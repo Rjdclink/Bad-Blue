@@ -1,14 +1,18 @@
-const fs = require('fs');
-const path = require('path');
+'use strict';
+
+const fs = require('node:fs');
+const path = require('node:path');
 
 const root = process.cwd();
+
+// APE V3 is now the canonical active-rescue implementation. Reuse its dedicated
+// verifier here instead of duplicating retired V2 source-shape assumptions.
+require('./verify-nix-gen-atomic-bps-single-pipeline.cjs');
+
 const files = {
   policy: 'server/services/cryptocrawl/optimization/adaptive-profitability-search-policy.ts',
   cex: 'server/services/cryptocrawl/integration/cex-four-mode-observability-wiring.ts',
-  zero: 'server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v2.ts',
-  fair: 'server/services/cryptocrawl/integration/zero-capital-profitability-rescue-fair.ts',
   core: 'server/services/cryptocrawl/core/zero-capital-engine.ts',
-  zeroDiscovery: 'server/services/cryptocrawl/discovery/zero-capital-canonical-discovery.ts',
   executor: 'server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts',
   flashExecutor: 'server/services/cryptocrawl/execution/zero-capital-flash-canonical-executor.ts',
   dailyBudget: 'server/services/cryptocrawl/governance/profit-ladder-daily-profit-budget.ts',
@@ -19,10 +23,6 @@ const files = {
   canonical: 'server/services/cryptocrawl/integration/canonical-runtime-wiring.ts',
 };
 
-// Deployment preflight intentionally redirects path-based reads of the canonical
-// zero-capital executor to the preserved flash implementation for legacy verifiers.
-// New router-aware checks must inspect the physical canonical file, so read it by
-// file descriptor; the preflight compatibility redirect only rewrites path strings.
 function readPhysical(absolute) {
   const fd = fs.openSync(absolute, 'r');
   try {
@@ -39,9 +39,11 @@ for (const [key, relative] of Object.entries(files)) {
   source[key] = key === 'executor' ? readPhysical(absolute) : fs.readFileSync(absolute, 'utf8');
 }
 
-// These are behavior-level invariants, not telemetry field counts. Every entry
-// corresponds to code that changes search ordering, quote breadth, sizing,
-// provider admission, execution-stage maker safety, or rescue feasibility.
+// Batch 9 retains its independent non-APE behavior checks. Active APE rescue is
+// verified above by the canonical V3 verifier, which covers shared pass-level
+// provider races, quote/provider parallelism, provider-capacity resizing, verified
+// Aave+Balancer stacking, targeted route/size transformations, strict-improvement
+// recursion, Stage-One immutability, and downstream-only execution authority.
 const behaviors = [
   ['policy', 'riskAdjustedBpsToBreakEven', 'risk-adjusted CEX gap ranking'],
   ['policy', 'measuredMakerSavings(item, takerFees)', 'maker-savings recovery weighting'],
@@ -64,29 +66,6 @@ const behaviors = [
   ['cex', 'observeFailClosed().finally(scheduleNext)', 'recursive adaptive rescheduling after completion or failure'],
   ['cex', 'smallest_risk_adjusted_then_exact_bps_to_break_even_first', 'risk-adjusted near-miss ordering'],
 
-  ['zero', 'baseUnitsFromUsd(usd: number, decimals: number, inputTokenUsdPrice: number)', 'token-price-and-decimal-correct sizing'],
-  ['zero', 'opportunity.expiresAt + rescueSeedGraceMs() > now', 'bounded stale seed may be structural input for a fresh requote only'],
-  ['zero', 'refined.expiresAt <= refined.timestamp || refined.expiresAt <= Date.now()', 'fresh requote expiry validation'],
-  ['zero', 'ZERO_CAPITAL_PROVIDER_EVIDENCE_MAX_AGE_MS', 'provider evidence freshness bound'],
-  ['zero', 'ZERO_CAPITAL_PROVIDER_MAX_UTILIZATION', 'provider utilization ceiling'],
-  ['zero', 'ZERO_CAPITAL_PROVIDER_MIN_HEADROOM_RATIO', 'provider liquidity headroom floor'],
-  ['zero', 'calculateMeasuredFlashLoanFee', 'exact measured provider fee recomputation'],
-  ['zero', 'else if (gapToBreakEvenBps <= 15)', 'near-break-even dense sizing curve'],
-  ['zero', 'gasPressureBps >= 25', 'gas-pressure sizing curve'],
-  ['zero', 'sharedResidualFractions', 'shared BPS Super Engine nonlinear sizing input'],
-  ['zero', 'buildBpsReductionSuperPlan', 'shared BPS Super Engine operational zero-capital plan'],
-  ['zero', 'ZERO_CAPITAL_RESCUE_TOTAL_QUOTE_BUDGET', 'bounded exact quote budget'],
-  ['zero', 'routeFamily(route)', 'route-family rescue diversity'],
-  ['zero', 'ZERO_CAPITAL_RESCUE_HALF_LIFE_MS', 'candidate-age rescue decay'],
-  ['zero', 'const confidence =', 'confidence-weighted rescue priority'],
-  ['zero', 'ZERO_CAPITAL_RESCUE_MAX_QUOTE_LATENCY_MS', 'quote-latency rejection bound'],
-  ['zero', 'for (const evidence of providerEvidence)', 'multi-provider evaluation per quote'],
-  ['zero', 'candidateProfitable && currentProfitable', 'profitable candidates rank by absolute net'],
-  ['zero', 'candidate.netProfitBps > current.netProfitBps', 'non-profitable candidates rank by closest BPS'],
-  ['zero', 'strictImprovement(original', 'strict replacement improvement'],
-  ['zero', 'existingPositiveNeverReplacedByNegative: true', 'positive candidates cannot regress to negative'],
-  ['zero', 'inputTokenDecimalsAuthoritative: true', 'denomination authority attestation'],
-
   ['maker', 'REJECT_MAKER_EXECUTION_FEE_AUTHORITY', 'authenticated maker-fee execution guard'],
   ['maker', 'REJECT_MAKER_EXECUTION_CANARY_CEILING', 'maker canary ceiling recheck'],
   ['maker', 'REJECT_MAKER_EXECUTION_FILL_PROBABILITY', 'measured joint-fill execution floor'],
@@ -102,8 +81,8 @@ const behaviors = [
   ['transformWiring', 'closestByTopology', 'closest feasible rescue retained per topology'],
 ];
 
-if (behaviors.length !== 53) {
-  throw new Error(`[substantial-profitability-batch9] expected exactly 53 behavior checks after shared BPS zero-capital operational wiring, got ${behaviors.length}`);
+if (behaviors.length !== 31) {
+  throw new Error(`[substantial-profitability-batch9] expected exactly 31 independent non-APE behavior checks, got ${behaviors.length}`);
 }
 for (const [fileKey, pattern, name] of behaviors) {
   if (!source[fileKey].includes(pattern)) {
@@ -111,56 +90,39 @@ for (const [fileKey, pattern, name] of behaviors) {
   }
 }
 
-if (!source.zero.includes('function recoverableByAtomicSurplus') ||
-    !source.zero.includes('opportunity.expiresAt + rescueSeedGraceMs() > now') ||
-    !source.zero.includes('recentlyExpiredSeedIsStructuralOnly: true') ||
-    !source.zero.includes('refined.expiresAt <= refined.timestamp || refined.expiresAt <= Date.now()')) {
-  throw new Error('[substantial-profitability-batch9] zero-capital rescue may use only a bounded recently expired seed as structural requote input and must require independently fresh refined evidence before any economic improvement survives');
-}
 if (!source.cex.includes('function scheduleNext') ||
     !source.cex.includes('setTimeout(() =>') ||
     !source.cex.includes('observeFailClosed().finally(scheduleNext)')) {
   throw new Error('[substantial-profitability-batch9] adaptive CEX rescheduling must remain one-shot, recursive, and failure-resilient');
 }
-if (source.core.includes('runZeroCapitalProfitabilityRescueV2') ||
-    !source.core.includes('duplicateAtomicRescuePass: false') ||
-    !source.zeroDiscovery.includes("import { runFairZeroCapitalProfitabilityRescue } from '../integration/zero-capital-profitability-rescue-fair.js';") ||
-    !source.zeroDiscovery.includes('rescueReady = await runFairZeroCapitalProfitabilityRescue({') ||
-    !source.zeroDiscovery.includes('stageOneClassificationChanged: false') ||
-    !source.fair.includes('primeApeResidentRouting(input.opportunities);') ||
-    !source.fair.includes('const residentFastPath = runZeroCapitalAtomicBpsEngine({') ||
-    !source.fair.includes('transformed = await runZeroCapitalProfitabilityRescueV2({') ||
-    !source.fair.includes('activeRescueCreatesDerivedEvidenceOnly: true') ||
-    !source.fair.includes('stageOneMutation: false') ||
-    !source.fair.includes('executionAuthority: false')) {
-  throw new Error('[substantial-profitability-batch9] Atomic rescue must remain single-owner after locked Stage-1 classification: canonical discovery awaits the APE gateway, the resident APE fast path runs first on the original Stage-1 references, active measured rescue derives fresh evidence only for non-positive rescue candidates, the core scan remains measurement-only, Stage One remains unchanged, and execution authority stays downstream');
+
+if (!source.core.includes('duplicateAtomicRescuePass: false')) {
+  throw new Error('[substantial-profitability-batch9] core scan must remain measurement-only with no duplicate Atomic rescue pass');
 }
-if (source.canonical.includes('ensureZeroCapitalProfitabilityRescueV2') || source.zero.includes('target.scanChain =')) {
-  throw new Error('[substantial-profitability-batch9] retired zero-capital rescue installer/scan mutation must not return');
+
+if (source.canonical.includes('ensureZeroCapitalProfitabilityRescueV2') ||
+    source.canonical.includes('ensureZeroCapitalProfitabilityRescueV3')) {
+  throw new Error('[substantial-profitability-batch9] retired installer-style zero-capital rescue wiring must not return');
 }
-if (source.zero.includes('getProfitLadderDiscoveryNotionalAuthority') ||
-    source.zero.includes('getProfitLadderNotionalAuthority') ||
-    !source.zero.includes('function providerSafeBorrowAmount')) {
-  throw new Error('[substantial-profitability-batch9] zero-capital rescue borrowing must remain independent of Profit Ladder notional and bounded by fresh provider capacity');
-}
+
 if (!source.core.includes('tokenUnitEqualsUsdAssumption: false') ||
     !source.executor.includes("import { livePriceMesh } from '../bridge/live-price-mesh.js';") ||
     !source.executor.includes('livePriceMesh.getLiveSymbolPrices([...new Set(symbols)])') ||
     !source.executor.includes('inputTokenUsdPrice: prices.get(input.opportunity.inputAssetSymbol) ?? null') ||
     !source.flashExecutor.includes("missingInformation: ['live_input_token_usd_price_for_builder_realized_profit']")) {
-  throw new Error('[substantial-profitability-batch9] canonical zero-capital execution must retain live input-token USD valuation without restoring retired parallel execution authority');
+  throw new Error('[substantial-profitability-batch9] canonical zero-capital execution must retain live input-token USD valuation without restoring parallel execution authority');
 }
+
 if (!source.dailyBudget.includes("authority: 'profit_ladder_daily_realized_profit_only'") ||
     !source.dailyBudget.includes('borrowingNotionalAuthority: false') ||
     !source.dailyBudget.includes('expectedProfitFitsDailyBudget') ||
-    !source.zero.includes('getProfitLadderDailyProfitBudget') ||
-    !source.zero.includes('profitLadderRescueVetoAuthority: false') ||
     !source.executor.includes('void observeDailyProfitBudget(opportunity);') ||
     !source.executor.includes('expectedProfitFitsDailyBudget') ||
     !source.executor.includes('executionVetoAuthority: false') ||
     source.executor.includes('dailyProfitBudgetFailure')) {
-  throw new Error('[substantial-profitability-batch9] Profit Ladder must remain realized-profit telemetry/accounting for Atomic while borrowing and strict-positive execution remain independently governed by provider capacity and canonical economics');
+  throw new Error('[substantial-profitability-batch9] Profit Ladder must remain realized-profit telemetry/accounting while borrowing and strict-positive execution remain independently governed');
 }
+
 if (!source.venue.includes("getActiveExecutableQuoteVenues(): Array<'coinbase' | 'kraken' | 'okx'>")) {
   throw new Error('[substantial-profitability-batch9] active CEX quote topology must remain restricted to fully implemented Coinbase/Kraken/OKX paths');
 }
@@ -175,4 +137,4 @@ if (fs.existsSync(path.join(root, 'server/services/cryptocrawl/integration/zero-
   throw new Error('[substantial-profitability-batch9] duplicate zero-capital size/provider optimizer wrappers must remain retired');
 }
 
-console.log('[substantial-profitability-batch9] PASS: fifty-three behavior-level profitability enhancements are present; zero-capital rescue remains single-owner after locked Stage-1 classification, the resident APE fast path runs first on the exact Stage-1 references, bounded active measured rescue derives fresh evidence without mutating Stage 1 or gaining execution authority, bounded recently expired seeds are structural requote inputs only and cannot extend stale economics, fresh requotes supersede stale seeds, Profit Ladder remains realized-profit telemetry/accounting rather than Atomic borrowing or execution veto authority, canonical execution uses the live price mesh, duplicate optimizer wrappers remain retired, and implemented CEX topology remains settlement-gated');
+console.log('[substantial-profitability-batch9] PASS: canonical APE V3 verification is reused without stale V2 source-shape assumptions; independent CEX, maker, transformation, execution-valuation, Profit Ladder, venue, and duplicate-wrapper invariants remain build-locked');
