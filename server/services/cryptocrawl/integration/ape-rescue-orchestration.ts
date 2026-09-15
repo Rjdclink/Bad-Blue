@@ -1,5 +1,7 @@
 import type { ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 
+export type ApeRescueDefect = 'cost_positive_gross' | 'structural_nonpositive_gross';
+
 export interface ApeCandidateRescueSnapshot {
   id: string;
   generation: string;
@@ -24,6 +26,33 @@ export interface ApeTierBudget {
 
 function finite(value: number, fallback: number): number {
   return Number.isFinite(value) ? value : fallback;
+}
+
+function grossProfitBaseUnits(opportunity: ZeroCapitalOpportunity): bigint {
+  return opportunity.grossProfit
+    ?? (opportunity.expectedProfit + opportunity.estimatedExecutionCostInInputToken);
+}
+
+/**
+ * Cheap exact defect classification from evidence already present on the Stage-1
+ * candidate. No registry read, model, RPC, database call, quote or new economics
+ * calculation is introduced. A candidate with positive gross route value can be
+ * rescued by cost/provider/size compression; a non-positive-gross candidate first
+ * needs a structural route/edge change because cost compression cannot create
+ * gross edge that is not there.
+ */
+export function classifyApeRescueDefect(opportunity: ZeroCapitalOpportunity): ApeRescueDefect {
+  return grossProfitBaseUnits(opportunity) > 0n
+    ? 'cost_positive_gross'
+    : 'structural_nonpositive_gross';
+}
+
+export function apeV4FirstCandidate(opportunity: ZeroCapitalOpportunity): boolean {
+  return classifyApeRescueDefect(opportunity) === 'cost_positive_gross';
+}
+
+export function apeStructuralFirstCandidate(opportunity: ZeroCapitalOpportunity): boolean {
+  return classifyApeRescueDefect(opportunity) === 'structural_nonpositive_gross';
 }
 
 /**
