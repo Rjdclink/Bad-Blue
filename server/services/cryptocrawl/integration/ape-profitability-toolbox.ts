@@ -115,11 +115,6 @@ function scheduleToolboxPrewarm(opportunity: ZeroCapitalOpportunity, generation:
   task.unref?.();
 }
 
-/**
- * Pure hot-path resident read. A miss performs no scheduling, map mutation, model,
- * database, research or transformation work. Callers that want a future plan must
- * prewarm it from an already-deferred/background callback.
- */
 export function peekApeProfitabilityToolboxPlan(
   opportunity: ZeroCapitalOpportunity,
   now = Date.now(),
@@ -130,10 +125,6 @@ export function peekApeProfitabilityToolboxPlan(
   return cached.plan;
 }
 
-/**
- * Background-only prewarm entrypoint. It is intentionally separate from the live
- * peek so a worker can never create advisory scheduling merely by asking for help.
- */
 export function prewarmApeProfitabilityToolboxPlan(opportunity: ZeroCapitalOpportunity): void {
   const now = Date.now();
   if (opportunity.expiresAt <= now) return;
@@ -151,23 +142,16 @@ export function prewarmApeProfitabilityToolboxPlan(opportunity: ZeroCapitalOppor
 }
 
 /**
- * Compatibility wrapper for non-hot-path callers. New APE live workers must use
- * peekApeProfitabilityToolboxPlan and must never schedule advisory work themselves.
+ * Legacy name retained for existing APE callers, but now deliberately pure. A live
+ * worker miss returns null and does not schedule, mutate cache state, perform
+ * research or create any other work. Prewarm is requested only from deferred code.
  */
 export function buildApeProfitabilityToolboxPlan(
   opportunity: ZeroCapitalOpportunity,
 ): ApeProfitabilityToolboxPlan | null {
-  const resident = peekApeProfitabilityToolboxPlan(opportunity);
-  if (resident) return resident;
-  prewarmApeProfitabilityToolboxPlan(opportunity);
-  return null;
+  return peekApeProfitabilityToolboxPlan(opportunity);
 }
 
-/**
- * APE owns every live, finite, negative Stage-1 candidate it receives. There is
- * deliberately no fixed BPS entry floor here: profitability is determined only
- * by exact all-in economics after bounded compatible transformations are tried.
- */
 export function isApeRescueCandidate(
   opportunity: ZeroCapitalOpportunity,
   graceMs: number,
@@ -179,7 +163,6 @@ export function isApeRescueCandidate(
     && opportunity.expectedProfit <= 0n;
 }
 
-/** Hyperdynamic policy can expand or contract bounded quote work, never economics. */
 export function apeTargetAttemptLimit(
   configuredBase: number,
   plan: ApeProfitabilityToolboxPlan | null,
@@ -203,14 +186,6 @@ export function apePrefersRouteAlternatives(plan: ApeProfitabilityToolboxPlan | 
   return routePressure > sizePressure * 1.05;
 }
 
-/**
- * Builds a bounded size search from the existing BPS toolbox. Measured fixed-cost
- * pressure explores larger safe notionals first to dilute gas/relay/bridge cost;
- * impact pressure explores smaller sizes first. Flash premium is treated as a
- * provider-cost surface rather than a fixed cost: provider selection does the
- * primary work while size probes stay close to the measured route. Super Engine
- * residual fractions and provider capacity boundaries remain first-class probes.
- */
 export function buildApeTargetAmounts(input: {
   intended: bigint;
   fundingCeiling: bigint;
