@@ -17,6 +17,7 @@ import {
 } from './ape-resident-workbench.js';
 import { selectPersistentSplitRatio, settleBeforeDeadline } from './ape-hypergraph-intelligence.js';
 import { runZeroCapitalAtomicStackTactic, type AtomicStackTacticResult } from './zero-capital-atomic-stack-wiring.js';
+import { clearsFiveDollarOutputFloor } from './zero-capital-profit-output-floor.js';
 
 export interface ZeroCapitalRouteSplitRescueInput {
   chain: SupportedChain;
@@ -79,11 +80,6 @@ function alignRouteCostBasisToStageOne(
   };
 }
 
-/**
- * Resident gross evidence picks the first ratio. A persistent ratio frontier then
- * advances one exact ratio per work wave instead of launching six RPC calls for
- * every pair every time. No ratio is deleted; later waves cover the remainder.
- */
 function splitRatiosForPair(pair: ApeResidentRoutePair): SplitRatio[] {
   const left = peekResidentBestBpsQuote(pair.left.id);
   const right = peekResidentBestBpsQuote(pair.right.id);
@@ -144,7 +140,11 @@ function exactBpsImprovement(current: ZeroCapitalOpportunity, candidate: ZeroCap
     > current.expectedProfit * candidate.flashLoanAmount;
 }
 
-async function resolveInputUsdPrice(parent: ZeroCapitalOpportunity, deadlineAt: number): Promise<number | null> {
+/**
+ * Route-split never waits for price I/O. It consumes resident/fresh handoff evidence
+ * or yields immediately while the shared resident price plane refreshes in parallel.
+ */
+function resolveInputUsdPrice(parent: ZeroCapitalOpportunity): number | null {
   const now = Date.now();
   const resident = livePriceMesh.peekLiveSymbolPriceEvidence(parent.inputAssetSymbol, now);
   if (resident) return resident.priceUsd;
@@ -152,12 +152,8 @@ async function resolveInputUsdPrice(parent: ZeroCapitalOpportunity, deadlineAt: 
   const compatibility = parent.expiresAt > now ? finitePositive(parent.inputAssetUsdPrice) : null;
   if (compatibility !== null) return compatibility;
 
-  await settleBeforeDeadline(
-    livePriceMesh.getLiveSymbolPrices([parent.inputAssetSymbol]),
-    deadlineAt,
-    new Map<string, number>(),
-  );
-  return livePriceMesh.peekLiveSymbolPriceEvidence(parent.inputAssetSymbol)?.priceUsd ?? null;
+  livePriceMesh.primeResidentSymbolPrices([parent.inputAssetSymbol]);
+  return null;
 }
 
 function residentAlternativeImprovement(
@@ -286,7 +282,7 @@ function quoteToTransientChild(input: {
       bpsToBreakEven: input.quote.bpsToBreakEven,
     },
     executableCapability: false,
-    executionCapabilityReason: 'APE partial-route child is measurement-only; aggregate composite exact simulation and strict-positive all-in economics remain authoritative',
+    executionCapabilityReason: 'APE partial-route child is measurement-only; aggregate composite exact simulation and $5 output floor remain authoritative',
     missingInformation: ['required:composite_route_split_exact_simulation'],
     provenance: [
       'ape_route_split_child',
@@ -326,7 +322,6 @@ function incrementReason(reasons: Record<string, number>, reason: string): void 
   reasons[reason] = (reasons[reason] ?? 0) + 1;
 }
 
-/** Candidate TTL never ends APE ownership; this deadline bounds one work wave only. */
 function parentDeadline(input: ZeroCapitalRouteSplitRescueInput): number {
   return input.deadlineAt ?? Number.MAX_SAFE_INTEGER;
 }
@@ -424,8 +419,8 @@ export async function runZeroCapitalRouteSplitRescue(
     if (splittable) result.splittableCandidates! += 1;
     else result.unsplittableCandidates! += 1;
 
-    if (parent.expectedProfit > 0n) {
-      incrementReason(rejectionReasons, 'already_strict_positive');
+    if (clearsFiveDollarOutputFloor(parent)) {
+      incrementReason(rejectionReasons, 'already_five_dollar_output');
       return;
     }
 
@@ -439,9 +434,9 @@ export async function runZeroCapitalRouteSplitRescue(
       return;
     }
 
-    const usdPrice = await resolveInputUsdPrice(parent, parentDeadline(input));
+    const usdPrice = resolveInputUsdPrice(parent);
     if (usdPrice === null) {
-      incrementReason(rejectionReasons, 'fresh_input_price_refresh_pending');
+      incrementReason(rejectionReasons, 'fresh_input_price_refresh_pending_zero_wait');
       return;
     }
 
@@ -456,8 +451,8 @@ export async function runZeroCapitalRouteSplitRescue(
       result.residentAlternativeImprovements! += 1;
       improvedOpportunities.push(residentImprovement);
       input.onImprovement?.(parent, residentImprovement);
-      if (residentImprovement.expectedProfit > 0n) {
-        incrementReason(rejectionReasons, 'resident_strict_positive_replaced_split_work');
+      if (clearsFiveDollarOutputFloor(residentImprovement)) {
+        incrementReason(rejectionReasons, 'resident_five_dollar_output_replaced_split_work');
         return;
       }
     }
@@ -559,6 +554,7 @@ export async function runZeroCapitalRouteSplitRescue(
     ...telemetryResult,
     candidateOwnershipExpires: false,
     negativeBpsRejected: false,
+    positiveBelowFiveDollarsRetainedForRescue: true,
     staleEvidenceRefreshesInsteadOfKillingCandidate: true,
     candidatesRunConcurrently: true,
     ratiosWithinPairRunConcurrently: true,
@@ -571,6 +567,7 @@ export async function runZeroCapitalRouteSplitRescue(
     residentAssignmentRebuildOnCacheMiss: true,
     residentPriceEvidenceFirst: true,
     missingPriceRefreshesThroughCanonicalMesh: true,
+    missingPriceWaitsOnHotPath: false,
     residentExactQuoteHits,
     splitQuoteSingleflightHits,
     splitExactQuoteSingleflight: true,
