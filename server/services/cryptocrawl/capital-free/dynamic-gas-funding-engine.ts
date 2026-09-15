@@ -20,12 +20,12 @@ export interface GasFundingDecision {
   strictZeroInitialCapitalEligible?: boolean;
   /** True only when the operator must add money before this exact execution can run. */
   operatorMonetaryInputRequired?: boolean;
-  /** Provider-fronted gas may still be billed later and remains a canonical economic cost. */
+  /** External provider account/subscription billing is outside Cryptara trade economics. */
   providerBillingLiability?: boolean;
   sponsorOperatorMonetaryCostProvenZero?: boolean;
 }
 
-/** Strong lifetime-zero-operator-cost mode is opt-in; default objective is zero initial capital. */
+/** Strong lifetime-zero-operator-cost mode is retained for compatibility; zero-initial-capital admission is the canonical objective. */
 export function strictZeroOperatorCostRequired(): boolean {
   return process.env.ZERO_INITIAL_CAPITAL_STRICT_OPERATOR_ZERO_COST?.trim().toLowerCase() === 'true';
 }
@@ -39,12 +39,12 @@ export function chooseGasFundingMode(
   const defaultFloor = ethers.utils.parseEther(process.env.DYNAMIC_GAS_RESERVE_NATIVE || '0.002').toBigInt();
   const specific = process.env[`DYNAMIC_GAS_RESERVE_${chain.nativeAsset}`];
   const reserveFloor = specific ? ethers.utils.parseUnits(specific, 18).toBigInt() : defaultFloor;
-  const requireZeroOperatorCost = strictZeroOperatorCostRequired();
   const sponsorCostProvenZero = proof.sponsorOperatorMonetaryCostProvenZero === true;
   const sponsorConfiguredAndReady = chain.sponsoredBootstrap && sponsorReady;
 
-  // Highest priority: a sponsor independently proven to create zero operator cost.
-  if (sponsorConfiguredAndReady && sponsorCostProvenZero) {
+  // Primary sponsored lane: external provider account billing is paid outside Cryptara and
+  // therefore is not trade capital, a trade fee, prefunding, or canonical all-in economics.
+  if (sponsorConfiguredAndReady) {
     return {
       chain: chain.id,
       mode: 'sponsored',
@@ -54,12 +54,12 @@ export function chooseGasFundingMode(
       strictZeroInitialCapitalEligible: true,
       operatorMonetaryInputRequired: false,
       providerBillingLiability: false,
-      sponsorOperatorMonetaryCostProvenZero: true,
-      reason: 'Provider sponsorship proves zero upfront wallet capital and independently proves zero operator monetary gas cost',
+      sponsorOperatorMonetaryCostProvenZero: sponsorCostProvenZero,
+      reason: 'Primary hosted sponsorship removes the upfront wallet-gas requirement; externally paid provider account billing is outside Cryptara trade economics',
     };
   }
 
-  // Prefer already-proven system-owned native gas over any billed provider fallback.
+  // Fallback to already-proven system-owned native gas if the primary sponsored lane is unavailable.
   if (nativeBalance >= reserveFloor && proof.nativeSystemOwnedProven === true) {
     return {
       chain: chain.id,
@@ -75,27 +75,7 @@ export function chooseGasFundingMode(
     };
   }
 
-  // Functional last-resort sponsor: zero upfront wallet gas, but provider billing is real.
-  if (sponsorConfiguredAndReady && !requireZeroOperatorCost) {
-    return {
-      chain: chain.id,
-      mode: 'sponsored',
-      nativeBalance,
-      reserveFloor,
-      paymentSource: 'provider_sponsored',
-      strictZeroInitialCapitalEligible: true,
-      operatorMonetaryInputRequired: false,
-      providerBillingLiability: true,
-      sponsorOperatorMonetaryCostProvenZero: false,
-      reason: 'Billed provider fallback removes the upfront native-balance requirement; provider-fronted gas remains a billing liability that canonical all-in economics must charge',
-    };
-  }
-
-  const sponsorReason = sponsorConfiguredAndReady
-    ? requireZeroOperatorCost
-      ? 'sponsorship removes upfront native funding but explicit zero-operator-cost mode requires independent proof that the provider bill is zero'
-      : 'configured sponsorship did not satisfy the executable funding boundary'
-    : 'no configured sponsored lane is ready';
+  const sponsorReason = 'no configured sponsored lane is ready';
   const nativeReason = nativeBalance >= reserveFloor
     ? 'native balance exists but SELF_FUNDED system ownership is not proven at this boundary'
     : 'native balance is below the reserve floor';
@@ -108,7 +88,7 @@ export function chooseGasFundingMode(
     paymentSource: nativeBalance >= reserveFloor ? 'unproven_native_balance' : 'unavailable',
     strictZeroInitialCapitalEligible: false,
     operatorMonetaryInputRequired: true,
-    providerBillingLiability: sponsorConfiguredAndReady && !sponsorCostProvenZero,
+    providerBillingLiability: false,
     sponsorOperatorMonetaryCostProvenZero: false,
     reason: `Zero-initial-capital funding rejected: ${sponsorReason}; ${nativeReason}`,
   };
