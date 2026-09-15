@@ -3,6 +3,7 @@ import type { providers } from 'ethers';
 import type { SupportedChain, ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import { measuredCandidateRegistry, type MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
 import {
+  peekResidentBestBpsQuote,
   quoteConfiguredZeroCapitalRoute,
   type ConfiguredRouteLeg,
   type ConfiguredZeroCapitalRoute,
@@ -40,7 +41,7 @@ type SplitRatio = {
   rightPercent: bigint;
 };
 
-const SPLIT_RATIOS: readonly SplitRatio[] = [
+const FALLBACK_SPLIT_RATIOS: readonly SplitRatio[] = [
   { leftPercent: 50n, rightPercent: 50n },
   { leftPercent: 65n, rightPercent: 35n },
   { leftPercent: 35n, rightPercent: 65n },
@@ -111,12 +112,18 @@ function routesArePoolDisjoint(left: ConfiguredZeroCapitalRoute, right: Configur
   return true;
 }
 
+function residentRouteScore(route: ConfiguredZeroCapitalRoute): number {
+  const quote = peekResidentBestBpsQuote(route.id);
+  if (!quote || !Number.isFinite(quote.grossProfitBps)) return Number.NEGATIVE_INFINITY;
+  return quote.grossProfitBps;
+}
+
 function routePairs(routes: readonly ConfiguredZeroCapitalRoute[]): RoutePair[] {
   const maximum = maxRoutePairsPerCandidate();
   const pairs: RoutePair[] = [];
   const usedFamilies = new Set<string>();
-  for (let leftIndex = 0; leftIndex < routes.length && pairs.length < maximum; leftIndex += 1) {
-    for (let rightIndex = leftIndex + 1; rightIndex < routes.length && pairs.length < maximum; rightIndex += 1) {
+  for (let leftIndex = 0; leftIndex < routes.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < routes.length; rightIndex += 1) {
       const left = routes[leftIndex];
       const right = routes[rightIndex];
       if (left.id === right.id || !routesArePoolDisjoint(left, right)) continue;
@@ -126,7 +133,41 @@ function routePairs(routes: readonly ConfiguredZeroCapitalRoute[]): RoutePair[] 
       pairs.push({ left, right });
     }
   }
-  return pairs;
+  // Reuse upstream measured route quality to attempt the most promising disjoint
+  // pair first. No quote, RPC call, registry lookup or new measurement is added.
+  pairs.sort((a, b) => {
+    const scoreA = residentRouteScore(a.left) + residentRouteScore(a.right);
+    const scoreB = residentRouteScore(b.left) + residentRouteScore(b.right);
+    if (scoreA !== scoreB) return scoreB - scoreA;
+    return `${a.left.id}:${a.right.id}`.localeCompare(`${b.left.id}:${b.right.id}`);
+  });
+  return pairs.slice(0, maximum);
+}
+
+function splitRatiosForPair(pair: RoutePair): SplitRatio[] {
+  const left = peekResidentBestBpsQuote(pair.left.id);
+  const right = peekResidentBestBpsQuote(pair.right.id);
+  const ratios: SplitRatio[] = [];
+
+  if (left && right && Number.isFinite(left.grossProfitBps) && Number.isFinite(right.grossProfitBps)) {
+    // Positive resident gross-edge density is used only as a starting allocation
+    // hint. Exact split quotes and composite simulation remain authoritative.
+    const leftScore = Math.max(0, left.grossProfitBps);
+    const rightScore = Math.max(0, right.grossProfitBps);
+    const total = leftScore + rightScore;
+    if (total > 0) {
+      const rawLeftPercent = 100 * leftScore / total;
+      const rounded = Math.round(Math.max(20, Math.min(80, rawLeftPercent)) / 5) * 5;
+      ratios.push({ leftPercent: BigInt(rounded), rightPercent: BigInt(100 - rounded) });
+    }
+  }
+
+  for (const fallback of FALLBACK_SPLIT_RATIOS) {
+    if (ratios.some(ratio => ratio.leftPercent === fallback.leftPercent)) continue;
+    ratios.push(fallback);
+    if (ratios.length >= FALLBACK_SPLIT_RATIOS.length) break;
+  }
+  return ratios;
 }
 
 function blockTimestamp(opportunity: ZeroCapitalOpportunity): number {
@@ -317,7 +358,8 @@ export async function runZeroCapitalRouteSplitRescue(
       if (promotedParentSplit || parent.expiresAt <= Date.now()) break;
       result.routePairsTried += 1;
 
-      for (const ratio of SPLIT_RATIOS) {
+      const splitRatios = splitRatiosForPair(pair);
+      for (const ratio of splitRatios) {
         if (parent.expiresAt <= Date.now()) break;
         const amounts = splitAmounts(parent.flashLoanAmount, ratio);
         if (!amounts) continue;
@@ -378,7 +420,9 @@ export async function runZeroCapitalRouteSplitRescue(
     component: 'ZeroCapitalRouteSplitRescue',
     chain: input.chain,
     ...result,
-    splitRatios: SPLIT_RATIOS.map(ratio => `${ratio.leftPercent.toString()}/${ratio.rightPercent.toString()}`),
+    splitRatioPolicy: 'resident_gross_bps_weighted_first_then_existing_fallbacks_same_maximum_count',
+    residentRoutePairOrdering: true,
+    extraRpcForSplitIntelligence: false,
     pairConstraint: 'pool_disjoint',
     partialQuotesRunInParallel: true,
     splitChildrenStandaloneExecutable: false,
