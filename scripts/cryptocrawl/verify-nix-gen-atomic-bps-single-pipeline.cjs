@@ -31,14 +31,28 @@ assert.doesNotMatch(discovery, /ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS/);
 assert.match(gateway, /primeApeResidentRouting\(input\.opportunities\)/);
 assert.match(gateway, /runZeroCapitalAtomicBpsEngine\(\{/);
 assert.match(gateway, /opportunities: input\.opportunities/);
-assert.match(gateway, /const activeRescueCandidates = residentFastPath\.filter/);
+assert.match(gateway, /const measuredRescueCandidates = residentFastPath\.filter\(stillNeedsMeasuredRescue\)/);
 assert.match(gateway, /opportunity\.expectedProfit <= 0n/);
 
-// Non-positive candidates are actively measured by the deadline-aware V4 actuator.
+// Already-arrived route/size evidence owns the normal path. V4 is retained as a
+// bounded recovery actuator only when the canonical resident quote is genuinely
+// missing; candidates deferred by the recovery budget remain eligible next scan.
+assert.match(gateway, /function hasLiveResidentRouteEvidence\(/);
+assert.match(gateway, /peekResidentBestBpsQuote\(route\.id\)/);
+assert.match(gateway, /const residentMissCandidates = measuredRescueCandidates\.filter/);
+assert.match(gateway, /!hasLiveResidentRouteEvidence\(input, opportunity\)/);
+assert.match(gateway, /function fallbackCandidateBudget\(/);
+assert.match(gateway, /function selectResidentMissRecoveryCandidates\(/);
+assert.match(gateway, /fallbackRotationCursorByChain/);
+assert.match(gateway, /const activeRescueCandidates = selectResidentMissRecoveryCandidates/);
+assert.match(gateway, /remoteMeasuredRescuePolicy: 'resident_miss_recovery_only_with_bounded_fair_admission'/);
+assert.match(gateway, /deferredCandidatesRemainEligibleNextFreshScan: true/);
+
+// True resident misses are actively measured by the deadline-aware V4 actuator.
 // V4 owns candidate-local anytime refinement under one absolute budget; Stage One
 // remains immutable and only strict measured improvements may replace APE output.
 assert.match(gateway, /runZeroCapitalProfitabilityRescueV4\(\{/);
-assert.match(gateway, /const passInput = transformed\.filter\(stillNeedsMeasuredRescue\)/);
+assert.match(gateway, /const passInput = activeRescueCandidates\.filter\(stillNeedsMeasuredRescue\)/);
 assert.match(gateway, /opportunities: passInput/);
 assert.match(gateway, /deadlineAt,/);
 assert.match(gateway, /maxRefinements: maxPasses/);
@@ -71,7 +85,7 @@ assert.match(residentApe, /stageOneMutation: false/);
 assert.match(residentApe, /executionAuthority: false/);
 
 // Provider evidence is measured once per pass/chain/asset and shared by concurrent
-// candidate workers. The first route quote launches in parallel with provider proof,
+// fallback workers. The first route quote launches in parallel with provider proof,
 // and the provider wait is bounded by the same absolute APE deadline.
 assert.match(activeRescue, /const providerRaces = new Map<string, Promise<FlashLoanProviderEconomics\[\]>>\(\)/);
 assert.match(activeRescue, /if \(providerRaces\.has\(key\)\) continue;/);
@@ -152,4 +166,4 @@ assert.match(activeRescue, /stageOneMutation: false/);
 assert.match(activeRescue, /syntheticEconomics: false/);
 assert.match(activeRescue, /executionAuthority: false/);
 
-console.log('[atomic-bps-single-pipeline] PASS: Stage One and resident APE remain locked; deadline-aware V4 rescue uses one absolute budget, shared provider races, parallel quote/provider probing, bounded hedged quote waves, adaptive route deadlines and candidate concurrency, candidate-local anytime refinement, provider-capacity clamping, verified Aave+Balancer stacking, separate provider-vs-route liquidity telemetry, and off-hot-path advisory/profit-ladder work without fabricating unsupported split-route execution or transport-level cancellation');
+console.log('[atomic-bps-single-pipeline] PASS: Stage One and resident APE remain locked; already-arrived route/size evidence owns the zero-I/O hot path, while deadline-aware V4 is retained as bounded fair resident-miss recovery with shared provider races, parallel quote/provider probing, hedged quote waves, adaptive route deadlines and candidate concurrency, provider-capacity clamping, verified Aave+Balancer stacking, separate provider-vs-route liquidity telemetry, and no fabricated split-route execution or transport-level cancellation');
