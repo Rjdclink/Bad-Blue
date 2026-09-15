@@ -14,6 +14,7 @@ export interface ApeResidentRoutePair {
 export interface ApeResidentPeerHint {
   opportunityId: string;
   suggestedWorker: ApeWorkerKind;
+  preferredRouteId: string | null;
   measuredNetBps: number;
   observedAt: number;
   expiresAt: number;
@@ -243,11 +244,15 @@ export function getApeResidentWorkAssignment(
  * Piggyback a hint only when a worker is already publishing a useful improvement.
  * It creates no independent message, event, acknowledgement, poll, lock or I/O.
  */
-export function publishApeResidentPeerHint(opportunity: ZeroCapitalOpportunity): void {
+export function publishApeResidentPeerHint(
+  opportunity: ZeroCapitalOpportunity,
+  preferredRouteId: string | null = null,
+): void {
   if (opportunity.expiresAt <= Date.now()) return;
   const hint: ApeResidentPeerHint = {
     opportunityId: opportunity.id,
     suggestedWorker: primaryWorker(opportunity),
+    preferredRouteId,
     measuredNetBps: opportunity.netProfitBps,
     observedAt: opportunity.timestamp,
     expiresAt: opportunity.expiresAt,
