@@ -20,6 +20,15 @@ export interface ApeProfitabilityToolboxPlan {
   activeHyperdynamicSolutionKeys: string[];
 }
 
+type CachedToolboxPlan = {
+  generation: string;
+  expiresAt: number;
+  plan: ApeProfitabilityToolboxPlan | null;
+};
+
+const residentToolboxPlans = new Map<string, CachedToolboxPlan>();
+const MAX_RESIDENT_TOOLBOX_PLANS = 512;
+
 function scaledAmount(amount: bigint, factor: number): bigint {
   if (amount <= 0n || !Number.isFinite(factor) || factor <= 0) return 0n;
   const scale = 1_000_000n;
@@ -46,32 +55,64 @@ function clampInteger(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, Math.trunc(value)));
 }
 
+function toolboxGeneration(opportunity: ZeroCapitalOpportunity): string {
+  return `${opportunity.id}:${opportunity.timestamp}:${opportunity.expiresAt}:${opportunity.netProfitBps}:${opportunity.flashLoanAmount.toString()}`;
+}
+
+function pruneResidentToolboxPlans(now = Date.now()): void {
+  for (const [key, value] of residentToolboxPlans) {
+    if (value.expiresAt <= now) residentToolboxPlans.delete(key);
+  }
+  while (residentToolboxPlans.size > MAX_RESIDENT_TOOLBOX_PLANS) {
+    const oldest = residentToolboxPlans.keys().next().value as string | undefined;
+    if (!oldest) break;
+    residentToolboxPlans.delete(oldest);
+  }
+}
+
 /**
  * Reconnects the existing BPS Super Engine, 25 research tactics and exact
  * 100-method Hyperdynamic catalog to APE strictly as search/scheduling guidance.
+ * The result is generation-fenced in resident memory so repeated rescue passes do
+ * not rebuild identical advisory work while the same candidate is still fresh.
  * Advisory failure is always local: it can remove a scheduling hint, never
  * suppress measured route/provider/size rescue or change canonical economics.
  */
 export function buildApeProfitabilityToolboxPlan(
   opportunity: ZeroCapitalOpportunity,
 ): ApeProfitabilityToolboxPlan | null {
+  const now = Date.now();
+  const generation = toolboxGeneration(opportunity);
+  const cached = residentToolboxPlans.get(opportunity.id);
+  if (cached && cached.generation === generation && cached.expiresAt > now) return cached.plan;
+
+  let plan: ApeProfitabilityToolboxPlan | null = null;
   try {
     const candidate = measuredCandidateRegistry.get(opportunity.id);
-    if (!candidate || candidate.topology !== 'ZERO_CAPITAL_ATOMIC') return null;
-    const advice = adviseEconomicTransformations(candidate);
-    const research = buildResearchBpsExecutionPlan(candidate, advice);
-    const mesh = getBpsCompressionMeshSnapshot();
-    const superPlan = buildBpsReductionSuperPlan(candidate, advice, research, null, mesh);
-    return {
-      advice,
-      superPlan,
-      hyperdynamic: mesh?.hyperdynamic ?? null,
-      hyperdynamicCatalogSize: HYPERDYNAMIC_BPS_SOLUTIONS.length,
-      activeHyperdynamicSolutionKeys: [...(mesh?.hyperdynamic.activeSolutionKeys ?? [])],
-    };
+    if (candidate && candidate.topology === 'ZERO_CAPITAL_ATOMIC') {
+      const advice = adviseEconomicTransformations(candidate);
+      const research = buildResearchBpsExecutionPlan(candidate, advice);
+      const mesh = getBpsCompressionMeshSnapshot();
+      const superPlan = buildBpsReductionSuperPlan(candidate, advice, research, null, mesh);
+      plan = {
+        advice,
+        superPlan,
+        hyperdynamic: mesh?.hyperdynamic ?? null,
+        hyperdynamicCatalogSize: HYPERDYNAMIC_BPS_SOLUTIONS.length,
+        activeHyperdynamicSolutionKeys: [...(mesh?.hyperdynamic.activeSolutionKeys ?? [])],
+      };
+    }
   } catch {
-    return null;
+    plan = null;
   }
+
+  residentToolboxPlans.set(opportunity.id, {
+    generation,
+    expiresAt: Math.max(now + 1, opportunity.expiresAt),
+    plan,
+  });
+  pruneResidentToolboxPlans(now);
+  return plan;
 }
 
 /**
