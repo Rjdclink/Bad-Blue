@@ -1,7 +1,11 @@
 import logger from '../../../logger.js';
 import type { providers } from 'ethers';
 import { zeroCapitalEngine, type SupportedChain, type ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
-import type { ConfiguredZeroCapitalRoute, QuotedZeroCapitalRoute } from '../execution/adapters/onchain-route-quoter.js';
+import {
+  peekResidentBestBpsQuote,
+  type ConfiguredZeroCapitalRoute,
+  type QuotedZeroCapitalRoute,
+} from '../execution/adapters/onchain-route-quoter.js';
 import { primeApeResidentRouting } from './atomic-profitability-resident-routing.js';
 import { runZeroCapitalAtomicBpsEngine } from './zero-capital-atomic-bps-engine.js';
 import { runZeroCapitalAtomicStackTactic } from './zero-capital-atomic-stack-wiring.js';
@@ -36,6 +40,35 @@ function stillNeedsMeasuredRescue(opportunity: ZeroCapitalOpportunity): boolean 
     && opportunity.expectedProfit <= 0n;
 }
 
+function routeForOpportunity(
+  routes: readonly ConfiguredZeroCapitalRoute[],
+  opportunity: ZeroCapitalOpportunity,
+): ConfiguredZeroCapitalRoute | null {
+  let best: ConfiguredZeroCapitalRoute | null = null;
+  for (const route of routes) {
+    if (route.chain !== opportunity.chain) continue;
+    if (opportunity.id !== route.id && !opportunity.id.startsWith(`${route.id}-`)) continue;
+    if (!best || route.id.length > best.id.length) best = route;
+  }
+  return best;
+}
+
+/**
+ * The upstream bounded size sweep already performed the expensive route measurements
+ * and retains its best-BPS quote in resident memory. When that evidence is still
+ * live, starting another RPC/provider search in the same APE continuation would be
+ * duplicate work. V4 therefore becomes recovery for a true resident miss only.
+ */
+function hasLiveResidentRouteEvidence(
+  input: FairZeroCapitalProfitabilityRescueInput,
+  opportunity: ZeroCapitalOpportunity,
+): boolean {
+  const route = routeForOpportunity(input.configuredRoutes, opportunity);
+  if (!route) return false;
+  const resident = peekResidentBestBpsQuote(route.id);
+  return Boolean(resident && resident.chain === opportunity.chain);
+}
+
 function strictDerivedImprovement(before: ZeroCapitalOpportunity, after: ZeroCapitalOpportunity): boolean {
   if (after === before) return false;
   if (!Number.isFinite(before.netProfitBps) || !Number.isFinite(after.netProfitBps)) return false;
@@ -51,7 +84,11 @@ export async function runFairZeroCapitalProfitabilityRescue(
 ): Promise<ZeroCapitalOpportunity[]> {
   primeApeResidentRouting(input.opportunities);
   const residentFastPath = runZeroCapitalAtomicBpsEngine({ ...input, opportunities: input.opportunities });
-  const activeRescueCandidates = residentFastPath.filter(stillNeedsMeasuredRescue);
+  const measuredRescueCandidates = residentFastPath.filter(stillNeedsMeasuredRescue);
+  const activeRescueCandidates = measuredRescueCandidates.filter(
+    opportunity => !hasLiveResidentRouteEvidence(input, opportunity),
+  );
+  const residentEvidenceSuppressedRemoteRescue = measuredRescueCandidates.length - activeRescueCandidates.length;
   const boundFromQuotedRoute = input.fromQuotedRoute.bind(zeroCapitalEngine);
 
   let transformed = residentFastPath;
@@ -98,7 +135,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
   if (activeRescueCandidates.length > 0) {
     activeMeasuredRescueInvoked = true;
     try {
-      const passInput = transformed.filter(stillNeedsMeasuredRescue);
+      const passInput = activeRescueCandidates.filter(stillNeedsMeasuredRescue);
       if (passInput.length > 0 && Date.now() < deadlineAt) {
         const measured = await runZeroCapitalProfitabilityRescueV4({
           ...input,
@@ -128,7 +165,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
       if (Date.now() >= deadlineAt) recursiveWallClockStops = 1;
     } catch (error) {
       activeMeasuredRescueError = error instanceof Error ? error.message : String(error);
-      logger.warn('[ZeroCapitalProfitabilityRescueFair] Deadline-aware APE rescue degraded locally; latest strict improvements continue', {
+      logger.warn('[ZeroCapitalProfitabilityRescueFair] Resident-miss APE rescue degraded locally; latest strict improvements continue', {
         component: 'ZeroCapitalProfitabilityRescueFair',
         chain: input.chain,
         error: activeMeasuredRescueError,
@@ -193,11 +230,14 @@ export async function runFairZeroCapitalProfitabilityRescue(
       });
     })();
 
-    logger.info('[ZeroCapitalProfitabilityRescueFair] Stage-1 -> deadline-aware anytime APE continuation completed', {
+    logger.info('[ZeroCapitalProfitabilityRescueFair] Stage-1 -> resident-first APE continuation completed', {
       component: 'ZeroCapitalProfitabilityRescueFair',
       chain: input.chain,
       profitabilityFinishLine: 'strict_positive_all_in_base_units',
       residentFastPathFirst: true,
+      residentRouteEvidencePrimary: true,
+      remoteMeasuredRescuePolicy: 'resident_miss_recovery_only',
+      residentEvidenceSuppressedRemoteRescue,
       activeMeasuredRescueOwner: 'ZeroCapitalProfitabilityRescueV4',
       activeMeasuredRescueInvoked,
       activeMeasuredRescueCandidates: activeRescueCandidates.length,
