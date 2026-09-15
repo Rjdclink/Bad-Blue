@@ -57,11 +57,15 @@ function rescueMode(opportunity: ZeroCapitalOpportunity): ApeRescueMode {
   return grossProfit(opportunity) > 0n ? 'cost' : 'edge';
 }
 
-function liveStageOneCandidate(opportunity: ZeroCapitalOpportunity, now = Date.now()): boolean {
-  return opportunity.expiresAt > now
-    && opportunity.flashLoanAmount > 0n
+/** Candidate ownership is independent from the freshness of its current evidence. */
+function apeOwnedStageOneCandidate(opportunity: ZeroCapitalOpportunity): boolean {
+  return opportunity.flashLoanAmount > 0n
     && Number.isFinite(opportunity.netProfitBps)
     && Number.isFinite(exactNetBps(opportunity));
+}
+
+function hasFreshEvidence(opportunity: ZeroCapitalOpportunity, now: number): boolean {
+  return opportunity.expiresAt > now;
 }
 
 function routeForOpportunity(
@@ -83,6 +87,11 @@ function originalBlockTimestamp(opportunity: ZeroCapitalOpportunity): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : Math.floor(opportunity.timestamp / 1_000);
 }
 
+/**
+ * Consume only an already-resident better-BPS quote. A stale parent never gains a
+ * fabricated lifetime here; downstream rescue refreshes evidence while preserving
+ * the candidate identity/ownership.
+ */
 function residentBestBpsOverlay(
   input: ZeroCapitalAtomicBpsEngineInput,
   opportunity: ZeroCapitalOpportunity,
@@ -111,6 +120,11 @@ function residentBestBpsOverlay(
   return refined;
 }
 
+/**
+ * Canonical Atomic Profitability Engine (APE), zero-copy latency-safe front end.
+ * Negative BPS is APE work, not a rejection condition. Candidate ownership never
+ * expires; only evidence freshness controls whether current proof can be reused.
+ */
 export function runZeroCapitalAtomicBpsEngine(
   input: ZeroCapitalAtomicBpsEngineInput,
 ): ZeroCapitalOpportunity[] {
@@ -126,9 +140,10 @@ export function runZeroCapitalAtomicBpsEngine(
   const startedAtNs = process.hrtime.bigint();
   const freshnessSnapshotAt = startedAt;
   const ordered = orderApeResidentOpportunities(input.opportunities);
-  const live = ordered.filter(opportunity => liveStageOneCandidate(opportunity, freshnessSnapshotAt));
-  const fullStageOneCandidateCoverage = live.length === input.opportunities
-    .filter(item => liveStageOneCandidate(item, freshnessSnapshotAt)).length;
+  const owned = ordered.filter(apeOwnedStageOneCandidate);
+  const freshEvidenceCandidates = owned.filter(opportunity => hasFreshEvidence(opportunity, freshnessSnapshotAt)).length;
+  const staleEvidenceCandidates = owned.length - freshEvidenceCandidates;
+  const fullOwnedCandidateCoverage = owned.length === input.opportunities.filter(apeOwnedStageOneCandidate).length;
   const refinedById = new Map<string, ZeroCapitalOpportunity>();
   resetFlashLoanDemandHints(input.chain as any);
 
@@ -143,7 +158,7 @@ export function runZeroCapitalAtomicBpsEngine(
   let bestAvailableStrictPositiveBps: number | null = null;
   let bestAvailableStrictPositiveId: string | null = null;
 
-  for (const opportunity of live) {
+  for (const opportunity of owned) {
     const mode = rescueMode(opportunity);
     if (mode === 'cost') costRescueCandidates += 1;
     else if (mode === 'edge') edgeRescueCandidates += 1;
@@ -160,14 +175,20 @@ export function runZeroCapitalAtomicBpsEngine(
       refinedById.set(opportunity.id, refined);
     }
     const candidate = refined;
-    observeFlashLoanDemandHint({
-      chain: candidate.chain as any,
-      asset: candidate.inputToken,
-      amount: candidate.flashLoanAmount,
-      expiresAt: candidate.expiresAt,
-    });
+
+    // Demand hints describe currently usable evidence only. A stale candidate is
+    // still owned by APE, but its old amount is not represented as fresh capacity.
+    if (hasFreshEvidence(candidate, freshnessSnapshotAt)) {
+      observeFlashLoanDemandHint({
+        chain: candidate.chain as any,
+        asset: candidate.inputToken,
+        amount: candidate.flashLoanAmount,
+        expiresAt: candidate.expiresAt,
+      });
+    }
+
     const netBps = exactNetBps(candidate);
-    if (candidate.expectedProfit > 0n) {
+    if (candidate.expectedProfit > 0n && hasFreshEvidence(candidate, freshnessSnapshotAt)) {
       strictPositiveAlreadyArrived += 1;
       if (bestAvailableStrictPositiveBps === null || netBps > bestAvailableStrictPositiveBps) {
         bestAvailableStrictPositiveBps = netBps;
@@ -179,28 +200,40 @@ export function runZeroCapitalAtomicBpsEngine(
   const output = ordered.map(opportunity => refinedById.get(opportunity.id) ?? opportunity);
   const returnBoundaryAt = Date.now();
   const elapsedMsBeforeReturn = Number(process.hrtime.bigint() - startedAtNs) / 1_000_000;
+  const telemetrySnapshot = {
+    eligibleCandidatesReceived: input.opportunities.length,
+    ownedCandidates: owned.length,
+    freshEvidenceCandidates,
+    staleEvidenceCandidates,
+    fullOwnedCandidateCoverage,
+    freshnessSnapshotAt,
+    returnBoundaryAt,
+    activeCandidates,
+    hedgeCandidates,
+    reserveCandidates,
+    costRescueCandidates,
+    edgeRescueCandidates,
+    executionRescueCandidates,
+    strictPositiveAlreadyArrived,
+    residentBestBpsSizeOverlays,
+    bestAvailableStrictPositiveId,
+    bestAvailableStrictPositiveBps,
+    elapsedMsBeforeReturn,
+  };
 
   const telemetry = setImmediate(() => {
     logger.info('[AtomicProfitabilityEngine] Fused zero-copy APE pass completed', {
       component: 'AtomicProfitabilityEngine',
       acronym: 'APE',
       chain: input.chain,
-      eligibleCandidatesReceived: input.opportunities.length,
-      liveCandidates: live.length,
-      fullStageOneCandidateCoverage,
-      freshnessSnapshotAt,
-      returnBoundaryAt,
-      activeCandidates,
-      hedgeCandidates,
-      reserveCandidates,
-      costRescueCandidates,
-      edgeRescueCandidates,
-      executionRescueCandidates,
-      strictPositiveAlreadyArrived,
-      residentBestBpsSizeOverlays,
-      bestAvailableStrictPositiveId,
-      bestAvailableStrictPositiveBps,
-      elapsedMsBeforeReturn,
+      ...telemetrySnapshot,
+      // Backward-compatible fields now explicitly mean fresh-evidence coverage.
+      liveCandidates: freshEvidenceCandidates,
+      fullStageOneCandidateCoverage: fullOwnedCandidateCoverage,
+      candidateOwnershipExpires: false,
+      negativeBpsRejected: false,
+      staleEvidenceRequiresRefresh: true,
+      staleEvidenceExecutionAllowed: false,
       deferredLogDelayExcludedFromApeLatency: true,
       monotonicReturnBoundaryMeasurement: true,
       profitabilityFinishLine: 'strict_positive_all_in_base_units',
