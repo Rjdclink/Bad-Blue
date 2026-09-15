@@ -20,7 +20,12 @@ export interface ApeCandidateRescueSnapshot {
 export interface ApeTierBudget {
   hardDeadlineAt: number;
   freshnessBoundaryAt: number;
+  structuralDeadlineAt: number;
   v4DeadlineAt: number;
+  compositeDeadlineAt: number;
+  structuralBudgetMs: number;
+  v4BudgetMs: number;
+  compositeBudgetMs: number;
   downstreamReserveMs: number;
   usableWindowMs: number;
 }
@@ -54,11 +59,7 @@ export function apeStructuralFirstCandidate(opportunity: ZeroCapitalOpportunity)
   return classifyApeRescueDefect(opportunity) === 'structural_nonpositive_gross';
 }
 
-/**
- * APE ownership and execution freshness are intentionally separate concepts.
- * A timed-out or stale negative candidate remains APE-owned. Fresh exact evidence
- * is still mandatory for promotion/execution, but negative BPS is work, not reject.
- */
+/** Candidate ownership and evidence lifetime are intentionally independent. */
 export function isApeUnresolvedOwnershipCandidate(opportunity: ZeroCapitalOpportunity): boolean {
   return opportunity.flashLoanAmount > 0n
     && Number.isFinite(opportunity.netProfitBps)
@@ -72,12 +73,10 @@ export function isApeFreshMeasuredCandidate(
   return isApeUnresolvedOwnershipCandidate(opportunity) && opportunity.expiresAt > now;
 }
 
-/** Stable candidate/work identity. */
 function generationOf(opportunity: ZeroCapitalOpportunity): string {
   return opportunity.id;
 }
 
-/** Independently version the evidence carried by that stable candidate. */
 function evidenceGenerationOf(opportunity: ZeroCapitalOpportunity): string {
   return [
     opportunity.timestamp,
@@ -87,11 +86,6 @@ function evidenceGenerationOf(opportunity: ZeroCapitalOpportunity): string {
   ].join(':');
 }
 
-/**
- * Resident-only rescue state. No network, persistence, model, quote, RPC or
- * scheduler handoff is introduced here. The snapshot is advisory scheduling
- * state only; canonical economics remains the sole profitability authority.
- */
 export function buildApeCandidateRescueSnapshots(input: {
   roots: readonly ZeroCapitalOpportunity[];
   current: readonly ZeroCapitalOpportunity[];
@@ -126,11 +120,6 @@ export function buildApeCandidateRescueSnapshots(input: {
   });
 }
 
-/**
- * Momentum and distance change scheduling priority, never candidate survival.
- * Fresh evidence is preferred because it can be acted on immediately, but stale
- * candidates remain in the same ownership set and are refreshed by workers.
- */
 export function prioritizeApeRescueCandidates(input: {
   roots: readonly ZeroCapitalOpportunity[];
   current: readonly ZeroCapitalOpportunity[];
@@ -157,9 +146,12 @@ export function prioritizeApeRescueCandidates(input: {
 }
 
 /**
- * Reserve part of the existing APE wave for downstream tools. Candidate/evidence
- * expiry is deliberately NOT a hard boundary: stale evidence is refreshed and the
- * candidate remains owned. This function introduces no wait, poll or extra I/O.
+ * One freshness-capped budget is partitioned into protected lanes. The lanes are
+ * slices of the existing window, never additive time. Structural-negative work is
+ * guaranteed the first slice, V4 owns the middle slice, and exact composite proof
+ * retains the final slice. A stale candidate is still owned; when every input is
+ * stale the configured wave deadline remains available solely to reacquire fresh
+ * evidence, never to execute stale evidence.
  */
 export function buildApeTierBudget(input: {
   candidates: readonly ZeroCapitalOpportunity[];
@@ -168,18 +160,40 @@ export function buildApeTierBudget(input: {
   now?: number;
 }): ApeTierBudget {
   const now = input.now ?? Date.now();
-  const freshnessBoundaryAt = input.hardDeadlineAt;
-  const usableWindowMs = Math.max(0, input.hardDeadlineAt - now);
+  const configuredBoundaryAt = Math.max(now, input.hardDeadlineAt);
+  const freshExpiries = input.candidates
+    .map(candidate => candidate.expiresAt)
+    .filter(expiresAt => Number.isFinite(expiresAt) && expiresAt > now);
 
-  const targetReserve = Math.min(750, Math.floor(usableWindowMs * 0.30));
-  const maximumReserve = Math.max(0, usableWindowMs - 75);
-  const downstreamReserveMs = Math.min(maximumReserve, Math.max(0, targetReserve));
-  const v4DeadlineAt = Math.max(now, freshnessBoundaryAt - downstreamReserveMs);
+  // Do not let a work wave outlive the evidence window it entered with. When all
+  // evidence is already stale, keep the configured bounded window so workers may
+  // reacquire evidence; stale evidence itself still has no execution authority.
+  const observedFreshBoundaryAt = freshExpiries.length > 0
+    ? Math.max(...freshExpiries)
+    : configuredBoundaryAt;
+  const freshnessBoundaryAt = Math.min(configuredBoundaryAt, observedFreshBoundaryAt);
+  const hardDeadlineAt = freshnessBoundaryAt;
+  const usableWindowMs = Math.max(0, hardDeadlineAt - now);
+
+  // Protected lane fractions use the same total budget. No lane can borrow time
+  // from a later lane, which prevents slow V4 quotes from starving split/composite.
+  const structuralBudgetMs = Math.max(0, Math.floor(usableWindowMs * 0.30));
+  const compositeBudgetMs = Math.max(0, Math.floor(usableWindowMs * 0.25));
+  const v4BudgetMs = Math.max(0, usableWindowMs - structuralBudgetMs - compositeBudgetMs);
+  const structuralDeadlineAt = Math.min(hardDeadlineAt, now + structuralBudgetMs);
+  const v4DeadlineAt = Math.min(hardDeadlineAt, structuralDeadlineAt + v4BudgetMs);
+  const compositeDeadlineAt = hardDeadlineAt;
+  const downstreamReserveMs = Math.max(0, compositeDeadlineAt - v4DeadlineAt);
 
   return {
-    hardDeadlineAt: input.hardDeadlineAt,
+    hardDeadlineAt,
     freshnessBoundaryAt,
+    structuralDeadlineAt,
     v4DeadlineAt,
+    compositeDeadlineAt,
+    structuralBudgetMs,
+    v4BudgetMs,
+    compositeBudgetMs,
     downstreamReserveMs,
     usableWindowMs,
   };
