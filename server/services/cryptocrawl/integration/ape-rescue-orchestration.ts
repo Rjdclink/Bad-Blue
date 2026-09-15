@@ -26,12 +26,33 @@ export interface ApeTierBudget {
   structuralBudgetMs: number;
   v4BudgetMs: number;
   compositeBudgetMs: number;
+  structuralProtectedMs: number;
+  v4ProtectedMs: number;
+  compositeProtectedMs: number;
+  elasticPoolMs: number;
+  structuralElasticGrantMs: number;
+  v4ElasticGrantMs: number;
+  compositeElasticGrantMs: number;
   downstreamReserveMs: number;
   usableWindowMs: number;
+  elasticBudgeting: true;
+}
+
+export interface ApeBudgetDemand {
+  structuralCandidates?: number;
+  v4Candidates?: number;
+  compositeCandidates?: number;
+  structuralMultiplier?: number;
+  v4Multiplier?: number;
+  compositeMultiplier?: number;
 }
 
 function finite(value: number, fallback: number): number {
   return Number.isFinite(value) ? value : fallback;
+}
+
+function bounded(value: number | undefined, fallback: number, min: number, max: number): number {
+  return Number.isFinite(value) ? Math.max(min, Math.min(max, Number(value))) : fallback;
 }
 
 function grossProfitBaseUnits(opportunity: ZeroCapitalOpportunity): bigint {
@@ -145,19 +166,24 @@ export function prioritizeApeRescueCandidates(input: {
   });
 }
 
+function laneDemand(count: number, multiplier: number): number {
+  if (count <= 0) return 0;
+  return Math.sqrt(count) * bounded(multiplier, 1, 0.5, 3);
+}
+
 /**
- * One freshness-capped budget is partitioned into protected lanes. The lanes are
- * slices of the existing window, never additive time. Structural-negative work is
- * guaranteed the first slice, V4 owns the middle slice, and exact composite proof
- * retains the final slice. A stale candidate is still owned; when every input is
- * stale the configured wave deadline remains available solely to reacquire fresh
- * evidence, never to execute stale evidence.
+ * Freshness-capped elastic budget. Each lane keeps a protected minimum, while the
+ * remaining time is allocated according to live demand and measured tactic yield.
+ * Because deadlines are cumulative, finishing a lane early automatically transfers
+ * its unused milliseconds to every later lane. No allocation can cross the parent
+ * freshness boundary.
  */
 export function buildApeTierBudget(input: {
   candidates: readonly ZeroCapitalOpportunity[];
   startedAt: number;
   hardDeadlineAt: number;
   now?: number;
+  demand?: ApeBudgetDemand;
 }): ApeTierBudget {
   const now = input.now ?? Date.now();
   const configuredBoundaryAt = Math.max(now, input.hardDeadlineAt);
@@ -165,10 +191,6 @@ export function buildApeTierBudget(input: {
     .map(candidate => candidate.expiresAt)
     .filter(expiresAt => Number.isFinite(expiresAt) && expiresAt > now);
 
-  // A mixed batch must obey its earliest live evidence boundary. Later-lived
-  // candidates keep ownership for the next wave, but cannot lend freshness time
-  // to an earlier-expiring candidate. When all evidence is stale, the configured
-  // bounded window is available only for reacquisition, never stale execution.
   const observedFreshBoundaryAt = freshExpiries.length > 0
     ? Math.min(...freshExpiries)
     : configuredBoundaryAt;
@@ -176,11 +198,45 @@ export function buildApeTierBudget(input: {
   const hardDeadlineAt = freshnessBoundaryAt;
   const usableWindowMs = Math.max(0, hardDeadlineAt - now);
 
-  // Protected lane fractions use the same total budget. No lane can borrow time
-  // from a later lane, which prevents slow V4 quotes from starving split/composite.
-  const structuralBudgetMs = Math.max(0, Math.floor(usableWindowMs * 0.30));
-  const compositeBudgetMs = Math.max(0, Math.floor(usableWindowMs * 0.25));
-  const v4BudgetMs = Math.max(0, usableWindowMs - structuralBudgetMs - compositeBudgetMs);
+  const structuralProtectedMs = Math.floor(usableWindowMs * 0.12);
+  const v4ProtectedMs = Math.floor(usableWindowMs * 0.18);
+  const compositeProtectedMs = Math.floor(usableWindowMs * 0.15);
+  const protectedTotalMs = structuralProtectedMs + v4ProtectedMs + compositeProtectedMs;
+  const elasticPoolMs = Math.max(0, usableWindowMs - protectedTotalMs);
+
+  const structuralCount = Math.max(0, Math.trunc(input.demand?.structuralCandidates ?? input.candidates.filter(apeStructuralFirstCandidate).length));
+  const v4Count = Math.max(0, Math.trunc(input.demand?.v4Candidates ?? input.candidates.length));
+  const compositeCount = Math.max(0, Math.trunc(input.demand?.compositeCandidates ?? (input.candidates.length >= 2 ? input.candidates.length : 0)));
+
+  const structuralDemand = laneDemand(structuralCount, input.demand?.structuralMultiplier ?? 1);
+  const v4Demand = laneDemand(v4Count, input.demand?.v4Multiplier ?? 1);
+  const compositeDemand = laneDemand(compositeCount, input.demand?.compositeMultiplier ?? 1);
+  const demandTotal = structuralDemand + v4Demand + compositeDemand;
+
+  const elasticGrant = (demand: number): number => demandTotal > 0
+    ? Math.floor(elasticPoolMs * demand / demandTotal)
+    : 0;
+
+  let structuralElasticGrantMs = structuralCount > 0 ? elasticGrant(structuralDemand) : 0;
+  let v4ElasticGrantMs = v4Count > 0 ? elasticGrant(v4Demand) : 0;
+  let compositeElasticGrantMs = compositeCount > 0 ? elasticGrant(compositeDemand) : 0;
+
+  // Preserve every millisecond despite integer rounding. Give remainder to the
+  // final stateful lane because it cannot steal time from earlier lanes.
+  const granted = structuralElasticGrantMs + v4ElasticGrantMs + compositeElasticGrantMs;
+  const remainder = Math.max(0, elasticPoolMs - granted);
+  if (compositeCount > 0) compositeElasticGrantMs += remainder;
+  else if (v4Count > 0) v4ElasticGrantMs += remainder;
+  else structuralElasticGrantMs += remainder;
+
+  const structuralBudgetMs = structuralCount > 0
+    ? structuralProtectedMs + structuralElasticGrantMs
+    : 0;
+  const v4BudgetMs = v4Count > 0
+    ? v4ProtectedMs + v4ElasticGrantMs
+    : 0;
+  const compositeBudgetMs = Math.max(0, usableWindowMs - structuralBudgetMs - v4BudgetMs);
+
   const structuralDeadlineAt = Math.min(hardDeadlineAt, now + structuralBudgetMs);
   const v4DeadlineAt = Math.min(hardDeadlineAt, structuralDeadlineAt + v4BudgetMs);
   const compositeDeadlineAt = hardDeadlineAt;
@@ -195,8 +251,16 @@ export function buildApeTierBudget(input: {
     structuralBudgetMs,
     v4BudgetMs,
     compositeBudgetMs,
+    structuralProtectedMs,
+    v4ProtectedMs,
+    compositeProtectedMs,
+    elasticPoolMs,
+    structuralElasticGrantMs,
+    v4ElasticGrantMs,
+    compositeElasticGrantMs,
     downstreamReserveMs,
     usableWindowMs,
+    elasticBudgeting: true,
   };
 }
 
