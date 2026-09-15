@@ -118,10 +118,23 @@ export function needsApeOptimization(
 }
 
 /*
- * Compatibility aliases. Existing callers can migrate without creating a build-risk
- * flag day. Their semantics are now the canonical strict-positive threshold, not $5.
+ * Compatibility wrappers keep the old public call signatures while changing their
+ * semantics to strict-positive. The former USD-price argument is intentionally ignored:
+ * one positive base unit is the canonical minimum regardless of token price.
  */
-export const requiredProfitBaseUnitsForFiveDollarOutput = requiredStrictPositiveProfitBaseUnits;
+export function requiredProfitBaseUnitsForFiveDollarOutput(
+  opportunity: ZeroCapitalOpportunity,
+  _priceUsd = freshOpportunityInputUsdPrice(opportunity),
+): bigint | null {
+  return requiredStrictPositiveProfitBaseUnits(opportunity);
+}
+
 export const evaluateFiveDollarOutputFloor = evaluateStrictPositiveOutputThreshold;
 export const clearsFiveDollarOutputFloor = clearsStrictPositiveOutputThreshold;
-export const needsApeRescueForFiveDollarOutput = needsApeOptimization;
+
+export function needsApeRescueForFiveDollarOutput(
+  opportunity: ZeroCapitalOpportunity,
+  _now = Date.now(),
+): boolean {
+  return needsApeOptimization(opportunity);
+}
