@@ -173,6 +173,14 @@ function classify(candidate: MeasuredCandidate, now = Date.now()): UniversalBpsR
   } else if (netBps === null) {
     state = 'bps_hydration_pending';
     reason = 'Canonical net BPS is not yet fully measured; topology-specific evidence reacquisition retains ownership.';
+  } else if (candidate.topology === 'ZERO_CAPITAL_ATOMIC') {
+    if (netBps <= 0) {
+      state = 'atomic_rescue_owned';
+      reason = `Canonical zero-capital net ${netBps} BPS is non-positive; APE retains the candidate until exact all-in economics become strictly positive, evidence expires, or compatible paths are explicitly exhausted.`;
+    } else {
+      state = 'target_achieved';
+      reason = `Canonical zero-capital net ${netBps} BPS is strictly positive; APE's profitability finish line is satisfied without any +10 BPS requirement.`;
+    }
   } else if (netBps <= entry) {
     state = 'bps_reduction_owned';
     reason = `Canonical net ${netBps} BPS is at or below the ${entry} BPS rescue-entry boundary; BPS reduction retains ownership until it is strictly above the boundary.`;
@@ -190,7 +198,7 @@ function classify(candidate: MeasuredCandidate, now = Date.now()): UniversalBpsR
     state,
     netBps,
     entryFloorBps: entry,
-    targetBps: target,
+    targetBps: candidate.topology === 'ZERO_CAPITAL_ATOMIC' ? 0 : target,
     observedAt: candidate.observedAt,
     updatedAt: candidate.updatedAt,
     expiresAt: candidate.expiresAt,
@@ -222,9 +230,9 @@ async function runTopologyReacquisition(candidate: MeasuredCandidate): Promise<v
       await discoverMeasuredDexCandidates();
       return;
     case 'ZERO_CAPITAL_ATOMIC':
-      // CanonicalZeroCapitalDiscovery records the candidate before running the fair
-      // rescue/provider/alternative-capital stages in that same recurring chain scan.
-      // Do not create a second scanner or execution authority here.
+      // CanonicalZeroCapitalDiscovery records the candidate before running APE,
+      // provider repricing and alternative-capital evaluation in the same scan.
+      // Never create a second scanner, Stage-2 handoff, or execution authority.
       return;
     case 'CROSS_CHAIN':
       await ensureDynamicRpcProviderWiring();
@@ -365,6 +373,7 @@ function acceptCandidate(candidate: MeasuredCandidate): void {
       executionFamily: next.executionFamily,
       normalStrictPositiveExecutionMayProceed: next.normalStrictPositiveExecutionMayProceed,
       topologySpecificExecutionPreserved: true,
+      zeroCapitalApeOwnsAllNonPositiveAfterStageOne: next.topology === 'ZERO_CAPITAL_ATOMIC',
       canonicalBpsMutation: false,
       executionAuthority: false,
     });
@@ -415,6 +424,9 @@ export function getUniversalBpsRescueSnapshot() {
     observedAt: Date.now(),
     entryFloorBps: entryFloorBps(),
     targetBps: targetBps(),
+    zeroCapitalApeFinishLine: 'strict_positive_all_in_net_bps_above_zero' as const,
+    zeroCapitalPostStageOneEntryFloorIgnored: true as const,
+    zeroCapitalPlusTenTargetRequired: false as const,
     totalTracked: rows.length,
     states,
     byTopology,
@@ -428,10 +440,10 @@ export function getUniversalBpsRescueSnapshot() {
     stageTwoBoundaryCrossings,
     stageTwoMeasurementMisses,
     reacquisitionInFlight: [...reacquisitionInFlight.keys()],
-    lifecycle: 'bps_hydration_pending -> bps_reduction_owned (<= entry floor) -> atomic_rescue_owned (> entry floor) -> target_achieved | measured_impossibility | evidence_expired' as const,
+    lifecycle: 'topology_specific: ZERO_CAPITAL_ATOMIC finite non-positive -> APE atomic_rescue_owned -> strict-positive target_achieved; other topologies retain legacy hydration/BPS-reduction/atomic rescue bands' as const,
     canonicalEconomicsAuthority: 'measured_candidate_registry.canonicalBps' as const,
     bpsReductionAuthority: 'existing_bps_reduction_super_engine' as const,
-    stageTwoMeasurementAuthority: 'fresh_same_market_canonical_reacquisition_only' as const,
+    stageTwoMeasurementAuthority: 'fresh_same_market_canonical_reacquisition_non_zero_capital_only' as const,
     universalAtomicAuthority: 'rescue_ownership_and_topology_specific_reacquisition_only' as const,
     strictPositiveExecutionFloorUnchanged: true as const,
     stageTwoRequiresStrictlyAboveEntryFloor: true as const,
@@ -461,8 +473,12 @@ export function ensureUniversalBpsRescueCoordinator(): void {
     targetBps: targetBps(),
     canonicalEconomicsAuthority: 'measured_candidate_registry.canonicalBps',
     bpsReductionAuthority: 'existing_bps_reduction_super_engine',
-    stageTwoMeasurementAuthority: 'fresh_same_market_canonical_reacquisition_only',
-    zeroCapitalAtomicPath: 'existing_canonical_zero_capital_discovery_same_cycle_rescue',
+    stageTwoMeasurementAuthority: 'fresh_same_market_canonical_reacquisition_non_zero_capital_only',
+    zeroCapitalAtomicPath: 'stage1_direct_to_ape_full_toolbox_same_cycle_rescue',
+    zeroCapitalApeOwnsAllNonPositiveAfterStageOne: true,
+    zeroCapitalApeFinishLine: 'strict_positive_all_in_net_bps_above_zero',
+    zeroCapitalPostStageOneEntryFloorIgnored: true,
+    zeroCapitalPlusTenTargetRequired: false,
     nonAtomicTopologiesRemainTopologySpecific: true,
     strictPositiveExecutionFloorUnchanged: true,
     stageTwoRequiresStrictlyAboveEntryFloor: true,
