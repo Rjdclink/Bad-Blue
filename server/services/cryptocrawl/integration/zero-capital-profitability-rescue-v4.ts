@@ -10,6 +10,7 @@ import { selectMeasuredDualFlashLoanAllocation } from '../execution/adapters/dua
 import {
   peekResidentBestBpsQuote,
   quoteConfiguredZeroCapitalRoute,
+  zeroCapitalDiscoveryFloorBps,
   type ConfiguredZeroCapitalRoute,
   type QuotedZeroCapitalRoute,
 } from '../execution/adapters/onchain-route-quoter.js';
@@ -21,6 +22,7 @@ import {
   isApeRescueCandidate,
   type ApeProfitabilityToolboxPlan,
 } from './ape-profitability-toolbox.js';
+import { inheritResidentPriceEvidence } from './zero-capital-price-evidence.js';
 
 type TimedQuoteResult = {
   quote: QuotedZeroCapitalRoute | null;
@@ -57,6 +59,12 @@ type ConcurrencyState = {
   limit: number;
 };
 
+type ResidentProviderEvidence = {
+  evidence: FlashLoanProviderEconomics[];
+  expiresAt: number;
+  inFlight: Promise<FlashLoanProviderEconomics[]> | null;
+};
+
 export interface ZeroCapitalProfitabilityRescueV4Input {
   chain: SupportedChain;
   provider: providers.JsonRpcProvider;
@@ -75,6 +83,7 @@ export interface ZeroCapitalProfitabilityRescueV4Input {
 const BPS_PRECISION_SCALE = 1_000_000n;
 const routeLatency = new Map<string, LatencyWindow>();
 const concurrencyByChain = new Map<string, ConcurrencyState>();
+const residentProviderEvidence = new Map<string, ResidentProviderEvidence>();
 
 function bounded(raw: unknown, fallback: number, min: number, max: number): number {
   const value = Number(raw);
@@ -408,6 +417,67 @@ function blockTimestamp(opportunity: ZeroCapitalOpportunity): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : Math.floor(opportunity.timestamp / 1000);
 }
 
+/**
+ * Rehydrate the exact quote that Stage 1 already accepted. This is not synthetic
+ * economics: every value is checked against the candidate's canonical base-unit
+ * cost/profit identity before it is reused. If any component is absent or differs,
+ * rescue falls back to existing resident/fresh quote paths.
+ */
+function quoteFromStageOneOpportunity(
+  opportunity: ZeroCapitalOpportunity,
+  route: ConfiguredZeroCapitalRoute,
+): QuotedZeroCapitalRoute | null {
+  if (route.chain !== opportunity.chain
+    || route.inputAssetSymbol !== opportunity.inputAssetSymbol
+    || route.inputTokenDecimals !== opportunity.inputTokenDecimals
+    || route.inputToken.toLowerCase() !== opportunity.inputToken.toLowerCase()
+    || opportunity.flashLoanAmount <= 0n) return null;
+
+  const gasCost = opportunity.estimatedGasCostInInputToken;
+  const flashFee = opportunity.flashLoanFeeInInputToken;
+  const relayFee = opportunity.relayFeeInInputToken;
+  if (gasCost === undefined || flashFee === undefined || relayFee === undefined) return null;
+  const allInCost = gasCost + flashFee + relayFee;
+  if (allInCost !== opportunity.estimatedExecutionCostInInputToken) return null;
+  const grossProfit = opportunity.grossProfit ?? (opportunity.expectedProfit + allInCost);
+  if (grossProfit - allInCost !== opportunity.expectedProfit) return null;
+
+  const grossProfitBps = bpsFromBaseUnits(grossProfit, opportunity.flashLoanAmount);
+  const allInCostBps = bpsFromBaseUnits(allInCost, opportunity.flashLoanAmount);
+  const exactNetProfitBps = bpsFromBaseUnits(opportunity.expectedProfit, opportunity.flashLoanAmount);
+  if (!Number.isFinite(exactNetProfitBps)) return null;
+
+  return {
+    id: route.id,
+    chain: route.chain,
+    inputAssetSymbol: opportunity.inputAssetSymbol,
+    inputToken: opportunity.inputToken,
+    inputTokenDecimals: opportunity.inputTokenDecimals,
+    amountIn: opportunity.flashLoanAmount,
+    grossProfit,
+    netProfit: opportunity.expectedProfit,
+    netProfitBps: exactNetProfitBps,
+    grossProfitBps,
+    allInCostBps,
+    breakEvenBps: allInCostBps,
+    bpsToBreakEven: exactNetProfitBps >= 0 ? 0 : Math.abs(exactNetProfitBps),
+    discoveryFloorBps: zeroCapitalDiscoveryFloorBps(),
+    executablePositive: opportunity.expectedProfit > 0n,
+    estimatedGasCostInInputToken: gasCost,
+    flashLoanFeeInInputToken: flashFee,
+    relayFeeInInputToken: relayFee,
+    quoteLatencyMs: opportunity.quoteLatencyMs,
+    route: opportunity.route.map(step => ({
+      protocol: step.protocol as any,
+      tokenIn: step.tokenIn,
+      tokenOut: step.tokenOut,
+      amountIn: step.amountIn.toString(),
+      expectedAmountOut: step.expectedAmountOut.toString(),
+      fee: step.fee,
+    })),
+  };
+}
+
 function awaitWithDeadline<T>(promise: Promise<T>, deadlineAt: number, fallback: T): Promise<T> {
   const waitMs = remainingMs(deadlineAt);
   if (waitMs <= 0) return Promise.resolve(fallback);
@@ -542,6 +612,8 @@ export async function runZeroCapitalProfitabilityRescueV4(
 
   let providerRaceCount = 0;
   let providerProbeFailures = 0;
+  let providerResidentHits = 0;
+  let providerSingleflightHits = 0;
   let providerCapacityShortfalls = 0;
   let providerCapacityResizes = 0;
   let providerResizeRecoveries = 0;
@@ -566,6 +638,7 @@ export async function runZeroCapitalProfitabilityRescueV4(
   let toolboxPlansBuilt = 0;
   let toolboxRouteFirstSearches = 0;
   let toolboxSizeFirstSearches = 0;
+  let stageOneInitialQuoteHits = 0;
   let residentInitialQuoteHits = 0;
   let residentInitialQuoteMisses = 0;
   let residentFreshnessInherited = 0;
@@ -585,23 +658,65 @@ export async function runZeroCapitalProfitabilityRescueV4(
   };
 
   const providerKeyFor = (opportunity: ZeroCapitalOpportunity) => `${chain}:${opportunity.inputToken.toLowerCase()}`;
+  const providerEvidenceTtlMs = Math.trunc(bounded(process.env.ZERO_CAPITAL_PROVIDER_EVIDENCE_MAX_AGE_MS, 5_000, 500, 30_000));
   for (const opportunity of opportunities) {
     if (!recoverableByAtomicSurplus(opportunity) || deadlineReached(deadlineAt)) continue;
     const key = providerKeyFor(opportunity);
     if (providerRaces.has(key)) continue;
+
+    const now = Date.now();
+    const resident = residentProviderEvidence.get(key);
+    if (resident && resident.expiresAt > now && resident.evidence.some(item => providerFresh(item, now))) {
+      providerResidentHits += 1;
+      providerRaces.set(key, Promise.resolve(resident.evidence));
+      continue;
+    }
+    if (resident?.inFlight) {
+      providerSingleflightHits += 1;
+      providerRaces.set(key, resident.inFlight);
+      continue;
+    }
+
     providerRaceCount += 1;
-    providerRaces.set(key, measureFlashLoanProviders({
+    const priorEvidence = resident?.evidence ?? [];
+    const pending = measureFlashLoanProviders({
       chain: chain as any,
       provider,
       asset: opportunity.inputToken,
+    }).then(evidence => {
+      const observedAt = Date.now();
+      residentProviderEvidence.set(key, {
+        evidence,
+        expiresAt: observedAt + providerEvidenceTtlMs,
+        inFlight: null,
+      });
+      return evidence;
     }).catch(error => {
       providerProbeFailures += 1;
+      const current = residentProviderEvidence.get(key);
+      if (current?.inFlight === pending) {
+        if (priorEvidence.some(item => providerFresh(item))) {
+          residentProviderEvidence.set(key, {
+            evidence: priorEvidence,
+            expiresAt: Date.now() + Math.min(250, providerEvidenceTtlMs),
+            inFlight: null,
+          });
+        } else {
+          residentProviderEvidence.delete(key);
+        }
+      }
       logger.debug('[ZeroCapitalProfitabilityRescueV4] Shared provider race degraded locally', {
         component: 'ZeroCapitalProfitabilityRescueV4', chain, asset: opportunity.inputToken,
         error: error instanceof Error ? error.message : String(error), opportunityKilled: false,
       });
-      return [];
-    }));
+      return priorEvidence.filter(item => providerFresh(item));
+    });
+    residentProviderEvidence.set(key, {
+      evidence: priorEvidence,
+      expiresAt: resident?.expiresAt ?? 0,
+      inFlight: pending,
+    });
+    providerRaces.set(key, pending);
   }
 
   const quoteOnce = (route: ConfiguredZeroCapitalRoute, amount: bigint): Promise<TimedQuoteResult> => {
@@ -628,6 +743,7 @@ export async function runZeroCapitalProfitabilityRescueV4(
     refined.timestamp = opportunity.timestamp;
     refined.expiresAt = Math.min(opportunity.expiresAt, refined.expiresAt);
     if (opportunity.inputAssetUsdPrice !== undefined) refined.inputAssetUsdPrice = opportunity.inputAssetUsdPrice;
+    inheritResidentPriceEvidence(opportunity, refined);
     residentFreshnessInherited += 1;
     return refined;
   };
@@ -641,13 +757,23 @@ export async function runZeroCapitalProfitabilityRescueV4(
 
     const intendedAmount = opportunity.flashLoanAmount;
     const primaryRoute = routes[0];
-    const residentInitial = peekResidentBestBpsQuote(primaryRoute.id);
+    const sourceRoute = routeForOpportunity(configuredRoutes, opportunity);
+    const stageOneInitial = sourceRoute?.id === primaryRoute.id
+      ? quoteFromStageOneOpportunity(opportunity, primaryRoute)
+      : null;
+    if (stageOneInitial) stageOneInitialQuoteHits += 1;
+
+    const residentInitial = stageOneInitial ? null : peekResidentBestBpsQuote(primaryRoute.id);
     const residentMatchesIntended = residentInitial?.amountIn === intendedAmount;
-    if (residentMatchesIntended) residentInitialQuoteHits += 1;
-    else residentInitialQuoteMisses += 1;
-    const initialQuotePromise: Promise<TimedQuoteResult> = residentMatchesIntended
-      ? Promise.resolve({ quote: residentInitial, timedOut: false, failed: false, elapsedMs: 0, deadlineExhausted: false })
-      : quoteOnce(primaryRoute, intendedAmount);
+    if (!stageOneInitial) {
+      if (residentMatchesIntended) residentInitialQuoteHits += 1;
+      else residentInitialQuoteMisses += 1;
+    }
+    const initialQuotePromise: Promise<TimedQuoteResult> = stageOneInitial
+      ? Promise.resolve({ quote: stageOneInitial, timedOut: false, failed: false, elapsedMs: 0, deadlineExhausted: false })
+      : residentMatchesIntended
+        ? Promise.resolve({ quote: residentInitial, timedOut: false, failed: false, elapsedMs: 0, deadlineExhausted: false })
+        : quoteOnce(primaryRoute, intendedAmount);
     const providerMeasurementsPromise = awaitWithDeadline(providerRace, deadlineAt, [] as FlashLoanProviderEconomics[]);
     const [initialResult, providerMeasurements] = await Promise.all([initialQuotePromise, providerMeasurementsPromise]);
     if (passWinnerFound) return opportunity;
@@ -692,7 +818,7 @@ export async function runZeroCapitalProfitabilityRescueV4(
       return clearsStrictProfitability(adjusted);
     };
 
-    if (consider(initialResult.quote, intendedFundingPlan, Boolean(residentMatchesIntended))) {
+    if (consider(initialResult.quote, intendedFundingPlan, Boolean(stageOneInitial || residentMatchesIntended))) {
       const refined = deriveFromQuote(opportunity, best!, bestInheritsCurrentFreshness);
       if (refined.expiresAt > refined.timestamp && refined.expiresAt > Date.now() && strictImprovement(opportunity, best!)) {
         improved += 1;
@@ -868,15 +994,18 @@ export async function runZeroCapitalProfitabilityRescueV4(
     targetedQuoteAttempts, hedgedWaveWidth: waveWidth, hedgedWaves, hedgedOutstandingAbandoned,
     strictPositiveEarlyWins, candidateRescueSerial: false, quoteStormBudget42Removed: true,
     candidateBatchEarlyStops, fullCandidateBatchBarrier: false,
-    providerRaceCount, providerProbeFailures, sharedProviderRace: true,
-    providerRaceScope: 'one_per_pass_chain_asset', quoteAndProviderProbeParallel: true,
+    providerRaceCount, providerProbeFailures, providerResidentHits, providerSingleflightHits,
+    sharedProviderRace: true,
+    providerRaceScope: 'resident_singleflight_per_chain_asset_across_passes', quoteAndProviderProbeParallel: true,
     providerSelectionBlocksInitialRouteDiscovery: false,
     providerCapacityShortfalls, providerCapacityResizes, providerResizeRecoveries,
     singleProviderPlansUsed, dualProviderPlansUsed,
     providerStacking: 'aave_v3_plus_balancer_v2_when_verified_execution_topology_can_fund_or_reduce_fee',
     morphoStackingEnabled: false, morphoStackingReason: 'no_verified_multi_provider_execution_topology_found',
     routeQuoteFailures, routeQuoteTimeouts, routeResizeRecoveries, routeAlternativesTried,
-    residentInitialQuoteHits, residentInitialQuoteMisses, residentFreshnessInherited,
+    stageOneInitialQuoteHits, residentInitialQuoteHits, residentInitialQuoteMisses, residentFreshnessInherited,
+    exactStageOneEconomicsReusedBeforeRequote: true,
+    stageOneEvidenceReuseRequiresCanonicalCostIdentity: true,
     unchangedPrimaryRouteRequoteAvoidedWhenResidentExactSizeExists: true,
     residentQuoteNeverExtendsCandidateFreshness: true,
     routeMeasuredCapacitySignals: [...routeMaxSuccessfulAmount.entries()].map(([routeId, maxSuccessfulAmount]) => ({
