@@ -8,13 +8,18 @@ import {
 /**
  * Provider-neutral live USD price authority used by execution economics.
  *
- * The underlying implementation resolves CoinMarketCap/CoinCap/Coinbase evidence
- * in parallel and queries CoinGecko only for symbols still missing afterward.
- * Execution callers must depend on this surface rather than on any named provider.
+ * Latency rule: hot stablecoin evidence is kept resident before APE needs it;
+ * overlapping refreshes collapse per symbol; fresh resident reads never wait.
  */
 class LivePriceMesh {
   private readonly residentEvidence = new Map<string, Readonly<ZeroCapitalPriceEvidence>>();
-  private readonly refreshInFlight = new Map<string, Promise<Map<string, number>>>();
+  private readonly symbolRefreshInFlight = new Map<string, Promise<void>>();
+  private readonly hotSymbols = ['USDC', 'USDT'] as const;
+  private residentPlaneStarted = false;
+
+  constructor() {
+    this.startResidentPricePlane();
+  }
 
   private liveCacheTtlMs(): number {
     const configured = Number(process.env.LIVE_PRICE_CACHE_TTL_MS || 3_000);
@@ -28,6 +33,18 @@ class LivePriceMesh {
     return Number.isFinite(configured)
       ? Math.max(500, Math.min(30_000, Math.trunc(configured)))
       : 5_000;
+  }
+
+  private backgroundRefreshLeadMs(): number {
+    const configured = Number(process.env.ZERO_CAPITAL_PRICE_RESIDENT_REFRESH_LEAD_MS || 1_500);
+    return Number.isFinite(configured)
+      ? Math.max(250, Math.min(5_000, Math.trunc(configured)))
+      : 1_500;
+  }
+
+  private backgroundCadenceMs(): number {
+    const ttl = this.evidenceMaxAgeMs();
+    return Math.max(500, Math.min(2_000, Math.trunc(ttl / 3)));
   }
 
   private normalizedSymbols(symbols: readonly string[]): string[] {
@@ -52,28 +69,82 @@ class LivePriceMesh {
     }
   }
 
+  private needsRefresh(symbol: string, now = Date.now()): boolean {
+    const evidence = this.residentEvidence.get(symbol);
+    if (!evidence) return true;
+    return evidence.expiresAt - now <= this.backgroundRefreshLeadMs();
+  }
+
+  /** Start one immediate warmup and then refresh only near expiry. Timers are unref'd. */
+  private startResidentPricePlane(): void {
+    if (this.residentPlaneStarted) return;
+    this.residentPlaneStarted = true;
+    const tick = () => {
+      const now = Date.now();
+      const due = this.hotSymbols.filter(symbol => this.needsRefresh(symbol, now));
+      if (due.length > 0) this.primeResidentSymbolPrices(due);
+    };
+    const initial = setTimeout(tick, 0);
+    initial.unref?.();
+    const timer = setInterval(tick, this.backgroundCadenceMs());
+    timer.unref?.();
+  }
+
   /**
-   * Identical concurrent refreshes share one provider-mesh request. There is no
-   * batching timer, poll, sleep or extra queue: the first caller starts immediately
-   * and siblings reuse the same in-flight promise.
+   * Launches at most one provider request for symbols not already represented by an
+   * in-flight refresh. Overlapping callers reuse the same promise per symbol.
+   */
+  private ensureRefresh(symbols: readonly string[]): Promise<void>[] {
+    const normalized = this.normalizedSymbols(symbols);
+    const waiters: Promise<void>[] = [];
+    const missing: string[] = [];
+
+    for (const symbol of normalized) {
+      const existing = this.symbolRefreshInFlight.get(symbol);
+      if (existing) waiters.push(existing);
+      else if (this.needsRefresh(symbol)) missing.push(symbol);
+    }
+
+    if (missing.length > 0) {
+      let pending: Promise<void>;
+      pending = coinGeckoPriceClient.getLiveSymbolPrices(missing)
+        .then(prices => {
+          this.publishResidentEvidence(prices);
+        })
+        .finally(() => {
+          for (const symbol of missing) {
+            if (this.symbolRefreshInFlight.get(symbol) === pending) this.symbolRefreshInFlight.delete(symbol);
+          }
+        });
+      for (const symbol of missing) this.symbolRefreshInFlight.set(symbol, pending);
+      waiters.push(pending);
+    }
+
+    return [...new Set(waiters)];
+  }
+
+  /** Fire-and-forget resident warmup for latency-critical callers. Never waits. */
+  primeResidentSymbolPrices(symbols: readonly string[]): void {
+    for (const pending of this.ensureRefresh(symbols)) void pending.catch(() => undefined);
+  }
+
+  /**
+   * Return fresh resident prices immediately when present. Only missing/near-expiry
+   * symbols await the coalesced provider mesh refresh; there is no batching timer.
    */
   async getLiveSymbolPrices(symbols: string[]): Promise<Map<string, number>> {
     const normalized = this.normalizedSymbols(symbols);
     if (normalized.length === 0) return new Map<string, number>();
-    const key = normalized.join('|');
-    const existing = this.refreshInFlight.get(key);
-    if (existing) return existing;
+    const waiters = this.ensureRefresh(normalized);
+    if (waiters.length > 0) await Promise.all(waiters);
 
-    const pending = coinGeckoPriceClient.getLiveSymbolPrices(normalized)
-      .then(prices => {
-        this.publishResidentEvidence(prices);
-        return prices;
-      })
-      .finally(() => {
-        if (this.refreshInFlight.get(key) === pending) this.refreshInFlight.delete(key);
-      });
-    this.refreshInFlight.set(key, pending);
-    return pending;
+    const now = Date.now();
+    const prices = new Map<string, number>();
+    for (const symbol of normalized) {
+      const evidence = this.peekLiveSymbolPriceEvidence(symbol, now);
+      if (evidence) prices.set(symbol, evidence.priceUsd);
+    }
+    return prices;
   }
 
   /**
@@ -90,6 +161,18 @@ class LivePriceMesh {
     const fresh = getFreshZeroCapitalPriceEvidence(evidence, now);
     if (!fresh && evidence) this.residentEvidence.delete(key);
     return fresh;
+  }
+
+  getResidentPricePlaneSnapshot() {
+    const now = Date.now();
+    return {
+      hotSymbols: [...this.hotSymbols],
+      residentFreshSymbols: [...this.residentEvidence.keys()].filter(symbol => Boolean(this.peekLiveSymbolPriceEvidence(symbol, now))),
+      inFlightSymbols: [...this.symbolRefreshInFlight.keys()],
+      perSymbolSingleflight: true as const,
+      backgroundNearExpiryRefresh: true as const,
+      hotPathWaitForResidentHit: false as const,
+    };
   }
 }
 

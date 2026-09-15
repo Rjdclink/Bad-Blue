@@ -26,6 +26,10 @@ import {
   recordApeRouteOutcome,
   selectPersistentRouteFrontier,
 } from './ape-hypergraph-intelligence.js';
+import {
+  clearsFiveDollarOutputFloor,
+  ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
+} from './zero-capital-profit-output-floor.js';
 
 type TimedQuoteResult = {
   quote: QuotedZeroCapitalRoute | null;
@@ -196,8 +200,17 @@ function bpsFromBaseUnits(value: bigint, notional: bigint): number {
   return Number((value * 10_000n * BPS_PRECISION_SCALE) / notional) / Number(BPS_PRECISION_SCALE);
 }
 
+/**
+ * V4 owns fresh finite candidates until $5 is reached. The legacy rescue-candidate
+ * predicate remains an admission source for negative/stale-grace candidates, while
+ * fresh positive-but-under-$5 candidates explicitly remain refinable.
+ */
 function recoverableByAtomicSurplus(opportunity: ZeroCapitalOpportunity, now = Date.now()): boolean {
-  return isApeRescueCandidate(opportunity, rescueSeedGraceMs(), now);
+  if (clearsFiveDollarOutputFloor(opportunity, now)) return false;
+  if (isApeRescueCandidate(opportunity, rescueSeedGraceMs(), now)) return true;
+  return opportunity.flashLoanAmount > 0n
+    && Number.isFinite(opportunity.netProfitBps)
+    && opportunity.expiresAt + rescueSeedGraceMs() > now;
 }
 
 function routeForOpportunity(
@@ -288,10 +301,6 @@ function compatibleRoutesForOpportunity(
   const ordered = orderRoutesByExplicitTradingFee(originalOrder);
   if (ordered.length === 0) return [];
 
-  // A bounded work wave no longer means repeatedly checking the same route prefix.
-  // The resident frontier rotates across compatible alternatives and uses prior
-  // measured outcomes only as ordering advice. The original route remains first so
-  // current evidence can still be reused without a new quote when resident.
   const frontier = selectPersistentRouteFrontier({
     opportunity,
     routes: ordered,
@@ -559,6 +568,8 @@ export async function runZeroCapitalProfitabilityRescueV4(
   let hedgedWaves = 0;
   let hedgedOutstandingAbandoned = 0;
   let strictPositiveEarlyWins = 0;
+  let fiveDollarOutputEarlyWins = 0;
+  let positiveBelowFloorContinuations = 0;
   let anytimeRefinementIterations = 0;
   let streamingImprovementCallbacks = 0;
   let toolboxPlansBuilt = 0;
@@ -719,7 +730,12 @@ export async function runZeroCapitalProfitabilityRescueV4(
       if (refined.expiresAt > refined.timestamp && refined.expiresAt > Date.now() && strictImprovement(opportunity, best!)) {
         improved += 1;
         strictPositiveRecoveries += 1;
-        return refined;
+        if (clearsFiveDollarOutputFloor(refined)) {
+          strictPositiveEarlyWins += 1;
+          fiveDollarOutputEarlyWins += 1;
+          return refined;
+        }
+        positiveBelowFloorContinuations += 1;
       }
     }
 
@@ -802,11 +818,15 @@ export async function runZeroCapitalProfitabilityRescueV4(
           break;
         }
         if (!strictImprovement(opportunity, best!)) break;
-        strictPositiveEarlyWins += 1;
-        hedgedOutstandingAbandoned += active.size;
-        improved += 1;
         strictPositiveRecoveries += 1;
-        return refined;
+        if (clearsFiveDollarOutputFloor(refined)) {
+          strictPositiveEarlyWins += 1;
+          fiveDollarOutputEarlyWins += 1;
+          hedgedOutstandingAbandoned += active.size;
+          improved += 1;
+          return refined;
+        }
+        positiveBelowFloorContinuations += 1;
       }
     }
 
@@ -832,12 +852,12 @@ export async function runZeroCapitalProfitabilityRescueV4(
     if (passWinnerFound || !recoverableByAtomicSurplus(root)) return root;
     let current = root;
     for (let refinement = 0; refinement < refinementLimit; refinement += 1) {
-      if (passWinnerFound || deadlineReached(deadlineAt) || current.expectedProfit > 0n) break;
+      if (passWinnerFound || deadlineReached(deadlineAt) || clearsFiveDollarOutputFloor(current)) break;
       anytimeRefinementIterations += 1;
       const next = await refineOnce(current);
       if (passWinnerFound) return current;
       if (next === current || next.netProfitBps <= current.netProfitBps) break;
-      if (next.expectedProfit > 0n) passWinnerFound = true;
+      if (clearsFiveDollarOutputFloor(next)) passWinnerFound = true;
       if (input.onImprovement) {
         streamingImprovementCallbacks += 1;
         input.onImprovement(root, current, next);
@@ -853,7 +873,7 @@ export async function runZeroCapitalProfitabilityRescueV4(
     concurrency,
     evaluate,
     result => {
-      const won = (result as ZeroCapitalOpportunity).expectedProfit > 0n;
+      const won = clearsFiveDollarOutputFloor(result as ZeroCapitalOpportunity);
       if (won) candidateBatchEarlyStops += 1;
       return won;
     },
@@ -888,7 +908,10 @@ export async function runZeroCapitalProfitabilityRescueV4(
     targetedAttemptLimit: perCandidateAttemptLimit,
     configuredQuoteTimeoutCeilingMs: targetedQuoteTimeoutMs(), adaptiveRouteP95Timeouts: true,
     targetedQuoteAttempts, hedgedWaveWidth: waveWidth, hedgedWaves, hedgedOutstandingAbandoned,
-    strictPositiveEarlyWins, candidateRescueSerial: false, quoteStormBudget42Removed: true,
+    strictPositiveEarlyWins, fiveDollarOutputEarlyWins, positiveBelowFloorContinuations,
+    minimumOutputProfitUsd: ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
+    positiveBelowFiveDollarsContinuesRefinement: true,
+    candidateRescueSerial: false, quoteStormBudget42Removed: true,
     candidateBatchEarlyStops, fullCandidateBatchBarrier: false,
     providerRaceCount, providerProbeFailures, sharedProviderRace: true,
     providerRaceScope: 'one_per_pass_chain_asset', quoteAndProviderProbeParallel: true,
@@ -913,7 +936,7 @@ export async function runZeroCapitalProfitabilityRescueV4(
     routeSplitReason: 'current_canonical_quote_and_execution_object_represents_one_sequential_route_only; composite split tactic owned by outer APE toolbox',
     dynamicSizeLadder: 'bps_toolbox_driver_aware_provider_boundaries_residual_fractions_and_fixed_cost_dilution',
     fixedBpsRescueEntryFloor: false,
-    rescueOwnership: 'every_live_finite_negative_stage1_candidate_received_by_ape',
+    rescueOwnership: 'every_finite_sub_five_dollar_stage1_candidate_received_by_ape',
     resizeInsteadOfReject: true,
     liquidityShortagePolicy: 'reroute_or_resize_until_compatible_profitable_combinations_exhausted',
     toolboxPlansBuilt,
@@ -932,7 +955,9 @@ export async function runZeroCapitalProfitabilityRescueV4(
     advisoryBpsIntelligenceOnCriticalPath: toolboxPlansBuilt > 0, profitLadderDatabaseReadOnCriticalPath: false,
     feeOrderingChanged: false, stageOneMutation: false,
     freshExactRequoteRequired: residentInitialQuoteMisses > 0,
-    exactStrictPositiveRequiredBeforePromotion: true, syntheticEconomics: false, executionAuthority: false,
+    exactStrictPositiveRequiredBeforePromotion: true,
+    fiveDollarOutputRequiredBeforeApeStop: true,
+    syntheticEconomics: false, executionAuthority: false,
   });
 
   return output;

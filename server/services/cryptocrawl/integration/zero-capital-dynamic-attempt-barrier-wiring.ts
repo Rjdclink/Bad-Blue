@@ -7,6 +7,10 @@ import { buildFlashLoanReceiverPayloadFromPlan } from '../execution/adapters/fla
 import { buildDualFlashLoanReceiverPayload } from '../execution/adapters/dual-flashloan-receiver-builder.js';
 import { flashLoanProviderSelectionRegistry } from '../execution/adapters/flash-loan-provider-selection-registry.js';
 import type { FlashLoanProviderKind } from '../execution/adapters/flash-loan-provider-economics.js';
+import {
+  evaluateFiveDollarOutputFloor,
+  ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
+} from './zero-capital-profit-output-floor.js';
 
 type BarrierProviderKind = FlashLoanProviderKind | 'aave_balancer_dual';
 
@@ -48,7 +52,13 @@ export interface DynamicAttemptBarrierDecision {
 let latest: DynamicAttemptBarrierDecision | null = null;
 let deferrals = 0;
 let approvals = 0;
+let localEconomicFastRejects = 0;
 let compatibilityNoticeLogged = false;
+
+const UNCHECKED_FUNDING: FundingDecisionLike = {
+  mode: 'unavailable',
+  reason: 'not_evaluated_before_local_economic_gate',
+};
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -71,11 +81,7 @@ function quoteAgeFraction(opportunity: ZeroCapitalOpportunity, now = Date.now())
   return clamp((now - opportunity.timestamp) / lifetime, 0, 2);
 }
 
-/**
- * Advisory risk telemetry only. This multiple may rank or explain opportunities,
- * but it cannot impose a second profit floor after canonical strictly-positive
- * all-in economics have admitted a trade.
- */
+/** Advisory risk telemetry only; never a second monetary floor. */
 function dynamicBarrierMultiple(opportunity: ZeroCapitalOpportunity, ageFraction: number): number {
   const base = clamp(Number(process.env.ZERO_CAPITAL_ATTEMPT_BARRIER_BASE_MULTIPLE || 1), 0.25, 5);
   const agePenalty = ageFraction * clamp(Number(process.env.ZERO_CAPITAL_ATTEMPT_BARRIER_AGE_WEIGHT || 1.5), 0, 4);
@@ -124,46 +130,59 @@ function denied(
 
 /**
  * Minimum-sufficient pre-broadcast validation used directly by the canonical
- * ZERO_CAPITAL_ATOMIC executor. Hard rejection is limited to facts required to
- * execute the selected atomic route: positive canonical economics, freshness,
- * exact provider/receiver identity and sizing, an available funding lane, exact
- * payload construction, and a usable gas estimate. eth_call simulation plus the
- * historical dynamic-attempt multiple are advisory telemetry only.
+ * ZERO_CAPITAL_ATOMIC executor. The authoritative monetary output requirement is
+ * fresh exact all-in expected profit >= $5. Local freshness/economic checks happen
+ * before any gas-funding or RPC work so rejected candidates add effectively zero
+ * network latency.
  */
 export async function evaluateZeroCapitalDynamicAttemptBarrier(
   context: ZeroCapitalBarrierContext,
   opportunity: ZeroCapitalOpportunity,
 ): Promise<DynamicAttemptBarrierDecision> {
   const observedAt = Date.now();
-  const funding = await context.getGasFundingDecision(opportunity.chain);
-  const provider = context.providers.get(opportunity.chain);
-  const wallet = context.executionWallets.get(opportunity.chain);
   const selection = flashLoanProviderSelectionRegistry.get(opportunity.id, observedAt);
   const flashLoanProvider: BarrierProviderKind = selection?.kind === 'dual'
     ? 'aave_balancer_dual'
     : selection?.provider || 'balancer_v2';
-  const receiver = selection?.receiver || context.receiverManager.getReceiver(opportunity.chain);
 
-  if (opportunity.expectedProfit <= 0n) {
-    const result = denied(opportunity, observedAt, funding, flashLoanProvider, 'Expected all-in net profit is not positive');
-    latest = result; deferrals++; return result;
-  }
   if (observedAt >= opportunity.expiresAt) {
-    const result = denied(opportunity, observedAt, funding, flashLoanProvider, 'Opportunity expired before exact pre-broadcast validation');
-    latest = result; deferrals++; return result;
+    const result = denied(opportunity, observedAt, UNCHECKED_FUNDING, flashLoanProvider, 'Opportunity expired before exact pre-broadcast validation');
+    latest = result; deferrals++; localEconomicFastRejects++; return result;
   }
+
+  const outputFloor = evaluateFiveDollarOutputFloor(opportunity, observedAt);
+  if (!outputFloor.satisfied) {
+    const detail = outputFloor.expectedProfitUsd === null ? outputFloor.reason : `$${outputFloor.expectedProfitUsd.toFixed(8)}`;
+    const result = denied(
+      opportunity,
+      observedAt,
+      UNCHECKED_FUNDING,
+      flashLoanProvider,
+      `Expected all-in net profit does not clear canonical $${ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD} output floor (${detail})`,
+    );
+    latest = result; deferrals++; localEconomicFastRejects++; return result;
+  }
+
   if (!selection) {
-    const result = denied(opportunity, observedAt, funding, flashLoanProvider, 'Canonical flash-loan provider selection is unavailable or expired');
+    const result = denied(opportunity, observedAt, UNCHECKED_FUNDING, flashLoanProvider, 'Canonical flash-loan provider selection is unavailable or expired');
     latest = result; deferrals++; return result;
   }
+
+  const provider = context.providers.get(opportunity.chain);
+  const wallet = context.executionWallets.get(opportunity.chain);
   if (!wallet || selection.receiverCapability.owner.toLowerCase() !== wallet.address.toLowerCase()) {
-    const result = denied(opportunity, observedAt, funding, flashLoanProvider, 'Selected provider receiver owner no longer matches execution wallet');
+    const result = denied(opportunity, observedAt, UNCHECKED_FUNDING, flashLoanProvider, 'Selected provider receiver owner no longer matches execution wallet');
     latest = result; deferrals++; return result;
   }
   if (selection.kind === 'dual' && selection.balancerAmount + selection.aaveAmount !== opportunity.flashLoanAmount) {
-    const result = denied(opportunity, observedAt, funding, flashLoanProvider, 'Dual-provider principal split no longer equals exact opportunity notional');
+    const result = denied(opportunity, observedAt, UNCHECKED_FUNDING, flashLoanProvider, 'Dual-provider principal split no longer equals exact opportunity notional');
     latest = result; deferrals++; return result;
   }
+
+  // Only candidates that clear all zero-cost local gates are allowed to spend time
+  // resolving gas-funding state.
+  const funding = await context.getGasFundingDecision(opportunity.chain);
+  const receiver = selection.receiver || context.receiverManager.getReceiver(opportunity.chain);
   if (funding.mode === 'unavailable' || !provider || !receiver) {
     const result = denied(
       opportunity,
@@ -205,8 +224,6 @@ export async function evaluateZeroCapitalDynamicAttemptBarrier(
   const [call, gas] = await Promise.allSettled([provider.call(request), provider.estimateGas(request)]);
   const nativeExposure = funding.mode === 'native' ? opportunity.estimatedGasCostInInputToken || 0n : 0n;
 
-  // eth_call is useful validation telemetry, but it is not a consensus execution
-  // prerequisite and cannot veto an otherwise executable, positive atomic trade.
   const exactCallPassed = call.status === 'fulfilled';
   if (!exactCallPassed) {
     logger.debug('[ZeroCapitalBarrier] Exact eth_call simulation advisory failed without vetoing execution', {
@@ -219,8 +236,6 @@ export async function evaluateZeroCapitalDynamicAttemptBarrier(
     });
   }
 
-  // A current gas bound remains required: it is an actual transaction parameter
-  // and part of the all-in cost/exposure evidence, rather than an advisory signal.
   if (gas.status !== 'fulfilled') {
     const result = denied(opportunity, observedAt, funding, flashLoanProvider,
       `Exact provider gas estimation rejected; defer and re-quote: ${gas.reason instanceof Error ? gas.reason.message : String(gas.reason)}`,
@@ -234,19 +249,16 @@ export async function evaluateZeroCapitalDynamicAttemptBarrier(
   const dynamicBarrier = multiplyCeil(nativeExposure, barrierMultiple);
   const clearsHistoricalBarrier = nativeExposure <= 0n || opportunity.expectedProfit > dynamicBarrier;
 
-  // Canonical positive all-in economics already admitted this opportunity. The
-  // former dynamic multiple is retained only to rank/learn from failed-attempt
-  // exposure; it no longer creates a second minimum-profit threshold.
   const result: DynamicAttemptBarrierDecision = {
     opportunityId: opportunity.id,
     chain: opportunity.chain,
     observedAt,
     approved: true,
     reason: funding.mode === 'sponsored'
-      ? `Required ${flashLoanProvider} payload/gas/funding facts are current; eth_call and dynamic-attempt risk are advisory`
+      ? `Canonical $${ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD} output floor and required ${flashLoanProvider} payload/gas/funding facts are current; eth_call and dynamic-attempt risk are advisory`
       : clearsHistoricalBarrier
-        ? `Required ${flashLoanProvider} payload/gas/funding facts are current; advisory failed-attempt multiple is also cleared (${barrierMultiple.toFixed(3)}x)`
-        : `Required ${flashLoanProvider} payload/gas/funding facts are current; advisory failed-attempt multiple is not cleared (${barrierMultiple.toFixed(3)}x) but has no veto authority`,
+        ? `Canonical $${ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD} output floor and required ${flashLoanProvider} payload/gas/funding facts are current; advisory failed-attempt multiple is also cleared (${barrierMultiple.toFixed(3)}x)`
+        : `Canonical $${ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD} output floor and required ${flashLoanProvider} payload/gas/funding facts are current; advisory failed-attempt multiple is not cleared (${barrierMultiple.toFixed(3)}x) but has no veto authority`,
     fundingMode: funding.mode,
     flashLoanProvider,
     exactCallPassed,
@@ -269,7 +281,14 @@ export async function evaluateZeroCapitalDynamicAttemptBarrier(
 }
 
 export function getZeroCapitalDynamicAttemptBarrierSnapshot() {
-  return { latest: latest ? { ...latest } : null, approvals, deferrals };
+  return {
+    latest: latest ? { ...latest } : null,
+    approvals,
+    deferrals,
+    localEconomicFastRejects,
+    minimumOutputProfitUsd: ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
+    economicFloorCheckedBeforeFundingIo: true as const,
+  };
 }
 
 /** Compatibility only. Canonical startup no longer installs a runtime wrapper. */
@@ -279,6 +298,8 @@ export function ensureZeroCapitalDynamicAttemptBarrierWiring(): void {
   logger.info('[ZeroCapitalBarrier] Compatibility installer retained without runtime mutation', {
     component: 'ZeroCapitalDynamicAttemptBarrier',
     validationAuthority: 'canonical_zero_capital_executor_direct_call',
+    minimumOutputProfitUsd: ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
+    economicFloorCheckedBeforeFundingIo: true,
     executeAndRecordMutation: false,
     executionAuthority: false,
   });

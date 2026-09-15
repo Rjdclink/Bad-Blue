@@ -12,6 +12,10 @@ import {
   getProfitLadderDailyProfitBudget,
 } from '../governance/profit-ladder-daily-profit-budget.js';
 import { ghostWalletAlternativeZeroCapitalSelectionRegistry } from '../ghost-wallet/zero-capital-alternative-selection-registry.js';
+import {
+  evaluateFiveDollarOutputFloor,
+  ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
+} from '../integration/zero-capital-profit-output-floor.js';
 import { getProvenZeroCapitalGasFundingDecision } from '../runtime/system-owned-gas-funding-proof-wiring.js';
 import {
   persistVerifiedSponsoredProfit,
@@ -158,7 +162,7 @@ async function observeDailyProfitBudget(opportunity: ZeroCapitalOpportunity): Pr
       executionVetoAuthority: false,
     });
   } catch (error) {
-    logger.debug('[ZeroCapitalExecutor] Profit Ladder telemetry unavailable; strict-positive Atomic execution remains governed by canonical economics', {
+    logger.debug('[ZeroCapitalExecutor] Profit Ladder telemetry unavailable; canonical $5 Atomic execution floor remains governed by exact economics', {
       component: 'CanonicalZeroCapitalExecutor',
       opportunityId: opportunity.id,
       error: error instanceof Error ? error.message : String(error),
@@ -460,7 +464,7 @@ function preparedResult(input: {
       ? positive
         ? undefined
         : !targetSatisfied
-          ? `${input.mode} terminal settlement did not preserve the prepared strict-positive profit threshold after realized costs`
+          ? `${input.mode} terminal settlement did not preserve the prepared profit threshold after realized costs`
           : `${input.mode} terminal settlement realized non-positive all-in net profit`
       : `${input.mode} terminal economics are incomplete: ${input.economics.missingInformation.join(', ')}`,
   };
@@ -564,6 +568,7 @@ async function executeCanonicalAlternative(
     settlementConfirmed: true,
     realizedNetProfitUsd: economics.netProfitUsd,
     strictPositiveSatisfied: result.success,
+    minimumOutputProfitUsd: ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
     treasuryRecorded: result.treasuryRecorded === true,
     singleSchedulerAuthority: true,
   });
@@ -578,7 +583,7 @@ async function executeCanonicalComposite(
   startedAt: number,
 ): Promise<CanonicalZeroCapitalExecutionResult> {
   const selection = zeroCapitalCompositeSelectionRegistry.get(opportunity.id);
-  if (!selection) return failed(opportunity, 'Strict-positive composite selection disappeared before execution');
+  if (!selection) return failed(opportunity, 'Prepared composite selection disappeared before execution');
   const profitRecipient = resolveOperationalProfitRecipient();
   const funding = await getProvenZeroCapitalGasFundingDecision(target as any, opportunity.chain);
   const systemCapitalAttempt = await prepareSystemCapitalAttempt(opportunity, profitRecipient, funding);
@@ -636,6 +641,7 @@ async function executeCanonicalComposite(
       'composite_receiver_terminal_balance_neutral',
       'operational_profit_recipient_delta:matches_composite_event',
       `required_target_net_bps:${selection.targetNetProfitBps}`,
+      `minimum_output_profit_usd:${ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD}`,
       facts.sponsoredExecution && facts.sponsorOperatorMonetaryCostProvenZero
         ? 'sponsored_gas:operator_cost_proven_zero'
         : 'system_owned_or_measured_sponsored_gas_cost',
@@ -659,13 +665,14 @@ async function executeCanonicalComposite(
     profitRecipient,
     zeroExternalInputCapitalVerified: facts.receiverStarting === facts.receiverEnding,
   });
-  logger.info('[ZeroCapitalExecutor] Canonical strict-positive composite terminal result', {
+  logger.info('[ZeroCapitalExecutor] Canonical $5-clearing composite terminal result', {
     component: 'CanonicalZeroCapitalExecutor',
     opportunityId: opportunity.id,
     memberOpportunityIds: selection.memberOpportunityIds,
     chain: opportunity.chain,
     sharedPrincipal: selection.principal.toString(),
     minimumNetProfitBaseUnits: selection.targetNetProfitBaseUnits.toString(),
+    minimumOutputProfitUsd: ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
     transactionHash: facts.transactionHash,
     settlementConfirmed: true,
     realizedNetProfitUsd: economics.netProfitUsd,
@@ -679,19 +686,27 @@ async function executeCanonicalComposite(
 }
 
 /**
- * Sole ZERO_CAPITAL_ATOMIC execution entrypoint. Fresh exact all-in base-unit
- * expectedProfit must be strictly positive before any flash, alternative-capital,
- * or composite submission path is selected. BPS is observability only. Profit
- * Ladder is telemetry only and cannot veto deterministic strict-positive execution.
+ * Sole ZERO_CAPITAL_ATOMIC execution entrypoint. Stage 1 remains untouched; every
+ * flash, alternative-capital, builder cold-start, and composite execution path must
+ * enter here with fresh exact all-in expected profit of at least $5. BPS remains
+ * observability/search data, while Profit Ladder remains telemetry only.
  */
 export async function executeCanonicalZeroCapitalOpportunity(
   opportunity: ZeroCapitalOpportunity,
 ): Promise<CanonicalZeroCapitalExecutionResult> {
   const startedAt = Date.now();
   if (opportunity.chain === 'europa') return failed(opportunity, 'Europa execution is retired');
-  if (Date.now() >= opportunity.expiresAt) return failed(opportunity, 'Exact zero-capital opportunity expired before canonical execution');
-  if (opportunity.expectedProfit <= 0n) return failed(opportunity, 'Canonical all-in net economics are not strictly positive');
+  const floor = evaluateFiveDollarOutputFloor(opportunity, startedAt);
+  if (!floor.satisfied) {
+    const detail = floor.expectedProfitUsd === null ? floor.reason : `$${floor.expectedProfitUsd.toFixed(8)}`;
+    return failed(
+      opportunity,
+      `Canonical all-in net economics do not clear $${ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD} output floor (${detail})`,
+    );
+  }
 
+  // Under-floor candidates return above before any Profit-Ladder telemetry, provider,
+  // receiver, gas-funding, reservation, or execution-path work is allowed to start.
   void observeDailyProfitBudget(opportunity);
 
   const composite = zeroCapitalCompositeSelectionRegistry.get(opportunity.id);
