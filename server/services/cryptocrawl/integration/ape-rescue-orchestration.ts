@@ -172,11 +172,11 @@ function laneDemand(count: number, multiplier: number): number {
 }
 
 /**
- * Freshness-capped elastic budget. Each lane keeps a protected minimum, while the
- * remaining time is allocated according to live demand and measured tactic yield.
- * Because deadlines are cumulative, finishing a lane early automatically transfers
- * its unused milliseconds to every later lane. No allocation can cross the parent
- * freshness boundary.
+ * Freshness-capped elastic budget. Each active lane keeps a protected minimum,
+ * while the rest is allocated according to live demand and measured tactic yield.
+ * Inactive lane reserves are immediately returned to the elastic pool. Because
+ * deadlines are cumulative, finishing a lane early automatically transfers its
+ * unused milliseconds to every later lane. No allocation crosses freshness.
  */
 export function buildApeTierBudget(input: {
   candidates: readonly ZeroCapitalOpportunity[];
@@ -198,15 +198,15 @@ export function buildApeTierBudget(input: {
   const hardDeadlineAt = freshnessBoundaryAt;
   const usableWindowMs = Math.max(0, hardDeadlineAt - now);
 
-  const structuralProtectedMs = Math.floor(usableWindowMs * 0.12);
-  const v4ProtectedMs = Math.floor(usableWindowMs * 0.18);
-  const compositeProtectedMs = Math.floor(usableWindowMs * 0.15);
-  const protectedTotalMs = structuralProtectedMs + v4ProtectedMs + compositeProtectedMs;
-  const elasticPoolMs = Math.max(0, usableWindowMs - protectedTotalMs);
-
   const structuralCount = Math.max(0, Math.trunc(input.demand?.structuralCandidates ?? input.candidates.filter(apeStructuralFirstCandidate).length));
   const v4Count = Math.max(0, Math.trunc(input.demand?.v4Candidates ?? input.candidates.length));
   const compositeCount = Math.max(0, Math.trunc(input.demand?.compositeCandidates ?? (input.candidates.length >= 2 ? input.candidates.length : 0)));
+
+  const structuralProtectedMs = structuralCount > 0 ? Math.floor(usableWindowMs * 0.12) : 0;
+  const v4ProtectedMs = v4Count > 0 ? Math.floor(usableWindowMs * 0.18) : 0;
+  const compositeProtectedMs = compositeCount > 0 ? Math.floor(usableWindowMs * 0.15) : 0;
+  const protectedTotalMs = structuralProtectedMs + v4ProtectedMs + compositeProtectedMs;
+  const elasticPoolMs = Math.max(0, usableWindowMs - protectedTotalMs);
 
   const structuralDemand = laneDemand(structuralCount, input.demand?.structuralMultiplier ?? 1);
   const v4Demand = laneDemand(v4Count, input.demand?.v4Multiplier ?? 1);
@@ -221,8 +221,6 @@ export function buildApeTierBudget(input: {
   let v4ElasticGrantMs = v4Count > 0 ? elasticGrant(v4Demand) : 0;
   let compositeElasticGrantMs = compositeCount > 0 ? elasticGrant(compositeDemand) : 0;
 
-  // Preserve every millisecond despite integer rounding. Give remainder to the
-  // final stateful lane because it cannot steal time from earlier lanes.
   const granted = structuralElasticGrantMs + v4ElasticGrantMs + compositeElasticGrantMs;
   const remainder = Math.max(0, elasticPoolMs - granted);
   if (compositeCount > 0) compositeElasticGrantMs += remainder;
