@@ -116,30 +116,50 @@ function scheduleToolboxPrewarm(opportunity: ZeroCapitalOpportunity, generation:
 }
 
 /**
- * Returns only already-resident advisory intelligence on the candidate hot path.
- * A missing plan is prewarmed after the current decision turn and never blocks
- * exact route/provider/size rescue. The next pass can reuse it at effectively
- * constant lookup cost. Advisory failure remains local and cannot change canonical
- * economics, candidate ownership or execution eligibility.
+ * Pure hot-path resident read. A miss performs no scheduling, map mutation, model,
+ * database, research or transformation work. Callers that want a future plan must
+ * prewarm it from an already-deferred/background callback.
  */
-export function buildApeProfitabilityToolboxPlan(
+export function peekApeProfitabilityToolboxPlan(
   opportunity: ZeroCapitalOpportunity,
+  now = Date.now(),
 ): ApeProfitabilityToolboxPlan | null {
-  const now = Date.now();
   const generation = toolboxGeneration(opportunity);
   const cached = residentToolboxPlans.get(opportunity.id);
-  if (cached && cached.generation === generation && cached.expiresAt > now && cached.ready) {
-    return cached.plan;
-  }
+  if (!cached || cached.generation !== generation || cached.expiresAt <= now || !cached.ready) return null;
+  return cached.plan;
+}
 
+/**
+ * Background-only prewarm entrypoint. It is intentionally separate from the live
+ * peek so a worker can never create advisory scheduling merely by asking for help.
+ */
+export function prewarmApeProfitabilityToolboxPlan(opportunity: ZeroCapitalOpportunity): void {
+  const now = Date.now();
+  if (opportunity.expiresAt <= now) return;
+  const generation = toolboxGeneration(opportunity);
+  const cached = residentToolboxPlans.get(opportunity.id);
+  if (cached && cached.generation === generation && cached.expiresAt > now && cached.ready) return;
   residentToolboxPlans.set(opportunity.id, {
     generation,
-    expiresAt: Math.max(now + 1, opportunity.expiresAt),
+    expiresAt: opportunity.expiresAt,
     plan: null,
     ready: false,
   });
   pruneResidentToolboxPlans(now);
   scheduleToolboxPrewarm(opportunity, generation);
+}
+
+/**
+ * Compatibility wrapper for non-hot-path callers. New APE live workers must use
+ * peekApeProfitabilityToolboxPlan and must never schedule advisory work themselves.
+ */
+export function buildApeProfitabilityToolboxPlan(
+  opportunity: ZeroCapitalOpportunity,
+): ApeProfitabilityToolboxPlan | null {
+  const resident = peekApeProfitabilityToolboxPlan(opportunity);
+  if (resident) return resident;
+  prewarmApeProfitabilityToolboxPlan(opportunity);
   return null;
 }
 
