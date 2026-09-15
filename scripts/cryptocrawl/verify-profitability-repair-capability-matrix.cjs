@@ -32,6 +32,7 @@ const atomicStack = read('server/services/cryptocrawl/integration/zero-capital-a
 const compositeBuilder = read('server/services/cryptocrawl/execution/adapters/composite-flashloan-receiver-builder.ts');
 const canonicalExecutor = readPhysical('server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts');
 const adaptiveCommand = read('server/services/cryptocrawl/integration/ape-adaptive-command.ts');
+const threshold = read('server/services/cryptocrawl/integration/zero-capital-profit-output-floor.ts');
 
 const matrix = [
   ['Ethereum RPC capability preserved', /ethereum:\s*1/.test(rpc)],
@@ -59,28 +60,32 @@ const matrix = [
   ['10 percent retained capital remains preserved', /retainedFractionBps:\s*1_000/.test(ingest)],
   ['builder cold start uses measured sequential gas', /eth_simulateV1/.test(builder) && /fixed_gas_ceiling_admission:false/.test(builder)],
 
-  ['Stage One lock remains present', /STAGE_ONE_LOCKED_INVARIANT/.test(discovery) && /const STAGE_ONE_ZERO_CAPITAL_ENTRY_FLOOR_BPS = -10;/.test(discovery)],
+  ['Stage One lock remains present and unchanged', /STAGE_ONE_LOCKED_INVARIANT/.test(discovery) && /const STAGE_ONE_ZERO_CAPITAL_ENTRY_FLOOR_BPS = -10;/.test(discovery) && !/zero-capital-profit-output-floor/.test(discovery)],
+  ['strict-positive ZERO_CAPITAL execution threshold is canonical', /ZERO_CAPITAL_STRICT_POSITIVE_MIN_BASE_UNITS = 1n/.test(threshold) && /clearsStrictPositiveOutputThreshold/.test(threshold) && !/ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD = 5/.test(threshold)],
+  ['APE optimization ownership is independent of execution threshold', /export function needsApeOptimization/.test(threshold) && /strictPositiveStopsApeOptimization: false/.test(apeGateway) && /strictPositiveAcceptanceThresholdIsNotApeStop: true/.test(apeRescue)],
   ['resident APE remains zero-I/O and non-mutating', /routeQuotesCreatedByApe: 0/.test(residentApe) && /rpcCallsCreatedByApe: 0/.test(residentApe) && /stageOneMutation: false/.test(residentApe)],
   ['APE gateway preserves resident fast path before active rescue', /primeApeResidentRouting/.test(apeGateway) && /runZeroCapitalAtomicBpsEngine/.test(apeGateway) && /runZeroCapitalProfitabilityRescueV4/.test(apeGateway)],
-
-  ['APE has no second fixed BPS rescue floor', /isApeRescueCandidate/.test(apeToolbox) && /opportunity\.expectedProfit <= 0n/.test(apeToolbox) && !/ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS/.test(apeRescue)],
+  ['APE has no second fixed BPS rescue floor', /isApeRescueCandidate/.test(apeToolbox) && !/ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS/.test(apeRescue) && /fixedBpsRescueEntryFloor: false/.test(apeRescue)],
   ['APE reconnects BPS Super Engine', /buildBpsReductionSuperPlan/.test(apeToolbox) && /bpsSuperEngineUsedForSearchScheduling: true/.test(apeRescue)],
   ['APE reconnects economic transformation intelligence', /adviseEconomicTransformations/.test(apeToolbox) && /economicTransformationAdviceUsedForSearchScheduling: true/.test(apeRescue)],
   ['APE reconnects research BPS tactics', /buildResearchBpsExecutionPlan/.test(apeToolbox) && /researchBpsTacticsUsedForSearchScheduling: true/.test(apeRescue)],
   ['APE reconnects Compression Mesh scheduling context', /getBpsCompressionMeshSnapshot/.test(apeToolbox)],
-  ['APE advisory toolbox fails open', /try \{/.test(apeToolbox) && /catch \{\s*return null;/s.test(apeToolbox) && /advisoryCanVetoDeterministicPositive: false/.test(apeRescue)],
+  ['APE advisory toolbox fails open', /catch \{\s*return null;/s.test(apeToolbox) && /advisoryCanVetoDeterministicPositive: false/.test(apeRescue)],
   ['APE uses cost-driver-aware dynamic sizing', /buildApeTargetAmounts/.test(apeRescue) && /superPlan\.residualNotionalFractions/.test(apeToolbox) && /driver === 'slippage_impact'/.test(apeToolbox) && /driver === 'flash_premium'/.test(apeToolbox)],
   ['APE preserves provider-capacity boundaries in sizing', /providerCapacityBoundaries:/.test(apeRescue) && /providerSafeBorrowAmount/.test(apeRescue)],
 
   ['APE refinement still requires strict measured improvement', /function strictDerivedImprovement\(/.test(apeGateway) && /recursiveStrictImprovementRequired: true/.test(apeGateway)],
-  ['APE preserves one freshness-capped hard boundary with protected structural/V4/composite lanes', /const configuredHardDeadlineAt = rescueStartedAt \+ wallClockBudgetMs/.test(apeGateway) && /const hardDeadlineAt = tierBudget\.hardDeadlineAt/.test(apeGateway) && /recursiveHardDeadlineAt: hardDeadlineAt/.test(apeGateway) && /hardDeadlinePropagatedIntoMeasuredRescue: true/.test(apeGateway) && /deadlineStoppedIsToolboxExhausted: false/.test(apeGateway) && /const freshnessBoundaryAt = Math\.min\(configuredBoundaryAt, observedFreshBoundaryAt\)/.test(apeOrchestration) && /const structuralDeadlineAt = Math\.min\(hardDeadlineAt, now \+ structuralBudgetMs\)/.test(apeOrchestration) && /const v4DeadlineAt = Math\.min\(hardDeadlineAt, structuralDeadlineAt \+ v4BudgetMs\)/.test(apeOrchestration) && /const compositeDeadlineAt = hardDeadlineAt/.test(apeOrchestration)],
-  ['APE removes whole-pass barrier with candidate-local anytime feedback', /onImprovement: \(root, prior, candidate\)/.test(apeGateway) && /if \(Date\.now\(\) >= deadlineAt\) return;/.test(apeGateway) && /replaceIfBetter\(root, prior, candidate, true\)/.test(apeGateway) && /settleBeforeDeadline\(pending, deadlineAt, \[\.\.\.eligible\]\)/.test(apeGateway) && /candidateLocalAnytimeRefinement: true/.test(apeGateway)],
+  ['APE preserves freshness-capped hard boundary', /const configuredHardDeadlineAt = rescueStartedAt \+ wallClockBudgetMs/.test(apeGateway) && /const hardDeadlineAt = tierBudget\.hardDeadlineAt/.test(apeGateway) && /hardDeadlinePropagatedIntoMeasuredRescue: true/.test(apeGateway) && /deadlineStoppedIsToolboxExhausted: false/.test(apeGateway) && /const freshnessBoundaryAt = Math\.min\(configuredBoundaryAt, observedFreshBoundaryAt\)/.test(apeOrchestration)],
+  ['APE structural candidates continue into V4 without sibling barrier', /const candidateLanes: Promise<void>\[\] = \[\]/.test(apeGateway) && /runSplitBatch\(\[candidate\], tierBudget\.structuralDeadlineAt\)/.test(apeGateway) && /runV4Batch\(\[current\], tierBudget\.v4DeadlineAt\)/.test(apeGateway) && /structuralSiblingBarrierBeforeV4: false/.test(apeGateway)],
+  ['APE has no cross-candidate profitability stop', /crossCandidateProfitabilityStop: false/.test(apeGateway) && /crossCandidateWinnerStops: 0/.test(apeRescue) && !/passWinnerFound/.test(apeRescue)],
+  ['APE candidate-local V4 completion is unordered and bounded', /async function mapConcurrentCandidateLocal/.test(apeRescue) && /const output = await mapConcurrentCandidateLocal/.test(apeRescue) && /Promise\.race\(\[\.\.\.active\.values\(\)\]/.test(apeRescue) && /candidateLocalRunToCompletion: true/.test(apeRescue)],
   ['APE merit promotion and generation-local retirement are search-only', /recordApeCommandOutcome/.test(adaptiveCommand) && /candidateRetiredForGeneration/.test(adaptiveCommand) && /meritPromotionAuthority: 'search_priority_only'/.test(adaptiveCommand) && /exactEconomicsAuthority: false/.test(adaptiveCommand)],
-  ['APE counterfactual multi-brain planner remains advisory', /buildApeCounterfactualPlan/.test(adaptiveCommand) && /reciprocalRankFusion/.test(adaptiveCommand) && /brainCount: 5/.test(adaptiveCommand) && /executionAuthority: false/.test(adaptiveCommand)],
+  ['APE has one synchronous monotonic candidate generation authority', /getApeCandidateGeneration/.test(adaptiveCommand) && /isCurrentApeCandidateGeneration/.test(adaptiveCommand) && /incomingGenerationIsNewer/.test(adaptiveCommand) && /synchronousCandidateStateAuthority: true/.test(adaptiveCommand) && /staleGenerationCannotRollBackAuthority: true/.test(adaptiveCommand)],
+  ['APE retirement is measured tactic exhaustion only', /retirementAuthority: 'candidate_local_measured_tactic_exhaustion_only'/.test(adaptiveCommand) && /strictPositiveStopsOptimization: false/.test(adaptiveCommand) && /exhaustedDistinctTactics >= minDistinctTactics/.test(adaptiveCommand)],
+  ['APE counterfactual planner remains resident/advisory', /buildApeCounterfactualPlan/.test(adaptiveCommand) && /cachedCounterfactualPlanning: true/.test(adaptiveCommand) && /brainCount: 5/.test(adaptiveCommand) && /executionAuthority: false/.test(adaptiveCommand) && !/reciprocalRankFusion/.test(adaptiveCommand)],
   ['APE shares provider races per pass and asset', /const providerRaces = new Map/.test(apeRescue) && /one_per_pass_chain_asset/.test(apeRescue)],
   ['APE starts route quote and provider probe in parallel', /initialQuotePromise/.test(apeRescue) && /providerMeasurementsPromise/.test(apeRescue) && /Promise\.all\(\[initialQuotePromise, providerMeasurementsPromise\]\)/.test(apeRescue)],
-  ['APE evaluates independent candidates concurrently', /mapConcurrentUntilStrictPositive\(/.test(apeRescue) && /const output = await mapConcurrentUntilStrictPositive\(/.test(apeRescue) && /candidateRescueSerial: false/.test(apeRescue)],
-  ['APE uses bounded hedged quote waves', /hedgedWaveWidth/.test(apeRescue) && /Promise\.race\(\[\.\.\.active\.values\(\)\]\)/.test(apeRescue) && /strictPositiveEarlyWins/.test(apeRescue)],
+  ['APE uses bounded hedged quote waves', /hedgedWaveWidth/.test(apeRescue) && /Promise\.race\(\[\.\.\.active\.values\(\)\]\)/.test(apeRescue)],
   ['APE adapts quote deadlines and candidate concurrency', /adaptiveQuoteTimeoutMs/.test(apeRescue) && /updateConcurrency/.test(apeRescue) && /adaptiveRouteP95Timeouts: true/.test(apeRescue) && /adaptiveConcurrency: true/.test(apeRescue)],
   ['APE resizes provider-limited notionals instead of immediate rejection', /executableFundingCeiling/.test(apeRescue) && /buildApeTargetAmounts/.test(apeRescue) && /resizeInsteadOfReject: true/.test(apeRescue)],
   ['APE retains Aave plus Balancer stacking economics', /selectMeasuredDualFlashLoanAllocation/.test(apeRescue) && /aave_balancer_dual/.test(apeRescue)],
@@ -88,13 +93,13 @@ const matrix = [
   ['APE separates provider liquidity from route quote capacity telemetry', /providerLiquidityTelemetrySeparatedFromRouteQuoteCapacity: true/.test(apeRescue) && /routeMeasuredCapacitySignals/.test(apeRescue)],
   ['APE direct single-route actuator never fabricates a split-route quote', /routeSplitExecutionSupported: false/.test(apeRescue) && /routeSplitPromotionSuppressed: true/.test(apeRescue)],
   ['APE old global 42-quote budget is retired', !/ZERO_CAPITAL_RESCUE_TOTAL_QUOTE_BUDGET/.test(apeRescue) && /quoteStormBudget42Removed: true/.test(apeRescue)],
-  ['APE profit ladder cannot block the V4 quote path', /postDecisionTelemetry = setImmediate/.test(apeRescue) && /profitLadderDatabaseReadOnCriticalPath: false/.test(apeRescue)],
+  ['APE profit ladder cannot block V4 quote path', /postDecisionTelemetry = setImmediate/.test(apeRescue) && /profitLadderDatabaseReadOnCriticalPath: false/.test(apeRescue)],
   ['APE preserves exact positive economics and no execution authority', /exactStrictPositiveRequiredBeforePromotion: true/.test(apeRescue) && /syntheticEconomics: false/.test(apeRescue) && /executionAuthority: false/.test(apeRescue)],
 
-  ['APE invokes route split before final return', /const pending = runZeroCapitalRouteSplitRescue\(\{/.test(apeGateway) && /settleBeforeDeadline\(pending, deadlineAt, emptySplitResult\(\)\)/.test(apeGateway) && /routeSplitTacticScheduledAfterApeDecision: false/.test(apeGateway) && /toolboxFinalRescueBeforeReturn: true/.test(apeGateway)],
-  ['APE invokes shared-principal stack before final return', /const pending = runZeroCapitalAtomicStackTactic\(\{/.test(apeGateway) && /settleBeforeDeadline\(pending, compositeHardDeadlineAt, emptyStackResult\(\)\)/.test(apeGateway) && /compositeTacticScheduledAfterApeDecision: false/.test(apeGateway)],
+  ['APE invokes route split before final return', /runZeroCapitalRouteSplitRescue\(\{/.test(apeGateway) && /settleBeforeDeadline\(pending, deadlineAt, emptySplitResult\(\)\)/.test(apeGateway) && /routeSplitTacticScheduledAfterApeDecision: false/.test(apeGateway) && /toolboxFinalRescueBeforeReturn: true/.test(apeGateway)],
+  ['APE invokes shared-principal stack before final return', /runZeroCapitalAtomicStackTactic\(\{/.test(apeGateway) && /settleBeforeDeadline\(pending, compositeHardDeadlineAt, emptyStackResult\(\)\)/.test(apeGateway) && /compositeTacticScheduledAfterApeDecision: false/.test(apeGateway)],
   ['APE route split requires pool-disjoint route pairs', /function routesArePoolDisjoint\(/.test(apeWorkbench) && /assignment\.splitPairs/.test(apeRouteSplit) && /all_resident_alternatives_visible_pool_disjoint_only_for_split_execution/.test(apeRouteSplit)],
-  ['APE route split quotes both partial paths concurrently', /Promise\.all\(\[/.test(apeRouteSplit) && /partialQuotesRunInParallel: true/.test(apeRouteSplit)],
+  ['APE route split quotes partial paths concurrently', /Promise\.all\(\[/.test(apeRouteSplit) && /partialQuotesRunInParallel: true/.test(apeRouteSplit)],
   ['APE route split uses bounded allocation probes', /leftPercent: 50n/.test(apeRouteSplit) && /leftPercent: 65n/.test(apeRouteSplit) && /leftPercent: 35n/.test(apeRouteSplit)],
   ['APE split children remain non-executable until exact composite validation', /executableCapability: false/.test(apeRouteSplit) && /required:composite_route_split_exact_simulation/.test(apeRouteSplit)],
   ['APE split failures retain the parent opportunity', /parentOpportunityKilledOnSplitFailure: false/.test(apeRouteSplit) && /parent_opportunity_retained:true/.test(apeRouteSplit)],
