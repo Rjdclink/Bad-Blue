@@ -165,11 +165,12 @@ export function buildApeTierBudget(input: {
     .map(candidate => candidate.expiresAt)
     .filter(expiresAt => Number.isFinite(expiresAt) && expiresAt > now);
 
-  // Do not let a work wave outlive the evidence window it entered with. When all
-  // evidence is already stale, keep the configured bounded window so workers may
-  // reacquire evidence; stale evidence itself still has no execution authority.
+  // A mixed batch must obey its earliest live evidence boundary. Later-lived
+  // candidates keep ownership for the next wave, but cannot lend freshness time
+  // to an earlier-expiring candidate. When all evidence is stale, the configured
+  // bounded window is available only for reacquisition, never stale execution.
   const observedFreshBoundaryAt = freshExpiries.length > 0
-    ? Math.max(...freshExpiries)
+    ? Math.min(...freshExpiries)
     : configuredBoundaryAt;
   const freshnessBoundaryAt = Math.min(configuredBoundaryAt, observedFreshBoundaryAt);
   const hardDeadlineAt = freshnessBoundaryAt;
