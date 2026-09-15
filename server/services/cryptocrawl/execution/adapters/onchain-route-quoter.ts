@@ -99,14 +99,15 @@ export interface QuotedZeroCapitalRoute {
   route: RoutePlanningSwapStep[];
 }
 
-interface ResidentBestBpsQuote {
-  quote: QuotedZeroCapitalRoute;
-  observedAt: number;
-  expiresAt: number;
+export interface ResidentZeroCapitalQuoteEvidence {
+  readonly quote: QuotedZeroCapitalRoute;
+  readonly observedAt: number;
+  readonly expiresAt: number;
 }
 
 const inFlightLegQuotes = new WeakMap<providers.Provider, Map<string, Promise<BigNumber>>>();
-const residentBestBpsQuotes = new Map<string, ResidentBestBpsQuote>();
+const residentBestBpsQuotes = new Map<string, ResidentZeroCapitalQuoteEvidence>();
+const residentExactAmountQuotes = new Map<string, ResidentZeroCapitalQuoteEvidence>();
 const BPS_PRECISION = 1_000_000n;
 
 function isAddress(value: string): boolean {
@@ -617,15 +618,36 @@ function bestBpsQuote(observed: readonly QuotedZeroCapitalRoute[]): QuotedZeroCa
   return best;
 }
 
+function exactResidentQuoteKey(routeId: string, amountIn: bigint): string {
+  return `${routeId}:${amountIn.toString()}`;
+}
+
+function freshResidentQuote(
+  cache: Map<string, ResidentZeroCapitalQuoteEvidence>,
+  key: string,
+  now: number,
+): ResidentZeroCapitalQuoteEvidence | null {
+  const entry = cache.get(key);
+  if (!entry || entry.expiresAt <= now) {
+    if (entry) cache.delete(key);
+    return null;
+  }
+  return entry;
+}
+
 function rememberResidentBestBpsQuote(routeId: string, observed: readonly QuotedZeroCapitalRoute[]): void {
   const best = bestBpsQuote(observed);
   if (!best) return;
   const observedAt = Date.now();
-  residentBestBpsQuotes.set(routeId, {
-    quote: best,
-    observedAt,
-    expiresAt: observedAt + routeTtlMs(),
-  });
+  const expiresAt = observedAt + routeTtlMs();
+  residentBestBpsQuotes.set(routeId, { quote: best, observedAt, expiresAt });
+  for (const quote of observed) {
+    residentExactAmountQuotes.set(exactResidentQuoteKey(routeId, quote.amountIn), {
+      quote,
+      observedAt,
+      expiresAt,
+    });
+  }
 }
 
 /**
@@ -634,12 +656,36 @@ function rememberResidentBestBpsQuote(routeId: string, observed: readonly Quoted
  * returns the stored object reference without copying it.
  */
 export function peekResidentBestBpsQuote(routeId: string, now = Date.now()): QuotedZeroCapitalRoute | null {
-  const entry = residentBestBpsQuotes.get(routeId);
-  if (!entry || entry.expiresAt <= now) {
-    if (entry) residentBestBpsQuotes.delete(routeId);
-    return null;
-  }
-  return entry.quote;
+  return peekResidentBestBpsQuoteEvidence(routeId, now)?.quote ?? null;
+}
+
+/** Preserve the quote observation timestamps instead of collapsing freshness into the candidate TTL. */
+export function peekResidentBestBpsQuoteEvidence(
+  routeId: string,
+  now = Date.now(),
+): ResidentZeroCapitalQuoteEvidence | null {
+  return freshResidentQuote(residentBestBpsQuotes, routeId, now);
+}
+
+/**
+ * Exact-notional resident lookup for rescue. A miss is a true cache miss; a quote
+ * measured for another size is never returned and therefore cannot force a false
+ * amount mismatch followed by an avoidable re-quote.
+ */
+export function peekResidentExactQuote(
+  routeId: string,
+  amountIn: bigint,
+  now = Date.now(),
+): QuotedZeroCapitalRoute | null {
+  return peekResidentExactQuoteEvidence(routeId, amountIn, now)?.quote ?? null;
+}
+
+export function peekResidentExactQuoteEvidence(
+  routeId: string,
+  amountIn: bigint,
+  now = Date.now(),
+): ResidentZeroCapitalQuoteEvidence | null {
+  return freshResidentQuote(residentExactAmountQuotes, exactResidentQuoteKey(routeId, amountIn), now);
 }
 
 async function quoteBestRouteSize(
@@ -656,8 +702,8 @@ async function quoteBestRouteSize(
     .filter((quote): quote is QuotedZeroCapitalRoute => !!quote);
   if (observed.length === 0) return null;
 
-  // Side evidence only: preserve the best already-measured BPS variant for APE.
-  // Stage 1 still receives exactly the same highest-dollar-profit size as before.
+  // Side evidence only: preserve every already-measured exact-size quote plus the
+  // best-BPS variant for APE. Stage 1 selection semantics remain unchanged.
   rememberResidentBestBpsQuote(route.id, observed);
 
   const positive = observed.filter(quote => quote.netProfit > 0n);
