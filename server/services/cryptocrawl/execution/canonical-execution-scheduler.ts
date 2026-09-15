@@ -1,4 +1,5 @@
 import logger from '../../../logger.js';
+import type { ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import { measuredCandidateRegistry, type MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
 import { operatorTradingStrategy, type OperatorTradingStrategyState } from '../governance/operator-trading-strategy.js';
 import { stageManager } from '../governance/stage-management.js';
@@ -342,7 +343,7 @@ class CanonicalExecutionScheduler {
       ));
       let anyDispatched = false;
       for (const decision of candidates) {
-        let zeroCapitalOpportunity = null;
+        let zeroCapitalOpportunity: ZeroCapitalOpportunity | null = null;
         if (decision.topology === 'ZERO_CAPITAL_ATOMIC') {
           const candidate = measuredCandidateRegistry.get(decision.opportunityId);
           const opportunity = zeroCapitalRouteEvidenceRegistry.getOpportunity(decision.opportunityId);
