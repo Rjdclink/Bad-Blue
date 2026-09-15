@@ -80,11 +80,12 @@ export function apePrefersRouteAlternatives(plan: ApeProfitabilityToolboxPlan | 
 }
 
 /**
- * Builds a bounded size search from the existing BPS toolbox. Fixed-cost pressure
- * explores larger safe notionals first to dilute gas/relay/flash overhead; impact
- * pressure explores smaller sizes first; Super Engine residual fractions are
- * always retained when applicable. Provider capacity boundaries are first-class
- * probes instead of rejection conditions.
+ * Builds a bounded size search from the existing BPS toolbox. Measured fixed-cost
+ * pressure explores larger safe notionals first to dilute gas/relay/bridge cost;
+ * impact pressure explores smaller sizes first. Flash premium is treated as a
+ * provider-cost surface rather than a fixed cost: provider selection does the
+ * primary work while size probes stay close to the measured route. Super Engine
+ * residual fractions and provider capacity boundaries remain first-class probes.
  */
 export function buildApeTargetAmounts(input: {
   intended: bigint;
@@ -106,10 +107,13 @@ export function buildApeTargetAmounts(input: {
   }
 
   const driver = plan?.advice.dominantCostDriver ?? 'unknown';
-  if (driver === 'gas' || driver === 'relay' || driver === 'bridge' || driver === 'flash_premium') {
+  if (driver === 'gas' || driver === 'relay' || driver === 'bridge') {
     for (const factor of [8, 5, 3, 2, 1.5, 1.25, 0.75, 0.5]) {
-      values.push(scaledAmount(clamped, factor) > fundingCeiling ? fundingCeiling : scaledAmount(clamped, factor));
+      const value = scaledAmount(clamped, factor);
+      values.push(value > fundingCeiling ? fundingCeiling : value);
     }
+  } else if (driver === 'flash_premium') {
+    for (const factor of [1, 0.75, 0.5]) values.push(scaledAmount(clamped, factor));
   } else if (driver === 'slippage_impact' || driver === 'latency_decay') {
     for (const factor of [0.25, 0.35, 0.4, 0.5, 0.6, 0.7, 0.85, 1]) {
       values.push(scaledAmount(clamped, factor));
@@ -124,7 +128,7 @@ export function buildApeTargetAmounts(input: {
   }
 
   const bounded = uniqueBounded(values, fundingCeiling);
-  if (driver === 'gas' || driver === 'relay' || driver === 'bridge' || driver === 'flash_premium') {
+  if (driver === 'gas' || driver === 'relay' || driver === 'bridge') {
     return bounded.sort((left, right) => left === right ? 0 : left > right ? -1 : 1);
   }
   if (driver === 'slippage_impact' || driver === 'latency_decay') {
