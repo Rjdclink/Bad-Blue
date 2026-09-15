@@ -14,6 +14,10 @@ const readPhysical = relative => {
   }
 };
 
+// APE V3 is the canonical active-rescue implementation. Reuse its dedicated
+// verifier here rather than duplicating retired V2/V3 source-shape assumptions.
+require('./verify-nix-gen-atomic-bps-single-pipeline.cjs');
+
 const capability = read('server/services/cryptocrawl/discovery/venue-capability-registry.ts');
 const inventoryResize = read('server/services/cryptocrawl/integration/inventory-constrained-cex-execution-wiring.ts');
 const timingGuard = read('server/services/cryptocrawl/integration/cross-venue-timing-guard-wiring.ts');
@@ -25,8 +29,6 @@ const memory = read('server/services/cryptocrawl/intelligence/canonical-intellig
 const dynamicRoutes = read('server/services/cryptocrawl/discovery/dynamic-zero-capital-routes.ts');
 const atomicSize = read('server/services/cryptocrawl/execution/adapters/atomic-size-optimizer.ts');
 const zeroCapitalCore = read('server/services/cryptocrawl/core/zero-capital-engine.ts');
-const zeroCapitalDiscovery = read('server/services/cryptocrawl/discovery/zero-capital-canonical-discovery.ts');
-const zeroCapitalFair = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-fair.ts');
 // verify-deployment-preflight redirects path-based reads of this filename to the
 // preserved flash implementation for legacy verifiers. This verifier needs the
 // physical canonical router, so read it by descriptor to bypass that compatibility shim.
@@ -67,18 +69,13 @@ assert(dynamicRoutes.includes('truePositiveQuotes = quotes.filter(quote => quote
 assert(dynamicRoutes.includes('state.measuredQuotes += quotes.length'), 'measured quote count must reflect actual measured quotes');
 assert(atomicSize.includes('profit > 0n') && atomicSize.includes('bestPositive'), 'atomic size optimizer must prefer strict-positive measured dollar profit');
 assert(atomicSize.includes('bpsToBreakEven') && atomicSize.includes('bestNearMiss'), 'all-negative atomic size fallback must preserve the closest measured BPS near miss only');
-assert(!zeroCapitalCore.includes('runZeroCapitalProfitabilityRescueV2') &&
-  zeroCapitalCore.includes('duplicateAtomicRescuePass: false') &&
-  zeroCapitalDiscovery.includes("import { runFairZeroCapitalProfitabilityRescue } from '../integration/zero-capital-profitability-rescue-fair.js';") &&
-  zeroCapitalDiscovery.includes('rescueReady = await runFairZeroCapitalProfitabilityRescue({') &&
-  zeroCapitalDiscovery.includes('stageOneClassificationChanged: false') &&
-  zeroCapitalFair.includes('primeApeResidentRouting(input.opportunities);') &&
-  zeroCapitalFair.includes('const residentFastPath = runZeroCapitalAtomicBpsEngine({') &&
-  zeroCapitalFair.includes('transformed = await runZeroCapitalProfitabilityRescueV3({') &&
-  zeroCapitalFair.includes('activeRescueCreatesDerivedEvidenceOnly: true') &&
-  zeroCapitalFair.includes('stageOneMutation: false') &&
-  zeroCapitalFair.includes('executionAuthority: false'),
-'Atomic rescue must remain single-owner after locked Stage-1 classification: canonical discovery awaits the APE gateway, the resident APE fast path runs first on the exact Stage-1 references, active measured rescue derives fresh evidence only for rescue candidates, core scan remains measurement-only, Stage One stays unchanged, and execution authority remains downstream');
+
+// The dedicated canonical APE V3 verifier above owns the detailed single-owner,
+// Stage-One immutability, shared provider race, targeted resize/reroute, stacking,
+// strict-improvement recursion, and downstream execution-authority assertions.
+assert(zeroCapitalCore.includes('duplicateAtomicRescuePass: false'),
+  'core scan must remain measurement-only with no duplicate Atomic rescue pass');
+
 assert(zeroCapitalCore.includes('tokenUnitEqualsUsdAssumption: false'), 'zero-capital runtime context must explicitly reject token-unit-equals-USD authority');
 assert(canonicalZeroCapitalExecutor.includes("import { livePriceMesh } from '../bridge/live-price-mesh.js';"), 'canonical zero-capital executor must use the provider-mesh live price surface');
 assert(canonicalZeroCapitalExecutor.includes('livePriceMesh.getLiveSymbolPrices([...new Set(symbols)])'), 'canonical zero-capital terminal economics must request live token prices through the mesh');
@@ -86,11 +83,11 @@ assert(canonicalZeroCapitalExecutor.includes('inputTokenUsdPrice: prices.get(inp
 assert(flashZeroCapitalExecutor.includes("missingInformation: ['live_input_token_usd_price_for_builder_realized_profit']"), 'builder-funded zero-capital execution must fail closed when live token USD valuation is unavailable');
 assert(!zeroCapitalRescue.includes('getProfitLadderDiscoveryNotionalAuthority'), 'canonical rescue must not use Profit Ladder as flash-borrow notional authority');
 assert(!zeroCapitalRescue.includes('getProfitLadderNotionalAuthority'), 'canonical rescue must not use self-funded Profit Ladder exposure rungs for flash principal');
-assert(zeroCapitalRescue.includes('function providerSafeBorrowAmount'), 'canonical rescue must size flash principal from fresh provider-safe capacity');
-assert(zeroCapitalRescue.includes('measureFlashLoanProviders({'), 'canonical rescue must use measured provider evidence');
+assert(zeroCapitalRescue.includes('function executableFundingCeiling('), 'canonical rescue must derive executable funding ceiling from fresh provider capacity');
+assert(zeroCapitalRescue.includes('measureFlashLoanProviders('), 'canonical rescue must use measured provider evidence');
 assert(zeroCapitalRescue.includes('calculateMeasuredFlashLoanFee'), 'canonical rescue must use exact measured provider fees');
-assert(zeroCapitalRescue.includes('quoteConfiguredZeroCapitalRoute'), 'canonical rescue must independently requote candidate sizes');
-assert(zeroCapitalRescue.includes('strictImprovement'), 'canonical rescue must require measured economic improvement');
+assert(zeroCapitalRescue.includes('quoteConfiguredZeroCapitalRoute('), 'canonical rescue must independently requote candidate sizes');
+assert(zeroCapitalRescue.includes('function strictImprovement('), 'canonical rescue must require measured economic improvement');
 assert(!runtime.includes('ensureZeroCapitalSizeRefinementWiring'), 'retired duplicate size-refinement installer must stay absent');
 assert(!runtime.includes('ensureZeroCapitalJointProviderSizeWiring'), 'retired duplicate joint provider-size installer must stay absent');
 
@@ -140,4 +137,4 @@ assert(runtime.includes("install('cross_venue_timing_guard', () => ensureCrossVe
 assert(runtime.includes("install('measured_candidate_expiry_guard', () => ensureMeasuredCandidateExpiryGuardWiring())"), 'candidate expiry guard must be isolated and installed');
 assert(runtime.includes('runtimeComponentIsolationGlobalShutdownAuthority: false'), 'component wiring failures must not own a global shutdown');
 assert(runtime.includes("executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero'"), 'strict all-in positive economics must remain canonical');
-console.log('[remaining-seventeen-batch12] PASS: executable CEX topology, exact inventory economics, synchronized timing, terminal learning, self-funded notional rungs isolated from provider-capacity-bounded zero-capital borrowing, Profit Ladder daily-realized-profit-only authority, single-owner APE rescue after locked Stage-1 classification with resident fast path first and bounded active measured derived-evidence rescue, measured provider fees/liquidity and live-price-mesh token valuation, FOK-preserving one-batch CEX execution, anti-rank-gaming partial accounting, fixed 90/10 treasury invariants, and isolated runtime protections preserved');
+console.log('[remaining-seventeen-batch12] PASS: executable CEX topology, exact inventory economics, synchronized timing, terminal learning, self-funded notional rungs isolated from provider-capacity-bounded zero-capital borrowing, Profit Ladder daily-realized-profit-only authority, canonical APE V3 single-owner verification with Stage One locked, measured provider fees/liquidity and live-price-mesh token valuation, FOK-preserving one-batch CEX execution, anti-rank-gaming partial accounting, fixed 90/10 treasury invariants, and isolated runtime protections preserved');
