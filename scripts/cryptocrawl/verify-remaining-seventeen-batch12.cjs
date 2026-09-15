@@ -32,7 +32,7 @@ const zeroCapitalFair = read('server/services/cryptocrawl/integration/zero-capit
 // physical canonical router, so read it by descriptor to bypass that compatibility shim.
 const canonicalZeroCapitalExecutor = readPhysical('server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts');
 const flashZeroCapitalExecutor = read('server/services/cryptocrawl/execution/zero-capital-flash-canonical-executor.ts');
-const zeroCapitalRescue = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v2.ts');
+const zeroCapitalRescue = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v3.ts');
 const ladderNotional = read('server/services/cryptocrawl/governance/profit-ladder-notional-authority.ts');
 const dailyProfitBudget = read('server/services/cryptocrawl/governance/profit-ladder-daily-profit-budget.ts');
 const hyperHybrid = read('server/services/cryptocrawl/execution/hyper-hybrid-cex-execution.ts');
@@ -74,7 +74,7 @@ assert(!zeroCapitalCore.includes('runZeroCapitalProfitabilityRescueV2') &&
   zeroCapitalDiscovery.includes('stageOneClassificationChanged: false') &&
   zeroCapitalFair.includes('primeApeResidentRouting(input.opportunities);') &&
   zeroCapitalFair.includes('const residentFastPath = runZeroCapitalAtomicBpsEngine({') &&
-  zeroCapitalFair.includes('transformed = await runZeroCapitalProfitabilityRescueV2({') &&
+  zeroCapitalFair.includes('transformed = await runZeroCapitalProfitabilityRescueV3({') &&
   zeroCapitalFair.includes('activeRescueCreatesDerivedEvidenceOnly: true') &&
   zeroCapitalFair.includes('stageOneMutation: false') &&
   zeroCapitalFair.includes('executionAuthority: false'),
