@@ -176,16 +176,18 @@ assert.match(resident, /externalIo: false/);
 assert.doesNotMatch(resident, /canonical_pending/);
 assert.doesNotMatch(resident, /fetch\(|axios|supabase|provider\.|Contract\(|Promise\.all|Promise\.race|await\s+/);
 
-// Compatibility workers cannot silently reintroduce live APE I/O.
-assert.match(workers, /compatibility_snapshot_only_no_live_io/);
+// Compatibility workers may read resident evidence and signal background prewarm, but live I/O may not block the current APE decision path.
+assert.match(workers, /resident_evidence_snapshot_and_nonblocking_prewarm/);
+assert.match(workers, /peekLiveSymbolPriceEvidence/);
+assert.match(workers, /peekResidentFlashLoanProviderEvidence/);
+assert.match(workers, /void prewarmFlashLoanProviderEvidence/);
 assert.match(workers, /livePriceCalls: 0/);
-assert.match(workers, /liveProviderMeasurements: 0/);
-assert.match(workers, /providerRefreshCalls: 0/);
-assert.match(workers, /rpcCalls: 0/);
-assert.match(workers, /apiCalls: 0/);
+assert.match(workers, /liveProviderMeasurementsOnDecisionPath: 0/);
+assert.match(workers, /providerRefreshCallsBlockingDecisionPath: 0/);
+assert.match(workers, /rpcCallsOnDecisionPath: 0/);
+assert.match(workers, /apiCallsOnDecisionPath: 0/);
 assert.match(workers, /setImmediate\(\(\) =>/);
 assert.doesNotMatch(workers, /queueMicrotask/);
-assert.doesNotMatch(workers, /livePriceMesh/);
 assert.doesNotMatch(workers, /atomic-profitability-provider-race/);
 assert.doesNotMatch(workers, /measureFlashLoanProviders/);
 assert.match(workers, /supabaseHotPathReads: 0/);
