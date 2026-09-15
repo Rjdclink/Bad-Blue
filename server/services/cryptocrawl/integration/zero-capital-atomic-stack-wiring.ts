@@ -304,8 +304,9 @@ async function measureTargetStack(input: {
   const relayFee = input.opportunities.reduce((sum, opportunity) => sum + (opportunity.relayFeeInInputToken || 0n), 0n);
   const targetNetProfitBaseUnits = STRICT_POSITIVE_PROFIT_BASE_UNITS;
   const targetNetProfitBps = bpsFromSharedPrincipal(targetNetProfitBaseUnits, sharedPrincipal);
-  const expiresAt = Math.min(...input.opportunities.map(opportunity => opportunity.expiresAt), input.deadlineAt ?? Number.MAX_SAFE_INTEGER);
-  if (Date.now() >= expiresAt) return null;
+  const evidenceExpiresAt = Math.min(...input.opportunities.map(opportunity => opportunity.expiresAt));
+  const hardDeadlineAt = Math.min(evidenceExpiresAt, input.deadlineAt ?? Number.MAX_SAFE_INTEGER);
+  if (Date.now() >= hardDeadlineAt) return null;
 
   const probePlan: CompositeFlashLoanExecutionPlan = {
     chain: input.chain,
@@ -321,12 +322,12 @@ async function measureTargetStack(input: {
   const probePayload = buildCompositeFlashLoanReceiverPayload(probePlan);
   const probeRequest = { from: input.wallet.address, to: probePayload.to, data: probePayload.data, value: probePayload.value };
   try {
-    if (deadlineReached(expiresAt)) return null;
+    if (deadlineReached(hardDeadlineAt)) return null;
     await input.provider.call(probeRequest);
   } catch {
     return null;
   }
-  if (deadlineReached(expiresAt)) return null;
+  if (deadlineReached(hardDeadlineAt)) return null;
   let estimatedGas = BigInt((await input.provider.estimateGas(probeRequest)).toString());
   if (estimatedGas <= 0n) return null;
 
@@ -334,14 +335,14 @@ async function measureTargetStack(input: {
   let requiredOnchainResidual = targetNetProfitBaseUnits + combinedGasCost + relayFee;
   let payload = buildCompositeFlashLoanReceiverPayload({ ...probePlan, minProfit: requiredOnchainResidual.toString() });
   for (let pass = 0; pass < 2; pass += 1) {
-    if (deadlineReached(expiresAt)) return null;
+    if (deadlineReached(hardDeadlineAt)) return null;
     const request = { from: input.wallet.address, to: payload.to, data: payload.data, value: payload.value };
     try {
       await input.provider.call(request);
     } catch {
       return null;
     }
-    if (deadlineReached(expiresAt)) return null;
+    if (deadlineReached(hardDeadlineAt)) return null;
     const nextGas = BigInt((await input.provider.estimateGas(request)).toString());
     if (nextGas <= 0n) return null;
     combinedGasCost = combinedGasCostFromEstimate(input.opportunities, nextGas);
@@ -350,33 +351,32 @@ async function measureTargetStack(input: {
     payload = buildCompositeFlashLoanReceiverPayload({ ...probePlan, minProfit: requiredOnchainResidual.toString() });
   }
 
-  if (deadlineReached(expiresAt)) return null;
+  if (deadlineReached(hardDeadlineAt)) return null;
   const exactRequest = { from: input.wallet.address, to: payload.to, data: payload.data, value: payload.value };
   try {
     await input.provider.call(exactRequest);
   } catch {
     return null;
   }
-  if (deadlineReached(expiresAt)) return null;
+  if (deadlineReached(hardDeadlineAt)) return null;
   estimatedGas = BigInt((await input.provider.estimateGas(exactRequest)).toString());
   if (estimatedGas <= 0n) return null;
   combinedGasCost = combinedGasCostFromEstimate(input.opportunities, estimatedGas);
   requiredOnchainResidual = targetNetProfitBaseUnits + combinedGasCost + relayFee;
   payload = buildCompositeFlashLoanReceiverPayload({ ...probePlan, minProfit: requiredOnchainResidual.toString() });
   try {
-    if (deadlineReached(expiresAt)) return null;
+    if (deadlineReached(hardDeadlineAt)) return null;
     await input.provider.call({ from: input.wallet.address, to: payload.to, data: payload.data, value: payload.value });
   } catch {
     return null;
   }
-  if (deadlineReached(expiresAt)) return null;
+  if (deadlineReached(hardDeadlineAt)) return null;
 
-  // Independent already-required chain data is acquired together rather than in
-  // serial. This removes a wait; it does not add a new proof or provider call.
   const [block, feeData] = await Promise.all([
     input.provider.getBlock('latest'),
     input.provider.getFeeData(),
   ]);
+  if (deadlineReached(hardDeadlineAt)) return null;
   const maxBlockFraction = bounded(process.env.CRYPTOCRAWL_MULTILEG_MAX_BLOCK_GAS_FRACTION, 0.50, 0.10, 0.80);
   const blockGasLimit = BigInt(block.gasLimit.toString());
   const allowedGas = blockGasLimit * BigInt(Math.floor(maxBlockFraction * 1_000_000)) / 1_000_000n;
@@ -399,7 +399,7 @@ async function measureTargetStack(input: {
   const opportunityIds = input.opportunities.map(opportunity => opportunity.id);
   const evidenceId = groupId(input.chain, loanToken, opportunityIds);
   const measuredAt = Date.now();
-  if (measuredAt >= expiresAt) return null;
+  if (measuredAt >= hardDeadlineAt) return null;
   const expectedGasPriceWei = expectedExecutionGasPriceWei(feeData);
   const minProfitSum = BigInt(individualPlans.length) * STRICT_POSITIVE_PROFIT_BASE_UNITS;
 
@@ -421,6 +421,7 @@ async function measureTargetStack(input: {
     `input_token_usd_price:${inputTokenUsdPrice}`,
     'combined_all_in_net_strict_positive',
     'principal_repayment_enforced_by_composite_receiver',
+    'scheduler_deadline_not_evidence_freshness_authority',
     'synthetic_evidence:false',
   ];
 
@@ -449,7 +450,7 @@ async function measureTargetStack(input: {
     estimatedGas,
     simulated: true,
     simulatedAt: measuredAt,
-    expiresAt,
+    expiresAt: evidenceExpiresAt,
     provenance,
   };
 
@@ -471,7 +472,7 @@ async function measureTargetStack(input: {
     estimatedGasUnits: estimatedGas,
     expectedGasPriceWei,
     prepared: { to: payload.to, data: payload.data, value: payload.value },
-    expiresAt,
+    expiresAt: evidenceExpiresAt,
     measuredAt,
     provenance,
   };
@@ -499,7 +500,7 @@ async function measureTargetStack(input: {
     route: input.opportunities.flatMap(item => item.route.map(step => ({ ...step }))),
     confidence: Math.min(...input.opportunities.map(item => item.confidence)),
     timestamp: measuredAt,
-    expiresAt,
+    expiresAt: evidenceExpiresAt,
   };
 
   return { evidence, selection, opportunity, members: input.opportunities, memberCandidates };
@@ -603,8 +604,6 @@ async function runGroup(input: {
   const stack = chooseStack(input.opportunities);
   if (stack.length < 2 || deadlineReached(input.deadlineAt)) return { measuredVariants: 0, promotedOpportunityId: null };
 
-  // Receiver capability and provider economics are independent, required facts.
-  // Measure them once per token group and in parallel, then reuse for every variant.
   const [compositeCapability, balancer] = await Promise.all([
     verifyFlashLoanReceiverCapability({
       kind: 'balancer_composite_v2',
@@ -734,9 +733,6 @@ export async function runZeroCapitalAtomicStackTactic(input: {
     return task;
   });
 
-  // Completion-order group consumption removes the outer Promise.all barrier. A
-  // strict-positive group returns immediately; unrelated in-flight groups retain
-  // read-only local work and have no authority to delay that winner.
   const active = new Map<number, Promise<{ index: number; result: AtomicStackTacticResult }>>();
   tasks.forEach((task, index) => active.set(index, task.then(result => ({ index, result }))));
   const aggregate: AtomicStackTacticResult = {
@@ -785,6 +781,7 @@ export function ensureZeroCapitalAtomicStackWiring(): void {
     measuredCompositionBenefitRequired: true,
     individualChildPositiveGrossRequired: false,
     aggregateTerminalEconomicsAuthority: true,
+    schedulerDeadlineChangesEvidenceExpiry: false,
     adaptiveMinLegsVetoAuthority: false,
     borrowingNotionalAuthority: false,
     syntheticEconomics: false,
