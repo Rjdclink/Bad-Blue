@@ -17,7 +17,7 @@ export interface PriceEvidence {
   readonly roundId?: string;
 }
 
-type PriceEvidencedOpportunity = ZeroCapitalOpportunity & {
+export type PriceEvidencedOpportunity = ZeroCapitalOpportunity & {
   readonly priceEvidence?: PriceEvidence;
 };
 
@@ -32,6 +32,7 @@ function validEvidence(evidence: PriceEvidence | undefined, now: number): eviden
     && evidence.observedAt <= now
     && evidence.expiresAt > now
     && evidence.expiresAt > evidence.observedAt
+    && typeof evidence.source === 'string'
     && evidence.source.trim().length > 0;
 }
 
