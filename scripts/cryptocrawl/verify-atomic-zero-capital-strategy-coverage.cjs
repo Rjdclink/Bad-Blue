@@ -101,14 +101,15 @@ check('Across executor has no direct raw-provider principal submission bypass', 
 check('Across recovery reuses exact signed bytes through system-owned gas authority', acrossRecovery.includes('executePreparedSystemOwnedNativeTransaction({') && acrossRecovery.includes("idempotencyKey: `across-origin:${row.depositTxnRef.toLowerCase()}`"));
 check('Across recovery has no raw-provider rebroadcast bypass', !acrossRecovery.includes('provider.sendTransaction(raw)'));
 
-check('billed hosted sponsor is rejected from strict zero-operator-cost admission',
+check('billed hosted sponsor is accepted as the existing zero-initial-capital fallback',
   gasPolicy.includes('const sponsorCostProvenZero = proof.sponsorOperatorMonetaryCostProvenZero === true')
-  && gasPolicy.includes('chain.sponsoredBootstrap && sponsorReady && sponsorCostProvenZero')
-  && gasPolicy.includes('providerBillingLiability: false')
-  && gasPolicy.includes('strictZeroInitialCapitalEligible: false')
-  && gasPolicy.includes('operatorMonetaryInputRequired: true')
-  && gasPolicy.includes('providerBillingLiability: chain.sponsoredBootstrap && sponsorReady && !sponsorCostProvenZero')
-  && gasPolicy.includes('not admissible without proof of zero operator billing liability'));
+  && gasPolicy.includes('const sponsorConfiguredAndReady = chain.sponsoredBootstrap && sponsorReady')
+  && gasPolicy.includes('if (sponsorConfiguredAndReady && !requireZeroOperatorCost)')
+  && gasPolicy.includes("paymentSource: 'provider_sponsored'")
+  && gasPolicy.includes('strictZeroInitialCapitalEligible: true')
+  && gasPolicy.includes('operatorMonetaryInputRequired: false')
+  && gasPolicy.includes('providerBillingLiability: true')
+  && gasPolicy.includes('provider-fronted gas remains a billing liability that canonical all-in economics must charge'));
 check('raw native balance is not promoted without system-owned proof', gasPolicy.includes('nativeSystemOwnedProven') && gasPolicy.includes('native balance exists but SELF_FUNDED system ownership is not proven'));
 check('durable native gas proof wiring keeps hosted sponsorship unproven', nativeGasProof.includes('sponsorOperatorMonetaryCostProvenZero: false'));
 check('durable native gas proof requires system ownership authority', nativeGasProof.includes('getSystemNativeGasAuthority'));
