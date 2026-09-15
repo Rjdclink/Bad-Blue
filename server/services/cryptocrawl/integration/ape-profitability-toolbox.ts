@@ -11,6 +11,7 @@ import {
 } from '../optimization/hyperdynamic-bps-solution-engine.js';
 import { buildResearchBpsExecutionPlan } from '../optimization/research-bps-execution-tactics.js';
 import { getBpsCompressionMeshSnapshot } from './bps-compression-mesh.js';
+import { buildApeDefectVector } from './ape-hypergraph-intelligence.js';
 
 export interface ApeProfitabilityToolboxPlan {
   advice: EconomicTransformationAdvice;
@@ -18,6 +19,7 @@ export interface ApeProfitabilityToolboxPlan {
   hyperdynamic: HyperdynamicBpsPlan | null;
   hyperdynamicCatalogSize: number;
   activeHyperdynamicSolutionKeys: string[];
+  deterministicGrossSignFallback?: boolean;
 }
 
 type CachedToolboxPlan = {
@@ -120,10 +122,57 @@ function scheduleToolboxPrewarm(opportunity: ZeroCapitalOpportunity, generation:
 }
 
 /**
- * Returns only already-resident advisory intelligence on the candidate hot path.
- * A missing plan is prewarmed after the current decision turn and never blocks
- * exact route/provider/size rescue. Advisory-plan freshness is independent from
- * candidate ownership; expiring a plan can never expire a candidate.
+ * A gross-negative candidate cannot be repaired by cost reduction or notional
+ * resizing alone. This zero-I/O deterministic fallback therefore chooses route
+ * transformation immediately while the richer advisory plan prewarms. It carries
+ * no economic or execution authority and disappears as soon as resident advice is
+ * ready. This removes the old null-plan => size-first semantic accident.
+ */
+function deterministicStructuralFallback(opportunity: ZeroCapitalOpportunity): ApeProfitabilityToolboxPlan | null {
+  const defect = buildApeDefectVector(opportunity);
+  if (!defect.structuralEdgeDefect) return null;
+  const requiredRecoveryBps = Number.isFinite(opportunity.netProfitBps) && opportunity.netProfitBps < 0
+    ? Math.abs(opportunity.netProfitBps)
+    : null;
+  const advice: EconomicTransformationAdvice = {
+    opportunityId: opportunity.id,
+    topology: 'ZERO_CAPITAL_ATOMIC',
+    dominantCostDriver: 'unknown',
+    dominantCostBps: null,
+    netProfitBps: Number.isFinite(opportunity.netProfitBps) ? opportunity.netProfitBps : null,
+    bpsToBreakEven: requiredRecoveryBps,
+    requiredRecoveryBps,
+    dominantCostCoverageRatio: null,
+    dominantCostAloneCouldCoverGap: false,
+    transformations: ['alternate_route_or_pool', 'retain_for_measurement'],
+    priorityScore: 1,
+    evidenceCompletenessScore: 1,
+    freshnessScore: opportunity.expiresAt > Date.now() ? 1 : 0,
+    transformationFeasibilityScore: 1,
+    authority: 'optimization_advisory_only',
+    executionAuthority: false,
+    provenance: [
+      'deterministic_gross_sign_rescue_classifier',
+      'gross_nonpositive_requires_edge_transformation',
+      'no_advisory_wait',
+      'synthetic_economics:false',
+    ],
+  };
+  return {
+    advice,
+    superPlan: { residualNotionalFractions: [] } as unknown as BpsReductionSuperPlan,
+    hyperdynamic: null,
+    hyperdynamicCatalogSize: HYPERDYNAMIC_BPS_SOLUTIONS.length,
+    activeHyperdynamicSolutionKeys: [],
+    deterministicGrossSignFallback: true,
+  };
+}
+
+/**
+ * Returns resident advisory intelligence when available. Missing advisory state is
+ * prewarmed after the current decision turn and never blocks exact rescue. The only
+ * synchronous fallback is deterministic gross-sign classification, which makes a
+ * structural-negative candidate route-first without performing extra I/O.
  */
 export function buildApeProfitabilityToolboxPlan(
   opportunity: ZeroCapitalOpportunity,
@@ -132,7 +181,7 @@ export function buildApeProfitabilityToolboxPlan(
   const generation = toolboxGeneration(opportunity);
   const cached = residentToolboxPlans.get(opportunity.id);
   if (cached && cached.generation === generation && cached.expiresAt > now && cached.ready) {
-    return cached.plan;
+    return cached.plan ?? deterministicStructuralFallback(opportunity);
   }
 
   residentToolboxPlans.set(opportunity.id, {
@@ -143,15 +192,10 @@ export function buildApeProfitabilityToolboxPlan(
   });
   pruneResidentToolboxPlans(now);
   scheduleToolboxPrewarm(opportunity, generation);
-  return null;
+  return deterministicStructuralFallback(opportunity);
 }
 
-/**
- * APE owns every finite non-positive candidate it receives regardless of the age
- * of the evidence generation attached to that object. Stale evidence is a refresh
- * requirement, not a candidate-deletion condition. This predicate grants no
- * execution authority; exact fresh measured proof is still required to promote.
- */
+/** Every finite non-positive candidate stays APE-owned regardless evidence age. */
 export function isApeRescueCandidate(
   opportunity: ZeroCapitalOpportunity,
   _graceMs: number,
