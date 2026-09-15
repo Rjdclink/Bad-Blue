@@ -1,9 +1,8 @@
 import type { ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import { measuredCandidateRegistry, type MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
-import {
-  peekResidentBestBpsQuote,
-  type ConfiguredRouteLeg,
-  type ConfiguredZeroCapitalRoute,
+import type {
+  ConfiguredRouteLeg,
+  ConfiguredZeroCapitalRoute,
 } from '../execution/adapters/onchain-route-quoter.js';
 
 export type ApeWorkerKind = 'route_split' | 'v4_cost_rescue' | 'shared_principal_stack' | 'execution_ready';
@@ -36,18 +35,20 @@ export interface ApeResidentWorkAssignment {
 }
 
 type StructuralIndex = {
-  signature: string;
-  routesByKey: Map<string, ConfiguredZeroCapitalRoute[]>;
+  routesByKey: Map<string, readonly ConfiguredZeroCapitalRoute[]>;
+  splitPairsByKey: Map<string, readonly ApeResidentRoutePair[]>;
 };
 
 const assignments = new Map<string, ApeResidentWorkAssignment>();
 const peerHints = new Map<string, ApeResidentPeerHint>();
-let structuralIndex: StructuralIndex = { signature: '', routesByKey: new Map() };
+let structuralIndex: StructuralIndex = { routesByKey: new Map(), splitPairsByKey: new Map() };
+let structuralInventoryIdentity: readonly ConfiguredZeroCapitalRoute[] | null = null;
 let primes = 0;
 let candidatesPrimed = 0;
 let structuralIndexBuilds = 0;
 let peerHintUpdates = 0;
 let peerHintAssignmentRefreshes = 0;
+let arrivedRouteAugmentations = 0;
 const MAX_ASSIGNMENTS = 4096;
 const MAX_HINTS = 4096;
 
@@ -69,35 +70,61 @@ function structuralKey(input: {
   ].join('|');
 }
 
-function routeSignature(routes: readonly ConfiguredZeroCapitalRoute[]): string {
-  return routes.map(route => [
-    route.id,
-    route.chain,
-    route.inputAssetSymbol,
-    route.inputToken.toLowerCase(),
-    route.inputTokenDecimals,
-    route.legs.map(leg => [
-      leg.protocol,
-      leg.tokenIn.toLowerCase(),
-      leg.tokenOut.toLowerCase(),
-      leg.pool?.toLowerCase() ?? '',
-      leg.feeTier ?? '',
-      leg.fee ?? '',
-    ].join(':')).join('>'),
-  ].join('#')).join('||');
+function legPoolIdentity(leg: ConfiguredRouteLeg): string {
+  if (leg.pool?.trim()) return `pool:${leg.pool.toLowerCase()}`;
+  const tokenPair = [leg.tokenIn.toLowerCase(), leg.tokenOut.toLowerCase()].sort().join(':');
+  const feeIdentity = leg.feeTier !== undefined
+    ? `tier:${leg.feeTier}`
+    : leg.fee !== undefined
+      ? `fee:${leg.fee}`
+      : 'fee:unknown';
+  return `${leg.protocol}:${tokenPair}:${feeIdentity}`;
 }
 
+function routesArePoolDisjoint(left: ConfiguredZeroCapitalRoute, right: ConfiguredZeroCapitalRoute): boolean {
+  const leftPools = new Set(left.legs.map(legPoolIdentity));
+  return right.legs.every(leg => !leftPools.has(legPoolIdentity(leg)));
+}
+
+function allSafeSplitPairs(routes: readonly ConfiguredZeroCapitalRoute[]): ApeResidentRoutePair[] {
+  const pairs: ApeResidentRoutePair[] = [];
+  for (let leftIndex = 0; leftIndex < routes.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < routes.length; rightIndex += 1) {
+      const left = routes[leftIndex];
+      const right = routes[rightIndex];
+      if (left.id === right.id || !routesArePoolDisjoint(left, right)) continue;
+      pairs.push({ left, right });
+    }
+  }
+  return pairs;
+}
+
+/**
+ * Build the stable topology once for a configured-route inventory object. The
+ * fused APE path normally receives the same immutable inventory reference, so
+ * subsequent passes are an identity check rather than a route scan/signature
+ * calculation. A genuinely replaced inventory is rebuilt once and then reused.
+ */
 function ensureStructuralIndex(routes: readonly ConfiguredZeroCapitalRoute[]): void {
-  const signature = routeSignature(routes);
-  if (signature === structuralIndex.signature) return;
-  const routesByKey = new Map<string, ConfiguredZeroCapitalRoute[]>();
+  if (structuralInventoryIdentity === routes) return;
+  const mutableRoutes = new Map<string, ConfiguredZeroCapitalRoute[]>();
   for (const route of routes) {
     const key = structuralKey(route);
-    const bucket = routesByKey.get(key);
+    const bucket = mutableRoutes.get(key);
     if (bucket) bucket.push(route);
-    else routesByKey.set(key, [route]);
+    else mutableRoutes.set(key, [route]);
   }
-  structuralIndex = { signature, routesByKey };
+
+  const routesByKey = new Map<string, readonly ConfiguredZeroCapitalRoute[]>();
+  const splitPairsByKey = new Map<string, readonly ApeResidentRoutePair[]>();
+  for (const [key, bucket] of mutableRoutes) {
+    const residentRoutes = Object.freeze([...bucket]);
+    routesByKey.set(key, residentRoutes);
+    splitPairsByKey.set(key, Object.freeze(allSafeSplitPairs(residentRoutes)));
+  }
+
+  structuralIndex = { routesByKey, splitPairsByKey };
+  structuralInventoryIdentity = routes;
   structuralIndexBuilds += 1;
 }
 
@@ -120,6 +147,7 @@ function routeFromArrivedOpportunity(opportunity: ZeroCapitalOpportunity): Confi
       protocol: step.protocol as ConfiguredRouteLeg['protocol'],
       tokenIn: step.tokenIn,
       tokenOut: step.tokenOut,
+      ...(step.pool ? { pool: step.pool } : {}),
       fee: step.fee,
       ...(feeTier !== undefined ? { feeTier } : {}),
     };
@@ -139,53 +167,63 @@ function routeFromArrivedOpportunity(opportunity: ZeroCapitalOpportunity): Confi
 }
 
 function configuredRouteMatchesOpportunity(route: ConfiguredZeroCapitalRoute, opportunity: ZeroCapitalOpportunity): boolean {
-  return opportunity.id === route.id || opportunity.id.startsWith(`${route.id}-`);
-}
-
-function legPoolIdentity(leg: ConfiguredRouteLeg): string {
-  if (leg.pool?.trim()) return `pool:${leg.pool.toLowerCase()}`;
-  const tokenPair = [leg.tokenIn.toLowerCase(), leg.tokenOut.toLowerCase()].sort().join(':');
-  const feeIdentity = leg.feeTier !== undefined
-    ? `tier:${leg.feeTier}`
-    : leg.fee !== undefined
-      ? `fee:${leg.fee}`
-      : 'fee:unknown';
-  return `${leg.protocol}:${tokenPair}:${feeIdentity}`;
-}
-
-function routesArePoolDisjoint(left: ConfiguredZeroCapitalRoute, right: ConfiguredZeroCapitalRoute): boolean {
-  const leftPools = new Set(left.legs.map(legPoolIdentity));
-  return right.legs.every(leg => !leftPools.has(legPoolIdentity(leg)));
-}
-
-function residentRouteScore(route: ConfiguredZeroCapitalRoute): number {
-  const quote = peekResidentBestBpsQuote(route.id);
-  return quote && Number.isFinite(quote.grossProfitBps) ? quote.grossProfitBps : Number.NEGATIVE_INFINITY;
-}
-
-function routeOrder(left: ConfiguredZeroCapitalRoute, right: ConfiguredZeroCapitalRoute): number {
-  const scoreDelta = residentRouteScore(right) - residentRouteScore(left);
-  if (Number.isFinite(scoreDelta) && scoreDelta !== 0) return scoreDelta;
-  return left.id.localeCompare(right.id);
-}
-
-function allSafeSplitPairs(routes: readonly ConfiguredZeroCapitalRoute[]): ApeResidentRoutePair[] {
-  const pairs: ApeResidentRoutePair[] = [];
-  for (let leftIndex = 0; leftIndex < routes.length; leftIndex += 1) {
-    for (let rightIndex = leftIndex + 1; rightIndex < routes.length; rightIndex += 1) {
-      const left = routes[leftIndex];
-      const right = routes[rightIndex];
-      if (left.id === right.id || !routesArePoolDisjoint(left, right)) continue;
-      pairs.push({ left, right });
-    }
-  }
-  pairs.sort((a, b) => {
-    const scoreA = residentRouteScore(a.left) + residentRouteScore(a.right);
-    const scoreB = residentRouteScore(b.left) + residentRouteScore(b.right);
-    if (scoreA !== scoreB) return scoreB - scoreA;
-    return `${a.left.id}:${a.right.id}`.localeCompare(`${b.left.id}:${b.right.id}`);
+  if (opportunity.id === route.id || opportunity.id.startsWith(`${route.id}-`)) return true;
+  if (route.legs.length !== opportunity.route.length) return false;
+  return route.legs.every((leg, index) => {
+    const step = opportunity.route[index];
+    return Boolean(step)
+      && leg.protocol === step.protocol
+      && leg.tokenIn.toLowerCase() === step.tokenIn.toLowerCase()
+      && leg.tokenOut.toLowerCase() === step.tokenOut.toLowerCase()
+      && (!leg.pool || !step.pool || leg.pool.toLowerCase() === step.pool.toLowerCase());
   });
-  return pairs;
+}
+
+function alignRouteCostBasis(
+  route: ConfiguredZeroCapitalRoute,
+  opportunity: ZeroCapitalOpportunity,
+): ConfiguredZeroCapitalRoute {
+  const gas = opportunity.estimatedGasCostInInputToken?.toString();
+  const relay = opportunity.relayFeeInInputToken?.toString();
+  if (gas === undefined && relay === undefined) return route;
+  return {
+    ...route,
+    ...(gas !== undefined ? { estimatedGasCostInInputToken: gas } : {}),
+    ...(relay !== undefined ? { relayFeeInInputToken: relay } : {}),
+  };
+}
+
+function assignmentTopology(opportunity: ZeroCapitalOpportunity): {
+  routes: readonly ConfiguredZeroCapitalRoute[];
+  splitPairs: readonly ApeResidentRoutePair[];
+} {
+  const key = structuralKey(opportunity);
+  const configuredRoutes = structuralIndex.routesByKey.get(key) ?? [];
+  const configuredPairs = structuralIndex.splitPairsByKey.get(key) ?? [];
+  const existingRoute = configuredRoutes.find(route => configuredRouteMatchesOpportunity(route, opportunity));
+  const arrived = existingRoute ? null : routeFromArrivedOpportunity(opportunity);
+
+  // The common path is zero-allocation structural reuse. Stage-1's already-arrived
+  // route is only materialized when configured inventory truly does not represent
+  // it; this replaces the old Splitter-side filtering/search instead of adding to it.
+  if (!arrived) {
+    return {
+      routes: configuredRoutes,
+      splitPairs: configuredPairs,
+    };
+  }
+
+  arrivedRouteAugmentations += 1;
+  const alignedConfigured = configuredRoutes.map(route => alignRouteCostBasis(route, opportunity));
+  const routes = Object.freeze([...alignedConfigured, arrived]);
+  const additionalPairs: ApeResidentRoutePair[] = [];
+  for (const route of alignedConfigured) {
+    if (routesArePoolDisjoint(route, arrived)) additionalPairs.push({ left: route, right: arrived });
+  }
+  return {
+    routes,
+    splitPairs: Object.freeze([...configuredPairs, ...additionalPairs]),
+  };
 }
 
 function grossProfitBaseUnits(opportunity: ZeroCapitalOpportunity): bigint {
@@ -221,6 +259,26 @@ function peerSuggestedWorker(candidate: MeasuredCandidate): ApeWorkerKind {
   return gross !== null && Number.isFinite(gross) && gross > 0 ? 'v4_cost_rescue' : 'route_split';
 }
 
+function prune(now = Date.now()): void {
+  for (const [id, assignment] of assignments) if (assignment.expiresAt <= now) assignments.delete(id);
+  for (const [id, hint] of peerHints) if (hint.expiresAt <= now) peerHints.delete(id);
+  while (assignments.size > MAX_ASSIGNMENTS) {
+    const key = assignments.keys().next().value as string | undefined;
+    if (!key) break;
+    assignments.delete(key);
+  }
+  while (peerHints.size > MAX_HINTS) {
+    const key = peerHints.keys().next().value as string | undefined;
+    if (!key) break;
+    peerHints.delete(key);
+  }
+}
+
+/**
+ * Piggybacked peer hints are written only when candidate state is already being
+ * published. There is no peer message, mailbox, queue, polling, acknowledgement,
+ * RPC, database lookup, model call or lock on the owner-worker path.
+ */
 function observePeerHint(candidate: MeasuredCandidate): void {
   if (candidate.topology !== 'ZERO_CAPITAL_ATOMIC' || candidate.expiresAt <= Date.now()) return;
   const hint: ApeResidentPeerHint = {
@@ -246,29 +304,11 @@ function observePeerHint(candidate: MeasuredCandidate): void {
 
 measuredCandidateRegistry.onUpdate(observePeerHint);
 
-function prune(now = Date.now()): void {
-  for (const [id, assignment] of assignments) if (assignment.expiresAt <= now) assignments.delete(id);
-  for (const [id, hint] of peerHints) if (hint.expiresAt <= now) peerHints.delete(id);
-  while (assignments.size > MAX_ASSIGNMENTS) {
-    const key = assignments.keys().next().value as string | undefined;
-    if (!key) break;
-    assignments.delete(key);
-  }
-  while (peerHints.size > MAX_HINTS) {
-    const key = peerHints.keys().next().value as string | undefined;
-    if (!key) break;
-    peerHints.delete(key);
-  }
-}
-
 /**
- * Prepares worker-visible structural state once per fused APE pass. There is no
- * network, database, model, queue or scheduler handoff here. Route alternatives
- * are indexed once and safe split pairs are materialized before the split worker
- * starts, so that worker never performs the old filter-then-slice route search.
- * The already-arrived Stage-1 route is represented as another alternative when it
- * is not already present in configured inventory; this widens visibility without
- * changing Stage 1 or granting execution authority.
+ * Replaces the old Splitter-side route filtering/pair discovery. Stable route
+ * topology is shared across all candidates and all fresh candidates receive an
+ * assignment before workers start. No network/database/model I/O occurs here and
+ * Stage-1 opportunity objects are never mutated.
  */
 export function primeApeResidentWorkbench(input: {
   opportunities: readonly ZeroCapitalOpportunity[];
@@ -280,17 +320,13 @@ export function primeApeResidentWorkbench(input: {
   prune();
 
   for (const opportunity of input.opportunities) {
-    const key = structuralKey(opportunity);
-    const configured = structuralIndex.routesByKey.get(key) ?? [];
-    const hasArrivedRoute = configured.some(route => configuredRouteMatchesOpportunity(route, opportunity));
-    const arrived = hasArrivedRoute ? null : routeFromArrivedOpportunity(opportunity);
-    const routes = [...configured, ...(arrived ? [arrived] : [])].sort(routeOrder);
+    const topology = assignmentTopology(opportunity);
     assignments.set(opportunity.id, {
       opportunityId: opportunity.id,
       generation: generationOf(opportunity),
-      structuralKey: key,
-      routes,
-      splitPairs: allSafeSplitPairs(routes),
+      structuralKey: structuralKey(opportunity),
+      routes: topology.routes,
+      splitPairs: topology.splitPairs,
       primaryWorker: primaryWorkerFor(opportunity),
       fallbackWorkers: fallbackWorkersFor(opportunity),
       peerHint: peerHints.get(opportunity.id) ?? null,
@@ -322,7 +358,9 @@ export function getApeResidentWorkbenchSnapshot() {
     candidatesPrimed,
     peerHintUpdates,
     peerHintAssignmentRefreshes,
+    arrivedRouteAugmentations,
     liveWorkerReadMode: 'single_resident_assignment_lookup' as const,
+    stableTopologyRebuildTrigger: 'configured_route_inventory_identity_change_only' as const,
     configuredRouteFilteringOnSplitWorkerPath: false as const,
     candidatePresliceBeforeSplittability: false as const,
     peerHintTransport: 'piggybacked_resident_candidate_state' as const,
@@ -330,6 +368,7 @@ export function getApeResidentWorkbenchSnapshot() {
     peerHintPolling: false as const,
     peerHintAcknowledgement: false as const,
     externalIo: false as const,
+    persistence: false as const,
     executionAuthority: false as const,
     economicAuthority: false as const,
   };
