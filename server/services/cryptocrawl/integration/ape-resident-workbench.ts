@@ -151,11 +151,13 @@ function sameRouteShape(route: ConfiguredZeroCapitalRoute, opportunity: ZeroCapi
   if (route.legs.length !== opportunity.route.length) return false;
   return route.legs.every((leg, index) => {
     const step = opportunity.route[index];
-    return Boolean(step)
-      && leg.protocol.toLowerCase() === step.protocol.toLowerCase()
-      && leg.tokenIn.toLowerCase() === step.tokenIn.toLowerCase()
-      && leg.tokenOut.toLowerCase() === step.tokenOut.toLowerCase()
-      && (leg.fee === undefined || Math.abs(leg.fee - step.fee) < Number.EPSILON);
+    if (!step
+      || leg.protocol.toLowerCase() !== step.protocol.toLowerCase()
+      || leg.tokenIn.toLowerCase() !== step.tokenIn.toLowerCase()
+      || leg.tokenOut.toLowerCase() !== step.tokenOut.toLowerCase()) return false;
+    if (leg.fee !== undefined && Math.abs(leg.fee - step.fee) >= Number.EPSILON) return false;
+    if (leg.feeTier !== undefined && feeTierFromDecimal(step.protocol, step.fee) !== leg.feeTier) return false;
+    return true;
   });
 }
 
