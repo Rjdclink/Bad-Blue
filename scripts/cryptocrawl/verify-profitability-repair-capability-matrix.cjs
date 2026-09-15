@@ -26,6 +26,7 @@ const apeOrchestration = read('server/services/cryptocrawl/integration/ape-rescu
 const apeRescue = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v4.ts');
 const apeToolbox = read('server/services/cryptocrawl/integration/ape-profitability-toolbox.ts');
 const residentApe = read('server/services/cryptocrawl/integration/zero-capital-atomic-bps-engine.ts');
+const apeWorkbench = read('server/services/cryptocrawl/integration/ape-resident-workbench.ts');
 const apeRouteSplit = read('server/services/cryptocrawl/integration/zero-capital-route-split-rescue.ts');
 const atomicStack = read('server/services/cryptocrawl/integration/zero-capital-atomic-stack-wiring.ts');
 const compositeBuilder = read('server/services/cryptocrawl/execution/adapters/composite-flashloan-receiver-builder.ts');
@@ -75,7 +76,7 @@ const matrix = [
   ['APE removes whole-pass barrier with candidate-local anytime feedback', /onImprovement: \(root, before, candidate\)/.test(apeGateway) && /candidateLocalAnytimeRefinement: true/.test(apeGateway)],
   ['APE shares provider races per pass and asset', /const providerRaces = new Map/.test(apeRescue) && /one_per_pass_chain_asset/.test(apeRescue)],
   ['APE starts route quote and provider probe in parallel', /initialQuotePromise/.test(apeRescue) && /providerMeasurementsPromise/.test(apeRescue) && /Promise\.all\(\[initialQuotePromise, providerMeasurementsPromise\]\)/.test(apeRescue)],
-  ['APE evaluates independent candidates concurrently', /mapConcurrent\(opportunities, concurrency, evaluate\)/.test(apeRescue) && /candidateRescueSerial: false/.test(apeRescue)],
+  ['APE evaluates independent candidates concurrently', /mapConcurrentUntilStrictPositive\(/.test(apeRescue) && /const output = await mapConcurrentUntilStrictPositive\(/.test(apeRescue) && /candidateRescueSerial: false/.test(apeRescue)],
   ['APE uses bounded hedged quote waves', /hedgedWaveWidth/.test(apeRescue) && /Promise\.race\(\[\.\.\.active\.values\(\)\]\)/.test(apeRescue) && /strictPositiveEarlyWins/.test(apeRescue)],
   ['APE adapts quote deadlines and candidate concurrency', /adaptiveQuoteTimeoutMs/.test(apeRescue) && /updateConcurrency/.test(apeRescue) && /adaptiveRouteP95Timeouts: true/.test(apeRescue) && /adaptiveConcurrency: true/.test(apeRescue)],
   ['APE resizes provider-limited notionals instead of immediate rejection', /executableFundingCeiling/.test(apeRescue) && /buildApeTargetAmounts/.test(apeRescue) && /resizeInsteadOfReject: true/.test(apeRescue)],
@@ -89,12 +90,12 @@ const matrix = [
 
   ['APE invokes route split before final return', /await runZeroCapitalRouteSplitRescue/.test(apeGateway) && /routeSplitTacticScheduledAfterApeDecision: false/.test(apeGateway) && /toolboxFinalRescueBeforeReturn: true/.test(apeGateway)],
   ['APE invokes shared-principal stack before final return', /await runZeroCapitalAtomicStackTactic/.test(apeGateway) && /compositeTacticScheduledAfterApeDecision: false/.test(apeGateway)],
-  ['APE route split requires pool-disjoint route pairs', /routesArePoolDisjoint/.test(apeRouteSplit) && /pairConstraint: 'pool_disjoint'/.test(apeRouteSplit)],
+  ['APE route split requires pool-disjoint route pairs', /function routesArePoolDisjoint\(/.test(apeWorkbench) && /assignment\.splitPairs/.test(apeRouteSplit) && /all_resident_alternatives_visible_pool_disjoint_only_for_split_execution/.test(apeRouteSplit)],
   ['APE route split quotes both partial paths concurrently', /Promise\.all\(\[/.test(apeRouteSplit) && /partialQuotesRunInParallel: true/.test(apeRouteSplit)],
   ['APE route split uses bounded allocation probes', /leftPercent: 50n/.test(apeRouteSplit) && /leftPercent: 65n/.test(apeRouteSplit) && /leftPercent: 35n/.test(apeRouteSplit)],
   ['APE split children remain non-executable until exact composite validation', /executableCapability: false/.test(apeRouteSplit) && /required:composite_route_split_exact_simulation/.test(apeRouteSplit)],
   ['APE split failures retain the parent opportunity', /parentOpportunityKilledOnSplitFailure: false/.test(apeRouteSplit) && /parent_opportunity_retained:true/.test(apeRouteSplit)],
-  ['APE split promotion delegates to existing Atomic Stack tactic', /runZeroCapitalAtomicStackTactic/.test(apeRouteSplit) && /existingCompositeReceiverReused: true/.test(apeRouteSplit)],
+  ['APE split promotion delegates to existing Atomic Stack tactic', /runZeroCapitalAtomicStackTactic/.test(apeRouteSplit) && /exactCompositeEthCallRequiredBeforePromotion: true/.test(apeRouteSplit) && /receiverKind: 'balancer_composite_v2'/.test(atomicStack)],
   ['Atomic Stack exact-simulates and gas-estimates composite payloads', /provider\.call\(probeRequest\)/.test(atomicStack) && /provider\.estimateGas\(probeRequest\)/.test(atomicStack)],
   ['Composite builder preserves closed-cycle boundaries', /cycleEndStepIndexes/.test(compositeBuilder) && /Composite final cycle must end at the final swap step/.test(compositeBuilder)],
   ['Canonical executor remains sole composite execution authority', /zeroCapitalCompositeSelectionRegistry\.get\(opportunity\.id\)/.test(canonicalExecutor) && /executeCompositePreparedWithinCanonicalExecutor/.test(canonicalExecutor)],
