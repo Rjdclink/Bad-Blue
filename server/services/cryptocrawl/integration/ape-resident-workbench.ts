@@ -44,10 +44,13 @@ let structuralIndexBuilds = 0;
 let assignmentPrimes = 0;
 let dynamicArrivedRoutesAdded = 0;
 let peerHintsPublished = 0;
+let residentAssignmentEvictions = 0;
+let residentHintEvictions = 0;
 const MAX_RESIDENT_ENTRIES = 4096;
 
+/** Candidate ownership generation is stable. Evidence generations expire independently. */
 function generationOf(opportunity: ZeroCapitalOpportunity): string {
-  return `${opportunity.id}:${opportunity.timestamp}:${opportunity.expiresAt}`;
+  return opportunity.id;
 }
 
 function structuralKey(input: {
@@ -170,25 +173,34 @@ function primaryWorker(opportunity: ZeroCapitalOpportunity): ApeWorkerKind {
   return grossProfit(opportunity) > 0n ? 'v4_cost_rescue' : 'route_split';
 }
 
+/**
+ * Every finite negative candidate keeps the complete compatible rescue toolbox.
+ * Ordering is only a latency optimization; negative gross/net is never rejection.
+ */
 function fallbackWorkers(opportunity: ZeroCapitalOpportunity): readonly ApeWorkerKind[] {
   if (opportunity.expectedProfit > 0n) return [];
   return grossProfit(opportunity) > 0n
     ? ['shared_principal_stack', 'route_split']
-    : ['route_split'];
+    : ['v4_cost_rescue', 'shared_principal_stack', 'route_split'];
 }
 
-function prune(now = Date.now()): void {
-  for (const [id, assignment] of assignments) if (assignment.expiresAt <= now) assignments.delete(id);
-  for (const [id, hint] of peerHints) if (hint.expiresAt <= now) peerHints.delete(id);
+/**
+ * Resident maps are caches, not ownership authorities. Size eviction may discard
+ * reconstructible cache state only; workers re-prime immediately from the owned
+ * candidate and configured topology. Evidence expiry never deletes ownership.
+ */
+function prune(): void {
   while (assignments.size > MAX_RESIDENT_ENTRIES) {
     const key = assignments.keys().next().value as string | undefined;
     if (!key) break;
     assignments.delete(key);
+    residentAssignmentEvictions += 1;
   }
   while (peerHints.size > MAX_RESIDENT_ENTRIES) {
     const key = peerHints.keys().next().value as string | undefined;
     if (!key) break;
     peerHints.delete(key);
+    residentHintEvictions += 1;
   }
 }
 
@@ -231,26 +243,27 @@ export function primeApeResidentWorkbench(input: {
       expiresAt: opportunity.expiresAt,
     });
   }
+  prune();
 }
 
 export function getApeResidentWorkAssignment(
   opportunity: ZeroCapitalOpportunity,
-  now = Date.now(),
+  _now = Date.now(),
 ): ApeResidentWorkAssignment | null {
   const assignment = assignments.get(opportunity.id);
-  if (!assignment || assignment.expiresAt <= now || assignment.generation !== generationOf(opportunity)) return null;
+  if (!assignment || assignment.generation !== generationOf(opportunity)) return null;
   return assignment;
 }
 
 /**
  * Piggyback a hint only when a worker is already publishing a useful improvement.
- * It creates no independent message, event, acknowledgement, poll, lock or I/O.
+ * Evidence expiry is metadata only; it cannot erase candidate ownership or the
+ * scheduling hint needed to refresh/re-route that candidate on its next turn.
  */
 export function publishApeResidentPeerHint(
   opportunity: ZeroCapitalOpportunity,
   preferredRouteId: string | null = null,
 ): void {
-  if (opportunity.expiresAt <= Date.now()) return;
   const hint: ApeResidentPeerHint = {
     opportunityId: opportunity.id,
     suggestedWorker: primaryWorker(opportunity),
@@ -265,6 +278,7 @@ export function publishApeResidentPeerHint(
   if (assignment && assignment.generation === generationOf(opportunity)) {
     assignments.set(opportunity.id, { ...assignment, peerHint: hint });
   }
+  prune();
 }
 
 export function getApeResidentWorkbenchSnapshot() {
@@ -277,6 +291,12 @@ export function getApeResidentWorkbenchSnapshot() {
     assignmentPrimes,
     dynamicArrivedRoutesAdded,
     peerHintsPublished,
+    residentAssignmentEvictions,
+    residentHintEvictions,
+    candidateOwnershipExpires: false as const,
+    evidenceExpiryMetadataOnly: true as const,
+    negativeBpsRejected: false as const,
+    cacheEvictionKillsCandidate: false as const,
     candidatePresliceBeforeSplittability: false as const,
     configuredRouteFilteringOnSplitWorkerPath: false as const,
     liveWorkerReadMode: 'single_resident_assignment_lookup' as const,
