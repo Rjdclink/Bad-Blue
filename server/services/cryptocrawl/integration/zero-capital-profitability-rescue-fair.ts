@@ -152,9 +152,6 @@ export async function runFairZeroCapitalProfitabilityRescue(
 
   if (activeRescueCandidates.length > 0) {
     try {
-      // V4 is no longer restricted to positive-gross candidates. Structural
-      // negatives remain route-first conceptually, but V4's route/size/provider
-      // alternatives are available to every finite negative candidate.
       const passInput = prioritizeApeRescueCandidates({
         roots: residentFastPath,
         current: transformed.filter(stillNeedsMeasuredRescue),
@@ -229,8 +226,6 @@ export async function runFairZeroCapitalProfitabilityRescue(
 
   const compositeStartedAt = Date.now();
   const compositeBudgetMs = compositeToolboxBudgetMs();
-  // One wave has a bounded latency budget; candidate ownership does not. Evidence
-  // expiry can trigger refresh inside a worker but cannot shorten this work window.
   const compositeHardDeadlineAt = Math.min(hardDeadlineAt, compositeStartedAt + compositeBudgetMs);
   const canStartCompositeWork = () => Date.now() < compositeHardDeadlineAt;
 
@@ -240,14 +235,9 @@ export async function runFairZeroCapitalProfitabilityRescue(
   let stackError: string | null = null;
   let splitInvoked = false;
   let stackInvoked = false;
-  let splitFirst = true;
   let firstStrictPositiveTool: 'route_split' | 'shared_principal_stack' | null = null;
 
   if (unresolved.length > 0) {
-    const structuralCount = unresolved.filter(apeStructuralFirstCandidate).length;
-    const costPositiveCount = unresolved.length - structuralCount;
-    splitFirst = structuralCount > 0 && structuralCount >= costPositiveCount;
-
     const currentUnresolved = () => prioritizeApeRescueCandidates({
       roots: residentFastPath,
       current: transformed.filter(stillNeedsMeasuredRescue),
@@ -255,7 +245,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
     });
 
     const runSplit = async () => {
-      if (!canStartCompositeWork() || firstStrictPositiveTool !== null) return;
+      if (!canStartCompositeWork()) return;
       const splitCandidates = currentUnresolved();
       if (splitCandidates.length === 0) return;
       primeApeResidentWorkbench({ opportunities: splitCandidates, configuredRoutes: input.configuredRoutes });
@@ -290,16 +280,19 @@ export async function runFairZeroCapitalProfitabilityRescue(
         replaceIfBetter(root, current, improved, false);
       }
       if (
-        splitResult.promoted > 0
-        || (splitResult.improvedOpportunities ?? []).some(opportunity => opportunity.expectedProfit > 0n)
+        firstStrictPositiveTool === null
+        && (
+          splitResult.promoted > 0
+          || (splitResult.improvedOpportunities ?? []).some(opportunity => opportunity.expectedProfit > 0n)
+        )
       ) firstStrictPositiveTool = 'route_split';
     };
 
     const runStack = async () => {
-      if (!canStartCompositeWork() || firstStrictPositiveTool !== null) return;
-      // Shared-principal grouping remains restricted to mathematically compatible
-      // positive-gross cycles; that is a tactic constraint, not candidate rejection.
-      const stackCandidates = currentUnresolved().filter(apeV4FirstCandidate);
+      if (!canStartCompositeWork()) return;
+      // All negative candidates may participate. The stack tactic itself proves
+      // composability and requires strictly positive aggregate measured economics.
+      const stackCandidates = currentUnresolved();
       if (stackCandidates.length < 2) return;
       stackInvoked = true;
       stackResult = await runZeroCapitalAtomicStackTactic({
@@ -315,20 +308,19 @@ export async function runFairZeroCapitalProfitabilityRescue(
           error: stackError,
           singleRouteResultAffected: false,
           candidateKilled: false,
+          negativeBpsRejected: false,
           executionAuthority: false,
         });
         return emptyStackResult();
       });
-      if (stackResult.promoted > 0) firstStrictPositiveTool = 'shared_principal_stack';
+      if (firstStrictPositiveTool === null && stackResult.promoted > 0) {
+        firstStrictPositiveTool = 'shared_principal_stack';
+      }
     };
 
-    if (splitFirst) {
-      await runSplit();
-      await runStack();
-    } else {
-      await runStack();
-      await runSplit();
-    }
+    // Independent rescue lanes start together. Neither can head-of-line block the
+    // other, and a failure in one lane remains local to that tactic.
+    await Promise.all([runSplit(), runStack()]);
   }
 
   const compositeElapsedMs = Date.now() - compositeStartedAt;
@@ -414,9 +406,11 @@ export async function runFairZeroCapitalProfitabilityRescue(
     toolboxCompositeBudgetMs: compositeBudgetMs,
     toolboxCompositeElapsedMs: compositeElapsedMs,
     toolboxCompositeHardDeadlineAt: compositeHardDeadlineAt,
-    toolboxCompositeOrder: splitFirst ? 'route_split_then_shared_principal_stack' : 'shared_principal_stack_then_route_split',
+    toolboxCompositeOrder: 'route_split_and_shared_principal_stack_parallel',
+    parallelCompositeRescueLanes: true,
+    sharedPrincipalNegativeCandidatesAdmittedWhenAggregateEconomicsCanProveCompatibility: true,
     firstStrictPositiveTool,
-    skipRemainingStatefulToolsAfterStrictPositive: true,
+    skipRemainingStatefulToolsAfterStrictPositive: false,
     routeSplitInvoked: splitInvoked,
     routeSplitAttemptedCandidates: splitResult.attemptedCandidates,
     routeSplitValidCandidates: splitResult.validCandidates ?? 0,
