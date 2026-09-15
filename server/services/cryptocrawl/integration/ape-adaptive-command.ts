@@ -38,6 +38,8 @@ type TransitionAggregate = {
 
 type CandidateState = {
   generation: string;
+  sourceTimestamp: number;
+  sourceExpiresAt: number;
   rank: ApeMeritRank;
   protectedRank: ApeMeritRank;
   attempts: number;
@@ -88,6 +90,8 @@ export function getApeCandidateGeneration(root: ZeroCapitalOpportunity): string 
 function freshCandidateState(root: ZeroCapitalOpportunity): CandidateState {
   return {
     generation: getApeCandidateGeneration(root),
+    sourceTimestamp: root.timestamp,
+    sourceExpiresAt: root.expiresAt,
     rank: 0,
     protectedRank: 0,
     attempts: 0,
@@ -104,16 +108,29 @@ function freshCandidateState(root: ZeroCapitalOpportunity): CandidateState {
   };
 }
 
+function incomingGenerationIsNewer(root: ZeroCapitalOpportunity, current: CandidateState): boolean {
+  if (root.timestamp !== current.sourceTimestamp) return root.timestamp > current.sourceTimestamp;
+  if (root.expiresAt !== current.sourceExpiresAt) return root.expiresAt > current.sourceExpiresAt;
+  return false;
+}
+
 function stateFor(root: ZeroCapitalOpportunity): CandidateState {
   const generation = getApeCandidateGeneration(root);
   const current = candidateStates.get(root.id);
-  if (!current || current.generation !== generation) {
+  if (!current) {
     const next = freshCandidateState(root);
     candidateStates.set(root.id, next);
     pruneMap(candidateStates);
     return next;
   }
-  return current;
+  if (current.generation === generation) return current;
+
+  // A late async result must never roll the authority back to an older generation.
+  if (!incomingGenerationIsNewer(root, current)) return current;
+  const next = freshCandidateState(root);
+  candidateStates.set(root.id, next);
+  pruneMap(candidateStates);
+  return next;
 }
 
 /** O(1) stale-generation guard for asynchronous worker results. */
@@ -121,7 +138,9 @@ export function isCurrentApeCandidateGeneration(
   root: ZeroCapitalOpportunity,
   generation: string,
 ): boolean {
-  return stateFor(root).generation === generation;
+  const current = candidateStates.get(root.id);
+  if (!current) return generation === getApeCandidateGeneration(root);
+  return current.generation === generation;
 }
 
 function tacticStateFor(state: CandidateState, tactic: ApeTactic): CandidateTacticState {
@@ -221,7 +240,9 @@ export function recordApeCommandOutcome(input: {
   tactic: ApeTactic;
   elapsedMs: number;
 }): void {
+  const expectedGeneration = getApeCandidateGeneration(input.root);
   const state = stateFor(input.root);
+  if (state.generation !== expectedGeneration) return;
   const local = tacticStateFor(state, input.tactic);
   const aggregate = aggregateFor(input.tactic);
   const elapsedMs = Math.max(0, Number.isFinite(input.elapsedMs) ? input.elapsedMs : 0);
@@ -288,7 +309,9 @@ export function recordApeCommandOutcome(input: {
  * creates a new generation and resurrects the candidate.
  */
 export function candidateRetiredForGeneration(root: ZeroCapitalOpportunity): boolean {
+  const expectedGeneration = getApeCandidateGeneration(root);
   const state = stateFor(root);
+  if (state.generation !== expectedGeneration) return true;
   if (state.retired) return true;
   const maxStalls = Math.trunc(bounded(process.env.ZERO_CAPITAL_APE_RETIRE_AFTER_STALLS, 4, 3, 8));
   const minDistinctTactics = Math.trunc(bounded(process.env.ZERO_CAPITAL_APE_RETIRE_MIN_TACTICS, 3, 2, 3));
@@ -326,6 +349,17 @@ export function buildApeCounterfactualPlan(input: {
   compatibleGroupSize: number;
 }): ApeCounterfactualPlan {
   const state = stateFor(input.root);
+  if (state.generation !== getApeCandidateGeneration(input.root)) {
+    return {
+      candidateId: input.root.id,
+      sequence: ['single_route_v4', 'route_split'],
+      planningDepth: 2,
+      brainCount: 5,
+      preferredFirstTactic: 'single_route_v4',
+      exactEconomicsAuthority: false,
+      executionAuthority: false,
+    };
+  }
   if (state.cachedPlan) return state.cachedPlan;
 
   const compatible: ApeTactic[] = ['route_split', 'single_route_v4'];
@@ -431,6 +465,8 @@ export function getApeAdaptiveCommandSnapshot() {
     stickyWinningTacticAffinity: true as const,
     cachedCounterfactualPlanning: true as const,
     generationLocalRetirement: true as const,
+    monotonicGenerationAuthority: true as const,
+    staleGenerationCannotRollBackAuthority: true as const,
     retirementAuthority: 'candidate_local_measured_tactic_exhaustion_only' as const,
     strictPositiveStopsOptimization: false as const,
     synchronousCandidateStateAuthority: true as const,
