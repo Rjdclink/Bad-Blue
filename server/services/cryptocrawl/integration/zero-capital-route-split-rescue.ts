@@ -41,6 +41,21 @@ type SplitRatio = {
   rightPercent: bigint;
 };
 
+type CandidateSplitPlan = {
+  parent: ZeroCapitalOpportunity;
+  parentCandidate: MeasuredCandidate;
+  pairs: RoutePair[];
+};
+
+type SplitEligibilityDiagnostics = {
+  invalidCandidate: number;
+  registryParentMissing: number;
+  wrongTopology: number;
+  noCompatibleRoutes: number;
+  noIndependentRoutePair: number;
+  splittableCandidates: number;
+};
+
 const FALLBACK_SPLIT_RATIOS: readonly SplitRatio[] = [
   { leftPercent: 50n, rightPercent: 50n },
   { leftPercent: 65n, rightPercent: 35n },
@@ -54,10 +69,6 @@ function bounded(raw: unknown, fallback: number, min: number, max: number): numb
 
 function maxRoutePairsPerCandidate(): number {
   return Math.trunc(bounded(process.env.ZERO_CAPITAL_APE_SPLIT_ROUTE_PAIRS, 3, 1, 8));
-}
-
-function maximumSplitCandidates(): number {
-  return Math.trunc(bounded(process.env.ZERO_CAPITAL_APE_SPLIT_CANDIDATES, 3, 1, 8));
 }
 
 function routeFamily(route: ConfiguredZeroCapitalRoute): string {
@@ -79,15 +90,38 @@ function alignRouteCostBasisToStageOne(
   };
 }
 
-function compatibleRoutes(
+function routeCompatibilityKey(input: {
+  chain: string;
+  inputAssetSymbol: string;
+  inputTokenDecimals: number;
+  inputToken: string;
+}): string {
+  return [
+    input.chain,
+    input.inputAssetSymbol,
+    input.inputTokenDecimals,
+    input.inputToken.toLowerCase(),
+  ].join('|');
+}
+
+function buildCompatibleRouteIndex(
   routes: readonly ConfiguredZeroCapitalRoute[],
+): Map<string, readonly ConfiguredZeroCapitalRoute[]> {
+  const index = new Map<string, ConfiguredZeroCapitalRoute[]>();
+  for (const route of routes) {
+    const key = routeCompatibilityKey(route);
+    const existing = index.get(key);
+    if (existing) existing.push(route);
+    else index.set(key, [route]);
+  }
+  return index;
+}
+
+function compatibleRoutes(
+  routeIndex: ReadonlyMap<string, readonly ConfiguredZeroCapitalRoute[]>,
   opportunity: ZeroCapitalOpportunity,
 ): ConfiguredZeroCapitalRoute[] {
-  return routes
-    .filter(route => route.chain === opportunity.chain)
-    .filter(route => route.inputAssetSymbol === opportunity.inputAssetSymbol)
-    .filter(route => route.inputTokenDecimals === opportunity.inputTokenDecimals)
-    .filter(route => route.inputToken.toLowerCase() === opportunity.inputToken.toLowerCase())
+  return (routeIndex.get(routeCompatibilityKey(opportunity)) ?? [])
     .map(route => alignRouteCostBasisToStageOne(route, opportunity));
 }
 
@@ -121,26 +155,35 @@ function residentRouteScore(route: ConfiguredZeroCapitalRoute): number {
 function routePairs(routes: readonly ConfiguredZeroCapitalRoute[]): RoutePair[] {
   const maximum = maxRoutePairsPerCandidate();
   const pairs: RoutePair[] = [];
-  const usedFamilies = new Set<string>();
+  const residentScores = new Map<string, number>();
+  for (const route of routes) residentScores.set(route.id, residentRouteScore(route));
+
   for (let leftIndex = 0; leftIndex < routes.length; leftIndex += 1) {
     for (let rightIndex = leftIndex + 1; rightIndex < routes.length; rightIndex += 1) {
       const left = routes[leftIndex];
       const right = routes[rightIndex];
       if (left.id === right.id || !routesArePoolDisjoint(left, right)) continue;
-      const familyPair = [routeFamily(left), routeFamily(right)].sort().join('|');
-      if (usedFamilies.has(familyPair)) continue;
-      usedFamilies.add(familyPair);
+      // Do not collapse same-protocol/same-token-path variants. Distinct pools and
+      // fee tiers are exactly the structural alternatives the splitter exists to
+      // compare. Pool identity, not route-family identity, owns split independence.
       pairs.push({ left, right });
     }
   }
-  // Reuse upstream measured route quality to attempt the most promising disjoint
-  // pair first. No quote, RPC call, registry lookup or new measurement is added.
+
   pairs.sort((a, b) => {
-    const scoreA = residentRouteScore(a.left) + residentRouteScore(a.right);
-    const scoreB = residentRouteScore(b.left) + residentRouteScore(b.right);
+    const scoreA = (residentScores.get(a.left.id) ?? Number.NEGATIVE_INFINITY)
+      + (residentScores.get(a.right.id) ?? Number.NEGATIVE_INFINITY);
+    const scoreB = (residentScores.get(b.left.id) ?? Number.NEGATIVE_INFINITY)
+      + (residentScores.get(b.right.id) ?? Number.NEGATIVE_INFINITY);
     if (scoreA !== scoreB) return scoreB - scoreA;
+    const familyOrder = `${routeFamily(a.left)}:${routeFamily(a.right)}`
+      .localeCompare(`${routeFamily(b.left)}:${routeFamily(b.right)}`);
+    if (familyOrder !== 0) return familyOrder;
     return `${a.left.id}:${a.right.id}`.localeCompare(`${b.left.id}:${b.right.id}`);
   });
+
+  // The cap limits expensive exact measurement only after splittability has been
+  // established. It can no longer cause a candidate itself to disappear.
   return pairs.slice(0, maximum);
 }
 
@@ -150,8 +193,6 @@ function splitRatiosForPair(pair: RoutePair): SplitRatio[] {
   const ratios: SplitRatio[] = [];
 
   if (left && right && Number.isFinite(left.grossProfitBps) && Number.isFinite(right.grossProfitBps)) {
-    // Positive resident gross-edge density is used only as a starting allocation
-    // hint. Exact split quotes and composite simulation remain authoritative.
     const leftScore = Math.max(0, left.grossProfitBps);
     const rightScore = Math.max(0, right.grossProfitBps);
     const total = leftScore + rightScore;
@@ -338,19 +379,62 @@ export async function runZeroCapitalRouteSplitRescue(
   };
   if (input.chain === 'europa' || input.opportunities.length === 0) return result;
 
-  const candidates = input.opportunities
-    .filter(opportunity => opportunity.chain === input.chain)
-    .filter(opportunity => opportunity.expectedProfit <= 0n)
-    .filter(opportunity => opportunity.expiresAt > Date.now())
-    .filter(opportunity => opportunity.flashLoanAmount > 1n)
-    .filter(opportunity => finitePositive(opportunity.inputAssetUsdPrice) !== null)
-    .slice(0, maximumSplitCandidates());
+  const diagnostics: SplitEligibilityDiagnostics = {
+    invalidCandidate: 0,
+    registryParentMissing: 0,
+    wrongTopology: 0,
+    noCompatibleRoutes: 0,
+    noIndependentRoutePair: 0,
+    splittableCandidates: 0,
+  };
+  const routeIndex = buildCompatibleRouteIndex(input.configuredRoutes);
+  const plans: CandidateSplitPlan[] = [];
+  const now = Date.now();
 
-  for (const parent of candidates) {
+  // Determine splittability for every valid candidate before any expensive split
+  // work is scheduled. No first-N candidate gate exists here: a later candidate can
+  // never be hidden merely because earlier candidates are unsplittable.
+  for (const parent of input.opportunities) {
+    if (
+      parent.chain !== input.chain
+      || parent.expectedProfit > 0n
+      || parent.expiresAt <= now
+      || parent.flashLoanAmount <= 1n
+      || finitePositive(parent.inputAssetUsdPrice) === null
+    ) {
+      diagnostics.invalidCandidate += 1;
+      continue;
+    }
+
     const parentCandidate = measuredCandidateRegistry.get(parent.id);
-    if (!parentCandidate || parentCandidate.topology !== 'ZERO_CAPITAL_ATOMIC') continue;
-    const pairs = routePairs(compatibleRoutes(input.configuredRoutes, parent));
-    if (pairs.length === 0) continue;
+    if (!parentCandidate) {
+      diagnostics.registryParentMissing += 1;
+      continue;
+    }
+    if (parentCandidate.topology !== 'ZERO_CAPITAL_ATOMIC') {
+      diagnostics.wrongTopology += 1;
+      continue;
+    }
+
+    const compatible = compatibleRoutes(routeIndex, parent);
+    if (compatible.length < 2) {
+      diagnostics.noCompatibleRoutes += 1;
+      continue;
+    }
+    const pairs = routePairs(compatible);
+    if (pairs.length === 0) {
+      diagnostics.noIndependentRoutePair += 1;
+      continue;
+    }
+
+    diagnostics.splittableCandidates += 1;
+    plans.push({ parent, parentCandidate, pairs });
+  }
+
+  for (const plan of plans) {
+    const { parent, parentCandidate, pairs } = plan;
+    // Every candidate proven splittable above receives work. This is deliberately
+    // candidate-complete even when another candidate has already failed or won.
     result.attemptedCandidates += 1;
 
     let promotedParentSplit = false;
@@ -420,10 +504,16 @@ export async function runZeroCapitalRouteSplitRescue(
     component: 'ZeroCapitalRouteSplitRescue',
     chain: input.chain,
     ...result,
+    ...diagnostics,
+    candidatePrefilterBeforeSplittability: false,
+    everySplittableCandidateAttempted: result.attemptedCandidates === diagnostics.splittableCandidates,
+    silentCandidateDropAllowed: false,
+    routeFamilyDeduplication: false,
+    compatibilityIndexBuiltOncePerPass: true,
     splitRatioPolicy: 'resident_gross_bps_weighted_first_then_existing_fallbacks_same_maximum_count',
     residentRoutePairOrdering: true,
     extraRpcForSplitIntelligence: false,
-    pairConstraint: 'pool_disjoint',
+    pairConstraint: 'pool_disjoint_distinct_route_pairs',
     partialQuotesRunInParallel: true,
     splitChildrenStandaloneExecutable: false,
     exactCompositeEthCallRequiredBeforePromotion: true,
