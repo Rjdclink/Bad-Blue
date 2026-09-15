@@ -24,7 +24,6 @@ type CachedToolboxPlan = {
   generation: string;
   expiresAt: number;
   plan: ApeProfitabilityToolboxPlan | null;
-  ready: boolean;
 };
 
 const residentToolboxPlans = new Map<string, CachedToolboxPlan>();
@@ -92,35 +91,11 @@ function computeToolboxPlan(opportunity: ZeroCapitalOpportunity): ApeProfitabili
   }
 }
 
-function scheduleToolboxPrewarm(opportunity: ZeroCapitalOpportunity, generation: string): void {
-  const key = `${opportunity.id}:${generation}`;
-  if (residentToolboxBuilds.has(key)) return;
-  residentToolboxBuilds.add(key);
-  const task = setImmediate(() => {
-    try {
-      if (Date.now() >= opportunity.expiresAt) return;
-      const currentGeneration = toolboxGeneration(opportunity);
-      if (currentGeneration !== generation) return;
-      residentToolboxPlans.set(opportunity.id, {
-        generation,
-        expiresAt: opportunity.expiresAt,
-        plan: computeToolboxPlan(opportunity),
-        ready: true,
-      });
-      pruneResidentToolboxPlans();
-    } finally {
-      residentToolboxBuilds.delete(key);
-    }
-  });
-  task.unref?.();
-}
-
 /**
- * Returns only already-resident advisory intelligence on the candidate hot path.
- * A missing plan is prewarmed after the current decision turn and never blocks
- * exact route/provider/size rescue. The next pass can reuse it at effectively
- * constant lookup cost. Advisory failure remains local and cannot change canonical
- * economics, candidate ownership or execution eligibility.
+ * Hot-path lookup is deliberately read-only: no setImmediate, model, registry
+ * planning pass or advisory computation is scheduled from the worker's decision
+ * turn. Missing intelligence simply means neutral exact rescue ordering for this
+ * pass; a post-decision prewarm may prepare it for the next opportunity.
  */
 export function buildApeProfitabilityToolboxPlan(
   opportunity: ZeroCapitalOpportunity,
@@ -128,19 +103,43 @@ export function buildApeProfitabilityToolboxPlan(
   const now = Date.now();
   const generation = toolboxGeneration(opportunity);
   const cached = residentToolboxPlans.get(opportunity.id);
-  if (cached && cached.generation === generation && cached.expiresAt > now && cached.ready) {
-    return cached.plan;
-  }
+  return cached && cached.generation === generation && cached.expiresAt > now
+    ? cached.plan
+    : null;
+}
 
-  residentToolboxPlans.set(opportunity.id, {
-    generation,
-    expiresAt: Math.max(now + 1, opportunity.expiresAt),
-    plan: null,
-    ready: false,
+/**
+ * Prepare candidate-specific advisory intelligence only after the live APE
+ * decision has yielded. This is generation-fenced and bounded; it never becomes
+ * a prerequisite for exact rescue or execution eligibility.
+ */
+export function prewarmApeProfitabilityToolboxPlans(
+  opportunities: readonly ZeroCapitalOpportunity[],
+): void {
+  if (opportunities.length === 0) return;
+  const task = setImmediate(() => {
+    const now = Date.now();
+    for (const opportunity of opportunities) {
+      if (opportunity.expiresAt <= now) continue;
+      const generation = toolboxGeneration(opportunity);
+      const cached = residentToolboxPlans.get(opportunity.id);
+      if (cached && cached.generation === generation && cached.expiresAt > now) continue;
+      const buildKey = `${opportunity.id}:${generation}`;
+      if (residentToolboxBuilds.has(buildKey)) continue;
+      residentToolboxBuilds.add(buildKey);
+      try {
+        residentToolboxPlans.set(opportunity.id, {
+          generation,
+          expiresAt: opportunity.expiresAt,
+          plan: computeToolboxPlan(opportunity),
+        });
+      } finally {
+        residentToolboxBuilds.delete(buildKey);
+      }
+    }
+    pruneResidentToolboxPlans(now);
   });
-  pruneResidentToolboxPlans(now);
-  scheduleToolboxPrewarm(opportunity, generation);
-  return null;
+  task.unref?.();
 }
 
 /**
