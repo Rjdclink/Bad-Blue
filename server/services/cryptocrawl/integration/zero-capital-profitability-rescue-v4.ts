@@ -568,6 +568,7 @@ export async function runZeroCapitalProfitabilityRescueV4(
   let toolboxSizeFirstSearches = 0;
   let residentInitialQuoteHits = 0;
   let residentInitialQuoteMisses = 0;
+  let residentFreshnessInherited = 0;
   let candidateBatchEarlyStops = 0;
   let passWinnerFound = false;
 
@@ -617,6 +618,20 @@ export async function runZeroCapitalProfitabilityRescueV4(
     return pending;
   };
 
+  const deriveFromQuote = (
+    opportunity: ZeroCapitalOpportunity,
+    quote: QuotedZeroCapitalRoute,
+    inheritCurrentFreshness: boolean,
+  ): ZeroCapitalOpportunity => {
+    const refined = fromQuotedRoute(quote, blockTimestamp(opportunity));
+    if (!inheritCurrentFreshness) return refined;
+    refined.timestamp = opportunity.timestamp;
+    refined.expiresAt = Math.min(opportunity.expiresAt, refined.expiresAt);
+    if (opportunity.inputAssetUsdPrice !== undefined) refined.inputAssetUsdPrice = opportunity.inputAssetUsdPrice;
+    residentFreshnessInherited += 1;
+    return refined;
+  };
+
   const refineOnce = async (opportunity: ZeroCapitalOpportunity): Promise<ZeroCapitalOpportunity> => {
     if (passWinnerFound || !recoverableByAtomicSurplus(opportunity) || deadlineReached(deadlineAt)) return opportunity;
     const routes = compatibleRoutesForOpportunity(configuredRoutes, opportunity);
@@ -653,14 +668,23 @@ export async function runZeroCapitalProfitabilityRescueV4(
     if (intendedAmount > fundingCeiling) providerCapacityResizes += 1;
 
     let best: QuotedZeroCapitalRoute | null = null;
+    let bestInheritsCurrentFreshness = false;
     let initialRouteFailed = initialResult.quote === null;
     if (initialResult.timedOut) routeQuoteTimeouts += 1;
     else if (initialResult.failed) routeQuoteFailures += 1;
 
-    const consider = (quote: QuotedZeroCapitalRoute | null, plan: FundingPlan | null): boolean => {
+    const consider = (
+      quote: QuotedZeroCapitalRoute | null,
+      plan: FundingPlan | null,
+      inheritsCurrentFreshness = false,
+    ): boolean => {
       if (!quote || !plan) return false;
       const adjusted = adjustForFundingPlan(quote, plan);
-      best = quoteBetter(best, adjusted);
+      const selected = quoteBetter(best, adjusted);
+      if (selected === adjusted) {
+        best = adjusted;
+        bestInheritsCurrentFreshness = inheritsCurrentFreshness;
+      }
       if (plan.kind === 'single') singleProviderPlansUsed += 1;
       else dualProviderPlansUsed += 1;
       const priorMax = routeMaxSuccessfulAmount.get(quote.id) ?? 0n;
@@ -668,8 +692,8 @@ export async function runZeroCapitalProfitabilityRescueV4(
       return clearsStrictProfitability(adjusted);
     };
 
-    if (consider(initialResult.quote, intendedFundingPlan)) {
-      const refined = fromQuotedRoute(best!, blockTimestamp(opportunity));
+    if (consider(initialResult.quote, intendedFundingPlan, Boolean(residentMatchesIntended))) {
+      const refined = deriveFromQuote(opportunity, best!, bestInheritsCurrentFreshness);
       if (refined.expiresAt > refined.timestamp && refined.expiresAt > Date.now() && strictImprovement(opportunity, best!)) {
         improved += 1;
         strictPositiveRecoveries += 1;
@@ -748,9 +772,9 @@ export async function runZeroCapitalProfitabilityRescueV4(
           routeResizeRecoveries += 1;
           initialRouteFailed = false;
         }
-        if (!consider(result.quote, target.plan)) continue;
+        if (!consider(result.quote, target.plan, false)) continue;
 
-        const refined = fromQuotedRoute(best!, blockTimestamp(opportunity));
+        const refined = deriveFromQuote(opportunity, best!, bestInheritsCurrentFreshness);
         if (refined.expiresAt <= refined.timestamp || refined.expiresAt <= Date.now()) {
           invalidFreshRefinement += 1;
           break;
@@ -770,7 +794,7 @@ export async function runZeroCapitalProfitabilityRescueV4(
       return opportunity;
     }
 
-    const refined = fromQuotedRoute(best, blockTimestamp(opportunity));
+    const refined = deriveFromQuote(opportunity, best, bestInheritsCurrentFreshness);
     if (refined.expiresAt <= refined.timestamp || refined.expiresAt <= Date.now()) {
       invalidFreshRefinement += 1;
       return opportunity;
@@ -852,8 +876,9 @@ export async function runZeroCapitalProfitabilityRescueV4(
     providerStacking: 'aave_v3_plus_balancer_v2_when_verified_execution_topology_can_fund_or_reduce_fee',
     morphoStackingEnabled: false, morphoStackingReason: 'no_verified_multi_provider_execution_topology_found',
     routeQuoteFailures, routeQuoteTimeouts, routeResizeRecoveries, routeAlternativesTried,
-    residentInitialQuoteHits, residentInitialQuoteMisses,
+    residentInitialQuoteHits, residentInitialQuoteMisses, residentFreshnessInherited,
     unchangedPrimaryRouteRequoteAvoidedWhenResidentExactSizeExists: true,
+    residentQuoteNeverExtendsCandidateFreshness: true,
     routeMeasuredCapacitySignals: [...routeMaxSuccessfulAmount.entries()].map(([routeId, maxSuccessfulAmount]) => ({
       routeId, maxSuccessfulAmount: maxSuccessfulAmount.toString(),
     })),
