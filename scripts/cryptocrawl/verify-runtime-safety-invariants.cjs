@@ -26,27 +26,23 @@ function forbid(relativePath, forbiddenFragments) {
   }
 }
 
-// 1) Unified execution preserves canonical economics. ZERO_CAPITAL_ATOMIC admits
-// on exact deterministic all-in strict positivity through the canonical output
-// threshold authority; other measured topologies retain their existing Stage-3
-// +10 BPS contract. This verifier intentionally checks behavior/invariants rather
-// than one historical source spelling so harmless refactors cannot fail production.
+// 1) Unified execution preserves canonical economics. There is no fixed +10 BPS
+// execution gate: Stage One may feed APE above -10 BPS, while execution requires
+// strictly-positive authoritative all-in economics plus fresh executable evidence.
 const unifiedRouter = requireAll('server/services/cryptocrawl/execution/unified-execution-router.ts', [
   'export interface AdvisoryEvidenceScores',
   'advisoryOnly: true',
-  'ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD',
-  'const STAGE_THREE_MINIMUM_TARGET_BPS = 10;',
-  "const isZeroCapitalAtomic = candidate.topology === 'ZERO_CAPITAL_ATOMIC';",
   'const deterministicPositive = Number.isFinite(deterministicNet) && deterministicNet > 0;',
   'const deterministicNegative = Number.isFinite(deterministicNet) && deterministicNet < 0;',
   'const fundingProjectedPositive = isFunding && projectedFunding !== null && projectedFunding > 0;',
   'const fundingProjectedNegative = isFunding && projectedFunding !== null && projectedFunding < 0;',
   'const predictionProjectedPositive = isPredictionEvent && projectedPredictionEvent !== null && projectedPredictionEvent > 0;',
   'const predictionProjectedNegative = isPredictionEvent && projectedPredictionEvent !== null && projectedPredictionEvent < 0;',
-  'const stageThreeTarget = isZeroCapitalAtomic ? null : STAGE_THREE_MINIMUM_TARGET_BPS;',
-  'const stageThreeTargetSatisfied = isZeroCapitalAtomic',
-  'deterministicNet >= ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD',
-  ': netBps !== null && stageThreeTarget !== null && netBps + 1e-9 >= stageThreeTarget;',
+  'const stageThreeTargetSatisfied = isFunding',
+  '? fundingProjectedPositive',
+  ': isPredictionEvent',
+  '? predictionProjectedPositive',
+  ': deterministicPositive && netBps !== null && netBps > 0;',
   'const stageThreeRescueRequired = stageTwoBoundaryCrossed && !stageThreeTargetSatisfied;',
   "if (!isFunding && !isPredictionEvent && deterministicNegative) hardVetoReasons.push('blocked:verified_negative_all_in_net');",
   "if (fundingProjectedNegative) hardVetoReasons.push('blocked:verified_negative_projected_funding_net');",
@@ -57,7 +53,7 @@ const unifiedRouter = requireAll('server/services/cryptocrawl/execution/unified-
   '|| (!isFunding && !isPredictionEvent && deterministicZero)',
   '|| !stageThreeTargetSatisfied',
   'candidate.missingInformation.length > 0;',
-  "'reacquire:atomic_minimum_output_profit_not_met'",
+  "'reacquire:strict_positive_execution_economics_not_met'",
   "'advisory:adaptive_profitability_or_confidence_below_ranking_threshold'",
   'const economicsAdmitted = isFunding',
   '? fundingProjectedPositive',
@@ -71,25 +67,63 @@ const unifiedRouter = requireAll('server/services/cryptocrawl/execution/unified-
   '&& fresh',
   '&& depthReady',
   '&& hardVetoReasons.length === 0;',
+  'stage3_target=strict_positive_authoritative_all_in_economics',
   'funding_projected_profit_is_not_deterministic_profit',
   'prediction_event_expected_profit_is_calibrated_not_deterministic',
   'raw_market_probability_execution_authority=false',
 ]);
 for (const forbidden of [
+  'const STAGE_THREE_MINIMUM_TARGET_BPS = 10;',
+  'stageThreeTargetBps()',
   'ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS',
   'ZERO_CAPITAL_RESCUE_TARGET_NET_BPS',
   'ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD = 5',
+  'stage3_target_not_met',
   "admitted: deterministicPositive && completeCurrentEvidence && aboveAdaptiveThreshold && path !== 'UNAVAILABLE'",
   "admitted: deterministicPositive && completeCurrentEvidence && path !== 'UNAVAILABLE'",
   'candidate.missingInformation.length === 0',
   'const economicsAdmitted = isFunding ? true : deterministicPositive;',
   'const economicsAdmitted = isFunding ? projectedFunding !== null : deterministicPositive;',
-  'const admitted = economicsAdmitted && pathAvailable && candidate.executableCapability && fresh && depthReady && hardVetoReasons.length === 0;',
 ]) {
   if (unifiedRouter.includes(forbidden)) {
-    throw new Error(`unified execution router reintroduced a duplicate/advisory execution veto or Zero-Capital fixed-profit dependency: ${forbidden}`);
+    throw new Error(`unified execution router reintroduced a duplicate/advisory/fixed-profit execution veto: ${forbidden}`);
   }
 }
+
+// 1b) Runtime safety may quarantine non-positive economics, but must not recreate
+// a +10 BPS magnitude gate that can kill a smaller profitable trade.
+const invariantMonitor = requireAll('server/services/cryptocrawl/runtime/runtime-invariant-monitor.ts', [
+  'stageThreeNetBps === null || stageThreeNetBps <= 0',
+  'requires strictly-positive canonical all-in net BPS',
+  "push('ELIGIBLE_WITHOUT_POSITIVE_NET'",
+]);
+for (const forbidden of [
+  'const STAGE_THREE_MINIMUM_TARGET_BPS = 10;',
+  'ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS',
+  'ZERO_CAPITAL_RESCUE_TARGET_NET_BPS',
+  'Math.max(STAGE_THREE_MINIMUM_TARGET_BPS',
+]) {
+  if (invariantMonitor.includes(forbidden)) throw new Error(`runtime invariant reintroduced fixed +10 BPS execution magnitude: ${forbidden}`);
+}
+
+// 1c) APE is an anytime optimizer: a positive incumbent remains resident while
+// optional tactics continue, and the optimizer yields before the execution reserve.
+requireAll('server/services/cryptocrawl/integration/ape-profitable-snapshot-lease.ts', [
+  'bestProfit: highest proven live absolute all-in profit',
+  "export type ApeProfitLeaseMode = 'none' | 'optimize' | 'refresh_shadow' | 'dispatch_now';",
+  'export function observeApeProfitableSnapshot',
+  'export function getApeBestExecutableSnapshot',
+  'export function capApeOptimizationDeadline',
+  'bestSnapshotOverwriteByWorseAttempt: false',
+  'strictPositiveStopsOptimization: false',
+]);
+requireAll('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-fair.ts', [
+  'observeApeProfitableSnapshot(candidate);',
+  'getApeProfitLeaseDecision',
+  'scheduleProfitEscape();',
+  'capApeOptimizationDeadline',
+  'getApeBestExecutableSnapshot',
+]);
 
 // 2) Cryptara CEX topology correction is limited to implemented execution venues.
 requireAll('server/services/cryptocrawl/integration/cryptara-cex-evidence-wiring.ts', [
@@ -195,4 +229,4 @@ forbid('server/services/cryptocrawl/execution/cex-spot-product-policy.ts', [
   'canonicalPair(raw.baseCcy, raw.quoteCcy);',
 ]);
 
-console.log('[runtime-safety-invariants] PASS: ZERO_CAPITAL_ATOMIC uses canonical strict-positive all-in economics with no +10 magnitude or hard-dollar floor; advisory evidence scoring, active reacquisition, no duplicate missing-information veto, implemented CEX topology, governance boundaries, advisory-only optimizer/provider intelligence, terminal settlement learning, measured zero-capital repricing, bounded production observability, and semantic venue-asset identity invariants preserved');
+console.log('[runtime-safety-invariants] PASS: canonical execution uses strict-positive all-in economics with no +10 BPS magnitude gate; APE preserves a positive incumbent while optimizing until its dispatch reserve; advisory scoring, active reacquisition, implemented CEX topology, governance boundaries, terminal settlement learning, zero-capital repricing, bounded observability, and semantic venue-asset identity invariants preserved');
