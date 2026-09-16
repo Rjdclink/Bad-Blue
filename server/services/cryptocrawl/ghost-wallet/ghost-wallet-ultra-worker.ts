@@ -11,7 +11,10 @@ import {
   evaluateGhostWalletMultiAssetControllerEconomics,
 } from './ghost-wallet-controller-economics.js';
 import { ghostWalletEngine } from './ghost-wallet-engine.js';
+import { resolveGhostWalletGasPricing } from './ghost-wallet-gas-pricing.js';
 import { processGhostWalletProfitConversion, type GhostWalletProfitConversionPayload } from './ghost-wallet-payout.js';
+import { recordGhostWalletPerformance } from './ghost-wallet-performance-intelligence.js';
+import { ghostWalletProviderMesh, type GhostWalletChain } from './ghost-wallet-provider-mesh.js';
 import { deserializeMatchedIntentPair } from './ghost-wallet-work-codec.js';
 import {
   claimGhostWalletWork,
@@ -26,7 +29,6 @@ import { ghostWalletWorkSignal, type GhostWalletWakeReason } from './ghost-walle
 import { ingestGhostWalletSettlementReceipt } from './ghost-wallet-settlement-ingest.js';
 import { recordGhostWalletRuntimeState } from './ghost-wallet-runtime-state.js';
 import { probeGhostWalletVenueCandidate, syncMeasuredGhostWalletVenues } from './ghost-wallet-venue-universe.js';
-import type { GhostWalletChain } from './ghost-wallet-provider-mesh.js';
 
 const { Client } = pg;
 const LISTEN_CHANNEL = 'cryptocrawler_ghost_wallet_work';
@@ -90,11 +92,6 @@ async function markDead(work: GhostWalletWorkItem, owner: string, error: unknown
   );
 }
 
-/**
- * Durable controller entrypoint retained for callers that already build a Ghost
- * transaction. The intermediary never submits; this queues work for the isolated
- * Ghost controller/Ultra execution lane.
- */
 export async function enqueueGhostWalletPreparedAtomicExecution(input: {
   dedupeKey: string;
   chain: GhostWalletChain;
@@ -148,6 +145,10 @@ class GhostWalletUltraWorker {
         concurrencyPolicy: 'read_lanes_parallel_transaction_lanes_serialized_per_chain',
         intermediarySubmitsTransactions: false,
         autonomousControllerSubmission: true,
+        expectedEffectiveGasForProfitability: true,
+        maxFeeCeilingForBalanceGuard: true,
+        identicalRawTransactionMultiProviderBroadcast: true,
+        providerCircuitBreaking: true,
         controllerGasAuthority: 'execution_wallet_system_owned_native_or_existing_balance',
         providerSponsoredExecution: false,
         alchemyDependency: false,
@@ -472,26 +473,36 @@ class GhostWalletUltraWorker {
     transaction: { to: string; data: string; value: string },
     extra: Record<string, unknown>,
   ): Promise<void> {
-    const provider = ghostWalletEngine.getProvider(chain);
     const wallet = ghostWalletEngine.getExecutionWallet(chain);
-    if (!provider || !wallet) throw new Error('GHOST_WALLET_CONTROLLER_WALLET_UNAVAILABLE');
+    if (!wallet) throw new Error('GHOST_WALLET_CONTROLLER_WALLET_UNAVAILABLE');
     const request = { from: wallet.address, to: transaction.to, data: transaction.data, value: transaction.value };
-    await provider.call(request);
-    const [gasRaw, feeData, network, nonce, balance] = await Promise.all([
-      provider.estimateGas(request), provider.getFeeData(), provider.getNetwork(),
-      provider.getTransactionCount(wallet.address, 'pending'), provider.getBalance(wallet.address),
-    ]);
-    const gasLimit = gasRaw.mul(110).add(99).div(100);
-    const feePerGas = feeData.maxFeePerGas || feeData.gasPrice;
-    if (!feePerGas || feePerGas.lte(0)) throw new Error('GHOST_WALLET_CONTROLLER_GAS_PRICE_UNAVAILABLE');
-    const worstCaseGasWei = gasLimit.mul(feePerGas);
-    if (balance.lt(worstCaseGasWei)) throw new Error('GHOST_WALLET_CONTROLLER_NATIVE_GAS_UNAVAILABLE');
+    const finalGateStartedAt = Date.now();
+    const preflight = await ghostWalletProviderMesh.runHedged({
+      chain,
+      operation: 'final_submission_preflight',
+      execute: async provider => {
+        await provider.call(request);
+        const [gasRaw, feeData, network, nonce, balance] = await Promise.all([
+          provider.estimateGas(request), provider.getFeeData(), provider.getNetwork(),
+          provider.getTransactionCount(wallet.address, 'pending'), provider.getBalance(wallet.address),
+        ]);
+        return { provider, gasRaw, feeData, network, nonce, balance, pricing: resolveGhostWalletGasPricing(feeData) };
+      },
+    });
+    const gasLimit = preflight.gasRaw.mul(110).add(99).div(100);
+    const expectedFeePerGas = preflight.pricing.expectedFeePerGas;
+    const signingFeeCeilingPerGas = preflight.pricing.signingFeeCeilingPerGas;
+    const worstCaseGasWei = gasLimit.mul(signingFeeCeilingPerGas);
+    if (preflight.balance.lt(worstCaseGasWei)) throw new Error('GHOST_WALLET_CONTROLLER_NATIVE_GAS_UNAVAILABLE');
 
     const executionMode = String(extra.mode || work.payload.mode || '');
     if (executionMode === 'broker_execution') {
       const economics = await evaluateGhostWalletControllerEconomics({
-        chain, provider, asset: payloadString(work.payload, 'asset'),
-        gasUnits: BigInt(gasLimit.toString()), feePerGasWei: BigInt(feePerGas.toString()),
+        chain,
+        provider: preflight.provider,
+        asset: payloadString(work.payload, 'asset'),
+        gasUnits: BigInt(gasLimit.toString()),
+        feePerGasWei: BigInt(expectedFeePerGas.toString()),
         expectedSpreadBaseUnits: BigInt(payloadString(work.payload, 'expectedSpreadBaseUnits')),
       });
       if (!economics.approved) throw new Error('GHOST_WALLET_CONTROLLER_NET_NOT_POSITIVE');
@@ -502,6 +513,14 @@ class GhostWalletUltraWorker {
         finalAssetPriceUsd: economics.assetPriceUsd,
         finalNativePriceUsd: economics.nativePriceUsd,
       };
+      recordGhostWalletPerformance({
+        stage: 'route_preflight', chain,
+        routeKey: `${String(work.payload.sourceKind || 'broker')}:${String(work.payload.lender || '').toLowerCase()}:${String(work.payload.amountBaseUnits || '')}`,
+        sourceKind: String(work.payload.sourceKind || 'broker'),
+        latencyMs: Date.now() - finalGateStartedAt,
+        success: true,
+        expectedNetProfitBaseUnits: economics.expectedNetProfitBaseUnits,
+      });
     } else if (executionMode === 'matched_intent') {
       const rawProfits = Array.isArray(extra.matchedIntentProfits) ? extra.matchedIntentProfits : [];
       const profits = rawProfits.flatMap((entry: any) => {
@@ -513,9 +532,9 @@ class GhostWalletUltraWorker {
       if (profits.length === 0) throw new Error('GHOST_WALLET_MATCHED_INTENT_PROFIT_INVALID');
       const economics = await evaluateGhostWalletMultiAssetControllerEconomics({
         chain,
-        provider,
+        provider: preflight.provider,
         gasUnits: BigInt(gasLimit.toString()),
-        feePerGasWei: BigInt(feePerGas.toString()),
+        feePerGasWei: BigInt(expectedFeePerGas.toString()),
         profits,
       });
       if (!economics.approved) throw new Error('GHOST_WALLET_CONTROLLER_NET_NOT_POSITIVE');
@@ -535,22 +554,24 @@ class GhostWalletUltraWorker {
     }
 
     const common = {
-      chainId: network.chainId,
-      nonce,
+      chainId: preflight.network.chainId,
+      nonce: preflight.nonce,
       to: transaction.to,
       data: transaction.data,
       value: ethers.BigNumber.from(transaction.value || '0'),
       gasLimit,
     };
-    const unsigned = feeData.maxFeePerGas && feeData.maxPriorityFeePerGas
-      ? { ...common, type: 2, maxFeePerGas: feeData.maxFeePerGas, maxPriorityFeePerGas: feeData.maxPriorityFeePerGas }
-      : { ...common, gasPrice: feePerGas };
+    const unsigned = preflight.feeData.maxFeePerGas && preflight.feeData.maxPriorityFeePerGas
+      ? {
+          ...common,
+          type: 2,
+          maxFeePerGas: preflight.feeData.maxFeePerGas,
+          maxPriorityFeePerGas: preflight.feeData.maxPriorityFeePerGas,
+        }
+      : { ...common, gasPrice: expectedFeePerGas };
     const rawTransaction = await wallet.signTransaction(unsigned);
     const transactionHash = ethers.utils.keccak256(rawTransaction);
 
-    // Persist the deterministic signed hash and raw bytes BEFORE broadcast. A crash
-    // after this write can only rebroadcast the identical transaction, never create
-    // a second nonce/spend.
     await markGhostWalletWorkSubmitted({
       workId: work.workId, owner: this.workerId, transactionHash, leaseMs: 60_000,
       result: {
@@ -558,21 +579,41 @@ class GhostWalletUltraWorker {
         phase: 'controller_signed_before_broadcast',
         rawTransaction,
         signer: wallet.address,
-        nonce,
+        nonce: preflight.nonce,
         gasLimit: gasLimit.toString(),
-        feePerGasWei: feePerGas.toString(),
-        chainId: network.chainId,
+        expectedFeePerGasWei: expectedFeePerGas.toString(),
+        signingFeeCeilingPerGasWei: signingFeeCeilingPerGas.toString(),
+        gasPricingMode: preflight.pricing.mode,
+        chainId: preflight.network.chainId,
       },
     });
     this.submittedThisAttempt.add(work.workId);
-    const sent = await provider.sendTransaction(rawTransaction).catch(error => {
-      const message = error instanceof Error ? error.message : String(error);
-      if (/already known|known transaction|nonce too low/i.test(message)) return null;
+
+    const broadcastStartedAt = Date.now();
+    try {
+      const observedHash = await ghostWalletProviderMesh.broadcastRawTransaction(chain, rawTransaction);
+      if (observedHash && observedHash.toLowerCase() !== transactionHash.toLowerCase()) {
+        throw new Error('GHOST_WALLET_CONTROLLER_SIGNED_HASH_MISMATCH');
+      }
+      recordGhostWalletPerformance({
+        stage: 'transaction_broadcast', chain,
+        routeKey: transactionHash,
+        sourceKind: String(work.payload.sourceKind || executionMode || 'prepared'),
+        latencyMs: Date.now() - broadcastStartedAt,
+        success: true,
+        expectedNetProfitBaseUnits: executionMode === 'broker_execution'
+          ? String((extra as any).finalExpectedNetProfitBaseUnits || '')
+          : null,
+      });
+    } catch (error) {
+      recordGhostWalletPerformance({
+        stage: 'transaction_broadcast', chain, routeKey: transactionHash,
+        latencyMs: Date.now() - broadcastStartedAt, success: false,
+        errorType: error instanceof Error ? error.message : String(error),
+      });
       throw error;
-    });
-    if (sent && sent.hash.toLowerCase() !== transactionHash.toLowerCase()) {
-      throw new Error('GHOST_WALLET_CONTROLLER_SIGNED_HASH_MISMATCH');
     }
+
     const deferred = await deferGhostWalletWork({
       workId: work.workId, owner: this.workerId, error: 'controller_transaction_submitted',
       retryAfterMs: 750, preserveSubmitted: true,
@@ -587,12 +628,7 @@ class GhostWalletUltraWorker {
     const raw = work.result?.rawTransaction;
     if (validRawTransaction(raw)) {
       const observed = await provider.getTransaction(work.transactionHash || '').catch(() => null);
-      if (!observed) {
-        await provider.sendTransaction(raw).catch(error => {
-          const message = error instanceof Error ? error.message : String(error);
-          if (!/already known|known transaction|nonce too low/i.test(message)) throw error;
-        });
-      }
+      if (!observed) await ghostWalletProviderMesh.broadcastRawTransaction(chain, raw);
     }
     const deferred = await deferGhostWalletWork({
       workId: work.workId, owner: this.workerId, error: 'receipt_pending', retryAfterMs, preserveSubmitted: true,
