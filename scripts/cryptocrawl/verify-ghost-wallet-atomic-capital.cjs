@@ -11,6 +11,7 @@ const fabric = read('server/services/cryptocrawl/ghost-wallet/capital-fabric.ts'
 const engine = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-engine.ts');
 const bridgeRuntime = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-external-bridge.ts');
 const borrowerSurface = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-borrower-surface.ts');
+const borrowerMandate = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-borrower-mandate.ts');
 const fundingMesh = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-funding-mesh.ts');
 const controller = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-autonomous-controller.ts');
 const controllerEconomics = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-controller-economics.ts');
@@ -29,6 +30,7 @@ const flashExecutor = read('server/services/cryptocrawl/execution/zero-capital-f
 const alternativeExecutor = read('server/services/cryptocrawl/execution/zero-capital-alternative-prepared-executor.ts');
 const coverage = read('server/services/cryptocrawl/governance/atomic-zero-capital-strategy-coverage.ts');
 const runtimeWiring = read('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
+const routes = read('server/routes/cryptoWiring.routes.ts');
 
 // Ghost stays independent from arbitrage economics/execution authority.
 assert.match(intermediary, /address public immutable profitRecipient/);
@@ -61,6 +63,23 @@ assert.match(engine, /matched_intent_settlement/);
 assert.match(engine, /serializeMatchedIntentPair/);
 assert.match(ultra, /evaluateGhostWalletMultiAssetControllerEconomics/);
 assert.match(ultra, /matchedIntentExpectedNetProfitUsdScaled/);
+
+// Standing external-credit demand is separately signed. EOA owners and ERC-1271
+// owners/borrowers are accepted only when ownership is proven; replay is versioned.
+assert.match(borrowerMandate, /_TypedDataEncoder\.hash/);
+assert.match(borrowerMandate, /isValidSignature/);
+assert.match(borrowerMandate, /recoverAddress/);
+assert.match(borrowerMandate, /owner\(\) view returns \(address\)/);
+assert.match(borrowerMandate, /getOwner\(\) view returns \(address\)/);
+assert.match(borrowerMandate, /GHOST_WALLET_MANDATE_NONCE_NOT_NEWER/);
+assert.match(borrowerMandate, /GHOST_WALLET_MANDATE_CANCELLED_REPLAY_REJECTED/);
+assert.match(borrowerMandate, /monotonicNonceRequiredForReplacement: true/);
+assert.match(borrowerMandate, /onePersistentMandatePerBorrowerAsset: true/);
+assert.match(borrowerMandate, /signedAuthorizationCreatesVerifiedRepaymentEvidence: false/);
+assert.match(borrowerMandate, /exactSimulationStillRequiredBeforeExecution: true/);
+assert.match(routes, /registerGhostWalletBorrowerMandate/);
+assert.match(routes, /cancelGhostWalletBorrowerMandate/);
+assert.match(routes, /autonomous_controller_signed_mandate/);
 
 // Existing measured capital fabric remains evidence-only and does not fabricate cash.
 for (const primitive of [
@@ -132,7 +151,7 @@ assert.match(fundingMesh, /providerFailureRouteLocal: true/);
 assert.match(fundingMesh, /Promise\.allSettled/);
 
 // Autonomous admission is exact-call + exact-gas + strict net-positive. Spread is
-// priced per transaction from measured gas, not by a global configuration transaction.
+// priced per transaction and recurring signed authority is explicitly bounded.
 assert.match(controller, /intermediaryRole: 'middleman_only'/);
 assert.match(controller, /controllerOwnsInitiation: true/);
 assert.match(controller, /provider\.call\(request\)/);
@@ -143,6 +162,11 @@ assert.match(controller, /hardBpsProfitAdmissionFloor: false/);
 assert.match(controller, /configuredSpreadFloorDefaultBps: 0/);
 assert.match(controller, /perTransactionSpreadCalibrationFromExactGas: true/);
 assert.match(controller, /globalSpreadConfigurationTransactionRequired: false/);
+assert.match(controller, /signedMandateExecutionCountEnforced: true/);
+assert.match(controller, /signedMandateCadenceEnforced: true/);
+assert.match(controller, /signedMandateVersionIsolation: true/);
+assert.match(controller, /oneActiveExecutionPerMandate: true/);
+assert.match(controller, /payload->>'mandateScope'/);
 assert.match(controller, /zeroCapitalIntegration: false/);
 assert.doesNotMatch(controller, /setMinimumBrokerSpreadBps/);
 assert.match(controllerEconomics, /expectedNetProfitBaseUnits > 0n/);
@@ -221,6 +245,8 @@ console.log(JSON.stringify({
   sameTransactionRepaymentOrRevert: true,
   intermediarySubmitsTransactions: false,
   autonomousControllerExecution: true,
+  signedBorrowerDemand: true,
+  signedMandateReplayProtection: true,
   zeroCapitalAuthorityCrossed: false,
   fixedBpsProfitFloor: false,
   perTransactionSpreadPricing: true,
