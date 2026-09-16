@@ -2,7 +2,6 @@ import {
   measuredCandidateRegistry,
   type MeasuredCandidate,
 } from '../discovery/measured-candidate-registry.js';
-import { ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD } from '../integration/zero-capital-profit-output-floor.js';
 import { adaptiveTopologyOptimizer } from '../optimization/adaptive-topology-optimizer.js';
 import { computeProfitabilityScore, type ProfitabilityScoreResult } from '../optimization/profitability-score.js';
 import { fundingPositionLifecycle } from './funding-position-lifecycle.js';
@@ -41,11 +40,12 @@ export interface UnifiedExecutionDecision {
   reasons: string[];
 }
 
-// The historical +10 Stage-3 target remains unchanged for topologies outside the
-// Atomic BPS Zero-Initial-Capital lane. ZERO_CAPITAL_ATOMIC uses the canonical
-// Stage-2/execution output finish line: fresh exact deterministic all-in net >= $5.
-const STAGE_THREE_MINIMUM_TARGET_BPS = 10;
-
+/**
+ * Stage One's > -10 BPS floor is an optimization/admission boundary, not an
+ * execution-profit target. Canonical execution has no arbitrary +10 BPS floor:
+ * every topology must prove strictly-positive all-in economics on its own
+ * authoritative model before it may execute.
+ */
 function stageThreeEntryFloorBps(): number {
   const parsed = Number(process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS ?? -10);
   return Number.isFinite(parsed) ? Math.max(-100, Math.min(0, parsed)) : -10;
@@ -155,7 +155,6 @@ export function routeMeasuredOpportunity(candidate: MeasuredCandidate): UnifiedE
   const deterministicNet = Number(candidate.economics.deterministicNetProfitUsd);
   const isFunding = candidate.topology === 'FUNDING_ARBITRAGE';
   const isPredictionEvent = candidate.topology === 'PREDICTION_EVENT';
-  const isZeroCapitalAtomic = candidate.topology === 'ZERO_CAPITAL_ATOMIC';
   const projectedFunding = projectedFundingNet(candidate);
   const projectedPredictionEvent = projectedPredictionEventNet(candidate);
   const deterministicPositive = Number.isFinite(deterministicNet) && deterministicNet > 0;
@@ -171,11 +170,12 @@ export function routeMeasuredOpportunity(candidate: MeasuredCandidate): UnifiedE
   const aboveAdaptiveThreshold = score.profitabilityScore > threshold.profitabilityScoreThreshold && score.confidenceLevel >= threshold.confidenceThreshold;
   const netBps = canonicalNetBps(candidate);
   const stageThreeEntryFloor = stageThreeEntryFloorBps();
-  const stageThreeTarget = isZeroCapitalAtomic ? null : STAGE_THREE_MINIMUM_TARGET_BPS;
   const stageTwoBoundaryCrossed = netBps !== null && netBps > stageThreeEntryFloor;
-  const stageThreeTargetSatisfied = isZeroCapitalAtomic
-    ? Number.isFinite(deterministicNet) && deterministicNet >= ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD
-    : netBps !== null && stageThreeTarget !== null && netBps + 1e-9 >= stageThreeTarget;
+  const stageThreeTargetSatisfied = isFunding
+    ? fundingProjectedPositive
+    : isPredictionEvent
+      ? predictionProjectedPositive
+      : deterministicPositive && netBps !== null && netBps > 0;
   const stageThreeRescueRequired = stageTwoBoundaryCrossed && !stageThreeTargetSatisfied;
 
   const hardVetoReasons: string[] = [];
@@ -219,7 +219,7 @@ export function routeMeasuredOpportunity(candidate: MeasuredCandidate): UnifiedE
     `evidence_confidence=${evidence.confidence.toFixed(2)}`,
     `evidence_overall=${evidence.overall.toFixed(2)}`,
     `stage3_entry_floor_bps=${stageThreeEntryFloor}`,
-    `stage3_target=${isZeroCapitalAtomic ? `minimum_${ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD}_usd_exact_all_in_net` : `${stageThreeTarget}_bps`}`,
+    'stage3_target=strict_positive_authoritative_all_in_economics',
     `canonical_all_in_net_bps=${netBps ?? 'unknown'}`,
     ...(isFunding ? [`funding_projected_net_usd=${projectedFunding ?? 'unknown'}`, 'funding_projected_profit_is_not_deterministic_profit'] : []),
     ...(isPredictionEvent ? [`prediction_event_expected_net_usd=${projectedPredictionEvent ?? 'unknown'}`, 'prediction_event_expected_profit_is_calibrated_not_deterministic', 'raw_market_probability_execution_authority=false'] : []),
@@ -234,9 +234,7 @@ export function routeMeasuredOpportunity(candidate: MeasuredCandidate): UnifiedE
   if (economicsMissing) reasons.push(isFunding ? 'reacquire:projected_funding_economics_unavailable' : isPredictionEvent ? 'reacquire:calibrated_prediction_event_economics_unavailable' : 'reacquire:deterministic_economics_unavailable');
   if (netBps === null) reasons.push('reacquire:canonical_all_in_net_bps_unavailable');
   else if (!stageTwoBoundaryCrossed) reasons.push('reacquire:stage2_boundary_not_crossed');
-  else if (stageThreeRescueRequired) reasons.push(isZeroCapitalAtomic
-    ? 'reacquire:atomic_minimum_output_profit_not_met'
-    : 'reacquire:stage3_target_not_met');
+  else if (stageThreeRescueRequired) reasons.push('reacquire:strict_positive_execution_economics_not_met');
   if (!fresh) reasons.push('reacquire:fresh_execution_evidence');
   if (!candidate.executableCapability) reasons.push('reacquire:authoritative_execution_path');
   if (!depthReady) reasons.push('reacquire:executable_depth');
