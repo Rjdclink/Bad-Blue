@@ -21,6 +21,7 @@ const chainEvents = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-
 const ingest = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-settlement-ingest.ts');
 const builder = read('server/services/cryptocrawl/execution/builder-sponsored-receiver-bootstrap.ts');
 const discovery = read('server/services/cryptocrawl/discovery/zero-capital-canonical-discovery.ts');
+const stageOnePolicy = read('server/services/cryptocrawl/discovery/stage-one-candidate-policy.ts');
 const measuredAdmission = read('server/services/cryptocrawl/integration/ape-measured-opportunity-admission.ts');
 const directionalMarket = read('server/services/cryptocrawl/integration/ape-directional-market.ts');
 const apeGateway = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-fair.ts');
@@ -63,10 +64,10 @@ const matrix = [
   ['10 percent retained capital remains preserved', /retainedFractionBps:\s*1_000/.test(ingest)],
   ['builder cold start uses measured sequential gas', /eth_simulateV1/.test(builder) && /fixed_gas_ceiling_admission:false/.test(builder)],
 
-  ['Stage One measured-priority admission replaces fixed BPS floor', /STAGE_ONE_MEASURED_PRIORITY_INVARIANT/.test(discovery) && /stageOneFixedBpsFloorRemoved: true/.test(discovery) && /selectApeStageOneHotSet\(exact, 3\)/.test(discovery) && !/STAGE_ONE_ZERO_CAPITAL_ENTRY_FLOOR_BPS/.test(discovery) && !/zero-capital-profit-output-floor/.test(discovery) && !/ape-profitable-snapshot-lease/.test(discovery)],
-  ['Stage One preserves non-hot measured candidates for canonical repricing', /rescueReady = exact\.map\(opportunity => rescuedById\.get\(opportunity\.id\) \?\? opportunity\)/.test(discovery) && /stageOneExplorationRemainsMeasuredAndRepriced: true/.test(discovery)],
+  ['Stage One outputs only candidates strictly above -10 BPS', /STAGE_ONE_LOCKED_INVARIANT/.test(discovery) && /STAGE_ONE_ZERO_CAPITAL_OUTPUT_FLOOR_BPS = -10/.test(stageOnePolicy) && /netProfitBps > STAGE_ONE_ZERO_CAPITAL_OUTPUT_FLOOR_BPS/.test(stageOnePolicy) && !/netProfitBps >= STAGE_ONE_ZERO_CAPITAL_OUTPUT_FLOOR_BPS/.test(stageOnePolicy) && /stageOneCandidateComparator: 'netProfitBps > -10'/.test(discovery) && /stageOneAtFloorPromoted: false/.test(discovery) && /rescueReady = rescueReady\.filter\(clearsStageOneCandidateOutputFloor\)/.test(discovery) && !/zero-capital-profit-output-floor/.test(discovery) && !/ape-profitable-snapshot-lease/.test(discovery)],
+  ['Stage One preserves non-hot admitted candidates for canonical repricing', /rescueReady = exact\.map\(opportunity => rescuedById\.get\(opportunity\.id\) \?\? opportunity\)/.test(discovery) && /stageOneHotLane: 'direction_neutral_market_best_reverse_and_hedge_within_strict_floor'/.test(discovery)],
   ['Stage One market identity is cyclic direction-neutral', /canonicalCyclicTokenPath/.test(directionalMarket) && /export function apeDirectionalMarketKey/.test(directionalMarket) && /export function selectApeStageOneHotSet/.test(directionalMarket)],
-  ['APE rescue requires fresh measured hot-lane evidence', /export function assessApeMeasuredAdmission/.test(measuredAdmission) && /isApeMeasuredAdmitted/.test(threshold) && /placement\.cohort === 0 && placement\.role !== 'reserve'/.test(threshold)],
+  ['APE rescue requires fresh measured hot-lane evidence and rejects Stage One floor violations', /export function assessApeMeasuredAdmission/.test(measuredAdmission) && /stage_one_output_floor_violation/.test(measuredAdmission) && /isApeMeasuredAdmitted/.test(threshold) && /placement\.cohort === 0 && placement\.role !== 'reserve'/.test(threshold)],
   ['strict-positive ZERO_CAPITAL execution threshold is canonical', /ZERO_CAPITAL_STRICT_POSITIVE_MIN_BASE_UNITS = 1n/.test(threshold) && /clearsStrictPositiveOutputThreshold/.test(threshold) && !/ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD = 5/.test(threshold)],
   ['APE optimization ownership is independent of execution threshold', /export function needsApeOptimization/.test(threshold) && /strictPositiveStopsApeOptimization: false/.test(apeGateway) && /strictPositiveAcceptanceThresholdIsNotApeStop: true/.test(apeRescue)],
   ['resident APE remains zero-I/O and non-mutating', /routeQuotesCreatedByApe: 0/.test(residentApe) && /rpcCallsCreatedByApe: 0/.test(residentApe) && /stageOneMutation: false/.test(residentApe)],
