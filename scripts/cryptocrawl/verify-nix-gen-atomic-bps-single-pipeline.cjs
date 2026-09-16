@@ -8,6 +8,7 @@ const root = process.cwd();
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 
 const discovery = read('server/services/cryptocrawl/discovery/zero-capital-canonical-discovery.ts');
+const stageOnePolicy = read('server/services/cryptocrawl/discovery/stage-one-candidate-policy.ts');
 const gateway = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-fair.ts');
 const activeRescue = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v4.ts');
 const residentApe = read('server/services/cryptocrawl/integration/zero-capital-atomic-bps-engine.ts');
@@ -25,14 +26,18 @@ const providerEconomics = read('server/services/cryptocrawl/execution/adapters/f
 const receiverCapability = read('server/services/cryptocrawl/execution/adapters/flash-loan-receiver-capability.ts');
 const dualMesh = read('server/services/cryptocrawl/execution/adapters/dual-flash-loan-provider-mesh.ts');
 
-// Stage One is explicitly operator-authorized to use measured priority instead of a
-// fixed BPS floor. Discovery breadth remains intact while only the hot market lane may
-// spend APE rescue I/O.
-assert.match(discovery, /STAGE_ONE_MEASURED_PRIORITY_INVARIANT/);
-assert.match(discovery, /stageOneFixedBpsFloorRemoved: true/);
+// Stage One keeps discovery breadth but emits only complete measured candidates strictly
+// above -10 BPS. The direction-aware hot lane remains inside that admitted set.
+assert.match(discovery, /STAGE_ONE_LOCKED_INVARIANT/);
+assert.match(stageOnePolicy, /STAGE_ONE_ZERO_CAPITAL_OUTPUT_FLOOR_BPS = -10/);
+assert.match(stageOnePolicy, /netProfitBps > STAGE_ONE_ZERO_CAPITAL_OUTPUT_FLOOR_BPS/);
+assert.doesNotMatch(stageOnePolicy, /netProfitBps >= STAGE_ONE_ZERO_CAPITAL_OUTPUT_FLOOR_BPS/);
+assert.match(discovery, /stageOneCandidateComparator: 'netProfitBps > -10'/);
+assert.match(discovery, /stageOneAtFloorPromoted: false/);
 assert.match(discovery, /selectApeStageOneHotSet\(exact, 3\)/);
-assert.doesNotMatch(discovery, /STAGE_ONE_ZERO_CAPITAL_ENTRY_FLOOR_BPS/);
+assert.match(discovery, /rescueReady = rescueReady\.filter\(clearsStageOneCandidateOutputFloor\)/);
 assert.match(measuredAdmission, /export function assessApeMeasuredAdmission/);
+assert.match(measuredAdmission, /stage_one_output_floor_violation/);
 assert.match(directionalMarket, /canonicalCyclicTokenPath/);
 assert.match(directionalMarket, /export function selectApeStageOneHotSet/);
 assert.match(threshold, /getApeResidentPlacement/);
@@ -173,4 +178,4 @@ assert.match(activeRescue, /calculateMeasuredFlashLoanFee\(/);
 assert.match(activeRescue, /syntheticEconomics: false/);
 assert.match(activeRescue, /executionAuthority: false/);
 
-console.log('[atomic-bps-single-pipeline] PASS: Stage One uses fresh measured direction-aware hot lanes with no fixed BPS admission floor; APE stays zero-I/O and stateful rescue remains bounded, candidate-local, exact-economics only');
+console.log('[atomic-bps-single-pipeline] PASS: Stage One emits only fresh measured complete-evidence candidates strictly above -10 BPS; direction-aware hot lanes remain bounded, APE stays zero-I/O, and stateful rescue remains candidate-local exact-economics only');
