@@ -91,7 +91,7 @@ export function chooseGasFundingMode(
       operatorMonetaryInputRequired: false,
       providerBillingLiability: false,
       sponsorOperatorMonetaryCostProvenZero: false,
-      reason: 'Sponsored gas is unavailable for this route; native reserve is sufficient and durable provenance proves it is system-owned, with actual receipt gas subtracted from realized system economics',
+      reason: 'Sponsored gas is unavailable for this route; native reserve is sufficient and durable provenance proves it is system-owned, with actual receipt gas terminally converted and subtracted from realized system economics',
     };
   }
 
