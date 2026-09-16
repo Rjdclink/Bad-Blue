@@ -99,7 +99,8 @@ has(lease, 'bestProfit: ZeroCapitalOpportunity', 'best profitable snapshot point
 has(lease, 'freshestPositive: ZeroCapitalOpportunity', 'fresh positive shadow pointer missing');
 has(lease, 'export function observeApeProfitableSnapshot', 'snapshot observation authority missing');
 has(lease, 'export function capApeOptimizationDeadline', 'execute-before-expiry deadline cap missing');
-has(lease, "mode: 'dispatch_now'", 'dispatch-now lease state missing');
+has(lease, "export type ApeProfitLeaseMode = 'none' | 'optimize' | 'refresh_shadow' | 'dispatch_now';", 'dispatch-now lease mode missing');
+has(lease, 'if (mode === DISPATCH_NOW_MODE.mode) dispatchDecisions += 1;', 'dispatch-now lease decision accounting missing');
 has(lease, "storageAuthority: 'resident_candidate_local_pointer_only'", 'lease must remain resident pointer state');
 has(lease, 'persistenceOnHotPath: false', 'lease added persistence to hot path');
 has(lease, 'networkIoOnDecisionPath: false', 'lease added network I/O to decision path');
