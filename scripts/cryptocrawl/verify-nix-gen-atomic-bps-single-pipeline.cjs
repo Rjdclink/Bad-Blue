@@ -162,8 +162,14 @@ assert.match(routeSplit, /candidatesRunConcurrently: true/);
 assert.match(routeSplit, /ratiosWithinPairRunConcurrently: true/);
 assert.match(routeSplit, /strictPositiveStopsRouteSplitOptimization: false/);
 assert.match(routeSplit, /promotedCompositeStopsRemainingSplitSearch: false/);
-assert.match(routeSplit, /protectedCompositeProofTail: true/);
-assert.match(routeSplit, /quoteSearchCannotConsumeProofReserve: true/);
+assert.match(routeSplit, /resolveConfiguredFlashLoanReceiver\('balancer_composite_v2', chain as any\)/);
+assert.match(routeSplit, /protectedCompositeProofTail: compositeProofAvailable/);
+assert.match(routeSplit, /currentCompositeProofReserveMs: compositeProofAvailable \? compositeProofReserveMs\(\) : 0/);
+assert.match(routeSplit, /quoteSearchCannotConsumeProofReserve: compositeProofAvailable/);
+assert.match(routeSplit, /missingCompositeCapabilityConsumesRemoteQuoteLatency: false/);
+assert.match(routeSplit, /missingCompositeCapabilityConsumesProofLatency: false/);
+assert.match(routeSplit, /missingCompositeCapabilityKillsCandidate: false/);
+assert.match(routeSplit, /composite_proof_capability_unavailable_route_local/);
 assert.match(routeSplit, /bestQuotedSplitProvenFirst: true/);
 
 // Provider sharing telemetry distinguishes logical consumers from physical measurement starts.
@@ -214,4 +220,4 @@ assert.match(activeRescue, /stageOneMutation: false/);
 assert.match(activeRescue, /syntheticEconomics: false/);
 assert.match(activeRescue, /executionAuthority: false/);
 
-console.log('[atomic-bps-single-pipeline] PASS: Stage One remains locked; structural split/V4 are parallel alternatives; route split protects exact proof time; provider measurements are globally singleflighted and truthfully counted; proof-aware scheduling cannot let unfinished exploration dominate; strict-positive execution acceptance remains separate from continuous candidate-local APE optimization');
+console.log('[atomic-bps-single-pipeline] PASS: Stage One remains locked; structural split/V4 are parallel alternatives; route split protects exact proof time only when composite proof capability exists and otherwise fails locally without wasting quote/proof latency; provider measurements are globally singleflighted and truthfully counted; proof-aware scheduling cannot let unfinished exploration dominate; strict-positive execution acceptance remains separate from continuous candidate-local APE optimization');
