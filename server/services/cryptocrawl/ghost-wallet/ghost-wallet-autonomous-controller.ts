@@ -18,6 +18,7 @@ const MAX_CALIBRATION_PASSES = 3;
 
 interface StandingBorrowerMandate {
   id: string;
+  executionScope: string;
   chain: GhostWalletChain;
   borrower: string;
   asset: string;
@@ -113,8 +114,10 @@ function configuredMandates(): StandingBorrowerMandate[] {
     const minIntervalMs = row?.minIntervalMs !== undefined
       ? safeIntervalMs(row.minIntervalMs)
       : safeIntervalMs(Number(row?.minIntervalSeconds || 0) * 1000);
+    const id = String(row?.id || `env-${index}`).slice(0, 160);
     return [{
-      id: String(row?.id || `env-${index}`).slice(0, 160),
+      id,
+      executionScope: `environment:${id}`,
       chain: parsedChain,
       borrower,
       asset,
@@ -152,8 +155,12 @@ async function registryMandates(): Promise<StandingBorrowerMandate[]> {
       const minIntervalMs = metadata.minIntervalMs !== undefined
         ? safeIntervalMs(metadata.minIntervalMs)
         : safeIntervalMs(Number(metadata.minIntervalSeconds || 0) * 1000);
+      const id = String(row.venue_id).slice(0, 240);
+      const mandateDigest = String(metadata.mandateDigest || '').trim().toLowerCase();
+      const executionScope = /^0x[a-f0-9]{64}$/.test(mandateDigest) ? mandateDigest : `venue:${id}`;
       return [{
-        id: String(row.venue_id).slice(0, 240),
+        id,
+        executionScope,
         chain: parsedChain,
         borrower,
         asset,
@@ -175,7 +182,7 @@ async function standingMandates(): Promise<StandingBorrowerMandate[]> {
   const combined = [...configuredMandates(), ...await registryMandates()];
   const unique = new Map<string, StandingBorrowerMandate>();
   for (const mandate of combined) {
-    const key = `${mandate.chain}:${mandate.borrower.toLowerCase()}:${mandate.asset.toLowerCase()}:${mandate.amountBaseUnits}:${mandate.borrowerData}:${mandate.id}`;
+    const key = `${mandate.chain}:${mandate.borrower.toLowerCase()}:${mandate.asset.toLowerCase()}:${mandate.executionScope}`;
     if (!unique.has(key)) unique.set(key, mandate);
   }
   return [...unique.values()];
@@ -194,8 +201,9 @@ async function mandateExecutionState(mandate: StandingBorrowerMandate): Promise<
      WHERE kind='prepared_atomic_execution'
        AND chain=$2
        AND payload->>'mode'='broker_execution'
-       AND payload->>'mandateId'=$1`,
-    [mandate.id, mandate.chain],
+       AND payload->>'mandateId'=$1
+       AND payload->>'mandateScope'=$3`,
+    [mandate.id, mandate.chain, mandate.executionScope],
   );
   const row = result.rows[0] || {};
   const lastCommittedAt = row.last_committed_at ? new Date(String(row.last_committed_at)).getTime() : null;
@@ -235,6 +243,7 @@ class GhostWalletAutonomousController {
       configuredSpreadFloorBps: configuredSpreadFloorBps(),
       perTransactionSpreadCalibration: true,
       signedMandateExecutionLimits: true,
+      signedMandateVersionIsolation: true,
       strictPositiveAllInNetRequired: true,
       chains: [...CHAINS],
       continuousOperation: true,
@@ -397,7 +406,7 @@ class GhostWalletAutonomousController {
 
       const executionSequence = executionState.total + 1;
       await enqueueGhostWalletWork({
-        dedupeKey: `ghost-controller:broker:${mandate.id}:${mandate.chain}:execution:${executionSequence}`,
+        dedupeKey: `ghost-controller:broker:${mandate.id}:${mandate.executionScope}:${mandate.chain}:execution:${executionSequence}`,
         kind: 'prepared_atomic_execution',
         chain: mandate.chain,
         priority: 900,
@@ -406,6 +415,7 @@ class GhostWalletAutonomousController {
           mode: 'broker_execution',
           chain: mandate.chain,
           mandateId: mandate.id,
+          mandateScope: mandate.executionScope,
           mandateSource: mandate.source,
           mandateExecutionSequence: executionSequence,
           mandateMaxExecutions: mandate.maxExecutions,
@@ -436,6 +446,7 @@ class GhostWalletAutonomousController {
       logger.debug('[GhostWalletController] Opportunity path failed locally', {
         component: 'GhostWalletAutonomousController',
         mandateId: mandate.id,
+        mandateScope: mandate.executionScope,
         chain: mandate.chain,
         error: error instanceof Error ? error.message : String(error),
         routeLocalFailure: true,
@@ -459,6 +470,7 @@ export const GHOST_WALLET_AUTONOMOUS_CONTROLLER_POLICY = {
   globalSpreadConfigurationTransactionRequired: false,
   signedMandateExecutionCountEnforced: true,
   signedMandateCadenceEnforced: true,
+  signedMandateVersionIsolation: true,
   oneActiveExecutionPerMandate: true,
   durableSubmissionLedgerRequired: true,
   chainFailureLocal: true,
