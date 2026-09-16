@@ -1,11 +1,13 @@
 import type { ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import { measuredCandidateRegistry, type MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
+import { apeDirectionKey, apeDirectionalMarketKey } from './ape-directional-market.js';
 
 export type ApeResidentRole = 'active' | 'hedge' | 'reserve';
 
 export interface ApeResidentPlacement {
   opportunityId: string;
   competitionKey: string;
+  directionKey: string;
   contextKey: string;
   cohort: number;
   role: ApeResidentRole;
@@ -70,26 +72,13 @@ function venueProfile(opportunity: ZeroCapitalOpportunity): string {
 }
 
 /**
- * Same-spread identity deliberately ignores venue/provider/builder. Those are
- * alternative ways to realize the SAME already-discovered token cycle. Direction
- * and the ordered token path remain part of the identity, so unrelated spreads do
- * not compete with one another merely because they borrow the same stablecoin.
+ * Same-market identity deliberately ignores venue/provider/builder AND direction.
+ * Direction remains attached metadata on each candidate, allowing both sides of one
+ * discovered market to compete in the same resident cohort without collapsing their
+ * independently measured economics.
  */
-function spreadPath(opportunity: ZeroCapitalOpportunity): string {
-  if (opportunity.route.length === 0) {
-    return `${opportunity.inputToken.toLowerCase()}>${opportunity.outputToken.toLowerCase()}`;
-  }
-  const first = opportunity.route[0].tokenIn.toLowerCase();
-  const outputs = opportunity.route.map(step => step.tokenOut.toLowerCase());
-  return [first, ...outputs].join('>');
-}
-
 function competitionKey(opportunity: ZeroCapitalOpportunity): string {
-  return [
-    opportunity.chain,
-    opportunity.inputToken.toLowerCase(),
-    spreadPath(opportunity),
-  ].join('|');
+  return apeDirectionalMarketKey(opportunity);
 }
 
 function hintKeyForOpportunity(opportunity: ZeroCapitalOpportunity): string {
@@ -171,6 +160,7 @@ function residentHint(opportunity: ZeroCapitalOpportunity, now = Date.now()): Ap
 function contextKey(opportunity: ZeroCapitalOpportunity, hint: ApeResidentContextHint | null): string {
   return [
     competitionKey(opportunity),
+    `direction:${apeDirectionKey(opportunity)}`,
     `size:${opportunity.flashLoanAmount.toString()}`,
     `venue:${venuePath(opportunity)}`,
     `provider:${hint?.provider ?? ANY_COMPATIBLE}`,
@@ -197,9 +187,9 @@ function prune(now = Date.now()): void {
  * Prepares the contextual 2-active + 1-hedge + 2-reserve layout before APE starts.
  * It stores metadata only and retains the caller's opportunity objects by reference;
  * no route/economics object is copied, serialized, persisted, or looked up remotely.
- * Same-spread variants are grouped by chain + ordered token cycle/direction, then
- * ranked by exact base-unit net-BPS ratio. Venue/provider/builder remain alternative
- * realization dimensions rather than new opportunity identities.
+ * Same-market variants are grouped by a direction-neutral canonical token path. Each
+ * candidate keeps its direction key and measured economics, while venue/provider/
+ * builder remain alternative realization dimensions rather than opportunity identities.
  * Provider/builder context comes only from an already-resident advisory hint. Missing
  * context stays wildcard-compatible instead of causing measurement or a wait.
  * Larger candidate sets form additional five-wide cohorts so Stage-1 coverage is
@@ -226,8 +216,6 @@ export function primeApeResidentRouting(opportunities: readonly ZeroCapitalOppor
       const exactOrder = compareExactNetBps(left, right);
       if (exactOrder !== 0) return exactOrder;
 
-      // Keep the numeric BPS representation only as a telemetry-compatible fallback;
-      // the exact base-unit ratio above owns the winner decision.
       const leftBps = exactNetBps(left);
       const rightBps = exactNetBps(right);
       if (rightBps !== leftBps) return rightBps - leftBps;
@@ -253,6 +241,7 @@ export function primeApeResidentRouting(opportunities: readonly ZeroCapitalOppor
       placements.set(opportunity.id, {
         opportunityId: opportunity.id,
         competitionKey: key,
+        directionKey: apeDirectionKey(opportunity),
         contextKey: contextKey(opportunity, hint),
         cohort: Math.floor(index / 5),
         role,
@@ -309,9 +298,13 @@ export function orderApeResidentOpportunities(
 
 export function getApeResidentRoutingSnapshot() {
   prune();
+  const residentMarkets = new Set([...placements.values()].map(placement => placement.competitionKey));
+  const residentDirections = new Set([...placements.values()].map(placement => `${placement.competitionKey}|${placement.directionKey}`));
   return {
     observedAt: Date.now(),
     residentEntries: placements.size,
+    residentMarkets: residentMarkets.size,
+    residentDirections: residentDirections.size,
     residentContextHints: residentContextHints.size,
     primes,
     candidatesPrimed,
@@ -324,8 +317,9 @@ export function getApeResidentRoutingSnapshot() {
     activePerCohort: 2 as const,
     maximumHedgePerCohort: 1 as const,
     dormantReservesPerCohort: 2 as const,
-    competitionScope: 'same_chain_ordered_token_cycle_direction' as const,
-    sameSpreadVariantsCompeteInMemory: true as const,
+    competitionScope: 'same_chain_direction_neutral_canonical_token_path' as const,
+    sameMarketDirectionsCompeteInMemory: true as const,
+    directionEconomicsRemainIndependent: true as const,
     exactBpsComparison: 'base_unit_cross_ratio' as const,
     providerDimension: 'resident_measured_or_any_compatible' as const,
     builderDimension: 'resident_measured_or_any_compatible' as const,
