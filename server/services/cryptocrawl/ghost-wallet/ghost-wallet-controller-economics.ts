@@ -25,6 +25,16 @@ export interface GhostWalletControllerEconomics {
   reason: string;
 }
 
+export interface GhostWalletMultiAssetEconomics {
+  nativeSymbol: 'ETH' | 'POL' | 'BNB' | 'AVAX';
+  gasCostUsdScaled: bigint;
+  expectedProfitUsdScaled: bigint;
+  expectedNetProfitUsdScaled: bigint;
+  approved: boolean;
+  reason: string;
+  profitAssets: Array<{ asset: string; symbol: string; decimals: number; amount: bigint; valueUsdScaled: bigint }>;
+}
+
 function nativeSymbol(chain: GhostWalletChain): 'ETH' | 'POL' | 'BNB' | 'AVAX' {
   if (chain === 'polygon') return 'POL';
   if (chain === 'bsc') return 'BNB';
@@ -51,6 +61,17 @@ function divUp(numerator: bigint, denominator: bigint): bigint {
   return numerator === 0n ? 0n : (numerator + denominator - 1n) / denominator;
 }
 
+async function tokenMetadata(provider: providers.JsonRpcProvider, asset: string): Promise<{ symbol: string; decimals: number }> {
+  const token = new Contract(asset, ERC20_METADATA_ABI, provider);
+  const [symbolRaw, decimalsRaw] = await Promise.all([token.symbol(), token.decimals()]);
+  const symbol = canonicalPriceSymbol(String(symbolRaw));
+  const decimals = Number(decimalsRaw.toString());
+  if (!Number.isSafeInteger(decimals) || decimals < 0 || decimals > 36) {
+    throw new Error('GHOST_WALLET_CONTROLLER_ASSET_DECIMALS_INVALID');
+  }
+  return { symbol, decimals };
+}
+
 export async function evaluateGhostWalletControllerEconomics(input: {
   chain: GhostWalletChain;
   provider: providers.JsonRpcProvider;
@@ -62,13 +83,9 @@ export async function evaluateGhostWalletControllerEconomics(input: {
   if (input.gasUnits <= 0n || input.feePerGasWei <= 0n || input.expectedSpreadBaseUnits <= 0n) {
     throw new Error('GHOST_WALLET_CONTROLLER_ECONOMICS_INPUT_INVALID');
   }
-  const token = new Contract(input.asset, ERC20_METADATA_ABI, input.provider);
-  const [symbolRaw, decimalsRaw] = await Promise.all([token.symbol(), token.decimals()]);
-  const assetSymbol = canonicalPriceSymbol(String(symbolRaw));
-  const assetDecimals = Number(decimalsRaw.toString());
-  if (!Number.isSafeInteger(assetDecimals) || assetDecimals < 0 || assetDecimals > 36) {
-    throw new Error('GHOST_WALLET_CONTROLLER_ASSET_DECIMALS_INVALID');
-  }
+  const metadata = await tokenMetadata(input.provider, input.asset);
+  const assetSymbol = metadata.symbol;
+  const assetDecimals = metadata.decimals;
   const gasSymbol = nativeSymbol(input.chain);
   const priceSymbols = [...new Set([gasSymbol, assetSymbol])];
   const prices = await coinGeckoPriceClient.getLiveSymbolPrices(priceSymbols);
@@ -103,11 +120,63 @@ export async function evaluateGhostWalletControllerEconomics(input: {
   };
 }
 
+export async function evaluateGhostWalletMultiAssetControllerEconomics(input: {
+  chain: GhostWalletChain;
+  provider: providers.JsonRpcProvider;
+  gasUnits: bigint;
+  feePerGasWei: bigint;
+  profits: Array<{ asset: string; amount: bigint }>;
+}): Promise<GhostWalletMultiAssetEconomics> {
+  const positive = input.profits.filter(item => item.amount > 0n);
+  if (input.gasUnits <= 0n || input.feePerGasWei <= 0n || positive.length === 0) {
+    throw new Error('GHOST_WALLET_CONTROLLER_MULTI_ASSET_INPUT_INVALID');
+  }
+  const metadata = await Promise.all(positive.map(async item => ({
+    ...item,
+    ...await tokenMetadata(input.provider, item.asset),
+  })));
+  const gasSymbol = nativeSymbol(input.chain);
+  const prices = await coinGeckoPriceClient.getLiveSymbolPrices([...new Set([gasSymbol, ...metadata.map(item => item.symbol)])]);
+  const nativePrice = prices.get(gasSymbol);
+  if (!nativePrice) throw new Error(`GHOST_WALLET_CONTROLLER_PRICE_EVIDENCE_UNAVAILABLE:${gasSymbol}`);
+  const gasCostWei = input.gasUnits * input.feePerGasWei;
+  const gasCostUsdScaled = (gasCostWei * scaledPrice(nativePrice)) / WEI;
+  let expectedProfitUsdScaled = 0n;
+  const profitAssets: GhostWalletMultiAssetEconomics['profitAssets'] = [];
+  for (const item of metadata) {
+    const price = prices.get(item.symbol);
+    if (!price) throw new Error(`GHOST_WALLET_CONTROLLER_PRICE_EVIDENCE_UNAVAILABLE:${item.symbol}`);
+    const valueUsdScaled = (item.amount * scaledPrice(price)) / (10n ** BigInt(item.decimals));
+    expectedProfitUsdScaled += valueUsdScaled;
+    profitAssets.push({
+      asset: item.asset,
+      symbol: item.symbol,
+      decimals: item.decimals,
+      amount: item.amount,
+      valueUsdScaled,
+    });
+  }
+  const expectedNetProfitUsdScaled = expectedProfitUsdScaled - gasCostUsdScaled;
+  const approved = expectedNetProfitUsdScaled > 0n;
+  return {
+    nativeSymbol: gasSymbol,
+    gasCostUsdScaled,
+    expectedProfitUsdScaled,
+    expectedNetProfitUsdScaled,
+    approved,
+    reason: approved
+      ? 'strict_positive_multi_asset_fees_after_controller_gas'
+      : 'ghost_matched_intent_fees_do_not_cover_controller_gas',
+    profitAssets,
+  };
+}
+
 export const GHOST_WALLET_CONTROLLER_ECONOMICS_POLICY = {
   zeroCapitalEconomicsAuthority: false,
   advisoryVetoAuthority: false,
   livePriceEvidenceRequired: true,
   exactPreparedGasEstimateRequired: true,
   strictPositiveAllInNetRequired: true,
+  multiAssetFeeValuationSupported: true,
   hardBpsProfitFloor: false,
 } as const;
