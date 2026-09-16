@@ -18,6 +18,7 @@ const atomicStack = read('server/services/cryptocrawl/integration/zero-capital-a
 const adaptiveCommand = read('server/services/cryptocrawl/integration/ape-adaptive-command.ts');
 const rescueOrchestration = read('server/services/cryptocrawl/integration/ape-rescue-orchestration.ts');
 const threshold = read('server/services/cryptocrawl/integration/zero-capital-profit-output-floor.ts');
+const lease = read('server/services/cryptocrawl/integration/ape-profitable-snapshot-lease.ts');
 
 // Stage One is locked and remains independent from APE/execution threshold changes.
 assert.match(discovery, /STAGE_ONE_LOCKED_INVARIANT/);
@@ -25,6 +26,7 @@ assert.match(discovery, /const STAGE_ONE_ZERO_CAPITAL_ENTRY_FLOOR_BPS = -10;/);
 assert.match(discovery, /stageOneLock: 'explicit_operator_authorization_required'/);
 assert.match(discovery, /opportunity\.netProfitBps >= atomicSurplusEntryFloorBps\(\)/);
 assert.doesNotMatch(discovery, /zero-capital-profit-output-floor/);
+assert.doesNotMatch(discovery, /ape-profitable-snapshot-lease/);
 
 // Strictly positive all-in profit is execution acceptance; it is not APE retirement.
 assert.match(threshold, /ZERO_CAPITAL_STRICT_POSITIVE_MIN_BASE_UNITS = 1n/);
@@ -75,14 +77,17 @@ assert.match(activeRescue, /hardDeadlinePropagation: true/);
 assert.match(activeRescue, /adaptiveRouteP95Timeouts: true/);
 assert.match(activeRescue, /adaptiveConcurrency: true/);
 
-// Fair schedules structural->V4 per candidate rather than through sibling barriers.
+// Fair schedules structural->V4 per candidate and races optional work against the
+// profitable execute-before-expiry escape instead of adding a sibling batch barrier.
 assert.match(gateway, /const candidateLanes: Promise<void>\[\] = \[\]/);
 assert.match(gateway, /runSplitBatch\(\[candidate\], tierBudget\.structuralDeadlineAt\)/);
-assert.match(gateway, /runV4Batch\(\[current\], tierBudget\.v4DeadlineAt\)/);
-assert.match(gateway, /await Promise\.all\(candidateLanes\)/);
+assert.match(gateway, /const localV4Deadline = capApeOptimizationDeadline\(candidate\.id, tierBudget\.v4DeadlineAt\)/);
+assert.match(gateway, /await runV4Batch\(\[current\], localV4Deadline\)/);
+assert.match(gateway, /Promise\.race\(\[\s*laneCompletion,\s*profitEscapeSignal\.then/s);
 assert.match(gateway, /structuralSiblingBarrierBeforeV4: false/);
 assert.match(gateway, /crossCandidateProfitabilityStop: false/);
 assert.match(gateway, /candidateLocalRunToCompletion: true/);
+assert.match(gateway, /profitEscapeCanPreemptRemainingOptimization: true/);
 assert.match(gateway, /outerAuthorityDeadlineEnforcedForAllStatefulTactics: true/);
 assert.match(gateway, /lateTacticResultsCanMutateCanonicalState: false/);
 assert.match(gateway, /stageOneMutation: false/);
@@ -108,8 +113,27 @@ assert.doesNotMatch(adaptiveCommand, /expectedProfit: root\.expectedProfit \+ 1n
 // Fair rejects late results in O(1) before they can replace candidate state.
 assert.match(gateway, /const generationById = new Map/);
 assert.match(gateway, /isCurrentApeCandidateGeneration\(root, expected\)/);
-assert.match(gateway, /if \(!generationCurrent\(root\)\) return false/);
+assert.match(gateway, /if \(releaseRequested \|\| !generationCurrent\(root\)\) return false/);
 assert.match(gateway, /staleGenerationResultsDiscarded/);
+
+// Best-known positive economics are retained by reference while a fresher shadow is
+// prepared. The lease decision itself performs no persistence/network I/O.
+assert.match(lease, /bestProfit: ZeroCapitalOpportunity/);
+assert.match(lease, /freshestPositive: ZeroCapitalOpportunity/);
+assert.match(lease, /export function observeApeProfitableSnapshot/);
+assert.match(lease, /export function getApeBestExecutableSnapshot/);
+assert.match(lease, /export function capApeOptimizationDeadline/);
+assert.match(lease, /mode: 'dispatch_now'/);
+assert.match(lease, /storageAuthority: 'resident_candidate_local_pointer_only'/);
+assert.match(lease, /persistenceOnHotPath: false/);
+assert.match(lease, /networkIoOnDecisionPath: false/);
+assert.match(lease, /staleEvidenceExtended: false/);
+assert.match(lease, /bestSnapshotOverwriteByWorseAttempt: false/);
+assert.match(gateway, /observeApeProfitableSnapshot\(normalized\)/);
+assert.match(gateway, /bestProvenSnapshotResident: true/);
+assert.match(gateway, /shadowExecutionLease: true/);
+assert.match(gateway, /executeBeforeExpiry: true/);
+assert.match(gateway, /return output;/);
 
 // Resident price evidence remains nonblocking and split keeps local failure semantics.
 assert.match(gateway, /livePriceMesh\.peekLiveSymbolPriceEvidence/);
@@ -120,6 +144,8 @@ assert.match(routeSplit, /missingPriceRefreshesThroughCanonicalMesh: true/);
 assert.match(routeSplit, /parentOpportunityKilledOnSplitFailure: false/);
 assert.match(routeSplit, /candidatesRunConcurrently: true/);
 assert.match(routeSplit, /ratiosWithinPairRunConcurrently: true/);
+assert.match(routeSplit, /strictPositiveStopsRouteSplitOptimization: false/);
+assert.match(routeSplit, /promotedCompositeStopsRemainingSplitSearch: false/);
 
 // Resident worker preparation remains local/no queue/persistence authority.
 assert.match(gateway, /primeApeResidentWorkbench\(\{/);
@@ -139,9 +165,13 @@ assert.match(rescueOrchestration, /const v4ProtectedMs = v4Count > 0/);
 assert.match(rescueOrchestration, /const compositeProtectedMs = compositeCount > 0/);
 assert.match(atomicStack, /exactStrictPositiveCompositeCallRequired: true/);
 assert.match(atomicStack, /measuredCompositionBenefitRequired: true/);
-assert.match(atomicStack, /aggregateEconomicsAuthority: true/);
+assert.match(atomicStack, /aggregateTerminalEconomicsAuthority: true/);
 assert.match(atomicStack, /individualChildPositiveGrossRequired: false/);
 assert.match(atomicStack, /fullVariantBatchBarrier: false/);
+assert.match(atomicStack, /firstPositiveStopsVariantSearch: false/);
+assert.match(atomicStack, /bestMeasuredProfitableVariantSelected: true/);
+assert.match(atomicStack, /firstPromotionStopsSiblingGroups: false/);
+assert.doesNotMatch(atomicStack, /if \(settled\.result\.promoted > 0\) return aggregate/);
 
 // No global quote storm or synthetic economics was reintroduced.
 assert.doesNotMatch(activeRescue, /ZERO_CAPITAL_RESCUE_TOTAL_QUOTE_BUDGET/);
@@ -152,4 +182,4 @@ assert.match(activeRescue, /stageOneMutation: false/);
 assert.match(activeRescue, /syntheticEconomics: false/);
 assert.match(activeRescue, /executionAuthority: false/);
 
-console.log('[atomic-bps-single-pipeline] PASS: Stage One remains locked; strict-positive execution acceptance is separate from continuous candidate-local APE optimization; generation authority is monotonic and sibling barriers/winner stops are removed');
+console.log('[atomic-bps-single-pipeline] PASS: Stage One remains locked; strict-positive execution acceptance is separate from continuous candidate-local APE optimization; best-profit/shadow leases release before expiry without reintroducing sibling barriers');
