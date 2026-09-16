@@ -11,6 +11,8 @@ import { ghostWalletWorkSignal, type GhostWalletWakeReason } from './ghost-walle
 
 const BRIDGE_OWNER_ABI = ['function setMinimumBrokerSpreadBps(uint16 spreadBps)'];
 const CHAINS = new Set<GhostWalletChain>(['ethereum', 'polygon', 'arbitrum', 'optimism', 'base', 'bsc', 'avalanche']);
+const BPS = 10_000n;
+const MAX_BRIDGE_SPREAD_BPS = 1_000;
 
 interface StandingBorrowerMandate {
   id: string;
@@ -44,9 +46,29 @@ function hexData(value: unknown): string {
   return ethers.utils.isHexString(raw) ? raw : '0x';
 }
 
-function targetSpreadBps(): number {
-  const configured = Number(process.env.GHOST_WALLET_AUTONOMOUS_MIN_SPREAD_BPS || 1);
-  return Number.isFinite(configured) ? Math.max(1, Math.min(1_000, Math.trunc(configured))) : 1;
+function configuredSpreadFloorBps(): number {
+  const configured = Number(
+    process.env.GHOST_WALLET_AUTONOMOUS_SPREAD_BPS
+    || process.env.GHOST_WALLET_AUTONOMOUS_MIN_SPREAD_BPS
+    || 0,
+  );
+  return Number.isFinite(configured)
+    ? Math.max(0, Math.min(MAX_BRIDGE_SPREAD_BPS, Math.trunc(configured)))
+    : 0;
+}
+
+function spreadBaseUnits(amount: bigint, spreadBps: number): bigint {
+  if (amount <= 0n) return 0n;
+  if (spreadBps <= 0) return 1n;
+  const numerator = amount * BigInt(spreadBps);
+  return (numerator + BPS - 1n) / BPS;
+}
+
+function requiredSpreadBps(amount: bigint, requiredSpread: bigint): number | null {
+  if (amount <= 0n || requiredSpread <= 0n) return null;
+  const result = (requiredSpread * BPS + amount - 1n) / amount;
+  if (result > BigInt(MAX_BRIDGE_SPREAD_BPS)) return null;
+  return Number(result);
 }
 
 function activeScanMs(hasMandates: boolean): number {
@@ -157,7 +179,8 @@ class GhostWalletAutonomousController {
       zeroCapitalSchedulerDependency: false,
       zeroCapitalExecutionAuthority: false,
       hardBpsProfitAdmissionFloor: false,
-      targetIntermediarySpreadBps: targetSpreadBps(),
+      configuredSpreadFloorBps: configuredSpreadFloorBps(),
+      dynamicSpreadCalibration: true,
       strictPositiveAllInNetRequired: true,
       chains: [...CHAINS],
       continuousOperation: true,
@@ -226,6 +249,34 @@ class GhostWalletAutonomousController {
     }
   }
 
+  private async enqueueSpreadConfiguration(input: {
+    mandate: StandingBorrowerMandate;
+    bridge: string;
+    spreadBps: number;
+    reason: 'configured_floor' | 'dynamic_gas_calibration';
+  }): Promise<void> {
+    if (!ghostWalletEngine.isLiveExecutionEnabled()) return;
+    const data = new ethers.utils.Interface(BRIDGE_OWNER_ABI)
+      .encodeFunctionData('setMinimumBrokerSpreadBps', [input.spreadBps]);
+    await enqueueGhostWalletWork({
+      dedupeKey: `ghost-controller:spread-config:${input.mandate.chain}:${input.bridge.toLowerCase()}:${input.spreadBps}`,
+      kind: 'prepared_atomic_execution',
+      chain: input.mandate.chain,
+      priority: 950,
+      maxAttempts: 20,
+      payload: {
+        mode: 'bridge_spread_config',
+        chain: input.mandate.chain,
+        to: input.bridge,
+        data,
+        value: '0',
+        verifySpreadBps: input.spreadBps,
+        spreadReason: input.reason,
+      },
+    });
+    ghostWalletWorkSignal.emitWake('local_work_enqueued');
+  }
+
   private async evaluateMandate(mandate: StandingBorrowerMandate): Promise<void> {
     try {
       if (mandate.expiresAt !== null && mandate.expiresAt <= Date.now()) return;
@@ -252,23 +303,14 @@ class GhostWalletAutonomousController {
         return;
       }
 
-      const requiredSpreadBps = targetSpreadBps();
-      if (descriptor.minimumBrokerSpreadBps < requiredSpreadBps) {
-        if (!ghostWalletEngine.isLiveExecutionEnabled()) return;
-        const data = new ethers.utils.Interface(BRIDGE_OWNER_ABI)
-          .encodeFunctionData('setMinimumBrokerSpreadBps', [requiredSpreadBps]);
-        await enqueueGhostWalletWork({
-          dedupeKey: `ghost-controller:spread-config:${mandate.chain}:${descriptor.address.toLowerCase()}:${requiredSpreadBps}`,
-          kind: 'prepared_atomic_execution',
-          chain: mandate.chain,
-          priority: 950,
-          maxAttempts: 20,
-          payload: {
-            mode: 'bridge_spread_config', chain: mandate.chain,
-            to: descriptor.address, data, value: '0', verifySpreadBps: requiredSpreadBps,
-          },
+      const configuredFloor = configuredSpreadFloorBps();
+      if (configuredFloor > descriptor.minimumBrokerSpreadBps) {
+        await this.enqueueSpreadConfiguration({
+          mandate,
+          bridge: descriptor.address,
+          spreadBps: configuredFloor,
+          reason: 'configured_floor',
         });
-        ghostWalletWorkSignal.emitWake('local_work_enqueued');
         return;
       }
 
@@ -299,7 +341,25 @@ class GhostWalletAutonomousController {
         feePerGasWei: BigInt(feePerGas.toString()),
         expectedSpreadBaseUnits: BigInt(quote.selected.ghostSpreadBaseUnits),
       });
-      if (!economics.approved) return;
+
+      if (!economics.approved) {
+        const amount = BigInt(mandate.amountBaseUnits);
+        const neededSpread = economics.gasCostAssetBaseUnits + 1n;
+        const calibratedBps = requiredSpreadBps(amount, neededSpread);
+        if (calibratedBps === null || calibratedBps <= descriptor.minimumBrokerSpreadBps) return;
+        const calibratedSpread = spreadBaseUnits(amount, calibratedBps);
+        const calibratedBorrowerFee = BigInt(quote.selected.upstreamFeeBaseUnits) + calibratedSpread;
+        if (mandate.maxBorrowerFeeBaseUnits !== null
+          && calibratedBorrowerFee > BigInt(mandate.maxBorrowerFeeBaseUnits)) return;
+        await this.enqueueSpreadConfiguration({
+          mandate,
+          bridge: descriptor.address,
+          spreadBps: calibratedBps,
+          reason: 'dynamic_gas_calibration',
+        });
+        return;
+      }
+
       this.lastOpportunityAt = Date.now();
       if (!ghostWalletEngine.isLiveExecutionEnabled()) return;
 
@@ -356,6 +416,9 @@ export const GHOST_WALLET_AUTONOMOUS_CONTROLLER_POLICY = {
   exactCallBeforeQueue: true,
   exactGasBeforeQueue: true,
   strictPositiveAllInNetBeforeQueue: true,
+  hardBpsProfitAdmissionFloor: false,
+  configuredSpreadFloorDefaultBps: 0,
+  dynamicSpreadCalibrationFromExactGas: true,
   durableSubmissionLedgerRequired: true,
   chainFailureLocal: true,
   zeroCapitalIntegration: false,
