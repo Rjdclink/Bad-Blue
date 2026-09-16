@@ -28,6 +28,10 @@ has(directions, 'canonicalCyclicTokenPath', 'cyclic direction-neutral market ide
 has(directions, 'step.protocol', 'venue order missing from direction identity');
 has(directions, "Number.isFinite(step.fee) ? String(step.fee) : 'fee_unknown'", 'fee state missing from direction identity');
 has(directions, 'const reverse = ordered.find(candidate => apeDirectionKey(candidate) !== winnerDirection)', 'opposite direction protection missing');
+has(directions, 'ZERO_CAPITAL_APE_HOT_GLOBAL_LIMIT', 'global measured APE hot-lane limit missing');
+has(directions, 'return boundedInteger(process.env.ZERO_CAPITAL_APE_HOT_GLOBAL_LIMIT, 6, 2, 24)', 'global APE hot-lane bound is not safely constrained');
+has(directions, 'marketSelections.sort((left, right) => compareExactEconomics(left[0], right[0]))', 'global market priority is not driven by current exact economics');
+has(directions, 'if (selected.length >= globalLimit) break', 'global APE hot-lane limit is not enforced');
 
 has(routeDirections, 'reverseConfiguredZeroCapitalRoute', 'compatible reverse template builder missing');
 has(routeDirections, 'ensureUniversalReverseRoutes', 'universal compatible reverse coverage missing');
@@ -57,4 +61,4 @@ has(ape, 'unquotedSkipped: admissionSnapshot.deferredForMeasurement', 'unquoted 
 has(ape, 'apeUpliftBps', 'APE uplift telemetry missing');
 has(ape, 'finalNetBps', 'final net BPS telemetry missing');
 
-console.log('[ape-measured-market-priority] PASS: fresh measured hot-lane admission, venue-aware direction identity, compatible reverse coverage, fixed quote-budget preservation, zero-I/O APE and deferred directional performance telemetry verified');
+console.log('[ape-measured-market-priority] PASS: fresh measured globally-bounded hot-lane admission, venue-aware direction identity, compatible reverse coverage, fixed quote-budget preservation, zero-I/O APE and deferred directional performance telemetry verified');
