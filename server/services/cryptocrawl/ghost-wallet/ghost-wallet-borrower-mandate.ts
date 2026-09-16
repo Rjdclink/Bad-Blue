@@ -88,6 +88,13 @@ function asSafeInteger(value: unknown, label: string, positive = false): number 
   return parsed;
 }
 
+function millisecondsFromSeconds(seconds: number, label: string): number {
+  if (!Number.isSafeInteger(seconds) || seconds < 0 || seconds > Math.floor(Number.MAX_SAFE_INTEGER / 1000)) {
+    throw new Error(`${label}_INVALID`);
+  }
+  return seconds * 1000;
+}
+
 function asData(value: unknown): string {
   const raw = String(value || '0x').trim();
   if (!ethers.utils.isHexString(raw)) throw new Error('GHOST_WALLET_MANDATE_BORROWER_DATA_INVALID');
@@ -190,6 +197,34 @@ function domain(chainId: number, borrower: string) {
   };
 }
 
+async function assertMandateVersionCanReplace(input: {
+  mandateId: string;
+  nonce: bigint;
+  digest: string;
+}): Promise<void> {
+  const result = await pool.query(
+    `SELECT enabled,metadata
+     FROM private.cryptocrawler_ghost_wallet_venues
+     WHERE venue_id=$1
+     LIMIT 1`,
+    [input.mandateId],
+  );
+  const row = result.rows[0];
+  if (!row) return;
+  const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata as Record<string, unknown> : {};
+  const storedNonceRaw = String(metadata.nonce ?? '');
+  const storedDigest = String(metadata.mandateDigest || '').toLowerCase();
+  if (!/^\d+$/.test(storedNonceRaw)) throw new Error('GHOST_WALLET_MANDATE_STORED_NONCE_INVALID');
+  const storedNonce = BigInt(storedNonceRaw);
+  if (input.nonce < storedNonce) throw new Error('GHOST_WALLET_MANDATE_NONCE_NOT_NEWER');
+  if (input.nonce === storedNonce) {
+    if (storedDigest !== input.digest.toLowerCase()) throw new Error('GHOST_WALLET_MANDATE_NONCE_CONFLICT');
+    if (metadata.cancelledAt !== undefined || row.enabled === false) {
+      throw new Error('GHOST_WALLET_MANDATE_CANCELLED_REPLAY_REJECTED');
+    }
+  }
+}
+
 export async function registerGhostWalletBorrowerMandate(
   input: GhostWalletBorrowerMandateInput,
 ): Promise<RegisteredGhostWalletBorrowerMandate> {
@@ -202,6 +237,8 @@ export async function registerGhostWalletBorrowerMandate(
   const deadline = asSafeInteger(input.deadline, 'GHOST_WALLET_MANDATE_DEADLINE', true);
   const maxExecutions = asSafeInteger(input.maxExecutions, 'GHOST_WALLET_MANDATE_MAX_EXECUTIONS', true);
   const minIntervalSeconds = asSafeInteger(input.minIntervalSeconds ?? 0, 'GHOST_WALLET_MANDATE_MIN_INTERVAL');
+  const deadlineMs = millisecondsFromSeconds(deadline, 'GHOST_WALLET_MANDATE_DEADLINE_MS');
+  const minIntervalMs = millisecondsFromSeconds(minIntervalSeconds, 'GHOST_WALLET_MANDATE_MIN_INTERVAL_MS');
   const borrowerData = asData(input.borrowerData);
   const signature = asSignature(input.signature);
   const nowSeconds = Math.floor(Date.now() / 1000);
@@ -226,7 +263,8 @@ export async function registerGhostWalletBorrowerMandate(
   };
   const digest = ethers.utils._TypedDataEncoder.hash(domain(network.chainId, borrower), BORROWER_MANDATE_TYPES, value);
   const authorizationMode = await verifyBorrowerAuthority({ provider, borrower, authorizer, digest, signature });
-  const mandateId = `signed-borrower:${input.chain}:${digest.toLowerCase()}`;
+  const mandateId = `signed-borrower:${input.chain}:${borrower.toLowerCase()}:${asset.toLowerCase()}`;
+  await assertMandateVersionCanReplace({ mandateId, nonce, digest });
 
   await upsertGhostWalletVenue({
     venueId: mandateId,
@@ -259,10 +297,10 @@ export async function registerGhostWalletBorrowerMandate(
       borrowerDataHash: value.borrowerDataHash,
       nonce: nonce.toString(),
       deadline,
-      expiresAt: deadline * 1000,
+      expiresAt: deadlineMs,
       maxExecutions,
       minIntervalSeconds,
-      minIntervalMs: minIntervalSeconds * 1000,
+      minIntervalMs,
       signatureHash: ethers.utils.keccak256(signature),
     },
   });
@@ -350,6 +388,9 @@ export const GHOST_WALLET_BORROWER_MANDATE_POLICY = {
   exactSimulationStillRequiredBeforeExecution: true,
   explicitExecutionCountRequired: true,
   explicitExpiryRequired: true,
+  monotonicNonceRequiredForReplacement: true,
+  cancelledMandateReplayRejected: true,
+  onePersistentMandatePerBorrowerAsset: true,
   cancellationSignedBySameAuthority: true,
   zeroCapitalDependency: false,
 } as const;
