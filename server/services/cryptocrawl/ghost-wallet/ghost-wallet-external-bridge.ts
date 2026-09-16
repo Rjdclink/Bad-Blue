@@ -51,24 +51,6 @@ function timeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> 
   });
 }
 
-function firstSuccessful<T>(attempts: Array<Promise<T>>, label: string): Promise<T> {
-  return new Promise<T>((resolvePromise, reject) => {
-    if (attempts.length === 0) {
-      reject(new Error(label));
-      return;
-    }
-    let remaining = attempts.length;
-    let lastError: unknown;
-    for (const attempt of attempts) {
-      attempt.then(resolvePromise, error => {
-        lastError = error;
-        remaining -= 1;
-        if (remaining === 0) reject(lastError instanceof Error ? lastError : new Error(label));
-      });
-    }
-  });
-}
-
 async function artifact(): Promise<BridgeArtifact> {
   if (!artifactPromise) {
     artifactPromise = (async () => {
@@ -105,8 +87,6 @@ async function verifyFactory(provider: providers.JsonRpcProvider): Promise<void>
 export async function getGhostWalletExternalBridgeDescriptor(
   chain: GhostWalletChain,
 ): Promise<GhostWalletExternalBridgeDescriptor> {
-  const availableProviders = await ghostWalletProviderMesh.getProviders(chain);
-  if (availableProviders.length === 0) throw new Error(`GHOST_WALLET_RPC_UNAVAILABLE:${chain}`);
   const built = await artifact();
   const recipient = canonicalRecipient();
   const initCode = ethers.utils.hexConcat([
@@ -118,51 +98,53 @@ export async function getGhostWalletExternalBridgeDescriptor(
     BRIDGE_SALT,
     ethers.utils.keccak256(initCode),
   );
-  return firstSuccessful(availableProviders.map(provider => timeout((async () => {
-    const network = await provider.getNetwork();
-    const code = await provider.getCode(bridgeAddress);
-    if (code !== '0x') {
-      const bridge = new Contract(bridgeAddress, BRIDGE_ABI, provider);
-      const [owner, profitRecipient, minimumBrokerSpreadBps] = await Promise.all([
-        bridge.owner(), bridge.profitRecipient(), bridge.minimumBrokerSpreadBps(),
-      ]);
-      if (String(owner).toLowerCase() !== recipient.toLowerCase()
-        || String(profitRecipient).toLowerCase() !== recipient.toLowerCase()) {
-        throw new Error('GHOST_WALLET_EXTERNAL_BRIDGE_IDENTITY_MISMATCH');
+
+  return ghostWalletProviderMesh.runHedged({
+    chain,
+    operation: 'external_bridge_descriptor',
+    execute: provider => timeout((async () => {
+      const network = await provider.getNetwork();
+      const code = await provider.getCode(bridgeAddress);
+      if (code !== '0x') {
+        const bridge = new Contract(bridgeAddress, BRIDGE_ABI, provider);
+        const [owner, profitRecipient, minimumBrokerSpreadBps] = await Promise.all([
+          bridge.owner(), bridge.profitRecipient(), bridge.minimumBrokerSpreadBps(),
+        ]);
+        if (String(owner).toLowerCase() !== recipient.toLowerCase()
+          || String(profitRecipient).toLowerCase() !== recipient.toLowerCase()) {
+          throw new Error('GHOST_WALLET_EXTERNAL_BRIDGE_IDENTITY_MISMATCH');
+        }
+        return {
+          chain,
+          chainId: network.chainId,
+          address: bridgeAddress,
+          deployed: true,
+          owner: recipient,
+          profitRecipient: recipient,
+          minimumBrokerSpreadBps: Number(minimumBrokerSpreadBps),
+          deployment: null,
+        } satisfies GhostWalletExternalBridgeDescriptor;
       }
+
+      await verifyFactory(provider);
       return {
         chain,
         chainId: network.chainId,
         address: bridgeAddress,
-        deployed: true,
+        deployed: false,
         owner: recipient,
         profitRecipient: recipient,
-        minimumBrokerSpreadBps: Number(minimumBrokerSpreadBps),
-        deployment: null,
+        minimumBrokerSpreadBps: 0,
+        deployment: {
+          to: CREATE2_DEPLOYER,
+          data: ethers.utils.hexConcat([BRIDGE_SALT, initCode]),
+          value: '0',
+          payer: 'transaction_initiator',
+          controllerCompatible: true,
+        },
       } satisfies GhostWalletExternalBridgeDescriptor;
-    }
-
-    // Deployment calldata stays permissionless. The autonomous Ghost controller may
-    // initiate this transaction itself, while the intermediary contract remains only
-    // the atomic middleman. External integrators may still deploy the exact same code.
-    await verifyFactory(provider);
-    return {
-      chain,
-      chainId: network.chainId,
-      address: bridgeAddress,
-      deployed: false,
-      owner: recipient,
-      profitRecipient: recipient,
-      minimumBrokerSpreadBps: 0,
-      deployment: {
-        to: CREATE2_DEPLOYER,
-        data: ethers.utils.hexConcat([BRIDGE_SALT, initCode]),
-        value: '0',
-        payer: 'transaction_initiator',
-        controllerCompatible: true,
-      },
-    } satisfies GhostWalletExternalBridgeDescriptor;
-  })(), BRIDGE_READ_TIMEOUT_MS, `Ghost external bridge descriptor ${chain}`)), `GHOST_WALLET_EXTERNAL_BRIDGE_UNAVAILABLE:${chain}`);
+    })(), BRIDGE_READ_TIMEOUT_MS, `Ghost external bridge descriptor ${chain}`),
+  });
 }
 
 export async function getReadyGhostWalletExternalBridges(): Promise<GhostWalletExternalBridgeDescriptor[]> {
@@ -182,5 +164,7 @@ export const GHOST_WALLET_EXTERNAL_BRIDGE_POLICY = {
   supportedUpstreamAdapters: ['erc3156', 'aave_v3', 'morpho_blue', 'balancer_v2'] as const,
   fixedBpsSpreadFloor: false,
   providerReadFailover: true,
+  hedgedProviderReads: true,
+  providerCircuitBreakerAware: true,
   providerReadTimeoutMs: BRIDGE_READ_TIMEOUT_MS,
 } as const;
