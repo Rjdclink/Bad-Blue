@@ -16,6 +16,11 @@ import {
   orderApeResidentOpportunities,
   primeApeResidentRouting,
 } from './atomic-profitability-resident-routing.js';
+import {
+  isApeMeasuredAdmitted,
+  rankApeEconomicPriority,
+  summarizeApeMeasuredAdmission,
+} from './ape-measured-opportunity-admission.js';
 
 export interface ZeroCapitalAtomicBpsEngineInput {
   chain: SupportedChain;
@@ -124,6 +129,8 @@ function residentBestBpsOverlay(
  * Canonical Atomic Profitability Engine (APE), zero-copy latency-safe front end.
  * Negative BPS is APE work, not a rejection condition. Candidate ownership never
  * expires; only evidence freshness controls whether current proof can be reused.
+ * Expensive rescue ownership additionally requires fresh measured route evidence;
+ * missing measurement is deferred for reacquisition, not rejected.
  */
 export function runZeroCapitalAtomicBpsEngine(
   input: ZeroCapitalAtomicBpsEngineInput,
@@ -139,11 +146,19 @@ export function runZeroCapitalAtomicBpsEngine(
   const startedAt = Date.now();
   const startedAtNs = process.hrtime.bigint();
   const freshnessSnapshotAt = startedAt;
-  const ordered = orderApeResidentOpportunities(input.opportunities);
-  const owned = ordered.filter(apeOwnedStageOneCandidate);
+  const residentOrdered = orderApeResidentOpportunities(input.opportunities);
+  const ordered = rankApeEconomicPriority(residentOrdered);
+  const admissionSnapshot = summarizeApeMeasuredAdmission(ordered, freshnessSnapshotAt);
+  const owned = ordered.filter(opportunity =>
+    apeOwnedStageOneCandidate(opportunity)
+    && isApeMeasuredAdmitted(opportunity, freshnessSnapshotAt),
+  );
   const freshEvidenceCandidates = owned.filter(opportunity => hasFreshEvidence(opportunity, freshnessSnapshotAt)).length;
   const staleEvidenceCandidates = owned.length - freshEvidenceCandidates;
-  const fullOwnedCandidateCoverage = owned.length === input.opportunities.filter(apeOwnedStageOneCandidate).length;
+  const fullOwnedCandidateCoverage = owned.length === input.opportunities.filter(opportunity =>
+    apeOwnedStageOneCandidate(opportunity)
+    && isApeMeasuredAdmitted(opportunity, freshnessSnapshotAt),
+  ).length;
   const refinedById = new Map<string, ZeroCapitalOpportunity>();
   resetFlashLoanDemandHints(input.chain as any);
 
@@ -203,6 +218,11 @@ export function runZeroCapitalAtomicBpsEngine(
   const telemetrySnapshot = {
     eligibleCandidatesReceived: input.opportunities.length,
     ownedCandidates: owned.length,
+    measuredCandidatesAdmitted: admissionSnapshot.admitted,
+    candidatesDeferredForMeasurement: admissionSnapshot.deferredForMeasurement,
+    registryMeasurementsAdmitted: admissionSnapshot.registryMeasurements,
+    stageOneExactMeasurementsAdmitted: admissionSnapshot.stageOneMeasurements,
+    measuredAdmissionReasons: admissionSnapshot.reasons,
     freshEvidenceCandidates,
     staleEvidenceCandidates,
     fullOwnedCandidateCoverage,
@@ -227,11 +247,16 @@ export function runZeroCapitalAtomicBpsEngine(
       acronym: 'APE',
       chain: input.chain,
       ...telemetrySnapshot,
-      // Backward-compatible fields now explicitly mean fresh-evidence coverage.
+      // Backward-compatible fields now explicitly mean admitted fresh-measurement coverage.
       liveCandidates: freshEvidenceCandidates,
       fullStageOneCandidateCoverage: fullOwnedCandidateCoverage,
       candidateOwnershipExpires: false,
       negativeBpsRejected: false,
+      missingMeasurementRejected: false,
+      missingMeasurementDeferredForReacquisition: true,
+      expensiveRescueRequiresFreshMeasuredEvidence: true,
+      economicPriority: 'strict_positive_then_highest_exact_signed_net_bps_then_freshness_then_latency',
+      advisoryPriorityCanOverrideCurrentEconomics: false,
       staleEvidenceRequiresRefresh: true,
       staleEvidenceExecutionAllowed: false,
       deferredLogDelayExcludedFromApeLatency: true,
@@ -240,7 +265,7 @@ export function runZeroCapitalAtomicBpsEngine(
       optimizationObjective: 'maximize_exact_executable_net_bps_from_already_arrived_evidence',
       exactBaseUnitBpsWinnerComparison: true,
       marginalVolumeClippingSource: 'already_measured_size_curve_only',
-      sameSpreadVariantGrouping: 'same_chain_ordered_token_cycle_direction',
+      sameSpreadVariantGrouping: 'direction_neutral_market_with_attached_direction_economics',
       sameSpreadVariantExtraMeasurement: false,
       stageOneObjectCopies: 0,
       apeResultOverlaysCreated: residentBestBpsSizeOverlays,
