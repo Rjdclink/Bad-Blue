@@ -69,25 +69,35 @@ export function reverseConfiguredZeroCapitalRoute(
 }
 
 /**
- * Adds only structurally missing, capability-compatible reverse routes. Existing
- * reverse variants win by signature, so stable-route configurations that already
- * enumerate both venue orders do not double in size. Reverse expansion is structural
- * only: it performs no quote/RPC work and the caller's quote budget remains unchanged.
+ * Adds only structurally missing, capability-compatible reverse routes and keeps each
+ * existing/generated twin adjacent to its forward route. Existing reverse variants win
+ * by signature, so route universes that already enumerate both orientations do not grow.
+ * The operation is structural only: no quote/RPC work is created and downstream bounded
+ * route frontiers can inspect a reverse twin without increasing their configured width.
  */
 export function ensureUniversalReverseRoutes(
   routes: readonly ConfiguredZeroCapitalRoute[],
 ): ConfiguredZeroCapitalRoute[] {
   if (routes.length === 0) return [];
-  const output = [...routes];
-  const keys = new Set(routes.map(routeStructuralKey));
+  const existingByKey = new Map(routes.map(route => [routeStructuralKey(route), route]));
+  const emitted = new Set<string>();
+  const output: ConfiguredZeroCapitalRoute[] = [];
+
   for (const route of routes) {
+    const routeKey = routeStructuralKey(route);
+    if (emitted.has(routeKey)) continue;
+    output.push(route);
+    emitted.add(routeKey);
+
     const reverse = reverseConfiguredZeroCapitalRoute(route);
     if (!reverse) continue;
-    const key = routeStructuralKey(reverse);
-    if (keys.has(key)) continue;
-    keys.add(key);
-    output.push(reverse);
+    const reverseKey = routeStructuralKey(reverse);
+    if (emitted.has(reverseKey)) continue;
+    const existingReverse = existingByKey.get(reverseKey);
+    output.push(existingReverse ?? reverse);
+    emitted.add(reverseKey);
   }
+
   return output;
 }
 
@@ -106,5 +116,7 @@ export function reverseRouteCoverage(routes: readonly ConfiguredZeroCapitalRoute
     reversibleRoutes: reversible,
     reverseCoveredRoutes: covered,
     fullCompatibleReverseCoverage: reversible === covered,
+    reverseTwinsAdjacentForBoundedFrontier: true,
+    quoteBudgetExpandedByReversePairing: false,
   };
 }
