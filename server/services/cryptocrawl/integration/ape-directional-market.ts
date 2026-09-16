@@ -1,4 +1,5 @@
 import type { ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
+import { measuredCandidateRegistry, type MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
 
 export interface ApeDirectionalMarketView {
   marketKey: string;
@@ -77,6 +78,56 @@ function compareExactEconomics(left: ZeroCapitalOpportunity, right: ZeroCapitalO
   return left.id.localeCompare(right.id);
 }
 
+function candidateHasExecutableMeasuredQuote(candidate: MeasuredCandidate, now: number): boolean {
+  return candidate.rawQuotes.some(quote => {
+    if (quote.executable === false) return false;
+    if (!Number.isFinite(quote.observedAt) || quote.observedAt <= 0 || quote.observedAt > now) return false;
+    return Boolean(quote.amountIn?.trim() && quote.amountOut?.trim());
+  });
+}
+
+function activeGlobalMeasuredCandidates(now: number): MeasuredCandidate[] {
+  return measuredCandidateRegistry.getRecent(4096).filter(candidate =>
+    candidate.topology === 'ZERO_CAPITAL_ATOMIC'
+    && candidate.expiresAt > now
+    && ['observed', 'enriched', 'deterministic_positive', 'eligible'].includes(candidate.status)
+    && candidate.depth.status !== 'unavailable'
+    && candidate.canonicalBps.netBps !== null
+    && Number.isFinite(candidate.canonicalBps.netBps)
+    && candidateHasExecutableMeasuredQuote(candidate, now),
+  );
+}
+
+function compareMeasuredRegistryPriority(left: MeasuredCandidate, right: MeasuredCandidate): number {
+  const leftBps = Number(left.canonicalBps.netBps);
+  const rightBps = Number(right.canonicalBps.netBps);
+  const leftPositive = leftBps > 0;
+  const rightPositive = rightBps > 0;
+  if (leftPositive !== rightPositive) return leftPositive ? -1 : 1;
+  if (leftBps !== rightBps) return rightBps - leftBps;
+  if (left.expiresAt !== right.expiresAt) return right.expiresAt - left.expiresAt;
+  const leftAge = left.quoteAgeMs ?? Math.max(0, Date.now() - left.updatedAt);
+  const rightAge = right.quoteAgeMs ?? Math.max(0, Date.now() - right.updatedAt);
+  if (leftAge !== rightAge) return leftAge - rightAge;
+  return left.opportunityId.localeCompare(right.opportunityId);
+}
+
+/**
+ * Cross-chain rescue admission is resident and zero-I/O. The measured candidate registry
+ * is the shared scoreboard across every chain scan, so a very weak candidate on one chain
+ * cannot consume a rescue lane while a materially better fresh measured candidate exists
+ * on another chain. Strict-positive candidates are never blocked by this optimization gate.
+ */
+function globalMeasuredRescueFrontierIds(now = Date.now()): Set<string> {
+  const active = activeGlobalMeasuredCandidates(now).sort(compareMeasuredRegistryPriority);
+  const limit = apeStageOneGlobalHotLimit();
+  const positives = active.filter(candidate => Number(candidate.canonicalBps.netBps) > 0);
+  const negatives = active
+    .filter(candidate => Number(candidate.canonicalBps.netBps) <= 0)
+    .slice(0, limit);
+  return new Set([...positives, ...negatives].map(candidate => candidate.opportunityId));
+}
+
 /**
  * Direction is the ordered execution orientation, not merely token order. A two-token
  * cycle A->B->A has the same token path in both arbitrage directions, so venue/fee
@@ -104,12 +155,12 @@ export function apeDirectionalMarketKey(opportunity: ZeroCapitalOpportunity): st
 
 /**
  * Stage One hot-set selection is bounded twice without a BPS cutoff:
- * 1) each market contributes at most winner + strongest opposite direction + hedge;
- * 2) only the globally best measured market work enters the APE rescue hot lane.
+ * 1) every fresh measured candidate first competes on one cross-chain registry scoreboard;
+ * 2) each surviving market contributes at most winner + strongest opposite direction + hedge.
  *
- * Global winners are admitted before reverse-side protection, and reverse-side
- * candidates before hedges. Candidates outside this set remain measured discovery
- * objects and still flow through canonical provider repricing.
+ * This adds no network call and no cross-chain wait. Candidates outside the frontier remain
+ * measured discovery objects and continue through canonical provider repricing; they simply
+ * do not spend expensive APE rescue work while stronger measured opportunities are resident.
  */
 export function selectApeStageOneHotSet(
   opportunities: readonly ZeroCapitalOpportunity[],
@@ -117,8 +168,13 @@ export function selectApeStageOneHotSet(
 ): ZeroCapitalOpportunity[] {
   const boundedMax = Math.max(1, Math.min(5, Math.trunc(maxPerMarket)));
   const globalLimit = apeStageOneGlobalHotLimit();
+  const globalFrontier = globalMeasuredRescueFrontierIds();
+  const globallyCompetitive = opportunities.filter(opportunity =>
+    opportunity.expectedProfit > 0n || globalFrontier.has(opportunity.id),
+  );
+
   const groups = new Map<string, ZeroCapitalOpportunity[]>();
-  for (const opportunity of opportunities) {
+  for (const opportunity of globallyCompetitive) {
     const key = apeDirectionalMarketKey(opportunity);
     const group = groups.get(key) ?? [];
     group.push(opportunity);
