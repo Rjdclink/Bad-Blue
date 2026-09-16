@@ -27,6 +27,22 @@ const BORROWER_MANDATE_TYPES = {
     { name: 'minIntervalSeconds', type: 'uint256' },
   ],
 };
+const BORROWER_RANGE_MANDATE_TYPES = {
+  BorrowerRangeMandate: [
+    { name: 'authorizer', type: 'address' },
+    { name: 'borrower', type: 'address' },
+    { name: 'asset', type: 'address' },
+    { name: 'minAmountBaseUnits', type: 'uint256' },
+    { name: 'preferredAmountBaseUnits', type: 'uint256' },
+    { name: 'maxAmountBaseUnits', type: 'uint256' },
+    { name: 'maxBorrowerFeeBaseUnits', type: 'uint256' },
+    { name: 'borrowerDataHash', type: 'bytes32' },
+    { name: 'nonce', type: 'uint256' },
+    { name: 'deadline', type: 'uint256' },
+    { name: 'maxExecutions', type: 'uint256' },
+    { name: 'minIntervalSeconds', type: 'uint256' },
+  ],
+};
 const CANCELLATION_TYPES = {
   BorrowerMandateCancellation: [
     { name: 'authorizer', type: 'address' },
@@ -39,7 +55,10 @@ export interface GhostWalletBorrowerMandateInput {
   chain: GhostWalletChain;
   borrower: string;
   asset: string;
-  amountBaseUnits: string;
+  amountBaseUnits?: string;
+  minAmountBaseUnits?: string;
+  preferredAmountBaseUnits?: string;
+  maxAmountBaseUnits?: string;
   maxBorrowerFeeBaseUnits: string;
   borrowerData?: string;
   authorizer: string;
@@ -59,7 +78,11 @@ export interface RegisteredGhostWalletBorrowerMandate {
   asset: string;
   authorizer: string;
   authorizationMode: 'borrower_erc1271' | 'owner_eoa' | 'owner_erc1271';
+  amountMode: 'exact' | 'range';
   amountBaseUnits: string;
+  minAmountBaseUnits: string;
+  preferredAmountBaseUnits: string;
+  maxAmountBaseUnits: string;
   maxBorrowerFeeBaseUnits: string;
   borrowerData: string;
   nonce: string;
@@ -105,6 +128,31 @@ function asSignature(value: unknown): string {
   const raw = String(value || '').trim();
   if (!ethers.utils.isHexString(raw) || raw === '0x') throw new Error('GHOST_WALLET_MANDATE_SIGNATURE_INVALID');
   return raw;
+}
+
+function amountAuthorization(input: GhostWalletBorrowerMandateInput): {
+  mode: 'exact' | 'range';
+  min: bigint;
+  preferred: bigint;
+  max: bigint;
+} {
+  const rangeRequested = input.minAmountBaseUnits !== undefined
+    || input.preferredAmountBaseUnits !== undefined
+    || input.maxAmountBaseUnits !== undefined;
+  if (!rangeRequested) {
+    const exact = asUnsignedInteger(input.amountBaseUnits, 'GHOST_WALLET_MANDATE_AMOUNT', true);
+    return { mode: 'exact', min: exact, preferred: exact, max: exact };
+  }
+  if (input.minAmountBaseUnits === undefined
+    || input.preferredAmountBaseUnits === undefined
+    || input.maxAmountBaseUnits === undefined) {
+    throw new Error('GHOST_WALLET_MANDATE_RANGE_INCOMPLETE');
+  }
+  const min = asUnsignedInteger(input.minAmountBaseUnits, 'GHOST_WALLET_MANDATE_MIN_AMOUNT', true);
+  const preferred = asUnsignedInteger(input.preferredAmountBaseUnits, 'GHOST_WALLET_MANDATE_PREFERRED_AMOUNT', true);
+  const max = asUnsignedInteger(input.maxAmountBaseUnits, 'GHOST_WALLET_MANDATE_MAX_AMOUNT', true);
+  if (min > preferred || preferred > max) throw new Error('GHOST_WALLET_MANDATE_RANGE_ORDER_INVALID');
+  return { mode: 'range', min, preferred, max };
 }
 
 async function contractOwner(provider: providers.Provider, borrower: string): Promise<string | null> {
@@ -231,7 +279,7 @@ export async function registerGhostWalletBorrowerMandate(
   const borrower = asAddress(input.borrower, 'GHOST_WALLET_MANDATE_BORROWER');
   const asset = asAddress(input.asset, 'GHOST_WALLET_MANDATE_ASSET');
   const authorizer = asAddress(input.authorizer, 'GHOST_WALLET_MANDATE_AUTHORIZER');
-  const amount = asUnsignedInteger(input.amountBaseUnits, 'GHOST_WALLET_MANDATE_AMOUNT', true);
+  const authorizedAmount = amountAuthorization(input);
   const maxBorrowerFee = asUnsignedInteger(input.maxBorrowerFeeBaseUnits, 'GHOST_WALLET_MANDATE_MAX_FEE', true);
   const nonce = asUnsignedInteger(input.nonce, 'GHOST_WALLET_MANDATE_NONCE');
   const deadline = asSafeInteger(input.deadline, 'GHOST_WALLET_MANDATE_DEADLINE', true);
@@ -249,11 +297,10 @@ export async function registerGhostWalletBorrowerMandate(
   const [network, assetCode] = await Promise.all([provider.getNetwork(), provider.getCode(asset)]);
   if (assetCode === '0x') throw new Error('GHOST_WALLET_MANDATE_ASSET_CONTRACT_REQUIRED');
 
-  const value = {
+  const common = {
     authorizer,
     borrower,
     asset,
-    amountBaseUnits: amount.toString(),
     maxBorrowerFeeBaseUnits: maxBorrowerFee.toString(),
     borrowerDataHash: ethers.utils.keccak256(borrowerData),
     nonce: nonce.toString(),
@@ -261,7 +308,16 @@ export async function registerGhostWalletBorrowerMandate(
     maxExecutions,
     minIntervalSeconds,
   };
-  const digest = ethers.utils._TypedDataEncoder.hash(domain(network.chainId, borrower), BORROWER_MANDATE_TYPES, value);
+  const typedValue = authorizedAmount.mode === 'range'
+    ? {
+        ...common,
+        minAmountBaseUnits: authorizedAmount.min.toString(),
+        preferredAmountBaseUnits: authorizedAmount.preferred.toString(),
+        maxAmountBaseUnits: authorizedAmount.max.toString(),
+      }
+    : { ...common, amountBaseUnits: authorizedAmount.preferred.toString() };
+  const typedTypes = authorizedAmount.mode === 'range' ? BORROWER_RANGE_MANDATE_TYPES : BORROWER_MANDATE_TYPES;
+  const digest = ethers.utils._TypedDataEncoder.hash(domain(network.chainId, borrower), typedTypes, typedValue);
   const authorizationMode = await verifyBorrowerAuthority({ provider, borrower, authorizer, digest, signature });
   const mandateId = `signed-borrower:${input.chain}:${borrower.toLowerCase()}:${asset.toLowerCase()}`;
   await assertMandateVersionCanReplace({ mandateId, nonce, digest });
@@ -281,6 +337,7 @@ export async function registerGhostWalletBorrowerMandate(
       contractCode: true,
       signedAuthorization: true,
       authorizationMode,
+      amountMode: authorizedAmount.mode,
       executionAuthority: 'signed_mandate_plus_exact_simulation',
       successfulAtomicRepaymentRequiredForVerifiedStatus: true,
       sameTransactionRepaymentRequired: true,
@@ -291,10 +348,14 @@ export async function registerGhostWalletBorrowerMandate(
       mandateDigest: digest,
       authorizer,
       authorizationMode,
-      amountBaseUnits: amount.toString(),
+      amountMode: authorizedAmount.mode,
+      amountBaseUnits: authorizedAmount.preferred.toString(),
+      minAmountBaseUnits: authorizedAmount.min.toString(),
+      preferredAmountBaseUnits: authorizedAmount.preferred.toString(),
+      maxAmountBaseUnits: authorizedAmount.max.toString(),
       maxBorrowerFeeBaseUnits: maxBorrowerFee.toString(),
       borrowerData,
-      borrowerDataHash: value.borrowerDataHash,
+      borrowerDataHash: common.borrowerDataHash,
       nonce: nonce.toString(),
       deadline,
       expiresAt: deadlineMs,
@@ -315,7 +376,11 @@ export async function registerGhostWalletBorrowerMandate(
     asset,
     authorizer,
     authorizationMode,
-    amountBaseUnits: amount.toString(),
+    amountMode: authorizedAmount.mode,
+    amountBaseUnits: authorizedAmount.preferred.toString(),
+    minAmountBaseUnits: authorizedAmount.min.toString(),
+    preferredAmountBaseUnits: authorizedAmount.preferred.toString(),
+    maxAmountBaseUnits: authorizedAmount.max.toString(),
     maxBorrowerFeeBaseUnits: maxBorrowerFee.toString(),
     borrowerData,
     nonce: nonce.toString(),
@@ -386,6 +451,9 @@ export const GHOST_WALLET_BORROWER_MANDATE_POLICY = {
   authorizationAlternatives: ['borrower_erc1271', 'owner_eoa', 'owner_erc1271'] as const,
   signedAuthorizationCreatesVerifiedRepaymentEvidence: false,
   exactSimulationStillRequiredBeforeExecution: true,
+  exactAmountMandatesRemainBackwardCompatible: true,
+  rangeAuthorizedDynamicSizing: true,
+  rangeAuthorizationFields: ['minAmountBaseUnits', 'preferredAmountBaseUnits', 'maxAmountBaseUnits'] as const,
   explicitExecutionCountRequired: true,
   explicitExpiryRequired: true,
   monotonicNonceRequiredForReplacement: true,
