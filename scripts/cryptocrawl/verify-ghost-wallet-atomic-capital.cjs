@@ -50,7 +50,7 @@ assert.match(vault, /atomic_credit_not_repaid/);
 assert.match(intermediary, /if \(temporaryApproval\) _safeApprove\(approvalToken, target, 0\)/);
 
 // Signed intents are authenticated, matched, durably handed to the Ghost worker,
-// and are final-rechecked against multi-asset fee value before controller signing.
+// and final-rechecked against multi-asset fee value before controller signing.
 assert.match(intermediary, /self_match_forbidden/);
 assert.match(intermediary, /profit_recipient_cannot_self_match/);
 assert.match(intermediary, /usedIntentNonces/);
@@ -83,19 +83,26 @@ assert.match(sourceMeasurement, /borrowCapacityAssetUnits/);
 assert.match(sourceMeasurement, /debtOf\(address account\)/);
 assert.match(sourceMeasurement, /synthetic_capacity:false/);
 
-// External bridge remains the atomic middleman: plural providers, no lender
-// allowlist, exact downstream/upstream repayment, and no fixed BPS profit gate.
+// External bridge remains the atomic middleman with both backward-compatible
+// minimum-spread functions and autonomous per-transaction spread pricing.
 assert.match(bridge, /Permissionless, zero-operator-capital atomic credit intermediary/);
-assert.match(bridge, /brokerExternalFlashLoan/);
-assert.match(bridge, /brokerAaveV3FlashLoan/);
-assert.match(bridge, /brokerMorphoFlashLoan/);
-assert.match(bridge, /brokerBalancerV2FlashLoan/);
+for (const fn of [
+  'brokerExternalFlashLoan',
+  'brokerAaveV3FlashLoan',
+  'brokerMorphoFlashLoan',
+  'brokerBalancerV2FlashLoan',
+  'brokerExternalFlashLoanWithSpread',
+  'brokerAaveV3FlashLoanWithSpread',
+  'brokerMorphoFlashLoanWithSpread',
+  'brokerBalancerV2FlashLoanWithSpread',
+]) assert.ok(bridge.includes(fn), `bridge missing ${fn}`);
 assert.match(bridge, /borrower_repayment_not_exact/);
 assert.match(bridge, /upstream_repayment_not_exact/);
-assert.match(bridge, /borrowerFee <= maxBorrowerFee/);
+assert.match(bridge, /borrower_fee_exceeds_max/);
 assert.match(bridge, /expectedBorrowerFee > upstreamFee/);
 assert.match(bridge, /minimumBrokerSpreadBps = 0/);
-assert.match(bridge, /return configured > 0 \? configured : 1/);
+assert.match(bridge, /expectedRequestedSpread/);
+assert.match(bridge, /return requestedSpread > floorSpread \? requestedSpread : floorSpread/);
 assert.doesNotMatch(bridge, /allowedLender|lenderAllowlist/);
 
 // Deterministic bridge bootstrap is controller-compatible while remaining public.
@@ -107,6 +114,8 @@ assert.match(bridgeRuntime, /lenderAllowlistRequired: false/);
 
 // Funding discovery is Ghost-owned and independent of zero-capital provider economics.
 assert.match(borrowerSurface, /measureGhostWalletFunding/);
+assert.match(borrowerSurface, /buildGhostWalletBorrowerTransactionWithSpread/);
+assert.match(borrowerSurface, /perTransactionSpreadPricing: true/);
 assert.match(borrowerSurface, /zeroCapitalFundingDependency: false/);
 assert.match(borrowerSurface, /ghostFundingMeshAuthority: true/);
 assert.match(borrowerSurface, /lenderCandidates/);
@@ -122,17 +131,20 @@ assert.match(fundingMesh, /hardSourceCountLimit: null/);
 assert.match(fundingMesh, /providerFailureRouteLocal: true/);
 assert.match(fundingMesh, /Promise\.allSettled/);
 
-// Autonomous admission is exact-call + exact-gas + strict net-positive. No fixed
-// BPS profit threshold exists; spread calibration derives from measured gas when needed.
+// Autonomous admission is exact-call + exact-gas + strict net-positive. Spread is
+// priced per transaction from measured gas, not by a global configuration transaction.
 assert.match(controller, /intermediaryRole: 'middleman_only'/);
 assert.match(controller, /controllerOwnsInitiation: true/);
 assert.match(controller, /provider\.call\(request\)/);
 assert.match(controller, /provider\.estimateGas\(request\)/);
+assert.match(controller, /buildGhostWalletBorrowerTransactionWithSpread/);
 assert.match(controller, /strictPositiveAllInNetBeforeQueue: true/);
 assert.match(controller, /hardBpsProfitAdmissionFloor: false/);
 assert.match(controller, /configuredSpreadFloorDefaultBps: 0/);
-assert.match(controller, /dynamicSpreadCalibrationFromExactGas: true/);
+assert.match(controller, /perTransactionSpreadCalibrationFromExactGas: true/);
+assert.match(controller, /globalSpreadConfigurationTransactionRequired: false/);
 assert.match(controller, /zeroCapitalIntegration: false/);
+assert.doesNotMatch(controller, /setMinimumBrokerSpreadBps/);
 assert.match(controllerEconomics, /expectedNetProfitBaseUnits > 0n/);
 assert.match(controllerEconomics, /expectedNetProfitUsdScaled > 0n/);
 assert.match(controllerEconomics, /hardBpsProfitFloor: false/);
@@ -211,7 +223,8 @@ console.log(JSON.stringify({
   autonomousControllerExecution: true,
   zeroCapitalAuthorityCrossed: false,
   fixedBpsProfitFloor: false,
-  dynamicSpreadCalibration: true,
+  perTransactionSpreadPricing: true,
+  globalSpreadConfigurationTransactionRequired: false,
   strictPositiveAllInNet: true,
   matchedIntentMultiAssetEconomics: true,
   lenderUniverseFixedLimit: false,
