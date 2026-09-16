@@ -88,9 +88,21 @@ assert.ok(ingestIndex >= 0 && cursorIndex > ingestIndex, 'Durable reconciliation
 assert.match(providerMesh, /bsc\.drpc\.org/);
 assert.match(providerMesh, /ghostWalletProviderSupportsSettlementLogs/);
 assert.match(providerMesh, /methodAwareSettlementLogSelection: true/);
-assert.match(bridge, /ghostWalletProviderMesh\.getProviders\(chain\)/);
-assert.match(bridge, /firstSuccessful/);
+
+// External bridge reads now delegate redundancy, adaptive ranking and circuit
+// breaking to the canonical Ghost provider mesh. Verify the stronger centralized
+// failover contract instead of requiring the retired local getProviders/firstSuccessful shape.
+assert.match(bridge, /ghostWalletProviderMesh\.runHedged\(\{/);
+assert.match(bridge, /operation:\s*'external_bridge_descriptor'/);
+assert.match(bridge, /execute:\s*provider\s*=>\s*timeout/);
+assert.match(bridge, /provider\.getNetwork\(\)/);
+assert.match(bridge, /provider\.getCode\(bridgeAddress\)/);
 assert.match(bridge, /providerReadFailover: true/);
+assert.match(bridge, /hedgedProviderReads: true/);
+assert.match(bridge, /providerCircuitBreakerAware: true/);
+assert.match(bridge, /providerReadTimeoutMs: BRIDGE_READ_TIMEOUT_MS/);
+assert.doesNotMatch(bridge, /ghostWalletProviderMesh\.getProviders\(chain\)/);
+
 assert.match(source, /startupBackfillNonBlocking: true/);
 assert.match(source, /retryBackfillWithoutPeriodicPolling: true/);
 assert.match(source, /coalescedPushBackfillReplay: true/);
