@@ -21,6 +21,10 @@ import {
   rankApeEconomicPriority,
   summarizeApeMeasuredAdmission,
 } from './ape-measured-opportunity-admission.js';
+import {
+  apeDirectionKey,
+  apeDirectionalMarketKey,
+} from './ape-directional-market.js';
 
 export interface ZeroCapitalAtomicBpsEngineInput {
   chain: SupportedChain;
@@ -31,6 +35,7 @@ export interface ZeroCapitalAtomicBpsEngineInput {
 }
 
 const BPS_PRECISION_SCALE = 1_000_000n;
+const lastWinningDirectionByMarket = new Map<string, string>();
 
 type ApeRescueMode = 'cost' | 'edge' | 'execution';
 
@@ -125,6 +130,67 @@ function residentBestBpsOverlay(
   return refined;
 }
 
+function directionalTelemetry(
+  before: readonly ZeroCapitalOpportunity[],
+  after: readonly ZeroCapitalOpportunity[],
+) {
+  const beforeById = new Map(before.map(candidate => [candidate.id, candidate]));
+  const markets = new Map<string, Map<string, ZeroCapitalOpportunity[]>>();
+  let maxApeUpliftBps = 0;
+  for (const candidate of after) {
+    const original = beforeById.get(candidate.id);
+    if (original) {
+      const uplift = exactNetBps(candidate) - exactNetBps(original);
+      if (Number.isFinite(uplift)) maxApeUpliftBps = Math.max(maxApeUpliftBps, uplift);
+    }
+    const marketKey = apeDirectionalMarketKey(candidate);
+    const directionKey = apeDirectionKey(candidate);
+    const directions = markets.get(marketKey) ?? new Map<string, ZeroCapitalOpportunity[]>();
+    const candidates = directions.get(directionKey) ?? [];
+    candidates.push(candidate);
+    directions.set(directionKey, candidates);
+    markets.set(marketKey, directions);
+  }
+
+  let directionFlips = 0;
+  const summaries = [...markets.entries()].map(([marketKey, directions]) => {
+    const directionLeaders = [...directions.entries()].map(([directionKey, candidates]) => {
+      const leader = rankApeEconomicPriority(candidates)[0];
+      return {
+        directionKey,
+        opportunityId: leader.id,
+        netBps: exactNetBps(leader),
+        sizeBaseUnits: leader.flashLoanAmount.toString(),
+      };
+    }).sort((left, right) => right.netBps - left.netBps);
+    const winner = directionLeaders[0] ?? null;
+    const previous = lastWinningDirectionByMarket.get(marketKey);
+    if (winner) {
+      if (previous && previous !== winner.directionKey) directionFlips += 1;
+      lastWinningDirectionByMarket.set(marketKey, winner.directionKey);
+    }
+    return {
+      marketKey,
+      forwardBps: directionLeaders[0]?.netBps ?? null,
+      reverseBps: directionLeaders[1]?.netBps ?? null,
+      winningDirection: winner?.directionKey ?? null,
+      winningSize: winner?.sizeBaseUnits ?? null,
+      measuredDirections: directionLeaders.length,
+    };
+  }).sort((left, right) => (right.forwardBps ?? Number.NEGATIVE_INFINITY) - (left.forwardBps ?? Number.NEGATIVE_INFINITY));
+
+  const beforeBps = before.map(exactNetBps).filter(Number.isFinite);
+  const afterBps = after.map(exactNetBps).filter(Number.isFinite);
+  return {
+    directionalMarkets: markets.size,
+    directionFlips,
+    directionalPerformance: summaries.slice(0, 8),
+    preApeBps: beforeBps.length > 0 ? Math.max(...beforeBps) : null,
+    apeUpliftBps: maxApeUpliftBps,
+    finalNetBps: afterBps.length > 0 ? Math.max(...afterBps) : null,
+  };
+}
+
 /**
  * Canonical Atomic Profitability Engine (APE), zero-copy latency-safe front end.
  * Negative BPS is APE work, not a rejection condition. Candidate ownership never
@@ -191,8 +257,6 @@ export function runZeroCapitalAtomicBpsEngine(
     }
     const candidate = refined;
 
-    // Demand hints describe currently usable evidence only. A stale candidate is
-    // still owned by APE, but its old amount is not represented as fresh capacity.
     if (hasFreshEvidence(candidate, freshnessSnapshotAt)) {
       observeFlashLoanDemandHint({
         chain: candidate.chain as any,
@@ -219,6 +283,8 @@ export function runZeroCapitalAtomicBpsEngine(
     eligibleCandidatesReceived: input.opportunities.length,
     ownedCandidates: owned.length,
     measuredCandidatesAdmitted: admissionSnapshot.admitted,
+    exactQuotes: admissionSnapshot.admitted,
+    unquotedSkipped: admissionSnapshot.deferredForMeasurement,
     candidatesDeferredForMeasurement: admissionSnapshot.deferredForMeasurement,
     registryMeasurementsAdmitted: admissionSnapshot.registryMeasurements,
     stageOneExactMeasurementsAdmitted: admissionSnapshot.stageOneMeasurements,
@@ -242,12 +308,14 @@ export function runZeroCapitalAtomicBpsEngine(
   };
 
   const telemetry = setImmediate(() => {
+    const directions = directionalTelemetry(input.opportunities, output);
     logger.info('[AtomicProfitabilityEngine] Fused zero-copy APE pass completed', {
       component: 'AtomicProfitabilityEngine',
       acronym: 'APE',
       chain: input.chain,
       ...telemetrySnapshot,
-      // Backward-compatible fields now explicitly mean admitted fresh-measurement coverage.
+      ...directions,
+      directionalTelemetryDeferredUntilAfterReturn: true,
       liveCandidates: freshEvidenceCandidates,
       fullStageOneCandidateCoverage: fullOwnedCandidateCoverage,
       candidateOwnershipExpires: false,
