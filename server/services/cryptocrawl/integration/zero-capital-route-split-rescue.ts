@@ -3,6 +3,7 @@ import type { providers } from 'ethers';
 import { livePriceMesh } from '../bridge/live-price-mesh.js';
 import type { SupportedChain, ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import { measuredCandidateRegistry, type MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
+import { resolveConfiguredFlashLoanReceiver } from '../execution/adapters/flash-loan-receiver-capability.js';
 import {
   peekResidentBestBpsQuote,
   peekResidentExactQuote,
@@ -98,6 +99,15 @@ function compositeProofReserveMs(): number {
   const p95 = compositeProofLatencySamples.length >= 3 ? compositeProofLatencyP95Ms() : null;
   if (p95 === null) return configured;
   return Math.max(150, Math.min(2_500, Math.ceil(p95 * 1.25 + 50)));
+}
+
+function hasCompositeProofCapability(chain: SupportedChain): boolean {
+  if (chain === 'europa') return false;
+  try {
+    return Boolean(resolveConfiguredFlashLoanReceiver('balancer_composite_v2', chain as any));
+  } catch {
+    return false;
+  }
 }
 
 function alignRouteCostBasisToStageOne(
@@ -366,9 +376,9 @@ function parentDeadline(input: ZeroCapitalRouteSplitRescueInput): number {
   return input.deadlineAt ?? Number.MAX_SAFE_INTEGER;
 }
 
-function quoteSearchDeadline(input: ZeroCapitalRouteSplitRescueInput): number {
+function quoteSearchDeadline(input: ZeroCapitalRouteSplitRescueInput, compositeProofAvailable: boolean): number {
   const deadline = parentDeadline(input);
-  if (!Number.isFinite(deadline) || deadline === Number.MAX_SAFE_INTEGER) return deadline;
+  if (!compositeProofAvailable || !Number.isFinite(deadline) || deadline === Number.MAX_SAFE_INTEGER) return deadline;
   return Math.max(Date.now(), deadline - compositeProofReserveMs());
 }
 
@@ -382,9 +392,12 @@ export async function runZeroCapitalRouteSplitRescue(
   const rejectionReasons: Record<string, number> = {};
   const improvedOpportunities: ZeroCapitalOpportunity[] = [];
   const exactQuoteInFlight = new Map<string, Promise<QuotedZeroCapitalRoute | null>>();
+  const compositeProofAvailable = hasCompositeProofCapability(input.chain);
   let residentExactQuoteHits = 0;
   let splitQuoteSingleflightHits = 0;
   let deadlineBoundQuoteStops = 0;
+  let capabilityDeferredQuoteSkips = 0;
+  let capabilityDeferredProofSkips = 0;
 
   const quoteExact = (
     route: ConfiguredZeroCapitalRoute,
@@ -415,6 +428,25 @@ export async function runZeroCapitalRouteSplitRescue(
     });
     exactQuoteInFlight.set(key, pending);
     return pending;
+  };
+
+  const quoteExactForCapability = (
+    route: ConfiguredZeroCapitalRoute,
+    amount: bigint,
+    deadlineAt: number,
+  ): Promise<QuotedZeroCapitalRoute | null> => {
+    if (compositeProofAvailable) return quoteExact(route, amount, deadlineAt);
+    if (Date.now() >= deadlineAt) {
+      deadlineBoundQuoteStops += 1;
+      return Promise.resolve(null);
+    }
+    const resident = peekResidentExactQuote(route.id, amount);
+    if (resident) {
+      residentExactQuoteHits += 1;
+      return Promise.resolve(resident);
+    }
+    capabilityDeferredQuoteSkips += 1;
+    return Promise.resolve(null);
   };
 
   const result: ZeroCapitalRouteSplitRescueResult = {
@@ -510,11 +542,15 @@ export async function runZeroCapitalRouteSplitRescue(
     }
 
     for (const residentPair of assignment.splitPairs) {
-      const searchDeadlineAt = quoteSearchDeadline(input);
+      const searchDeadlineAt = quoteSearchDeadline(input, compositeProofAvailable);
       if (Date.now() >= searchDeadlineAt) {
         result.deadlineStops! += 1;
-        result.proofReserveStops! += 1;
-        incrementReason(rejectionReasons, 'protected_proof_tail_before_next_pair');
+        if (compositeProofAvailable) {
+          result.proofReserveStops! += 1;
+          incrementReason(rejectionReasons, 'protected_proof_tail_before_next_pair');
+        } else {
+          incrementReason(rejectionReasons, 'wave_deadline_before_next_pair');
+        }
         return;
       }
       result.routePairsTried += 1;
@@ -533,8 +569,8 @@ export async function runZeroCapitalRouteSplitRescue(
         result.splitRatiosTried += 1;
         result.partialQuotesLaunched += 2;
         const [leftQuote, rightQuote] = await Promise.all([
-          quoteExact(pair.left, amounts.left, searchDeadlineAt),
-          quoteExact(pair.right, amounts.right, searchDeadlineAt),
+          quoteExactForCapability(pair.left, amounts.left, searchDeadlineAt),
+          quoteExactForCapability(pair.right, amounts.right, searchDeadlineAt),
         ]);
         return { ratio, leftQuote, rightQuote } satisfies RatioQuoteResult;
       });
@@ -559,6 +595,11 @@ export async function runZeroCapitalRouteSplitRescue(
         if (!quoted.leftQuote || !quoted.rightQuote) {
           result.partialQuoteFailures += Number(!quoted.leftQuote) + Number(!quoted.rightQuote);
           incrementReason(rejectionReasons, 'partial_quote_unavailable');
+          continue;
+        }
+        if (!compositeProofAvailable) {
+          capabilityDeferredProofSkips += 1;
+          incrementReason(rejectionReasons, 'composite_proof_capability_unavailable_route_local');
           continue;
         }
 
@@ -654,11 +695,17 @@ export async function runZeroCapitalRouteSplitRescue(
     splitQuoteSingleflightHits,
     splitExactQuoteSingleflight: true,
     deadlineBoundQuoteStops,
-    protectedCompositeProofTail: true,
-    currentCompositeProofReserveMs: compositeProofReserveMs(),
-    proofReserveUsesMeasuredP95: compositeProofLatencySamples.length >= 3,
+    compositeProofCapabilityAvailable: compositeProofAvailable,
+    capabilityDeferredQuoteSkips,
+    capabilityDeferredProofSkips,
+    protectedCompositeProofTail: compositeProofAvailable,
+    currentCompositeProofReserveMs: compositeProofAvailable ? compositeProofReserveMs() : 0,
+    proofReserveUsesMeasuredP95: compositeProofAvailable && compositeProofLatencySamples.length >= 3,
     bestQuotedSplitProvenFirst: true,
-    quoteSearchCannotConsumeProofReserve: true,
+    quoteSearchCannotConsumeProofReserve: compositeProofAvailable,
+    missingCompositeCapabilityConsumesRemoteQuoteLatency: false,
+    missingCompositeCapabilityConsumesProofLatency: false,
+    missingCompositeCapabilityKillsCandidate: false,
     everyAwaitedSplitQuoteBoundedByApeDeadline: true,
     lateSplitQuoteCannotExtendWaveAuthority: true,
     residentPeerHintsPiggybacked: true,
