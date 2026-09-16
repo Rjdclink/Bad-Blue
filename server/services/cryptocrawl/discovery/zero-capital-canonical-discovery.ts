@@ -4,6 +4,10 @@ import { zeroCapitalEngine, type SupportedChain, type ZeroCapitalOpportunity } f
 import type { DynamicChainConfig } from '../core/dynamic-chain-registry.js';
 import { discoverDynamicZeroCapitalQuotes } from './dynamic-zero-capital-routes.js';
 import { measuredCandidateRegistry } from './measured-candidate-registry.js';
+import {
+  clearsStageOneCandidateOutputFloor,
+  STAGE_ONE_ZERO_CAPITAL_OUTPUT_FLOOR_BPS,
+} from './stage-one-candidate-policy.js';
 import { getCanonicalZeroCapitalRoutes } from './zero-capital-route-authority.js';
 import {
   zeroCapitalDiscoveryFloorBps,
@@ -85,16 +89,10 @@ let filteredBelowStageOneFloor = 0;
 let stageOneMeasuredDeferredFromHotLane = 0;
 
 // STAGE_ONE_LOCKED_INVARIANT — explicitly reinstated by operator 2026-09-16.
-// Preserve every raw observation, but only publish finite ZERO_CAPITAL_ATOMIC candidates
-// at or above -10 BPS into the Stage-One candidate stream. This is classification only,
-// never execution-profitability authority. The measured direction-aware hot lane remains
-// intact inside that admitted set, so the floor adds no quote or network latency.
-const STAGE_ONE_ZERO_CAPITAL_ENTRY_FLOOR_BPS = -10;
-
-function clearsStageOneCandidateFloor(opportunity: ZeroCapitalOpportunity): boolean {
-  return Number.isFinite(opportunity.netProfitBps)
-    && opportunity.netProfitBps >= STAGE_ONE_ZERO_CAPITAL_ENTRY_FLOOR_BPS;
-}
+// Preserve every raw observation, but Stage One outputs only fresh finite exact
+// ZERO_CAPITAL_ATOMIC candidates whose all-in net spread is strictly above -10 BPS.
+// This is classification only, never execution-profitability authority. The measured
+// direction-aware hot lane remains intact inside that admitted set, adding no quote I/O.
 
 function runtime(): CanonicalZeroCapitalRuntime {
   return zeroCapitalEngine as unknown as CanonicalZeroCapitalRuntime;
@@ -357,11 +355,11 @@ function recordPreselectionCandidate(input: {
     });
   }
 
-  // Preserve every raw route observation, including below-floor evidence. Only the
-  // Stage-One candidate stream is bounded by the explicitly reinstated -10 BPS floor.
+  // Preserve every raw route observation, including <= -10 BPS evidence. Stage One
+  // publishes only candidates that satisfy its strict output boundary.
   zeroCapitalRouteEvidenceRegistry.record(opportunity);
   if (!Number.isFinite(opportunity.netProfitBps)) return;
-  if (!clearsStageOneCandidateFloor(opportunity)) {
+  if (!clearsStageOneCandidateOutputFloor(opportunity)) {
     filteredBelowStageOneFloor++;
     return;
   }
@@ -405,7 +403,7 @@ function recordPreselectionCandidate(input: {
       'min_output_tolerance_not_expected_slippage_cost',
       'eligibility_authority:canonical_measured_capital_repricing_only',
       positive ? 'deterministic_positive_net' : 'measured_negative_or_break_even',
-      'stage_one_candidate_floor:-10_bps',
+      'stage_one_output_floor:strictly_above_negative_10_bps',
       'synthetic_evidence:false',
     ],
   });
@@ -472,14 +470,13 @@ async function scanOneChain(
   const exact = [...configured, ...dynamic].filter(opportunity =>
     opportunity.expiresAt > Date.now()
     && opportunity.flashLoanAmount > 0n
-    && clearsStageOneCandidateFloor(opportunity)
+    && clearsStageOneCandidateOutputFloor(opportunity)
   );
   if (exact.length === 0 || !isCurrentChainScanGeneration(chain, generation)) return;
 
   // Stage One ranks a market, not thousands of equivalent variants. Protect the best
   // measured direction, the strongest measured opposite direction, and one hedge per
-  // direction-neutral market. The remaining admitted exact measurements stay in the
-  // canonical provider-repricing path and can become hot on the next state update.
+  // direction-neutral market. Every candidate in this set is already strictly > -10 BPS.
   const apeHot = selectApeStageOneHotSet(exact, 3);
   stageOneMeasuredDeferredFromHotLane += Math.max(0, exact.length - apeHot.length);
 
@@ -506,10 +503,10 @@ async function scanOneChain(
     });
   }
 
-  // APE transformations may change economics. Re-assert the Stage-One boundary at
-  // handoff so every candidate leaving Stage One still satisfies the same mandate.
+  // APE transformations may change economics. Re-assert the strict Stage-One boundary
+  // at handoff so 100% of Stage-One outputs remain strictly above -10 BPS.
   const rescueReadyBeforeFloor = rescueReady.length;
-  rescueReady = rescueReady.filter(clearsStageOneCandidateFloor);
+  rescueReady = rescueReady.filter(clearsStageOneCandidateOutputFloor);
   filteredBelowStageOneFloor += Math.max(0, rescueReadyBeforeFloor - rescueReady.length);
   if (rescueReady.length === 0 || !isCurrentChainScanGeneration(chain, generation)) return;
 
@@ -651,12 +648,15 @@ export async function startCanonicalZeroCapitalDiscovery(): Promise<void> {
     alternativeCapitalAuthority: 'configured_onchain_intermediary_exact_simulation_only',
     alternativeCapitalDoesNotDisplaceStrictPositiveFlashSelection: true,
     nonProfitableFlashSelectionCompletesProfitabilitySearch: false,
-    stageOneCandidateFloorBps: STAGE_ONE_ZERO_CAPITAL_ENTRY_FLOOR_BPS,
+    stageOneCandidateFloorBps: STAGE_ONE_ZERO_CAPITAL_OUTPUT_FLOOR_BPS,
+    stageOneCandidateComparator: 'netProfitBps > -10',
     stageOneBelowFloorPromoted: false,
+    stageOneAtFloorPromoted: false,
     rawBelowFloorRouteEvidencePreserved: true,
-    stageOneAdmission: 'fresh_finite_exact_measurement_at_or_above_negative_10_bps',
-    stageOneHotLane: 'direction_neutral_market_best_reverse_and_hedge_within_floor',
-    stageOneExplorationBelowFloor: 'raw_evidence_only',
+    stageOneAdmission: 'fresh_finite_exact_measurement_strictly_above_negative_10_bps',
+    stageOneHotLane: 'direction_neutral_market_best_reverse_and_hedge_within_strict_floor',
+    stageOneExplorationAtOrBelowFloor: 'raw_evidence_only',
+    stageOneProvidesApeDiscoveryEvidence: true,
     stageOneLock: 'explicit_operator_authorization_required',
     profitabilityFinishLine: 'strict_positive_all_in_base_units',
     bpsAuthority: 'measured_candidate_registry',
@@ -666,7 +666,7 @@ export async function startCanonicalZeroCapitalDiscovery(): Promise<void> {
     globalReceiverFailureBlocksProviderAdmission: false,
     duplicateHungTaskSuppression: true,
     timedOutChainScanOwnershipReleased: true,
-    lateTimedOutScanGenerationInvalidated: true,
+    lateTimedOutChainScanGenerationInvalidated: true,
     configuredAndDynamicMeasurementParallel: true,
     dynamicGraphlessDiscovery: true,
     runtimeMethodMutation: false,
@@ -695,11 +695,14 @@ export function getCanonicalZeroCapitalDiscoverySnapshot() {
     repriced,
     filteredBelowStageOneFloor,
     stageOneMeasuredDeferredFromHotLane,
-    stageOneCandidateFloorBps: STAGE_ONE_ZERO_CAPITAL_ENTRY_FLOOR_BPS,
+    stageOneCandidateFloorBps: STAGE_ONE_ZERO_CAPITAL_OUTPUT_FLOOR_BPS,
+    stageOneCandidateComparator: 'netProfitBps > -10',
     stageOneBelowFloorPromoted: false,
+    stageOneAtFloorPromoted: false,
     rawBelowFloorRouteEvidencePreserved: true,
-    stageOneAdmission: 'fresh_finite_exact_measurement_at_or_above_negative_10_bps',
-    stageOneHotLane: 'direction_neutral_market_best_reverse_and_hedge_within_floor',
+    stageOneAdmission: 'fresh_finite_exact_measurement_strictly_above_negative_10_bps',
+    stageOneHotLane: 'direction_neutral_market_best_reverse_and_hedge_within_strict_floor',
+    stageOneProvidesApeDiscoveryEvidence: true,
     stageOneLock: 'explicit_operator_authorization_required',
     profitabilityFinishLine: 'strict_positive_all_in_base_units',
     readyReceiverChains,
@@ -710,7 +713,7 @@ export function getCanonicalZeroCapitalDiscoverySnapshot() {
     isolatedChainScansPending: chainScanTasks.size,
     chainScanGenerationByChain: Object.fromEntries(chainScanGenerations.entries()),
     timedOutChainScanOwnershipReleased: true,
-    lateTimedOutScanGenerationInvalidated: true,
+    lateTimedOutChainScanGenerationInvalidated: true,
     globalReceiverFailureBlocksProviderAdmission: false,
   };
 }
