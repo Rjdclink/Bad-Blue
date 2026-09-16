@@ -67,8 +67,13 @@ function entryFloorBps(): number {
   return bounded(process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS, -10, -100, 0);
 }
 
-function targetBps(): number {
-  return bounded(process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS, 10, 10, 1_000);
+/** Legacy optimization target remains descriptive only for non-atomic families. */
+function legacyTargetBps(): number {
+  return bounded(process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS, 10, 0, 1_000);
+}
+
+function optimizationTargetBps(topology: MeasuredOpportunityTopology): number {
+  return topology === 'ZERO_CAPITAL_ATOMIC' || topology === 'DEX_ATOMIC' ? 0 : legacyTargetBps();
 }
 
 function reacquisitionCooldownMs(): number {
@@ -165,7 +170,7 @@ function findFreshMeasuredSuccessor(source: MeasuredCandidate, reacquisitionStar
 function classify(candidate: MeasuredCandidate, now = Date.now()): UniversalBpsRescueOwnership {
   const coverage = getAtomicZeroCapitalStrategyCoverage(candidate.topology);
   const entry = entryFloorBps();
-  const target = targetBps();
+  const target = optimizationTargetBps(candidate.topology);
   const netBps = finiteNetBps(candidate);
   const deterministicNetProfitUsd = finiteDeterministicNetProfitUsd(candidate);
   const zeroCapitalOutputCleared = candidate.topology === 'ZERO_CAPITAL_ATOMIC'
@@ -186,20 +191,31 @@ function classify(candidate: MeasuredCandidate, now = Date.now()): UniversalBpsR
   } else if (candidate.topology === 'ZERO_CAPITAL_ATOMIC') {
     if (!zeroCapitalOutputCleared) {
       state = 'atomic_rescue_owned';
-      reason = `Canonical zero-capital output is ${deterministicNetProfitUsd ?? 'unmeasured'} USD at ${netBps} BPS; APE retains the candidate until fresh exact all-in net reaches at least $${ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD}, evidence expires, or compatible paths are explicitly exhausted.`;
+      reason = `Canonical zero-capital output remains non-positive at ${netBps} BPS; APE retains the candidate until strict-positive all-in economics, evidence expiry, or compatible paths are explicitly exhausted.`;
     } else {
       state = 'target_achieved';
-      reason = `Canonical zero-capital output ${deterministicNetProfitUsd} USD clears the $${ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD} exact all-in finish line without any +10 BPS requirement.`;
+      reason = `Canonical zero-capital all-in economics are strictly positive; execution may proceed while APE's separate profitable-snapshot frontier preserves and safely improves the best executable version.`;
+    }
+  } else if (candidate.topology === 'DEX_ATOMIC') {
+    if (netBps <= entry) {
+      state = 'bps_reduction_owned';
+      reason = `Canonical DEX atomic net ${netBps} BPS is at or below the ${entry} BPS rescue-entry boundary; BPS reduction retains ownership until it is strictly above the boundary.`;
+    } else if (netBps <= 0) {
+      state = 'atomic_rescue_owned';
+      reason = `Canonical DEX atomic net ${netBps} BPS is inside the Stage-One rescue band; Atomic rescue owns improvement toward strict-positive all-in economics without any fixed +10 BPS target.`;
+    } else {
+      state = 'target_achieved';
+      reason = `Canonical DEX atomic net ${netBps} BPS is strictly positive; normal execution may proceed and no fixed BPS target may hold the candidate.`;
     }
   } else if (netBps <= entry) {
     state = 'bps_reduction_owned';
     reason = `Canonical net ${netBps} BPS is at or below the ${entry} BPS rescue-entry boundary; BPS reduction retains ownership until it is strictly above the boundary.`;
   } else if (netBps < target) {
     state = 'atomic_rescue_owned';
-    reason = `Canonical net ${netBps} BPS is strictly above the ${entry} BPS rescue-entry boundary and remains owned by Atomic rescue until ${target} BPS, expiry, or explicit measured impossibility.`;
+    reason = `Canonical net ${netBps} BPS is strictly above the ${entry} BPS rescue-entry boundary and remains owned by topology-specific rescue until ${target} BPS, expiry, or explicit measured impossibility.`;
   } else {
     state = 'target_achieved';
-    reason = `Canonical measured net ${netBps} BPS meets or exceeds the ${target} BPS rescue target.`;
+    reason = `Canonical measured net ${netBps} BPS meets or exceeds the topology-specific ${target} BPS rescue target.`;
   }
 
   return {
@@ -208,7 +224,7 @@ function classify(candidate: MeasuredCandidate, now = Date.now()): UniversalBpsR
     state,
     netBps,
     entryFloorBps: entry,
-    targetBps: candidate.topology === 'ZERO_CAPITAL_ATOMIC' ? 0 : target,
+    targetBps: target,
     observedAt: candidate.observedAt,
     updatedAt: candidate.updatedAt,
     expiresAt: candidate.expiresAt,
@@ -385,8 +401,9 @@ function acceptCandidate(candidate: MeasuredCandidate): void {
       executionFamily: next.executionFamily,
       normalStrictPositiveExecutionMayProceed: next.normalStrictPositiveExecutionMayProceed,
       topologySpecificExecutionPreserved: true,
-      zeroCapitalApeOwnsAllSubFiveDollarAfterStageOne: next.topology === 'ZERO_CAPITAL_ATOMIC',
+      zeroCapitalApeOwnsAllFiniteCandidatesUntilSafeFrontier: next.topology === 'ZERO_CAPITAL_ATOMIC',
       zeroCapitalMinimumOutputProfitUsd: ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
+      fixedPlusTenTargetAppliesToAtomicZeroInitialCapital: false,
       canonicalBpsMutation: false,
       executionAuthority: false,
     });
@@ -436,11 +453,13 @@ export function getUniversalBpsRescueSnapshot() {
   return {
     observedAt: Date.now(),
     entryFloorBps: entryFloorBps(),
-    targetBps: targetBps(),
-    zeroCapitalApeFinishLine: 'fresh_exact_all_in_net_profit_usd_at_least_5' as const,
+    legacyNonAtomicTargetBps: legacyTargetBps(),
+    atomicZeroInitialCapitalTargetBps: 0,
+    zeroCapitalApeFinishLine: 'fresh_exact_all_in_net_profit_strictly_positive' as const,
     zeroCapitalMinimumOutputProfitUsd: ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
     zeroCapitalPostStageOneEntryFloorIgnored: true as const,
     zeroCapitalPlusTenTargetRequired: false as const,
+    dexAtomicPlusTenTargetRequired: false as const,
     totalTracked: rows.length,
     states,
     byTopology,
@@ -454,13 +473,13 @@ export function getUniversalBpsRescueSnapshot() {
     stageTwoBoundaryCrossings,
     stageTwoMeasurementMisses,
     reacquisitionInFlight: [...reacquisitionInFlight.keys()],
-    lifecycle: 'topology_specific: ZERO_CAPITAL_ATOMIC finite sub-$5 -> APE atomic_rescue_owned -> fresh exact >=$5 target_achieved; other topologies retain legacy hydration/BPS-reduction/atomic rescue bands' as const,
+    lifecycle: 'ZERO_CAPITAL_ATOMIC and DEX_ATOMIC use strict-positive execution plus the separate APE safe optimization frontier; other topologies retain topology-specific hydration/BPS-reduction bands' as const,
     canonicalEconomicsAuthority: 'measured_candidate_registry.canonicalBps' as const,
     bpsReductionAuthority: 'existing_bps_reduction_super_engine' as const,
     stageTwoMeasurementAuthority: 'fresh_same_market_canonical_reacquisition_non_zero_capital_only' as const,
     universalAtomicAuthority: 'rescue_ownership_and_topology_specific_reacquisition_only' as const,
-    strictPositiveExecutionFloorUnchanged: false as const,
-    zeroCapitalFiveDollarExecutionFloorAuthoritative: true as const,
+    strictPositiveExecutionFloorUnchanged: true as const,
+    zeroCapitalFiveDollarExecutionFloorAuthoritative: false as const,
     stageTwoRequiresStrictlyAboveEntryFloor: true as const,
     topologySpecificExecutionPreserved: true as const,
     syntheticEconomicsAllowed: false as const,
@@ -485,19 +504,21 @@ export function ensureUniversalBpsRescueCoordinator(): void {
       'LIQUIDATION', 'MAKER_CEX', 'FUNDING_ARBITRAGE', 'PREDICTION_EVENT',
     ],
     entryFloorBps: entryFloorBps(),
-    targetBps: targetBps(),
+    legacyNonAtomicTargetBps: legacyTargetBps(),
+    atomicZeroInitialCapitalTargetBps: 0,
     canonicalEconomicsAuthority: 'measured_candidate_registry.canonicalBps',
     bpsReductionAuthority: 'existing_bps_reduction_super_engine',
     stageTwoMeasurementAuthority: 'fresh_same_market_canonical_reacquisition_non_zero_capital_only',
     zeroCapitalAtomicPath: 'stage1_direct_to_ape_full_toolbox_same_cycle_rescue',
-    zeroCapitalApeOwnsAllSubFiveDollarAfterStageOne: true,
+    zeroCapitalApeOwnsAllFiniteCandidatesUntilSafeFrontier: true,
     zeroCapitalMinimumOutputProfitUsd: ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
-    zeroCapitalApeFinishLine: 'fresh_exact_all_in_net_profit_usd_at_least_5',
+    zeroCapitalApeFinishLine: 'fresh_exact_all_in_net_profit_strictly_positive',
     zeroCapitalPostStageOneEntryFloorIgnored: true,
     zeroCapitalPlusTenTargetRequired: false,
+    dexAtomicPlusTenTargetRequired: false,
     nonAtomicTopologiesRemainTopologySpecific: true,
-    strictPositiveExecutionFloorUnchanged: false,
-    zeroCapitalFiveDollarExecutionFloorAuthoritative: true,
+    strictPositiveExecutionFloorUnchanged: true,
+    zeroCapitalFiveDollarExecutionFloorAuthoritative: false,
     stageTwoRequiresStrictlyAboveEntryFloor: true,
     missingExecutionResourceDoesNotReleaseRescueOwnership: true,
     syntheticEconomicsAllowed: false,
