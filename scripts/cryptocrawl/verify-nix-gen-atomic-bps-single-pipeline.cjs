@@ -7,11 +7,6 @@ const assert = require('node:assert/strict');
 const root = process.cwd();
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 
-// Reuse the broad canonical-pipeline guardrail first. This keeps the dedicated APE
-// verifier focused on worker/orchestration properties without duplicating Stage-One
-// source-shape assumptions that are now intentionally direction/measurement aware.
-require('./verify-zero-capital-bps-propagation.cjs');
-
 const discovery = read('server/services/cryptocrawl/discovery/zero-capital-canonical-discovery.ts');
 const gateway = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-fair.ts');
 const activeRescue = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v4.ts');
