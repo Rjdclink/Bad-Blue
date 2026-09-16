@@ -68,7 +68,8 @@ requireText('gateway', 'compositeTacticBlocksSingleRouteReturn: false', 'composi
 requireText('gateway', 'independentCompositePromotionLoop: false', 'no second composite promotion loop');
 requireText('stack', 'runZeroCapitalAtomicStackTactic', 'engine-owned composite tactic');
 requireText('stack', 'const STRICT_POSITIVE_PROFIT_BASE_UNITS = 1n;', 'strict-positive base-unit floor');
-requireText('stack', 'const targetNetProfitBaseUnits = STRICT_POSITIVE_PROFIT_BASE_UNITS;', 'compatibility target resolves to strict positivity');
+requireText('stack', 'const targetNetProfitBaseUnits = requiredStrictPositiveProfitBaseUnits(first);', 'canonical compatibility target resolves to strict positivity');
+requireText('stack', 'targetNetProfitBaseUnits === null || targetNetProfitBaseUnits < STRICT_POSITIVE_PROFIT_BASE_UNITS', 'compatibility target cannot fall below strict positivity');
 requireText('stack', 'input_authority:single_atomic_bps_engine_stage1_admitted_candidates', 'Stage-1-admitted input authority');
 requireText('stack', 'stageOneThresholdAuthority: false', 'stack cannot own Stage-1 threshold');
 requireText('stack', 'stageOneEnvironmentThresholdRead: false', 'stack cannot read alternate Stage-1 threshold');
