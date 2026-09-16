@@ -134,8 +134,12 @@ has(prices, 'backgroundNearExpiryRefresh: true', 'resident near-expiry refresh m
 has(split, 'fresh_input_price_refresh_pending_zero_wait', 'zero-wait split price fallback missing');
 has(split, 'missingPriceWaitsOnHotPath: false', 'split price miss can block the hot path');
 
-// Existing execution gates still consume the canonical alias, whose semantics are now > 0.
-has(router, 'ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD', 'unified router lost canonical threshold');
+// The unified router owns topology-neutral strict-positive authoritative economics;
+// lower ZERO_CAPITAL gates keep consuming the compatibility alias whose semantics are > 0.
+has(router, 'deterministicPositive && netBps !== null && netBps > 0', 'unified router lost strict-positive all-in economics gate');
+has(router, 'stage3_target=strict_positive_authoritative_all_in_economics', 'unified router strict-positive target telemetry missing');
+assert.ok(!router.includes('STAGE_THREE_MINIMUM_TARGET_BPS = 10'), 'unified router reintroduced +10 BPS magnitude gate');
+assert.ok(!router.includes('ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD'), 'unified router reintroduced zero-capital-specific dollar threshold coupling');
 has(resources, 'clearsFiveDollarOutputFloor', 'resource scheduler lost canonical threshold alias');
 has(barrier, 'evaluateFiveDollarOutputFloor(opportunity, observedAt)', 'pre-broadcast threshold assertion missing');
 has(scheduler, 'clearsFiveDollarOutputFloor(opportunity)', 'scheduler threshold assertion missing');
