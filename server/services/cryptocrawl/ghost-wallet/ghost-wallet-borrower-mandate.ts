@@ -26,14 +26,14 @@ const BORROWER_MANDATE_TYPES = {
     { name: 'maxExecutions', type: 'uint256' },
     { name: 'minIntervalSeconds', type: 'uint256' },
   ],
-} as const;
+};
 const CANCELLATION_TYPES = {
   BorrowerMandateCancellation: [
     { name: 'authorizer', type: 'address' },
     { name: 'mandateDigest', type: 'bytes32' },
     { name: 'deadline', type: 'uint256' },
   ],
-} as const;
+};
 
 export interface GhostWalletBorrowerMandateInput {
   chain: GhostWalletChain;
@@ -142,7 +142,13 @@ async function verifyBorrowerAuthority(input: {
   if (borrowerCode === '0x') throw new Error('GHOST_WALLET_MANDATE_BORROWER_CONTRACT_REQUIRED');
 
   if (input.authorizer.toLowerCase() === input.borrower.toLowerCase()) {
-    if (!await verifyErc1271(input)) throw new Error('GHOST_WALLET_MANDATE_BORROWER_ERC1271_REJECTED');
+    const valid = await verifyErc1271({
+      provider: input.provider,
+      signer: input.borrower,
+      digest: input.digest,
+      signature: input.signature,
+    });
+    if (!valid) throw new Error('GHOST_WALLET_MANDATE_BORROWER_ERC1271_REJECTED');
     return 'borrower_erc1271';
   }
 
@@ -153,7 +159,13 @@ async function verifyBorrowerAuthority(input: {
 
   const authorizerCode = await input.provider.getCode(input.authorizer);
   if (authorizerCode !== '0x') {
-    if (!await verifyErc1271(input)) throw new Error('GHOST_WALLET_MANDATE_OWNER_ERC1271_REJECTED');
+    const valid = await verifyErc1271({
+      provider: input.provider,
+      signer: input.authorizer,
+      digest: input.digest,
+      signature: input.signature,
+    });
+    if (!valid) throw new Error('GHOST_WALLET_MANDATE_OWNER_ERC1271_REJECTED');
     return 'owner_erc1271';
   }
 
