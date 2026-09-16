@@ -1,8 +1,10 @@
 import type { ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
-import type {
-  ConfiguredRouteLeg,
-  ConfiguredZeroCapitalRoute,
+import {
+  peekResidentBestBpsQuote,
+  type ConfiguredRouteLeg,
+  type ConfiguredZeroCapitalRoute,
 } from '../execution/adapters/onchain-route-quoter.js';
+import { resolveConfiguredFlashLoanReceiver } from '../execution/adapters/flash-loan-receiver-capability.js';
 import { routeInventoryFingerprint, routeTopologySignature } from './ape-hypergraph-intelligence.js';
 
 export type ApeWorkerKind = 'route_split' | 'v4_cost_rescue' | 'shared_principal_stack' | 'execution_ready';
@@ -52,6 +54,9 @@ let dynamicArrivedRoutesAdded = 0;
 let peerHintsPublished = 0;
 let residentAssignmentEvictions = 0;
 let residentHintEvictions = 0;
+let splitPairsBuiltFromMeasuredRoutes = 0;
+let splitPairsPrunedForMissingMeasurement = 0;
+let splitPairsPrunedForMissingCompositeCapability = 0;
 const MAX_RESIDENT_ENTRIES = 4096;
 
 /** Candidate ownership generation is stable. Evidence generations expire independently. */
@@ -97,6 +102,26 @@ function safeSplitPairs(routes: readonly ConfiguredZeroCapitalRoute[]): ApeResid
   return output;
 }
 
+function routeHasResidentMeasuredEvidence(route: ConfiguredZeroCapitalRoute): boolean {
+  const quote = peekResidentBestBpsQuote(route.id);
+  return Boolean(
+    quote
+    && quote.chain === route.chain
+    && quote.amountIn > 0n
+    && Number.isFinite(quote.netProfitBps)
+    && Number.isFinite(quote.grossProfitBps),
+  );
+}
+
+function compositeSplitCapabilityAvailable(chain: string): boolean {
+  if (chain === 'europa') return false;
+  try {
+    return Boolean(resolveConfiguredFlashLoanReceiver('balancer_composite_v2', chain as any));
+  } catch {
+    return false;
+  }
+}
+
 function buildBucket(routes: readonly ConfiguredZeroCapitalRoute[], key: string): {
   routes: readonly ConfiguredZeroCapitalRoute[];
   pairs: readonly ApeResidentRoutePair[];
@@ -106,14 +131,18 @@ function buildBucket(routes: readonly ConfiguredZeroCapitalRoute[], key: string)
   const residentRoutes = Object.freeze([...bucket]);
   return {
     routes: residentRoutes,
-    pairs: Object.freeze(safeSplitPairs(residentRoutes)),
+    // Split pairs are deliberately not precomputed here. Resident quote evidence changes
+    // much faster than route topology, so building every structural combination up front
+    // creates quadratic work that may never be executable. Pair construction is deferred
+    // until an assignment has both measured evidence and composite execution capability.
+    pairs: Object.freeze([]),
   };
 }
 
 /**
  * Content-stable topology identity prevents an equivalent newly allocated route
- * array from rebuilding the quadratic split-pair index. When topology actually
- * changes, only affected structural buckets are rebuilt unless the change is broad.
+ * array from rebuilding the structural route index. Split-pair construction is
+ * intentionally deferred to assignment time and only uses already-measured routes.
  */
 function ensureStructuralIndex(routes: readonly ConfiguredZeroCapitalRoute[]): void {
   const fingerprint = routeInventoryFingerprint(routes);
@@ -152,7 +181,7 @@ function ensureStructuralIndex(routes: readonly ConfiguredZeroCapitalRoute[]): v
     for (const [key, bucket] of mutable) {
       const residentRoutes = Object.freeze([...bucket]);
       routesByKey.set(key, residentRoutes);
-      splitPairsByKey.set(key, Object.freeze(safeSplitPairs(residentRoutes)));
+      splitPairsByKey.set(key, Object.freeze([]));
     }
     structuralIndex = { routesByKey, splitPairsByKey };
     structuralIndexFullBuilds += 1;
@@ -234,17 +263,23 @@ function grossProfit(opportunity: ZeroCapitalOpportunity): bigint {
   return opportunity.grossProfit ?? (opportunity.expectedProfit + opportunity.estimatedExecutionCostInInputToken);
 }
 
-function primaryWorker(opportunity: ZeroCapitalOpportunity): ApeWorkerKind {
+function primaryWorker(opportunity: ZeroCapitalOpportunity, splitCapable: boolean): ApeWorkerKind {
   if (opportunity.expectedProfit > 0n) return 'execution_ready';
-  return grossProfit(opportunity) > 0n ? 'v4_cost_rescue' : 'route_split';
+  if (grossProfit(opportunity) > 0n) return 'v4_cost_rescue';
+  return splitCapable ? 'route_split' : 'v4_cost_rescue';
 }
 
-/** Every finite negative candidate keeps the complete compatible rescue toolbox. */
-function fallbackWorkers(opportunity: ZeroCapitalOpportunity): readonly ApeWorkerKind[] {
+/** Every finite negative candidate keeps compatible rescue tools; unavailable split execution is not scheduled. */
+function fallbackWorkers(opportunity: ZeroCapitalOpportunity, splitCapable: boolean): readonly ApeWorkerKind[] {
   if (opportunity.expectedProfit > 0n) return [];
-  return grossProfit(opportunity) > 0n
-    ? ['shared_principal_stack', 'route_split']
-    : ['v4_cost_rescue', 'shared_principal_stack', 'route_split'];
+  if (grossProfit(opportunity) > 0n) {
+    return splitCapable
+      ? ['shared_principal_stack', 'route_split']
+      : ['shared_principal_stack'];
+  }
+  return splitCapable
+    ? ['v4_cost_rescue', 'shared_principal_stack', 'route_split']
+    : ['v4_cost_rescue', 'shared_principal_stack'];
 }
 
 function prune(): void {
@@ -273,13 +308,38 @@ export function primeApeResidentWorkbench(input: {
   for (const opportunity of input.opportunities) {
     const key = structuralKey(opportunity);
     const configuredRoutes = structuralIndex.routesByKey.get(key) ?? [];
-    const configuredPairs = structuralIndex.splitPairsByKey.get(key) ?? [];
+    const splitCapable = compositeSplitCapabilityAvailable(opportunity.chain);
+    const measuredConfiguredRoutes = splitCapable
+      ? configuredRoutes.filter(routeHasResidentMeasuredEvidence)
+      : [];
+
+    if (!splitCapable) {
+      const possiblePairs = configuredRoutes.length > 1
+        ? configuredRoutes.length * (configuredRoutes.length - 1) / 2
+        : 0;
+      splitPairsPrunedForMissingCompositeCapability += possiblePairs;
+    } else {
+      const totalPossiblePairs = configuredRoutes.length > 1
+        ? configuredRoutes.length * (configuredRoutes.length - 1) / 2
+        : 0;
+      const measuredPossiblePairs = measuredConfiguredRoutes.length > 1
+        ? measuredConfiguredRoutes.length * (measuredConfiguredRoutes.length - 1) / 2
+        : 0;
+      splitPairsPrunedForMissingMeasurement += Math.max(0, totalPossiblePairs - measuredPossiblePairs);
+    }
+
+    const configuredPairs = splitCapable ? safeSplitPairs(measuredConfiguredRoutes) : [];
+    splitPairsBuiltFromMeasuredRoutes += configuredPairs.length;
+
     const arrivedAlreadyRepresented = configuredRoutes.some(route => sameRouteShape(route, opportunity));
     const arrived = arrivedAlreadyRepresented ? null : routeFromArrivedOpportunity(opportunity);
     const routes = arrived ? Object.freeze([...configuredRoutes, arrived]) : configuredRoutes;
-    const additionalPairs = arrived
-      ? configuredRoutes.filter(route => routesArePoolDisjoint(route, arrived)).map(route => ({ left: route, right: arrived }))
+    const additionalPairs = splitCapable && arrived
+      ? measuredConfiguredRoutes
+        .filter(route => routesArePoolDisjoint(route, arrived))
+        .map(route => ({ left: route, right: arrived }))
       : [];
+    splitPairsBuiltFromMeasuredRoutes += additionalPairs.length;
     if (arrived) dynamicArrivedRoutesAdded += 1;
 
     assignments.set(opportunity.id, {
@@ -288,9 +348,9 @@ export function primeApeResidentWorkbench(input: {
       routes,
       splitPairs: additionalPairs.length > 0
         ? Object.freeze([...configuredPairs, ...additionalPairs])
-        : configuredPairs,
-      primaryWorker: primaryWorker(opportunity),
-      fallbackWorkers: fallbackWorkers(opportunity),
+        : Object.freeze([...configuredPairs]),
+      primaryWorker: primaryWorker(opportunity, splitCapable),
+      fallbackWorkers: fallbackWorkers(opportunity, splitCapable),
       peerHint: peerHints.get(opportunity.id) ?? null,
       expiresAt: opportunity.expiresAt,
     });
@@ -311,9 +371,10 @@ export function publishApeResidentPeerHint(
   opportunity: ZeroCapitalOpportunity,
   preferredRouteId: string | null = null,
 ): void {
+  const splitCapable = compositeSplitCapabilityAvailable(opportunity.chain);
   const hint: ApeResidentPeerHint = {
     opportunityId: opportunity.id,
-    suggestedWorker: primaryWorker(opportunity),
+    suggestedWorker: primaryWorker(opportunity, splitCapable),
     preferredRouteId,
     measuredNetBps: opportunity.netProfitBps,
     observedAt: opportunity.timestamp,
@@ -339,18 +400,23 @@ export function getApeResidentWorkbenchSnapshot() {
     structuralIndexIncrementalBuilds,
     structuralIndexStableHits,
     structuralInventoryFingerprint,
-    structuralTopologyIdentityMode: 'stable_content_fingerprint_plus_incremental_changed_buckets' as const,
+    structuralTopologyIdentityMode: 'stable_content_fingerprint_routes_only_split_pairs_deferred' as const,
     assignmentPrimes,
     dynamicArrivedRoutesAdded,
     peerHintsPublished,
     residentAssignmentEvictions,
     residentHintEvictions,
+    splitPairsBuiltFromMeasuredRoutes,
+    splitPairsPrunedForMissingMeasurement,
+    splitPairsPrunedForMissingCompositeCapability,
+    splitPairConstructionMode: 'measured_routes_only_after_composite_capability' as const,
     candidateOwnershipExpires: false as const,
     evidenceExpiryMetadataOnly: true as const,
     negativeBpsRejected: false as const,
     cacheEvictionKillsCandidate: false as const,
-    candidatePresliceBeforeSplittability: false as const,
-    configuredRouteFilteringOnSplitWorkerPath: false as const,
+    candidatePresliceBeforeSplittability: true as const,
+    configuredRouteFilteringOnSplitWorkerPath: true as const,
+    unavailableCompositeSchedulesRouteSplit: false as const,
     liveWorkerReadMode: 'single_resident_assignment_lookup' as const,
     peerHintTransport: 'piggybacked_existing_worker_result' as const,
     peerHintQueue: false as const,
