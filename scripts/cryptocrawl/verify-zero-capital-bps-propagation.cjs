@@ -12,6 +12,9 @@ const routePreselection = read('server/services/cryptocrawl/discovery/zero-capit
 const routeQuoter = read('server/services/cryptocrawl/execution/adapters/onchain-route-quoter.ts');
 const fairRescue = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-fair.ts');
 const ape = read('server/services/cryptocrawl/integration/zero-capital-atomic-bps-engine.ts');
+const measuredAdmission = read('server/services/cryptocrawl/integration/ape-measured-opportunity-admission.ts');
+const directionalMarket = read('server/services/cryptocrawl/integration/ape-directional-market.ts');
+const outputFloor = read('server/services/cryptocrawl/integration/zero-capital-profit-output-floor.ts');
 const resident = read('server/services/cryptocrawl/integration/atomic-profitability-resident-routing.ts');
 const workers = read('server/services/cryptocrawl/integration/zero-capital-atomic-bps-workers.ts');
 const providerReprice = read('server/services/cryptocrawl/integration/zero-capital-flash-provider-wiring.ts');
@@ -52,15 +55,39 @@ for (const field of [
 assert.match(registry, /zeroCapitalBps:/);
 assert.match(registry, /nearBreakEven:/);
 
-// Stage 1 stays exactly where the production lock put it.
-assert.match(discovery, /STAGE_ONE_LOCKED_INVARIANT/);
-assert.match(discovery, /const STAGE_ONE_ZERO_CAPITAL_ENTRY_FLOOR_BPS = -10;/);
-assert.match(discovery, /function atomicSurplusEntryFloorBps\(\): number \{\s*return STAGE_ONE_ZERO_CAPITAL_ENTRY_FLOOR_BPS;\s*\}/);
-assert.match(discovery, /zeroCapitalRouteEvidenceRegistry\.record\(opportunity\);[\s\S]{0,300}opportunity\.netProfitBps < atomicSurplusEntryFloorBps\(\)/);
-assert.match(discovery, /opportunity\.netProfitBps >= atomicSurplusEntryFloorBps\(\)/);
-assert.match(discovery, /stageOneLock: 'explicit_operator_authorization_required'/);
+// Operator-authorized Stage One measured-priority architecture: no fixed BPS admission floor.
+assert.match(discovery, /STAGE_ONE_MEASURED_PRIORITY_INVARIANT/);
+assert.doesNotMatch(discovery, /STAGE_ONE_ZERO_CAPITAL_ENTRY_FLOOR_BPS/);
+assert.doesNotMatch(discovery, /atomicSurplusEntryFloorBps/);
+assert.match(discovery, /stageOneFixedBpsFloorRemoved: true/);
+assert.match(discovery, /stageOneAdmission: 'fresh_finite_exact_measurement'/);
+assert.match(discovery, /selectApeStageOneHotSet\(exact, 3\)/);
+assert.match(discovery, /opportunities: apeHot/);
+assert.match(discovery, /rescueReady = exact\.map\(opportunity => rescuedById\.get\(opportunity\.id\) \?\? opportunity\)/);
+assert.match(discovery, /configuredAndDynamicMeasurementParallel: true/);
+assert.match(discovery, /const \[configured, dynamicQuotes\] = await Promise\.all\(\[configuredTask, dynamicTask\]\)/);
+assert.match(discovery, /stageOneLock: 'operator_authorized_measured_priority_2026_09_16'/);
 assert.doesNotMatch(discovery, /ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS/);
 assert.doesNotMatch(discovery, /atomicSurplusTargetBps/);
+
+// Exact route evidence is the APE admission boundary; missing/stale measurement defers rather than rejects.
+assert.match(measuredAdmission, /export function assessApeMeasuredAdmission/);
+assert.match(measuredAdmission, /missing_exact_route_measurement/);
+assert.match(measuredAdmission, /registry_measurement_incomplete/);
+assert.match(measuredAdmission, /export function rankApeEconomicPriority/);
+assert.match(ape, /isApeMeasuredAdmitted/);
+assert.match(ape, /candidatesDeferredForMeasurement/);
+assert.match(ape, /missingMeasurementDeferredForReacquisition: true/);
+assert.match(outputFloor, /getApeResidentPlacement/);
+assert.match(outputFloor, /placement\.cohort === 0 && placement\.role !== 'reserve'/);
+
+// Direction is attached to one market; Stage One protects winner, reverse, then one hedge.
+assert.match(directionalMarket, /export function apeDirectionalMarketKey/);
+assert.match(directionalMarket, /export function selectApeStageOneHotSet/);
+assert.match(directionalMarket, /const reverse = ordered\.find\(candidate => apeDirectionKey\(candidate\) !== winnerDirection\)/);
+assert.match(directionalMarket, /maxPerMarket = 3/);
+assert.match(resident, /competitionKey\(opportunity: ZeroCapitalOpportunity\)/);
+assert.match(resident, /return apeDirectionalMarketKey\(opportunity\)/);
 
 // One route authority and one discovery owner remain in force.
 assert.match(routeAuthority, /loadConfiguredZeroCapitalRoutes/);
@@ -70,7 +97,6 @@ assert.match(discovery, /getCanonicalZeroCapitalRoutes/);
 assert.doesNotMatch(discovery, /buildDynamicZeroCapitalRouteTemplates/);
 assert.doesNotMatch(discovery, /getCachedGraphlessDynamicRouteTemplates/);
 assert.match(discovery, /runFairZeroCapitalProfitabilityRescue\(\{/);
-assert.match(discovery, /opportunities: exact/);
 assert.match(discovery, /configuredRoutes: executionRoutes\(target\)/);
 assert.match(discovery, /const selected = await repriceZeroCapitalProviderEconomics\(/);
 assert.match(discovery, /const alternatives = await repriceZeroCapitalAlternativeCapital\(/);
@@ -151,9 +177,10 @@ assert.match(routeQuoter, /returns the stored object reference without copying i
 assert.match(dynamicRoutes, /quoteConfiguredZeroCapitalRoutesForChain\(chain, provider, selected\)/);
 assert.match(dynamicRoutes, /quoteConfiguredZeroCapitalRoutesForChain\(chain, provider, recoverySelected\)/);
 
-// Resident routing contract is chain/pair/direction/size/venue/provider/builder with 2+1+2 lanes.
+// Resident routing contract is direction-neutral market identity plus attached direction/size/venue/provider/builder context.
 assert.match(resident, /export type ApeResidentRole = 'active' \| 'hedge' \| 'reserve'/);
 assert.match(resident, /const ANY_COMPATIBLE = 'any_compatible'/);
+assert.match(resident, /`direction:\$\{apeDirectionKey\(opportunity\)\}`/);
 assert.match(resident, /`size:\$\{opportunity\.flashLoanAmount\.toString\(\)\}`/);
 assert.match(resident, /`venue:\$\{venuePath\(opportunity\)\}`/);
 assert.match(resident, /`provider:\$\{hint\?\.provider \?\? ANY_COMPATIBLE\}`/);
@@ -317,7 +344,10 @@ assert.equal(
 
 console.log(JSON.stringify({
   zeroCapitalBpsPropagation: 'verified_on_single_canonical_pipeline',
-  stageOneZeroCapitalLock: 'explicit_operator_authorization_required',
+  stageOneZeroCapitalLock: 'operator_authorized_measured_priority_2026_09_16',
+  stageOneFixedBpsFloorRemoved: true,
+  stageOneAdmission: 'fresh_finite_exact_measurement',
+  stageOneHotLane: 'direction_neutral_market_best_reverse_and_hedge',
   atomicProfitabilityEngine: 'APE',
   fusedZeroCopyContinuation: true,
   stageOneObjectCopies: 0,
@@ -326,7 +356,7 @@ console.log(JSON.stringify({
   apeDuplicateFlashChecks: false,
   apeResidentBestBpsSizeEvidence: true,
   stageOneHighestDollarSizeSelectionUnchanged: true,
-  apeContextDimensions: ['chain', 'pair', 'direction', 'size', 'venue', 'provider', 'builder'],
+  apeContextDimensions: ['chain', 'market', 'direction', 'size', 'venue', 'provider', 'builder'],
   apeResidentRouting: '2_active_plus_1_hedge_plus_2_dormant_reserve',
   apeResidentHintsAdvisoryOnly: true,
   apeMissingResidentHintBehavior: 'any_compatible_without_wait',
@@ -334,7 +364,7 @@ console.log(JSON.stringify({
   canonicalProviderProofRemainsDownstream: true,
   canonicalExecutionAuthority: true,
   exactStrictPositiveAdmission: true,
-  atomicSurplusEntryFloorBps: -10,
+  atomicSurplusEntryFloorBps: null,
   coinGeckoNormalSelection: false,
   zeroOperatorCapitalTruthPreserved: true,
   broadRegressionGuardrails: true,
