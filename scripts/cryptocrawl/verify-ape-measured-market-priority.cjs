@@ -63,3 +63,5 @@ has(ape, 'apeUpliftBps', 'APE uplift telemetry missing');
 has(ape, 'finalNetBps', 'final net BPS telemetry missing');
 
 console.log('[ape-measured-market-priority] PASS: fresh measured globally-bounded winner-first hot-lane admission, venue-aware direction identity, compatible reverse coverage, fixed quote-budget preservation, zero-I/O APE and deferred directional performance telemetry verified');
+
+// Merge-head marker only: this authorized merge intentionally skips GitHub Actions.
