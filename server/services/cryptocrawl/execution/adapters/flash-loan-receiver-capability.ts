@@ -29,12 +29,28 @@ export interface ReceiverPermissionRouteStep {
   fee: number;
 }
 
+type ResidentReceiverCapability = {
+  capability: VerifiedFlashLoanReceiverCapability;
+  expiresAt: number;
+};
+
 const RECEIVER_ADMIN_ABI = [
   'function allowedTargets(address) view returns (bool)',
   'function allowedApprovalTokens(address) view returns (bool)',
   'function setAllowedTarget(address target,bool allowed)',
   'function setAllowedApprovalToken(address token,bool allowed)',
 ];
+const residentReceiverCapabilities = new Map<string, ResidentReceiverCapability>();
+const receiverCapabilityInFlight = new Map<string, Promise<VerifiedFlashLoanReceiverCapability | null>>();
+
+function receiverCapabilityTtlMs(): number {
+  const configured = Number(process.env.ZERO_CAPITAL_RECEIVER_CAPABILITY_TTL_MS || 60_000);
+  return Number.isFinite(configured) ? Math.max(1_000, Math.min(300_000, Math.trunc(configured))) : 60_000;
+}
+
+function cloneCapability(value: VerifiedFlashLoanReceiverCapability): VerifiedFlashLoanReceiverCapability {
+  return { ...value, provenance: [...value.provenance] };
+}
 
 function requireAddress(label: string, value: string): string {
   if (!ethers.utils.isAddress(value)) throw new Error(`${label} must be a valid EVM address`);
@@ -113,6 +129,76 @@ function expectedInfrastructure(kind: FlashLoanReceiverCapabilityKind, chain: Su
   return resolveSponsoredReceiverVault(chain);
 }
 
+function capabilityKey(input: {
+  kind: FlashLoanReceiverCapabilityKind;
+  chain: SupportedExecutionChain;
+  address: string;
+  owner: string;
+  infrastructure: string;
+}): string {
+  return [
+    input.kind,
+    input.chain,
+    input.address.toLowerCase(),
+    input.owner.toLowerCase(),
+    input.infrastructure.toLowerCase(),
+  ].join(':');
+}
+
+function pruneReceiverCapabilities(now = Date.now()): void {
+  for (const [key, value] of residentReceiverCapabilities) {
+    if (value.expiresAt <= now) residentReceiverCapabilities.delete(key);
+  }
+  while (residentReceiverCapabilities.size > 128) {
+    const oldest = residentReceiverCapabilities.keys().next().value as string | undefined;
+    if (!oldest) break;
+    residentReceiverCapabilities.delete(oldest);
+  }
+}
+
+async function verifyFlashLoanReceiverCapabilityUncached(input: {
+  kind: FlashLoanReceiverCapabilityKind;
+  chain: SupportedExecutionChain;
+  provider: providers.Provider;
+  address: string;
+  owner: string;
+  infrastructure: string;
+}): Promise<VerifiedFlashLoanReceiverCapability | null> {
+  const code = await input.provider.getCode(input.address);
+  if (code === '0x') return null;
+  const infrastructureGetter = input.kind === 'aave_v3' ? 'pool' : input.kind === 'morpho_blue' ? 'morpho' : 'vault';
+  const receiver = new Contract(input.address, [
+    'function owner() view returns (address)',
+    `function ${infrastructureGetter}() view returns (address)`,
+  ], input.provider);
+  const [actualOwnerRaw, actualInfrastructureRaw] = await Promise.all([
+    receiver.owner() as Promise<string>,
+    receiver[infrastructureGetter]() as Promise<string>,
+  ]);
+  const actualOwner = requireAddress('receiver owner', actualOwnerRaw);
+  const actualInfrastructure = requireAddress(`receiver ${infrastructureGetter}`, actualInfrastructureRaw);
+  if (actualOwner.toLowerCase() !== input.owner.toLowerCase()) return null;
+  if (actualInfrastructure.toLowerCase() !== input.infrastructure.toLowerCase()) return null;
+
+  return {
+    kind: input.kind,
+    chain: input.chain,
+    address: input.address,
+    owner: actualOwner,
+    infrastructure: actualInfrastructure,
+    codeHash: ethers.utils.keccak256(code),
+    verifiedAt: Date.now(),
+    provenance: [
+      'receiver_bytecode_present',
+      'receiver_owner_verified',
+      `${infrastructureGetter}_binding_verified`,
+      'configured_receiver_address',
+      'resident_capability_cache_eligible',
+      'synthetic_evidence:false',
+    ],
+  };
+}
+
 export async function verifyFlashLoanReceiverCapability(input: {
   kind: FlashLoanReceiverCapabilityKind;
   chain: SupportedExecutionChain;
@@ -124,40 +210,49 @@ export async function verifyFlashLoanReceiverCapability(input: {
   if (!configuredAddress) return null;
   const address = requireAddress('flash-loan receiver', configuredAddress);
   const owner = requireAddress('expected receiver owner', input.expectedOwner);
-  const infrastructure = expectedInfrastructure(input.kind, input.chain);
-  if (!infrastructure) return null;
+  const infrastructureRaw = expectedInfrastructure(input.kind, input.chain);
+  if (!infrastructureRaw) return null;
+  const infrastructure = requireAddress('expected receiver infrastructure', infrastructureRaw);
+  const key = capabilityKey({ kind: input.kind, chain: input.chain, address, owner, infrastructure });
+  const now = Date.now();
+  const resident = residentReceiverCapabilities.get(key);
+  if (resident && resident.expiresAt > now) return cloneCapability(resident.capability);
+  if (resident) residentReceiverCapabilities.delete(key);
 
-  const code = await input.provider.getCode(address);
-  if (code === '0x') return null;
-  const infrastructureGetter = input.kind === 'aave_v3' ? 'pool' : input.kind === 'morpho_blue' ? 'morpho' : 'vault';
-  const receiver = new Contract(address, [
-    'function owner() view returns (address)',
-    `function ${infrastructureGetter}() view returns (address)`,
-  ], input.provider);
-  const [actualOwnerRaw, actualInfrastructureRaw] = await Promise.all([
-    receiver.owner() as Promise<string>,
-    receiver[infrastructureGetter]() as Promise<string>,
-  ]);
-  const actualOwner = requireAddress('receiver owner', actualOwnerRaw);
-  const actualInfrastructure = requireAddress(`receiver ${infrastructureGetter}`, actualInfrastructureRaw);
-  if (actualOwner.toLowerCase() !== owner.toLowerCase()) return null;
-  if (actualInfrastructure.toLowerCase() !== infrastructure.toLowerCase()) return null;
+  const existing = receiverCapabilityInFlight.get(key);
+  if (existing) return existing.then(value => value ? cloneCapability(value) : null);
 
-  return {
+  const pending = verifyFlashLoanReceiverCapabilityUncached({
     kind: input.kind,
     chain: input.chain,
+    provider: input.provider,
     address,
-    owner: actualOwner,
-    infrastructure: actualInfrastructure,
-    codeHash: ethers.utils.keccak256(code),
-    verifiedAt: Date.now(),
-    provenance: [
-      'receiver_bytecode_present',
-      'receiver_owner_verified',
-      `${infrastructureGetter}_binding_verified`,
-      'configured_receiver_address',
-      'synthetic_evidence:false',
-    ],
+    owner,
+    infrastructure,
+  }).then(capability => {
+    if (capability) {
+      residentReceiverCapabilities.set(key, {
+        capability: cloneCapability(capability),
+        expiresAt: Date.now() + receiverCapabilityTtlMs(),
+      });
+      pruneReceiverCapabilities();
+    }
+    return capability;
+  }).finally(() => {
+    if (receiverCapabilityInFlight.get(key) === pending) receiverCapabilityInFlight.delete(key);
+  });
+  receiverCapabilityInFlight.set(key, pending);
+  return pending.then(value => value ? cloneCapability(value) : null);
+}
+
+export function getReceiverCapabilityCacheSnapshot() {
+  pruneReceiverCapabilities();
+  return {
+    residentCapabilities: residentReceiverCapabilities.size,
+    inFlightVerifications: receiverCapabilityInFlight.size,
+    ttlMs: receiverCapabilityTtlMs(),
+    verificationOnEveryApeUse: false as const,
+    missingConfiguredReceiverTriggersRpc: false as const,
   };
 }
 
