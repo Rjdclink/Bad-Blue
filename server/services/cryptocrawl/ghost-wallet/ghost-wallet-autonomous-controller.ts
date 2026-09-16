@@ -25,7 +25,16 @@ interface StandingBorrowerMandate {
   borrowerData: string;
   maxBorrowerFeeBaseUnits: string | null;
   expiresAt: number | null;
+  maxExecutions: number;
+  minIntervalMs: number;
   source: 'environment' | 'venue_registry';
+}
+
+interface MandateExecutionState {
+  settled: number;
+  active: number;
+  total: number;
+  lastCommittedAt: number | null;
 }
 
 function address(value: unknown): string | null {
@@ -46,6 +55,16 @@ function positiveInteger(value: unknown): string | null {
 function hexData(value: unknown): string {
   const raw = String(value || '0x').trim();
   return ethers.utils.isHexString(raw) ? raw : '0x';
+}
+
+function safePositiveCount(value: unknown, fallback = 1): number {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function safeIntervalMs(value: unknown, fallback = 0): number {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 function configuredSpreadFloorBps(): number {
@@ -91,6 +110,9 @@ function configuredMandates(): StandingBorrowerMandate[] {
       ? null
       : positiveInteger(row.maxBorrowerFeeBaseUnits);
     const expiresAt = Number(row?.expiresAt);
+    const minIntervalMs = row?.minIntervalMs !== undefined
+      ? safeIntervalMs(row.minIntervalMs)
+      : safeIntervalMs(Number(row?.minIntervalSeconds || 0) * 1000);
     return [{
       id: String(row?.id || `env-${index}`).slice(0, 160),
       chain: parsedChain,
@@ -100,6 +122,8 @@ function configuredMandates(): StandingBorrowerMandate[] {
       borrowerData: hexData(row?.borrowerData),
       maxBorrowerFeeBaseUnits,
       expiresAt: Number.isFinite(expiresAt) && expiresAt > 0 ? expiresAt : null,
+      maxExecutions: safePositiveCount(row?.maxExecutions, 1),
+      minIntervalMs,
       source: 'environment' as const,
     }];
   });
@@ -117,22 +141,28 @@ async function registryMandates(): Promise<StandingBorrowerMandate[]> {
     return result.rows.flatMap((row: any) => {
       const parsedChain = chain(row.chain);
       const borrower = address(row.address);
-      const asset = address(row.asset || row.metadata?.asset);
-      const amountBaseUnits = positiveInteger(row.metadata?.amountBaseUnits);
+      const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+      const asset = address(row.asset || metadata.asset);
+      const amountBaseUnits = positiveInteger(metadata.amountBaseUnits);
       if (!parsedChain || !borrower || !asset || !amountBaseUnits) return [];
-      const maxBorrowerFeeBaseUnits = row.metadata?.maxBorrowerFeeBaseUnits === undefined
+      const maxBorrowerFeeBaseUnits = metadata.maxBorrowerFeeBaseUnits === undefined
         ? null
-        : positiveInteger(row.metadata.maxBorrowerFeeBaseUnits);
-      const expiresAt = Number(row.metadata?.expiresAt);
+        : positiveInteger(metadata.maxBorrowerFeeBaseUnits);
+      const expiresAt = Number(metadata.expiresAt);
+      const minIntervalMs = metadata.minIntervalMs !== undefined
+        ? safeIntervalMs(metadata.minIntervalMs)
+        : safeIntervalMs(Number(metadata.minIntervalSeconds || 0) * 1000);
       return [{
-        id: String(row.venue_id).slice(0, 160),
+        id: String(row.venue_id).slice(0, 240),
         chain: parsedChain,
         borrower,
         asset,
         amountBaseUnits,
-        borrowerData: hexData(row.metadata?.borrowerData),
+        borrowerData: hexData(metadata.borrowerData),
         maxBorrowerFeeBaseUnits,
         expiresAt: Number.isFinite(expiresAt) && expiresAt > 0 ? expiresAt : null,
+        maxExecutions: safePositiveCount(metadata.maxExecutions, 1),
+        minIntervalMs,
         source: 'venue_registry' as const,
       }];
     });
@@ -145,10 +175,36 @@ async function standingMandates(): Promise<StandingBorrowerMandate[]> {
   const combined = [...configuredMandates(), ...await registryMandates()];
   const unique = new Map<string, StandingBorrowerMandate>();
   for (const mandate of combined) {
-    const key = `${mandate.chain}:${mandate.borrower.toLowerCase()}:${mandate.asset.toLowerCase()}:${mandate.amountBaseUnits}:${mandate.borrowerData}`;
+    const key = `${mandate.chain}:${mandate.borrower.toLowerCase()}:${mandate.asset.toLowerCase()}:${mandate.amountBaseUnits}:${mandate.borrowerData}:${mandate.id}`;
     if (!unique.has(key)) unique.set(key, mandate);
   }
   return [...unique.values()];
+}
+
+async function mandateExecutionState(mandate: StandingBorrowerMandate): Promise<MandateExecutionState> {
+  const result = await pool.query(
+    `SELECT
+       count(*) FILTER (WHERE status='SETTLED')::integer AS settled,
+       count(*) FILTER (WHERE status IN ('QUEUED','CLAIMED','PROCESSING','SUBMITTED','RETRYABLE'))::integer AS active,
+       count(*)::integer AS total,
+       max(CASE WHEN status IN ('SUBMITTED','SETTLED')
+                THEN COALESCE(submitted_at,settled_at,created_at)
+                ELSE NULL END) AS last_committed_at
+     FROM private.cryptocrawler_ghost_wallet_work
+     WHERE kind='prepared_atomic_execution'
+       AND chain=$2
+       AND payload->>'mode'='broker_execution'
+       AND payload->>'mandateId'=$1`,
+    [mandate.id, mandate.chain],
+  );
+  const row = result.rows[0] || {};
+  const lastCommittedAt = row.last_committed_at ? new Date(String(row.last_committed_at)).getTime() : null;
+  return {
+    settled: Number(row.settled || 0),
+    active: Number(row.active || 0),
+    total: Number(row.total || 0),
+    lastCommittedAt: Number.isFinite(lastCommittedAt) ? lastCommittedAt : null,
+  };
 }
 
 class GhostWalletAutonomousController {
@@ -178,6 +234,7 @@ class GhostWalletAutonomousController {
       hardBpsProfitAdmissionFloor: false,
       configuredSpreadFloorBps: configuredSpreadFloorBps(),
       perTransactionSpreadCalibration: true,
+      signedMandateExecutionLimits: true,
       strictPositiveAllInNetRequired: true,
       chains: [...CHAINS],
       continuousOperation: true,
@@ -248,7 +305,15 @@ class GhostWalletAutonomousController {
 
   private async evaluateMandate(mandate: StandingBorrowerMandate): Promise<void> {
     try {
-      if (mandate.expiresAt !== null && mandate.expiresAt <= Date.now()) return;
+      const now = Date.now();
+      if (mandate.expiresAt !== null && mandate.expiresAt <= now) return;
+      const executionState = await mandateExecutionState(mandate);
+      if (executionState.settled >= mandate.maxExecutions) return;
+      if (executionState.active > 0) return;
+      if (executionState.lastCommittedAt !== null
+        && mandate.minIntervalMs > 0
+        && executionState.lastCommittedAt + mandate.minIntervalMs > now) return;
+
       const provider = ghostWalletEngine.getProvider(mandate.chain);
       const wallet = ghostWalletEngine.getExecutionWallet(mandate.chain);
       if (!provider || !wallet) return;
@@ -330,8 +395,9 @@ class GhostWalletAutonomousController {
       this.lastOpportunityAt = Date.now();
       if (!ghostWalletEngine.isLiveExecutionEnabled()) return;
 
+      const executionSequence = executionState.total + 1;
       await enqueueGhostWalletWork({
-        dedupeKey: `ghost-controller:broker:${mandate.id}:${mandate.chain}:${blockNumber}:${quote.selected.sourceKind}:${quote.selected.lender.toLowerCase()}`,
+        dedupeKey: `ghost-controller:broker:${mandate.id}:${mandate.chain}:execution:${executionSequence}`,
         kind: 'prepared_atomic_execution',
         chain: mandate.chain,
         priority: 900,
@@ -341,6 +407,9 @@ class GhostWalletAutonomousController {
           chain: mandate.chain,
           mandateId: mandate.id,
           mandateSource: mandate.source,
+          mandateExecutionSequence: executionSequence,
+          mandateMaxExecutions: mandate.maxExecutions,
+          mandateMinIntervalMs: mandate.minIntervalMs,
           to: finalPrepared.to,
           data: finalPrepared.data,
           value: finalPrepared.value,
@@ -388,6 +457,9 @@ export const GHOST_WALLET_AUTONOMOUS_CONTROLLER_POLICY = {
   configuredSpreadFloorDefaultBps: 0,
   perTransactionSpreadCalibrationFromExactGas: true,
   globalSpreadConfigurationTransactionRequired: false,
+  signedMandateExecutionCountEnforced: true,
+  signedMandateCadenceEnforced: true,
+  oneActiveExecutionPerMandate: true,
   durableSubmissionLedgerRequired: true,
   chainFailureLocal: true,
   zeroCapitalIntegration: false,
