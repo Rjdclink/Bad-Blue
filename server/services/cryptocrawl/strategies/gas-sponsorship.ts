@@ -2,7 +2,8 @@ import { BigNumber, Wallet, ethers } from 'ethers';
 
 const ALCHEMY_WALLET_API_BASE = 'https://api.g.alchemy.com/v2';
 const DEFAULT_TIMEOUT_MS = 60_000;
-const DEFAULT_POLL_MS = 1_000;
+const DEFAULT_POLL_MS = 250;
+const DEFAULT_RPC_TIMEOUT_MS = 5_000;
 const ALCHEMY_MODULAR_ACCOUNT_7702_ALLOWLIST = new Set([
   '0x69007702764179f14f51cdce752f4f775d74e139',
   '0x77021100bd87b7008e5e1989d0eb38555d0d0000',
@@ -51,20 +52,25 @@ function stripEip712Domain(types: Record<string, Array<{ name: string; type: str
 
 function boundedCooldownMs(raw: unknown): number {
   const parsed = Number(raw);
-  if (!Number.isFinite(parsed)) return 300_000;
-  return Math.max(30_000, Math.min(3_600_000, Math.trunc(parsed)));
+  if (!Number.isFinite(parsed)) return 60_000;
+  return Math.max(10_000, Math.min(300_000, Math.trunc(parsed)));
 }
 
 function isDeterministicPolicyFailure(message: string): boolean {
   const normalized = message.toLowerCase();
+  // Only failures that prove the policy itself is globally unusable enter cooldown.
+  // Chain/call-specific rejection must remain local to that attempted execution.
   return normalized.includes('policy not found')
     || normalized.includes('policy is not active')
     || normalized.includes('policy inactive')
-    || normalized.includes('invalid policy')
-    || (normalized.includes('policy') && normalized.includes('application'));
+    || normalized.includes('invalid policy');
 }
 
-/** Functional billed Alchemy fallback. Provider billing remains canonical cost. */
+/**
+ * Primary zero-initial-capital gas submission lane on configured supported chains.
+ * Alchemy fronts the native gas; provider billing remains a canonical economic cost
+ * unless independent evidence proves the operator monetary cost is zero.
+ */
 export class AlchemyGasSponsorshipManager {
   private readonly apiKey: string;
   private readonly policyId: string;
@@ -105,7 +111,7 @@ export class AlchemyGasSponsorshipManager {
     this.unavailableUntil = 0;
   }
 
-  private async rpc<T>(method: string, params: unknown[], timeoutMs = 15_000): Promise<T> {
+  private async rpc<T>(method: string, params: unknown[], timeoutMs = DEFAULT_RPC_TIMEOUT_MS): Promise<T> {
     const readiness = this.getReadiness();
     if (!readiness.ready) throw new Error(readiness.reason || 'Alchemy Gas Manager is not configured');
     const controller = new AbortController();
@@ -181,7 +187,7 @@ export class AlchemyGasSponsorshipManager {
     const callId = String(sendResult?.id || '');
     if (!ethers.utils.isHexString(callId)) throw new Error('Alchemy wallet_sendPreparedCalls returned an invalid call id');
     const deadline = Date.now() + Math.max(5_000, input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-    const pollMs = Math.max(250, input.pollMs ?? DEFAULT_POLL_MS);
+    const pollMs = Math.max(100, input.pollMs ?? DEFAULT_POLL_MS);
     while (Date.now() < deadline) {
       const status = await this.rpc<any>('wallet_getCallsStatus', [callId]);
       const numericStatus = Number(status?.status);

@@ -18,10 +18,11 @@ import {
   type VerifiedFlashLoanReceiverCapability,
 } from '../execution/adapters/flash-loan-receiver-capability.js';
 import { ensureProviderSpecificReceiverCapability } from '../execution/adapters/provider-specific-receiver-bootstrap.js';
+import { ensureDualFlashLoanReceiverCapability } from '../execution/adapters/dual-flashloan-receiver-bootstrap.js';
 import { verifyDualFlashLoanReceiverCapability } from '../execution/adapters/dual-flashloan-receiver-capability.js';
 import { flashLoanProviderSelectionRegistry } from '../execution/adapters/flash-loan-provider-selection-registry.js';
 import { dualFlashLoanProviderSelectionRegistry } from '../execution/adapters/dual-flash-loan-provider-selection-registry.js';
-import type { ReceiverFundingMode } from '../execution/adapters/sponsored-receiver-manager.js';
+import { resolveSponsoredReceiverVault, type ReceiverFundingMode } from '../execution/adapters/sponsored-receiver-manager.js';
 import { prepareBuilderSponsoredZeroCapitalColdStart } from '../execution/builder-sponsored-zero-capital-coldstart.js';
 import { prepareBuilderSponsoredProviderReceiverBootstrap } from '../execution/builder-sponsored-receiver-bootstrap.js';
 import type { GasFundingDecision } from '../capital-free/dynamic-gas-funding-engine.js';
@@ -236,6 +237,7 @@ export async function repriceZeroCapitalProviderEconomics(input: {
   const resourceReady = strictFundingReady(funding);
   const capabilities = await verifiedCapabilities({ chain, provider, wallet, balancerReceiver });
   const bootstrappedProviders = new Set<FlashLoanProviderKind>();
+  let dualReceiverColdStarted = false;
   const repriced: ZeroCapitalOpportunity[] = [];
   const permissionCalls = new Map<string, any>();
   const permissionDeferred = new Set<string>();
@@ -252,6 +254,67 @@ export async function repriceZeroCapitalProviderEconomics(input: {
       const evidence = await providerEvidence(chain, provider, opportunity.inputToken);
       const measuredSingle = selectMeasuredFlashLoanProvider(evidence, opportunity.flashLoanAmount);
       const measuredDual = selectMeasuredDualFlashLoanAllocation(evidence, opportunity.flashLoanAmount);
+
+      if (
+        measuredDual
+        && wallet
+        && resourceReady
+        && !capabilities.dual
+        && !dualReceiverColdStarted
+      ) {
+        const vault = resolveSponsoredReceiverVault(chain as any);
+        if (vault) {
+          const ensuredDual = await ensureDualFlashLoanReceiverCapability({
+            chain: chain as any,
+            provider,
+            wallet,
+            vault,
+            fundingMode: funding.mode as ReceiverFundingMode,
+            executeSetupCalls: calls => context.executeSetupCalls(
+              chain as any,
+              provider,
+              wallet,
+              funding.mode as ReceiverFundingMode,
+              calls,
+            ),
+          }).catch(error => {
+            logger.debug('[ZeroCapitalFlashProvider] Aave+Balancer dual receiver cold start failed locally', {
+              component: 'ZeroCapitalFlashProviderWiring',
+              chain,
+              opportunityId: opportunity.id,
+              error: error instanceof Error ? error.message : String(error),
+              singleProviderAdmissionBlocked: false,
+              otherProviderAdmissionBlocked: false,
+              personalFundingRequested: false,
+              executionAuthority: false,
+            });
+            return null;
+          });
+          if (ensuredDual) {
+            capabilities.dual = ensuredDual;
+            dualReceiverColdStarted = true;
+            const values = repriceOpportunity(opportunity, measuredDual.totalFee);
+            recordReprice(opportunity, chain, values);
+            zeroCapitalRouteEvidenceRegistry.remove(opportunity.id);
+            updateCandidate({
+              opportunity,
+              selected: measuredDual.balancer,
+              eligible: false,
+              reason: 'Aave+Balancer dual receiver was cold-started through the proven zero-initial-capital gas path; the triggering quote is intentionally invalid until canonical discovery reacquires fresh executable evidence',
+              missingInformation: ['fresh_quote_after_dual_receiver_bootstrap'],
+              receiverBindingProvenance: 'provider_receiver_binding:dual_route_local_cold_start_completed',
+              extraProvenance: [
+                ...ensuredDual.provenance,
+                'dual_provider_receiver_cold_start_route_local:true',
+                'stale_quote_execution_allowed:false',
+                'single_provider_alternatives_preserved:true',
+                'provider_reprice_input_immutable:true',
+              ],
+            });
+            continue;
+          }
+        }
+      }
 
       if (
         measuredSingle

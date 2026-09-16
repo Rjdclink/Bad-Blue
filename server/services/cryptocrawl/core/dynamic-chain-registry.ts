@@ -11,15 +11,16 @@ export interface DynamicChainConfig {
   family: ChainFamily;
   rpcUrl: string;
   nativeAsset: string;
-  /** True when this chain has a configured hosted-sponsorship fallback capability. */
+  /** True when this chain has a configured hosted-sponsorship execution capability. */
   sponsoredBootstrap: boolean;
   executionMode: 'sponsored_or_native' | 'native_only';
 }
 
 /**
- * Hosted sponsorship is a fallback capability, never a zero-cost assumption.
- * Lower-cost compatible lanes may win first; Alchemy remains available on the
- * chains its Wallet API supports, with provider billing retained in economics.
+ * Hosted sponsorship is the primary zero-initial-capital gas lane where supported,
+ * never a zero-cost assumption. Provider-fronted/billed gas remains a canonical
+ * economic cost unless independent evidence proves the operator cost is zero.
+ * System-owned native gas remains a route-local fallback rather than a prerequisite.
  */
 const DEFINITIONS: ReadonlyArray<Omit<DynamicChainConfig, 'rpcUrl'>> = [
   { id: 'ethereum', family: 'evm', nativeAsset: 'ETH', sponsoredBootstrap: true, executionMode: 'sponsored_or_native' },
@@ -73,9 +74,11 @@ export function loadDynamicChainRegistry(): DynamicChainConfig[] {
   logger.info('[DynamicChainRegistry] Configured RPC networks discovered', {
     component: 'DynamicChainRegistry',
     chains: configured.map(chain => `${chain.id}:${chain.family}`),
-    hostedSponsorshipFallbackChains: configured.filter(chain => chain.sponsoredBootstrap).map(chain => chain.id),
+    hostedSponsorshipPrimaryEligibleChains: configured.filter(chain => chain.sponsoredBootstrap).map(chain => chain.id),
     publicDiscoveryFallbackChains: configured.filter(chain => !ENV[chain.id].some(name => Boolean(process.env[name]?.trim()))).map(chain => chain.id),
     hostedSponsorshipZeroCostAssumed: false,
+    providerBillingRetainedInCanonicalEconomics: true,
+    systemOwnedNativeGasIsFallback: true,
     receiverCapabilityImpliedGasSponsorship: false,
     executionReadinessImpliedByRpcPresence: false,
   });

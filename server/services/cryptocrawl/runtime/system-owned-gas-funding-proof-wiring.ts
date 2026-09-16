@@ -1,5 +1,9 @@
 import type { Wallet, providers } from 'ethers';
-import { chooseGasFundingMode, type GasFundingDecision } from '../capital-free/dynamic-gas-funding-engine.js';
+import {
+  chooseGasFundingMode,
+  strictZeroOperatorCostRequired,
+  type GasFundingDecision,
+} from '../capital-free/dynamic-gas-funding-engine.js';
 import type { SupportedChain } from '../core/zero-capital-engine.js';
 import type { DynamicChainConfig } from '../core/dynamic-chain-registry.js';
 import { getSystemNativeGasAuthority } from '../execution/system-native-gas-spend-authority.js';
@@ -36,10 +40,15 @@ export function getLatestProvenZeroCapitalGasFundingDecisions(): GasFundingDecis
 }
 
 /**
- * Sole strict ZERO_CAPITAL_ATOMIC gas-selection boundary. It composes the live
- * wallet/provider reading with the durable system-native ownership ledger. It
- * never rewrites engine methods and it never promotes configured sponsorship to
- * zero-operator-cost proof without independent billing evidence.
+ * Sole ZERO_CAPITAL_ATOMIC gas-selection boundary. Ready provider sponsorship is
+ * the primary zero-initial-capital lane and therefore does not wait on a native
+ * balance RPC probe. Native balance plus durable system-ownership proof is queried
+ * only as the route-local fallback when sponsorship is unavailable/incompatible or
+ * the explicitly stronger lifetime-zero-operator-cost mode is enabled.
+ *
+ * Provider-fronted gas is never rewritten as free: the funding decision marks its
+ * billing liability and canonical execution economics continue charging the actual
+ * gas cost unless independent zero-cost billing evidence exists.
  */
 export async function getProvenZeroCapitalGasFundingDecision(
   runtime: StrictZeroCapitalGasContext,
@@ -74,14 +83,22 @@ export async function getProvenZeroCapitalGasFundingDecision(
     });
   }
 
+  const sponsorReady = runtime.gasSponsor.getReadiness().ready === true;
+  if (config.sponsoredBootstrap && sponsorReady && !strictZeroOperatorCostRequired()) {
+    return rememberDecision(chain, chooseGasFundingMode(config, 0n, true, {
+      sponsorOperatorMonetaryCostProvenZero: false,
+      nativeSystemOwnedProven: false,
+    }));
+  }
+
   try {
     const nativeBalance = (await provider.getBalance(wallet.address)).toBigInt();
-    const sponsorReady = runtime.gasSponsor.getReadiness().ready === true;
     const unproven = chooseGasFundingMode(config, nativeBalance, sponsorReady, {
       sponsorOperatorMonetaryCostProvenZero: false,
       nativeSystemOwnedProven: false,
     });
 
+    if (unproven.mode === 'sponsored') return rememberDecision(chain, unproven);
     if (nativeBalance < unproven.reserveFloor || unproven.reserveFloor <= 0n) {
       return rememberDecision(chain, unproven);
     }
