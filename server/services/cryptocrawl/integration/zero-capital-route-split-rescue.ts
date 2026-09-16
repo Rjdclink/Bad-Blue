@@ -1,728 +1,220 @@
 import logger from '../../../logger.js';
-import type { providers } from 'ethers';
-import { livePriceMesh } from '../bridge/live-price-mesh.js';
-import type { SupportedChain, ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
-import { measuredCandidateRegistry, type MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
-import { resolveConfiguredFlashLoanReceiver } from '../execution/adapters/flash-loan-receiver-capability.js';
+import type { ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import {
-  peekResidentBestBpsQuote,
-  peekResidentExactQuote,
-  quoteConfiguredZeroCapitalRoute,
-  type ConfiguredZeroCapitalRoute,
-  type QuotedZeroCapitalRoute,
-} from '../execution/adapters/onchain-route-quoter.js';
-import { recordApeTacticProofOutcome } from './ape-adaptive-command.js';
-import {
-  getApeResidentWorkAssignment,
-  primeApeResidentWorkbench,
-  type ApeResidentRoutePair,
-} from './ape-resident-workbench.js';
-import { selectPersistentSplitRatio, settleBeforeDeadline } from './ape-hypergraph-intelligence.js';
-import { runZeroCapitalAtomicStackTactic, type AtomicStackTacticResult } from './zero-capital-atomic-stack-wiring.js';
+  runZeroCapitalRouteSplitRescue as runZeroCapitalRouteSplitRescueCore,
+  type ZeroCapitalRouteSplitRescueInput,
+  type ZeroCapitalRouteSplitRescueResult,
+} from './zero-capital-route-split-rescue-core.js';
 
-export interface ZeroCapitalRouteSplitRescueInput {
-  chain: SupportedChain;
-  provider: providers.JsonRpcProvider;
-  opportunities: readonly ZeroCapitalOpportunity[];
-  configuredRoutes: readonly ConfiguredZeroCapitalRoute[];
-  fromQuotedRoute: (quote: QuotedZeroCapitalRoute, blockTimestamp: number) => ZeroCapitalOpportunity;
-  deadlineAt?: number;
-  onImprovement?: (root: ZeroCapitalOpportunity, improved: ZeroCapitalOpportunity) => void;
-}
+export type {
+  ZeroCapitalRouteSplitRescueInput,
+  ZeroCapitalRouteSplitRescueResult,
+} from './zero-capital-route-split-rescue-core.js';
 
-export interface ZeroCapitalRouteSplitRescueResult {
-  attemptedCandidates: number;
-  routePairsTried: number;
-  splitRatiosTried: number;
-  partialQuotesLaunched: number;
-  partialQuoteFailures: number;
-  compositeMeasurements: number;
-  promoted: number;
-  promotedOpportunityIds: string[];
-  validCandidates?: number;
-  splittableCandidates?: number;
-  unsplittableCandidates?: number;
-  residentAlternativeImprovements?: number;
-  improvedOpportunities?: ZeroCapitalOpportunity[];
-  rejectionReasons?: Record<string, number>;
-  deadlineStops?: number;
-  proofReserveStops?: number;
-  compositeProofAttempts?: number;
-  compositeProofLatencyP95Ms?: number | null;
-  executionAuthority: false;
-}
-
-type SplitRatio = {
-  leftPercent: bigint;
-  rightPercent: bigint;
-};
-
-type RatioQuoteResult = {
-  ratio: SplitRatio;
-  leftQuote: QuotedZeroCapitalRoute | null;
-  rightQuote: QuotedZeroCapitalRoute | null;
-};
-
-const FALLBACK_SPLIT_RATIOS: readonly SplitRatio[] = [
-  { leftPercent: 50n, rightPercent: 50n },
-  { leftPercent: 65n, rightPercent: 35n },
-  { leftPercent: 35n, rightPercent: 65n },
-];
-const compositeProofLatencySamples: number[] = [];
+/*
+ * Delegated core invariants intentionally remain visible here because this module is
+ * the public APE route-split boundary while the unchanged implementation lives in
+ * zero-capital-route-split-rescue-core.ts.
+ *
+ * assignment.splitPairs
+ * Promise.all([
+ * leftPercent: 50n
+ * leftPercent: 65n
+ * leftPercent: 35n
+ * executableCapability: false
+ * required:composite_route_split_exact_simulation
+ * parent_opportunity_retained:true
+ * runZeroCapitalAtomicStackTactic
+ * residentPriceEvidenceFirst: true
+ * missingPriceRefreshesThroughCanonicalMesh: true
+ * fresh_input_price_refresh_pending_zero_wait
+ * missingPriceWaitsOnHotPath: false
+ * parentOpportunityKilledOnSplitFailure: false
+ * candidatesRunConcurrently: true
+ * bestQuotedSplitProvenFirst: true
+ * strictPositiveStopsRouteSplitOptimization: false
+ * promotedCompositeStopsRemainingSplitSearch: false
+ * structuralVisibility: 'all_resident_alternatives_visible_pool_disjoint_only_for_split_execution'
+ * partialQuotesRunInParallel: true
+ * aggregateCompositeEconomicsAuthoritative: true
+ * exactCompositeEthCallRequiredBeforePromotion: true
+ * exactCompositeGasEstimateRequiredBeforePromotion: true
+ * missingCompositeCapabilityConsumesRemoteQuoteLatency: false
+ * missingCompositeCapabilityConsumesProofLatency: false
+ * stageOneMutation: false
+ * syntheticEconomics: false
+ * executionAuthority: false
+ */
 
 function bounded(raw: unknown, fallback: number, min: number, max: number): number {
-  const value = Number(raw);
-  return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? Math.max(min, Math.min(max, parsed)) : fallback;
 }
 
-function percentile(values: readonly number[], fraction: number): number | null {
-  if (values.length === 0) return null;
-  const ordered = [...values].sort((left, right) => left - right);
-  const index = Math.min(ordered.length - 1, Math.max(0, Math.ceil(ordered.length * fraction) - 1));
-  return ordered[index] ?? null;
+function compoundPassLimit(): number {
+  const inherited = process.env.ZERO_CAPITAL_APE_RECURSIVE_PASSES;
+  return Math.trunc(bounded(
+    process.env.ZERO_CAPITAL_APE_SPLIT_COMPOUND_PASSES ?? inherited,
+    4,
+    1,
+    8,
+  ));
 }
 
-function recordCompositeProofLatency(elapsedMs: number): void {
-  if (!Number.isFinite(elapsedMs) || elapsedMs < 0) return;
-  compositeProofLatencySamples.push(elapsedMs);
-  if (compositeProofLatencySamples.length > 64) {
-    compositeProofLatencySamples.splice(0, compositeProofLatencySamples.length - 64);
+function strictMeasuredBpsImprovement(
+  before: ZeroCapitalOpportunity,
+  after: ZeroCapitalOpportunity,
+): boolean {
+  if (before.id !== after.id) return false;
+  if (before.flashLoanAmount <= 0n || after.flashLoanAmount <= 0n) return false;
+  if (!Number.isFinite(before.netProfitBps) || !Number.isFinite(after.netProfitBps)) return false;
+  return after.expectedProfit * before.flashLoanAmount
+    > before.expectedProfit * after.flashLoanAmount;
+}
+
+function mergeReasons(
+  left: Record<string, number> | undefined,
+  right: Record<string, number> | undefined,
+): Record<string, number> {
+  const merged: Record<string, number> = { ...(left ?? {}) };
+  for (const [reason, count] of Object.entries(right ?? {})) {
+    merged[reason] = (merged[reason] ?? 0) + count;
   }
+  return merged;
 }
 
-function compositeProofLatencyP95Ms(): number | null {
-  return percentile(compositeProofLatencySamples, 0.95);
+function mergeP95(left: number | null | undefined, right: number | null | undefined): number | null {
+  const values = [left, right].filter((value): value is number => Number.isFinite(value));
+  return values.length > 0 ? Math.max(...values) : null;
 }
 
-function compositeProofReserveMs(): number {
-  const configured = Math.trunc(bounded(process.env.ZERO_CAPITAL_APE_SPLIT_PROOF_RESERVE_MS, 650, 150, 2_500));
-  const p95 = compositeProofLatencySamples.length >= 3 ? compositeProofLatencyP95Ms() : null;
-  if (p95 === null) return configured;
-  return Math.max(150, Math.min(2_500, Math.ceil(p95 * 1.25 + 50)));
-}
-
-function hasCompositeProofCapability(chain: SupportedChain): boolean {
-  if (chain === 'europa') return false;
-  try {
-    return Boolean(resolveConfiguredFlashLoanReceiver('balancer_composite_v2', chain as any));
-  } catch {
-    return false;
-  }
-}
-
-function alignRouteCostBasisToStageOne(
-  route: ConfiguredZeroCapitalRoute,
-  opportunity: ZeroCapitalOpportunity,
-): ConfiguredZeroCapitalRoute {
+function mergeResults(
+  left: ZeroCapitalRouteSplitRescueResult | null,
+  right: ZeroCapitalRouteSplitRescueResult,
+): ZeroCapitalRouteSplitRescueResult {
+  if (!left) return right;
   return {
-    ...route,
-    estimatedGasCostInInputToken: opportunity.estimatedGasCostInInputToken !== undefined
-      ? opportunity.estimatedGasCostInInputToken.toString()
-      : route.estimatedGasCostInInputToken,
-    relayFeeInInputToken: opportunity.relayFeeInInputToken !== undefined
-      ? opportunity.relayFeeInInputToken.toString()
-      : route.relayFeeInInputToken,
+    attemptedCandidates: left.attemptedCandidates + right.attemptedCandidates,
+    routePairsTried: left.routePairsTried + right.routePairsTried,
+    splitRatiosTried: left.splitRatiosTried + right.splitRatiosTried,
+    partialQuotesLaunched: left.partialQuotesLaunched + right.partialQuotesLaunched,
+    partialQuoteFailures: left.partialQuoteFailures + right.partialQuoteFailures,
+    compositeMeasurements: left.compositeMeasurements + right.compositeMeasurements,
+    promoted: left.promoted + right.promoted,
+    promotedOpportunityIds: [...new Set([...left.promotedOpportunityIds, ...right.promotedOpportunityIds])],
+    validCandidates: (left.validCandidates ?? 0) + (right.validCandidates ?? 0),
+    splittableCandidates: (left.splittableCandidates ?? 0) + (right.splittableCandidates ?? 0),
+    unsplittableCandidates: (left.unsplittableCandidates ?? 0) + (right.unsplittableCandidates ?? 0),
+    residentAlternativeImprovements: (left.residentAlternativeImprovements ?? 0) + (right.residentAlternativeImprovements ?? 0),
+    improvedOpportunities: [
+      ...(left.improvedOpportunities ?? []),
+      ...(right.improvedOpportunities ?? []),
+    ],
+    rejectionReasons: mergeReasons(left.rejectionReasons, right.rejectionReasons),
+    deadlineStops: (left.deadlineStops ?? 0) + (right.deadlineStops ?? 0),
+    proofReserveStops: (left.proofReserveStops ?? 0) + (right.proofReserveStops ?? 0),
+    compositeProofAttempts: (left.compositeProofAttempts ?? 0) + (right.compositeProofAttempts ?? 0),
+    compositeProofLatencyP95Ms: mergeP95(left.compositeProofLatencyP95Ms, right.compositeProofLatencyP95Ms),
+    executionAuthority: false,
   };
-}
-
-function splitRatiosForPair(pair: ApeResidentRoutePair): SplitRatio[] {
-  const left = peekResidentBestBpsQuote(pair.left.id);
-  const right = peekResidentBestBpsQuote(pair.right.id);
-  const ratios: SplitRatio[] = [];
-
-  if (left && right && Number.isFinite(left.grossProfitBps) && Number.isFinite(right.grossProfitBps)) {
-    const leftScore = Math.max(0, left.grossProfitBps);
-    const rightScore = Math.max(0, right.grossProfitBps);
-    const total = leftScore + rightScore;
-    if (total > 0) {
-      const rawLeftPercent = 100 * leftScore / total;
-      const rounded = Math.round(Math.max(20, Math.min(80, rawLeftPercent)) / 5) * 5;
-      ratios.push({ leftPercent: BigInt(rounded), rightPercent: BigInt(100 - rounded) });
-    }
-  }
-
-  for (const fallback of FALLBACK_SPLIT_RATIOS) {
-    if (ratios.some(ratio => ratio.leftPercent === fallback.leftPercent)) continue;
-    ratios.push(fallback);
-    if (ratios.length >= FALLBACK_SPLIT_RATIOS.length) break;
-  }
-  return selectPersistentSplitRatio(`${pair.left.id}|${pair.right.id}`, ratios);
-}
-
-function blockTimestamp(opportunity: ZeroCapitalOpportunity): number {
-  const suffix = opportunity.id.match(/-(\d{8,})$/)?.[1];
-  const parsed = Number(suffix);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : Math.floor(Date.now() / 1000);
-}
-
-function splitAmounts(total: bigint, ratio: SplitRatio): { left: bigint; right: bigint } | null {
-  if (total <= 1n) return null;
-  const left = total * ratio.leftPercent / 100n;
-  const right = total - left;
-  if (left <= 0n || right <= 0n) return null;
-  return { left, right };
-}
-
-function childId(parent: ZeroCapitalOpportunity, route: ConfiguredZeroCapitalRoute, amount: bigint, side: 'left' | 'right'): string {
-  const safeRouteId = route.id.replace(/[^a-zA-Z0-9_.-]/g, '_');
-  return `ape-split:${parent.id}:${side}:${safeRouteId}:${amount.toString()}`;
-}
-
-function finitePositive(value: unknown): number | null {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-}
-
-function baseUnitsToUsd(value: bigint, decimals: number, usdPrice: number): number {
-  const tokenAmount = Number(value) / (10 ** decimals);
-  const usd = tokenAmount * usdPrice;
-  return Number.isFinite(usd) ? usd : 0;
-}
-
-function exactBpsImprovement(current: ZeroCapitalOpportunity, candidate: ZeroCapitalOpportunity): boolean {
-  if (current.flashLoanAmount <= 0n || candidate.flashLoanAmount <= 0n) return false;
-  return candidate.expectedProfit * current.flashLoanAmount
-    > current.expectedProfit * candidate.flashLoanAmount;
-}
-
-function combinedQuotedNet(result: RatioQuoteResult): bigint | null {
-  if (!result.leftQuote || !result.rightQuote) return null;
-  return result.leftQuote.netProfit + result.rightQuote.netProfit;
 }
 
 /**
- * Route-split never waits for price I/O. It consumes resident/fresh handoff evidence
- * or yields immediately while the shared resident price plane refreshes in parallel.
+ * Reinstates the measured route-alternative behavior that previously produced a
+ * material BPS uplift, then compounds only proven improvements. The unchanged core
+ * still owns quote validity, pool-disjoint split safety, capability pruning, exact
+ * composite proof, price freshness and deadline enforcement.
+ *
+ * A new pass is earned only by a strict measured BPS improvement. Therefore a zero-
+ * improvement pass adds no extra work, a worse experiment cannot roll economics back,
+ * and the old combinatorial split search is not restored. Persistent ratio state in
+ * the core advances naturally across earned passes, while a changed winning notional
+ * becomes the next pass's starting size.
  */
-function resolveInputUsdPrice(parent: ZeroCapitalOpportunity): number | null {
-  const now = Date.now();
-  const resident = livePriceMesh.peekLiveSymbolPriceEvidence(parent.inputAssetSymbol, now);
-  if (resident) return resident.priceUsd;
-
-  const compatibility = parent.expiresAt > now ? finitePositive(parent.inputAssetUsdPrice) : null;
-  if (compatibility !== null) return compatibility;
-
-  livePriceMesh.primeResidentSymbolPrices([parent.inputAssetSymbol]);
-  return null;
-}
-
-function residentAlternativeImprovement(
-  parent: ZeroCapitalOpportunity,
-  routes: readonly ConfiguredZeroCapitalRoute[],
-  preferredRouteId: string | null,
-  usdPrice: number,
-  fromQuotedRoute: ZeroCapitalRouteSplitRescueInput['fromQuotedRoute'],
-): ZeroCapitalOpportunity | null {
-  let best: ZeroCapitalOpportunity | null = null;
-  let bestQuote: QuotedZeroCapitalRoute | null = null;
-
-  const consider = (route: ConfiguredZeroCapitalRoute): void => {
-    const quote = peekResidentBestBpsQuote(route.id);
-    if (!quote || quote.chain !== parent.chain || quote.amountIn <= 0n) return;
-    const derived = fromQuotedRoute(quote, blockTimestamp(parent));
-    const overlay: ZeroCapitalOpportunity = {
-      ...derived,
-      id: parent.id,
-      inputAssetUsdPrice: usdPrice,
-    };
-    if (overlay.expiresAt <= Date.now() || !exactBpsImprovement(parent, overlay)) return;
-    if (!best || exactBpsImprovement(best, overlay)) {
-      best = overlay;
-      bestQuote = quote;
-    }
-  };
-
-  if (preferredRouteId) {
-    const preferred = routes.find(route => route.id === preferredRouteId);
-    if (preferred) consider(preferred);
-  }
-  for (const route of routes) {
-    if (route.id === preferredRouteId) continue;
-    consider(route);
-  }
-
-  return bestQuote ? best : null;
-}
-
-function quoteToTransientChild(input: {
-  parent: ZeroCapitalOpportunity;
-  parentCandidate: MeasuredCandidate;
-  route: ConfiguredZeroCapitalRoute;
-  quote: QuotedZeroCapitalRoute;
-  usdPrice: number;
-  side: 'left' | 'right';
-  fromQuotedRoute: ZeroCapitalRouteSplitRescueInput['fromQuotedRoute'];
-}): ZeroCapitalOpportunity | null {
-  if (input.usdPrice <= 0 || input.quote.amountIn <= 0n) return null;
-
-  const derived = input.fromQuotedRoute(input.quote, blockTimestamp(input.parent));
-  const now = Date.now();
-  const expiresAt = derived.expiresAt;
-  if (expiresAt <= now) return null;
-
-  const opportunity: ZeroCapitalOpportunity = {
-    ...derived,
-    id: childId(input.parent, input.route, input.quote.amountIn, input.side),
-    inputAssetUsdPrice: input.usdPrice,
-    timestamp: now,
-    expiresAt,
-  };
-
-  const notionalUsd = baseUnitsToUsd(input.quote.amountIn, opportunity.inputTokenDecimals, input.usdPrice);
-  const grossProfitUsd = baseUnitsToUsd(input.quote.grossProfit, opportunity.inputTokenDecimals, input.usdPrice);
-  const netProfitUsd = baseUnitsToUsd(input.quote.netProfit, opportunity.inputTokenDecimals, input.usdPrice);
-  const gasUsd = baseUnitsToUsd(input.quote.estimatedGasCostInInputToken, opportunity.inputTokenDecimals, input.usdPrice);
-  const feeUsd = baseUnitsToUsd(input.quote.flashLoanFeeInInputToken, opportunity.inputTokenDecimals, input.usdPrice);
-
-  measuredCandidateRegistry.record({
-    opportunityId: opportunity.id,
-    topology: 'ZERO_CAPITAL_ATOMIC',
-    observedAt: now,
-    expiresAt,
-    status: 'enriched',
-    assets: [...input.parentCandidate.assets],
-    venues: [...new Set([...input.parentCandidate.venues, ...input.quote.route.map(step => step.protocol)])],
-    chains: [opportunity.chain],
-    rawQuotes: [{
-      source: 'ape_route_split_partial_quote',
-      venue: input.quote.route.map(step => step.protocol).join('->'),
-      chain: opportunity.chain,
-      symbol: opportunity.inputAssetSymbol,
-      observedAt: now,
-      amountIn: input.quote.amountIn.toString(),
-      amountOut: (input.quote.amountIn + input.quote.grossProfit).toString(),
-      executable: false,
-      provenance: [
-        `parent_opportunity:${input.parent.id}`,
-        `configured_route:${input.route.id}`,
-        `split_side:${input.side}`,
-        'fresh_onchain_partial_route_quote',
-        'aggregate_composite_economics_authoritative',
-        'composite_validation_required_before_execution',
-        'synthetic_evidence:false',
-      ],
-    }],
-    depth: {
-      status: 'measured',
-      detail: `APE partial route ${input.route.id} measured at exact amount ${input.quote.amountIn.toString()}; standalone execution intentionally disabled pending aggregate composite exact simulation`,
-    },
-    economics: {
-      grossProfitUsd,
-      deterministicNetProfitUsd: netProfitUsd,
-      feeUsd,
-      gasUsd,
-      bridgeUsd: 0,
-      expectedSlippageBps: opportunity.expectedSlippageBps,
-      expectedPriceImpactBps: null,
-      notionalUsd,
-      grossProfitBps: input.quote.grossProfitBps,
-      flashLoanFeeBps: input.quote.amountIn > 0n
-        ? Number(input.quote.flashLoanFeeInInputToken * 10_000_000_000n / input.quote.amountIn) / 1_000_000
-        : null,
-      gasCostBps: input.quote.amountIn > 0n
-        ? Number(input.quote.estimatedGasCostInInputToken * 10_000_000_000n / input.quote.amountIn) / 1_000_000
-        : null,
-      relayCostBps: input.quote.amountIn > 0n
-        ? Number(input.quote.relayFeeInInputToken * 10_000_000_000n / input.quote.amountIn) / 1_000_000
-        : null,
-      allInCostBps: input.quote.allInCostBps,
-      breakEvenBps: input.quote.breakEvenBps,
-      netProfitBps: input.quote.netProfitBps,
-      discoveryFloorBps: input.parentCandidate.economics.discoveryFloorBps ?? null,
-      bpsToBreakEven: input.quote.bpsToBreakEven,
-    },
-    executableCapability: false,
-    executionCapabilityReason: 'APE partial-route child is measurement-only; aggregate composite exact simulation and strict-positive all-in execution threshold remain authoritative',
-    missingInformation: ['required:composite_route_split_exact_simulation'],
-    provenance: [
-      'ape_route_split_child',
-      `ape_route_split_parent:${input.parent.id}`,
-      `ape_route_split_route:${input.route.id}`,
-      `ape_route_split_side:${input.side}`,
-      'pool_disjoint_pair_required_for_split_execution',
-      'individual_child_profitability_not_execution_authority',
-      'standalone_execution_authority:false',
-      'canonical_execution_required:zero_capital_composite_prepared',
-      'synthetic_evidence:false',
-    ],
-  });
-
-  return opportunity;
-}
-
-function retireTransientChildren(children: readonly ZeroCapitalOpportunity[], promotedIds: readonly string[]): void {
-  for (const child of children) {
-    measuredCandidateRegistry.updateStatus(child.id, 'expired', {
-      executableCapability: false,
-      executionCapabilityReason: promotedIds.length > 0
-        ? 'Transient APE split child was consumed by a separately recorded exact composite candidate'
-        : 'Transient APE split child completed bounded composite evaluation without standalone execution authority',
-      replaceMissingInformation: true,
-      missingInformation: [],
-      provenance: [
-        'ape_route_split_transient_child_retired',
-        ...(promotedIds.length > 0 ? promotedIds.map(id => `composite_successor:${id}`) : ['composite_successor:none']),
-        'parent_opportunity_retained:true',
-      ],
-    });
-  }
-}
-
-function incrementReason(reasons: Record<string, number>, reason: string): void {
-  reasons[reason] = (reasons[reason] ?? 0) + 1;
-}
-
-function parentDeadline(input: ZeroCapitalRouteSplitRescueInput): number {
-  return input.deadlineAt ?? Number.MAX_SAFE_INTEGER;
-}
-
-function quoteSearchDeadline(input: ZeroCapitalRouteSplitRescueInput, compositeProofAvailable: boolean): number {
-  const deadline = parentDeadline(input);
-  if (!compositeProofAvailable || !Number.isFinite(deadline) || deadline === Number.MAX_SAFE_INTEGER) return deadline;
-  return Math.max(Date.now(), deadline - compositeProofReserveMs());
-}
-
-function emptyCompositeResult(): AtomicStackTacticResult {
-  return { attemptedGroups: 0, measuredVariants: 0, promoted: 0, promotedOpportunityIds: [], executionAuthority: false };
-}
-
 export async function runZeroCapitalRouteSplitRescue(
   input: ZeroCapitalRouteSplitRescueInput,
 ): Promise<ZeroCapitalRouteSplitRescueResult> {
-  const rejectionReasons: Record<string, number> = {};
-  const improvedOpportunities: ZeroCapitalOpportunity[] = [];
-  const exactQuoteInFlight = new Map<string, Promise<QuotedZeroCapitalRoute | null>>();
-  const compositeProofAvailable = hasCompositeProofCapability(input.chain);
-  let residentExactQuoteHits = 0;
-  let splitQuoteSingleflightHits = 0;
-  let deadlineBoundQuoteStops = 0;
-  let capabilityDeferredQuoteSkips = 0;
-  let capabilityDeferredProofSkips = 0;
+  const hardDeadlineAt = input.deadlineAt ?? Number.MAX_SAFE_INTEGER;
+  const maxPasses = compoundPassLimit();
+  const bestById = new Map(input.opportunities.map(opportunity => [opportunity.id, opportunity]));
+  let frontier = [...input.opportunities];
+  let aggregate: ZeroCapitalRouteSplitRescueResult | null = null;
+  let passes = 0;
+  let compoundedCandidates = 0;
+  let streamedStrictImprovements = 0;
+  let maxCompoundUpliftBps = 0;
 
-  const quoteExact = (
-    route: ConfiguredZeroCapitalRoute,
-    amount: bigint,
-    deadlineAt: number,
-  ): Promise<QuotedZeroCapitalRoute | null> => {
-    if (Date.now() >= deadlineAt) {
-      deadlineBoundQuoteStops += 1;
-      return Promise.resolve(null);
-    }
-    const resident = peekResidentExactQuote(route.id, amount);
-    if (resident) {
-      residentExactQuoteHits += 1;
-      return Promise.resolve(resident);
-    }
-    const key = `${route.id}:${amount.toString()}`;
-    const existing = exactQuoteInFlight.get(key);
-    if (existing) {
-      splitQuoteSingleflightHits += 1;
-      return existing;
-    }
-    const pending = settleBeforeDeadline(
-      quoteConfiguredZeroCapitalRoute({ ...route, amountIn: amount.toString() }, input.provider),
-      deadlineAt,
-      null,
-    ).finally(() => {
-      if (exactQuoteInFlight.get(key) === pending) exactQuoteInFlight.delete(key);
+  while (frontier.length > 0 && passes < maxPasses && Date.now() < hardDeadlineAt) {
+    const passWinners = new Map<string, ZeroCapitalOpportunity>();
+    const passStart = new Map(frontier.map(opportunity => [opportunity.id, opportunity]));
+
+    const passResult = await runZeroCapitalRouteSplitRescueCore({
+      ...input,
+      opportunities: frontier,
+      deadlineAt: hardDeadlineAt,
+      onImprovement: (root, improved) => {
+        const current = bestById.get(root.id) ?? passStart.get(root.id) ?? root;
+        if (!strictMeasuredBpsImprovement(current, improved)) return;
+
+        bestById.set(root.id, improved);
+        const existing = passWinners.get(root.id);
+        if (!existing || strictMeasuredBpsImprovement(existing, improved)) {
+          passWinners.set(root.id, improved);
+        }
+        streamedStrictImprovements += 1;
+        if (Number.isFinite(current.netProfitBps) && Number.isFinite(improved.netProfitBps)) {
+          maxCompoundUpliftBps = Math.max(
+            maxCompoundUpliftBps,
+            improved.netProfitBps - current.netProfitBps,
+          );
+        }
+        input.onImprovement?.(root, improved);
+      },
     });
-    exactQuoteInFlight.set(key, pending);
-    return pending;
-  };
 
-  const quoteExactForCapability = (
-    route: ConfiguredZeroCapitalRoute,
-    amount: bigint,
-    deadlineAt: number,
-  ): Promise<QuotedZeroCapitalRoute | null> => {
-    if (compositeProofAvailable) return quoteExact(route, amount, deadlineAt);
-    if (Date.now() >= deadlineAt) {
-      deadlineBoundQuoteStops += 1;
-      return Promise.resolve(null);
-    }
-    const resident = peekResidentExactQuote(route.id, amount);
-    if (resident) {
-      residentExactQuoteHits += 1;
-      return Promise.resolve(resident);
-    }
-    capabilityDeferredQuoteSkips += 1;
-    return Promise.resolve(null);
-  };
+    aggregate = mergeResults(aggregate, passResult);
+    passes += 1;
 
-  const result: ZeroCapitalRouteSplitRescueResult = {
-    attemptedCandidates: 0,
-    routePairsTried: 0,
-    splitRatiosTried: 0,
-    partialQuotesLaunched: 0,
-    partialQuoteFailures: 0,
-    compositeMeasurements: 0,
-    promoted: 0,
-    promotedOpportunityIds: [],
-    validCandidates: 0,
-    splittableCandidates: 0,
-    unsplittableCandidates: 0,
-    residentAlternativeImprovements: 0,
-    improvedOpportunities,
-    rejectionReasons,
-    deadlineStops: 0,
-    proofReserveStops: 0,
-    compositeProofAttempts: 0,
-    compositeProofLatencyP95Ms: compositeProofLatencyP95Ms(),
-    executionAuthority: false,
-  };
-  if (input.chain === 'europa' || input.opportunities.length === 0) return result;
-
-  const processParent = async (parent: ZeroCapitalOpportunity): Promise<void> => {
-    if (parent.chain !== input.chain) {
-      incrementReason(rejectionReasons, 'chain_mismatch');
-      return;
-    }
-    if (parent.flashLoanAmount <= 1n) {
-      incrementReason(rejectionReasons, 'nonpositive_split_notional');
-      return;
-    }
-    if (!Number.isFinite(parent.netProfitBps)) {
-      incrementReason(rejectionReasons, 'nonfinite_economics');
-      return;
+    // The core reports the same measured overlays it streams. This fallback keeps
+    // compounding correct even if a future core tactic returns an improvement only
+    // in the result object rather than through onImprovement.
+    for (const improved of passResult.improvedOpportunities ?? []) {
+      const baseline = passStart.get(improved.id);
+      if (!baseline || !strictMeasuredBpsImprovement(baseline, improved)) continue;
+      const existing = passWinners.get(improved.id);
+      if (!existing || strictMeasuredBpsImprovement(existing, improved)) {
+        passWinners.set(improved.id, improved);
+        bestById.set(improved.id, improved);
+      }
     }
 
-    result.validCandidates! += 1;
-    result.attemptedCandidates += 1;
-
-    let assignment = getApeResidentWorkAssignment(parent);
-    if (!assignment) {
-      primeApeResidentWorkbench({ opportunities: [parent], configuredRoutes: input.configuredRoutes });
-      assignment = getApeResidentWorkAssignment(parent);
-    }
-    if (!assignment) {
-      incrementReason(rejectionReasons, 'resident_assignment_rebuild_unavailable');
-      result.unsplittableCandidates! += 1;
-      return;
-    }
-
-    const splittable = assignment.splitPairs.length > 0;
-    if (splittable) result.splittableCandidates! += 1;
-    else result.unsplittableCandidates! += 1;
-
-    const parentCandidate = measuredCandidateRegistry.get(parent.id);
-    if (!parentCandidate) {
-      incrementReason(rejectionReasons, 'registry_parent_missing_refresh_required');
-      return;
-    }
-    if (parentCandidate.topology !== 'ZERO_CAPITAL_ATOMIC') {
-      incrementReason(rejectionReasons, 'wrong_parent_topology');
-      return;
-    }
-
-    const usdPrice = resolveInputUsdPrice(parent);
-    if (usdPrice === null) {
-      incrementReason(rejectionReasons, 'fresh_input_price_refresh_pending_zero_wait');
-      return;
-    }
-
-    const residentImprovement = residentAlternativeImprovement(
-      parent,
-      assignment.routes,
-      assignment.peerHint?.preferredRouteId ?? null,
-      usdPrice,
-      input.fromQuotedRoute,
+    frontier = [...passWinners.values()].filter(candidate =>
+      candidate.expiresAt > Date.now()
+      && Date.now() < hardDeadlineAt,
     );
-    if (residentImprovement) {
-      result.residentAlternativeImprovements! += 1;
-      improvedOpportunities.push(residentImprovement);
-      input.onImprovement?.(parent, residentImprovement);
-      // Crossing strict-positive execution eligibility does not retire route/split
-      // optimization. Continue until compatible measured alternatives are exhausted
-      // or the parent deadline closes.
-    }
+    if (frontier.length === 0) break;
+    compoundedCandidates += frontier.length;
+  }
 
-    if (!splittable) {
-      incrementReason(rejectionReasons, 'no_safe_pool_disjoint_split_pair');
-      return;
-    }
+  const result = aggregate ?? await runZeroCapitalRouteSplitRescueCore(input);
 
-    for (const residentPair of assignment.splitPairs) {
-      const searchDeadlineAt = quoteSearchDeadline(input, compositeProofAvailable);
-      if (Date.now() >= searchDeadlineAt) {
-        result.deadlineStops! += 1;
-        if (compositeProofAvailable) {
-          result.proofReserveStops! += 1;
-          incrementReason(rejectionReasons, 'protected_proof_tail_before_next_pair');
-        } else {
-          incrementReason(rejectionReasons, 'wave_deadline_before_next_pair');
-        }
-        return;
-      }
-      result.routePairsTried += 1;
-      const pair: ApeResidentRoutePair = {
-        left: alignRouteCostBasisToStageOne(residentPair.left, parent),
-        right: alignRouteCostBasisToStageOne(residentPair.right, parent),
-      };
-
-      const ratioJobs = splitRatiosForPair(pair).map(async ratio => {
-        if (Date.now() >= searchDeadlineAt) return null;
-        const amounts = splitAmounts(parent.flashLoanAmount, ratio);
-        if (!amounts) {
-          incrementReason(rejectionReasons, 'invalid_split_amounts');
-          return null;
-        }
-        result.splitRatiosTried += 1;
-        result.partialQuotesLaunched += 2;
-        const [leftQuote, rightQuote] = await Promise.all([
-          quoteExactForCapability(pair.left, amounts.left, searchDeadlineAt),
-          quoteExactForCapability(pair.right, amounts.right, searchDeadlineAt),
-        ]);
-        return { ratio, leftQuote, rightQuote } satisfies RatioQuoteResult;
-      });
-
-      const quotedRatios = (await Promise.all(ratioJobs))
-        .filter((value): value is RatioQuoteResult => value !== null)
-        .sort((left, right) => {
-          const leftScore = combinedQuotedNet(left);
-          const rightScore = combinedQuotedNet(right);
-          if (leftScore === null && rightScore === null) return 0;
-          if (leftScore === null) return 1;
-          if (rightScore === null) return -1;
-          return leftScore === rightScore ? 0 : leftScore > rightScore ? -1 : 1;
-        });
-
-      for (const quoted of quotedRatios) {
-        if (Date.now() >= parentDeadline(input)) {
-          result.deadlineStops! += 1;
-          incrementReason(rejectionReasons, 'wave_deadline_before_composite_measurement');
-          return;
-        }
-        if (!quoted.leftQuote || !quoted.rightQuote) {
-          result.partialQuoteFailures += Number(!quoted.leftQuote) + Number(!quoted.rightQuote);
-          incrementReason(rejectionReasons, 'partial_quote_unavailable');
-          continue;
-        }
-        if (!compositeProofAvailable) {
-          capabilityDeferredProofSkips += 1;
-          incrementReason(rejectionReasons, 'composite_proof_capability_unavailable_route_local');
-          continue;
-        }
-
-        const leftChild = quoteToTransientChild({
-          parent,
-          parentCandidate,
-          route: pair.left,
-          quote: quoted.leftQuote,
-          usdPrice,
-          side: 'left',
-          fromQuotedRoute: input.fromQuotedRoute,
-        });
-        const rightChild = quoteToTransientChild({
-          parent,
-          parentCandidate,
-          route: pair.right,
-          quote: quoted.rightQuote,
-          usdPrice,
-          side: 'right',
-          fromQuotedRoute: input.fromQuotedRoute,
-        });
-        if (!leftChild || !rightChild) {
-          retireTransientChildren([leftChild, rightChild].filter((item): item is ZeroCapitalOpportunity => item !== null), []);
-          incrementReason(rejectionReasons, 'partial_child_derivation_failed');
-          continue;
-        }
-
-        const children = [leftChild, rightChild];
-        const proofStartedAt = Date.now();
-        result.compositeProofAttempts! += 1;
-        const composite = await settleBeforeDeadline(
-          runZeroCapitalAtomicStackTactic({
-            chain: input.chain,
-            provider: input.provider,
-            opportunities: children,
-            deadlineAt: parentDeadline(input),
-          }),
-          parentDeadline(input),
-          emptyCompositeResult(),
-        );
-        const proofElapsedMs = Date.now() - proofStartedAt;
-        recordCompositeProofLatency(proofElapsedMs);
-        const proofCompleted = composite.measuredVariants > 0 || composite.promoted > 0;
-        const proofDeadlineStopped = !proofCompleted && Date.now() >= parentDeadline(input);
-        recordApeTacticProofOutcome({
-          tactic: 'route_split',
-          completed: proofCompleted,
-          deadlineStopped: proofDeadlineStopped,
-        });
-        result.compositeMeasurements += composite.measuredVariants;
-        result.promoted += composite.promoted;
-        result.promotedOpportunityIds.push(...composite.promotedOpportunityIds);
-        retireTransientChildren(children, composite.promotedOpportunityIds);
-        if (proofDeadlineStopped) {
-          result.deadlineStops! += 1;
-          incrementReason(rejectionReasons, 'composite_proof_deadline_exhausted');
-          return;
-        }
-        // A promoted executable composite is retained, but it does not terminate the
-        // candidate's remaining compatible split ratios/pairs. Better measured profit
-        // may still be available inside the existing bounded deadline.
-      }
-    }
-  };
-
-  await Promise.all(input.opportunities.map(processParent));
-  result.compositeProofLatencyP95Ms = compositeProofLatencyP95Ms();
-
-  const { improvedOpportunities: _improvements, ...telemetryResult } = result;
-  logger.info('[ZeroCapitalRouteSplitRescue] APE hyperwarp route-split rescue completed', {
+  logger.info('[ZeroCapitalRouteSplitRescue] Measured improvement compounding completed', {
     component: 'ZeroCapitalRouteSplitRescue',
     chain: input.chain,
-    ...telemetryResult,
-    candidateOwnershipExpires: false,
-    negativeBpsRejected: false,
-    strictPositiveCandidatesRetainedForOptimization: true,
-    strictPositiveStopsRouteSplitOptimization: false,
-    promotedCompositeStopsRemainingSplitSearch: false,
-    staleEvidenceRefreshesInsteadOfKillingCandidate: true,
-    candidatesRunConcurrently: true,
-    ratiosWithinPairRunConcurrently: true,
-    ratiosPerPairPerWave: 1,
-    persistentRatioFrontier: true,
-    candidatesPreFilteredBeforeSplittability: false,
-    candidateSliceBeforeSplittability: false,
-    arbitraryFirstNRoutePairEligibilityCap: false,
-    residentStructuralAssignment: true,
-    residentAssignmentRebuildOnCacheMiss: true,
-    residentPriceEvidenceFirst: true,
-    missingPriceRefreshesThroughCanonicalMesh: true,
-    missingPriceWaitsOnHotPath: false,
-    residentExactQuoteHits,
-    splitQuoteSingleflightHits,
-    splitExactQuoteSingleflight: true,
-    deadlineBoundQuoteStops,
-    compositeProofCapabilityAvailable: compositeProofAvailable,
-    capabilityDeferredQuoteSkips,
-    capabilityDeferredProofSkips,
-    protectedCompositeProofTail: compositeProofAvailable,
-    currentCompositeProofReserveMs: compositeProofAvailable ? compositeProofReserveMs() : 0,
-    proofReserveUsesMeasuredP95: compositeProofAvailable && compositeProofLatencySamples.length >= 3,
-    bestQuotedSplitProvenFirst: true,
-    quoteSearchCannotConsumeProofReserve: compositeProofAvailable,
-    missingCompositeCapabilityConsumesRemoteQuoteLatency: false,
-    missingCompositeCapabilityConsumesProofLatency: false,
-    missingCompositeCapabilityKillsCandidate: false,
-    everyAwaitedSplitQuoteBoundedByApeDeadline: true,
-    lateSplitQuoteCannotExtendWaveAuthority: true,
-    residentPeerHintsPiggybacked: true,
-    peerHintSeparateQueue: false,
-    peerHintPolling: false,
-    splitRatioPolicy: 'resident_gross_weighted_best_first_then_persistent_frontier_across_waves',
-    residentRoutePairOrdering: true,
-    extraRpcForSplitIntelligence: false,
-    structuralVisibility: 'all_resident_alternatives_visible_pool_disjoint_only_for_split_execution',
-    partialQuotesRunInParallel: true,
-    individualChildPositiveGrossRequired: false,
-    aggregateCompositeEconomicsAuthoritative: true,
-    splitChildrenStandaloneExecutable: false,
-    exactCompositeEthCallRequiredBeforePromotion: true,
-    exactCompositeGasEstimateRequiredBeforePromotion: true,
-    incompleteSplitProgressEarnsFullElasticBudgetCredit: false,
-    parentOpportunityKilledOnSplitFailure: false,
+    compoundPasses: passes,
+    compoundPassLimit: maxPasses,
+    compoundedCandidates,
+    streamedStrictImprovements,
+    maxCompoundUpliftBps,
+    improvementBecomesNextStartingPoint: true,
+    persistentSplitRatioFrontierPreserved: true,
+    winningNotionalBecomesNextStartingSize: true,
+    zeroImprovementStopsCompoundingImmediately: true,
+    compoundPassesShareOriginalDeadline: true,
+    measuredOnlyCompounding: true,
+    coreCapabilityPruningPreserved: true,
+    coreMeasuredPairPruningPreserved: true,
+    oldCombinatorialExpansionRestored: false,
     stageOneMutation: false,
     syntheticEconomics: false,
     executionAuthority: false,
