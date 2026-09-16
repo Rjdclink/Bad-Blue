@@ -1,4 +1,4 @@
-import { providers } from 'ethers';
+import { providers, utils } from 'ethers';
 import logger from '../../../logger.js';
 import { ghostWalletProviderSupportsSettlementLogs } from './ghost-wallet-log-policy.js';
 import { recordGhostWalletPerformance } from './ghost-wallet-performance-intelligence.js';
@@ -357,6 +357,7 @@ class GhostWalletProviderMesh {
       .filter(candidate => candidate.cooldownUntil <= Date.now())
       .slice(0, maxHedgeAttempts());
     if (candidates.length === 0) throw new Error(`GHOST_WALLET_RPC_UNAVAILABLE:${chain}`);
+    const expectedHash = utils.keccak256(rawTransaction);
     const attempts = candidates.map(async candidate => {
       const startedAt = Date.now();
       try {
@@ -365,9 +366,16 @@ class GhostWalletProviderMesh {
         return response.hash;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (/already known|known transaction|nonce too low/i.test(message)) {
+        if (/already known|known transaction/i.test(message)) {
           this.recordOutcome(chain, candidate, 'eth_sendRawTransaction', startedAt, true);
-          return '';
+          return expectedHash;
+        }
+        if (/nonce too low/i.test(message)) {
+          const observed = await candidate.provider.getTransaction(expectedHash).catch(() => null);
+          if (observed?.hash?.toLowerCase() === expectedHash.toLowerCase()) {
+            this.recordOutcome(chain, candidate, 'eth_sendRawTransaction', startedAt, true);
+            return expectedHash;
+          }
         }
         this.recordOutcome(chain, candidate, 'eth_sendRawTransaction', startedAt, false, error);
         throw error;
@@ -376,7 +384,6 @@ class GhostWalletProviderMesh {
     const result = await Promise.allSettled(attempts);
     const fulfilled = result.find((entry): entry is PromiseFulfilledResult<string> => entry.status === 'fulfilled' && Boolean(entry.value));
     if (fulfilled) return fulfilled.value;
-    if (result.some(entry => entry.status === 'fulfilled')) return '';
     const firstFailure = result.find((entry): entry is PromiseRejectedResult => entry.status === 'rejected');
     throw firstFailure?.reason || new Error('GHOST_WALLET_RPC_BROADCAST_FAILED');
   }
@@ -469,6 +476,7 @@ export const GHOST_WALLET_PROVIDER_POLICY = {
   hedgedReadFailover: true,
   providerCircuitBreaking: true,
   identicalRawTransactionMultiProviderBroadcast: true,
+  exactHashRequiredOnNonceConflict: true,
   routeLocalFailure: true,
   periodicHealthPolling: false,
 } as const;
