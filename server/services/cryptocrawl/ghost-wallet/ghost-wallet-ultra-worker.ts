@@ -1,9 +1,12 @@
 import os from 'node:os';
 import pg from 'pg';
+import { Contract, ethers } from 'ethers';
 import logger from '../../../logger.js';
 import { ensureCryptocrawlOverflowRuntimeSchema } from '../runtime/cryptocrawl-overflow-runtime-schema.js';
 import { pool } from '../runtime/cryptocrawl-runtime-database.js';
+import { ghostWalletAutonomousController } from './ghost-wallet-autonomous-controller.js';
 import { ghostWalletChainEvents } from './ghost-wallet-chain-events.js';
+import { evaluateGhostWalletControllerEconomics } from './ghost-wallet-controller-economics.js';
 import { ghostWalletEngine } from './ghost-wallet-engine.js';
 import { processGhostWalletProfitConversion, type GhostWalletProfitConversionPayload } from './ghost-wallet-payout.js';
 import { deserializeMatchedIntentPair } from './ghost-wallet-work-codec.js';
@@ -20,9 +23,11 @@ import { ghostWalletWorkSignal, type GhostWalletWakeReason } from './ghost-walle
 import { ingestGhostWalletSettlementReceipt } from './ghost-wallet-settlement-ingest.js';
 import { recordGhostWalletRuntimeState } from './ghost-wallet-runtime-state.js';
 import { probeGhostWalletVenueCandidate, syncMeasuredGhostWalletVenues } from './ghost-wallet-venue-universe.js';
+import type { GhostWalletChain } from './ghost-wallet-provider-mesh.js';
 
 const { Client } = pg;
 const LISTEN_CHANNEL = 'cryptocrawler_ghost_wallet_work';
+const BRIDGE_ABI = ['function minimumBrokerSpreadBps() view returns (uint16)'];
 
 function normalizedUrl(raw: unknown): string {
   return typeof raw === 'string' ? raw.trim() : '';
@@ -41,10 +46,7 @@ function listenerConnectionUrl(): string {
 
 function listenerSsl() {
   return process.env.PGSSLMODE !== 'disable'
-    ? {
-        rejectUnauthorized: false,
-        ...(process.env.DATABASE_SSL_CERT ? { ca: process.env.DATABASE_SSL_CERT } : {}),
-      }
+    ? { rejectUnauthorized: false, ...(process.env.DATABASE_SSL_CERT ? { ca: process.env.DATABASE_SSL_CERT } : {}) }
     : false;
 }
 
@@ -56,9 +58,23 @@ function validHash(value: unknown): value is string {
   return typeof value === 'string' && /^0x[a-fA-F0-9]{64}$/.test(value);
 }
 
+function validRawTransaction(value: unknown): value is string {
+  return typeof value === 'string' && /^0x[a-fA-F0-9]+$/.test(value) && value.length > 130;
+}
+
 function retryDelayMs(attempt: number): number {
   const exponent = Math.max(0, Math.min(8, attempt - 1));
   return Math.min(30_000, 250 * (2 ** exponent));
+}
+
+function payloadString(payload: Record<string, unknown>, key: string): string {
+  const value = String(payload[key] ?? '').trim();
+  if (!value) throw new Error(`GHOST_WALLET_PREPARED_${key.toUpperCase()}_INVALID`);
+  return value;
+}
+
+function payloadChain(work: GhostWalletWorkItem): GhostWalletChain {
+  return payloadString({ chain: work.payload.chain || work.chain }, 'chain') as GhostWalletChain;
 }
 
 async function markDead(work: GhostWalletWorkItem, owner: string, error: unknown): Promise<void> {
@@ -72,12 +88,26 @@ async function markDead(work: GhostWalletWorkItem, owner: string, error: unknown
 }
 
 /**
- * Legacy compatibility export. Ghost no longer originates arbitrary prepared
- * transactions from the server because that path depended on operator/provider
- * sponsorship. New lending execution is caller-funded through the public bridge.
+ * Durable controller entrypoint retained for callers that already build a Ghost
+ * transaction. The intermediary never submits; this queues work for the isolated
+ * Ghost controller/Ultra execution lane.
  */
-export async function enqueueGhostWalletPreparedAtomicExecution(): Promise<string> {
-  throw new Error('GHOST_WALLET_CALLER_FUNDED_SUBMISSION_REQUIRED');
+export async function enqueueGhostWalletPreparedAtomicExecution(input: {
+  dedupeKey: string;
+  chain: GhostWalletChain;
+  payload: Record<string, unknown>;
+  priority?: number;
+}): Promise<string> {
+  const work = await enqueueGhostWalletWork({
+    dedupeKey: input.dedupeKey,
+    kind: 'prepared_atomic_execution',
+    chain: input.chain,
+    priority: input.priority ?? 900,
+    maxAttempts: 20,
+    payload: input.payload,
+  });
+  ghostWalletWorkSignal.emitWake('local_work_enqueued');
+  return work.workId;
 }
 
 class GhostWalletUltraWorker {
@@ -103,6 +133,7 @@ class GhostWalletUltraWorker {
       await this.connectListener();
       await ghostWalletChainEvents.start();
       await syncMeasuredGhostWalletVenues(ghostWalletEngine.getMeasuredCapitalQuotes());
+      await ghostWalletAutonomousController.start();
       this.requestDrain('startup_backlog');
       logger.info('[GhostWalletUltra] Dedicated event-driven Ultra Worker started', {
         component: 'GhostWalletUltraWorker',
@@ -111,14 +142,14 @@ class GhostWalletUltraWorker {
         wakeSources: ['postgres_notify', 'local_enqueue', 'chain_settlement_websocket', 'startup_backlog', 'per_job_retry'],
         persistenceAuthority: 'overflow_private_cryptocrawler_ghost_wallet_work',
         parallelCapacity: parallelCapacity(),
-        concurrencyPolicy: 'independent_lanes_parallel',
-        coreBorrowerExecutionPayer: 'caller',
-        serverBorrowTransactionSubmission: false,
+        concurrencyPolicy: 'read_lanes_parallel_transaction_lanes_serialized_per_chain',
+        intermediarySubmitsTransactions: false,
+        autonomousControllerSubmission: true,
+        controllerGasAuthority: 'execution_wallet_system_owned_native_or_existing_balance',
         providerSponsoredExecution: false,
         alchemyDependency: false,
         profitLadderAuthority: false,
-        arbitrageExecutionAuthority: false,
-        arbitrageTreasuryAuthority: false,
+        zeroCapitalExecutionAuthority: false,
       });
     } catch (error) {
       await this.stop().catch(() => undefined);
@@ -128,6 +159,7 @@ class GhostWalletUltraWorker {
 
   async stop(): Promise<void> {
     this.running = false;
+    ghostWalletAutonomousController.stop();
     this.unsubscribeLocalWake?.();
     this.unsubscribeLocalWake = null;
     ghostWalletChainEvents.stop();
@@ -171,6 +203,7 @@ class GhostWalletUltraWorker {
       void recordGhostWalletRuntimeState({
         chain: 'global', notification: true, metadata: { workId: message.payload || null },
       }).catch(() => undefined);
+      ghostWalletAutonomousController.requestEvaluation('explicit_refresh');
       this.requestDrain('postgres_notify');
     });
     await client.connect();
@@ -230,8 +263,9 @@ class GhostWalletUltraWorker {
   }
 
   private laneFor(work: GhostWalletWorkItem): string {
-    if (work.kind === 'profit_conversion') return `payout:${String(work.payload.chain || work.chain).toLowerCase()}`;
-    if (work.kind === 'matched_intent_settlement' || work.kind === 'prepared_atomic_execution') return `reconcile:${work.chain}`;
+    if (work.kind === 'profit_conversion' || work.kind === 'matched_intent_settlement' || work.kind === 'prepared_atomic_execution') {
+      return `transaction:${String(work.payload.chain || work.chain).toLowerCase()}`;
+    }
     return `read:${work.workId}`;
   }
 
@@ -261,7 +295,7 @@ class GhostWalletUltraWorker {
       else throw new Error(`GHOST_WALLET_UNSUPPORTED_WORK_KIND:${work.kind}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const deterministic = /INVALID|EXPIRED|NOT_POSITIVE|MISMATCH|REVERTED|UNSUPPORTED|TERMINAL_FAILURE|SETTLEMENT_EVENT_REQUIRED|CALLER_FUNDED_SUBMISSION_REQUIRED/.test(message);
+      const deterministic = /INVALID|EXPIRED|NOT_POSITIVE|MISMATCH|REVERTED|UNSUPPORTED|TERMINAL_FAILURE|SETTLEMENT_EVENT_REQUIRED/.test(message);
       if (deterministic) {
         await markDead(work, this.workerId, error).catch(() => undefined);
         return;
@@ -276,35 +310,33 @@ class GhostWalletUltraWorker {
       if (deferred && !deferred.terminal) this.scheduleRetry(work.workId, deferred.notBefore);
     } finally {
       this.submittedThisAttempt.delete(work.workId);
+      ghostWalletAutonomousController.requestEvaluation('work_completed');
     }
   }
 
   private async processMatchedIntent(work: GhostWalletWorkItem): Promise<void> {
     const pair = deserializeMatchedIntentPair(work.payload.pair);
-    if (!(work.claimedFromStatus === 'SUBMITTED' && validHash(work.transactionHash))) {
-      throw new Error('GHOST_WALLET_CALLER_FUNDED_SUBMISSION_REQUIRED');
-    }
-    const settlement = await ghostWalletEngine.reconcileSubmittedMatchedPair(pair, work.transactionHash);
-    if (!settlement) {
-      const deferred = await deferGhostWalletWork({
-        workId: work.workId, owner: this.workerId, error: 'receipt_pending', retryAfterMs: 1_000, preserveSubmitted: true,
+    if (work.claimedFromStatus === 'SUBMITTED' && validHash(work.transactionHash)) {
+      const settlement = await ghostWalletEngine.reconcileSubmittedMatchedPair(pair, work.transactionHash);
+      if (!settlement) {
+        await this.rebroadcastOrDefer(work, 1_000);
+        return;
+      }
+      const provider = ghostWalletEngine.getProvider(pair.chain);
+      if (!provider) throw new Error('GHOST_WALLET_PROVIDER_UNAVAILABLE');
+      const receipt = await provider.getTransactionReceipt(settlement.transactionHash);
+      if (!receipt || receipt.status !== 1) throw new Error('GHOST_WALLET_SETTLEMENT_RECEIPT_UNAVAILABLE');
+      const profits = await ingestGhostWalletSettlementReceipt(pair.chain, receipt);
+      if (profits <= 0) throw new Error('GHOST_WALLET_SETTLEMENT_EVENT_REQUIRED');
+      await markGhostWalletWorkSettled({
+        workId: work.workId, owner: this.workerId, transactionHash: settlement.transactionHash,
+        blockNumber: settlement.blockNumber, result: { phase: 'matched_intent_reconciled', profitJobsEnqueued: profits },
       });
-      this.scheduleRetry(work.workId, deferred.notBefore);
       return;
     }
-    const provider = ghostWalletEngine.getProvider(pair.chain);
-    if (!provider) throw new Error('GHOST_WALLET_PROVIDER_UNAVAILABLE');
-    const receipt = await provider.getTransactionReceipt(settlement.transactionHash);
-    if (!receipt || receipt.status !== 1) throw new Error('GHOST_WALLET_SETTLEMENT_RECEIPT_UNAVAILABLE');
-    const profits = await ingestGhostWalletSettlementReceipt(pair.chain, receipt);
-    if (profits <= 0) throw new Error('GHOST_WALLET_SETTLEMENT_EVENT_REQUIRED');
-    await markGhostWalletWorkSettled({
-      workId: work.workId,
-      owner: this.workerId,
-      transactionHash: settlement.transactionHash,
-      blockNumber: settlement.blockNumber,
-      result: { phase: 'matched_intent_reconciled', profitJobsEnqueued: profits },
-    });
+    if (!ghostWalletEngine.isLiveExecutionEnabled()) throw new Error('GHOST_WALLET_LIVE_EXECUTION_DISABLED');
+    const transaction = ghostWalletEngine.buildCallerFundedMatchedPair(pair);
+    await this.submitPreparedTransaction(work, pair.chain as GhostWalletChain, transaction, { mode: 'matched_intent' });
   }
 
   private async processProfitConversion(work: GhostWalletWorkItem): Promise<void> {
@@ -315,65 +347,39 @@ class GhostWalletUltraWorker {
       priorResult: work.result,
       onSubmitted: async (transactionHash, submittedResult) => {
         await markGhostWalletWorkSubmitted({
-          workId: work.workId,
-          owner: this.workerId,
-          transactionHash,
-          leaseMs: 60_000,
-          result: submittedResult,
+          workId: work.workId, owner: this.workerId, transactionHash, leaseMs: 60_000, result: submittedResult,
         });
         this.submittedThisAttempt.add(work.workId);
       },
     });
-
     if (result.state === 'submitted') {
       const deferred = await deferGhostWalletWork({
-        workId: work.workId,
-        owner: this.workerId,
-        error: 'payout_settlement_pending',
-        retryAfterMs: result.retryAfterMs,
-        preserveSubmitted: true,
+        workId: work.workId, owner: this.workerId, error: 'payout_settlement_pending',
+        retryAfterMs: result.retryAfterMs, preserveSubmitted: true,
       });
       this.scheduleRetry(work.workId, deferred.notBefore);
       return;
     }
-
     if (result.followUp) {
       const followUp = await enqueueGhostWalletWork({
         dedupeKey: `${work.dedupeKey}:followup:${result.followUp.asset.toLowerCase()}:${result.followUp.amountBaseUnits}`,
-        kind: 'profit_conversion',
-        chain: result.followUp.chain,
-        priority: work.priority + 1,
-        maxAttempts: work.maxAttempts,
-        payload: result.followUp as unknown as Record<string, unknown>,
-        profitAsset: result.followUp.asset,
-        profitAmountBaseUnits: result.followUp.amountBaseUnits,
+        kind: 'profit_conversion', chain: result.followUp.chain, priority: work.priority + 1,
+        maxAttempts: work.maxAttempts, payload: result.followUp as unknown as Record<string, unknown>,
+        profitAsset: result.followUp.asset, profitAmountBaseUnits: result.followUp.amountBaseUnits,
       });
       await markGhostWalletWorkSettled({
-        workId: work.workId,
-        owner: this.workerId,
-        transactionHash: result.transactionHash,
-        blockNumber: result.blockNumber,
-        result: { ...result.result, phase: 'intermediate_conversion_settled', followUpWorkId: followUp.workId },
+        workId: work.workId, owner: this.workerId, transactionHash: result.transactionHash,
+        blockNumber: result.blockNumber, result: { ...result.result, phase: 'intermediate_conversion_settled', followUpWorkId: followUp.workId },
       });
       ghostWalletWorkSignal.emitWake('local_work_enqueued');
       return;
     }
-
     await markGhostWalletWorkSettled({
-      workId: work.workId,
-      owner: this.workerId,
-      transactionHash: result.transactionHash,
-      blockNumber: result.blockNumber,
-      payoutTransactionHash: result.payoutTransactionHash,
-      payoutDestinationMode: result.payoutDestinationMode,
-      profitAsset: work.profitAsset || payload.asset,
+      workId: work.workId, owner: this.workerId, transactionHash: result.transactionHash,
+      blockNumber: result.blockNumber, payoutTransactionHash: result.payoutTransactionHash,
+      payoutDestinationMode: result.payoutDestinationMode, profitAsset: work.profitAsset || payload.asset,
       profitAmountBaseUnits: work.profitAmountBaseUnits || payload.amountBaseUnits,
-      result: {
-        ...result.result,
-        destination: result.destination,
-        ethAmountWei: result.ethAmountWei.toString(),
-        payoutTerminallyVerified: true,
-      },
+      result: { ...result.result, destination: result.destination, ethAmountWei: result.ethAmountWei.toString(), payoutTerminallyVerified: true },
     });
   }
 
@@ -390,10 +396,7 @@ class GhostWalletUltraWorker {
     if (result.verified) {
       await enqueueGhostWalletWork({
         dedupeKey: `source-refresh:${result.candidate.chain}:${result.candidate.venueId}:${Date.now()}`,
-        kind: 'source_refresh',
-        chain: result.candidate.chain,
-        priority: 200,
-        maxAttempts: 4,
+        kind: 'source_refresh', chain: result.candidate.chain, priority: 200, maxAttempts: 4,
         payload: { reason: 'verified_venue_candidate', venueId: result.candidate.venueId },
       });
       ghostWalletWorkSignal.emitWake('local_work_enqueued');
@@ -401,30 +404,160 @@ class GhostWalletUltraWorker {
   }
 
   private async processPreparedAtomic(work: GhostWalletWorkItem): Promise<void> {
-    if (!(work.claimedFromStatus === 'SUBMITTED' && validHash(work.transactionHash))) {
-      throw new Error('GHOST_WALLET_CALLER_FUNDED_SUBMISSION_REQUIRED');
-    }
-    const chain = String(work.payload.chain || work.chain).trim().toLowerCase();
+    const mode = String(work.payload.mode || 'broker_execution');
+    const chain = payloadChain(work);
     const provider = ghostWalletEngine.getProvider(chain);
     if (!provider) throw new Error('GHOST_WALLET_PREPARED_RUNTIME_UNAVAILABLE');
-    const receipt = await provider.getTransactionReceipt(work.transactionHash);
-    if (!receipt) {
-      const deferred = await deferGhostWalletWork({
-        workId: work.workId, owner: this.workerId, error: 'receipt_pending', retryAfterMs: 1_000, preserveSubmitted: true,
+
+    if (work.claimedFromStatus === 'SUBMITTED' && validHash(work.transactionHash)) {
+      const receipt = await provider.getTransactionReceipt(work.transactionHash);
+      if (!receipt) {
+        await this.rebroadcastOrDefer(work, 750);
+        return;
+      }
+      if (receipt.status !== 1) throw new Error('GHOST_WALLET_PREPARED_SUBMITTED_REVERTED');
+
+      if (mode === 'bridge_bootstrap') {
+        const verifyCodeAt = payloadString(work.payload, 'verifyCodeAt');
+        if (await provider.getCode(verifyCodeAt) === '0x') throw new Error('GHOST_WALLET_BRIDGE_BOOTSTRAP_CODE_MISMATCH');
+        await markGhostWalletWorkSettled({
+          workId: work.workId, owner: this.workerId, transactionHash: receipt.transactionHash,
+          blockNumber: receipt.blockNumber, result: { phase: 'bridge_bootstrap_verified' },
+        });
+        return;
+      }
+
+      if (mode === 'bridge_spread_config') {
+        const bridge = new Contract(payloadString(work.payload, 'to'), BRIDGE_ABI, provider);
+        const actual = Number(await bridge.minimumBrokerSpreadBps());
+        const expected = Number(work.payload.verifySpreadBps);
+        if (!Number.isFinite(expected) || actual < expected) throw new Error('GHOST_WALLET_BRIDGE_SPREAD_CONFIG_MISMATCH');
+        await markGhostWalletWorkSettled({
+          workId: work.workId, owner: this.workerId, transactionHash: receipt.transactionHash,
+          blockNumber: receipt.blockNumber, result: { phase: 'bridge_spread_config_verified', minimumBrokerSpreadBps: actual },
+        });
+        return;
+      }
+
+      const profitJobs = await ingestGhostWalletSettlementReceipt(chain, receipt);
+      if (profitJobs <= 0) throw new Error('GHOST_WALLET_SETTLEMENT_EVENT_REQUIRED');
+      await markGhostWalletWorkSettled({
+        workId: work.workId, owner: this.workerId, transactionHash: receipt.transactionHash,
+        blockNumber: receipt.blockNumber, result: { phase: 'autonomous_broker_execution_settled', profitJobs },
       });
-      this.scheduleRetry(work.workId, deferred.notBefore);
       return;
     }
-    if (receipt.status !== 1) throw new Error('GHOST_WALLET_PREPARED_SUBMITTED_REVERTED');
-    const profitJobs = await ingestGhostWalletSettlementReceipt(chain, receipt);
-    if (profitJobs <= 0) throw new Error('GHOST_WALLET_SETTLEMENT_EVENT_REQUIRED');
-    await markGhostWalletWorkSettled({
-      workId: work.workId,
-      owner: this.workerId,
-      transactionHash: receipt.transactionHash,
-      blockNumber: receipt.blockNumber,
-      result: { phase: 'legacy_prepared_reconciled', profitJobs },
+
+    if (!ghostWalletEngine.isLiveExecutionEnabled()) throw new Error('GHOST_WALLET_LIVE_EXECUTION_DISABLED');
+    const transaction = {
+      to: payloadString(work.payload, 'to'),
+      data: payloadString(work.payload, 'data'),
+      value: String(work.payload.value || '0'),
+    };
+    await this.submitPreparedTransaction(work, chain, transaction, { mode });
+  }
+
+  private async submitPreparedTransaction(
+    work: GhostWalletWorkItem,
+    chain: GhostWalletChain,
+    transaction: { to: string; data: string; value: string },
+    extra: Record<string, unknown>,
+  ): Promise<void> {
+    const provider = ghostWalletEngine.getProvider(chain);
+    const wallet = ghostWalletEngine.getExecutionWallet(chain);
+    if (!provider || !wallet) throw new Error('GHOST_WALLET_CONTROLLER_WALLET_UNAVAILABLE');
+    const request = { from: wallet.address, to: transaction.to, data: transaction.data, value: transaction.value };
+    await provider.call(request);
+    const [gasRaw, feeData, network, nonce, balance] = await Promise.all([
+      provider.estimateGas(request), provider.getFeeData(), provider.getNetwork(),
+      provider.getTransactionCount(wallet.address, 'pending'), provider.getBalance(wallet.address),
+    ]);
+    const gasLimit = gasRaw.mul(110).add(99).div(100);
+    const feePerGas = feeData.maxFeePerGas || feeData.gasPrice;
+    if (!feePerGas || feePerGas.lte(0)) throw new Error('GHOST_WALLET_CONTROLLER_GAS_PRICE_UNAVAILABLE');
+    const worstCaseGasWei = gasLimit.mul(feePerGas);
+    if (balance.lt(worstCaseGasWei)) throw new Error('GHOST_WALLET_CONTROLLER_NATIVE_GAS_UNAVAILABLE');
+
+    if (String(work.payload.mode || '') === 'broker_execution') {
+      const economics = await evaluateGhostWalletControllerEconomics({
+        chain, provider, asset: payloadString(work.payload, 'asset'),
+        gasUnits: BigInt(gasLimit.toString()), feePerGasWei: BigInt(feePerGas.toString()),
+        expectedSpreadBaseUnits: BigInt(payloadString(work.payload, 'expectedSpreadBaseUnits')),
+      });
+      if (!economics.approved) throw new Error('GHOST_WALLET_CONTROLLER_NET_NOT_POSITIVE');
+      extra = {
+        ...extra,
+        finalGasCostAssetBaseUnits: economics.gasCostAssetBaseUnits.toString(),
+        finalExpectedNetProfitBaseUnits: economics.expectedNetProfitBaseUnits.toString(),
+        finalAssetPriceUsd: economics.assetPriceUsd,
+        finalNativePriceUsd: economics.nativePriceUsd,
+      };
+    }
+
+    const common = {
+      chainId: network.chainId,
+      nonce,
+      to: transaction.to,
+      data: transaction.data,
+      value: ethers.BigNumber.from(transaction.value || '0'),
+      gasLimit,
+    };
+    const unsigned = feeData.maxFeePerGas && feeData.maxPriorityFeePerGas
+      ? { ...common, type: 2, maxFeePerGas: feeData.maxFeePerGas, maxPriorityFeePerGas: feeData.maxPriorityFeePerGas }
+      : { ...common, gasPrice: feePerGas };
+    const rawTransaction = await wallet.signTransaction(unsigned);
+    const transactionHash = ethers.utils.keccak256(rawTransaction);
+
+    // Persist the deterministic signed hash and raw bytes BEFORE broadcast. A crash
+    // after this write can only rebroadcast the identical transaction, never create
+    // a second nonce/spend.
+    await markGhostWalletWorkSubmitted({
+      workId: work.workId, owner: this.workerId, transactionHash, leaseMs: 60_000,
+      result: {
+        ...extra,
+        phase: 'controller_signed_before_broadcast',
+        rawTransaction,
+        signer: wallet.address,
+        nonce,
+        gasLimit: gasLimit.toString(),
+        feePerGasWei: feePerGas.toString(),
+        chainId: network.chainId,
+      },
     });
+    this.submittedThisAttempt.add(work.workId);
+    const sent = await provider.sendTransaction(rawTransaction).catch(error => {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/already known|known transaction|nonce too low/i.test(message)) return null;
+      throw error;
+    });
+    if (sent && sent.hash.toLowerCase() !== transactionHash.toLowerCase()) {
+      throw new Error('GHOST_WALLET_CONTROLLER_SIGNED_HASH_MISMATCH');
+    }
+    const deferred = await deferGhostWalletWork({
+      workId: work.workId, owner: this.workerId, error: 'controller_transaction_submitted',
+      retryAfterMs: 750, preserveSubmitted: true,
+    });
+    this.scheduleRetry(work.workId, deferred.notBefore);
+  }
+
+  private async rebroadcastOrDefer(work: GhostWalletWorkItem, retryAfterMs: number): Promise<void> {
+    const chain = payloadChain(work);
+    const provider = ghostWalletEngine.getProvider(chain);
+    if (!provider) throw new Error('GHOST_WALLET_REBROADCAST_PROVIDER_UNAVAILABLE');
+    const raw = work.result?.rawTransaction;
+    if (validRawTransaction(raw)) {
+      const observed = await provider.getTransaction(work.transactionHash || '').catch(() => null);
+      if (!observed) {
+        await provider.sendTransaction(raw).catch(error => {
+          const message = error instanceof Error ? error.message : String(error);
+          if (!/already known|known transaction|nonce too low/i.test(message)) throw error;
+        });
+      }
+    }
+    const deferred = await deferGhostWalletWork({
+      workId: work.workId, owner: this.workerId, error: 'receipt_pending', retryAfterMs, preserveSubmitted: true,
+    });
+    this.scheduleRetry(work.workId, deferred.notBefore);
   }
 
   private async processSettlementReconcile(work: GhostWalletWorkItem): Promise<void> {
@@ -445,11 +578,8 @@ class GhostWalletUltraWorker {
     const profitJobs = await ingestGhostWalletSettlementReceipt(chain, receipt);
     if (profitJobs <= 0) throw new Error('GHOST_WALLET_SETTLEMENT_EVENT_REQUIRED');
     await markGhostWalletWorkSettled({
-      workId: work.workId,
-      owner: this.workerId,
-      transactionHash,
-      blockNumber: receipt.blockNumber,
-      result: { profitJobs },
+      workId: work.workId, owner: this.workerId, transactionHash,
+      blockNumber: receipt.blockNumber, result: { profitJobs },
     });
   }
 
