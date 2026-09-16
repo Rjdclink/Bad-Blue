@@ -22,6 +22,28 @@ function tokenPath(opportunity: ZeroCapitalOpportunity): string[] {
   ];
 }
 
+function canonicalCyclicTokenPath(path: readonly string[]): string {
+  if (path.length <= 1) return path.join('>');
+  const cyclic = path[0] === path[path.length - 1];
+  if (!cyclic) {
+    const forward = path.join('>');
+    const reverse = [...path].reverse().join('>');
+    return forward <= reverse ? forward : reverse;
+  }
+
+  const core = path.slice(0, -1);
+  if (core.length === 0) return path.join('>');
+  const variants: string[] = [];
+  for (const orientation of [core, [...core].reverse()] as const) {
+    for (let offset = 0; offset < orientation.length; offset += 1) {
+      const rotated = [...orientation.slice(offset), ...orientation.slice(0, offset)];
+      variants.push(rotated.join('>'));
+    }
+  }
+  variants.sort();
+  return variants[0] ?? core.join('>');
+}
+
 function exactNetBps(opportunity: ZeroCapitalOpportunity): number {
   if (opportunity.flashLoanAmount <= 0n) return Number.NEGATIVE_INFINITY;
   return Number(
@@ -52,16 +74,12 @@ export function apeDirectionKey(opportunity: ZeroCapitalOpportunity): string {
 
 /**
  * The same discovered market competes as one resident object regardless of direction.
- * Direction remains attached metadata/economics, not a separate market identity.
- * Normalizing a path against its reverse preserves arbitrary multi-hop cycles while
- * avoiding a venue/provider dependency in the market key.
+ * Cyclic routes are canonicalized across both rotation and reversal, so borrowing A
+ * for A->B->A and borrowing B for B->A->B are correctly treated as the same market.
+ * Venue/provider/builder remain realization dimensions, not opportunity identity.
  */
 export function apeDirectionalMarketKey(opportunity: ZeroCapitalOpportunity): string {
-  const path = tokenPath(opportunity);
-  const forward = path.join('>');
-  const reverse = [...path].reverse().join('>');
-  const canonicalPath = forward <= reverse ? forward : reverse;
-  return `${opportunity.chain}|${canonicalPath}`;
+  return `${opportunity.chain}|${canonicalCyclicTokenPath(tokenPath(opportunity))}`;
 }
 
 /**
@@ -88,22 +106,21 @@ export function selectApeStageOneHotSet(
   for (const group of groups.values()) {
     const ordered = [...group].sort(compareExactEconomics);
     if (ordered.length === 0) continue;
+
+    const marketSelected: ZeroCapitalOpportunity[] = [];
     const winner = ordered[0];
-    selected.push(winner);
-    if (boundedMax === 1) continue;
-
-    const winnerDirection = apeDirectionKey(winner);
-    const reverse = ordered.find(candidate => apeDirectionKey(candidate) !== winnerDirection);
-    if (reverse) selected.push(reverse);
-    if (selected.length >= boundedMax * groups.size) continue;
-
-    for (const candidate of ordered) {
-      if (selected.length >= boundedMax * groups.size) break;
-      if (candidate === winner || candidate === reverse) continue;
-      const selectedForMarket = selected.filter(item => apeDirectionalMarketKey(item) === apeDirectionalMarketKey(winner)).length;
-      if (selectedForMarket >= boundedMax) break;
-      selected.push(candidate);
+    marketSelected.push(winner);
+    if (boundedMax > 1) {
+      const winnerDirection = apeDirectionKey(winner);
+      const reverse = ordered.find(candidate => apeDirectionKey(candidate) !== winnerDirection);
+      if (reverse) marketSelected.push(reverse);
+      for (const candidate of ordered) {
+        if (marketSelected.length >= boundedMax) break;
+        if (marketSelected.includes(candidate)) continue;
+        marketSelected.push(candidate);
+      }
     }
+    selected.push(...marketSelected);
   }
   return selected.sort(compareExactEconomics);
 }
