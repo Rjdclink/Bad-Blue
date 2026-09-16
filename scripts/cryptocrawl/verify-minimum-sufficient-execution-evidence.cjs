@@ -10,6 +10,7 @@ const router = read('server/services/cryptocrawl/execution/unified-execution-rou
 const scheduler = read('server/services/cryptocrawl/execution/canonical-execution-scheduler.ts');
 const gateway = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-fair.ts');
 const stack = read('server/services/cryptocrawl/integration/zero-capital-atomic-stack-wiring.ts');
+const lease = read('server/services/cryptocrawl/integration/ape-profitable-snapshot-lease.ts');
 const multileg = read('server/services/cryptocrawl/optimization/unified-multileg-arbitrage-engine.ts');
 
 // Required execution evidence is authoritative. Optional, redundant, advisory,
@@ -34,20 +35,14 @@ has(router, 'advisory:missing_information:', 'non-required missing information m
 has(scheduler, 'candidate.missingInformation.length === 0', 'scheduler must retain defense-in-depth over registry-filtered required gaps');
 
 // Shared-principal composition is an internal tactic of the single Atomic-BPS
-// pipeline. It receives the already Stage-1-admitted set rather than owning a second
-// configurable near-miss threshold. Structural ownership survives evidence expiry,
-// but exact simulation rejects stale evidence before it can gain economic or
-// execution authority. Blocked/unmeasurable members still fail locally, and promotion
-// occurs only after exact simulation proves at least one base unit of all-in net
-// profit plus a real measured composition gain. Daily realized-profit governance
-// remains separate from this measurement worker: Profit Ladder must not become a
-// pre-measurement database dependency or a composition veto.
+// pipeline. Stale evidence cannot gain economic/execution authority and the exact
+// simulation deadline remains bounded by member freshness. Positive acceptance does
+// not terminate the bounded variant/group search: the best measured composition is
+// retained through the candidate's remaining executable window.
 has(gateway, 'runZeroCapitalAtomicStackTactic', 'single Atomic-BPS gateway must own composite tactic triggering');
 has(gateway, 'compositeTacticInsideSamePipeline: true', 'composite tactic must remain inside the single transformation pipeline');
-has(gateway, 'compositeTacticBlocksSingleRouteReturn: false', 'composite tactic must not delay a profitable single route');
+has(gateway, 'compositeTacticBlocksSingleRouteReturn: false', 'composite tactic must not delay a profitable single route beyond its execution reserve');
 has(stack, "candidate.status !== 'blocked'", 'atomic stack tactic must reject blocked candidates');
-has(stack, 'Structural ownership is independent of evidence freshness.', 'atomic stack must preserve stale candidate ownership independently of evidence freshness');
-has(stack, 'Stale candidates stay owned/plannable, but stale route evidence never gains', 'atomic stack must explicitly separate durable ownership from fresh simulation authority');
 has(stack, 'if (input.opportunities.some(opportunity => opportunity.expiresAt <= now)) return null;', 'atomic stack exact simulation must reject stale opportunity evidence');
 has(stack, 'const expiresAt = Math.min(...input.opportunities.map(opportunity => opportunity.expiresAt), input.deadlineAt ?? Number.MAX_SAFE_INTEGER);', 'atomic stack exact proof deadline must remain bounded by member evidence expiry');
 has(stack, "candidate.depth.status !== 'unavailable'", 'atomic stack tactic must require measurable route depth');
@@ -56,7 +51,7 @@ has(stack, 'stageOneThresholdAuthority: false', 'atomic stack tactic must not ow
 has(stack, 'stageOneEnvironmentThresholdRead: false', 'atomic stack tactic must not read a second Stage-1 threshold');
 must(!stack.includes('ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS'), 'duplicate Atomic Stage-1 entry-floor variable must not return');
 has(stack, 'const STRICT_POSITIVE_PROFIT_BASE_UNITS = 1n;', 'atomic stack must bind profitability to the smallest exactly positive base-unit value');
-has(stack, 'const targetNetProfitBaseUnits = STRICT_POSITIVE_PROFIT_BASE_UNITS;', 'atomic stack compatibility target must resolve to exact strict positivity');
+has(stack, 'requiredStrictPositiveProfitBaseUnits(first)', 'atomic stack must consume the canonical strict-positive base-unit authority');
 has(stack, 'combinedExpectedProfit < targetNetProfitBaseUnits || combinedExpectedProfit <= 0n', 'atomic stack must require strictly positive all-in economics');
 has(stack, 'measuredCompositionGain <= 0n', 'atomic stack must require a real measured composition improvement');
 has(stack, 'exact_strict_positive_composite_eth_call_passed', 'atomic stack must preserve exact strict-positive simulation evidence');
@@ -66,12 +61,26 @@ must(!stack.includes('getProfitLadderDailyProfitBudget'), 'Profit Ladder databas
 has(stack, 'aggregateEconomicsAuthority: true', 'Atomic composition must expose aggregate exact economics as the composition authority');
 has(stack, 'adaptiveMinLegsVetoAuthority: false', 'advisory topology policy must not veto Atomic composition');
 has(stack, 'completionOrderVariantMeasurement: true', 'atomic stack variants must be consumed in completion order');
-has(stack, 'fullVariantBatchBarrier: false', 'atomic stack strict-positive promotion must not wait on a full variant batch');
+has(stack, 'fullVariantBatchBarrier: false', 'atomic stack may not use a full variant barrier');
+has(stack, 'firstPositiveStopsVariantSearch: false', 'atomic stack must continue bounded optimization after first positive variant');
+has(stack, 'bestMeasuredProfitableVariantSelected: true', 'atomic stack must retain the best measured profitable variant');
+has(stack, 'firstPromotionStopsSiblingGroups: false', 'one profitable group must not cancel compatible sibling groups');
+must(!stack.includes('if (settled.result.promoted > 0) return aggregate'), 'first promoted group must not terminate sibling search');
 has(stack, "status: 'eligible'", 'only the newly measured strictly-positive composite may be promoted eligible');
 has(stack, 'executableCapability: true', 'strictly-positive composite must receive explicit executable capability');
 has(stack, 'missingInformation: []', 'promoted composite must carry complete execution evidence');
 has(stack, "promotion_authority:single_atomic_bps_engine", 'composite promotion must remain attributed to the single Atomic-BPS engine');
 has(stack, 'executionAuthority: false', 'atomic stack must remain non-execution authority');
+
+// The profitable fallback itself is resident pointer state. It cannot extend stale
+// evidence and its decision path adds no database/network dependency.
+has(lease, 'bestProfit: ZeroCapitalOpportunity', 'best profitable fallback pointer missing');
+has(lease, 'freshestPositive: ZeroCapitalOpportunity', 'fresh positive shadow pointer missing');
+has(lease, 'persistenceOnHotPath: false', 'profitable fallback added persistence to hot path');
+has(lease, 'networkIoOnDecisionPath: false', 'profitable fallback added network I/O to decision path');
+has(lease, 'staleEvidenceExtended: false', 'profitable fallback may not extend stale evidence');
+has(gateway, 'executeBeforeExpiry: true', 'profitable execution reserve escape missing');
+has(gateway, 'profitEscapeCanPreemptRemainingOptimization: true', 'optional optimization may still consume execution reserve');
 
 // General multileg optimization remains downstream of ordinary execution admission:
 // it cannot relax freshness, eligibility, capability, depth, path or positive-net
@@ -84,13 +93,11 @@ has(multileg, 'requiresIndependentFinalAdmission: true', 'multileg optimization 
 
 // This verifier already runs inside deployment-preflight. Pull the dedicated
 // Atomic-BPS structural gate into the same mandatory prebuild path so these
-// invariants cannot drift without failing the build. Run it in a clean process so
-// the legacy preflight read redirect cannot substitute the flash executor for the
-// canonical router while the modern single-pipeline assertions execute.
+// invariants cannot drift without failing the build.
 execFileSync(
   process.execPath,
   ['scripts/cryptocrawl/verify-nix-gen-atomic-bps-single-pipeline.cjs'],
   { stdio: 'inherit', env: process.env },
 );
 
-console.log('[required-execution-evidence] PASS: execution remains guarded by topology-correct economics plus minimum sufficient live evidence; ZERO_CAPITAL_ATOMIC uses exact strict-positive all-in base units with no +10 magnitude floor; Atomic composition retains stale candidate ownership for bounded reacquisition/planning but grants no stale economic or execution authority, and may promote only when fresh exact simulation proves positive net plus measured composition gain; Profit Ladder stays off the Atomic composition measurement path and cannot become a shadow veto');
+console.log('[required-execution-evidence] PASS: execution remains guarded by topology-correct strict-positive economics plus live evidence; Atomic composition searches past first profitability, retains the best bounded measured result, and execute-before-expiry prevents optional optimization from consuming the profitable execution reserve');
