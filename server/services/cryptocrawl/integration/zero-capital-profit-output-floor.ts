@@ -1,5 +1,6 @@
 import type { ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import { isApeMeasuredAdmitted } from './ape-measured-opportunity-admission.js';
+import { getApeResidentPlacement } from './atomic-profitability-resident-routing.js';
 
 /**
  * Canonical Stage-2/execution profitability authority.
@@ -111,13 +112,20 @@ export function clearsStrictPositiveOutputThreshold(
  * A positive candidate remains APE-owned while its current evidence generation still
  * has compatible measured transformations left to try. Expired/missing measurement
  * is deferred for reacquisition rather than rejected or allowed to spend rescue I/O.
+ *
+ * Stage One also assigns a direction-neutral resident market lane before APE. Only
+ * the first cohort's active/hedge entries spend stateful rescue I/O. Deeper variants
+ * stay resident/discoverable and can move into the hot lane on the next market-state
+ * update; they are not rejected, deleted, or prevented from provider repricing.
  */
 export function needsApeOptimization(
   opportunity: ZeroCapitalOpportunity,
 ): boolean {
-  return opportunity.flashLoanAmount > 0n
-    && Number.isFinite(opportunity.netProfitBps)
-    && isApeMeasuredAdmitted(opportunity);
+  if (opportunity.flashLoanAmount <= 0n || !Number.isFinite(opportunity.netProfitBps)) return false;
+  if (!isApeMeasuredAdmitted(opportunity)) return false;
+  const placement = getApeResidentPlacement(opportunity.id);
+  if (!placement) return false;
+  return placement.cohort === 0 && placement.role !== 'reserve';
 }
 
 /*
