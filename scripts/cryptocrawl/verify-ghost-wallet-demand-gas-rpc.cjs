@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const assert = require('node:assert/strict');
 const read = p => fs.readFileSync(p, 'utf8');
 
+const dockerfile = read('Dockerfile');
 const engine = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-engine.ts');
 const demand = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-borrower-demand-mesh.ts');
 const mandate = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-borrower-mandate.ts');
@@ -34,6 +35,7 @@ assert.match(engine, /borrowerDemandTransportAuthority: false/);
 // only the retained realized Ghost allocation and preserves explicit first-trade truth.
 assert.match(reserveMigration, /cryptocrawler_ghost_wallet_gas_reserve/);
 assert.match(reserveMigration, /UNIQUE\(source_work_id, chain, asset\)/);
+assert.match(dockerfile, /COPY --from=builder \/app\/server\/migrations\/058_cryptocrawler_ghost_wallet_gas_reserve\.sql \.\/dist\/migrations\/058_cryptocrawler_ghost_wallet_gas_reserve\.sql/);
 assert.match(reserve, /retainedAmountBaseUnits/);
 assert.match(reserve, /retained_realized_ghost_profit_only/);
 assert.match(reserve, /operatorPrincipalAllowed:false/);
