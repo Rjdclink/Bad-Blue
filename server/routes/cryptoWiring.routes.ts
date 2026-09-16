@@ -2,6 +2,10 @@ import express from 'express';
 import { getCryptara } from '../services/cryptara';
 import { pipeline } from '../services/cryptocrawl/integration/master-pipeline.js';
 import { quoteGhostWalletBorrowerRoute } from '../services/cryptocrawl/ghost-wallet/ghost-wallet-borrower-surface.js';
+import {
+  cancelGhostWalletBorrowerMandate,
+  registerGhostWalletBorrowerMandate,
+} from '../services/cryptocrawl/ghost-wallet/ghost-wallet-borrower-mandate.js';
 import { getGhostWalletExternalBridgeDescriptor } from '../services/cryptocrawl/ghost-wallet/ghost-wallet-external-bridge.js';
 import { ghostWalletProviderMesh, type GhostWalletChain } from '../services/cryptocrawl/ghost-wallet/ghost-wallet-provider-mesh.js';
 import { createLogger } from '../logger';
@@ -50,7 +54,7 @@ function ghostChain(value: unknown): GhostWalletChain {
   return chain;
 }
 
-function enforceGhostQuoteRequestBounds(req: express.Request): void {
+function enforceGhostRequestBounds(req: express.Request): void {
   const maxCandidates = boundedPositiveInt('GHOST_WALLET_MAX_LENDER_CANDIDATES_PER_REQUEST', 32, 256);
   const candidates = req.body?.lenderCandidates;
   if (Array.isArray(candidates) && candidates.length > maxCandidates) {
@@ -123,10 +127,9 @@ router.post('/wire-check', async (_req, res) => {
 });
 
 /**
- * Public Ghost Wallet capability manifest. This endpoint never submits a
- * transaction and exposes no secrets. A not-yet-deployed deterministic bridge
- * includes permissionless CREATE2 bootstrap calldata so an integrator/borrower,
- * not the operator, can fund the one-time deployment transaction.
+ * Public Ghost Wallet capability manifest. The intermediary is only the atomic
+ * middleman. External callers may submit quote transactions themselves, while the
+ * separate Ghost controller may initiate only cryptographically authorized mandates.
  */
 router.get('/ghost-wallet/capabilities', async (_req, res) => {
   try {
@@ -137,10 +140,13 @@ router.get('/ghost-wallet/capabilities', async (_req, res) => {
     return res.json({
       ok: true,
       model: 'borrow_upstream_then_atomically_lend_downstream',
-      transactionPayer: 'caller',
-      operatorMonetaryInputRequired: false,
+      intermediarySubmitsTransactions: false,
+      executionModes: ['external_caller', 'autonomous_controller_signed_mandate'],
+      autonomousBorrowerAuthorization: ['borrower_erc1271', 'owner_eoa', 'owner_erc1271'],
+      operatorMonetaryInputRequiredForPrincipal: false,
       fixedBpsProfitFloor: false,
-      minimumPositiveSpread: 'one_smallest_token_unit_when_configured_spread_bps_is_zero',
+      perTransactionSpreadPricing: true,
+      minimumPositiveSpread: 'one_smallest_token_unit_or_exact_gas_calibrated_higher_spread',
       lenderUniverseHardLimit: null,
       borrowerUniverseHardLimit: null,
       perRequestLenderCandidateLimit: boundedPositiveInt('GHOST_WALLET_MAX_LENDER_CANDIDATES_PER_REQUEST', 32, 256),
@@ -148,6 +154,7 @@ router.get('/ghost-wallet/capabilities', async (_req, res) => {
       perIpQuoteRequestsPerMinute: boundedPositiveInt('GHOST_WALLET_QUOTE_REQUESTS_PER_MINUTE', 30, 600),
       adapters: ['erc3156', 'aave_v3', 'morpho_blue', 'balancer_v2'],
       alchemyDependency: false,
+      zeroCapitalExecutionAuthority: false,
       providerMesh: ghostWalletProviderMesh.getStatus(),
       bridges: descriptors.flatMap(result => result.status === 'fulfilled' ? [result.value] : []),
       unavailableChains: descriptors.flatMap(result => result.status === 'rejected'
@@ -161,13 +168,12 @@ router.get('/ghost-wallet/capabilities', async (_req, res) => {
 });
 
 /**
- * On-demand borrower quote. Work occurs only because a borrower asks; there is no
- * scanning timer. All healthy Ghost RPCs and implemented lender adapters are
- * measured in parallel, and the cheapest live same-asset route is returned.
+ * On-demand borrower quote. The quote surface never submits. Healthy Ghost RPCs and
+ * Ghost-owned lender adapters are measured in parallel; the cheapest live route wins.
  */
 router.post('/ghost-wallet/quote', async (req, res) => {
   try {
-    enforceGhostQuoteRequestBounds(req);
+    enforceGhostRequestBounds(req);
     const chain = ghostChain(req.body?.chain);
     const candidates = Array.isArray(req.body?.lenderCandidates)
       ? [...new Map(req.body.lenderCandidates.map((row: any) => {
@@ -199,6 +205,61 @@ router.post('/ghost-wallet/quote', async (req, res) => {
   }
 });
 
+/**
+ * Registers a standing autonomous borrower mandate only after cryptographic
+ * authorization is proven. Registration itself does not prove repayment ability;
+ * the controller still exact-simulates every concrete transaction before signing.
+ */
+router.post('/ghost-wallet/borrower-mandate', async (req, res) => {
+  try {
+    enforceGhostRequestBounds(req);
+    const mandate = await registerGhostWalletBorrowerMandate({
+      chain: ghostChain(req.body?.chain),
+      borrower: String(req.body?.borrower || ''),
+      asset: String(req.body?.asset || ''),
+      amountBaseUnits: String(req.body?.amountBaseUnits || ''),
+      maxBorrowerFeeBaseUnits: String(req.body?.maxBorrowerFeeBaseUnits || ''),
+      borrowerData: req.body?.borrowerData === undefined ? undefined : String(req.body.borrowerData),
+      authorizer: String(req.body?.authorizer || ''),
+      nonce: String(req.body?.nonce ?? ''),
+      deadline: Number(req.body?.deadline),
+      maxExecutions: Number(req.body?.maxExecutions),
+      minIntervalSeconds: req.body?.minIntervalSeconds === undefined ? undefined : Number(req.body.minIntervalSeconds),
+      signature: String(req.body?.signature || ''),
+    });
+    return res.status(201).json({ ok: true, mandate });
+  } catch (error: any) {
+    const message = error?.message ?? String(error);
+    const rateLimited = /RATE_LIMIT_EXCEEDED/.test(message);
+    const unavailable = /UNAVAILABLE/.test(message);
+    const requestTooLarge = /DATA_LIMIT_EXCEEDED/.test(message);
+    log.warn('Ghost Wallet borrower mandate rejected', { error: message });
+    if (rateLimited) res.setHeader('Retry-After', '60');
+    return res.status(rateLimited ? 429 : requestTooLarge ? 413 : unavailable ? 503 : 400).json({ ok: false, error: message });
+  }
+});
+
+/** Signed revocation by the same borrower authority. */
+router.post('/ghost-wallet/borrower-mandate/cancel', async (req, res) => {
+  try {
+    enforceGhostRequestBounds(req);
+    const result = await cancelGhostWalletBorrowerMandate({
+      mandateId: String(req.body?.mandateId || ''),
+      authorizer: String(req.body?.authorizer || ''),
+      deadline: Number(req.body?.deadline),
+      signature: String(req.body?.signature || ''),
+    });
+    return res.json({ ok: true, ...result });
+  } catch (error: any) {
+    const message = error?.message ?? String(error);
+    const rateLimited = /RATE_LIMIT_EXCEEDED/.test(message);
+    const unavailable = /UNAVAILABLE/.test(message);
+    log.warn('Ghost Wallet borrower mandate cancellation rejected', { error: message });
+    if (rateLimited) res.setHeader('Retry-After', '60');
+    return res.status(rateLimited ? 429 : unavailable ? 503 : 400).json({ ok: false, error: message });
+  }
+});
+
 router.post('/deployment-review', async (_req, res) => {
   try {
     const review = await pipeline.reviewDeploymentReadiness({ passes: 2 });
@@ -207,6 +268,7 @@ router.post('/deployment-review', async (_req, res) => {
     log.error('Deployment review failed', { error: error?.message ?? String(error) });
     return res.status(500).json({
       ok: false,
+      stage: 5,
       error: error?.message ?? String(error),
     });
   }
