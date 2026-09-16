@@ -2,17 +2,19 @@ import { ethers } from 'ethers';
 import logger from '../../../logger.js';
 import { pool } from '../runtime/cryptocrawl-runtime-database.js';
 import { evaluateGhostWalletControllerEconomics } from './ghost-wallet-controller-economics.js';
-import { quoteGhostWalletBorrowerRoute } from './ghost-wallet-borrower-surface.js';
+import {
+  buildGhostWalletBorrowerTransactionWithSpread,
+  quoteGhostWalletBorrowerRoute,
+} from './ghost-wallet-borrower-surface.js';
 import { ghostWalletEngine } from './ghost-wallet-engine.js';
 import { getGhostWalletExternalBridgeDescriptor } from './ghost-wallet-external-bridge.js';
 import type { GhostWalletChain } from './ghost-wallet-provider-mesh.js';
 import { enqueueGhostWalletWork } from './ghost-wallet-work-ledger.js';
 import { ghostWalletWorkSignal, type GhostWalletWakeReason } from './ghost-wallet-work-signal.js';
 
-const BRIDGE_OWNER_ABI = ['function setMinimumBrokerSpreadBps(uint16 spreadBps)'];
 const CHAINS = new Set<GhostWalletChain>(['ethereum', 'polygon', 'arbitrum', 'optimism', 'base', 'bsc', 'avalanche']);
 const BPS = 10_000n;
-const MAX_BRIDGE_SPREAD_BPS = 1_000;
+const MAX_CALIBRATION_PASSES = 3;
 
 interface StandingBorrowerMandate {
   id: string;
@@ -52,9 +54,7 @@ function configuredSpreadFloorBps(): number {
     || process.env.GHOST_WALLET_AUTONOMOUS_MIN_SPREAD_BPS
     || 0,
   );
-  return Number.isFinite(configured)
-    ? Math.max(0, Math.min(MAX_BRIDGE_SPREAD_BPS, Math.trunc(configured)))
-    : 0;
+  return Number.isFinite(configured) ? Math.max(0, Math.min(1_000, Math.trunc(configured))) : 0;
 }
 
 function spreadBaseUnits(amount: bigint, spreadBps: number): bigint {
@@ -64,11 +64,8 @@ function spreadBaseUnits(amount: bigint, spreadBps: number): bigint {
   return (numerator + BPS - 1n) / BPS;
 }
 
-function requiredSpreadBps(amount: bigint, requiredSpread: bigint): number | null {
-  if (amount <= 0n || requiredSpread <= 0n) return null;
-  const result = (requiredSpread * BPS + amount - 1n) / amount;
-  if (result > BigInt(MAX_BRIDGE_SPREAD_BPS)) return null;
-  return Number(result);
+function maxBigInt(left: bigint, right: bigint): bigint {
+  return left > right ? left : right;
 }
 
 function activeScanMs(hasMandates: boolean): number {
@@ -180,7 +177,7 @@ class GhostWalletAutonomousController {
       zeroCapitalExecutionAuthority: false,
       hardBpsProfitAdmissionFloor: false,
       configuredSpreadFloorBps: configuredSpreadFloorBps(),
-      dynamicSpreadCalibration: true,
+      perTransactionSpreadCalibration: true,
       strictPositiveAllInNetRequired: true,
       chains: [...CHAINS],
       continuousOperation: true,
@@ -249,34 +246,6 @@ class GhostWalletAutonomousController {
     }
   }
 
-  private async enqueueSpreadConfiguration(input: {
-    mandate: StandingBorrowerMandate;
-    bridge: string;
-    spreadBps: number;
-    reason: 'configured_floor' | 'dynamic_gas_calibration';
-  }): Promise<void> {
-    if (!ghostWalletEngine.isLiveExecutionEnabled()) return;
-    const data = new ethers.utils.Interface(BRIDGE_OWNER_ABI)
-      .encodeFunctionData('setMinimumBrokerSpreadBps', [input.spreadBps]);
-    await enqueueGhostWalletWork({
-      dedupeKey: `ghost-controller:spread-config:${input.mandate.chain}:${input.bridge.toLowerCase()}:${input.spreadBps}`,
-      kind: 'prepared_atomic_execution',
-      chain: input.mandate.chain,
-      priority: 950,
-      maxAttempts: 20,
-      payload: {
-        mode: 'bridge_spread_config',
-        chain: input.mandate.chain,
-        to: input.bridge,
-        data,
-        value: '0',
-        verifySpreadBps: input.spreadBps,
-        spreadReason: input.reason,
-      },
-    });
-    ghostWalletWorkSignal.emitWake('local_work_enqueued');
-  }
-
   private async evaluateMandate(mandate: StandingBorrowerMandate): Promise<void> {
     try {
       if (mandate.expiresAt !== null && mandate.expiresAt <= Date.now()) return;
@@ -303,17 +272,6 @@ class GhostWalletAutonomousController {
         return;
       }
 
-      const configuredFloor = configuredSpreadFloorBps();
-      if (configuredFloor > descriptor.minimumBrokerSpreadBps) {
-        await this.enqueueSpreadConfiguration({
-          mandate,
-          bridge: descriptor.address,
-          spreadBps: configuredFloor,
-          reason: 'configured_floor',
-        });
-        return;
-      }
-
       const quote = await quoteGhostWalletBorrowerRoute({
         chain: mandate.chain,
         borrower: mandate.borrower,
@@ -322,44 +280,53 @@ class GhostWalletAutonomousController {
         borrowerData: mandate.borrowerData,
       });
       if (!quote.bridgeDeployed) return;
-      const borrowerFee = BigInt(quote.selected.borrowerFeeBaseUnits);
-      if (mandate.maxBorrowerFeeBaseUnits !== null && borrowerFee > BigInt(mandate.maxBorrowerFeeBaseUnits)) return;
 
-      const request = { from: wallet.address, to: quote.transaction.to, data: quote.transaction.data, value: quote.transaction.value };
-      await provider.call(request);
-      const [gasRaw, feeData, blockNumber] = await Promise.all([
-        provider.estimateGas(request), provider.getFeeData(), provider.getBlockNumber(),
-      ]);
-      const gasUnits = BigInt(gasRaw.toString());
-      const feePerGas = feeData.maxFeePerGas || feeData.gasPrice;
-      if (!feePerGas || feePerGas.lte(0)) return;
-      const economics = await evaluateGhostWalletControllerEconomics({
-        chain: mandate.chain,
-        provider,
-        asset: mandate.asset,
-        gasUnits,
-        feePerGasWei: BigInt(feePerGas.toString()),
-        expectedSpreadBaseUnits: BigInt(quote.selected.ghostSpreadBaseUnits),
-      });
+      const amount = BigInt(mandate.amountBaseUnits);
+      const bridgeFloorSpread = spreadBaseUnits(amount, descriptor.minimumBrokerSpreadBps);
+      const configuredFloorSpread = spreadBaseUnits(amount, configuredSpreadFloorBps());
+      let requestedSpread = maxBigInt(bridgeFloorSpread, configuredFloorSpread);
+      const mandateMaxFee = mandate.maxBorrowerFeeBaseUnits === null
+        ? null
+        : BigInt(mandate.maxBorrowerFeeBaseUnits);
+      let finalPrepared: ReturnType<typeof buildGhostWalletBorrowerTransactionWithSpread> | null = null;
+      let finalEconomics: Awaited<ReturnType<typeof evaluateGhostWalletControllerEconomics>> | null = null;
+      let finalGasUnits = 0n;
+      let finalFeePerGas = 0n;
 
-      if (!economics.approved) {
-        const amount = BigInt(mandate.amountBaseUnits);
-        const neededSpread = economics.gasCostAssetBaseUnits + 1n;
-        const calibratedBps = requiredSpreadBps(amount, neededSpread);
-        if (calibratedBps === null || calibratedBps <= descriptor.minimumBrokerSpreadBps) return;
-        const calibratedSpread = spreadBaseUnits(amount, calibratedBps);
-        const calibratedBorrowerFee = BigInt(quote.selected.upstreamFeeBaseUnits) + calibratedSpread;
-        if (mandate.maxBorrowerFeeBaseUnits !== null
-          && calibratedBorrowerFee > BigInt(mandate.maxBorrowerFeeBaseUnits)) return;
-        await this.enqueueSpreadConfiguration({
-          mandate,
-          bridge: descriptor.address,
-          spreadBps: calibratedBps,
-          reason: 'dynamic_gas_calibration',
+      for (let pass = 0; pass < MAX_CALIBRATION_PASSES; pass += 1) {
+        const prepared = buildGhostWalletBorrowerTransactionWithSpread({
+          quote,
+          requestedSpreadBaseUnits: requestedSpread,
+          maxBorrowerFeeBaseUnits: mandateMaxFee,
         });
-        return;
+        const request = { from: wallet.address, to: prepared.to, data: prepared.data, value: prepared.value };
+        await provider.call(request);
+        const [gasRaw, feeData] = await Promise.all([provider.estimateGas(request), provider.getFeeData()]);
+        const gasUnits = BigInt(gasRaw.toString());
+        const feePerGas = feeData.maxFeePerGas || feeData.gasPrice;
+        if (!feePerGas || feePerGas.lte(0)) return;
+        const economics = await evaluateGhostWalletControllerEconomics({
+          chain: mandate.chain,
+          provider,
+          asset: mandate.asset,
+          gasUnits,
+          feePerGasWei: BigInt(feePerGas.toString()),
+          expectedSpreadBaseUnits: requestedSpread,
+        });
+        if (economics.approved) {
+          finalPrepared = prepared;
+          finalEconomics = economics;
+          finalGasUnits = gasUnits;
+          finalFeePerGas = BigInt(feePerGas.toString());
+          break;
+        }
+        const nextSpread = maxBigInt(requestedSpread + 1n, economics.gasCostAssetBaseUnits + 1n);
+        if (nextSpread <= requestedSpread) return;
+        requestedSpread = nextSpread;
       }
 
+      if (!finalPrepared || !finalEconomics) return;
+      const blockNumber = await provider.getBlockNumber();
       this.lastOpportunityAt = Date.now();
       if (!ghostWalletEngine.isLiveExecutionEnabled()) return;
 
@@ -374,22 +341,23 @@ class GhostWalletAutonomousController {
           chain: mandate.chain,
           mandateId: mandate.id,
           mandateSource: mandate.source,
-          to: quote.transaction.to,
-          data: quote.transaction.data,
-          value: quote.transaction.value,
+          to: finalPrepared.to,
+          data: finalPrepared.data,
+          value: finalPrepared.value,
           borrower: mandate.borrower,
           asset: mandate.asset,
           amountBaseUnits: mandate.amountBaseUnits,
           sourceKind: quote.selected.sourceKind,
           lender: quote.selected.lender,
-          expectedSpreadBaseUnits: quote.selected.ghostSpreadBaseUnits,
-          quotedBorrowerFeeBaseUnits: quote.selected.borrowerFeeBaseUnits,
+          expectedSpreadBaseUnits: requestedSpread.toString(),
+          quotedBorrowerFeeBaseUnits: finalPrepared.borrowerFeeBaseUnits.toString(),
           quoteObservedAt: quote.selected.observedAt,
-          preflightGasUnits: gasUnits.toString(),
-          preflightFeePerGasWei: feePerGas.toString(),
-          preflightGasCostAssetBaseUnits: economics.gasCostAssetBaseUnits.toString(),
-          preflightExpectedNetProfitBaseUnits: economics.expectedNetProfitBaseUnits.toString(),
+          preflightGasUnits: finalGasUnits.toString(),
+          preflightFeePerGasWei: finalFeePerGas.toString(),
+          preflightGasCostAssetBaseUnits: finalEconomics.gasCostAssetBaseUnits.toString(),
+          preflightExpectedNetProfitBaseUnits: finalEconomics.expectedNetProfitBaseUnits.toString(),
           preflightBlockNumber: blockNumber,
+          calibrationPassLimit: MAX_CALIBRATION_PASSES,
         },
       });
       this.profitablePrepared += 1;
@@ -418,7 +386,8 @@ export const GHOST_WALLET_AUTONOMOUS_CONTROLLER_POLICY = {
   strictPositiveAllInNetBeforeQueue: true,
   hardBpsProfitAdmissionFloor: false,
   configuredSpreadFloorDefaultBps: 0,
-  dynamicSpreadCalibrationFromExactGas: true,
+  perTransactionSpreadCalibrationFromExactGas: true,
+  globalSpreadConfigurationTransactionRequired: false,
   durableSubmissionLedgerRequired: true,
   chainFailureLocal: true,
   zeroCapitalIntegration: false,
