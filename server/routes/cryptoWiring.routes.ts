@@ -1,12 +1,14 @@
 import express from 'express';
 import { getCryptara } from '../services/cryptara';
 import { pipeline } from '../services/cryptocrawl/integration/master-pipeline.js';
+import { ghostWalletAutonomousController } from '../services/cryptocrawl/ghost-wallet/ghost-wallet-autonomous-controller.js';
 import { quoteGhostWalletBorrowerRoute } from '../services/cryptocrawl/ghost-wallet/ghost-wallet-borrower-surface.js';
 import {
   cancelGhostWalletBorrowerMandate,
   registerGhostWalletBorrowerMandate,
 } from '../services/cryptocrawl/ghost-wallet/ghost-wallet-borrower-mandate.js';
 import { getGhostWalletExternalBridgeDescriptor } from '../services/cryptocrawl/ghost-wallet/ghost-wallet-external-bridge.js';
+import { getGhostWalletPerformanceSnapshot } from '../services/cryptocrawl/ghost-wallet/ghost-wallet-performance-intelligence.js';
 import { ghostWalletProviderMesh, type GhostWalletChain } from '../services/cryptocrawl/ghost-wallet/ghost-wallet-provider-mesh.js';
 import { createLogger } from '../logger';
 
@@ -24,18 +26,9 @@ interface WireCheckResponse {
   noExecution: boolean;
   noIntervals: boolean;
   cryptaraMode: string;
-  signal: {
-    type: 'sentiment';
-    output: unknown;
-  };
-  decision: {
-    verdict: WireVerdict;
-    reason: string;
-  };
-  executionStub: {
-    executed: false;
-    reason: string;
-  };
+  signal: { type: 'sentiment'; output: unknown };
+  decision: { verdict: WireVerdict; reason: string };
+  executionStub: { executed: false; reason: string };
 }
 
 function truthyEnv(name: string): boolean {
@@ -60,7 +53,6 @@ function enforceGhostRequestBounds(req: express.Request): void {
   if (Array.isArray(candidates) && candidates.length > maxCandidates) {
     throw new Error(`GHOST_WALLET_LENDER_CANDIDATE_LIMIT_EXCEEDED:${maxCandidates}`);
   }
-
   const borrowerData = req.body?.borrowerData;
   if (borrowerData !== undefined) {
     const value = String(borrowerData);
@@ -68,7 +60,6 @@ function enforceGhostRequestBounds(req: express.Request): void {
     const payloadBytes = value.startsWith('0x') ? Math.ceil(Math.max(0, value.length - 2) / 2) : Buffer.byteLength(value);
     if (payloadBytes > maxBytes) throw new Error(`GHOST_WALLET_BORROWER_DATA_LIMIT_EXCEEDED:${maxBytes}`);
   }
-
   const now = Date.now();
   const key = req.ip || req.socket.remoteAddress || 'unknown';
   const limit = boundedPositiveInt('GHOST_WALLET_QUOTE_REQUESTS_PER_MINUTE', 30, 600);
@@ -79,7 +70,6 @@ function enforceGhostRequestBounds(req: express.Request): void {
     existing.count += 1;
     if (existing.count > limit) throw new Error(`GHOST_WALLET_QUOTE_RATE_LIMIT_EXCEEDED:${limit}`);
   }
-
   if (ghostQuoteRate.size > 10_000) {
     for (const [entryKey, value] of ghostQuoteRate) {
       if (now - value.startedAt >= GHOST_QUOTE_RATE_WINDOW_MS) ghostQuoteRate.delete(entryKey);
@@ -91,46 +81,27 @@ router.post('/wire-check', async (_req, res) => {
   const noExecution = truthyEnv('NO_EXECUTION');
   const noIntervals = truthyEnv('NO_INTERVALS');
   const cryptaraMode = process.env.CRYPTARA_MODE || 'UNSET';
-
   try {
-    // Signal synthesis: on-demand call only (no timers)
     const cryptara = getCryptara();
     await cryptara.initialize();
     const sentiment = await cryptara.analyzeSentiment();
-
-    // Decision engine: deterministic gate for Stage 5
     const verdict: WireVerdict = (noExecution && noIntervals) ? 'PASS' : 'FAIL';
     const reason = verdict === 'PASS'
       ? 'Stage 5 gate satisfied (NO_EXECUTION + NO_INTERVALS)'
       : 'Stage 5 gate failed: require NO_EXECUTION=true and NO_INTERVALS=true';
-
     const response: WireCheckResponse = {
-      ok: verdict === 'PASS',
-      stage: 5,
-      noExecution,
-      noIntervals,
-      cryptaraMode,
+      ok: verdict === 'PASS', stage: 5, noExecution, noIntervals, cryptaraMode,
       signal: { type: 'sentiment', output: sentiment },
       decision: { verdict, reason },
       executionStub: { executed: false, reason: 'Execution disabled in Stage 5' },
     };
-
     return res.json(response);
   } catch (error: any) {
     log.error('Wire-check failed', { error: error?.message ?? String(error) });
-    return res.status(500).json({
-      ok: false,
-      stage: 5,
-      error: error?.message ?? String(error),
-    });
+    return res.status(500).json({ ok: false, stage: 5, error: error?.message ?? String(error) });
   }
 });
 
-/**
- * Public Ghost Wallet capability manifest. The intermediary is only the atomic
- * middleman. External callers may submit quote transactions themselves, while the
- * separate Ghost controller may initiate only cryptographically authorized mandates.
- */
 router.get('/ghost-wallet/capabilities', async (_req, res) => {
   try {
     await ghostWalletProviderMesh.initialize();
@@ -143,6 +114,7 @@ router.get('/ghost-wallet/capabilities', async (_req, res) => {
       intermediarySubmitsTransactions: false,
       executionModes: ['external_caller', 'autonomous_controller_signed_mandate'],
       autonomousBorrowerAuthorization: ['borrower_erc1271', 'owner_eoa', 'owner_erc1271'],
+      autonomousAmountAuthorization: ['exact_amount', 'signed_min_preferred_max_range'],
       operatorMonetaryInputRequiredForPrincipal: false,
       fixedBpsProfitFloor: false,
       perTransactionSpreadPricing: true,
@@ -153,6 +125,11 @@ router.get('/ghost-wallet/capabilities', async (_req, res) => {
       perRequestBorrowerDataBytesLimit: boundedPositiveInt('GHOST_WALLET_MAX_BORROWER_DATA_BYTES', 16_384, 131_072),
       perIpQuoteRequestsPerMinute: boundedPositiveInt('GHOST_WALLET_QUOTE_REQUESTS_PER_MINUTE', 30, 600),
       adapters: ['erc3156', 'aave_v3', 'morpho_blue', 'balancer_v2'],
+      adaptiveRpcHedging: true,
+      providerCircuitBreaking: true,
+      gasAdjustedAutonomousRouteSelection: true,
+      dynamicRangeSizing: true,
+      liveProfitabilityTelemetry: true,
       alchemyDependency: false,
       zeroCapitalExecutionAuthority: false,
       providerMesh: ghostWalletProviderMesh.getStatus(),
@@ -167,10 +144,16 @@ router.get('/ghost-wallet/capabilities', async (_req, res) => {
   }
 });
 
-/**
- * On-demand borrower quote. The quote surface never submits. Healthy Ghost RPCs and
- * Ghost-owned lender adapters are measured in parallel; the cheapest live route wins.
- */
+router.get('/ghost-wallet/telemetry', (_req, res) => {
+  return res.json({
+    ok: true,
+    authority: 'telemetry_only_terminal_settlement_remains_profit_truth',
+    controller: ghostWalletAutonomousController.getStatus(),
+    providers: ghostWalletProviderMesh.getStatus(),
+    performance: getGhostWalletPerformanceSnapshot(),
+  });
+});
+
 router.post('/ghost-wallet/quote', async (req, res) => {
   try {
     enforceGhostRequestBounds(req);
@@ -205,11 +188,6 @@ router.post('/ghost-wallet/quote', async (req, res) => {
   }
 });
 
-/**
- * Registers a standing autonomous borrower mandate only after cryptographic
- * authorization is proven. Registration itself does not prove repayment ability;
- * the controller still exact-simulates every concrete transaction before signing.
- */
 router.post('/ghost-wallet/borrower-mandate', async (req, res) => {
   try {
     enforceGhostRequestBounds(req);
@@ -217,7 +195,10 @@ router.post('/ghost-wallet/borrower-mandate', async (req, res) => {
       chain: ghostChain(req.body?.chain),
       borrower: String(req.body?.borrower || ''),
       asset: String(req.body?.asset || ''),
-      amountBaseUnits: String(req.body?.amountBaseUnits || ''),
+      amountBaseUnits: req.body?.amountBaseUnits === undefined ? undefined : String(req.body.amountBaseUnits),
+      minAmountBaseUnits: req.body?.minAmountBaseUnits === undefined ? undefined : String(req.body.minAmountBaseUnits),
+      preferredAmountBaseUnits: req.body?.preferredAmountBaseUnits === undefined ? undefined : String(req.body.preferredAmountBaseUnits),
+      maxAmountBaseUnits: req.body?.maxAmountBaseUnits === undefined ? undefined : String(req.body.maxAmountBaseUnits),
       maxBorrowerFeeBaseUnits: String(req.body?.maxBorrowerFeeBaseUnits || ''),
       borrowerData: req.body?.borrowerData === undefined ? undefined : String(req.body.borrowerData),
       authorizer: String(req.body?.authorizer || ''),
@@ -239,7 +220,6 @@ router.post('/ghost-wallet/borrower-mandate', async (req, res) => {
   }
 });
 
-/** Signed revocation by the same borrower authority. */
 router.post('/ghost-wallet/borrower-mandate/cancel', async (req, res) => {
   try {
     enforceGhostRequestBounds(req);
@@ -266,11 +246,7 @@ router.post('/deployment-review', async (_req, res) => {
     return res.json({ ok: review.finalStatus === 'ready', review });
   } catch (error: any) {
     log.error('Deployment review failed', { error: error?.message ?? String(error) });
-    return res.status(500).json({
-      ok: false,
-      stage: 5,
-      error: error?.message ?? String(error),
-    });
+    return res.status(500).json({ ok: false, stage: 5, error: error?.message ?? String(error) });
   }
 });
 
