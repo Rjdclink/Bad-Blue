@@ -1,4 +1,5 @@
 import type { ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
+import { livePriceMesh } from '../bridge/live-price-mesh.js';
 import { measuredCandidateRegistry, type MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
 
 export interface ApeDirectionalMarketView {
@@ -12,6 +13,24 @@ export interface ApeDirectionalMarketView {
 }
 
 const BPS_PRECISION_SCALE = 1_000_000n;
+let residentPricePrewarmInstalled = false;
+
+function installResidentPricePrewarm(): void {
+  if (residentPricePrewarmInstalled) return;
+  residentPricePrewarmInstalled = true;
+  measuredCandidateRegistry.onUpdate(candidate => {
+    if (candidate.topology !== 'ZERO_CAPITAL_ATOMIC') return;
+    if (candidate.expiresAt <= Date.now()) return;
+    if (!['observed', 'enriched', 'deterministic_positive', 'eligible'].includes(candidate.status)) return;
+    const symbols = [...new Set(candidate.assets.map(symbol => symbol.trim()).filter(Boolean))];
+    if (symbols.length === 0) return;
+    // Acquisition only: start shared singleflight/cached price work immediately after
+    // Stage One publishes measurement. No caller awaits this on the APE decision path.
+    livePriceMesh.primeResidentSymbolPrices(symbols);
+  });
+}
+
+installResidentPricePrewarm();
 
 function boundedInteger(raw: unknown, fallback: number, min: number, max: number): number {
   const parsed = Number(raw);
