@@ -7,6 +7,7 @@ const read = path => fs.readFileSync(path, 'utf8');
 const registry = read('server/services/cryptocrawl/discovery/measured-candidate-registry.ts');
 const routeAuthority = read('server/services/cryptocrawl/discovery/zero-capital-route-authority.ts');
 const discovery = read('server/services/cryptocrawl/discovery/zero-capital-canonical-discovery.ts');
+const stageOnePolicy = read('server/services/cryptocrawl/discovery/stage-one-candidate-policy.ts');
 const dynamicRoutes = read('server/services/cryptocrawl/discovery/dynamic-zero-capital-routes.ts');
 const routePreselection = read('server/services/cryptocrawl/discovery/zero-capital-route-preselection.ts');
 const routeQuoter = read('server/services/cryptocrawl/execution/adapters/onchain-route-quoter.ts');
@@ -55,18 +56,25 @@ for (const field of [
 assert.match(registry, /zeroCapitalBps:/);
 assert.match(registry, /nearBreakEven:/);
 
-// Operator-authorized Stage One measured-priority architecture: no fixed BPS admission floor.
-assert.match(discovery, /STAGE_ONE_MEASURED_PRIORITY_INVARIANT/);
-assert.doesNotMatch(discovery, /STAGE_ONE_ZERO_CAPITAL_ENTRY_FLOOR_BPS/);
-assert.doesNotMatch(discovery, /atomicSurplusEntryFloorBps/);
-assert.match(discovery, /stageOneFixedBpsFloorRemoved: true/);
-assert.match(discovery, /stageOneAdmission: 'fresh_finite_exact_measurement'/);
+// Operator-reinstated Stage One output contract: discovery remains broad, but 100% of
+// promoted candidates and APE inputs must be strictly above -10 BPS.
+assert.match(discovery, /STAGE_ONE_LOCKED_INVARIANT/);
+assert.match(stageOnePolicy, /STAGE_ONE_ZERO_CAPITAL_OUTPUT_FLOOR_BPS = -10/);
+assert.match(stageOnePolicy, /netProfitBps > STAGE_ONE_ZERO_CAPITAL_OUTPUT_FLOOR_BPS/);
+assert.doesNotMatch(stageOnePolicy, /netProfitBps >= STAGE_ONE_ZERO_CAPITAL_OUTPUT_FLOOR_BPS/);
+assert.match(discovery, /clearsStageOneCandidateOutputFloor\(opportunity\)/);
+assert.match(discovery, /rescueReady = rescueReady\.filter\(clearsStageOneCandidateOutputFloor\)/);
+assert.match(discovery, /stageOneCandidateComparator: 'netProfitBps > -10'/);
+assert.match(discovery, /stageOneAtFloorPromoted: false/);
+assert.match(discovery, /stageOneAdmission: 'fresh_finite_exact_measurement_strictly_above_negative_10_bps'/);
 assert.match(discovery, /selectApeStageOneHotSet\(exact, 3\)/);
 assert.match(discovery, /opportunities: apeHot/);
 assert.match(discovery, /rescueReady = exact\.map\(opportunity => rescuedById\.get\(opportunity\.id\) \?\? opportunity\)/);
 assert.match(discovery, /configuredAndDynamicMeasurementParallel: true/);
 assert.match(discovery, /const \[configured, dynamicQuotes\] = await Promise\.all\(\[configuredTask, dynamicTask\]\)/);
-assert.match(discovery, /stageOneLock: 'operator_authorized_measured_priority_2026_09_16'/);
+assert.match(discovery, /stageOneLock: 'explicit_operator_authorization_required'/);
+assert.match(measuredAdmission, /stage_one_output_floor_violation/);
+assert.match(measuredAdmission, /if \(!clearsStageOneOutputFloorBps\(opportunity\.netProfitBps\)\)/);
 assert.doesNotMatch(discovery, /ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS/);
 assert.doesNotMatch(discovery, /atomicSurplusTargetBps/);
 
@@ -344,10 +352,12 @@ assert.equal(
 
 console.log(JSON.stringify({
   zeroCapitalBpsPropagation: 'verified_on_single_canonical_pipeline',
-  stageOneZeroCapitalLock: 'operator_authorized_measured_priority_2026_09_16',
-  stageOneFixedBpsFloorRemoved: true,
-  stageOneAdmission: 'fresh_finite_exact_measurement',
-  stageOneHotLane: 'direction_neutral_market_best_reverse_and_hedge',
+  stageOneZeroCapitalLock: 'strictly_above_negative_10_bps',
+  stageOneOutputFloorBps: -10,
+  stageOneComparator: 'netProfitBps > -10',
+  stageOneFixedBpsFloorRemoved: false,
+  stageOneAdmission: 'fresh_finite_exact_measurement_strictly_above_negative_10_bps',
+  stageOneHotLane: 'direction_neutral_market_best_reverse_and_hedge_within_strict_floor',
   atomicProfitabilityEngine: 'APE',
   fusedZeroCopyContinuation: true,
   stageOneObjectCopies: 0,
