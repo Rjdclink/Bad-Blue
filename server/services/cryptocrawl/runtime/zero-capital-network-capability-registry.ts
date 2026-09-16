@@ -101,6 +101,32 @@ for (const [network, chainId] of [
   });
 }
 
+for (const [network, chainId, rpcUrl, provenance] of [
+  ['berachain', 80094, 'https://rpc.berachain.com', 'berachain_mainnet_chain_id_80094'],
+  ['monad', 143, 'https://rpc.monad.xyz', 'monad_mainnet_chain_id_143'],
+  ['hyperevm', 999, 'https://rpc.hyperliquid.xyz/evm', 'hyperevm_mainnet_chain_id_999'],
+] as const) {
+  seed({
+    id: `evm:${network}`,
+    family: 'evm',
+    network,
+    chainId,
+    rpcUrl,
+    roles: ['discovery'],
+    bootstrapEligible: false,
+    operatorPrincipalRequired: false,
+    operatorNativeFeeRequired: false,
+    requiresSystemOwnedCapital: false,
+    providerEvidenceReady: false,
+    feePaymentEvidenceReady: false,
+    settlementEvidenceReady: false,
+    executionReady: false,
+    source: 'official_docs_verified',
+    provenance: [provenance, 'official_public_rpc_discovery_fallback', 'execution_fail_closed_until_route_local_zero_capital_proof'],
+    reason: `${network} is enabled for route-local discovery and measurement; execution remains disabled until provider, receiver/gas and terminal settlement evidence are measured.`,
+  });
+}
+
 seed({
   id: 'evm:sei',
   family: 'evm',
