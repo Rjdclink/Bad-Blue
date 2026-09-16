@@ -38,15 +38,18 @@ has(scheduler, 'candidate.missingInformation.length === 0', 'scheduler must reta
 
 // Shared-principal composition is an internal tactic of the single Atomic-BPS
 // pipeline. Stale evidence cannot gain economic/execution authority and the exact
-// simulation deadline remains bounded by member freshness. Positive acceptance does
-// not terminate the bounded variant/group search: the best measured composition is
-// retained through the candidate's remaining executable window.
+// simulation deadline remains bounded by member freshness. Scheduler time limits
+// bound proof work without shortening the evidence freshness stored on the result.
+// Positive acceptance does not terminate the bounded variant/group search: the best
+// measured composition is retained through the candidate's remaining executable window.
 has(gateway, 'runZeroCapitalAtomicStackTactic', 'single Atomic-BPS gateway must own composite tactic triggering');
 has(gateway, 'compositeTacticInsideSamePipeline: true', 'composite tactic must remain inside the single transformation pipeline');
 has(gateway, 'compositeTacticBlocksSingleRouteReturn: false', 'composite tactic must not delay a profitable single route beyond its execution reserve');
 has(stack, "candidate.status !== 'blocked'", 'atomic stack tactic must reject blocked candidates');
 has(stack, 'if (input.opportunities.some(opportunity => opportunity.expiresAt <= now)) return null;', 'atomic stack exact simulation must reject stale opportunity evidence');
-has(stack, 'const expiresAt = Math.min(...input.opportunities.map(opportunity => opportunity.expiresAt), input.deadlineAt ?? Number.MAX_SAFE_INTEGER);', 'atomic stack exact proof deadline must remain bounded by member evidence expiry');
+has(stack, 'const evidenceExpiresAt = Math.min(...input.opportunities.map(opportunity => opportunity.expiresAt));', 'atomic stack must preserve member evidence expiry independently of scheduler deadline');
+has(stack, 'const hardDeadlineAt = Math.min(evidenceExpiresAt, input.deadlineAt ?? Number.MAX_SAFE_INTEGER);', 'atomic stack exact proof deadline must remain bounded by member evidence expiry');
+has(stack, 'expiresAt: evidenceExpiresAt', 'scheduler deadline must not shorten persisted composite evidence freshness');
 has(stack, "candidate.depth.status !== 'unavailable'", 'atomic stack tactic must require measurable route depth');
 has(stack, 'input_authority:single_atomic_bps_engine_stage1_admitted_candidates', 'atomic stack tactic must inherit its intake authority from the locked Stage-1 stream');
 has(stack, 'stageOneThresholdAuthority: false', 'atomic stack tactic must not own Stage-1 threshold authority');
