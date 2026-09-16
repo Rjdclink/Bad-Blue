@@ -19,6 +19,7 @@ import type { GasFundingDecision } from '../capital-free/dynamic-gas-funding-eng
 import { repriceZeroCapitalProviderEconomics } from '../integration/zero-capital-flash-provider-wiring.js';
 import { repriceZeroCapitalAlternativeCapital } from '../integration/zero-capital-alternative-capital-wiring.js';
 import { runFairZeroCapitalProfitabilityRescue } from '../integration/zero-capital-profitability-rescue-fair.js';
+import { selectApeStageOneHotSet } from '../integration/ape-directional-market.js';
 import { zeroCapitalRouteEvidenceRegistry } from '../optimization/zero-capital-route-evidence-registry.js';
 import { getProvenZeroCapitalGasFundingDecision } from '../runtime/system-owned-gas-funding-proof-wiring.js';
 import { executeSystemOwnedNativeTransaction } from '../execution/system-owned-native-transaction.js';
@@ -81,12 +82,13 @@ let receiverWatchdogExpirations = 0;
 let chainWatchdogExpirations = 0;
 let observationOnlyCycles = 0;
 let filteredBelowStageOneFloor = 0;
+let stageOneMeasuredDeferredFromHotLane = 0;
 
-// STAGE_ONE_LOCKED_INVARIANT — production baseline 907ee69eeee3436763e64e39b9db017ad833222c.
-// Preserve every raw observation, but only promote finite ZERO_CAPITAL_ATOMIC candidates
-// at or above -10 BPS into the Stage-1 candidate stream. This is classification only,
-// never execution-profitability authority. Change only with explicit operator authorization.
-const STAGE_ONE_ZERO_CAPITAL_ENTRY_FLOOR_BPS = -10;
+// STAGE_ONE_MEASURED_PRIORITY_INVARIANT — operator-authorized 2026-09-16.
+// Stage One preserves every raw observation and publishes every fresh finite exact
+// ZERO_CAPITAL_ATOMIC measurement. No fixed BPS threshold decides APE admission.
+// Expensive rescue work is bounded instead by direction-neutral market hot lanes;
+// non-hot measured routes remain discoverable and continue canonical repricing.
 
 function runtime(): CanonicalZeroCapitalRuntime {
   return zeroCapitalEngine as unknown as CanonicalZeroCapitalRuntime;
@@ -100,10 +102,6 @@ function scanDelayMs(): number {
 function boundedWatchdogMs(raw: string | undefined, fallback: number, min: number, max: number): number {
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? Math.max(min, Math.min(max, Math.trunc(parsed))) : fallback;
-}
-
-function atomicSurplusEntryFloorBps(): number {
-  return STAGE_ONE_ZERO_CAPITAL_ENTRY_FLOOR_BPS;
 }
 
 function receiverFleetWatchdogMs(): number {
@@ -353,13 +351,10 @@ function recordPreselectionCandidate(input: {
     });
   }
 
-  // Preserve raw route evidence for discovery/research, but Stage 1 only promotes
-  // finite Zero-Initial-Capital candidates at or above the locked -10 BPS floor.
+  // Preserve every observation. Fresh finite exact measurements are published without
+  // an arbitrary BPS floor; expensive APE rescue is bounded later by the market hot lane.
   zeroCapitalRouteEvidenceRegistry.record(opportunity);
-  if (!Number.isFinite(opportunity.netProfitBps) || opportunity.netProfitBps < atomicSurplusEntryFloorBps()) {
-    filteredBelowStageOneFloor++;
-    return;
-  }
+  if (!Number.isFinite(opportunity.netProfitBps)) return;
 
   measuredCandidateRegistry.record({
     opportunityId: opportunity.id,
@@ -377,8 +372,8 @@ function recordPreselectionCandidate(input: {
       observedAt: opportunity.timestamp,
       amountIn: step.amountIn.toString(),
       amountOut: step.expectedAmountOut.toString(),
-      executable: false,
-      provenance: ['direct_contract_quote', 'provider_selection_pending'],
+      executable: true,
+      provenance: ['direct_contract_quote', 'exact_route_measurement', 'capital_source_selection_pending'],
     })),
     depth: { status: 'measured', detail: 'Exact route legs returned live contract/router quote output' },
     economics: canonicalEconomics(opportunity, quote),
@@ -399,7 +394,7 @@ function recordPreselectionCandidate(input: {
       'quoted_amount_out_embeds_current_route_economics',
       'min_output_tolerance_not_expected_slippage_cost',
       'eligibility_authority:canonical_measured_capital_repricing_only',
-      positive ? 'deterministic_positive_net' : 'near_break_even_observation_only',
+      positive ? 'deterministic_positive_net' : 'measured_negative_or_break_even',
       'synthetic_evidence:false',
     ],
   });
@@ -424,27 +419,31 @@ async function scanOneChain(
     ? funding.reason
     : receiverReady ? funding.reason : 'verified_execution_receiver_unavailable';
 
-  const configured = await target.scanChain(chain, provider).catch(error => {
+  // Configured and dynamic measurement are independent Stage-One acquisition lanes.
+  // Start both together so dynamic breadth cannot consume the freshness window of
+  // already-known configured routes, and vice versa.
+  const configuredTask = target.scanChain(chain, provider).catch(error => {
     logger.warn('[ZeroCapitalDiscovery] Configured-route measurement degraded', {
       component: 'CanonicalZeroCapitalDiscovery', chain,
       error: error instanceof Error ? error.message : String(error),
     });
     return [] as ZeroCapitalOpportunity[];
   });
-  if (!isCurrentChainScanGeneration(chain, generation)) return;
-  for (const opportunity of configured) {
-    if (!isCurrentChainScanGeneration(chain, generation)) return;
-    recordPreselectionCandidate({ opportunity, source: 'configured', resourceReady, resourceReason });
-  }
-
-  const dynamicQuotes = await discoverDynamicZeroCapitalQuotes(chain, provider, funding.mode).catch(error => {
+  const dynamicTask = discoverDynamicZeroCapitalQuotes(chain, provider, funding.mode).catch(error => {
     logger.warn('[ZeroCapitalDiscovery] Dynamic graphless measurement degraded', {
       component: 'CanonicalZeroCapitalDiscovery', chain,
       error: error instanceof Error ? error.message : String(error),
     });
     return [] as QuotedZeroCapitalRoute[];
   });
+  const [configured, dynamicQuotes] = await Promise.all([configuredTask, dynamicTask]);
   if (!isCurrentChainScanGeneration(chain, generation)) return;
+
+  for (const opportunity of configured) {
+    if (!isCurrentChainScanGeneration(chain, generation)) return;
+    recordPreselectionCandidate({ opportunity, source: 'configured', resourceReady, resourceReason });
+  }
+
   const block = dynamicQuotes.length > 0 ? await provider.getBlock('latest') : null;
   if (!isCurrentChainScanGeneration(chain, generation)) return;
   const dynamic: ZeroCapitalOpportunity[] = [];
@@ -461,23 +460,29 @@ async function scanOneChain(
 
   const exact = [...configured, ...dynamic].filter(opportunity =>
     opportunity.expiresAt > Date.now()
+    && opportunity.flashLoanAmount > 0n
     && Number.isFinite(opportunity.netProfitBps)
-    && opportunity.netProfitBps >= atomicSurplusEntryFloorBps()
   );
   if (exact.length === 0 || !isCurrentChainScanGeneration(chain, generation)) return;
 
-  // Stage-1 object identity remains unchanged at the boundary. The resident APE
-  // fast path runs first, then its bounded measured actuator may asynchronously
-  // derive fresh rescue evidence before canonical capital-source repricing.
-  let rescueReady: ZeroCapitalOpportunity[];
+  // Stage One ranks a market, not thousands of equivalent variants. Protect the best
+  // measured direction, the strongest measured opposite direction, and one hedge per
+  // direction-neutral market. The remaining exact measurements stay in the canonical
+  // provider-repricing path and can become hot on the next state update.
+  const apeHot = selectApeStageOneHotSet(exact, 3);
+  stageOneMeasuredDeferredFromHotLane += Math.max(0, exact.length - apeHot.length);
+
+  let rescueReady = [...exact];
   try {
-    rescueReady = await runFairZeroCapitalProfitabilityRescue({
+    const rescuedHot = await runFairZeroCapitalProfitabilityRescue({
       chain,
       provider,
-      opportunities: exact,
+      opportunities: apeHot,
       configuredRoutes: executionRoutes(target),
       fromQuotedRoute: target.fromQuotedRoute,
     });
+    const rescuedById = new Map(rescuedHot.map(opportunity => [opportunity.id, opportunity]));
+    rescueReady = exact.map(opportunity => rescuedById.get(opportunity.id) ?? opportunity);
   } catch (error) {
     logger.warn('[ZeroCapitalDiscovery] Fused profitability rescue degraded; original fresh candidates continue through canonical provider repricing', {
       component: 'CanonicalZeroCapitalDiscovery',
@@ -486,8 +491,8 @@ async function scanOneChain(
       executionAuthority: false,
       staleQuotePreserved: false,
       stageOneClassificationChanged: false,
+      nonHotMeasuredCandidatesPreserved: true,
     });
-    rescueReady = exact;
   }
   if (rescueReady.length === 0 || !isCurrentChainScanGeneration(chain, generation)) return;
 
@@ -629,10 +634,13 @@ export async function startCanonicalZeroCapitalDiscovery(): Promise<void> {
     alternativeCapitalAuthority: 'configured_onchain_intermediary_exact_simulation_only',
     alternativeCapitalDoesNotDisplaceStrictPositiveFlashSelection: true,
     nonProfitableFlashSelectionCompletesProfitabilitySearch: false,
-    stageOneCandidateFloorBps: atomicSurplusEntryFloorBps(),
-    stageOneBelowFloorPromoted: false,
-    rawBelowFloorRouteEvidencePreserved: true,
-    stageOneLock: 'explicit_operator_authorization_required',
+    stageOneCandidateFloorBps: null,
+    stageOneFixedBpsFloorRemoved: true,
+    stageOneAdmission: 'fresh_finite_exact_measurement',
+    stageOneHotLane: 'direction_neutral_market_best_reverse_and_hedge',
+    stageOneExplorationRemainsMeasuredAndRepriced: true,
+    rawRouteEvidencePreserved: true,
+    stageOneLock: 'operator_authorized_measured_priority_2026_09_16',
     profitabilityFinishLine: 'strict_positive_all_in_base_units',
     bpsAuthority: 'measured_candidate_registry',
     receiverFleetWatchdogMs: receiverFleetWatchdogMs(),
@@ -642,6 +650,7 @@ export async function startCanonicalZeroCapitalDiscovery(): Promise<void> {
     duplicateHungTaskSuppression: true,
     timedOutChainScanOwnershipReleased: true,
     lateTimedOutScanGenerationInvalidated: true,
+    configuredAndDynamicMeasurementParallel: true,
     dynamicGraphlessDiscovery: true,
     runtimeMethodMutation: false,
     startupRetryableAfterInitializationFailure: true,
@@ -668,8 +677,12 @@ export function getCanonicalZeroCapitalDiscoverySnapshot() {
     observed,
     repriced,
     filteredBelowStageOneFloor,
-    stageOneCandidateFloorBps: atomicSurplusEntryFloorBps(),
-    stageOneLock: 'explicit_operator_authorization_required',
+    stageOneMeasuredDeferredFromHotLane,
+    stageOneCandidateFloorBps: null,
+    stageOneFixedBpsFloorRemoved: true,
+    stageOneAdmission: 'fresh_finite_exact_measurement',
+    stageOneHotLane: 'direction_neutral_market_best_reverse_and_hedge',
+    stageOneLock: 'operator_authorized_measured_priority_2026_09_16',
     profitabilityFinishLine: 'strict_positive_all_in_base_units',
     readyReceiverChains,
     receiverWatchdogExpirations,

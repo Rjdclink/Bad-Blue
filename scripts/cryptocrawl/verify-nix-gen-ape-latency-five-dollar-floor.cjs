@@ -27,6 +27,8 @@ const collectTsFiles = relative => {
 
 const floor = read('server/services/cryptocrawl/integration/zero-capital-profit-output-floor.ts');
 const stageOne = read('server/services/cryptocrawl/discovery/zero-capital-canonical-discovery.ts');
+const measuredAdmission = read('server/services/cryptocrawl/integration/ape-measured-opportunity-admission.ts');
+const directionalMarket = read('server/services/cryptocrawl/integration/ape-directional-market.ts');
 const fair = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-fair.ts');
 const v4 = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v4.ts');
 const merit = read('server/services/cryptocrawl/integration/ape-adaptive-command.ts');
@@ -51,11 +53,17 @@ has(floor, 'export function requiredProfitBaseUnitsForFiveDollarOutput', 'legacy
 has(floor, 'return requiredStrictPositiveProfitBaseUnits(opportunity)', 'legacy base-unit helper must resolve to strict-positive authority');
 assert.ok(!floor.includes('ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD = 5'), 'hard $5 threshold reintroduced');
 
-// Stage 1 remains locked and does not import Stage-2/execution threshold authority.
-has(stageOne, 'STAGE_ONE_LOCKED_INVARIANT', 'Stage-1 lock marker missing');
-has(stageOne, 'STAGE_ONE_ZERO_CAPITAL_ENTRY_FLOOR_BPS = -10', 'Stage-1 locked -10 BPS floor changed');
+// Stage One is operator-authorized for measured-priority admission, without importing
+// execution-profitability threshold or APE lease authority.
+has(stageOne, 'STAGE_ONE_MEASURED_PRIORITY_INVARIANT', 'Stage-1 measured-priority marker missing');
+has(stageOne, 'stageOneFixedBpsFloorRemoved: true', 'Stage-1 fixed BPS floor reintroduced');
+has(stageOne, 'selectApeStageOneHotSet(exact, 3)', 'Stage-1 direction-aware hot set missing');
+assert.ok(!stageOne.includes('STAGE_ONE_ZERO_CAPITAL_ENTRY_FLOOR_BPS'), 'Stage 1 fixed -10 BPS floor reintroduced');
 assert.ok(!stageOne.includes('zero-capital-profit-output-floor'), 'Stage 1 must not import output threshold authority');
 assert.ok(!stageOne.includes('ape-profitable-snapshot-lease'), 'Stage 1 must remain independent from APE lease state');
+has(measuredAdmission, 'export function assessApeMeasuredAdmission', 'fresh measured APE admission authority missing');
+has(directionalMarket, 'canonicalCyclicTokenPath', 'direction-neutral cyclic market identity missing');
+has(floor, "placement.cohort === 0 && placement.role !== 'reserve'", 'APE stateful work is not bounded to the hot market lane');
 
 // Above-zero is acceptance, never the APE stop signal.
 has(fair, 'strictPositiveIsExecutionEligible: true', 'strict-positive execution eligibility telemetry missing');
@@ -142,4 +150,4 @@ const flashImporters = collectTsFiles('server/services/cryptocrawl')
   .filter(relative => read(relative).includes("zero-capital-flash-canonical-executor.js"));
 assert.deepEqual(flashImporters, ['server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts'], 'lower-level flash executor gained a threshold-bypass caller');
 
-console.log('[ape-strict-positive-continuous] PASS: Stage 1 remains locked; strict all-in net > 0 is execution acceptance; APE retains best proven profit, refreshes a shadow generation and releases before expiry while continuing bounded optimization past first profitability');
+console.log('[ape-strict-positive-continuous] PASS: Stage One uses fresh measured direction-aware hot lanes; strict all-in net > 0 is execution acceptance; APE retains best proven profit, refreshes a shadow generation and releases before expiry while continuing bounded optimization past first profitability');
