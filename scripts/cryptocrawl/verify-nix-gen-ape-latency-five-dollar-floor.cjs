@@ -30,6 +30,7 @@ const stageOne = read('server/services/cryptocrawl/discovery/zero-capital-canoni
 const fair = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-fair.ts');
 const v4 = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v4.ts');
 const merit = read('server/services/cryptocrawl/integration/ape-adaptive-command.ts');
+const lease = read('server/services/cryptocrawl/integration/ape-profitable-snapshot-lease.ts');
 const prices = read('server/services/cryptocrawl/bridge/live-price-mesh.ts');
 const split = read('server/services/cryptocrawl/integration/zero-capital-route-split-rescue.ts');
 const stack = read('server/services/cryptocrawl/integration/zero-capital-atomic-stack-wiring.ts');
@@ -54,6 +55,7 @@ assert.ok(!floor.includes('ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD = 5'), 'hard $
 has(stageOne, 'STAGE_ONE_LOCKED_INVARIANT', 'Stage-1 lock marker missing');
 has(stageOne, 'STAGE_ONE_ZERO_CAPITAL_ENTRY_FLOOR_BPS = -10', 'Stage-1 locked -10 BPS floor changed');
 assert.ok(!stageOne.includes('zero-capital-profit-output-floor'), 'Stage 1 must not import output threshold authority');
+assert.ok(!stageOne.includes('ape-profitable-snapshot-lease'), 'Stage 1 must remain independent from APE lease state');
 
 // Above-zero is acceptance, never the APE stop signal.
 has(fair, 'strictPositiveIsExecutionEligible: true', 'strict-positive execution eligibility telemetry missing');
@@ -61,7 +63,7 @@ has(fair, 'strictPositiveStopsApeOptimization: false', 'Fair may stop APE merely
 has(fair, 'optimizationStopsOnCandidateLocalMeasuredExhaustionOrDeadline: true', 'candidate-local exhaustion stop authority missing');
 has(fair, 'candidateLocalRunToCompletion: true', 'candidate-local run-to-completion missing');
 has(fair, 'structuralSiblingBarrierBeforeV4: false', 'cross-candidate structural/V4 barrier remains');
-has(fair, 'crossCandidateProfitabilityStop: false', 'one candidate can stop siblings');
+has(fair, 'crossCandidateProfitabilityStop: false', 'ordinary profitability can stop siblings');
 has(fair, 'staleGenerationResultsDiscarded', 'stale-generation discard telemetry missing');
 has(v4, 'strictPositiveAcceptanceThresholdIsNotApeStop: true', 'V4 still conflates acceptance with stopping');
 has(v4, 'candidateLocalRunToCompletion: true', 'V4 candidate-local scheduler missing');
@@ -70,11 +72,17 @@ has(v4, 'mapConcurrentCandidateLocal', 'V4 unordered candidate-local concurrency
 assert.ok(!v4.includes('passWinnerFound'), 'global pass winner authority reintroduced');
 assert.ok(!v4.includes('clearsFiveDollarOutputFloor'), 'V4 must not use an execution threshold as an optimization stop');
 
-// Route split also continues after the candidate becomes execution-positive.
+// Route split and shared-principal stack also continue after first profitability.
 has(split, 'strictPositiveStopsRouteSplitOptimization: false', 'route split stops at strict-positive execution eligibility');
 has(split, 'promotedCompositeStopsRemainingSplitSearch: false', 'route split stops after the first promoted composite');
 assert.ok(!split.includes("'already_five_dollar_output'"), 'route split still rejects already-positive candidates through the old finish gate');
 assert.ok(!split.includes("'resident_five_dollar_output_replaced_split_work'"), 'resident positive improvement still terminates split work');
+has(stack, 'requiredStrictPositiveProfitBaseUnits', 'composite must use the canonical strict-positive base-unit authority');
+has(stack, 'clearsStrictPositiveOutputThreshold', 'composite must use canonical strict-positive admission');
+has(stack, 'firstPositiveStopsVariantSearch: false', 'first profitable composite still stops bounded variant optimization');
+has(stack, 'firstPromotionStopsSiblingGroups: false', 'one profitable group still cancels sibling groups');
+has(stack, 'bestMeasuredProfitableVariantSelected: true', 'composite does not retain the best bounded measured variant');
+assert.ok(!stack.includes('if (settled.result.promoted > 0) return aggregate'), 'composite sibling-group early return reintroduced');
 
 // Candidate identity/generation has one synchronous in-memory authority.
 has(merit, 'export function getApeCandidateGeneration', 'candidate generation authority missing');
@@ -85,6 +93,25 @@ has(merit, "retirementAuthority: 'candidate_local_measured_tactic_exhaustion_onl
 has(merit, 'strictPositiveStopsOptimization: false', 'merit authority stops at positive');
 assert.ok(!merit.includes('if (clearsFiveDollarOutputFloor(root)) return false'), 'profit threshold still controls retirement');
 assert.ok(!merit.includes('fetch(') && !merit.includes('axios') && !merit.includes('supabase'), 'candidate authority added network/persistence latency');
+
+// Best-proven snapshot + shadow freshness lease are resident O(1) decisions.
+has(lease, 'bestProfit: ZeroCapitalOpportunity', 'best profitable snapshot pointer missing');
+has(lease, 'freshestPositive: ZeroCapitalOpportunity', 'fresh positive shadow pointer missing');
+has(lease, 'export function observeApeProfitableSnapshot', 'snapshot observation authority missing');
+has(lease, 'export function capApeOptimizationDeadline', 'execute-before-expiry deadline cap missing');
+has(lease, "mode: 'dispatch_now'", 'dispatch-now lease state missing');
+has(lease, "storageAuthority: 'resident_candidate_local_pointer_only'", 'lease must remain resident pointer state');
+has(lease, 'persistenceOnHotPath: false', 'lease added persistence to hot path');
+has(lease, 'networkIoOnDecisionPath: false', 'lease added network I/O to decision path');
+has(lease, 'staleEvidenceExtended: false', 'lease may not extend stale evidence');
+has(lease, 'bestSnapshotOverwriteByWorseAttempt: false', 'worse optimization may overwrite profitable fallback');
+has(fair, 'bestProvenSnapshotResident: true', 'Fair does not expose best-proven snapshot behavior');
+has(fair, 'shadowExecutionLease: true', 'Fair shadow execution lease missing');
+has(fair, 'rollingFreshnessLease: true', 'rolling freshness lease missing');
+has(fair, 'executeBeforeExpiry: true', 'execute-before-expiry escape missing');
+has(fair, 'profitEscapeCanPreemptRemainingOptimization: true', 'expiry escape cannot preempt optional optimization');
+has(fair, 'staleEvidenceExpiryExtended: false', 'Fair may extend stale evidence instead of refreshing it');
+has(fair, 'return output;', 'Fair must return the preserved best executable snapshot set');
 
 // Price and route-split latency improvements remain resident/nonblocking.
 has(prices, 'symbolRefreshInFlight', 'per-symbol price singleflight missing');
@@ -98,7 +125,6 @@ has(resources, 'clearsFiveDollarOutputFloor', 'resource scheduler lost canonical
 has(barrier, 'evaluateFiveDollarOutputFloor(opportunity, observedAt)', 'pre-broadcast threshold assertion missing');
 has(scheduler, 'clearsFiveDollarOutputFloor(opportunity)', 'scheduler threshold assertion missing');
 has(executor, 'evaluateFiveDollarOutputFloor(opportunity, startedAt)', 'canonical executor threshold assertion missing');
-has(stack, 'requiredProfitBaseUnitsForFiveDollarOutput', 'composite strict-positive base-unit target compatibility helper missing');
 
 // Gates remain before scarce/I/O work.
 before(resources, 'if (!clearsFiveDollarOutputFloor(opportunity)) return null;', 'const gasDecision = await strictCanonicalGasDecision(opportunity.chain);', 'resource threshold must precede gas decision I/O');
@@ -115,4 +141,4 @@ const flashImporters = collectTsFiles('server/services/cryptocrawl')
   .filter(relative => read(relative).includes("zero-capital-flash-canonical-executor.js"));
 assert.deepEqual(flashImporters, ['server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts'], 'lower-level flash executor gained a threshold-bypass caller');
 
-console.log('[ape-strict-positive-continuous] PASS: Stage 1 remains locked; strict all-in net > 0 is the canonical execution threshold; APE continues beyond zero with candidate-local scheduling, monotonic generation authority and no cross-candidate winner barrier');
+console.log('[ape-strict-positive-continuous] PASS: Stage 1 remains locked; strict all-in net > 0 is execution acceptance; APE retains best proven profit, refreshes a shadow generation and releases before expiry while continuing bounded optimization past first profitability');
