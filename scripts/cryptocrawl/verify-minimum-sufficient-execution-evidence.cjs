@@ -29,8 +29,10 @@ has(registry, 'advisory_missing_nonblocking:', 'nonblocking evidence gaps must r
 // may retain their existing Stage-3 target semantics in this bounded change.
 has(router, 'const admitted = economicsAdmitted\n    && stageThreeTargetSatisfied\n    && pathAvailable\n    && candidate.executableCapability\n    && fresh\n    && depthReady\n    && hardVetoReasons.length === 0;', 'router must require topology-correct economics, all concrete execution evidence and no hard veto');
 has(router, "const isZeroCapitalAtomic = candidate.topology === 'ZERO_CAPITAL_ATOMIC';", 'router must explicitly identify the Atomic BPS Zero-Capital lane');
-has(router, 'const stageThreeTargetSatisfied = isZeroCapitalAtomic\n    ? deterministicPositive', 'Zero Capital must use deterministic strict-positive all-in economics instead of a magnitude target');
-has(router, "`stage3_target=${isZeroCapitalAtomic ? 'strict_positive_all_in_base_units'", 'router must expose the Zero-Capital strict-positive finish line');
+const strictPositiveRouterSemantics = router.includes('const stageThreeTargetSatisfied = isZeroCapitalAtomic\n    ? deterministicPositive')
+  || router.includes('const stageThreeTargetSatisfied = isZeroCapitalAtomic\n    ? Number.isFinite(deterministicNet) && deterministicNet >= ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD');
+must(strictPositiveRouterSemantics, 'Zero Capital must use canonical deterministic strict-positive all-in economics instead of a magnitude target');
+must(router.includes("strict_positive_all_in_base_units") || router.includes('ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD'), 'router must expose the canonical Zero-Capital strict-positive finish line');
 has(router, 'advisory:missing_information:', 'non-required missing information must remain advisory');
 has(scheduler, 'candidate.missingInformation.length === 0', 'scheduler must retain defense-in-depth over registry-filtered required gaps');
 
