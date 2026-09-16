@@ -43,7 +43,10 @@ export function chooseGasFundingMode(
   const sponsorCostProvenZero = proof.sponsorOperatorMonetaryCostProvenZero === true;
   const sponsorConfiguredAndReady = chain.sponsoredBootstrap && sponsorReady;
 
-  // Highest priority: a sponsor independently proven to create zero operator cost.
+  // Primary zero-initial-capital gas lane: provider sponsorship. If independent
+  // evidence proves the provider cost is zero, canonical economics may credit that;
+  // otherwise the provider-fronted gas remains a real billing liability and must be
+  // charged by the canonical all-in economics authority.
   if (sponsorConfiguredAndReady && sponsorCostProvenZero) {
     return {
       chain: chain.id,
@@ -55,27 +58,10 @@ export function chooseGasFundingMode(
       operatorMonetaryInputRequired: false,
       providerBillingLiability: false,
       sponsorOperatorMonetaryCostProvenZero: true,
-      reason: 'Provider sponsorship proves zero upfront wallet capital and independently proves zero operator monetary gas cost',
+      reason: 'Primary provider sponsorship removes upfront wallet capital and independently proves zero operator monetary gas cost',
     };
   }
 
-  // Prefer already-proven system-owned native gas over any billed provider fallback.
-  if (nativeBalance >= reserveFloor && proof.nativeSystemOwnedProven === true) {
-    return {
-      chain: chain.id,
-      mode: 'native',
-      nativeBalance,
-      reserveFloor,
-      paymentSource: 'system_owned_native',
-      strictZeroInitialCapitalEligible: true,
-      operatorMonetaryInputRequired: false,
-      providerBillingLiability: false,
-      sponsorOperatorMonetaryCostProvenZero: false,
-      reason: 'Native reserve is sufficient and durable provenance proves it is system-owned; actual receipt gas is terminally converted and subtracted from realized system economics',
-    };
-  }
-
-  // Functional last-resort sponsor: zero upfront wallet gas, but provider billing is real.
   if (sponsorConfiguredAndReady && !requireZeroOperatorCost) {
     return {
       chain: chain.id,
@@ -87,7 +73,25 @@ export function chooseGasFundingMode(
       operatorMonetaryInputRequired: false,
       providerBillingLiability: true,
       sponsorOperatorMonetaryCostProvenZero: false,
-      reason: 'Billed provider fallback removes the upfront native-balance requirement; provider-fronted gas remains a billing liability that canonical all-in economics must charge',
+      reason: 'Primary provider sponsorship removes the upfront native-balance requirement; provider-fronted gas remains a billing liability that canonical all-in economics must charge',
+    };
+  }
+
+  // Route-local fallback only: already-proven system-owned native gas. This is not
+  // preferred over a ready sponsorship lane because zero-initial-capital execution
+  // should preserve native inventory whenever the configured sponsor can front gas.
+  if (nativeBalance >= reserveFloor && proof.nativeSystemOwnedProven === true) {
+    return {
+      chain: chain.id,
+      mode: 'native',
+      nativeBalance,
+      reserveFloor,
+      paymentSource: 'system_owned_native',
+      strictZeroInitialCapitalEligible: true,
+      operatorMonetaryInputRequired: false,
+      providerBillingLiability: false,
+      sponsorOperatorMonetaryCostProvenZero: false,
+      reason: 'Sponsored gas is unavailable for this route; native reserve is sufficient and durable provenance proves it is system-owned, with actual receipt gas subtracted from realized system economics',
     };
   }
 
