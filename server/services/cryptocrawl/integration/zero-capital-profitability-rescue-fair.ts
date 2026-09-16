@@ -16,6 +16,8 @@ import {
   type ApeCounterfactualPlan,
   type ApeTactic,
 } from './ape-adaptive-command.js';
+import { settleBeforeDeadline } from './ape-hypergraph-intelligence.js';
+import { prewarmApeProfitabilityToolboxPlan } from './ape-profitability-toolbox.js';
 import {
   capApeOptimizationDeadline,
   getApeBestExecutableSnapshot,
@@ -29,7 +31,6 @@ import {
   buildApeCandidateRescueSnapshots,
   buildApeTierBudget,
 } from './ape-rescue-orchestration.js';
-import { settleBeforeDeadline } from './ape-hypergraph-intelligence.js';
 import { primeApeResidentRouting } from './atomic-profitability-resident-routing.js';
 import {
   getApeResidentWorkbenchSnapshot,
@@ -180,6 +181,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
     .map(candidate => candidate.inputAssetSymbol))];
   const pricePrewarmStarted = pricePrewarmSymbols.length > 0;
   if (pricePrewarmStarted) livePriceMesh.primeResidentSymbolPrices(pricePrewarmSymbols);
+  for (const candidate of activeRescueCandidates) prewarmApeProfitabilityToolboxPlan(candidate);
 
   const compatibleGroupSizeFor = (opportunity: ZeroCapitalOpportunity): number => activeRescueCandidates.filter(candidate =>
     candidate.chain === opportunity.chain
@@ -207,6 +209,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
   let structuralSplitInvokedBeforeV4 = false;
   let structuralSplitCandidatesBeforeV4 = 0;
   let structuralResidualV4Candidates = 0;
+  let structuralConcurrentV4Candidates = 0;
   let outerDeadlineStops = 0;
   let compositeCapabilityFastSkips = 0;
   let staleGenerationResultsDiscarded = 0;
@@ -249,6 +252,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
     shadowPrimeKeys.add(key);
     primeApeResidentRouting([decision.snapshot]);
     primeApeResidentWorkbench({ opportunities: [decision.snapshot], configuredRoutes: input.configuredRoutes });
+    prewarmApeProfitabilityToolboxPlan(decision.snapshot);
     livePriceMesh.primeResidentSymbolPrices([decision.snapshot.inputAssetSymbol]);
     shadowRefreshPrimes += 1;
   };
@@ -497,14 +501,13 @@ export async function runFairZeroCapitalProfitabilityRescue(
     return improvements;
   };
 
-  // Candidate-local lanes: structural candidates perform their required split-first
-  // move and immediately continue into V4 without waiting for sibling candidates.
-  // Cost-first candidates run V4 concurrently. Profitability alone never stops a lane;
-  // only the execute-before-expiry reserve can preempt remaining optional optimization.
+  // Candidate-local lanes: structural route transformation and V4 are compatible
+  // alternatives, not prerequisites. Launch both from the same measured generation;
+  // whichever improves first may stream an overlay, but neither can consume the
+  // other's start window. Cost-first candidates still use their direct V4 lane.
   const structuralCandidates = prioritizedForTactic('route_split').filter(apeStructuralFirstCandidate);
   const costFirstCandidates = prioritizedForTactic('single_route_v4').filter(apeV4FirstCandidate);
-  structuralSplitCandidatesBeforeV4 = structuralCandidates.length;
-  structuralSplitInvokedBeforeV4 = structuralCandidates.length > 0;
+  structuralConcurrentV4Candidates = structuralCandidates.length;
 
   const candidateLanes: Promise<void>[] = [];
   if (!profitEscapeTriggered) {
@@ -517,17 +520,25 @@ export async function runFairZeroCapitalProfitabilityRescue(
     for (const candidate of structuralCandidates) {
       candidateLocalLanesStarted += 1;
       candidateLanes.push((async () => {
-        if (Date.now() < capApeOptimizationDeadline(candidate.id, tierBudget.structuralDeadlineAt)) {
-          const localSplit = await runSplitBatch([candidate], tierBudget.structuralDeadlineAt);
-          if (!releaseRequested) splitResult = mergeSplitResult(splitResult, localSplit);
-        }
-        if (releaseRequested) return;
-        const current = transformed.find(item => item.id === candidate.id) ?? candidate;
         const root = currentRoot(candidate.id);
+        if (!generationCurrent(root) || candidateRetiredForGeneration(root)) return;
+        const localSplitDeadline = capApeOptimizationDeadline(candidate.id, tierBudget.structuralDeadlineAt);
         const localV4Deadline = capApeOptimizationDeadline(candidate.id, tierBudget.v4DeadlineAt);
-        if (Date.now() >= localV4Deadline || !generationCurrent(root) || candidateRetiredForGeneration(root)) return;
-        structuralResidualV4Candidates += 1;
-        await runV4Batch([current], localV4Deadline);
+
+        const splitTask = Date.now() < localSplitDeadline
+          ? runSplitBatch([candidate], localSplitDeadline).then(localSplit => {
+              if (!releaseRequested) splitResult = mergeSplitResult(splitResult, localSplit);
+            })
+          : Promise.resolve();
+
+        const v4Task = Date.now() < localV4Deadline
+          ? (async () => {
+              structuralResidualV4Candidates += 1;
+              await runV4Batch([candidate], localV4Deadline);
+            })()
+          : Promise.resolve();
+
+        await Promise.allSettled([splitTask, v4Task]);
       })());
     }
   }
@@ -572,6 +583,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
 
   if (unresolved.length > 0 && !releaseRequested) {
     primeApeResidentWorkbench({ opportunities: unresolved, configuredRoutes: input.configuredRoutes });
+    for (const candidate of unresolved) prewarmApeProfitabilityToolboxPlan(candidate);
   }
 
   const compositeStartedAt = Date.now();
@@ -698,6 +710,8 @@ export async function runFairZeroCapitalProfitabilityRescue(
     structuralNonPositiveGrossCandidatesBypassingV4: Math.max(0, initialStructuralFirstCandidates.length - structuralResidualV4Candidates),
     structuralSplitInvokedBeforeV4,
     structuralSplitCandidatesBeforeV4,
+    structuralSplitAndV4Concurrent: true,
+    structuralSplitAndV4ConcurrentCandidates: structuralConcurrentV4Candidates,
     workerDefectClassificationSource: 'resident_exact_gross_base_units_no_io',
     workerDefectClassificationAddsNetworkLatency: false,
     advisoryBpsIntelligenceOnFairCriticalPath: false,
@@ -747,6 +761,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
     candidateLocalLanesStarted,
     crossCandidateProfitabilityStop: false,
     structuralSiblingBarrierBeforeV4: false,
+    structuralRouteSplitPrerequisiteForV4: false,
     hardDeadlinePropagatedIntoMeasuredRescue: true,
     hardDeadlinePropagatedIntoSplitAndComposite: true,
     downstreamStatefulOpportunityReservedBeforeV4: tierBudget.downstreamReserveMs > 0,
@@ -829,7 +844,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
     toolboxCompositeBudgetMs: configuredCompositeBudgetMs,
     toolboxCompositeElapsedMs: compositeElapsedMs,
     toolboxCompositeHardDeadlineAt: compositeHardDeadlineAt,
-    toolboxCompositeOrder: 'candidate_local_defect_safe_first_move_with_resident_followups',
+    toolboxCompositeOrder: 'candidate_local_defect_safe_parallel_alternatives_with_resident_followups',
     protectedRescueLanes: true,
     parallelCompositeRescueLanes: true,
     sharedPrincipalNegativeCandidatesAdmittedWhenAggregateEconomicsCanProveCompatibility: true,
