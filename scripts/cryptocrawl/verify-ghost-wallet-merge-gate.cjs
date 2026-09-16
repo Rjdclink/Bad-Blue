@@ -12,6 +12,7 @@ const vault = read('contracts/cryptocrawl/CryptocrawlGhostWalletCapitalVault.sol
 const externalBridge = read('contracts/cryptocrawl/CryptocrawlGhostWalletErc3156Bridge.sol');
 const bridgeRuntime = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-external-bridge.ts');
 const borrowerSurface = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-borrower-surface.ts');
+const borrowerMandate = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-borrower-mandate.ts');
 const fundingMesh = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-funding-mesh.ts');
 const controller = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-autonomous-controller.ts');
 const controllerEconomics = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-controller-economics.ts');
@@ -24,6 +25,7 @@ const settlementIngest = read('server/services/cryptocrawl/ghost-wallet/ghost-wa
 const payout = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-payout.ts');
 const venueUniverse = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-venue-universe.ts');
 const runtimeWiring = read('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
+const routes = read('server/routes/cryptoWiring.routes.ts');
 const compiler = read('scripts/cryptocrawl/compile-ghost-wallet-contracts.cjs');
 
 // Zero-capital arbitrage remains untouched and owns no Ghost scheduling/submission.
@@ -95,6 +97,24 @@ assert.match(borrowerSurface, /lenderCandidates/);
 assert.match(borrowerSurface, /autonomousControllerMayConsumeQuote: true/);
 assert.doesNotMatch(borrowerSurface, /measureFlashLoanProviders/);
 
+// Autonomous borrower demand must be cryptographically authorized and durable.
+// Authorization is not repayment proof; every concrete execution is still simulated.
+assert.match(borrowerMandate, /CryptoCrawler Ghost Wallet Borrower Mandate/);
+assert.match(borrowerMandate, /_TypedDataEncoder\.hash/);
+assert.match(borrowerMandate, /isValidSignature/);
+assert.match(borrowerMandate, /recoverAddress/);
+assert.match(borrowerMandate, /GHOST_WALLET_MANDATE_AUTHORIZER_NOT_BORROWER_OWNER/);
+assert.match(borrowerMandate, /monotonicNonceRequiredForReplacement: true/);
+assert.match(borrowerMandate, /cancelledMandateReplayRejected: true/);
+assert.match(borrowerMandate, /onePersistentMandatePerBorrowerAsset: true/);
+assert.match(borrowerMandate, /exactSimulationStillRequiredBeforeExecution: true/);
+assert.match(borrowerMandate, /zeroCapitalDependency: false/);
+assert.match(routes, /\/ghost-wallet\/borrower-mandate'/);
+assert.match(routes, /\/ghost-wallet\/borrower-mandate\/cancel'/);
+assert.match(routes, /registerGhostWalletBorrowerMandate/);
+assert.match(routes, /cancelGhostWalletBorrowerMandate/);
+assert.match(routes, /autonomous_controller_signed_mandate/);
+
 // Ghost funding sources are measured independently, in parallel across healthy
 // Ghost RPCs. One source/provider failure cannot remove unrelated alternatives.
 for (const adapter of ['aave_v3', 'morpho_blue', 'balancer_v2', 'erc3156']) {
@@ -107,7 +127,7 @@ assert.match(fundingMesh, /providerFailureRouteLocal: true/);
 assert.match(fundingMesh, /freshEvidenceSingleflight: true/);
 
 // Autonomous controller: exact-call + exact-gas, per-transaction spread calibration,
-// strict positive all-in economics, no global spread-config transaction dependency.
+// signed execution limits/version isolation, no global spread-config transaction.
 assert.match(controller, /intermediaryRole: 'middleman_only'/);
 assert.match(controller, /controllerOwnsInitiation: true/);
 assert.match(controller, /continuousEventPlusAdaptiveScan: true/);
@@ -116,6 +136,11 @@ assert.match(controller, /hardBpsProfitAdmissionFloor: false/);
 assert.match(controller, /configuredSpreadFloorDefaultBps: 0/);
 assert.match(controller, /perTransactionSpreadCalibrationFromExactGas: true/);
 assert.match(controller, /globalSpreadConfigurationTransactionRequired: false/);
+assert.match(controller, /signedMandateExecutionCountEnforced: true/);
+assert.match(controller, /signedMandateCadenceEnforced: true/);
+assert.match(controller, /signedMandateVersionIsolation: true/);
+assert.match(controller, /oneActiveExecutionPerMandate: true/);
+assert.match(controller, /mandateScope/);
 assert.match(controller, /buildGhostWalletBorrowerTransactionWithSpread/);
 assert.match(controller, /provider\.call\(request\)/);
 assert.match(controller, /provider\.estimateGas\(request\)/);
@@ -204,6 +229,8 @@ console.log(JSON.stringify({
   ghostModel: 'independent_autonomous_atomic_credit_intermediation',
   intermediarySubmitsTransactions: false,
   autonomousControllerSubmission: true,
+  signedBorrowerDemand: true,
+  signedMandateReplayProtection: true,
   zeroCapitalAuthorityCrossed: false,
   hardBpsProfitAdmissionFloor: false,
   perTransactionSpreadPricing: true,
