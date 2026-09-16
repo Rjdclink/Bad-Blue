@@ -1,5 +1,6 @@
 import type { ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import { measuredCandidateRegistry, type MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
+import { clearsStageOneOutputFloorBps } from '../discovery/stage-one-candidate-policy.js';
 
 export type ApeMeasuredEvidenceSource = 'measured_candidate_registry' | 'stage_one_exact_route' | 'none';
 
@@ -17,6 +18,7 @@ export interface ApeMeasuredAdmissionDecision {
     | 'admitted_stage_one_exact_route'
     | 'expired_evidence'
     | 'invalid_economics'
+    | 'stage_one_output_floor_violation'
     | 'missing_exact_route_measurement'
     | 'registry_measurement_incomplete';
 }
@@ -30,6 +32,7 @@ function exactStageOneRouteMeasured(opportunity: ZeroCapitalOpportunity): boolea
   if (opportunity.route.length === 0) return false;
   if (opportunity.flashLoanAmount <= 0n) return false;
   if (!Number.isFinite(opportunity.netProfitBps)) return false;
+  if (!clearsStageOneOutputFloorBps(opportunity.netProfitBps)) return false;
   if (!Number.isFinite(opportunity.quoteLatencyMs) || opportunity.quoteLatencyMs < 0) return false;
   if (opportunity.estimatedExecutionCostInInputToken < 0n || opportunity.gasEstimate < 0n) return false;
   return opportunity.route.every(step =>
@@ -77,6 +80,19 @@ function registryMeasurementDecision(
   const canonicalNetBps = finite(candidate.canonicalBps.netBps);
   const exactRouteMeasured = candidateHasExactMeasuredQuote(candidate, now);
   const depthMeasured = candidate.depth.status !== 'unavailable';
+  if (canonicalNetBps !== null && !clearsStageOneOutputFloorBps(canonicalNetBps)) {
+    return {
+      opportunityId: opportunity.id,
+      admitted: false,
+      source: 'measured_candidate_registry',
+      fresh: true,
+      exactRouteMeasured,
+      depthMeasured,
+      canonicalNetBps,
+      quoteAgeMs: candidate.quoteAgeMs ?? Math.max(0, now - candidate.updatedAt),
+      reason: 'stage_one_output_floor_violation',
+    };
+  }
   const activeStatus = ['observed', 'enriched', 'deterministic_positive', 'eligible'].includes(candidate.status);
   const admitted = activeStatus && canonicalNetBps !== null && exactRouteMeasured && depthMeasured;
   return {
@@ -93,10 +109,10 @@ function registryMeasurementDecision(
 }
 
 /**
- * APE may optimize only fresh measured economics. A fresh Stage-1 exact route quote is
- * itself valid measured evidence; the registry is preferred when it contains a newer
- * authoritative measurement. Missing evidence never kills the opportunity: it simply
- * prevents expensive APE rescue work until reacquisition publishes fresh measurement.
+ * APE may optimize only fresh measured Stage-One output. Stage One supplies the exact
+ * route/depth/economics evidence; APE independently rejects any candidate whose signed
+ * all-in net spread is not strictly greater than -10 BPS. Missing evidence never kills
+ * discovery: it prevents APE work until Stage One reacquires and republishes it.
  */
 export function assessApeMeasuredAdmission(
   opportunity: ZeroCapitalOpportunity,
@@ -128,15 +144,28 @@ export function assessApeMeasuredAdmission(
       reason: 'invalid_economics',
     };
   }
+  if (!clearsStageOneOutputFloorBps(opportunity.netProfitBps)) {
+    return {
+      opportunityId: opportunity.id,
+      admitted: false,
+      source: 'none',
+      fresh: true,
+      exactRouteMeasured: false,
+      depthMeasured: false,
+      canonicalNetBps: opportunity.netProfitBps,
+      quoteAgeMs: Math.max(0, now - opportunity.timestamp),
+      reason: 'stage_one_output_floor_violation',
+    };
+  }
 
   const registered = measuredCandidateRegistry.get(opportunity.id);
   if (registered) {
     const registryDecision = registryMeasurementDecision(opportunity, registered, now);
     if (registryDecision?.admitted) return registryDecision;
-    // Stage-1 exact evidence remains a compatible fallback when the registry entry is
-    // incomplete rather than stale. This prevents a partially-enriched publication
-    // from suppressing a fresher exact route quote that already arrived in memory.
-    if (registryDecision?.reason === 'expired_evidence') return registryDecision;
+    // Stage-1 exact evidence remains a compatible fallback only when the registry entry
+    // is incomplete, not when it violates freshness or the locked Stage-One BPS floor.
+    if (registryDecision?.reason === 'expired_evidence'
+      || registryDecision?.reason === 'stage_one_output_floor_violation') return registryDecision;
   }
 
   if (exactStageOneRouteMeasured(opportunity)) {
