@@ -107,9 +107,9 @@ export function apeDirectionalMarketKey(opportunity: ZeroCapitalOpportunity): st
  * 1) each market contributes at most winner + strongest opposite direction + hedge;
  * 2) only the globally best measured market work enters the APE rescue hot lane.
  *
- * Candidates outside this set remain measured discovery objects and still flow through
- * canonical provider repricing. The global cap therefore bounds rescue I/O/concurrency
- * without rejecting or deleting lower-ranked opportunities.
+ * Global winners are admitted before reverse-side protection, and reverse-side
+ * candidates before hedges. Candidates outside this set remain measured discovery
+ * objects and still flow through canonical provider repricing.
  */
 export function selectApeStageOneHotSet(
   opportunities: readonly ZeroCapitalOpportunity[],
@@ -146,17 +146,17 @@ export function selectApeStageOneHotSet(
     marketSelections.push(marketSelected);
   }
 
-  // Market winners establish global priority first. Within each selected market, the
-  // reverse twin stays adjacent/protected before the hedge so bidirectional coverage
-  // is not lost merely because another same-direction variant exists.
   marketSelections.sort((left, right) => compareExactEconomics(left[0], right[0]));
   const selected: ZeroCapitalOpportunity[] = [];
-  for (const market of marketSelections) {
-    for (const candidate of market) {
+  for (let lane = 0; lane < boundedMax && selected.length < globalLimit; lane += 1) {
+    const laneCandidates = marketSelections
+      .map(market => market[lane])
+      .filter((candidate): candidate is ZeroCapitalOpportunity => Boolean(candidate))
+      .sort(compareExactEconomics);
+    for (const candidate of laneCandidates) {
       if (selected.length >= globalLimit) break;
       selected.push(candidate);
     }
-    if (selected.length >= globalLimit) break;
   }
 
   return selected.sort(compareExactEconomics);
