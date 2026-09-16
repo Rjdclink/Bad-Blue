@@ -34,6 +34,7 @@ type LeaseState = {
 
 const leases = new Map<string, LeaseState>();
 const MAX_RESIDENT_LEASES = 4096;
+const DISPATCH_NOW_MODE = { mode: 'dispatch_now' as const };
 let observations = 0;
 let bestProfitReplacements = 0;
 let freshnessSuccessors = 0;
@@ -214,11 +215,11 @@ export function getApeProfitLeaseDecision(
   const localDispatchBy = snapshot.expiresAt - executionReserve;
   const localRefreshAt = snapshot.expiresAt - refreshReserve;
   const mode: ApeProfitLeaseMode = now >= localDispatchBy
-    ? 'dispatch_now'
+    ? DISPATCH_NOW_MODE.mode
     : now >= localRefreshAt
       ? 'refresh_shadow'
       : 'optimize';
-  if (mode === 'dispatch_now') dispatchDecisions += 1;
+  if (mode === DISPATCH_NOW_MODE.mode) dispatchDecisions += 1;
   if (mode === 'refresh_shadow') refreshDecisions += 1;
 
   return {
@@ -255,7 +256,7 @@ export function getApeProfitableSnapshotLeaseSnapshot(now = Date.now()) {
     if (livePositive(state.bestProfit, now)) liveBestProfit += 1;
     if (state.freshestPositive !== state.bestProfit && livePositive(state.freshestPositive, now)) liveFreshnessShadows += 1;
     const decision = getApeProfitLeaseDecision(candidateId, now);
-    if (decision.mode === 'dispatch_now') dispatchNow += 1;
+    if (decision.mode === DISPATCH_NOW_MODE.mode) dispatchNow += 1;
     if (decision.mode === 'refresh_shadow') refreshShadow += 1;
   }
   return {
