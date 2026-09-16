@@ -24,15 +24,14 @@ has(registry, 'executionBlockingMissingInformation(candidate)', 'consumer snapsh
 has(registry, 'const next = clone(previous, true);', 'internal updates must preserve complete diagnostic evidence');
 has(registry, 'advisory_missing_nonblocking:', 'nonblocking evidence gaps must remain observable through provenance');
 
-// Canonical execution requires concrete live facts. ZERO_CAPITAL_ATOMIC uses the
-// canonical exact strict-positive all-in profit boundary; other topology contracts
-// may retain their existing Stage-3 target semantics in this bounded change.
+// Canonical execution requires concrete live facts. Deterministic topologies use a
+// topology-neutral strict-positive all-in boundary; funding/prediction retain their
+// domain-correct positive projected/expected economics without magnitude targets.
 has(router, 'const admitted = economicsAdmitted\n    && stageThreeTargetSatisfied\n    && pathAvailable\n    && candidate.executableCapability\n    && fresh\n    && depthReady\n    && hardVetoReasons.length === 0;', 'router must require topology-correct economics, all concrete execution evidence and no hard veto');
-has(router, "const isZeroCapitalAtomic = candidate.topology === 'ZERO_CAPITAL_ATOMIC';", 'router must explicitly identify the Atomic BPS Zero-Capital lane');
-const strictPositiveRouterSemantics = router.includes('const stageThreeTargetSatisfied = isZeroCapitalAtomic\n    ? deterministicPositive')
-  || router.includes('const stageThreeTargetSatisfied = isZeroCapitalAtomic\n    ? Number.isFinite(deterministicNet) && deterministicNet >= ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD');
-must(strictPositiveRouterSemantics, 'Zero Capital must use canonical deterministic strict-positive all-in economics instead of a magnitude target');
-must(router.includes("strict_positive_all_in_base_units") || router.includes('ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD'), 'router must expose the canonical Zero-Capital strict-positive finish line');
+has(router, 'deterministicPositive && netBps !== null && netBps > 0;', 'router must require strict-positive deterministic all-in economics and canonical net BPS');
+has(router, 'stage3_target=strict_positive_authoritative_all_in_economics', 'router must expose the strict-positive authoritative finish line');
+must(!router.includes('STAGE_THREE_MINIMUM_TARGET_BPS = 10'), 'router must not reintroduce the retired +10 BPS magnitude target');
+must(!router.includes('ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD'), 'router must not couple topology-neutral admission to a zero-capital-specific dollar sentinel');
 has(router, 'advisory:missing_information:', 'non-required missing information must remain advisory');
 has(scheduler, 'candidate.missingInformation.length === 0', 'scheduler must retain defense-in-depth over registry-filtered required gaps');
 
