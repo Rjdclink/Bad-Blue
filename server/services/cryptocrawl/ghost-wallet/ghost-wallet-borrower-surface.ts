@@ -207,10 +207,13 @@ export async function quoteGhostWalletBorrowerRoute(
   const asset = asAddress(request.asset, 'GHOST_WALLET_ASSET');
   const amount = asAmount(request.amountBaseUnits);
   const borrowerData = asData(request.borrowerData);
-  const providersForChain = await ghostWalletProviderMesh.getProviders(chain);
-  if (providersForChain.length === 0) throw new Error(`GHOST_WALLET_RPC_UNAVAILABLE:${chain}`);
-  const provider = providersForChain[0];
-  const [borrowerCode, assetCode] = await Promise.all([provider.getCode(borrower), provider.getCode(asset)]);
+
+  const identity = await ghostWalletProviderMesh.runHedged({
+    chain,
+    operation: 'borrower_surface_identity',
+    execute: async provider => Promise.all([provider.getCode(borrower), provider.getCode(asset)]),
+  });
+  const [borrowerCode, assetCode] = identity;
   if (borrowerCode === '0x') throw new Error('GHOST_WALLET_BORROWER_CONTRACT_REQUIRED');
   if (assetCode === '0x') throw new Error('GHOST_WALLET_ASSET_CONTRACT_REQUIRED');
 
@@ -226,12 +229,19 @@ export async function quoteGhostWalletBorrowerRoute(
     bySource.set(`${route.sourceKind}:${route.lender.toLowerCase()}`, route);
   }
 
-  const callerCandidates = request.lenderCandidates || [];
-  const externalSettled = await Promise.allSettled(callerCandidates.flatMap(candidate =>
-    providersForChain.map(rpc => quoteErc3156Candidate({ provider: rpc, chain, asset, amount, spread, candidate })),
+  const externalSettled = await Promise.allSettled((request.lenderCandidates || []).map(candidate =>
+    ghostWalletProviderMesh.runHedged({
+      chain,
+      operation: `erc3156_candidate:${String(candidate.address || '').toLowerCase()}`,
+      execute: async provider => {
+        const route = await quoteErc3156Candidate({ provider, chain, asset, amount, spread, candidate });
+        if (!route) throw new Error('GHOST_WALLET_ERC3156_CANDIDATE_UNAVAILABLE');
+        return route;
+      },
+    }),
   ));
   for (const result of externalSettled) {
-    if (result.status !== 'fulfilled' || !result.value) continue;
+    if (result.status !== 'fulfilled') continue;
     const route = result.value;
     const key = `${route.sourceKind}:${route.lender.toLowerCase()}`;
     const existing = bySource.get(key);
@@ -288,5 +298,8 @@ export const GHOST_WALLET_BORROWER_SURFACE_POLICY = {
   externalCallerMayPayTransactionGas: true,
   autonomousControllerMayConsumeQuote: true,
   perTransactionSpreadPricing: true,
+  dynamicErc3156CandidateHedging: true,
+  identityReadHedging: true,
+  cartesianProviderFanout: false,
   operatorMonetaryInputRequired: false,
 } as const;
