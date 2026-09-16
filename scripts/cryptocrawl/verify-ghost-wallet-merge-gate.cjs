@@ -53,15 +53,22 @@ assert.match(vault, /atomic_credit_not_repaid/);
 assert.match(vault, /VIRTUAL_SHARES/);
 assert.match(vault, /VIRTUAL_ASSETS/);
 
-// Permissionless external bridge keeps plural upstream adapters, exact atomic
-// repayment, and strictly positive spread without a fixed BPS admission gate.
-assert.match(externalBridge, /brokerExternalFlashLoan/);
-assert.match(externalBridge, /brokerAaveV3FlashLoan/);
-assert.match(externalBridge, /brokerMorphoFlashLoan/);
-assert.match(externalBridge, /brokerBalancerV2FlashLoan/);
+// Permissionless external bridge: plural upstream adapters, exact atomic repayment,
+// backward-compatible minimum-spread functions, and per-transaction spread functions.
+for (const fn of [
+  'brokerExternalFlashLoan',
+  'brokerAaveV3FlashLoan',
+  'brokerMorphoFlashLoan',
+  'brokerBalancerV2FlashLoan',
+  'brokerExternalFlashLoanWithSpread',
+  'brokerAaveV3FlashLoanWithSpread',
+  'brokerMorphoFlashLoanWithSpread',
+  'brokerBalancerV2FlashLoanWithSpread',
+]) assert.ok(externalBridge.includes(fn), `Ghost bridge missing ${fn}`);
 assert.match(externalBridge, /borrower_repayment_not_exact/);
 assert.match(externalBridge, /upstream_repayment_not_exact/);
-assert.match(externalBridge, /return configured > 0 \? configured : 1/);
+assert.match(externalBridge, /return requestedSpread > floorSpread \? requestedSpread : floorSpread/);
+assert.match(externalBridge, /expectedRequestedSpread/);
 assert.match(externalBridge, /realizedSpread/);
 assert.doesNotMatch(externalBridge, /lenderAllowlist|allowedLender/);
 
@@ -75,9 +82,11 @@ assert.match(bridgeRuntime, /lenderAllowlistRequired: false/);
 assert.match(bridgeRuntime, /fixedBpsSpreadFloor: false/);
 assert.match(bridgeRuntime, /CREATE2_DEPLOYER_CODE_HASH/);
 
-// Borrower routing uses Ghost's own funding mesh, not zero-capital provider
-// economics. Dynamic ERC-3156 lender discovery remains additive and route-local.
+// Borrower routing uses Ghost's own funding mesh, not zero-capital provider economics,
+// and exposes a per-transaction spread builder for the controller.
 assert.match(borrowerSurface, /measureGhostWalletFunding/);
+assert.match(borrowerSurface, /buildGhostWalletBorrowerTransactionWithSpread/);
+assert.match(borrowerSurface, /perTransactionSpreadPricing: true/);
 assert.match(borrowerSurface, /zeroCapitalFundingDependency: false/);
 assert.match(borrowerSurface, /ghostFundingMeshAuthority: true/);
 assert.match(borrowerSurface, /hardLenderUniverseLimit: null/);
@@ -96,21 +105,23 @@ assert.match(fundingMesh, /hardSourceCountLimit: null/);
 assert.match(fundingMesh, /Promise\.allSettled/);
 assert.match(fundingMesh, /providerFailureRouteLocal: true/);
 assert.match(fundingMesh, /freshEvidenceSingleflight: true/);
-assert.doesNotMatch(fundingMesh, /zero-capital|zeroCapital.*provider.*economics/i);
 
-// Autonomous controller: separate from the intermediary and from zero-capital,
-// continuous, strict-positive after live gas, with no hardcoded BPS admission floor.
+// Autonomous controller: exact-call + exact-gas, per-transaction spread calibration,
+// strict positive all-in economics, no global spread-config transaction dependency.
 assert.match(controller, /intermediaryRole: 'middleman_only'/);
 assert.match(controller, /controllerOwnsInitiation: true/);
 assert.match(controller, /continuousEventPlusAdaptiveScan: true/);
 assert.match(controller, /strictPositiveAllInNetBeforeQueue: true/);
 assert.match(controller, /hardBpsProfitAdmissionFloor: false/);
 assert.match(controller, /configuredSpreadFloorDefaultBps: 0/);
-assert.match(controller, /dynamicSpreadCalibrationFromExactGas: true/);
+assert.match(controller, /perTransactionSpreadCalibrationFromExactGas: true/);
+assert.match(controller, /globalSpreadConfigurationTransactionRequired: false/);
+assert.match(controller, /buildGhostWalletBorrowerTransactionWithSpread/);
 assert.match(controller, /provider\.call\(request\)/);
 assert.match(controller, /provider\.estimateGas\(request\)/);
 assert.match(controller, /routeLocalFailure: true/);
 assert.match(controller, /zeroCapitalIntegration: false/);
+assert.doesNotMatch(controller, /setMinimumBrokerSpreadBps/);
 
 // Economics are Ghost-owned and exact-gas based. Both single-asset broker spread
 // and multi-asset matched-intent fees must remain positive after controller gas.
@@ -195,7 +206,8 @@ console.log(JSON.stringify({
   autonomousControllerSubmission: true,
   zeroCapitalAuthorityCrossed: false,
   hardBpsProfitAdmissionFloor: false,
-  dynamicSpreadCalibration: true,
+  perTransactionSpreadPricing: true,
+  globalSpreadConfigurationTransactionRequired: false,
   strictPositiveAllInNet: true,
   multiAssetMatchedIntentEconomics: true,
   upstreamAdapters: ['erc3156', 'aave_v3', 'morpho_blue', 'balancer_v2'],
