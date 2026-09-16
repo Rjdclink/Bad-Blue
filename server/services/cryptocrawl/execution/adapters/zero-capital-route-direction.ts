@@ -6,7 +6,6 @@ import type {
 const REVERSIBLE_PROTOCOLS = new Set([
   'uniswapV3',
   'sushiswap',
-  'sushiswapV3',
   'pancakeswapV2',
   'traderJoeV1',
   'fluidDexT1',
