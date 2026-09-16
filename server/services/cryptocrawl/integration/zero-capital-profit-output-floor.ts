@@ -1,4 +1,5 @@
 import type { ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
+import { isApeMeasuredAdmitted } from './ape-measured-opportunity-admission.js';
 
 /**
  * Canonical Stage-2/execution profitability authority.
@@ -108,13 +109,15 @@ export function clearsStrictPositiveOutputThreshold(
 /**
  * Optimization ownership is intentionally independent of the execution threshold.
  * A positive candidate remains APE-owned while its current evidence generation still
- * has compatible measured transformations left to try. Evidence expiry is handled by
- * reacquisition rather than turning a candidate into a permanent rejection.
+ * has compatible measured transformations left to try. Expired/missing measurement
+ * is deferred for reacquisition rather than rejected or allowed to spend rescue I/O.
  */
 export function needsApeOptimization(
   opportunity: ZeroCapitalOpportunity,
 ): boolean {
-  return opportunity.flashLoanAmount > 0n && Number.isFinite(opportunity.netProfitBps);
+  return opportunity.flashLoanAmount > 0n
+    && Number.isFinite(opportunity.netProfitBps)
+    && isApeMeasuredAdmitted(opportunity);
 }
 
 /*
