@@ -6,7 +6,10 @@ import { ensureCryptocrawlOverflowRuntimeSchema } from '../runtime/cryptocrawl-o
 import { pool } from '../runtime/cryptocrawl-runtime-database.js';
 import { ghostWalletAutonomousController } from './ghost-wallet-autonomous-controller.js';
 import { ghostWalletChainEvents } from './ghost-wallet-chain-events.js';
-import { evaluateGhostWalletControllerEconomics } from './ghost-wallet-controller-economics.js';
+import {
+  evaluateGhostWalletControllerEconomics,
+  evaluateGhostWalletMultiAssetControllerEconomics,
+} from './ghost-wallet-controller-economics.js';
 import { ghostWalletEngine } from './ghost-wallet-engine.js';
 import { processGhostWalletProfitConversion, type GhostWalletProfitConversionPayload } from './ghost-wallet-payout.js';
 import { deserializeMatchedIntentPair } from './ghost-wallet-work-codec.js';
@@ -336,7 +339,13 @@ class GhostWalletUltraWorker {
     }
     if (!ghostWalletEngine.isLiveExecutionEnabled()) throw new Error('GHOST_WALLET_LIVE_EXECUTION_DISABLED');
     const transaction = ghostWalletEngine.buildCallerFundedMatchedPair(pair);
-    await this.submitPreparedTransaction(work, pair.chain as GhostWalletChain, transaction, { mode: 'matched_intent' });
+    await this.submitPreparedTransaction(work, pair.chain as GhostWalletChain, transaction, {
+      mode: 'matched_intent',
+      matchedIntentProfits: [
+        ...(pair.feeAmountA > 0n ? [{ asset: pair.intentA.buyToken, amountBaseUnits: pair.feeAmountA.toString() }] : []),
+        ...(pair.feeAmountB > 0n ? [{ asset: pair.intentB.buyToken, amountBaseUnits: pair.feeAmountB.toString() }] : []),
+      ],
+    });
   }
 
   private async processProfitConversion(work: GhostWalletWorkItem): Promise<void> {
@@ -478,7 +487,8 @@ class GhostWalletUltraWorker {
     const worstCaseGasWei = gasLimit.mul(feePerGas);
     if (balance.lt(worstCaseGasWei)) throw new Error('GHOST_WALLET_CONTROLLER_NATIVE_GAS_UNAVAILABLE');
 
-    if (String(work.payload.mode || '') === 'broker_execution') {
+    const executionMode = String(extra.mode || work.payload.mode || '');
+    if (executionMode === 'broker_execution') {
       const economics = await evaluateGhostWalletControllerEconomics({
         chain, provider, asset: payloadString(work.payload, 'asset'),
         gasUnits: BigInt(gasLimit.toString()), feePerGasWei: BigInt(feePerGas.toString()),
@@ -491,6 +501,36 @@ class GhostWalletUltraWorker {
         finalExpectedNetProfitBaseUnits: economics.expectedNetProfitBaseUnits.toString(),
         finalAssetPriceUsd: economics.assetPriceUsd,
         finalNativePriceUsd: economics.nativePriceUsd,
+      };
+    } else if (executionMode === 'matched_intent') {
+      const rawProfits = Array.isArray(extra.matchedIntentProfits) ? extra.matchedIntentProfits : [];
+      const profits = rawProfits.flatMap((entry: any) => {
+        const asset = String(entry?.asset || '').trim();
+        const amount = String(entry?.amountBaseUnits || '').trim();
+        if (!ethers.utils.isAddress(asset) || !/^\d+$/.test(amount) || BigInt(amount) <= 0n) return [];
+        return [{ asset: ethers.utils.getAddress(asset), amount: BigInt(amount) }];
+      });
+      if (profits.length === 0) throw new Error('GHOST_WALLET_MATCHED_INTENT_PROFIT_INVALID');
+      const economics = await evaluateGhostWalletMultiAssetControllerEconomics({
+        chain,
+        provider,
+        gasUnits: BigInt(gasLimit.toString()),
+        feePerGasWei: BigInt(feePerGas.toString()),
+        profits,
+      });
+      if (!economics.approved) throw new Error('GHOST_WALLET_CONTROLLER_NET_NOT_POSITIVE');
+      extra = {
+        ...extra,
+        matchedIntentGasCostUsdScaled: economics.gasCostUsdScaled.toString(),
+        matchedIntentExpectedProfitUsdScaled: economics.expectedProfitUsdScaled.toString(),
+        matchedIntentExpectedNetProfitUsdScaled: economics.expectedNetProfitUsdScaled.toString(),
+        matchedIntentProfitAssets: economics.profitAssets.map(item => ({
+          asset: item.asset,
+          symbol: item.symbol,
+          decimals: item.decimals,
+          amountBaseUnits: item.amount.toString(),
+          valueUsdScaled: item.valueUsdScaled.toString(),
+        })),
       };
     }
 
