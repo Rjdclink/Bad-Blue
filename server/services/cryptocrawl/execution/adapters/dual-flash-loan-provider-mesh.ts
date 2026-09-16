@@ -18,6 +18,20 @@ export interface MeasuredDualFlashLoanAllocation {
   reason: 'combined_liquidity_unlocks_exact_size' | 'fee_split_beats_single_provider';
 }
 
+export interface MeasuredProviderPairAllocation {
+  providers: readonly [FlashLoanProviderKind, FlashLoanProviderKind];
+  first: FlashLoanProviderEconomics;
+  second: FlashLoanProviderEconomics;
+  firstAmount: bigint;
+  secondAmount: bigint;
+  totalAmount: bigint;
+  firstFee: bigint;
+  secondFee: bigint;
+  totalFee: bigint;
+  reason: 'combined_liquidity_unlocks_exact_size' | 'fee_split_beats_single_provider';
+  executionAuthority: false;
+}
+
 function complete(item: FlashLoanProviderEconomics | undefined): item is FlashLoanProviderEconomics {
   return Boolean(
     item &&
@@ -28,6 +42,70 @@ function complete(item: FlashLoanProviderEconomics | undefined): item is FlashLo
     item.feeRateNumerator !== null &&
     item.feeRateDenominator !== null,
   );
+}
+
+/**
+ * Provider-neutral planning surface. It is deliberately advisory: a pair becomes
+ * executable only when a matching verified receiver/payload topology exists. This
+ * lets Morpho participate in measured shortage planning without fabricating a dual
+ * callback topology. The lower-fee provider is consumed first.
+ */
+export function selectMeasuredProviderPairAllocation(input: {
+  evidence: readonly FlashLoanProviderEconomics[];
+  requestedAmount: bigint;
+  pairs?: readonly (readonly [FlashLoanProviderKind, FlashLoanProviderKind])[];
+  requireSingleProviderShortage?: boolean;
+}): MeasuredProviderPairAllocation | null {
+  if (input.requestedAmount <= 0n) return null;
+  const pairs = input.pairs ?? [
+    ['morpho_blue', 'balancer_v2'],
+    ['morpho_blue', 'aave_v3'],
+    ['balancer_v2', 'aave_v3'],
+  ] as const;
+  const completeEvidence = input.evidence.filter(complete);
+  if (input.requireSingleProviderShortage !== false) {
+    const singleCanFund = completeEvidence.some(item => item.availableLiquidity! >= input.requestedAmount);
+    if (singleCanFund) return null;
+  }
+
+  let best: MeasuredProviderPairAllocation | null = null;
+  for (const pair of pairs) {
+    const left = completeEvidence.find(item => item.provider === pair[0]);
+    const right = completeEvidence.find(item => item.provider === pair[1]);
+    if (!left || !right) continue;
+    const leftLiquidity = left.availableLiquidity!;
+    const rightLiquidity = right.availableLiquidity!;
+    if (leftLiquidity + rightLiquidity < input.requestedAmount) continue;
+
+    const leftCheaper = left.feeBps! <= right.feeBps!;
+    const first = leftCheaper ? left : right;
+    const second = leftCheaper ? right : left;
+    const firstAmount = first.availableLiquidity! < input.requestedAmount
+      ? first.availableLiquidity!
+      : input.requestedAmount;
+    const secondAmount = input.requestedAmount - firstAmount;
+    if (firstAmount <= 0n || secondAmount <= 0n || secondAmount > second.availableLiquidity!) continue;
+
+    const firstFee = calculateMeasuredFlashLoanFee(first, firstAmount);
+    const secondFee = calculateMeasuredFlashLoanFee(second, secondAmount);
+    if (firstFee === null || secondFee === null) continue;
+    const totalFee = firstFee + secondFee;
+    const candidate: MeasuredProviderPairAllocation = {
+      providers: [first.provider, second.provider],
+      first,
+      second,
+      firstAmount,
+      secondAmount,
+      totalAmount: input.requestedAmount,
+      firstFee,
+      secondFee,
+      totalFee,
+      reason: 'combined_liquidity_unlocks_exact_size',
+      executionAuthority: false,
+    };
+    if (!best || candidate.totalFee < best.totalFee) best = candidate;
+  }
+  return best;
 }
 
 /**
