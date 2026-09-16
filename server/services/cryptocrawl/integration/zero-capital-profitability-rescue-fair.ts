@@ -202,6 +202,9 @@ export async function runFairZeroCapitalProfitabilityRescue(
   let alternateRouteIdentityRebindings = 0;
   let activeMeasuredRescueError: string | null = null;
   let recursiveMeasuredPasses = 0;
+  let recursiveSplitPasses = 0;
+  let recursiveSplitImprovements = 0;
+  let recursiveSplitNoImprovementStops = 0;
   let recursiveStrictPositiveImprovements = 0;
   let recursiveNoImprovementStops = 0;
   let recursiveWallClockStops = 0;
@@ -439,6 +442,39 @@ export async function runFairZeroCapitalProfitabilityRescue(
     return result;
   };
 
+  // Recreate the measured route-improvement behavior that previously produced the
+  // largest observed APE uplift, then compound only proven gains. Every successful
+  // derived overlay becomes the next split seed immediately. A no-improvement pass,
+  // candidate retirement, release signal, or the existing freshness/deadline boundary
+  // stops the loop, so this cannot restore the old unbounded pair/quote explosion.
+  const runCompoundingSplitBatch = async (
+    candidate: ZeroCapitalOpportunity,
+    deadlineAt: number,
+  ): Promise<ZeroCapitalRouteSplitRescueResult> => {
+    let aggregate = emptySplitResult();
+    for (let pass = 0; pass < maxPasses; pass += 1) {
+      if (releaseRequested || Date.now() >= deadlineAt) break;
+      const before = transformed.find(item => item.id === candidate.id) ?? candidate;
+      if (!stillNeedsMeasuredRescue(before)) break;
+
+      const result = await runSplitBatch([before], deadlineAt);
+      aggregate = mergeSplitResult(aggregate, result);
+      recursiveSplitPasses += 1;
+
+      const after = transformed.find(item => item.id === candidate.id) ?? before;
+      if (!strictDerivedImprovement(before, after)) {
+        recursiveSplitNoImprovementStops += 1;
+        break;
+      }
+
+      recursiveSplitImprovements += 1;
+      primeApeResidentRouting([after]);
+      primeApeResidentWorkbench({ opportunities: [after], configuredRoutes: input.configuredRoutes });
+      prewarmApeProfitabilityToolboxPlan(after);
+    }
+    return aggregate;
+  };
+
   const runV4Batch = async (
     passInput: readonly ZeroCapitalOpportunity[],
     deadlineAt: number,
@@ -526,7 +562,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
         const localV4Deadline = capApeOptimizationDeadline(candidate.id, tierBudget.v4DeadlineAt);
 
         const splitTask = Date.now() < localSplitDeadline
-          ? runSplitBatch([candidate], localSplitDeadline).then(localSplit => {
+          ? runCompoundingSplitBatch(candidate, localSplitDeadline).then(localSplit => {
               if (!releaseRequested) splitResult = mergeSplitResult(splitResult, localSplit);
             })
           : Promise.resolve();
@@ -604,7 +640,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
       const splitCandidates = prioritizedForTactic('route_split').filter(apeV4FirstCandidate);
       await Promise.all(splitCandidates.map(async candidate => {
         if (!canStartCompositeWork()) return;
-        const result = await runSplitBatch([candidate], compositeHardDeadlineAt);
+        const result = await runCompoundingSplitBatch(candidate, compositeHardDeadlineAt);
         if (!releaseRequested) splitResult = mergeSplitResult(splitResult, result);
       }));
     };
@@ -727,6 +763,13 @@ export async function runFairZeroCapitalProfitabilityRescue(
     deadlineStoppedIsToolboxExhausted: false,
     activeMeasuredRescueError,
     recursiveMeasuredPasses,
+    recursiveSplitPasses,
+    recursiveSplitImprovements,
+    recursiveSplitNoImprovementStops,
+    recursiveSplitFeedsImprovedCandidate: true,
+    recursiveSplitBoundedBySameDeadline: true,
+    recursiveSplitStopsOnNoMeasuredImprovement: true,
+    recursiveSplitPreservesMeasuredOnlyPairing: true,
     recursiveMeasuredPassLimit: maxPasses,
     recursiveWallClockBudgetMs: wallClockBudgetMs,
     configuredRecursiveHardDeadlineAt: configuredHardDeadlineAt,
