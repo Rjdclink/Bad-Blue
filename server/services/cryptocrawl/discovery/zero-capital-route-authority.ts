@@ -3,6 +3,10 @@ import {
   loadConfiguredZeroCapitalRoutes,
   type ConfiguredZeroCapitalRoute,
 } from '../execution/adapters/onchain-route-quoter.js';
+import {
+  ensureUniversalReverseRoutes,
+  reverseRouteCoverage,
+} from '../execution/adapters/zero-capital-route-direction.js';
 import { supportsSponsoredReceiverChain } from '../execution/adapters/sponsored-receiver-manager.js';
 import {
   buildDynamicZeroCapitalRouteTemplates,
@@ -14,6 +18,8 @@ export interface CanonicalZeroCapitalRouteSnapshot {
   explicitRoutes: number;
   dynamicRoutes: number;
   graphlessRoutes: number;
+  reverseTemplatesAdded: number;
+  compatibleReverseCoverage: ReturnType<typeof reverseRouteCoverage>;
   chains: SupportedChain[];
 }
 
@@ -27,7 +33,9 @@ function activeChain(raw: string): raw is Exclude<SupportedChain, 'europa'> {
  * Explicit configuration, deterministic dynamic templates, and graphless routes
  * are inputs to this function; no caller is allowed to build a competing merged
  * route set. The returned set is filtered to reviewed receiver-capable chains and
- * deduplicated by exact route identity.
+ * deduplicated by exact route identity. Every closed-cycle route whose adapters are
+ * bidirectionally executable also receives a structural reverse twin when one is not
+ * already represented. This expansion performs no quote/RPC work.
  */
 export function getCanonicalZeroCapitalRouteSnapshot(input: {
   providerChains?: Iterable<string>;
@@ -49,13 +57,16 @@ export function getCanonicalZeroCapitalRouteSnapshot(input: {
 
   const byId = new Map<string, ConfiguredZeroCapitalRoute>();
   for (const route of [...explicit, ...dynamic, ...graphless]) byId.set(route.id, route);
-  const routes = [...byId.values()];
+  const baseRoutes = [...byId.values()];
+  const routes = ensureUniversalReverseRoutes(baseRoutes);
 
   return {
     routes,
     explicitRoutes: explicit.length,
     dynamicRoutes: dynamic.length,
     graphlessRoutes: graphless.length,
+    reverseTemplatesAdded: routes.length - baseRoutes.length,
+    compatibleReverseCoverage: reverseRouteCoverage(routes),
     chains: [...new Set(routes.map(route => route.chain as SupportedChain))],
   };
 }
