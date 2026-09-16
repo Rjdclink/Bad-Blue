@@ -24,6 +24,9 @@ import {
   type GhostWalletSourceConfig,
 } from './onchain-capital-sources.js';
 import { ghostWalletProviderMesh } from './ghost-wallet-provider-mesh.js';
+import { serializeMatchedIntentPair } from './ghost-wallet-work-codec.js';
+import { enqueueGhostWalletWork } from './ghost-wallet-work-ledger.js';
+import { ghostWalletWorkSignal } from './ghost-wallet-work-signal.js';
 
 const MATCHED_INTENT_EVENT_INTERFACE = new utils.Interface([
   'event MatchedIntentPairSettled(address indexed ownerA,address indexed ownerB,address tokenA,address tokenB,uint256 feeA,uint256 feeB,address profitRecipient)',
@@ -48,7 +51,8 @@ export interface GhostWalletEngineStatus {
   configuredIntermediaryChains: string[];
   providerChains: string[];
   alchemyDependency: false;
-  serverTransactionSubmission: false;
+  intermediaryTransactionSubmission: false;
+  controllerTransactionSubmission: true;
   measuredCapitalQuotes: number;
   openSignedIntents: number;
   matchedIntentPairs: number;
@@ -60,11 +64,7 @@ export interface GhostWalletEngineStatus {
   sourceErrors: Array<{ source: string; chain?: string; error: string }>;
 }
 
-/**
- * This switch controls Ghost server automation only. The core borrower-funded
- * on-chain bridge is permissionless and does not require a server transaction.
- * NO_EXECUTION remains the global emergency stop for server-originated actions.
- */
+/** Dedicated Ghost authority. NO_EXECUTION remains the global emergency stop. */
 function liveExecutionEnabled(): boolean {
   return process.env.GHOST_WALLET_LIVE_EXECUTION?.trim().toLowerCase() === 'true'
     && process.env.GHOST_WALLET_LIVE_CONFIRMATION === 'I_ACCEPT_GHOST_WALLET_ATOMIC_CREDIT_RISK'
@@ -107,7 +107,7 @@ export class GhostWalletEngine {
     await this.refresh();
     this.running = true;
 
-    logger.info('[GhostWallet] Independent atomic intermediation lane started', {
+    logger.info('[GhostWallet] Independent autonomous atomic intermediation lane started', {
       component: 'GhostWalletEngine',
       configuredIntermediaryChains: this.config.intermediaries.map(entry => entry.chain),
       providerChains: ghostWalletProviderMesh.getReadyChains(),
@@ -120,21 +120,21 @@ export class GhostWalletEngine {
         'euler_debt_assumption_measurement',
         'aave_credit_delegation_measurement',
         'permissionless_vault_capital',
+        'signed_intent_capital',
+        'coincidence_of_wants',
       ],
-      inactiveSourceAvailablePrimitives: ['signed_intent_capital', 'coincidence_of_wants'],
       alchemyDependency: false,
       existingArbitrageSystemsAffected: false,
-      manualRailwayConfigurationRequired: false,
-      coreExecutionGasPayer: 'transaction_initiator',
-      operatorInitialCapitalRequired: false,
-      serverTransactionSubmission: false,
+      intermediaryRole: 'atomic_middleman_only',
+      intermediaryTransactionSubmission: false,
+      controllerTransactionSubmission: true,
       repaymentPolicy: 'same_transaction_or_revert',
       profitRouting: '90_percent_payout_10_percent_retained',
       profitLadderAuthority: false,
-      arbitrageScheduleAuthority: false,
+      zeroCapitalExecutionAuthority: false,
       periodicWorkPolling: false,
       eventDrivenWorker: true,
-      liveExecutionAuthority: 'ghost_wallet_dedicated_switch_only_for_server_automation',
+      liveExecutionAuthority: 'ghost_wallet_dedicated_switch_only',
       liveExecutionEnabled: liveExecutionEnabled(),
     });
   }
@@ -158,8 +158,6 @@ export class GhostWalletEngine {
   async refresh(): Promise<void> {
     if (this.refreshPromise) return this.refreshPromise;
     this.refreshPromise = (async () => {
-      // Refresh provider rankings on the same demand-driven cadence as source
-      // evidence. No independent polling authority is introduced.
       await ghostWalletProviderMesh.initialize();
       this.config = loadGhostWalletSourceConfig();
       const providersByChain = new Map<string, providers.JsonRpcProvider>();
@@ -179,20 +177,37 @@ export class GhostWalletEngine {
   }
 
   registerSignedIntent(input: GhostWalletSignedIntent): GhostWalletSignedIntent {
-    return ghostWalletIntentBook.register(input);
+    const registered = ghostWalletIntentBook.register(input);
+    queueMicrotask(() => {
+      void this.enqueueReadyIntentPairWork().catch(error => logger.debug('[GhostWallet] Intent handoff deferred', {
+        component: 'GhostWalletEngine', error: error instanceof Error ? error.message : String(error),
+      }));
+    });
+    return registered;
   }
 
-  /**
-   * Signed pairs are intentionally not submitted by the server. Their signatures
-   * authorize settlement; any external submitter may pay gas once the intermediary
-   * exposes the permissionless settlement entrypoint.
-   */
   async enqueueReadyIntentPairWork(): Promise<number> {
-    return 0;
+    const pairs = ghostWalletIntentBook.match().filter(pair => pair.expiresAt > Date.now());
+    let enqueued = 0;
+    for (const pair of pairs) {
+      const intermediary = this.getConfiguredIntermediary(pair.chain);
+      if (!intermediary || !sameAddress(intermediary, pair.intermediary)) continue;
+      const work = await enqueueGhostWalletWork({
+        dedupeKey: `ghost-matched-intent:${pair.pairId}:${pair.expiresAt}`,
+        kind: 'matched_intent_settlement',
+        chain: pair.chain,
+        priority: 850,
+        maxAttempts: 20,
+        payload: { pair: serializeMatchedIntentPair(pair) as unknown as Record<string, unknown> },
+      });
+      if (work.status === 'QUEUED') enqueued += 1;
+    }
+    if (enqueued > 0) ghostWalletWorkSignal.emitWake('local_work_enqueued');
+    return enqueued;
   }
 
   async executeReadyIntentPairs(): Promise<void> {
-    // Caller-funded only. No server submission or provider sponsorship fallback.
+    await this.enqueueReadyIntentPairWork();
   }
 
   getMeasuredCapitalQuotes(): GhostWalletCapitalQuote[] {
@@ -243,7 +258,7 @@ export class GhostWalletEngine {
 
   getExecutionWallet(chain: string): Wallet | null {
     const provider = this.getProvider(chain);
-    const key = normalizePrivateKey(process.env.WALLET_PRIVATE_KEY) || null;
+    const key = normalizePrivateKey(process.env.WALLET_PRIVATE_KEY || process.env.PRIVATE_KEY) || null;
     if (!provider || !key) return null;
     return walletFromPrivateKey(key).connect(provider);
   }
@@ -260,7 +275,8 @@ export class GhostWalletEngine {
       configuredIntermediaryChains: this.config.intermediaries.map(entry => entry.chain),
       providerChains: ghostWalletProviderMesh.getReadyChains(),
       alchemyDependency: false,
-      serverTransactionSubmission: false,
+      intermediaryTransactionSubmission: false,
+      controllerTransactionSubmission: true,
       measuredCapitalQuotes: this.freshQuotes().length,
       openSignedIntents: ghostWalletIntentBook.getOpen().length,
       matchedIntentPairs: matches.length,
@@ -273,11 +289,19 @@ export class GhostWalletEngine {
     };
   }
 
-  /** Server submission is intentionally retired; external initiators pay gas. */
-  async executePersistedMatchedPair(): Promise<GhostWalletMatchedSettlement> {
+  async executePersistedMatchedPair(pair: GhostWalletMatchedIntentPair): Promise<{ workId: string }> {
+    if (!liveExecutionEnabled()) throw new Error('GHOST_WALLET_LIVE_EXECUTION_DISABLED');
     this.executionsAttempted += 1;
-    this.executionsFailed += 1;
-    throw new Error('GHOST_WALLET_SERVER_SUBMISSION_DISABLED_CALLER_FUNDED_ONLY');
+    const work = await enqueueGhostWalletWork({
+      dedupeKey: `ghost-matched-intent:${pair.pairId}:${pair.expiresAt}`,
+      kind: 'matched_intent_settlement',
+      chain: pair.chain,
+      priority: 850,
+      maxAttempts: 20,
+      payload: { pair: serializeMatchedIntentPair(pair) as unknown as Record<string, unknown> },
+    });
+    ghostWalletWorkSignal.emitWake('local_work_enqueued');
+    return { workId: work.workId };
   }
 
   async reconcileSubmittedMatchedPair(
@@ -288,7 +312,10 @@ export class GhostWalletEngine {
     if (!provider) throw new Error(`GHOST_WALLET_PROVIDER_UNAVAILABLE:${pair.chain}`);
     const receipt = await provider.getTransactionReceipt(transactionHash);
     if (!receipt) return null;
-    if (receipt.status !== 1) throw new Error('GHOST_WALLET_SUBMITTED_TRANSACTION_REVERTED');
+    if (receipt.status !== 1) {
+      this.executionsFailed += 1;
+      throw new Error('GHOST_WALLET_SUBMITTED_TRANSACTION_REVERTED');
+    }
     const settlement = this.verifyMatchedIntentReceipt(pair, receipt, resolvePrimaryProfitPayoutAddress() || '');
     this.executionsSettled += 1;
     this.lastExecutionAt = Date.now();
