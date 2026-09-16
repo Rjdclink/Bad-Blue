@@ -115,6 +115,28 @@ function timeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> 
   });
 }
 
+function firstSuccessful<T>(attempts: Array<Promise<T>>): Promise<T> {
+  if (attempts.length === 0) return Promise.reject(new Error('GHOST_WALLET_RPC_NO_ATTEMPTS'));
+  return new Promise<T>((resolve, reject) => {
+    const failures: unknown[] = new Array(attempts.length);
+    let remaining = attempts.length;
+    let settled = false;
+    attempts.forEach((attempt, index) => {
+      attempt.then(value => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      }, error => {
+        failures[index] = error;
+        remaining -= 1;
+        if (!settled && remaining === 0) {
+          reject(failures.find(Boolean) || new Error('GHOST_WALLET_RPC_ALL_ATTEMPTS_FAILED'));
+        }
+      });
+    });
+  });
+}
+
 function providerHealthTtlMs(): number {
   const configured = Number(process.env.GHOST_WALLET_PROVIDER_HEALTH_TTL_MS || 15_000);
   return Number.isFinite(configured)
@@ -325,15 +347,16 @@ class GhostWalletProviderMesh {
         throw error;
       }
     })());
-    return Promise.any(attempts);
+    return firstSuccessful(attempts);
   }
 
   async broadcastRawTransaction(chain: GhostWalletChain, rawTransaction: string): Promise<string> {
     await this.ensureChain(chain);
     this.sortCandidates(chain);
-    const candidates = (this.healthy.get(chain) || []).filter(candidate => candidate.cooldownUntil <= Date.now()).slice(0, maxHedgeAttempts());
+    const candidates = (this.healthy.get(chain) || [])
+      .filter(candidate => candidate.cooldownUntil <= Date.now())
+      .slice(0, maxHedgeAttempts());
     if (candidates.length === 0) throw new Error(`GHOST_WALLET_RPC_UNAVAILABLE:${chain}`);
-    const expectedHash = providers.JsonRpcProvider.hexlify ? null : null;
     const attempts = candidates.map(async candidate => {
       const startedAt = Date.now();
       try {
@@ -405,27 +428,31 @@ class GhostWalletProviderMesh {
 
   getStatus() {
     const now = Date.now();
-    return [...this.healthy.entries()].map(([chain, rows]) => ({
-      chain,
-      selected: [...rows].sort((a, b) => a.ewmaLatencyMs - b.ewmaLatencyMs)[0]?.label || null,
-      redundancy: rows.length,
-      availableNow: rows.filter(row => row.cooldownUntil <= now).length,
-      providers: rows.map(row => ({
-        label: row.label,
-        ewmaLatencyMs: Math.round(row.ewmaLatencyMs * 100) / 100,
-        successes: row.successes,
-        failures: row.failures,
-        consecutiveFailures: row.consecutiveFailures,
-        cooldownUntil: row.cooldownUntil || null,
-      })),
-      lastProbeAt: this.lastProbeAt.get(chain) || null,
-      healthTtlMs: providerHealthTtlMs(),
-      hedgeDelayMs: hedgeDelayMs(),
-      maxHedgeAttempts: maxHedgeAttempts(),
-      alchemy: false,
-      websocketCandidates: ghostWalletWebSocketUrls(chain).length,
-      settlementLogRedundancy: rows.filter(row => ghostWalletProviderSupportsSettlementLogs(chain, row.url)).length,
-    }));
+    return [...this.healthy.entries()].map(([chain, rows]) => {
+      this.sortCandidates(chain);
+      const ranked = this.healthy.get(chain) || rows;
+      return {
+        chain,
+        selected: ranked.find(row => row.cooldownUntil <= now)?.label || ranked[0]?.label || null,
+        redundancy: ranked.length,
+        availableNow: ranked.filter(row => row.cooldownUntil <= now).length,
+        providers: ranked.map(row => ({
+          label: row.label,
+          ewmaLatencyMs: Math.round(row.ewmaLatencyMs * 100) / 100,
+          successes: row.successes,
+          failures: row.failures,
+          consecutiveFailures: row.consecutiveFailures,
+          cooldownUntil: row.cooldownUntil || null,
+        })),
+        lastProbeAt: this.lastProbeAt.get(chain) || null,
+        healthTtlMs: providerHealthTtlMs(),
+        hedgeDelayMs: hedgeDelayMs(),
+        maxHedgeAttempts: maxHedgeAttempts(),
+        alchemy: false,
+        websocketCandidates: ghostWalletWebSocketUrls(chain).length,
+        settlementLogRedundancy: ranked.filter(row => ghostWalletProviderSupportsSettlementLogs(chain, row.url)).length,
+      };
+    });
   }
 }
 
