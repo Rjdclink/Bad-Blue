@@ -68,8 +68,19 @@ function compareExactEconomics(left: ZeroCapitalOpportunity, right: ZeroCapitalO
   return left.id.localeCompare(right.id);
 }
 
+/**
+ * Direction is the ordered execution orientation, not merely token order. A two-token
+ * cycle A->B->A has the same token path in both arbitrage directions, so venue/fee
+ * order must be part of the direction identity while remaining outside market identity.
+ */
 export function apeDirectionKey(opportunity: ZeroCapitalOpportunity): string {
-  return tokenPath(opportunity).join('>');
+  if (opportunity.route.length === 0) return tokenPath(opportunity).join('>');
+  return opportunity.route.map(step => [
+    step.tokenIn.toLowerCase(),
+    step.tokenOut.toLowerCase(),
+    step.protocol,
+    Number.isFinite(step.fee) ? String(step.fee) : 'fee_unknown',
+  ].join('@')).join('|');
 }
 
 /**
