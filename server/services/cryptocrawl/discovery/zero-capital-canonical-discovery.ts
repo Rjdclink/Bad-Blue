@@ -666,7 +666,7 @@ export async function startCanonicalZeroCapitalDiscovery(): Promise<void> {
     globalReceiverFailureBlocksProviderAdmission: false,
     duplicateHungTaskSuppression: true,
     timedOutChainScanOwnershipReleased: true,
-    lateTimedOutChainScanGenerationInvalidated: true,
+    lateTimedOutScanGenerationInvalidated: true,
     configuredAndDynamicMeasurementParallel: true,
     dynamicGraphlessDiscovery: true,
     runtimeMethodMutation: false,
@@ -713,7 +713,7 @@ export function getCanonicalZeroCapitalDiscoverySnapshot() {
     isolatedChainScansPending: chainScanTasks.size,
     chainScanGenerationByChain: Object.fromEntries(chainScanGenerations.entries()),
     timedOutChainScanOwnershipReleased: true,
-    lateTimedOutChainScanGenerationInvalidated: true,
+    lateTimedOutScanGenerationInvalidated: true,
     globalReceiverFailureBlocksProviderAdmission: false,
   };
 }
