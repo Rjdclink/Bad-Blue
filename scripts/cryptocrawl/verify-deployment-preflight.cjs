@@ -114,19 +114,11 @@ fs.readFileSync = originalReadFileSync;
 require('./verify-ghost-wallet-atomic-capital.cjs');
 require('./verify-ghost-wallet-merge-gate.cjs');
 require('./verify-ghost-wallet-performance-optimizations.cjs');
+require('./verify-ghost-wallet-demand-gas-rpc.cjs');
 require('./verify-full-runtime-regression-repair.cjs');
 
-// Compile runtime-deployable contracts during the real production prebuild. The
-// flash receiver compiler writes Balancer, composite, Aave V3, Morpho Blue, and
-// Aave+Balancer artifacts into artifacts/cryptocrawl before Docker copies that
-// directory into the production image. Missing provider artifacts therefore fail
-// the build instead of silently removing an otherwise supported route.
 const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-execFileSync(
-  npx,
-  ['--no-install', 'tsx', 'scripts/cryptocrawl/compile-flashloan-receiver.ts'],
-  { stdio: 'inherit', env: process.env },
-);
+execFileSync(npx, ['--no-install', 'tsx', 'scripts/cryptocrawl/compile-flashloan-receiver.ts'], { stdio: 'inherit', env: process.env });
 
 for (const [artifactPath, expectedContract] of [
   ['artifacts/cryptocrawl/CryptocrawlAaveV3FlashLoanReceiver.json', 'CryptocrawlAaveV3FlashLoanReceiver'],
@@ -138,13 +130,6 @@ for (const [artifactPath, expectedContract] of [
   }
 }
 
-// Ghost Wallet contracts use their existing compiler path. Keeping the two
-// compilation steps independent means a failure is local and the build fails
-// closed without changing any runtime execution authority.
-execFileSync(
-  process.execPath,
-  ['scripts/cryptocrawl/compile-ghost-wallet-contracts.cjs'],
-  { stdio: 'inherit', env: process.env },
-);
+execFileSync(process.execPath, ['scripts/cryptocrawl/compile-ghost-wallet-contracts.cjs'], { stdio: 'inherit', env: process.env });
 
-console.log('[deployment-preflight] structural BPS truth plus complete Overflow runtime authority, checked-out database disconnect resilience, Kalshi bidirectional funding/prediction/maker/cross-venue/zero-personal-capital completion, safety, measured-profitability, provider, treasury, execution-family, production-pressure/evidence recovery, minimum-sufficient execution evidence, first-pass route measurability, canonical refresh/capability authority, event-driven zero-capital BPS evidence handoff, bounded stale-evidence canonical reacquisition, bounded multi-topology discovery liveness, topology-local runtime readiness, route-local protocol-anchor failure isolation, Fluid successful-return and custom-revert quote decoding, continuously-available provider-mesh pending fallback, degraded-but-usable RPC cross-chain admission, authenticated Across token catalog resolution, provider-local adaptive Ghost settlement log recovery, provider-aware dynamic sequential builder gas sizing, explicit before/after capability monotonicity matrix, final evidence/route resolution, payout invariants, Ghost Wallet atomic-capital isolation, deterministic no-manual bootstrap, merge gate, Ghost performance optimization gate, full runtime regression repair gate, flash-receiver and Ghost Wallet Solidity compilation, and single zero-capital route authority passed; continuing to downstream prebuild/build');
+console.log('[deployment-preflight] all established zero-capital, Overflow, runtime, payout, Ghost atomic-capital, Ghost performance, Ghost demand/gas/RPC, contract compilation, and full runtime regression gates passed; continuing to downstream build');

@@ -71,26 +71,13 @@ function liveExecutionEnabled(): boolean {
     && process.env.NO_EXECUTION?.trim().toLowerCase() !== 'true';
 }
 
-function normalizeChain(value: string): string {
-  return value.trim().toLowerCase();
-}
-
-function bigint(value: any): bigint {
-  return BigInt(value.toString());
-}
-
-function sameAddress(left: string, right: string): boolean {
-  return left.toLowerCase() === right.toLowerCase();
-}
+function normalizeChain(value: string): string { return value.trim().toLowerCase(); }
+function bigint(value: any): bigint { return BigInt(value.toString()); }
+function sameAddress(left: string, right: string): boolean { return left.toLowerCase() === right.toLowerCase(); }
 
 export class GhostWalletEngine {
   private running = false;
-  private config: GhostWalletSourceConfig = {
-    intermediaries: [],
-    aaveDelegations: [],
-    eulerDebtAssumptions: [],
-    capitalVaults: [],
-  };
+  private config: GhostWalletSourceConfig = { intermediaries: [], aaveDelegations: [], eulerDebtAssumptions: [], capitalVaults: [] };
   private quotes: GhostWalletCapitalQuote[] = [];
   private sourceErrors: Array<{ source: string; chain?: string; error: string }> = [];
   private lastRefreshAt: number | null = null;
@@ -107,22 +94,27 @@ export class GhostWalletEngine {
     await this.refresh();
     this.running = true;
 
+    // Dynamic imports avoid a static cycle: both demand verification and reserve
+    // replenishment call back into this already-initialized Ghost engine.
+    const [{ ghostWalletBorrowerDemandMesh }, { ghostWalletGasReserve }] = await Promise.all([
+      import('./ghost-wallet-borrower-demand-mesh.js'),
+      import('./ghost-wallet-gas-reserve.js'),
+    ]);
+    await Promise.all([ghostWalletBorrowerDemandMesh.start(), ghostWalletGasReserve.start()]);
+
     logger.info('[GhostWallet] Independent autonomous atomic intermediation lane started', {
       component: 'GhostWalletEngine',
       configuredIntermediaryChains: this.config.intermediaries.map(entry => entry.chain),
       providerChains: ghostWalletProviderMesh.getReadyChains(),
       capitalPrimitives: [
-        'permissionless_external_flash_intermediation',
-        'aave_v3_flash_intermediation',
-        'morpho_blue_flash_intermediation',
-        'balancer_v2_flash_intermediation',
-        'erc3156_flash_intermediation',
-        'euler_debt_assumption_measurement',
-        'aave_credit_delegation_measurement',
-        'permissionless_vault_capital',
-        'signed_intent_capital',
-        'coincidence_of_wants',
+        'permissionless_external_flash_intermediation', 'aave_v3_flash_intermediation', 'morpho_blue_flash_intermediation',
+        'balancer_v2_flash_intermediation', 'erc3156_flash_intermediation', 'euler_debt_assumption_measurement',
+        'aave_credit_delegation_measurement', 'permissionless_vault_capital', 'signed_intent_capital', 'coincidence_of_wants',
       ],
+      borrowerDemandAcquisition: 'signed_https_feed_plus_direct_signed_registration',
+      borrowerDemandTransportAuthority: false,
+      controllerGasReserve: 'retained_realized_ghost_profit_same_chain_native',
+      firstTradeGasBootstrap: 'existing_system_native_or_optional_sponsor_required',
       alchemyDependency: false,
       existingArbitrageSystemsAffected: false,
       intermediaryRole: 'atomic_middleman_only',
@@ -141,19 +133,15 @@ export class GhostWalletEngine {
 
   stop(): void {
     this.running = false;
+    void Promise.all([
+      import('./ghost-wallet-borrower-demand-mesh.js').then(({ ghostWalletBorrowerDemandMesh }) => ghostWalletBorrowerDemandMesh.stop()),
+      import('./ghost-wallet-gas-reserve.js').then(({ ghostWalletGasReserve }) => ghostWalletGasReserve.stop()),
+    ]).catch(() => undefined);
   }
 
-  isRunning(): boolean {
-    return this.running;
-  }
-
-  isLiveExecutionEnabled(): boolean {
-    return liveExecutionEnabled();
-  }
-
-  private freshQuotes(now = Date.now()): GhostWalletCapitalQuote[] {
-    return this.quotes.filter(quote => quote.measured === true && quote.expiresAt > now);
-  }
+  isRunning(): boolean { return this.running; }
+  isLiveExecutionEnabled(): boolean { return liveExecutionEnabled(); }
+  private freshQuotes(now = Date.now()): GhostWalletCapitalQuote[] { return this.quotes.filter(quote => quote.measured === true && quote.expiresAt > now); }
 
   async refresh(): Promise<void> {
     if (this.refreshPromise) return this.refreshPromise;
@@ -170,19 +158,15 @@ export class GhostWalletEngine {
       this.quotes = measurement.quotes;
       this.sourceErrors = measurement.errors;
       this.lastRefreshAt = measurement.observedAt;
-    })().finally(() => {
-      this.refreshPromise = null;
-    });
+    })().finally(() => { this.refreshPromise = null; });
     return this.refreshPromise;
   }
 
   registerSignedIntent(input: GhostWalletSignedIntent): GhostWalletSignedIntent {
     const registered = ghostWalletIntentBook.register(input);
-    queueMicrotask(() => {
-      void this.enqueueReadyIntentPairWork().catch(error => logger.debug('[GhostWallet] Intent handoff deferred', {
-        component: 'GhostWalletEngine', error: error instanceof Error ? error.message : String(error),
-      }));
-    });
+    queueMicrotask(() => { void this.enqueueReadyIntentPairWork().catch(error => logger.debug('[GhostWallet] Intent handoff deferred', {
+      component: 'GhostWalletEngine', error: error instanceof Error ? error.message : String(error),
+    })); });
     return registered;
   }
 
@@ -193,11 +177,8 @@ export class GhostWalletEngine {
       const intermediary = this.getConfiguredIntermediary(pair.chain);
       if (!intermediary || !sameAddress(intermediary, pair.intermediary)) continue;
       const work = await enqueueGhostWalletWork({
-        dedupeKey: `ghost-matched-intent:${pair.pairId}:${pair.expiresAt}`,
-        kind: 'matched_intent_settlement',
-        chain: pair.chain,
-        priority: 850,
-        maxAttempts: 20,
+        dedupeKey: `ghost-matched-intent:${pair.pairId}:${pair.expiresAt}`, kind: 'matched_intent_settlement',
+        chain: pair.chain, priority: 850, maxAttempts: 20,
         payload: { pair: serializeMatchedIntentPair(pair) as unknown as Record<string, unknown> },
       });
       if (work.status === 'QUEUED') enqueued += 1;
@@ -206,56 +187,23 @@ export class GhostWalletEngine {
     return enqueued;
   }
 
-  async executeReadyIntentPairs(): Promise<void> {
-    await this.enqueueReadyIntentPairWork();
-  }
-
-  getMeasuredCapitalQuotes(): GhostWalletCapitalQuote[] {
-    return this.freshQuotes().map(quote => ({
-      ...quote,
-      provenance: [...quote.provenance],
-      metadata: quote.metadata ? { ...quote.metadata } : undefined,
-    }));
-  }
-
-  composeLiquidCapital(input: {
-    chain: string;
-    asset: string;
-    requiredPrincipal: bigint;
-  }): GhostWalletCapitalComposition | null {
-    return composeGhostWalletCapital({ ...input, quotes: this.freshQuotes() });
-  }
-
-  selectDebtAssumption(input: { chain: string; asset: string; requiredCapacity: bigint }): GhostWalletCapitalQuote | null {
-    return selectLiabilityCapacity({ ...input, primitive: 'euler_debt_assumption', quotes: this.freshQuotes() });
-  }
-
-  selectDelegatedCredit(input: { chain: string; asset: string; requiredCapacity: bigint }): GhostWalletCapitalQuote | null {
-    return selectLiabilityCapacity({ ...input, primitive: 'aave_credit_delegation', quotes: this.freshQuotes() });
-  }
-
-  getMatchedIntentPairs(): GhostWalletMatchedIntentPair[] {
-    return ghostWalletIntentBook.match();
-  }
+  async executeReadyIntentPairs(): Promise<void> { await this.enqueueReadyIntentPairWork(); }
+  getMeasuredCapitalQuotes(): GhostWalletCapitalQuote[] { return this.freshQuotes().map(quote => ({ ...quote, provenance: [...quote.provenance], metadata: quote.metadata ? { ...quote.metadata } : undefined })); }
+  composeLiquidCapital(input: { chain: string; asset: string; requiredPrincipal: bigint }): GhostWalletCapitalComposition | null { return composeGhostWalletCapital({ ...input, quotes: this.freshQuotes() }); }
+  selectDebtAssumption(input: { chain: string; asset: string; requiredCapacity: bigint }): GhostWalletCapitalQuote | null { return selectLiabilityCapacity({ ...input, primitive: 'euler_debt_assumption', quotes: this.freshQuotes() }); }
+  selectDelegatedCredit(input: { chain: string; asset: string; requiredCapacity: bigint }): GhostWalletCapitalQuote | null { return selectLiabilityCapacity({ ...input, primitive: 'aave_credit_delegation', quotes: this.freshQuotes() }); }
+  getMatchedIntentPairs(): GhostWalletMatchedIntentPair[] { return ghostWalletIntentBook.match(); }
 
   buildCallerFundedMatchedPair(pair: GhostWalletMatchedIntentPair): { to: string; data: string; value: string } {
     const profitRecipient = resolvePrimaryProfitPayoutAddress();
     if (!profitRecipient) throw new Error('GHOST_WALLET_PRIMARY_PAYOUT_UNAVAILABLE');
     const intermediary = this.getConfiguredIntermediary(pair.chain);
-    if (!intermediary || !sameAddress(intermediary, pair.intermediary)) {
-      throw new Error('GHOST_WALLET_INTERMEDIARY_BINDING_UNAVAILABLE');
-    }
+    if (!intermediary || !sameAddress(intermediary, pair.intermediary)) throw new Error('GHOST_WALLET_INTERMEDIARY_BINDING_UNAVAILABLE');
     return buildMatchedIntentPairTransaction({ intermediary, pair, profitRecipient });
   }
 
-  getConfiguredIntermediary(chain: string): string | null {
-    return this.config.intermediaries.find(entry => normalizeChain(entry.chain) === normalizeChain(chain))?.address || null;
-  }
-
-  getProvider(chain: string): providers.JsonRpcProvider | null {
-    return ghostWalletProviderMesh.getReadyProvider(normalizeChain(chain));
-  }
-
+  getConfiguredIntermediary(chain: string): string | null { return this.config.intermediaries.find(entry => normalizeChain(entry.chain) === normalizeChain(chain))?.address || null; }
+  getProvider(chain: string): providers.JsonRpcProvider | null { return ghostWalletProviderMesh.getReadyProvider(normalizeChain(chain)); }
   getExecutionWallet(chain: string): Wallet | null {
     const provider = this.getProvider(chain);
     const key = normalizePrivateKey(process.env.WALLET_PRIVATE_KEY || process.env.PRIVATE_KEY) || null;
@@ -266,26 +214,13 @@ export class GhostWalletEngine {
   getStatus(): GhostWalletEngineStatus {
     const matches = ghostWalletIntentBook.match();
     return {
-      running: this.running,
-      liveExecutionEnabled: liveExecutionEnabled(),
-      eventDriven: true,
-      periodicWorkPolling: false,
-      profitLadderAuthority: false,
-      profitRouting: '90_percent_payout_10_percent_retained',
-      configuredIntermediaryChains: this.config.intermediaries.map(entry => entry.chain),
-      providerChains: ghostWalletProviderMesh.getReadyChains(),
-      alchemyDependency: false,
-      intermediaryTransactionSubmission: false,
-      controllerTransactionSubmission: true,
-      measuredCapitalQuotes: this.freshQuotes().length,
-      openSignedIntents: ghostWalletIntentBook.getOpen().length,
-      matchedIntentPairs: matches.length,
-      executionsAttempted: this.executionsAttempted,
-      executionsSettled: this.executionsSettled,
-      executionsFailed: this.executionsFailed,
-      lastRefreshAt: this.lastRefreshAt,
-      lastExecutionAt: this.lastExecutionAt,
-      sourceErrors: this.sourceErrors.map(error => ({ ...error })),
+      running: this.running, liveExecutionEnabled: liveExecutionEnabled(), eventDriven: true, periodicWorkPolling: false,
+      profitLadderAuthority: false, profitRouting: '90_percent_payout_10_percent_retained',
+      configuredIntermediaryChains: this.config.intermediaries.map(entry => entry.chain), providerChains: ghostWalletProviderMesh.getReadyChains(),
+      alchemyDependency: false, intermediaryTransactionSubmission: false, controllerTransactionSubmission: true,
+      measuredCapitalQuotes: this.freshQuotes().length, openSignedIntents: ghostWalletIntentBook.getOpen().length, matchedIntentPairs: matches.length,
+      executionsAttempted: this.executionsAttempted, executionsSettled: this.executionsSettled, executionsFailed: this.executionsFailed,
+      lastRefreshAt: this.lastRefreshAt, lastExecutionAt: this.lastExecutionAt, sourceErrors: this.sourceErrors.map(error => ({ ...error })),
     };
   }
 
@@ -293,40 +228,26 @@ export class GhostWalletEngine {
     if (!liveExecutionEnabled()) throw new Error('GHOST_WALLET_LIVE_EXECUTION_DISABLED');
     this.executionsAttempted += 1;
     const work = await enqueueGhostWalletWork({
-      dedupeKey: `ghost-matched-intent:${pair.pairId}:${pair.expiresAt}`,
-      kind: 'matched_intent_settlement',
-      chain: pair.chain,
-      priority: 850,
-      maxAttempts: 20,
-      payload: { pair: serializeMatchedIntentPair(pair) as unknown as Record<string, unknown> },
+      dedupeKey: `ghost-matched-intent:${pair.pairId}:${pair.expiresAt}`, kind: 'matched_intent_settlement', chain: pair.chain,
+      priority: 850, maxAttempts: 20, payload: { pair: serializeMatchedIntentPair(pair) as unknown as Record<string, unknown> },
     });
     ghostWalletWorkSignal.emitWake('local_work_enqueued');
     return { workId: work.workId };
   }
 
-  async reconcileSubmittedMatchedPair(
-    pair: GhostWalletMatchedIntentPair,
-    transactionHash: string,
-  ): Promise<GhostWalletMatchedSettlement | null> {
+  async reconcileSubmittedMatchedPair(pair: GhostWalletMatchedIntentPair, transactionHash: string): Promise<GhostWalletMatchedSettlement | null> {
     const provider = this.getProvider(pair.chain);
     if (!provider) throw new Error(`GHOST_WALLET_PROVIDER_UNAVAILABLE:${pair.chain}`);
     const receipt = await provider.getTransactionReceipt(transactionHash);
     if (!receipt) return null;
-    if (receipt.status !== 1) {
-      this.executionsFailed += 1;
-      throw new Error('GHOST_WALLET_SUBMITTED_TRANSACTION_REVERTED');
-    }
+    if (receipt.status !== 1) { this.executionsFailed += 1; throw new Error('GHOST_WALLET_SUBMITTED_TRANSACTION_REVERTED'); }
     const settlement = this.verifyMatchedIntentReceipt(pair, receipt, resolvePrimaryProfitPayoutAddress() || '');
     this.executionsSettled += 1;
     this.lastExecutionAt = Date.now();
     return settlement;
   }
 
-  private verifyMatchedIntentReceipt(
-    pair: GhostWalletMatchedIntentPair,
-    receipt: providers.TransactionReceipt,
-    expectedProfitRecipient: string,
-  ): GhostWalletMatchedSettlement {
+  private verifyMatchedIntentReceipt(pair: GhostWalletMatchedIntentPair, receipt: providers.TransactionReceipt, expectedProfitRecipient: string): GhostWalletMatchedSettlement {
     if (!expectedProfitRecipient) throw new Error('GHOST_WALLET_PRIMARY_PAYOUT_UNAVAILABLE');
     let matched = false;
     for (const log of receipt.logs) {
@@ -341,24 +262,17 @@ export class GhostWalletEngine {
         if (!sameAddress(String(args.tokenB), pair.intentA.buyToken)) continue;
         if (bigint(args.feeA) !== pair.feeAmountA || bigint(args.feeB) !== pair.feeAmountB) continue;
         if (!sameAddress(String(args.profitRecipient), expectedProfitRecipient)) continue;
-        matched = true;
-        break;
-      } catch {
-        // unrelated log
-      }
+        matched = true; break;
+      } catch { /* unrelated log */ }
     }
     if (!matched) throw new Error('GHOST_WALLET_SETTLEMENT_EVENT_MISMATCH');
     ghostWalletIntentBook.markSettled(pair);
     return {
-      pairId: pair.pairId,
-      chain: pair.chain,
-      transactionHash: receipt.transactionHash,
-      blockNumber: receipt.blockNumber ?? null,
+      pairId: pair.pairId, chain: pair.chain, transactionHash: receipt.transactionHash, blockNumber: receipt.blockNumber ?? null,
       profits: [
         ...(pair.feeAmountA > 0n ? [{ asset: pair.intentA.buyToken, amount: pair.feeAmountA }] : []),
         ...(pair.feeAmountB > 0n ? [{ asset: pair.intentB.buyToken, amount: pair.feeAmountB }] : []),
-      ],
-      profitRecipient: expectedProfitRecipient,
+      ], profitRecipient: expectedProfitRecipient,
     };
   }
 }
