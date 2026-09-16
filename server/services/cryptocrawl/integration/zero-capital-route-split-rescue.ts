@@ -10,6 +10,7 @@ import {
   type ConfiguredZeroCapitalRoute,
   type QuotedZeroCapitalRoute,
 } from '../execution/adapters/onchain-route-quoter.js';
+import { recordApeTacticProofOutcome } from './ape-adaptive-command.js';
 import {
   getApeResidentWorkAssignment,
   primeApeResidentWorkbench,
@@ -44,6 +45,9 @@ export interface ZeroCapitalRouteSplitRescueResult {
   improvedOpportunities?: ZeroCapitalOpportunity[];
   rejectionReasons?: Record<string, number>;
   deadlineStops?: number;
+  proofReserveStops?: number;
+  compositeProofAttempts?: number;
+  compositeProofLatencyP95Ms?: number | null;
   executionAuthority: false;
 }
 
@@ -63,6 +67,38 @@ const FALLBACK_SPLIT_RATIOS: readonly SplitRatio[] = [
   { leftPercent: 65n, rightPercent: 35n },
   { leftPercent: 35n, rightPercent: 65n },
 ];
+const compositeProofLatencySamples: number[] = [];
+
+function bounded(raw: unknown, fallback: number, min: number, max: number): number {
+  const value = Number(raw);
+  return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
+}
+
+function percentile(values: readonly number[], fraction: number): number | null {
+  if (values.length === 0) return null;
+  const ordered = [...values].sort((left, right) => left - right);
+  const index = Math.min(ordered.length - 1, Math.max(0, Math.ceil(ordered.length * fraction) - 1));
+  return ordered[index] ?? null;
+}
+
+function recordCompositeProofLatency(elapsedMs: number): void {
+  if (!Number.isFinite(elapsedMs) || elapsedMs < 0) return;
+  compositeProofLatencySamples.push(elapsedMs);
+  if (compositeProofLatencySamples.length > 64) {
+    compositeProofLatencySamples.splice(0, compositeProofLatencySamples.length - 64);
+  }
+}
+
+function compositeProofLatencyP95Ms(): number | null {
+  return percentile(compositeProofLatencySamples, 0.95);
+}
+
+function compositeProofReserveMs(): number {
+  const configured = Math.trunc(bounded(process.env.ZERO_CAPITAL_APE_SPLIT_PROOF_RESERVE_MS, 650, 150, 2_500));
+  const p95 = compositeProofLatencySamples.length >= 3 ? compositeProofLatencyP95Ms() : null;
+  if (p95 === null) return configured;
+  return Math.max(150, Math.min(2_500, Math.ceil(p95 * 1.25 + 50)));
+}
 
 function alignRouteCostBasisToStageOne(
   route: ConfiguredZeroCapitalRoute,
@@ -137,6 +173,11 @@ function exactBpsImprovement(current: ZeroCapitalOpportunity, candidate: ZeroCap
   if (current.flashLoanAmount <= 0n || candidate.flashLoanAmount <= 0n) return false;
   return candidate.expectedProfit * current.flashLoanAmount
     > current.expectedProfit * candidate.flashLoanAmount;
+}
+
+function combinedQuotedNet(result: RatioQuoteResult): bigint | null {
+  if (!result.leftQuote || !result.rightQuote) return null;
+  return result.leftQuote.netProfit + result.rightQuote.netProfit;
 }
 
 /**
@@ -325,6 +366,12 @@ function parentDeadline(input: ZeroCapitalRouteSplitRescueInput): number {
   return input.deadlineAt ?? Number.MAX_SAFE_INTEGER;
 }
 
+function quoteSearchDeadline(input: ZeroCapitalRouteSplitRescueInput): number {
+  const deadline = parentDeadline(input);
+  if (!Number.isFinite(deadline) || deadline === Number.MAX_SAFE_INTEGER) return deadline;
+  return Math.max(Date.now(), deadline - compositeProofReserveMs());
+}
+
 function emptyCompositeResult(): AtomicStackTacticResult {
   return { attemptedGroups: 0, measuredVariants: 0, promoted: 0, promotedOpportunityIds: [], executionAuthority: false };
 }
@@ -339,8 +386,12 @@ export async function runZeroCapitalRouteSplitRescue(
   let splitQuoteSingleflightHits = 0;
   let deadlineBoundQuoteStops = 0;
 
-  const quoteExact = (route: ConfiguredZeroCapitalRoute, amount: bigint): Promise<QuotedZeroCapitalRoute | null> => {
-    if (Date.now() >= parentDeadline(input)) {
+  const quoteExact = (
+    route: ConfiguredZeroCapitalRoute,
+    amount: bigint,
+    deadlineAt: number,
+  ): Promise<QuotedZeroCapitalRoute | null> => {
+    if (Date.now() >= deadlineAt) {
       deadlineBoundQuoteStops += 1;
       return Promise.resolve(null);
     }
@@ -357,7 +408,7 @@ export async function runZeroCapitalRouteSplitRescue(
     }
     const pending = settleBeforeDeadline(
       quoteConfiguredZeroCapitalRoute({ ...route, amountIn: amount.toString() }, input.provider),
-      parentDeadline(input),
+      deadlineAt,
       null,
     ).finally(() => {
       if (exactQuoteInFlight.get(key) === pending) exactQuoteInFlight.delete(key);
@@ -382,6 +433,9 @@ export async function runZeroCapitalRouteSplitRescue(
     improvedOpportunities,
     rejectionReasons,
     deadlineStops: 0,
+    proofReserveStops: 0,
+    compositeProofAttempts: 0,
+    compositeProofLatencyP95Ms: compositeProofLatencyP95Ms(),
     executionAuthority: false,
   };
   if (input.chain === 'europa' || input.opportunities.length === 0) return result;
@@ -456,9 +510,11 @@ export async function runZeroCapitalRouteSplitRescue(
     }
 
     for (const residentPair of assignment.splitPairs) {
-      if (Date.now() >= parentDeadline(input)) {
+      const searchDeadlineAt = quoteSearchDeadline(input);
+      if (Date.now() >= searchDeadlineAt) {
         result.deadlineStops! += 1;
-        incrementReason(rejectionReasons, 'wave_deadline_before_next_pair');
+        result.proofReserveStops! += 1;
+        incrementReason(rejectionReasons, 'protected_proof_tail_before_next_pair');
         return;
       }
       result.routePairsTried += 1;
@@ -468,7 +524,7 @@ export async function runZeroCapitalRouteSplitRescue(
       };
 
       const ratioJobs = splitRatiosForPair(pair).map(async ratio => {
-        if (Date.now() >= parentDeadline(input)) return null;
+        if (Date.now() >= searchDeadlineAt) return null;
         const amounts = splitAmounts(parent.flashLoanAmount, ratio);
         if (!amounts) {
           incrementReason(rejectionReasons, 'invalid_split_amounts');
@@ -477,14 +533,22 @@ export async function runZeroCapitalRouteSplitRescue(
         result.splitRatiosTried += 1;
         result.partialQuotesLaunched += 2;
         const [leftQuote, rightQuote] = await Promise.all([
-          quoteExact(pair.left, amounts.left),
-          quoteExact(pair.right, amounts.right),
+          quoteExact(pair.left, amounts.left, searchDeadlineAt),
+          quoteExact(pair.right, amounts.right, searchDeadlineAt),
         ]);
         return { ratio, leftQuote, rightQuote } satisfies RatioQuoteResult;
       });
 
       const quotedRatios = (await Promise.all(ratioJobs))
-        .filter((value): value is RatioQuoteResult => value !== null);
+        .filter((value): value is RatioQuoteResult => value !== null)
+        .sort((left, right) => {
+          const leftScore = combinedQuotedNet(left);
+          const rightScore = combinedQuotedNet(right);
+          if (leftScore === null && rightScore === null) return 0;
+          if (leftScore === null) return 1;
+          if (rightScore === null) return -1;
+          return leftScore === rightScore ? 0 : leftScore > rightScore ? -1 : 1;
+        });
 
       for (const quoted of quotedRatios) {
         if (Date.now() >= parentDeadline(input)) {
@@ -523,6 +587,8 @@ export async function runZeroCapitalRouteSplitRescue(
         }
 
         const children = [leftChild, rightChild];
+        const proofStartedAt = Date.now();
+        result.compositeProofAttempts! += 1;
         const composite = await settleBeforeDeadline(
           runZeroCapitalAtomicStackTactic({
             chain: input.chain,
@@ -533,10 +599,24 @@ export async function runZeroCapitalRouteSplitRescue(
           parentDeadline(input),
           emptyCompositeResult(),
         );
+        const proofElapsedMs = Date.now() - proofStartedAt;
+        recordCompositeProofLatency(proofElapsedMs);
+        const proofCompleted = composite.measuredVariants > 0 || composite.promoted > 0;
+        const proofDeadlineStopped = !proofCompleted && Date.now() >= parentDeadline(input);
+        recordApeTacticProofOutcome({
+          tactic: 'route_split',
+          completed: proofCompleted,
+          deadlineStopped: proofDeadlineStopped,
+        });
         result.compositeMeasurements += composite.measuredVariants;
         result.promoted += composite.promoted;
         result.promotedOpportunityIds.push(...composite.promotedOpportunityIds);
         retireTransientChildren(children, composite.promotedOpportunityIds);
+        if (proofDeadlineStopped) {
+          result.deadlineStops! += 1;
+          incrementReason(rejectionReasons, 'composite_proof_deadline_exhausted');
+          return;
+        }
         // A promoted executable composite is retained, but it does not terminate the
         // candidate's remaining compatible split ratios/pairs. Better measured profit
         // may still be available inside the existing bounded deadline.
@@ -545,6 +625,7 @@ export async function runZeroCapitalRouteSplitRescue(
   };
 
   await Promise.all(input.opportunities.map(processParent));
+  result.compositeProofLatencyP95Ms = compositeProofLatencyP95Ms();
 
   const { improvedOpportunities: _improvements, ...telemetryResult } = result;
   logger.info('[ZeroCapitalRouteSplitRescue] APE hyperwarp route-split rescue completed', {
@@ -573,6 +654,11 @@ export async function runZeroCapitalRouteSplitRescue(
     splitQuoteSingleflightHits,
     splitExactQuoteSingleflight: true,
     deadlineBoundQuoteStops,
+    protectedCompositeProofTail: true,
+    currentCompositeProofReserveMs: compositeProofReserveMs(),
+    proofReserveUsesMeasuredP95: compositeProofLatencySamples.length >= 3,
+    bestQuotedSplitProvenFirst: true,
+    quoteSearchCannotConsumeProofReserve: true,
     everyAwaitedSplitQuoteBoundedByApeDeadline: true,
     lateSplitQuoteCannotExtendWaveAuthority: true,
     residentPeerHintsPiggybacked: true,
@@ -588,6 +674,7 @@ export async function runZeroCapitalRouteSplitRescue(
     splitChildrenStandaloneExecutable: false,
     exactCompositeEthCallRequiredBeforePromotion: true,
     exactCompositeGasEstimateRequiredBeforePromotion: true,
+    incompleteSplitProgressEarnsFullElasticBudgetCredit: false,
     parentOpportunityKilledOnSplitFailure: false,
     stageOneMutation: false,
     syntheticEconomics: false,
