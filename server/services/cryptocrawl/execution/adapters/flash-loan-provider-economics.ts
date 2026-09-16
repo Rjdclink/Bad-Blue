@@ -21,6 +21,16 @@ export interface FlashLoanProviderEconomics {
   provenance: string[];
 }
 
+export interface FlashLoanProviderMeasurementTelemetry {
+  logicalRequests: number;
+  residentHits: number;
+  physicalMeasurementStarts: number;
+  singleflightJoins: number;
+  prewarmRequests: number;
+  residentKeys: number;
+  inFlightKeys: number;
+}
+
 const ERC20_ABI = ['function balanceOf(address account) view returns (uint256)'];
 const BALANCER_VAULT_ABI = ['function getProtocolFeesCollector() view returns (address)'];
 const BALANCER_FEES_ABI = ['function getFlashLoanFeePercentage() view returns (uint256)'];
@@ -44,6 +54,21 @@ const AAVE_BPS_DENOMINATOR = 10_000n;
 // evidence causes a new shared measurement generation, never candidate deletion.
 const residentFlashProviderEvidence = new Map<string, FlashLoanProviderEconomics[]>();
 const flashProviderEvidenceInFlight = new Map<string, Promise<FlashLoanProviderEconomics[]>>();
+const measurementTelemetry = {
+  logicalRequests: 0,
+  residentHits: 0,
+  physicalMeasurementStarts: 0,
+  singleflightJoins: 0,
+  prewarmRequests: 0,
+};
+
+export function getFlashLoanProviderMeasurementTelemetry(): FlashLoanProviderMeasurementTelemetry {
+  return {
+    ...measurementTelemetry,
+    residentKeys: residentFlashProviderEvidence.size,
+    inFlightKeys: flashProviderEvidenceInFlight.size,
+  };
+}
 
 function residentProviderEvidenceMaxAgeMs(): number {
   const configured = Number(process.env.ZERO_CAPITAL_PROVIDER_EVIDENCE_MAX_AGE_MS || 5_000);
@@ -547,8 +572,12 @@ function startSharedFlashProviderMeasurement(input: {
 }): Promise<FlashLoanProviderEconomics[]> {
   const key = providerEvidenceKey(input.chain, input.asset);
   const existing = flashProviderEvidenceInFlight.get(key);
-  if (existing) return existing;
+  if (existing) {
+    measurementTelemetry.singleflightJoins += 1;
+    return existing;
+  }
 
+  measurementTelemetry.physicalMeasurementStarts += 1;
   const pending = measureFlashLoanProvidersUncached(input).then(measured => {
     const current = residentFlashProviderEvidence.get(key) ?? [];
     const merged = [...current];
@@ -567,6 +596,7 @@ export function prewarmFlashLoanProviderEvidence(input: {
   provider: providers.Provider;
   asset: string;
 }): Promise<FlashLoanProviderEconomics[]> {
+  measurementTelemetry.prewarmRequests += 1;
   return startSharedFlashProviderMeasurement(input);
 }
 
@@ -575,6 +605,7 @@ export async function measureFlashLoanProviders(input: {
   provider: providers.Provider;
   asset: string;
 }): Promise<FlashLoanProviderEconomics[]> {
+  measurementTelemetry.logicalRequests += 1;
   const requestedAmount = getFlashLoanDemandHint(input.chain, input.asset);
   const resident = peekResidentFlashLoanProviderEvidence(input.chain, input.asset);
   if (
@@ -586,6 +617,7 @@ export async function measureFlashLoanProviders(input: {
       || dualEvidenceCanFund(resident, requestedAmount)
     )
   ) {
+    measurementTelemetry.residentHits += 1;
     const maxAgeMs = residentProviderEvidenceMaxAgeMs();
     const oldestObservedAt = resident.reduce((minimum, item) => Math.min(minimum, item.observedAt), Date.now());
     if (Date.now() - oldestObservedAt >= Math.floor(maxAgeMs / 2)) {
