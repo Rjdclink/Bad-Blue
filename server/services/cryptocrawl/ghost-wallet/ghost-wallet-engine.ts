@@ -107,6 +107,13 @@ export class GhostWalletEngine {
     await this.refresh();
     this.running = true;
 
+    // Load demand discovery only after the engine is initialized. The mandate
+    // verifier depends on this engine for provider identity, so the dynamic import
+    // deliberately avoids a static circular dependency while keeping one Ghost
+    // lifecycle authority.
+    const { ghostWalletBorrowerDemandMesh } = await import('./ghost-wallet-borrower-demand-mesh.js');
+    await ghostWalletBorrowerDemandMesh.start();
+
     logger.info('[GhostWallet] Independent autonomous atomic intermediation lane started', {
       component: 'GhostWalletEngine',
       configuredIntermediaryChains: this.config.intermediaries.map(entry => entry.chain),
@@ -123,6 +130,8 @@ export class GhostWalletEngine {
         'signed_intent_capital',
         'coincidence_of_wants',
       ],
+      borrowerDemandAcquisition: 'signed_https_feed_plus_direct_signed_registration',
+      borrowerDemandTransportAuthority: false,
       alchemyDependency: false,
       existingArbitrageSystemsAffected: false,
       intermediaryRole: 'atomic_middleman_only',
@@ -141,6 +150,9 @@ export class GhostWalletEngine {
 
   stop(): void {
     this.running = false;
+    void import('./ghost-wallet-borrower-demand-mesh.js')
+      .then(({ ghostWalletBorrowerDemandMesh }) => ghostWalletBorrowerDemandMesh.stop())
+      .catch(() => undefined);
   }
 
   isRunning(): boolean {
