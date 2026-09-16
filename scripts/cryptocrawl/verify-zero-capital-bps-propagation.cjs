@@ -253,9 +253,9 @@ assert.match(alternativeReprice, /input\.provider\.estimateGas\(exactEnvelope\)/
 assert.match(alternativeReprice, /canonical_flash_provider_behavior_unchanged/);
 assert.match(alternativeRegistry, /expectedNetProfit <= 0n/);
 
-// Canonical scheduler/executor remain the only money boundary and use strict positive base units.
+// Canonical scheduler/executor remain the only money boundary and use the canonical strict-positive predicate.
 assert.match(scheduler, /decision\.topology === 'ZERO_CAPITAL_ATOMIC'/);
-assert.match(scheduler, /opportunity\.expectedProfit > 0n/);
+assert.match(scheduler, /clearsFiveDollarOutputFloor\(opportunity\)/);
 assert.match(scheduler, /executeCanonicalZeroCapitalOpportunity\(/);
 assert.match(executorEntry, /flashLoanProviderSelectionRegistry\.get\(opportunity\.id\)/);
 assert.match(executorEntry, /builderSponsoredZeroCapitalRegistry\.get\(opportunity\.id\)/);
