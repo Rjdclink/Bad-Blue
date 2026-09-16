@@ -9,6 +9,9 @@ const discovery = read('server/services/cryptocrawl/discovery/zero-capital-canon
 const compression = read('server/services/cryptocrawl/integration/bps-compression-mesh.ts');
 const gas = read('server/services/cryptocrawl/capital-free/dynamic-gas-funding-engine.ts');
 const gasSponsor = read('server/services/cryptocrawl/strategies/gas-sponsorship.ts');
+const gasProof = read('server/services/cryptocrawl/runtime/system-owned-gas-funding-proof-wiring.ts');
+const providerWiring = read('server/services/cryptocrawl/integration/zero-capital-flash-provider-wiring.ts');
+const rescueCoordinator = read('server/services/cryptocrawl/integration/universal-bps-rescue-coordinator.ts');
 const providers = read('server/services/cryptocrawl/intelligence/market-data-providers.ts');
 const rpc = read('server/services/cryptocrawl/runtime/dynamic-rpc-provider-wiring.ts');
 const ledger = read('server/services/cryptocrawl/compensation/retained-profit-ledger.ts');
@@ -40,12 +43,27 @@ must(billedSponsorBranch >= 0 && nativeFallbackBranch >= 0 && billedSponsorBranc
 must(gasSponsor.includes('ALCHEMY_API_KEY'), 'canonical sponsorship manager must read the configured Alchemy credential');
 must(gasSponsor.includes('ALCHEMY_GAS_POLICY_ID'), 'canonical sponsorship manager must read the configured Alchemy gas policy');
 must(gasSponsor.includes('wallet_prepareCalls') && gasSponsor.includes('wallet_sendPreparedCalls'), 'Alchemy sponsorship must use prepared sponsored calls rather than a synthetic readiness flag');
+must(gasProof.includes('config.sponsoredBootstrap && sponsorReady && !strictZeroOperatorCostRequired()'), 'ready sponsorship must bypass the native-balance RPC probe on the normal zero-initial-capital hot path');
+must(gasProof.indexOf('config.sponsoredBootstrap && sponsorReady && !strictZeroOperatorCostRequired()') < gasProof.indexOf('provider.getBalance(wallet.address)'), 'sponsored decision must be resolved before native balance I/O');
 // Verify the semantic provenance states independently instead of coupling this
 // proof to one implementation expression. Refactors may legitimately replace a
 // ternary with guarded branches, but neither state may disappear.
 must(gas.includes("'system_owned_native'"), 'system-owned native payment-source provenance must remain explicit');
 must(gas.includes("'unproven_native_balance'"), 'unproven native-balance provenance must remain explicit');
 must(gas.includes('strictZeroInitialCapitalEligible'), 'native/sponsored provenance must still feed strict zero-initial-capital eligibility');
+
+// The already-built Aave+Balancer receiver bootstrap must be reachable from the
+// live provider repricing authority. Its setup transaction invalidates the current
+// quote and failure remains local to the dual-provider path.
+must(providerWiring.includes('ensureDualFlashLoanReceiverCapability'), 'dual-provider receiver bootstrap must be wired into live provider repricing');
+must(providerWiring.includes('fresh_quote_after_dual_receiver_bootstrap'), 'dual receiver cold start must require fresh market evidence before execution');
+must(providerWiring.includes('singleProviderAdmissionBlocked: false'), 'dual bootstrap failure must not block compatible single-provider alternatives');
+must(providerWiring.includes('dual_provider_receiver_cold_start_route_local:true'), 'dual receiver cold start provenance must remain route-local');
+
+// Atomic zero-initial-capital execution must have no fixed +10 BPS ownership goal.
+must(rescueCoordinator.includes("topology === 'ZERO_CAPITAL_ATOMIC' || topology === 'DEX_ATOMIC' ? 0"), 'atomic zero-initial-capital topologies must use a zero fixed target and strict-positive execution truth');
+must(rescueCoordinator.includes('dexAtomicPlusTenTargetRequired: false'), 'DEX atomic telemetry must explicitly reject the retired +10 BPS target');
+must(rescueCoordinator.includes("zeroCapitalApeFinishLine: 'fresh_exact_all_in_net_profit_strictly_positive'"), 'zero-capital finish line telemetry must report strict-positive all-in economics');
 
 // Preserve the already-completed live zero-personal-cost admission work from
 // PR #558 on the current structural branch. Generic sponsor readiness cannot
