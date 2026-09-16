@@ -179,9 +179,23 @@ function applyDeterministicRescueMode(
 }
 
 /**
- * Returns resident advisory intelligence when available. Missing advisory state is
- * prewarmed after the current decision turn and never blocks exact rescue. Exact
- * gross sign remains sovereign even after richer advice arrives.
+ * Deferred/background preparation only. Live APE workers never create advisory
+ * work merely by asking for a plan; callers that already own a deferred/prewarm
+ * phase can request the next generation here without adding a hot-path wait.
+ */
+export function prewarmApeProfitabilityToolboxPlan(opportunity: ZeroCapitalOpportunity): void {
+  const now = Date.now();
+  const generation = toolboxGeneration(opportunity);
+  const cached = residentToolboxPlans.get(opportunity.id);
+  if (cached && cached.generation === generation && cached.expiresAt > now && cached.ready) return;
+  pruneResidentToolboxPlans(now);
+  scheduleToolboxPrewarm(opportunity, generation);
+}
+
+/**
+ * Pure live-path resident read. A miss performs no scheduling or cache mutation.
+ * Exact gross sign still receives its deterministic zero-I/O fallback immediately,
+ * so advisory availability can never delay or veto measured rescue.
  */
 export function buildApeProfitabilityToolboxPlan(
   opportunity: ZeroCapitalOpportunity,
@@ -192,15 +206,6 @@ export function buildApeProfitabilityToolboxPlan(
   if (cached && cached.generation === generation && cached.expiresAt > now && cached.ready) {
     return applyDeterministicRescueMode(opportunity, cached.plan);
   }
-
-  residentToolboxPlans.set(opportunity.id, {
-    generation,
-    expiresAt: now + toolboxPlanTtlMs(),
-    plan: null,
-    ready: false,
-  });
-  pruneResidentToolboxPlans(now);
-  scheduleToolboxPrewarm(opportunity, generation);
   return deterministicStructuralFallback(opportunity);
 }
 
