@@ -17,6 +17,10 @@ const BRIDGE_ABI = [
   'function brokerAaveV3FlashLoan(address pool,address borrower,address token,uint256 amount,uint256 maxBorrowerFee,bytes borrowerData) returns (bool)',
   'function brokerMorphoFlashLoan(address morpho,address borrower,address token,uint256 amount,uint256 maxBorrowerFee,bytes borrowerData) returns (bool)',
   'function brokerBalancerV2FlashLoan(address vault,address borrower,address token,uint256 amount,uint256 maxBorrowerFee,bytes borrowerData) returns (bool)',
+  'function brokerExternalFlashLoanWithSpread(address lender,address borrower,address token,uint256 amount,uint256 requestedSpread,uint256 maxBorrowerFee,bytes borrowerData) returns (bool)',
+  'function brokerAaveV3FlashLoanWithSpread(address pool,address borrower,address token,uint256 amount,uint256 requestedSpread,uint256 maxBorrowerFee,bytes borrowerData) returns (bool)',
+  'function brokerMorphoFlashLoanWithSpread(address morpho,address borrower,address token,uint256 amount,uint256 requestedSpread,uint256 maxBorrowerFee,bytes borrowerData) returns (bool)',
+  'function brokerBalancerV2FlashLoanWithSpread(address vault,address borrower,address token,uint256 amount,uint256 requestedSpread,uint256 maxBorrowerFee,bytes borrowerData) returns (bool)',
 ];
 
 export type GhostWalletBorrowerSourceKind = GhostWalletFundingKind;
@@ -56,6 +60,7 @@ export interface GhostWalletBorrowerQuoteResult {
   borrower: string;
   asset: string;
   amountBaseUnits: string;
+  borrowerData: string;
   transactionPayer: 'caller';
   controllerCompatible: true;
   operatorMonetaryInputRequired: false;
@@ -164,6 +169,36 @@ function sourceMethod(kind: GhostWalletBorrowerSourceKind): string {
   return 'brokerExternalFlashLoan';
 }
 
+function sourceSpreadMethod(kind: GhostWalletBorrowerSourceKind): string {
+  if (kind === 'aave_v3') return 'brokerAaveV3FlashLoanWithSpread';
+  if (kind === 'morpho_blue') return 'brokerMorphoFlashLoanWithSpread';
+  if (kind === 'balancer_v2') return 'brokerBalancerV2FlashLoanWithSpread';
+  return 'brokerExternalFlashLoanWithSpread';
+}
+
+export function buildGhostWalletBorrowerTransactionWithSpread(input: {
+  quote: GhostWalletBorrowerQuoteResult;
+  requestedSpreadBaseUnits: bigint;
+  maxBorrowerFeeBaseUnits?: bigint | null;
+}): { to: string; data: string; value: '0'; borrowerFeeBaseUnits: bigint } {
+  if (input.requestedSpreadBaseUnits <= 0n) throw new Error('GHOST_WALLET_REQUESTED_SPREAD_INVALID');
+  const upstreamFee = BigInt(input.quote.selected.upstreamFeeBaseUnits);
+  const borrowerFee = upstreamFee + input.requestedSpreadBaseUnits;
+  const maxBorrowerFee = input.maxBorrowerFeeBaseUnits ?? borrowerFee;
+  if (maxBorrowerFee < borrowerFee) throw new Error('GHOST_WALLET_BORROWER_FEE_EXCEEDS_MAX');
+  const iface = new ethers.utils.Interface(BRIDGE_ABI);
+  const data = iface.encodeFunctionData(sourceSpreadMethod(input.quote.selected.sourceKind), [
+    input.quote.selected.lender,
+    input.quote.borrower,
+    input.quote.asset,
+    input.quote.amountBaseUnits,
+    input.requestedSpreadBaseUnits.toString(),
+    maxBorrowerFee.toString(),
+    input.quote.borrowerData,
+  ]);
+  return { to: input.quote.bridge, data, value: '0', borrowerFeeBaseUnits: borrowerFee };
+}
+
 export async function quoteGhostWalletBorrowerRoute(
   request: GhostWalletBorrowerQuoteRequest,
 ): Promise<GhostWalletBorrowerQuoteResult> {
@@ -233,6 +268,7 @@ export async function quoteGhostWalletBorrowerRoute(
     borrower,
     asset,
     amountBaseUnits: amount.toString(),
+    borrowerData,
     transactionPayer: 'caller',
     controllerCompatible: true,
     operatorMonetaryInputRequired: false,
@@ -251,5 +287,6 @@ export const GHOST_WALLET_BORROWER_SURFACE_POLICY = {
   quoteSurfaceSubmitsTransaction: false,
   externalCallerMayPayTransactionGas: true,
   autonomousControllerMayConsumeQuote: true,
+  perTransactionSpreadPricing: true,
   operatorMonetaryInputRequired: false,
 } as const;
