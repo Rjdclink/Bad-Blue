@@ -19,6 +19,9 @@ const adaptiveCommand = read('server/services/cryptocrawl/integration/ape-adapti
 const rescueOrchestration = read('server/services/cryptocrawl/integration/ape-rescue-orchestration.ts');
 const threshold = read('server/services/cryptocrawl/integration/zero-capital-profit-output-floor.ts');
 const lease = read('server/services/cryptocrawl/integration/ape-profitable-snapshot-lease.ts');
+const providerEconomics = read('server/services/cryptocrawl/execution/adapters/flash-loan-provider-economics.ts');
+const receiverCapability = read('server/services/cryptocrawl/execution/adapters/flash-loan-receiver-capability.ts');
+const dualMesh = read('server/services/cryptocrawl/execution/adapters/dual-flash-loan-provider-mesh.ts');
 
 // Stage One is locked and remains independent from APE/execution threshold changes.
 assert.match(discovery, /STAGE_ONE_LOCKED_INVARIANT/);
@@ -64,6 +67,9 @@ assert.match(activeRescue, /addTarget\(primaryRoute, amount\)/);
 assert.match(activeRescue, /selectMeasuredDualFlashLoanAllocation\(/);
 assert.match(activeRescue, /kind: 'aave_balancer_dual'/);
 assert.match(activeRescue, /morphoStackingEnabled: false/);
+assert.match(activeRescue, /morphoStackingPlannerResident: true/);
+assert.match(dualMesh, /export function selectMeasuredProviderPairAllocation/);
+assert.match(dualMesh, /executionAuthority: false/);
 assert.match(activeRescue, /liquidityShortagePolicy: 'reroute_or_resize_until_compatible_profitable_combinations_exhausted'/);
 
 // V4 is unordered candidate-local run-to-completion. One candidate never stops siblings.
@@ -76,15 +82,21 @@ assert.match(activeRescue, /candidateLocalRecursiveFeedback: true/);
 assert.match(activeRescue, /hardDeadlinePropagation: true/);
 assert.match(activeRescue, /adaptiveRouteP95Timeouts: true/);
 assert.match(activeRescue, /adaptiveConcurrency: true/);
+assert.match(activeRescue, /predictedDeadlineLaunchSuppression: true/);
+assert.match(activeRescue, /canonicalEthersTransportReplaced: false/);
+assert.match(activeRescue, /if \(remaining <= predicted \+ reserve\) return 0/);
 
-// Fair schedules structural->V4 per candidate and races optional work against the
-// profitable execute-before-expiry escape instead of adding a sibling batch barrier.
+// Structural split and V4 are compatible candidate-local alternatives. Neither is a
+// prerequisite for the other, and profitable execute-before-expiry can preempt both.
 assert.match(gateway, /const candidateLanes: Promise<void>\[\] = \[\]/);
-assert.match(gateway, /runSplitBatch\(\[candidate\], tierBudget\.structuralDeadlineAt\)/);
-assert.match(gateway, /const localV4Deadline = capApeOptimizationDeadline\(candidate\.id, tierBudget\.v4DeadlineAt\)/);
-assert.match(gateway, /await runV4Batch\(\[current\], localV4Deadline\)/);
+assert.match(gateway, /const localSplitDeadline = capApeOptimizationDeadline\(candidate\.id, tierBudget\.structuralDeadlineAt\)/);
+assert.match(gateway, /const splitTask =/);
+assert.match(gateway, /const v4Task =/);
+assert.match(gateway, /Promise\.allSettled\(\[splitTask, v4Task\]\)/);
 assert.match(gateway, /Promise\.race\(\[\s*laneCompletion,\s*profitEscapeSignal\.then/s);
 assert.match(gateway, /structuralSiblingBarrierBeforeV4: false/);
+assert.match(gateway, /structuralSplitAndV4Concurrent: true/);
+assert.match(gateway, /structuralRouteSplitPrerequisiteForV4: false/);
 assert.match(gateway, /crossCandidateProfitabilityStop: false/);
 assert.match(gateway, /candidateLocalRunToCompletion: true/);
 assert.match(gateway, /profitEscapeCanPreemptRemainingOptimization: true/);
@@ -99,6 +111,9 @@ assert.match(adaptiveCommand, /export function isCurrentApeCandidateGeneration/)
 assert.match(adaptiveCommand, /function incomingGenerationIsNewer/);
 assert.match(adaptiveCommand, /if \(!incomingGenerationIsNewer\(root, current\)\) return current/);
 assert.match(adaptiveCommand, /export function recordApeCommandOutcome/);
+assert.match(adaptiveCommand, /export function recordApeTacticProofOutcome/);
+assert.match(adaptiveCommand, /completedExecutableProofYieldControlsRouteSplitBudget: true/);
+assert.match(adaptiveCommand, /incompleteExplorationCannotDominateDemand: true/);
 assert.match(adaptiveCommand, /export function candidateRetiredForGeneration/);
 assert.match(adaptiveCommand, /state\.triedTactics\.size >= minDistinctTactics/);
 assert.match(adaptiveCommand, /exhaustedDistinctTactics >= minDistinctTactics/);
@@ -147,6 +162,22 @@ assert.match(routeSplit, /candidatesRunConcurrently: true/);
 assert.match(routeSplit, /ratiosWithinPairRunConcurrently: true/);
 assert.match(routeSplit, /strictPositiveStopsRouteSplitOptimization: false/);
 assert.match(routeSplit, /promotedCompositeStopsRemainingSplitSearch: false/);
+assert.match(routeSplit, /protectedCompositeProofTail: true/);
+assert.match(routeSplit, /quoteSearchCannotConsumeProofReserve: true/);
+assert.match(routeSplit, /bestQuotedSplitProvenFirst: true/);
+
+// Provider sharing telemetry distinguishes logical consumers from physical measurement starts.
+assert.match(providerEconomics, /physicalMeasurementStarts/);
+assert.match(providerEconomics, /singleflightJoins/);
+assert.match(providerEconomics, /residentHits/);
+assert.match(activeRescue, /providerPhysicalMeasurementStarts/);
+assert.match(activeRescue, /providerRaceCountSemantic: 'logical_chain_asset_snapshot_reference_not_physical_network_race'/);
+
+// Receiver capability proof is resident/singleflighted, never weakened or fabricated.
+assert.match(receiverCapability, /residentReceiverCapabilities/);
+assert.match(receiverCapability, /receiverCapabilityInFlight/);
+assert.match(receiverCapability, /verificationOnEveryApeUse: false/);
+assert.match(receiverCapability, /missingConfiguredReceiverTriggersRpc: false/);
 
 // Resident worker preparation remains local/no queue/persistence authority.
 assert.match(gateway, /primeApeResidentWorkbench\(\{/);
@@ -183,4 +214,4 @@ assert.match(activeRescue, /stageOneMutation: false/);
 assert.match(activeRescue, /syntheticEconomics: false/);
 assert.match(activeRescue, /executionAuthority: false/);
 
-console.log('[atomic-bps-single-pipeline] PASS: Stage One remains locked; strict-positive execution acceptance is separate from continuous candidate-local APE optimization; best-profit/shadow leases release before expiry without reintroducing sibling barriers');
+console.log('[atomic-bps-single-pipeline] PASS: Stage One remains locked; structural split/V4 are parallel alternatives; route split protects exact proof time; provider measurements are globally singleflighted and truthfully counted; proof-aware scheduling cannot let unfinished exploration dominate; strict-positive execution acceptance remains separate from continuous candidate-local APE optimization');

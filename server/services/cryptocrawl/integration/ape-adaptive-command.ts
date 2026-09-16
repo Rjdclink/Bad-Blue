@@ -19,6 +19,10 @@ type TacticAggregate = {
   strictPositiveWins: number;
   cumulativeImprovementBps: number;
   cumulativeLatencyMs: number;
+  proofAttempts: number;
+  proofCompletions: number;
+  proofDeadlineStops: number;
+  cumulativeCompletedImprovementBps: number;
 };
 
 type CandidateTacticState = {
@@ -177,9 +181,36 @@ function aggregateFor(tactic: ApeTactic): TacticAggregate {
     strictPositiveWins: 0,
     cumulativeImprovementBps: 0,
     cumulativeLatencyMs: 0,
+    proofAttempts: 0,
+    proofCompletions: 0,
+    proofDeadlineStops: 0,
+    cumulativeCompletedImprovementBps: 0,
   };
   tacticAggregates.set(tactic, created);
   return created;
+}
+
+/**
+ * Separate proof feedback from exploratory BPS movement. Route discovery can inform
+ * search ordering, but unfinished work must not earn the same elastic budget credit
+ * as a completed exact proof. This is scheduling telemetry only; it owns no economics.
+ */
+export function recordApeTacticProofOutcome(input: {
+  tactic: ApeTactic;
+  completed: boolean;
+  deadlineStopped?: boolean;
+  completedImprovementBps?: number;
+}): void {
+  const aggregate = aggregateFor(input.tactic);
+  aggregate.proofAttempts += 1;
+  if (input.completed) {
+    aggregate.proofCompletions += 1;
+    const improvement = Number(input.completedImprovementBps ?? 0);
+    if (Number.isFinite(improvement) && improvement > 0) {
+      aggregate.cumulativeCompletedImprovementBps += improvement;
+    }
+  }
+  if (input.deadlineStopped) aggregate.proofDeadlineStops += 1;
 }
 
 function transitionKey(from: ApeTactic, to: ApeTactic): string {
@@ -209,6 +240,27 @@ function tacticImprovementPerMs(tactic: ApeTactic): number {
   const aggregate = tacticAggregates.get(tactic);
   return aggregate && aggregate.cumulativeLatencyMs > 0
     ? aggregate.cumulativeImprovementBps / aggregate.cumulativeLatencyMs
+    : 0;
+}
+
+function tacticCompletedProofRate(tactic: ApeTactic): number {
+  const aggregate = tacticAggregates.get(tactic);
+  return aggregate && aggregate.proofAttempts > 0
+    ? aggregate.proofCompletions / aggregate.proofAttempts
+    : 0;
+}
+
+function tacticCompletedImprovementPerMs(tactic: ApeTactic): number {
+  const aggregate = tacticAggregates.get(tactic);
+  return aggregate && aggregate.cumulativeLatencyMs > 0
+    ? aggregate.cumulativeCompletedImprovementBps / aggregate.cumulativeLatencyMs
+    : 0;
+}
+
+function tacticProofDeadlineRate(tactic: ApeTactic): number {
+  const aggregate = tacticAggregates.get(tactic);
+  return aggregate && aggregate.proofAttempts > 0
+    ? aggregate.proofDeadlineStops / aggregate.proofAttempts
     : 0;
 }
 
@@ -325,11 +377,22 @@ export function candidateRetiredForGeneration(root: ZeroCapitalOpportunity): boo
 }
 
 export function getApeTacticDemandMultiplier(tactic: ApeTactic): number {
-  const success = tacticSuccessRate(tactic);
-  const efficiency = tacticImprovementPerMs(tactic);
+  const explorationSuccess = tacticSuccessRate(tactic);
+  const explorationEfficiency = tacticImprovementPerMs(tactic);
+  const proofRate = tacticCompletedProofRate(tactic);
+  const completedEfficiency = tacticCompletedImprovementPerMs(tactic);
+  const proofDeadlineRate = tacticProofDeadlineRate(tactic);
   const latency = tacticAverageLatencyMs(tactic);
   const latencyPenalty = Number.isFinite(latency) ? Math.min(0.6, Math.log1p(latency) / 16) : 0;
-  return Math.max(0.35, Math.min(3, 1 + success + Math.max(0, efficiency) * 30 - latencyPenalty));
+
+  if (tactic === 'route_split' && (tacticAggregates.get(tactic)?.proofAttempts ?? 0) > 0) {
+    const cappedExplorationCredit = Math.min(0.15, Math.max(0, explorationSuccess) * 0.1 + Math.max(0, explorationEfficiency) * 5);
+    const completedYieldCredit = proofRate + Math.max(0, completedEfficiency) * 30;
+    const deadlinePenalty = Math.min(0.75, proofDeadlineRate * 0.75);
+    return Math.max(0.35, Math.min(3, 1 + completedYieldCredit + cappedExplorationCredit - latencyPenalty - deadlinePenalty));
+  }
+
+  return Math.max(0.35, Math.min(3, 1 + explorationSuccess + Math.max(0, explorationEfficiency) * 30 - latencyPenalty));
 }
 
 function transitionScore(from: ApeTactic | null, to: ApeTactic): number {
@@ -453,6 +516,12 @@ export function getApeAdaptiveCommandSnapshot() {
       improvements: aggregate.improvements,
       strictPositive: aggregate.strictPositiveWins,
       strictPositiveWins: aggregate.strictPositiveWins,
+      proofAttempts: aggregate.proofAttempts,
+      proofCompletions: aggregate.proofCompletions,
+      proofCompletionRate: aggregate.proofAttempts > 0 ? aggregate.proofCompletions / aggregate.proofAttempts : 0,
+      proofDeadlineStops: aggregate.proofDeadlineStops,
+      explorationImprovementPerMs: tacticImprovementPerMs(tactic),
+      completedImprovementPerMs: tacticCompletedImprovementPerMs(tactic),
       improvementPerMs: tacticImprovementPerMs(tactic),
       averageLatencyMs: tacticAverageLatencyMs(tactic),
       demandMultiplier: getApeTacticDemandMultiplier(tactic),
@@ -464,6 +533,8 @@ export function getApeAdaptiveCommandSnapshot() {
     localLatencyOutlierDeprioritization: true as const,
     stickyWinningTacticAffinity: true as const,
     cachedCounterfactualPlanning: true as const,
+    incompleteExplorationCannotDominateDemand: true as const,
+    completedExecutableProofYieldControlsRouteSplitBudget: true as const,
     generationLocalRetirement: true as const,
     monotonicGenerationAuthority: true as const,
     staleGenerationCannotRollBackAuthority: true as const,
