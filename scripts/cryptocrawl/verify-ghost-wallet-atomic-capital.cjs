@@ -11,6 +11,10 @@ const fabric = read('server/services/cryptocrawl/ghost-wallet/capital-fabric.ts'
 const engine = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-engine.ts');
 const bridgeRuntime = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-external-bridge.ts');
 const borrowerSurface = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-borrower-surface.ts');
+const fundingMesh = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-funding-mesh.ts');
+const controller = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-autonomous-controller.ts');
+const controllerEconomics = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-controller-economics.ts');
+const ultra = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-ultra-worker.ts');
 const providerMesh = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-provider-mesh.ts');
 const payout = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-payout.ts');
 const compiler = read('scripts/cryptocrawl/compile-ghost-wallet-contracts.cjs');
@@ -26,13 +30,15 @@ const alternativeExecutor = read('server/services/cryptocrawl/execution/zero-cap
 const coverage = read('server/services/cryptocrawl/governance/atomic-zero-capital-strategy-coverage.ts');
 const runtimeWiring = read('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
 
-// Ghost remains isolated from arbitrage economics/execution authority.
+// Ghost stays independent from arbitrage economics/execution authority.
 assert.match(intermediary, /address public immutable profitRecipient/);
 assert.match(runtimeWiring, /ghostWalletProfitLadderAuthority:\s*false/);
 assert.match(runtimeWiring, /ghostWalletArbitrageExecutionAuthority:\s*false/);
 assert.match(engine, /profitLadderAuthority:\s*false/);
 assert.match(engine, /90_percent_payout_10_percent_retained/);
-assert.match(engine, /serverTransactionSubmission: false/);
+assert.match(engine, /intermediaryTransactionSubmission: false/);
+assert.match(engine, /controllerTransactionSubmission: true/);
+assert.match(engine, /zeroCapitalExecutionAuthority: false/);
 assert.doesNotMatch(engine, /zeroCapitalEngine|gasSponsor|CRYPTO_ARBITRAGE_LIVE_EXECUTION/);
 
 // Existing Ghost vault/intermediary settlement remains same-transaction and exact.
@@ -43,15 +49,20 @@ assert.match(vault, /endingAssets >= startingAssets \+ fee/);
 assert.match(vault, /atomic_credit_not_repaid/);
 assert.match(intermediary, /if \(temporaryApproval\) _safeApprove\(approvalToken, target, 0\)/);
 
-// Signed-intent protections remain source-available but are not advertised as an active production capital primitive.
+// Signed intents are authenticated, matched, durably handed to the Ghost worker,
+// and are final-rechecked against multi-asset fee value before controller signing.
 assert.match(intermediary, /self_match_forbidden/);
 assert.match(intermediary, /profit_recipient_cannot_self_match/);
 assert.match(intermediary, /usedIntentNonces/);
 assert.match(intentBook, /verifyTypedData/);
 assert.match(intentBook, /address\(left\.owner\) !== address\(right\.owner\)/);
-assert.match(engine, /inactiveSourceAvailablePrimitives: \['signed_intent_capital', 'coincidence_of_wants'\]/);
+assert.match(engine, /enqueueReadyIntentPairWork/);
+assert.match(engine, /matched_intent_settlement/);
+assert.match(engine, /serializeMatchedIntentPair/);
+assert.match(ultra, /evaluateGhostWalletMultiAssetControllerEconomics/);
+assert.match(ultra, /matchedIntentExpectedNetProfitUsdScaled/);
 
-// Existing measured capital fabric remains read-only evidence and does not fabricate cash.
+// Existing measured capital fabric remains evidence-only and does not fabricate cash.
 for (const primitive of [
   'euler_debt_assumption',
   'aave_credit_delegation',
@@ -64,7 +75,7 @@ assert.match(fabric, /quote\.sameTransactionSettlement === true/);
 assert.match(fabric, /quote\.repaymentFailureReverts === true/);
 assert.match(fabric, /resourceForm === 'liquid_principal'/);
 
-// Aave/Euler evidence stays grounded in live protocol state.
+// Aave/Euler evidence remains grounded in live protocol state.
 assert.match(sourceMeasurement, /borrowAllowance\(config\.delegator, intermediary\)/);
 assert.match(sourceMeasurement, /getUserAccountData\(config\.delegator\)/);
 assert.match(sourceMeasurement, /getAssetPrice\(config\.asset\)/);
@@ -72,7 +83,8 @@ assert.match(sourceMeasurement, /borrowCapacityAssetUnits/);
 assert.match(sourceMeasurement, /debtOf\(address account\)/);
 assert.match(sourceMeasurement, /synthetic_capacity:false/);
 
-// New caller-funded external bridge is the zero-operator-capital execution surface.
+// External bridge remains the atomic middleman: plural providers, no lender
+// allowlist, exact downstream/upstream repayment, and no fixed BPS profit gate.
 assert.match(bridge, /Permissionless, zero-operator-capital atomic credit intermediary/);
 assert.match(bridge, /brokerExternalFlashLoan/);
 assert.match(bridge, /brokerAaveV3FlashLoan/);
@@ -86,27 +98,66 @@ assert.match(bridge, /minimumBrokerSpreadBps = 0/);
 assert.match(bridge, /return configured > 0 \? configured : 1/);
 assert.doesNotMatch(bridge, /allowedLender|lenderAllowlist/);
 
-// Public descriptor/quote surface needs no new Railway setup and admits dynamic ERC-3156 lenders.
-assert.match(bridgeRuntime, /serverSubmitsDeployment: false/);
+// Deterministic bridge bootstrap is controller-compatible while remaining public.
+assert.match(bridgeRuntime, /intermediarySubmitsDeployment: false/);
+assert.match(bridgeRuntime, /autonomousControllerMaySubmitDeployment: true/);
+assert.match(bridgeRuntime, /externalPermissionlessDeployment: true/);
 assert.match(bridgeRuntime, /deploymentPayer: 'transaction_initiator'/);
-assert.match(bridgeRuntime, /operatorInitialCapitalRequired: false/);
 assert.match(bridgeRuntime, /lenderAllowlistRequired: false/);
+
+// Funding discovery is Ghost-owned and independent of zero-capital provider economics.
+assert.match(borrowerSurface, /measureGhostWalletFunding/);
+assert.match(borrowerSurface, /zeroCapitalFundingDependency: false/);
+assert.match(borrowerSurface, /ghostFundingMeshAuthority: true/);
 assert.match(borrowerSurface, /lenderCandidates/);
 assert.match(borrowerSurface, /hardLenderUniverseLimit: null/);
 assert.match(borrowerSurface, /hardBorrowerUniverseLimit: null/);
-assert.match(borrowerSurface, /lowest_live_all_in_upstream_fee_for_same_asset_and_amount/);
+assert.match(borrowerSurface, /lowest_live_exact_upstream_fee_for_same_asset_and_amount/);
+assert.doesNotMatch(borrowerSurface, /measureFlashLoanProviders/);
+for (const adapter of ['aave_v3', 'morpho_blue', 'balancer_v2', 'erc3156']) {
+  assert.ok(fundingMesh.includes(adapter), `funding mesh missing ${adapter}`);
+}
+assert.match(fundingMesh, /zeroCapitalDependency: false/);
+assert.match(fundingMesh, /hardSourceCountLimit: null/);
+assert.match(fundingMesh, /providerFailureRouteLocal: true/);
+assert.match(fundingMesh, /Promise\.allSettled/);
 
-// Alchemy is not a Ghost dependency. Configured non-Alchemy RPCs and public fallbacks
-// are measured in parallel; a chain outage is local and health can be re-evaluated.
+// Autonomous admission is exact-call + exact-gas + strict net-positive. No fixed
+// BPS profit threshold exists; spread calibration derives from measured gas when needed.
+assert.match(controller, /intermediaryRole: 'middleman_only'/);
+assert.match(controller, /controllerOwnsInitiation: true/);
+assert.match(controller, /provider\.call\(request\)/);
+assert.match(controller, /provider\.estimateGas\(request\)/);
+assert.match(controller, /strictPositiveAllInNetBeforeQueue: true/);
+assert.match(controller, /hardBpsProfitAdmissionFloor: false/);
+assert.match(controller, /configuredSpreadFloorDefaultBps: 0/);
+assert.match(controller, /dynamicSpreadCalibrationFromExactGas: true/);
+assert.match(controller, /zeroCapitalIntegration: false/);
+assert.match(controllerEconomics, /expectedNetProfitBaseUnits > 0n/);
+assert.match(controllerEconomics, /expectedNetProfitUsdScaled > 0n/);
+assert.match(controllerEconomics, /hardBpsProfitFloor: false/);
+assert.match(controllerEconomics, /multiAssetFeeValuationSupported: true/);
+
+// Submission is durable and crash-safe: exact signed bytes are persisted before
+// broadcast and only those identical bytes may be rebroadcast after restart.
+assert.match(ultra, /provider\.call\(request\)/);
+assert.match(ultra, /provider\.estimateGas\(request\)/);
+assert.match(ultra, /wallet\.signTransaction\(unsigned\)/);
+assert.match(ultra, /controller_signed_before_broadcast/);
+assert.match(ultra, /rawTransaction/);
+assert.match(ultra, /rebroadcastOrDefer/);
+assert.match(ultra, /transaction_lanes_serialized_per_chain/);
+assert.doesNotMatch(ultra, /GHOST_WALLET_CALLER_FUNDED_SUBMISSION_REQUIRED/);
+assert.doesNotMatch(ultra, /zeroCapitalEngine|gasSponsor|provider_sponsored/);
+
+// Alchemy is not a Ghost dependency. Provider failures remain route-local.
 assert.match(providerMesh, /alchemyAllowed: false/);
 assert.match(providerMesh, /Promise\.allSettled/);
 assert.match(providerMesh, /requestDrivenHealthRefresh: true/);
 assert.match(providerMesh, /routeLocalFailure: true/);
 assert.doesNotMatch(providerMesh, /ALCHEMY_API_KEY|ALCHEMY_GAS_POLICY_ID/);
 
-// Profit conversion never spends provider-sponsored/operator native gas. The 0x
-// leg is gasless; any Across/fallback spend is bounded by native proceeds created
-// from the same realized Ghost profit. Only 90% is routed to payout; 10% is retained.
+// Profit conversion moves realized Ghost profit only. 90% payout / 10% retained.
 assert.match(payout, /zeroOperatorNativeGas: true/);
 assert.match(payout, /GHOST_WALLET_ACROSS_WOULD_SPEND_PREEXISTING_OPERATOR_NATIVE/);
 assert.match(payout, /quote\.maxSpend > input\.acquiredNative/);
@@ -118,15 +169,13 @@ assert.match(payout, /submitProfitFundedEthereumFallback/);
 assert.doesNotMatch(payout, /state:\s*'fallback_required'/);
 assert.doesNotMatch(payout, /zeroCapitalEngine|gasSponsor|ALCHEMY_/);
 
-// Deferred settlement is never promoted into a false executable capability.
+// Deferred settlement remains unavailable to zero-capital execution.
 assert.match(coverage, /protocolDeferredSettlementExecutionEnabled:\s*false/);
 assert.match(coverage, /if \(provenance === 'protocol_deferred_settlement'\) return false/);
 const admittedBlock = coverage.match(/const ATOMIC_EXTERNAL_PRINCIPAL_SOURCES:[\s\S]*?\] as const;/)?.[0] || '';
 assert.doesNotMatch(admittedBlock, /protocol_deferred_settlement_capital/);
 
-// Existing arbitrage zero-capital execution remains under the same canonical authority.
-// Alternative-capital promotion uses the same exact strict-positive all-in base-unit
-// boundary as the single Atomic-BPS pipeline; no retired +10 BPS magnitude gate may reappear.
+// Existing zero-capital canonical authority and strict-positive boundary are unchanged.
 assert.match(discovery, /repriceZeroCapitalProviderEconomics\(/);
 assert.match(discovery, /repriceZeroCapitalAlternativeCapital\(/);
 assert.match(alternativeReprice, /await input\.provider\.call\(exactEnvelope\)/);
@@ -143,13 +192,11 @@ assert.match(alternativeExecutor, /await provider\.estimateGas\(request\)/);
 assert.match(alternativeExecutor, /preBroadcastCheck/);
 assert.match(flashExecutor, /Sole ZERO_CAPITAL_ATOMIC execution route|CanonicalExecutionScheduler/);
 
-// Vault arithmetic overflow protection is preserved.
+// Vault arithmetic and production compilation protections remain intact.
 assert.match(vault, /VIRTUAL_SHARES = 1_000/);
 assert.match(vault, /VIRTUAL_ASSETS = 1/);
 assert.match(vault, /uint256 quotient = product \/ denominator/);
 assert.doesNotMatch(vault, /\(product \+ denominator - 1\) \/ denominator/);
-
-// Production prebuild compiles every Ghost contract.
 assert.match(compiler, /CryptocrawlGhostWalletIntermediary\.sol/);
 assert.match(compiler, /CryptocrawlGhostWalletCapitalVault\.sol/);
 assert.match(compiler, /CryptocrawlGhostWalletErc3156Bridge\.sol/);
@@ -158,19 +205,22 @@ assert.match(preflight, /compile-ghost-wallet-contracts\.cjs/);
 
 console.log(JSON.stringify({
   ghostWalletAtomicCapital: 'verified',
-  model: 'borrow_upstream_lend_downstream_atomic_spread',
+  model: 'independent_autonomous_borrow_upstream_lend_downstream_atomic_spread',
   sameTransactionRepaymentOrRevert: true,
+  intermediarySubmitsTransactions: false,
+  autonomousControllerExecution: true,
+  zeroCapitalAuthorityCrossed: false,
   fixedBpsProfitFloor: false,
-  minimumPositiveSpreadBaseUnits: 1,
-  callerFundedCoreExecution: true,
-  operatorInitialCapitalRequired: false,
+  dynamicSpreadCalibration: true,
+  strictPositiveAllInNet: true,
+  matchedIntentMultiAssetEconomics: true,
   lenderUniverseFixedLimit: false,
   borrowerUniverseFixedLimit: false,
   alchemyDependency: false,
   routeLocalProviderFailure: true,
+  durableWorkerRecovery: true,
+  signedBeforeBroadcastRecovery: true,
   profitFundedEthPayout: true,
   payoutPercent: 90,
   retainedCapitalPercent: 10,
-  durableWorkerRecovery: true,
-  arbitrageAuthorityCrossed: false,
 }, null, 2));
