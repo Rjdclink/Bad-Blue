@@ -3,7 +3,6 @@ import { resolve } from 'node:path';
 import { BigNumber, Wallet, ethers, providers } from 'ethers';
 import { requireZeroCapitalInfrastructureDeploymentAllowed } from '../../governance/zero-capital-infrastructure-policy.js';
 import { resolveAaveV3Pool } from './flash-loan-provider-economics.js';
-import { resolveSponsoredReceiverVault, type ReceiverFundingMode } from './sponsored-receiver-manager.js';
 import type { SupportedExecutionChain } from './onchain-payload-builder.js';
 import {
   verifyDualFlashLoanReceiverCapability,
@@ -38,17 +37,15 @@ function publishRuntimeReceiver(chain: SupportedExecutionChain, address: string)
 
 /**
  * Route-local, zero-personal-cost cold start for the already-supported nested
- * Aave+Balancer receiver. This mirrors the single-provider deterministic CREATE2
- * bootstrap: deployment is permitted only through the caller's proven sponsored /
- * system-owned zero-personal-cost setup boundary, then fully re-verified on-chain.
- * The triggering market quote is never made executable by this helper; callers
- * must reacquire fresh route evidence after any deployment transaction.
+ * Aave+Balancer receiver. The caller supplies the chain's already-verified vault
+ * and zero-personal-cost setup executor, avoiding any new funding authority here.
  */
 export async function ensureDualFlashLoanReceiverCapability(input: {
   chain: SupportedExecutionChain;
   provider: providers.JsonRpcProvider;
   wallet: Wallet;
-  fundingMode: ReceiverFundingMode;
+  vault: string;
+  fundingMode: 'sponsored' | 'native';
   executeSetupCalls: (calls: Array<{ to: string; data: string; value?: BigNumber }>) => Promise<void>;
 }): Promise<VerifiedDualFlashLoanReceiverCapability | null> {
   const configured = await verifyDualFlashLoanReceiverCapability({
@@ -58,15 +55,15 @@ export async function ensureDualFlashLoanReceiverCapability(input: {
   });
   if (configured) return configured;
 
-  const vault = resolveSponsoredReceiverVault(input.chain);
+  const vault = ethers.utils.getAddress(input.vault);
   const pool = resolveAaveV3Pool(input.chain);
-  if (!vault || !pool) return null;
+  if (!pool) return null;
 
   const artifact = await loadArtifact();
   const owner = ethers.utils.getAddress(input.wallet.address);
   const constructorArgs = ethers.utils.defaultAbiCoder.encode(
     ['address', 'address', 'address'],
-    [ethers.utils.getAddress(vault), ethers.utils.getAddress(pool), owner],
+    [vault, ethers.utils.getAddress(pool), owner],
   );
   const initCode = ethers.utils.hexConcat([artifact.bytecode, constructorArgs]);
   const predictedAddress = ethers.utils.getCreate2Address(
