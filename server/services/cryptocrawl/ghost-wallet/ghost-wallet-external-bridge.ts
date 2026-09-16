@@ -34,7 +34,7 @@ export interface GhostWalletExternalBridgeDescriptor {
     data: string;
     value: '0';
     payer: 'transaction_initiator';
-    operatorCost: 0;
+    controllerCompatible: true;
   };
 }
 
@@ -142,10 +142,9 @@ export async function getGhostWalletExternalBridgeDescriptor(
       } satisfies GhostWalletExternalBridgeDescriptor;
     }
 
-    // Deployment is deliberately not submitted by the Ghost server. Any borrower,
-    // integrator, builder or other third party may permissionlessly deploy the exact
-    // deterministic bridge through the verified singleton factory and pay that one
-    // transaction's gas. The user's/operator's monetary input remains exactly zero.
+    // Deployment calldata stays permissionless. The autonomous Ghost controller may
+    // initiate this transaction itself, while the intermediary contract remains only
+    // the atomic middleman. External integrators may still deploy the exact same code.
     await verifyFactory(provider);
     return {
       chain,
@@ -160,7 +159,7 @@ export async function getGhostWalletExternalBridgeDescriptor(
         data: ethers.utils.hexConcat([BRIDGE_SALT, initCode]),
         value: '0',
         payer: 'transaction_initiator',
-        operatorCost: 0,
+        controllerCompatible: true,
       },
     } satisfies GhostWalletExternalBridgeDescriptor;
   })(), BRIDGE_READ_TIMEOUT_MS, `Ghost external bridge descriptor ${chain}`)), `GHOST_WALLET_EXTERNAL_BRIDGE_UNAVAILABLE:${chain}`);
@@ -175,9 +174,10 @@ export async function getReadyGhostWalletExternalBridges(): Promise<GhostWalletE
 }
 
 export const GHOST_WALLET_EXTERNAL_BRIDGE_POLICY = {
-  serverSubmitsDeployment: false,
+  intermediarySubmitsDeployment: false,
+  autonomousControllerMaySubmitDeployment: true,
+  externalPermissionlessDeployment: true,
   deploymentPayer: 'transaction_initiator',
-  operatorInitialCapitalRequired: false,
   lenderAllowlistRequired: false,
   supportedUpstreamAdapters: ['erc3156', 'aave_v3', 'morpho_blue', 'balancer_v2'] as const,
   fixedBpsSpreadFloor: false,
