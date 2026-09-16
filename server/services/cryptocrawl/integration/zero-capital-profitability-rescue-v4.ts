@@ -3,10 +3,14 @@ import type { providers } from 'ethers';
 import type { SupportedChain, ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import {
   calculateMeasuredFlashLoanFee,
+  getFlashLoanProviderMeasurementTelemetry,
   measureFlashLoanProviders,
   type FlashLoanProviderEconomics,
 } from '../execution/adapters/flash-loan-provider-economics.js';
-import { selectMeasuredDualFlashLoanAllocation } from '../execution/adapters/dual-flash-loan-provider-mesh.js';
+import {
+  selectMeasuredDualFlashLoanAllocation,
+  selectMeasuredProviderPairAllocation,
+} from '../execution/adapters/dual-flash-loan-provider-mesh.js';
 import {
   peekResidentExactQuote,
   quoteConfiguredZeroCapitalRoute,
@@ -34,6 +38,7 @@ type TimedQuoteResult = {
   failed: boolean;
   elapsedMs: number;
   deadlineExhausted: boolean;
+  launchSuppressed: boolean;
 };
 
 type FundingPlan =
@@ -95,6 +100,10 @@ function targetedQuoteTimeoutMs(): number {
   return Math.trunc(bounded(process.env.ZERO_CAPITAL_APE_TARGETED_QUOTE_TIMEOUT_MS, 500, 100, 1_500));
 }
 
+function rpcLaunchReserveMs(): number {
+  return Math.trunc(bounded(process.env.ZERO_CAPITAL_APE_RPC_LAUNCH_RESERVE_MS, 60, 20, 500));
+}
+
 function targetedAttemptLimit(): number {
   return Math.trunc(bounded(process.env.ZERO_CAPITAL_APE_TARGETED_ATTEMPTS_PER_CANDIDATE, 8, 3, 16));
 }
@@ -146,16 +155,25 @@ function percentile(values: readonly number[], fraction: number): number | null 
   return ordered[index] ?? null;
 }
 
-function adaptiveQuoteTimeoutMs(route: ConfiguredZeroCapitalRoute, deadlineAt: number): number {
-  const remaining = remainingMs(deadlineAt);
-  if (remaining <= 0) return 0;
+function predictedQuoteDurationMs(route: ConfiguredZeroCapitalRoute): number {
   const configuredCeiling = targetedQuoteTimeoutMs();
   const stats = routeLatency.get(routeLatencyKey(route));
   const p95 = stats && stats.samples.length >= 3 ? percentile(stats.samples, 0.95) : null;
-  const measured = p95 === null
+  return p95 === null
     ? configuredCeiling
-    : Math.max(100, Math.ceil(p95 * 1.35 + 20));
-  return Math.max(0, Math.min(configuredCeiling, measured, Math.max(0, remaining - 35)));
+    : Math.min(configuredCeiling, Math.max(100, Math.ceil(p95 * 1.35 + 20)));
+}
+
+function adaptiveQuoteTimeoutMs(route: ConfiguredZeroCapitalRoute, deadlineAt: number): number {
+  const remaining = remainingMs(deadlineAt);
+  if (remaining <= 0) return 0;
+  const predicted = predictedQuoteDurationMs(route);
+  const reserve = rpcLaunchReserveMs();
+  // Do not create transport work that measured latency says cannot finish while
+  // preserving an authority handoff margin. This prevents cooperative ethers calls
+  // from consuming resources after APE has already lost authority to use the result.
+  if (remaining <= predicted + reserve) return 0;
+  return predicted;
 }
 
 function currentConcurrency(chain: SupportedChain): number {
@@ -450,7 +468,7 @@ function quoteWithDeadline(
   const startedAt = Date.now();
   const timeoutMs = adaptiveQuoteTimeoutMs(route, deadlineAt);
   if (timeoutMs <= 0) {
-    return Promise.resolve({ quote: null, timedOut: true, failed: false, elapsedMs: 0, deadlineExhausted: true });
+    return Promise.resolve({ quote: null, timedOut: false, failed: false, elapsedMs: 0, deadlineExhausted: true, launchSuppressed: true });
   }
   return new Promise<TimedQuoteResult>(resolve => {
     let settled = false;
@@ -459,7 +477,7 @@ function quoteWithDeadline(
       settled = true;
       const elapsedMs = Date.now() - startedAt;
       recordRouteLatency(route, elapsedMs, true);
-      resolve({ quote: null, timedOut: true, failed: false, elapsedMs, deadlineExhausted: deadlineReached(deadlineAt) });
+      resolve({ quote: null, timedOut: true, failed: false, elapsedMs, deadlineExhausted: deadlineReached(deadlineAt), launchSuppressed: false });
     }, timeoutMs);
     timer.unref?.();
     quoteConfiguredZeroCapitalRoute({ ...route, amountIn: amountIn.toString() }, provider).then(
@@ -469,7 +487,7 @@ function quoteWithDeadline(
         clearTimeout(timer);
         const elapsedMs = Date.now() - startedAt;
         recordRouteLatency(route, elapsedMs, false);
-        resolve({ quote, timedOut: false, failed: quote === null, elapsedMs, deadlineExhausted: false });
+        resolve({ quote, timedOut: false, failed: quote === null, elapsedMs, deadlineExhausted: false, launchSuppressed: false });
       },
       () => {
         if (settled) return;
@@ -477,7 +495,7 @@ function quoteWithDeadline(
         clearTimeout(timer);
         const elapsedMs = Date.now() - startedAt;
         recordRouteLatency(route, elapsedMs, false);
-        resolve({ quote: null, timedOut: false, failed: true, elapsedMs, deadlineExhausted: false });
+        resolve({ quote: null, timedOut: false, failed: true, elapsedMs, deadlineExhausted: false, launchSuppressed: false });
       },
     );
   });
@@ -544,6 +562,7 @@ export async function runZeroCapitalProfitabilityRescueV4(
   const routeMaxSuccessfulAmount = new Map<string, bigint>();
   const toolboxPlans = new Map<string, ApeProfitabilityToolboxPlan | null>();
   const toolboxDominantDrivers = new Map<string, number>();
+  const providerTelemetryBefore = getFlashLoanProviderMeasurementTelemetry();
 
   let providerRaceCount = 0;
   let providerProbeFailures = 0;
@@ -552,8 +571,10 @@ export async function runZeroCapitalProfitabilityRescueV4(
   let providerResizeRecoveries = 0;
   let singleProviderPlansUsed = 0;
   let dualProviderPlansUsed = 0;
+  let morphoPairPlansObserved = 0;
   let routeQuoteFailures = 0;
   let routeQuoteTimeouts = 0;
+  let deadlineLaunchSuppressions = 0;
   let routeResizeRecoveries = 0;
   let routeAlternativesTried = 0;
   let targetedQuoteAttempts = 0;
@@ -614,7 +635,7 @@ export async function runZeroCapitalProfitabilityRescueV4(
   const quoteOnce = (route: ConfiguredZeroCapitalRoute, amount: bigint): Promise<TimedQuoteResult> => {
     if (deadlineReached(deadlineAt)) {
       hardDeadlineStops += 1;
-      return Promise.resolve({ quote: null, timedOut: true, failed: false, elapsedMs: 0, deadlineExhausted: true });
+      return Promise.resolve({ quote: null, timedOut: false, failed: false, elapsedMs: 0, deadlineExhausted: true, launchSuppressed: true });
     }
     const key = `${route.id}:${amount.toString()}`;
     const existing = quoteCache.get(key);
@@ -655,13 +676,29 @@ export async function runZeroCapitalProfitabilityRescueV4(
     if (residentMatchesIntended) residentInitialQuoteHits += 1;
     else residentInitialQuoteMisses += 1;
     const initialQuotePromise: Promise<TimedQuoteResult> = residentMatchesIntended
-      ? Promise.resolve({ quote: residentInitial, timedOut: false, failed: false, elapsedMs: 0, deadlineExhausted: false })
+      ? Promise.resolve({ quote: residentInitial, timedOut: false, failed: false, elapsedMs: 0, deadlineExhausted: false, launchSuppressed: false })
       : quoteOnce(primaryRoute, intendedAmount);
     const providerMeasurementsPromise = awaitWithDeadline(providerRace, deadlineAt, [] as FlashLoanProviderEconomics[]);
     const [initialResult, providerMeasurements] = await Promise.all([initialQuotePromise, providerMeasurementsPromise]);
+    if (initialResult.launchSuppressed) deadlineLaunchSuppressions += 1;
     if (deadlineReached(deadlineAt) && providerMeasurements.length === 0) {
       hardDeadlineStops += 1;
       return opportunity;
+    }
+
+    const safeEvidence = safeProviderEvidence(providerMeasurements);
+    const intendedFundingPlan = chooseFundingPlan(providerMeasurements, intendedAmount);
+    if (!intendedFundingPlan) {
+      const morphoPair = selectMeasuredProviderPairAllocation({
+        evidence: safeEvidence,
+        requestedAmount: intendedAmount,
+        pairs: [
+          ['morpho_blue', 'balancer_v2'],
+          ['morpho_blue', 'aave_v3'],
+        ],
+        requireSingleProviderShortage: true,
+      });
+      if (morphoPair) morphoPairPlansObserved += 1;
     }
 
     const fundingCeiling = executableFundingCeiling(providerMeasurements);
@@ -671,7 +708,6 @@ export async function runZeroCapitalProfitabilityRescueV4(
       return opportunity;
     }
 
-    const intendedFundingPlan = chooseFundingPlan(providerMeasurements, intendedAmount);
     if (!intendedFundingPlan) providerCapacityShortfalls += 1;
     if (intendedAmount > fundingCeiling) providerCapacityResizes += 1;
 
@@ -728,7 +764,6 @@ export async function runZeroCapitalProfitabilityRescueV4(
     }
 
     const toolboxPlan = toolboxPlanFor(opportunity);
-    const safeEvidence = safeProviderEvidence(providerMeasurements);
     const amounts = buildApeTargetAmounts({
       intended: intendedAmount,
       fundingCeiling,
@@ -785,6 +820,10 @@ export async function runZeroCapitalProfitabilityRescueV4(
         const settled = await Promise.race([...active.values()]);
         active.delete(settled.index);
         const { target, result } = settled;
+        if (result.launchSuppressed) {
+          deadlineLaunchSuppressions += 1;
+          continue;
+        }
         if (result.timedOut) {
           routeQuoteTimeouts += 1;
           continue;
@@ -855,8 +894,14 @@ export async function runZeroCapitalProfitabilityRescueV4(
     item => item,
   );
   const elapsedMs = Date.now() - passStartedAt;
-  const timeoutRate = targetedQuoteAttempts > 0 ? routeQuoteTimeouts / targetedQuoteAttempts : 0;
+  const networkQuoteAttempts = Math.max(0, targetedQuoteAttempts - deadlineLaunchSuppressions);
+  const timeoutRate = networkQuoteAttempts > 0 ? routeQuoteTimeouts / networkQuoteAttempts : 0;
   const nextConcurrency = updateConcurrency(chain, concurrency, timeoutRate, opportunities.length, elapsedMs, passBudgetMs);
+  const providerTelemetryAfter = getFlashLoanProviderMeasurementTelemetry();
+  const providerLogicalRequests = Math.max(0, providerTelemetryAfter.logicalRequests - providerTelemetryBefore.logicalRequests);
+  const providerResidentHits = Math.max(0, providerTelemetryAfter.residentHits - providerTelemetryBefore.residentHits);
+  const providerPhysicalMeasurementStarts = Math.max(0, providerTelemetryAfter.physicalMeasurementStarts - providerTelemetryBefore.physicalMeasurementStarts);
+  const providerSingleflightJoins = Math.max(0, providerTelemetryAfter.singleflightJoins - providerTelemetryBefore.singleflightJoins);
 
   const postDecisionTelemetry = setImmediate(() => {
     void getProfitLadderDailyProfitBudget().then(budget => {
@@ -878,11 +923,15 @@ export async function runZeroCapitalProfitabilityRescueV4(
     candidatesReceived: opportunities.length, elapsedMs,
     hardDeadlineAt: deadlineAt, hardDeadlineBudgetMs: passBudgetMs, hardDeadlineStops,
     hardDeadlinePropagation: true, deadlineCheckedBeforeNewQuoteWork: true,
-    transportCancellationMode: 'cooperative_authority_boundary_without_replacing_canonical_ethers_transport',
+    transportCancellationMode: 'predicted_deadline_launch_suppression_plus_cooperative_authority_boundary',
+    canonicalEthersTransportReplaced: false,
+    predictedDeadlineLaunchSuppression: true,
+    rpcLaunchReserveMs: rpcLaunchReserveMs(),
+    deadlineLaunchSuppressions,
     concurrency, nextConcurrency, adaptiveConcurrency: true, timeoutRate,
     targetedAttemptLimit: perCandidateAttemptLimit,
     configuredQuoteTimeoutCeilingMs: targetedQuoteTimeoutMs(), adaptiveRouteP95Timeouts: true,
-    targetedQuoteAttempts, hedgedWaveWidth: waveWidth, hedgedWaves, hedgedOutstandingAbandoned,
+    targetedQuoteAttempts, networkQuoteAttempts, hedgedWaveWidth: waveWidth, hedgedWaves, hedgedOutstandingAbandoned,
     strictPositiveObservations, positiveContinuationIterations,
     minimumOutputProfitUsd: ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
     strictPositiveAcceptanceThresholdIsNotApeStop: true,
@@ -890,13 +939,23 @@ export async function runZeroCapitalProfitabilityRescueV4(
     crossCandidateWinnerStops: 0, fullCandidateBatchBarrier: false,
     candidateLocalRunToCompletion: true,
     unorderedCandidateCompletion: true,
-    providerRaceCount, providerProbeFailures, sharedProviderRace: true,
-    providerRaceScope: 'one_per_pass_chain_asset', quoteAndProviderProbeParallel: true,
+    providerRaceCount,
+    providerRaceCountSemantic: 'logical_chain_asset_snapshot_reference_not_physical_network_race',
+    providerSnapshotReferences: providerRaceCount,
+    providerLogicalRequests,
+    providerResidentHits,
+    providerPhysicalMeasurementStarts,
+    providerSingleflightJoins,
+    providerProbeFailures, sharedProviderRace: true,
+    providerRaceScope: 'global_resident_singleflight_chain_asset_with_pass_local_references', quoteAndProviderProbeParallel: true,
     providerSelectionBlocksInitialRouteDiscovery: false,
     providerCapacityShortfalls, providerCapacityResizes, providerResizeRecoveries,
     singleProviderPlansUsed, dualProviderPlansUsed,
     providerStacking: 'aave_v3_plus_balancer_v2_when_verified_execution_topology_can_fund_or_reduce_fee',
-    morphoStackingEnabled: false, morphoStackingReason: 'no_verified_multi_provider_execution_topology_found',
+    morphoStackingPlannerResident: true,
+    morphoPairPlansObserved,
+    morphoStackingEnabled: false,
+    morphoStackingReason: 'measured_pair_planning_available_but_no_verified_multi_provider_execution_receiver_topology',
     routeQuoteFailures, routeQuoteTimeouts, routeResizeRecoveries, routeAlternativesTried,
     persistentRouteFrontierUses,
     learnedRouteOutcomesRecorded,
@@ -905,12 +964,12 @@ export async function runZeroCapitalProfitabilityRescueV4(
     residentInitialQuoteHits, residentInitialQuoteMisses, residentFreshnessInherited,
     unchangedPrimaryRouteRequoteAvoidedWhenResidentExactSizeExists: true,
     residentQuoteNeverExtendsCandidateFreshness: true,
-    routeMeasuredCapacitySignals: [...routeMaxSuccessfulAmount.entries()].map(([routeId, maxSuccessfulAmount]) => ({
+    routeMeasuredCapacitySignals: [...routeMaxSuccessfulAmount.entries()].slice(0, 12).map(([routeId, maxSuccessfulAmount]) => ({
       routeId, maxSuccessfulAmount: maxSuccessfulAmount.toString(),
     })),
     providerLiquidityTelemetrySeparatedFromRouteQuoteCapacity: true,
     routeSplitExecutionSupported: false, routeSplitPromotionSuppressed: true,
-    routeSplitReason: 'current_canonical_quote_and_execution_object_represents_one_sequential_route_only; composite split tactic owned by outer APE toolbox',
+    routeSplitReason: 'current_canonical_quote_and_execution_object_represents_one_sequential_route_only; composite split tactic owned_by_outer_APE_toolbox',
     dynamicSizeLadder: 'bps_toolbox_driver_aware_provider_boundaries_residual_fractions_and_fixed_cost_dilution',
     fixedBpsRescueEntryFloor: false,
     rescueOwnership: 'every_finite_candidate_until_candidate_local_measured_exhaustion_or_deadline',
