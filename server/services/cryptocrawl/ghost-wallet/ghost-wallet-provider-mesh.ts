@@ -1,6 +1,7 @@
-import { providers } from 'ethers';
+import { providers, utils } from 'ethers';
 import logger from '../../../logger.js';
 import { ghostWalletProviderSupportsSettlementLogs } from './ghost-wallet-log-policy.js';
+import { recordGhostWalletPerformance } from './ghost-wallet-performance-intelligence.js';
 
 export type GhostWalletChain = 'ethereum' | 'polygon' | 'arbitrum' | 'optimism' | 'base' | 'bsc' | 'avalanche';
 
@@ -39,6 +40,13 @@ interface Candidate {
   url: string;
   provider: providers.JsonRpcProvider;
   latencyMs: number;
+  ewmaLatencyMs: number;
+  successes: number;
+  failures: number;
+  consecutiveFailures: number;
+  cooldownUntil: number;
+  lastSuccessAt: number | null;
+  lastFailureAt: number | null;
 }
 
 function uniq(values: Array<string | undefined | null>): string[] {
@@ -107,11 +115,58 @@ function timeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> 
   });
 }
 
+function firstSuccessful<T>(attempts: Array<Promise<T>>): Promise<T> {
+  if (attempts.length === 0) return Promise.reject(new Error('GHOST_WALLET_RPC_NO_ATTEMPTS'));
+  return new Promise<T>((resolve, reject) => {
+    const failures: unknown[] = new Array(attempts.length);
+    let remaining = attempts.length;
+    let settled = false;
+    attempts.forEach((attempt, index) => {
+      attempt.then(value => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      }, error => {
+        failures[index] = error;
+        remaining -= 1;
+        if (!settled && remaining === 0) {
+          reject(failures.find(Boolean) || new Error('GHOST_WALLET_RPC_ALL_ATTEMPTS_FAILED'));
+        }
+      });
+    });
+  });
+}
+
 function providerHealthTtlMs(): number {
   const configured = Number(process.env.GHOST_WALLET_PROVIDER_HEALTH_TTL_MS || 15_000);
   return Number.isFinite(configured)
     ? Math.max(2_000, Math.min(120_000, Math.trunc(configured)))
     : 15_000;
+}
+
+function hedgeDelayMs(): number {
+  const configured = Number(process.env.GHOST_WALLET_RPC_HEDGE_DELAY_MS || 35);
+  return Number.isFinite(configured) ? Math.max(5, Math.min(250, Math.trunc(configured))) : 35;
+}
+
+function maxHedgeAttempts(): number {
+  const configured = Number(process.env.GHOST_WALLET_RPC_HEDGE_ATTEMPTS || 3);
+  return Number.isFinite(configured) ? Math.max(1, Math.min(4, Math.trunc(configured))) : 3;
+}
+
+function providerFailureCooldownMs(candidate: Candidate, error: unknown): number {
+  const message = error instanceof Error ? error.message : String(error);
+  const rateLimited = /429|rate limit|too many requests/i.test(message);
+  const base = rateLimited ? 5_000 : 500;
+  return Math.min(60_000, base * (2 ** Math.min(6, Math.max(0, candidate.consecutiveFailures))));
+}
+
+function wait(ms: number): Promise<void> {
+  if (ms <= 0) return Promise.resolve();
+  return new Promise(resolve => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
 }
 
 class GhostWalletProviderMesh {
@@ -152,18 +207,54 @@ class GhostWalletProviderMesh {
     const measured = await Promise.allSettled(candidates.map(async row => {
       const provider = new providers.JsonRpcProvider(row.url, expectedChainId);
       const startedAt = Date.now();
-      const [network, block] = await timeout(
-        Promise.all([provider.getNetwork(), provider.getBlockNumber()]),
-        5_000,
-        `Ghost ${chain} ${row.label}`,
-      );
-      if (network.chainId !== expectedChainId || block < 0) throw new Error('chain identity mismatch');
-      return { ...row, provider, latencyMs: Date.now() - startedAt } as Candidate;
+      try {
+        const [network, block] = await timeout(
+          Promise.all([provider.getNetwork(), provider.getBlockNumber()]),
+          5_000,
+          `Ghost ${chain} ${row.label}`,
+        );
+        if (network.chainId !== expectedChainId || block < 0) throw new Error('chain identity mismatch');
+        const latencyMs = Date.now() - startedAt;
+        recordGhostWalletPerformance({
+          stage: 'provider_probe', chain, providerLabel: row.label, latencyMs, success: true,
+        });
+        return {
+          ...row,
+          provider,
+          latencyMs,
+          ewmaLatencyMs: latencyMs,
+          successes: 1,
+          failures: 0,
+          consecutiveFailures: 0,
+          cooldownUntil: 0,
+          lastSuccessAt: Date.now(),
+          lastFailureAt: null,
+        } as Candidate;
+      } catch (error) {
+        recordGhostWalletPerformance({
+          stage: 'provider_probe', chain, providerLabel: row.label,
+          latencyMs: Date.now() - startedAt, success: false,
+          errorType: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
     }));
+    const priorByUrl = new Map((this.healthy.get(chain) || []).map(candidate => [candidate.url, candidate]));
     const healthy = measured
       .filter((result): result is PromiseFulfilledResult<Candidate> => result.status === 'fulfilled')
-      .map(result => result.value)
-      .sort((a, b) => a.latencyMs - b.latencyMs);
+      .map(result => {
+        const prior = priorByUrl.get(result.value.url);
+        return prior ? {
+          ...result.value,
+          ewmaLatencyMs: prior.ewmaLatencyMs,
+          successes: prior.successes + 1,
+          failures: prior.failures,
+          consecutiveFailures: 0,
+          cooldownUntil: 0,
+          lastSuccessAt: Date.now(),
+          lastFailureAt: prior.lastFailureAt,
+        } : result.value;
+      });
     if (healthy.length === 0) {
       this.healthy.delete(chain);
       this.initialized.delete(chain);
@@ -171,46 +262,171 @@ class GhostWalletProviderMesh {
       throw new Error(`GHOST_WALLET_RPC_UNAVAILABLE:${chain}`);
     }
     this.healthy.set(chain, healthy);
+    this.sortCandidates(chain);
     this.initialized.add(chain);
     this.lastProbeAt.set(chain, Date.now());
+    const ranked = this.healthy.get(chain) || [];
     logger.info('[GhostWalletProviderMesh] Alchemy-free RPC redundancy ready', {
       component: 'GhostWalletProviderMesh',
       chain,
-      selected: healthy[0].label,
-      healthyProviders: healthy.map(row => ({ label: row.label, latencyMs: row.latencyMs })),
+      selected: ranked[0]?.label || null,
+      healthyProviders: ranked.map(row => ({ label: row.label, latencyMs: Math.round(row.ewmaLatencyMs), cooldownUntil: row.cooldownUntil || null })),
       alchemyEligible: false,
       requestDrivenHealthRefresh: true,
+      adaptiveLatencyRanking: true,
+      hedgedReads: true,
+      circuitBreaking: true,
       healthTtlMs: providerHealthTtlMs(),
       periodicHealthPolling: false,
     });
+  }
+
+  private sortCandidates(chain: GhostWalletChain): void {
+    const now = Date.now();
+    const rows = this.healthy.get(chain);
+    if (!rows) return;
+    rows.sort((left, right) => {
+      const leftCooling = left.cooldownUntil > now ? 1 : 0;
+      const rightCooling = right.cooldownUntil > now ? 1 : 0;
+      if (leftCooling !== rightCooling) return leftCooling - rightCooling;
+      if (left.consecutiveFailures !== right.consecutiveFailures) return left.consecutiveFailures - right.consecutiveFailures;
+      return left.ewmaLatencyMs - right.ewmaLatencyMs;
+    });
+  }
+
+  private candidateFor(chain: GhostWalletChain, provider: providers.JsonRpcProvider): Candidate | null {
+    return (this.healthy.get(chain) || []).find(candidate => candidate.provider === provider) || null;
+  }
+
+  private recordOutcome(chain: GhostWalletChain, candidate: Candidate, operation: string, startedAt: number, success: boolean, error?: unknown): void {
+    const latencyMs = Math.max(0, Date.now() - startedAt);
+    candidate.ewmaLatencyMs = (candidate.ewmaLatencyMs * 0.8) + (latencyMs * 0.2);
+    if (success) {
+      candidate.successes += 1;
+      candidate.consecutiveFailures = 0;
+      candidate.cooldownUntil = 0;
+      candidate.lastSuccessAt = Date.now();
+    } else {
+      candidate.failures += 1;
+      candidate.consecutiveFailures += 1;
+      candidate.lastFailureAt = Date.now();
+      candidate.cooldownUntil = Date.now() + providerFailureCooldownMs(candidate, error);
+    }
+    recordGhostWalletPerformance({
+      stage: 'provider_probe', chain, providerLabel: `${candidate.label}:${operation}`,
+      latencyMs, success, errorType: success ? null : (error instanceof Error ? error.message : String(error)),
+    });
+    this.sortCandidates(chain);
+  }
+
+  async runHedged<T>(input: {
+    chain: GhostWalletChain;
+    operation: string;
+    execute: (provider: providers.JsonRpcProvider, providerIndex: number) => Promise<T>;
+    maxAttempts?: number;
+    hedgeDelayMs?: number;
+  }): Promise<T> {
+    await this.ensureChain(input.chain);
+    this.sortCandidates(input.chain);
+    const now = Date.now();
+    const candidates = (this.healthy.get(input.chain) || [])
+      .filter(candidate => candidate.cooldownUntil <= now)
+      .slice(0, Math.max(1, Math.min(input.maxAttempts ?? maxHedgeAttempts(), 4)));
+    const fallbackCandidates = candidates.length > 0 ? candidates : (this.healthy.get(input.chain) || []).slice(0, 1);
+    if (fallbackCandidates.length === 0) throw new Error(`GHOST_WALLET_RPC_UNAVAILABLE:${input.chain}`);
+    const delay = Math.max(0, input.hedgeDelayMs ?? hedgeDelayMs());
+    const attempts = fallbackCandidates.map((candidate, index) => (async () => {
+      if (index > 0) await wait(delay * index);
+      const startedAt = Date.now();
+      try {
+        const result = await input.execute(candidate.provider, index);
+        this.recordOutcome(input.chain, candidate, input.operation, startedAt, true);
+        return result;
+      } catch (error) {
+        this.recordOutcome(input.chain, candidate, input.operation, startedAt, false, error);
+        throw error;
+      }
+    })());
+    return firstSuccessful(attempts);
+  }
+
+  async broadcastRawTransaction(chain: GhostWalletChain, rawTransaction: string): Promise<string> {
+    await this.ensureChain(chain);
+    this.sortCandidates(chain);
+    const candidates = (this.healthy.get(chain) || [])
+      .filter(candidate => candidate.cooldownUntil <= Date.now())
+      .slice(0, maxHedgeAttempts());
+    if (candidates.length === 0) throw new Error(`GHOST_WALLET_RPC_UNAVAILABLE:${chain}`);
+    const expectedHash = utils.keccak256(rawTransaction);
+    const attempts = candidates.map(async candidate => {
+      const startedAt = Date.now();
+      try {
+        const response = await candidate.provider.sendTransaction(rawTransaction);
+        this.recordOutcome(chain, candidate, 'eth_sendRawTransaction', startedAt, true);
+        return response.hash;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (/already known|known transaction/i.test(message)) {
+          this.recordOutcome(chain, candidate, 'eth_sendRawTransaction', startedAt, true);
+          return expectedHash;
+        }
+        if (/nonce too low/i.test(message)) {
+          const observed = await candidate.provider.getTransaction(expectedHash).catch(() => null);
+          if (observed?.hash?.toLowerCase() === expectedHash.toLowerCase()) {
+            this.recordOutcome(chain, candidate, 'eth_sendRawTransaction', startedAt, true);
+            return expectedHash;
+          }
+        }
+        this.recordOutcome(chain, candidate, 'eth_sendRawTransaction', startedAt, false, error);
+        throw error;
+      }
+    });
+    const result = await Promise.allSettled(attempts);
+    const fulfilled = result.find((entry): entry is PromiseFulfilledResult<string> => entry.status === 'fulfilled' && Boolean(entry.value));
+    if (fulfilled) return fulfilled.value;
+    const firstFailure = result.find((entry): entry is PromiseRejectedResult => entry.status === 'rejected');
+    throw firstFailure?.reason || new Error('GHOST_WALLET_RPC_BROADCAST_FAILED');
   }
 
   async getProvider(chain: string): Promise<providers.JsonRpcProvider | null> {
     const normalized = chain.trim().toLowerCase() as GhostWalletChain;
     if (!(normalized in CHAIN_IDS)) return null;
     await this.ensureChain(normalized);
-    return this.healthy.get(normalized)?.[0]?.provider || null;
+    this.sortCandidates(normalized);
+    return (this.healthy.get(normalized) || []).find(candidate => candidate.cooldownUntil <= Date.now())?.provider
+      || this.healthy.get(normalized)?.[0]?.provider
+      || null;
   }
 
   async getProviders(chain: string): Promise<providers.JsonRpcProvider[]> {
     const normalized = chain.trim().toLowerCase() as GhostWalletChain;
     if (!(normalized in CHAIN_IDS)) return [];
     await this.ensureChain(normalized);
+    this.sortCandidates(normalized);
     return (this.healthy.get(normalized) || []).map(row => row.provider);
+  }
+
+  getProviderLabel(chain: GhostWalletChain, provider: providers.JsonRpcProvider): string | null {
+    return this.candidateFor(chain, provider)?.label || null;
   }
 
   async getLogProviders(chain: string): Promise<providers.JsonRpcProvider[]> {
     const normalized = chain.trim().toLowerCase() as GhostWalletChain;
     if (!(normalized in CHAIN_IDS)) return [];
     await this.ensureChain(normalized);
+    this.sortCandidates(normalized);
     return (this.healthy.get(normalized) || [])
+      .filter(row => row.cooldownUntil <= Date.now())
       .filter(row => ghostWalletProviderSupportsSettlementLogs(normalized, row.url))
       .map(row => row.provider);
   }
 
   getReadyProvider(chain: string): providers.JsonRpcProvider | null {
     const normalized = chain.trim().toLowerCase() as GhostWalletChain;
-    return this.healthy.get(normalized)?.[0]?.provider || null;
+    this.sortCandidates(normalized);
+    return (this.healthy.get(normalized) || []).find(candidate => candidate.cooldownUntil <= Date.now())?.provider
+      || this.healthy.get(normalized)?.[0]?.provider
+      || null;
   }
 
   getReadyChains(): GhostWalletChain[] {
@@ -218,16 +434,32 @@ class GhostWalletProviderMesh {
   }
 
   getStatus() {
-    return [...this.healthy.entries()].map(([chain, rows]) => ({
-      chain,
-      selected: rows[0]?.label || null,
-      redundancy: rows.length,
-      lastProbeAt: this.lastProbeAt.get(chain) || null,
-      healthTtlMs: providerHealthTtlMs(),
-      alchemy: false,
-      websocketCandidates: ghostWalletWebSocketUrls(chain).length,
-      settlementLogRedundancy: rows.filter(row => ghostWalletProviderSupportsSettlementLogs(chain, row.url)).length,
-    }));
+    const now = Date.now();
+    return [...this.healthy.entries()].map(([chain, rows]) => {
+      this.sortCandidates(chain);
+      const ranked = this.healthy.get(chain) || rows;
+      return {
+        chain,
+        selected: ranked.find(row => row.cooldownUntil <= now)?.label || ranked[0]?.label || null,
+        redundancy: ranked.length,
+        availableNow: ranked.filter(row => row.cooldownUntil <= now).length,
+        providers: ranked.map(row => ({
+          label: row.label,
+          ewmaLatencyMs: Math.round(row.ewmaLatencyMs * 100) / 100,
+          successes: row.successes,
+          failures: row.failures,
+          consecutiveFailures: row.consecutiveFailures,
+          cooldownUntil: row.cooldownUntil || null,
+        })),
+        lastProbeAt: this.lastProbeAt.get(chain) || null,
+        healthTtlMs: providerHealthTtlMs(),
+        hedgeDelayMs: hedgeDelayMs(),
+        maxHedgeAttempts: maxHedgeAttempts(),
+        alchemy: false,
+        websocketCandidates: ghostWalletWebSocketUrls(chain).length,
+        settlementLogRedundancy: ranked.filter(row => ghostWalletProviderSupportsSettlementLogs(chain, row.url)).length,
+      };
+    });
   }
 }
 
@@ -240,6 +472,11 @@ export const GHOST_WALLET_PROVIDER_POLICY = {
   methodAwareSettlementLogSelection: true,
   parallelInitialProbe: true,
   requestDrivenHealthRefresh: true,
+  adaptiveLatencyRanking: true,
+  hedgedReadFailover: true,
+  providerCircuitBreaking: true,
+  identicalRawTransactionMultiProviderBroadcast: true,
+  exactHashRequiredOnNonceConflict: true,
   routeLocalFailure: true,
   periodicHealthPolling: false,
 } as const;

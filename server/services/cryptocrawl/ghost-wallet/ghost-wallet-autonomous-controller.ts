@@ -1,14 +1,18 @@
-import { ethers } from 'ethers';
+import { ethers, providers } from 'ethers';
 import logger from '../../../logger.js';
 import { pool } from '../runtime/cryptocrawl-runtime-database.js';
 import { evaluateGhostWalletControllerEconomics } from './ghost-wallet-controller-economics.js';
 import {
   buildGhostWalletBorrowerTransactionWithSpread,
   quoteGhostWalletBorrowerRoute,
+  type GhostWalletBorrowerQuoteResult,
+  type GhostWalletBorrowerRouteQuote,
 } from './ghost-wallet-borrower-surface.js';
 import { ghostWalletEngine } from './ghost-wallet-engine.js';
 import { getGhostWalletExternalBridgeDescriptor } from './ghost-wallet-external-bridge.js';
-import type { GhostWalletChain } from './ghost-wallet-provider-mesh.js';
+import { resolveGhostWalletGasPricing } from './ghost-wallet-gas-pricing.js';
+import { recordGhostWalletPerformance } from './ghost-wallet-performance-intelligence.js';
+import { ghostWalletProviderMesh, type GhostWalletChain } from './ghost-wallet-provider-mesh.js';
 import { enqueueGhostWalletWork } from './ghost-wallet-work-ledger.js';
 import { ghostWalletWorkSignal, type GhostWalletWakeReason } from './ghost-wallet-work-signal.js';
 
@@ -22,7 +26,10 @@ interface StandingBorrowerMandate {
   chain: GhostWalletChain;
   borrower: string;
   asset: string;
-  amountBaseUnits: string;
+  amountMode: 'exact' | 'range';
+  minAmountBaseUnits: string;
+  preferredAmountBaseUnits: string;
+  maxAmountBaseUnits: string;
   borrowerData: string;
   maxBorrowerFeeBaseUnits: string | null;
   expiresAt: number | null;
@@ -37,6 +44,24 @@ interface MandateExecutionState {
   total: number;
   lastCommittedAt: number | null;
 }
+
+interface PreflightCandidate {
+  quote: GhostWalletBorrowerQuoteResult;
+  route: GhostWalletBorrowerRouteQuote;
+  amount: bigint;
+  requestedSpread: bigint;
+  borrowerFee: bigint;
+  prepared: ReturnType<typeof buildGhostWalletBorrowerTransactionWithSpread>;
+  economics: Awaited<ReturnType<typeof evaluateGhostWalletControllerEconomics>>;
+  gasUnits: bigint;
+  expectedFeePerGas: bigint;
+  signingFeeCeilingPerGas: bigint;
+  pricingMode: string;
+  provider: providers.JsonRpcProvider;
+  latencyMs: number;
+}
+
+let registryCache: { expiresAt: number; rows: StandingBorrowerMandate[] } | null = null;
 
 function address(value: unknown): string | null {
   const raw = String(value || '').trim();
@@ -94,6 +119,86 @@ function activeScanMs(hasMandates: boolean): number {
   return Number.isFinite(configured) ? Math.max(hasMandates ? 500 : 2_000, Math.min(60_000, Math.trunc(configured))) : fallback;
 }
 
+function mandateCacheTtlMs(): number {
+  const configured = Number(process.env.GHOST_WALLET_MANDATE_CACHE_TTL_MS || 10_000);
+  return Number.isFinite(configured) ? Math.max(500, Math.min(60_000, Math.trunc(configured))) : 10_000;
+}
+
+function matchConcurrency(): number {
+  const configured = Number(process.env.GHOST_WALLET_MATCH_CONCURRENCY || 8);
+  return Number.isFinite(configured) ? Math.max(1, Math.min(32, Math.trunc(configured))) : 8;
+}
+
+function sizeCandidateLimit(): number {
+  const configured = Number(process.env.GHOST_WALLET_SIZE_CANDIDATE_LIMIT || 4);
+  return Number.isFinite(configured) ? Math.max(1, Math.min(5, Math.trunc(configured))) : 4;
+}
+
+function routePlanLimit(): number {
+  const configured = Number(process.env.GHOST_WALLET_ROUTE_PLAN_LIMIT || 6);
+  return Number.isFinite(configured) ? Math.max(1, Math.min(12, Math.trunc(configured))) : 6;
+}
+
+function preflightConcurrency(): number {
+  const configured = Number(process.env.GHOST_WALLET_PREFLIGHT_CONCURRENCY || 2);
+  return Number.isFinite(configured) ? Math.max(1, Math.min(4, Math.trunc(configured))) : 2;
+}
+
+function amountRange(input: any): { mode: 'exact' | 'range'; min: string; preferred: string; max: string } | null {
+  const exact = positiveInteger(input?.amountBaseUnits);
+  const min = positiveInteger(input?.minAmountBaseUnits);
+  const preferred = positiveInteger(input?.preferredAmountBaseUnits);
+  const max = positiveInteger(input?.maxAmountBaseUnits);
+  if (min && preferred && max && BigInt(min) <= BigInt(preferred) && BigInt(preferred) <= BigInt(max)) {
+    return { mode: min === max ? 'exact' : 'range', min, preferred, max };
+  }
+  if (!exact) return null;
+  return { mode: 'exact', min: exact, preferred: exact, max: exact };
+}
+
+function amountCandidates(mandate: StandingBorrowerMandate): bigint[] {
+  const min = BigInt(mandate.minAmountBaseUnits);
+  const preferred = BigInt(mandate.preferredAmountBaseUnits);
+  const max = BigInt(mandate.maxAmountBaseUnits);
+  if (mandate.amountMode === 'exact' || min === max) return [preferred];
+  const candidates = [
+    preferred,
+    max,
+    (preferred + max) / 2n,
+    (min + preferred) / 2n,
+    min,
+  ].filter(value => value >= min && value <= max && value > 0n);
+  const unique: bigint[] = [];
+  const seen = new Set<string>();
+  for (const value of candidates) {
+    const key = value.toString();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(value);
+    if (unique.length >= sizeCandidateLimit()) break;
+  }
+  return unique;
+}
+
+async function mapBounded<T, R>(items: readonly T[], concurrency: number, mapper: (item: T, index: number) => Promise<R>): Promise<Array<PromiseSettledResult<R>>> {
+  const results: Array<PromiseSettledResult<R>> = new Array(items.length);
+  let nextIndex = 0;
+  const worker = async () => {
+    while (true) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= items.length) return;
+      try {
+        results[index] = { status: 'fulfilled', value: await mapper(items[index], index) };
+      } catch (reason) {
+        results[index] = { status: 'rejected', reason };
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(Math.max(1, concurrency), Math.max(1, items.length)) }, () => worker()));
+  return results;
+}
+
 function configuredMandates(): StandingBorrowerMandate[] {
   const raw = process.env.GHOST_WALLET_AUTONOMOUS_BORROWERS_JSON?.trim();
   if (!raw) return [];
@@ -105,8 +210,8 @@ function configuredMandates(): StandingBorrowerMandate[] {
     const parsedChain = chain(row?.chain);
     const borrower = address(row?.borrower);
     const asset = address(row?.asset);
-    const amountBaseUnits = positiveInteger(row?.amountBaseUnits);
-    if (!parsedChain || !borrower || !asset || !amountBaseUnits) return [];
+    const authorizedAmount = amountRange(row);
+    if (!parsedChain || !borrower || !asset || !authorizedAmount) return [];
     const maxBorrowerFeeBaseUnits = row?.maxBorrowerFeeBaseUnits === undefined
       ? null
       : positiveInteger(row.maxBorrowerFeeBaseUnits);
@@ -121,7 +226,10 @@ function configuredMandates(): StandingBorrowerMandate[] {
       chain: parsedChain,
       borrower,
       asset,
-      amountBaseUnits,
+      amountMode: authorizedAmount.mode,
+      minAmountBaseUnits: authorizedAmount.min,
+      preferredAmountBaseUnits: authorizedAmount.preferred,
+      maxAmountBaseUnits: authorizedAmount.max,
       borrowerData: hexData(row?.borrowerData),
       maxBorrowerFeeBaseUnits,
       expiresAt: Number.isFinite(expiresAt) && expiresAt > 0 ? expiresAt : null,
@@ -133,6 +241,7 @@ function configuredMandates(): StandingBorrowerMandate[] {
 }
 
 async function registryMandates(): Promise<StandingBorrowerMandate[]> {
+  if (registryCache && registryCache.expiresAt > Date.now()) return registryCache.rows.map(row => ({ ...row }));
   try {
     const result = await pool.query(
       `SELECT venue_id,chain,address,asset,metadata
@@ -141,13 +250,13 @@ async function registryMandates(): Promise<StandingBorrowerMandate[]> {
          AND lower(COALESCE(metadata->>'autonomous','false'))='true'
        ORDER BY verified DESC, last_verified_at DESC NULLS LAST, last_observed_at DESC`,
     );
-    return result.rows.flatMap((row: any) => {
+    const rows = result.rows.flatMap((row: any) => {
       const parsedChain = chain(row.chain);
       const borrower = address(row.address);
       const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
       const asset = address(row.asset || metadata.asset);
-      const amountBaseUnits = positiveInteger(metadata.amountBaseUnits);
-      if (!parsedChain || !borrower || !asset || !amountBaseUnits) return [];
+      const authorizedAmount = amountRange(metadata);
+      if (!parsedChain || !borrower || !asset || !authorizedAmount) return [];
       const maxBorrowerFeeBaseUnits = metadata.maxBorrowerFeeBaseUnits === undefined
         ? null
         : positiveInteger(metadata.maxBorrowerFeeBaseUnits);
@@ -164,7 +273,10 @@ async function registryMandates(): Promise<StandingBorrowerMandate[]> {
         chain: parsedChain,
         borrower,
         asset,
-        amountBaseUnits,
+        amountMode: authorizedAmount.mode,
+        minAmountBaseUnits: authorizedAmount.min,
+        preferredAmountBaseUnits: authorizedAmount.preferred,
+        maxAmountBaseUnits: authorizedAmount.max,
         borrowerData: hexData(metadata.borrowerData),
         maxBorrowerFeeBaseUnits,
         expiresAt: Number.isFinite(expiresAt) && expiresAt > 0 ? expiresAt : null,
@@ -173,9 +285,15 @@ async function registryMandates(): Promise<StandingBorrowerMandate[]> {
         source: 'venue_registry' as const,
       }];
     });
+    registryCache = { expiresAt: Date.now() + mandateCacheTtlMs(), rows };
+    return rows.map(row => ({ ...row }));
   } catch {
-    return [];
+    return registryCache?.rows.map(row => ({ ...row })) || [];
   }
+}
+
+function invalidateRegistryMandates(): void {
+  registryCache = null;
 }
 
 async function standingMandates(): Promise<StandingBorrowerMandate[]> {
@@ -215,6 +333,10 @@ async function mandateExecutionState(mandate: StandingBorrowerMandate): Promise<
   };
 }
 
+function routeQuote(base: GhostWalletBorrowerQuoteResult, selected: GhostWalletBorrowerRouteQuote): GhostWalletBorrowerQuoteResult {
+  return { ...base, selected, alternatives: [base.selected, ...base.alternatives].filter(route => route !== selected) };
+}
+
 class GhostWalletAutonomousController {
   private running = false;
   private evaluating = false;
@@ -223,6 +345,7 @@ class GhostWalletAutonomousController {
   private unsubscribeWake: (() => void) | null = null;
   private lastEvaluationAt: number | null = null;
   private lastOpportunityAt: number | null = null;
+  private lastMandateCount = 0;
   private mandatesSeen = 0;
   private profitablePrepared = 0;
   private localFailures = 0;
@@ -244,6 +367,10 @@ class GhostWalletAutonomousController {
       perTransactionSpreadCalibration: true,
       signedMandateExecutionLimits: true,
       signedMandateVersionIsolation: true,
+      rangeAuthorizedDynamicSizing: true,
+      gasAdjustedRouteSelection: true,
+      boundedMatchingConcurrency: matchConcurrency(),
+      eventInvalidatedMandateCache: true,
       strictPositiveAllInNetRequired: true,
       chains: [...CHAINS],
       continuousOperation: true,
@@ -258,8 +385,9 @@ class GhostWalletAutonomousController {
     this.timer = null;
   }
 
-  requestEvaluation(_reason: GhostWalletWakeReason | 'work_completed'): void {
+  requestEvaluation(reason: GhostWalletWakeReason | 'work_completed'): void {
     if (!this.running) return;
+    if (reason === 'explicit_refresh') invalidateRegistryMandates();
     this.pending = true;
     if (this.evaluating) return;
     queueMicrotask(() => { void this.evaluate(); });
@@ -274,9 +402,15 @@ class GhostWalletAutonomousController {
       zeroCapitalExecutionAuthority: false as const,
       lastEvaluationAt: this.lastEvaluationAt,
       lastOpportunityAt: this.lastOpportunityAt,
+      lastMandateCount: this.lastMandateCount,
       mandatesSeen: this.mandatesSeen,
       profitablePrepared: this.profitablePrepared,
       localFailures: this.localFailures,
+      matchConcurrency: matchConcurrency(),
+      preflightConcurrency: preflightConcurrency(),
+      sizeCandidateLimit: sizeCandidateLimit(),
+      routePlanLimit: routePlanLimit(),
+      mandateCacheTtlMs: mandateCacheTtlMs(),
       supportedChains: [...CHAINS],
     };
   }
@@ -301,18 +435,121 @@ class GhostWalletAutonomousController {
         this.lastEvaluationAt = Date.now();
         const mandates = await standingMandates();
         hasMandates = mandates.length > 0;
+        this.lastMandateCount = mandates.length;
         this.mandatesSeen += mandates.length;
         if (mandates.length === 0) break;
-        await Promise.allSettled(mandates.map(mandate => this.evaluateMandate(mandate)));
+        await mapBounded(mandates, matchConcurrency(), mandate => this.evaluateMandate(mandate));
       } while (this.running && this.pending);
     } finally {
       this.evaluating = false;
       this.schedule(hasMandates);
-      if (this.pending) this.requestEvaluation('explicit_refresh');
+      if (this.pending) this.requestEvaluation('work_completed');
     }
   }
 
+  private async preflightPlan(input: {
+    mandate: StandingBorrowerMandate;
+    quote: GhostWalletBorrowerQuoteResult;
+    route: GhostWalletBorrowerRouteQuote;
+    descriptorMinimumSpreadBps: number;
+  }): Promise<PreflightCandidate> {
+    const startedAt = Date.now();
+    const amount = BigInt(input.quote.amountBaseUnits);
+    const upstreamFee = BigInt(input.route.upstreamFeeBaseUnits);
+    const bridgeFloor = spreadBaseUnits(amount, input.descriptorMinimumSpreadBps);
+    const configuredFloor = spreadBaseUnits(amount, configuredSpreadFloorBps());
+    let requestedSpread = maxBigInt(bridgeFloor, configuredFloor);
+    const mandateMaxFee = input.mandate.maxBorrowerFeeBaseUnits === null
+      ? null
+      : BigInt(input.mandate.maxBorrowerFeeBaseUnits);
+    if (mandateMaxFee !== null) {
+      if (mandateMaxFee <= upstreamFee) throw new Error('GHOST_WALLET_ROUTE_BORROWER_FEE_CEILING_TOO_LOW');
+      const authorizedSpreadCeiling = mandateMaxFee - upstreamFee;
+      if (authorizedSpreadCeiling < requestedSpread) throw new Error('GHOST_WALLET_ROUTE_SPREAD_FLOOR_EXCEEDS_BORROWER_CEILING');
+      // A signed max fee is explicit authorization. Ghost keeps the largest spread
+      // permitted by that mandate; lower upstream cost therefore becomes more net profit.
+      requestedSpread = authorizedSpreadCeiling;
+    }
+
+    const routedQuote = routeQuote(input.quote, input.route);
+    let lastError: unknown = null;
+    for (let pass = 0; pass < MAX_CALIBRATION_PASSES; pass += 1) {
+      try {
+        const prepared = buildGhostWalletBorrowerTransactionWithSpread({
+          quote: routedQuote,
+          requestedSpreadBaseUnits: requestedSpread,
+          maxBorrowerFeeBaseUnits: mandateMaxFee,
+        });
+        const preflight = await ghostWalletProviderMesh.runHedged({
+          chain: input.mandate.chain,
+          operation: `route_preflight:${input.route.sourceKind}:${input.route.lender.toLowerCase()}`,
+          execute: async provider => {
+            const request = {
+              from: ghostWalletEngine.getExecutionWallet(input.mandate.chain)?.address,
+              to: prepared.to,
+              data: prepared.data,
+              value: prepared.value,
+            };
+            if (!request.from) throw new Error('GHOST_WALLET_CONTROLLER_WALLET_UNAVAILABLE');
+            await provider.call(request);
+            const [gasRaw, feeData] = await Promise.all([provider.estimateGas(request), provider.getFeeData()]);
+            return { provider, gasRaw, pricing: resolveGhostWalletGasPricing(feeData) };
+          },
+        });
+        const gasUnits = BigInt(preflight.gasRaw.toString());
+        const expectedFeePerGas = BigInt(preflight.pricing.expectedFeePerGas.toString());
+        const economics = await evaluateGhostWalletControllerEconomics({
+          chain: input.mandate.chain,
+          provider: preflight.provider,
+          asset: input.mandate.asset,
+          gasUnits,
+          feePerGasWei: expectedFeePerGas,
+          expectedSpreadBaseUnits: requestedSpread,
+        });
+        if (economics.approved) {
+          const candidate: PreflightCandidate = {
+            quote: routedQuote,
+            route: input.route,
+            amount,
+            requestedSpread,
+            borrowerFee: prepared.borrowerFeeBaseUnits,
+            prepared,
+            economics,
+            gasUnits,
+            expectedFeePerGas,
+            signingFeeCeilingPerGas: BigInt(preflight.pricing.signingFeeCeilingPerGas.toString()),
+            pricingMode: preflight.pricing.mode,
+            provider: preflight.provider,
+            latencyMs: Date.now() - startedAt,
+          };
+          recordGhostWalletPerformance({
+            stage: 'route_preflight', chain: input.mandate.chain,
+            routeKey: `${input.route.sourceKind}:${input.route.lender.toLowerCase()}:${amount}`,
+            sourceKind: input.route.sourceKind, latencyMs: candidate.latencyMs, success: true,
+            expectedNetProfitBaseUnits: economics.expectedNetProfitBaseUnits,
+          });
+          return candidate;
+        }
+        if (mandateMaxFee !== null) throw new Error('GHOST_WALLET_ROUTE_NET_NOT_POSITIVE_AT_AUTHORIZED_FEE_CEILING');
+        const nextSpread = maxBigInt(requestedSpread + 1n, economics.gasCostAssetBaseUnits + 1n);
+        if (nextSpread <= requestedSpread) throw new Error('GHOST_WALLET_ROUTE_SPREAD_CALIBRATION_STALLED');
+        requestedSpread = nextSpread;
+      } catch (error) {
+        lastError = error;
+        if (mandateMaxFee !== null) break;
+      }
+    }
+    recordGhostWalletPerformance({
+      stage: 'route_preflight', chain: input.mandate.chain,
+      routeKey: `${input.route.sourceKind}:${input.route.lender.toLowerCase()}:${amount}`,
+      sourceKind: input.route.sourceKind, latencyMs: Date.now() - startedAt, success: false,
+      errorType: lastError instanceof Error ? lastError.message : String(lastError || 'preflight_failed'),
+    });
+    throw lastError || new Error('GHOST_WALLET_ROUTE_PREFLIGHT_FAILED');
+  }
+
   private async evaluateMandate(mandate: StandingBorrowerMandate): Promise<void> {
+    const startedAt = Date.now();
     try {
       const now = Date.now();
       if (mandate.expiresAt !== null && mandate.expiresAt <= now) return;
@@ -323,19 +560,14 @@ class GhostWalletAutonomousController {
         && mandate.minIntervalMs > 0
         && executionState.lastCommittedAt + mandate.minIntervalMs > now) return;
 
-      const provider = ghostWalletEngine.getProvider(mandate.chain);
       const wallet = ghostWalletEngine.getExecutionWallet(mandate.chain);
-      if (!provider || !wallet) return;
+      if (!wallet) return;
       const descriptor = await getGhostWalletExternalBridgeDescriptor(mandate.chain);
-
       if (!descriptor.deployed) {
         if (!ghostWalletEngine.isLiveExecutionEnabled() || !descriptor.deployment) return;
         await enqueueGhostWalletWork({
           dedupeKey: `ghost-controller:bridge-bootstrap:${mandate.chain}:${descriptor.address.toLowerCase()}`,
-          kind: 'prepared_atomic_execution',
-          chain: mandate.chain,
-          priority: 1_000,
-          maxAttempts: 20,
+          kind: 'prepared_atomic_execution', chain: mandate.chain, priority: 1_000, maxAttempts: 20,
           payload: {
             mode: 'bridge_bootstrap', chain: mandate.chain,
             to: descriptor.deployment.to, data: descriptor.deployment.data, value: descriptor.deployment.value,
@@ -346,71 +578,80 @@ class GhostWalletAutonomousController {
         return;
       }
 
-      const quote = await quoteGhostWalletBorrowerRoute({
-        chain: mandate.chain,
-        borrower: mandate.borrower,
-        asset: mandate.asset,
-        amountBaseUnits: mandate.amountBaseUnits,
-        borrowerData: mandate.borrowerData,
-      });
-      if (!quote.bridgeDeployed) return;
-
-      const amount = BigInt(mandate.amountBaseUnits);
-      const bridgeFloorSpread = spreadBaseUnits(amount, descriptor.minimumBrokerSpreadBps);
-      const configuredFloorSpread = spreadBaseUnits(amount, configuredSpreadFloorBps());
-      let requestedSpread = maxBigInt(bridgeFloorSpread, configuredFloorSpread);
-      const mandateMaxFee = mandate.maxBorrowerFeeBaseUnits === null
-        ? null
-        : BigInt(mandate.maxBorrowerFeeBaseUnits);
-      let finalPrepared: ReturnType<typeof buildGhostWalletBorrowerTransactionWithSpread> | null = null;
-      let finalEconomics: Awaited<ReturnType<typeof evaluateGhostWalletControllerEconomics>> | null = null;
-      let finalGasUnits = 0n;
-      let finalFeePerGas = 0n;
-
-      for (let pass = 0; pass < MAX_CALIBRATION_PASSES; pass += 1) {
-        const prepared = buildGhostWalletBorrowerTransactionWithSpread({
-          quote,
-          requestedSpreadBaseUnits: requestedSpread,
-          maxBorrowerFeeBaseUnits: mandateMaxFee,
-        });
-        const request = { from: wallet.address, to: prepared.to, data: prepared.data, value: prepared.value };
-        await provider.call(request);
-        const [gasRaw, feeData] = await Promise.all([provider.estimateGas(request), provider.getFeeData()]);
-        const gasUnits = BigInt(gasRaw.toString());
-        const feePerGas = feeData.maxFeePerGas || feeData.gasPrice;
-        if (!feePerGas || feePerGas.lte(0)) return;
-        const economics = await evaluateGhostWalletControllerEconomics({
+      const sizes = amountCandidates(mandate);
+      const quotedSizes = await mapBounded(sizes, Math.min(2, sizes.length), async amount => ({
+        amount,
+        quote: await quoteGhostWalletBorrowerRoute({
           chain: mandate.chain,
-          provider,
+          borrower: mandate.borrower,
           asset: mandate.asset,
-          gasUnits,
-          feePerGasWei: BigInt(feePerGas.toString()),
-          expectedSpreadBaseUnits: requestedSpread,
-        });
-        if (economics.approved) {
-          finalPrepared = prepared;
-          finalEconomics = economics;
-          finalGasUnits = gasUnits;
-          finalFeePerGas = BigInt(feePerGas.toString());
-          break;
+          amountBaseUnits: amount.toString(),
+          borrowerData: mandate.borrowerData,
+        }),
+      }));
+
+      const plans: Array<{ quote: GhostWalletBorrowerQuoteResult; route: GhostWalletBorrowerRouteQuote; theoreticalSpread: bigint }> = [];
+      for (const result of quotedSizes) {
+        if (result.status !== 'fulfilled' || !result.value.quote.bridgeDeployed) continue;
+        const { quote } = result.value;
+        const routes = [quote.selected, ...quote.alternatives];
+        for (const route of routes) {
+          const upstreamFee = BigInt(route.upstreamFeeBaseUnits);
+          const amount = BigInt(quote.amountBaseUnits);
+          const floor = maxBigInt(
+            spreadBaseUnits(amount, descriptor.minimumBrokerSpreadBps),
+            spreadBaseUnits(amount, configuredSpreadFloorBps()),
+          );
+          const theoreticalSpread = mandate.maxBorrowerFeeBaseUnits === null
+            ? floor
+            : BigInt(mandate.maxBorrowerFeeBaseUnits) > upstreamFee
+              ? BigInt(mandate.maxBorrowerFeeBaseUnits) - upstreamFee
+              : 0n;
+          if (theoreticalSpread < floor || theoreticalSpread <= 0n) continue;
+          plans.push({ quote, route, theoreticalSpread });
         }
-        const nextSpread = maxBigInt(requestedSpread + 1n, economics.gasCostAssetBaseUnits + 1n);
-        if (nextSpread <= requestedSpread) return;
-        requestedSpread = nextSpread;
+      }
+      plans.sort((left, right) => {
+        if (left.theoreticalSpread !== right.theoreticalSpread) return left.theoreticalSpread > right.theoreticalSpread ? -1 : 1;
+        const leftPreferred = left.quote.amountBaseUnits === mandate.preferredAmountBaseUnits ? 1 : 0;
+        const rightPreferred = right.quote.amountBaseUnits === mandate.preferredAmountBaseUnits ? 1 : 0;
+        if (leftPreferred !== rightPreferred) return rightPreferred - leftPreferred;
+        const leftFee = BigInt(left.route.upstreamFeeBaseUnits);
+        const rightFee = BigInt(right.route.upstreamFeeBaseUnits);
+        return leftFee === rightFee ? 0 : leftFee < rightFee ? -1 : 1;
+      });
+
+      const preflightPlans = plans.slice(0, routePlanLimit());
+      const preflight = await mapBounded(preflightPlans, preflightConcurrency(), plan => this.preflightPlan({
+        mandate,
+        quote: plan.quote,
+        route: plan.route,
+        descriptorMinimumSpreadBps: descriptor.minimumBrokerSpreadBps,
+      }));
+      const candidates = preflight.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
+      candidates.sort((left, right) => {
+        const leftNet = left.economics.expectedNetProfitBaseUnits;
+        const rightNet = right.economics.expectedNetProfitBaseUnits;
+        if (leftNet !== rightNet) return leftNet > rightNet ? -1 : 1;
+        if (left.gasUnits !== right.gasUnits) return left.gasUnits < right.gasUnits ? -1 : 1;
+        return left.latencyMs - right.latencyMs;
+      });
+      const best = candidates[0];
+      if (!best) {
+        recordGhostWalletPerformance({
+          stage: 'mandate_match', chain: mandate.chain, routeKey: mandate.executionScope,
+          latencyMs: Date.now() - startedAt, success: false, errorType: 'no_strict_positive_route_size_plan',
+        });
+        return;
       }
 
-      if (!finalPrepared || !finalEconomics) return;
-      const blockNumber = await provider.getBlockNumber();
+      const blockNumber = await best.provider.getBlockNumber();
       this.lastOpportunityAt = Date.now();
       if (!ghostWalletEngine.isLiveExecutionEnabled()) return;
-
       const executionSequence = executionState.total + 1;
       await enqueueGhostWalletWork({
         dedupeKey: `ghost-controller:broker:${mandate.id}:${mandate.executionScope}:${mandate.chain}:execution:${executionSequence}`,
-        kind: 'prepared_atomic_execution',
-        chain: mandate.chain,
-        priority: 900,
-        maxAttempts: 20,
+        kind: 'prepared_atomic_execution', chain: mandate.chain, priority: 900, maxAttempts: 20,
         payload: {
           mode: 'broker_execution',
           chain: mandate.chain,
@@ -420,29 +661,54 @@ class GhostWalletAutonomousController {
           mandateExecutionSequence: executionSequence,
           mandateMaxExecutions: mandate.maxExecutions,
           mandateMinIntervalMs: mandate.minIntervalMs,
-          to: finalPrepared.to,
-          data: finalPrepared.data,
-          value: finalPrepared.value,
+          mandateAmountMode: mandate.amountMode,
+          authorizedMinAmountBaseUnits: mandate.minAmountBaseUnits,
+          authorizedPreferredAmountBaseUnits: mandate.preferredAmountBaseUnits,
+          authorizedMaxAmountBaseUnits: mandate.maxAmountBaseUnits,
+          to: best.prepared.to,
+          data: best.prepared.data,
+          value: best.prepared.value,
           borrower: mandate.borrower,
           asset: mandate.asset,
-          amountBaseUnits: mandate.amountBaseUnits,
-          sourceKind: quote.selected.sourceKind,
-          lender: quote.selected.lender,
-          expectedSpreadBaseUnits: requestedSpread.toString(),
-          quotedBorrowerFeeBaseUnits: finalPrepared.borrowerFeeBaseUnits.toString(),
-          quoteObservedAt: quote.selected.observedAt,
-          preflightGasUnits: finalGasUnits.toString(),
-          preflightFeePerGasWei: finalFeePerGas.toString(),
-          preflightGasCostAssetBaseUnits: finalEconomics.gasCostAssetBaseUnits.toString(),
-          preflightExpectedNetProfitBaseUnits: finalEconomics.expectedNetProfitBaseUnits.toString(),
+          amountBaseUnits: best.amount.toString(),
+          sourceKind: best.route.sourceKind,
+          lender: best.route.lender,
+          expectedSpreadBaseUnits: best.requestedSpread.toString(),
+          quotedBorrowerFeeBaseUnits: best.borrowerFee.toString(),
+          quoteObservedAt: best.route.observedAt,
+          preflightGasUnits: best.gasUnits.toString(),
+          preflightExpectedFeePerGasWei: best.expectedFeePerGas.toString(),
+          preflightSigningFeeCeilingPerGasWei: best.signingFeeCeilingPerGas.toString(),
+          preflightGasPricingMode: best.pricingMode,
+          preflightGasCostAssetBaseUnits: best.economics.gasCostAssetBaseUnits.toString(),
+          preflightExpectedNetProfitBaseUnits: best.economics.expectedNetProfitBaseUnits.toString(),
           preflightBlockNumber: blockNumber,
+          sizeCandidatesEvaluated: sizes.map(value => value.toString()),
+          routePlansConsidered: plans.length,
+          routePlansPreflighted: preflightPlans.length,
           calibrationPassLimit: MAX_CALIBRATION_PASSES,
         },
       });
       this.profitablePrepared += 1;
+      recordGhostWalletPerformance({
+        stage: 'prepared_enqueue', chain: mandate.chain,
+        routeKey: `${best.route.sourceKind}:${best.route.lender.toLowerCase()}:${best.amount}`,
+        sourceKind: best.route.sourceKind, latencyMs: Date.now() - startedAt, success: true,
+        expectedNetProfitBaseUnits: best.economics.expectedNetProfitBaseUnits,
+      });
+      recordGhostWalletPerformance({
+        stage: 'mandate_match', chain: mandate.chain, routeKey: mandate.executionScope,
+        latencyMs: Date.now() - startedAt, success: true,
+        expectedNetProfitBaseUnits: best.economics.expectedNetProfitBaseUnits,
+      });
       ghostWalletWorkSignal.emitWake('local_work_enqueued');
     } catch (error) {
       this.localFailures += 1;
+      recordGhostWalletPerformance({
+        stage: 'mandate_match', chain: mandate.chain, routeKey: mandate.executionScope,
+        latencyMs: Date.now() - startedAt, success: false,
+        errorType: error instanceof Error ? error.message : String(error),
+      });
       logger.debug('[GhostWalletController] Opportunity path failed locally', {
         component: 'GhostWalletAutonomousController',
         mandateId: mandate.id,
@@ -461,12 +727,17 @@ export const GHOST_WALLET_AUTONOMOUS_CONTROLLER_POLICY = {
   intermediaryRole: 'middleman_only',
   controllerOwnsInitiation: true,
   continuousEventPlusAdaptiveScan: true,
+  eventInvalidatedMandateCache: true,
+  boundedMatchingConcurrency: true,
   exactCallBeforeQueue: true,
   exactGasBeforeQueue: true,
+  gasAdjustedRouteSelection: true,
+  rangeAuthorizedDynamicSizing: true,
   strictPositiveAllInNetBeforeQueue: true,
   hardBpsProfitAdmissionFloor: false,
   configuredSpreadFloorDefaultBps: 0,
   perTransactionSpreadCalibrationFromExactGas: true,
+  signedFeeCeilingProfitSeekingWithinAuthorization: true,
   globalSpreadConfigurationTransactionRequired: false,
   signedMandateExecutionCountEnforced: true,
   signedMandateCadenceEnforced: true,

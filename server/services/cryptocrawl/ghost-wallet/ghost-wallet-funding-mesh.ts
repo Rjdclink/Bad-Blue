@@ -1,5 +1,9 @@
 import { BigNumber, Contract, ethers, providers } from 'ethers';
 import { ghostWalletProviderMesh, type GhostWalletChain } from './ghost-wallet-provider-mesh.js';
+import {
+  ghostWalletPerformancePenalty,
+  recordGhostWalletPerformance,
+} from './ghost-wallet-performance-intelligence.js';
 import { loadVerifiedGhostWalletVenues } from './ghost-wallet-work-ledger.js';
 
 export type GhostWalletFundingKind = 'aave_v3' | 'morpho_blue' | 'balancer_v2' | 'erc3156';
@@ -22,6 +26,8 @@ export interface GhostWalletFundingQuote {
   feeBps: number;
   observedAt: number;
   providerIndex: number;
+  providerLabel?: string | null;
+  measurementLatencyMs?: number;
   provenance: string[];
 }
 
@@ -45,8 +51,6 @@ const BALANCER_FEES_ABI = ['function getFlashLoanFeePercentage() view returns (u
 const BPS = 10_000n;
 const BALANCER_ONE = 10n ** 18n;
 
-// Independent Ghost defaults. These are protocol deployment addresses, not an
-// import or execution dependency on the ZERO_CAPITAL_ATOMIC stack.
 const AAVE_V3_DEFAULTS: Partial<Record<GhostWalletChain, string>> = {
   ethereum: '0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2',
   polygon: '0x794a61358D6845594F94dc1DB02A252b5b4814aD',
@@ -194,8 +198,7 @@ async function measureAave(input: {
       }
     }
   } catch { /* reserve getter evidence may still be enough */ }
-  if (!aToken) return null;
-  if (flashLoanEnabled === false) return null;
+  if (!aToken || flashLoanEnabled === false) return null;
   const [liquidityRaw, premiumRaw] = await Promise.all([
     new Contract(input.asset, ERC20_ABI, input.provider).balanceOf(aToken) as Promise<BigNumber>,
     pool.FLASHLOAN_PREMIUM_TOTAL() as Promise<BigNumber>,
@@ -299,6 +302,18 @@ async function measureOne(
   return measureErc3156(input);
 }
 
+export function invalidateGhostWalletFundingEvidence(input?: { chain?: GhostWalletChain; asset?: string }): void {
+  const chainPrefix = input?.chain ? `${input.chain}:` : null;
+  const assetNeedle = input?.asset && ethers.utils.isAddress(input.asset)
+    ? `:${ethers.utils.getAddress(input.asset).toLowerCase()}:`
+    : null;
+  for (const key of resident.keys()) {
+    if (chainPrefix && !key.startsWith(chainPrefix)) continue;
+    if (assetNeedle && !key.includes(assetNeedle)) continue;
+    resident.delete(key);
+  }
+}
+
 export async function measureGhostWalletFunding(input: {
   chain: GhostWalletChain;
   asset: string;
@@ -310,31 +325,71 @@ export async function measureGhostWalletFunding(input: {
   if (!asset) throw new Error('GHOST_WALLET_FUNDING_ASSET_INVALID');
   const key = `${input.chain}:${asset.toLowerCase()}:${input.amount}`;
   const cached = resident.get(key);
-  if (!input.forceFresh && cached && cached.expiresAt > Date.now()) return cached.quotes.map(row => ({ ...row, provenance: [...row.provenance] }));
+  if (!input.forceFresh && cached && cached.expiresAt > Date.now()) {
+    return cached.quotes.map(row => ({ ...row, provenance: [...row.provenance] }));
+  }
   const pending = inFlight.get(key);
   if (pending) return pending;
 
   const work = (async () => {
-    const [providersForChain, sources] = await Promise.all([
-      ghostWalletProviderMesh.getProviders(input.chain),
-      sourcesForChain(input.chain),
-    ]);
-    if (providersForChain.length === 0 || sources.length === 0) return [];
-    const settled = await Promise.allSettled(sources.flatMap(source => providersForChain.map((provider, providerIndex) =>
-      measureOne(source, provider, providerIndex, asset, input.amount),
-    )));
-    const best = new Map<string, GhostWalletFundingQuote>();
-    for (const result of settled) {
-      if (result.status !== 'fulfilled' || !result.value) continue;
-      const quote = result.value;
-      const id = `${quote.kind}:${quote.lender.toLowerCase()}`;
-      const existing = best.get(id);
-      if (!existing || quote.upstreamFee < existing.upstreamFee || (quote.upstreamFee === existing.upstreamFee && quote.providerIndex < existing.providerIndex)) {
-        best.set(id, quote);
-      }
-    }
-    const quotes = [...best.values()].sort((left, right) => {
+    const sources = await sourcesForChain(input.chain);
+    if (sources.length === 0) return [];
+    const settled = await Promise.allSettled(sources.map(source =>
+      ghostWalletProviderMesh.runHedged({
+        chain: input.chain,
+        operation: `funding:${source.kind}:${source.address.toLowerCase()}`,
+        execute: async (provider, providerIndex) => {
+          const startedAt = Date.now();
+          try {
+            const quote = await measureOne(source, provider, providerIndex, asset, input.amount);
+            if (!quote) throw new Error('GHOST_WALLET_FUNDING_SOURCE_UNAVAILABLE');
+            const measurementLatencyMs = Date.now() - startedAt;
+            const providerLabel = ghostWalletProviderMesh.getProviderLabel(input.chain, provider);
+            const enriched = { ...quote, measurementLatencyMs, providerLabel };
+            recordGhostWalletPerformance({
+              stage: 'funding_quote',
+              chain: input.chain,
+              routeKey: `${quote.kind}:${quote.lender.toLowerCase()}`,
+              sourceKind: quote.kind,
+              providerLabel,
+              latencyMs: measurementLatencyMs,
+              success: true,
+            });
+            return enriched;
+          } catch (error) {
+            recordGhostWalletPerformance({
+              stage: 'funding_quote',
+              chain: input.chain,
+              routeKey: `${source.kind}:${source.address.toLowerCase()}`,
+              sourceKind: source.kind,
+              providerLabel: ghostWalletProviderMesh.getProviderLabel(input.chain, provider),
+              latencyMs: Date.now() - startedAt,
+              success: false,
+              errorType: error instanceof Error ? error.message : String(error),
+            });
+            throw error;
+          }
+        },
+      }),
+    ));
+
+    const quotes = settled.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
+    quotes.sort((left, right) => {
       if (left.upstreamFee !== right.upstreamFee) return left.upstreamFee < right.upstreamFee ? -1 : 1;
+      const leftKey = `${left.kind}:${left.lender.toLowerCase()}`;
+      const rightKey = `${right.kind}:${right.lender.toLowerCase()}`;
+      const leftPerformance = ghostWalletPerformancePenalty({
+        stage: 'funding_quote', chain: input.chain, routeKey: leftKey, sourceKind: left.kind,
+      });
+      const rightPerformance = ghostWalletPerformancePenalty({
+        stage: 'funding_quote', chain: input.chain, routeKey: rightKey, sourceKind: right.kind,
+      });
+      if (leftPerformance.failureRate !== rightPerformance.failureRate) {
+        return leftPerformance.failureRate - rightPerformance.failureRate;
+      }
+      const leftLatency = leftPerformance.ewmaLatencyMs ?? left.measurementLatencyMs ?? Number.POSITIVE_INFINITY;
+      const rightLatency = rightPerformance.ewmaLatencyMs ?? right.measurementLatencyMs ?? Number.POSITIVE_INFINITY;
+      if (leftLatency !== rightLatency) return leftLatency - rightLatency;
       if (left.availableLiquidity !== right.availableLiquidity) return left.availableLiquidity > right.availableLiquidity ? -1 : 1;
       return left.providerIndex - right.providerIndex;
     });
@@ -358,9 +413,13 @@ export function getGhostWalletFundingCoverage(): Record<GhostWalletChain, GhostW
 export const GHOST_WALLET_FUNDING_MESH_POLICY = {
   zeroCapitalDependency: false,
   hardSourceCountLimit: null,
-  allConfiguredProvidersMeasuredInParallel: true,
+  sourceMeasurementsRemainParallel: true,
+  cartesianProviderFanout: false,
+  hedgedProviderSelection: true,
   providerFailureRouteLocal: true,
   freshEvidenceSingleflight: true,
   lowestExactUpstreamFeeWins: true,
+  latencyReliabilityTieBreak: true,
+  eventInvalidationSupported: true,
   supportedChains: ['ethereum', 'polygon', 'arbitrum', 'optimism', 'base', 'bsc', 'avalanche'] as const,
 } as const;

@@ -1,5 +1,6 @@
 import { ethers, providers } from 'ethers';
 import { resolvePrimaryProfitPayoutAddress } from '../core/wallet-identity.js';
+import { recordGhostWalletPerformance } from './ghost-wallet-performance-intelligence.js';
 import { enqueueGhostWalletWork, upsertGhostWalletVenue } from './ghost-wallet-work-ledger.js';
 import { ghostWalletWorkSignal } from './ghost-wallet-work-signal.js';
 import { recordGhostWalletRuntimeState } from './ghost-wallet-runtime-state.js';
@@ -28,8 +29,6 @@ function upstreamProtocol(kind: number): string {
 
 function splitRealizedProfit(realized: bigint): { payout: bigint; retained: bigint } {
   if (realized <= 0n) return { payout: 0n, retained: 0n };
-  // Keep every base unit accounted for. Integer remainder goes to the user's
-  // payout so rounding can never make the payout share less than 90%.
   const retained = (realized * RETAINED_SPLIT_NUMERATOR) / PROFIT_SPLIT_DENOMINATOR;
   const payout = realized - retained;
   return { payout, retained };
@@ -70,6 +69,14 @@ async function enqueueProfit(input: {
       destinationMode: 'primary',
       sourceKind: input.sourceKind,
     },
+  });
+  recordGhostWalletPerformance({
+    stage: 'settlement',
+    chain: input.chain,
+    routeKey: `${input.transactionHash.toLowerCase()}:${input.logIndex}:${input.asset.toLowerCase()}`,
+    sourceKind: input.sourceKind,
+    success: true,
+    realizedProfitBaseUnits: input.amount,
   });
   return true;
 }
