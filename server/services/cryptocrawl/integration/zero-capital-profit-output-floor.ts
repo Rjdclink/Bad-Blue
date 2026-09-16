@@ -1,14 +1,17 @@
 import type { ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 
 /**
- * Canonical Stage-2/execution output floor.
+ * Canonical Stage-2/execution profitability authority.
  *
- * This is deliberately NOT a Stage-1 discovery/admission threshold. Stage 1 may
- * surface any finite opportunity allowed by its locked rules. APE retains ownership
- * until fresh exact all-in expected profit reaches at least $5, and the canonical
- * pre-broadcast barrier reasserts the same floor before money can move.
+ * Stage 1 remains completely independent from this module. For ZERO_CAPITAL_ATOMIC,
+ * fresh deterministic all-in expected profit must be strictly greater than zero to
+ * be execution-eligible. Crossing that threshold is NOT an APE stop condition: APE
+ * continues refining a candidate until compatible measured transformations are
+ * exhausted, freshness/deadline constraints make further work invalid, or its
+ * candidate-local generation is retired by the APE state authority.
  */
-export const ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD = 5;
+export const ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD = Number.MIN_VALUE;
+export const ZERO_CAPITAL_STRICT_POSITIVE_MIN_BASE_UNITS = 1n;
 
 export interface ZeroCapitalOutputFloorDecision {
   minimumUsd: number;
@@ -16,39 +19,19 @@ export interface ZeroCapitalOutputFloorDecision {
   expectedProfitUsd: number | null;
   requiredProfitBaseUnits: bigint | null;
   satisfied: boolean;
-  reason: 'satisfied' | 'expired' | 'missing_fresh_input_usd_price' | 'below_five_dollar_output_floor';
+  reason:
+    | 'satisfied'
+    | 'expired'
+    | 'invalid_candidate'
+    | 'non_positive_all_in_net_profit'
+    // Kept in the public union for source compatibility with older telemetry only.
+    | 'missing_fresh_input_usd_price'
+    | 'below_five_dollar_output_floor';
 }
 
 function normalizedDecimals(decimals: number): number {
   if (!Number.isFinite(decimals)) return 0;
   return Math.max(0, Math.min(36, Math.trunc(decimals)));
-}
-
-function tokenScale(decimals: number): bigint {
-  return 10n ** BigInt(normalizedDecimals(decimals));
-}
-
-/** Exact rational representation of the already-measured JS price value. */
-function positiveNumberRational(value: number): { numerator: bigint; denominator: bigint } | null {
-  if (!Number.isFinite(value) || value <= 0) return null;
-  const text = value.toString().toLowerCase();
-  const [coefficient, exponentText] = text.split('e');
-  const exponent = exponentText === undefined ? 0 : Number(exponentText);
-  if (!Number.isInteger(exponent)) return null;
-  const [whole = '0', fraction = ''] = coefficient.split('.');
-  const digits = `${whole}${fraction}`.replace(/^0+/, '') || '0';
-  const numeratorBase = BigInt(digits);
-  if (numeratorBase <= 0n) return null;
-  const decimalExponent = exponent - fraction.length;
-  if (decimalExponent >= 0) {
-    return { numerator: numeratorBase * (10n ** BigInt(decimalExponent)), denominator: 1n };
-  }
-  return { numerator: numeratorBase, denominator: 10n ** BigInt(-decimalExponent) };
-}
-
-function ceilDiv(numerator: bigint, denominator: bigint): bigint {
-  if (numerator <= 0n || denominator <= 0n) return 0n;
-  return (numerator + denominator - 1n) / denominator;
 }
 
 export function freshOpportunityInputUsdPrice(
@@ -60,75 +43,98 @@ export function freshOpportunityInputUsdPrice(
   return Number.isFinite(price) && price > 0 ? price : null;
 }
 
-export function requiredProfitBaseUnitsForFiveDollarOutput(
+/**
+ * Smallest representable strictly-positive profit in the opportunity's input token.
+ * USD price evidence is intentionally not an execution-admission dependency.
+ */
+export function requiredStrictPositiveProfitBaseUnits(
   opportunity: ZeroCapitalOpportunity,
-  priceUsd = freshOpportunityInputUsdPrice(opportunity),
 ): bigint | null {
-  const rational = positiveNumberRational(Number(priceUsd));
-  if (!rational) return null;
-  const requiredUsdNumerator = BigInt(ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD)
-    * tokenScale(opportunity.inputTokenDecimals)
-    * rational.denominator;
-  const required = ceilDiv(requiredUsdNumerator, rational.numerator);
-  return required > 0n ? required : null;
+  if (opportunity.flashLoanAmount <= 0n || !Number.isFinite(opportunity.netProfitBps)) return null;
+  return ZERO_CAPITAL_STRICT_POSITIVE_MIN_BASE_UNITS;
 }
 
-export function evaluateFiveDollarOutputFloor(
+export function evaluateStrictPositiveOutputThreshold(
   opportunity: ZeroCapitalOpportunity,
   now = Date.now(),
 ): ZeroCapitalOutputFloorDecision {
+  const priceUsd = freshOpportunityInputUsdPrice(opportunity, now);
+  const decimals = normalizedDecimals(opportunity.inputTokenDecimals);
+  const expectedProfitUsd = priceUsd === null
+    ? null
+    : Number(opportunity.expectedProfit) / (10 ** decimals) * priceUsd;
+
   if (opportunity.expiresAt <= now) {
     return {
       minimumUsd: ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
-      priceUsd: null,
-      expectedProfitUsd: null,
+      priceUsd,
+      expectedProfitUsd: Number.isFinite(expectedProfitUsd) ? expectedProfitUsd : null,
       requiredProfitBaseUnits: null,
       satisfied: false,
       reason: 'expired',
     };
   }
 
-  const priceUsd = freshOpportunityInputUsdPrice(opportunity, now);
-  if (priceUsd === null) {
+  const requiredProfitBaseUnits = requiredStrictPositiveProfitBaseUnits(opportunity);
+  if (requiredProfitBaseUnits === null) {
     return {
       minimumUsd: ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
-      priceUsd: null,
-      expectedProfitUsd: null,
+      priceUsd,
+      expectedProfitUsd: Number.isFinite(expectedProfitUsd) ? expectedProfitUsd : null,
       requiredProfitBaseUnits: null,
       satisfied: false,
-      reason: 'missing_fresh_input_usd_price',
+      reason: 'invalid_candidate',
     };
   }
 
-  const requiredProfitBaseUnits = requiredProfitBaseUnitsForFiveDollarOutput(opportunity, priceUsd);
-  const decimals = normalizedDecimals(opportunity.inputTokenDecimals);
-  const expectedProfitUsd = Number(opportunity.expectedProfit) / (10 ** decimals) * priceUsd;
-  const satisfied = requiredProfitBaseUnits !== null
-    && opportunity.expectedProfit >= requiredProfitBaseUnits;
-
+  const satisfied = opportunity.expectedProfit >= requiredProfitBaseUnits;
   return {
     minimumUsd: ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
     priceUsd,
     expectedProfitUsd: Number.isFinite(expectedProfitUsd) ? expectedProfitUsd : null,
     requiredProfitBaseUnits,
     satisfied,
-    reason: satisfied ? 'satisfied' : 'below_five_dollar_output_floor',
+    reason: satisfied ? 'satisfied' : 'non_positive_all_in_net_profit',
   };
 }
 
-export function clearsFiveDollarOutputFloor(
+export function clearsStrictPositiveOutputThreshold(
   opportunity: ZeroCapitalOpportunity,
   now = Date.now(),
 ): boolean {
-  return evaluateFiveDollarOutputFloor(opportunity, now).satisfied;
+  return evaluateStrictPositiveOutputThreshold(opportunity, now).satisfied;
 }
 
-/** APE owns every otherwise-valid candidate until the canonical $5 output floor clears. */
+/**
+ * Optimization ownership is intentionally independent of the execution threshold.
+ * A positive candidate remains APE-owned while its current evidence generation still
+ * has compatible measured transformations left to try. Evidence expiry is handled by
+ * reacquisition rather than turning a candidate into a permanent rejection.
+ */
+export function needsApeOptimization(
+  opportunity: ZeroCapitalOpportunity,
+): boolean {
+  return opportunity.flashLoanAmount > 0n && Number.isFinite(opportunity.netProfitBps);
+}
+
+/*
+ * Compatibility wrappers keep the old public call signatures while changing their
+ * semantics to strict-positive. The former USD-price argument is intentionally ignored:
+ * one positive base unit is the canonical minimum regardless of token price.
+ */
+export function requiredProfitBaseUnitsForFiveDollarOutput(
+  opportunity: ZeroCapitalOpportunity,
+  _priceUsd = freshOpportunityInputUsdPrice(opportunity),
+): bigint | null {
+  return requiredStrictPositiveProfitBaseUnits(opportunity);
+}
+
+export const evaluateFiveDollarOutputFloor = evaluateStrictPositiveOutputThreshold;
+export const clearsFiveDollarOutputFloor = clearsStrictPositiveOutputThreshold;
+
 export function needsApeRescueForFiveDollarOutput(
   opportunity: ZeroCapitalOpportunity,
-  now = Date.now(),
+  _now = Date.now(),
 ): boolean {
-  return opportunity.flashLoanAmount > 0n
-    && Number.isFinite(opportunity.netProfitBps)
-    && !clearsFiveDollarOutputFloor(opportunity, now);
+  return needsApeOptimization(opportunity);
 }

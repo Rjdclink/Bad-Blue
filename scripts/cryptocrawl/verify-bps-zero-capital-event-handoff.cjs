@@ -11,24 +11,25 @@ const transformation = read('server/services/cryptocrawl/integration/economic-tr
 const coordinator = read('server/services/cryptocrawl/integration/universal-bps-rescue-coordinator.ts');
 const apeToolbox = read('server/services/cryptocrawl/integration/ape-profitability-toolbox.ts');
 const apeRescue = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v4.ts');
+const apeGateway = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-fair.ts');
+const threshold = read('server/services/cryptocrawl/integration/zero-capital-profit-output-floor.ts');
+const adaptiveCommand = read('server/services/cryptocrawl/integration/ape-adaptive-command.ts');
 
-// Zero-capital recovery remains a current measured projection, not a second
-// economics authority or an execution authority.
+// Recovery remains observability/evidence projection only.
 assert.match(recovery, /measuredCandidateRegistry\.onUpdate\(scheduleCandidateRefresh\)/);
 assert.match(recovery, /candidate\.topology !== 'ZERO_CAPITAL_ATOMIC'/);
 assert.match(recovery, /export function onZeroCapitalRecoveryUpdate/);
 assert.match(recovery, /staleCandidateEconomicAuthority: false/);
 assert.match(recovery, /syntheticProfitAllowed: false/);
 
-// Compression Mesh stays scheduling-only and cannot manufacture economics.
+// Compression Mesh remains scheduling-only and cannot manufacture economics.
 assert.match(mesh, /authority: 'search_and_compute_scheduling_only'/);
 assert.match(mesh, /executionAuthority: false/);
 assert.match(mesh, /syntheticEvidenceAllowed: false/);
 assert.doesNotMatch(mesh, /measuredCandidateRegistry\.(record|updateStatus)\(/);
 assert.doesNotMatch(mesh, /canonicalBps\.[A-Za-z]+\s*=/);
 
-// Canonical BPS remains one registry-owned measurement surface. Legacy reporting
-// bands may still exist for observability; they are not APE admission boundaries.
+// Canonical BPS remains registry-owned.
 assert.match(registry, /bpsByTopology: Record<MeasuredOpportunityTopology, TopologyBpsMetrics>/);
 for (const topology of [
   'CEX_CEX', 'DEX_ATOMIC', 'ZERO_CAPITAL_ATOMIC', 'CROSS_CHAIN', 'MEMPOOL_BACKRUN',
@@ -36,46 +37,52 @@ for (const topology of [
 ]) assert.match(registry, new RegExp(`'${topology}'`));
 assert.match(registry, /canonicalBps: buildCanonicalBps\(economics, updatedAt\)/);
 
-// The general transformation sidecar remains non-executing scheduling/research
-// infrastructure for topologies that use it. APE now consumes its relevant BPS
-// intelligence directly for ZERO_CAPITAL_ATOMIC, so this sidecar cannot be the
-// gate that a zero-capital candidate must cross before APE owns it.
+// General transformation sidecar stays non-executing scheduling/research infrastructure.
 assert.match(transformation, /measuredCandidateRegistry\.onUpdate\(candidate => \{/);
 assert.match(transformation, /ensureUniversalBpsRescueCoordinator\(\)/);
 assert.match(transformation, /executionAuthority: false/);
 assert.doesNotMatch(transformation, /canonicalBps\.[A-Za-z]+\s*=/);
 
-// APE directly owns every live finite sub-$5 ZERO_CAPITAL_ATOMIC candidate it
-// receives from locked Stage One. There is no second -10 or +10 gate.
+// ZERO_CAPITAL execution acceptance is strictly above zero, centralized in one predicate.
+assert.match(threshold, /ZERO_CAPITAL_STRICT_POSITIVE_MIN_BASE_UNITS = 1n/);
+assert.match(threshold, /export function clearsStrictPositiveOutputThreshold/);
+assert.match(threshold, /opportunity\.expectedProfit >= requiredProfitBaseUnits/);
+assert.match(threshold, /export function needsApeOptimization/);
+assert.doesNotMatch(threshold, /ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD = 5/);
+
+// APE receives finite candidates without a second fixed BPS gate and continues beyond zero.
 assert.match(apeToolbox, /export function isApeRescueCandidate/);
-assert.match(apeToolbox, /opportunity\.expectedProfit <= 0n/);
 assert.match(apeToolbox, /HYPERDYNAMIC_BPS_SOLUTIONS/);
 assert.match(apeToolbox, /hyperdynamicCatalogSize: HYPERDYNAMIC_BPS_SOLUTIONS\.length/);
 assert.doesNotMatch(apeRescue, /ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS/);
 assert.match(apeRescue, /fixedBpsRescueEntryFloor: false/);
-assert.match(apeRescue, /rescueOwnership: 'every_finite_sub_five_dollar_stage1_candidate_received_by_ape'/);
-assert.match(apeRescue, /fiveDollarOutputRequiredBeforeApeStop: true/);
+assert.match(apeRescue, /strictPositiveAcceptanceThresholdIsNotApeStop: true/);
+assert.match(apeRescue, /rescueOwnership: 'every_finite_candidate_until_candidate_local_measured_exhaustion_or_deadline'/);
+assert.doesNotMatch(apeRescue, /passWinnerFound/);
+assert.match(apeGateway, /strictPositiveStopsApeOptimization: false/);
+assert.match(apeGateway, /optimizationStopsOnCandidateLocalMeasuredExhaustionOrDeadline: true/);
+assert.match(apeGateway, /crossCandidateProfitabilityStop: false/);
 
-// The universal coordinator mirrors the same $5 topology-specific contract without
-// changing canonical economics. Other topologies retain their legacy bounded bands.
+// Candidate ownership is one synchronous, monotonic, generation-local authority.
+assert.match(adaptiveCommand, /synchronousCandidateStateAuthority: true/);
+assert.match(adaptiveCommand, /monotonicGenerationAuthority: true/);
+assert.match(adaptiveCommand, /staleGenerationCannotRollBackAuthority: true/);
+assert.match(adaptiveCommand, /retirementAuthority: 'candidate_local_measured_tactic_exhaustion_only'/);
+assert.match(adaptiveCommand, /strictPositiveStopsOptimization: false/);
+
+// Universal coordinator may observe execution eligibility but cannot own APE optimization.
 assert.match(coordinator, /measuredCandidateRegistry\.onUpdate\(acceptCandidate\)/);
-assert.match(coordinator, /const zeroCapitalOutputCleared = candidate\.topology === 'ZERO_CAPITAL_ATOMIC'/);
-assert.match(coordinator, /deterministicNetProfitUsd >= ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD/);
-assert.match(coordinator, /if \(!zeroCapitalOutputCleared\) \{[\s\S]{0,180}state = 'atomic_rescue_owned'/);
-assert.match(coordinator, /APE retains the candidate until fresh exact all-in net reaches at least/);
-assert.match(coordinator, /without any \+10 BPS requirement/);
-assert.match(coordinator, /targetBps: candidate\.topology === 'ZERO_CAPITAL_ATOMIC' \? 0 : target/);
-assert.match(coordinator, /zeroCapitalApeOwnsAllSubFiveDollarAfterStageOne: true/);
-assert.match(coordinator, /zeroCapitalMinimumOutputProfitUsd: ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD/);
-assert.match(coordinator, /zeroCapitalPostStageOneEntryFloorIgnored: true/);
-assert.match(coordinator, /zeroCapitalPlusTenTargetRequired: false/);
-assert.match(coordinator, /zeroCapitalApeFinishLine: 'fresh_exact_all_in_net_profit_usd_at_least_5'/);
-assert.match(coordinator, /zeroCapitalFiveDollarExecutionFloorAuthoritative: true/);
-assert.match(coordinator, /normalStrictPositiveExecutionMayProceed: candidate\.topology === 'ZERO_CAPITAL_ATOMIC'[\s\S]{0,100}\? zeroCapitalOutputCleared/);
+assert.match(coordinator, /ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD/);
+assert.match(coordinator, /normalStrictPositiveExecutionMayProceed:/);
 assert.match(coordinator, /candidate\.topology === 'ZERO_CAPITAL_ATOMIC'\) return;/);
+assert.match(coordinator, /canonicalEconomicsAuthority: 'measured_candidate_registry\.canonicalBps'/);
+assert.match(coordinator, /syntheticEconomicsAllowed: false/);
+assert.match(coordinator, /canonicalBpsMutation: false/);
+assert.match(coordinator, /executionAuthority: false/);
+assert.doesNotMatch(coordinator, /measuredCandidateRegistry\.(record|updateStatus)\(/);
+assert.doesNotMatch(coordinator, /canonicalBps\.[A-Za-z]+\s*=/);
 
-// Non-zero-capital topologies retain their existing topology-specific reacquisition
-// and banded scheduling behavior; this repair does not flatten unrelated systems.
+// Other topologies preserve their existing topology-specific reacquisition/banded behavior.
 assert.match(coordinator, /else if \(netBps <= entry\)/);
 assert.match(coordinator, /else if \(netBps < target\)/);
 assert.match(coordinator, /nonAtomicTopologiesRemainTopologySpecific: true/);
@@ -84,12 +91,4 @@ assert.match(coordinator, /venues\.has\('polymarket'\)[\s\S]{0,120}discoverPredi
 assert.match(coordinator, /venues\.has\('kalshi'\)[\s\S]{0,160}refreshKalshiSystemEvidenceNow\(\)/,
   'Kalshi prediction rescue must remain on the canonical Kalshi evidence path');
 
-// Single authority invariants remain explicit.
-assert.match(coordinator, /canonicalEconomicsAuthority: 'measured_candidate_registry\.canonicalBps'/);
-assert.match(coordinator, /syntheticEconomicsAllowed: false/);
-assert.match(coordinator, /canonicalBpsMutation: false/);
-assert.match(coordinator, /executionAuthority: false/);
-assert.doesNotMatch(coordinator, /measuredCandidateRegistry\.(record|updateStatus)\(/);
-assert.doesNotMatch(coordinator, /canonicalBps\.[A-Za-z]+\s*=/);
-
-console.log('[bps-zero-capital-event-handoff] PASS: locked Stage One defines which ZERO_CAPITAL_ATOMIC candidates reach APE; once received, every live finite sub-$5 candidate remains APE-owned until fresh exact all-in net reaches at least $5, expires, or proves compatible paths exhausted. Unrelated topology-specific rescue behavior and canonical economics/execution authorities remain unchanged.');
+console.log('[bps-zero-capital-event-handoff] PASS: strict all-in net > 0 is the ZERO_CAPITAL execution threshold; APE ownership is independent of that threshold and remains candidate-local until measured exhaustion/deadline; canonical economics and unrelated topology behavior remain unchanged.');

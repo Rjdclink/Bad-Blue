@@ -29,120 +29,116 @@ const floor = read('server/services/cryptocrawl/integration/zero-capital-profit-
 const stageOne = read('server/services/cryptocrawl/discovery/zero-capital-canonical-discovery.ts');
 const fair = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-fair.ts');
 const v4 = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v4.ts');
-const split = read('server/services/cryptocrawl/integration/zero-capital-route-split-rescue.ts');
 const merit = read('server/services/cryptocrawl/integration/ape-adaptive-command.ts');
+const lease = read('server/services/cryptocrawl/integration/ape-profitable-snapshot-lease.ts');
 const prices = read('server/services/cryptocrawl/bridge/live-price-mesh.ts');
+const split = read('server/services/cryptocrawl/integration/zero-capital-route-split-rescue.ts');
 const stack = read('server/services/cryptocrawl/integration/zero-capital-atomic-stack-wiring.ts');
-const coordinator = read('server/services/cryptocrawl/integration/universal-bps-rescue-coordinator.ts');
 const barrier = read('server/services/cryptocrawl/integration/zero-capital-dynamic-attempt-barrier-wiring.ts');
 const router = read('server/services/cryptocrawl/execution/unified-execution-router.ts');
 const resources = read('server/services/cryptocrawl/execution/zero-capital-resource-scheduler.ts');
 const scheduler = read('server/services/cryptocrawl/execution/canonical-execution-scheduler.ts');
 const executor = read('server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts');
 
-// One explicit monetary output authority. It is Stage-2/execution-only.
-has(floor, 'export const ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD = 5;', '$5 output floor constant missing');
-has(floor, 'needsApeRescueForFiveDollarOutput', 'APE $5 ownership helper missing');
-has(floor, 'requiredProfitBaseUnitsForFiveDollarOutput', 'base-unit $5 conversion helper missing');
+// One canonical ZERO_CAPITAL execution threshold: strictly greater than zero.
+has(floor, 'ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD = Number.MIN_VALUE', 'strict-positive USD sentinel missing');
+has(floor, 'ZERO_CAPITAL_STRICT_POSITIVE_MIN_BASE_UNITS = 1n', 'strict-positive base-unit threshold missing');
+has(floor, 'opportunity.expectedProfit >= requiredProfitBaseUnits', 'base-unit strict-positive decision missing');
+has(floor, 'export function clearsStrictPositiveOutputThreshold', 'canonical strict-positive predicate missing');
+has(floor, 'export function needsApeOptimization', 'threshold-independent APE ownership predicate missing');
+has(floor, 'clearsFiveDollarOutputFloor = clearsStrictPositiveOutputThreshold', 'compatibility alias must resolve to strict-positive authority');
+has(floor, 'export function requiredProfitBaseUnitsForFiveDollarOutput', 'legacy base-unit helper signature missing');
+has(floor, 'return requiredStrictPositiveProfitBaseUnits(opportunity)', 'legacy base-unit helper must resolve to strict-positive authority');
+assert.ok(!floor.includes('ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD = 5'), 'hard $5 threshold reintroduced');
 
-// Locked Stage 1 must remain exactly its own discovery authority and must not import the $5 floor.
+// Stage 1 remains locked and does not import Stage-2/execution threshold authority.
 has(stageOne, 'STAGE_ONE_LOCKED_INVARIANT', 'Stage-1 lock marker missing');
 has(stageOne, 'STAGE_ONE_ZERO_CAPITAL_ENTRY_FLOOR_BPS = -10', 'Stage-1 locked -10 BPS floor changed');
-assert.ok(!stageOne.includes('zero-capital-profit-output-floor'), 'Stage 1 must not import the $5 output floor');
-assert.ok(!stageOne.includes('ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD'), 'Stage 1 must not own the $5 output floor');
+assert.ok(!stageOne.includes('zero-capital-profit-output-floor'), 'Stage 1 must not import output threshold authority');
+assert.ok(!stageOne.includes('ape-profitable-snapshot-lease'), 'Stage 1 must remain independent from APE lease state');
 
-// APE ownership and finish-line semantics.
-has(fair, 'positiveBelowFiveDollarsRemainsApeOwned: true', 'positive-but-under-$5 ownership missing');
-has(fair, 'recursiveStopsAtFiveDollarOutputPerCandidate: true', '$5 APE stop condition missing');
-has(fair, 'pricePrewarmAwaitedOnHotPath: false', 'price prewarm must remain nonblocking');
-has(fair, 'unavailableCompositeConsumesHotPathTime: false', 'unavailable composite must not consume APE hot-path time');
-has(v4, 'fiveDollarOutputRequiredBeforeApeStop: true', 'V4 may stop before $5');
-has(v4, 'positiveBelowFiveDollarsContinuesRefinement: true', 'V4 must continue refining positive-but-under-$5 candidates');
-has(v4, 'clearsFiveDollarOutputFloor(current)', 'V4 $5 current-candidate stop gate missing');
+// Above-zero is acceptance, never the APE stop signal.
+has(fair, 'strictPositiveIsExecutionEligible: true', 'strict-positive execution eligibility telemetry missing');
+has(fair, 'strictPositiveStopsApeOptimization: false', 'Fair may stop APE merely at positive profit');
+has(fair, 'optimizationStopsOnCandidateLocalMeasuredExhaustionOrDeadline: true', 'candidate-local exhaustion stop authority missing');
+has(fair, 'candidateLocalRunToCompletion: true', 'candidate-local run-to-completion missing');
+has(fair, 'structuralSiblingBarrierBeforeV4: false', 'cross-candidate structural/V4 barrier remains');
+has(fair, 'crossCandidateProfitabilityStop: false', 'ordinary profitability can stop siblings');
+has(fair, 'staleGenerationResultsDiscarded', 'stale-generation discard telemetry missing');
+has(v4, 'strictPositiveAcceptanceThresholdIsNotApeStop: true', 'V4 still conflates acceptance with stopping');
+has(v4, 'candidateLocalRunToCompletion: true', 'V4 candidate-local scheduler missing');
+has(v4, 'crossCandidateWinnerStops: 0', 'V4 cross-candidate winner stop remains');
+has(v4, 'mapConcurrentCandidateLocal', 'V4 unordered candidate-local concurrency missing');
+assert.ok(!v4.includes('passWinnerFound'), 'global pass winner authority reintroduced');
+assert.ok(!v4.includes('clearsFiveDollarOutputFloor'), 'V4 must not use an execution threshold as an optimization stop');
 
-// Universal rescue may never release ZERO_CAPITAL merely because it crossed $0.
-has(coordinator, 'ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD', 'universal rescue does not use the canonical $5 authority');
-has(coordinator, 'deterministicNetProfitUsd >= ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD', 'universal rescue can release ZERO_CAPITAL below $5');
-has(coordinator, "zeroCapitalApeFinishLine: 'fresh_exact_all_in_net_profit_usd_at_least_5'", 'universal rescue $5 finish-line telemetry missing');
-has(coordinator, 'zeroCapitalApeOwnsAllSubFiveDollarAfterStageOne: true', 'universal rescue sub-$5 ownership telemetry missing');
-has(coordinator, 'zeroCapitalFiveDollarExecutionFloorAuthoritative: true', 'universal rescue $5 execution authority marker missing');
+// Route split and shared-principal stack also continue after first profitability.
+has(split, 'strictPositiveStopsRouteSplitOptimization: false', 'route split stops at strict-positive execution eligibility');
+has(split, 'promotedCompositeStopsRemainingSplitSearch: false', 'route split stops after the first promoted composite');
+assert.ok(!split.includes("'already_five_dollar_output'"), 'route split still rejects already-positive candidates through the old finish gate');
+assert.ok(!split.includes("'resident_five_dollar_output_replaced_split_work'"), 'resident positive improvement still terminates split work');
+has(stack, 'requiredStrictPositiveProfitBaseUnits', 'composite must use the canonical strict-positive base-unit authority');
+has(stack, 'clearsStrictPositiveOutputThreshold', 'composite must use canonical strict-positive admission');
+has(stack, 'firstPositiveStopsVariantSearch: false', 'first profitable composite still stops bounded variant optimization');
+has(stack, 'firstPromotionStopsSiblingGroups: false', 'one profitable group still cancels sibling groups');
+has(stack, 'bestMeasuredProfitableVariantSelected: true', 'composite does not retain the best bounded measured variant');
+assert.ok(!stack.includes('if (settled.result.promoted > 0) return aggregate'), 'composite sibling-group early return reintroduced');
 
-// Price and split latency: resident first, per-symbol singleflight, zero waiting on split price misses.
+// Candidate identity/generation has one synchronous in-memory authority.
+has(merit, 'export function getApeCandidateGeneration', 'candidate generation authority missing');
+has(merit, 'export function isCurrentApeCandidateGeneration', 'stale generation guard missing');
+has(merit, 'staleGenerationCannotRollBackAuthority: true', 'monotonic generation invariant missing');
+has(merit, 'synchronousCandidateStateAuthority: true', 'single synchronous state authority missing');
+has(merit, "retirementAuthority: 'candidate_local_measured_tactic_exhaustion_only'", 'retirement still threshold-driven');
+has(merit, 'strictPositiveStopsOptimization: false', 'merit authority stops at positive');
+assert.ok(!merit.includes('if (clearsFiveDollarOutputFloor(root)) return false'), 'profit threshold still controls retirement');
+assert.ok(!merit.includes('fetch(') && !merit.includes('axios') && !merit.includes('supabase'), 'candidate authority added network/persistence latency');
+
+// Best-proven snapshot + shadow freshness lease are resident O(1) decisions.
+has(lease, 'bestProfit: ZeroCapitalOpportunity', 'best profitable snapshot pointer missing');
+has(lease, 'freshestPositive: ZeroCapitalOpportunity', 'fresh positive shadow pointer missing');
+has(lease, 'export function observeApeProfitableSnapshot', 'snapshot observation authority missing');
+has(lease, 'export function capApeOptimizationDeadline', 'execute-before-expiry deadline cap missing');
+has(lease, "mode: 'dispatch_now'", 'dispatch-now lease state missing');
+has(lease, "storageAuthority: 'resident_candidate_local_pointer_only'", 'lease must remain resident pointer state');
+has(lease, 'persistenceOnHotPath: false', 'lease added persistence to hot path');
+has(lease, 'networkIoOnDecisionPath: false', 'lease added network I/O to decision path');
+has(lease, 'staleEvidenceExtended: false', 'lease may not extend stale evidence');
+has(lease, 'bestSnapshotOverwriteByWorseAttempt: false', 'worse optimization may overwrite profitable fallback');
+has(fair, 'bestProvenSnapshotResident: true', 'Fair does not expose best-proven snapshot behavior');
+has(fair, 'shadowExecutionLease: true', 'Fair shadow execution lease missing');
+has(fair, 'rollingFreshnessLease: true', 'rolling freshness lease missing');
+has(fair, 'executeBeforeExpiry: true', 'execute-before-expiry escape missing');
+has(fair, 'profitEscapeCanPreemptRemainingOptimization: true', 'expiry escape cannot preempt optional optimization');
+has(fair, 'staleEvidenceExpiryExtended: false', 'Fair may extend stale evidence instead of refreshing it');
+has(fair, 'return output;', 'Fair must return the preserved best executable snapshot set');
+
+// Price and route-split latency improvements remain resident/nonblocking.
 has(prices, 'symbolRefreshInFlight', 'per-symbol price singleflight missing');
-has(prices, 'backgroundNearExpiryRefresh: true', 'resident near-expiry price refresh missing');
-has(prices, 'hotPathWaitForResidentHit: false', 'resident price hits must not wait');
+has(prices, 'backgroundNearExpiryRefresh: true', 'resident near-expiry refresh missing');
 has(split, 'fresh_input_price_refresh_pending_zero_wait', 'zero-wait split price fallback missing');
-has(split, 'missingPriceWaitsOnHotPath: false', 'route split may wait for price on hot path');
+has(split, 'missingPriceWaitsOnHotPath: false', 'split price miss can block the hot path');
 
-// Merit intelligence must improve speed by being resident/local rather than another network stage.
-has(merit, 'candidateAndTacticMeritSeparated: true', 'candidate/tactic merit separation missing');
-has(merit, 'promotionHysteresisWithinEvidenceGeneration: true', 'promotion hysteresis missing');
-has(merit, 'localLatencyOutlierDeprioritization: true', 'local latency outlier deprioritization missing');
-has(merit, 'stickyWinningTacticAffinity: true', 'sticky winning-tactic affinity missing');
-has(merit, 'cachedCounterfactualPlanning: true', 'cached counterfactual planning missing');
-assert.ok(!merit.includes('fetch(') && !merit.includes('axios') && !merit.includes('supabase'), 'merit controller must not add network/persistence hot-path work');
+// Existing execution gates still consume the canonical alias, whose semantics are now > 0.
+has(router, 'ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD', 'unified router lost canonical threshold');
+has(resources, 'clearsFiveDollarOutputFloor', 'resource scheduler lost canonical threshold alias');
+has(barrier, 'evaluateFiveDollarOutputFloor(opportunity, observedAt)', 'pre-broadcast threshold assertion missing');
+has(scheduler, 'clearsFiveDollarOutputFloor(opportunity)', 'scheduler threshold assertion missing');
+has(executor, 'evaluateFiveDollarOutputFloor(opportunity, startedAt)', 'canonical executor threshold assertion missing');
 
-// Composite must fail in memory if no proven configured receiver exists and only promote >= $5.
-has(stack, 'configuredCompositeReceiver(input.chain)', 'composite receiver fail-fast gate missing');
-has(stack, 'missingCompositeReceiverFailsBeforeRpc: true', 'composite zero-I/O capability telemetry missing');
-has(stack, 'requiredProfitBaseUnitsForFiveDollarOutput', 'composite $5 base-unit target missing');
-has(stack, 'if (!clearsFiveDollarOutputFloor(opportunity, measuredAt)) return null;', 'composite may expose an under-$5 measured opportunity');
-
-// Unified routing must keep positive-but-under-$5 ZERO_CAPITAL candidates in reacquisition/APE instead of admission.
-has(router, 'ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD', 'unified router does not import the canonical $5 output authority');
-has(router, 'deterministicNet >= ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD', 'unified router can admit ZERO_CAPITAL below $5');
-has(router, 'reacquire:atomic_minimum_output_profit_not_met', 'under-$5 ZERO_CAPITAL reacquisition reason missing');
-
-// Resource admission must fail in memory before gas decision, database leases, or scarce resource claims.
-has(resources, 'clearsFiveDollarOutputFloor', 'resource scheduler $5 gate missing');
-before(
-  resources,
-  'if (!clearsFiveDollarOutputFloor(opportunity)) return null;',
-  'const gasDecision = await strictCanonicalGasDecision(opportunity.chain);',
-  '$5 resource gate must precede gas-decision I/O',
-);
-
-// Pre-broadcast barrier must reject locally before gas-funding/network work.
-has(barrier, 'evaluateFiveDollarOutputFloor(opportunity, observedAt)', 'pre-broadcast $5 assertion missing');
-before(
-  barrier,
-  'const outputFloor = evaluateFiveDollarOutputFloor(opportunity, observedAt);',
-  'const funding = await context.getGasFundingDecision(opportunity.chain);',
-  '$5 pre-broadcast economics must be checked before gas-funding I/O',
-);
-has(barrier, 'economicFloorCheckedBeforeFundingIo: true', 'barrier latency invariant telemetry missing');
-
-// Scheduler must fail zero-capital candidates before operator reservation/database work.
+// Gates remain before scarce/I/O work.
+before(resources, 'if (!clearsFiveDollarOutputFloor(opportunity)) return null;', 'const gasDecision = await strictCanonicalGasDecision(opportunity.chain);', 'resource threshold must precede gas decision I/O');
+before(barrier, 'const outputFloor = evaluateFiveDollarOutputFloor(opportunity, observedAt);', 'const funding = await context.getGasFundingDecision(opportunity.chain);', 'pre-broadcast economics must precede gas funding I/O');
 const dispatchStart = scheduler.indexOf('private async dispatchMeasuredTopologies');
 const dispatchEnd = scheduler.indexOf('private maintainLifecycleLanes', dispatchStart);
 assert.ok(dispatchStart >= 0 && dispatchEnd > dispatchStart, 'scheduler measured-topology dispatch body missing');
 const dispatchBody = scheduler.slice(dispatchStart, dispatchEnd);
-before(
-  dispatchBody,
-  'clearsFiveDollarOutputFloor(opportunity)',
-  'const reservation = await this.reserveOperatorTrade',
-  '$5 ZERO_CAPITAL gate must precede operator reservation',
-);
-has(scheduler, 'zeroCapitalFloorCheckedBeforeOperatorReservation: true', 'scheduler floor-order telemetry missing');
+before(dispatchBody, 'clearsFiveDollarOutputFloor(opportunity)', 'const reservation = await this.reserveOperatorTrade', 'ZERO_CAPITAL threshold must precede operator reservation');
+before(executor, 'const floor = evaluateFiveDollarOutputFloor(opportunity, startedAt);', 'void observeDailyProfitBudget(opportunity);', 'execution threshold must precede telemetry/provider/path work');
 
-// Sole canonical execution entrypoint reasserts $5 before every flash/alternative/composite path.
-has(executor, 'const floor = evaluateFiveDollarOutputFloor(opportunity, startedAt);', 'canonical executor $5 assertion missing');
-before(
-  executor,
-  'const floor = evaluateFiveDollarOutputFloor(opportunity, startedAt);',
-  'void observeDailyProfitBudget(opportunity);',
-  '$5 execution assertion must precede telemetry/provider/path work',
-);
-has(executor, 'minimum_output_profit_usd:${ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD}', 'prepared-composite $5 provenance missing');
-
-// The lower-level flash executor intentionally has no duplicate hot-path floor computation.
-// Enforce structurally that production code can reach it only through the already-gated canonical executor.
+// Lower-level flash execution still has exactly one production caller.
 const flashImporters = collectTsFiles('server/services/cryptocrawl')
   .filter(relative => read(relative).includes("zero-capital-flash-canonical-executor.js"));
-assert.deepEqual(
-  flashImporters,
-  ['server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts'],
-  'lower-level flash executor gained a caller that can bypass the canonical $5 gate',
-);
+assert.deepEqual(flashImporters, ['server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts'], 'lower-level flash executor gained a threshold-bypass caller');
 
-console.log('[ape-latency-five-dollar-floor] PASS: Stage 1 remains locked; APE and universal rescue keep sub-$5 candidates; $5 is enforced at rescue ownership, unified admission, resource admission, scheduling, pre-broadcast, and the sole canonical execution entrypoint without duplicate hot-path work');
+console.log('[ape-strict-positive-continuous] PASS: Stage 1 remains locked; strict all-in net > 0 is execution acceptance; APE retains best proven profit, refreshes a shadow generation and releases before expiry while continuing bounded optimization past first profitability');

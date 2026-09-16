@@ -38,9 +38,8 @@ import {
 import { zeroCapitalRouteEvidenceRegistry } from '../optimization/zero-capital-route-evidence-registry.js';
 import { buildBoundedStackVariants, settleBeforeDeadline } from './ape-hypergraph-intelligence.js';
 import {
-  clearsFiveDollarOutputFloor,
-  requiredProfitBaseUnitsForFiveDollarOutput,
-  ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
+  clearsStrictPositiveOutputThreshold,
+  requiredStrictPositiveProfitBaseUnits,
 } from './zero-capital-profit-output-floor.js';
 
 const installed = new WeakSet<object>();
@@ -121,6 +120,17 @@ function deadlineReached(deadlineAt?: number): boolean {
 
 function emptyTacticResult(): AtomicStackTacticResult {
   return { attemptedGroups: 0, measuredVariants: 0, promoted: 0, promotedOpportunityIds: [], executionAuthority: false };
+}
+
+function betterMeasuredStack(candidate: MeasuredTargetStack, current: MeasuredTargetStack | null): boolean {
+  if (!current) return true;
+  if (candidate.opportunity.expectedProfit !== current.opportunity.expectedProfit) {
+    return candidate.opportunity.expectedProfit > current.opportunity.expectedProfit;
+  }
+  if (candidate.opportunity.netProfitBps !== current.opportunity.netProfitBps) {
+    return candidate.opportunity.netProfitBps > current.opportunity.netProfitBps;
+  }
+  return candidate.opportunity.expiresAt > current.opportunity.expiresAt;
 }
 
 function configuredCompositeReceiver(chain: SupportedChain): string | null {
@@ -269,7 +279,7 @@ async function measureTargetStack(input: {
   const first = input.opportunities[0];
   const inputTokenUsdPrice = Number(first.inputAssetUsdPrice);
   if (!(Number.isFinite(inputTokenUsdPrice) && inputTokenUsdPrice > 0)) return null;
-  const targetNetProfitBaseUnits = requiredProfitBaseUnitsForFiveDollarOutput(first, inputTokenUsdPrice);
+  const targetNetProfitBaseUnits = requiredStrictPositiveProfitBaseUnits(first);
   if (targetNetProfitBaseUnits === null || targetNetProfitBaseUnits < STRICT_POSITIVE_PROFIT_BASE_UNITS) return null;
 
   const profitRecipient = process.env.CRYPTO_PROFIT_WALLET_ADDRESS || process.env.BRIDGE_WALLET_ADDRESS || input.wallet.address;
@@ -407,13 +417,12 @@ async function measureTargetStack(input: {
     'measured_combined_relay_cost',
     'input_authority:single_atomic_bps_engine_stage1_admitted_candidates',
     `strict_positive_profit_floor_base_units:${STRICT_POSITIVE_PROFIT_BASE_UNITS.toString()}`,
-    `five_dollar_output_floor_base_units:${targetNetProfitBaseUnits.toString()}`,
-    `minimum_output_profit_usd:${ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD}`,
+    `strict_positive_output_floor_base_units:${targetNetProfitBaseUnits.toString()}`,
     `measured_duplicate_flash_fee_savings:${measuredFlashFeeSavings.toString()}`,
     `measured_combined_gas_savings:${measuredGasSavings.toString()}`,
     `input_token_usd_price:${inputTokenUsdPrice}`,
     'combined_all_in_net_strict_positive',
-    'combined_all_in_net_at_least_five_usd',
+    'combined_all_in_net_strictly_above_zero',
     'principal_repayment_enforced_by_composite_receiver',
     'synthetic_evidence:false',
   ];
@@ -495,7 +504,7 @@ async function measureTargetStack(input: {
     timestamp: measuredAt,
     expiresAt,
   };
-  if (!clearsFiveDollarOutputFloor(opportunity, measuredAt)) return null;
+  if (!clearsStrictPositiveOutputThreshold(opportunity, measuredAt)) return null;
 
   return { evidence, selection, opportunity, members: input.opportunities, memberCandidates };
 }
@@ -507,7 +516,7 @@ function inheritedDiscoveryFloor(memberCandidates: readonly MeasuredCandidate[])
 
 function promoteMeasuredStack(measured: MeasuredTargetStack): void {
   const { evidence, selection, opportunity, memberCandidates } = measured;
-  if (!clearsFiveDollarOutputFloor(opportunity)) return;
+  if (!clearsStrictPositiveOutputThreshold(opportunity)) return;
 
   zeroCapitalCompositeEvidenceRegistry.record(evidence);
   zeroCapitalCompositeSelectionRegistry.record(selection);
@@ -542,7 +551,7 @@ function promoteMeasuredStack(measured: MeasuredTargetStack): void {
     venues,
     chains: [opportunity.chain],
     rawQuotes,
-    depth: { status: 'measured', detail: `Exact ${evidence.opportunityIds.length}-cycle shared-principal composite measured against the canonical $${ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD} output floor` },
+    depth: { status: 'measured', detail: `Exact ${evidence.opportunityIds.length}-cycle shared-principal composite measured against the canonical strict-positive all-in threshold` },
     economics: {
       grossProfitUsd,
       deterministicNetProfitUsd: netProfitUsd,
@@ -563,7 +572,7 @@ function promoteMeasuredStack(measured: MeasuredTargetStack): void {
       bpsToBreakEven: 0,
     },
     executableCapability: true,
-    executionCapabilityReason: `Single Atomic-BPS engine selected an exact prepared shared-principal composite with at least $${ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD} all-in net profit after measured flash fee, gas and relay costs`,
+    executionCapabilityReason: 'Single Atomic-BPS engine selected an exact prepared shared-principal composite with strictly positive all-in net profit after measured flash fee, gas and relay costs',
     missingInformation: [],
     provenance: [
       ...evidence.provenance,
@@ -573,7 +582,7 @@ function promoteMeasuredStack(measured: MeasuredTargetStack): void {
       `atomic_multileg_shared_principal_bps:${evidence.sharedPrincipalStackedBps.toFixed(6)}`,
       `atomic_multileg_estimated_gas:${evidence.estimatedGas.toString()}`,
       `measured_composite_gain_usd:${evidence.compositionGainUsd.toFixed(8)}`,
-      `minimum_output_profit_usd:${ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD}`,
+      `strict_positive_profit_base_units:${STRICT_POSITIVE_PROFIT_BASE_UNITS.toString()}`,
       'promotion_authority:single_atomic_bps_engine',
       'canonical_execution_required:zero_capital_composite_prepared',
     ],
@@ -657,7 +666,7 @@ async function runGroup(input: {
   let measuredVariants = 0;
   let best: MeasuredTargetStack | null = null;
 
-  for (let offset = 0; offset < variants.length && !best && !deadlineReached(input.deadlineAt); offset += waveWidth) {
+  for (let offset = 0; offset < variants.length && !deadlineReached(input.deadlineAt); offset += waveWidth) {
     const wave = variants.slice(offset, offset + waveWidth);
     const active = new Map<number, Promise<{ index: number; measured: MeasuredTargetStack | null }>>();
     wave.forEach((variant, index) => {
@@ -673,33 +682,35 @@ async function runGroup(input: {
       active.set(index, pending);
     });
 
-    while (active.size > 0 && !best && !deadlineReached(input.deadlineAt)) {
+    while (active.size > 0 && !deadlineReached(input.deadlineAt)) {
       const settled = await Promise.race([...active.values()]);
       active.delete(settled.index);
       measuredVariants += 1;
-      if (settled.measured) best = settled.measured;
+      if (settled.measured && betterMeasuredStack(settled.measured, best)) best = settled.measured;
     }
   }
 
-  if (!best || !clearsFiveDollarOutputFloor(best.opportunity)) {
+  if (!best || !clearsStrictPositiveOutputThreshold(best.opportunity)) {
     return { measuredVariants, promotedOpportunityId: null };
   }
   promoteMeasuredStack(best);
 
   const expectedNetProfitUsd = baseUnitsToUsd(best.evidence.combinedExpectedProfit, best.evidence.inputTokenDecimals, Number(best.opportunity.inputAssetUsdPrice));
-  logger.info('[ZeroCapitalStack] Single Atomic-BPS engine promoted $5-clearing shared-principal composition', {
+  logger.info('[ZeroCapitalStack] Single Atomic-BPS engine promoted best strict-positive shared-principal composition', {
     component: 'ZeroCapitalAtomicStackWiring',
     chain: best.opportunity.chain,
     opportunityId: best.opportunity.id,
     memberOpportunityIds: best.evidence.opportunityIds,
     combinedExpectedProfit: best.evidence.combinedExpectedProfit.toString(),
     combinedExpectedProfitUsd: expectedNetProfitUsd,
-    minimumOutputProfitUsd: ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
+    minimumProfitBaseUnits: STRICT_POSITIVE_PROFIT_BASE_UNITS.toString(),
     achievedNetProfitBps: best.evidence.sharedPrincipalStackedBps,
     measuredCompositionGain: best.evidence.measuredCompositionGain.toString(),
     measuredVariantsBeforePromotion: measuredVariants,
     completionOrderVariantMeasurement: true,
     fullVariantBatchBarrier: false,
+    firstPositiveStopsVariantSearch: false,
+    bestMeasuredProfitableVariantSelected: true,
     providerEconomicsMeasuredOncePerGroup: true,
     providerEconomicsResidentHit: providerResolution.residentHit,
     providerEconomicsResidentMeshPreferred: true,
@@ -793,7 +804,8 @@ export async function runZeroCapitalAtomicStackTactic(input: {
     aggregate.measuredVariants += settled.result.measuredVariants;
     aggregate.promoted += settled.result.promoted;
     aggregate.promotedOpportunityIds.push(...settled.result.promotedOpportunityIds);
-    if (settled.result.promoted > 0) return aggregate;
+    // A profitable group cannot cancel sibling groups. Each compatible group owns its
+    // own bounded search and can still produce a better aggregate result before expiry.
   }
   return aggregate;
 }
@@ -807,8 +819,10 @@ export function ensureZeroCapitalAtomicStackWiring(): void {
     receiverKind: 'balancer_composite_v2',
     profitabilityFinishLine: 'strict_positive_all_in_base_units',
     minimumProfitBaseUnits: STRICT_POSITIVE_PROFIT_BASE_UNITS.toString(),
-    minimumOutputProfitUsd: ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
     strictPositiveNecessaryButNotSufficientForPromotion: true,
+    strictPositiveStopsOptimization: false,
+    firstPromotionStopsVariantSearch: false,
+    firstPromotionStopsSiblingGroups: false,
     stageOneThresholdAuthority: false,
     stageOneEnvironmentThresholdRead: false,
     independentMeasuredCandidateListener: false,

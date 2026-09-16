@@ -6,14 +6,23 @@ import { resolveConfiguredFlashLoanReceiver } from '../execution/adapters/flash-
 import type { ConfiguredZeroCapitalRoute, QuotedZeroCapitalRoute } from '../execution/adapters/onchain-route-quoter.js';
 import {
   getApeAdaptiveCommandSnapshot,
+  getApeCandidateGeneration,
   getApeTacticDemandMultiplier,
   buildApeCounterfactualPlan,
   candidateRetiredForGeneration,
+  isCurrentApeCandidateGeneration,
   rankApeCommandCandidates,
   recordApeCommandOutcome,
   type ApeCounterfactualPlan,
   type ApeTactic,
 } from './ape-adaptive-command.js';
+import {
+  capApeOptimizationDeadline,
+  getApeBestExecutableSnapshot,
+  getApeProfitLeaseDecision,
+  getApeProfitableSnapshotLeaseSnapshot,
+  observeApeProfitableSnapshot,
+} from './ape-profitable-snapshot-lease.js';
 import {
   apeStructuralFirstCandidate,
   apeV4FirstCandidate,
@@ -32,8 +41,8 @@ import { runZeroCapitalAtomicStackTactic, type AtomicStackTacticResult } from '.
 import { runZeroCapitalProfitabilityRescueV4 } from './zero-capital-profitability-rescue-v4.js';
 import { runZeroCapitalRouteSplitRescue, type ZeroCapitalRouteSplitRescueResult } from './zero-capital-route-split-rescue.js';
 import {
-  clearsFiveDollarOutputFloor,
-  needsApeRescueForFiveDollarOutput,
+  clearsStrictPositiveOutputThreshold,
+  needsApeOptimization,
   ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
 } from './zero-capital-profit-output-floor.js';
 
@@ -62,9 +71,9 @@ function compositeToolboxBudgetMs(): number {
   return Math.trunc(bounded(process.env.ZERO_CAPITAL_APE_COMPOSITE_MAX_MS, 2_500, 250, 7_500));
 }
 
-/** Stage-2 APE owns every finite candidate until fresh exact all-in profit reaches $5. */
+/** Execution acceptance and APE optimization ownership are deliberately separate. */
 function stillNeedsMeasuredRescue(opportunity: ZeroCapitalOpportunity): boolean {
-  return needsApeRescueForFiveDollarOutput(opportunity);
+  return needsApeOptimization(opportunity);
 }
 
 function strictDerivedImprovement(before: ZeroCapitalOpportunity, after: ZeroCapitalOpportunity): boolean {
@@ -148,10 +157,13 @@ export async function runFairZeroCapitalProfitabilityRescue(
 ): Promise<ZeroCapitalOpportunity[]> {
   primeApeResidentRouting(input.opportunities);
   const residentFastPath = runZeroCapitalAtomicBpsEngine({ ...input, opportunities: input.opportunities });
+  for (const candidate of residentFastPath) observeApeProfitableSnapshot(candidate);
+
   const activeRescueCandidates = residentFastPath.filter(stillNeedsMeasuredRescue);
   const initialV4FirstCandidates = activeRescueCandidates.filter(apeV4FirstCandidate);
   const initialStructuralFirstCandidates = activeRescueCandidates.filter(apeStructuralFirstCandidate);
   const rootsById = new Map(residentFastPath.map(opportunity => [opportunity.id, opportunity]));
+  const generationById = new Map(residentFastPath.map(opportunity => [opportunity.id, getApeCandidateGeneration(opportunity)]));
   const boundFromQuotedRoute = input.fromQuotedRoute.bind(zeroCapitalEngine);
   const compositeConfigured = compositeReceiverConfigured(input.chain);
 
@@ -188,8 +200,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
   let alternateRouteIdentityRebindings = 0;
   let activeMeasuredRescueError: string | null = null;
   let recursiveMeasuredPasses = 0;
-  let recursiveStrictPositiveStops = 0;
-  let recursiveFiveDollarOutputStops = 0;
+  let recursiveStrictPositiveImprovements = 0;
   let recursiveNoImprovementStops = 0;
   let recursiveWallClockStops = 0;
   let streamedMeasuredImprovements = 0;
@@ -198,6 +209,19 @@ export async function runFairZeroCapitalProfitabilityRescue(
   let structuralResidualV4Candidates = 0;
   let outerDeadlineStops = 0;
   let compositeCapabilityFastSkips = 0;
+  let staleGenerationResultsDiscarded = 0;
+  let candidateLocalLanesStarted = 0;
+  let shadowRefreshPrimes = 0;
+  let bestSnapshotRestores = 0;
+  let profitEscapeSignals = 0;
+  let releaseRequested = false;
+  let profitEscapeTriggered = false;
+  let profitEscapeTimer: NodeJS.Timeout | null = null;
+  let resolveProfitEscape: (() => void) | null = null;
+  const profitEscapeSignal = new Promise<void>(resolve => { resolveProfitEscape = resolve; });
+  const shadowPrimeKeys = new Set<string>();
+  const candidateIds = new Set(residentFastPath.map(candidate => candidate.id));
+
   const rescueStartedAt = Date.now();
   const maxPasses = recursivePassLimit();
   const wallClockBudgetMs = recursiveWallClockBudgetMs();
@@ -217,6 +241,58 @@ export async function runFairZeroCapitalProfitabilityRescue(
   });
   const hardDeadlineAt = tierBudget.hardDeadlineAt;
 
+  const primeShadowLease = (candidateId: string): void => {
+    const decision = getApeProfitLeaseDecision(candidateId);
+    if (decision.mode !== 'refresh_shadow' || !decision.snapshot) return;
+    const key = `${candidateId}:${decision.snapshot.timestamp}:${decision.snapshot.expiresAt}`;
+    if (shadowPrimeKeys.has(key)) return;
+    shadowPrimeKeys.add(key);
+    primeApeResidentRouting([decision.snapshot]);
+    primeApeResidentWorkbench({ opportunities: [decision.snapshot], configuredRoutes: input.configuredRoutes });
+    livePriceMesh.primeResidentSymbolPrices([decision.snapshot.inputAssetSymbol]);
+    shadowRefreshPrimes += 1;
+  };
+
+  const scheduleProfitEscape = (): void => {
+    if (releaseRequested || profitEscapeTriggered) return;
+    const now = Date.now();
+    let earliestDispatchBy = Number.POSITIVE_INFINITY;
+    for (const id of candidateIds) {
+      const decision = getApeProfitLeaseDecision(id, now);
+      if (decision.mode === 'refresh_shadow') primeShadowLease(id);
+      if (decision.dispatchBy !== null) earliestDispatchBy = Math.min(earliestDispatchBy, decision.dispatchBy);
+    }
+    if (!Number.isFinite(earliestDispatchBy)) return;
+    if (profitEscapeTimer) {
+      clearTimeout(profitEscapeTimer);
+      profitEscapeTimer = null;
+    }
+    if (earliestDispatchBy <= now) {
+      profitEscapeTriggered = true;
+      profitEscapeSignals += 1;
+      resolveProfitEscape?.();
+      return;
+    }
+    profitEscapeTimer = setTimeout(() => {
+      profitEscapeTimer = null;
+      // Re-evaluate at the boundary. A newer shadow may have safely extended the
+      // executable window; stale evidence itself is never extended.
+      scheduleProfitEscape();
+    }, Math.max(1, earliestDispatchBy - now));
+    profitEscapeTimer.unref?.();
+  };
+
+  for (const id of candidateIds) primeShadowLease(id);
+  scheduleProfitEscape();
+
+  const capDeadlineFor = (
+    candidates: readonly ZeroCapitalOpportunity[],
+    proposedDeadlineAt: number,
+  ): number => candidates.reduce(
+    (deadline, candidate) => Math.min(deadline, capApeOptimizationDeadline(candidate.id, deadline)),
+    proposedDeadlineAt,
+  );
+
   const normalizeToRootIdentity = (
     root: ZeroCapitalOpportunity,
     candidate: ZeroCapitalOpportunity,
@@ -226,21 +302,34 @@ export async function runFairZeroCapitalProfitabilityRescue(
     return { ...candidate, id: root.id };
   };
 
+  const generationCurrent = (root: ZeroCapitalOpportunity): boolean => {
+    const expected = generationById.get(root.id);
+    if (!expected) return false;
+    const current = isCurrentApeCandidateGeneration(root, expected);
+    if (!current) staleGenerationResultsDiscarded += 1;
+    return current;
+  };
+
   const replaceIfBetter = (
     root: ZeroCapitalOpportunity,
     before: ZeroCapitalOpportunity,
     candidate: ZeroCapitalOpportunity,
     streamed: boolean,
   ): boolean => {
+    if (releaseRequested || !generationCurrent(root)) return false;
     const normalized = normalizeToRootIdentity(root, candidate);
+    // Preserve any proven profitable result before judging whether it is the next
+    // normalized optimization winner. A larger absolute-profit fallback can never be
+    // destroyed by a later experimental transformation.
+    observeApeProfitableSnapshot(normalized);
+    scheduleProfitEscape();
     if (!strictDerivedImprovement(before, normalized)) return false;
     const current = transformed.find(item => item.id === root.id) ?? root;
     if (current !== before && !strictDerivedImprovement(current, normalized)) return false;
     transformed = transformed.map(item => item.id === root.id ? normalized : item);
     activeMeasuredRescueOverlays += 1;
     if (streamed) streamedMeasuredImprovements += 1;
-    if (normalized.expectedProfit > 0n) recursiveStrictPositiveStops += 1;
-    if (clearsFiveDollarOutputFloor(normalized)) recursiveFiveDollarOutputStops += 1;
+    if (clearsStrictPositiveOutputThreshold(normalized)) recursiveStrictPositiveImprovements += 1;
     publishApeResidentPeerHint(normalized);
     return true;
   };
@@ -268,8 +357,10 @@ export async function runFairZeroCapitalProfitabilityRescue(
     before: ReadonlyMap<string, ZeroCapitalOpportunity>,
     elapsedMs: number,
   ): void => {
+    if (releaseRequested) return;
     for (const candidate of candidates) {
       const root = currentRoot(candidate.id);
+      if (!generationCurrent(root)) continue;
       const previous = before.get(candidate.id) ?? candidate;
       const after = transformed.find(item => item.id === candidate.id) ?? previous;
       recordApeCommandOutcome({ root, before: previous, after, tactic, elapsedMs });
@@ -283,20 +374,17 @@ export async function runFairZeroCapitalProfitabilityRescue(
   let splitInvoked = false;
   let stackInvoked = false;
   let firstStrictPositiveTool: 'route_split' | 'single_route_v4' | 'shared_principal_stack' | null = null;
-  let firstFiveDollarOutputTool: 'route_split' | 'single_route_v4' | 'shared_principal_stack' | null = null;
 
   const applySplitImprovements = (result: ZeroCapitalRouteSplitRescueResult): void => {
+    if (releaseRequested) return;
     for (const improved of result.improvedOpportunities ?? []) {
       const root = residentFastPath.find(item => item.id === improved.id);
-      if (!root) continue;
+      if (!root || !generationCurrent(root)) continue;
       const current = transformed.find(item => item.id === root.id) ?? root;
       replaceIfBetter(root, current, improved, false);
     }
-    if (firstStrictPositiveTool === null && (result.improvedOpportunities ?? []).some(opportunity => opportunity.expectedProfit > 0n)) {
+    if (firstStrictPositiveTool === null && (result.improvedOpportunities ?? []).some(clearsStrictPositiveOutputThreshold)) {
       firstStrictPositiveTool = 'route_split';
-    }
-    if (firstFiveDollarOutputTool === null && (result.improvedOpportunities ?? []).some(clearsFiveDollarOutputFloor)) {
-      firstFiveDollarOutputTool = 'route_split';
     }
   };
 
@@ -304,8 +392,13 @@ export async function runFairZeroCapitalProfitabilityRescue(
     candidates: readonly ZeroCapitalOpportunity[],
     deadlineAt: number,
   ): Promise<ZeroCapitalRouteSplitRescueResult> => {
-    const eligible = candidates.filter(candidate => !candidateRetiredForGeneration(currentRoot(candidate.id)));
-    if (eligible.length === 0 || Date.now() >= deadlineAt) return emptySplitResult();
+    if (releaseRequested) return emptySplitResult();
+    const eligible = candidates.filter(candidate => {
+      const root = currentRoot(candidate.id);
+      return generationCurrent(root) && !candidateRetiredForGeneration(root);
+    });
+    const localDeadlineAt = capDeadlineFor(eligible, deadlineAt);
+    if (eligible.length === 0 || Date.now() >= localDeadlineAt) return emptySplitResult();
     primeApeResidentWorkbench({ opportunities: eligible, configuredRoutes: input.configuredRoutes });
     splitInvoked = true;
     const startedAt = Date.now();
@@ -314,11 +407,11 @@ export async function runFairZeroCapitalProfitabilityRescue(
       ...input,
       opportunities: eligible,
       fromQuotedRoute: boundFromQuotedRoute,
-      deadlineAt,
+      deadlineAt: localDeadlineAt,
       onImprovement: (root, improved) => {
-        if (Date.now() >= deadlineAt) return;
+        if (releaseRequested || Date.now() >= localDeadlineAt) return;
         const canonicalRoot = residentFastPath.find(item => item.id === root.id) ?? root;
-        if (candidateRetiredForGeneration(canonicalRoot)) return;
+        if (!generationCurrent(canonicalRoot) || candidateRetiredForGeneration(canonicalRoot)) return;
         const current = transformed.find(item => item.id === root.id) ?? root;
         replaceIfBetter(canonicalRoot, current, improved, true);
       },
@@ -335,99 +428,130 @@ export async function runFairZeroCapitalProfitabilityRescue(
       });
       return emptySplitResult();
     });
-    const result = await settleBeforeDeadline(pending, deadlineAt, emptySplitResult());
-    if (Date.now() >= deadlineAt) outerDeadlineStops += 1;
+    const result = await settleBeforeDeadline(pending, localDeadlineAt, emptySplitResult());
+    if (Date.now() >= localDeadlineAt) outerDeadlineStops += 1;
     applySplitImprovements(result);
     recordTacticBatch('route_split', eligible, before, Date.now() - startedAt);
     return result;
   };
 
-  if (initialStructuralFirstCandidates.length > 0 && Date.now() < tierBudget.structuralDeadlineAt) {
-    structuralSplitInvokedBeforeV4 = true;
-    const structuralCandidates = prioritizedForTactic('route_split').filter(apeStructuralFirstCandidate);
-    structuralSplitCandidatesBeforeV4 = structuralCandidates.length;
-    const structuralResult = await runSplitBatch(structuralCandidates, tierBudget.structuralDeadlineAt);
-    splitResult = mergeSplitResult(splitResult, structuralResult);
-  }
-
   const runV4Batch = async (
     passInput: readonly ZeroCapitalOpportunity[],
     deadlineAt: number,
   ): Promise<number> => {
-    const eligible = passInput.filter(candidate => !candidateRetiredForGeneration(currentRoot(candidate.id)));
-    if (eligible.length === 0 || Date.now() >= deadlineAt) return 0;
+    if (releaseRequested) return 0;
+    const eligible = passInput.filter(candidate => {
+      const root = currentRoot(candidate.id);
+      return generationCurrent(root) && !candidateRetiredForGeneration(root);
+    });
+    const localDeadlineAt = capDeadlineFor(eligible, deadlineAt);
+    if (eligible.length === 0 || Date.now() >= localDeadlineAt) return 0;
     activeMeasuredRescueInvoked = true;
-    const overlaysBefore = activeMeasuredRescueOverlays;
     const before = new Map(eligible.map(candidate => [candidate.id, transformed.find(item => item.id === candidate.id) ?? candidate]));
     const startedAt = Date.now();
     const pending = runZeroCapitalProfitabilityRescueV4({
       ...input,
       opportunities: eligible,
       fromQuotedRoute: boundFromQuotedRoute,
-      deadlineAt,
+      deadlineAt: localDeadlineAt,
       maxRefinements: maxPasses,
       onImprovement: (root, prior, candidate) => {
-        if (Date.now() >= deadlineAt) return;
-        if (candidateRetiredForGeneration(root)) return;
-        replaceIfBetter(root, prior, candidate, true);
+        if (releaseRequested || Date.now() >= localDeadlineAt) return;
+        const canonicalRoot = currentRoot(root.id);
+        if (!generationCurrent(canonicalRoot) || candidateRetiredForGeneration(canonicalRoot)) return;
+        replaceIfBetter(canonicalRoot, prior, candidate, true);
       },
+    }).catch(error => {
+      activeMeasuredRescueError = error instanceof Error ? error.message : String(error);
+      logger.warn('[ZeroCapitalProfitabilityRescueFair] Candidate-local V4 rescue degraded locally', {
+        component: 'ZeroCapitalProfitabilityRescueFair',
+        chain: input.chain,
+        error: activeMeasuredRescueError,
+        candidateKilled: false,
+        siblingCandidatesBlocked: false,
+        stageOneMutation: false,
+        executionAuthority: false,
+      });
+      return [...eligible];
     });
-    const measured = await settleBeforeDeadline(pending, deadlineAt, [...eligible]);
-    if (Date.now() >= deadlineAt) outerDeadlineStops += 1;
+    const measured = await settleBeforeDeadline(pending, localDeadlineAt, [...eligible]);
+    if (Date.now() >= localDeadlineAt) outerDeadlineStops += 1;
     recursiveMeasuredPasses += 1;
 
-    let finalImprovements = 0;
     measured.forEach((candidate, index) => {
       const root = eligible[index];
-      if (!root) return;
+      if (!root || releaseRequested || !generationCurrent(currentRoot(root.id))) return;
       const current = transformed.find(item => item.id === root.id) ?? root;
-      if (replaceIfBetter(currentRoot(root.id), current, candidate, false)) finalImprovements += 1;
+      replaceIfBetter(currentRoot(root.id), current, candidate, false);
     });
     recordTacticBatch('single_route_v4', eligible, before, Date.now() - startedAt);
-    const improvements = activeMeasuredRescueOverlays - overlaysBefore + finalImprovements;
+    const improvements = eligible.filter(candidate => {
+      const previous = before.get(candidate.id) ?? candidate;
+      const after = transformed.find(item => item.id === candidate.id) ?? previous;
+      return strictDerivedImprovement(previous, after);
+    }).length;
     if (improvements === 0) recursiveNoImprovementStops += 1;
-    if (firstStrictPositiveTool === null && measured.some(candidate => candidate.expectedProfit > 0n)) {
+    if (firstStrictPositiveTool === null && measured.some(clearsStrictPositiveOutputThreshold)) {
       firstStrictPositiveTool = 'single_route_v4';
-    }
-    if (firstFiveDollarOutputTool === null && measured.some(clearsFiveDollarOutputFloor)) {
-      firstFiveDollarOutputTool = 'single_route_v4';
     }
     return improvements;
   };
 
-  if (activeRescueCandidates.length > 0) {
-    try {
-      const costFirst = prioritizedForTactic('single_route_v4').filter(apeV4FirstCandidate);
-      await runV4Batch(costFirst, tierBudget.v4DeadlineAt);
+  // Candidate-local lanes: structural candidates perform their required split-first
+  // move and immediately continue into V4 without waiting for sibling candidates.
+  // Cost-first candidates run V4 concurrently. Profitability alone never stops a lane;
+  // only the execute-before-expiry reserve can preempt remaining optional optimization.
+  const structuralCandidates = prioritizedForTactic('route_split').filter(apeStructuralFirstCandidate);
+  const costFirstCandidates = prioritizedForTactic('single_route_v4').filter(apeV4FirstCandidate);
+  structuralSplitCandidatesBeforeV4 = structuralCandidates.length;
+  structuralSplitInvokedBeforeV4 = structuralCandidates.length > 0;
 
-      if (Date.now() < tierBudget.v4DeadlineAt) {
-        const structuralResidual = prioritizedForTactic('single_route_v4').filter(apeStructuralFirstCandidate);
-        structuralResidualV4Candidates = structuralResidual.length;
-        await runV4Batch(structuralResidual, tierBudget.v4DeadlineAt);
-      }
-
-      if (activeMeasuredRescueInvoked && Date.now() >= tierBudget.v4DeadlineAt) recursiveWallClockStops = 1;
-    } catch (error) {
-      activeMeasuredRescueError = error instanceof Error ? error.message : String(error);
-      logger.warn('[ZeroCapitalProfitabilityRescueFair] Deadline-aware APE rescue degraded locally; candidate ownership and latest strict improvements continue', {
-        component: 'ZeroCapitalProfitabilityRescueFair',
-        chain: input.chain,
-        error: activeMeasuredRescueError,
-        recursiveMeasuredPasses,
-        candidateKilled: false,
-        negativeBpsRejected: false,
-        stageOneMutation: false,
-        priorDerivedImprovementsPreserved: true,
-        syntheticEconomics: false,
-        executionAuthority: false,
-      });
+  const candidateLanes: Promise<void>[] = [];
+  if (!profitEscapeTriggered) {
+    for (const candidate of costFirstCandidates) {
+      candidateLocalLanesStarted += 1;
+      candidateLanes.push((async () => {
+        await runV4Batch([candidate], tierBudget.v4DeadlineAt);
+      })());
+    }
+    for (const candidate of structuralCandidates) {
+      candidateLocalLanesStarted += 1;
+      candidateLanes.push((async () => {
+        if (Date.now() < capApeOptimizationDeadline(candidate.id, tierBudget.structuralDeadlineAt)) {
+          const localSplit = await runSplitBatch([candidate], tierBudget.structuralDeadlineAt);
+          if (!releaseRequested) splitResult = mergeSplitResult(splitResult, localSplit);
+        }
+        if (releaseRequested) return;
+        const current = transformed.find(item => item.id === candidate.id) ?? candidate;
+        const root = currentRoot(candidate.id);
+        const localV4Deadline = capApeOptimizationDeadline(candidate.id, tierBudget.v4DeadlineAt);
+        if (Date.now() >= localV4Deadline || !generationCurrent(root) || candidateRetiredForGeneration(root)) return;
+        structuralResidualV4Candidates += 1;
+        await runV4Batch([current], localV4Deadline);
+      })());
     }
   }
 
+  if (profitEscapeTriggered) {
+    releaseRequested = true;
+  } else if (candidateLanes.length > 0) {
+    const laneCompletion = Promise.all(candidateLanes).then(() => 'complete' as const);
+    const laneOutcome = await Promise.race([
+      laneCompletion,
+      profitEscapeSignal.then(() => 'escape' as const),
+    ]);
+    if (laneOutcome === 'escape') {
+      releaseRequested = true;
+      // Work already in transport is allowed to settle locally, but generation/release
+      // guards prevent late results from mutating the returned canonical APE output.
+      void laneCompletion;
+    }
+  }
+  if (activeMeasuredRescueInvoked && Date.now() >= tierBudget.v4DeadlineAt) recursiveWallClockStops = 1;
+
   const strictPositiveAfterRescue = transformed.filter(
-    opportunity => opportunity.expiresAt > Date.now() && opportunity.expectedProfit > 0n,
+    opportunity => opportunity.expiresAt > Date.now() && clearsStrictPositiveOutputThreshold(opportunity),
   ).length;
-  const fiveDollarOutputAfterRescue = transformed.filter(opportunity => clearsFiveDollarOutputFloor(opportunity)).length;
 
   const unresolvedApeOwned = rankApeCommandCandidates({
     roots: residentFastPath,
@@ -446,21 +570,31 @@ export async function runFairZeroCapitalProfitabilityRescue(
     startedAt: rescueStartedAt,
   });
 
-  if (unresolved.length > 0) {
+  if (unresolved.length > 0 && !releaseRequested) {
     primeApeResidentWorkbench({ opportunities: unresolved, configuredRoutes: input.configuredRoutes });
   }
 
   const compositeStartedAt = Date.now();
   const configuredCompositeBudgetMs = compositeToolboxBudgetMs();
-  const compositeHardDeadlineAt = Math.min(tierBudget.compositeDeadlineAt, compositeStartedAt + configuredCompositeBudgetMs);
-  const canStartCompositeWork = () => Date.now() < compositeHardDeadlineAt;
+  const earliestDispatchBy = [...candidateIds]
+    .map(id => getApeProfitLeaseDecision(id).dispatchBy)
+    .filter((value): value is number => value !== null)
+    .reduce((earliest, value) => Math.min(earliest, value), Number.POSITIVE_INFINITY);
+  const compositeHardDeadlineAt = Math.min(
+    tierBudget.compositeDeadlineAt,
+    compositeStartedAt + configuredCompositeBudgetMs,
+    earliestDispatchBy,
+  );
+  const canStartCompositeWork = () => !releaseRequested && Date.now() < compositeHardDeadlineAt;
 
   if (unresolved.length > 0 && canStartCompositeWork()) {
     const runFinalSplit = async () => {
       const splitCandidates = prioritizedForTactic('route_split').filter(apeV4FirstCandidate);
-      if (splitCandidates.length === 0) return;
-      const result = await runSplitBatch(splitCandidates, compositeHardDeadlineAt);
-      splitResult = mergeSplitResult(splitResult, result);
+      await Promise.all(splitCandidates.map(async candidate => {
+        if (!canStartCompositeWork()) return;
+        const result = await runSplitBatch([candidate], compositeHardDeadlineAt);
+        if (!releaseRequested) splitResult = mergeSplitResult(splitResult, result);
+      }));
     };
 
     const runStack = async () => {
@@ -498,30 +632,65 @@ export async function runFairZeroCapitalProfitabilityRescue(
       if (firstStrictPositiveTool === null && stackResult.promoted > 0) firstStrictPositiveTool = 'shared_principal_stack';
     };
 
-    await Promise.all([runFinalSplit(), runStack()]);
+    const compositeCompletion = Promise.all([runFinalSplit(), runStack()]).then(() => 'complete' as const);
+    const compositeOutcome = await Promise.race([
+      compositeCompletion,
+      profitEscapeSignal.then(() => 'escape' as const),
+    ]);
+    if (compositeOutcome === 'escape') {
+      releaseRequested = true;
+      void compositeCompletion;
+    }
   }
+
+  if (profitEscapeTimer) {
+    clearTimeout(profitEscapeTimer);
+    profitEscapeTimer = null;
+  }
+
+  // Monotonic best-proven snapshot: a failed/worse experiment never replaces the
+  // highest proven live absolute-profit version. If the old winner expires, the
+  // freshest positive shadow becomes the fallback instead of preserving stale proof.
+  const outputNow = Date.now();
+  const output = transformed.map(current => {
+    const best = getApeBestExecutableSnapshot(current.id, outputNow);
+    if (!best || best === current) return current;
+    const currentPositive = current.expiresAt > outputNow && clearsStrictPositiveOutputThreshold(current, outputNow);
+    if (!currentPositive || best.expectedProfit > current.expectedProfit) {
+      bestSnapshotRestores += 1;
+      return best;
+    }
+    return current;
+  });
 
   const compositeElapsedMs = Date.now() - compositeStartedAt;
   const workbench = getApeResidentWorkbenchSnapshot();
   const adaptiveCommand = getApeAdaptiveCommandSnapshot();
+  const profitLease = getApeProfitableSnapshotLeaseSnapshot();
   const planValues = [...commandPlans.values()];
-  logger.info('[ZeroCapitalProfitabilityRescueFair] Stage-1 -> full-toolbox hyperwarp APE continuation completed', {
+  logger.info('[ZeroCapitalProfitabilityRescueFair] Stage-1 -> candidate-local continuous APE continuation completed', {
     component: 'ZeroCapitalProfitabilityRescueFair',
     chain: input.chain,
-    profitabilityFinishLine: 'strict_positive_all_in_base_units',
+    profitabilityAcceptanceThreshold: 'strict_positive_all_in_base_units',
     minimumOutputProfitUsd: ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
-    strictPositiveIsNecessaryButNotSufficientForOutput: true,
-    fiveDollarOutputAfterRescue,
+    strictPositiveIsExecutionEligible: true,
+    strictPositiveStopsApeOptimization: false,
+    optimizationStopsOnCandidateLocalMeasuredExhaustionOrDeadline: true,
+    strictPositiveAfterRescue,
     candidateOwnershipExpires: false,
     negativeBpsRejected: false,
-    positiveBelowFiveDollarsRemainsApeOwned: true,
     evidenceExpiryKillsCandidate: false,
     residentFastPathFirst: true,
     residentPriceEvidencePrewarm: true,
     pricePrewarmStarted,
     pricePrewarmSymbols,
     pricePrewarmAwaitedOnHotPath: false,
-    activeMeasuredRescueOwner: 'ZeroCapitalProfitabilityRescueV4',
+    activeMeasuredRescueWorker: 'ZeroCapitalProfitabilityRescueV4',
+    candidateStateAuthority: 'ape-adaptive-command',
+    synchronousCandidateStateAuthority: adaptiveCommand.synchronousCandidateStateAuthority,
+    monotonicGenerationAuthority: adaptiveCommand.monotonicGenerationAuthority,
+    staleGenerationCannotRollBackAuthority: adaptiveCommand.staleGenerationCannotRollBackAuthority,
+    staleGenerationResultsDiscarded,
     activeMeasuredRescueInvoked,
     activeMeasuredRescueCandidates: activeRescueCandidates.length,
     v4CostPositiveGrossCandidates: initialV4FirstCandidates.length,
@@ -535,7 +704,6 @@ export async function runFairZeroCapitalProfitabilityRescue(
     activeMeasuredRescueOverlays,
     streamedMeasuredImprovements,
     alternateRouteIdentityRebindings,
-    strictPositiveAfterRescue,
     unresolvedAfterSingleRouteRescue: unresolved.length,
     unresolvedApeOwnedAfterSingleRouteRescue: unresolvedApeOwned.length,
     staleButApeOwnedAfterSingleRouteRescue: staleButApeOwned.length,
@@ -570,19 +738,20 @@ export async function runFairZeroCapitalProfitabilityRescue(
     outerAuthorityDeadlineEnforcedForAllStatefulTactics: true,
     outerDeadlineStops,
     lateTacticResultsCanMutateCanonicalState: false,
-    recursiveStrictPositiveStops,
-    recursiveFiveDollarOutputStops,
+    recursiveStrictPositiveImprovements,
     recursiveNoImprovementStops,
     recursiveWallClockStops,
     recursivePartialImprovementFeedback: true,
     passBarrierRemoved: true,
-    candidateLocalAnytimeRefinement: true,
+    candidateLocalRunToCompletion: true,
+    candidateLocalLanesStarted,
+    crossCandidateProfitabilityStop: false,
+    structuralSiblingBarrierBeforeV4: false,
     hardDeadlinePropagatedIntoMeasuredRescue: true,
     hardDeadlinePropagatedIntoSplitAndComposite: true,
     downstreamStatefulOpportunityReservedBeforeV4: tierBudget.downstreamReserveMs > 0,
     recursiveStrictImprovementRequired: true,
     recursiveStopsAtStrictPositivePerCandidate: false,
-    recursiveStopsAtFiveDollarOutputPerCandidate: true,
     recursiveProviderFailureLocal: true,
     candidatePriorityUsesMeasuredMomentumDistanceFreshnessAndLatency: true,
     candidatePriorityNeverOwnsEconomics: true,
@@ -606,6 +775,27 @@ export async function runFairZeroCapitalProfitabilityRescue(
     rescueSnapshotCount: rescueSnapshots.length,
     rescueSnapshotMaxImprovementBps: rescueSnapshots.reduce((best, item) => Math.max(best, item.improvementBps), 0),
     rescueSnapshotMaxVelocityBpsPerSecond: rescueSnapshots.reduce((best, item) => Math.max(best, item.improvementVelocityBpsPerSecond), 0),
+    bestProvenSnapshotResident: true,
+    bestSnapshotPointerSwapO1: true,
+    bestSnapshotOverwriteByWorseAttempt: false,
+    bestSnapshotRestores,
+    shadowExecutionLease: true,
+    shadowRefreshPrimes,
+    rollingFreshnessLease: true,
+    staleEvidenceExpiryExtended: false,
+    executeBeforeExpiry: true,
+    profitEscapeTriggered,
+    profitEscapeSignals,
+    profitEscapeCanPreemptRemainingOptimization: true,
+    profitEscapeRequiresStrictPositive: true,
+    profitEscapeThresholdIsOptimizationStop: false,
+    profitableSnapshotResidentLeases: profitLease.residentLeases,
+    profitableSnapshotLiveBest: profitLease.liveBestProfit,
+    profitableSnapshotFreshnessShadows: profitLease.liveFreshnessShadows,
+    profitableSnapshotDispatchNow: profitLease.dispatchNow,
+    profitableSnapshotRefreshShadow: profitLease.refreshShadow,
+    profitableSnapshotPersistenceOnHotPath: profitLease.persistenceOnHotPath,
+    profitableSnapshotNetworkIoOnDecisionPath: profitLease.networkIoOnDecisionPath,
     fromQuotedRouteContextBound: true,
     stageOneSameReferenceIntoResidentFastPath: true,
     activeRescueCreatesDerivedEvidenceOnly: true,
@@ -639,12 +829,11 @@ export async function runFairZeroCapitalProfitabilityRescue(
     toolboxCompositeBudgetMs: configuredCompositeBudgetMs,
     toolboxCompositeElapsedMs: compositeElapsedMs,
     toolboxCompositeHardDeadlineAt: compositeHardDeadlineAt,
-    toolboxCompositeOrder: 'elastic_merit_command_with_defect_safe_first_move_and_resident_followups',
+    toolboxCompositeOrder: 'candidate_local_defect_safe_first_move_with_resident_followups',
     protectedRescueLanes: true,
     parallelCompositeRescueLanes: true,
     sharedPrincipalNegativeCandidatesAdmittedWhenAggregateEconomicsCanProveCompatibility: true,
     firstStrictPositiveTool,
-    firstFiveDollarOutputTool,
     skipRemainingStatefulToolsAfterStrictPositive: false,
     routeSplitInvoked: splitInvoked,
     routeSplitAttemptedCandidates: splitResult.attemptedCandidates,
@@ -672,5 +861,5 @@ export async function runFairZeroCapitalProfitabilityRescue(
     executionAuthority: false,
   });
 
-  return transformed;
+  return output;
 }
