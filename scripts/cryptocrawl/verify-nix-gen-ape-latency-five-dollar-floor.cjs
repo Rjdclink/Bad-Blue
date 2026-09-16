@@ -27,6 +27,7 @@ const collectTsFiles = relative => {
 
 const floor = read('server/services/cryptocrawl/integration/zero-capital-profit-output-floor.ts');
 const stageOne = read('server/services/cryptocrawl/discovery/zero-capital-canonical-discovery.ts');
+const stageOnePolicy = read('server/services/cryptocrawl/discovery/stage-one-candidate-policy.ts');
 const measuredAdmission = read('server/services/cryptocrawl/integration/ape-measured-opportunity-admission.ts');
 const directionalMarket = read('server/services/cryptocrawl/integration/ape-directional-market.ts');
 const fair = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-fair.ts');
@@ -53,15 +54,20 @@ has(floor, 'export function requiredProfitBaseUnitsForFiveDollarOutput', 'legacy
 has(floor, 'return requiredStrictPositiveProfitBaseUnits(opportunity)', 'legacy base-unit helper must resolve to strict-positive authority');
 assert.ok(!floor.includes('ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD = 5'), 'hard $5 threshold reintroduced');
 
-// Stage One is operator-authorized for measured-priority admission, without importing
-// execution-profitability threshold or APE lease authority.
-has(stageOne, 'STAGE_ONE_MEASURED_PRIORITY_INVARIANT', 'Stage-1 measured-priority marker missing');
-has(stageOne, 'stageOneFixedBpsFloorRemoved: true', 'Stage-1 fixed BPS floor reintroduced');
+// Stage One is locked to output only complete measured candidates strictly above -10 BPS,
+// without importing execution-profitability threshold or APE lease authority.
+has(stageOne, 'STAGE_ONE_LOCKED_INVARIANT', 'Stage-1 locked output marker missing');
+has(stageOnePolicy, 'STAGE_ONE_ZERO_CAPITAL_OUTPUT_FLOOR_BPS = -10', 'Stage-1 -10 BPS floor missing');
+has(stageOnePolicy, 'netProfitBps > STAGE_ONE_ZERO_CAPITAL_OUTPUT_FLOOR_BPS', 'Stage-1 floor is not strict');
+assert.ok(!stageOnePolicy.includes('netProfitBps >= STAGE_ONE_ZERO_CAPITAL_OUTPUT_FLOOR_BPS'), 'Stage 1 incorrectly admits exactly -10 BPS');
+has(stageOne, "stageOneCandidateComparator: 'netProfitBps > -10'", 'Stage-1 strict comparator telemetry missing');
+has(stageOne, 'stageOneAtFloorPromoted: false', 'Stage-1 can promote exactly -10 BPS');
 has(stageOne, 'selectApeStageOneHotSet(exact, 3)', 'Stage-1 direction-aware hot set missing');
-assert.ok(!stageOne.includes('STAGE_ONE_ZERO_CAPITAL_ENTRY_FLOOR_BPS'), 'Stage 1 fixed -10 BPS floor reintroduced');
-assert.ok(!stageOne.includes('zero-capital-profit-output-floor'), 'Stage 1 must not import output threshold authority');
+has(stageOne, 'rescueReady = rescueReady.filter(clearsStageOneCandidateOutputFloor)', 'Stage-1 post-APE floor assertion missing');
+assert.ok(!stageOne.includes('zero-capital-profit-output-floor'), 'Stage 1 must not import execution output threshold authority');
 assert.ok(!stageOne.includes('ape-profitable-snapshot-lease'), 'Stage 1 must remain independent from APE lease state');
 has(measuredAdmission, 'export function assessApeMeasuredAdmission', 'fresh measured APE admission authority missing');
+has(measuredAdmission, 'stage_one_output_floor_violation', 'APE Stage-1 floor defense missing');
 has(directionalMarket, 'canonicalCyclicTokenPath', 'direction-neutral cyclic market identity missing');
 has(floor, "placement.cohort === 0 && placement.role !== 'reserve'", 'APE stateful work is not bounded to the hot market lane');
 
@@ -150,4 +156,4 @@ const flashImporters = collectTsFiles('server/services/cryptocrawl')
   .filter(relative => read(relative).includes("zero-capital-flash-canonical-executor.js"));
 assert.deepEqual(flashImporters, ['server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts'], 'lower-level flash executor gained a threshold-bypass caller');
 
-console.log('[ape-strict-positive-continuous] PASS: Stage One uses fresh measured direction-aware hot lanes; strict all-in net > 0 is execution acceptance; APE retains best proven profit, refreshes a shadow generation and releases before expiry while continuing bounded optimization past first profitability');
+console.log('[ape-strict-positive-continuous] PASS: Stage One emits only fresh measured complete-evidence candidates strictly above -10 BPS; strict all-in net > 0 remains execution acceptance; APE retains best proven profit, refreshes a shadow generation and releases before expiry while continuing bounded optimization past first profitability');
