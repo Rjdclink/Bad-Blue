@@ -8,6 +8,7 @@ const must = (condition, message) => { if (!condition) throw new Error(`[bps-str
 const discovery = read('server/services/cryptocrawl/discovery/zero-capital-canonical-discovery.ts');
 const compression = read('server/services/cryptocrawl/integration/bps-compression-mesh.ts');
 const gas = read('server/services/cryptocrawl/capital-free/dynamic-gas-funding-engine.ts');
+const gasSponsor = read('server/services/cryptocrawl/strategies/gas-sponsorship.ts');
 const providers = read('server/services/cryptocrawl/intelligence/market-data-providers.ts');
 const rpc = read('server/services/cryptocrawl/runtime/dynamic-rpc-provider-wiring.ts');
 const ledger = read('server/services/cryptocrawl/compensation/retained-profit-ledger.ts');
@@ -32,6 +33,13 @@ must(compression.includes("typeof value === 'string' && value.trim() === ''"), '
 must(gas.includes('sponsorOperatorMonetaryCostProvenZero === true'), 'sponsored zero-gas claim must require proven zero operator monetary cost');
 must(gas.includes('nativeSystemOwnedProven === true'), 'native gas must require durable system-owned provenance');
 must(gas.includes("paymentSource: 'provider_sponsored'"), 'sponsored payment source must remain explicit');
+must(gas.includes('providerBillingLiability: true'), 'provider-fronted gas billing must remain a canonical economic liability unless independently proven zero');
+const billedSponsorBranch = gas.indexOf('if (sponsorConfiguredAndReady && !requireZeroOperatorCost)');
+const nativeFallbackBranch = gas.indexOf("if (nativeBalance >= reserveFloor && proof.nativeSystemOwnedProven === true)");
+must(billedSponsorBranch >= 0 && nativeFallbackBranch >= 0 && billedSponsorBranch < nativeFallbackBranch, 'configured provider sponsorship must be the primary zero-initial-capital gas lane before system-owned native fallback');
+must(gasSponsor.includes('ALCHEMY_API_KEY'), 'canonical sponsorship manager must read the configured Alchemy credential');
+must(gasSponsor.includes('ALCHEMY_GAS_POLICY_ID'), 'canonical sponsorship manager must read the configured Alchemy gas policy');
+must(gasSponsor.includes('wallet_prepareCalls') && gasSponsor.includes('wallet_sendPreparedCalls'), 'Alchemy sponsorship must use prepared sponsored calls rather than a synthetic readiness flag');
 // Verify the semantic provenance states independently instead of coupling this
 // proof to one implementation expression. Refactors may legitimately replace a
 // ternary with guarded branches, but neither state may disappear.
