@@ -317,8 +317,9 @@ async function measureTargetStack(input: {
   const individualExpectedProfitSum = input.opportunities.reduce((sum, opportunity) => sum + opportunity.expectedProfit, 0n);
   const relayFee = input.opportunities.reduce((sum, opportunity) => sum + (opportunity.relayFeeInInputToken || 0n), 0n);
   const targetNetProfitBps = bpsFromSharedPrincipal(targetNetProfitBaseUnits, sharedPrincipal);
-  const expiresAt = Math.min(...input.opportunities.map(opportunity => opportunity.expiresAt), input.deadlineAt ?? Number.MAX_SAFE_INTEGER);
-  if (Date.now() >= expiresAt) return null;
+  const evidenceExpiresAt = Math.min(...input.opportunities.map(opportunity => opportunity.expiresAt));
+  const hardDeadlineAt = Math.min(evidenceExpiresAt, input.deadlineAt ?? Number.MAX_SAFE_INTEGER);
+  if (Date.now() >= hardDeadlineAt) return null;
 
   const probePlan: CompositeFlashLoanExecutionPlan = {
     chain: input.chain,
@@ -335,10 +336,10 @@ async function measureTargetStack(input: {
   const probeRequest = { from: input.wallet.address, to: probePayload.to, data: probePayload.data, value: probePayload.value };
 
   const [probeCallPassed, probeGas] = await Promise.all([
-    settleBeforeDeadline(input.provider.call(probeRequest).then(() => true), expiresAt, false),
-    settleBeforeDeadline(input.provider.estimateGas(probeRequest).then(value => BigInt(value.toString())), expiresAt, 0n),
+    settleBeforeDeadline(input.provider.call(probeRequest).then(() => true), hardDeadlineAt, false),
+    settleBeforeDeadline(input.provider.estimateGas(probeRequest).then(value => BigInt(value.toString())), hardDeadlineAt, 0n),
   ]);
-  if (!probeCallPassed || probeGas <= 0n || deadlineReached(expiresAt)) return null;
+  if (!probeCallPassed || probeGas <= 0n || deadlineReached(hardDeadlineAt)) return null;
 
   let estimatedGas = probeGas;
   let combinedGasCost = combinedGasCostFromEstimate(input.opportunities, estimatedGas);
@@ -348,14 +349,14 @@ async function measureTargetStack(input: {
 
   const chainContextPromise = settleBeforeDeadline(
     Promise.all([input.provider.getBlock('latest'), input.provider.getFeeData()]),
-    expiresAt,
+    hardDeadlineAt,
     null,
   );
   const [exactCallPassed, exactGas] = await Promise.all([
-    settleBeforeDeadline(input.provider.call(exactRequest).then(() => true), expiresAt, false),
-    settleBeforeDeadline(input.provider.estimateGas(exactRequest).then(value => BigInt(value.toString())), expiresAt, 0n),
+    settleBeforeDeadline(input.provider.call(exactRequest).then(() => true), hardDeadlineAt, false),
+    settleBeforeDeadline(input.provider.estimateGas(exactRequest).then(value => BigInt(value.toString())), hardDeadlineAt, 0n),
   ]);
-  if (!exactCallPassed || exactGas <= 0n || deadlineReached(expiresAt)) return null;
+  if (!exactCallPassed || exactGas <= 0n || deadlineReached(hardDeadlineAt)) return null;
 
   estimatedGas = exactGas;
   const exactGasCost = combinedGasCostFromEstimate(input.opportunities, estimatedGas);
@@ -366,14 +367,14 @@ async function measureTargetStack(input: {
     requiredOnchainResidual = exactRequiredResidual;
     payload = buildCompositeFlashLoanReceiverPayload({ ...probePlan, minProfit: requiredOnchainResidual.toString() });
     exactRequest = { from: input.wallet.address, to: payload.to, data: payload.data, value: payload.value };
-    const finalCallPassed = await settleBeforeDeadline(input.provider.call(exactRequest).then(() => true), expiresAt, false);
-    if (!finalCallPassed || deadlineReached(expiresAt)) return null;
+    const finalCallPassed = await settleBeforeDeadline(input.provider.call(exactRequest).then(() => true), hardDeadlineAt, false);
+    if (!finalCallPassed || deadlineReached(hardDeadlineAt)) return null;
   } else {
     requiredOnchainResidual = exactRequiredResidual;
   }
 
   const chainContext = await chainContextPromise;
-  if (!chainContext || deadlineReached(expiresAt)) return null;
+  if (!chainContext || deadlineReached(hardDeadlineAt)) return null;
   const [block, feeData] = chainContext;
   const maxBlockFraction = bounded(process.env.CRYPTOCRAWL_MULTILEG_MAX_BLOCK_GAS_FRACTION, 0.50, 0.10, 0.80);
   const blockGasLimit = BigInt(block.gasLimit.toString());
@@ -397,7 +398,7 @@ async function measureTargetStack(input: {
   const opportunityIds = input.opportunities.map(opportunity => opportunity.id);
   const evidenceId = groupId(input.chain, loanToken, opportunityIds);
   const measuredAt = Date.now();
-  if (measuredAt >= expiresAt) return null;
+  if (measuredAt >= hardDeadlineAt) return null;
   const expectedGasPriceWei = expectedExecutionGasPriceWei(feeData);
   const minProfitSum = BigInt(individualPlans.length) * STRICT_POSITIVE_PROFIT_BASE_UNITS;
 
@@ -424,6 +425,7 @@ async function measureTargetStack(input: {
     'combined_all_in_net_strict_positive',
     'combined_all_in_net_strictly_above_zero',
     'principal_repayment_enforced_by_composite_receiver',
+    'scheduler_deadline_not_evidence_freshness_authority',
     'synthetic_evidence:false',
   ];
 
@@ -452,7 +454,7 @@ async function measureTargetStack(input: {
     estimatedGas,
     simulated: true,
     simulatedAt: measuredAt,
-    expiresAt,
+    expiresAt: evidenceExpiresAt,
     provenance,
   };
 
@@ -474,7 +476,7 @@ async function measureTargetStack(input: {
     estimatedGasUnits: estimatedGas,
     expectedGasPriceWei,
     prepared: { to: payload.to, data: payload.data, value: payload.value },
-    expiresAt,
+    expiresAt: evidenceExpiresAt,
     measuredAt,
     provenance,
   };
@@ -502,7 +504,7 @@ async function measureTargetStack(input: {
     route: input.opportunities.flatMap(item => item.route.map(step => ({ ...step }))),
     confidence: Math.min(...input.opportunities.map(item => item.confidence)),
     timestamp: measuredAt,
-    expiresAt,
+    expiresAt: evidenceExpiresAt,
   };
   if (!clearsStrictPositiveOutputThreshold(opportunity, measuredAt)) return null;
 
@@ -722,6 +724,7 @@ async function runGroup(input: {
     staleOwnershipSeparatedFromFreshExecutionAuthority: true,
     fixedCompositeRpcConvergenceLoopRemoved: true,
     deadlineAuthoritativeRpcProof: true,
+    schedulerDeadlineChangesEvidenceExpiry: false,
     promotionAuthority: 'single_atomic_bps_engine',
     executionAuthority: false,
   });
@@ -844,6 +847,7 @@ export function ensureZeroCapitalAtomicStackWiring(): void {
     nonPrefixBoundedVariantSearch: true,
     staleOwnershipSeparatedFromFreshExecutionAuthority: true,
     deadlineAuthoritativeRpcProof: true,
+    schedulerDeadlineChangesEvidenceExpiry: false,
     fixedCompositeRpcConvergenceLoopRemoved: true,
     measuredCompositionBenefitRequired: true,
     individualChildPositiveGrossRequired: false,
