@@ -39,8 +39,6 @@ export interface RuntimeInvariantMonitorSnapshot {
   }>;
 }
 
-const STAGE_THREE_MINIMUM_TARGET_BPS = 10;
-
 function finiteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
@@ -52,16 +50,6 @@ function finiteNonNegative(value: unknown): value is number {
 function economicsTolerance(...values: number[]): number {
   const scale = Math.max(1, ...values.map(value => Math.abs(value)));
   return Math.max(0.000001, scale * 1e-9);
-}
-
-function stageThreeTargetBps(): number {
-  const parsed = Number(
-    process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS
-    ?? process.env.ZERO_CAPITAL_RESCUE_TARGET_NET_BPS
-    ?? STAGE_THREE_MINIMUM_TARGET_BPS,
-  );
-  const finite = Number.isFinite(parsed) ? parsed : STAGE_THREE_MINIMUM_TARGET_BPS;
-  return Math.max(STAGE_THREE_MINIMUM_TARGET_BPS, Math.min(1_000, finite));
 }
 
 function canonicalStageThreeNetBps(snapshot: CanonicalOpportunitySnapshot): number | null {
@@ -105,12 +93,14 @@ function inspectSnapshot(snapshot: CanonicalOpportunitySnapshot): RuntimeInvaria
       push('ELIGIBLE_WITHOUT_POSITIVE_NET', 'Eligible state requires a finite strictly-positive deterministic all-in net profit');
     }
 
+    // Historical +10 BPS quarantine removed. The invariant is the same as the
+    // canonical execution authority: finite, fresh, executable, strictly-positive
+    // all-in net economics. Positive magnitude is not an independent safety veto.
     const stageThreeNetBps = canonicalStageThreeNetBps(snapshot);
-    const stageThreeTarget = stageThreeTargetBps();
-    if (stageThreeNetBps === null || stageThreeNetBps + 1e-9 < stageThreeTarget) {
+    if (stageThreeNetBps === null || stageThreeNetBps <= 0) {
       push(
         'ELIGIBLE_BELOW_STAGE3_TARGET',
-        `Stage-4 admission requires canonical all-in net BPS >= ${stageThreeTarget}; observed=${stageThreeNetBps ?? 'unknown'}`,
+        `Stage-4 admission requires strictly-positive canonical all-in net BPS; observed=${stageThreeNetBps ?? 'unknown'}`,
       );
     }
 
