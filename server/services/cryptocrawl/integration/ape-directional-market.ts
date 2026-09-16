@@ -12,6 +12,15 @@ export interface ApeDirectionalMarketView {
 
 const BPS_PRECISION_SCALE = 1_000_000n;
 
+function boundedInteger(raw: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? Math.max(min, Math.min(max, Math.trunc(parsed))) : fallback;
+}
+
+export function apeStageOneGlobalHotLimit(): number {
+  return boundedInteger(process.env.ZERO_CAPITAL_APE_HOT_GLOBAL_LIMIT, 6, 2, 24);
+}
+
 function tokenPath(opportunity: ZeroCapitalOpportunity): string[] {
   if (opportunity.route.length === 0) {
     return [opportunity.inputToken.toLowerCase(), opportunity.outputToken.toLowerCase()];
@@ -94,17 +103,20 @@ export function apeDirectionalMarketKey(opportunity: ZeroCapitalOpportunity): st
 }
 
 /**
- * Stage One hot-set selection is bounded by market structure, never by an arbitrary
- * BPS cutoff. The best measured direction enters first, the strongest independently
- * measured opposite direction is protected second when present, and the best remaining
- * variant becomes the hedge. Every other measured route stays in discovery/provider
- * repricing and can become hot on the next state update.
+ * Stage One hot-set selection is bounded twice without a BPS cutoff:
+ * 1) each market contributes at most winner + strongest opposite direction + hedge;
+ * 2) only the globally best measured market work enters the APE rescue hot lane.
+ *
+ * Candidates outside this set remain measured discovery objects and still flow through
+ * canonical provider repricing. The global cap therefore bounds rescue I/O/concurrency
+ * without rejecting or deleting lower-ranked opportunities.
  */
 export function selectApeStageOneHotSet(
   opportunities: readonly ZeroCapitalOpportunity[],
   maxPerMarket = 3,
 ): ZeroCapitalOpportunity[] {
   const boundedMax = Math.max(1, Math.min(5, Math.trunc(maxPerMarket)));
+  const globalLimit = apeStageOneGlobalHotLimit();
   const groups = new Map<string, ZeroCapitalOpportunity[]>();
   for (const opportunity of opportunities) {
     const key = apeDirectionalMarketKey(opportunity);
@@ -113,7 +125,7 @@ export function selectApeStageOneHotSet(
     groups.set(key, group);
   }
 
-  const selected: ZeroCapitalOpportunity[] = [];
+  const marketSelections: ZeroCapitalOpportunity[][] = [];
   for (const group of groups.values()) {
     const ordered = [...group].sort(compareExactEconomics);
     if (ordered.length === 0) continue;
@@ -131,8 +143,22 @@ export function selectApeStageOneHotSet(
         marketSelected.push(candidate);
       }
     }
-    selected.push(...marketSelected);
+    marketSelections.push(marketSelected);
   }
+
+  // Market winners establish global priority first. Within each selected market, the
+  // reverse twin stays adjacent/protected before the hedge so bidirectional coverage
+  // is not lost merely because another same-direction variant exists.
+  marketSelections.sort((left, right) => compareExactEconomics(left[0], right[0]));
+  const selected: ZeroCapitalOpportunity[] = [];
+  for (const market of marketSelections) {
+    for (const candidate of market) {
+      if (selected.length >= globalLimit) break;
+      selected.push(candidate);
+    }
+    if (selected.length >= globalLimit) break;
+  }
+
   return selected.sort(compareExactEconomics);
 }
 
