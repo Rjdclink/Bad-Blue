@@ -100,6 +100,7 @@ contract CryptocrawlGhostWalletErc3156Bridge is
     uint256 private expectedUpstreamFee;
     uint256 private expectedBorrowerFee;
     uint256 private expectedMaxBorrowerFee;
+    uint256 private expectedRequestedSpread;
     uint256 private expectedStartingBalance;
 
     event MinimumBrokerSpreadUpdated(uint16 spreadBps);
@@ -175,7 +176,7 @@ contract CryptocrawlGhostWalletErc3156Bridge is
         return _positiveSpread(amount);
     }
 
-    /// @notice Borrow from any ERC-3156 lender and immediately lend to a borrower.
+    /// @notice Backward-compatible minimum-spread ERC-3156 broker entrypoint.
     function brokerExternalFlashLoan(
         address lender,
         IERC3156FlashBorrowerGhostBridge borrower,
@@ -184,22 +185,40 @@ contract CryptocrawlGhostWalletErc3156Bridge is
         uint256 maxBorrowerFee,
         bytes calldata borrowerData
     ) external onlyIdle returns (bool) {
-        _requireContracts(lender, address(borrower), token);
-        require(amount > 0, "amount_required");
-        IERC3156FlashLenderGhostBridge upstream = IERC3156FlashLenderGhostBridge(lender);
-        require(upstream.maxFlashLoan(token) >= amount, "insufficient_upstream_liquidity");
-        uint256 upstreamFee = upstream.flashFee(token, amount);
-        uint256 borrowerFee = upstreamFee + _positiveSpread(amount);
-        require(borrowerFee <= maxBorrowerFee, "borrower_fee_exceeds_max");
-        _begin(UpstreamKind.ERC3156, lender, address(borrower), token, amount, upstreamFee, borrowerFee, maxBorrowerFee);
-        bool accepted = upstream.flashLoan(this, token, amount, abi.encode(borrowerData));
-        require(accepted, "upstream_flash_loan_rejected");
-        _finishPullUpstream();
-        return true;
+        return _brokerExternalFlashLoan(
+            lender,
+            borrower,
+            token,
+            amount,
+            _positiveSpread(amount),
+            maxBorrowerFee,
+            borrowerData
+        );
     }
 
-    /// @notice Borrow from any Aave V3 pool and immediately lend to a borrower.
-    /// @dev Aave's actual callback premium is used as settlement truth.
+    /// @notice ERC-3156 broker entrypoint with a caller-selected positive spread.
+    /// @dev The requested spread is still bounded below by the configured bridge floor.
+    function brokerExternalFlashLoanWithSpread(
+        address lender,
+        IERC3156FlashBorrowerGhostBridge borrower,
+        address token,
+        uint256 amount,
+        uint256 requestedSpread,
+        uint256 maxBorrowerFee,
+        bytes calldata borrowerData
+    ) external onlyIdle returns (bool) {
+        return _brokerExternalFlashLoan(
+            lender,
+            borrower,
+            token,
+            amount,
+            _effectiveSpread(amount, requestedSpread),
+            maxBorrowerFee,
+            borrowerData
+        );
+    }
+
+    /// @notice Backward-compatible minimum-spread Aave V3 broker entrypoint.
     function brokerAaveV3FlashLoan(
         address pool,
         IERC3156FlashBorrowerGhostBridge borrower,
@@ -208,16 +227,39 @@ contract CryptocrawlGhostWalletErc3156Bridge is
         uint256 maxBorrowerFee,
         bytes calldata borrowerData
     ) external onlyIdle returns (bool) {
-        _requireContracts(pool, address(borrower), token);
-        require(amount > 0, "amount_required");
-        _begin(UpstreamKind.AaveV3, pool, address(borrower), token, amount, 0, 0, maxBorrowerFee);
-        IAaveV3PoolGhostBridge(pool).flashLoanSimple(address(this), token, amount, abi.encode(borrowerData), 0);
-        _finishPullUpstream();
-        return true;
+        return _brokerAaveV3FlashLoan(
+            pool,
+            borrower,
+            token,
+            amount,
+            _positiveSpread(amount),
+            maxBorrowerFee,
+            borrowerData
+        );
     }
 
-    /// @notice Borrow from any Morpho Blue-compatible singleton and immediately
-    ///         lend to a borrower. Morpho's current flash-loan primitive is fee-free.
+    /// @notice Aave V3 broker entrypoint with caller-selected positive spread.
+    function brokerAaveV3FlashLoanWithSpread(
+        address pool,
+        IERC3156FlashBorrowerGhostBridge borrower,
+        address token,
+        uint256 amount,
+        uint256 requestedSpread,
+        uint256 maxBorrowerFee,
+        bytes calldata borrowerData
+    ) external onlyIdle returns (bool) {
+        return _brokerAaveV3FlashLoan(
+            pool,
+            borrower,
+            token,
+            amount,
+            _effectiveSpread(amount, requestedSpread),
+            maxBorrowerFee,
+            borrowerData
+        );
+    }
+
+    /// @notice Backward-compatible minimum-spread Morpho broker entrypoint.
     function brokerMorphoFlashLoan(
         address morpho,
         IERC3156FlashBorrowerGhostBridge borrower,
@@ -226,18 +268,39 @@ contract CryptocrawlGhostWalletErc3156Bridge is
         uint256 maxBorrowerFee,
         bytes calldata borrowerData
     ) external onlyIdle returns (bool) {
-        _requireContracts(morpho, address(borrower), token);
-        require(amount > 0, "amount_required");
-        uint256 borrowerFee = _positiveSpread(amount);
-        require(borrowerFee <= maxBorrowerFee, "borrower_fee_exceeds_max");
-        _begin(UpstreamKind.Morpho, morpho, address(borrower), token, amount, 0, borrowerFee, maxBorrowerFee);
-        IMorphoGhostBridge(morpho).flashLoan(token, amount, abi.encode(token, borrowerData));
-        _finishPullUpstream();
-        return true;
+        return _brokerMorphoFlashLoan(
+            morpho,
+            borrower,
+            token,
+            amount,
+            _positiveSpread(amount),
+            maxBorrowerFee,
+            borrowerData
+        );
     }
 
-    /// @notice Borrow from any Balancer V2-compatible vault and immediately lend
-    ///         the single borrowed asset to a downstream ERC-3156 borrower.
+    /// @notice Morpho broker entrypoint with caller-selected positive spread.
+    function brokerMorphoFlashLoanWithSpread(
+        address morpho,
+        IERC3156FlashBorrowerGhostBridge borrower,
+        address token,
+        uint256 amount,
+        uint256 requestedSpread,
+        uint256 maxBorrowerFee,
+        bytes calldata borrowerData
+    ) external onlyIdle returns (bool) {
+        return _brokerMorphoFlashLoan(
+            morpho,
+            borrower,
+            token,
+            amount,
+            _effectiveSpread(amount, requestedSpread),
+            maxBorrowerFee,
+            borrowerData
+        );
+    }
+
+    /// @notice Backward-compatible minimum-spread Balancer V2 broker entrypoint.
     function brokerBalancerV2FlashLoan(
         address vault,
         IERC3156FlashBorrowerGhostBridge borrower,
@@ -246,9 +309,113 @@ contract CryptocrawlGhostWalletErc3156Bridge is
         uint256 maxBorrowerFee,
         bytes calldata borrowerData
     ) external onlyIdle returns (bool) {
+        return _brokerBalancerV2FlashLoan(
+            vault,
+            borrower,
+            token,
+            amount,
+            _positiveSpread(amount),
+            maxBorrowerFee,
+            borrowerData
+        );
+    }
+
+    /// @notice Balancer V2 broker entrypoint with caller-selected positive spread.
+    function brokerBalancerV2FlashLoanWithSpread(
+        address vault,
+        IERC3156FlashBorrowerGhostBridge borrower,
+        address token,
+        uint256 amount,
+        uint256 requestedSpread,
+        uint256 maxBorrowerFee,
+        bytes calldata borrowerData
+    ) external onlyIdle returns (bool) {
+        return _brokerBalancerV2FlashLoan(
+            vault,
+            borrower,
+            token,
+            amount,
+            _effectiveSpread(amount, requestedSpread),
+            maxBorrowerFee,
+            borrowerData
+        );
+    }
+
+    function _brokerExternalFlashLoan(
+        address lender,
+        IERC3156FlashBorrowerGhostBridge borrower,
+        address token,
+        uint256 amount,
+        uint256 requestedSpread,
+        uint256 maxBorrowerFee,
+        bytes memory borrowerData
+    ) internal returns (bool) {
+        _requireContracts(lender, address(borrower), token);
+        require(amount > 0, "amount_required");
+        require(requestedSpread > 0, "positive_spread_required");
+        IERC3156FlashLenderGhostBridge upstream = IERC3156FlashLenderGhostBridge(lender);
+        require(upstream.maxFlashLoan(token) >= amount, "insufficient_upstream_liquidity");
+        uint256 upstreamFee = upstream.flashFee(token, amount);
+        uint256 borrowerFee = upstreamFee + requestedSpread;
+        require(borrowerFee <= maxBorrowerFee, "borrower_fee_exceeds_max");
+        _begin(UpstreamKind.ERC3156, lender, address(borrower), token, amount, upstreamFee, borrowerFee, maxBorrowerFee, requestedSpread);
+        bool accepted = upstream.flashLoan(this, token, amount, abi.encode(borrowerData));
+        require(accepted, "upstream_flash_loan_rejected");
+        _finishPullUpstream();
+        return true;
+    }
+
+    function _brokerAaveV3FlashLoan(
+        address pool,
+        IERC3156FlashBorrowerGhostBridge borrower,
+        address token,
+        uint256 amount,
+        uint256 requestedSpread,
+        uint256 maxBorrowerFee,
+        bytes memory borrowerData
+    ) internal returns (bool) {
+        _requireContracts(pool, address(borrower), token);
+        require(amount > 0, "amount_required");
+        require(requestedSpread > 0, "positive_spread_required");
+        _begin(UpstreamKind.AaveV3, pool, address(borrower), token, amount, 0, 0, maxBorrowerFee, requestedSpread);
+        IAaveV3PoolGhostBridge(pool).flashLoanSimple(address(this), token, amount, abi.encode(borrowerData), 0);
+        _finishPullUpstream();
+        return true;
+    }
+
+    function _brokerMorphoFlashLoan(
+        address morpho,
+        IERC3156FlashBorrowerGhostBridge borrower,
+        address token,
+        uint256 amount,
+        uint256 requestedSpread,
+        uint256 maxBorrowerFee,
+        bytes memory borrowerData
+    ) internal returns (bool) {
+        _requireContracts(morpho, address(borrower), token);
+        require(amount > 0, "amount_required");
+        require(requestedSpread > 0, "positive_spread_required");
+        uint256 borrowerFee = requestedSpread;
+        require(borrowerFee <= maxBorrowerFee, "borrower_fee_exceeds_max");
+        _begin(UpstreamKind.Morpho, morpho, address(borrower), token, amount, 0, borrowerFee, maxBorrowerFee, requestedSpread);
+        IMorphoGhostBridge(morpho).flashLoan(token, amount, abi.encode(token, borrowerData));
+        _finishPullUpstream();
+        return true;
+    }
+
+    function _brokerBalancerV2FlashLoan(
+        address vault,
+        IERC3156FlashBorrowerGhostBridge borrower,
+        address token,
+        uint256 amount,
+        uint256 requestedSpread,
+        uint256 maxBorrowerFee,
+        bytes memory borrowerData
+    ) internal returns (bool) {
         _requireContracts(vault, address(borrower), token);
         require(amount > 0, "amount_required");
-        _begin(UpstreamKind.BalancerV2, vault, address(borrower), token, amount, 0, 0, maxBorrowerFee);
+        require(requestedSpread > 0, "positive_spread_required");
+        _begin(UpstreamKind.BalancerV2, vault, address(borrower), token, amount, 0, 0, maxBorrowerFee, requestedSpread);
         address[] memory tokens = new address[](1);
         tokens[0] = token;
         uint256[] memory amounts = new uint256[](1);
@@ -286,7 +453,7 @@ contract CryptocrawlGhostWalletErc3156Bridge is
         _validateCallback(UpstreamKind.AaveV3, asset, amount);
         require(initiator == address(this), "unexpected_upstream_initiator");
         expectedUpstreamFee = premium;
-        expectedBorrowerFee = premium + _positiveSpread(amount);
+        expectedBorrowerFee = premium + expectedRequestedSpread;
         require(expectedBorrowerFee <= expectedMaxBorrowerFee, "borrower_fee_exceeds_max");
         _serviceBorrowerAndPreparePullRepayment(premium, abi.decode(params, (bytes)));
         return true;
@@ -310,7 +477,7 @@ contract CryptocrawlGhostWalletErc3156Bridge is
         _validateCallback(UpstreamKind.BalancerV2, tokens[0], amounts[0]);
         uint256 upstreamFee = feeAmounts[0];
         expectedUpstreamFee = upstreamFee;
-        expectedBorrowerFee = upstreamFee + _positiveSpread(expectedAmount);
+        expectedBorrowerFee = upstreamFee + expectedRequestedSpread;
         require(expectedBorrowerFee <= expectedMaxBorrowerFee, "borrower_fee_exceeds_max");
         _serviceBorrower(upstreamFee, abi.decode(userData, (bytes)));
         _safeTransfer(expectedToken, expectedLender, expectedAmount + upstreamFee);
@@ -328,8 +495,10 @@ contract CryptocrawlGhostWalletErc3156Bridge is
         uint256 amount,
         uint256 upstreamFee,
         uint256 borrowerFee,
-        uint256 maxBorrowerFee
+        uint256 maxBorrowerFee,
+        uint256 requestedSpread
     ) internal {
+        require(requestedSpread > 0, "positive_spread_required");
         require(maxBorrowerFee > upstreamFee, "nonpositive_broker_spread");
         active = true;
         callbackCompleted = false;
@@ -342,6 +511,7 @@ contract CryptocrawlGhostWalletErc3156Bridge is
         expectedUpstreamFee = upstreamFee;
         expectedBorrowerFee = borrowerFee;
         expectedMaxBorrowerFee = maxBorrowerFee;
+        expectedRequestedSpread = requestedSpread;
         expectedStartingBalance = IERC20GhostBridge(token).balanceOf(address(this));
     }
 
@@ -411,6 +581,11 @@ contract CryptocrawlGhostWalletErc3156Bridge is
         return configured > 0 ? configured : 1;
     }
 
+    function _effectiveSpread(uint256 amount, uint256 requestedSpread) internal view returns (uint256) {
+        uint256 floorSpread = _positiveSpread(amount);
+        return requestedSpread > floorSpread ? requestedSpread : floorSpread;
+    }
+
     function _requireContracts(address lender, address borrower, address token) internal view {
         require(lender.code.length > 0, "lender_contract_required");
         if (borrower != address(1)) require(borrower.code.length > 0, "borrower_contract_required");
@@ -429,6 +604,7 @@ contract CryptocrawlGhostWalletErc3156Bridge is
         expectedUpstreamFee = 0;
         expectedBorrowerFee = 0;
         expectedMaxBorrowerFee = 0;
+        expectedRequestedSpread = 0;
         expectedStartingBalance = 0;
     }
 
