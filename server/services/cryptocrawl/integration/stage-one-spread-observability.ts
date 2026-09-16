@@ -64,11 +64,20 @@ export interface StageOneTopologySpreadSnapshot {
   measuredSpreadCount: number;
   currentMeasuredSpreadCount: number;
   stageOneSpreadVisible: boolean;
+  /** Legacy visibility field retained for compatibility; see explicit gross/net fields below. */
   bestMeasuredSpreadBps: number | null;
   closestToZeroSpreadBps: number | null;
   latestMeasuredSpreadBps: number | null;
   latestMeasuredAt: number | null;
   latestSource: SpreadSource | null;
+  bestMeasuredGrossBps: number | null;
+  bestMeasuredNetBps: number | null;
+  latestMeasuredGrossBps: number | null;
+  latestMeasuredNetBps: number | null;
+  grossPositiveCount: number;
+  netPositiveCount: number;
+  grossPositiveNetNonpositiveCount: number;
+  explicitGrossNetTelemetry: true;
   lockedBaselineInvariant: boolean;
   lockedLastKnownMeasurement: boolean;
   lockedMeasurementAgeMs: number | null;
@@ -117,6 +126,26 @@ function intervalMs(): number {
   return Number.isFinite(configured) ? Math.max(1_000, Math.min(60_000, Math.trunc(configured))) : 5_000;
 }
 
+function candidateGrossBps(candidate: MeasuredCandidate): number | null {
+  const canonicalGross = finite(candidate.canonicalBps.grossBps);
+  if (canonicalGross !== null) return canonicalGross;
+  const directGross = finite(candidate.economics.grossProfitBps);
+  if (directGross !== null) return directGross;
+  const grossUsd = finite(candidate.economics.grossProfitUsd);
+  const notionalUsd = finite(candidate.economics.notionalUsd) ?? finite(candidate.canonicalBps.notionalUsd);
+  if (grossUsd !== null && notionalUsd !== null && notionalUsd > 0) {
+    const bps = grossUsd / notionalUsd * 10_000;
+    return Number.isFinite(bps) ? bps : null;
+  }
+  return null;
+}
+
+function candidateNetBps(candidate: MeasuredCandidate): number | null {
+  const canonicalNet = finite(candidate.canonicalBps.netBps);
+  if (canonicalNet !== null) return canonicalNet;
+  return finite(candidate.economics.netProfitBps);
+}
+
 function candidateMeasuredSpread(candidate: MeasuredCandidate): { spreadBps: number; source: MeasuredSpreadPoint['source'] } | null {
   const canonicalGross = finite(candidate.canonicalBps.grossBps);
   if (canonicalGross !== null) return { spreadBps: canonicalGross, source: 'canonical_gross_bps' };
@@ -133,7 +162,7 @@ function candidateMeasuredSpread(candidate: MeasuredCandidate): { spreadBps: num
     }
   }
 
-  const canonicalNet = finite(candidate.canonicalBps.netBps);
+  const canonicalNet = candidateNetBps(candidate);
   if (canonicalNet !== null) return { spreadBps: canonicalNet, source: 'canonical_net_bps_fallback' };
   return null;
 }
@@ -208,16 +237,35 @@ function recompute(): StageOneSpreadSnapshot {
     const topologyPoints = points
       .filter(point => point.topology === topology)
       .sort((left, right) => right.observedAt - left.observedAt);
+    const topologyCandidates = registryCandidates
+      .filter(candidate => candidate.topology === topology)
+      .sort((left, right) => right.observedAt - left.observedAt);
     const values = topologyPoints.map(point => point.spreadBps);
     const latestPoint = topologyPoints[0] || null;
     const locked = lockedMeasuredSpreads.get(topology) ?? null;
     const visibleSpread = latestPoint?.spreadBps ?? locked?.spreadBps ?? null;
     const observationsInRetentionWindow = topology === 'CEX_CEX'
-      ? Math.max(
-          registryCandidates.filter(candidate => candidate.topology === topology).length,
-          cexPoints.length,
-        )
-      : registryCandidates.filter(candidate => candidate.topology === topology).length;
+      ? Math.max(topologyCandidates.length, cexPoints.length)
+      : topologyCandidates.length;
+
+    const grossPairs = topologyCandidates
+      .map(candidate => ({ candidate, value: candidateGrossBps(candidate) }))
+      .filter((entry): entry is { candidate: MeasuredCandidate; value: number } => entry.value !== null);
+    const netPairs = topologyCandidates
+      .map(candidate => ({ candidate, value: candidateNetBps(candidate) }))
+      .filter((entry): entry is { candidate: MeasuredCandidate; value: number } => entry.value !== null);
+    // CEX four-mode evidence is explicitly net-after-exchange-fees; include it only
+    // in net telemetry rather than silently calling it gross.
+    const cexNetValues = topology === 'CEX_CEX' ? cexPoints.map(point => point.spreadBps) : [];
+    const grossValues = grossPairs.map(entry => entry.value);
+    const netValues = [...netPairs.map(entry => entry.value), ...cexNetValues];
+    const grossByOpportunity = new Map(grossPairs.map(entry => [entry.candidate.opportunityId, entry.value]));
+    const netByOpportunity = new Map(netPairs.map(entry => [entry.candidate.opportunityId, entry.value]));
+    let grossPositiveNetNonpositiveCount = 0;
+    for (const [opportunityId, gross] of grossByOpportunity) {
+      const net = netByOpportunity.get(opportunityId);
+      if (gross > 0 && net !== undefined && net <= 0) grossPositiveNetNonpositiveCount += 1;
+    }
 
     const snapshot: StageOneTopologySpreadSnapshot = {
       topology,
@@ -230,6 +278,14 @@ function recompute(): StageOneSpreadSnapshot {
       latestMeasuredSpreadBps: visibleSpread,
       latestMeasuredAt: latestPoint?.observedAt ?? locked?.observedAt ?? null,
       latestSource: latestPoint?.source ?? (locked ? 'locked_last_known_measured_bps' : null),
+      bestMeasuredGrossBps: grossValues.length ? Math.max(...grossValues) : null,
+      bestMeasuredNetBps: netValues.length ? Math.max(...netValues) : null,
+      latestMeasuredGrossBps: grossPairs[0]?.value ?? null,
+      latestMeasuredNetBps: netPairs[0]?.value ?? (cexNetValues[0] ?? null),
+      grossPositiveCount: grossValues.filter(value => value > 0).length,
+      netPositiveCount: netValues.filter(value => value > 0).length,
+      grossPositiveNetNonpositiveCount,
+      explicitGrossNetTelemetry: true,
       lockedBaselineInvariant: LOCKED_BASELINE_TOPOLOGIES.includes(topology),
       lockedLastKnownMeasurement: latestPoint === null && locked !== null,
       lockedMeasurementAgeMs: locked ? Math.max(0, now - locked.observedAt) : null,
@@ -270,6 +326,7 @@ function publish(): void {
     lockedBaselineTopologies: snapshot.lockedBaselineTopologies,
     lockedMeasuredTopologies: snapshot.lockedMeasuredTopologies,
     byTopology: Object.values(snapshot.byTopology),
+    grossAndNetReportedSeparately: true,
     recovery: getStageOneMeasurementRecoverySnapshot(),
     dexMempoolRepair: getStageOneDexMempoolRepairSnapshot(),
     authority: snapshot.authority,
@@ -301,6 +358,7 @@ export function ensureStageOneSpreadObservability(): void {
     currentWindowMs: currentWindowMs(),
     measurementRecoveryInstalled: true,
     dexMempoolRepairInstalled: true,
+    grossAndNetReportedSeparately: true,
     executionAuthority: false,
     economicMutationAuthority: false,
     staleEvidenceExecutionAuthority: false,
