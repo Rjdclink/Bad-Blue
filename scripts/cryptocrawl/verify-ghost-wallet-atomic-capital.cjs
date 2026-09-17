@@ -150,17 +150,21 @@ assert.match(fundingMesh, /hardSourceCountLimit: null/);
 assert.match(fundingMesh, /providerFailureRouteLocal: true/);
 assert.match(fundingMesh, /Promise\.allSettled/);
 
-// Autonomous candidate ranking stays bounded. Final execution economics are recomputed
-// from the exact sponsored UserOperation immediately before durable submission.
+// Autonomous candidate ranking stays bounded. Native estimation is functional preflight only;
+// exact sponsored UserOperation economics are the final strict-positive admission authority.
 assert.match(controller, /intermediaryRole: 'middleman_only'/);
 assert.match(controller, /controllerOwnsInitiation: true/);
-assert.match(controller, /provider\.call\(request\)/);
+assert.doesNotMatch(controller, /provider\.call\(request\)/);
 assert.match(controller, /provider\.estimateGas\(request\)/);
 assert.match(controller, /buildGhostWalletBorrowerTransactionWithSpread/);
-assert.match(controller, /strictPositiveAllInNetBeforeQueue: true/);
+assert.match(controller, /nativeEstimateBeforeQueue: 'functional_preflight_and_spread_hint_only'/);
+assert.match(controller, /nativeGasEconomicsVetoAuthority: false/);
+assert.match(controller, /pimlicoSponsoredUserOperationFinalEconomicsAuthority: true/);
+assert.match(controller, /strictPositiveAllInNetBeforeQueue: false/);
+assert.match(controller, /strictPositiveAllInNetBeforeSubmission: true/);
 assert.match(controller, /hardBpsProfitAdmissionFloor: false/);
 assert.match(controller, /configuredSpreadFloorDefaultBps: 0/);
-assert.match(controller, /perTransactionSpreadCalibrationFromExactGas: true/);
+assert.match(controller, /perTransactionSpreadCalibrationFromNativeHint: true/);
 assert.match(controller, /globalSpreadConfigurationTransactionRequired: false/);
 assert.match(controller, /signedMandateExecutionCountEnforced: true/);
 assert.match(controller, /signedMandateCadenceEnforced: true/);
