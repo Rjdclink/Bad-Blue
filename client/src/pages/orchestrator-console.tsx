@@ -36,7 +36,7 @@ import { apiRequest } from "@/lib/queryClient";
 
 /**
  * 4JI Orchestrator Admin Console - Access Zone B
- * Master Password: FORGEAI
+ * Authentication: canonical platform master session
  * Role: ORCHESTRATOR_ADMIN
  * Purpose: Merged Meta-AI Control Brain - unified 13+ model orchestration
  */
