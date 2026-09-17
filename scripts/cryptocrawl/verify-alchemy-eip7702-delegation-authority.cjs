@@ -6,9 +6,9 @@ const funding = fs.readFileSync('server/services/cryptocrawl/capital-free/dynami
 const proof = fs.readFileSync('server/services/cryptocrawl/runtime/system-owned-gas-funding-proof-wiring.ts', 'utf8');
 
 // Historical filename retained for compatibility. The active authority verified here
-// is Pimlico ERC-4337/EIP-7702, which is the sole APE bootstrap gas lane. Sponsorship
-// removes the upfront native-capital requirement, while provider billing remains a
-// canonical economic cost unless independently proven zero.
+// is Pimlico ERC-4337/EIP-7702, the sole APE bootstrap gas lane. Sponsorship removes
+// the upfront native-capital requirement, while provider billing remains a canonical
+// economic cost unless independently proven zero.
 assert.match(sponsorship, /APE_PIMLICO_API_KEY|PIMLICO_API_KEY/, 'canonical APE sponsorship must read Pimlico credentials');
 assert.match(sponsorship, /api\.pimlico\.io\/v2\//, 'canonical APE sponsorship must use Pimlico v2 RPC');
 assert.match(sponsorship, /pimlico_getUserOperationGasPrice/, 'canonical APE sponsorship must read Pimlico gas-price evidence');
