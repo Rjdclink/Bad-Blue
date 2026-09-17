@@ -9,8 +9,10 @@ import crypto from "crypto";
  * on an email address.
  */
 const MASTER_PASSWORD_SHA256 = "f885c6ded699d8c970055152f35d09fca76c14e76fcb22532e84934c8b5c1908";
-const MASTER_INTERNAL_EMAIL = "master@legalwhat.internal";
-const MASTER_USER_ID = "admin-master-root";
+export const MASTER_INTERNAL_EMAIL = "master@legalwhat.internal";
+export const MASTER_USER_ID = "admin-master-root";
+export const MASTER_SESSION_COOKIE = "legalwhat_master";
+const MASTER_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 function digest(value: string): string {
   return crypto.createHash("sha256").update(value || "").digest("hex");
@@ -97,4 +99,44 @@ export function generateMasterUserId(_email: string | null | undefined, _zone: A
  */
 export function getMasterUserEmail(_email: string | null | undefined, _zone: AccessZone = 'admin'): string {
   return MASTER_INTERNAL_EMAIL;
+}
+
+
+function masterSessionSecret(): string {
+  const secret = String(process.env.SESSION_SECRET || "").trim();
+  if (secret.length < 32) {
+    throw new Error("SESSION_SECRET is required for master session signing");
+  }
+  return secret;
+}
+
+function masterSessionSignature(expiresAt: number): string {
+  return crypto
+    .createHmac("sha256", masterSessionSecret())
+    .update(`master:${expiresAt}`)
+    .digest("base64url");
+}
+
+/**
+ * Short, server-signed stateless token used only for the password-only master
+ * session. It keeps administrative recovery independent from the ordinary user
+ * database while remaining bound to SESSION_SECRET and a finite lifetime.
+ */
+export function createMasterSessionToken(now = Date.now()): string {
+  const expiresAt = now + MASTER_SESSION_TTL_MS;
+  return `${expiresAt}.${masterSessionSignature(expiresAt)}`;
+}
+
+export function verifyMasterSessionToken(token: string | null | undefined, now = Date.now()): boolean {
+  if (!token) return false;
+  const [expiresRaw, signature, ...extra] = token.split(".");
+  if (extra.length > 0 || !expiresRaw || !signature) return false;
+  const expiresAt = Number(expiresRaw);
+  if (!Number.isSafeInteger(expiresAt) || expiresAt <= now) return false;
+  const expected = masterSessionSignature(expiresAt);
+  return safeEquals(signature, expected);
+}
+
+export function getMasterSessionMaxAgeSeconds(): number {
+  return Math.floor(MASTER_SESSION_TTL_MS / 1000);
 }
