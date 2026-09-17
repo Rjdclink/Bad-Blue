@@ -16,9 +16,15 @@ export interface StatelessLocalUser {
   hasPaidForAccess: boolean;
 }
 
-interface LocalSessionPayload extends StatelessLocalUser {
+export interface StatelessLocalSession {
+  id: string;
+}
+
+interface LocalSessionPayload {
   v: 1;
+  uid: string;
   exp: number;
+  nonce: string;
 }
 
 let client: SupabaseClient | null | undefined;
@@ -38,7 +44,13 @@ function primarySupabaseClient(): SupabaseClient {
 
   client = createClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-    global: { headers: { "X-Client-Info": "legalwhat-server-auth" } },
+    global: {
+      headers: { "X-Client-Info": "legalwhat-server-auth" },
+      fetch: (input, init) => fetch(input, {
+        ...init,
+        signal: AbortSignal.timeout(8_000),
+      }),
+    },
   });
   return client;
 }
@@ -64,6 +76,18 @@ function mapUser(row: any): StatelessLocalUser {
     status: String(row.status || "active"),
     hasPaidForAccess: row.has_paid_for_access !== false,
   };
+}
+
+export async function getLocalUserByIdHttp(userId: string): Promise<StatelessLocalUser | null> {
+  if (!userId) return null;
+  const supabase = primarySupabaseClient();
+  const { data, error } = await supabase
+    .from("users")
+    .select("id,email,first_name,last_name,status,has_paid_for_access")
+    .eq("id", userId)
+    .maybeSingle();
+  if (error) throw new Error(`User lookup failed: ${error.message}`);
+  return data ? mapUser(data) : null;
 }
 
 export async function authenticateLocalUserHttp(email: string, password: string): Promise<StatelessLocalUser | null> {
@@ -184,12 +208,17 @@ function safeEquals(left: string, right: string): boolean {
 }
 
 export function createLocalSessionToken(user: StatelessLocalUser, now = Date.now()): string {
-  const payload: LocalSessionPayload = { ...user, v: 1, exp: now + LOCAL_SESSION_TTL_MS };
+  const payload: LocalSessionPayload = {
+    v: 1,
+    uid: user.id,
+    exp: now + LOCAL_SESSION_TTL_MS,
+    nonce: crypto.randomBytes(24).toString("base64url"),
+  };
   const encoded = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
   return `${encoded}.${sign(encoded)}`;
 }
 
-export function verifyLocalSessionToken(token: string | null | undefined, now = Date.now()): StatelessLocalUser | null {
+export function verifyLocalSessionToken(token: string | null | undefined, now = Date.now()): StatelessLocalSession | null {
   if (!token) return null;
   const [encoded, signature, ...extra] = token.split(".");
   if (extra.length || !encoded || !signature || !safeEquals(signature, sign(encoded))) return null;
@@ -197,15 +226,8 @@ export function verifyLocalSessionToken(token: string | null | undefined, now = 
   try {
     const payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as LocalSessionPayload;
     if (payload.v !== 1 || !Number.isSafeInteger(payload.exp) || payload.exp <= now) return null;
-    if (!payload.id || !payload.email) return null;
-    return {
-      id: String(payload.id),
-      email: String(payload.email),
-      firstName: payload.firstName == null ? null : String(payload.firstName),
-      lastName: payload.lastName == null ? null : String(payload.lastName),
-      status: String(payload.status || "active"),
-      hasPaidForAccess: payload.hasPaidForAccess !== false,
-    };
+    if (!payload.uid || !/^[A-Za-z0-9_-]{20,}$/.test(payload.nonce || "")) return null;
+    return { id: String(payload.uid) };
   } catch {
     return null;
   }
