@@ -39,12 +39,18 @@ must(gas.includes("paymentSource: 'provider_sponsored'"), 'sponsored payment sou
 must(gas.includes('providerBillingLiability: true'), 'provider-fronted gas billing must remain a canonical economic liability unless independently proven zero');
 const billedSponsorBranch = gas.indexOf('if (sponsorConfiguredAndReady && !requireZeroOperatorCost)');
 const nativeFallbackBranch = gas.indexOf("if (nativeBalance >= reserveFloor && proof.nativeSystemOwnedProven === true)");
-must(billedSponsorBranch >= 0 && nativeFallbackBranch >= 0 && billedSponsorBranch < nativeFallbackBranch, 'configured provider sponsorship must be the primary zero-initial-capital gas lane before system-owned native fallback');
-must(gasSponsor.includes('ALCHEMY_API_KEY'), 'canonical sponsorship manager must read the configured Alchemy credential');
-must(gasSponsor.includes('ALCHEMY_GAS_POLICY_ID'), 'canonical sponsorship manager must read the configured Alchemy gas policy');
-must(gasSponsor.includes('wallet_prepareCalls') && gasSponsor.includes('wallet_sendPreparedCalls'), 'Alchemy sponsorship must use prepared sponsored calls rather than a synthetic readiness flag');
-must(gasProof.includes('config.sponsoredBootstrap && sponsorReady && !strictZeroOperatorCostRequired()'), 'ready sponsorship must bypass the native-balance RPC probe on the normal zero-initial-capital hot path');
-must(gasProof.indexOf('config.sponsoredBootstrap && sponsorReady && !strictZeroOperatorCostRequired()') < gasProof.indexOf('provider.getBalance(wallet.address)'), 'sponsored decision must be resolved before native balance I/O');
+must(billedSponsorBranch >= 0 && nativeFallbackBranch >= 0 && billedSponsorBranch < nativeFallbackBranch, 'configured provider sponsorship must remain the primary zero-initial-capital mode inside the generic funding selector');
+must(gasSponsor.includes('APE_PIMLICO_API_KEY') && gasSponsor.includes('PIMLICO_API_KEY'), 'canonical APE sponsorship manager must read Pimlico credentials');
+must(gasSponsor.includes('pm_sponsorUserOperation'), 'Pimlico paymaster sponsorship must be requested for the exact UserOperation');
+must(gasSponsor.includes('eth_estimateUserOperationGas') && gasSponsor.includes('eth_sendUserOperation'), 'Pimlico sponsorship must use measured ERC-4337 UserOperation gas and real submission');
+must(gasSponsor.includes('pimlico_getUserOperationGasPrice'), 'Stage One must consume Pimlico gas-price evidence rather than a synthetic zero-gas assumption');
+must(gasSponsor.includes('APE_PIMLICO_STAGE_ONE_OVERHEAD_GAS_UNITS'), 'Stage One must account for Pimlico/UserOperation overhead explicitly');
+must(gasSponsor.includes('APE_PIMLICO_SURCHARGE_BPS'), 'Pimlico provider billing surcharge must remain explicit in APE economics');
+must(gasProof.includes('Pimlico sponsorship is the only executable gas source'), 'canonical gas proof must state Pimlico-only bootstrap authority');
+must(gasProof.includes('if (selfFundedAuthority)'), 'self-funded authority must be proven before native gas can replace Pimlico');
+must(gasProof.indexOf('if (selfFundedAuthority)') < gasProof.indexOf('const readiness = runtime.gasSponsor.getReadiness()'), 'durably proven self-funded gas must take precedence over Pimlico only after the transition threshold is met');
+must(gasProof.includes('Pimlico is the sole APE bootstrap gas provider and is unavailable'), 'missing Pimlico must fail closed during bootstrap rather than falling back to operator/pre-existing native gas');
+must(gasProof.includes('APE_SELF_FUNDED_GAS_RUNWAY_MULTIPLIER'), 'Pimlico retirement must require a durable self-funded gas runway');
 // Verify the semantic provenance states independently instead of coupling this
 // proof to one implementation expression. Refactors may legitimately replace a
 // ternary with guarded branches, but neither state may disappear.
