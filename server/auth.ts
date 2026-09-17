@@ -20,6 +20,16 @@ import {
   getMasterSessionMaxAgeSeconds,
   verifyMasterSessionToken,
 } from "./masterPassword";
+import { authRateLimit } from "./rateLimit";
+import {
+  LOCAL_SESSION_COOKIE,
+  authenticateLocalUserHttp,
+  createLocalSessionToken,
+  getLocalSessionMaxAgeSeconds,
+  registerLocalUserHttp,
+  verifyLocalSessionToken,
+  type StatelessLocalUser,
+} from "./statelessLocalAuth";
 
 
 function readCookie(req: any, name: string): string | null {
@@ -70,6 +80,29 @@ function attachMasterIdentity(req: any): boolean {
   return true;
 }
 
+function localSessionUser(req: any): StatelessLocalUser | null {
+  return verifyLocalSessionToken(readCookie(req, LOCAL_SESSION_COOKIE));
+}
+
+function attachLocalIdentity(req: any): boolean {
+  const user = localSessionUser(req);
+  if (!user) return false;
+  req.user = {
+    id: user.id,
+    claims: {
+      sub: user.id,
+      email: user.email,
+      firstName: user.firstName ?? undefined,
+      lastName: user.lastName ?? undefined,
+    },
+    isAdmin: false,
+    isAdminBypass: false,
+    isMasterBypass: false,
+  } as Express.User;
+  req.isAuthenticated = () => true;
+  return true;
+}
+
 function setMasterCookie(res: any, token: string): void {
   const secure = getConfig().NODE_ENV === "production";
   const parts = [
@@ -80,7 +113,7 @@ function setMasterCookie(res: any, token: string): void {
     `Max-Age=${getMasterSessionMaxAgeSeconds()}`,
   ];
   if (secure) parts.push("Secure");
-  res.setHeader("Set-Cookie", parts.join("; "));
+  res.append("Set-Cookie", parts.join("; "));
 }
 
 function clearMasterCookie(res: any): void {
@@ -93,7 +126,33 @@ function clearMasterCookie(res: any): void {
     "Max-Age=0",
   ];
   if (secure) parts.push("Secure");
-  res.setHeader("Set-Cookie", parts.join("; "));
+  res.append("Set-Cookie", parts.join("; "));
+}
+
+function setLocalCookie(res: any, token: string): void {
+  const secure = getConfig().NODE_ENV === "production";
+  const parts = [
+    `${LOCAL_SESSION_COOKIE}=${encodeURIComponent(token)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Max-Age=${getLocalSessionMaxAgeSeconds()}`,
+  ];
+  if (secure) parts.push("Secure");
+  res.append("Set-Cookie", parts.join("; "));
+}
+
+function clearLocalCookie(res: any): void {
+  const secure = getConfig().NODE_ENV === "production";
+  const parts = [
+    `${LOCAL_SESSION_COOKIE}=`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    "Max-Age=0",
+  ];
+  if (secure) parts.push("Secure");
+  res.append("Set-Cookie", parts.join("; "));
 }
 
 export function getSession() {
@@ -140,7 +199,7 @@ export async function setupAuth(app: Express) {
   const passportInit = passport.initialize();
   const passportSession = passport.session();
 
-  app.post("/api/master-login", (req, res) => {
+  app.post("/api/master-login", authRateLimit, (req, res) => {
     const password = typeof req.body?.password === "string" ? req.body.password : "";
     const accessZone = checkMasterPassword(password);
     if (!accessZone) {
@@ -149,6 +208,7 @@ export async function setupAuth(app: Express) {
 
     const zoneConfig = ACCESS_ZONES[accessZone];
     setMasterCookie(res, createMasterSessionToken());
+    clearLocalCookie(res);
     return res.json({
       success: true,
       message: "Login successful",
@@ -161,11 +221,51 @@ export async function setupAuth(app: Express) {
     });
   });
 
+  app.post("/api/local-login", authRateLimit, async (req, res) => {
+    try {
+      const email = typeof req.body?.email === "string" ? req.body.email : "";
+      const password = typeof req.body?.password === "string" ? req.body.password : "";
+      const user = await authenticateLocalUserHttp(email, password);
+      if (!user) return res.status(401).json({ message: "Invalid email or password" });
+
+      setLocalCookie(res, createLocalSessionToken(user));
+      clearMasterCookie(res);
+      return res.json({
+        success: true,
+        user,
+        hasActiveSubscription: user.hasPaidForAccess && user.status === "active",
+      });
+    } catch (error) {
+      console.error("[AUTH] HTTP local login unavailable:", error instanceof Error ? error.message : String(error));
+      return res.status(503).json({ message: "Authentication service is temporarily unavailable" });
+    }
+  });
+
+  app.post("/api/local-register", authRateLimit, async (req, res) => {
+    try {
+      const user = await registerLocalUserHttp(
+        typeof req.body?.email === "string" ? req.body.email : "",
+        typeof req.body?.password === "string" ? req.body.password : "",
+        typeof req.body?.firstName === "string" ? req.body.firstName : "",
+        typeof req.body?.lastName === "string" ? req.body.lastName : "",
+      );
+      setLocalCookie(res, createLocalSessionToken(user));
+      clearMasterCookie(res);
+      return res.status(201).json({ success: true, user, hasActiveSubscription: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Registration failed";
+      if (message === "Email already registered") return res.status(409).json({ message });
+      if (/required|valid email|at least 8 characters/i.test(message)) return res.status(400).json({ message });
+      console.error("[AUTH] HTTP local registration unavailable:", message);
+      return res.status(503).json({ message: "Registration service is temporarily unavailable" });
+    }
+  });
+
   // Resolve master identity before any database-backed session lookup. This
   // keeps master recovery available even when the ordinary user DB is degraded.
   app.use((req, res, next) => {
-    if (attachMasterIdentity(req)) return next();
-    if (req.path === "/api/master-login") return next();
+    if (attachMasterIdentity(req) || attachLocalIdentity(req)) return next();
+    if (req.path === "/api/master-login" || req.path === "/api/local-login" || req.path === "/api/local-register") return next();
     // Only apply session middleware to API routes or specific auth paths
     // NOTE: /admin/crypto is protected by cryptoAuthMiddleware which relies on passport sessions.
     // If we don't attach sessions here, crypto admin routes will always return 401 even with a valid cookie.
@@ -195,17 +295,33 @@ export async function setupAuth(app: Express) {
   // Master-aware auth status/logout short-circuits must be registered before
   // the ordinary database-backed routes are installed later in registerRoutes.
   app.get("/api/auth/user", (req, res, next) => {
-    if (!hasValidMasterCookie(req)) return next();
-    return res.json(masterPlatformUser());
+    if (hasValidMasterCookie(req)) return res.json(masterPlatformUser());
+    const localUser = localSessionUser(req);
+    if (!localUser) return next();
+    return res.json({
+      id: localUser.id,
+      email: localUser.email,
+      firstName: localUser.firstName,
+      lastName: localUser.lastName,
+      profileImageUrl: null,
+      status: localUser.status,
+      hasPaidForAccess: localUser.hasPaidForAccess,
+      accessPaymentId: null,
+      accessPaidAt: null,
+      lastLoginAt: null,
+      createdAt: null,
+      updatedAt: null,
+    });
   });
 
-  const masterLogout = (req: any, res: any, next: any) => {
-    if (!hasValidMasterCookie(req)) return next();
+  const statelessLogout = (req: any, res: any, next: any) => {
+    if (!hasValidMasterCookie(req) && !localSessionUser(req)) return next();
     clearMasterCookie(res);
+    clearLocalCookie(res);
     return res.json({ success: true });
   };
-  app.get("/api/auth/logout", masterLogout);
-  app.post("/api/auth/logout", masterLogout);
+  app.get("/api/auth/logout", statelessLogout);
+  app.post("/api/auth/logout", statelessLogout);
 
   passport.serializeUser((user: Express.User, cb) => cb(null, normalizePlatformUser(user)));
   passport.deserializeUser((user: Express.User, cb) => cb(null, normalizePlatformUser(user)));
