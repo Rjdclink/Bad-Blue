@@ -10,13 +10,12 @@ import { MaintenanceMode } from "@/components/MaintenanceMode";
 import { lazy, Suspense, useEffect, useState, Component, ErrorInfo, ReactNode } from "react";
 import { AuthLoadingSkeleton, PageSkeleton } from "@/components/ui/page-skeleton";
 import { useGlobalGestureNavigation } from "@/hooks/useGlobalGestureNavigation";
+import MasterPanelNavigator from "@/components/MasterPanelNavigator";
 
-// Performance monitoring
 if (typeof window !== 'undefined') {
   console.log('[Performance] App component loading...');
 }
 
-// Error Boundary to catch lazy loading failures
 interface ErrorBoundaryState {
   hasError: boolean;
   error?: Error;
@@ -44,8 +43,8 @@ class ErrorBoundary extends Component<{ children: ReactNode; fallback?: ReactNod
           <div className="text-center p-8">
             <h1 className="text-2xl font-bold text-destructive mb-4">Something went wrong</h1>
             <p className="text-muted-foreground mb-4">Please try refreshing the page</p>
-            <button 
-              onClick={() => window.location.reload()} 
+            <button
+              onClick={() => window.location.reload()}
               className="px-4 py-2 bg-primary text-primary-foreground rounded-md"
             >
               Refresh Page
@@ -58,7 +57,6 @@ class ErrorBoundary extends Component<{ children: ReactNode; fallback?: ReactNod
   }
 }
 
-// Helper for lazy loading with error handling and retry
 function lazyWithRetry<T extends { default: React.ComponentType<any> }>(
   importFn: () => Promise<T>,
   chunkName?: string
@@ -71,8 +69,6 @@ function lazyWithRetry<T extends { default: React.ComponentType<any> }>(
   );
 }
 
-// Lazy load all pages for better performance
-// Critical pages loaded with higher priority
 const Landing = lazyWithRetry(() => {
   console.log('[Performance] Loading Landing page chunk...');
   return import("@/pages/landing");
@@ -84,7 +80,6 @@ const Contact = lazyWithRetry(() => import("@/pages/contact"), 'Contact');
 const Privacy = lazyWithRetry(() => import("@/pages/privacy"), 'Privacy');
 const Terms = lazyWithRetry(() => import("@/pages/terms"), 'Terms');
 
-// Feature pages - loaded on demand
 const OfficerSearchPage = lazyWithRetry(() => import("@/pages/officer-search"), 'OfficerSearch');
 const OfficerInfo = lazyWithRetry(() => import("@/pages/officer"), 'OfficerInfo');
 const ComplaintForm = lazyWithRetry(() => import("@/pages/complaint-form"), 'ComplaintForm');
@@ -103,57 +98,24 @@ const EvidenceHub = lazyWithRetry(() => import("@/pages/evidence-hub"), 'Evidenc
 const PetitionEdit = lazyWithRetry(() => import("@/pages/petition-edit"), 'PetitionEdit');
 const LegalConsultationPage = lazyWithRetry(() => import("@/pages/legal-consultation"), 'LegalConsultation');
 const LegalDocumentCreator = lazyWithRetry(() => import("@/pages/legal-document-creator"), 'LegalDocumentCreator');
-
-// New LegalWhat Welcome Page - Stage 1B/1C
 const WelcomePage = lazyWithRetry(() => import("@/pages/welcome"), 'WelcomePage');
-
-// Legal Tools Page - Stage 4
 const LegalToolsPage = lazyWithRetry(() => import("@/pages/legal-tools"), 'LegalTools');
-
-// People Finder Page - Global Identity Intelligence
 const PeopleFinderPage = lazyWithRetry(() => import("@/pages/people-finder"), 'PeopleFinder');
-
-// PANTHEON Page - Advanced Intelligence Platform
 const PantheonPage = lazyWithRetry(() => import("@/pages/pantheon"), 'Pantheon');
-
-// Domain Consultation Page - 4JI Orchestrator Integration (Now using Legal Consultation)
 const ConsultationPage = lazyWithRetry(() => import("@/pages/legal-consultation"), 'Consultation');
-
-// LEXARA Viewport - Full-Page AI Legal Consultation (Production, FULL AUTO)
 const LexaraViewport = lazyWithRetry(() => import("@/components/LexaraViewport"), 'LexaraViewport');
-
-// SPECTRA - LEXARA + GeoConsole + People Radar
 const SpectraPage = lazyWithRetry(() => import("@/pages/spectra"), 'Spectra');
-
-// DEV-ONLY: GeoConsole layout preview (UI verification without auth)
 const GeoConsolePage = lazyWithRetry(() => import("@/pages/geoconsole"), 'GeoConsole');
-
-// Subscription Success Page
 const SubscriptionSuccess = lazyWithRetry(() => import("@/pages/subscription-success"), 'SubscriptionSuccess');
-
-// FAQ Page
 const FAQPage = lazyWithRetry(() => import("@/pages/faq"), 'FAQ');
-
-// Location Intelligence Page - Interactive Heatmap Dashboard
 const LocationIntelPage = lazyWithRetry(() => import("@/pages/location-intel"), 'LocationIntel');
-
-// TSHPE - Triangulated Satellite-Hybrid Positioning Engine
 const TSHPELocatorPage = lazyWithRetry(() => import("@/pages/tshpe-locator"), 'TSHPELocator');
-
-// Nationwide Inmate Locator Page
 const InmateLocatorPage = lazyWithRetry(() => import("@/pages/inmate-locator"), 'InmateLocator');
-
-// V2 Pages - Clean implementations (Rule 1: New route, new page component)
-// No AppLayout, no feature guards, no auth gates, no global error boundary
 const InmateLocatorV2Page = lazyWithRetry(() => import("@/pages/inmate-locator-v2"), 'InmateLocatorV2');
 const CryptoCrawlerV2Dashboard = lazyWithRetry(() => import("@/pages/cryptocrawler-v2"), 'CryptoCrawlerV2');
 const ControlRoomPage = lazyWithRetry(() => import("@/pages/control-room"), 'ControlRoom');
 const OrchestratorConsole = lazyWithRetry(() => import("@/pages/orchestrator-console"), 'OrchestratorConsole');
-
-// PANTHEON Administrator - protected by the platform master session
 const AdminConsole = lazyWithRetry(() => import("@/pages/admin-console"), 'AdminConsole');
-
-// Admin pages - lowest priority
 const AdminPetitions = lazyWithRetry(() => import("@/pages/admin-petitions"), 'AdminPetitions');
 const AdminLawsuits = lazyWithRetry(() => import("@/pages/admin-lawsuits"), 'AdminLawsuits');
 const AdminComplaints = lazyWithRetry(() => import("@/pages/admin-complaints"), 'AdminComplaints');
@@ -164,23 +126,15 @@ const AdminWorkerLogs = lazyWithRetry(() => import("@/pages/admin-worker-logs"),
 const AdminUsers = lazyWithRetry(() => import("@/pages/admin-users"), 'AdminUsers');
 const AdminEvidenceHub = lazyWithRetry(() => import("@/pages/admin-evidence-hub"), 'AdminEvidenceHub');
 
-// Loading fallback component with better UX
 const PageLoader = () => <PageSkeleton />;
 
 function GeoConsoleRedirect() {
   const [, setLocation] = useLocation();
-
   useEffect(() => {
-    // Redirect geo-console to legal-consultation without forcing a full page reload
     setLocation('/legal-consultation?geo=true', { replace: true });
   }, [setLocation]);
-
   return null;
 }
-
-// ----------------------------------------------------------------------------
-// Admin feature gating (client-side, controlled by Administrator Console)
-// ----------------------------------------------------------------------------
 
 const ADMIN_FEATURE_FLAGS_KEY = "adminFeatureFlags";
 
@@ -207,13 +161,11 @@ function useAdminFeatureEnabled(feature: "cryptocrawler" | "monteCarlo" | "react
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-
     const sync = () => setEnabled(readAdminFeatureFlags()[feature]);
     const onStorage = (e: StorageEvent) => {
       if (e.key === ADMIN_FEATURE_FLAGS_KEY) sync();
     };
     const onCustom = () => sync();
-
     window.addEventListener("storage", onStorage);
     window.addEventListener("adminFeatureFlagsChanged", onCustom as any);
     return () => {
@@ -225,29 +177,22 @@ function useAdminFeatureEnabled(feature: "cryptocrawler" | "monteCarlo" | "react
   return enabled;
 }
 
-function FeatureGate({
-  feature,
-  children,
-}: {
-  feature: "cryptocrawler" | "monteCarlo" | "reactor";
-  children: ReactNode;
-}) {
+function FeatureGate({ feature, children }: { feature: "cryptocrawler" | "monteCarlo" | "reactor"; children: ReactNode }) {
   const enabled = useAdminFeatureEnabled(feature);
+  const { user } = useAuth();
+  const isMasterSession = Boolean((user as any)?.isMasterBypass);
   const [, setLocation] = useLocation();
 
-  if (enabled) return <>{children}</>;
+  // Master access is the root administrative authority and must never be hidden
+  // by client-side feature toggles.
+  if (enabled || isMasterSession) return <>{children}</>;
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-6">
       <div className="max-w-md w-full text-center border rounded-lg p-6 bg-card">
         <h1 className="text-xl font-semibold mb-2">Access Disabled</h1>
-        <p className="text-sm text-muted-foreground mb-4">
-          This surface has been disabled by the Administrator control panel.
-        </p>
-        <button
-          onClick={() => setLocation("/administrator")}
-          className="px-4 py-2 bg-primary text-primary-foreground rounded-md w-full"
-        >
+        <p className="text-sm text-muted-foreground mb-4">This surface has been disabled by the Administrator control panel.</p>
+        <button onClick={() => setLocation("/administrator")} className="px-4 py-2 bg-primary text-primary-foreground rounded-md w-full">
           Go to Administrator
         </button>
       </div>
@@ -256,190 +201,130 @@ function FeatureGate({
 }
 
 function GatedCryptoCrawlerV2() {
-  return (
-    <FeatureGate feature="cryptocrawler">
-      <CryptoCrawlerV2Dashboard />
-    </FeatureGate>
-  );
+  return <FeatureGate feature="cryptocrawler"><CryptoCrawlerV2Dashboard /></FeatureGate>;
 }
 
 function GatedOrchestratorConsole() {
-  return (
-    <FeatureGate feature="monteCarlo">
-      <OrchestratorConsole />
-    </FeatureGate>
-  );
+  return <FeatureGate feature="monteCarlo"><OrchestratorConsole /></FeatureGate>;
 }
 
 function GatedControlRoom() {
-  return (
-    <FeatureGate feature="reactor">
-      <ControlRoomPage />
-    </FeatureGate>
-  );
+  return <FeatureGate feature="reactor"><ControlRoomPage /></FeatureGate>;
 }
 
 function Router() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { user, isAuthenticated, isLoading } = useAuth();
+  const isMasterSession = Boolean((user as any)?.isMasterBypass);
 
-  // Global navigation contract (mobile-first, absolute)
-  // Swipe Up    -> Welcome / Overview
-  // Swipe Left  -> Monte Carlo
-  // Swipe Right -> CryptoCrawler
-  // Swipe Down / PageDown -> Control Room
+  // Swipe routing remains available to ordinary authenticated sessions, but is
+  // deliberately disabled for the master shell. On mobile, vertical scrolling
+  // must never act like master Back/Forward navigation.
   useGlobalGestureNavigation({
     up: "/welcome",
     left: "/orchestrator-console",
     right: "/cryptocrawler-v2",
     down: "/control-room",
-    enabled: isAuthenticated,
+    enabled: isAuthenticated && !isMasterSession,
   });
-  
-  // Performance monitoring for auth check
+
   useEffect(() => {
     if (!isLoading) {
       console.log('[Performance] Auth check completed. User authenticated:', isAuthenticated);
     }
   }, [isLoading, isAuthenticated]);
-  
-  // Check for maintenance mode every 30 seconds
+
   const { data: maintenanceStatus } = useQuery<{ maintenanceMode: boolean }>({
     queryKey: ['/api/maintenance-status'],
-    refetchInterval: 30000, // Check every 30 seconds
+    refetchInterval: 30000,
     refetchIntervalInBackground: true,
   });
 
-  // Use better loading skeleton for auth loading
-  if (isLoading) {
-    return <AuthLoadingSkeleton />;
-  }
-  
-  // Show maintenance mode screen if system is under maintenance
-  if (maintenanceStatus?.maintenanceMode) {
-    return <MaintenanceMode />;
-  }
+  if (isLoading) return <AuthLoadingSkeleton />;
+  if (maintenanceStatus?.maintenanceMode) return <MaintenanceMode />;
 
   return (
     <Suspense fallback={<PageLoader />}>
-      <Switch>
-        {/* LegalWhat Platform Landing Page - Public Entry Point */}
-        <Route path="/" component={Landing} />
-        <Route path="/landing" component={Landing} />
+      <>
+        {isMasterSession && <MasterPanelNavigator />}
+        <Switch>
+          <Route path="/" component={Landing} />
+          <Route path="/landing" component={Landing} />
+          {import.meta.env.DEV && <Route path="/geoconsole" component={GeoConsolePage} />}
 
-        {/* DEV-ONLY: GeoConsole layout surface (no auth required) */}
-        {import.meta.env.DEV && <Route path="/geoconsole" component={GeoConsolePage} />}
-        
-        {/* Public routes - accessible to everyone */}
-        <Route path="/subscription-success" component={SubscriptionSuccess} />
-        <Route path="/control-room" component={GatedControlRoom} />
-        <Route path="/orchestrator-console" component={GatedOrchestratorConsole} />
-        
-        {/* Other public routes */}
-        <Route path="/login" component={Login} />
-        <Route path="/contact" component={Contact} />
-        <Route path="/support" component={Contact} />
-        <Route path="/privacy" component={Privacy} />
-        <Route path="/terms" component={Terms} />
-        <Route path="/legal-consultation" component={LegalConsultationPage} />
-        <Route path="/faq" component={FAQPage} />
-        
-        {/* Public petition page - accessible without authentication */}
-        <Route path="/petition/:slug" component={PetitionDetail} />
+          <Route path="/subscription-success" component={SubscriptionSuccess} />
+          <Route path="/control-room" component={GatedControlRoom} />
+          <Route path="/orchestrator-console" component={GatedOrchestratorConsole} />
+          <Route path="/login" component={Login} />
+          <Route path="/contact" component={Contact} />
+          <Route path="/support" component={Contact} />
+          <Route path="/privacy" component={Privacy} />
+          <Route path="/terms" component={Terms} />
+          <Route path="/legal-consultation" component={LegalConsultationPage} />
+          <Route path="/faq" component={FAQPage} />
+          <Route path="/petition/:slug" component={PetitionDetail} />
 
-        {/* Protected routes - only accessible when authenticated */}
-        {isAuthenticated ? (
-          <>
-            {/* PANTHEON ADMINISTRATOR - Single Master Password Access */}
-            {/* Email: rjdclink@outlook.com, Password: SARBEAR */}
-            <Route path="/administrator" component={AdminConsole} />
-            {/* Stable alias route (fixes navigation/bookmarks) */}
-            <Route path="/admin" component={AdminConsole} />
-            
-            {/* Welcome Page - LegalWhat law type selection (post-login) */}
-            <Route path="/welcome" component={WelcomePage} />
-            
-            {/* Legal Tools Page - Stage 4 */}
-            <Route path="/legal-tools" component={LegalToolsPage} />
-            
-            {/* People Finder - Global Identity Intelligence */}
-            <Route path="/people-finder" component={PeopleFinderPage} />
-            
-            {/* PANTHEON - Advanced Intelligence Platform */}
-            <Route path="/pantheon" component={PantheonPage} />
-            
-            {/* LEXARA Viewport - REMOVED: legal-consultation page is the only LEXARA interface */}
-            {/* <Route path="/lexara" component={LexaraViewport} /> */}
-            
-            {/* SPECTRA - LEXARA + GeoConsole + People Radar */}
-            <Route path="/spectra" component={SpectraPage} />
-            
-            {/* GEO Console - Redirects to legal-consultation */}
-            <Route path="/geo-console" component={GeoConsoleRedirect} />
-            
-            {/* Domain Consultation - 4JI Orchestrator Integration */}
-            <Route path="/legal-consultation/:domainId" component={ConsultationPage} />
-            
-            {/* Location Intelligence - Interactive Heatmap Dashboard */}
-            <Route path="/location-intel" component={LocationIntelPage} />
-            
-            {/* TSHPE - Triangulated Satellite-Hybrid Positioning Engine */}
-            <Route path="/tshpe" component={TSHPELocatorPage} />
-            <Route path="/tshpe-locator" component={TSHPELocatorPage} />
-            <Route path="/positioning" component={TSHPELocatorPage} />
-            
-            {/* Nationwide Inmate Locator */}
-            <Route path="/inmate-locator" component={InmateLocatorPage} />
-            <Route path="/inmate-locator/dashboard" component={InmateLocatorPage} />
-            
-            {/* V2 Pages - Clean implementations without wrappers */}
-            <Route path="/inmate-locator-v2" component={InmateLocatorV2Page} />
-            {/* Stable alias for invariant scripts + bookmarks */}
-            <Route path="/cryptocrawler" component={GatedCryptoCrawlerV2} />
-            <Route path="/cryptocrawler-v2" component={GatedCryptoCrawlerV2} />
-            
-            {/* BadBlue routes - Law Enforcement Accountability */}
-            <Route path="/badblue" component={Home} />
-            <Route path="/home" component={Home} />
-            <Route path="/dashboard" component={Home} />
-            <Route path="/officer-search" component={OfficerSearchPage} />
-            <Route path="/officer/:id" component={OfficerInfo} />
-            <Route path="/complaints" component={Complaints} />
-            <Route path="/complaint-form" component={ComplaintForm} />
-            <Route path="/complaint" component={ComplaintForm} />
-            <Route path="/complaint/:id" component={ComplaintDetail} />
-            <Route path="/lawsuit-form" component={LawsuitForm} />
-            <Route path="/lawsuit" component={LawsuitForm} />
-            <Route path="/lawsuit/:id" component={LawsuitDetail} />
-            <Route path="/petition-form" component={PetitionForm} />
-            <Route path="/petition" component={PetitionForm} />
-            <Route path="/petition-workflow" component={PetitionWorkflow} />
-            <Route path="/petitions" component={Petitions} />
-            <Route path="/foia-request" component={FOIARequestForm} />
-            <Route path="/foia" component={FOIARequestForm} />
-            <Route path="/legal-document-creator" component={LegalDocumentCreator} />
-            <Route path="/admin-petitions" component={AdminPetitions} />
-            <Route path="/admin-lawsuits" component={AdminLawsuits} />
-            <Route path="/admin-complaints" component={AdminComplaints} />
-            <Route path="/admin-foia" component={AdminFOIA} />
-            <Route path="/admin-email" component={AdminEmail} />
-            <Route path="/admin-worker-logs" component={AdminWorkerLogs} />
-            <Route path="/admin-subagent" component={AdminSubAgent} />
-            <Route path="/ai-subagent" component={AdminSubAgent} />
-            <Route path="/admin-users" component={AdminUsers} />
-            <Route path="/admin-evidence-hub" component={AdminEvidenceHub} />
-            <Route path="/petition-edit/:id" component={PetitionEdit} />
-            <Route path="/confirmation/:type/:id" component={Confirmation} />
-            <Route path="/history" component={History} />
-            <Route path="/evidence-hub" component={EvidenceHub} />
-          </>
-        ) : (
-          <Route path="/welcome">
-            <Redirect to="/login" />
-          </Route>
-        )}
+          {isAuthenticated ? (
+            <>
+              <Route path="/administrator" component={AdminConsole} />
+              <Route path="/admin" component={AdminConsole} />
+              <Route path="/welcome" component={WelcomePage} />
+              <Route path="/legal-tools" component={LegalToolsPage} />
+              <Route path="/people-finder" component={PeopleFinderPage} />
+              <Route path="/pantheon" component={PantheonPage} />
+              {/* LEXARA Viewport intentionally remains retired; /legal-consultation is canonical. */}
+              <Route path="/spectra" component={SpectraPage} />
+              <Route path="/geo-console" component={GeoConsoleRedirect} />
+              <Route path="/legal-consultation/:domainId" component={ConsultationPage} />
+              <Route path="/location-intel" component={LocationIntelPage} />
+              <Route path="/tshpe" component={TSHPELocatorPage} />
+              <Route path="/tshpe-locator" component={TSHPELocatorPage} />
+              <Route path="/positioning" component={TSHPELocatorPage} />
+              <Route path="/inmate-locator" component={InmateLocatorPage} />
+              <Route path="/inmate-locator/dashboard" component={InmateLocatorPage} />
+              <Route path="/inmate-locator-v2" component={InmateLocatorV2Page} />
+              <Route path="/cryptocrawler" component={GatedCryptoCrawlerV2} />
+              <Route path="/cryptocrawler-v2" component={GatedCryptoCrawlerV2} />
+              <Route path="/badblue" component={Home} />
+              <Route path="/home" component={Home} />
+              <Route path="/dashboard" component={Home} />
+              <Route path="/officer-search" component={OfficerSearchPage} />
+              <Route path="/officer/:id" component={OfficerInfo} />
+              <Route path="/complaints" component={Complaints} />
+              <Route path="/complaint-form" component={ComplaintForm} />
+              <Route path="/complaint" component={ComplaintForm} />
+              <Route path="/complaint/:id" component={ComplaintDetail} />
+              <Route path="/lawsuit-form" component={LawsuitForm} />
+              <Route path="/lawsuit" component={LawsuitForm} />
+              <Route path="/lawsuit/:id" component={LawsuitDetail} />
+              <Route path="/petition-form" component={PetitionForm} />
+              <Route path="/petition" component={PetitionForm} />
+              <Route path="/petition-workflow" component={PetitionWorkflow} />
+              <Route path="/petitions" component={Petitions} />
+              <Route path="/foia-request" component={FOIARequestForm} />
+              <Route path="/foia" component={FOIARequestForm} />
+              <Route path="/legal-document-creator" component={LegalDocumentCreator} />
+              <Route path="/admin-petitions" component={AdminPetitions} />
+              <Route path="/admin-lawsuits" component={AdminLawsuits} />
+              <Route path="/admin-complaints" component={AdminComplaints} />
+              <Route path="/admin-foia" component={AdminFOIA} />
+              <Route path="/admin-email" component={AdminEmail} />
+              <Route path="/admin-worker-logs" component={AdminWorkerLogs} />
+              <Route path="/admin-subagent" component={AdminSubAgent} />
+              <Route path="/ai-subagent" component={AdminSubAgent} />
+              <Route path="/admin-users" component={AdminUsers} />
+              <Route path="/admin-evidence-hub" component={AdminEvidenceHub} />
+              <Route path="/petition-edit/:id" component={PetitionEdit} />
+              <Route path="/confirmation/:type/:id" component={Confirmation} />
+              <Route path="/history" component={History} />
+              <Route path="/evidence-hub" component={EvidenceHub} />
+            </>
+          ) : (
+            <Route path="/welcome"><Redirect to="/login" /></Route>
+          )}
 
-        <Route component={NotFound} />
-      </Switch>
+          <Route component={NotFound} />
+        </Switch>
+      </>
     </Suspense>
   );
 }
