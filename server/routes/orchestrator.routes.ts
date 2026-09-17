@@ -2,7 +2,7 @@
  * 4JI Orchestrator API Routes
  * 
  * API endpoints for controlling the ForgeAI unified orchestrator system.
- * Requires FORGEAI master password for authentication.
+ * Requires canonical platform master authorization.
  */
 
 import express from 'express';
