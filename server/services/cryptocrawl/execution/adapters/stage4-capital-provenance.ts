@@ -30,6 +30,8 @@ export interface VerifiedBootstrapProfit {
   asset: string;
   residualProfit: string;
   zeroMonetaryGasVerified: boolean;
+  /** True when a provider-fronted gas liability was measured and already deducted from the profit being capitalized. */
+  providerGasLiabilityAccounted?: boolean;
   zeroExternalNativeCapitalVerified: boolean;
   zeroExternalInputCapitalVerified: boolean;
   sourceRecipient?: string;
@@ -44,7 +46,10 @@ export interface VerifiedRetainedProfit {
   chain: string;
   asset: string;
   retainedProfit: string;
+  /** Distributable all-in net profit from which the 90/10 split is taken. */
   grossProfit?: string;
+  /** Settlement recipient delta before provider gas liability is deducted from distributable economics. */
+  settlementGrossProfit?: string;
   payoutReserved?: string;
   settlementReceiptVerified: boolean;
   profitRecipientDeltaVerified: boolean;
@@ -242,8 +247,9 @@ export class InMemoryStage4CapitalProvenanceStore implements Stage4CapitalProven
 
 function requireVerifiedProof(proof: VerifiedBootstrapProfit): void {
   requirePositiveInteger('residualProfit', proof.residualProfit);
-  if (!proof.zeroMonetaryGasVerified || !proof.zeroExternalNativeCapitalVerified || !proof.zeroExternalInputCapitalVerified) {
-    throw new Error('Bootstrap profit cannot be recorded without zero-fee and zero-external-capital proof');
+  const gasTruthVerified = proof.zeroMonetaryGasVerified || proof.providerGasLiabilityAccounted === true;
+  if (!gasTruthVerified || !proof.zeroExternalNativeCapitalVerified || !proof.zeroExternalInputCapitalVerified) {
+    throw new Error('Bootstrap profit requires zero upfront operator capital and either zero sponsor cost or provider gas liability already deducted from retained profit');
   }
   if (!/^0x[a-fA-F0-9]{64}$/.test(proof.transactionHash)) {
     throw new Error('Bootstrap profit requires a transaction hash');
@@ -252,12 +258,14 @@ function requireVerifiedProof(proof: VerifiedBootstrapProfit): void {
 
 function requireVerifiedRetainedProfit(proof: VerifiedRetainedProfit): void {
   requirePositiveInteger('retainedProfit', proof.retainedProfit);
-  const grossProfit = proof.grossProfit ?? proof.retainedProfit;
+  const distributableProfit = proof.grossProfit ?? proof.retainedProfit;
+  const settlementGrossProfit = proof.settlementGrossProfit ?? distributableProfit;
   const payoutReserved = proof.payoutReserved ?? '0';
-  requirePositiveInteger('grossProfit', grossProfit);
+  requirePositiveInteger('grossProfit', distributableProfit);
+  requirePositiveInteger('settlementGrossProfit', settlementGrossProfit);
   requireNonNegativeInteger('payoutReserved', payoutReserved);
-  if (BigInt(proof.retainedProfit) + BigInt(payoutReserved) !== BigInt(grossProfit)) {
-    throw new Error('Retained profit plus payout-reserved units must equal gross settled profit');
+  if (BigInt(proof.retainedProfit) + BigInt(payoutReserved) !== BigInt(distributableProfit)) {
+    throw new Error('Retained profit plus payout-reserved units must equal distributable all-in net profit');
   }
   if (!proof.settlementReceiptVerified || !proof.profitRecipientDeltaVerified) {
     throw new Error('Retained profit requires a confirmed receipt and verified profit-recipient balance delta');
@@ -273,8 +281,8 @@ function requireVerifiedRetainedProfit(proof: VerifiedRetainedProfit): void {
   } catch {
     throw new Error('Retained profit recipient balance evidence must be integer strings');
   }
-  if (before < 0n || after < before || after - before !== BigInt(grossProfit)) {
-    throw new Error('Retained profit recipient balance delta does not match gross settled profit base units');
+  if (before < 0n || after < before || after - before !== BigInt(settlementGrossProfit)) {
+    throw new Error('Retained profit recipient balance delta does not match settlement gross profit base units');
   }
 }
 
