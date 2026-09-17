@@ -115,8 +115,8 @@ assert.match(apeV4, /routeLatencyIsolation: 'route_id_p95_timeout_plus_chain_can
 
 // Composite split execution is a real additive capability. The manager prepares a
 // separately salted V2 receiver through the same zero-operator-capital funding path,
-// publishes its runtime address, and a composite-only failure cannot disable the
-// already-supported standalone receiver.
+// publishes its runtime address, and deployment/permission failure is isolated from
+// the already-supported standalone receiver.
 assert.match(receiverManager, /COMPOSITE_RECEIVER_SALT/);
 assert.match(receiverManager, /CryptocrawlBalancerCompositeFlashLoanReceiver\.json/);
 assert.match(receiverManager, /async ensureCompositeReceiver\(/);
@@ -124,6 +124,10 @@ assert.match(receiverManager, /ZERO_CAPITAL_BALANCER_COMPOSITE_RECEIVERS/);
 assert.match(receiverManager, /Composite V2 receiver preparation degraded locally/);
 assert.match(receiverManager, /standaloneReceiverReady: true/);
 assert.match(receiverManager, /compositeOnlyFailure: true/);
+assert.match(receiverManager, /async buildMissingCompositePermissionCalls\(/);
+assert.match(discovery, /buildMissingCompositePermissionCalls\(/);
+assert.match(discovery, /Composite receiver permission setup degraded locally/);
+assert.match(discovery, /compositeFailureDemotesStandalone: false/);
 assert.match(routeSplit, /runZeroCapitalAtomicStackTactic\(/);
 assert.match(routeSplit, /exactCompositeEthCallRequiredBeforePromotion: true/);
 assert.match(routeSplit, /exactCompositeGasEstimateRequiredBeforePromotion: true/);
@@ -215,4 +219,4 @@ assert.match(executor, /opportunity\.expectedProfit <= 0n/);
 assert.doesNotMatch(executor, /opportunity\.netProfitBps > 0/);
 assert.match(executor, /Canonical all-in net economics are not strictly positive/);
 
-console.log('[zero-capital-quote-liveness] bounded RPC/provider/receiver/chain work, canonical Stage-1 all-in net BPS, strict > -10 visibility, exact-block RPC evidence reuse, mesh-global singleflight, event-driven invalidation, bounded quote batching, slow-route concurrency isolation, additive composite receiver bootstrap, exact composite split proof, executable Aave+Balancer provider stacking, truthful Morpho single-provider capability, live-price mesh gas valuation, timeout ownership recovery, route-local RPC failover, cross-provider rejection isolation, chain-local funding proof, single-pass fairness-ordered Atomic rescue, durable fairness schema authority, dynamic provider economics, current-candidate BPS allocation, numeric negative-route measurement, recurring liveness recovery, and positive-only canonical execution verified');
+console.log('[zero-capital-quote-liveness] bounded RPC/provider/receiver/chain work, canonical Stage-1 all-in net BPS, strict > -10 visibility, exact-block RPC evidence reuse, mesh-global singleflight, event-driven invalidation, bounded quote batching, slow-route concurrency isolation, additive composite receiver bootstrap and permission locality, exact composite split proof, executable Aave+Balancer provider stacking, truthful Morpho single-provider capability, live-price mesh gas valuation, timeout ownership recovery, route-local RPC failover, cross-provider rejection isolation, chain-local funding proof, single-pass fairness-ordered Atomic rescue, durable fairness schema authority, dynamic provider economics, current-candidate BPS allocation, numeric negative-route measurement, recurring liveness recovery, and positive-only canonical execution verified');
