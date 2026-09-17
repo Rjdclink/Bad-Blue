@@ -7,7 +7,10 @@ import {
   cancelGhostWalletBorrowerMandate,
   registerGhostWalletBorrowerMandate,
 } from '../services/cryptocrawl/ghost-wallet/ghost-wallet-borrower-mandate.js';
+import { ghostWalletEngine } from '../services/cryptocrawl/ghost-wallet/ghost-wallet-engine.js';
 import { getGhostWalletExternalBridgeDescriptor } from '../services/cryptocrawl/ghost-wallet/ghost-wallet-external-bridge.js';
+import { ghostWalletIntermediaryBootstrap } from '../services/cryptocrawl/ghost-wallet/ghost-wallet-intermediary-bootstrap.js';
+import { getGhostWalletPimlicoSupportedChains } from '../services/cryptocrawl/ghost-wallet/ghost-wallet-pimlico-sponsor.js';
 import { getGhostWalletPerformanceSnapshot } from '../services/cryptocrawl/ghost-wallet/ghost-wallet-performance-intelligence.js';
 import { ghostWalletProviderMesh, type GhostWalletChain } from '../services/cryptocrawl/ghost-wallet/ghost-wallet-provider-mesh.js';
 import { createLogger } from '../logger';
@@ -15,6 +18,15 @@ import { createLogger } from '../logger';
 const log = createLogger('crypto-wiring');
 const router = express.Router();
 const GHOST_CHAINS = new Set<GhostWalletChain>(['ethereum', 'polygon', 'arbitrum', 'optimism', 'base', 'bsc', 'avalanche']);
+const GHOST_CHAIN_IDS: Record<GhostWalletChain, number> = {
+  ethereum: 1,
+  polygon: 137,
+  arbitrum: 42161,
+  optimism: 10,
+  base: 8453,
+  bsc: 56,
+  avalanche: 43114,
+};
 const GHOST_QUOTE_RATE_WINDOW_MS = 60_000;
 const ghostQuoteRate = new Map<string, { startedAt: number; count: number }>();
 
@@ -105,14 +117,21 @@ router.post('/wire-check', async (_req, res) => {
 router.get('/ghost-wallet/capabilities', async (_req, res) => {
   try {
     await ghostWalletProviderMesh.initialize();
+    const readyChains = ghostWalletProviderMesh.getReadyChains();
+    const pimlico7702ExecutionChains = getGhostWalletPimlicoSupportedChains();
+    const pimlicoExecution = new Set<GhostWalletChain>(pimlico7702ExecutionChains);
     const descriptors = await Promise.allSettled(
-      ghostWalletProviderMesh.getReadyChains().map(chain => getGhostWalletExternalBridgeDescriptor(chain)),
+      readyChains.map(chain => getGhostWalletExternalBridgeDescriptor(chain)),
     );
     return res.json({
       ok: true,
       model: 'borrow_upstream_then_atomically_lend_downstream',
       intermediarySubmitsTransactions: false,
       executionModes: ['external_caller', 'autonomous_controller_signed_mandate'],
+      borrowerDemandIngress: ['permissionless_onchain_external_credit_bridge', 'signed_https_feed', 'direct_signed_registration', 'durable_registry'],
+      permissionlessBorrowerIngress: true,
+      externalBorrowerFeedMandatory: false,
+      signedIntentIngress: '/api/crypto/ghost-wallet/signed-intent',
       autonomousBorrowerAuthorization: ['borrower_erc1271', 'owner_eoa', 'owner_erc1271'],
       autonomousAmountAuthorization: ['exact_amount', 'signed_min_preferred_max_range'],
       operatorMonetaryInputRequiredForPrincipal: false,
@@ -132,7 +151,17 @@ router.get('/ghost-wallet/capabilities', async (_req, res) => {
       liveProfitabilityTelemetry: true,
       alchemyDependency: false,
       zeroCapitalExecutionAuthority: false,
+      pimlico7702ExecutionChains,
+      observationOnlyChains: readyChains
+        .filter(chain => !pimlicoExecution.has(chain))
+        .map(chain => ({
+          chain,
+          reason: chain === 'avalanche'
+            ? 'pimlico_eip7702_execution_capability_not_available'
+            : 'pimlico_eip7702_execution_capability_not_available',
+        })),
       providerMesh: ghostWalletProviderMesh.getStatus(),
+      bootstrap: ghostWalletIntermediaryBootstrap.getStatus(),
       bridges: descriptors.flatMap(result => result.status === 'fulfilled' ? [result.value] : []),
       unavailableChains: descriptors.flatMap(result => result.status === 'rejected'
         ? [result.reason instanceof Error ? result.reason.message : String(result.reason)]
@@ -148,10 +177,68 @@ router.get('/ghost-wallet/telemetry', (_req, res) => {
   return res.json({
     ok: true,
     authority: 'telemetry_only_terminal_settlement_remains_profit_truth',
+    engine: ghostWalletEngine.getStatus(),
     controller: ghostWalletAutonomousController.getStatus(),
+    bootstrap: ghostWalletIntermediaryBootstrap.getStatus(),
     providers: ghostWalletProviderMesh.getStatus(),
     performance: getGhostWalletPerformanceSnapshot(),
   });
+});
+
+router.post('/ghost-wallet/signed-intent', async (req, res) => {
+  try {
+    enforceGhostRequestBounds(req);
+    const chain = ghostChain(req.body?.chain);
+    const chainId = Number(req.body?.chainId);
+    if (!Number.isSafeInteger(chainId) || chainId !== GHOST_CHAIN_IDS[chain]) {
+      throw new Error('GHOST_WALLET_SIGNED_INTENT_CHAIN_ID_MISMATCH');
+    }
+    const intermediary = String(req.body?.intermediary || '').trim();
+    const configuredIntermediary = ghostWalletEngine.getConfiguredIntermediary(chain);
+    if (!configuredIntermediary) throw new Error('GHOST_WALLET_INTERMEDIARY_BINDING_UNAVAILABLE');
+    if (intermediary.toLowerCase() !== configuredIntermediary.toLowerCase()) {
+      throw new Error('GHOST_WALLET_SIGNED_INTENT_INTERMEDIARY_MISMATCH');
+    }
+    const registered = ghostWalletEngine.registerSignedIntent({
+      chain,
+      chainId,
+      intermediary,
+      owner: String(req.body?.owner || ''),
+      sellToken: String(req.body?.sellToken || ''),
+      buyToken: String(req.body?.buyToken || ''),
+      sellAmount: BigInt(String(req.body?.sellAmount ?? '')),
+      minBuyAmount: BigInt(String(req.body?.minBuyAmount ?? '')),
+      maxFeeBps: Number(req.body?.maxFeeBps),
+      nonce: BigInt(String(req.body?.nonce ?? '')),
+      deadline: Number(req.body?.deadline),
+      signature: String(req.body?.signature || ''),
+      receivedAt: Date.now(),
+    });
+    return res.status(201).json({
+      ok: true,
+      intent: {
+        chain: registered.chain,
+        chainId: registered.chainId,
+        intermediary: registered.intermediary,
+        owner: registered.owner,
+        sellToken: registered.sellToken,
+        buyToken: registered.buyToken,
+        sellAmount: registered.sellAmount.toString(),
+        minBuyAmount: registered.minBuyAmount.toString(),
+        maxFeeBps: registered.maxFeeBps,
+        nonce: registered.nonce.toString(),
+        deadline: registered.deadline,
+        receivedAt: registered.receivedAt,
+      },
+    });
+  } catch (error: any) {
+    const message = error?.message ?? String(error);
+    const rateLimited = /RATE_LIMIT_EXCEEDED/.test(message);
+    const unavailable = /INTERMEDIARY_BINDING_UNAVAILABLE|UNAVAILABLE/.test(message);
+    log.warn('Ghost Wallet signed intent rejected', { error: message });
+    if (rateLimited) res.setHeader('Retry-After', '60');
+    return res.status(rateLimited ? 429 : unavailable ? 503 : 400).json({ ok: false, error: message });
+  }
 });
 
 router.post('/ghost-wallet/quote', async (req, res) => {
