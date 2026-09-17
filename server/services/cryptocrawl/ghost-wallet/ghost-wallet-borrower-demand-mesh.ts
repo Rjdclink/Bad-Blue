@@ -3,6 +3,7 @@ import {
   registerGhostWalletBorrowerMandate,
   type GhostWalletBorrowerMandateInput,
 } from './ghost-wallet-borrower-mandate.js';
+import { ghostWalletIntermediaryBootstrap } from './ghost-wallet-intermediary-bootstrap.js';
 import type { GhostWalletChain } from './ghost-wallet-provider-mesh.js';
 
 const CHAINS = new Set<GhostWalletChain>(['ethereum', 'polygon', 'arbitrum', 'optimism', 'base', 'bsc', 'avalanche']);
@@ -159,6 +160,7 @@ class GhostWalletBorrowerDemandMesh {
   async start(): Promise<void> {
     if (this.running) return;
     this.running = true;
+    ghostWalletIntermediaryBootstrap.start();
     const feeds = configuredFeeds();
     for (const feed of feeds) {
       const state: FeedState = {
@@ -185,12 +187,15 @@ class GhostWalletBorrowerDemandMesh {
       feedItemsRequireExistingCryptographicMandateVerification: true,
       genericTradeIntentsAcceptedAsBorrowers: false,
       successfulAtomicRepaymentStillRequiredForTrustedBorrower: true,
+      matchedIntentIntermediaryAutoBootstrap: true,
+      matchedIntentIntermediaryGasAuthority: 'pimlico_sponsored_user_operation',
       zeroCapitalDependency: false,
     });
   }
 
   stop(): void {
     this.running = false;
+    ghostWalletIntermediaryBootstrap.stop();
     for (const state of this.states.values()) if (state.timer) clearTimeout(state.timer);
     this.states.clear();
   }
@@ -214,6 +219,7 @@ class GhostWalletBorrowerDemandMesh {
       directSignedRegistration: true,
       cryptographicAdmissionAuthority: 'registerGhostWalletBorrowerMandate',
       genericOrderBooksAreNotBorrowerAuthority: true,
+      matchedIntentIntermediaryBootstrap: ghostWalletIntermediaryBootstrap.getStatus(),
     };
   }
 
@@ -326,6 +332,8 @@ export const GHOST_WALLET_BORROWER_DEMAND_POLICY = {
   genericTradeIntentAdmission: false,
   bytecodeOnlyBorrowerTrust: false,
   atomicRepaymentEvidenceStillRequiredForVerifiedStatus: true,
+  matchedIntentIntermediaryAutoBootstrap: true,
+  matchedIntentIntermediaryDeploymentGasAuthority: 'pimlico_sponsored_user_operation',
   boundedFeedCount: MAX_FEEDS,
   boundedResponseDemandCount: MAX_DEMANDS_PER_RESPONSE,
   boundedVerificationConcurrency: MAX_VERIFY_CONCURRENCY,
