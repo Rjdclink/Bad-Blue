@@ -103,8 +103,6 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       const continuous = optionsRef.current.continuous ?? true;
       if (!continuous || !shouldBeListening()) return;
 
-      // Browser recognition services can reject an immediate start() from onend.
-      // A short bounded delay also prevents start/stop races during TTS handoff.
       restartTimerRef.current = window.setTimeout(() => {
         restartTimerRef.current = null;
         if (!shouldBeListening() || recognitionActiveRef.current) return;
@@ -112,7 +110,6 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
           recognition.start();
         } catch {
           // A concurrent browser state transition can make start() invalid.
-          // The next explicit start/resume or recognition end will recover.
         }
       }, 120);
     };
@@ -131,11 +128,12 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       if (finalText.trim()) {
         const finalValue = finalText.trim();
         setTranscript(prev => (prev ? `${prev} ${finalValue}` : finalValue));
+        // Preserve any still-evolving words for display, but do not emit a
+        // second interim callback in the same browser event. Emitting it after
+        // the final callback would cancel the caller's quiet-turn timer and can
+        // strand an otherwise complete spoken turn.
         setInterimTranscript(interimText.trim());
         optionsRef.current.onTranscript?.(finalValue, true);
-        if (interimText.trim()) {
-          optionsRef.current.onTranscript?.(interimText.trim(), false);
-        }
       } else {
         setInterimTranscript(interimText.trim());
         if (interimText.trim()) {
@@ -164,8 +162,6 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
         return;
       }
 
-      // These are expected lifecycle/transient conditions. onend handles a
-      // controlled restart when the caller still wants the microphone live.
       if (code === 'aborted' || code === 'no-speech' || code === 'network') {
         setError(null);
         return;
@@ -244,8 +240,6 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     setInterimTranscript('');
     clearRestartTimer();
 
-    // stopListening is an intentional turn-taking boundary. abort() prevents a
-    // partial segment from being finalized after TTS has already started.
     try {
       recognitionRef.current?.abort();
     } catch {
