@@ -1,12 +1,12 @@
 /**
  * LEXARA Legal Consultation Page
  * Canonical continuous conversation surface with the existing full case-analysis
- * toolset preserved as an alternate mode.
+ * capabilities preserved as an alternate, consent-safe tool mode.
  */
 
 import { useMemo } from 'react';
 import LexaraConversation from '@/components/LexaraConversation';
-import LexaraConsultation from '@/components/LexaraConsultation';
+import LexaraCaseTools from '@/components/LexaraCaseTools';
 import { useLocation, useRoute } from 'wouter';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, Scale } from 'lucide-react';
@@ -75,9 +75,9 @@ export default function LegalConsultationPage() {
       </header>
 
       {toolsMode ? (
-        <LexaraConsultation
-          onBack={() => setLocation(canonicalPath)}
-          lawType={domainInfo?.id || domainId}
+        <LexaraCaseTools
+          lawTypeId={domainInfo?.id || domainId}
+          lawTypeName={domainInfo?.name}
         />
       ) : (
         <LexaraConversation
