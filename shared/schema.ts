@@ -3033,7 +3033,7 @@ export type InsertDatabaseShadowSync = typeof databaseShadowSync.$inferInsert;
 export const adminIdentityBinding = pgTable("admin_identity_binding", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   identityLabel: varchar("identity_label", { length: 50 }).notNull().unique(), // "Daddy"
-  passwordHash: text("password_hash").notNull(), // Hashed SARBEAR
+  passwordHash: text("password_hash").notNull(), // Password hash retained only for legacy schema compatibility
   lastAuthenticated: timestamp("last_authenticated"),
   authenticationCount: integer("authentication_count").notNull().default(0),
   failedAttempts: integer("failed_attempts").notNull().default(0),
