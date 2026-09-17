@@ -5,6 +5,7 @@ import {
 } from './ghost-wallet-borrower-mandate.js';
 import { ghostWalletIntermediaryBootstrap } from './ghost-wallet-intermediary-bootstrap.js';
 import type { GhostWalletChain } from './ghost-wallet-provider-mesh.js';
+import { ghostWalletUniswapXDemand } from './ghost-wallet-uniswapx-demand.js';
 
 const CHAINS = new Set<GhostWalletChain>(['ethereum', 'polygon', 'arbitrum', 'optimism', 'base', 'bsc', 'avalanche']);
 const DEFAULT_POLL_MS = 10_000;
@@ -161,6 +162,7 @@ class GhostWalletBorrowerDemandMesh {
     if (this.running) return;
     this.running = true;
     ghostWalletIntermediaryBootstrap.start();
+    await ghostWalletUniswapXDemand.start();
     const feeds = configuredFeeds();
     for (const feed of feeds) {
       const state: FeedState = {
@@ -186,6 +188,8 @@ class GhostWalletBorrowerDemandMesh {
       directSignedRegistrationRemainsEnabled: true,
       feedItemsRequireExistingCryptographicMandateVerification: true,
       genericTradeIntentsAcceptedAsBorrowers: false,
+      autonomousAtomicDemandLane: 'uniswapx_public_signed_order_feed',
+      autonomousAtomicDemandStatus: ghostWalletUniswapXDemand.getStatus(),
       successfulAtomicRepaymentStillRequiredForTrustedBorrower: true,
       matchedIntentIntermediaryAutoBootstrap: true,
       matchedIntentIntermediaryGasAuthority: 'pimlico_sponsored_user_operation',
@@ -196,6 +200,7 @@ class GhostWalletBorrowerDemandMesh {
   stop(): void {
     this.running = false;
     ghostWalletIntermediaryBootstrap.stop();
+    ghostWalletUniswapXDemand.stop();
     for (const state of this.states.values()) if (state.timer) clearTimeout(state.timer);
     this.states.clear();
   }
@@ -219,6 +224,7 @@ class GhostWalletBorrowerDemandMesh {
       directSignedRegistration: true,
       cryptographicAdmissionAuthority: 'registerGhostWalletBorrowerMandate',
       genericOrderBooksAreNotBorrowerAuthority: true,
+      autonomousAtomicDemand: ghostWalletUniswapXDemand.getStatus(),
       matchedIntentIntermediaryBootstrap: ghostWalletIntermediaryBootstrap.getStatus(),
     };
   }
@@ -332,6 +338,8 @@ export const GHOST_WALLET_BORROWER_DEMAND_POLICY = {
   genericTradeIntentAdmission: false,
   bytecodeOnlyBorrowerTrust: false,
   atomicRepaymentEvidenceStillRequiredForVerifiedStatus: true,
+  autonomousSignedAtomicDemandLane: 'uniswapx_public_signed_order_feed',
+  uniswapXOrdersAreBorrowerMandates: false,
   matchedIntentIntermediaryAutoBootstrap: true,
   matchedIntentIntermediaryDeploymentGasAuthority: 'pimlico_sponsored_user_operation',
   boundedFeedCount: MAX_FEEDS,
