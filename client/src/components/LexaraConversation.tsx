@@ -10,6 +10,7 @@ import {
   type LEXARAGazeHint,
 } from '@/components/LexaraEtherealAvatar';
 import { getLexaraLiveEnabled } from '@/components/LexaraLiveConsentModal';
+import { analyzeUserSignals } from '@shared/lexaraVoicePersona';
 import { cn } from '@/lib/utils';
 
 interface LexaraConversationProps {
@@ -46,6 +47,19 @@ function friendlyError(error: unknown): string {
   return 'LEXARA could not complete that turn. Please try again.';
 }
 
+function emotionFromUserText(text: string): LEXARAEmotionHint {
+  try {
+    const emotionalState = analyzeUserSignals(text)?.signals?.emotionalState;
+    if (emotionalState === 'anxious') return 'empathetic';
+    if (emotionalState === 'frustrated') return 'protective';
+    if (emotionalState === 'curious') return 'playful';
+    if (emotionalState === 'grateful') return 'empathetic';
+  } catch {
+    // Signal analysis is advisory; conversation must continue if it fails.
+  }
+  return 'calm';
+}
+
 export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraConversationProps) {
   const [conversation, setConversation] = useState<ConversationMessage[]>([]);
   const [userInput, setUserInput] = useState('');
@@ -71,6 +85,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const messageEndRef = useRef<HTMLDivElement>(null);
   const voiceTurnBufferRef = useRef('');
   const voiceTurnTimerRef = useRef<number | null>(null);
+  const responseEmotionRef = useRef<LEXARAEmotionHint>('authoritative');
 
   const clearVoiceTurnTimer = useCallback(() => {
     if (voiceTurnTimerRef.current !== null) {
@@ -208,7 +223,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     suspendListening();
     if (generation === undefined || generation === generationRef.current) {
       setConversationPhase('speaking');
-      setEmotion('authoritative');
+      setEmotion(responseEmotionRef.current);
       setGaze('camera');
     }
 
@@ -249,11 +264,14 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       content: item.content,
     }));
 
+    const userEmotion = emotionFromUserText(message);
+    responseEmotionRef.current = userEmotion === 'calm' ? 'authoritative' : userEmotion;
+
     appendMessage('user', message);
     setUserInput('');
     setErrorMessage(null);
     setConversationPhase('thinking');
-    setEmotion('calm');
+    setEmotion(userEmotion);
     setGaze('thinking');
 
     try {
@@ -320,6 +338,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     if (greetingRef.current) return;
     greetingRef.current = true;
     const greetingGeneration = generationRef.current;
+    responseEmotionRef.current = 'calm';
 
     const domain = lawTypeName ? ` about ${lawTypeName}` : '';
     const greeting = `Hello. Tell me what happened${domain}, in your own words. I'll identify the legal issues, test the strengths and weaknesses, and ask only the questions that materially affect the analysis.`;
