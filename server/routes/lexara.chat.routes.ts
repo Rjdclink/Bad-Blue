@@ -1,149 +1,91 @@
 /**
  * LEXARA API Routes
- * Backend endpoints for LEXARA conversational AI
- * 
- * A7 - LOCK LEXARA INTO TRUE "PERSONA MODE"
- * Permanent, Stable, Feminine, Non-Robotic
+ * Conversational legal analysis + voice/persona endpoints.
  */
 
 import express, { Request, Response } from 'express';
 import { createLogger } from '../logger';
-import { callAIWithFallback } from '../aiSubAgent';
 import { LEXARA_PERSONA } from '../../shared/lexaraVoicePersona';
 import { LEXARA_KERNEL, mergePersonaWithKernel } from '../lexara/personaKernel';
+import { generateLexaraConversationResponse } from '../lexara/LexaraConversationOrchestrator';
 
 const router = express.Router();
 const log = createLogger('LEXARARoutes');
 
 /**
  * POST /api/lexara/chat
- * Main chat endpoint for LEXARA conversational AI
- * Force-merges LEXARA_KERNEL to ensure persona consistency
- * 
- * Returns:
- * - response: Lexara's text response
- * - audio: Audio data as base64 or audioUrl for playback
- * - If ElevenLabs TTS is unavailable, returns text only
+ * Canonical conversational endpoint for LEXARA Live.
+ *
+ * The server owns the legal/system prompt. Client-provided system prompts are
+ * intentionally ignored so an untrusted browser cannot replace legal accuracy,
+ * citation, or persona constraints.
  */
 router.post('/chat', express.json(), async (req: Request, res: Response) => {
-  console.log('[LEXARA CHAT] Handler entered', {
-    requestId: Date.now(),
-    hasBody: !!req.body,
-    hasPrompt: !!req.body?.prompt,
-    promptLength: req.body?.prompt?.length,
-  });
-  
   try {
-    const { prompt, context, systemPrompt, includeAudio = true } = req.body;
-    
-    // Force-merge LEXARA_KERNEL into persona - stops the "default robot" voice from ever appearing
-    req.body.persona = mergePersonaWithKernel(req.body.persona);
-    
-    if (!prompt || typeof prompt !== 'string') {
-      console.log('[LEXARA CHAT] Validation failed: invalid prompt');
+    const { prompt, context = {}, includeAudio = true } = req.body || {};
+
+    if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
       return res.status(400).json({
         success: false,
         error: 'Prompt is required',
       });
     }
-    
-    console.log('[LEXARA CHAT] Validation passed, generating response');
-    
-    log.info('[LEXARA] Chat request received with persona kernel', {
+
+    log.info('[LEXARA] Conversational legal turn received', {
       promptLength: prompt.length,
-      hasPreviousMessages: !!context?.previousMessages?.length,
-      behaviorMode: context?.behaviorMode,
-      personaName: LEXARA_KERNEL.identity.name,
+      previousMessages: Array.isArray(context?.previousMessages) ? context.previousMessages.length : 0,
+      lawType: context?.lawType,
+      jurisdiction: context?.jurisdiction,
       includeAudio,
     });
-    
-    // Build conversation history for context
-    const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [];
-    
-    // Add system prompt
-    const finalSystemPrompt = systemPrompt || LEXARA_PERSONA.systemPrompt;
-    messages.push({
-      role: 'system',
-      content: finalSystemPrompt,
+
+    const conversationResult = await generateLexaraConversationResponse(prompt, {
+      previousMessages: Array.isArray(context?.previousMessages) ? context.previousMessages : [],
+      lawType: typeof context?.lawType === 'string' ? context.lawType : undefined,
+      lawTypeName: typeof context?.lawTypeName === 'string' ? context.lawTypeName : undefined,
+      jurisdiction: typeof context?.jurisdiction === 'string' ? context.jurisdiction : undefined,
+      behaviorMode: context?.behaviorMode === 'personable' ? 'personable' : 'professional',
     });
-    
-    // Add previous messages for context
-    if (context?.previousMessages && Array.isArray(context.previousMessages)) {
-      for (const msg of context.previousMessages.slice(-6)) {
-        messages.push({
-          role: msg.role === 'lexara' ? 'assistant' : 'user',
-          content: msg.content,
-        });
-      }
-    }
-    
-    // Add current prompt
-    messages.push({
-      role: 'user',
-      content: prompt,
+
+    const responseText = conversationResult.text;
+    const model = 'lexara-legal-orchestrator';
+
+    log.info('[LEXARA] Conversational legal response generated', {
+      responseLength: responseText.length,
+      jurisdiction: conversationResult.jurisdiction,
+      mappedLawType: conversationResult.mappedLawType,
     });
-    
-    // Build prompt string from messages for AI fallback
-    const conversationPrompt = messages
-      .map(msg => `${msg.role.toUpperCase()}: ${msg.content}`)
-      .join('\n\n');
-    
-    // Call AI with fallback support
-    const aiResponse = await callAIWithFallback(conversationPrompt, {
-      systemPrompt: finalSystemPrompt,
-      temperature: 0.7,
-      maxTokens: 1000,
-    });
-    
-    if (!aiResponse.success || !aiResponse.content) {
-      log.error('[LEXARA] AI call failed', { error: aiResponse.error });
-      return res.status(500).json({
-        success: false,
-        error: 'Failed to generate response',
-      });
-    }
-    
-    log.info('[LEXARA] Chat response generated', {
-      responseLength: aiResponse.content.length,
-      model: aiResponse.model,
-    });
-    
-    // Generate audio using ElevenLabs TTS if requested
-    let audioData: { audioUrl?: string; audioBase64?: string; mimeType?: string; durationMs?: number } | null = null;
-    
+
+    let audioData: {
+      audioUrl?: string;
+      audioBase64?: string;
+      mimeType?: string;
+      durationMs?: number;
+    } | null = null;
+
+    // Backward-compatible path for callers that still request bundled audio.
+    // LEXARA Live sends includeAudio:false and starts TTS immediately after text
+    // arrives, which avoids serializing legal reasoning behind audio generation.
     if (includeAudio) {
       try {
-        // Import the TTS router
         const { synthesizeLexaraSpeech } = await import('../lexara/LexaraTTSRouter');
-        
         const ttsResult = await synthesizeLexaraSpeech({
-          text: aiResponse.content,
+          text: responseText,
           context: 'general',
         });
-        
-        // Return audio as base64 for client playback
+
         audioData = {
           audioBase64: ttsResult.audioData.toString('base64'),
           mimeType: ttsResult.mimeType,
           durationMs: ttsResult.durationMs,
         };
-        
-        log.info('[LEXARA] TTS synthesis complete', {
-          provider: 'elevenlabs',
-          voiceId: ttsResult.voiceId,
-          audioByteLength: ttsResult.audioByteLength,
-          durationMs: ttsResult.durationMs,
-        });
-        
       } catch (ttsError) {
-        // Log the error but don't fail the request - return text without audio
-        log.warn('[LEXARA] TTS synthesis failed, returning text only', { 
-          error: ttsError instanceof Error ? ttsError.message : 'Unknown error' 
+        log.warn('[LEXARA] Bundled TTS unavailable; returning text', {
+          error: ttsError instanceof Error ? ttsError.message : 'Unknown error',
         });
       }
     }
 
-    // Persist conversation to database
     const userId = (req as any).user?.id || (req as any).user?.claims?.sub;
     const sessionId = context?.sessionId || null;
     let conversationId: string | null = null;
@@ -155,53 +97,47 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
         userId,
         sessionId,
         userPrompt: prompt,
-        lexaraResponse: aiResponse.content,
+        lexaraResponse: responseText,
         audioGenerated: !!audioData,
         audioBase64: audioData?.audioBase64 || undefined,
         audioDurationMs: audioData?.durationMs || undefined,
-        model: aiResponse.model,
-        context: context || null,
+        model,
+        context: {
+          ...context,
+          jurisdiction: conversationResult.jurisdiction || context?.jurisdiction || null,
+          mappedLawType: conversationResult.mappedLawType || null,
+        },
       });
       conversationId = conversation.id;
-
-      log.info('[LEXARA] Conversation persisted', {
-        conversationId,
-        userId,
-        sessionId,
-      });
     } catch (dbError) {
-      log.error('[LEXARA] Failed to persist conversation', { error: dbError });
       persistenceSuccess = false;
-      // Continue even if persistence fails - don't block the response
+      log.error('[LEXARA] Failed to persist conversation', { error: dbError });
     }
-    
+
     return res.json({
       success: true,
-      response: aiResponse.content,
-      model: aiResponse.model,
+      response: responseText,
+      model,
       audio: audioData,
+      jurisdiction: conversationResult.jurisdiction,
+      mappedLawType: conversationResult.mappedLawType,
       conversationId,
-      persistenceSuccess, // Indicate if conversation was saved
+      persistenceSuccess,
       jobCompleted: true,
       jobStatus: 'completed',
     });
-    
   } catch (error) {
     log.error('[LEXARA] Chat endpoint error', { error });
     return res.status(500).json({
       success: false,
-      error: 'Internal server error',
+      error: 'LEXARA could not complete the legal analysis for this turn',
       jobCompleted: true,
       jobStatus: 'failed',
     });
   }
 });
 
-/**
- * GET /api/lexara/status
- * Get LEXARA system status with persona kernel info
- */
-router.get('/status', (req: Request, res: Response) => {
+router.get('/status', (_req: Request, res: Response) => {
   res.json({
     success: true,
     status: 'active',
@@ -219,39 +155,32 @@ router.get('/status', (req: Request, res: Response) => {
       voice: true,
       video: true,
       adaptiveBehavior: true,
+      conversationalLegalOrchestrator: true,
       modes: ['personable', 'professional'],
       personaLocked: true,
     },
   });
 });
 
-/**
- * POST /api/lexara/voice
- * Voice synthesis endpoint with persona kernel
- */
 router.post('/voice', express.json(), async (req: Request, res: Response) => {
   try {
     const { text, context, emotionalState } = req.body;
-    
-    // Force-merge LEXARA_KERNEL into persona
     req.body.persona = mergePersonaWithKernel(req.body.persona);
-    
+
     if (!text || typeof text !== 'string') {
       return res.status(400).json({
         success: false,
         error: 'Text is required for voice synthesis',
       });
     }
-    
+
     log.info('[LEXARA] Voice synthesis request', {
       textLength: text.length,
       context,
       emotionalState,
       personaTimbre: LEXARA_KERNEL.speech.timbre,
     });
-    
-    // Return voice configuration for client-side TTS
-    // The client will use server TTS (LexaraServerTTS) when available
+
     return res.json({
       success: true,
       text,
@@ -264,7 +193,6 @@ router.post('/voice', express.json(), async (req: Request, res: Response) => {
       persona: LEXARA_KERNEL,
       emotionalState: emotionalState || 'neutral',
     });
-    
   } catch (error) {
     log.error('[LEXARA] Voice synthesis error', { error });
     return res.status(500).json({
@@ -274,31 +202,24 @@ router.post('/voice', express.json(), async (req: Request, res: Response) => {
   }
 });
 
-/**
- * POST /api/lexara/analyze-signals
- * Analyze user signals for adaptive behavior (optional server-side analysis)
- */
-router.post('/analyze-signals', express.json(), (req: Request, res: Response) => {
+router.post('/analyze-signals', express.json(), async (req: Request, res: Response) => {
   try {
     const { text, voiceMetrics, bodyLanguage } = req.body;
-    
+
     if (!text || typeof text !== 'string') {
       return res.status(400).json({
         success: false,
         error: 'Text is required',
       });
     }
-    
-    // Import and use the signal analyzer
-    // This mirrors the client-side analysis for consistency
-    const { analyzeUserSignals } = require('../../shared/lexaraVoicePersona');
+
+    const { analyzeUserSignals } = await import('../../shared/lexaraVoicePersona');
     const analysis = analyzeUserSignals(text, voiceMetrics, bodyLanguage);
-    
+
     return res.json({
       success: true,
       analysis,
     });
-    
   } catch (error) {
     log.error('[LEXARA] Signal analysis error', { error });
     return res.status(500).json({
