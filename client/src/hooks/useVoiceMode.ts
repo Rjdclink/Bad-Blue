@@ -34,6 +34,9 @@ export interface VoiceModeResult {
   hasPermission: boolean | null;
 }
 
+const BASE_RESTART_DELAY_MS = 120;
+const MAX_NETWORK_RESTART_DELAY_MS = 5_000;
+
 export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
   const { toast } = useToast();
   const [isEnabled, setIsEnabled] = useState(false);
@@ -51,6 +54,8 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
   const suspendedRef = useRef(false);
   const recognitionActiveRef = useRef(false);
   const restartTimerRef = useRef<number | null>(null);
+  const restartDelayRef = useRef(BASE_RESTART_DELAY_MS);
+  const networkFailureCountRef = useRef(0);
 
   useEffect(() => {
     optionsRef.current = options;
@@ -61,6 +66,11 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       window.clearTimeout(restartTimerRef.current);
       restartTimerRef.current = null;
     }
+  }, []);
+
+  const resetTransientRecovery = useCallback(() => {
+    restartDelayRef.current = BASE_RESTART_DELAY_MS;
+    networkFailureCountRef.current = 0;
   }, []);
 
   const isSpeechRecognitionSupported = useCallback(() => {
@@ -103,6 +113,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       const continuous = optionsRef.current.continuous ?? true;
       if (!continuous || !shouldBeListening()) return;
 
+      const restartDelay = restartDelayRef.current;
       restartTimerRef.current = window.setTimeout(() => {
         restartTimerRef.current = null;
         if (!shouldBeListening() || recognitionActiveRef.current) return;
@@ -111,7 +122,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
         } catch {
           // A concurrent browser state transition can make start() invalid.
         }
-      }, 120);
+      }, restartDelay);
     };
 
     recognition.onresult = (event: any) => {
@@ -123,6 +134,10 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
         const text = result[0]?.transcript || '';
         if (result.isFinal) finalText += text;
         else interimText += text;
+      }
+
+      if (finalText.trim() || interimText.trim()) {
+        resetTransientRecovery();
       }
 
       if (finalText.trim()) {
@@ -154,6 +169,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
         desiredListeningRef.current = false;
         suspendedRef.current = false;
         clearRestartTimer();
+        resetTransientRecovery();
         setIsEnabled(false);
         setIsSuspended(false);
         setHasPermission(code === 'audio-capture' ? null : false);
@@ -162,7 +178,22 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
         return;
       }
 
-      if (code === 'aborted' || code === 'no-speech' || code === 'network') {
+      if (code === 'network') {
+        networkFailureCountRef.current += 1;
+        restartDelayRef.current = Math.min(
+          MAX_NETWORK_RESTART_DELAY_MS,
+          BASE_RESTART_DELAY_MS * (2 ** Math.min(networkFailureCountRef.current, 6)),
+        );
+        setError(null);
+        return;
+      }
+
+      if (code === 'aborted' || code === 'no-speech') {
+        // Aborts are intentional during turn changes. No-speech is ordinary
+        // endpointing; neither should create an error or a hot retry loop.
+        if (code === 'no-speech') {
+          restartDelayRef.current = Math.max(restartDelayRef.current, 300);
+        }
         setError(null);
         return;
       }
@@ -177,7 +208,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
 
     recognitionRef.current = recognition;
     return recognition;
-  }, [clearRestartTimer, isSpeechRecognitionSupported, shouldBeListening]);
+  }, [clearRestartTimer, isSpeechRecognitionSupported, resetTransientRecovery, shouldBeListening]);
 
   const enableVoice = useCallback(async () => {
     try {
@@ -203,6 +234,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       }
 
       initializeSpeechRecognition();
+      resetTransientRecovery();
       enabledRef.current = true;
       setIsEnabled(true);
     } catch (err) {
@@ -213,7 +245,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       setIsEnabled(false);
       throw nextError;
     }
-  }, [initializeSpeechRecognition, isSpeechRecognitionSupported]);
+  }, [initializeSpeechRecognition, isSpeechRecognitionSupported, resetTransientRecovery]);
 
   const startListening = useCallback(() => {
     desiredListeningRef.current = true;
@@ -239,13 +271,14 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     setIsSuspended(false);
     setInterimTranscript('');
     clearRestartTimer();
+    resetTransientRecovery();
 
     try {
       recognitionRef.current?.abort();
     } catch {
       // Ignore invalid-state errors while already stopped.
     }
-  }, [clearRestartTimer]);
+  }, [clearRestartTimer, resetTransientRecovery]);
 
   const suspendListening = useCallback(() => {
     if (!enabledRef.current) return;
@@ -286,6 +319,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     suspendedRef.current = false;
     recognitionActiveRef.current = false;
     clearRestartTimer();
+    resetTransientRecovery();
 
     if (recognitionRef.current) {
       try {
@@ -307,7 +341,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       title: 'Voice Mode Disabled',
       description: 'Switched back to text-only mode.',
     });
-  }, [clearRestartTimer, toast]);
+  }, [clearRestartTimer, resetTransientRecovery, toast]);
 
   useEffect(() => {
     return () => {
@@ -315,6 +349,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       desiredListeningRef.current = false;
       suspendedRef.current = true;
       clearRestartTimer();
+      resetTransientRecovery();
       if (recognitionRef.current) {
         try {
           recognitionRef.current.abort();
@@ -324,7 +359,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       }
       recognitionRef.current = null;
     };
-  }, [clearRestartTimer]);
+  }, [clearRestartTimer, resetTransientRecovery]);
 
   return {
     isEnabled,
