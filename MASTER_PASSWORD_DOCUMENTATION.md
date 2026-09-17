@@ -1,183 +1,46 @@
-# Master Password Implementation - Three-Tier Access System
+# Master Access
 
-## Overview
-This document describes the implementation of the three-tier master password system that provides isolated access to different platform zones.
+## Canonical authentication
 
-## The Three Master Passwords
+LegalWhat now has one master-access authority:
 
-### Zone A: LegalWhat User Access
-- **Password**: `SARBEAR`
-- **Role**: `LEGALWHAT_ROOT`
-- **Route**: `/legalwhat/home`
-- **AI Mode**: `legal`
-- **Purpose**:
-  - Grants entry to the LegalWhat platform interface
-  - Activates the AI subsystem governing legal operations
-  - Allows AIs to visualize, optimize, enhance, and manage all LegalWhat functions
-  - Enables the filing system, autosave restoration, consultation modules, and all legal tools
+- Authentication is **password-only**.
+- No master email or username is requested or accepted as part of the credential.
+- The credential lives only in the deployment secret `MASTER_ADMIN_PASSWORD`.
+- No plaintext master credential or reusable password verifier belongs in source control.
+- Successful master login begins at `/welcome`.
+- The persistent master navigator is the only traversal authority between master panels.
+- Back and Forward wrap across the complete registered master-panel sequence.
+- Logout remains available from that navigation bar.
+- Gesture-driven page switching is disabled for the master shell so normal mobile scrolling cannot change panels.
 
-### Zone B: 4JI Orchestrator Admin Console
-- **Password**: `FORGEAI`
-- **Role**: `ORCHESTRATOR_ADMIN`
-- **Route**: `/4ji/orchestrator`
-- **AI Mode**: `orchestrator`
-- **Purpose**:
-  - Grants access to the 4JI control console
-  - Controls the merged entity containing all 13+ models unified into a single adaptive intelligence layer
-  - Manages orchestration, scheduling, optimization cycles, subsystem diagnostics
-  - Runs both the Worker Engine and the Sub-Agent Execution Engine
-  - Governs system-wide directives
+## Server contract
 
-### Zone C: CryptoCrawler Dashboard Access
-- **Password**: `CRPTCRWLR`
-- **Role**: `CRAWLER_ROOT`
-- **Route**: `/cryptocrawler/dashboard`
-- **AI Mode**: `crypto`
-- **Purpose**:
-  - Full access to the CryptoCrawler control panel
-  - Controls Monte Carlo simulations
-  - Controls the trading faucet system
-  - Runs deep-market crawling, autonomous strategy evolution
-  - Manages multi-source signal fusion
-  - Uses separate learning + evolving Supabase tables
-
-## System Rules
-
-### 1. No Email Required
-All three access levels authenticate purely by password:
-- No email field required
-- No username field required
-- No account lookup required
-- Password → direct access
-
-### 2. Physical Isolation
-Each password unlocks a different environment:
-- Each zone has its own route
-- Each zone has its own UI
-- Each zone has its own state container
-- Cross-zone access is blocked
-
-### 3. Domain Isolation (4JI)
-Even though all intelligence is merged into 4JI, domains remain isolated:
+Master login uses:
 
 ```
-IF 4ji.current_mode == 'legal':
-    ONLY LegalWhat systems may be read, altered, optimized, or evolved
-
-IF 4ji.current_mode == 'crypto':
-    ONLY CryptoCrawler systems may be read, altered, optimized, or evolved
+POST /api/master-login
+{ "password": "<deployment master password>" }
 ```
 
-### 4. Memory Table Isolation
-Each domain has separate tables:
-- `learning_legal`, `evolving_legal` (Legal Domain)
-- `learning_crypto`, `evolving_crypto` (Crypto Domain)
+On success the server issues a finite, HttpOnly, signed master session cookie and returns the master route metadata. Master authentication is intentionally independent of the ordinary user database so administrative recovery is still possible while normal user storage is degraded.
 
-Flow Rule: `learning_* → evolving_*` (NEVER cross between legal and crypto tables)
+## Security rules
 
-## Scheduled Operations (CST)
+- Rate-limit master authentication attempts.
+- Use HTTPS in production.
+- Use Secure, HttpOnly and SameSite cookie protections.
+- Never log the master password or signed session token.
+- Never add a second master-password authority to Passport, a client component, or another route.
+- Rotate the deployment secret only when the credential is intentionally changed or compromise is suspected.
+- `SESSION_SECRET` signs master sessions and must remain a strong deployment secret.
 
-### Nightly Optimization Window
-- **Start**: 1:30 CST
-- **End**: 3:30 CST
-- **Task**: Full-platform optimization
+## Panel authority
 
-### Monte Carlo Window
-- **Start**: 3:30 CST
-- **End**: 5:30 CST
-- **Task**: Continuous Monte Carlo training cycles
+The canonical panel sequence is defined once in `client/src/components/MasterPanelNavigator.tsx`. Aliases may point to an existing panel, but every distinct master/admin operational surface must appear exactly once in the canonical sequence.
 
-### Immediate On-Demand Issue Repair
-```
-IF error_detected:
-    4ji.research_fix()
-    4ji.apply_fix(live_patch=True, redeploy=False)
-    4ji.verify_fix()
-```
+The master session supersedes client-side feature toggles for master-only operational panels. Server-side authorization remains authoritative for privileged API actions.
 
-## API Response Format
+## Ordinary users
 
-When using master passwords, the login endpoint returns:
-
-```json
-{
-  "success": true,
-  "message": "Login successful",
-  "isMasterBypass": true,
-  "hasActiveSubscription": true,
-  "accessZone": "legalwhat|orchestrator|cryptocrawler",
-  "accessRole": "LEGALWHAT_ROOT|ORCHESTRATOR_ADMIN|CRAWLER_ROOT",
-  "redirectRoute": "/legalwhat/home|/4ji/orchestrator|/cryptocrawler/dashboard",
-  "aiMode": "legal|orchestrator|crypto"
-}
-```
-
-## Usage Examples
-
-### Example 1: LegalWhat Access
-```bash
-POST /api/login/local
-{
-  "password": "SARBEAR"
-}
-```
-**Result**: Redirected to `/legalwhat/home` with `LEGALWHAT_ROOT` role
-
-### Example 2: 4JI Orchestrator Access
-```bash
-POST /api/login/local
-{
-  "password": "FORGEAI"
-}
-```
-**Result**: Redirected to `/4ji/orchestrator` with `ORCHESTRATOR_ADMIN` role
-
-### Example 3: CryptoCrawler Access
-```bash
-POST /api/login/local
-{
-  "password": "CRPTCRWLR"
-}
-```
-**Result**: Redirected to `/cryptocrawler/dashboard` with `CRAWLER_ROOT` role
-
-## Security Considerations
-
-### By Design
-- Master passwords are hardcoded (as required)
-- Each bypasses payment requirements
-- Each bypasses rate limiting (intentional)
-- Works without email (as required)
-
-### Security Measures
-- All usage is logged with security alerts and timestamps
-- Unique user IDs per zone per email (if provided)
-- Proper session management
-- Domain isolation prevents cross-zone data access
-
-## Integration Points
-
-The master password system integrates with:
-1. **Authentication System**: Passport local strategy
-2. **User Management**: storage.upsertUser()
-3. **Payment System**: storage.updateUserAccess()
-4. **Session Management**: req.login()
-5. **Database**: Zone-specific Supabase tables
-
-## Active System Integrations
-
-All previously defined integrations remain in full force:
-- TradingView
-- Alchemy
-- Monte Carlo Engine
-- Multi-model orchestration
-- Error scanners
-- Self-healers
-- Crawlers
-- Legal filing engines
-- Autosave + Supabase storage
-- Full coding autonomy
-- UI optimization tools
-- Data fusion layer
-- Offline heuristic core
-
+Normal users do not use the master credential. Signup and login remain separate user-account flows, with unique persisted email identities and password hashes stored in the normal authentication tables.
