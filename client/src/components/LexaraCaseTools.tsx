@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import FMIAnalysis from '@/components/FMIAnalysis';
+import { mapProductLawTypeToExpert } from '@shared/legalDomainMapping';
 
 interface LexaraCaseToolsProps {
   lawTypeId?: string;
@@ -77,6 +78,7 @@ export default function LexaraCaseTools({ lawTypeId, lawTypeName }: LexaraCaseTo
     setError(null);
 
     try {
+      const engineLawType = mapProductLawTypeToExpert(lawTypeId) || lawTypeId;
       const response = await fetch('/api/legal-consultation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -84,7 +86,7 @@ export default function LexaraCaseTools({ lawTypeId, lawTypeName }: LexaraCaseTo
         body: JSON.stringify({
           state,
           situation: situation.trim(),
-          lawType: lawTypeId,
+          lawType: engineLawType,
           fmiContext: fmiContext || undefined,
         }),
       });
