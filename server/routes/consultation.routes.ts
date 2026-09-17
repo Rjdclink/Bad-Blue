@@ -14,6 +14,27 @@ import { createLogger } from '../logger';
 import type { LawType } from '../../shared/legalCounselTypes';
 
 const log = createLogger('ConsultationRoutes');
+const MAX_FMI_CONTEXT_CHARACTERS = 8_000;
+
+function serializeFmiContext(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+
+  try {
+    const serialized = typeof value === 'string' ? value : JSON.stringify(value);
+    const trimmed = serialized.trim();
+    if (!trimmed) return undefined;
+    return trimmed.slice(0, MAX_FMI_CONTEXT_CHARACTERS);
+  } catch {
+    return undefined;
+  }
+}
+
+function withFmiEvidenceContext(situation: string, fmiContext: unknown): string {
+  const serialized = serializeFmiContext(fmiContext);
+  if (!serialized) return situation;
+
+  return `${situation}\n\nF.M.I. EVIDENCE ANALYSIS PROVIDED BY THE PLATFORM:\n${serialized}\n\nTreat the F.M.I. material as extracted/advisory evidence context only. Do not treat it as controlling legal authority, do not assume an extraction is correct merely because F.M.I. produced it, and distinguish it from facts independently supplied by the user.`;
+}
 
 export function setupConsultationRoutes(app: Express): void {
   
@@ -25,6 +46,7 @@ export function setupConsultationRoutes(app: Express): void {
    * - state: State where the issue occurred (required)
    * - situation: Description of the legal situation (required)
    * - lawType: Law type for specialized expertise (optional, Stage 3)
+   * - fmiContext: Optional structured F.M.I. evidence analysis
    * 
    * Response:
    * - analysis: AI-generated legal guidance
@@ -32,7 +54,7 @@ export function setupConsultationRoutes(app: Express): void {
   app.post(
     '/api/legal-consultation',
     asyncHandler(async (req: Request, res: Response) => {
-      const { state, situation, lawType } = req.body;
+      const { state, situation, lawType, fmiContext } = req.body;
 
       // Validation
       if (!state || typeof state !== 'string') {
@@ -43,23 +65,26 @@ export function setupConsultationRoutes(app: Express): void {
         return res.status(400).json({ error: 'Situation description is required' });
       }
 
+      const consultationSituation = withFmiEvidenceContext(situation.trim(), fmiContext);
+
       try {
         log.info('Legal consultation requested', {
           state,
           lawType: lawType || 'general',
           situationLength: situation.length,
+          hasFmiContext: !!serializeFmiContext(fmiContext),
         });
 
         // Use comprehensive consultation engine if lawType is provided (Stage 1B enhancement)
         // Otherwise fall back to original analysis (backward compatibility)
         if (lawType) {
           const consultationResult = await performConsultation(
-            situation,
+            consultationSituation,
             lawType as LawType,
             state,
             {
               includeQuestions: true,
-              verifyAll: false, // Set to true for full verification (more expensive)
+              verifyAll: false, // Model consensus is not primary-authority verification.
               detailLevel: 'detailed'
             }
           );
@@ -86,7 +111,7 @@ export function setupConsultationRoutes(app: Express): void {
         } else {
           // Backward compatibility: use original analysis method
           const analysis = await analyzeLegalIssue(
-            situation,
+            consultationSituation,
             state,
             undefined, // additionalContext
             lawType // Stage 3: law-specific expertise
