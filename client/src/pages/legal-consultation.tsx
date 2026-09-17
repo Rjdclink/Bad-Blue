@@ -77,7 +77,7 @@ export default function LegalConsultationPage() {
       {toolsMode ? (
         <LexaraConsultation
           onBack={() => setLocation(canonicalPath)}
-          lawType={domainInfo?.name}
+          lawType={domainInfo?.id || domainId}
         />
       ) : (
         <LexaraConversation
