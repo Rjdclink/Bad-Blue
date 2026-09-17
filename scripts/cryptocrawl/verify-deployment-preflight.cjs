@@ -90,7 +90,7 @@ require('./verify-runtime-initialization-efficiency.cjs');
 require('./verify-product-discovery-coverage.cjs');
 require('./verify-cross-venue-asset-identity.cjs');
 require('./verify-dex-atomic-profit-path.cjs');
-require('./verify-zero-capital-quote-liveness.cjs');
+require('./verify-zero-capital-quote-liveness-current-shape.cjs');
 require('./verify-stale-evidence-reacquisition.cjs');
 require('./verify-multi-topology-discovery-liveness.cjs');
 require('./verify-topology-local-runtime-readiness.cjs');
@@ -115,6 +115,7 @@ require('./verify-ghost-wallet-atomic-capital.cjs');
 require('./verify-ghost-wallet-merge-gate.cjs');
 require('./verify-ghost-wallet-performance-optimizations.cjs');
 require('./verify-ghost-wallet-demand-gas-rpc.cjs');
+require('./verify-ghost-wallet-100-100-remediation.cjs');
 require('./verify-ghost-wallet-autonomous-readiness.cjs');
 require('./verify-full-runtime-regression-repair.cjs');
 
