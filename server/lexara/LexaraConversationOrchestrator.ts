@@ -83,7 +83,11 @@ function trustedDomainName(lawType?: string): string {
 
 function normalizeJurisdiction(value?: string): string | undefined {
   if (!value) return undefined;
-  const normalized = value.trim().toLowerCase();
+  const trimmed = value.trim();
+  const abbreviationMatch = STATE_BY_ABBREVIATION[trimmed.toUpperCase()];
+  if (abbreviationMatch) return abbreviationMatch;
+
+  const normalized = trimmed.toLowerCase();
   return STATE_NAMES.find(state => state.toLowerCase() === normalized);
 }
 
@@ -122,6 +126,15 @@ function buildConversationHistory(messages: LexaraConversationMessage[] = []): s
   return clampText(selected.join('\n\n'), MAX_HISTORY_CHARACTERS);
 }
 
+function buildUserJurisdictionEvidence(messages: LexaraConversationMessage[] = []): string {
+  const userTurns = messages
+    .filter(message => message?.role === 'user' && message?.content?.trim())
+    .slice(-MAX_HISTORY_MESSAGES)
+    .map(message => clampText(message.content, 2500));
+
+  return clampText(userTurns.join('\n'), MAX_HISTORY_CHARACTERS);
+}
+
 function buildLegalSystemPrompt(
   context: LexaraConversationContext,
   mappedLawType?: ExpertLawType,
@@ -156,7 +169,9 @@ export async function generateLexaraConversationResponse(
 
   const mappedLawType = mapLexaraLawType(context.lawType);
   const history = buildConversationHistory(context.previousMessages);
-  const jurisdiction = normalizeJurisdiction(context.jurisdiction) || inferJurisdiction(`${history}\n${cleanPrompt}`);
+  const userJurisdictionEvidence = buildUserJurisdictionEvidence(context.previousMessages);
+  const jurisdiction = normalizeJurisdiction(context.jurisdiction)
+    || inferJurisdiction(`${userJurisdictionEvidence}\n${cleanPrompt}`);
   const systemPrompt = buildLegalSystemPrompt(context, mappedLawType, jurisdiction);
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
 
