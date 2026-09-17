@@ -5,6 +5,7 @@ import type {
   ConfiguredZeroCapitalRoute,
 } from '../execution/adapters/onchain-route-quoter.js';
 import type { SupportedExecutionChain } from '../execution/adapters/onchain-payload-builder.js';
+import { getGasSponsorManager } from '../strategies/gas-sponsorship.js';
 
 const NATIVE_SYMBOL: Record<Exclude<SupportedExecutionChain, 'europa'>, 'ETH' | 'POL' | 'BNB' | 'AVAX'> = {
   ethereum: 'ETH',
@@ -56,8 +57,6 @@ function gasUsdToTokenBaseUnits(gasUsd: number, tokenUsd: number, decimals: numb
   if (!Number.isFinite(tokenUsd) || tokenUsd <= 0) throw new Error('Live input-token USD price must be positive');
   const normalizedDecimals = Math.max(0, Math.min(36, Math.trunc(decimals)));
   const gasMicroUsd = BigInt(Math.max(1, Math.ceil(gasUsd * 1_000_000)));
-  // Floor the token price so the resulting gas cost is conservative rather than
-  // silently understated by decimal rounding.
   const tokenMicroUsd = BigInt(Math.max(1, Math.floor(tokenUsd * 1_000_000)));
   return ceilDiv(gasMicroUsd * (10n ** BigInt(normalizedDecimals)), tokenMicroUsd).toString();
 }
@@ -79,13 +78,20 @@ function authorityFor(funding: GasFundingDecision): GasCostAuthority {
   return 'measured_unfunded_observation_gas';
 }
 
+function applyBpsSurcharge(units: number, surchargeBps: number): number {
+  if (units <= 0) return 0;
+  return Math.ceil(units * (10_000 + Math.max(0, surchargeBps)) / 10_000);
+}
+
 /**
- * Price configured zero-capital routes before they enter BPS/provider admission.
+ * Price configured zero-capital routes before they enter Stage One BPS admission.
  *
- * The configured route definitions intentionally carry a zero seed because they
- * are static topology, not live economics. This boundary replaces that seed with
- * current gas-price and provider-neutral live market-price evidence. Only
- * independently proven zero-operator-cost sponsorship may retain zero gas economics.
+ * Static route definitions intentionally carry a zero seed. This boundary replaces
+ * that seed with the gas economics of the gas authority that will actually submit
+ * the transaction. During bootstrap that authority is Pimlico, so Stage One uses
+ * Pimlico's live UserOperation gas price plus ERC-4337/paymaster overhead before a
+ * spread is surfaced. After the durable self-funded transition, the same boundary
+ * automatically returns to measured native gas economics.
  */
 export async function enrichConfiguredZeroCapitalGasEconomics(
   chain: SupportedExecutionChain,
@@ -111,11 +117,7 @@ export async function enrichConfiguredZeroCapitalGasEconomics(
     };
   }
 
-  // This is a pre-receiver observation estimate only. Exact source-specific gas
-  // economics replace it before executable admission (native simulation/estimate
-  // or builder-sponsored repayment economics). Keeping this conservative estimate
-  // must never become execution authority.
-  const estimatedGasUnits = Math.floor(bounded(
+  const baseEstimatedGasUnits = Math.floor(bounded(
     process.env.ZERO_CAPITAL_CONFIGURED_EXECUTION_GAS_UNITS,
     1_400_000,
     100_000,
@@ -129,11 +131,24 @@ export async function enrichConfiguredZeroCapitalGasEconomics(
   );
   const nativeSymbol = NATIVE_SYMBOL[chain];
   const inputSymbols = [...new Set(routes.map(route => route.inputAssetSymbol))];
-  const [feeData, prices] = await Promise.all([
-    provider.getFeeData(),
-    livePriceMesh.getLiveSymbolPrices([nativeSymbol, ...inputSymbols]),
-  ]);
-  const gasPriceWei = expectedExecutionGasPriceWei(feeData);
+  const sponsor = getGasSponsorManager();
+
+  const pricesPromise = livePriceMesh.getLiveSymbolPrices([nativeSymbol, ...inputSymbols]);
+  let estimatedGasUnits = baseEstimatedGasUnits;
+  let gasPricePromise: Promise<bigint>;
+
+  if (funding.mode === 'sponsored' && funding.paymentSource === 'provider_sponsored') {
+    const network = await provider.getNetwork();
+    estimatedGasUnits = applyBpsSurcharge(
+      baseEstimatedGasUnits + sponsor.getStageOneOverheadGasUnits(),
+      funding.providerBillingLiability === true ? sponsor.getBillingSurchargeBps() : 0,
+    );
+    gasPricePromise = sponsor.getGasPriceQuote(network.chainId).then(quote => quote.maxFeePerGasWei);
+  } else {
+    gasPricePromise = provider.getFeeData().then(expectedExecutionGasPriceWei);
+  }
+
+  const [gasPriceWei, prices] = await Promise.all([gasPricePromise, pricesPromise]);
   const nativeUsd = prices.get(nativeSymbol);
   if (gasPriceWei <= 0n || !Number.isFinite(nativeUsd) || Number(nativeUsd) <= 0) {
     throw new Error(`Configured ${chain} route gas economics unavailable`);
