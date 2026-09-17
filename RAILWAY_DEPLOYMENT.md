@@ -233,7 +233,7 @@ For Railway-specific issues:
 - Database heartbeat logs show connection health
 
 For BadBlue issues:
-- Admin bypass: `admin` / `SARBEAR`
+- Admin bypass: `admin` / `<set via MASTER_ADMIN_PASSWORD deployment secret>`
 - Payment bypass: `bypass` / `Payment`
 - Check `/api/test/diagnostics` endpoint
 

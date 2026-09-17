@@ -1,19 +1,6 @@
 // Local Authentication (Username/Password) with bcrypt
 // STRICT AUTH: No fallback users, no auto-create on unauthenticated requests
 import passport from "passport";
-import { Strategy as LocalStrategy } from "passport-local";
-import bcrypt from "bcrypt";
-import { storage } from "./storage";
-import crypto from "crypto";
-import { 
-  checkMasterPassword, 
-  getAccessZoneConfig, 
-  generateMasterUserId, 
-  getMasterUserEmail,
-  ZONE_FIRST_NAMES,
-  type AccessZone,
-  type AccessRole 
-} from "./masterPassword";
 
 const BCRYPT_SALT_ROUNDS = 12; // Strong hashing cost
 
@@ -89,7 +76,7 @@ export async function registerLocalUser(email: string, password: string, firstNa
 /**
  * Setup passport-local strategy for email-based authentication
  * STRICT: No fallback users, passwords validated only against registered users
- * MASTER CREDENTIALS: configured through MASTER_ADMIN_EMAIL and MASTER_ADMIN_PASSWORD
+ * MASTER CREDENTIALS: handled exclusively by the canonical password-only master endpoint
  */
 export function setupLocalStrategy() {
   passport.use(
@@ -98,63 +85,10 @@ export function setupLocalStrategy() {
       { usernameField: 'email', passwordField: 'password' }, // Use email instead of username
       async (email, password, done) => {
         try {
-          // ============================================
-          // SINGLE MASTER PASSWORD CHECK
-          // Credentials are loaded only from the deployment environment.
-          // All other master passwords permanently discarded
-          // ============================================
-          
-          // STRICT: Both email AND password must match
-          const accessZone = checkMasterPassword(password, email);
-          
-          if (accessZone) {
-            console.info('[AUTH] MASTER_CREDENTIAL_MATCH');
-            const zoneConfig = getAccessZoneConfig(password, email)!;
-            console.info('[AUTH] MASTER_ACCESS_ZONE_RESOLVED', { role: zoneConfig.role });
-            
-            // Create a unique user ID based on canonical master email
-            const userId = generateMasterUserId(email, accessZone);
-            const userEmail = getMasterUserEmail(email, accessZone);
-            
-            // Create or get admin user
-            console.info('[AUTH] MASTER_USER_LOOKUP');
-            let user = await storage.getUser(userId);
-            if (!user) {
-              console.info('[AUTH] MASTER_USER_CREATE');
-              user = await storage.upsertUser({
-                id: userId,
-                email: userEmail,
-                firstName: ZONE_FIRST_NAMES[accessZone],
-                lastName: "Admin",
-                profileImageUrl: null,
-                lastLoginAt: new Date(),
-              });
-            } else {
-              // Update last login for existing user
-              console.info('[AUTH] MASTER_LAST_LOGIN_UPDATE');
-              await storage.updateUserLastLogin(userId);
-            }
-            
-            // Grant paid access (bypass payment gate)
-            if (!user.hasPaidForAccess) {
-              console.info('[AUTH] MASTER_ACCESS_UPDATE');
-              await storage.updateUserAccess(userId, userId, 0);
-            }
-            
-            console.info('[AUTH] PASSPORT_SUCCESS');
-            return done(null, {
-              id: user.id,
-              claims: { sub: user.id, email: user.email || userEmail, firstName: user.firstName ?? undefined, lastName: user.lastName ?? undefined },
-              isAdmin: true,
-              isAdminBypass: false,
-              isMasterBypass: true,
-              accessZone: accessZone,
-              accessRole: zoneConfig.role,
-              redirectRoute: zoneConfig.route,
-              aiMode: zoneConfig.mode,
-            } as Express.User);
-          }
-          
+          // Master authentication is intentionally not part of passport-local.
+          // It has one canonical password-only endpoint in auth.ts so recovery
+          // never depends on the ordinary user database.
+
           // ============================================
           // STRICT NORMAL AUTHENTICATION
           // Passwords validated ONLY against registered users

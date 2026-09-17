@@ -2,7 +2,7 @@
  * 4JI-GENIE API Routes
  * 
  * API endpoints for the dual-module AI system:
- * - Authentication (SARBEAR password)
+ * - Authentication (canonical platform master session)
  * - Request routing to ALEXARA or CRYPTARA
  * - Admin panel access
  * - Module diagnostics

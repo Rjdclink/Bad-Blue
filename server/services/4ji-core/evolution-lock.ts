@@ -15,6 +15,7 @@
 
 import { EventEmitter } from 'events';
 import { createLogger } from '../../logger';
+import { checkMasterPassword } from '../../masterPassword.js';
 import {
   EvolutionLockStatus,
   LockTriggerReason,
@@ -29,9 +30,6 @@ const log = createLogger('4Ji-EvolutionLock');
 
 /** Time before lock becomes permanent (24 hours for review) */
 const LOCK_GRACE_PERIOD_MS = 24 * 60 * 60 * 1000;
-
-/** Admin key for manual lock/unlock (would be secured in production) */
-const ADMIN_OVERRIDE_KEY = process.env.FOURJI_ADMIN_KEY || 'FORGEAI';
 
 // ============================================================================
 // EVOLUTION LOCK SYSTEM
@@ -75,7 +73,7 @@ export class EvolutionLockSystem extends EventEmitter {
 
     // For admin-triggered locks, verify admin key
     if (triggeredBy === 'admin') {
-      if (adminKey !== ADMIN_OVERRIDE_KEY) {
+      if (!checkMasterPassword(adminKey || '')) {
         log.error('Invalid admin key for Evolution Lock trigger');
         return false;
       }
@@ -122,7 +120,7 @@ export class EvolutionLockSystem extends EventEmitter {
     message: string;
   } {
     // Verify admin key
-    if (adminKey !== ADMIN_OVERRIDE_KEY) {
+    if (!checkMasterPassword(adminKey || '')) {
       log.warn('Invalid admin key for Evolution Lock unlock attempt');
       return { success: false, message: 'Invalid admin credentials' };
     }
@@ -375,7 +373,7 @@ export class EvolutionLockSystem extends EventEmitter {
    * Only for critical security situations
    */
   forcePermamentLock(adminKey: string, securityReason: string): boolean {
-    if (adminKey !== ADMIN_OVERRIDE_KEY) {
+    if (!checkMasterPassword(adminKey || '')) {
       log.error('Invalid admin key for force permanent lock');
       return false;
     }

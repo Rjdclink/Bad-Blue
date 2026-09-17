@@ -19,7 +19,7 @@ import { SEOHead } from "@/components/SEOHead";
 
 /**
  * LegalWhat Home Page - Access Zone A
- * Master Password: SARBEAR
+ * Authentication: canonical platform master session
  * Role: LEGALWHAT_ROOT
  * Purpose: LegalWhat platform interface with AI legal operations
  */
