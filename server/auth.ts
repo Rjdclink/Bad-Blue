@@ -260,6 +260,11 @@ export async function setupAuth(app: Express) {
   app.use((req, res, next) => {
     if (attachMasterIdentity(req) || attachLocalIdentity(req)) return next();
     if (req.path === "/api/master-login" || req.path === "/api/local-login" || req.path === "/api/local-register") return next();
+
+    // An unauthenticated auth-state probe must never wait on the PostgreSQL
+    // session store. Preserve legacy Passport sessions only when the browser
+    // actually presents the legacy connect.sid cookie.
+    if (req.path === "/api/auth/user" && !readCookie(req, "connect.sid")) return next();
     // Only apply session middleware to API routes or specific auth paths
     // NOTE: /admin/crypto is protected by cryptoAuthMiddleware which relies on passport sessions.
     // If we don't attach sessions here, crypto admin routes will always return 401 even with a valid cookie.
@@ -291,7 +296,12 @@ export async function setupAuth(app: Express) {
   app.get("/api/auth/user", async (req, res, next) => {
     if (hasValidMasterCookie(req)) return res.json(masterPlatformUser());
     const localSession = localSessionIdentity(req);
-    if (!localSession) return next();
+    if (!localSession) {
+      // No master/local token and no hydrated legacy Passport identity means
+      // this is simply an unauthenticated browser, not a database error.
+      if (!req.user) return res.json(null);
+      return next();
+    }
 
     try {
       const localUser = await getLocalUserByIdHttp(localSession.id);
