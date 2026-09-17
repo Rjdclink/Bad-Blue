@@ -7,10 +7,43 @@ import express, { Request, Response } from 'express';
 import { createLogger } from '../logger';
 import { LEXARA_PERSONA } from '../../shared/lexaraVoicePersona';
 import { LEXARA_KERNEL, mergePersonaWithKernel } from '../lexara/personaKernel';
-import { generateLexaraConversationResponse } from '../lexara/LexaraConversationOrchestrator';
+import {
+  generateLexaraConversationResponse,
+  type LexaraConversationMessage,
+} from '../lexara/LexaraConversationOrchestrator';
 
 const router = express.Router();
 const log = createLogger('LEXARARoutes');
+
+const MAX_CHAT_PROMPT_CHARACTERS = 8_000;
+const MAX_HISTORY_MESSAGES = 16;
+const MAX_HISTORY_MESSAGE_CHARACTERS = 2_500;
+const MAX_CONTEXT_FIELD_CHARACTERS = 128;
+
+function cleanOptionalString(value: unknown, maxLength = MAX_CONTEXT_FIELD_CHARACTERS): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  return trimmed.slice(0, maxLength);
+}
+
+function sanitizePreviousMessages(value: unknown): LexaraConversationMessage[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .slice(-MAX_HISTORY_MESSAGES)
+    .flatMap(item => {
+      if (!item || typeof item !== 'object') return [];
+      const role = (item as any).role;
+      const content = (item as any).content;
+      if (role !== 'user' && role !== 'lexara' && role !== 'assistant') return [];
+      if (typeof content !== 'string' || !content.trim()) return [];
+      return [{
+        role,
+        content: content.trim().slice(0, MAX_HISTORY_MESSAGE_CHARACTERS),
+      } satisfies LexaraConversationMessage];
+    });
+}
 
 /**
  * POST /api/lexara/chat
@@ -22,29 +55,46 @@ const log = createLogger('LEXARARoutes');
  */
 router.post('/chat', express.json(), async (req: Request, res: Response) => {
   try {
-    const { prompt, context = {}, includeAudio = true } = req.body || {};
+    const body = req.body || {};
+    const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
+    const rawContext = body.context && typeof body.context === 'object' ? body.context : {};
+    const includeAudio = typeof body.includeAudio === 'boolean' ? body.includeAudio : true;
 
-    if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+    if (!prompt) {
       return res.status(400).json({
         success: false,
         error: 'Prompt is required',
       });
     }
 
+    if (prompt.length > MAX_CHAT_PROMPT_CHARACTERS) {
+      return res.status(400).json({
+        success: false,
+        error: `Prompt must be ${MAX_CHAT_PROMPT_CHARACTERS} characters or fewer`,
+      });
+    }
+
+    const previousMessages = sanitizePreviousMessages((rawContext as any).previousMessages);
+    const lawType = cleanOptionalString((rawContext as any).lawType);
+    const lawTypeName = cleanOptionalString((rawContext as any).lawTypeName, 160);
+    const jurisdiction = cleanOptionalString((rawContext as any).jurisdiction, 80);
+    const behaviorMode = (rawContext as any).behaviorMode === 'personable' ? 'personable' : 'professional';
+    const sessionId = cleanOptionalString((rawContext as any).sessionId, 128);
+
     log.info('[LEXARA] Conversational legal turn received', {
       promptLength: prompt.length,
-      previousMessages: Array.isArray(context?.previousMessages) ? context.previousMessages.length : 0,
-      lawType: context?.lawType,
-      jurisdiction: context?.jurisdiction,
+      previousMessages: previousMessages.length,
+      lawType,
+      jurisdiction,
       includeAudio,
     });
 
     const conversationResult = await generateLexaraConversationResponse(prompt, {
-      previousMessages: Array.isArray(context?.previousMessages) ? context.previousMessages : [],
-      lawType: typeof context?.lawType === 'string' ? context.lawType : undefined,
-      lawTypeName: typeof context?.lawTypeName === 'string' ? context.lawTypeName : undefined,
-      jurisdiction: typeof context?.jurisdiction === 'string' ? context.jurisdiction : undefined,
-      behaviorMode: context?.behaviorMode === 'personable' ? 'personable' : 'professional',
+      previousMessages,
+      lawType,
+      lawTypeName,
+      jurisdiction,
+      behaviorMode,
     });
 
     const responseText = conversationResult.text;
@@ -87,7 +137,6 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
     }
 
     const userId = (req as any).user?.id || (req as any).user?.claims?.sub;
-    const sessionId = context?.sessionId || null;
     let conversationId: string | null = null;
     let persistenceSuccess = true;
 
@@ -102,10 +151,14 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
         audioBase64: audioData?.audioBase64 || undefined,
         audioDurationMs: audioData?.durationMs || undefined,
         model,
+        // Persist only server-reviewed metadata. The complete client-supplied
+        // previous-message array and arbitrary context never become trusted DB
+        // metadata by being spread into this record.
         context: {
-          ...context,
-          jurisdiction: conversationResult.jurisdiction || context?.jurisdiction || null,
+          lawType: lawType || null,
+          jurisdiction: conversationResult.jurisdiction || jurisdiction || null,
           mappedLawType: conversationResult.mappedLawType || null,
+          behaviorMode,
         },
       });
       conversationId = conversation.id;
