@@ -188,7 +188,10 @@ export async function generateLexaraConversationResponse(
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
 
   if (shouldUseZeroApiMode()) {
-    const local = await generateZeroApiResponse(`${systemPrompt}\n\n${userPrompt}`, {
+    // The local fallback is regex/pattern based. Feeding the system directive
+    // into it would contaminate classification because the directive itself
+    // contains legal trigger terms such as statute, court, criminal, and civil.
+    const local = await generateZeroApiResponse(userPrompt, {
       type: 'legal-consultation',
     });
     const localText = local.content?.trim();
