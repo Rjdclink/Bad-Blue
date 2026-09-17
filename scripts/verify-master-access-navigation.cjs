@@ -64,7 +64,12 @@ assert(avatar.includes('src="/images/oip.webp"'), "LEXARA attorney image is not 
 assert(!avatar.includes("<svg"), "Retired ethereal SVG is still rendered");
 
 assert(login.includes('"/api/master-login"'), "Master login UI is not using the canonical password-only endpoint");
-assert(!/master[^\n]{0,80}email/i.test(login), "Master login UI appears to require an email");
+const masterTabStart = login.indexOf('<TabsContent value="master">');
+const masterTabEnd = login.indexOf('</TabsContent>', masterTabStart);
+assert(masterTabStart >= 0 && masterTabEnd > masterTabStart, "Master login tab is missing");
+const masterTab = login.slice(masterTabStart, masterTabEnd);
+assert(!/type="email"/i.test(masterTab), "Master login UI must not contain an email input");
+assert(masterTab.includes('name="master-password"'), "Master login UI must expose the master password field");
 assert(auth.includes('app.post("/api/master-login"'), "Canonical master login endpoint is missing");
 assert(auth.includes('app.post("/api/local-login"'), "Canonical local login endpoint is missing");
 assert(auth.includes('app.post("/api/local-register"'), "Canonical local registration endpoint is missing");
