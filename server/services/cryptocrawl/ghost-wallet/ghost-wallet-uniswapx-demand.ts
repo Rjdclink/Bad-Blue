@@ -55,7 +55,7 @@ const ORDER_QUOTERS: Partial<Record<GhostWalletChain, string>> = {
   optimism: '0x00000000a3db63Df9078cBF3dF88B4CAdD5a7F58',
   bsc: '0x00000000a3db63Df9078cBF3dF88B4CAdD5a7F58',
   polygon: '0x00000000a3db63Df9078cBF3dF88B4CAdD5a7F58',
-  base: '0x00000000a3db63Df9078cBF3dF88B4CAdD5a7F58',
+  base: '0x88440407634f89873c5d9439987ac4be9725fea8',
   arbitrum: '0x00000000a3db63Df9078cBF3dF88B4CAdD5a7F58',
   avalanche: '0x00000000a3db63Df9078cBF3dF88B4CAdD5a7F58',
 };
@@ -117,7 +117,6 @@ interface PublicOrder {
   orderHash?: unknown;
   orderStatus?: unknown;
   chainId?: unknown;
-  reactor?: unknown;
 }
 
 interface DemandStatus {
@@ -328,19 +327,19 @@ async function qualifyAndQueue(chain: GhostWalletChain, filler: string, order: P
   const orderHash = safeHash(order.orderHash);
   const encodedOrder = safeHex(order.encodedOrder);
   const signature = safeHex(order.signature);
-  const reactor = safeAddress(order.reactor);
-  if (!chainId || orderChainId !== chainId || !orderHash || !encodedOrder || !signature || !reactor) return false;
+  if (!chainId || orderChainId !== chainId || !orderHash || !encodedOrder || !signature) return false;
   if (String(order.orderStatus || '').toLowerCase() !== 'open') return false;
-  const allowedReactors = new Set(currentReactors(chain).map(value => value.toLowerCase()));
-  if (!allowedReactors.has(reactor.toLowerCase())) return false;
 
+  // Reactor is deliberately derived from the signed encoded order through the
+  // on-chain OrderQuoter. The public /v2/orders schema does not expose reactor.
   const resolved = await resolvedOrder(chain, encodedOrder, signature);
-  const resolvedReactor = safeAddress(resolved?.info?.reactor);
+  const reactor = safeAddress(resolved?.info?.reactor);
   const inputToken = safeAddress(resolved?.input?.token);
   const inputAmount = BigInt(ethers.BigNumber.from(resolved?.input?.amount ?? 0).toString());
   const output = oneOutputAsset(Array.from(resolved?.outputs || []));
-  if (!resolvedReactor || resolvedReactor.toLowerCase() !== reactor.toLowerCase()) return false;
-  if (!inputToken || inputToken === ethers.constants.AddressZero || inputAmount <= 0n || !output) return false;
+  if (!reactor || !inputToken || inputToken === ethers.constants.AddressZero || inputAmount <= 0n || !output) return false;
+  const allowedReactors = new Set(currentReactors(chain).map(value => value.toLowerCase()));
+  if (!allowedReactors.has(reactor.toLowerCase())) return false;
   if (inputToken.toLowerCase() === output.token.toLowerCase()) return false;
 
   const slip = slippagePpm();
@@ -438,6 +437,7 @@ class GhostWalletUniswapXDemand {
       apiKeyRequired: false,
       signupRequired: false,
       genericOrdersReclassifiedAsBorrowerMandates: false,
+      reactorAuthority: 'derived_from_signed_encoded_order_via_onchain_order_quoter',
       zeroInventoryFillContract: true,
       controllerGasAuthority: 'pimlico_sponsored_user_operation',
       strictlyPositiveAllInEconomicsRequiredByUltraWorker: true,
@@ -553,6 +553,7 @@ export const GHOST_WALLET_UNISWAPX_DEMAND_POLICY = {
   apiKeyRequired: false,
   signupRequired: false,
   genericSwapOrdersAreBorrowerMandates: false,
+  signedReactorAuthorityDerivedOnchain: true,
   zeroInventoryCallbackFiller: true,
   sameTransactionSettlement: true,
   outputShortfallReverts: true,
