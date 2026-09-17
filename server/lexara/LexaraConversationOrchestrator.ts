@@ -1,5 +1,6 @@
 import { generateUserText, TaskPriority } from '../aiProvider';
 import type { LawType as ExpertLawType } from '../../shared/legalCounselTypes';
+import { LAW_TYPE_DATA } from '../../shared/lawTypes';
 import { LEXARA_PERSONA } from '../../shared/lexaraVoicePersona';
 
 export interface LexaraConversationMessage {
@@ -66,11 +67,24 @@ const STATE_BY_ABBREVIATION: Record<string, string> = {
 };
 
 const STATE_NAMES = Object.values(STATE_BY_ABBREVIATION);
+const LAW_TYPE_NAME_BY_ID = new Map(LAW_TYPE_DATA.map(item => [item.id, item.name]));
 
 export function mapLexaraLawType(lawType?: string): ExpertLawType | undefined {
   if (!lawType) return undefined;
   const normalized = lawType.trim().toLowerCase().replace(/\s+/g, '-');
   return PRODUCT_TO_EXPERT_LAW_TYPE[normalized];
+}
+
+function trustedDomainName(lawType?: string): string {
+  if (!lawType) return 'the relevant area of law';
+  const normalized = lawType.trim().toLowerCase().replace(/\s+/g, '-');
+  return LAW_TYPE_NAME_BY_ID.get(normalized) || 'the relevant area of law';
+}
+
+function normalizeJurisdiction(value?: string): string | undefined {
+  if (!value) return undefined;
+  const normalized = value.trim().toLowerCase();
+  return STATE_NAMES.find(state => state.toLowerCase() === normalized);
 }
 
 export function inferJurisdiction(text: string): string | undefined {
@@ -113,7 +127,9 @@ function buildLegalSystemPrompt(
   mappedLawType?: ExpertLawType,
   jurisdiction?: string,
 ): string {
-  const domainName = context.lawTypeName || context.lawType || 'the relevant area of law';
+  // The domain and jurisdiction inserted into the system prompt must come from
+  // server-owned allowlists. Client-provided labels are intentionally ignored.
+  const domainName = trustedDomainName(context.lawType);
   const behaviorMode = context.behaviorMode === 'personable'
     ? 'warm and conversational'
     : 'calm, precise, and professional';
@@ -140,7 +156,7 @@ export async function generateLexaraConversationResponse(
 
   const mappedLawType = mapLexaraLawType(context.lawType);
   const history = buildConversationHistory(context.previousMessages);
-  const jurisdiction = context.jurisdiction || inferJurisdiction(`${history}\n${cleanPrompt}`);
+  const jurisdiction = normalizeJurisdiction(context.jurisdiction) || inferJurisdiction(`${history}\n${cleanPrompt}`);
   const systemPrompt = buildLegalSystemPrompt(context, mappedLawType, jurisdiction);
 
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
