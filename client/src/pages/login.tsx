@@ -185,6 +185,9 @@ export default function Login() {
                       <Input
                         id="login-email"
                         type="email"
+                        name="email"
+                        autoComplete="username"
+                        inputMode="email"
                         placeholder="Email address"
                         value={loginEmail}
                         onChange={(e) => setLoginEmail(e.target.value)}
@@ -198,6 +201,8 @@ export default function Login() {
                       <Input
                         id="login-password"
                         type="password"
+                        name="password"
+                        autoComplete="current-password"
                         placeholder="••••••••"
                         value={loginPassword}
                         onChange={(e) => setLoginPassword(e.target.value)}
@@ -219,6 +224,7 @@ export default function Login() {
                       <Input
                         id="master-password"
                         type="password"
+                        name="master-password"
                         placeholder="Master password"
                         value={masterPassword}
                         onChange={(e) => setMasterPassword(e.target.value)}
@@ -240,22 +246,22 @@ export default function Login() {
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label htmlFor="signup-firstname">First Name</Label>
-                        <Input id="signup-firstname" type="text" placeholder="John" value={signupFirstName} onChange={(e) => setSignupFirstName(e.target.value)} required disabled={isLoading} />
+                        <Input id="signup-firstname" name="given-name" autoComplete="given-name" type="text" placeholder="John" value={signupFirstName} onChange={(e) => setSignupFirstName(e.target.value)} required disabled={isLoading} />
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="signup-lastname">Last Name</Label>
-                        <Input id="signup-lastname" type="text" placeholder="Doe" value={signupLastName} onChange={(e) => setSignupLastName(e.target.value)} required disabled={isLoading} />
+                        <Input id="signup-lastname" name="family-name" autoComplete="family-name" type="text" placeholder="Doe" value={signupLastName} onChange={(e) => setSignupLastName(e.target.value)} required disabled={isLoading} />
                       </div>
                     </div>
 
                     <div className="space-y-2">
                       <Label htmlFor="signup-email">Email</Label>
-                      <Input id="signup-email" type="email" placeholder="your@email.com" value={signupEmail} onChange={(e) => setSignupEmail(e.target.value)} required disabled={isLoading} />
+                      <Input id="signup-email" name="email" autoComplete="username" inputMode="email" type="email" placeholder="your@email.com" value={signupEmail} onChange={(e) => setSignupEmail(e.target.value)} required disabled={isLoading} />
                     </div>
 
                     <div className="space-y-2">
                       <Label htmlFor="signup-password">Password</Label>
-                      <Input id="signup-password" type="password" placeholder="••••••••" value={signupPassword} onChange={(e) => setSignupPassword(e.target.value)} required minLength={8} disabled={isLoading} />
+                      <Input id="signup-password" name="new-password" autoComplete="new-password" type="password" placeholder="••••••••" value={signupPassword} onChange={(e) => setSignupPassword(e.target.value)} required minLength={8} disabled={isLoading} />
                       <p className="text-xs text-muted-foreground">Password must be at least 8 characters</p>
                     </div>
 
