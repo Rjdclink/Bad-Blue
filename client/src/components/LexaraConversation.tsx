@@ -66,6 +66,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const handleMessageRef = useRef<(text: string) => void>(() => undefined);
   const videoRef = useRef<HTMLVideoElement>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
+  const messageEndRef = useRef<HTMLDivElement>(null);
 
   const voiceMode = useVoiceMode({
     continuous: true,
@@ -76,14 +77,28 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       handleMessageRef.current(text.trim());
     },
     onError: error => {
-      // A voice failure must not destroy the consultation. Text remains available.
-      if (String(error.message).includes('permission')) {
+      if (String(error.message).toLowerCase().includes('permission')) {
         setVoiceReady(false);
       }
     },
   });
 
+  const {
+    enableVoice: enableRecognition,
+    startListening,
+    stopListening,
+    suspendListening,
+    resumeListening,
+    isListening: recognitionListening,
+    interimTranscript,
+  } = voiceMode;
+
   const voiceSynthesis = useVoiceSynthesis();
+  const {
+    speak,
+    stop: stopSpeaking,
+    isSpeaking: synthesisSpeaking,
+  } = voiceSynthesis;
 
   const setConversationPhase = useCallback((next: ConversationPhase) => {
     phaseRef.current = next;
@@ -103,8 +118,6 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       conversationRef.current = next;
       return next;
     });
-
-    return nextMessage;
   }, []);
 
   const startCamera = useCallback(async () => {
@@ -132,9 +145,9 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
   const enableVoice = useCallback(async () => {
     try {
-      await voiceMode.enableVoice();
+      await enableRecognition();
       setVoiceReady(true);
-      voiceMode.startListening();
+      startListening();
       setConversationPhase('listening');
       return true;
     } catch {
@@ -142,45 +155,51 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       setConversationPhase('text-only');
       return false;
     }
-  }, [setConversationPhase, voiceMode]);
+  }, [enableRecognition, setConversationPhase, startListening]);
 
-  const speakLexara = useCallback(async (text: string) => {
+  const speakLexara = useCallback(async (text: string, generation?: number) => {
     if (!liveEnabled || !voiceReady) {
-      setConversationPhase('text-only');
+      if (generation === undefined || generation === generationRef.current) {
+        setConversationPhase('text-only');
+      }
       return;
     }
 
-    // Hard half-duplex boundary for browser SpeechRecognition: abort partial ASR
-    // before TTS starts so Lexara can never transcribe herself as the user.
-    voiceMode.suspendListening();
-    setConversationPhase('speaking');
-    setEmotion('authoritative');
-    setGaze('camera');
+    // Browser SpeechRecognition is intentionally suspended during TTS. abort()
+    // discards any partial ASR result, preventing Lexara from transcribing herself.
+    suspendListening();
+    if (generation === undefined || generation === generationRef.current) {
+      setConversationPhase('speaking');
+      setEmotion('authoritative');
+      setGaze('camera');
+    }
 
     try {
-      await voiceSynthesis.speak(text, {
+      await speak(text, {
         context: 'guidance',
         autoPlay: true,
       });
     } finally {
-      voiceMode.resumeListening();
-      setConversationPhase('listening');
-      setEmotion('calm');
+      resumeListening();
+      if (generation === undefined || generation === generationRef.current) {
+        setConversationPhase('listening');
+        setEmotion('calm');
+      }
     }
-  }, [liveEnabled, setConversationPhase, voiceMode, voiceReady, voiceSynthesis]);
+  }, [liveEnabled, resumeListening, setConversationPhase, speak, suspendListening, voiceReady]);
 
   const handleUserMessage = useCallback(async (rawMessage: string) => {
     const message = rawMessage.trim();
     if (!message) return;
 
-    // A new user turn supersedes an in-flight response. This allows the user to
-    // add or correct facts while Lexara is still thinking instead of queueing a
-    // stale answer.
-    currentRequestRef.current?.abort();
-    voiceSynthesis.stop();
-
+    // Advance generation before stopping old speech so the outgoing turn cannot
+    // overwrite the new turn's state from its asynchronous finally block.
     const generation = generationRef.current + 1;
     generationRef.current = generation;
+
+    currentRequestRef.current?.abort();
+    stopSpeaking();
+
     const controller = new AbortController();
     currentRequestRef.current = controller;
 
@@ -231,12 +250,11 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
       appendMessage('lexara', answer);
       setGaze('camera');
-      await speakLexara(answer);
+      await speakLexara(answer, generation);
     } catch (error: any) {
       if (error?.name === 'AbortError' || generation !== generationRef.current) return;
 
-      const messageText = friendlyError(error);
-      setErrorMessage(messageText);
+      setErrorMessage(friendlyError(error));
       setConversationPhase(liveEnabled && voiceReady ? 'listening' : 'error');
       setEmotion('empathetic');
       setGaze('camera');
@@ -245,17 +263,17 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         currentRequestRef.current = null;
       }
     }
-  }, [appendMessage, jurisdiction, lawTypeId, lawTypeName, liveEnabled, setConversationPhase, speakLexara, voiceReady, voiceSynthesis]);
+  }, [appendMessage, jurisdiction, lawTypeId, lawTypeName, liveEnabled, setConversationPhase, speakLexara, stopSpeaking, voiceReady]);
 
   handleMessageRef.current = handleUserMessage;
 
   const interruptLexara = useCallback(() => {
-    voiceSynthesis.stop();
-    voiceMode.resumeListening();
+    stopSpeaking();
+    resumeListening();
     setConversationPhase(liveEnabled && voiceReady ? 'listening' : 'text-only');
     setEmotion('calm');
     setGaze('camera');
-  }, [liveEnabled, setConversationPhase, voiceMode, voiceReady, voiceSynthesis]);
+  }, [liveEnabled, resumeListening, setConversationPhase, stopSpeaking, voiceReady]);
 
   const sendGreeting = useCallback(async () => {
     if (greetingRef.current) return;
@@ -284,8 +302,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       }
 
       setConversationPhase('initializing');
-      await startCamera();
-      await enableVoice();
+      await Promise.allSettled([startCamera(), enableVoice()]);
     };
 
     initialize().catch(() => {
@@ -294,8 +311,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   }, [enableVoice, setConversationPhase, startCamera]);
 
   useEffect(() => {
-    if (phase === 'initializing') return;
-    if (greetingRef.current) return;
+    if (phase === 'initializing' || greetingRef.current) return;
 
     const timer = window.setTimeout(() => {
       sendGreeting().catch(() => undefined);
@@ -305,8 +321,8 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   }, [phase, sendGreeting]);
 
   useEffect(() => {
-    if (!voiceSynthesis.isSpeaking) {
-      setAudioLevel(voiceMode.isListening ? 0.12 : 0);
+    if (!synthesisSpeaking) {
+      setAudioLevel(recognitionListening ? 0.12 : 0);
       return;
     }
 
@@ -315,16 +331,20 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     }, 90);
 
     return () => window.clearInterval(timer);
-  }, [voiceMode.isListening, voiceSynthesis.isSpeaking]);
+  }, [recognitionListening, synthesisSpeaking]);
+
+  useEffect(() => {
+    messageEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [conversation, interimTranscript, phase]);
 
   useEffect(() => {
     return () => {
       currentRequestRef.current?.abort();
       cameraStreamRef.current?.getTracks().forEach(track => track.stop());
-      voiceSynthesis.stop();
-      voiceMode.stopListening();
+      stopSpeaking();
+      stopListening();
     };
-  }, [voiceMode, voiceSynthesis]);
+  }, [stopListening, stopSpeaking]);
 
   const statusLabel = useMemo(() => {
     if (phase === 'initializing') return 'Preparing live consultation';
@@ -341,8 +361,8 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   };
 
   const isThinking = phase === 'thinking';
-  const isSpeaking = phase === 'speaking' || voiceSynthesis.isSpeaking;
-  const isListening = phase === 'listening' && voiceMode.isListening;
+  const isSpeaking = phase === 'speaking' || synthesisSpeaking;
+  const isListening = phase === 'listening' && recognitionListening;
 
   return (
     <div className="mx-auto grid min-h-[calc(100vh-73px)] max-w-7xl grid-cols-1 overflow-hidden lg:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.75fr)]">
@@ -438,10 +458,10 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             </div>
           ))}
 
-          {voiceMode.interimTranscript && !isSpeaking && (
+          {interimTranscript && !isSpeaking && (
             <div className="flex justify-end">
               <div className="max-w-[92%] rounded-2xl bg-muted px-4 py-3 text-sm italic text-muted-foreground">
-                {voiceMode.interimTranscript}…
+                {interimTranscript}…
               </div>
             </div>
           )}
@@ -461,6 +481,8 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
               <span>{errorMessage}</span>
             </div>
           )}
+
+          <div ref={messageEndRef} />
         </div>
 
         <div className="border-t p-4">
@@ -469,7 +491,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => enableVoice()}
+              onClick={() => void enableVoice()}
               className="mb-3 w-full gap-2"
             >
               <Mic className="h-4 w-4" />
