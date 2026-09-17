@@ -18,16 +18,23 @@ export interface MasterPanelDefinition {
 export const MASTER_PANELS: MasterPanelDefinition[] = [
   { label: 'LegalWhat', path: '/welcome' },
   { label: 'Administrator', path: '/administrator', aliases: ['/admin'] },
-  { label: 'CryptoCrawler', path: '/cryptocrawler-v2', aliases: ['/cryptocrawler'] },
-  { label: 'Monte Carlo', path: '/orchestrator-console' },
-  { label: 'Control Room', path: '/control-room' },
+  { label: 'Platform Dashboard', path: '/dashboard', aliases: ['/home', '/badblue'] },
+  { label: 'CryptoCrawler V2', path: '/cryptocrawler-v2', aliases: ['/cryptocrawler'] },
+  { label: 'CryptoCrawler Command', path: '/cryptocrawler-dashboard' },
+  { label: 'Monte Carlo / Orchestrator', path: '/orchestrator-console' },
+  { label: 'Computational Reactor / Control Room', path: '/control-room' },
   { label: 'PANTHEON', path: '/pantheon' },
   { label: 'SPECTRA', path: '/spectra' },
+  { label: 'GeoConsole', path: '/geoconsole' },
+  { label: 'GeoConsole Command', path: '/geoconsole-command' },
+  { label: 'GeoConsole Process', path: '/geoconsole-process' },
+  { label: 'GeoConsole Report', path: '/geoconsole-report' },
   { label: 'Location Intelligence', path: '/location-intel' },
   { label: 'TSHPE', path: '/tshpe-locator', aliases: ['/tshpe', '/positioning'] },
   { label: 'AI Sub-Agent', path: '/admin-subagent', aliases: ['/ai-subagent'] },
   { label: 'Worker Logs', path: '/admin-worker-logs' },
   { label: 'Users', path: '/admin-users' },
+  { label: 'Subscriptions', path: '/admin-subscriptions' },
   { label: 'Evidence Administration', path: '/admin-evidence-hub' },
   { label: 'Email Administration', path: '/admin-email' },
   { label: 'Petition Administration', path: '/admin-petitions' },
@@ -79,14 +86,14 @@ export default function MasterPanelNavigator() {
   };
 
   return (
-    <div className="sticky top-0 z-[100] border-b bg-background/95 px-2 py-2 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/80">
+    <div className="sticky top-0 z-[100] overscroll-x-contain touch-pan-y border-b bg-background/95 px-2 py-2 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/80">
       <div className="mx-auto flex w-full max-w-7xl items-center gap-2">
         <Button
           type="button"
           variant="outline"
           size="sm"
           onClick={() => move(-1)}
-          className="min-h-10 shrink-0 touch-manipulation gap-1.5"
+          className="min-h-11 min-w-11 shrink-0 touch-manipulation gap-1.5"
           aria-label="Previous master panel"
         >
           <ArrowLeft className="h-4 w-4" />
@@ -105,7 +112,7 @@ export default function MasterPanelNavigator() {
           variant="outline"
           size="sm"
           onClick={() => move(1)}
-          className="min-h-10 shrink-0 touch-manipulation gap-1.5"
+          className="min-h-11 min-w-11 shrink-0 touch-manipulation gap-1.5"
           aria-label="Next master panel"
         >
           <span className="hidden sm:inline">Forward</span>
@@ -118,7 +125,7 @@ export default function MasterPanelNavigator() {
           size="sm"
           onClick={() => void logout()}
           disabled={loggingOut}
-          className="min-h-10 shrink-0 touch-manipulation gap-1.5"
+          className="min-h-11 min-w-11 shrink-0 touch-manipulation gap-1.5"
           aria-label="Log out"
         >
           <LogOut className="h-4 w-4" />
