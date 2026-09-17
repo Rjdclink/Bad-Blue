@@ -249,9 +249,7 @@ export async function setupAuth(app: Express) {
         typeof req.body?.firstName === "string" ? req.body.firstName : "",
         typeof req.body?.lastName === "string" ? req.body.lastName : "",
       );
-      setLocalCookie(res, createLocalSessionToken(user));
-      clearMasterCookie(res);
-      return res.status(201).json({ success: true, user, hasActiveSubscription: true });
+      return res.status(201).json({ success: true, user, hasActiveSubscription: user.hasPaidForAccess && user.status === "active" });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Registration failed";
       if (message === "Email already registered") return res.status(409).json({ message });
