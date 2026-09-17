@@ -57,7 +57,8 @@ function requireAddress(label: string, value: string): string {
   return ethers.utils.getAddress(value);
 }
 
-function parseVaultOverrides(raw: string | undefined, label: string): Partial<Record<SupportedExecutionChain, string>> {
+function parseVaultOverrides(raw: string | undefined): Partial<Record<SupportedExecutionChain, string>> {
+  const label = 'ZERO_CAPITAL_BALANCER_VAULTS';
   if (!raw?.trim()) return {};
   let parsed: unknown;
   try {
@@ -80,7 +81,7 @@ export function resolveSponsoredReceiverVault(
   chain: SupportedExecutionChain,
   environment: NodeJS.ProcessEnv = process.env,
 ): string | null {
-  const overrides = parseVaultOverrides(environment.ZERO_CAPITAL_BALANCER_VAULTS, 'ZERO_CAPITAL_BALANCER_VAULTS');
+  const overrides = parseVaultOverrides(environment.ZERO_CAPITAL_BALANCER_VAULTS);
   const chainSpecific = environment[`ZERO_CAPITAL_BALANCER_VAULT_${chain.toUpperCase()}`]?.trim();
   const candidate = chainSpecific || overrides[chain] || DEFAULT_BALANCER_VAULTS[chain];
   return candidate ? requireAddress(`Balancer vault for ${chain}`, candidate) : null;
