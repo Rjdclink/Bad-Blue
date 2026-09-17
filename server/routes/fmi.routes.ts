@@ -43,7 +43,6 @@ function getAuthenticatedUserId(req: Request): string | undefined {
   return typeof id === 'string' && id.trim() ? id.trim() : undefined;
 }
 
-// Valid US state/territory codes supported by F.M.I.
 const US_STATE_CODES = [
   'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
   'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD',
@@ -52,10 +51,6 @@ const US_STATE_CODES = [
   'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY',
   'DC', 'PR', 'VI', 'GU', 'AS', 'MP'
 ] as const;
-
-// ============================================================================
-// MULTER CONFIGURATION
-// ============================================================================
 
 const storage = multer.diskStorage({
   destination: async (_req, _file, cb) => {
@@ -90,24 +85,15 @@ const fileFilter = (_req: Request, file: Express.Multer.File, cb: multer.FileFil
     'application/vnd.ms-outlook'
   ];
 
-  if (allowedTypes.includes(file.mimetype)) {
-    cb(null, true);
-  } else {
-    cb(new Error(`F.M.I. does not support file type: ${file.mimetype}`));
-  }
+  if (allowedTypes.includes(file.mimetype)) cb(null, true);
+  else cb(new Error(`F.M.I. does not support file type: ${file.mimetype}`));
 };
 
 const upload = multer({
   storage,
   fileFilter,
-  limits: {
-    fileSize: 100 * 1024 * 1024,
-  },
+  limits: { fileSize: 100 * 1024 * 1024 },
 });
-
-// ============================================================================
-// VALIDATION
-// ============================================================================
 
 const fmiLawTypeSchema = z.string()
   .trim()
@@ -130,10 +116,6 @@ const fmiAnalyzeSchema = z.object({
   path: ['fileId'],
 });
 
-// ============================================================================
-// ROUTES
-// ============================================================================
-
 export function setupFMIRoutes(app: Express): void {
   app.post(
     '/api/fmi/upload',
@@ -145,9 +127,7 @@ export function setupFMIRoutes(app: Express): void {
       const { lawType, associatedWith } = (req as any).body || {};
       const userId = getAuthenticatedUserId(req);
 
-      if (!file) {
-        return res.status(400).json({ error: 'F.M.I. requires a file to upload' });
-      }
+      if (!file) return res.status(400).json({ error: 'F.M.I. requires a file to upload' });
 
       if (!userId) {
         await fs.unlink(file.path).catch(() => {});
@@ -191,7 +171,6 @@ export function setupFMIRoutes(app: Express): void {
         );
 
         const evidenceFile = result.rows[0];
-
         return res.json({
           success: true,
           message: 'File uploaded to F.M.I. successfully',
@@ -226,18 +205,12 @@ export function setupFMIRoutes(app: Express): void {
       }
 
       const userId = getAuthenticatedUserId(req);
-      if (!userId) {
-        return res.status(401).json({ error: 'Authentication required for F.M.I. operations' });
-      }
+      if (!userId) return res.status(401).json({ error: 'Authentication required for F.M.I. operations' });
 
       const { lawType, state, caseContext } = validation.data;
       const fileId = validation.data.fileId || validation.data.file?.id;
-      if (!fileId) {
-        return res.status(400).json({ error: 'Evidence file ID is required' });
-      }
+      if (!fileId) return res.status(400).json({ error: 'Evidence file ID is required' });
 
-      // File identity, metadata, and storage location are server-owned. Never
-      // accept a browser-supplied path/name/type as the analysis authority.
       const storedFileResult = await pool.query(
         `SELECT id, user_id, file_name, file_type, file_size, storage_path,
                 uploaded_at, law_type, fmi_analysis_status
@@ -295,6 +268,40 @@ export function setupFMIRoutes(app: Express): void {
           caseContext
         );
 
+        const structuredSignalCount =
+          analysis.extracted.facts.length
+          + analysis.extracted.parties.length
+          + analysis.extracted.events.length
+          + analysis.extracted.timeline.length
+          + analysis.extracted.documents.length
+          + analysis.extracted.locations.length
+          + analysis.extracted.dates.length
+          + analysis.extracted.quotes.length;
+
+        if (structuredSignalCount === 0 && extractedText.trim().length >= 40) {
+          throw new Error('F.M.I. extracted the file content but structured evidence analysis did not complete');
+        }
+
+        // The legacy engine assigned the same canned credibility/reliability
+        // scores to every file. Do not surface or persist those placeholders as
+        // forensic findings. Credibility requires corroboration and context that
+        // a single automated file pass cannot establish.
+        const analysisForClient: any = {
+          ...analysis,
+          strength: {
+            overall: 'unassessed',
+            credibility: null,
+            reliability: null,
+            corroboration: null,
+            strengths: [],
+            weaknesses: [],
+            gaps: analysis.strength?.gaps || [],
+            recommendations: [
+              'F.M.I. does not assign an automatic credibility score from a single file. Corroborate the extracted content against independent evidence and source provenance.',
+            ],
+          },
+        };
+
         await pool.query(
           `UPDATE evidence_files SET
             fmi_analysis_status = 'completed',
@@ -312,7 +319,7 @@ export function setupFMIRoutes(app: Express): void {
             JSON.stringify(analysis.classification),
             analysis.extracted.facts.slice(0, 10),
             analysis.legalSignificance.relevantTo,
-            analysis.strength.overall,
+            null,
             analysis.classification.admissibility,
             analysis.keyFindings,
             fileId,
@@ -328,18 +335,16 @@ export function setupFMIRoutes(app: Express): void {
         return res.json({
           success: true,
           message: 'F.M.I. analysis completed',
-          analysis,
+          analysis: analysisForClient,
         });
       } catch (error) {
         log.error('[F.M.I.] Analysis failed', { error, fileId, userId });
-
         await pool.query(
           `UPDATE evidence_files
            SET fmi_analysis_status = 'failed'
            WHERE id = $1 AND user_id = $2`,
           [fileId, userId]
         ).catch(() => {});
-
         throw error;
       }
     })
@@ -351,9 +356,7 @@ export function setupFMIRoutes(app: Express): void {
     isAuthenticated,
     asyncHandler(async (req: Request, res: Response) => {
       const userId = getAuthenticatedUserId(req);
-      if (!userId) {
-        return res.status(401).json({ error: 'Authentication required' });
-      }
+      if (!userId) return res.status(401).json({ error: 'Authentication required' });
 
       const result = await pool.query(
         `SELECT
@@ -394,10 +397,7 @@ export function setupFMIRoutes(app: Express): void {
     asyncHandler(async (req: Request, res: Response) => {
       const { id } = req.params;
       const userId = getAuthenticatedUserId(req);
-
-      if (!userId) {
-        return res.status(401).json({ error: 'Authentication required' });
-      }
+      if (!userId) return res.status(401).json({ error: 'Authentication required' });
 
       const result = await pool.query(
         `SELECT * FROM evidence_files WHERE id = $1 AND user_id = $2`,
@@ -409,7 +409,6 @@ export function setupFMIRoutes(app: Express): void {
       }
 
       const file = result.rows[0];
-
       return res.json({
         success: true,
         file: {
