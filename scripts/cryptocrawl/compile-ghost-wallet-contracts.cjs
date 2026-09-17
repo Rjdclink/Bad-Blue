@@ -20,6 +20,11 @@ const contracts = [
     contractName: 'CryptocrawlGhostWalletErc3156Bridge',
     outputPath: 'artifacts/cryptocrawl/CryptocrawlGhostWalletErc3156Bridge.json',
   },
+  {
+    sourceName: 'contracts/cryptocrawl/CryptocrawlGhostWalletUniswapXFiller.sol',
+    contractName: 'CryptocrawlGhostWalletUniswapXFiller',
+    outputPath: 'artifacts/cryptocrawl/CryptocrawlGhostWalletUniswapXFiller.json',
+  },
 ];
 
 function compiler() {
