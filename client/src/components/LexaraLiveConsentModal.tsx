@@ -165,12 +165,12 @@ const LexaraLiveConsentModal = memo(function LexaraLiveConsentModal({
               </div>
             </div>
             <DialogTitle className="text-center text-2xl font-bold text-white">
-              Enable LEXARA Live Co-Counsel
+              Enable LEXARA Live
             </DialogTitle>
             <DialogDescription className="mt-2 text-center text-slate-300">
               {targetLawArea
-                ? `Enable real-time voice consultation for ${targetLawArea}.`
-                : 'Enable real-time voice and optional video consultation with LEXARA.'}
+                ? `Enable real-time voice legal analysis for ${targetLawArea}.`
+                : 'Enable real-time voice legal analysis and optional video with LEXARA.'}
             </DialogDescription>
           </DialogHeader>
         </div>
@@ -201,7 +201,7 @@ const LexaraLiveConsentModal = memo(function LexaraLiveConsentModal({
               <div className="flex-1">
                 <p className="mb-1 text-sm font-medium text-amber-200">Legal Disclaimer</p>
                 <p className="mb-4 text-sm leading-relaxed text-amber-100/80">
-                  LEXARA provides AI-powered legal information and analysis, not legal advice, and does not create an attorney-client relationship. Verify important legal authorities and consult a licensed attorney when appropriate.
+                  LEXARA is an AI legal analysis assistant, not a lawyer. It provides legal information and analysis, does not create an attorney-client relationship, and can make mistakes. Verify important legal authorities and deadlines and consult a licensed attorney when appropriate.
                 </p>
                 <div className="flex items-start gap-3 border-t border-amber-500/20 pt-3">
                   <Checkbox
