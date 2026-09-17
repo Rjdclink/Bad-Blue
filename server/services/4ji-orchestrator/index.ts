@@ -81,11 +81,7 @@
  * - Complete operational autonomy per domain
  * - Recursive task completion to the 4th power
  * 
- * MASTER PASSWORDS:
- * - SARBEAR → Legal What platform (no email required)
- * - CRPTCRWLR → Crypto Crawler dashboard (no email required)
- * - FORGEAI → 4JI admin console (orchestrator)
- * 
+ * MASTER ACCESS:\n * - One canonical password-only platform master session unlocks authorized master panels.\n * - Legacy per-zone master credentials are retired.\n * 
  * USAGE:
  * ```typescript
  * import { ForgeAI, Domain, DomainFirewall, SubAgentCoordinator, HyperDimensionalEngine } from './services/4ji-orchestrator';
