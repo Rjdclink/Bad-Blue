@@ -1,6 +1,6 @@
 import os from 'node:os';
 import pg from 'pg';
-import { Contract, ethers } from 'ethers';
+import { Contract, ethers, type providers } from 'ethers';
 import logger from '../../../logger.js';
 import { ensureCryptocrawlOverflowRuntimeSchema } from '../runtime/cryptocrawl-overflow-runtime-schema.js';
 import { pool } from '../runtime/cryptocrawl-runtime-database.js';
@@ -11,7 +11,14 @@ import {
   evaluateGhostWalletMultiAssetControllerEconomics,
 } from './ghost-wallet-controller-economics.js';
 import { ghostWalletEngine } from './ghost-wallet-engine.js';
-import { resolveGhostWalletGasPricing } from './ghost-wallet-gas-pricing.js';
+import { assertGhostWalletMandateStillExecutable } from './ghost-wallet-mandate-runtime-guard.js';
+import {
+  ensureGhostWalletPimlicoSubmission,
+  getGhostWalletPimlicoReceipt,
+  prepareGhostWalletPimlicoSponsoredTransaction,
+  submitGhostWalletPimlicoSponsoredTransaction,
+  type GhostWalletPimlicoRpcUserOperation,
+} from './ghost-wallet-pimlico-sponsor.js';
 import { processGhostWalletProfitConversion, type GhostWalletProfitConversionPayload } from './ghost-wallet-payout.js';
 import { recordGhostWalletPerformance } from './ghost-wallet-performance-intelligence.js';
 import { ghostWalletProviderMesh, type GhostWalletChain } from './ghost-wallet-provider-mesh.js';
@@ -65,6 +72,21 @@ function validHash(value: unknown): value is string {
 
 function validRawTransaction(value: unknown): value is string {
   return typeof value === 'string' && /^0x[a-fA-F0-9]+$/.test(value) && value.length > 130;
+}
+
+function validPimlicoUserOperation(value: unknown): value is GhostWalletPimlicoRpcUserOperation {
+  if (!value || typeof value !== 'object') return false;
+  const row = value as Record<string, unknown>;
+  return typeof row.sender === 'string'
+    && typeof row.nonce === 'string'
+    && typeof row.callData === 'string'
+    && typeof row.signature === 'string';
+}
+
+function isPimlicoSubmission(work: GhostWalletWorkItem): boolean {
+  return work.result?.submissionKind === 'pimlico_user_operation'
+    && validHash(work.transactionHash)
+    && validPimlicoUserOperation(work.result?.pimlicoUserOperation);
 }
 
 function retryDelayMs(attempt: number): number {
@@ -145,12 +167,13 @@ class GhostWalletUltraWorker {
         concurrencyPolicy: 'read_lanes_parallel_transaction_lanes_serialized_per_chain',
         intermediarySubmitsTransactions: false,
         autonomousControllerSubmission: true,
-        expectedEffectiveGasForProfitability: true,
-        maxFeeCeilingForBalanceGuard: true,
-        identicalRawTransactionMultiProviderBroadcast: true,
+        sponsoredUserOperationEconomicsAuthority: true,
+        pimlicoExclusiveExecutionGasAuthority: true,
+        nativeControllerGasFallback: false,
+        providerSponsoredExecution: true,
+        signedUserOperationPersistedBeforeSubmission: true,
         providerCircuitBreaking: true,
-        controllerGasAuthority: 'execution_wallet_system_owned_native_or_existing_balance',
-        providerSponsoredExecution: false,
+        controllerGasAuthority: 'pimlico_eip7702_erc4337_sponsored_user_operation',
         alchemyDependency: false,
         profitLadderAuthority: false,
         zeroCapitalExecutionAuthority: false,
@@ -214,7 +237,8 @@ class GhostWalletUltraWorker {
     await client.query(`LISTEN ${LISTEN_CHANNEL}`);
     this.listener = client;
     await recordGhostWalletRuntimeState({
-      chain: 'global', listenerConnected: true, metadata: { eventDriven: true, alchemyDependency: false },
+      chain: 'global', listenerConnected: true,
+      metadata: { eventDriven: true, alchemyDependency: false, pimlicoExclusiveExecutionGasAuthority: true },
     });
     this.requestDrain('listener_reconnected');
   }
@@ -299,7 +323,7 @@ class GhostWalletUltraWorker {
       else throw new Error(`GHOST_WALLET_UNSUPPORTED_WORK_KIND:${work.kind}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const deterministic = /INVALID|EXPIRED|NOT_POSITIVE|MISMATCH|REVERTED|UNSUPPORTED|TERMINAL_FAILURE|SETTLEMENT_EVENT_REQUIRED/.test(message);
+      const deterministic = /INVALID|EXPIRED|NOT_POSITIVE|MISMATCH|REVERTED|UNSUPPORTED|TERMINAL_FAILURE|SETTLEMENT_EVENT_REQUIRED|FINAL_CANCELLED|FINAL_NOT_FOUND/.test(message);
       if (deterministic) {
         await markDead(work, this.workerId, error).catch(() => undefined);
         return;
@@ -318,9 +342,37 @@ class GhostWalletUltraWorker {
     }
   }
 
+  private async pimlicoNetworkReceipt(work: GhostWalletWorkItem, chain: GhostWalletChain): Promise<providers.TransactionReceipt | null> {
+    if (!isPimlicoSubmission(work) || !work.transactionHash) return null;
+    const pimlicoReceipt = await getGhostWalletPimlicoReceipt(chain, work.transactionHash);
+    if (!pimlicoReceipt) return null;
+    if (!pimlicoReceipt.success) throw new Error('GHOST_WALLET_PIMLICO_USER_OPERATION_REVERTED');
+    const provider = ghostWalletEngine.getProvider(chain) || await ghostWalletProviderMesh.getProvider(chain);
+    if (!provider) throw new Error('GHOST_WALLET_PIMLICO_RECEIPT_PROVIDER_UNAVAILABLE');
+    const receipt = await provider.getTransactionReceipt(pimlicoReceipt.transactionHash);
+    if (!receipt) return null;
+    if (receipt.status !== 1) throw new Error('GHOST_WALLET_PIMLICO_TRANSACTION_REVERTED');
+    return receipt;
+  }
+
   private async processMatchedIntent(work: GhostWalletWorkItem): Promise<void> {
     const pair = deserializeMatchedIntentPair(work.payload.pair);
     if (work.claimedFromStatus === 'SUBMITTED' && validHash(work.transactionHash)) {
+      if (isPimlicoSubmission(work)) {
+        const receipt = await this.pimlicoNetworkReceipt(work, pair.chain as GhostWalletChain);
+        if (!receipt) {
+          await this.rebroadcastOrDefer(work, 750);
+          return;
+        }
+        const profits = await ingestGhostWalletSettlementReceipt(pair.chain, receipt);
+        if (profits <= 0) throw new Error('GHOST_WALLET_SETTLEMENT_EVENT_REQUIRED');
+        await markGhostWalletWorkSettled({
+          workId: work.workId, owner: this.workerId, transactionHash: receipt.transactionHash,
+          blockNumber: receipt.blockNumber, result: { phase: 'matched_intent_pimlico_reconciled', userOperationHash: work.transactionHash, profitJobsEnqueued: profits },
+        });
+        return;
+      }
+      // Preserve reconciliation for durable legacy submissions created before Pimlico became mandatory.
       const settlement = await ghostWalletEngine.reconcileSubmittedMatchedPair(pair, work.transactionHash);
       if (!settlement) {
         await this.rebroadcastOrDefer(work, 1_000);
@@ -334,7 +386,7 @@ class GhostWalletUltraWorker {
       if (profits <= 0) throw new Error('GHOST_WALLET_SETTLEMENT_EVENT_REQUIRED');
       await markGhostWalletWorkSettled({
         workId: work.workId, owner: this.workerId, transactionHash: settlement.transactionHash,
-        blockNumber: settlement.blockNumber, result: { phase: 'matched_intent_reconciled', profitJobsEnqueued: profits },
+        blockNumber: settlement.blockNumber, result: { phase: 'matched_intent_legacy_reconciled', profitJobsEnqueued: profits },
       });
       return;
     }
@@ -416,11 +468,13 @@ class GhostWalletUltraWorker {
   private async processPreparedAtomic(work: GhostWalletWorkItem): Promise<void> {
     const mode = String(work.payload.mode || 'broker_execution');
     const chain = payloadChain(work);
-    const provider = ghostWalletEngine.getProvider(chain);
+    const provider = ghostWalletEngine.getProvider(chain) || await ghostWalletProviderMesh.getProvider(chain);
     if (!provider) throw new Error('GHOST_WALLET_PREPARED_RUNTIME_UNAVAILABLE');
 
     if (work.claimedFromStatus === 'SUBMITTED' && validHash(work.transactionHash)) {
-      const receipt = await provider.getTransactionReceipt(work.transactionHash);
+      const receipt = isPimlicoSubmission(work)
+        ? await this.pimlicoNetworkReceipt(work, chain)
+        : await provider.getTransactionReceipt(work.transactionHash);
       if (!receipt) {
         await this.rebroadcastOrDefer(work, 750);
         return;
@@ -432,7 +486,7 @@ class GhostWalletUltraWorker {
         if (await provider.getCode(verifyCodeAt) === '0x') throw new Error('GHOST_WALLET_BRIDGE_BOOTSTRAP_CODE_MISMATCH');
         await markGhostWalletWorkSettled({
           workId: work.workId, owner: this.workerId, transactionHash: receipt.transactionHash,
-          blockNumber: receipt.blockNumber, result: { phase: 'bridge_bootstrap_verified' },
+          blockNumber: receipt.blockNumber, result: { phase: 'bridge_bootstrap_verified', userOperationHash: isPimlicoSubmission(work) ? work.transactionHash : null },
         });
         return;
       }
@@ -444,7 +498,7 @@ class GhostWalletUltraWorker {
         if (!Number.isFinite(expected) || actual < expected) throw new Error('GHOST_WALLET_BRIDGE_SPREAD_CONFIG_MISMATCH');
         await markGhostWalletWorkSettled({
           workId: work.workId, owner: this.workerId, transactionHash: receipt.transactionHash,
-          blockNumber: receipt.blockNumber, result: { phase: 'bridge_spread_config_verified', minimumBrokerSpreadBps: actual },
+          blockNumber: receipt.blockNumber, result: { phase: 'bridge_spread_config_verified', minimumBrokerSpreadBps: actual, userOperationHash: isPimlicoSubmission(work) ? work.transactionHash : null },
         });
         return;
       }
@@ -453,7 +507,7 @@ class GhostWalletUltraWorker {
       if (profitJobs <= 0) throw new Error('GHOST_WALLET_SETTLEMENT_EVENT_REQUIRED');
       await markGhostWalletWorkSettled({
         workId: work.workId, owner: this.workerId, transactionHash: receipt.transactionHash,
-        blockNumber: receipt.blockNumber, result: { phase: 'autonomous_broker_execution_settled', profitJobs },
+        blockNumber: receipt.blockNumber, result: { phase: 'autonomous_broker_execution_settled', userOperationHash: isPimlicoSubmission(work) ? work.transactionHash : null, profitJobs },
       });
       return;
     }
@@ -475,37 +529,23 @@ class GhostWalletUltraWorker {
   ): Promise<void> {
     const wallet = ghostWalletEngine.getExecutionWallet(chain);
     if (!wallet) throw new Error('GHOST_WALLET_CONTROLLER_WALLET_UNAVAILABLE');
-    const request = { from: wallet.address, to: transaction.to, data: transaction.data, value: transaction.value };
-    const finalGateStartedAt = Date.now();
-    const preflight = await ghostWalletProviderMesh.runHedged({
-      chain,
-      operation: 'final_submission_preflight',
-      execute: async provider => {
-        await provider.call(request);
-        const [gasRaw, feeData, network, nonce, balance] = await Promise.all([
-          provider.estimateGas(request), provider.getFeeData(), provider.getNetwork(),
-          provider.getTransactionCount(wallet.address, 'pending'), provider.getBalance(wallet.address),
-        ]);
-        return { provider, gasRaw, feeData, network, nonce, balance, pricing: resolveGhostWalletGasPricing(feeData) };
-      },
-    });
-    const gasLimit = preflight.gasRaw.mul(110).add(99).div(100);
-    const expectedFeePerGas = preflight.pricing.expectedFeePerGas;
-    const signingFeeCeilingPerGas = preflight.pricing.signingFeeCeilingPerGas;
-    const worstCaseGasWei = gasLimit.mul(signingFeeCeilingPerGas);
-    if (preflight.balance.lt(worstCaseGasWei)) throw new Error('GHOST_WALLET_CONTROLLER_NATIVE_GAS_UNAVAILABLE');
+    const provider = await ghostWalletProviderMesh.getProvider(chain) || ghostWalletEngine.getProvider(chain);
+    if (!provider) throw new Error('GHOST_WALLET_PIMLICO_EXECUTION_PROVIDER_UNAVAILABLE');
 
+    const finalGateStartedAt = Date.now();
+    const prepared = await prepareGhostWalletPimlicoSponsoredTransaction({ chain, provider, wallet, transaction });
     const executionMode = String(extra.mode || work.payload.mode || '');
+
     if (executionMode === 'broker_execution') {
       const economics = await evaluateGhostWalletControllerEconomics({
         chain,
-        provider: preflight.provider,
+        provider,
         asset: payloadString(work.payload, 'asset'),
-        gasUnits: BigInt(gasLimit.toString()),
-        feePerGasWei: BigInt(expectedFeePerGas.toString()),
+        gasUnits: prepared.billableGasUnitsWithSurcharge,
+        feePerGasWei: prepared.billingFeePerGasWei,
         expectedSpreadBaseUnits: BigInt(payloadString(work.payload, 'expectedSpreadBaseUnits')),
       });
-      if (!economics.approved) throw new Error('GHOST_WALLET_CONTROLLER_NET_NOT_POSITIVE');
+      if (!economics.approved) throw new Error('GHOST_WALLET_CONTROLLER_NET_NOT_POSITIVE_AFTER_PIMLICO');
       extra = {
         ...extra,
         finalGasCostAssetBaseUnits: economics.gasCostAssetBaseUnits.toString(),
@@ -521,6 +561,8 @@ class GhostWalletUltraWorker {
         success: true,
         expectedNetProfitBaseUnits: economics.expectedNetProfitBaseUnits,
       });
+      // Last durable authorization check after UserOperation preparation and before persistence/submission.
+      await assertGhostWalletMandateStillExecutable(work.payload);
     } else if (executionMode === 'matched_intent') {
       const rawProfits = Array.isArray(extra.matchedIntentProfits) ? extra.matchedIntentProfits : [];
       const profits = rawProfits.flatMap((entry: any) => {
@@ -532,12 +574,12 @@ class GhostWalletUltraWorker {
       if (profits.length === 0) throw new Error('GHOST_WALLET_MATCHED_INTENT_PROFIT_INVALID');
       const economics = await evaluateGhostWalletMultiAssetControllerEconomics({
         chain,
-        provider: preflight.provider,
-        gasUnits: BigInt(gasLimit.toString()),
-        feePerGasWei: BigInt(expectedFeePerGas.toString()),
+        provider,
+        gasUnits: prepared.billableGasUnitsWithSurcharge,
+        feePerGasWei: prepared.billingFeePerGasWei,
         profits,
       });
-      if (!economics.approved) throw new Error('GHOST_WALLET_CONTROLLER_NET_NOT_POSITIVE');
+      if (!economics.approved) throw new Error('GHOST_WALLET_CONTROLLER_NET_NOT_POSITIVE_AFTER_PIMLICO');
       extra = {
         ...extra,
         matchedIntentGasCostUsdScaled: economics.gasCostUsdScaled.toString(),
@@ -553,52 +595,43 @@ class GhostWalletUltraWorker {
       };
     }
 
-    const common = {
-      chainId: preflight.network.chainId,
-      nonce: preflight.nonce,
-      to: transaction.to,
-      data: transaction.data,
-      value: ethers.BigNumber.from(transaction.value || '0'),
-      gasLimit,
-    };
-    const unsigned = preflight.feeData.maxFeePerGas && preflight.feeData.maxPriorityFeePerGas
-      ? {
-          ...common,
-          type: 2,
-          maxFeePerGas: preflight.feeData.maxFeePerGas,
-          maxPriorityFeePerGas: preflight.feeData.maxPriorityFeePerGas,
-        }
-      : { ...common, gasPrice: expectedFeePerGas };
-    const rawTransaction = await wallet.signTransaction(unsigned);
-    const transactionHash = ethers.utils.keccak256(rawTransaction);
-
+    const userOperationHash = prepared.userOperationHash;
     await markGhostWalletWorkSubmitted({
-      workId: work.workId, owner: this.workerId, transactionHash, leaseMs: 60_000,
+      workId: work.workId, owner: this.workerId, transactionHash: userOperationHash, leaseMs: 60_000,
       result: {
         ...extra,
-        phase: 'controller_signed_before_broadcast',
-        rawTransaction,
+        phase: 'controller_signed_user_operation_before_submission',
+        submissionKind: 'pimlico_user_operation',
+        pimlicoSubmissionMode: prepared.submissionMode,
+        pimlicoUserOperation: prepared.userOperation,
+        userOperationHash,
         signer: wallet.address,
-        nonce: preflight.nonce,
-        gasLimit: gasLimit.toString(),
-        expectedFeePerGasWei: expectedFeePerGas.toString(),
-        signingFeeCeilingPerGasWei: signingFeeCeilingPerGas.toString(),
-        gasPricingMode: preflight.pricing.mode,
-        chainId: preflight.network.chainId,
+        entryPoint: prepared.entryPoint,
+        eip7702Implementation: prepared.implementation,
+        authorizationIncluded: prepared.authorizationIncluded,
+        estimatedUserOperationGasUnits: prepared.estimatedGasUnits.toString(),
+        billableGasUnitsWithSurcharge: prepared.billableGasUnitsWithSurcharge.toString(),
+        billingFeePerGasWei: prepared.billingFeePerGasWei.toString(),
+        userOperationMaxFeePerGasWei: prepared.maxFeePerGasWei.toString(),
+        userOperationMaxPriorityFeePerGasWei: prepared.maxPriorityFeePerGasWei.toString(),
+        pimlicoSurchargeBps: prepared.surchargeBps,
+        pimlicoGasTier: prepared.gasTier,
+        chainId: prepared.chainId,
+        nativeWalletGasRequired: false,
       },
     });
     this.submittedThisAttempt.add(work.workId);
 
     const broadcastStartedAt = Date.now();
     try {
-      const observedHash = await ghostWalletProviderMesh.broadcastRawTransaction(chain, rawTransaction);
-      if (observedHash && observedHash.toLowerCase() !== transactionHash.toLowerCase()) {
-        throw new Error('GHOST_WALLET_CONTROLLER_SIGNED_HASH_MISMATCH');
+      const observedHash = await submitGhostWalletPimlicoSponsoredTransaction(prepared);
+      if (observedHash.toLowerCase() !== userOperationHash.toLowerCase()) {
+        throw new Error('GHOST_WALLET_PIMLICO_USER_OPERATION_HASH_MISMATCH');
       }
       recordGhostWalletPerformance({
         stage: 'transaction_broadcast', chain,
-        routeKey: transactionHash,
-        sourceKind: String(work.payload.sourceKind || executionMode || 'prepared'),
+        routeKey: userOperationHash,
+        sourceKind: `pimlico:${prepared.submissionMode}:${String(work.payload.sourceKind || executionMode || 'prepared')}`,
         latencyMs: Date.now() - broadcastStartedAt,
         success: true,
         expectedNetProfitBaseUnits: executionMode === 'broker_execution'
@@ -607,7 +640,7 @@ class GhostWalletUltraWorker {
       });
     } catch (error) {
       recordGhostWalletPerformance({
-        stage: 'transaction_broadcast', chain, routeKey: transactionHash,
+        stage: 'transaction_broadcast', chain, routeKey: userOperationHash,
         latencyMs: Date.now() - broadcastStartedAt, success: false,
         errorType: error instanceof Error ? error.message : String(error),
       });
@@ -615,20 +648,29 @@ class GhostWalletUltraWorker {
     }
 
     const deferred = await deferGhostWalletWork({
-      workId: work.workId, owner: this.workerId, error: 'controller_transaction_submitted',
-      retryAfterMs: 750, preserveSubmitted: true,
+      workId: work.workId, owner: this.workerId, error: 'pimlico_user_operation_submitted',
+      retryAfterMs: 500, preserveSubmitted: true,
     });
     this.scheduleRetry(work.workId, deferred.notBefore);
   }
 
   private async rebroadcastOrDefer(work: GhostWalletWorkItem, retryAfterMs: number): Promise<void> {
     const chain = payloadChain(work);
-    const provider = ghostWalletEngine.getProvider(chain);
-    if (!provider) throw new Error('GHOST_WALLET_REBROADCAST_PROVIDER_UNAVAILABLE');
-    const raw = work.result?.rawTransaction;
-    if (validRawTransaction(raw)) {
-      const observed = await provider.getTransaction(work.transactionHash || '').catch(() => null);
-      if (!observed) await ghostWalletProviderMesh.broadcastRawTransaction(chain, raw);
+    if (isPimlicoSubmission(work) && work.transactionHash) {
+      await ensureGhostWalletPimlicoSubmission({
+        chain,
+        userOperationHash: work.transactionHash,
+        userOperation: work.result!.pimlicoUserOperation as GhostWalletPimlicoRpcUserOperation,
+      });
+    } else {
+      // Durable compatibility only for submissions created before Pimlico became mandatory.
+      const provider = ghostWalletEngine.getProvider(chain);
+      if (!provider) throw new Error('GHOST_WALLET_REBROADCAST_PROVIDER_UNAVAILABLE');
+      const raw = work.result?.rawTransaction;
+      if (validRawTransaction(raw)) {
+        const observed = await provider.getTransaction(work.transactionHash || '').catch(() => null);
+        if (!observed) await ghostWalletProviderMesh.broadcastRawTransaction(chain, raw);
+      }
     }
     const deferred = await deferGhostWalletWork({
       workId: work.workId, owner: this.workerId, error: 'receipt_pending', retryAfterMs, preserveSubmitted: true,
