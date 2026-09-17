@@ -21,16 +21,18 @@ const previous = {
 try {
   process.env.SESSION_SECRET = 'test-session-secret-that-is-longer-than-thirty-two-characters';
 
-  // Master access is fixed server-side and password-only. Deployment environment
-  // aliases cannot silently create a second master credential.
+  // Master access is password-only and sourced exclusively from the deployment
+  // secret. Email has no role in the credential check.
   delete process.env.MASTER_ADMIN_EMAIL;
   delete process.env.MASTER_ADMIN_PASSWORD;
-  assert.equal(checkMasterPassword('definitely-wrong'), null);
-  assert.equal(isMasterPassword('definitely-wrong'), false);
+  assert.equal(checkMasterPassword('test-master-password'), null);
+  assert.equal(isMasterPassword('test-master-password'), false);
 
   process.env.MASTER_ADMIN_EMAIL = 'ignored@example.com';
-  process.env.MASTER_ADMIN_PASSWORD = 'ignored-master-password';
-  assert.equal(checkMasterPassword('ignored-master-password', 'ignored@example.com'), null);
+  process.env.MASTER_ADMIN_PASSWORD = 'test-master-password';
+  assert.equal(checkMasterPassword('test-master-password'), 'admin');
+  assert.equal(checkMasterPassword('test-master-password', 'anything@example.com'), 'admin');
+  assert.equal(checkMasterPassword('definitely-wrong'), null);
   assert.equal(ACCESS_ZONES.admin.route, '/welcome');
   assert.equal(ACCESS_ZONES.admin.role, 'ADMIN_ROOT');
 
