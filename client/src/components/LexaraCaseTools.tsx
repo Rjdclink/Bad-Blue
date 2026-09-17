@@ -257,6 +257,8 @@ export default function LexaraCaseTools({ lawTypeId, lawTypeName }: LexaraCaseTo
         <FMIAnalysis
           lawType={lawTypeId || 'general'}
           lawTypeName={lawTypeName || 'Legal Analysis'}
+          state={state || undefined}
+          caseContext={situation.trim() || undefined}
           onAnalysisComplete={setFmiContext}
         />
       </section>
