@@ -2,9 +2,8 @@
  * useVoiceSynthesis Hook
  *
  * Server TTS is preferred, with a zero-cost browser voice fallback. The promise
- * returned by speak() now represents the actual audible turn: it resolves when
- * playback ends or is intentionally interrupted, not merely when synthesis
- * finishes downloading.
+ * returned by speak() represents the audible turn and is bounded so a missing
+ * browser/audio completion event can never strand the microphone in suspension.
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
@@ -40,7 +39,13 @@ export interface VoiceSynthesisResult {
   provider: string | null;
 }
 
-type PlaybackOutcome = 'ended' | 'interrupted';
+type PlaybackOutcome = 'ended' | 'interrupted' | 'timeout';
+
+interface ServerAudio {
+  blob: Blob;
+  voiceId: string | null;
+  durationMs: number | null;
+}
 
 const FEMALE_VOICE_HINTS = [
   'female', 'woman', 'samantha', 'karen', 'fiona', 'tessa', 'moira',
@@ -51,6 +56,8 @@ const FEMALE_VOICE_HINTS = [
 ];
 
 const LEXARA_VOICE_STORAGE_KEY = 'lexara-voice-profile';
+const MIN_PLAYBACK_WATCHDOG_MS = 10_000;
+const MAX_PLAYBACK_WATCHDOG_MS = 240_000;
 
 export function useVoiceSynthesis(): VoiceSynthesisResult {
   const { toast } = useToast();
@@ -63,7 +70,15 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const emotionalStateRef = useRef<PersonaKernelSpeech | null>(null);
   const interruptionResolverRef = useRef<(() => void) | null>(null);
+  const playbackWatchdogRef = useRef<number | null>(null);
   const activeTurnRef = useRef(0);
+
+  const clearPlaybackWatchdog = useCallback(() => {
+    if (playbackWatchdogRef.current !== null) {
+      window.clearTimeout(playbackWatchdogRef.current);
+      playbackWatchdogRef.current = null;
+    }
+  }, []);
 
   const interruptActiveWait = useCallback(() => {
     const resolve = interruptionResolverRef.current;
@@ -73,6 +88,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
 
   const stop = useCallback(() => {
     activeTurnRef.current += 1;
+    clearPlaybackWatchdog();
     interruptActiveWait();
     LexaraServerTTS.stop();
 
@@ -85,7 +101,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     setIsPaused(false);
     setIsLoading(false);
     Lexara.notify(Lexara.events.SPEAKING_END);
-  }, [interruptActiveWait]);
+  }, [clearPlaybackWatchdog, interruptActiveWait]);
 
   const pause = useCallback(() => {
     if (utteranceRef.current && 'speechSynthesis' in window) {
@@ -122,17 +138,20 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
 
     return new Promise(resolve => {
       let settled = false;
+      let timer: number | null = null;
+
       const finish = () => {
         if (settled) return;
         settled = true;
-        window.clearTimeout(timer);
+        if (timer !== null) window.clearTimeout(timer);
         window.speechSynthesis.removeEventListener('voiceschanged', onVoicesChanged as any);
         resolve(window.speechSynthesis.getVoices());
       };
       const onVoicesChanged = () => {
         if (window.speechSynthesis.getVoices().length) finish();
       };
-      const timer = window.setTimeout(finish, timeoutMs);
+
+      timer = window.setTimeout(finish, timeoutMs);
       window.speechSynthesis.addEventListener('voiceschanged', onVoicesChanged as any);
     });
   }, []);
@@ -190,7 +209,22 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     });
   }, []);
 
-  const fetchServerAudio = useCallback(async (text: string): Promise<{ blob: Blob; voiceId: string | null }> => {
+  const makePlaybackWatchdog = useCallback((timeoutMs: number): Promise<PlaybackOutcome> => {
+    clearPlaybackWatchdog();
+    const boundedTimeout = Math.max(
+      MIN_PLAYBACK_WATCHDOG_MS,
+      Math.min(MAX_PLAYBACK_WATCHDOG_MS, timeoutMs),
+    );
+
+    return new Promise(resolve => {
+      playbackWatchdogRef.current = window.setTimeout(() => {
+        playbackWatchdogRef.current = null;
+        resolve('timeout');
+      }, boundedTimeout);
+    });
+  }, [clearPlaybackWatchdog]);
+
+  const fetchServerAudio = useCallback(async (text: string): Promise<ServerAudio> => {
     const response = await fetch('/api/lexara/tts/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -210,9 +244,11 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     const blob = await response.blob();
     if (!blob.size) throw new Error('Received empty audio from server');
 
+    const parsedDuration = Number(response.headers.get('X-Audio-Duration'));
     return {
       blob,
       voiceId: response.headers.get('X-Voice-Id'),
+      durationMs: Number.isFinite(parsedDuration) && parsedDuration > 0 ? parsedDuration : null,
     };
   }, []);
 
@@ -229,15 +265,27 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     setIsSpeaking(true);
     options.onStart?.();
 
+    const expectedDuration = audio.durationMs || Math.max(5_000, text.length * 70);
     const playback = LexaraServerTTS.play(audio.blob).then<PlaybackOutcome>(() => 'ended');
-    const outcome = await Promise.race([playback, makeInterruptionPromise()]);
+    const outcome = await Promise.race([
+      playback,
+      makeInterruptionPromise(),
+      makePlaybackWatchdog(expectedDuration + 8_000),
+    ]);
+
+    clearPlaybackWatchdog();
     interruptionResolverRef.current = null;
 
     if (turnId !== activeTurnRef.current || outcome === 'interrupted') return;
+    if (outcome === 'timeout') {
+      LexaraServerTTS.stop();
+      setIsSpeaking(false);
+      return;
+    }
 
     setIsSpeaking(false);
     options.onEnd?.();
-  }, [fetchServerAudio, makeInterruptionPromise]);
+  }, [clearPlaybackWatchdog, fetchServerAudio, makeInterruptionPromise, makePlaybackWatchdog]);
 
   const speakWithBrowser = useCallback(async (
     text: string,
@@ -293,15 +341,30 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
       window.speechSynthesis.speak(utterance);
     });
 
-    const outcome = await Promise.race([playback, makeInterruptionPromise()]);
+    // Browser speech engines do not expose duration. Estimate generously from
+    // character count and still apply an absolute cap to prevent a dead turn.
+    const estimatedDuration = Math.max(8_000, text.length * 85);
+    const outcome = await Promise.race([
+      playback,
+      makeInterruptionPromise(),
+      makePlaybackWatchdog(estimatedDuration + 12_000),
+    ]);
+
+    clearPlaybackWatchdog();
     interruptionResolverRef.current = null;
 
     if (turnId !== activeTurnRef.current || outcome === 'interrupted') return;
+    if (outcome === 'timeout') {
+      window.speechSynthesis.cancel();
+      utteranceRef.current = null;
+      setIsSpeaking(false);
+      return;
+    }
 
     setIsSpeaking(false);
     Lexara.notify(Lexara.events.SPEAKING_END);
     options.onEnd?.();
-  }, [getLexaraVoice, getModulatedVoiceSettings, makeInterruptionPromise, waitForVoices]);
+  }, [clearPlaybackWatchdog, getLexaraVoice, getModulatedVoiceSettings, makeInterruptionPromise, makePlaybackWatchdog, waitForVoices]);
 
   const speak = useCallback(async (
     text: string,
@@ -320,6 +383,8 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
         await speakWithServer(cleanText, options, turnId);
         return;
       } catch (serverError) {
+        clearPlaybackWatchdog();
+        interruptionResolverRef.current = null;
         if (turnId !== activeTurnRef.current) return;
 
         const message = serverError instanceof Error ? serverError.message.toLowerCase() : String(serverError).toLowerCase();
@@ -339,6 +404,8 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
         await speakWithBrowser(cleanText, options, turnId);
       }
     } catch (err) {
+      clearPlaybackWatchdog();
+      interruptionResolverRef.current = null;
       if (turnId !== activeTurnRef.current) return;
 
       const nextError = err instanceof Error ? err : new Error('Speech synthesis failed');
@@ -353,7 +420,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
         variant: 'destructive',
       });
     }
-  }, [speakWithBrowser, speakWithServer, stop, toast]);
+  }, [clearPlaybackWatchdog, speakWithBrowser, speakWithServer, stop, toast]);
 
   useEffect(() => {
     return () => {
