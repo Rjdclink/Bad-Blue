@@ -131,8 +131,11 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       if (finalText.trim()) {
         const finalValue = finalText.trim();
         setTranscript(prev => (prev ? `${prev} ${finalValue}` : finalValue));
-        setInterimTranscript('');
+        setInterimTranscript(interimText.trim());
         optionsRef.current.onTranscript?.(finalValue, true);
+        if (interimText.trim()) {
+          optionsRef.current.onTranscript?.(interimText.trim(), false);
+        }
       } else {
         setInterimTranscript(interimText.trim());
         if (interimText.trim()) {
@@ -148,9 +151,14 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       const code = String(event?.error || 'unknown');
       const err = new Error(`Speech recognition error: ${code}`);
 
-      if (code === 'not-allowed' || code === 'permission-denied') {
-        setHasPermission(false);
+      if (code === 'not-allowed' || code === 'permission-denied' || code === 'audio-capture') {
+        enabledRef.current = false;
         desiredListeningRef.current = false;
+        suspendedRef.current = false;
+        clearRestartTimer();
+        setIsEnabled(false);
+        setIsSuspended(false);
+        setHasPermission(code === 'audio-capture' ? null : false);
         setError(err);
         optionsRef.current.onError?.(err);
         return;
@@ -233,10 +241,13 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     desiredListeningRef.current = false;
     suspendedRef.current = false;
     setIsSuspended(false);
+    setInterimTranscript('');
     clearRestartTimer();
 
+    // stopListening is an intentional turn-taking boundary. abort() prevents a
+    // partial segment from being finalized after TTS has already started.
     try {
-      recognitionRef.current?.stop();
+      recognitionRef.current?.abort();
     } catch {
       // Ignore invalid-state errors while already stopped.
     }
@@ -250,9 +261,6 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     setInterimTranscript('');
     clearRestartTimer();
 
-    // abort() intentionally discards a partial recognition result. This is
-    // important when Lexara starts speaking so her own TTS cannot become a
-    // finalized user turn.
     try {
       recognitionRef.current?.abort();
     } catch {
