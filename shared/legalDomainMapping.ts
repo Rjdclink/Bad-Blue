@@ -3,13 +3,13 @@ import type { LawType as ExpertLawType } from './legalCounselTypes';
 
 /**
  * LegalWhat exposes a broader/differently-named set of product domains than the
- * legacy expert-profile engine. Keep the translation in one pure shared module
- * so live conversation and structured case tools cannot drift apart.
+ * legacy expert-profile engine. Keep only mappings that are materially
+ * equivalent; an unmapped product domain is safer than forcing the wrong legal
+ * specialty onto a user's matter.
  */
 export const PRODUCT_TO_EXPERT_LAW_TYPE: Partial<Record<ProductLawType, ExpertLawType>> = {
   'law-enforcement-accountability': 'law-enforcement-accountability',
   'criminal-law': 'criminal-law',
-  'civil-law': 'tort-law',
   'family-law': 'family-law',
   'juvenile-law': 'juvenile-law',
   'constitutional-law': 'constitutional-law',
@@ -22,8 +22,6 @@ export const PRODUCT_TO_EXPERT_LAW_TYPE: Partial<Record<ProductLawType, ExpertLa
   'administrative-law': 'administrative-law',
   'trusts-law': 'estate-planning',
   'immigration-law': 'immigration-law',
-  'banking-financing-law': 'business-law',
-  'insurance-law': 'consumer-protection',
   'employment-labor-law': 'employment-law',
   'military-veterans-law': 'military-law',
   'foia-open-records-law': 'administrative-law',
