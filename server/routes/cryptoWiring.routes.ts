@@ -1,4 +1,5 @@
 import express from 'express';
+import { ethers } from 'ethers';
 import { getCryptara } from '../services/cryptara';
 import { pipeline } from '../services/cryptocrawl/integration/master-pipeline.js';
 import { ghostWalletAutonomousController } from '../services/cryptocrawl/ghost-wallet/ghost-wallet-autonomous-controller.js';
@@ -7,6 +8,7 @@ import {
   cancelGhostWalletBorrowerMandate,
   registerGhostWalletBorrowerMandate,
 } from '../services/cryptocrawl/ghost-wallet/ghost-wallet-borrower-mandate.js';
+import { ghostWalletEngine } from '../services/cryptocrawl/ghost-wallet/ghost-wallet-engine.js';
 import { getGhostWalletExternalBridgeDescriptor } from '../services/cryptocrawl/ghost-wallet/ghost-wallet-external-bridge.js';
 import { getGhostWalletPerformanceSnapshot } from '../services/cryptocrawl/ghost-wallet/ghost-wallet-performance-intelligence.js';
 import { ghostWalletProviderMesh, type GhostWalletChain } from '../services/cryptocrawl/ghost-wallet/ghost-wallet-provider-mesh.js';
@@ -15,6 +17,15 @@ import { createLogger } from '../logger';
 const log = createLogger('crypto-wiring');
 const router = express.Router();
 const GHOST_CHAINS = new Set<GhostWalletChain>(['ethereum', 'polygon', 'arbitrum', 'optimism', 'base', 'bsc', 'avalanche']);
+const GHOST_CHAIN_IDS: Record<GhostWalletChain, number> = {
+  ethereum: 1,
+  polygon: 137,
+  arbitrum: 42161,
+  optimism: 10,
+  base: 8453,
+  bsc: 56,
+  avalanche: 43114,
+};
 const GHOST_QUOTE_RATE_WINDOW_MS = 60_000;
 const ghostQuoteRate = new Map<string, { startedAt: number; count: number }>();
 
@@ -115,6 +126,8 @@ router.get('/ghost-wallet/capabilities', async (_req, res) => {
       executionModes: ['external_caller', 'autonomous_controller_signed_mandate'],
       autonomousBorrowerAuthorization: ['borrower_erc1271', 'owner_eoa', 'owner_erc1271'],
       autonomousAmountAuthorization: ['exact_amount', 'signed_min_preferred_max_range'],
+      signedIntentIngress: '/ghost-wallet/signed-intent',
+      signedIntentCryptographicAdmissionRequired: true,
       operatorMonetaryInputRequiredForPrincipal: false,
       fixedBpsProfitFloor: false,
       perTransactionSpreadPricing: true,
@@ -149,6 +162,7 @@ router.get('/ghost-wallet/telemetry', (_req, res) => {
     ok: true,
     authority: 'telemetry_only_terminal_settlement_remains_profit_truth',
     controller: ghostWalletAutonomousController.getStatus(),
+    engine: ghostWalletEngine.getStatus(),
     providers: ghostWalletProviderMesh.getStatus(),
     performance: getGhostWalletPerformanceSnapshot(),
   });
@@ -235,6 +249,62 @@ router.post('/ghost-wallet/borrower-mandate/cancel', async (req, res) => {
     const rateLimited = /RATE_LIMIT_EXCEEDED/.test(message);
     const unavailable = /UNAVAILABLE/.test(message);
     log.warn('Ghost Wallet borrower mandate cancellation rejected', { error: message });
+    if (rateLimited) res.setHeader('Retry-After', '60');
+    return res.status(rateLimited ? 429 : unavailable ? 503 : 400).json({ ok: false, error: message });
+  }
+});
+
+router.post('/ghost-wallet/signed-intent', async (req, res) => {
+  try {
+    enforceGhostRequestBounds(req);
+    const chain = ghostChain(req.body?.chain);
+    const chainId = Number(req.body?.chainId);
+    if (!Number.isSafeInteger(chainId) || chainId !== GHOST_CHAIN_IDS[chain]) {
+      throw new Error('GHOST_WALLET_SIGNED_INTENT_CHAIN_ID_MISMATCH');
+    }
+    const intermediary = String(req.body?.intermediary || '').trim();
+    const configuredIntermediary = ghostWalletEngine.getConfiguredIntermediary(chain);
+    if (!configuredIntermediary) throw new Error('GHOST_WALLET_INTERMEDIARY_BINDING_UNAVAILABLE');
+    if (!ethers.utils.isAddress(intermediary)
+      || ethers.utils.getAddress(intermediary).toLowerCase() !== ethers.utils.getAddress(configuredIntermediary).toLowerCase()) {
+      throw new Error('GHOST_WALLET_SIGNED_INTENT_INTERMEDIARY_MISMATCH');
+    }
+    const intent = ghostWalletEngine.registerSignedIntent({
+      chain,
+      chainId,
+      intermediary,
+      owner: String(req.body?.owner || ''),
+      sellToken: String(req.body?.sellToken || ''),
+      buyToken: String(req.body?.buyToken || ''),
+      sellAmount: BigInt(String(req.body?.sellAmount || '0')),
+      minBuyAmount: BigInt(String(req.body?.minBuyAmount || '0')),
+      maxFeeBps: Number(req.body?.maxFeeBps),
+      nonce: BigInt(String(req.body?.nonce ?? '0')),
+      deadline: Number(req.body?.deadline),
+      signature: String(req.body?.signature || ''),
+      receivedAt: Date.now(),
+    });
+    return res.status(201).json({
+      ok: true,
+      accepted: true,
+      chain: intent.chain,
+      chainId: intent.chainId,
+      intermediary: intent.intermediary,
+      owner: intent.owner,
+      sellToken: intent.sellToken,
+      buyToken: intent.buyToken,
+      sellAmount: intent.sellAmount.toString(),
+      minBuyAmount: intent.minBuyAmount.toString(),
+      maxFeeBps: intent.maxFeeBps,
+      nonce: intent.nonce.toString(),
+      deadline: intent.deadline,
+      receivedAt: intent.receivedAt,
+    });
+  } catch (error: any) {
+    const message = error?.message ?? String(error);
+    const rateLimited = /RATE_LIMIT_EXCEEDED/.test(message);
+    const unavailable = /UNAVAILABLE/.test(message);
+    log.warn('Ghost Wallet signed intent rejected', { error: message });
     if (rateLimited) res.setHeader('Retry-After', '60');
     return res.status(rateLimited ? 429 : unavailable ? 503 : 400).json({ ok: false, error: message });
   }

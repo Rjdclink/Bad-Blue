@@ -3,10 +3,13 @@ import { resolve } from 'node:path';
 import { Contract, ethers } from 'ethers';
 import logger from '../../../logger.js';
 import { resolvePrimaryProfitPayoutAddress } from '../core/wallet-identity.js';
+import {
+  ensureGhostWalletBootstrapWork,
+  type GhostWalletBootstrapWorkSnapshot,
+} from './ghost-wallet-bootstrap-work-recovery.js';
 import { ghostWalletEngine } from './ghost-wallet-engine.js';
 import { getGhostWalletPimlicoSupportedChains } from './ghost-wallet-pimlico-sponsor.js';
 import { ghostWalletProviderMesh, type GhostWalletChain } from './ghost-wallet-provider-mesh.js';
-import { enqueueGhostWalletWork } from './ghost-wallet-work-ledger.js';
 import { ghostWalletWorkSignal } from './ghost-wallet-work-signal.js';
 
 const CREATE2_DEPLOYER = '0x4e59b44847b379578588920cA78FbF26c0B4956C';
@@ -33,6 +36,10 @@ interface IntermediaryDescriptor {
   profitRecipient: string;
   deployed: boolean;
   deployment: null | { to: string; data: string; value: '0' };
+}
+
+interface BootstrapWorkState extends GhostWalletBootstrapWorkSnapshot {
+  chain: GhostWalletChain;
 }
 
 let artifactPromise: Promise<IntermediaryArtifact> | null = null;
@@ -144,6 +151,7 @@ class GhostWalletIntermediaryBootstrap {
   private verifiedChains: GhostWalletChain[] = [];
   private pendingChains: GhostWalletChain[] = [];
   private lastErrors: Array<{ chain: GhostWalletChain; error: string }> = [];
+  private workStates: BootstrapWorkState[] = [];
 
   start(): void {
     if (this.running) return;
@@ -165,6 +173,7 @@ class GhostWalletIntermediaryBootstrap {
       verifiedChains: [...this.verifiedChains],
       pendingChains: [...this.pendingChains],
       lastErrors: this.lastErrors.map(row => ({ ...row })),
+      workStates: this.workStates.map(row => ({ ...row })),
       executionGasAuthority: 'pimlico_sponsored_user_operation',
       operatorCapitalRequired: false,
     };
@@ -196,6 +205,7 @@ class GhostWalletIntermediaryBootstrap {
       const verified: Array<{ chain: string; address: string }> = [];
       const pending: GhostWalletChain[] = [];
       const errors: Array<{ chain: GhostWalletChain; error: string }> = [];
+      const workStates: BootstrapWorkState[] = [];
       for (let index = 0; index < settled.length; index += 1) {
         const chain = targets[index];
         const result = settled[index];
@@ -210,9 +220,8 @@ class GhostWalletIntermediaryBootstrap {
         }
         if (!item.deployment) continue;
         pending.push(chain);
-        await enqueueGhostWalletWork({
+        const work = await ensureGhostWalletBootstrapWork({
           dedupeKey: `ghost-intermediary-bootstrap:${chain}:${item.address.toLowerCase()}`,
-          kind: 'prepared_atomic_execution',
           chain,
           priority: 1_000,
           maxAttempts: 20,
@@ -226,6 +235,7 @@ class GhostWalletIntermediaryBootstrap {
             infrastructureKind: 'matched_intent_intermediary',
           },
         });
+        workStates.push({ chain, ...work });
       }
 
       const merged = new Map<string, { chain: string; address: string }>();
@@ -245,12 +255,24 @@ class GhostWalletIntermediaryBootstrap {
       this.verifiedChains = nextRows.map(row => row.chain as GhostWalletChain);
       this.pendingChains = pending;
       this.lastErrors = errors;
+      this.workStates = workStates;
       logger.info('[GhostWalletBootstrap] Matched-intent intermediary capability reconciled', {
         component: 'GhostWalletIntermediaryBootstrap',
         verifiedChains: this.verifiedChains,
         pendingChains: this.pendingChains,
         routeLocalErrors: errors,
+        workStates: workStates.map(work => ({
+          chain: work.chain,
+          workId: work.workId,
+          status: work.status,
+          attemptCount: work.attemptCount,
+          maxAttempts: work.maxAttempts,
+          rearmed: work.rearmed,
+          transactionHash: work.transactionHash,
+          lastError: work.lastError?.slice(0, 400) || null,
+        })),
         automaticCreate2Bootstrap: true,
+        deadWorkRecovery: true,
         pimlicoSponsoredDeployment: true,
         operatorCapitalRequired: false,
       });
@@ -284,4 +306,6 @@ export const GHOST_WALLET_INTERMEDIARY_BOOTSTRAP_POLICY = {
   matchedIntentOnly: true,
   zeroCapitalExecutionAuthority: false,
   routeLocalFailure: true,
+  deadDedupeWorkRearmedWhenCodeStillAbsent: true,
+  workFailureStateExposedPerChain: true,
 } as const;
