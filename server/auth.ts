@@ -28,7 +28,8 @@ import {
   getLocalSessionMaxAgeSeconds,
   registerLocalUserHttp,
   verifyLocalSessionToken,
-  type StatelessLocalUser,
+  getLocalUserByIdHttp,
+  type StatelessLocalSession,
 } from "./statelessLocalAuth";
 
 
@@ -80,21 +81,16 @@ function attachMasterIdentity(req: any): boolean {
   return true;
 }
 
-function localSessionUser(req: any): StatelessLocalUser | null {
+function localSessionIdentity(req: any): StatelessLocalSession | null {
   return verifyLocalSessionToken(readCookie(req, LOCAL_SESSION_COOKIE));
 }
 
 function attachLocalIdentity(req: any): boolean {
-  const user = localSessionUser(req);
-  if (!user) return false;
+  const session = localSessionIdentity(req);
+  if (!session) return false;
   req.user = {
-    id: user.id,
-    claims: {
-      sub: user.id,
-      email: user.email,
-      firstName: user.firstName ?? undefined,
-      lastName: user.lastName ?? undefined,
-    },
+    id: session.id,
+    claims: { sub: session.id },
     isAdmin: false,
     isAdminBypass: false,
     isMasterBypass: false,
@@ -292,28 +288,39 @@ export async function setupAuth(app: Express) {
 
   // Master-aware auth status/logout short-circuits must be registered before
   // the ordinary database-backed routes are installed later in registerRoutes.
-  app.get("/api/auth/user", (req, res, next) => {
+  app.get("/api/auth/user", async (req, res, next) => {
     if (hasValidMasterCookie(req)) return res.json(masterPlatformUser());
-    const localUser = localSessionUser(req);
-    if (!localUser) return next();
-    return res.json({
-      id: localUser.id,
-      email: localUser.email,
-      firstName: localUser.firstName,
-      lastName: localUser.lastName,
-      profileImageUrl: null,
-      status: localUser.status,
-      hasPaidForAccess: localUser.hasPaidForAccess,
-      accessPaymentId: null,
-      accessPaidAt: null,
-      lastLoginAt: null,
-      createdAt: null,
-      updatedAt: null,
-    });
+    const localSession = localSessionIdentity(req);
+    if (!localSession) return next();
+
+    try {
+      const localUser = await getLocalUserByIdHttp(localSession.id);
+      if (!localUser) {
+        clearLocalCookie(res);
+        return res.json(null);
+      }
+      return res.json({
+        id: localUser.id,
+        email: localUser.email,
+        firstName: localUser.firstName,
+        lastName: localUser.lastName,
+        profileImageUrl: null,
+        status: localUser.status,
+        hasPaidForAccess: localUser.hasPaidForAccess,
+        accessPaymentId: null,
+        accessPaidAt: null,
+        lastLoginAt: null,
+        createdAt: null,
+        updatedAt: null,
+      });
+    } catch (error) {
+      console.error("[AUTH] HTTP session lookup unavailable:", error instanceof Error ? error.message : String(error));
+      return res.status(503).json({ message: "Authentication service is temporarily unavailable" });
+    }
   });
 
   const statelessLogout = (req: any, res: any, next: any) => {
-    if (!hasValidMasterCookie(req) && !localSessionUser(req)) return next();
+    if (!hasValidMasterCookie(req) && !localSessionIdentity(req)) return next();
     clearMasterCookie(res);
     clearLocalCookie(res);
     return res.json({ success: true });
