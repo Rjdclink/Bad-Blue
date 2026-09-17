@@ -1,6 +1,7 @@
 import logger from '../../../logger.js';
 import { ensureStageOneDexMempoolRepair, getStageOneDexMempoolRepairSnapshot } from '../discovery/stage-one-dex-mempool-repair.js';
 import { ensureStageOneMeasurementRecovery, getStageOneMeasurementRecoverySnapshot } from '../discovery/stage-one-measurement-recovery.js';
+import { clearsStageOneOutputFloorBps, STAGE_ONE_ZERO_CAPITAL_OUTPUT_FLOOR_BPS } from '../discovery/stage-one-candidate-policy.js';
 import {
   measuredCandidateRegistry,
   type MeasuredCandidate,
@@ -39,6 +40,7 @@ type SpreadSource =
   | 'canonical_gross_bps'
   | 'measured_gross_profit_usd_over_notional'
   | 'canonical_net_bps_fallback'
+  | 'canonical_net_bps_stage_one'
   | 'cex_four_mode_measured_net_after_exchange_fees_bps'
   | 'locked_last_known_measured_bps';
 
@@ -146,7 +148,20 @@ function candidateNetBps(candidate: MeasuredCandidate): number | null {
   return finite(candidate.economics.netProfitBps);
 }
 
+/**
+ * ZERO_CAPITAL_ATOMIC Stage-1 output is canonical all-in NET BPS only. Gas,
+ * flash-loan and relay costs are already represented in canonical net economics;
+ * gross BPS remains diagnostic telemetry but is never the displayed Stage-1 spread.
+ * The locked > -10 BPS output floor is applied before a point can enter either the
+ * live visibility stream or its last-known measurement lock.
+ */
 function candidateMeasuredSpread(candidate: MeasuredCandidate): { spreadBps: number; source: MeasuredSpreadPoint['source'] } | null {
+  if (candidate.topology === 'ZERO_CAPITAL_ATOMIC') {
+    const canonicalNet = candidateNetBps(candidate);
+    if (canonicalNet === null || !clearsStageOneOutputFloorBps(canonicalNet)) return null;
+    return { spreadBps: canonicalNet, source: 'canonical_net_bps_stage_one' };
+  }
+
   const canonicalGross = finite(candidate.canonicalBps.grossBps);
   if (canonicalGross !== null) return { spreadBps: canonicalGross, source: 'canonical_gross_bps' };
 
@@ -327,6 +342,9 @@ function publish(): void {
     lockedMeasuredTopologies: snapshot.lockedMeasuredTopologies,
     byTopology: Object.values(snapshot.byTopology),
     grossAndNetReportedSeparately: true,
+    zeroCapitalDisplayedSpreadAuthority: 'canonical_all_in_net_bps_after_gas_flash_and_relay_costs',
+    zeroCapitalStageOneOutputFloorBps: STAGE_ONE_ZERO_CAPITAL_OUTPUT_FLOOR_BPS,
+    zeroCapitalStageOneFloorStrictlyGreaterThan: true,
     recovery: getStageOneMeasurementRecoverySnapshot(),
     dexMempoolRepair: getStageOneDexMempoolRepairSnapshot(),
     authority: snapshot.authority,
@@ -359,6 +377,9 @@ export function ensureStageOneSpreadObservability(): void {
     measurementRecoveryInstalled: true,
     dexMempoolRepairInstalled: true,
     grossAndNetReportedSeparately: true,
+    zeroCapitalDisplayedSpreadAuthority: 'canonical_all_in_net_bps_after_gas_flash_and_relay_costs',
+    zeroCapitalStageOneOutputFloorBps: STAGE_ONE_ZERO_CAPITAL_OUTPUT_FLOOR_BPS,
+    zeroCapitalStageOneFloorStrictlyGreaterThan: true,
     executionAuthority: false,
     economicMutationAuthority: false,
     staleEvidenceExecutionAuthority: false,
