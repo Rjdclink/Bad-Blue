@@ -353,7 +353,7 @@ async function prepareSystemCapitalAttempt(
   profitRecipient: string,
   funding: Awaited<ReturnType<typeof getProvenZeroCapitalGasFundingDecision>>,
 ): Promise<SponsoredSystemCapitalAttempt | null> {
-  if (funding.mode !== 'sponsored' || funding.sponsorOperatorMonetaryCostProvenZero !== true) return null;
+  if (funding.mode !== 'sponsored' || funding.operatorMonetaryInputRequired !== false) return null;
   try {
     return await prepareSponsoredSystemCapital({
       chain: opportunity.chain,
@@ -387,31 +387,40 @@ async function persistPreparedProfit(input: {
   try {
     const allocation = await retainedProfitLedger.recordTerminalSettlement(feedback);
     input.result.treasuryRecorded = allocation !== null;
+    const distributableNetProfitBaseUnits = input.result.profit;
     if (
       allocation
       && input.facts.sponsoredExecution
-      && input.facts.sponsorOperatorMonetaryCostProvenZero
       && input.systemCapitalAttempt
+      && typeof distributableNetProfitBaseUnits === 'bigint'
+      && distributableNetProfitBaseUnits > 0n
     ) {
-      const split = splitGrossBaseUnits(input.facts.grossProfit, allocation.retainedFraction);
+      const split = splitGrossBaseUnits(distributableNetProfitBaseUnits, allocation.retainedFraction);
       if (split.retainedProfitBaseUnits > 0n) {
         await persistVerifiedSponsoredProfit(input.systemCapitalAttempt, {
           transactionHash: input.facts.transactionHash,
           chain: input.opportunity.chain,
           asset: input.opportunity.inputAssetSymbol,
           grossProfitBaseUnits: input.facts.grossProfit,
+          distributableNetProfitBaseUnits,
           retainedProfitBaseUnits: split.retainedProfitBaseUnits,
           payoutReservedBaseUnits: split.payoutReservedBaseUnits,
           sourceRecipient: input.profitRecipient,
           sourceRecipientBalanceBeforeBaseUnits: input.facts.recipientStarting,
           sourceRecipientBalanceAfterBaseUnits: input.facts.recipientEnding,
-          zeroOperatorMonetaryGasVerified: true,
+          zeroOperatorMonetaryGasVerified: input.facts.sponsorOperatorMonetaryCostProvenZero,
+          providerGasLiabilityAccounted:
+            !input.facts.sponsorOperatorMonetaryCostProvenZero
+            && input.facts.nativeFeeWei > 0n
+            && input.result.economicsVerified === true,
           zeroExternalNativeCapitalVerified: true,
           zeroExternalInputCapitalVerified: input.zeroExternalInputCapitalVerified,
         });
+        input.result.capitalProvenanceVerified = true;
       }
     }
   } catch (error) {
+    input.result.capitalProvenanceVerified = false;
     logger.error('[ZeroCapitalExecutor] Confirmed profit preserved but treasury/system-capital persistence requires reconciliation', {
       component: 'CanonicalZeroCapitalExecutor',
       opportunityId: input.opportunity.id,
@@ -459,7 +468,7 @@ function preparedResult(input: {
     latencyMs: Date.now() - input.startedAt,
     blockNumber: input.facts.receipt.blockNumber,
     normalized: input.normalized,
-    capitalProvenanceVerified: true,
+    capitalProvenanceVerified: false,
     error: input.economics.economicsComplete
       ? positive
         ? undefined
@@ -705,8 +714,6 @@ export async function executeCanonicalZeroCapitalOpportunity(
     );
   }
 
-  // Under-floor candidates return above before any Profit-Ladder telemetry, provider,
-  // receiver, gas-funding, reservation, or execution-path work is allowed to start.
   void observeDailyProfitBudget(opportunity);
 
   const composite = zeroCapitalCompositeSelectionRegistry.get(opportunity.id);
