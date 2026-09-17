@@ -7,22 +7,23 @@
 import { useMemo } from 'react';
 import LexaraConversation from '@/components/LexaraConversation';
 import LexaraCaseTools from '@/components/LexaraCaseTools';
-import { useLocation, useRoute } from 'wouter';
+import { useLocation, useRoute, useSearch } from 'wouter';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, Scale } from 'lucide-react';
 import { SEOHead } from '@/components/SEOHead';
 import { LAW_TYPE_DATA } from '@shared/lawTypes';
 
 export default function LegalConsultationPage() {
-  const [location, setLocation] = useLocation();
+  const [, setLocation] = useLocation();
+  const search = useSearch();
   const [, params] = useRoute('/legal-consultation/:domainId');
 
   const domainId = params?.domainId;
   const domainInfo = domainId ? LAW_TYPE_DATA.find(type => type.id === domainId) : null;
-  const toolsMode = useMemo(() => {
-    const query = location.includes('?') ? location.slice(location.indexOf('?') + 1) : '';
-    return new URLSearchParams(query).get('mode') === 'tools';
-  }, [location]);
+  const toolsMode = useMemo(
+    () => new URLSearchParams(search).get('mode') === 'tools',
+    [search],
+  );
 
   const canonicalPath = domainId ? `/legal-consultation/${domainId}` : '/legal-consultation';
 
