@@ -1,0 +1,500 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertCircle, Camera, Loader2, Mic, MicOff, Send, Square } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { useVoiceMode } from '@/hooks/useVoiceMode';
+import { useVoiceSynthesis } from '@/hooks/useVoiceSynthesis';
+import {
+  LEXARAEtherealAvatar,
+  LEXARAStatusIndicator,
+  type LEXARAEmotionHint,
+  type LEXARAGazeHint,
+} from '@/components/LexaraEtherealAvatar';
+import { getLexaraLiveEnabled } from '@/components/LexaraLiveConsentModal';
+import { cn } from '@/lib/utils';
+
+interface LexaraConversationProps {
+  lawTypeId?: string;
+  lawTypeName?: string;
+}
+
+interface ConversationMessage {
+  id: string;
+  role: 'user' | 'lexara';
+  content: string;
+  timestamp: Date;
+}
+
+type ConversationPhase =
+  | 'initializing'
+  | 'listening'
+  | 'thinking'
+  | 'speaking'
+  | 'text-only'
+  | 'error';
+
+function makeMessageId(role: ConversationMessage['role']): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return `${role}-${crypto.randomUUID()}`;
+  }
+  return `${role}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function friendlyError(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  return 'LEXARA could not complete that turn. Please try again.';
+}
+
+export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraConversationProps) {
+  const [conversation, setConversation] = useState<ConversationMessage[]>([]);
+  const [userInput, setUserInput] = useState('');
+  const [phase, setPhase] = useState<ConversationPhase>('initializing');
+  const [jurisdiction, setJurisdiction] = useState<string | undefined>();
+  const [liveEnabled, setLiveEnabled] = useState(false);
+  const [voiceReady, setVoiceReady] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [audioLevel, setAudioLevel] = useState(0);
+  const [emotion, setEmotion] = useState<LEXARAEmotionHint>('calm');
+  const [gaze, setGaze] = useState<LEXARAGazeHint>('camera');
+
+  const conversationRef = useRef<ConversationMessage[]>([]);
+  const phaseRef = useRef<ConversationPhase>('initializing');
+  const currentRequestRef = useRef<AbortController | null>(null);
+  const generationRef = useRef(0);
+  const initializedRef = useRef(false);
+  const greetingRef = useRef(false);
+  const handleMessageRef = useRef<(text: string) => void>(() => undefined);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+
+  const voiceMode = useVoiceMode({
+    continuous: true,
+    interimResults: true,
+    onTranscript: (text, isFinal) => {
+      if (!isFinal || !text.trim()) return;
+      if (phaseRef.current === 'speaking') return;
+      handleMessageRef.current(text.trim());
+    },
+    onError: error => {
+      // A voice failure must not destroy the consultation. Text remains available.
+      if (String(error.message).includes('permission')) {
+        setVoiceReady(false);
+      }
+    },
+  });
+
+  const voiceSynthesis = useVoiceSynthesis();
+
+  const setConversationPhase = useCallback((next: ConversationPhase) => {
+    phaseRef.current = next;
+    setPhase(next);
+  }, []);
+
+  const appendMessage = useCallback((role: ConversationMessage['role'], content: string) => {
+    const nextMessage: ConversationMessage = {
+      id: makeMessageId(role),
+      role,
+      content,
+      timestamp: new Date(),
+    };
+
+    setConversation(previous => {
+      const next = [...previous, nextMessage];
+      conversationRef.current = next;
+      return next;
+    });
+
+    return nextMessage;
+  }, []);
+
+  const startCamera = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 480 },
+          height: { ideal: 360 },
+          facingMode: 'user',
+        },
+        audio: false,
+      });
+
+      cameraStreamRef.current?.getTracks().forEach(track => track.stop());
+      cameraStreamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play().catch(() => undefined);
+      }
+      setCameraReady(true);
+    } catch {
+      setCameraReady(false);
+    }
+  }, []);
+
+  const enableVoice = useCallback(async () => {
+    try {
+      await voiceMode.enableVoice();
+      setVoiceReady(true);
+      voiceMode.startListening();
+      setConversationPhase('listening');
+      return true;
+    } catch {
+      setVoiceReady(false);
+      setConversationPhase('text-only');
+      return false;
+    }
+  }, [setConversationPhase, voiceMode]);
+
+  const speakLexara = useCallback(async (text: string) => {
+    if (!liveEnabled || !voiceReady) {
+      setConversationPhase('text-only');
+      return;
+    }
+
+    // Hard half-duplex boundary for browser SpeechRecognition: abort partial ASR
+    // before TTS starts so Lexara can never transcribe herself as the user.
+    voiceMode.suspendListening();
+    setConversationPhase('speaking');
+    setEmotion('authoritative');
+    setGaze('camera');
+
+    try {
+      await voiceSynthesis.speak(text, {
+        context: 'guidance',
+        autoPlay: true,
+      });
+    } finally {
+      voiceMode.resumeListening();
+      setConversationPhase('listening');
+      setEmotion('calm');
+    }
+  }, [liveEnabled, setConversationPhase, voiceMode, voiceReady, voiceSynthesis]);
+
+  const handleUserMessage = useCallback(async (rawMessage: string) => {
+    const message = rawMessage.trim();
+    if (!message) return;
+
+    // A new user turn supersedes an in-flight response. This allows the user to
+    // add or correct facts while Lexara is still thinking instead of queueing a
+    // stale answer.
+    currentRequestRef.current?.abort();
+    voiceSynthesis.stop();
+
+    const generation = generationRef.current + 1;
+    generationRef.current = generation;
+    const controller = new AbortController();
+    currentRequestRef.current = controller;
+
+    const previousMessages = conversationRef.current.map(item => ({
+      role: item.role,
+      content: item.content,
+    }));
+
+    appendMessage('user', message);
+    setUserInput('');
+    setErrorMessage(null);
+    setConversationPhase('thinking');
+    setEmotion('calm');
+    setGaze('thinking');
+
+    try {
+      const response = await fetch('/api/lexara/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          prompt: message,
+          includeAudio: false,
+          context: {
+            previousMessages,
+            lawType: lawTypeId,
+            lawTypeName,
+            jurisdiction,
+            behaviorMode: 'professional',
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body?.error || body?.message || `LEXARA request failed (${response.status})`);
+      }
+
+      const data = await response.json();
+      if (generation !== generationRef.current) return;
+
+      const answer = String(data?.response || '').trim();
+      if (!answer) throw new Error('LEXARA returned an empty response');
+
+      if (data?.jurisdiction && typeof data.jurisdiction === 'string') {
+        setJurisdiction(data.jurisdiction);
+      }
+
+      appendMessage('lexara', answer);
+      setGaze('camera');
+      await speakLexara(answer);
+    } catch (error: any) {
+      if (error?.name === 'AbortError' || generation !== generationRef.current) return;
+
+      const messageText = friendlyError(error);
+      setErrorMessage(messageText);
+      setConversationPhase(liveEnabled && voiceReady ? 'listening' : 'error');
+      setEmotion('empathetic');
+      setGaze('camera');
+    } finally {
+      if (generation === generationRef.current) {
+        currentRequestRef.current = null;
+      }
+    }
+  }, [appendMessage, jurisdiction, lawTypeId, lawTypeName, liveEnabled, setConversationPhase, speakLexara, voiceReady, voiceSynthesis]);
+
+  handleMessageRef.current = handleUserMessage;
+
+  const interruptLexara = useCallback(() => {
+    voiceSynthesis.stop();
+    voiceMode.resumeListening();
+    setConversationPhase(liveEnabled && voiceReady ? 'listening' : 'text-only');
+    setEmotion('calm');
+    setGaze('camera');
+  }, [liveEnabled, setConversationPhase, voiceMode, voiceReady, voiceSynthesis]);
+
+  const sendGreeting = useCallback(async () => {
+    if (greetingRef.current) return;
+    greetingRef.current = true;
+
+    const domain = lawTypeName ? ` about ${lawTypeName}` : '';
+    const greeting = `Hello. Tell me what happened${domain}, in your own words. I'll identify the legal issues, test the strengths and weaknesses, and ask only the questions that materially affect the analysis.`;
+    appendMessage('lexara', greeting);
+
+    if (liveEnabled && voiceReady) {
+      await speakLexara(greeting).catch(() => undefined);
+    }
+  }, [appendMessage, lawTypeName, liveEnabled, speakLexara, voiceReady]);
+
+  useEffect(() => {
+    if (initializedRef.current) return;
+    initializedRef.current = true;
+
+    const initialize = async () => {
+      const consentedLive = getLexaraLiveEnabled() === 'true';
+      setLiveEnabled(consentedLive);
+
+      if (!consentedLive) {
+        setConversationPhase('text-only');
+        return;
+      }
+
+      setConversationPhase('initializing');
+      await startCamera();
+      await enableVoice();
+    };
+
+    initialize().catch(() => {
+      setConversationPhase('text-only');
+    });
+  }, [enableVoice, setConversationPhase, startCamera]);
+
+  useEffect(() => {
+    if (phase === 'initializing') return;
+    if (greetingRef.current) return;
+
+    const timer = window.setTimeout(() => {
+      sendGreeting().catch(() => undefined);
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [phase, sendGreeting]);
+
+  useEffect(() => {
+    if (!voiceSynthesis.isSpeaking) {
+      setAudioLevel(voiceMode.isListening ? 0.12 : 0);
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      setAudioLevel(0.3 + Math.random() * 0.45);
+    }, 90);
+
+    return () => window.clearInterval(timer);
+  }, [voiceMode.isListening, voiceSynthesis.isSpeaking]);
+
+  useEffect(() => {
+    return () => {
+      currentRequestRef.current?.abort();
+      cameraStreamRef.current?.getTracks().forEach(track => track.stop());
+      voiceSynthesis.stop();
+      voiceMode.stopListening();
+    };
+  }, [voiceMode, voiceSynthesis]);
+
+  const statusLabel = useMemo(() => {
+    if (phase === 'initializing') return 'Preparing live consultation';
+    if (phase === 'thinking') return 'Analyzing';
+    if (phase === 'speaking') return 'Speaking';
+    if (phase === 'listening') return 'Listening';
+    if (phase === 'error') return 'Text available';
+    return 'Text consultation';
+  }, [phase]);
+
+  const submitText = (event: React.FormEvent) => {
+    event.preventDefault();
+    handleUserMessage(userInput);
+  };
+
+  const isThinking = phase === 'thinking';
+  const isSpeaking = phase === 'speaking' || voiceSynthesis.isSpeaking;
+  const isListening = phase === 'listening' && voiceMode.isListening;
+
+  return (
+    <div className="mx-auto grid min-h-[calc(100vh-73px)] max-w-7xl grid-cols-1 overflow-hidden lg:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.75fr)]">
+      <section className="relative flex min-h-[50vh] items-center justify-center overflow-hidden bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 p-6 lg:min-h-full">
+        <div className="absolute inset-0 opacity-40">
+          <div className="absolute left-1/4 top-1/4 h-80 w-80 rounded-full bg-cyan-500/10 blur-3xl" />
+          <div className="absolute bottom-1/4 right-1/4 h-96 w-96 rounded-full bg-indigo-400/10 blur-3xl" />
+        </div>
+
+        <div className="relative z-10 h-[420px] w-full max-w-lg sm:h-[520px]">
+          <LEXARAEtherealAvatar
+            isSpeaking={isSpeaking}
+            isListening={isListening}
+            isThinking={isThinking}
+            audioLevel={audioLevel}
+            emotionHint={emotion}
+            gazeHint={gaze}
+            size="full"
+          />
+        </div>
+
+        <div className="absolute left-4 top-4 z-20 flex items-center gap-2 rounded-full border border-white/10 bg-slate-950/70 px-3 py-2 text-xs text-slate-200 backdrop-blur">
+          <LEXARAStatusIndicator
+            isSpeaking={isSpeaking}
+            isListening={isListening}
+            isThinking={isThinking}
+          />
+          <span>{statusLabel}</span>
+        </div>
+
+        {liveEnabled && (
+          <div className="absolute bottom-4 left-4 z-20 h-24 w-32 overflow-hidden rounded-xl border border-white/15 bg-slate-950/80 shadow-xl sm:h-28 sm:w-40">
+            <video ref={videoRef} muted playsInline autoPlay className="h-full w-full object-cover" />
+            {!cameraReady && (
+              <div className="absolute inset-0 flex items-center justify-center text-slate-500">
+                <Camera className="h-5 w-5" />
+              </div>
+            )}
+          </div>
+        )}
+
+        {isSpeaking && (
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={interruptLexara}
+            className="absolute bottom-4 right-4 z-20 gap-2"
+          >
+            <Square className="h-3.5 w-3.5" />
+            Interrupt
+          </Button>
+        )}
+      </section>
+
+      <section className="flex min-h-[50vh] flex-col border-l bg-background lg:min-h-full">
+        <div className="border-b px-5 py-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="font-semibold">LEXARA Consultation</h2>
+              <p className="text-xs text-muted-foreground">
+                {lawTypeName || 'Legal analysis'}{jurisdiction ? ` · ${jurisdiction}` : ''}
+              </p>
+            </div>
+            <div className={cn(
+              'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs',
+              liveEnabled && voiceReady
+                ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                : 'bg-muted text-muted-foreground',
+            )}>
+              {liveEnabled && voiceReady ? <Mic className="h-3.5 w-3.5" /> : <MicOff className="h-3.5 w-3.5" />}
+              {liveEnabled && voiceReady ? 'Voice live' : 'Text mode'}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex-1 space-y-3 overflow-y-auto p-4">
+          {conversation.map(message => (
+            <div
+              key={message.id}
+              className={cn('flex', message.role === 'user' ? 'justify-end' : 'justify-start')}
+            >
+              <div
+                className={cn(
+                  'max-w-[92%] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm',
+                  message.role === 'user'
+                    ? 'bg-primary text-primary-foreground'
+                    : 'border bg-card text-card-foreground',
+                )}
+              >
+                {message.content}
+              </div>
+            </div>
+          ))}
+
+          {voiceMode.interimTranscript && !isSpeaking && (
+            <div className="flex justify-end">
+              <div className="max-w-[92%] rounded-2xl bg-muted px-4 py-3 text-sm italic text-muted-foreground">
+                {voiceMode.interimTranscript}…
+              </div>
+            </div>
+          )}
+
+          {isThinking && (
+            <div className="flex justify-start">
+              <div className="flex items-center gap-2 rounded-2xl border bg-card px-4 py-3 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Reviewing the facts and law…
+              </div>
+            </div>
+          )}
+
+          {errorMessage && (
+            <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{errorMessage}</span>
+            </div>
+          )}
+        </div>
+
+        <div className="border-t p-4">
+          {liveEnabled && !voiceReady && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => enableVoice()}
+              className="mb-3 w-full gap-2"
+            >
+              <Mic className="h-4 w-4" />
+              Re-enable microphone
+            </Button>
+          )}
+
+          <form onSubmit={submitText} className="flex gap-2">
+            <input
+              value={userInput}
+              onChange={event => setUserInput(event.target.value)}
+              placeholder={isSpeaking ? 'Type to interrupt or add a fact…' : 'Type or speak naturally…'}
+              className="min-w-0 flex-1 rounded-full border bg-background px-4 py-2.5 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label="Message LEXARA"
+            />
+            <Button type="submit" size="icon" className="h-10 w-10 rounded-full" disabled={!userInput.trim()}>
+              <Send className="h-4 w-4" />
+            </Button>
+          </form>
+
+          <p className="mt-2 text-center text-[11px] text-muted-foreground">
+            AI legal information and analysis. Verify controlling authority before relying on a citation or deadline.
+          </p>
+        </div>
+      </section>
+    </div>
+  );
+}
