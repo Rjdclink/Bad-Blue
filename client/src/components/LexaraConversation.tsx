@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Camera, Loader2, Mic, MicOff, Send, Square } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useVoiceMode } from '@/hooks/useVoiceMode';
@@ -25,6 +25,17 @@ interface ConversationMessage {
   timestamp: Date;
 }
 
+interface StoredConversationState {
+  sessionId: string;
+  jurisdiction?: string;
+  messages: Array<{
+    id: string;
+    role: 'user' | 'lexara';
+    content: string;
+    timestamp: string;
+  }>;
+}
+
 type ConversationPhase =
   | 'initializing'
   | 'listening'
@@ -35,12 +46,71 @@ type ConversationPhase =
 
 const VOICE_TURN_SETTLE_MS = 600;
 const CHAT_TURN_TIMEOUT_MS = 45_000;
+const MAX_STORED_CONVERSATION_MESSAGES = 24;
 
 function makeMessageId(role: ConversationMessage['role']): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
     return `${role}-${crypto.randomUUID()}`;
   }
   return `${role}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function makeSessionId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return `lexara-${crypto.randomUUID()}`;
+  }
+  return `lexara-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function conversationStorageKey(lawTypeId?: string): string {
+  const normalized = lawTypeId?.trim().toLowerCase() || 'general';
+  return `lexara-live-session:${normalized}`;
+}
+
+function loadStoredConversation(lawTypeId?: string): {
+  sessionId: string;
+  jurisdiction?: string;
+  messages: ConversationMessage[];
+} {
+  const fallback = {
+    sessionId: makeSessionId(),
+    jurisdiction: undefined,
+    messages: [] as ConversationMessage[],
+  };
+
+  if (typeof window === 'undefined') return fallback;
+
+  try {
+    const raw = window.sessionStorage.getItem(conversationStorageKey(lawTypeId));
+    if (!raw) return fallback;
+
+    const parsed = JSON.parse(raw) as Partial<StoredConversationState>;
+    const sessionId = typeof parsed.sessionId === 'string' && parsed.sessionId.trim()
+      ? parsed.sessionId.trim().slice(0, 128)
+      : fallback.sessionId;
+    const jurisdiction = typeof parsed.jurisdiction === 'string' && parsed.jurisdiction.trim()
+      ? parsed.jurisdiction.trim().slice(0, 80)
+      : undefined;
+    const messages = Array.isArray(parsed.messages)
+      ? parsed.messages
+        .slice(-MAX_STORED_CONVERSATION_MESSAGES)
+        .flatMap(item => {
+          if (!item || (item.role !== 'user' && item.role !== 'lexara')) return [];
+          if (typeof item.content !== 'string' || !item.content.trim()) return [];
+          const timestamp = new Date(item.timestamp || Date.now());
+          return [{
+            id: typeof item.id === 'string' && item.id ? item.id : makeMessageId(item.role),
+            role: item.role,
+            content: item.content.trim(),
+            timestamp: Number.isNaN(timestamp.getTime()) ? new Date() : timestamp,
+          } satisfies ConversationMessage];
+        })
+      : [];
+
+    return { sessionId, jurisdiction, messages };
+  } catch {
+    return fallback;
+  }
 }
 
 function friendlyError(error: unknown): string {
@@ -62,10 +132,14 @@ function emotionFromUserText(text: string): LEXARAEmotionHint {
 }
 
 export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraConversationProps) {
-  const [conversation, setConversation] = useState<ConversationMessage[]>([]);
+  const initialStateRef = useRef(loadStoredConversation(lawTypeId));
+  const storageKeyRef = useRef(conversationStorageKey(lawTypeId));
+  const sessionIdRef = useRef(initialStateRef.current.sessionId);
+
+  const [conversation, setConversation] = useState<ConversationMessage[]>(initialStateRef.current.messages);
   const [userInput, setUserInput] = useState('');
   const [phase, setPhase] = useState<ConversationPhase>('initializing');
-  const [jurisdiction, setJurisdiction] = useState<string | undefined>();
+  const [jurisdiction, setJurisdiction] = useState<string | undefined>(initialStateRef.current.jurisdiction);
   const [liveEnabled, setLiveEnabled] = useState(false);
   const [voiceReady, setVoiceReady] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
@@ -74,12 +148,12 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const [emotion, setEmotion] = useState<LEXARAEmotionHint>('calm');
   const [gaze, setGaze] = useState<LEXARAGazeHint>('camera');
 
-  const conversationRef = useRef<ConversationMessage[]>([]);
+  const conversationRef = useRef<ConversationMessage[]>(initialStateRef.current.messages);
   const phaseRef = useRef<ConversationPhase>('initializing');
   const currentRequestRef = useRef<AbortController | null>(null);
   const generationRef = useRef(0);
   const initializedRef = useRef(false);
-  const greetingRef = useRef(false);
+  const greetingRef = useRef(initialStateRef.current.messages.length > 0);
   const userSpeechObservedRef = useRef(false);
   const handleMessageRef = useRef<(text: string) => void>(() => undefined);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -296,6 +370,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             lawType: lawTypeId,
             lawTypeName,
             jurisdiction,
+            sessionId: sessionIdRef.current,
             behaviorMode: 'professional',
           },
         }),
@@ -388,6 +463,26 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   }, [enableVoice, setConversationPhase, startCamera]);
 
   useEffect(() => {
+    try {
+      const stored: StoredConversationState = {
+        sessionId: sessionIdRef.current,
+        jurisdiction,
+        messages: conversation
+          .slice(-MAX_STORED_CONVERSATION_MESSAGES)
+          .map(message => ({
+            id: message.id,
+            role: message.role,
+            content: message.content,
+            timestamp: message.timestamp.toISOString(),
+          })),
+      };
+      window.sessionStorage.setItem(storageKeyRef.current, JSON.stringify(stored));
+    } catch {
+      // Session persistence is best-effort; live conversation still works without it.
+    }
+  }, [conversation, jurisdiction]);
+
+  useEffect(() => {
     if (phase === 'initializing' || greetingRef.current) return;
 
     const timer = window.setTimeout(() => {
@@ -433,7 +528,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     return 'Text consultation';
   }, [phase]);
 
-  const submitText = (event: React.FormEvent) => {
+  const submitText = (event: FormEvent) => {
     event.preventDefault();
     handleUserMessage(userInput);
   };
