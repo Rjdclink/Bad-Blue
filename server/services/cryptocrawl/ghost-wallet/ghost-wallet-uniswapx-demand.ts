@@ -15,7 +15,6 @@ import { ghostWalletWorkSignal } from './ghost-wallet-work-signal.js';
 const CREATE2_DEPLOYER = '0x4e59b44847b379578588920cA78FbF26c0B4956C';
 const CREATE2_DEPLOYER_CODE_HASH = '0x2fa86add0aed31f33a762c9d88e807c475bd51d0f52bd0955754b2608f7e4989';
 const FILLER_SALT = ethers.utils.keccak256(ethers.utils.toUtf8Bytes('bad-blue:cryptocrawl-ghost-wallet-uniswapx-filler:v1'));
-const ORDER_QUOTER = '0x00000000a3db63Df9078cBF3dF88B4CAdD5a7F58';
 const DEFAULT_POLL_MS = 1_000;
 const MIN_POLL_MS = 750;
 const MAX_POLL_MS = 10_000;
@@ -35,8 +34,6 @@ const CHAIN_IDS: Partial<Record<GhostWalletChain, number>> = {
   avalanche: 43114,
 };
 
-// Current UniswapX reactors plus still-live Ethereum legacy reactors. The signed
-// order itself remains authoritative; this list is only a bounded safety allowlist.
 const UNISWAPX_REACTORS: Partial<Record<GhostWalletChain, string[]>> = {
   ethereum: [
     '0x0000000015757c461808EA25Eb309638B62681cf',
@@ -52,6 +49,19 @@ const UNISWAPX_REACTORS: Partial<Record<GhostWalletChain, string[]>> = {
   ],
   arbitrum: ['0xB274d5F4b833b61B340b654d600A864fB604a87c'],
   avalanche: ['0x00000000862cCF095823fc7576Fa6C7e6b7385ef'],
+};
+
+// Deployment addresses are taken from the current upstream UniswapX deployment
+// manifest. Ethereum/Base retain their established quoters; newer V3 chains use
+// the canonical shared CREATE2 address.
+const ORDER_QUOTERS: Partial<Record<GhostWalletChain, string>> = {
+  ethereum: '0x54539967a06Fc0E3C3ED0ee320Eb67362D13C5fF',
+  optimism: '0x00000000a3db63Df9078cBF3dF88B4CAdD5a7F58',
+  bsc: '0x00000000a3db63Df9078cBF3dF88B4CAdD5a7F58',
+  polygon: '0x00000000a3db63Df9078cBF3dF88B4CAdD5a7F58',
+  base: '0x88440407634f89873c5d9439987ac4be9725fea8',
+  arbitrum: '0x00000000a3db63Df9078cBF3dF88B4CAdD5a7F58',
+  avalanche: '0x00000000a3db63Df9078cBF3dF88B4CAdD5a7F58',
 };
 
 const FILLER_ABI = [
@@ -301,11 +311,13 @@ async function fetchOpenOrders(chainId: number): Promise<PublicOrder[]> {
 }
 
 async function resolvedOrder(chain: GhostWalletChain, encodedOrder: string, signature: string): Promise<any> {
+  const quoterAddress = ORDER_QUOTERS[chain];
+  if (!quoterAddress) throw new Error(`GHOST_WALLET_UNISWAPX_QUOTER_UNAVAILABLE:${chain}`);
   const provider = await ghostWalletProviderMesh.getProvider(chain) || ghostWalletEngine.getProvider(chain);
   if (!provider) throw new Error(`GHOST_WALLET_UNISWAPX_PROVIDER_UNAVAILABLE:${chain}`);
-  const code = await provider.getCode(ORDER_QUOTER);
+  const code = await provider.getCode(quoterAddress);
   if (code === '0x') throw new Error(`GHOST_WALLET_UNISWAPX_QUOTER_UNAVAILABLE:${chain}`);
-  const quoter = new Contract(ORDER_QUOTER, ORDER_QUOTER_ABI as any, provider);
+  const quoter = new Contract(quoterAddress, ORDER_QUOTER_ABI as any, provider);
   return quoter.callStatic.quote(encodedOrder, signature);
 }
 
@@ -339,8 +351,6 @@ async function ensureOrderWork(input: {
   });
   if (work.status !== 'DEAD' || work.transactionHash) return { work, rearmed: false };
 
-  // A freshly re-qualified API order can safely re-arm a pre-submission DEAD row.
-  // Never re-arm a row that has any submission hash; reconciliation owns that case.
   const result = await pool.query(
     `UPDATE private.cryptocrawler_ghost_wallet_work
      SET status='RETRYABLE', attempt_count=0, not_before=now(), max_attempts=GREATEST(max_attempts,8),
@@ -362,8 +372,6 @@ async function qualifyAndQueue(chain: GhostWalletChain, filler: string, order: P
   if (!chainId || orderChainId !== chainId || !orderHash || !encodedOrder || !signature) return 'rejected';
   if (String(order.orderStatus || '').toLowerCase() !== 'open') return 'rejected';
 
-  // /v2/orders intentionally does not expose a trusted top-level reactor field.
-  // Resolve and validate the signed order through the canonical on-chain quoter.
   const resolved = await resolvedOrder(chain, encodedOrder, signature);
   const resolvedHash = safeHash(resolved?.hash);
   const reactor = safeAddress(resolved?.info?.reactor);
@@ -376,9 +384,6 @@ async function qualifyAndQueue(chain: GhostWalletChain, filler: string, order: P
   const allowedReactors = new Set(currentReactors(chain).map(value => value.toLowerCase()));
   if (!allowedReactors.has(reactor.toLowerCase())) return 'rejected';
   if (inputToken.toLowerCase() === output.token.toLowerCase()) return 'rejected';
-
-  // Exact-input route calldata cannot safely survive a changing Dutch input amount.
-  // Fixed-input orders remain eligible; decaying-input orders stay local/reconsiderable.
   if (maxInputAmount !== null && maxInputAmount > 0n && maxInputAmount !== inputAmount) return 'rejected';
 
   const slip = slippagePpm();
@@ -482,13 +487,13 @@ class GhostWalletUniswapXDemand {
       genericOrdersReclassifiedAsBorrowerMandates: false,
       reactorAuthority: 'derived_from_signed_encoded_order_via_onchain_order_quoter',
       orderHashCrossCheck: true,
-      currentOrderQuoter: ORDER_QUOTER,
+      chainSpecificOrderQuoters: true,
       zeroInventoryFillContract: true,
       changingDutchInputRejectedLocally: true,
       controllerGasAuthority: 'pimlico_sponsored_user_operation',
       strictlyPositiveAllInEconomicsRequiredByUltraWorker: true,
       supportedExecutableChains: getGhostWalletPimlicoSupportedChains()
-        .filter(chain => Boolean(CHAIN_IDS[chain] && UNISWAPX_REACTORS[chain]?.length)),
+        .filter(chain => Boolean(CHAIN_IDS[chain] && UNISWAPX_REACTORS[chain]?.length && ORDER_QUOTERS[chain])),
       avalancheObservationOnlyUntilPimlico7702Supported: true,
     });
   }
@@ -538,7 +543,7 @@ class GhostWalletUniswapXDemand {
     this.lastPollAt = Date.now();
     try {
       const executable = getGhostWalletPimlicoSupportedChains()
-        .filter(chain => Boolean(CHAIN_IDS[chain] && UNISWAPX_REACTORS[chain]?.length));
+        .filter(chain => Boolean(CHAIN_IDS[chain] && UNISWAPX_REACTORS[chain]?.length && ORDER_QUOTERS[chain]));
       if (executable.length === 0) return;
       const chain = executable[this.nextChainIndex % executable.length];
       this.nextChainIndex = (this.nextChainIndex + 1) % executable.length;
@@ -606,7 +611,7 @@ export const GHOST_WALLET_UNISWAPX_DEMAND_POLICY = {
   genericSwapOrdersAreBorrowerMandates: false,
   signedReactorAuthorityDerivedOnchain: true,
   orderHashCrossCheckedAgainstResolvedOrder: true,
-  currentOrderQuoter: ORDER_QUOTER,
+  chainSpecificOrderQuoters: true,
   zeroInventoryCallbackFiller: true,
   sameTransactionSettlement: true,
   outputShortfallReverts: true,
