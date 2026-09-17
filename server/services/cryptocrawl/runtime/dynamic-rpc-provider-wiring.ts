@@ -4,6 +4,10 @@ import {
   type RpcCapability,
   type SupportedChain,
 } from '../api/blockchain-providers.js';
+import {
+  installRpcRequestCoalescer,
+  noteRpcChainBlock,
+} from './rpc-request-coalescer.js';
 
 const CHAINS: SupportedChain[] = ['ethereum', 'polygon', 'arbitrum', 'optimism', 'base', 'avalanche', 'bsc'];
 const DEFAULT_CAPABILITIES: RpcCapability[] = [
@@ -21,6 +25,7 @@ interface ProviderDefinition {
 
 let installed = false;
 let installationPromise: Promise<void> | null = null;
+let blockInvalidationStarted = false;
 
 function validHttpUrl(value: unknown): string | null {
   if (typeof value !== 'string' || !value.trim()) return null;
@@ -120,6 +125,42 @@ function freeStreamingDefinitions(): ProviderDefinition[] {
   });
 }
 
+/**
+ * Alchemy is admitted only as another standard JSON-RPC fallback. PublicNode /
+ * official endpoints remain preferred so one paid/free-credit provider cannot
+ * become a quota bottleneck. Enhanced APIs, gas sponsorship, and mempool authority
+ * remain outside this lane.
+ */
+function alchemyStandardRpcDefinitions(): ProviderDefinition[] {
+  if (/^(1|true|yes|on)$/i.test(String(process.env.CRYPTOCRAWL_ALCHEMY_STANDARD_RPC_DISABLED || ''))) return [];
+  const key = process.env.ALCHEMY_API_KEY?.trim();
+  const slugs: Partial<Record<SupportedChain, string>> = {
+    ethereum: 'eth-mainnet',
+    polygon: 'polygon-mainnet',
+    arbitrum: 'arb-mainnet',
+    optimism: 'opt-mainnet',
+    base: 'base-mainnet',
+  };
+  const definitions: ProviderDefinition[] = [];
+  for (const chain of CHAINS) {
+    const prefix = chain.toUpperCase();
+    const explicitHttp = validHttpUrl(process.env[`${prefix}_ALCHEMY_RPC_URL`]);
+    const explicitWs = validWebSocketUrl(process.env[`${prefix}_ALCHEMY_WS_URL`]);
+    const slug = slugs[chain];
+    const httpUrl = explicitHttp || (key && slug ? `https://${slug}.g.alchemy.com/v2/${key}` : null);
+    if (!httpUrl) continue;
+    definitions.push({
+      provider: 'AlchemyStandardRPC',
+      chain,
+      httpUrl,
+      websocketUrl: explicitWs || (key && slug ? `wss://${slug}.g.alchemy.com/v2/${key}` : undefined),
+      priority: 80,
+      pendingTransactions: false,
+    });
+  }
+  return definitions;
+}
+
 function namedProviderDefinitions(): ProviderDefinition[] {
   const definitions: ProviderDefinition[] = [];
   const providers = [
@@ -186,10 +227,29 @@ function genericProviderDefinitions(): ProviderDefinition[] {
   return output;
 }
 
+function startBlockInvalidationSubscriptions(): void {
+  if (blockInvalidationStarted) return;
+  blockInvalidationStarted = true;
+  for (const chain of CHAINS) {
+    void multiProviderRpcManager.subscribe(chain, 'blocks', value => {
+      const blockNumber = Number(value);
+      if (Number.isSafeInteger(blockNumber) && blockNumber >= 0) noteRpcChainBlock(chain, blockNumber);
+    }).catch(error => {
+      logger.debug('[DynamicRpcProviderWiring] Block invalidation stream degraded locally', {
+        component: 'DynamicRpcProviderWiring',
+        chain,
+        error: error instanceof Error ? error.message : String(error),
+        cacheFallsBackToBoundedTtl: true,
+      });
+    });
+  }
+}
+
 async function registerConfiguredMesh(): Promise<void> {
   const definitions = [
     ...freeStreamingDefinitions(),
     ...costSafePublicDefinitions(),
+    ...alchemyStandardRpcDefinitions(),
     ...namedProviderDefinitions(),
     ...genericProviderDefinitions(),
   ];
@@ -222,29 +282,38 @@ async function registerConfiguredMesh(): Promise<void> {
   const publicAdmitted = admitted.filter(result =>
     result.provider.startsWith('CostSafePublicRPC') || result.provider === 'dRPCPublicStreaming',
   ).length;
+  const alchemyStandardRpcAdmitted = admitted.filter(result => result.provider === 'AlchemyStandardRPC').length;
   logger.info('[DynamicRpcProviderWiring] Free/configured provider mesh admission completed', {
     component: 'DynamicRpcProviderWiring',
     configuredCandidates: unique.size,
     admitted,
     failed,
     publicAdmitted,
+    alchemyStandardRpcAdmitted,
     freePendingTransactionLanes: admitted.filter(result => result.pendingTransactions).length,
     endpointUrlsLogged: false,
     providerManagerAuthoritative: true,
     costSafePublicRpcPreferred: true,
     streamingHttpIsGeneralAuthority: false,
     independentNoKeyPublicFailover: true,
+    standardRpcQuotaDiversification: true,
+    sharedRpcSingleflight: true,
+    blockScopedReadCache: true,
+    eventDrivenCacheInvalidation: true,
     deprecatedCloudflarePublicGatewayAdmitted: false,
     alchemyOperationalAuthority: false,
+    alchemyStandardRpcFallback: alchemyStandardRpcAdmitted > 0,
     alchemyPaidMempoolAuthority: false,
     alchemyGasSponsorshipAuthority: false,
     localComputeRole: 'ComputationalBeam_Aries_Cryptara_analysis_after_bounded_market_evidence',
   });
+  startBlockInvalidationSubscriptions();
 }
 
 export function ensureDynamicRpcProviderWiring(): Promise<void> {
   if (installationPromise) return installationPromise;
   installed = true;
+  installRpcRequestCoalescer();
   installationPromise = registerConfiguredMesh().catch(error => {
     logger.warn('[DynamicRpcProviderWiring] Provider admission degraded without blocking canonical core', {
       component: 'DynamicRpcProviderWiring',
