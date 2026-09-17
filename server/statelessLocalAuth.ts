@@ -48,7 +48,7 @@ function primarySupabaseClient(): SupabaseClient {
       headers: { "X-Client-Info": "legalwhat-server-auth" },
       fetch: (input, init) => fetch(input, {
         ...init,
-        signal: AbortSignal.timeout(8_000),
+        signal: AbortSignal.timeout(4_000),
       }),
     },
   });
@@ -126,7 +126,10 @@ export async function authenticateLocalUserHttp(email: string, password: string)
   if (!valid) return null;
 
   const now = new Date().toISOString();
-  await Promise.allSettled([
+  // Login telemetry must not extend the credential-validation critical path.
+  // These writes are best-effort metadata updates; authentication success is
+  // already established once bcrypt verification completes.
+  void Promise.allSettled([
     supabase.from("users").update({ last_login_at: now, updated_at: now }).eq("id", userRow.id),
     supabase.from("auth_accounts").update({ last_login_at: now, updated_at: now }).eq("id", authRow.id),
   ]);
