@@ -11,14 +11,17 @@ import {
 import { ghostWalletEngine } from './ghost-wallet-engine.js';
 import { getGhostWalletExternalBridgeDescriptor } from './ghost-wallet-external-bridge.js';
 import { resolveGhostWalletGasPricing } from './ghost-wallet-gas-pricing.js';
+import { getGhostWalletPimlicoSupportedChains } from './ghost-wallet-pimlico-sponsor.js';
 import { recordGhostWalletPerformance } from './ghost-wallet-performance-intelligence.js';
 import { ghostWalletProviderMesh, type GhostWalletChain } from './ghost-wallet-provider-mesh.js';
 import { enqueueGhostWalletWork } from './ghost-wallet-work-ledger.js';
 import { ghostWalletWorkSignal, type GhostWalletWakeReason } from './ghost-wallet-work-signal.js';
 
-const CHAINS = new Set<GhostWalletChain>(['ethereum', 'polygon', 'arbitrum', 'optimism', 'base', 'bsc', 'avalanche']);
+const KNOWN_CHAINS = new Set<GhostWalletChain>(['ethereum', 'polygon', 'arbitrum', 'optimism', 'base', 'bsc', 'avalanche']);
+const PIMLICO_EXECUTION_CHAINS = new Set<GhostWalletChain>(getGhostWalletPimlicoSupportedChains());
 const BPS = 10_000n;
 const MAX_CALIBRATION_PASSES = 3;
+const REGISTRY_WARN_INTERVAL_MS = 60_000;
 
 interface StandingBorrowerMandate {
   id: string;
@@ -52,16 +55,22 @@ interface PreflightCandidate {
   requestedSpread: bigint;
   borrowerFee: bigint;
   prepared: ReturnType<typeof buildGhostWalletBorrowerTransactionWithSpread>;
-  economics: Awaited<ReturnType<typeof evaluateGhostWalletControllerEconomics>>;
+  economics: Awaited<ReturnType<typeof evaluateGhostWalletControllerEconomics>> | null;
   gasUnits: bigint;
   expectedFeePerGas: bigint;
   signingFeeCeilingPerGas: bigint;
   pricingMode: string;
   provider: providers.JsonRpcProvider;
   latencyMs: number;
+  advisoryError: string | null;
 }
 
 let registryCache: { expiresAt: number; rows: StandingBorrowerMandate[] } | null = null;
+let registryLastSuccessAt: number | null = null;
+let registryLastFailureAt: number | null = null;
+let registryLastError: string | null = null;
+let registryConsecutiveFailures = 0;
+let registryLastWarnAt = 0;
 
 function address(value: unknown): string | null {
   const raw = String(value || '').trim();
@@ -70,7 +79,7 @@ function address(value: unknown): string | null {
 
 function chain(value: unknown): GhostWalletChain | null {
   const normalized = String(value || '').trim().toLowerCase() as GhostWalletChain;
-  return CHAINS.has(normalized) ? normalized : null;
+  return KNOWN_CHAINS.has(normalized) ? normalized : null;
 }
 
 function positiveInteger(value: unknown): string | null {
@@ -286,14 +295,32 @@ async function registryMandates(): Promise<StandingBorrowerMandate[]> {
       }];
     });
     registryCache = { expiresAt: Date.now() + mandateCacheTtlMs(), rows };
+    registryLastSuccessAt = Date.now();
+    registryLastFailureAt = null;
+    registryLastError = null;
+    registryConsecutiveFailures = 0;
     return rows.map(row => ({ ...row }));
-  } catch {
+  } catch (error) {
+    registryLastFailureAt = Date.now();
+    registryLastError = error instanceof Error ? error.message : String(error);
+    registryConsecutiveFailures += 1;
+    if (registryLastFailureAt - registryLastWarnAt >= REGISTRY_WARN_INTERVAL_MS) {
+      registryLastWarnAt = registryLastFailureAt;
+      logger.warn('[GhostWalletController] Borrower mandate registry degraded; preserving last-known-good cache', {
+        component: 'GhostWalletAutonomousController',
+        error: registryLastError,
+        consecutiveFailures: registryConsecutiveFailures,
+        cachedMandates: registryCache?.rows.length || 0,
+        staleCachePreserved: Boolean(registryCache),
+        routeLocalFailure: true,
+      });
+    }
     return registryCache?.rows.map(row => ({ ...row })) || [];
   }
 }
 
 function invalidateRegistryMandates(): void {
-  registryCache = null;
+  if (registryCache) registryCache.expiresAt = 0;
 }
 
 async function standingMandates(): Promise<StandingBorrowerMandate[]> {
@@ -346,6 +373,7 @@ class GhostWalletAutonomousController {
   private lastEvaluationAt: number | null = null;
   private lastOpportunityAt: number | null = null;
   private lastMandateCount = 0;
+  private lastUnsupportedMandateCount = 0;
   private mandatesSeen = 0;
   private profitablePrepared = 0;
   private localFailures = 0;
@@ -368,11 +396,14 @@ class GhostWalletAutonomousController {
       signedMandateExecutionLimits: true,
       signedMandateVersionIsolation: true,
       rangeAuthorizedDynamicSizing: true,
-      gasAdjustedRouteSelection: true,
+      nativeGasEconomicsAuthority: false,
+      nativeGasEstimateRole: 'functional_preflight_and_spread_hint_only',
+      pimlicoSponsoredUserOperationFinalEconomicsAuthority: true,
       boundedMatchingConcurrency: matchConcurrency(),
       eventInvalidatedMandateCache: true,
-      strictPositiveAllInNetRequired: true,
-      chains: [...CHAINS],
+      strictPositiveAllInNetRequiredBeforeSubmission: true,
+      observedChains: [...KNOWN_CHAINS],
+      executableChains: [...PIMLICO_EXECUTION_CHAINS],
       continuousOperation: true,
     });
   }
@@ -403,6 +434,7 @@ class GhostWalletAutonomousController {
       lastEvaluationAt: this.lastEvaluationAt,
       lastOpportunityAt: this.lastOpportunityAt,
       lastMandateCount: this.lastMandateCount,
+      lastUnsupportedMandateCount: this.lastUnsupportedMandateCount,
       mandatesSeen: this.mandatesSeen,
       profitablePrepared: this.profitablePrepared,
       localFailures: this.localFailures,
@@ -411,7 +443,14 @@ class GhostWalletAutonomousController {
       sizeCandidateLimit: sizeCandidateLimit(),
       routePlanLimit: routePlanLimit(),
       mandateCacheTtlMs: mandateCacheTtlMs(),
-      supportedChains: [...CHAINS],
+      observedChains: [...KNOWN_CHAINS],
+      supportedChains: [...PIMLICO_EXECUTION_CHAINS],
+      registryHealthy: registryConsecutiveFailures === 0,
+      registryLastSuccessAt,
+      registryLastFailureAt,
+      registryLastError,
+      registryConsecutiveFailures,
+      registryCachedMandates: registryCache?.rows.length || 0,
     };
   }
 
@@ -434,11 +473,13 @@ class GhostWalletAutonomousController {
         this.pending = false;
         this.lastEvaluationAt = Date.now();
         const mandates = await standingMandates();
-        hasMandates = mandates.length > 0;
+        const executableMandates = mandates.filter(mandate => PIMLICO_EXECUTION_CHAINS.has(mandate.chain));
+        this.lastUnsupportedMandateCount = mandates.length - executableMandates.length;
+        hasMandates = executableMandates.length > 0;
         this.lastMandateCount = mandates.length;
         this.mandatesSeen += mandates.length;
-        if (mandates.length === 0) break;
-        await mapBounded(mandates, matchConcurrency(), mandate => this.evaluateMandate(mandate));
+        if (executableMandates.length === 0) break;
+        await mapBounded(executableMandates, matchConcurrency(), mandate => this.evaluateMandate(mandate));
       } while (this.running && this.pending);
     } finally {
       this.evaluating = false;
@@ -466,13 +507,12 @@ class GhostWalletAutonomousController {
       if (mandateMaxFee <= upstreamFee) throw new Error('GHOST_WALLET_ROUTE_BORROWER_FEE_CEILING_TOO_LOW');
       const authorizedSpreadCeiling = mandateMaxFee - upstreamFee;
       if (authorizedSpreadCeiling < requestedSpread) throw new Error('GHOST_WALLET_ROUTE_SPREAD_FLOOR_EXCEEDS_BORROWER_CEILING');
-      // A signed max fee is explicit authorization. Ghost keeps the largest spread
-      // permitted by that mandate; lower upstream cost therefore becomes more net profit.
       requestedSpread = authorizedSpreadCeiling;
     }
 
     const routedQuote = routeQuote(input.quote, input.route);
     let lastError: unknown = null;
+    let lastCandidate: PreflightCandidate | null = null;
     for (let pass = 0; pass < MAX_CALIBRATION_PASSES; pass += 1) {
       try {
         const prepared = buildGhostWalletBorrowerTransactionWithSpread({
@@ -491,54 +531,65 @@ class GhostWalletAutonomousController {
               value: prepared.value,
             };
             if (!request.from) throw new Error('GHOST_WALLET_CONTROLLER_WALLET_UNAVAILABLE');
-            await provider.call(request);
+            // estimateGas executes the target path and therefore doubles as the functional
+            // revert preflight. Native gas is never the final profitability authority.
             const [gasRaw, feeData] = await Promise.all([provider.estimateGas(request), provider.getFeeData()]);
             return { provider, gasRaw, pricing: resolveGhostWalletGasPricing(feeData) };
           },
         });
         const gasUnits = BigInt(preflight.gasRaw.toString());
         const expectedFeePerGas = BigInt(preflight.pricing.expectedFeePerGas.toString());
-        const economics = await evaluateGhostWalletControllerEconomics({
-          chain: input.mandate.chain,
-          provider: preflight.provider,
-          asset: input.mandate.asset,
-          gasUnits,
-          feePerGasWei: expectedFeePerGas,
-          expectedSpreadBaseUnits: requestedSpread,
-        });
-        if (economics.approved) {
-          const candidate: PreflightCandidate = {
-            quote: routedQuote,
-            route: input.route,
-            amount,
-            requestedSpread,
-            borrowerFee: prepared.borrowerFeeBaseUnits,
-            prepared,
-            economics,
-            gasUnits,
-            expectedFeePerGas,
-            signingFeeCeilingPerGas: BigInt(preflight.pricing.signingFeeCeilingPerGas.toString()),
-            pricingMode: preflight.pricing.mode,
+        let economics: Awaited<ReturnType<typeof evaluateGhostWalletControllerEconomics>> | null = null;
+        let advisoryError: string | null = null;
+        try {
+          economics = await evaluateGhostWalletControllerEconomics({
+            chain: input.mandate.chain,
             provider: preflight.provider,
-            latencyMs: Date.now() - startedAt,
-          };
-          recordGhostWalletPerformance({
-            stage: 'route_preflight', chain: input.mandate.chain,
-            routeKey: `${input.route.sourceKind}:${input.route.lender.toLowerCase()}:${amount}`,
-            sourceKind: input.route.sourceKind, latencyMs: candidate.latencyMs, success: true,
-            expectedNetProfitBaseUnits: economics.expectedNetProfitBaseUnits,
+            asset: input.mandate.asset,
+            gasUnits,
+            feePerGasWei: expectedFeePerGas,
+            expectedSpreadBaseUnits: requestedSpread,
           });
-          return candidate;
+        } catch (error) {
+          advisoryError = error instanceof Error ? error.message : String(error);
         }
-        if (mandateMaxFee !== null) throw new Error('GHOST_WALLET_ROUTE_NET_NOT_POSITIVE_AT_AUTHORIZED_FEE_CEILING');
+        const candidate: PreflightCandidate = {
+          quote: routedQuote,
+          route: input.route,
+          amount,
+          requestedSpread,
+          borrowerFee: prepared.borrowerFeeBaseUnits,
+          prepared,
+          economics,
+          gasUnits,
+          expectedFeePerGas,
+          signingFeeCeilingPerGas: BigInt(preflight.pricing.signingFeeCeilingPerGas.toString()),
+          pricingMode: preflight.pricing.mode,
+          provider: preflight.provider,
+          latencyMs: Date.now() - startedAt,
+          advisoryError,
+        };
+        lastCandidate = candidate;
+        recordGhostWalletPerformance({
+          stage: 'route_preflight', chain: input.mandate.chain,
+          routeKey: `${input.route.sourceKind}:${input.route.lender.toLowerCase()}:${amount}`,
+          sourceKind: input.route.sourceKind, latencyMs: candidate.latencyMs, success: true,
+          expectedNetProfitBaseUnits: economics?.expectedNetProfitBaseUnits ?? null,
+        });
+
+        // Native economics are only a calibration/ranking hint. A signed borrower fee ceiling
+        // is passed through to the exact Pimlico gate even if this hint is negative, preventing
+        // native-gas false negatives. Unbounded mandates use the hint to improve first-pass spread.
+        if (mandateMaxFee !== null || !economics || economics.approved) return candidate;
         const nextSpread = maxBigInt(requestedSpread + 1n, economics.gasCostAssetBaseUnits + 1n);
-        if (nextSpread <= requestedSpread) throw new Error('GHOST_WALLET_ROUTE_SPREAD_CALIBRATION_STALLED');
+        if (nextSpread <= requestedSpread) return candidate;
         requestedSpread = nextSpread;
       } catch (error) {
         lastError = error;
-        if (mandateMaxFee !== null) break;
+        break;
       }
     }
+    if (lastCandidate) return lastCandidate;
     recordGhostWalletPerformance({
       stage: 'route_preflight', chain: input.mandate.chain,
       routeKey: `${input.route.sourceKind}:${input.route.lender.toLowerCase()}:${amount}`,
@@ -551,6 +602,7 @@ class GhostWalletAutonomousController {
   private async evaluateMandate(mandate: StandingBorrowerMandate): Promise<void> {
     const startedAt = Date.now();
     try {
+      if (!PIMLICO_EXECUTION_CHAINS.has(mandate.chain)) return;
       const now = Date.now();
       if (mandate.expiresAt !== null && mandate.expiresAt <= now) return;
       const executionState = await mandateExecutionState(mandate);
@@ -630,8 +682,8 @@ class GhostWalletAutonomousController {
       }));
       const candidates = preflight.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
       candidates.sort((left, right) => {
-        const leftNet = left.economics.expectedNetProfitBaseUnits;
-        const rightNet = right.economics.expectedNetProfitBaseUnits;
+        const leftNet = left.economics?.expectedNetProfitBaseUnits ?? left.requestedSpread;
+        const rightNet = right.economics?.expectedNetProfitBaseUnits ?? right.requestedSpread;
         if (leftNet !== rightNet) return leftNet > rightNet ? -1 : 1;
         if (left.gasUnits !== right.gasUnits) return left.gasUnits < right.gasUnits ? -1 : 1;
         return left.latencyMs - right.latencyMs;
@@ -640,12 +692,11 @@ class GhostWalletAutonomousController {
       if (!best) {
         recordGhostWalletPerformance({
           stage: 'mandate_match', chain: mandate.chain, routeKey: mandate.executionScope,
-          latencyMs: Date.now() - startedAt, success: false, errorType: 'no_strict_positive_route_size_plan',
+          latencyMs: Date.now() - startedAt, success: false, errorType: 'no_functionally_valid_route_size_plan',
         });
         return;
       }
 
-      const blockNumber = await best.provider.getBlockNumber();
       this.lastOpportunityAt = Date.now();
       if (!ghostWalletEngine.isLiveExecutionEnabled()) return;
       const executionSequence = executionState.total + 1;
@@ -680,9 +731,11 @@ class GhostWalletAutonomousController {
           preflightExpectedFeePerGasWei: best.expectedFeePerGas.toString(),
           preflightSigningFeeCeilingPerGasWei: best.signingFeeCeilingPerGas.toString(),
           preflightGasPricingMode: best.pricingMode,
-          preflightGasCostAssetBaseUnits: best.economics.gasCostAssetBaseUnits.toString(),
-          preflightExpectedNetProfitBaseUnits: best.economics.expectedNetProfitBaseUnits.toString(),
-          preflightBlockNumber: blockNumber,
+          preflightGasCostAssetBaseUnits: best.economics?.gasCostAssetBaseUnits.toString() || null,
+          preflightExpectedNetProfitBaseUnits: best.economics?.expectedNetProfitBaseUnits.toString() || null,
+          preflightAdvisoryError: best.advisoryError,
+          preflightEconomicsAuthority: 'advisory_native_hint_only',
+          finalEconomicsAuthority: 'pimlico_sponsored_user_operation',
           sizeCandidatesEvaluated: sizes.map(value => value.toString()),
           routePlansConsidered: plans.length,
           routePlansPreflighted: preflightPlans.length,
@@ -694,12 +747,12 @@ class GhostWalletAutonomousController {
         stage: 'prepared_enqueue', chain: mandate.chain,
         routeKey: `${best.route.sourceKind}:${best.route.lender.toLowerCase()}:${best.amount}`,
         sourceKind: best.route.sourceKind, latencyMs: Date.now() - startedAt, success: true,
-        expectedNetProfitBaseUnits: best.economics.expectedNetProfitBaseUnits,
+        expectedNetProfitBaseUnits: best.economics?.expectedNetProfitBaseUnits ?? null,
       });
       recordGhostWalletPerformance({
         stage: 'mandate_match', chain: mandate.chain, routeKey: mandate.executionScope,
         latencyMs: Date.now() - startedAt, success: true,
-        expectedNetProfitBaseUnits: best.economics.expectedNetProfitBaseUnits,
+        expectedNetProfitBaseUnits: best.economics?.expectedNetProfitBaseUnits ?? null,
       });
       ghostWalletWorkSignal.emitWake('local_work_enqueued');
     } catch (error) {
@@ -729,14 +782,15 @@ export const GHOST_WALLET_AUTONOMOUS_CONTROLLER_POLICY = {
   continuousEventPlusAdaptiveScan: true,
   eventInvalidatedMandateCache: true,
   boundedMatchingConcurrency: true,
-  exactCallBeforeQueue: true,
-  exactGasBeforeQueue: true,
-  gasAdjustedRouteSelection: true,
+  nativeEstimateBeforeQueue: 'functional_preflight_and_spread_hint_only',
+  nativeGasEconomicsVetoAuthority: false,
+  pimlicoSponsoredUserOperationFinalEconomicsAuthority: true,
   rangeAuthorizedDynamicSizing: true,
-  strictPositiveAllInNetBeforeQueue: true,
+  strictPositiveAllInNetBeforeQueue: false,
+  strictPositiveAllInNetBeforeSubmission: true,
   hardBpsProfitAdmissionFloor: false,
   configuredSpreadFloorDefaultBps: 0,
-  perTransactionSpreadCalibrationFromExactGas: true,
+  perTransactionSpreadCalibrationFromNativeHint: true,
   signedFeeCeilingProfitSeekingWithinAuthorization: true,
   globalSpreadConfigurationTransactionRequired: false,
   signedMandateExecutionCountEnforced: true,
@@ -744,7 +798,10 @@ export const GHOST_WALLET_AUTONOMOUS_CONTROLLER_POLICY = {
   signedMandateVersionIsolation: true,
   oneActiveExecutionPerMandate: true,
   durableSubmissionLedgerRequired: true,
+  borrowerRegistryLastKnownGoodCache: true,
+  borrowerRegistryFailureObservable: true,
   chainFailureLocal: true,
   zeroCapitalIntegration: false,
-  supportedChains: ['ethereum', 'polygon', 'arbitrum', 'optimism', 'base', 'bsc', 'avalanche'] as const,
+  observedChains: ['ethereum', 'polygon', 'arbitrum', 'optimism', 'base', 'bsc', 'avalanche'] as const,
+  supportedExecutionChains: getGhostWalletPimlicoSupportedChains(),
 } as const;
