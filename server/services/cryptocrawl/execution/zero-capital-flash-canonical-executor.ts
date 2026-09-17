@@ -566,10 +566,11 @@ async function executeBuilderColdStart(input: {
 
 /**
  * Sole ZERO_CAPITAL_ATOMIC execution route. The canonical parent scheduler is the
- * only caller. A fresh Titan/Quasar sponsored-bundle proof may cold-start Ethereum
- * without pre-existing native capital because builder prefunding is reimbursed from
- * execution-created value. Ordinary execution still requires the canonical proven
- * gas-funding boundary and never treats provider-billed sponsorship as zero cost.
+ * only caller. During bootstrap, Pimlico is the exclusive APE gas sponsor/paymaster.
+ * Builder-sponsored cold-start evidence is retained for compatibility analysis but
+ * is not allowed to bypass the canonical gas authority. After a durable retained-
+ * profit runway is proven, the canonical gas boundary may select system-owned native
+ * gas instead. Provider-billed sponsorship is never treated as zero economic cost.
  */
 export async function executeCanonicalZeroCapitalOpportunity(
   opportunity: ZeroCapitalOpportunity,
@@ -592,6 +593,11 @@ export async function executeCanonicalZeroCapitalOpportunity(
   const profitRecipient = resolveOperationalProfitRecipient();
   const token = new Contract(opportunity.inputToken, ERC20_BALANCE_ABI, provider);
   let builderEvidence = builderSponsoredZeroCapitalRegistry.get(opportunity.id);
+  const pimlicoSoleBootstrap = !/^(0|false|no|off)$/i.test(String(process.env.APE_PIMLICO_SOLE_BOOTSTRAP || 'true'));
+  if (builderEvidence && pimlicoSoleBootstrap) {
+    builderSponsoredZeroCapitalRegistry.remove(opportunity.id);
+    builderEvidence = null;
+  }
 
   if (builderEvidence?.receiverBootstrap) {
     if (opportunity.chain !== 'ethereum') return failed(opportunity, 'First-receiver builder bootstrap is Ethereum-only');
@@ -698,7 +704,7 @@ export async function executeCanonicalZeroCapitalOpportunity(
   }
 
   let systemCapitalAttempt: SponsoredSystemCapitalAttempt | null = null;
-  if (funding.mode === 'sponsored' && funding.sponsorOperatorMonetaryCostProvenZero === true) {
+  if (funding.mode === 'sponsored' && funding.operatorMonetaryInputRequired === false) {
     try {
       systemCapitalAttempt = await prepareSponsoredSystemCapital({
         chain: opportunity.chain,
@@ -707,7 +713,7 @@ export async function executeCanonicalZeroCapitalOpportunity(
         opportunityId: opportunity.id,
       });
     } catch (error) {
-      logger.warn('[ZeroCapitalExecutor] Zero-cost sponsored system-capital bookkeeping preparation degraded without changing settlement truth', {
+      logger.warn('[ZeroCapitalExecutor] Sponsored system-capital bookkeeping preparation degraded without changing settlement truth', {
         component: 'CanonicalZeroCapitalExecutor', opportunityId: opportunity.id,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -868,6 +874,7 @@ export async function executeCanonicalZeroCapitalOpportunity(
     latencyMs: Date.now() - startedAt,
     blockNumber: receipt.blockNumber,
     normalized,
+    capitalProvenanceVerified: false,
     error: economics.economicsComplete
       ? positive ? undefined : 'Terminal settlement realized non-positive all-in net profit'
       : `Terminal settlement realized economics are incomplete: ${economics.missingInformation.join(', ')}`,
@@ -878,20 +885,32 @@ export async function executeCanonicalZeroCapitalOpportunity(
     try {
       const allocation = await retainedProfitLedger.recordTerminalSettlement(feedback);
       result.treasuryRecorded = allocation !== null;
-      if (allocation && sponsoredExecution && systemCapitalAttempt && funding.sponsorOperatorMonetaryCostProvenZero === true) {
-        const split = splitGrossBaseUnits(grossProfit, allocation.retainedFraction);
+      const distributableNetProfitBaseUnits = economics.netProfitBaseUnits;
+      if (
+        allocation
+        && sponsoredExecution
+        && systemCapitalAttempt
+        && distributableNetProfitBaseUnits !== null
+        && distributableNetProfitBaseUnits > 0n
+      ) {
+        const split = splitGrossBaseUnits(distributableNetProfitBaseUnits, allocation.retainedFraction);
         if (split.retainedProfitBaseUnits > 0n) {
           await persistVerifiedSponsoredProfit(systemCapitalAttempt, {
             transactionHash,
             chain: opportunity.chain,
             asset: opportunity.inputAssetSymbol,
             grossProfitBaseUnits: grossProfit,
+            distributableNetProfitBaseUnits,
             retainedProfitBaseUnits: split.retainedProfitBaseUnits,
             payoutReservedBaseUnits: split.payoutReservedBaseUnits,
             sourceRecipient: profitRecipient,
             sourceRecipientBalanceBeforeBaseUnits: recipientStarting,
             sourceRecipientBalanceAfterBaseUnits: recipientEnding,
-            zeroOperatorMonetaryGasVerified: true,
+            zeroOperatorMonetaryGasVerified: funding.sponsorOperatorMonetaryCostProvenZero === true,
+            providerGasLiabilityAccounted:
+              funding.sponsorOperatorMonetaryCostProvenZero !== true
+              && nativeFeeWei > 0n
+              && economics.economicsComplete,
             zeroExternalNativeCapitalVerified: true,
             zeroExternalInputCapitalVerified: receiverStarting === 0n,
           });
