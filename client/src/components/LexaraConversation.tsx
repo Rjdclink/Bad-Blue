@@ -319,13 +319,14 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const sendGreeting = useCallback(async () => {
     if (greetingRef.current) return;
     greetingRef.current = true;
+    const greetingGeneration = generationRef.current;
 
     const domain = lawTypeName ? ` about ${lawTypeName}` : '';
     const greeting = `Hello. Tell me what happened${domain}, in your own words. I'll identify the legal issues, test the strengths and weaknesses, and ask only the questions that materially affect the analysis.`;
     appendMessage('lexara', greeting);
 
     if (liveEnabled && voiceReady) {
-      await speakLexara(greeting).catch(() => undefined);
+      await speakLexara(greeting, greetingGeneration).catch(() => undefined);
     }
   }, [appendMessage, lawTypeName, liveEnabled, speakLexara, voiceReady]);
 
