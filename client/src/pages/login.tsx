@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type FormEvent } from "react";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -58,7 +58,7 @@ export default function Login() {
     setLocation(redirectPath);
   };
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleLogin = async (e: FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
 
@@ -79,16 +79,12 @@ export default function Login() {
     }
   };
 
-  const handleMasterLogin = async (e: React.FormEvent) => {
+  const handleMasterLogin = async (e: FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
 
     try {
-      // passport-local still expects a username-shaped field internally. The
-      // sentinel is never treated as a credential; master verification is
-      // password-only on the server.
-      const response = await apiRequest("/api/login/local", "POST", {
-        email: "__master__",
+      const response = await apiRequest("/api/master-login", "POST", {
         password: masterPassword,
       });
       await completeLogin(response);
@@ -103,7 +99,7 @@ export default function Login() {
     }
   };
 
-  const handleSignup = async (e: React.FormEvent) => {
+  const handleSignup = async (e: FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
 
