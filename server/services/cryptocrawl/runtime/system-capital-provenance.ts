@@ -16,14 +16,19 @@ export interface VerifiedSponsoredProfitEvidence {
   transactionHash: string;
   chain: string;
   asset: string;
+  /** Settlement recipient delta before provider-fronted gas liability is deducted. */
   grossProfitBaseUnits: bigint;
+  /** Canonical all-in net profit after every measured gas/provider liability. */
+  distributableNetProfitBaseUnits: bigint;
   retainedProfitBaseUnits: bigint;
   payoutReservedBaseUnits: bigint;
   sourceRecipient: string;
   sourceRecipientBalanceBeforeBaseUnits: bigint;
   sourceRecipientBalanceAfterBaseUnits: bigint;
-  /** True only when the provider/paymaster monetary obligation is proven not to be operator-funded. */
+  /** True only when the provider/paymaster monetary obligation is proven zero. */
   zeroOperatorMonetaryGasVerified?: boolean;
+  /** True when a non-zero provider/paymaster liability is measured and deducted from distributableNetProfitBaseUnits. */
+  providerGasLiabilityAccounted?: boolean;
   /** True only when no operator/personal native capital funded the bootstrap transaction. */
   zeroExternalNativeCapitalVerified?: boolean;
   /** True only when no operator/personal input-token capital funded the bootstrap transaction. */
@@ -83,24 +88,31 @@ export async function persistVerifiedSponsoredProfit(
   attempt: SponsoredSystemCapitalAttempt,
   proof: VerifiedSponsoredProfitEvidence,
 ): Promise<CapitalProvenanceState> {
-  if (proof.grossProfitBaseUnits <= 0n) throw new Error('Verified sponsored gross profit must be positive');
+  if (proof.grossProfitBaseUnits <= 0n) throw new Error('Verified sponsored settlement gross profit must be positive');
+  if (proof.distributableNetProfitBaseUnits <= 0n) throw new Error('Verified sponsored all-in net profit must be positive');
+  if (proof.distributableNetProfitBaseUnits > proof.grossProfitBaseUnits) {
+    throw new Error('Verified sponsored all-in net profit cannot exceed settlement gross profit');
+  }
   if (proof.retainedProfitBaseUnits <= 0n) throw new Error('Verified sponsored retained profit must be positive');
   if (proof.payoutReservedBaseUnits < 0n) throw new Error('Verified sponsored payout reserve cannot be negative');
-  if (proof.retainedProfitBaseUnits + proof.payoutReservedBaseUnits !== proof.grossProfitBaseUnits) {
-    throw new Error('Verified sponsored retained plus payout-reserved units must equal gross settled profit');
+  if (proof.retainedProfitBaseUnits + proof.payoutReservedBaseUnits !== proof.distributableNetProfitBaseUnits) {
+    throw new Error('Verified sponsored retained plus payout-reserved units must equal canonical all-in net profit');
   }
   if (proof.sourceRecipientBalanceAfterBaseUnits - proof.sourceRecipientBalanceBeforeBaseUnits !== proof.grossProfitBaseUnits) {
-    throw new Error('Verified sponsored gross profit does not equal the operational recipient token delta');
+    throw new Error('Verified sponsored settlement gross profit does not equal the operational recipient token delta');
+  }
+  const gasTruthVerified = proof.zeroOperatorMonetaryGasVerified === true || proof.providerGasLiabilityAccounted === true;
+  if (!gasTruthVerified) {
+    throw new Error('Sponsored system-capital credit requires zero sponsor cost or proof that provider gas liability was deducted from canonical net profit');
   }
 
   if (attempt.bootstrapPending) {
     if (
-      proof.zeroOperatorMonetaryGasVerified !== true ||
       proof.zeroExternalNativeCapitalVerified !== true ||
       proof.zeroExternalInputCapitalVerified !== true
     ) {
       throw new Error(
-        'Bootstrap system-capital credit requires explicit proof of zero operator monetary gas, zero external native capital, and zero external input capital',
+        'Bootstrap system-capital credit requires zero external native capital and zero external input capital',
       );
     }
     return capitalStore.recordVerifiedBootstrapProfit({
@@ -110,7 +122,8 @@ export async function persistVerifiedSponsoredProfit(
       chain: proof.chain,
       asset: proof.asset,
       residualProfit: proof.retainedProfitBaseUnits.toString(),
-      zeroMonetaryGasVerified: proof.zeroOperatorMonetaryGasVerified,
+      zeroMonetaryGasVerified: proof.zeroOperatorMonetaryGasVerified === true,
+      providerGasLiabilityAccounted: proof.providerGasLiabilityAccounted === true,
       zeroExternalNativeCapitalVerified: proof.zeroExternalNativeCapitalVerified,
       zeroExternalInputCapitalVerified: proof.zeroExternalInputCapitalVerified,
       sourceRecipient: proof.sourceRecipient,
@@ -126,7 +139,8 @@ export async function persistVerifiedSponsoredProfit(
     chain: proof.chain,
     asset: proof.asset,
     retainedProfit: proof.retainedProfitBaseUnits.toString(),
-    grossProfit: proof.grossProfitBaseUnits.toString(),
+    grossProfit: proof.distributableNetProfitBaseUnits.toString(),
+    settlementGrossProfit: proof.grossProfitBaseUnits.toString(),
     payoutReserved: proof.payoutReservedBaseUnits.toString(),
     settlementReceiptVerified: true,
     profitRecipientDeltaVerified: true,
