@@ -10,7 +10,7 @@
  * - Install/download approval with detailed checkbox controller
  * 
  * AUTHENTICATION:
- * - Admin password: SARBEAR
+ * - Authentication: canonical platform master session
  * - Identity binding: "Daddy" = internal system label for the user
  * - Prevents external actors from taking administrative roles
  */
