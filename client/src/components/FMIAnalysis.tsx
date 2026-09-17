@@ -1,34 +1,24 @@
 /**
  * F.M.I. - Forensic Media Intelligence Component
- * 
- * Unified interface for forensic media upload and intelligence analysis.
- * Design based on 615D.avif - professional forensic technology aesthetic.
- * 
- * Features:
- * - Drag-and-drop + button upload
- * - All media type support (documents, images, video, audio)
- * - Real-time analysis status
- * - Structured intelligence results display
- * - Legal relevance tagging
- * - Evidence strength indicators
- * - Contradiction/corroboration flags
+ *
+ * Uploads evidence, immediately runs the server-owned extraction/analysis path,
+ * and hands completed evidence context back to LEXARA case analysis.
  */
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Separator } from "@/components/ui/separator";
-import { 
-  Upload, 
-  FileText, 
-  Image, 
-  Video, 
+import {
+  Upload,
+  FileText,
+  Image,
+  Video,
   Music,
-  CheckCircle2, 
-  AlertCircle, 
+  CheckCircle2,
+  AlertCircle,
   Scale,
   Search,
   Brain,
@@ -44,6 +34,8 @@ import { useDropzone } from "react-dropzone";
 interface FMIAnalysisProps {
   lawType: string;
   lawTypeName: string;
+  state?: string;
+  caseContext?: string;
   onAnalysisComplete?: (results: any) => void;
 }
 
@@ -59,13 +51,24 @@ interface FMIFile {
   keyFindings?: string[];
 }
 
-export default function FMIAnalysis({ lawType, lawTypeName, onAnalysisComplete }: FMIAnalysisProps) {
+interface FMIUploadResponse {
+  success: boolean;
+  file: FMIFile;
+  error?: string;
+}
+
+export default function FMIAnalysis({
+  lawType,
+  lawTypeName,
+  state,
+  caseContext,
+  onAnalysisComplete,
+}: FMIAnalysisProps) {
   const { toast } = useToast();
-  const [uploadedFiles, setUploadedFiles] = useState<FMIFile[]>([]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number>(0);
+  const completedAnalysesRef = useRef<any[]>([]);
 
-  // Query for user's F.M.I. files
   const { data: fmiFiles, refetch: refetchFiles } = useQuery<FMIFile[]>({
     queryKey: ['/api/fmi/files'],
     queryFn: async () => {
@@ -76,12 +79,11 @@ export default function FMIAnalysis({ lawType, lawTypeName, onAnalysisComplete }
     }
   });
 
-  // Upload mutation
   const uploadMutation = useMutation({
-    mutationFn: async (file: File) => {
+    mutationFn: async (file: File): Promise<FMIUploadResponse> => {
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('lawType', lawType);
+      formData.append('lawType', lawType || 'general');
       formData.append('associatedWith', 'consultation');
 
       const response = await fetch('/api/fmi/upload', {
@@ -100,11 +102,9 @@ export default function FMIAnalysis({ lawType, lawTypeName, onAnalysisComplete }
     onSuccess: (data) => {
       toast({
         title: "F.M.I. Upload Successful",
-        description: `${data.file.name} uploaded and queued for forensic analysis`,
+        description: `${data.file.name} uploaded. Running forensic extraction and analysis now.`,
       });
-      setUploadedFiles(prev => [...prev, data.file]);
-      refetchFiles();
-      setUploadProgress(0);
+      void refetchFiles();
     },
     onError: (error: Error) => {
       toast({
@@ -112,25 +112,36 @@ export default function FMIAnalysis({ lawType, lawTypeName, onAnalysisComplete }
         description: error.message,
         variant: "destructive",
       });
-      setUploadProgress(0);
     },
   });
 
-  // Analyze mutation
   const analyzeMutation = useMutation({
-    mutationFn: async (fileData: any) => {
-      const response = await apiRequest('/api/fmi/analyze', 'POST', fileData);
-      if (!response.ok) throw new Error('F.M.I. analysis failed');
+    mutationFn: async (payload: {
+      fileId: string;
+      lawType: string;
+      state: string;
+      caseContext?: string;
+    }) => {
+      const response = await apiRequest('/api/fmi/analyze', 'POST', payload);
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body?.error || body?.message || 'F.M.I. analysis failed');
+      }
       return await response.json();
     },
     onSuccess: (data) => {
       toast({
         title: "F.M.I. Analysis Complete",
-        description: "Forensic intelligence extraction completed successfully",
+        description: "Evidence content was extracted and analyzed successfully.",
       });
-      refetchFiles();
-      if (onAnalysisComplete) {
-        onAnalysisComplete(data.analysis);
+      void refetchFiles();
+
+      if (data?.analysis) {
+        completedAnalysesRef.current = [
+          ...completedAnalysesRef.current,
+          data.analysis,
+        ].slice(-12);
+        onAnalysisComplete?.(completedAnalysesRef.current);
       }
     },
     onError: (error: Error) => {
@@ -139,19 +150,48 @@ export default function FMIAnalysis({ lawType, lawTypeName, onAnalysisComplete }
         description: error.message,
         variant: "destructive",
       });
+      void refetchFiles();
     },
   });
 
-  // Dropzone configuration
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop: async (acceptedFiles) => {
+      if (!state) {
+        toast({
+          title: 'Select a jurisdiction first',
+          description: 'F.M.I. needs the case jurisdiction before it can analyze legal significance.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
       for (const file of acceptedFiles) {
-        setUploadProgress(50);
-        await uploadMutation.mutateAsync(file);
+        try {
+          setUploadProgress(30);
+          const uploaded = await uploadMutation.mutateAsync(file);
+          setUploadProgress(65);
+
+          if (!uploaded?.file?.id) {
+            throw new Error('F.M.I. upload completed without an evidence file ID');
+          }
+
+          await analyzeMutation.mutateAsync({
+            fileId: uploaded.file.id,
+            lawType: lawType || 'general',
+            state,
+            caseContext: caseContext?.trim() || undefined,
+          });
+          setUploadProgress(100);
+        } catch {
+          // The mutations surface the actionable error. Continue so one bad file
+          // does not prevent other accepted evidence from being processed.
+        } finally {
+          window.setTimeout(() => setUploadProgress(0), 250);
+        }
       }
     },
     multiple: true,
-    maxSize: 100 * 1024 * 1024, // 100MB
+    maxSize: 100 * 1024 * 1024,
   });
 
   const getFileIcon = (type: string) => {
@@ -172,20 +212,20 @@ export default function FMIAnalysis({ lawType, lawTypeName, onAnalysisComplete }
     }
   };
 
+  const busy = uploadMutation.isPending || analyzeMutation.isPending;
+
   return (
     <div className="space-y-6">
-      {/* Main F.M.I. Upload Card - Forensic Technology Aesthetic with 615D.avif Background */}
       <Card className="border-2 border-primary/20 bg-gradient-to-br from-slate-950 to-slate-900 text-white overflow-hidden relative">
-        {/* Background Image with Overlay */}
         <div className="absolute inset-0 opacity-10">
-          <img 
-            src="/images/615D.avif" 
-            alt="" 
+          <img
+            src="/images/615D.avif"
+            alt=""
             className="w-full h-full object-cover"
           />
           <div className="absolute inset-0 bg-gradient-to-b from-slate-950/80 via-slate-900/90 to-slate-950/95" />
         </div>
-        
+
         <CardHeader className="space-y-1 relative z-10">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-primary/20 rounded-lg">
@@ -194,66 +234,67 @@ export default function FMIAnalysis({ lawType, lawTypeName, onAnalysisComplete }
             <div>
               <CardTitle className="text-xl">F.M.I. — Forensic Media Intelligence</CardTitle>
               <CardDescription className="text-gray-300">
-                Advanced evidence analysis system for {lawTypeName.toLowerCase()} cases
+                Evidence extraction and legal-context analysis for {lawTypeName.toLowerCase()} matters
               </CardDescription>
             </div>
           </div>
         </CardHeader>
         <CardContent className="relative z-10">
-          {/* Upload Zone */}
           <div
             {...getRootProps()}
+            aria-disabled={!state || busy}
             className={`
-              border-2 border-dashed rounded-lg p-8 text-center cursor-pointer
+              border-2 border-dashed rounded-lg p-8 text-center
               transition-all duration-200
-              ${isDragActive 
-                ? 'border-primary bg-primary/10' 
-                : 'border-gray-600 hover:border-primary/50 bg-slate-900/50'
+              ${!state || busy
+                ? 'cursor-not-allowed border-gray-700 bg-slate-900/70 opacity-70'
+                : isDragActive
+                  ? 'cursor-pointer border-primary bg-primary/10'
+                  : 'cursor-pointer border-gray-600 hover:border-primary/50 bg-slate-900/50'
               }
             `}
           >
-            <input {...getInputProps()} />
+            <input {...getInputProps()} disabled={!state || busy} />
             <Upload className="w-12 h-12 mx-auto mb-4 text-primary" />
             <p className="text-lg font-semibold mb-2">
-              {isDragActive ? 'Drop files for F.M.I. analysis' : 'Upload Evidence to F.M.I.'}
+              {!state
+                ? 'Select the case jurisdiction before uploading evidence'
+                : busy
+                  ? 'F.M.I. is processing evidence…'
+                  : isDragActive
+                    ? 'Drop files for F.M.I. analysis'
+                    : 'Upload Evidence to F.M.I.'}
             </p>
             <p className="text-sm text-gray-400 mb-4">
-              Drag & drop files here, or click to select
+              Supported media is extracted from the actual stored file, then analyzed in the selected legal context.
             </p>
-            <Button variant="outline" className="text-white border-gray-600 hover:bg-primary/20">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={!state || busy}
+              className="text-white border-gray-600 hover:bg-primary/20"
+            >
               <Upload className="w-4 h-4 mr-2" />
               Select Files
             </Button>
-            
-            {uploadProgress > 0 && uploadProgress < 100 && (
+
+            {uploadProgress > 0 && (
               <div className="mt-4">
                 <Progress value={uploadProgress} className="h-2" />
               </div>
             )}
           </div>
 
-          {/* Supported File Types */}
           <div className="mt-4 flex flex-wrap gap-2 justify-center">
-            <Badge variant="outline" className="text-xs bg-slate-800 text-white border-gray-600">
-              📄 Documents
-            </Badge>
-            <Badge variant="outline" className="text-xs bg-slate-800 text-white border-gray-600">
-              🖼️ Images
-            </Badge>
-            <Badge variant="outline" className="text-xs bg-slate-800 text-white border-gray-600">
-              🎥 Video
-            </Badge>
-            <Badge variant="outline" className="text-xs bg-slate-800 text-white border-gray-600">
-              🎵 Audio
-            </Badge>
-            <Badge variant="outline" className="text-xs bg-slate-800 text-white border-gray-600">
-              📧 Email
-            </Badge>
+            <Badge variant="outline" className="text-xs bg-slate-800 text-white border-gray-600">📄 Documents</Badge>
+            <Badge variant="outline" className="text-xs bg-slate-800 text-white border-gray-600">🖼️ Images</Badge>
+            <Badge variant="outline" className="text-xs bg-slate-800 text-white border-gray-600">🎥 Video</Badge>
+            <Badge variant="outline" className="text-xs bg-slate-800 text-white border-gray-600">🎵 Audio</Badge>
+            <Badge variant="outline" className="text-xs bg-slate-800 text-white border-gray-600">📧 Email</Badge>
           </div>
         </CardContent>
       </Card>
 
-      {/* F.M.I. Capabilities Card */}
       <Card className="border-primary/20">
         <CardHeader className="pb-3">
           <CardTitle className="text-lg flex items-center gap-2">
@@ -269,70 +310,69 @@ export default function FMIAnalysis({ lawType, lawTypeName, onAnalysisComplete }
                 Content Extraction
               </h4>
               <ul className="text-xs text-muted-foreground space-y-1 pl-6">
-                <li>• OCR for documents and images</li>
-                <li>• Speech-to-text for audio/video</li>
-                <li>• Metadata and EXIF extraction</li>
-                <li>• Timeline reconstruction</li>
+                <li>• Document and image text extraction</li>
+                <li>• Audio/video transcription and salient timestamps</li>
+                <li>• Names, dates, locations, quotations, and event extraction</li>
+                <li>• Timeline-oriented evidence structuring</li>
               </ul>
             </div>
-            
+
             <div className="space-y-2">
               <h4 className="font-semibold text-sm flex items-center gap-2">
                 <Scale className="w-4 h-4 text-purple-600" />
-                Legal Analysis
+                Legal Context
               </h4>
               <ul className="text-xs text-muted-foreground space-y-1 pl-6">
-                <li>• Legal relevance tagging</li>
-                <li>• Admissibility assessment</li>
-                <li>• Element satisfaction analysis</li>
-                <li>• Evidentiary rules application</li>
+                <li>• Evidence classification and relevance type</li>
+                <li>• Hearsay and authentication flags</li>
+                <li>• Chain-of-custody and expert-witness flags</li>
+                <li>• Jurisdiction-aware evidentiary-rule analysis</li>
               </ul>
             </div>
-            
+
             <div className="space-y-2">
               <h4 className="font-semibold text-sm flex items-center gap-2">
                 <Link2 className="w-4 h-4 text-green-600" />
-                Case Linking
+                LEXARA Handoff
               </h4>
               <ul className="text-xs text-muted-foreground space-y-1 pl-6">
-                <li>• People, dates, locations</li>
-                <li>• Event correlation</li>
-                <li>• Document cross-referencing</li>
-                <li>• Witness statement linking</li>
+                <li>• Completed evidence analysis feeds full case analysis</li>
+                <li>• Multiple uploaded analyses remain available in the current case context</li>
+                <li>• Evidence remains separate from controlling legal authority</li>
+                <li>• Extracted content is treated as untrusted evidence, not instructions</li>
               </ul>
             </div>
-            
+
             <div className="space-y-2">
               <h4 className="font-semibold text-sm flex items-center gap-2">
                 <AlertTriangle className="w-4 h-4 text-orange-600" />
-                Contradiction Detection
+                Accuracy Boundaries
               </h4>
               <ul className="text-xs text-muted-foreground space-y-1 pl-6">
-                <li>• Factual inconsistencies</li>
-                <li>• Temporal conflicts</li>
-                <li>• Corroboration analysis</li>
-                <li>• Credibility assessment</li>
+                <li>• Unreadable or inaudible content must remain marked uncertain</li>
+                <li>• F.M.I. output is evidence analysis, not proof of credibility</li>
+                <li>• Failed extraction is marked failed rather than completed</li>
+                <li>• File ownership is enforced server-side before analysis</li>
               </ul>
             </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Uploaded Files List */}
       {fmiFiles && fmiFiles.length > 0 && (
         <Card>
           <CardHeader>
             <CardTitle className="text-lg">F.M.I. Evidence Repository</CardTitle>
             <CardDescription>
-              {fmiFiles.length} file{fmiFiles.length !== 1 ? 's' : ''} analyzed by F.M.I.
+              {fmiFiles.length} evidence file{fmiFiles.length !== 1 ? 's' : ''} in your F.M.I. repository
             </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
               {fmiFiles.map((file) => (
-                <div 
+                <div
                   key={file.id}
-                  className="flex items-center justify-between p-3 border rounded-lg hover:bg-accent/50 cursor-pointer transition-colors"
+                  className={`flex items-center justify-between p-3 border rounded-lg transition-colors ${selectedFile === file.id ? 'bg-accent/70' : 'hover:bg-accent/50'} cursor-pointer`}
                   onClick={() => setSelectedFile(file.id)}
                 >
                   <div className="flex items-center gap-3 flex-1">
@@ -344,7 +384,7 @@ export default function FMIAnalysis({ lawType, lawTypeName, onAnalysisComplete }
                       </p>
                     </div>
                   </div>
-                  
+
                   <div className="flex items-center gap-2">
                     {file.fmiAnalysisStatus === 'completed' && (
                       <>
@@ -360,8 +400,14 @@ export default function FMIAnalysis({ lawType, lawTypeName, onAnalysisComplete }
                     {file.fmiAnalysisStatus === 'pending' && (
                       <Badge variant="outline" className="text-xs">Pending</Badge>
                     )}
+                    {file.fmiAnalysisStatus === 'processing' && (
+                      <Badge variant="secondary" className="text-xs">Processing</Badge>
+                    )}
                     {file.fmiAnalysisStatus === 'failed' && (
-                      <AlertCircle className="w-5 h-5 text-red-600" />
+                      <Badge variant="destructive" className="text-xs">
+                        <AlertCircle className="w-3 h-3 mr-1" />
+                        Failed
+                      </Badge>
                     )}
                   </div>
                 </div>
@@ -371,7 +417,6 @@ export default function FMIAnalysis({ lawType, lawTypeName, onAnalysisComplete }
         </Card>
       )}
 
-      {/* F.M.I. Integration Notice */}
       <Card className="bg-primary/5 border-primary/20">
         <CardContent className="pt-6">
           <div className="flex items-start gap-3">
@@ -379,8 +424,7 @@ export default function FMIAnalysis({ lawType, lawTypeName, onAnalysisComplete }
             <div className="space-y-1">
               <p className="text-sm font-medium">F.M.I. Integration with LEXARA</p>
               <p className="text-xs text-muted-foreground">
-                All evidence analyzed by F.M.I. is automatically integrated with LEXARA (Legal Expert AI Resource Advisor) 
-                for comprehensive case strategy and legal analysis.
+                Successfully analyzed evidence is supplied to LEXARA as bounded evidence context for the current case. It is not treated as controlling law or as independently verified truth.
               </p>
             </div>
           </div>
