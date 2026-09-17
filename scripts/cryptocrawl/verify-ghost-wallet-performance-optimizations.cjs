@@ -102,17 +102,20 @@ assert.match(controller, /rangeAuthorizedDynamicSizing: true/);
 assert.match(controller, /amountCandidates/);
 assert.match(controller, /sizeCandidateLimit/);
 
-// Route/size selection remains bounded. The controller's cheap chain preflight is a
-// ranking/filter stage; the exact sponsored UserOperation is the final execution gate.
+// Route/size selection remains bounded. Native preflight is functional/advisory only;
+// exact sponsored UserOperation economics is the final strict-positive execution gate.
 assert.match(controller, /boundedMatchingConcurrency: true/);
 assert.match(controller, /matchConcurrency/);
 assert.match(controller, /routePlanLimit/);
 assert.match(controller, /preflightConcurrency/);
-assert.match(controller, /gasAdjustedRouteSelection: true/);
+assert.match(controller, /nativeEstimateBeforeQueue: 'functional_preflight_and_spread_hint_only'/);
+assert.match(controller, /nativeGasEconomicsVetoAuthority: false/);
+assert.match(controller, /pimlicoSponsoredUserOperationFinalEconomicsAuthority: true/);
+assert.match(controller, /strictPositiveAllInNetBeforeSubmission: true/);
 assert.match(controller, /signedFeeCeilingProfitSeekingWithinAuthorization: true/);
 assert.match(controller, /evaluateGhostWalletControllerEconomics/);
 assert.match(controller, /expectedNetProfitBaseUnits/);
-assert.match(controller, /provider\.call\(request\)/);
+assert.doesNotMatch(controller, /provider\.call\(request\)/);
 assert.match(controller, /provider\.estimateGas\(request\)/);
 assert.match(controller, /routePlansPreflighted/);
 assert.doesNotMatch(controller, /hardBpsProfitAdmissionFloor: true/);
