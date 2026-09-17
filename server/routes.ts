@@ -47,10 +47,9 @@ declare global {
 import { getSquareClient, getSquareLocationId } from "./squareClient";
 import multer from "multer";
 import { z } from "zod";
-import passport from "passport";
 import { storage } from "./storage";
-import { sendAdminEmail, sendWelcomeEmail } from "./emailService";
-import { isAdminBypass, createAdminUser, ADMIN_BYPASS_USER_ID, isAdmin } from "./adminAuth";
+import { sendAdminEmail } from "./emailService";
+import { ADMIN_BYPASS_USER_ID, isAdmin } from "./adminAuth";
 import { setupAutosaveRoutes } from "./routes/autosave.routes";
 import { setupLawTypesRoutes } from "./routes/law-types.routes";
 import { setupFMIRoutes } from "./routes/fmi.routes";
@@ -1104,167 +1103,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // AUTH ROUTES
   // ============================================
 
-  const authRateLimiter = new Map<string, { count: number; resetAt: number }>();
-  const AUTH_RATE_LIMIT = 5; // 5 attempts
-  const AUTH_RATE_WINDOW = 15 * 60 * 1000; // 15 minutes
-
-  function checkRateLimit(identifier: string): boolean {
-    const now = Date.now();
-    const record = authRateLimiter.get(identifier);
-
-    if (!record || now > record.resetAt) {
-      authRateLimiter.set(identifier, { count: 1, resetAt: now + AUTH_RATE_WINDOW });
-      return true;
-    }
-
-    if (record.count >= AUTH_RATE_LIMIT) {
-      return false;
-    }
-
-    record.count++;
-    return true;
-  }
-
-  // Clean up rate limiter every hour
-  setInterval(() => {
-    const now = Date.now();
-    Array.from(authRateLimiter.entries()).forEach(([key, record]) => {
-      if (now > record.resetAt) {
-        authRateLimiter.delete(key);
-      }
-    });
-  }, 60 * 60 * 1000);
-
-  app.post("/api/register/local", asyncHandler(async (req: any, res: any) => {
-    const { firstName, lastName, email, password } = req.body;
-    const clientIp = req.ip || req.connection.remoteAddress || "unknown";
-
-    const ipIdentifier = `register:ip:${clientIp}`;
-
-    if (!checkRateLimit(ipIdentifier)) {
-      console.log(`[SECURITY] Registration rate limit exceeded from IP: ${clientIp}`);
-      throw ErrorTypes.RATE_LIMIT_EXCEEDED(15);
-    }
-
-    if (!firstName || !lastName || !email || !password) {
-      throw ErrorTypes.MISSING_REQUIRED_FIELDS(['firstName', 'lastName', 'email', 'password']);
-    }
-
-    const { registerLocalUser } = await import("./localAuth");
-    
-    try {
-      const { user } = await registerLocalUser(email, password, firstName, lastName);
-      
-      console.log(`[SECURITY] New user registered: ${email} from IP: ${clientIp}`);
-
-      // Send welcome email immediately after successful registration
-      try {
-        const emailSent = await sendWelcomeEmail({
-          firstName,
-          email,
-        });
-        
-        if (emailSent) {
-          console.log(`[EMAIL] ✓ Welcome email sent to new user: ${email}`);
-        } else {
-          console.error(`[EMAIL] ✗ Failed to send welcome email to: ${email}`);
-        }
-      } catch (emailError: any) {
-        console.error(`[EMAIL] ✗ Error sending welcome email to ${email}:`, emailError.message);
-      }
-
-      res.json({
-        success: true,
-        message: "Registration successful. Please log in.",
-        userId: user.id,
-      });
-    } catch (error: any) {
-      if (error.message?.includes('already exists') || error.message?.includes('already registered')) {
-        throw ErrorTypes.DUPLICATE_ENTRY('Email');
-      }
-      throw error;
-    }
-  }));
-
-  app.post("/api/login/local", async (req: any, res, next) => {
-    try {
-      const { email, username, password } = req.body;
-      const loginIdentifier = email || username;
-      const clientIp = req.ip || req.connection.remoteAddress || "unknown";
-
-      // Master access has a single canonical, database-independent endpoint:
-      // POST /api/master-login. Ordinary local login never interprets a user
-      // password as an administrative credential.
-
-      // Admin bypass - check second
-      if (loginIdentifier && password && isAdminBypass(loginIdentifier, password)) {
-        const adminUser = createAdminUser();
-        
-        req.login(adminUser, (err: any) => {
-          if (err) {
-            return res.status(500).json({ error: "Login failed" });
-          }
-          return res.json({ 
-            success: true, 
-            user: adminUser,
-            hasActiveSubscription: true, // Admin bypasses subscription
-          });
-        });
-        return;
-      }
-
-      const ipIdentifier = `login:ip:${clientIp}`;
-      const userIdentifier = `login:user:${loginIdentifier}`;
-
-      if (!checkRateLimit(ipIdentifier) || !checkRateLimit(userIdentifier)) {
-        console.log(`[SECURITY] Rate limit exceeded for ${loginIdentifier} from IP: ${clientIp}`);
-        return res.status(429).json({
-          message: "Too many login attempts. Please try again in 15 minutes."
-        });
-      }
-
-      if (process.env.ADMIN_BYPASS_ID && loginIdentifier === process.env.ADMIN_BYPASS_ID) {
-        await storage.createAdminAccessLog({
-          adminId: loginIdentifier,
-          ipAddress: clientIp,
-          userAgent: req.get("user-agent") || null,
-          sessionId: req.sessionID || null,
-        });
-        console.log(`[SECURITY] Admin bypass login attempt from IP: ${clientIp}, User-Agent: ${req.get("user-agent")}`);
-      }
-
-      req.body.email = loginIdentifier;
-      
-      passport.authenticate("local", (err: any, user: any, info: any) => {
-        if (err) {
-          console.error("[AUTH ERROR] Passport authentication error:", err);
-          return res.status(500).json({ message: "Authentication error" });
-        }
-        if (!user) {
-          console.log(`[AUTH] Login failed for: ${loginIdentifier}, reason: ${info?.message}`);
-          return res.status(401).json({ message: info?.message || "Invalid credentials" });
-        }
-
-        req.login(user, (loginErr: any) => {
-          if (loginErr) {
-            console.error("[AUTH ERROR] req.login error:", loginErr);
-            return res.status(500).json({ message: "Login failed" });
-          }
-          console.log(`[AUTH] Login successful for: ${loginIdentifier}`);
-          res.json({
-            success: true,
-            message: "Login successful",
-            isAdminBypass: user.isAdminBypass || false,
-            isMasterBypass: user.isMasterBypass || false,
-            hasActiveSubscription: user.isMasterBypass || user.isAdminBypass || false,
-          });
-        });
-      })(req, res, next);
-    } catch (error: any) {
-      console.error("Login error:", error);
-      res.status(500).json({ message: "Login failed" });
-    }
-  });
+  // Canonical login, registration, and logout authority is registered by setupAuth().
+  // Legacy credential-issuing routes were removed; only bounded session-read
+  // compatibility remains for already-issued connect.sid cookies.
 
   app.get("/api/auth/user", async (req: any, res) => {
     try {
