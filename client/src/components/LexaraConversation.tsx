@@ -32,6 +32,8 @@ type ConversationPhase =
   | 'text-only'
   | 'error';
 
+const VOICE_TURN_SETTLE_MS = 600;
+
 function makeMessageId(role: ConversationMessage['role']): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
     return `${role}-${crypto.randomUUID()}`;
@@ -67,14 +69,51 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const videoRef = useRef<HTMLVideoElement>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const messageEndRef = useRef<HTMLDivElement>(null);
+  const voiceTurnBufferRef = useRef('');
+  const voiceTurnTimerRef = useRef<number | null>(null);
+
+  const clearVoiceTurnTimer = useCallback(() => {
+    if (voiceTurnTimerRef.current !== null) {
+      window.clearTimeout(voiceTurnTimerRef.current);
+      voiceTurnTimerRef.current = null;
+    }
+  }, []);
+
+  const clearVoiceTurnBuffer = useCallback(() => {
+    clearVoiceTurnTimer();
+    voiceTurnBufferRef.current = '';
+  }, [clearVoiceTurnTimer]);
+
+  const flushVoiceTurn = useCallback(() => {
+    clearVoiceTurnTimer();
+    const text = voiceTurnBufferRef.current.trim();
+    voiceTurnBufferRef.current = '';
+    if (!text || phaseRef.current === 'speaking') return;
+    handleMessageRef.current(text);
+  }, [clearVoiceTurnTimer]);
 
   const voiceMode = useVoiceMode({
     continuous: true,
     interimResults: true,
     onTranscript: (text, isFinal) => {
-      if (!isFinal || !text.trim()) return;
       if (phaseRef.current === 'speaking') return;
-      handleMessageRef.current(text.trim());
+
+      // Web Speech can emit several finalized segments during one human turn.
+      // Accumulate them and require a brief quiet interval before dispatching so
+      // a natural pause does not create multiple overlapping legal questions.
+      if (!isFinal) {
+        clearVoiceTurnTimer();
+        return;
+      }
+
+      const segment = text.trim();
+      if (!segment) return;
+      voiceTurnBufferRef.current = voiceTurnBufferRef.current
+        ? `${voiceTurnBufferRef.current} ${segment}`
+        : segment;
+
+      clearVoiceTurnTimer();
+      voiceTurnTimerRef.current = window.setTimeout(flushVoiceTurn, VOICE_TURN_SETTLE_MS);
     },
     onError: error => {
       if (String(error.message).toLowerCase().includes('permission')) {
@@ -165,8 +204,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       return;
     }
 
-    // Browser SpeechRecognition is intentionally suspended during TTS. abort()
-    // discards any partial ASR result, preventing Lexara from transcribing herself.
+    clearVoiceTurnBuffer();
     suspendListening();
     if (generation === undefined || generation === generationRef.current) {
       setConversationPhase('speaking');
@@ -186,11 +224,14 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         setEmotion('calm');
       }
     }
-  }, [liveEnabled, resumeListening, setConversationPhase, speak, suspendListening, voiceReady]);
+  }, [clearVoiceTurnBuffer, liveEnabled, resumeListening, setConversationPhase, speak, suspendListening, voiceReady]);
 
   const handleUserMessage = useCallback(async (rawMessage: string) => {
     const message = rawMessage.trim();
     if (!message) return;
+
+    // A typed/manual turn supersedes any not-yet-dispatched voice segment.
+    clearVoiceTurnBuffer();
 
     // Advance generation before stopping old speech so the outgoing turn cannot
     // overwrite the new turn's state from its asynchronous finally block.
@@ -263,7 +304,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         currentRequestRef.current = null;
       }
     }
-  }, [appendMessage, jurisdiction, lawTypeId, lawTypeName, liveEnabled, setConversationPhase, speakLexara, stopSpeaking, voiceReady]);
+  }, [appendMessage, clearVoiceTurnBuffer, jurisdiction, lawTypeId, lawTypeName, liveEnabled, setConversationPhase, speakLexara, stopSpeaking, voiceReady]);
 
   handleMessageRef.current = handleUserMessage;
 
@@ -340,11 +381,12 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   useEffect(() => {
     return () => {
       currentRequestRef.current?.abort();
+      clearVoiceTurnBuffer();
       cameraStreamRef.current?.getTracks().forEach(track => track.stop());
       stopSpeaking();
       stopListening();
     };
-  }, [stopListening, stopSpeaking]);
+  }, [clearVoiceTurnBuffer, stopListening, stopSpeaking]);
 
   const statusLabel = useMemo(() => {
     if (phase === 'initializing') return 'Preparing live consultation';
