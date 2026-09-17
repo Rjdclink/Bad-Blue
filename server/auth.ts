@@ -3,9 +3,6 @@ import passport from "passport";
 import session from "express-session";
 import type { Express, RequestHandler } from "express";
 import connectPg from "connect-pg-simple";
-import { storage } from "./storage";
-import { sendWelcomeEmail } from "./emailService";
-import { setupLocalStrategy } from "./localAuth";
 import { getConfig } from "./config";
 import { isDatabaseConfigured, pool } from "./db";
 import { getPlatformUserId, normalizePlatformUser } from "./authIdentity";
@@ -153,6 +150,19 @@ function clearLocalCookie(res: any): void {
   res.append("Set-Cookie", parts.join("; "));
 }
 
+function clearLegacySessionCookie(res: any): void {
+  const secure = getConfig().NODE_ENV === "production";
+  const parts = [
+    "connect.sid=",
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    "Max-Age=0",
+  ];
+  if (secure) parts.push("Secure");
+  res.append("Set-Cookie", parts.join("; "));
+}
+
 export function getSession() {
   const sessionTtl = 7 * 24 * 60 * 60 * 1000; // 1 week
   const cfg = getConfig();
@@ -180,7 +190,7 @@ export function getSession() {
     cookie: {
       httpOnly: true,
       secure: cfg.NODE_ENV === 'production',
-      sameSite: cfg.NODE_ENV === 'production' ? 'none' : 'lax',
+      sameSite: 'lax',
       maxAge: sessionTtl,
     },
   });
@@ -190,12 +200,18 @@ export function getSession() {
 export async function setupAuth(app: Express) {
   app.set("trust proxy", 1);
   
-  // CRITICAL: Only apply session middleware to API routes to prevent database overload.
-  // Master recovery uses a short-lived HMAC cookie and deliberately avoids the
-  // ordinary database-backed session store.
-  const sessionMiddleware = getSession();
+  // Canonical master/local authentication is stateless at the application layer.
+  // The PostgreSQL-backed Passport session stack is retained only as a bounded
+  // compatibility reader for browsers that still present a legacy connect.sid.
+  // It is created lazily so ordinary requests and startup never acquire a DB
+  // session merely because authentication middleware exists.
+  let legacySessionMiddleware: ReturnType<typeof getSession> | null = null;
   const passportInit = passport.initialize();
   const passportSession = passport.session();
+  const getLegacySessionMiddleware = () => {
+    if (!legacySessionMiddleware) legacySessionMiddleware = getSession();
+    return legacySessionMiddleware;
+  };
 
   app.post("/api/master-login", authRateLimit, (req, res) => {
     const password = typeof req.body?.password === "string" ? req.body.password : "";
@@ -268,41 +284,24 @@ export async function setupAuth(app: Express) {
     }
   });
 
-  // Resolve master identity before any database-backed session lookup. This
-  // keeps master recovery available even when the ordinary user DB is degraded.
+  // Resolve canonical identities first. Only a request carrying the old
+  // connect.sid cookie is allowed to enter the legacy PostgreSQL/Passport path.
+  // This removes database-session work from unauthenticated API traffic and from
+  // all new master/local sessions while preserving a bounded migration window.
   app.use((req, res, next) => {
     if (attachMasterIdentity(req) || attachLocalIdentity(req)) return next();
-    if (req.path === "/api/master-login" || req.path === "/api/local-login" || req.path === "/api/local-register") return next();
 
-    // An unauthenticated auth-state probe must never wait on the PostgreSQL
-    // session store. Preserve legacy Passport sessions only when the browser
-    // actually presents the legacy connect.sid cookie.
-    if (req.path === "/api/auth/user" && !readCookie(req, "connect.sid")) return next();
-    // Only apply session middleware to API routes or specific auth paths
-    // NOTE: /admin/crypto is protected by cryptoAuthMiddleware which relies on passport sessions.
-    // If we don't attach sessions here, crypto admin routes will always return 401 even with a valid cookie.
-    if (
-      req.path.startsWith('/api/') ||
-      req.path.startsWith('/admin/crypto') ||
-      req.path === '/login' ||
-      req.path === '/signup' ||
-      req.path === '/'
-    ) {
-      sessionMiddleware(req, res, (err) => {
+    if (!readCookie(req, "connect.sid")) return next();
+
+    const sessionMiddleware = getLegacySessionMiddleware();
+    sessionMiddleware(req, res, (err) => {
+      if (err) return next(err);
+      passportInit(req, res, (err) => {
         if (err) return next(err);
-        passportInit(req, res, (err) => {
-          if (err) return next(err);
-          passportSession(req, res, next);
-        });
+        passportSession(req, res, next);
       });
-    } else {
-      // Skip session middleware for static assets
-      next();
-    }
+    });
   });
-
-  // Setup local strategy for username/password auth
-  setupLocalStrategy();
 
   // Master-aware auth status/logout short-circuits must be registered before
   // the ordinary database-backed routes are installed later in registerRoutes.
@@ -342,14 +341,21 @@ export async function setupAuth(app: Express) {
     }
   });
 
-  const statelessLogout = (req: any, res: any, next: any) => {
-    if (!hasValidMasterCookie(req) && !localSessionIdentity(req)) return next();
-    clearMasterCookie(res);
-    clearLocalCookie(res);
-    return res.json({ success: true });
+  const canonicalLogout = (req: any, res: any) => {
+    const finish = () => {
+      clearMasterCookie(res);
+      clearLocalCookie(res);
+      clearLegacySessionCookie(res);
+      return res.json({ success: true });
+    };
+
+    if (req.session?.destroy) {
+      return req.session.destroy(() => finish());
+    }
+    return finish();
   };
-  app.get("/api/auth/logout", statelessLogout);
-  app.post("/api/auth/logout", statelessLogout);
+  app.get("/api/auth/logout", canonicalLogout);
+  app.post("/api/auth/logout", canonicalLogout);
 
   passport.serializeUser((user: Express.User, cb) => cb(null, normalizePlatformUser(user)));
   passport.deserializeUser((user: Express.User, cb) => cb(null, normalizePlatformUser(user)));
@@ -368,10 +374,15 @@ export async function setupAuth(app: Express) {
     res.status(404).json({ message: "OAuth callback not configured" });
   });
 
-  app.get("/api/logout", (req, res) => {
-    req.logout(() => {
+  app.get("/api/logout", (req: any, res) => {
+    const finish = () => {
+      clearMasterCookie(res);
+      clearLocalCookie(res);
+      clearLegacySessionCookie(res);
       res.redirect("/");
-    });
+    };
+    if (req.session?.destroy) return req.session.destroy(() => finish());
+    return finish();
   });
 
   const purgeCutoff = String(process.env.PURGE_LOCAL_TEST_USERS_BEFORE || "").trim();
