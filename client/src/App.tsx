@@ -103,7 +103,6 @@ const LegalToolsPage = lazyWithRetry(() => import("@/pages/legal-tools"), 'Legal
 const PeopleFinderPage = lazyWithRetry(() => import("@/pages/people-finder"), 'PeopleFinder');
 const PantheonPage = lazyWithRetry(() => import("@/pages/pantheon"), 'Pantheon');
 const ConsultationPage = lazyWithRetry(() => import("@/pages/legal-consultation"), 'Consultation');
-const LexaraViewport = lazyWithRetry(() => import("@/components/LexaraViewport"), 'LexaraViewport');
 const SpectraPage = lazyWithRetry(() => import("@/pages/spectra"), 'Spectra');
 const GeoConsolePage = lazyWithRetry(() => import("@/pages/geoconsole"), 'GeoConsole');
 const SubscriptionSuccess = lazyWithRetry(() => import("@/pages/subscription-success"), 'SubscriptionSuccess');
