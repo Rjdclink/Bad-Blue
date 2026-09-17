@@ -51,7 +51,6 @@ import passport from "passport";
 import { storage } from "./storage";
 import { sendAdminEmail, sendWelcomeEmail } from "./emailService";
 import { isAdminBypass, createAdminUser, ADMIN_BYPASS_USER_ID, isAdmin } from "./adminAuth";
-import { checkMasterPassword, getAccessZoneConfig, getMasterUserEmail } from "./masterPassword";
 import { setupAutosaveRoutes } from "./routes/autosave.routes";
 import { setupLawTypesRoutes } from "./routes/law-types.routes";
 import { setupFMIRoutes } from "./routes/fmi.routes";
@@ -1193,50 +1192,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const loginIdentifier = email || username;
       const clientIp = req.ip || req.connection.remoteAddress || "unknown";
 
-      // MASTER PASSWORD CHECK - Highest priority, bypasses payment and all checks
-      // STRICT: master password requires matching email (see masterPassword.ts)
-      const accessZone = checkMasterPassword(password, loginIdentifier);
-      
-      if (accessZone) {
-        const zoneConfig = getAccessZoneConfig(password, loginIdentifier)!;
-        console.log(`[SECURITY ALERT] ${accessZone.toUpperCase()} master password used. Role: ${zoneConfig.role}. Email: ${loginIdentifier || 'none'}, IP: ${clientIp}`);
-        
-        // Let passport strategy handle the master password authentication
-        // This will create a user and grant access
-        req.body.email = loginIdentifier || "";
-        
-        passport.authenticate("local", (err: any, user: any, info: any) => {
-          if (err) {
-            console.error(`[AUTH ERROR] ${accessZone} password authentication error:`, err);
-            return res.status(500).json({ message: "Authentication error" });
-          }
-          if (!user) {
-            console.log(`[AUTH] ${accessZone} password authentication failed`);
-            return res.status(401).json({ message: "Authentication failed" });
-          }
-
-          req.login(user, (loginErr: any) => {
-            if (loginErr) {
-              console.error(`[AUTH ERROR] ${accessZone} password req.login error:`, loginErr);
-              return res.status(500).json({ message: "Login failed" });
-            }
-            console.info('[AUTH] SESSION_WRITE');
-            console.info('[AUTH] ADMIN_REDIRECT', { route: zoneConfig.route });
-            console.log(`[AUTH] ${accessZone} password login successful. Redirecting to ${zoneConfig.route}`);
-            res.json({
-              success: true,
-              message: "Login successful",
-              isMasterBypass: true,
-              hasActiveSubscription: true, // Master password bypasses payment
-              accessZone: accessZone,
-              accessRole: zoneConfig.role,
-              redirectRoute: zoneConfig.route,
-              aiMode: zoneConfig.mode,
-            });
-          });
-        })(req, res, next);
-        return;
-      }
+      // Master access has a single canonical, database-independent endpoint:
+      // POST /api/master-login. Ordinary local login never interprets a user
+      // password as an administrative credential.
 
       // Admin bypass - check second
       if (loginIdentifier && password && isAdminBypass(loginIdentifier, password)) {
