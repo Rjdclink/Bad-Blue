@@ -34,6 +34,7 @@ type ConversationPhase =
   | 'error';
 
 const VOICE_TURN_SETTLE_MS = 600;
+const CHAT_TURN_TIMEOUT_MS = 45_000;
 
 function makeMessageId(role: ConversationMessage['role']): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -79,6 +80,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const generationRef = useRef(0);
   const initializedRef = useRef(false);
   const greetingRef = useRef(false);
+  const userSpeechObservedRef = useRef(false);
   const handleMessageRef = useRef<(text: string) => void>(() => undefined);
   const videoRef = useRef<HTMLVideoElement>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
@@ -113,6 +115,9 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     onTranscript: (text, isFinal) => {
       if (phaseRef.current === 'speaking') return;
 
+      const observed = text.trim();
+      if (observed) userSpeechObservedRef.current = true;
+
       // Web Speech can emit several finalized segments during one human turn.
       // Accumulate them and require a brief quiet interval before dispatching so
       // a natural pause does not create multiple overlapping legal questions.
@@ -121,7 +126,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         return;
       }
 
-      const segment = text.trim();
+      const segment = observed;
       if (!segment) return;
       voiceTurnBufferRef.current = voiceTurnBufferRef.current
         ? `${voiceTurnBufferRef.current} ${segment}`
@@ -131,7 +136,8 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       voiceTurnTimerRef.current = window.setTimeout(flushVoiceTurn, VOICE_TURN_SETTLE_MS);
     },
     onError: error => {
-      if (String(error.message).toLowerCase().includes('permission')) {
+      const message = String(error.message).toLowerCase();
+      if (message.includes('permission') || message.includes('audio-capture')) {
         setVoiceReady(false);
       }
     },
@@ -245,11 +251,9 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     const message = rawMessage.trim();
     if (!message) return;
 
-    // A typed/manual turn supersedes any not-yet-dispatched voice segment.
+    userSpeechObservedRef.current = true;
     clearVoiceTurnBuffer();
 
-    // Advance generation before stopping old speech so the outgoing turn cannot
-    // overwrite the new turn's state from its asynchronous finally block.
     const generation = generationRef.current + 1;
     generationRef.current = generation;
 
@@ -258,6 +262,11 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
     const controller = new AbortController();
     currentRequestRef.current = controller;
+    let requestTimedOut = false;
+    const requestTimeout = window.setTimeout(() => {
+      requestTimedOut = true;
+      controller.abort();
+    }, CHAT_TURN_TIMEOUT_MS);
 
     const previousMessages = conversationRef.current.map(item => ({
       role: item.role,
@@ -311,13 +320,20 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       setGaze('camera');
       await speakLexara(answer, generation);
     } catch (error: any) {
-      if (error?.name === 'AbortError' || generation !== generationRef.current) return;
+      if (generation !== generationRef.current) return;
 
-      setErrorMessage(friendlyError(error));
+      if (error?.name === 'AbortError') {
+        if (!requestTimedOut) return;
+        setErrorMessage('LEXARA’s analysis timed out. Please repeat or shorten the last turn.');
+      } else {
+        setErrorMessage(friendlyError(error));
+      }
+
       setConversationPhase(liveEnabled && voiceReady ? 'listening' : 'error');
       setEmotion('empathetic');
       setGaze('camera');
     } finally {
+      window.clearTimeout(requestTimeout);
       if (generation === generationRef.current) {
         currentRequestRef.current = null;
       }
@@ -335,7 +351,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   }, [liveEnabled, resumeListening, setConversationPhase, stopSpeaking, voiceReady]);
 
   const sendGreeting = useCallback(async () => {
-    if (greetingRef.current) return;
+    if (greetingRef.current || userSpeechObservedRef.current || conversationRef.current.length > 0) return;
     greetingRef.current = true;
     const greetingGeneration = generationRef.current;
     responseEmotionRef.current = 'calm';
