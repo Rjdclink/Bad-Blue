@@ -4,7 +4,6 @@
  * @module 4JI-GENIE
  * @exports GenieController - Main controller class
  * @exports getGenieController - Singleton getter
- * @exports ADMIN_PASSWORD - Admin authentication password
  * @exports PRIMARY_CONTROLLER_LABEL - User identity label ("Daddy")
  * @exports Domain - Domain type enum
  * 
@@ -22,7 +21,7 @@
  * 
  * IDENTITY BINDING:
  * - Primary controller name: "Daddy" (internal system label for the user)
- * - Admin password: SARBEAR
+ * - Admin credential: canonical deployment master password
  * - Used as permissions anchor; prevents external actors from admin roles
  * 
  * SCHEDULED AUTONOMY:
@@ -36,6 +35,7 @@ import { createLogger } from '../../logger';
 import { Alexara, getAlexara, type LegalResearchRequest, type DocumentGenerationRequest } from '../alexara';
 import { Cryptara, getCryptara, type CryptaraConfig } from '../cryptara';
 import { ensureCryptaraBeamWiring } from '../cryptocrawl/integration/cryptara-beam-wiring.js';
+import { checkMasterPassword } from '../../masterPassword.js';
 
 const log = createLogger('4JI-GENIE');
 
@@ -51,10 +51,7 @@ function isNoIntervals(): boolean {
 // CONSTANTS AND CONFIGURATION
 // ============================================================================
 
-// Note: The admin password is specified by the system design requirements.
-// In production, this would typically be moved to environment variables.
-// The password 'SARBEAR' is a design requirement from the specification.
-const ADMIN_PASSWORD = process.env.GENIE_ADMIN_PASSWORD || 'SARBEAR';
+// Administrative authentication delegates to the single platform master authority.
 const PRIMARY_CONTROLLER_LABEL = 'Daddy';
 
 const LEGAL_KEYWORDS = [
@@ -296,7 +293,7 @@ export class GenieController extends EventEmitter {
    * Authenticate with admin password
    */
   authenticate(password: string): boolean {
-    if (password === ADMIN_PASSWORD) {
+    if (checkMasterPassword(password)) {
       this.isAuthenticated = true;
       this.authenticatedUser = PRIMARY_CONTROLLER_LABEL;
       log.info('Admin authenticated successfully', { user: PRIMARY_CONTROLLER_LABEL });
@@ -701,6 +698,6 @@ export const getGenieController = (): GenieController => {
 };
 
 // Export constants
-export { ADMIN_PASSWORD, PRIMARY_CONTROLLER_LABEL };
+export { PRIMARY_CONTROLLER_LABEL };
 
 export default GenieController;
