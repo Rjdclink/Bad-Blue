@@ -3,12 +3,12 @@
 import crypto from "crypto";
 
 /**
- * The master password is intentionally stored only as a SHA-256 digest in source.
- * This preserves the requested fixed password without exposing the plaintext in
- * browser code or deployment configuration. Master authentication never depends
- * on an email address.
+ * The master credential is deployment-secret only. It is intentionally never
+ * committed (even as a reusable verifier) and never depends on an email address.
  */
-const MASTER_PASSWORD_SHA256 = "f885c6ded699d8c970055152f35d09fca76c14e76fcb22532e84934c8b5c1908";
+function configuredMasterPassword(): string {
+  return String(process.env.MASTER_ADMIN_PASSWORD || "").trim();
+}
 export const MASTER_INTERNAL_EMAIL = "master@legalwhat.internal";
 export const MASTER_USER_ID = "admin-master-root";
 export const MASTER_SESSION_COOKIE = "legalwhat_master";
@@ -65,7 +65,9 @@ export const ZONE_FIRST_NAMES: Record<AccessZone, string> = {
  * backwards-compatible callers but is deliberately ignored.
  */
 export function checkMasterPassword(password: string, _email?: string): AccessZone | null {
-  return safeEquals(digest(password), MASTER_PASSWORD_SHA256) ? 'admin' : null;
+  const configured = configuredMasterPassword();
+  if (!configured || !password) return null;
+  return safeEquals(digest(password), digest(configured)) ? 'admin' : null;
 }
 
 export function isMasterPassword(password: string): boolean {
@@ -110,10 +112,10 @@ function masterSessionSecret(): string {
   return secret;
 }
 
-function masterSessionSignature(expiresAt: number): string {
+function masterSessionSignature(expiresAt: number, nonce: string): string {
   return crypto
     .createHmac("sha256", masterSessionSecret())
-    .update(`master:${expiresAt}`)
+    .update(`master:${expiresAt}:${nonce}`)
     .digest("base64url");
 }
 
@@ -124,16 +126,18 @@ function masterSessionSignature(expiresAt: number): string {
  */
 export function createMasterSessionToken(now = Date.now()): string {
   const expiresAt = now + MASTER_SESSION_TTL_MS;
-  return `${expiresAt}.${masterSessionSignature(expiresAt)}`;
+  const nonce = crypto.randomBytes(24).toString("base64url");
+  return `${expiresAt}.${nonce}.${masterSessionSignature(expiresAt, nonce)}`;
 }
 
 export function verifyMasterSessionToken(token: string | null | undefined, now = Date.now()): boolean {
   if (!token) return false;
-  const [expiresRaw, signature, ...extra] = token.split(".");
-  if (extra.length > 0 || !expiresRaw || !signature) return false;
+  const [expiresRaw, nonce, signature, ...extra] = token.split(".");
+  if (extra.length > 0 || !expiresRaw || !nonce || !signature) return false;
   const expiresAt = Number(expiresRaw);
   if (!Number.isSafeInteger(expiresAt) || expiresAt <= now) return false;
-  const expected = masterSessionSignature(expiresAt);
+  if (!/^[A-Za-z0-9_-]{20,}$/.test(nonce)) return false;
+  const expected = masterSessionSignature(expiresAt, nonce);
   return safeEquals(signature, expected);
 }
 
