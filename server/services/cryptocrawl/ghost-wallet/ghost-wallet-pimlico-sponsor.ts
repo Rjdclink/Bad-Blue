@@ -35,7 +35,7 @@ const PIMLICO_7702_CHAIN_IDS: Partial<Record<GhostWalletChain, number>> = {
   // matrix does not advertise EIP-7702 there. Keep that incompatibility local.
 };
 
-type RpcUserOperation = Record<string, unknown> & {
+export type GhostWalletPimlicoRpcUserOperation = Record<string, unknown> & {
   sender: string;
   nonce: string;
   factory: string;
@@ -58,7 +58,7 @@ export interface GhostWalletPimlicoPreparedSubmission {
   chain: GhostWalletChain;
   chainId: number;
   userOperationHash: string;
-  userOperation: RpcUserOperation;
+  userOperation: GhostWalletPimlicoRpcUserOperation;
   entryPoint: string;
   implementation: string;
   authorizationIncluded: boolean;
@@ -77,6 +77,13 @@ export interface GhostWalletPimlicoReceipt {
   actualGasUsed: bigint | null;
 }
 
+export interface GhostWalletPimlicoProbeResult {
+  chain: GhostWalletChain;
+  chainId: number;
+  entryPointSupported: boolean;
+  gasPriceAvailable: boolean;
+}
+
 function apiKey(): string {
   return process.env.GHOST_WALLET_PIMLICO_API_KEY?.trim() || '';
 }
@@ -91,12 +98,20 @@ function quantity(value: ethers.BigNumberish): string {
   return ethers.utils.hexValue(BigNumber.from(value));
 }
 
-function positiveQuantity(value: unknown, label: string): bigint {
+function parseQuantity(value: unknown, label: string, positive: boolean): bigint {
   const raw = String(value ?? '').trim();
   if (!/^0x[0-9a-fA-F]+$/.test(raw)) throw new Error(`${label}_INVALID`);
   const parsed = BigInt(raw);
-  if (parsed <= 0n) throw new Error(`${label}_INVALID`);
+  if (positive ? parsed <= 0n : parsed < 0n) throw new Error(`${label}_INVALID`);
   return parsed;
+}
+
+function positiveQuantity(value: unknown, label: string): bigint {
+  return parseQuantity(value, label, true);
+}
+
+function nonNegativeQuantity(value: unknown, label: string): bigint {
+  return parseQuantity(value, label, false);
 }
 
 function optionalQuantity(value: unknown): bigint | null {
@@ -139,10 +154,14 @@ async function rpc<T>(chainId: number, method: string, params: unknown[]): Promi
     if (!response.ok) throw new Error(`GHOST_WALLET_PIMLICO_HTTP_${response.status}`);
     if (parsed?.error) {
       const code = Number.isFinite(Number(parsed.error.code)) ? Number(parsed.error.code) : 'UNKNOWN';
-      const message = String(parsed.error.message || 'rpc_error').replace(/apikey=[^&\s]+/gi, 'apikey=REDACTED').slice(0, 400);
+      const message = String(parsed.error.message || 'rpc_error')
+        .replace(/apikey=[^&\s]+/gi, 'apikey=REDACTED')
+        .slice(0, 400);
       throw new Error(`GHOST_WALLET_PIMLICO_RPC_${code}:${message}`);
     }
-    if (!Object.prototype.hasOwnProperty.call(parsed, 'result')) throw new Error('GHOST_WALLET_PIMLICO_RPC_RESULT_MISSING');
+    if (!Object.prototype.hasOwnProperty.call(parsed, 'result')) {
+      throw new Error('GHOST_WALLET_PIMLICO_RPC_RESULT_MISSING');
+    }
     return parsed.result as T;
   } finally {
     clearTimeout(timer);
@@ -164,6 +183,7 @@ function signAuthorization(wallet: Wallet, chainId: number, nonce: ethers.BigNum
   ]);
   const digest = ethers.utils.keccak256(ethers.utils.hexConcat(['0x05', payload]));
   const signature = wallet._signingKey().signDigest(digest);
+  // EIP-7702 yParity is a single byte. Keep 0 as 0x00 rather than a padded uint256.
   const parity = signature.recoveryParam === 1 ? '0x01' : '0x00';
   return {
     chainId: quantity(chainId),
@@ -175,7 +195,7 @@ function signAuthorization(wallet: Wallet, chainId: number, nonce: ethers.BigNum
   };
 }
 
-function packedPaymasterAndData(userOperation: RpcUserOperation): string {
+function packedPaymasterAndData(userOperation: GhostWalletPimlicoRpcUserOperation): string {
   if (!ethers.utils.isAddress(userOperation.paymaster)) return '0x';
   return ethers.utils.hexConcat([
     userOperation.paymaster,
@@ -185,7 +205,7 @@ function packedPaymasterAndData(userOperation: RpcUserOperation): string {
   ]);
 }
 
-function userOperationTypedData(userOperation: RpcUserOperation, chainId: number) {
+function userOperationTypedData(userOperation: GhostWalletPimlicoRpcUserOperation, chainId: number) {
   return {
     domain: {
       name: 'ERC4337',
@@ -197,7 +217,8 @@ function userOperationTypedData(userOperation: RpcUserOperation, chainId: number
     message: {
       sender: userOperation.sender,
       nonce: BigNumber.from(userOperation.nonce),
-      // ERC-4337 v0.8 hashes the actual delegation target, not the 0x7702 marker.
+      // ERC-4337 v0.8 hashes the actual EIP-7702 delegation target in place
+      // of the 0x7702 marker while retaining any factoryData initialization bytes.
       initCode: ethers.utils.hexConcat([SIMPLE_7702_ACCOUNT, userOperation.factoryData || '0x']),
       callData: userOperation.callData,
       accountGasLimits: ethers.utils.hexConcat([
@@ -214,12 +235,16 @@ function userOperationTypedData(userOperation: RpcUserOperation, chainId: number
   };
 }
 
-function userOperationHash(userOperation: RpcUserOperation, chainId: number): string {
+function userOperationHash(userOperation: GhostWalletPimlicoRpcUserOperation, chainId: number): string {
   const typed = userOperationTypedData(userOperation, chainId);
   return ethers.utils._TypedDataEncoder.hash(typed.domain, typed.types, typed.message);
 }
 
-async function signUserOperation(wallet: Wallet, userOperation: RpcUserOperation, chainId: number): Promise<string> {
+async function signUserOperation(
+  wallet: Wallet,
+  userOperation: GhostWalletPimlicoRpcUserOperation,
+  chainId: number,
+): Promise<string> {
   const typed = userOperationTypedData(userOperation, chainId);
   return wallet._signTypedData(typed.domain, typed.types, typed.message);
 }
@@ -233,22 +258,37 @@ function parseGasPrice(result: any): { maxFeePerGas: bigint; maxPriorityFeePerGa
   };
 }
 
-function mergeSponsoredOperation(base: Record<string, unknown>, sponsored: any): RpcUserOperation {
+function mergeEstimatedOperation(base: Record<string, unknown>, estimate: any): Record<string, unknown> {
+  return {
+    ...base,
+    callGasLimit: quantity(positiveQuantity(estimate?.callGasLimit, 'GHOST_WALLET_PIMLICO_CALL_GAS')),
+    verificationGasLimit: quantity(positiveQuantity(estimate?.verificationGasLimit, 'GHOST_WALLET_PIMLICO_VERIFICATION_GAS')),
+    preVerificationGas: quantity(positiveQuantity(estimate?.preVerificationGas, 'GHOST_WALLET_PIMLICO_PREVERIFICATION_GAS')),
+  };
+}
+
+function mergeSponsoredOperation(base: Record<string, unknown>, sponsored: any): GhostWalletPimlicoRpcUserOperation {
   const paymaster = String(sponsored?.paymaster || '').trim();
   const paymasterData = String(sponsored?.paymasterData || '0x').trim();
   if (!ethers.utils.isAddress(paymaster)) throw new Error('GHOST_WALLET_PIMLICO_PAYMASTER_INVALID');
   if (!ethers.utils.isHexString(paymasterData)) throw new Error('GHOST_WALLET_PIMLICO_PAYMASTER_DATA_INVALID');
-  const merged: RpcUserOperation = {
-    ...(base as RpcUserOperation),
-    callGasLimit: quantity(positiveQuantity(sponsored.callGasLimit, 'GHOST_WALLET_PIMLICO_CALL_GAS')),
-    verificationGasLimit: quantity(positiveQuantity(sponsored.verificationGasLimit, 'GHOST_WALLET_PIMLICO_VERIFICATION_GAS')),
-    preVerificationGas: quantity(positiveQuantity(sponsored.preVerificationGas, 'GHOST_WALLET_PIMLICO_PREVERIFICATION_GAS')),
+  const merged = {
+    ...base,
+    callGasLimit: quantity(positiveQuantity(sponsored?.callGasLimit ?? base.callGasLimit, 'GHOST_WALLET_PIMLICO_CALL_GAS')),
+    verificationGasLimit: quantity(positiveQuantity(sponsored?.verificationGasLimit ?? base.verificationGasLimit, 'GHOST_WALLET_PIMLICO_VERIFICATION_GAS')),
+    preVerificationGas: quantity(positiveQuantity(sponsored?.preVerificationGas ?? base.preVerificationGas, 'GHOST_WALLET_PIMLICO_PREVERIFICATION_GAS')),
     paymaster: ethers.utils.getAddress(paymaster),
-    paymasterVerificationGasLimit: quantity(positiveQuantity(sponsored.paymasterVerificationGasLimit, 'GHOST_WALLET_PIMLICO_PAYMASTER_VERIFICATION_GAS')),
-    paymasterPostOpGasLimit: quantity(positiveQuantity(sponsored.paymasterPostOpGasLimit, 'GHOST_WALLET_PIMLICO_PAYMASTER_POSTOP_GAS')),
+    paymasterVerificationGasLimit: quantity(positiveQuantity(
+      sponsored?.paymasterVerificationGasLimit,
+      'GHOST_WALLET_PIMLICO_PAYMASTER_VERIFICATION_GAS',
+    )),
+    paymasterPostOpGasLimit: quantity(nonNegativeQuantity(
+      sponsored?.paymasterPostOpGasLimit ?? '0x0',
+      'GHOST_WALLET_PIMLICO_PAYMASTER_POSTOP_GAS',
+    )),
     paymasterData,
     signature: STUB_SIGNATURE,
-  };
+  } as GhostWalletPimlicoRpcUserOperation;
   return merged;
 }
 
@@ -262,6 +302,21 @@ export function isGhostWalletPimlicoEip7702Supported(chain: GhostWalletChain): b
 
 export function getGhostWalletPimlicoSupportedChains(): GhostWalletChain[] {
   return Object.keys(PIMLICO_7702_CHAIN_IDS) as GhostWalletChain[];
+}
+
+export async function probeGhostWalletPimlicoChain(chain: GhostWalletChain): Promise<GhostWalletPimlicoProbeResult> {
+  const chainId = PIMLICO_7702_CHAIN_IDS[chain];
+  if (!chainId) throw new Error(`GHOST_WALLET_PIMLICO_EIP7702_UNSUPPORTED:${chain}`);
+  if (!isGhostWalletPimlicoConfigured()) throw new Error('GHOST_WALLET_PIMLICO_API_KEY_UNAVAILABLE');
+  const [entryPoints, gasPriceRaw] = await Promise.all([
+    rpc<string[]>(chainId, 'eth_supportedEntryPoints', []),
+    rpc<any>(chainId, 'pimlico_getUserOperationGasPrice', []),
+  ]);
+  const entryPointSupported = Array.isArray(entryPoints)
+    && entryPoints.some(value => String(value).toLowerCase() === ENTRY_POINT_V08.toLowerCase());
+  if (!entryPointSupported) throw new Error(`GHOST_WALLET_PIMLICO_ENTRYPOINT_V08_UNSUPPORTED:${chain}`);
+  parseGasPrice(gasPriceRaw);
+  return { chain, chainId, entryPointSupported: true, gasPriceAvailable: true };
 }
 
 export async function prepareGhostWalletPimlicoSponsoredTransaction(input: {
@@ -320,11 +375,22 @@ export async function prepareGhostWalletPimlicoSponsoredTransaction(input: {
     signature: STUB_SIGNATURE,
     ...(authorization ? { eip7702Auth: authorization } : {}),
   };
+
+  // Pimlico's current v0.8 flow prepares the UserOperation gas first, then asks
+  // the paymaster to sponsor the already-prepared operation, then signs the final
+  // paymaster-bound UserOperation. Do not sponsor an unprepared partial request.
+  const initialEstimate = await rpc<any>(
+    network.chainId,
+    'eth_estimateUserOperationGas',
+    [base, ENTRY_POINT_V08],
+  );
+  const preparedBase = mergeEstimatedOperation(base, initialEstimate);
+
   const policyId = process.env.GHOST_WALLET_PIMLICO_SPONSORSHIP_POLICY_ID?.trim();
-  const sponsorParams: unknown[] = [base, ENTRY_POINT_V08];
+  const sponsorParams: unknown[] = [preparedBase, ENTRY_POINT_V08];
   if (policyId) sponsorParams.push({ sponsorshipPolicyId: policyId });
   const sponsored = await rpc<any>(network.chainId, 'pm_sponsorUserOperation', sponsorParams);
-  const userOperation = mergeSponsoredOperation(base, sponsored);
+  const userOperation = mergeSponsoredOperation(preparedBase, sponsored);
   userOperation.signature = await signUserOperation(input.wallet, userOperation, network.chainId);
   const hash = userOperationHash(userOperation, network.chainId);
 
@@ -357,21 +423,32 @@ export async function prepareGhostWalletPimlicoSponsoredTransaction(input: {
 export async function submitGhostWalletPimlicoSponsoredTransaction(
   prepared: Pick<GhostWalletPimlicoPreparedSubmission, 'chainId' | 'userOperationHash' | 'userOperation'>,
 ): Promise<string> {
-  const returned = String(await rpc<string>(prepared.chainId, 'eth_sendUserOperation', [prepared.userOperation, ENTRY_POINT_V08]));
-  if (!/^0x[a-fA-F0-9]{64}$/.test(returned)) throw new Error('GHOST_WALLET_PIMLICO_USER_OPERATION_HASH_INVALID');
+  const returned = String(await rpc<string>(
+    prepared.chainId,
+    'eth_sendUserOperation',
+    [prepared.userOperation, ENTRY_POINT_V08],
+  ));
+  if (!/^0x[a-fA-F0-9]{64}$/.test(returned)) {
+    throw new Error('GHOST_WALLET_PIMLICO_USER_OPERATION_HASH_INVALID');
+  }
   if (returned.toLowerCase() !== prepared.userOperationHash.toLowerCase()) {
     throw new Error('GHOST_WALLET_PIMLICO_USER_OPERATION_HASH_MISMATCH');
   }
   return returned;
 }
 
-export async function getGhostWalletPimlicoReceipt(chain: GhostWalletChain, userOperationHashValue: string): Promise<GhostWalletPimlicoReceipt | null> {
+export async function getGhostWalletPimlicoReceipt(
+  chain: GhostWalletChain,
+  userOperationHashValue: string,
+): Promise<GhostWalletPimlicoReceipt | null> {
   const chainId = PIMLICO_7702_CHAIN_IDS[chain];
   if (!chainId) throw new Error(`GHOST_WALLET_PIMLICO_EIP7702_UNSUPPORTED:${chain}`);
   const result = await rpc<any>(chainId, 'eth_getUserOperationReceipt', [userOperationHashValue]);
   if (!result) return null;
   const transactionHash = String(result?.receipt?.transactionHash || '');
-  if (!/^0x[a-fA-F0-9]{64}$/.test(transactionHash)) throw new Error('GHOST_WALLET_PIMLICO_RECEIPT_TRANSACTION_HASH_INVALID');
+  if (!/^0x[a-fA-F0-9]{64}$/.test(transactionHash)) {
+    throw new Error('GHOST_WALLET_PIMLICO_RECEIPT_TRANSACTION_HASH_INVALID');
+  }
   return {
     userOperationHash: String(result.userOpHash || userOperationHashValue),
     transactionHash,
@@ -384,7 +461,7 @@ export async function getGhostWalletPimlicoReceipt(chain: GhostWalletChain, user
 export async function ensureGhostWalletPimlicoSubmission(input: {
   chain: GhostWalletChain;
   userOperationHash: string;
-  userOperation: RpcUserOperation;
+  userOperation: GhostWalletPimlicoRpcUserOperation;
 }): Promise<void> {
   const chainId = PIMLICO_7702_CHAIN_IDS[input.chain];
   if (!chainId) throw new Error(`GHOST_WALLET_PIMLICO_EIP7702_UNSUPPORTED:${input.chain}`);
@@ -400,7 +477,7 @@ export async function ensureGhostWalletPimlicoSubmission(input: {
 }
 
 export const GHOST_WALLET_PIMLICO_POLICY = {
-  purpose: 'first_transaction_native_gas_bootstrap_only',
+  purpose: 'first_transaction_and_native_reserve_shortfall_only',
   zeroCapitalDependency: false,
   operatorNativePrefundRequired: false,
   preservesControllerEoaAddress: true,
@@ -415,5 +492,6 @@ export const GHOST_WALLET_PIMLICO_POLICY = {
   apiKeyEnvironmentVariable: 'GHOST_WALLET_PIMLICO_API_KEY',
   policyEnvironmentVariable: 'GHOST_WALLET_PIMLICO_SPONSORSHIP_POLICY_ID',
   authorizationYParityIsSingleByte: true,
-  rawRpcAvoidsViemYParityFormattingRegression: true,
+  prepareBeforeSponsor: true,
+  signedUserOperationPersistBeforeSubmissionRequired: true,
 } as const;
