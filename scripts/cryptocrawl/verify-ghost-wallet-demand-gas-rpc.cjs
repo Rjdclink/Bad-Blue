@@ -6,6 +6,7 @@ const read = p => fs.readFileSync(p, 'utf8');
 const dockerfile = read('Dockerfile');
 const engine = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-engine.ts');
 const demand = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-borrower-demand-mesh.ts');
+const bootstrap = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-intermediary-bootstrap.ts');
 const mandate = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-borrower-mandate.ts');
 const reserve = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-gas-reserve.ts');
 const reserveMigration = read('server/migrations/058_cryptocrawler_ghost_wallet_gas_reserve.sql');
@@ -32,6 +33,26 @@ assert.match(mandate, /isValidSignature/);
 assert.match(mandate, /cancelledMandateReplayRejected: true/);
 assert.match(engine, /ghost-wallet-borrower-demand-mesh\.js/);
 assert.match(engine, /borrowerDemandTransportAuthority: false/);
+
+// The matched-intent lane must no longer depend on a manually-entered intermediary.
+// A missing contract is deterministically bootstrapped with the existing Pimlico
+// sponsored execution path; explicit operator configuration remains authoritative.
+assert.match(demand, /ghostWalletIntermediaryBootstrap\.start\(\)/);
+assert.match(demand, /matchedIntentIntermediaryAutoBootstrap: true/);
+assert.match(bootstrap, /bad-blue:cryptocrawl-ghost-wallet-intermediary:v1/);
+assert.match(bootstrap, /GHOST_WALLET_INTERMEDIARIES_JSON/);
+assert.match(bootstrap, /kind: 'prepared_atomic_execution'/);
+assert.match(bootstrap, /mode: 'bridge_bootstrap'/);
+assert.match(bootstrap, /ghostWalletEngine\.refresh\(\)/);
+assert.match(bootstrap, /ghostWalletEngine\.enqueueReadyIntentPairWork\(\)/);
+assert.match(bootstrap, /deterministicCreate2Address: true/);
+assert.match(bootstrap, /automaticDeployment: true/);
+assert.match(bootstrap, /deploymentGasAuthority: 'pimlico_sponsored_user_operation'/);
+assert.match(bootstrap, /operatorPrincipalAuthority: false/);
+assert.match(bootstrap, /explicitConfigurationPreserved: true/);
+assert.match(bootstrap, /runtimeRegistrationAfterIdentityVerification: true/);
+assert.match(bootstrap, /routeLocalFailure: true/);
+assert.doesNotMatch(bootstrap, /zeroCapitalEngine|AtomicProfitabilityEngine/);
 
 // Historical gas-reserve schema stays readable, but native-reserve execution is retired.
 // Pimlico is the mandatory Ghost controller gas authority for all new submissions.
@@ -82,6 +103,8 @@ assert.match(zeroCapital, /executeFlashCanonicalZeroCapitalOpportunity|executeAl
 console.log(JSON.stringify({
   ok: true,
   borrowerDemandFeeds: 'signed_and_bounded',
+  matchedIntentIntermediaryBootstrap: 'deterministic_create2_pimlico_sponsored',
+  operatorCapitalRequiredForIntermediaryBootstrap: false,
   retainedProfitNativeGasReserve: 'retired_execution_authority',
   historicalGasReserveLedgerPreserved: true,
   pimlicoExclusiveExecutionGasAuthority: true,

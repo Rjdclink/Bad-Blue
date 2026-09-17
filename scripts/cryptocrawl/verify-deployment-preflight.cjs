@@ -115,6 +115,7 @@ require('./verify-ghost-wallet-atomic-capital.cjs');
 require('./verify-ghost-wallet-merge-gate.cjs');
 require('./verify-ghost-wallet-performance-optimizations.cjs');
 require('./verify-ghost-wallet-demand-gas-rpc.cjs');
+require('./verify-ghost-wallet-autonomous-readiness.cjs');
 require('./verify-full-runtime-regression-repair.cjs');
 
 const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
@@ -132,4 +133,4 @@ for (const [artifactPath, expectedContract] of [
 
 execFileSync(process.execPath, ['scripts/cryptocrawl/compile-ghost-wallet-contracts.cjs'], { stdio: 'inherit', env: process.env });
 
-console.log('[deployment-preflight] all established zero-capital, Overflow, runtime, payout, Ghost atomic-capital, Ghost performance, Ghost demand/gas/RPC, contract compilation, and full runtime regression gates passed; continuing to downstream build');
+console.log('[deployment-preflight] all established zero-capital, Overflow, runtime, payout, Ghost atomic-capital, Ghost performance, Ghost demand/gas/RPC, Ghost autonomous readiness, contract compilation, and full runtime regression gates passed; continuing to downstream build');
