@@ -107,30 +107,32 @@ export default function MasterPanelNavigator() {
           </div>
         </div>
 
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => move(1)}
-          className="min-h-11 min-w-11 shrink-0 touch-manipulation gap-1.5"
-          aria-label="Next master panel"
-        >
-          <span className="hidden sm:inline">Forward</span>
-          <ArrowRight className="h-4 w-4" />
-        </Button>
+        <div className="flex shrink-0 flex-col gap-1.5">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => move(1)}
+            className="min-h-11 min-w-11 touch-manipulation gap-1.5"
+            aria-label="Next master panel"
+          >
+            <span className="hidden sm:inline">Forward</span>
+            <ArrowRight className="h-4 w-4" />
+          </Button>
 
-        <Button
-          type="button"
-          variant="destructive"
-          size="sm"
-          onClick={() => void logout()}
-          disabled={loggingOut}
-          className="min-h-11 min-w-11 shrink-0 touch-manipulation gap-1.5"
-          aria-label="Log out"
-        >
-          <LogOut className="h-4 w-4" />
-          <span className="hidden md:inline">Logout</span>
-        </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            size="sm"
+            onClick={() => void logout()}
+            disabled={loggingOut}
+            className="min-h-11 min-w-11 touch-manipulation gap-1.5"
+            aria-label="Log out"
+          >
+            <LogOut className="h-4 w-4" />
+            <span className="hidden sm:inline">Logout</span>
+          </Button>
+        </div>
       </div>
     </div>
   );
