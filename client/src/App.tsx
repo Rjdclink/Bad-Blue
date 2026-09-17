@@ -105,6 +105,9 @@ const PantheonPage = lazyWithRetry(() => import("@/pages/pantheon"), 'Pantheon')
 const ConsultationPage = lazyWithRetry(() => import("@/pages/legal-consultation"), 'Consultation');
 const SpectraPage = lazyWithRetry(() => import("@/pages/spectra"), 'Spectra');
 const GeoConsolePage = lazyWithRetry(() => import("@/pages/geoconsole"), 'GeoConsole');
+const GeoConsoleCommandPage = lazyWithRetry(() => import("@/pages/geoconsole-command"), 'GeoConsoleCommand');
+const GeoConsoleProcessPage = lazyWithRetry(() => import("@/pages/geoconsole-process"), 'GeoConsoleProcess');
+const GeoConsoleReportPage = lazyWithRetry(() => import("@/pages/geoconsole-report"), 'GeoConsoleReport');
 const SubscriptionSuccess = lazyWithRetry(() => import("@/pages/subscription-success"), 'SubscriptionSuccess');
 const FAQPage = lazyWithRetry(() => import("@/pages/faq"), 'FAQ');
 const LocationIntelPage = lazyWithRetry(() => import("@/pages/location-intel"), 'LocationIntel');
@@ -112,6 +115,7 @@ const TSHPELocatorPage = lazyWithRetry(() => import("@/pages/tshpe-locator"), 'T
 const InmateLocatorPage = lazyWithRetry(() => import("@/pages/inmate-locator"), 'InmateLocator');
 const InmateLocatorV2Page = lazyWithRetry(() => import("@/pages/inmate-locator-v2"), 'InmateLocatorV2');
 const CryptoCrawlerV2Dashboard = lazyWithRetry(() => import("@/pages/cryptocrawler-v2"), 'CryptoCrawlerV2');
+const CryptoCrawlerCommandDashboard = lazyWithRetry(() => import("@/pages/cryptocrawler-dashboard"), 'CryptoCrawlerCommand');
 const ControlRoomPage = lazyWithRetry(() => import("@/pages/control-room"), 'ControlRoom');
 const OrchestratorConsole = lazyWithRetry(() => import("@/pages/orchestrator-console"), 'OrchestratorConsole');
 const AdminConsole = lazyWithRetry(() => import("@/pages/admin-console"), 'AdminConsole');
@@ -124,6 +128,7 @@ const AdminEmail = lazyWithRetry(() => import("@/pages/admin-email"), 'AdminEmai
 const AdminWorkerLogs = lazyWithRetry(() => import("@/pages/admin-worker-logs"), 'AdminWorkerLogs');
 const AdminUsers = lazyWithRetry(() => import("@/pages/admin-users"), 'AdminUsers');
 const AdminEvidenceHub = lazyWithRetry(() => import("@/pages/admin-evidence-hub"), 'AdminEvidenceHub');
+const AdminSubscriptions = lazyWithRetry(() => import("@/pages/admin-subscriptions"), 'AdminSubscriptions');
 
 const PageLoader = () => <PageSkeleton />;
 
@@ -226,6 +231,34 @@ function Router() {
     enabled: isAuthenticated && !isMasterSession,
   });
 
+  // Master navigation is button-driven only. Preserve native vertical scrolling
+  // and pinch zoom while suppressing horizontal overscroll/history gestures when
+  // the browser supports the relevant CSS controls.
+  useEffect(() => {
+    if (!isMasterSession || typeof document === "undefined") return;
+
+    const html = document.documentElement;
+    const body = document.body;
+    const previous = {
+      htmlOverscrollX: html.style.overscrollBehaviorX,
+      bodyOverscrollX: body.style.overscrollBehaviorX,
+      bodyTouchAction: body.style.touchAction,
+      htmlScrollPaddingTop: html.style.scrollPaddingTop,
+    };
+
+    html.style.overscrollBehaviorX = "none";
+    body.style.overscrollBehaviorX = "none";
+    body.style.touchAction = "pan-y pinch-zoom";
+    html.style.scrollPaddingTop = "64px";
+
+    return () => {
+      html.style.overscrollBehaviorX = previous.htmlOverscrollX;
+      body.style.overscrollBehaviorX = previous.bodyOverscrollX;
+      body.style.touchAction = previous.bodyTouchAction;
+      html.style.scrollPaddingTop = previous.htmlScrollPaddingTop;
+    };
+  }, [isMasterSession]);
+
   useEffect(() => {
     if (!isLoading) {
       console.log('[Performance] Auth check completed. User authenticated:', isAuthenticated);
@@ -248,7 +281,7 @@ function Router() {
         <Switch>
           <Route path="/" component={Landing} />
           <Route path="/landing" component={Landing} />
-          {import.meta.env.DEV && <Route path="/geoconsole" component={GeoConsolePage} />}
+          {import.meta.env.DEV && !isMasterSession && <Route path="/geoconsole" component={GeoConsolePage} />}
 
           <Route path="/subscription-success" component={SubscriptionSuccess} />
           <Route path="/control-room" component={GatedControlRoom} />
@@ -274,6 +307,10 @@ function Router() {
               <Route path="/spectra" component={SpectraPage} />
               <Route path="/geo-console" component={GeoConsoleRedirect} />
               <Route path="/legal-consultation/:domainId" component={ConsultationPage} />
+              {isMasterSession && <Route path="/geoconsole" component={GeoConsolePage} />}
+              {isMasterSession && <Route path="/geoconsole-command" component={GeoConsoleCommandPage} />}
+              {isMasterSession && <Route path="/geoconsole-process" component={GeoConsoleProcessPage} />}
+              {isMasterSession && <Route path="/geoconsole-report" component={GeoConsoleReportPage} />}
               <Route path="/location-intel" component={LocationIntelPage} />
               <Route path="/tshpe" component={TSHPELocatorPage} />
               <Route path="/tshpe-locator" component={TSHPELocatorPage} />
@@ -283,6 +320,7 @@ function Router() {
               <Route path="/inmate-locator-v2" component={InmateLocatorV2Page} />
               <Route path="/cryptocrawler" component={GatedCryptoCrawlerV2} />
               <Route path="/cryptocrawler-v2" component={GatedCryptoCrawlerV2} />
+              {isMasterSession && <Route path="/cryptocrawler-dashboard" component={CryptoCrawlerCommandDashboard} />}
               <Route path="/badblue" component={Home} />
               <Route path="/home" component={Home} />
               <Route path="/dashboard" component={Home} />
@@ -311,6 +349,7 @@ function Router() {
               <Route path="/admin-subagent" component={AdminSubAgent} />
               <Route path="/ai-subagent" component={AdminSubAgent} />
               <Route path="/admin-users" component={AdminUsers} />
+              <Route path="/admin-subscriptions" component={AdminSubscriptions} />
               <Route path="/admin-evidence-hub" component={AdminEvidenceHub} />
               <Route path="/petition-edit/:id" component={PetitionEdit} />
               <Route path="/confirmation/:type/:id" component={Confirmation} />
