@@ -56,6 +56,7 @@ const FEMALE_VOICE_HINTS = [
 ];
 
 const LEXARA_VOICE_STORAGE_KEY = 'lexara-voice-profile';
+const SERVER_TTS_FETCH_TIMEOUT_MS = 8_000;
 const MIN_PLAYBACK_WATCHDOG_MS = 10_000;
 const MAX_PLAYBACK_WATCHDOG_MS = 240_000;
 
@@ -225,31 +226,44 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
   }, [clearPlaybackWatchdog]);
 
   const fetchServerAudio = useCallback(async (text: string): Promise<ServerAudio> => {
-    const response = await fetch('/api/lexara/tts/stream', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
-    });
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), SERVER_TTS_FETCH_TIMEOUT_MS);
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.message || `Server speech synthesis failed: ${response.status}`);
+    try {
+      const response = await fetch('/api/lexara/tts/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || `Server speech synthesis failed: ${response.status}`);
+      }
+
+      const contentType = response.headers.get('Content-Type');
+      if (!contentType?.includes('audio/')) {
+        throw new Error('Server did not return audio data');
+      }
+
+      const blob = await response.blob();
+      if (!blob.size) throw new Error('Received empty audio from server');
+
+      const parsedDuration = Number(response.headers.get('X-Audio-Duration'));
+      return {
+        blob,
+        voiceId: response.headers.get('X-Voice-Id'),
+        durationMs: Number.isFinite(parsedDuration) && parsedDuration > 0 ? parsedDuration : null,
+      };
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw new Error('Server speech synthesis timed out');
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timeout);
     }
-
-    const contentType = response.headers.get('Content-Type');
-    if (!contentType?.includes('audio/')) {
-      throw new Error('Server did not return audio data');
-    }
-
-    const blob = await response.blob();
-    if (!blob.size) throw new Error('Received empty audio from server');
-
-    const parsedDuration = Number(response.headers.get('X-Audio-Duration'));
-    return {
-      blob,
-      voiceId: response.headers.get('X-Voice-Id'),
-      durationMs: Number.isFinite(parsedDuration) && parsedDuration > 0 ? parsedDuration : null,
-    };
   }, []);
 
   const speakWithServer = useCallback(async (
@@ -341,8 +355,6 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
       window.speechSynthesis.speak(utterance);
     });
 
-    // Browser speech engines do not expose duration. Estimate generously from
-    // character count and still apply an absolute cap to prevent a dead turn.
     const estimatedDuration = Math.max(8_000, text.length * 85);
     const outcome = await Promise.race([
       playback,
