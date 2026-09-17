@@ -78,6 +78,16 @@ function mapUser(row: any): StatelessLocalUser {
   };
 }
 
+export async function probeLocalAuthStoreHttp(): Promise<void> {
+  const supabase = primarySupabaseClient();
+  const [usersProbe, accountsProbe] = await Promise.all([
+    supabase.from("users").select("id").limit(1),
+    supabase.from("auth_accounts").select("id").limit(1),
+  ]);
+  if (usersProbe.error) throw new Error(`Users store probe failed: ${usersProbe.error.message}`);
+  if (accountsProbe.error) throw new Error(`Auth accounts store probe failed: ${accountsProbe.error.message}`);
+}
+
 export async function getLocalUserByIdHttp(userId: string): Promise<StatelessLocalUser | null> {
   if (!userId) return null;
   const supabase = primarySupabaseClient();
