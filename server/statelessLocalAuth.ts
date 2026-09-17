@@ -236,3 +236,46 @@ export function verifyLocalSessionToken(token: string | null | undefined, now = 
 export function getLocalSessionMaxAgeSeconds(): number {
   return Math.floor(LOCAL_SESSION_TTL_MS / 1000);
 }
+
+/**
+ * One-time cleanup for pre-existing local signup test accounts. The cutoff is
+ * mandatory so a repeated deployment can never remove a user created after the
+ * cleanup was authorized.
+ */
+export async function purgeLocalTestUsersBeforeHttp(cutoffIso: string): Promise<number> {
+  const cutoff = new Date(cutoffIso);
+  if (!Number.isFinite(cutoff.getTime())) throw new Error("Invalid local-test-user purge cutoff");
+
+  const supabase = primarySupabaseClient();
+  const { data: localAccounts, error: accountError } = await supabase
+    .from("auth_accounts")
+    .select("user_id")
+    .eq("auth_type", "local");
+  if (accountError) throw new Error(`Local account cleanup lookup failed: ${accountError.message}`);
+
+  const localUserIds = [...new Set((localAccounts || []).map((row: any) => String(row.user_id || "")).filter(Boolean))];
+  if (!localUserIds.length) return 0;
+
+  const { data: candidateUsers, error: userError } = await supabase
+    .from("users")
+    .select("id,created_at")
+    .in("id", localUserIds)
+    .lt("created_at", cutoff.toISOString());
+  if (userError) throw new Error(`Local account cleanup user lookup failed: ${userError.message}`);
+
+  const ids = (candidateUsers || []).map((row: any) => String(row.id || "")).filter(Boolean);
+  if (!ids.length) return 0;
+
+  // Two legacy tables have non-cascading user foreign keys. Remove only rows
+  // owned by the authorized pre-cutoff local test identities before deleting
+  // the user records; all other user-owned tables cascade or set-null.
+  for (const table of ["public_evidence", "document_creator_sessions"]) {
+    const { error } = await supabase.from(table).delete().in("user_id", ids);
+    if (error) throw new Error(`Local account cleanup failed for ${table}: ${error.message}`);
+  }
+
+  const { error: deleteError } = await supabase.from("users").delete().in("id", ids);
+  if (deleteError) throw new Error(`Local account cleanup user delete failed: ${deleteError.message}`);
+
+  return ids.length;
+}
