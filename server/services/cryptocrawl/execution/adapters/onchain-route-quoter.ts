@@ -105,10 +105,30 @@ export interface ResidentZeroCapitalQuoteEvidence {
   readonly expiresAt: number;
 }
 
-const inFlightLegQuotes = new WeakMap<providers.Provider, Map<string, Promise<BigNumber>>>();
+interface BlockScopedLegQuote {
+  readonly blockNumber: number;
+  readonly value: BigNumber;
+  readonly observedAt: number;
+}
+
+// Europa retains provider-local singleflight because it does not use the canonical
+// EVM provider mesh. Ordinary APE EVM routes use mesh-global singleflight so the
+// same deterministic quote requested by different workers/providers launches only
+// one RPC operation for the active block.
+const inFlightEuropaLegQuotes = new WeakMap<providers.Provider, Map<string, Promise<BigNumber>>>();
+const inFlightMeshLegQuotes = new Map<string, Promise<BigNumber>>();
+const blockScopedLegQuotes = new Map<string, BlockScopedLegQuote>();
+const latestQuoteBlockByChain = new Map<RpcSupportedChain, number>();
+const quoteBlockTrackerStarts = new Map<RpcSupportedChain, Promise<void>>();
 const residentBestBpsQuotes = new Map<string, ResidentZeroCapitalQuoteEvidence>();
 const residentExactAmountQuotes = new Map<string, ResidentZeroCapitalQuoteEvidence>();
 const BPS_PRECISION = 1_000_000n;
+
+let blockScopedLegQuoteHits = 0;
+let meshSingleflightJoins = 0;
+let meshLegQuoteStarts = 0;
+let blockInvalidations = 0;
+let routeBatchWaves = 0;
 
 function isAddress(value: string): boolean {
   return /^0x[a-fA-F0-9]{40}$/.test(value);
@@ -320,6 +340,73 @@ function legQuoteKey(chain: SupportedExecutionChain, leg: ConfiguredRouteLeg, am
   return [chain, leg.protocol, normalizeAddress(leg.tokenIn), normalizeAddress(leg.tokenOut), leg.pool ? normalizeAddress(leg.pool) : '', leg.feeTier || '', leg.fee ?? '', amountIn.toString()].join(':');
 }
 
+function clearBlockScopedLegQuotes(chain: RpcSupportedChain): void {
+  const prefix = `${chain}:`;
+  for (const key of blockScopedLegQuotes.keys()) {
+    if (key.startsWith(prefix)) blockScopedLegQuotes.delete(key);
+  }
+}
+
+/**
+ * Start one logical new-block feed per active APE chain. The provider manager owns
+ * failover/migration, and DynamicRpcProviderWiring ranks no-key public/streaming
+ * transports ahead of Infura. Quote results are therefore reusable for the exact
+ * canonical block and invalidated immediately when the next block arrives.
+ *
+ * Startup is deliberately non-blocking: the first quote can proceed immediately;
+ * reuse begins as soon as block evidence is resident.
+ */
+function ensureQuoteBlockTracker(chain: SupportedExecutionChain): void {
+  if (chain === 'europa') return;
+  const rpcChain = chain as RpcSupportedChain;
+  if (quoteBlockTrackerStarts.has(rpcChain)) return;
+
+  const start = (async () => {
+    try {
+      const { result } = await multiProviderRpcManager.execute(rpcChain, 'blocks', rpc => rpc.getBlockNumber());
+      if (Number.isInteger(result) && result >= 0) latestQuoteBlockByChain.set(rpcChain, result);
+    } catch {
+      // Reuse is an optimization only. Quote capability remains live without it.
+    }
+
+    try {
+      await multiProviderRpcManager.subscribe(rpcChain, 'blocks', value => {
+        if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) return;
+        const previous = latestQuoteBlockByChain.get(rpcChain);
+        if (previous === value) return;
+        latestQuoteBlockByChain.set(rpcChain, value);
+        clearBlockScopedLegQuotes(rpcChain);
+        blockInvalidations += 1;
+      });
+    } catch {
+      // The normal quote path still uses provider failover if a subscription lane
+      // is unavailable; no route or chain is removed because reuse could not start.
+    }
+  })();
+
+  quoteBlockTrackerStarts.set(rpcChain, start);
+  void start.catch(() => undefined);
+}
+
+export function getZeroCapitalRpcReuseSnapshot() {
+  return {
+    blockScopedCacheEntries: blockScopedLegQuotes.size,
+    blockScopedCacheHits: blockScopedLegQuoteHits,
+    meshSingleflightJoins,
+    meshLegQuoteStarts,
+    blockInvalidations,
+    routeBatchWaves,
+    trackedBlocks: Object.fromEntries([...latestQuoteBlockByChain.entries()]),
+    providerFailoverAuthority: 'multiProviderRpcManager',
+    exactBlockReuseOnly: true,
+    eventDrivenBlockInvalidation: true,
+    globalMeshSingleflight: true,
+    boundedRouteBatching: true,
+    staleBlockReuseAllowed: false,
+    capabilityReduction: false,
+  } as const;
+}
+
 async function quoteLegAgainstProvider(
   rpcProvider: providers.Provider,
   chain: SupportedExecutionChain,
@@ -451,30 +538,70 @@ async function quoteLeg(
   amountIn: BigNumber,
   timeoutMs: number,
 ): Promise<BigNumber> {
-  let providerQuotes = inFlightLegQuotes.get(provider);
-  if (!providerQuotes) {
-    providerQuotes = new Map<string, Promise<BigNumber>>();
-    inFlightLegQuotes.set(provider, providerQuotes);
+  const key = legQuoteKey(chain, leg, amountIn);
+
+  if (chain === 'europa') {
+    let providerQuotes = inFlightEuropaLegQuotes.get(provider);
+    if (!providerQuotes) {
+      providerQuotes = new Map<string, Promise<BigNumber>>();
+      inFlightEuropaLegQuotes.set(provider, providerQuotes);
+    }
+    const existing = providerQuotes.get(key);
+    if (existing) return withQuoteTimeout(existing, timeoutMs, `${chain}:${leg.protocol} shared leg quote`);
+    const pending = withQuoteTimeout(
+      quoteLegUncached(provider, chain, leg, amountIn),
+      Math.min(maxQuoteLatencyMs(), Math.max(1, timeoutMs)),
+      `${chain}:${leg.protocol} leg quote`,
+    );
+    providerQuotes.set(key, pending);
+    try {
+      return await pending;
+    } finally {
+      if (providerQuotes.get(key) === pending) providerQuotes.delete(key);
+    }
   }
 
-  const key = legQuoteKey(chain, leg, amountIn);
-  const existing = providerQuotes.get(key);
-  if (existing) return withQuoteTimeout(existing, timeoutMs, `${chain}:${leg.protocol} shared leg quote`);
+  ensureQuoteBlockTracker(chain);
+  const rpcChain = chain as RpcSupportedChain;
+  const blockNumber = latestQuoteBlockByChain.get(rpcChain);
+  const cached = blockNumber === undefined ? undefined : blockScopedLegQuotes.get(key);
+  if (cached && cached.blockNumber === blockNumber) {
+    blockScopedLegQuoteHits += 1;
+    return cached.value;
+  }
+  if (cached) blockScopedLegQuotes.delete(key);
 
-  // Cache the bounded promise, never the raw RPC. A provider call that stops
-  // answering must not pin this key forever or prevent the recurring scanner from
-  // scheduling its next cycle. The underlying RPC may eventually settle, but it
-  // has handlers attached here and is no longer an authority after the deadline.
+  // Block number is part of singleflight identity. A request launched for block N
+  // can never hold up or contaminate a request that arrives after block N+1.
+  const singleflightKey = `${blockNumber ?? 'untracked'}:${key}`;
+  const existing = inFlightMeshLegQuotes.get(singleflightKey);
+  if (existing) {
+    meshSingleflightJoins += 1;
+    return withQuoteTimeout(existing, timeoutMs, `${chain}:${leg.protocol} shared mesh leg quote`);
+  }
+
+  meshLegQuoteStarts += 1;
   const pending = withQuoteTimeout(
     quoteLegUncached(provider, chain, leg, amountIn),
     Math.min(maxQuoteLatencyMs(), Math.max(1, timeoutMs)),
     `${chain}:${leg.protocol} leg quote`,
   );
-  providerQuotes.set(key, pending);
+  inFlightMeshLegQuotes.set(singleflightKey, pending);
   try {
-    return await pending;
+    const result = await pending;
+    // Only cache an exact quote when block provenance stayed unchanged throughout
+    // measurement. If a new block arrived, the result remains usable by this caller
+    // but is deliberately not reused by later work.
+    if (blockNumber !== undefined && latestQuoteBlockByChain.get(rpcChain) === blockNumber) {
+      blockScopedLegQuotes.set(key, {
+        blockNumber,
+        value: result,
+        observedAt: Date.now(),
+      });
+    }
+    return result;
   } finally {
-    if (providerQuotes.get(key) === pending) providerQuotes.delete(key);
+    if (inFlightMeshLegQuotes.get(singleflightKey) === pending) inFlightMeshLegQuotes.delete(singleflightKey);
   }
 }
 
@@ -692,7 +819,11 @@ async function quoteBestRouteSize(
   route: ConfiguredZeroCapitalRoute,
   provider: providers.Provider,
 ): Promise<QuotedZeroCapitalRoute | null> {
-  const sizes = routeNotionalCandidates(route);
+  const sizes = [...new Set(routeNotionalCandidates(route))];
+  routeBatchWaves += 1;
+  // Keep exact-size capability while launching the bounded notional curve as one
+  // parallel wave. The block cache and mesh-global singleflight collapse shared
+  // leg work across this wave and across concurrently evaluated routes.
   const settled = await Promise.allSettled(sizes.map(notionalUsd =>
     quoteConfiguredZeroCapitalRoute({ ...route, amountIn: baseUnitsFromUsd(notionalUsd, route.inputTokenDecimals) }, provider),
   ));
