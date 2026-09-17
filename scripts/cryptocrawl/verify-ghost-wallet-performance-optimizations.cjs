@@ -10,9 +10,10 @@ const borrowerSurface = read('server/services/cryptocrawl/ghost-wallet/ghost-wal
 const funding = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-funding-mesh.ts');
 const provider = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-provider-mesh.ts');
 const bridge = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-external-bridge.ts');
-const gas = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-gas-pricing.ts');
 const telemetry = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-performance-intelligence.ts');
 const worker = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-ultra-worker.ts');
+const sponsor = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-pimlico-sponsor.ts');
+const mandateGuard = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-mandate-runtime-guard.ts');
 const settlement = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-settlement-ingest.ts');
 const routes = read('server/routes/cryptoWiring.routes.ts');
 const zeroCapital = read('server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts');
@@ -27,7 +28,7 @@ assert.doesNotMatch(worker, /zeroCapitalEngine|AtomicProfitabilityEngine|assessG
 assert.match(zeroCapital, /executeFlashCanonicalZeroCapitalOpportunity|executeAlternativePreparedWithinCanonicalExecutor/);
 
 // Counterparties remain open-ended but executable routes require measured live
-// capability. Funding adapters are alternatives; no single protocol is mandatory.
+// capability. Funding adapters are alternatives; no single capital protocol is mandatory.
 for (const adapter of ['aave_v3', 'morpho_blue', 'balancer_v2', 'erc3156']) {
   assert.ok(funding.includes(adapter), `Ghost performance funding mesh missing ${adapter}`);
 }
@@ -35,8 +36,7 @@ assert.match(funding, /hardSourceCountLimit: null/);
 assert.match(borrowerSurface, /hardLenderUniverseLimit: null/);
 assert.match(borrowerSurface, /hardBorrowerUniverseLimit: null/);
 
-// Hot-path RPC behavior must remain bounded. Independent funding sources can race,
-// but a source no longer explodes into source x every-RPC Cartesian requests.
+// Hot-path RPC behavior remains bounded and route-local.
 assert.match(funding, /sourceMeasurementsRemainParallel: true/);
 assert.match(funding, /cartesianProviderFanout: false/);
 assert.match(funding, /hedgedProviderSelection: true/);
@@ -46,8 +46,6 @@ assert.match(borrowerSurface, /dynamicErc3156CandidateHedging: true/);
 assert.match(borrowerSurface, /identityReadHedging: true/);
 assert.doesNotMatch(borrowerSurface, /providersForChain\.map/);
 
-// Provider selection learns latency/failure behavior and rate-limited providers
-// cool down locally. Reads are staggered/hedged, not global-failure coupled.
 assert.match(provider, /adaptiveLatencyRanking: true/);
 assert.match(provider, /hedgedReadFailover: true/);
 assert.match(provider, /providerCircuitBreaking: true/);
@@ -59,17 +57,37 @@ assert.match(provider, /hedgeDelayMs/);
 assert.match(bridge, /hedgedProviderReads: true/);
 assert.match(bridge, /providerCircuitBreakerAware: true/);
 
-// Exact signed transaction bytes are the only broadcast artifact. A nonce conflict
-// is accepted only when the deterministic expected hash is observed.
-assert.match(provider, /identicalRawTransactionMultiProviderBroadcast: true/);
-assert.match(provider, /exactHashRequiredOnNonceConflict: true/);
-assert.match(provider, /utils\.keccak256\(rawTransaction\)/);
-assert.match(provider, /nonce too low/);
-assert.match(provider, /getTransaction\(expectedHash\)/);
-assert.match(worker, /controller_signed_before_broadcast/);
-assert.match(worker, /markGhostWalletWorkSubmitted/);
-assert.match(worker, /broadcastRawTransaction/);
-assert.match(worker, /rebroadcastOrDefer/);
+// New Ghost controller submissions are exclusively Pimlico EIP-7702/ERC-4337.
+// The exact signed UserOperation is persisted before submission and exact hash is verified.
+assert.match(worker, /pimlicoExclusiveExecutionGasAuthority: true/);
+assert.match(worker, /nativeControllerGasFallback: false/);
+assert.match(worker, /controller_signed_user_operation_before_submission/);
+assert.match(worker, /submissionKind: 'pimlico_user_operation'/);
+assert.match(worker, /pimlicoUserOperation: prepared\.userOperation/);
+assert.match(worker, /submitGhostWalletPimlicoSponsoredTransaction/);
+assert.match(worker, /ensureGhostWalletPimlicoSubmission/);
+assert.match(worker, /billableGasUnitsWithSurcharge/);
+assert.doesNotMatch(worker, /GHOST_WALLET_CONTROLLER_NATIVE_GAS_UNAVAILABLE/);
+assert.doesNotMatch(worker, /wallet\.signTransaction\(unsigned\)/);
+assert.match(sponsor, /requiredForGhostControllerTransactions: true/);
+assert.match(sponsor, /nativeGasFallbackAllowed: false/);
+assert.match(sponsor, /operatorNativePrefundRequired: false/);
+assert.match(sponsor, /eth_sendUserOperation/);
+assert.match(sponsor, /eth_getUserOperationReceipt/);
+assert.match(sponsor, /eth_getUserOperationByHash/);
+assert.match(sponsor, /GHOST_WALLET_PIMLICO_USER_OPERATION_HASH_MISMATCH/);
+assert.match(sponsor, /staticCapabilityCacheMs/);
+assert.match(sponsor, /gasPriceCacheMs/);
+assert.match(sponsor, /boostedFastPathOptional: true/);
+assert.match(sponsor, /boostedFallback: 'standard_pimlico_only'/);
+assert.match(sponsor, /mainnetBillingSurchargeBpsDefault: 1_000/);
+assert.match(sponsor, /billingSurchargeIncludedInCanonicalEconomics: true/);
+
+// Final mandate cancellation/version/expiry is rechecked at the signing boundary.
+assert.match(worker, /assertGhostWalletMandateStillExecutable\(work\.payload\)/);
+assert.match(mandateGuard, /cancellationFailsClosed: true/);
+assert.match(mandateGuard, /replacementDigestMustMatchQueuedScope: true/);
+assert.match(mandateGuard, /expiryRecheckedAtSubmission: true/);
 
 // Existing exact-amount signatures stay valid. Dynamic sizing is only enabled by
 // an explicit signed min/preferred/max range and never inferred from an exact mandate.
@@ -84,8 +102,8 @@ assert.match(controller, /rangeAuthorizedDynamicSizing: true/);
 assert.match(controller, /amountCandidates/);
 assert.match(controller, /sizeCandidateLimit/);
 
-// Route/size selection is bounded and based on strict positive final net economics,
-// not lender fee alone. Signed borrower fee ceilings remain hard authorization.
+// Route/size selection remains bounded. The controller's cheap chain preflight is a
+// ranking/filter stage; the exact sponsored UserOperation is the final execution gate.
 assert.match(controller, /boundedMatchingConcurrency: true/);
 assert.match(controller, /matchConcurrency/);
 assert.match(controller, /routePlanLimit/);
@@ -98,20 +116,11 @@ assert.match(controller, /provider\.call\(request\)/);
 assert.match(controller, /provider\.estimateGas\(request\)/);
 assert.match(controller, /routePlansPreflighted/);
 assert.doesNotMatch(controller, /hardBpsProfitAdmissionFloor: true/);
+assert.match(worker, /feePerGasWei: prepared\.billingFeePerGasWei/);
+assert.match(worker, /gasUnits: prepared\.billableGasUnitsWithSurcharge/);
+assert.match(worker, /GHOST_WALLET_CONTROLLER_NET_NOT_POSITIVE_AFTER_PIMLICO/);
 
-// EIP-1559 maxFee is a balance/signing ceiling, not assumed realized economics.
-assert.match(gas, /profitabilityUsesExpectedEffectiveFee: true/);
-assert.match(gas, /balanceGuardUsesSigningCeiling: true/);
-assert.match(gas, /maxFeeHeadroomNotCountedAsCertainCost: true/);
-assert.match(gas, /lastBaseFeePerGas/);
-assert.match(gas, /maxPriorityFeePerGas/);
-assert.match(worker, /expectedFeePerGasWei/);
-assert.match(worker, /signingFeeCeilingPerGasWei/);
-assert.match(worker, /worstCaseGasWei = gasLimit\.mul\(signingFeeCeilingPerGas\)/);
-assert.match(worker, /feePerGasWei: BigInt\(expectedFeePerGas\.toString\(\)\)/);
-
-// Telemetry is O(1)-style bounded in-memory observation only. It cannot veto a
-// trade, and terminal settlement remains realized-profit truth.
+// Telemetry remains advisory and bounded; terminal settlement remains profit truth.
 assert.match(telemetry, /MAX_METRICS = 512/);
 assert.match(telemetry, /EWMA_ALPHA = 0\.2/);
 assert.match(telemetry, /executionAuthority: false/);
@@ -130,11 +139,15 @@ console.log(JSON.stringify({
   cartesianProviderFanout: false,
   hedgedProviderReads: true,
   providerCircuitBreaking: true,
-  exactHashBroadcastFailover: true,
+  exclusivePimlicoExecutionGas: true,
+  nativeWalletGasRequired: false,
+  signedUserOperationPersistedBeforeSubmission: true,
+  exactUserOperationHashRequired: true,
+  boostedPimlicoFastPathReady: true,
+  standardPimlicoFallbackOnly: true,
+  sponsoredCostIncludedInProfitability: true,
+  finalMandateRaceGuard: true,
   rangeAuthorizedDynamicSizing: true,
-  gasAdjustedRouteSelection: true,
-  expectedEffectiveGasEconomics: true,
-  maxFeeUsedAsCeilingOnly: true,
   boundedLiveProfitabilityTelemetry: true,
   terminalSettlementProfitTruth: true,
 }, null, 2));
