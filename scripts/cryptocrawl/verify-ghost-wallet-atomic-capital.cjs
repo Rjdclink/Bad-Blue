@@ -16,6 +16,8 @@ const fundingMesh = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-
 const controller = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-autonomous-controller.ts');
 const controllerEconomics = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-controller-economics.ts');
 const ultra = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-ultra-worker.ts');
+const pimlico = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-pimlico-sponsor.ts');
+const mandateGuard = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-mandate-runtime-guard.ts');
 const providerMesh = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-provider-mesh.ts');
 const payout = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-payout.ts');
 const compiler = read('scripts/cryptocrawl/compile-ghost-wallet-contracts.cjs');
@@ -41,7 +43,7 @@ assert.match(engine, /90_percent_payout_10_percent_retained/);
 assert.match(engine, /intermediaryTransactionSubmission: false/);
 assert.match(engine, /controllerTransactionSubmission: true/);
 assert.match(engine, /zeroCapitalExecutionAuthority: false/);
-assert.doesNotMatch(engine, /zeroCapitalEngine|gasSponsor|CRYPTO_ARBITRAGE_LIVE_EXECUTION/);
+assert.doesNotMatch(engine, /zeroCapitalEngine|CRYPTO_ARBITRAGE_LIVE_EXECUTION/);
 
 // Existing Ghost vault/intermediary settlement remains same-transaction and exact.
 assert.match(intermediary, /borrower_repayment_not_exact/);
@@ -102,8 +104,7 @@ assert.match(sourceMeasurement, /borrowCapacityAssetUnits/);
 assert.match(sourceMeasurement, /debtOf\(address account\)/);
 assert.match(sourceMeasurement, /synthetic_capacity:false/);
 
-// External bridge remains the atomic middleman with both backward-compatible
-// minimum-spread functions and autonomous per-transaction spread pricing.
+// External bridge remains the atomic middleman with backward-compatible and per-transaction spread pricing.
 assert.match(bridge, /Permissionless, zero-operator-capital atomic credit intermediary/);
 for (const fn of [
   'brokerExternalFlashLoan',
@@ -124,7 +125,6 @@ assert.match(bridge, /expectedRequestedSpread/);
 assert.match(bridge, /return requestedSpread > floorSpread \? requestedSpread : floorSpread/);
 assert.doesNotMatch(bridge, /allowedLender|lenderAllowlist/);
 
-// Deterministic bridge bootstrap is controller-compatible while remaining public.
 assert.match(bridgeRuntime, /intermediarySubmitsDeployment: false/);
 assert.match(bridgeRuntime, /autonomousControllerMaySubmitDeployment: true/);
 assert.match(bridgeRuntime, /externalPermissionlessDeployment: true/);
@@ -150,8 +150,8 @@ assert.match(fundingMesh, /hardSourceCountLimit: null/);
 assert.match(fundingMesh, /providerFailureRouteLocal: true/);
 assert.match(fundingMesh, /Promise\.allSettled/);
 
-// Autonomous admission is exact-call + exact-gas + strict net-positive. Spread is
-// priced per transaction and recurring signed authority is explicitly bounded.
+// Autonomous candidate ranking stays bounded. Final execution economics are recomputed
+// from the exact sponsored UserOperation immediately before durable submission.
 assert.match(controller, /intermediaryRole: 'middleman_only'/);
 assert.match(controller, /controllerOwnsInitiation: true/);
 assert.match(controller, /provider\.call\(request\)/);
@@ -174,17 +174,43 @@ assert.match(controllerEconomics, /expectedNetProfitUsdScaled > 0n/);
 assert.match(controllerEconomics, /hardBpsProfitFloor: false/);
 assert.match(controllerEconomics, /multiAssetFeeValuationSupported: true/);
 
-// Submission is durable and crash-safe: exact signed bytes are persisted before
-// broadcast and only those identical bytes may be rebroadcast after restart.
-assert.match(ultra, /provider\.call\(request\)/);
-assert.match(ultra, /provider\.estimateGas\(request\)/);
-assert.match(ultra, /wallet\.signTransaction\(unsigned\)/);
-assert.match(ultra, /controller_signed_before_broadcast/);
-assert.match(ultra, /rawTransaction/);
+// Pimlico is the sole new Ghost controller gas authority. No wallet-native balance
+// prerequisite may veto execution. Exact signed UserOperation is durable before send.
+assert.match(engine, /controllerGasAuthority: 'pimlico_eip7702_erc4337_sponsorship_only'/);
+assert.match(engine, /controllerNativeGasBalanceRequired: false/);
+assert.match(engine, /pimlicoExclusiveExecutionGasAuthority: true/);
+assert.match(ultra, /pimlicoExclusiveExecutionGasAuthority: true/);
+assert.match(ultra, /nativeControllerGasFallback: false/);
+assert.match(ultra, /controller_signed_user_operation_before_submission/);
+assert.match(ultra, /submissionKind: 'pimlico_user_operation'/);
+assert.match(ultra, /pimlicoUserOperation: prepared\.userOperation/);
+assert.match(ultra, /markGhostWalletWorkSubmitted/);
+assert.match(ultra, /submitGhostWalletPimlicoSponsoredTransaction/);
+assert.match(ultra, /ensureGhostWalletPimlicoSubmission/);
+assert.match(ultra, /gasUnits: prepared\.billableGasUnitsWithSurcharge/);
+assert.match(ultra, /feePerGasWei: prepared\.billingFeePerGasWei/);
+assert.match(ultra, /GHOST_WALLET_CONTROLLER_NET_NOT_POSITIVE_AFTER_PIMLICO/);
 assert.match(ultra, /rebroadcastOrDefer/);
 assert.match(ultra, /transaction_lanes_serialized_per_chain/);
+assert.doesNotMatch(ultra, /GHOST_WALLET_CONTROLLER_NATIVE_GAS_UNAVAILABLE/);
+assert.doesNotMatch(ultra, /wallet\.signTransaction\(unsigned\)/);
 assert.doesNotMatch(ultra, /GHOST_WALLET_CALLER_FUNDED_SUBMISSION_REQUIRED/);
-assert.doesNotMatch(ultra, /zeroCapitalEngine|gasSponsor|provider_sponsored/);
+assert.doesNotMatch(ultra, /zeroCapitalEngine|AtomicProfitabilityEngine/);
+assert.match(pimlico, /requiredForGhostControllerTransactions: true/);
+assert.match(pimlico, /nativeGasFallbackAllowed: false/);
+assert.match(pimlico, /operatorNativePrefundRequired: false/);
+assert.match(pimlico, /mainnetBillingSurchargeBpsDefault: 1_000/);
+assert.match(pimlico, /billingSurchargeIncludedInCanonicalEconomics: true/);
+assert.match(pimlico, /eth_estimateUserOperationGas/);
+assert.match(pimlico, /pm_sponsorUserOperation/);
+assert.match(pimlico, /eth_sendUserOperation/);
+assert.match(pimlico, /eth_getUserOperationReceipt/);
+assert.match(pimlico, /eth_getUserOperationByHash/);
+assert.match(pimlico, /boostedFastPathOptional: true/);
+assert.match(pimlico, /boostedFallback: 'standard_pimlico_only'/);
+assert.match(mandateGuard, /cancellationFailsClosed: true/);
+assert.match(mandateGuard, /replacementDigestMustMatchQueuedScope: true/);
+assert.match(ultra, /assertGhostWalletMandateStillExecutable\(work\.payload\)/);
 
 // Alchemy is not a Ghost dependency. Provider failures remain route-local.
 assert.match(providerMesh, /alchemyAllowed: false/);
@@ -193,7 +219,7 @@ assert.match(providerMesh, /requestDrivenHealthRefresh: true/);
 assert.match(providerMesh, /routeLocalFailure: true/);
 assert.doesNotMatch(providerMesh, /ALCHEMY_API_KEY|ALCHEMY_GAS_POLICY_ID/);
 
-// Profit conversion moves realized Ghost profit only. 90% payout / 10% retained.
+// Profit conversion moves realized Ghost profit only. Existing payout authority is unchanged.
 assert.match(payout, /zeroOperatorNativeGas: true/);
 assert.match(payout, /GHOST_WALLET_ACROSS_WOULD_SPEND_PREEXISTING_OPERATOR_NATIVE/);
 assert.match(payout, /quote\.maxSpend > input\.acquiredNative/);
@@ -203,7 +229,7 @@ assert.match(payout, /percentOfRealizedGhostNet: 90/);
 assert.match(payout, /retainedCapitalPercent: 10/);
 assert.match(payout, /submitProfitFundedEthereumFallback/);
 assert.doesNotMatch(payout, /state:\s*'fallback_required'/);
-assert.doesNotMatch(payout, /zeroCapitalEngine|gasSponsor|ALCHEMY_/);
+assert.doesNotMatch(payout, /zeroCapitalEngine|ALCHEMY_/);
 
 // Deferred settlement remains unavailable to zero-capital execution.
 assert.match(coverage, /protocolDeferredSettlementExecutionEnabled:\s*false/);
@@ -247,18 +273,24 @@ console.log(JSON.stringify({
   autonomousControllerExecution: true,
   signedBorrowerDemand: true,
   signedMandateReplayProtection: true,
+  finalMandateRaceGuard: true,
   zeroCapitalAuthorityCrossed: false,
   fixedBpsProfitFloor: false,
   perTransactionSpreadPricing: true,
   globalSpreadConfigurationTransactionRequired: false,
   strictPositiveAllInNet: true,
+  exactSponsoredUserOperationFinalGate: true,
+  pimlicoExclusiveExecutionGasAuthority: true,
+  nativeControllerGasBalanceRequired: false,
+  pimlicoBillingSurchargeIncluded: true,
+  boostedPimlicoFastPathReady: true,
   matchedIntentMultiAssetEconomics: true,
   lenderUniverseFixedLimit: false,
   borrowerUniverseFixedLimit: false,
   alchemyDependency: false,
   routeLocalProviderFailure: true,
   durableWorkerRecovery: true,
-  signedBeforeBroadcastRecovery: true,
+  signedBeforeSubmissionRecovery: true,
   profitFundedEthPayout: true,
   payoutPercent: 90,
   retainedCapitalPercent: 10,

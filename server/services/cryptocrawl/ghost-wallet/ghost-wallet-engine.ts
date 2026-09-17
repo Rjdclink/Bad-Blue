@@ -94,8 +94,8 @@ export class GhostWalletEngine {
     await this.refresh();
     this.running = true;
 
-    // Dynamic imports avoid a static cycle: both demand verification and reserve
-    // replenishment call back into this already-initialized Ghost engine.
+    // Dynamic imports avoid a static cycle: both demand verification and retained-profit
+    // accounting call back into this already-initialized Ghost engine.
     const [{ ghostWalletBorrowerDemandMesh }, { ghostWalletGasReserve }] = await Promise.all([
       import('./ghost-wallet-borrower-demand-mesh.js'),
       import('./ghost-wallet-gas-reserve.js'),
@@ -113,8 +113,11 @@ export class GhostWalletEngine {
       ],
       borrowerDemandAcquisition: 'signed_https_feed_plus_direct_signed_registration',
       borrowerDemandTransportAuthority: false,
-      controllerGasReserve: 'retained_realized_ghost_profit_same_chain_native',
-      firstTradeGasBootstrap: 'existing_system_native_or_optional_sponsor_required',
+      controllerGasAuthority: 'pimlico_eip7702_erc4337_sponsorship_only',
+      controllerNativeGasBalanceRequired: false,
+      pimlicoExclusiveExecutionGasAuthority: true,
+      pimlicoSponsoredCostIncludedInCanonicalEconomics: true,
+      retainedProfitGasReserveExecutionAuthority: false,
       alchemyDependency: false,
       existingArbitrageSystemsAffected: false,
       intermediaryRole: 'atomic_middleman_only',

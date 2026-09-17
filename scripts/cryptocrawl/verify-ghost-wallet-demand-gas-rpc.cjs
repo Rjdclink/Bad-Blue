@@ -9,6 +9,8 @@ const demand = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-borro
 const mandate = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-borrower-mandate.ts');
 const reserve = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-gas-reserve.ts');
 const reserveMigration = read('server/migrations/058_cryptocrawler_ghost_wallet_gas_reserve.sql');
+const pimlico = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-pimlico-sponsor.ts');
+const worker = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-ultra-worker.ts');
 const provider = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-provider-mesh.ts');
 const controller = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-autonomous-controller.ts');
 const zeroCapital = read('server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts');
@@ -31,49 +33,61 @@ assert.match(mandate, /cancelledMandateReplayRejected: true/);
 assert.match(engine, /ghost-wallet-borrower-demand-mesh\.js/);
 assert.match(engine, /borrowerDemandTransportAuthority: false/);
 
-// Retained gas funding is isolated from payout principal and zero-capital. It uses
-// only the retained realized Ghost allocation and preserves explicit first-trade truth.
+// Historical gas-reserve schema stays readable, but native-reserve execution is retired.
+// Pimlico is the mandatory Ghost controller gas authority for all new submissions.
 assert.match(reserveMigration, /cryptocrawler_ghost_wallet_gas_reserve/);
 assert.match(reserveMigration, /UNIQUE\(source_work_id, chain, asset\)/);
 assert.match(dockerfile, /COPY --from=builder \/app\/server\/migrations\/058_cryptocrawler_ghost_wallet_gas_reserve\.sql \.\/dist\/migrations\/058_cryptocrawler_ghost_wallet_gas_reserve\.sql/);
-assert.match(reserve, /retainedAmountBaseUnits/);
-assert.match(reserve, /retained_realized_ghost_profit_only/);
-assert.match(reserve, /operatorPrincipalAllowed:false/);
-assert.match(reserve, /zeroCapitalDependency:false/);
-assert.match(reserve, /sameChainNativeReserve:true/);
-assert.match(reserve, /gaslessConversionPreferred:true/);
-assert.match(reserve, /signedPayloadPersistedBeforeRelaySubmission:true/);
-assert.match(reserve, /firstTradeBootstrapRequiresExistingNativeOrOptionalSponsor:true/);
-assert.match(reserve, /sponsorIsMandatoryDependency:false/);
-assert.match(engine, /ghost-wallet-gas-reserve\.js/);
-assert.match(engine, /firstTradeGasBootstrap: 'existing_system_native_or_optional_sponsor_required'/);
+assert.match(reserve, /historicalLedgerPreserved: true/);
+assert.match(reserve, /executionAuthority: false/);
+assert.match(reserve, /retainedProfitConversionToNativeGas: false/);
+assert.match(reserve, /sameChainNativeReserve: false/);
+assert.match(reserve, /nativeGasFallbackAllowed: false/);
+assert.match(reserve, /pimlicoExclusiveExecutionGasAuthority: true/);
+assert.match(reserve, /pimlicoSponsorIsMandatoryDependency: true/);
+assert.match(engine, /controllerGasAuthority: 'pimlico_eip7702_erc4337_sponsorship_only'/);
+assert.match(engine, /controllerNativeGasBalanceRequired: false/);
+assert.match(engine, /pimlicoExclusiveExecutionGasAuthority: true/);
+assert.match(worker, /pimlicoExclusiveExecutionGasAuthority: true/);
+assert.match(worker, /nativeControllerGasFallback: false/);
+assert.match(pimlico, /requiredForGhostControllerTransactions: true/);
+assert.match(pimlico, /nativeGasFallbackAllowed: false/);
+assert.match(pimlico, /operatorNativePrefundRequired: false/);
+assert.match(pimlico, /billingSurchargeIncludedInCanonicalEconomics: true/);
+assert.match(pimlico, /boostedFastPathOptional: true/);
+assert.match(pimlico, /boostedFallback: 'standard_pimlico_only'/);
 
-// RPC health is separated by operation class so a log-provider throttle does not
-// demote a provider for unrelated reads/broadcasts, and Retry-After is honored.
+// RPC health remains separated by operation class. Pimlico UserOperation submission
+// is its own execution path and does not make Alchemy or raw RPC broadcast mandatory.
 assert.match(provider, /GhostWalletRpcOperationClass = 'read' \| 'logs' \| 'broadcast'/);
 assert.match(provider, /operationClassHealth: \['read', 'logs', 'broadcast'\]/);
 assert.match(provider, /runHedgedLogs/);
 assert.match(provider, /retryAfterAwareCircuitBreaking: true/);
 assert.match(provider, /providerCircuitBreaking: true/);
-assert.match(provider, /identicalRawTransactionMultiProviderBroadcast: true/);
-assert.match(provider, /exactHashRequiredOnNonceConflict: true/);
 assert.match(provider, /routeLocalFailure: true/);
+assert.match(worker, /submitGhostWalletPimlicoSponsoredTransaction/);
+assert.match(worker, /ensureGhostWalletPimlicoSubmission/);
+assert.doesNotMatch(worker, /GHOST_WALLET_CONTROLLER_NATIVE_GAS_UNAVAILABLE/);
 
-// Ghost remains autonomous and separate. Performance/gas work must not migrate
-// Ghost scheduling or transaction authority into zero-capital/APE.
+// Ghost remains autonomous and separate from zero-capital/APE.
 assert.match(controller, /zeroCapitalIntegration: false/);
 assert.match(engine, /intermediaryTransactionSubmission: false/);
 assert.match(engine, /controllerTransactionSubmission: true/);
 assert.match(engine, /zeroCapitalExecutionAuthority: false/);
 assert.doesNotMatch(demand, /zeroCapitalEngine|AtomicProfitabilityEngine/);
 assert.doesNotMatch(reserve, /zeroCapitalEngine|AtomicProfitabilityEngine/);
+assert.doesNotMatch(pimlico, /zeroCapitalEngine|AtomicProfitabilityEngine/);
 assert.match(zeroCapital, /executeFlashCanonicalZeroCapitalOpportunity|executeAlternativePreparedWithinCanonicalExecutor/);
 
 console.log(JSON.stringify({
   ok: true,
   borrowerDemandFeeds: 'signed_and_bounded',
-  retainedProfitGasReserve: 'durable_same_chain',
-  firstTradeBootstrapInvented: false,
+  retainedProfitNativeGasReserve: 'retired_execution_authority',
+  historicalGasReserveLedgerPreserved: true,
+  pimlicoExclusiveExecutionGasAuthority: true,
+  nativeControllerGasBalanceRequired: false,
+  boostedPimlicoFastPathReady: true,
+  standardPimlicoFallbackOnly: true,
   rpcHealth: 'read_logs_broadcast_isolated',
   zeroCapitalAuthorityCrossed: false,
   intermediaryRemainsMiddleman: true,
