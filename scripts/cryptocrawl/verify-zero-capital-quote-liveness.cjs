@@ -11,6 +11,12 @@ const overflowSchema = fs.readFileSync('server/services/cryptocrawl/runtime/cryp
 const fairnessMigration = fs.readFileSync('server/migrations/059_cryptocrawler_zero_capital_rescue_fairness.sql', 'utf8');
 const mesh = fs.readFileSync('server/services/cryptocrawl/integration/bps-compression-mesh.ts', 'utf8');
 const executor = fs.readFileSync('server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts', 'utf8');
+const stageOneSpread = fs.readFileSync('server/services/cryptocrawl/integration/stage-one-spread-observability.ts', 'utf8');
+const apeV4 = fs.readFileSync('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v4.ts', 'utf8');
+const receiverManager = fs.readFileSync('server/services/cryptocrawl/execution/adapters/sponsored-receiver-manager.ts', 'utf8');
+const routeSplit = fs.readFileSync('server/services/cryptocrawl/integration/zero-capital-route-split-rescue-core.ts', 'utf8');
+const providerWiring = fs.readFileSync('server/services/cryptocrawl/integration/zero-capital-flash-provider-wiring.ts', 'utf8');
+const dualReceiver = fs.readFileSync('contracts/cryptocrawl/CryptocrawlAaveBalancerDualFlashLoanReceiver.sol', 'utf8');
 
 // A non-responsive DEX eth_call must never pin the shared leg cache or prevent
 // the recurring canonical zero-capital discovery cycle from scheduling again.
@@ -47,6 +53,15 @@ assert.match(quoter, /latestQuoteBlockByChain\.get\(rpcChain\) === blockNumber/)
 assert.match(quoter, /const sizes = \[\.\.\.new Set\(routeNotionalCandidates\(route\)\)\]/);
 assert.match(quoter, /routeBatchWaves \+= 1/);
 assert.match(quoter, /capabilityReduction: false/);
+
+// Stage One's visible ZERO_CAPITAL_ATOMIC spread is the canonical all-in NET BPS,
+// never gross-first telemetry, and the strict > -10 BPS boundary is re-used here.
+assert.match(stageOneSpread, /candidate\.topology === 'ZERO_CAPITAL_ATOMIC'/);
+assert.match(stageOneSpread, /const canonicalNet = candidateNetBps\(candidate\)/);
+assert.match(stageOneSpread, /!clearsStageOneOutputFloorBps\(canonicalNet\)/);
+assert.match(stageOneSpread, /source: 'canonical_net_bps_stage_one'/);
+assert.match(stageOneSpread, /zeroCapitalDisplayedSpreadAuthority: 'canonical_all_in_net_bps_after_gas_flash_and_relay_costs'/);
+assert.match(stageOneSpread, /zeroCapitalStageOneFloorStrictlyGreaterThan: true/);
 
 // A successfully quoted route remains measurable regardless of economic quality.
 assert.doesNotMatch(quoter, /if \(netProfitBps < discoveryFloorBps\) return null/);
@@ -90,6 +105,41 @@ assert.match(providerEconomics, /settled\.every\(result => result\.status === 'r
 assert.match(providerEconomics, /All applicable flash-loan provider measurements failed/);
 assert.match(providerEconomics, /morpho_blue_core_flashFee_zero_by_interface/);
 assert.match(providerEconomics, /synthetic_evidence:false/);
+
+// Slow route families retain route-local P95/timeout suppression but can no longer
+// collapse unrelated candidate throughput below the configured chain base lane.
+assert.match(apeV4, /const floor = Math\.min\(maximum, baseRescueConcurrency\(\)\)/);
+assert.match(apeV4, /Math\.max\(floor, current - 1\)/);
+assert.match(apeV4, /slowRouteTimeoutCanCollapseChainBelowBase: false/);
+assert.match(apeV4, /routeLatencyIsolation: 'route_id_p95_timeout_plus_chain_candidate_floor'/);
+
+// Composite split execution is a real additive capability. The manager prepares a
+// separately salted V2 receiver through the same zero-operator-capital funding path,
+// publishes its runtime address, and a composite-only failure cannot disable the
+// already-supported standalone receiver.
+assert.match(receiverManager, /COMPOSITE_RECEIVER_SALT/);
+assert.match(receiverManager, /CryptocrawlBalancerCompositeFlashLoanReceiver\.json/);
+assert.match(receiverManager, /async ensureCompositeReceiver\(/);
+assert.match(receiverManager, /ZERO_CAPITAL_BALANCER_COMPOSITE_RECEIVERS/);
+assert.match(receiverManager, /Composite V2 receiver preparation degraded locally/);
+assert.match(receiverManager, /standaloneReceiverReady: true/);
+assert.match(receiverManager, /compositeOnlyFailure: true/);
+assert.match(routeSplit, /runZeroCapitalAtomicStackTactic\(/);
+assert.match(routeSplit, /exactCompositeEthCallRequiredBeforePromotion: true/);
+assert.match(routeSplit, /exactCompositeGasEstimateRequiredBeforePromotion: true/);
+assert.match(routeSplit, /aggregateCompositeEconomicsAuthoritative: true/);
+
+// Multi-provider capital remains executable only where the nested callback topology
+// is actually proven. Aave+Balancer is persisted for the canonical executor, while
+// Morpho remains independently available as a zero-fee single provider rather than
+// being fabricated into an unsupported nested topology.
+assert.match(providerWiring, /selectMeasuredDualFlashLoanAllocation/);
+assert.match(providerWiring, /provider: 'aave_balancer_dual'/);
+assert.match(providerWiring, /dualFlashLoanProviderSelectionRegistry\.record/);
+assert.match(providerWiring, /capabilities\.single\.set\('morpho_blue'/);
+assert.match(dualReceiver, /Balancer is the outer loan; Aave is nested inside the Balancer callback/);
+assert.match(dualReceiver, /executeOperation/);
+assert.match(dualReceiver, /receiveFlashLoan/);
 
 // CanonicalZeroCapitalDiscovery is the only recurring ZERO_CAPITAL_ATOMIC scan
 // cadence. Receiver preparation is single-flight and watchdog-bounded, but a slow
@@ -165,4 +215,4 @@ assert.match(executor, /opportunity\.expectedProfit <= 0n/);
 assert.doesNotMatch(executor, /opportunity\.netProfitBps > 0/);
 assert.match(executor, /Canonical all-in net economics are not strictly positive/);
 
-console.log('[zero-capital-quote-liveness] bounded RPC/provider/receiver/chain work, exact-block RPC evidence reuse, mesh-global singleflight, event-driven invalidation, bounded quote batching, live-price mesh gas valuation, timeout ownership recovery, route-local RPC failover, cross-provider rejection isolation, chain-local funding proof, single-pass fairness-ordered Atomic rescue, durable fairness schema authority, dynamic provider economics, current-candidate BPS allocation, numeric negative-route measurement, recurring liveness recovery, and positive-only canonical execution verified');
+console.log('[zero-capital-quote-liveness] bounded RPC/provider/receiver/chain work, canonical Stage-1 all-in net BPS, strict > -10 visibility, exact-block RPC evidence reuse, mesh-global singleflight, event-driven invalidation, bounded quote batching, slow-route concurrency isolation, additive composite receiver bootstrap, exact composite split proof, executable Aave+Balancer provider stacking, truthful Morpho single-provider capability, live-price mesh gas valuation, timeout ownership recovery, route-local RPC failover, cross-provider rejection isolation, chain-local funding proof, single-pass fairness-ordered Atomic rescue, durable fairness schema authority, dynamic provider economics, current-candidate BPS allocation, numeric negative-route measurement, recurring liveness recovery, and positive-only canonical execution verified');
