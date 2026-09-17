@@ -1,17 +1,19 @@
 // Master Password Configuration and Utilities
-// SINGLE MASTER PASSWORD SYSTEM - Admin Console Access
+// SINGLE MASTER PASSWORD SYSTEM - password-only administrator access
 import crypto from "crypto";
 
 /**
- * SINGLE MASTER PASSWORD
- * Grants access to PANTHEON Admin Console
+ * The master password is intentionally stored only as a SHA-256 digest in source.
+ * This preserves the requested fixed password without exposing the plaintext in
+ * browser code or deployment configuration. Master authentication never depends
+ * on an email address.
  */
-function getMasterEmail(): string {
-  return process.env.MASTER_ADMIN_EMAIL?.trim().toLowerCase() || '';
-}
+const MASTER_PASSWORD_SHA256 = "f885c6ded699d8c970055152f35d09fca76c14e76fcb22532e84934c8b5c1908";
+const MASTER_INTERNAL_EMAIL = "master@legalwhat.internal";
+const MASTER_USER_ID = "admin-master-root";
 
-function getMasterPassword(): string {
-  return process.env.MASTER_ADMIN_PASSWORD || '';
+function digest(value: string): string {
+  return crypto.createHash("sha256").update(value || "").digest("hex");
 }
 
 function safeEquals(left: string, right: string): boolean {
@@ -40,83 +42,59 @@ export interface AccessZoneConfig {
 }
 
 /**
- * Single admin zone configuration
+ * Single admin zone configuration.
+ * Master access starts on the LegalWhat welcome surface; the persistent master
+ * navigator then cycles through every registered master panel.
  */
 export const ACCESS_ZONES: Record<AccessZone, AccessZoneConfig> = {
   admin: {
     role: 'ADMIN_ROOT',
-    route: '/administrator',
+    route: '/welcome',
     mode: 'admin',
   },
 };
 
-/**
- * Admin user first name
- */
 export const ZONE_FIRST_NAMES: Record<AccessZone, string> = {
   admin: "PANTHEON",
 };
 
 /**
- * Check if provided password and email match the master credentials
- * Returns 'admin' if matched, null otherwise
- * STRICT: Both password AND email must match
+ * Password-only master credential check. The email argument is retained for
+ * backwards-compatible callers but is deliberately ignored.
  */
-export function checkMasterPassword(password: string, email?: string): AccessZone | null {
-  const masterEmail = getMasterEmail();
-  const masterPassword = getMasterPassword();
-  if (safeEquals(password, masterPassword) && safeEquals(email?.trim().toLowerCase() || '', masterEmail)) {
-    return 'admin';
-  }
-  return null;
+export function checkMasterPassword(password: string, _email?: string): AccessZone | null {
+  return safeEquals(digest(password), MASTER_PASSWORD_SHA256) ? 'admin' : null;
 }
 
-/**
- * Check if provided password is the master password
- * NOTE: This alone is NOT sufficient for auth - email must also match
- */
 export function isMasterPassword(password: string): boolean {
-  return safeEquals(password, getMasterPassword());
+  return checkMasterPassword(password) === 'admin';
 }
 
-/**
- * @deprecated - Permanently discarded
- */
+/** @deprecated - Permanently discarded */
 export function isOrchestratorPassword(_password: string): boolean {
   return false;
 }
 
-/**
- * @deprecated - Permanently discarded
- */
+/** @deprecated - Permanently discarded */
 export function isCryptoCrawlerPassword(_password: string): boolean {
   return false;
 }
 
-/**
- * Get the access zone config if credentials match
- */
 export function getAccessZoneConfig(password: string, email?: string): AccessZoneConfig | null {
   const zone = checkMasterPassword(password, email);
   return zone ? ACCESS_ZONES[zone] : null;
 }
 
 /**
- * Generate a consistent user ID for master password logins
- * Uses the master email hash
+ * Stable synthetic identity for the master session. It is not a login credential.
  */
 export function generateMasterUserId(_email: string | null | undefined, _zone: AccessZone = 'admin'): string {
-  const masterEmail = getMasterEmail();
-  if (!masterEmail) throw new Error('MASTER_ADMIN_EMAIL is not configured');
-  return `admin-${crypto.createHash('sha256').update(masterEmail).digest('hex').slice(0, 16)}`;
+  return MASTER_USER_ID;
 }
 
 /**
- * Get the email to use for master password login
- * Always returns the canonical master email
+ * Internal persistence email only. The user never has to enter it.
  */
 export function getMasterUserEmail(_email: string | null | undefined, _zone: AccessZone = 'admin'): string {
-  const masterEmail = getMasterEmail();
-  if (!masterEmail) throw new Error('MASTER_ADMIN_EMAIL is not configured');
-  return masterEmail;
+  return MASTER_INTERNAL_EMAIL;
 }
