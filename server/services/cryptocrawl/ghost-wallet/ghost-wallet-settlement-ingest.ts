@@ -96,6 +96,12 @@ function mergeAdjustment(target: Map<string, bigint>, asset: string, value: bigi
   target.set(key, (target.get(key) || 0n) + value);
 }
 
+function sponsoredMode(work: any): string {
+  const payload = work?.payload && typeof work.payload === 'object' ? work.payload : {};
+  if (payload.mode) return String(payload.mode);
+  return work?.kind === 'matched_intent_settlement' ? 'matched_intent' : '';
+}
+
 function sponsoredCostAdjustments(work: any, billedActualWei: bigint): Map<string, bigint> {
   const payload = work?.payload && typeof work.payload === 'object' ? work.payload : {};
   const result = work?.result && typeof work.result === 'object' ? work.result : {};
@@ -106,7 +112,7 @@ function sponsoredCostAdjustments(work: any, billedActualWei: bigint): Map<strin
   if (estimatedBilledWei <= 0n) return new Map();
 
   const adjustments = new Map<string, bigint>();
-  const mode = String(payload.mode || '');
+  const mode = sponsoredMode(work);
   if (mode === 'broker_execution') {
     const asset = String(payload.asset || '').trim();
     const estimatedAssetCost = positiveBigInt(result.finalGasCostAssetBaseUnits);
@@ -147,7 +153,7 @@ function sponsoredCostAdjustments(work: any, billedActualWei: bigint): Map<strin
 
 async function loadSponsoredContext(userOperationHash: string, actualGasCostWei: bigint, eventLogIndex: number): Promise<SponsoredCostContext | null> {
   const result = await pool.query(
-    `SELECT work_id,payload,result
+    `SELECT work_id,kind,payload,result
      FROM private.cryptocrawler_ghost_wallet_work
      WHERE lower(transaction_hash)=lower($1)
        AND result->>'submissionKind'='pimlico_user_operation'
@@ -161,6 +167,10 @@ async function loadSponsoredContext(userOperationHash: string, actualGasCostWei:
   const bps = surchargeBps(rowResult.pimlicoSurchargeBps);
   const billed = billedGasCostWei(actualGasCostWei, bps);
   const adjustments = sponsoredCostAdjustments(work, billed);
+  const mode = sponsoredMode(work);
+  if ((mode === 'broker_execution' || mode === 'matched_intent') && billed > 0n && adjustments.size === 0) {
+    throw new Error(`GHOST_WALLET_SPONSORED_COST_ALLOCATION_UNAVAILABLE:${mode}:${userOperationHash}`);
+  }
   await pool.query(
     `UPDATE private.cryptocrawler_ghost_wallet_work
      SET result=result || $2::jsonb, updated_at=now()
@@ -284,11 +294,6 @@ async function settlementContextForLog(chain: string, log: providers.Log): Promi
     receiptContextCache.delete(key);
     throw error;
   }
-}
-
-function sponsoredGasCostForLog(context: SponsoredCostContext | null, log: providers.Log, asset: string): bigint {
-  if (!context) return 0n;
-  return context.allocatedByProfitKey.get(profitCostKey(log.logIndex, asset)) || 0n;
 }
 
 async function enqueueProfit(input: {
@@ -505,6 +510,7 @@ export const GHOST_WALLET_SETTLEMENT_ACCOUNTING_POLICY = {
   pimlicoActualCostSource: 'entrypoint_user_operation_event',
   pimlicoMainnetSurchargeIncluded: true,
   sponsoredGasDeductedBeforeProfitSplit: true,
+  sponsoredCostProvenanceRequiredBeforePayout: true,
   userOperationBoundariesPreserved: true,
   deterministicRetrySafeCostAllocation: true,
   payoutFractionBps: 9_000,
