@@ -29,6 +29,25 @@ assert.match(quoter, /if \(error instanceof Error && error\.message\.includes\('
 assert.match(quoter, /multiProviderRpcManager\.execute\([\s\S]*'contract_calls'/);
 assert.match(quoter, /rpcProvider => quoteLegAgainstProvider\(rpcProvider, chain, leg, amountIn\)/);
 
+// Exact quote evidence is reused only inside the same canonical block. One logical
+// provider-mesh block feed invalidates resident quote evidence event-by-event, and
+// mesh-global singleflight collapses duplicate worker requests without narrowing
+// any route/provider capability. The existing bounded size sweep remains one
+// parallel application batch wave rather than serializing candidate sizes.
+assert.match(quoter, /const blockScopedLegQuotes = new Map<string, BlockScopedLegQuote>\(\)/);
+assert.match(quoter, /const inFlightMeshLegQuotes = new Map<string, Promise<BigNumber>>\(\)/);
+assert.match(quoter, /function ensureQuoteBlockTracker\(chain: SupportedExecutionChain\): void/);
+assert.match(quoter, /multiProviderRpcManager\.subscribe\(rpcChain, 'blocks'/);
+assert.match(quoter, /clearBlockScopedLegQuotes\(rpcChain\)/);
+assert.match(quoter, /const blockNumber = latestQuoteBlockByChain\.get\(rpcChain\)/);
+assert.match(quoter, /cached && cached\.blockNumber === blockNumber/);
+assert.match(quoter, /const singleflightKey = `\$\{blockNumber \?\? 'untracked'\}:\$\{key\}`/);
+assert.match(quoter, /meshSingleflightJoins \+= 1/);
+assert.match(quoter, /latestQuoteBlockByChain\.get\(rpcChain\) === blockNumber/);
+assert.match(quoter, /const sizes = \[\.\.\.new Set\(routeNotionalCandidates\(route\)\)\]/);
+assert.match(quoter, /routeBatchWaves \+= 1/);
+assert.match(quoter, /capabilityReduction: false/);
+
 // A successfully quoted route remains measurable regardless of economic quality.
 assert.doesNotMatch(quoter, /if \(netProfitBps < discoveryFloorBps\) return null/);
 assert.match(quoter, /bpsToBreakEven: netProfitBps >= 0 \? 0 : Math\.abs\(netProfitBps\)/);
@@ -146,4 +165,4 @@ assert.match(executor, /opportunity\.expectedProfit <= 0n/);
 assert.doesNotMatch(executor, /opportunity\.netProfitBps > 0/);
 assert.match(executor, /Canonical all-in net economics are not strictly positive/);
 
-console.log('[zero-capital-quote-liveness] bounded RPC/provider/receiver/chain work, live-price mesh gas valuation, timeout ownership recovery, route-local RPC failover, cross-provider rejection isolation, chain-local funding proof, single-pass fairness-ordered Atomic rescue, durable fairness schema authority, dynamic provider economics, current-candidate BPS allocation, numeric negative-route measurement, recurring liveness recovery, and positive-only canonical execution verified');
+console.log('[zero-capital-quote-liveness] bounded RPC/provider/receiver/chain work, exact-block RPC evidence reuse, mesh-global singleflight, event-driven invalidation, bounded quote batching, live-price mesh gas valuation, timeout ownership recovery, route-local RPC failover, cross-provider rejection isolation, chain-local funding proof, single-pass fairness-ordered Atomic rescue, durable fairness schema authority, dynamic provider economics, current-candidate BPS allocation, numeric negative-route measurement, recurring liveness recovery, and positive-only canonical execution verified');
