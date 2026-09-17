@@ -29,11 +29,23 @@ interface SponsoredCostContext {
   actualGasCostWei: bigint;
   billedGasCostWei: bigint;
   adjustments: Map<string, bigint>;
+  allocatedByProfitKey: Map<string, bigint>;
+}
+
+interface UserOperationBoundary {
+  eventLogIndex: number;
+  sponsored: SponsoredCostContext | null;
 }
 
 interface ReceiptSettlementContext {
   receipt: providers.TransactionReceipt;
-  sponsored: SponsoredCostContext[];
+  boundaries: UserOperationBoundary[];
+}
+
+interface ProfitEntry {
+  logIndex: number;
+  asset: string;
+  gross: bigint;
 }
 
 const receiptContextCache = new Map<string, { expiresAt: number; promise: Promise<ReceiptSettlementContext> }>();
@@ -159,7 +171,65 @@ async function loadSponsoredContext(userOperationHash: string, actualGasCostWei:
       pimlicoRealizedCostAuthority: 'entrypoint_user_operation_event_actual_gas_cost_plus_pimlico_surcharge',
     })],
   );
-  return { eventLogIndex, userOperationHash, actualGasCostWei, billedGasCostWei: billed, adjustments };
+  return {
+    eventLogIndex,
+    userOperationHash,
+    actualGasCostWei,
+    billedGasCostWei: billed,
+    adjustments,
+    allocatedByProfitKey: new Map(),
+  };
+}
+
+function settlementProfitEntries(log: providers.Log): ProfitEntry[] {
+  const primary = resolvePrimaryProfitPayoutAddress();
+  if (!primary) return [];
+  let parsed: ethers.utils.LogDescription;
+  try { parsed = EVENT_INTERFACE.parseLog(log); } catch { return []; }
+  const args = parsed.args;
+  const recipient = (() => {
+    try { return addr(args.profitRecipient); } catch { return ''; }
+  })();
+  if (!recipient || recipient.toLowerCase() !== primary.toLowerCase()) return [];
+  if (parsed.name === 'AtomicCreditSettled') return [{ logIndex: log.logIndex, asset: addr(args.asset), gross: amount(args.realizedProfit) }];
+  if (parsed.name === 'AtomicLiabilityCycleSettled') return [{ logIndex: log.logIndex, asset: addr(args.profitAsset), gross: amount(args.realizedProfit) }];
+  if (parsed.name === 'MatchedIntentPairSettled') return [
+    { logIndex: log.logIndex, asset: addr(args.tokenB), gross: amount(args.feeA) },
+    { logIndex: log.logIndex, asset: addr(args.tokenA), gross: amount(args.feeB) },
+  ];
+  if (parsed.name === 'VaultCreditSettled') return [{ logIndex: log.logIndex, asset: addr(args.asset), gross: amount(args.realizedProfit) }];
+  if (parsed.name === 'BrokeredAtomicCreditSettled') return [{ logIndex: log.logIndex, asset: addr(args.asset), gross: amount(args.realizedSpread) }];
+  if (parsed.name === 'ExternalCreditBrokered') return [{ logIndex: log.logIndex, asset: addr(args.token), gross: amount(args.realizedSpread) }];
+  return [];
+}
+
+function profitCostKey(logIndex: number, asset: string): string {
+  return `${logIndex}:${asset.toLowerCase()}`;
+}
+
+function allocateSponsoredCosts(receipt: providers.TransactionReceipt, boundaries: UserOperationBoundary[]): void {
+  let previousBoundary = -1;
+  for (const boundary of boundaries) {
+    const sponsored = boundary.sponsored;
+    if (sponsored) {
+      const remaining = new Map(sponsored.adjustments);
+      const entries = receipt.logs
+        .filter(log => log.logIndex > previousBoundary && log.logIndex < boundary.eventLogIndex)
+        .flatMap(settlementProfitEntries)
+        .sort((left, right) => left.logIndex - right.logIndex);
+      for (const entry of entries) {
+        const assetKey = entry.asset.toLowerCase();
+        const available = remaining.get(assetKey) || 0n;
+        if (available <= 0n || entry.gross <= 0n) continue;
+        const allocated = available > entry.gross ? entry.gross : available;
+        sponsored.allocatedByProfitKey.set(profitCostKey(entry.logIndex, entry.asset), allocated);
+        const next = available - allocated;
+        if (next > 0n) remaining.set(assetKey, next);
+        else remaining.delete(assetKey);
+      }
+    }
+    previousBoundary = boundary.eventLogIndex;
+  }
 }
 
 async function buildReceiptSettlementContext(receipt: providers.TransactionReceipt): Promise<ReceiptSettlementContext> {
@@ -176,22 +246,24 @@ async function buildReceiptSettlementContext(receipt: providers.TransactionRecei
     } catch {
       return [];
     }
-  });
+  }).sort((left, right) => left.eventLogIndex - right.eventLogIndex);
   const contexts = await Promise.all(userOperationEvents.map(event => loadSponsoredContext(
     event.userOperationHash,
     event.actualGasCostWei,
     event.eventLogIndex,
   )));
-  return {
-    receipt,
-    sponsored: contexts.filter((value): value is SponsoredCostContext => Boolean(value))
-      .sort((left, right) => left.eventLogIndex - right.eventLogIndex),
-  };
+  const boundaries: UserOperationBoundary[] = userOperationEvents.map((event, index) => ({
+    eventLogIndex: event.eventLogIndex,
+    sponsored: contexts[index],
+  }));
+  allocateSponsoredCosts(receipt, boundaries);
+  return { receipt, boundaries };
 }
 
 function contextForLog(context: ReceiptSettlementContext | null, log: providers.Log): SponsoredCostContext | null {
   if (!context) return null;
-  return context.sponsored.find(entry => entry.eventLogIndex > log.logIndex) || null;
+  const boundary = context.boundaries.find(entry => entry.eventLogIndex > log.logIndex);
+  return boundary?.sponsored || null;
 }
 
 async function settlementContextForLog(chain: string, log: providers.Log): Promise<ReceiptSettlementContext | null> {
@@ -214,16 +286,9 @@ async function settlementContextForLog(chain: string, log: providers.Log): Promi
   }
 }
 
-function consumeSponsoredCost(context: SponsoredCostContext | null, asset: string, gross: bigint): bigint {
-  if (!context || gross <= 0n) return 0n;
-  const key = asset.toLowerCase();
-  const remaining = context.adjustments.get(key) || 0n;
-  if (remaining <= 0n) return 0n;
-  const consumed = remaining > gross ? gross : remaining;
-  const next = remaining - consumed;
-  if (next > 0n) context.adjustments.set(key, next);
-  else context.adjustments.delete(key);
-  return consumed;
+function sponsoredGasCostForLog(context: SponsoredCostContext | null, log: providers.Log, asset: string): bigint {
+  if (!context) return 0n;
+  return context.allocatedByProfitKey.get(profitCostKey(log.logIndex, asset)) || 0n;
 }
 
 async function enqueueProfit(input: {
@@ -237,7 +302,9 @@ async function enqueueProfit(input: {
   sponsoredContext?: SponsoredCostContext | null;
 }): Promise<boolean> {
   if (input.amount <= 0n) return false;
-  const sponsoredGasCost = consumeSponsoredCost(input.sponsoredContext || null, input.asset, input.amount);
+  const sponsoredGasCost = input.sponsoredContext
+    ? input.sponsoredContext.allocatedByProfitKey.get(profitCostKey(input.logIndex, input.asset)) || 0n
+    : 0n;
   const netRealized = input.amount - sponsoredGasCost;
   const allocation = splitRealizedProfit(netRealized);
   if (allocation.payout <= 0n) {
@@ -438,6 +505,8 @@ export const GHOST_WALLET_SETTLEMENT_ACCOUNTING_POLICY = {
   pimlicoActualCostSource: 'entrypoint_user_operation_event',
   pimlicoMainnetSurchargeIncluded: true,
   sponsoredGasDeductedBeforeProfitSplit: true,
+  userOperationBoundariesPreserved: true,
+  deterministicRetrySafeCostAllocation: true,
   payoutFractionBps: 9_000,
   retainedFractionBps: 1_000,
   allInNetSettlementProvenance: true,
