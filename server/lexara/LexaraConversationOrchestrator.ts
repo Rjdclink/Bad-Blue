@@ -44,6 +44,7 @@ const STATE_BY_ABBREVIATION: Record<string, string> = {
 
 const STATE_NAMES = Object.values(STATE_BY_ABBREVIATION);
 const LAW_TYPE_NAME_BY_ID = new Map(LAW_TYPE_DATA.map(item => [item.id, item.name]));
+const STATE_ABBREVIATION_PATTERN = /\b(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC)\b/g;
 
 export function mapLexaraLawType(lawType?: string): ExpertLawType | undefined {
   return mapProductLawTypeToExpert(lawType);
@@ -65,16 +66,46 @@ function normalizeJurisdiction(value?: string): string | undefined {
   return STATE_NAMES.find(state => state.toLowerCase() === normalized);
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function jurisdictionMentions(text: string): Array<{ state: string; index: number }> {
+  if (!text) return [];
+
+  const mentions: Array<{ state: string; index: number }> = [];
+  for (const state of STATE_NAMES) {
+    const pattern = new RegExp(`\\b${escapeRegExp(state)}\\b`, 'gi');
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(text)) !== null) {
+      mentions.push({ state, index: match.index });
+    }
+  }
+
+  for (const match of text.matchAll(STATE_ABBREVIATION_PATTERN)) {
+    const abbreviation = match[1];
+    const state = STATE_BY_ABBREVIATION[abbreviation];
+    if (state && match.index !== undefined) {
+      mentions.push({ state, index: match.index });
+    }
+  }
+
+  return mentions.sort((a, b) => a.index - b.index);
+}
+
 export function inferJurisdiction(text: string): string | undefined {
-  if (!text) return undefined;
+  const normalizedExact = normalizeJurisdiction(text);
+  if (normalizedExact) return normalizedExact;
 
-  const lower = text.toLowerCase();
-  const fullState = STATE_NAMES.find(state => lower.includes(state.toLowerCase()));
-  if (fullState) return fullState;
+  const mentions = jurisdictionMentions(text);
+  const uniqueStates = [...new Set(mentions.map(mention => mention.state))];
+  if (uniqueStates.length === 1) return uniqueStates[0];
+  if (uniqueStates.length === 0) return undefined;
 
-  const upperAbbreviationMatch = text.match(/\b(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC)\b/);
-  if (upperAbbreviationMatch) {
-    return STATE_BY_ABBREVIATION[upperAbbreviationMatch[1]];
+  // When the user explicitly corrects themselves, the final state mention is
+  // the best signal. Otherwise multiple jurisdictions are genuinely ambiguous.
+  if (/\b(actually|correction|instead|rather|not\s+\w+|i\s+meant)\b/i.test(text)) {
+    return mentions[mentions.length - 1]?.state;
   }
 
   return undefined;
@@ -98,13 +129,18 @@ function buildConversationHistory(messages: LexaraConversationMessage[] = []): s
   return clampText(selected.join('\n\n'), MAX_HISTORY_CHARACTERS);
 }
 
-function buildUserJurisdictionEvidence(messages: LexaraConversationMessage[] = []): string {
+function inferPriorUserJurisdiction(messages: LexaraConversationMessage[] = []): string | undefined {
   const userTurns = messages
     .filter(message => message?.role === 'user' && message?.content?.trim())
     .slice(-MAX_HISTORY_MESSAGES)
-    .map(message => clampText(message.content, 2500));
+    .reverse();
 
-  return clampText(userTurns.join('\n'), MAX_HISTORY_CHARACTERS);
+  for (const message of userTurns) {
+    const inferred = inferJurisdiction(message.content);
+    if (inferred) return inferred;
+  }
+
+  return undefined;
 }
 
 function buildLegalSystemPrompt(
@@ -139,9 +175,9 @@ export async function generateLexaraConversationResponse(
 
   const mappedLawType = mapLexaraLawType(context.lawType);
   const history = buildConversationHistory(context.previousMessages);
-  const userJurisdictionEvidence = buildUserJurisdictionEvidence(context.previousMessages);
-  const jurisdiction = normalizeJurisdiction(context.jurisdiction)
-    || inferJurisdiction(`${userJurisdictionEvidence}\n${cleanPrompt}`);
+  const jurisdiction = inferJurisdiction(cleanPrompt)
+    || normalizeJurisdiction(context.jurisdiction)
+    || inferPriorUserJurisdiction(context.previousMessages);
   const systemPrompt = buildLegalSystemPrompt(context, mappedLawType, jurisdiction);
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
 
