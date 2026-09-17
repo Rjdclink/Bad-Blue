@@ -28,6 +28,7 @@ interface SponsoredCostContext {
   userOperationHash: string;
   actualGasCostWei: bigint;
   billedGasCostWei: bigint;
+  adjustments: Map<string, bigint>;
   allocatedByProfitKey: Map<string, bigint>;
 }
 
@@ -37,6 +38,7 @@ interface UserOperationBoundary {
 }
 
 interface ReceiptSettlementContext {
+  receipt: providers.TransactionReceipt;
   boundaries: UserOperationBoundary[];
 }
 
@@ -184,9 +186,9 @@ async function loadSponsoredContext(userOperationHash: string, actualGasCostWei:
     userOperationHash,
     actualGasCostWei,
     billedGasCostWei: billed,
+    adjustments,
     allocatedByProfitKey: new Map(),
-    ...({ adjustments } as any),
-  } as SponsoredCostContext & { adjustments: Map<string, bigint> };
+  };
 }
 
 function settlementProfitEntries(log: providers.Log): ProfitEntry[] {
@@ -218,9 +220,9 @@ function profitCostKey(logIndex: number, asset: string): string {
 function allocateSponsoredCosts(receipt: providers.TransactionReceipt, boundaries: UserOperationBoundary[]): void {
   let previousBoundary = -1;
   for (const boundary of boundaries) {
-    const sponsored = boundary.sponsored as (SponsoredCostContext & { adjustments?: Map<string, bigint> }) | null;
+    const sponsored = boundary.sponsored;
     if (sponsored) {
-      const remaining = new Map(sponsored.adjustments || []);
+      const remaining = new Map(sponsored.adjustments);
       const entries = receipt.logs
         .filter(log => log.logIndex > previousBoundary && log.logIndex < boundary.eventLogIndex)
         .flatMap(settlementProfitEntries)
@@ -265,7 +267,7 @@ async function buildReceiptSettlementContext(receipt: providers.TransactionRecei
     sponsored: contexts[index],
   }));
   allocateSponsoredCosts(receipt, boundaries);
-  return { boundaries };
+  return { receipt, boundaries };
 }
 
 function contextForLog(context: ReceiptSettlementContext | null, log: providers.Log): SponsoredCostContext | null {
