@@ -453,6 +453,7 @@ export class SponsoredReceiverManager {
       receiver: composite.address,
       routes: input.routes,
     });
+    if (permissions.targets.length === 0 && permissions.approvalTokens.length === 0) return [];
     return this.buildMissingExplicitPermissionCalls({
       receiver: composite.address,
       provider: input.provider,
