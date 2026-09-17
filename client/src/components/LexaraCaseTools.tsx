@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import FMIAnalysis from '@/components/FMIAnalysis';
+import { useAuth } from '@/hooks/useAuth';
 import { mapProductLawTypeToExpert } from '@shared/legalDomainMapping';
 
 interface LexaraCaseToolsProps {
@@ -57,6 +58,7 @@ const US_STATES = [
 ] as const;
 
 export default function LexaraCaseTools({ lawTypeId, lawTypeName }: LexaraCaseToolsProps) {
+  const { user } = useAuth();
   const [, setLocation] = useLocation();
   const [state, setState] = useState('');
   const [situation, setSituation] = useState('');
@@ -105,6 +107,11 @@ export default function LexaraCaseTools({ lawTypeId, lawTypeName }: LexaraCaseTo
   };
 
   const prepareDocument = (route: '/complaint-form' | '/lawsuit-form') => {
+    if (!user) {
+      window.location.href = '/api/login';
+      return;
+    }
+
     try {
       localStorage.setItem('prefillData', JSON.stringify({
         state,
