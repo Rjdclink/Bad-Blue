@@ -57,21 +57,21 @@ function requireAddress(label: string, value: string): string {
   return ethers.utils.getAddress(value);
 }
 
-function parseVaultOverrides(raw: string | undefined): Partial<Record<SupportedExecutionChain, string>> {
+function parseVaultOverrides(raw: string | undefined, label: string): Partial<Record<SupportedExecutionChain, string>> {
   if (!raw?.trim()) return {};
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new Error('ZERO_CAPITAL_BALANCER_VAULTS must be valid JSON');
+    throw new Error(`${label} must be valid JSON`);
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('ZERO_CAPITAL_BALANCER_VAULTS must be a JSON object keyed by chain');
+    throw new Error(`${label} must be a JSON object keyed by chain`);
   }
   const result: Partial<Record<SupportedExecutionChain, string>> = {};
   for (const [chain, value] of Object.entries(parsed as Record<string, unknown>)) {
     if (typeof value !== 'string') continue;
-    result[chain as SupportedExecutionChain] = requireAddress(`ZERO_CAPITAL_BALANCER_VAULTS.${chain}`, value);
+    result[chain as SupportedExecutionChain] = requireAddress(`${label}.${chain}`, value);
   }
   return result;
 }
@@ -80,7 +80,7 @@ export function resolveSponsoredReceiverVault(
   chain: SupportedExecutionChain,
   environment: NodeJS.ProcessEnv = process.env,
 ): string | null {
-  const overrides = parseVaultOverrides(environment.ZERO_CAPITAL_BALANCER_VAULTS);
+  const overrides = parseVaultOverrides(environment.ZERO_CAPITAL_BALANCER_VAULTS, 'ZERO_CAPITAL_BALANCER_VAULTS');
   const chainSpecific = environment[`ZERO_CAPITAL_BALANCER_VAULT_${chain.toUpperCase()}`]?.trim();
   const candidate = chainSpecific || overrides[chain] || DEFAULT_BALANCER_VAULTS[chain];
   return candidate ? requireAddress(`Balancer vault for ${chain}`, candidate) : null;
@@ -349,9 +349,8 @@ export class SponsoredReceiverManager {
   }): Promise<SponsoredReceiverRecord> {
     const standalone = await this.ensureReceiverKind({ ...input, kind: 'standalone_v1' });
 
-    // Composite capability is an additive APE path, never a prerequisite for the
-    // already-supported standalone route. Prepare it under the same proven zero-
-    // capital funding mode, but keep a composite-only failure local.
+    // Composite capability is additive. Deployment failure must stay local and can
+    // never revoke the already-ready standalone route.
     try {
       await this.ensureCompositeReceiver(input);
     } catch (error) {
@@ -390,15 +389,13 @@ export class SponsoredReceiverManager {
     return calls;
   }
 
-  async buildMissingPermissionCalls(input: {
+  private routePermissionTargets(input: {
     chain: SupportedExecutionChain;
     receiver: string;
-    provider: providers.JsonRpcProvider;
     routes: ConfiguredZeroCapitalRoute[];
-  }): Promise<SponsoredCall[]> {
+  }): { targets: string[]; approvalTokens: string[] } {
     const targets = new Set<string>();
     const approvalTokens = new Set<string>();
-
     for (const route of input.routes) {
       if (route.chain !== input.chain) continue;
       for (const leg of route.legs) {
@@ -417,24 +414,49 @@ export class SponsoredReceiverManager {
         approvalTokens.add(ethers.utils.getAddress(built.approvalToken));
       }
     }
+    return { targets: [...targets], approvalTokens: [...approvalTokens] };
+  }
 
-    const calls = await this.buildMissingExplicitPermissionCalls({
+  /** Standalone permission work stays isolated from optional composite capability. */
+  async buildMissingPermissionCalls(input: {
+    chain: SupportedExecutionChain;
+    receiver: string;
+    provider: providers.JsonRpcProvider;
+    routes: ConfiguredZeroCapitalRoute[];
+  }): Promise<SponsoredCall[]> {
+    const permissions = this.routePermissionTargets({
+      chain: input.chain,
+      receiver: input.receiver,
+      routes: input.routes,
+    });
+    return this.buildMissingExplicitPermissionCalls({
       receiver: input.receiver,
       provider: input.provider,
-      targets: [...targets],
-      approvalTokens: [...approvalTokens],
+      ...permissions,
     });
+  }
 
+  /**
+   * Composite V2 permissions are prepared independently so a composite-only
+   * configuration/RPC/setup failure can never poison the standalone receiver lane.
+   */
+  async buildMissingCompositePermissionCalls(input: {
+    chain: SupportedExecutionChain;
+    provider: providers.JsonRpcProvider;
+    routes: ConfiguredZeroCapitalRoute[];
+  }): Promise<SponsoredCall[]> {
     const composite = this.compositeRecords.get(input.chain);
-    if (composite) {
-      calls.push(...await this.buildMissingExplicitPermissionCalls({
-        receiver: composite.address,
-        provider: input.provider,
-        targets: [...targets],
-        approvalTokens: [...approvalTokens],
-      }));
-    }
-    return calls;
+    if (!composite) return [];
+    const permissions = this.routePermissionTargets({
+      chain: input.chain,
+      receiver: composite.address,
+      routes: input.routes,
+    });
+    return this.buildMissingExplicitPermissionCalls({
+      receiver: composite.address,
+      provider: input.provider,
+      ...permissions,
+    });
   }
 }
 
