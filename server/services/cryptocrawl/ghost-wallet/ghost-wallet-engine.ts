@@ -101,17 +101,40 @@ export class GhostWalletEngine {
       import('./ghost-wallet-gas-reserve.js'),
     ]);
     await Promise.all([ghostWalletBorrowerDemandMesh.start(), ghostWalletGasReserve.start()]);
+    const demandStatus = ghostWalletBorrowerDemandMesh.getStatus();
+
+    if (demandStatus.configuredFeeds === 0) {
+      logger.warn('[GhostWallet] No external signed borrower feed is configured; direct signed registration and durable venue registry remain available', {
+        component: 'GhostWalletEngine',
+        configuredFeeds: 0,
+        directSignedRegistrationEnabled: true,
+        durableVenueRegistryEnabled: true,
+        genericOrderBookBorrowerInferenceAllowed: false,
+        operatorActionRequiredForExternalFeedCoverage: true,
+      });
+    }
+    if (this.config.intermediaries.length === 0) {
+      logger.warn('[GhostWallet] Matched-intent intermediary lane has no configured intermediary; autonomous external-credit broker lane remains independent', {
+        component: 'GhostWalletEngine',
+        configuredIntermediaryChains: [],
+        matchedIntentExecutionConfigured: false,
+        autonomousBrokerExecutionAffected: false,
+        routeLocalCapabilityGap: true,
+      });
+    }
 
     logger.info('[GhostWallet] Independent autonomous atomic intermediation lane started', {
       component: 'GhostWalletEngine',
       configuredIntermediaryChains: this.config.intermediaries.map(entry => entry.chain),
+      matchedIntentExecutionConfigured: this.config.intermediaries.length > 0,
+      borrowerDemandFeedsConfigured: demandStatus.configuredFeeds,
       providerChains: ghostWalletProviderMesh.getReadyChains(),
       capitalPrimitives: [
         'permissionless_external_flash_intermediation', 'aave_v3_flash_intermediation', 'morpho_blue_flash_intermediation',
         'balancer_v2_flash_intermediation', 'erc3156_flash_intermediation', 'euler_debt_assumption_measurement',
         'aave_credit_delegation_measurement', 'permissionless_vault_capital', 'signed_intent_capital', 'coincidence_of_wants',
       ],
-      borrowerDemandAcquisition: 'signed_https_feed_plus_direct_signed_registration',
+      borrowerDemandAcquisition: 'signed_https_feed_plus_direct_signed_registration_plus_durable_registry',
       borrowerDemandTransportAuthority: false,
       controllerGasAuthority: 'pimlico_eip7702_erc4337_sponsorship_only',
       controllerNativeGasBalanceRequired: false,
