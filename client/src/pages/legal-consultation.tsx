@@ -35,7 +35,7 @@ export default function LegalConsultationPage() {
         keywords="LEXARA, legal consultation, AI legal analysis, legal issue spotting"
         ogTitle={domainInfo ? `LEXARA - ${domainInfo.name} Legal Consultation` : 'LEXARA - Conversational Legal Analysis'}
         ogDescription="Continuous voice-first AI legal analysis with the existing full case-analysis workflow preserved."
-        canonicalUrl="https://example.com/legal-consultation"
+        canonicalUrl={`https://legalwhat.com${canonicalPath}`}
       />
 
       <header className="sticky top-0 z-50 border-b bg-card">
