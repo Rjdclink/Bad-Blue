@@ -4,12 +4,13 @@
  * capabilities preserved as an alternate, consent-safe tool mode.
  */
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import LexaraConversation from '@/components/LexaraConversation';
 import LexaraCaseTools from '@/components/LexaraCaseTools';
+import LexaraLiveConsentModal, { getLexaraLiveEnabled } from '@/components/LexaraLiveConsentModal';
 import { useLocation, useRoute, useSearch } from 'wouter';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, Scale } from 'lucide-react';
+import { ArrowLeft, Mic, Scale } from 'lucide-react';
 import { SEOHead } from '@/components/SEOHead';
 import { LAW_TYPE_DATA } from '@shared/lawTypes';
 
@@ -17,6 +18,9 @@ export default function LegalConsultationPage() {
   const [, setLocation] = useLocation();
   const search = useSearch();
   const [, params] = useRoute('/legal-consultation/:domainId');
+  const [showLiveConsent, setShowLiveConsent] = useState(false);
+  const [liveEnabled, setLiveEnabled] = useState(() => getLexaraLiveEnabled() === 'true');
+  const [conversationMount, setConversationMount] = useState(0);
 
   const domainId = params?.domainId;
   const domainInfo = domainId ? LAW_TYPE_DATA.find(type => type.id === domainId) : null;
@@ -26,6 +30,14 @@ export default function LegalConsultationPage() {
   );
 
   const canonicalPath = domainId ? `/legal-consultation/${domainId}` : '/legal-consultation';
+
+  const handleLiveConsent = (enabled: boolean) => {
+    setShowLiveConsent(false);
+    setLiveEnabled(enabled);
+    // LexaraConversation reads consent while mounting. Remount only when the
+    // user's live-mode choice changes so device setup is deterministic.
+    setConversationMount(value => value + 1);
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -58,6 +70,16 @@ export default function LegalConsultationPage() {
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
+            {!toolsMode && !liveEnabled && (
+              <Button
+                variant="outline"
+                onClick={() => setShowLiveConsent(true)}
+                className="gap-2"
+              >
+                <Mic className="h-4 w-4" />
+                Enable voice
+              </Button>
+            )}
             <Button
               variant="outline"
               onClick={() => setLocation(toolsMode ? canonicalPath : `${canonicalPath}?mode=tools`)}
@@ -82,10 +104,18 @@ export default function LegalConsultationPage() {
         />
       ) : (
         <LexaraConversation
+          key={conversationMount}
           lawTypeId={domainInfo?.id || domainId}
           lawTypeName={domainInfo?.name}
         />
       )}
+
+      <LexaraLiveConsentModal
+        isOpen={showLiveConsent}
+        onClose={() => setShowLiveConsent(false)}
+        onConsent={handleLiveConsent}
+        targetLawArea={domainInfo?.name}
+      />
     </div>
   );
 }
