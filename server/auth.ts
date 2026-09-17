@@ -30,6 +30,7 @@ import {
   verifyLocalSessionToken,
   getLocalUserByIdHttp,
   purgeLocalTestUsersBeforeHttp,
+  probeLocalAuthStoreHttp,
   type StatelessLocalSession,
 } from "./statelessLocalAuth";
 
@@ -253,6 +254,17 @@ export async function setupAuth(app: Express) {
       if (/required|valid email|at least 8 characters/i.test(message)) return res.status(400).json({ message });
       console.error("[AUTH] HTTP local registration unavailable:", message);
       return res.status(503).json({ message: "Registration service is temporarily unavailable" });
+    }
+  });
+
+  app.get("/api/auth/ready", async (_req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      await probeLocalAuthStoreHttp();
+      return res.json({ ready: true, backend: "supabase-http" });
+    } catch (error) {
+      console.error("[AUTH] HTTP auth-store readiness failed:", error instanceof Error ? error.message : String(error));
+      return res.status(503).json({ ready: false });
     }
   });
 
