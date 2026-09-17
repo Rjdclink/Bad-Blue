@@ -2,6 +2,7 @@ import { callAIWithFallback } from '../aiSubAgent';
 import { generateZeroApiResponse, shouldUseZeroApiMode } from '../zeroApiIntelligence';
 import type { LawType as ExpertLawType } from '../../shared/legalCounselTypes';
 import { LAW_TYPE_DATA } from '../../shared/lawTypes';
+import { mapProductLawTypeToExpert } from '../../shared/legalDomainMapping';
 import { LEXARA_PERSONA } from '../../shared/lexaraVoicePersona';
 
 export interface LexaraConversationMessage {
@@ -27,32 +28,6 @@ const MAX_HISTORY_MESSAGES = 16;
 const MAX_HISTORY_CHARACTERS = 14000;
 const MAX_PROMPT_CHARACTERS = 7000;
 
-const PRODUCT_TO_EXPERT_LAW_TYPE: Record<string, ExpertLawType> = {
-  'law-enforcement-accountability': 'law-enforcement-accountability',
-  'criminal-law': 'criminal-law',
-  'family-law': 'family-law',
-  'juvenile-law': 'juvenile-law',
-  'constitutional-law': 'constitutional-law',
-  'property-law': 'real-estate-law',
-  'real-estate-law': 'real-estate-law',
-  'contract-law': 'contract-law',
-  'civil-rights-law': 'civil-rights',
-  'tort-law': 'tort-law',
-  'probate-estate-law': 'estate-planning',
-  'trusts-law': 'estate-planning',
-  'administrative-law': 'administrative-law',
-  'immigration-law': 'immigration-law',
-  'employment-labor-law': 'employment-law',
-  'military-veterans-law': 'military-law',
-  'foia-open-records-law': 'administrative-law',
-  'intellectual-property-law': 'intellectual-property',
-  'public-housing-law': 'landlord-tenant',
-  'securities-law': 'business-law',
-  'tax-law': 'tax-law',
-  'environmental-law': 'environmental-law',
-  'municipal-government-law': 'administrative-law',
-};
-
 const STATE_BY_ABBREVIATION: Record<string, string> = {
   AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California',
   CO: 'Colorado', CT: 'Connecticut', DE: 'Delaware', FL: 'Florida', GA: 'Georgia',
@@ -71,9 +46,7 @@ const STATE_NAMES = Object.values(STATE_BY_ABBREVIATION);
 const LAW_TYPE_NAME_BY_ID = new Map(LAW_TYPE_DATA.map(item => [item.id, item.name]));
 
 export function mapLexaraLawType(lawType?: string): ExpertLawType | undefined {
-  if (!lawType) return undefined;
-  const normalized = lawType.trim().toLowerCase().replace(/\s+/g, '-');
-  return PRODUCT_TO_EXPERT_LAW_TYPE[normalized];
+  return mapProductLawTypeToExpert(lawType);
 }
 
 function trustedDomainName(lawType?: string): string {
@@ -172,9 +145,6 @@ export async function generateLexaraConversationResponse(
   const systemPrompt = buildLegalSystemPrompt(context, mappedLawType, jurisdiction);
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
 
-  // Preserve the platform's local zero-API capability. This is checked before
-  // remote fallback so a deployment with no configured model keys remains
-  // functional instead of burning through unavailable providers first.
   if (shouldUseZeroApiMode()) {
     const local = await generateZeroApiResponse(userPrompt, {
       type: 'legal-consultation',
@@ -188,10 +158,6 @@ export async function generateLexaraConversationResponse(
     };
   }
 
-  // The generic user dispatcher waits for every parallel provider before
-  // returning, even though its standard aggregation normally prefers Mistral.
-  // Live conversation therefore uses Mistral first and falls back only when
-  // necessary, avoiding slowest-provider latency on the ordinary successful path.
   const response = await callAIWithFallback(userPrompt, {
     taskName: 'lexara-live-conversation',
     systemPrompt,
