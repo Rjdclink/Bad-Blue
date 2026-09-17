@@ -4,16 +4,18 @@ import { Contract, ethers } from 'ethers';
 import logger from '../../../logger.js';
 import { resolvePrimaryProfitPayoutAddress } from '../core/wallet-identity.js';
 import { getHedgedDexQuote } from '../intelligence/dex-quote-provider-mesh.js';
+import { pool } from '../runtime/cryptocrawl-runtime-database.js';
 import { ensureGhostWalletBootstrapWork } from './ghost-wallet-bootstrap-work-recovery.js';
 import { ghostWalletEngine } from './ghost-wallet-engine.js';
 import { getGhostWalletPimlicoSupportedChains } from './ghost-wallet-pimlico-sponsor.js';
 import { ghostWalletProviderMesh, type GhostWalletChain } from './ghost-wallet-provider-mesh.js';
-import { enqueueGhostWalletWork } from './ghost-wallet-work-ledger.js';
+import { enqueueGhostWalletWork, type GhostWalletWorkItem } from './ghost-wallet-work-ledger.js';
 import { ghostWalletWorkSignal } from './ghost-wallet-work-signal.js';
 
 const CREATE2_DEPLOYER = '0x4e59b44847b379578588920cA78FbF26c0B4956C';
 const CREATE2_DEPLOYER_CODE_HASH = '0x2fa86add0aed31f33a762c9d88e807c475bd51d0f52bd0955754b2608f7e4989';
 const FILLER_SALT = ethers.utils.keccak256(ethers.utils.toUtf8Bytes('bad-blue:cryptocrawl-ghost-wallet-uniswapx-filler:v1'));
+const ORDER_QUOTER = '0x00000000a3db63Df9078cBF3dF88B4CAdD5a7F58';
 const DEFAULT_POLL_MS = 1_000;
 const MIN_POLL_MS = 750;
 const MAX_POLL_MS = 10_000;
@@ -33,10 +35,12 @@ const CHAIN_IDS: Partial<Record<GhostWalletChain, number>> = {
   avalanche: 43114,
 };
 
+// Current UniswapX reactors plus still-live Ethereum legacy reactors. The signed
+// order itself remains authoritative; this list is only a bounded safety allowlist.
 const UNISWAPX_REACTORS: Partial<Record<GhostWalletChain, string[]>> = {
   ethereum: [
-    '0x00000011F84B9aa48e5f8aA8B9897600006289Be',
     '0x0000000015757c461808EA25Eb309638B62681cf',
+    '0x00000011F84B9aa48e5f8aA8B9897600006289Be',
     '0x6000da47483062A0D734Ba3dc7576Ce6A0B645C4',
   ],
   optimism: ['0x000000000923439A92daE8930613568824108631'],
@@ -48,16 +52,6 @@ const UNISWAPX_REACTORS: Partial<Record<GhostWalletChain, string[]>> = {
   ],
   arbitrum: ['0xB274d5F4b833b61B340b654d600A864fB604a87c'],
   avalanche: ['0x00000000862cCF095823fc7576Fa6C7e6b7385ef'],
-};
-
-const ORDER_QUOTERS: Partial<Record<GhostWalletChain, string>> = {
-  ethereum: '0x54539967a06Fc0E3C3ED0ee320Eb67362D13C5fF',
-  optimism: '0x00000000a3db63Df9078cBF3dF88B4CAdD5a7F58',
-  bsc: '0x00000000a3db63Df9078cBF3dF88B4CAdD5a7F58',
-  polygon: '0x00000000a3db63Df9078cBF3dF88B4CAdD5a7F58',
-  base: '0x88440407634f89873c5d9439987ac4be9725fea8',
-  arbitrum: '0x00000000a3db63Df9078cBF3dF88B4CAdD5a7F58',
-  avalanche: '0x00000000a3db63Df9078cBF3dF88B4CAdD5a7F58',
 };
 
 const FILLER_ABI = [
@@ -127,6 +121,7 @@ interface DemandStatus {
   executableOrders: number;
   queuedOrders: number;
   rejectedOrders: number;
+  rearmedOrders: number;
   routeLocalErrors: number;
   lastPollAt: number | null;
   lastSuccessAt: number | null;
@@ -171,6 +166,15 @@ function safeHex(value: unknown): string | null {
 function safeHash(value: unknown): string | null {
   const raw = String(value || '').trim();
   return /^0x[0-9a-fA-F]{64}$/.test(raw) ? raw.toLowerCase() : null;
+}
+
+function asBigInt(value: unknown): bigint | null {
+  try {
+    const parsed = BigInt(ethers.BigNumber.from(value ?? 0).toString());
+    return parsed >= 0n ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 async function artifact(): Promise<FillerArtifact> {
@@ -297,11 +301,11 @@ async function fetchOpenOrders(chainId: number): Promise<PublicOrder[]> {
 }
 
 async function resolvedOrder(chain: GhostWalletChain, encodedOrder: string, signature: string): Promise<any> {
-  const quoterAddress = ORDER_QUOTERS[chain];
-  if (!quoterAddress) throw new Error(`GHOST_WALLET_UNISWAPX_QUOTER_UNAVAILABLE:${chain}`);
   const provider = await ghostWalletProviderMesh.getProvider(chain) || ghostWalletEngine.getProvider(chain);
   if (!provider) throw new Error(`GHOST_WALLET_UNISWAPX_PROVIDER_UNAVAILABLE:${chain}`);
-  const quoter = new Contract(quoterAddress, ORDER_QUOTER_ABI as any, provider);
+  const code = await provider.getCode(ORDER_QUOTER);
+  if (code === '0x') throw new Error(`GHOST_WALLET_UNISWAPX_QUOTER_UNAVAILABLE:${chain}`);
+  const quoter = new Contract(ORDER_QUOTER, ORDER_QUOTER_ABI as any, provider);
   return quoter.callStatic.quote(encodedOrder, signature);
 }
 
@@ -311,9 +315,8 @@ function oneOutputAsset(outputs: any[]): { token: string; required: bigint } | n
   let required = 0n;
   for (const output of outputs) {
     const address = safeAddress(output?.token);
-    if (!address || address === ethers.constants.AddressZero) return null;
-    const amount = BigInt(ethers.BigNumber.from(output?.amount ?? 0).toString());
-    if (amount <= 0n) return null;
+    const amount = asBigInt(output?.amount);
+    if (!address || address === ethers.constants.AddressZero || amount === null || amount <= 0n) return null;
     if (!token) token = address;
     else if (token.toLowerCase() !== address.toLowerCase()) return null;
     required += amount;
@@ -321,26 +324,62 @@ function oneOutputAsset(outputs: any[]): { token: string; required: bigint } | n
   return token && required > 0n ? { token, required } : null;
 }
 
-async function qualifyAndQueue(chain: GhostWalletChain, filler: string, order: PublicOrder): Promise<boolean> {
+async function ensureOrderWork(input: {
+  dedupeKey: string;
+  chain: GhostWalletChain;
+  payload: Record<string, unknown>;
+}): Promise<{ work: GhostWalletWorkItem; rearmed: boolean }> {
+  const work = await enqueueGhostWalletWork({
+    dedupeKey: input.dedupeKey,
+    kind: 'prepared_atomic_execution',
+    chain: input.chain,
+    priority: 930,
+    maxAttempts: 8,
+    payload: input.payload,
+  });
+  if (work.status !== 'DEAD' || work.transactionHash) return { work, rearmed: false };
+
+  // A freshly re-qualified API order can safely re-arm a pre-submission DEAD row.
+  // Never re-arm a row that has any submission hash; reconciliation owns that case.
+  const result = await pool.query(
+    `UPDATE private.cryptocrawler_ghost_wallet_work
+     SET status='RETRYABLE', attempt_count=0, not_before=now(), max_attempts=GREATEST(max_attempts,8),
+         lease_owner=NULL, lease_until=NULL, payload=$2::jsonb, result='{}'::jsonb,
+         last_error=NULL, updated_at=now()
+     WHERE dedupe_key=$1 AND status='DEAD' AND transaction_hash IS NULL
+     RETURNING work_id`,
+    [input.dedupeKey, JSON.stringify(input.payload)],
+  );
+  return { work, rearmed: Boolean(result.rows[0]) };
+}
+
+async function qualifyAndQueue(chain: GhostWalletChain, filler: string, order: PublicOrder): Promise<'queued' | 'rearmed' | 'rejected' | 'existing'> {
   const chainId = CHAIN_IDS[chain];
   const orderChainId = Number(order.chainId);
   const orderHash = safeHash(order.orderHash);
   const encodedOrder = safeHex(order.encodedOrder);
   const signature = safeHex(order.signature);
-  if (!chainId || orderChainId !== chainId || !orderHash || !encodedOrder || !signature) return false;
-  if (String(order.orderStatus || '').toLowerCase() !== 'open') return false;
+  if (!chainId || orderChainId !== chainId || !orderHash || !encodedOrder || !signature) return 'rejected';
+  if (String(order.orderStatus || '').toLowerCase() !== 'open') return 'rejected';
 
-  // Reactor is deliberately derived from the signed encoded order through the
-  // on-chain OrderQuoter. The public /v2/orders schema does not expose reactor.
+  // /v2/orders intentionally does not expose a trusted top-level reactor field.
+  // Resolve and validate the signed order through the canonical on-chain quoter.
   const resolved = await resolvedOrder(chain, encodedOrder, signature);
+  const resolvedHash = safeHash(resolved?.hash);
   const reactor = safeAddress(resolved?.info?.reactor);
   const inputToken = safeAddress(resolved?.input?.token);
-  const inputAmount = BigInt(ethers.BigNumber.from(resolved?.input?.amount ?? 0).toString());
+  const inputAmount = asBigInt(resolved?.input?.amount);
+  const maxInputAmount = asBigInt(resolved?.input?.maxAmount);
   const output = oneOutputAsset(Array.from(resolved?.outputs || []));
-  if (!reactor || !inputToken || inputToken === ethers.constants.AddressZero || inputAmount <= 0n || !output) return false;
+  if (!resolvedHash || resolvedHash !== orderHash) return 'rejected';
+  if (!reactor || !inputToken || inputToken === ethers.constants.AddressZero || inputAmount === null || inputAmount <= 0n || !output) return 'rejected';
   const allowedReactors = new Set(currentReactors(chain).map(value => value.toLowerCase()));
-  if (!allowedReactors.has(reactor.toLowerCase())) return false;
-  if (inputToken.toLowerCase() === output.token.toLowerCase()) return false;
+  if (!allowedReactors.has(reactor.toLowerCase())) return 'rejected';
+  if (inputToken.toLowerCase() === output.token.toLowerCase()) return 'rejected';
+
+  // Exact-input route calldata cannot safely survive a changing Dutch input amount.
+  // Fixed-input orders remain eligible; decaying-input orders stay local/reconsiderable.
+  if (maxInputAmount !== null && maxInputAmount > 0n && maxInputAmount !== inputAmount) return 'rejected';
 
   const slip = slippagePpm();
   const quote = await getHedgedDexQuote({
@@ -353,17 +392,17 @@ async function qualifyAndQueue(chain: GhostWalletChain, filler: string, order: P
     forceRefresh: true,
     slippagePpm: slip,
   });
-  if (!quote?.executable || !quote.transaction) return false;
-  if (String(quote.transaction.value || '0') !== '0') return false;
+  if (!quote?.executable || !quote.transaction) return 'rejected';
+  if (String(quote.transaction.value || '0') !== '0') return 'rejected';
   const routeTarget = safeAddress(quote.transaction.to);
   const routeData = safeHex(quote.transaction.data);
-  const quotedBuy = BigInt(String(quote.buyAmount || '0'));
-  if (!routeTarget || !routeData || quotedBuy <= 0n) return false;
+  const quotedBuy = asBigInt(quote.buyAmount);
+  if (!routeTarget || !routeData || quotedBuy === null || quotedBuy <= 0n) return 'rejected';
 
   const conservativeBuy = (quotedBuy * BigInt(1_000_000 - slip)) / 1_000_000n;
-  if (conservativeBuy <= output.required) return false;
+  if (conservativeBuy <= output.required) return 'rejected';
   const minimumProfit = conservativeBuy - output.required;
-  if (minimumProfit <= 0n) return false;
+  if (minimumProfit <= 0n) return 'rejected';
 
   const fillerInterface = new ethers.utils.Interface(FILLER_ABI);
   const data = fillerInterface.encodeFunctionData('executeSignedOrder', [
@@ -380,34 +419,37 @@ async function qualifyAndQueue(chain: GhostWalletChain, filler: string, order: P
     },
   ]);
 
-  const work = await enqueueGhostWalletWork({
-    dedupeKey: `ghost-uniswapx-fill:${chain}:${orderHash}`,
-    kind: 'prepared_atomic_execution',
+  const payload = {
+    mode: 'broker_execution',
     chain,
-    priority: 930,
-    maxAttempts: 8,
-    payload: {
-      mode: 'broker_execution',
-      chain,
-      to: filler,
-      data,
-      value: '0',
-      asset: output.token,
-      expectedSpreadBaseUnits: minimumProfit.toString(),
-      sourceKind: 'uniswapx_signed_order_zero_inventory',
-      lender: reactor,
-      amountBaseUnits: inputAmount.toString(),
-      orderHash,
-      uniswapXOrderType: String(order.type || 'unknown'),
-      demandAuthority: 'uniswapx_public_signed_order_feed',
-      operatorTradingPrincipalRequired: false,
-    },
+    to: filler,
+    data,
+    value: '0',
+    asset: output.token,
+    expectedSpreadBaseUnits: minimumProfit.toString(),
+    sourceKind: 'uniswapx_signed_order_zero_inventory',
+    lender: reactor,
+    amountBaseUnits: inputAmount.toString(),
+    orderHash,
+    uniswapXOrderType: String(order.type || 'unknown'),
+    demandAuthority: 'uniswapx_public_signed_order_feed',
+    operatorTradingPrincipalRequired: false,
+  } satisfies Record<string, unknown>;
+  const result = await ensureOrderWork({
+    dedupeKey: `ghost-uniswapx-fill:${chain}:${orderHash}`,
+    chain,
+    payload,
   });
-  if (work.status === 'QUEUED' || work.status === 'RETRYABLE') {
+  if (result.rearmed) {
     ghostWalletWorkSignal.emitWake('local_work_enqueued');
-    return true;
+    return 'rearmed';
   }
-  return work.status === 'SUBMITTED' || work.status === 'SETTLED';
+  if (result.work.status === 'QUEUED' || result.work.status === 'RETRYABLE') {
+    ghostWalletWorkSignal.emitWake('local_work_enqueued');
+    return 'queued';
+  }
+  if (result.work.status === 'SUBMITTED' || result.work.status === 'SETTLED') return 'existing';
+  return 'rejected';
 }
 
 class GhostWalletUniswapXDemand {
@@ -422,6 +464,7 @@ class GhostWalletUniswapXDemand {
   private executableOrders = 0;
   private queuedOrders = 0;
   private rejectedOrders = 0;
+  private rearmedOrders = 0;
   private routeLocalErrors = 0;
   private lastPollAt: number | null = null;
   private lastSuccessAt: number | null = null;
@@ -438,10 +481,14 @@ class GhostWalletUniswapXDemand {
       signupRequired: false,
       genericOrdersReclassifiedAsBorrowerMandates: false,
       reactorAuthority: 'derived_from_signed_encoded_order_via_onchain_order_quoter',
+      orderHashCrossCheck: true,
+      currentOrderQuoter: ORDER_QUOTER,
       zeroInventoryFillContract: true,
+      changingDutchInputRejectedLocally: true,
       controllerGasAuthority: 'pimlico_sponsored_user_operation',
       strictlyPositiveAllInEconomicsRequiredByUltraWorker: true,
-      supportedExecutableChains: getGhostWalletPimlicoSupportedChains().filter(chain => Boolean(CHAIN_IDS[chain] && UNISWAPX_REACTORS[chain]?.length)),
+      supportedExecutableChains: getGhostWalletPimlicoSupportedChains()
+        .filter(chain => Boolean(CHAIN_IDS[chain] && UNISWAPX_REACTORS[chain]?.length)),
       avalancheObservationOnlyUntilPimlico7702Supported: true,
     });
   }
@@ -461,6 +508,7 @@ class GhostWalletUniswapXDemand {
       executableOrders: this.executableOrders,
       queuedOrders: this.queuedOrders,
       rejectedOrders: this.rejectedOrders,
+      rearmedOrders: this.rearmedOrders,
       routeLocalErrors: this.routeLocalErrors,
       lastPollAt: this.lastPollAt,
       lastSuccessAt: this.lastSuccessAt,
@@ -508,17 +556,20 @@ class GhostWalletUniswapXDemand {
       const candidates = orders.filter(order => {
         const hash = safeHash(order.orderHash);
         if (!hash) return false;
-        const next = this.nextOrderCheck.get(`${chain}:${hash}`) || 0;
-        return next <= now;
+        return (this.nextOrderCheck.get(`${chain}:${hash}`) || 0) <= now;
       }).slice(0, MAX_ORDERS_PER_TICK);
 
       const results = await Promise.allSettled(candidates.map(async order => {
         const hash = safeHash(order.orderHash);
         if (hash) this.nextOrderCheck.set(`${chain}:${hash}`, Date.now() + ORDER_RECHECK_MS);
-        const queued = await qualifyAndQueue(chain, filler, order);
-        if (queued) {
+        const outcome = await qualifyAndQueue(chain, filler, order);
+        if (outcome === 'queued' || outcome === 'rearmed' || outcome === 'existing') {
           this.executableOrders += 1;
-          this.queuedOrders += 1;
+          if (outcome === 'queued') this.queuedOrders += 1;
+          if (outcome === 'rearmed') {
+            this.queuedOrders += 1;
+            this.rearmedOrders += 1;
+          }
         } else {
           this.rejectedOrders += 1;
         }
@@ -554,9 +605,14 @@ export const GHOST_WALLET_UNISWAPX_DEMAND_POLICY = {
   signupRequired: false,
   genericSwapOrdersAreBorrowerMandates: false,
   signedReactorAuthorityDerivedOnchain: true,
+  orderHashCrossCheckedAgainstResolvedOrder: true,
+  currentOrderQuoter: ORDER_QUOTER,
   zeroInventoryCallbackFiller: true,
   sameTransactionSettlement: true,
   outputShortfallReverts: true,
+  changingDutchInputIsRouteLocalIncompatibility: true,
+  preSubmissionDeadWorkMayRearmAfterFreshQualification: true,
+  submittedWorkNeverBlindlyRearmed: true,
   canonicalPimlicoGasAuthorityPreserved: true,
   canonicalFinalEconomicsAuthorityPreserved: true,
   conservativeSlippageProfitAdmission: true,
