@@ -54,7 +54,7 @@ try {
   }, issuedAt);
   const localIdentityFromToken = verifyLocalSessionToken(localToken, issuedAt + 1);
   assert.equal(localIdentityFromToken?.id, 'local-user-id');
-  assert.equal(localIdentityFromToken?.email, 'local@example.com');
+  assert.deepEqual(Object.keys(localIdentityFromToken || {}).sort(), ['id']);
   assert.equal(verifyLocalSessionToken(localToken + 'x', issuedAt + 1), null);
 
   process.env.ADMIN_BYPASS_EMAIL = 'bypass@example.com';
