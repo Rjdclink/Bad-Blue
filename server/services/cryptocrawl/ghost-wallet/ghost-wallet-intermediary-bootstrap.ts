@@ -3,10 +3,11 @@ import { resolve } from 'node:path';
 import { Contract, ethers } from 'ethers';
 import logger from '../../../logger.js';
 import { resolvePrimaryProfitPayoutAddress } from '../core/wallet-identity.js';
+import { ensureRecoverableGhostWalletWork } from './ghost-wallet-bootstrap-work-recovery.js';
 import { ghostWalletEngine } from './ghost-wallet-engine.js';
+import { getGhostWalletExternalBridgeDescriptor } from './ghost-wallet-external-bridge.js';
 import { getGhostWalletPimlicoSupportedChains } from './ghost-wallet-pimlico-sponsor.js';
 import { ghostWalletProviderMesh, type GhostWalletChain } from './ghost-wallet-provider-mesh.js';
-import { enqueueGhostWalletWork } from './ghost-wallet-work-ledger.js';
 import { ghostWalletWorkSignal } from './ghost-wallet-work-signal.js';
 
 const CREATE2_DEPLOYER = '0x4e59b44847b379578588920cA78FbF26c0B4956C';
@@ -21,6 +22,8 @@ const INTERMEDIARY_ABI = [
 const RETRY_MS = 15_000;
 const HEALTHY_RECHECK_MS = 5 * 60_000;
 
+type BootstrapCapability = 'matched_intent_intermediary' | 'permissionless_external_credit_bridge';
+
 interface IntermediaryArtifact {
   contractName: string;
   bytecode: string;
@@ -33,6 +36,19 @@ interface IntermediaryDescriptor {
   profitRecipient: string;
   deployed: boolean;
   deployment: null | { to: string; data: string; value: '0' };
+}
+
+interface BootstrapWorkStatus {
+  capability: BootstrapCapability;
+  chain: GhostWalletChain;
+  address: string;
+  workId: string;
+  status: string;
+  attemptCount: number;
+  maxAttempts: number;
+  lastError: string | null;
+  rearmed: boolean;
+  transactionHashPresent: boolean;
 }
 
 let artifactPromise: Promise<IntermediaryArtifact> | null = null;
@@ -136,6 +152,26 @@ async function descriptor(chain: GhostWalletChain): Promise<IntermediaryDescript
   });
 }
 
+function workStatus(input: {
+  capability: BootstrapCapability;
+  chain: GhostWalletChain;
+  address: string;
+  work: Awaited<ReturnType<typeof ensureRecoverableGhostWalletWork>>;
+}): BootstrapWorkStatus {
+  return {
+    capability: input.capability,
+    chain: input.chain,
+    address: input.address,
+    workId: input.work.work.workId,
+    status: input.work.work.status,
+    attemptCount: input.work.work.attemptCount,
+    maxAttempts: input.work.work.maxAttempts,
+    lastError: input.work.work.lastError || input.work.priorTerminalError,
+    rearmed: input.work.rearmed,
+    transactionHashPresent: Boolean(input.work.work.transactionHash),
+  };
+}
+
 class GhostWalletIntermediaryBootstrap {
   private running = false;
   private inFlight = false;
@@ -143,7 +179,10 @@ class GhostWalletIntermediaryBootstrap {
   private lastRunAt: number | null = null;
   private verifiedChains: GhostWalletChain[] = [];
   private pendingChains: GhostWalletChain[] = [];
+  private externalBridgeVerifiedChains: GhostWalletChain[] = [];
+  private externalBridgePendingChains: GhostWalletChain[] = [];
   private lastErrors: Array<{ chain: GhostWalletChain; error: string }> = [];
+  private bootstrapWork: BootstrapWorkStatus[] = [];
 
   start(): void {
     if (this.running) return;
@@ -164,6 +203,14 @@ class GhostWalletIntermediaryBootstrap {
       lastRunAt: this.lastRunAt,
       verifiedChains: [...this.verifiedChains],
       pendingChains: [...this.pendingChains],
+      permissionlessExternalCreditBridge: {
+        proactiveBootstrap: true,
+        borrowerInitiatedDemandIngress: true,
+        operatorFeedRequired: false,
+        verifiedChains: [...this.externalBridgeVerifiedChains],
+        pendingChains: [...this.externalBridgePendingChains],
+      },
+      work: this.bootstrapWork.map(row => ({ ...row })),
       lastErrors: this.lastErrors.map(row => ({ ...row })),
       executionGasAuthority: 'pimlico_sponsored_user_operation',
       operatorCapitalRequired: false,
@@ -195,7 +242,11 @@ class GhostWalletIntermediaryBootstrap {
 
       const verified: Array<{ chain: string; address: string }> = [];
       const pending: GhostWalletChain[] = [];
+      const externalVerified: GhostWalletChain[] = [];
+      const externalPending: GhostWalletChain[] = [];
       const errors: Array<{ chain: GhostWalletChain; error: string }> = [];
+      const workRows: BootstrapWorkStatus[] = [];
+
       for (let index = 0; index < settled.length; index += 1) {
         const chain = targets[index];
         const result = settled[index];
@@ -210,7 +261,7 @@ class GhostWalletIntermediaryBootstrap {
         }
         if (!item.deployment) continue;
         pending.push(chain);
-        await enqueueGhostWalletWork({
+        const ensured = await ensureRecoverableGhostWalletWork({
           dedupeKey: `ghost-intermediary-bootstrap:${chain}:${item.address.toLowerCase()}`,
           kind: 'prepared_atomic_execution',
           chain,
@@ -226,13 +277,85 @@ class GhostWalletIntermediaryBootstrap {
             infrastructureKind: 'matched_intent_intermediary',
           },
         });
+        const status = workStatus({ capability: 'matched_intent_intermediary', chain, address: item.address, work: ensured });
+        workRows.push(status);
+        if (ensured.rearmed) {
+          logger.warn('[GhostWalletBootstrap] Safely re-armed exhausted intermediary deployment work', {
+            component: 'GhostWalletIntermediaryBootstrap', chain, workId: ensured.work.workId,
+            priorTerminalError: ensured.priorTerminalError, duplicateBroadcastAuthority: false,
+          });
+        }
+        if (ensured.work.status === 'DEAD') {
+          errors.push({
+            chain,
+            error: ensured.work.transactionHash
+              ? 'GHOST_WALLET_BOOTSTRAP_DEAD_WITH_TRANSACTION_REQUIRES_RECONCILIATION'
+              : ensured.work.lastError || 'GHOST_WALLET_BOOTSTRAP_TERMINAL',
+          });
+        } else if (ensured.work.status === 'SETTLED') {
+          errors.push({ chain, error: 'GHOST_WALLET_BOOTSTRAP_SETTLED_BUT_CODE_NOT_VISIBLE' });
+        }
+      }
+
+      const externalSettled = await Promise.allSettled(executable.map(async chain => ({
+        chain,
+        bridge: await getGhostWalletExternalBridgeDescriptor(chain),
+      })));
+      for (let index = 0; index < externalSettled.length; index += 1) {
+        const chain = executable[index];
+        const result = externalSettled[index];
+        if (result.status === 'rejected') {
+          errors.push({ chain, error: result.reason instanceof Error ? result.reason.message : String(result.reason) });
+          continue;
+        }
+        const bridge = result.value.bridge;
+        if (bridge.deployed) {
+          externalVerified.push(chain);
+          continue;
+        }
+        if (!bridge.deployment) continue;
+        externalPending.push(chain);
+        const ensured = await ensureRecoverableGhostWalletWork({
+          dedupeKey: `ghost-controller:bridge-bootstrap:${chain}:${bridge.address.toLowerCase()}`,
+          kind: 'prepared_atomic_execution',
+          chain,
+          priority: 1_000,
+          maxAttempts: 20,
+          payload: {
+            mode: 'bridge_bootstrap',
+            chain,
+            to: bridge.deployment.to,
+            data: bridge.deployment.data,
+            value: bridge.deployment.value,
+            verifyCodeAt: bridge.address,
+            infrastructureKind: 'permissionless_external_credit_bridge',
+          },
+        });
+        const status = workStatus({ capability: 'permissionless_external_credit_bridge', chain, address: bridge.address, work: ensured });
+        workRows.push(status);
+        if (ensured.rearmed) {
+          logger.warn('[GhostWalletBootstrap] Safely re-armed exhausted external-credit bridge deployment work', {
+            component: 'GhostWalletIntermediaryBootstrap', chain, workId: ensured.work.workId,
+            priorTerminalError: ensured.priorTerminalError, duplicateBroadcastAuthority: false,
+          });
+        }
+        if (ensured.work.status === 'DEAD') {
+          errors.push({
+            chain,
+            error: ensured.work.transactionHash
+              ? 'GHOST_WALLET_EXTERNAL_BRIDGE_BOOTSTRAP_DEAD_WITH_TRANSACTION_REQUIRES_RECONCILIATION'
+              : ensured.work.lastError || 'GHOST_WALLET_EXTERNAL_BRIDGE_BOOTSTRAP_TERMINAL',
+          });
+        } else if (ensured.work.status === 'SETTLED') {
+          errors.push({ chain, error: 'GHOST_WALLET_EXTERNAL_BRIDGE_SETTLED_BUT_CODE_NOT_VISIBLE' });
+        }
       }
 
       const merged = new Map<string, { chain: string; address: string }>();
       for (const row of explicit) merged.set(row.chain, row);
       for (const row of verified) if (!merged.has(row.chain)) merged.set(row.chain, row);
       const nextRows = [...merged.values()];
-      const previousJson = JSON.stringify(explicit.sort((a, b) => a.chain.localeCompare(b.chain)));
+      const previousJson = JSON.stringify([...explicit].sort((a, b) => a.chain.localeCompare(b.chain)));
       const nextJson = JSON.stringify([...nextRows].sort((a, b) => a.chain.localeCompare(b.chain)));
       if (nextJson !== previousJson) {
         process.env.GHOST_WALLET_INTERMEDIARIES_JSON = JSON.stringify(nextRows);
@@ -241,20 +364,31 @@ class GhostWalletIntermediaryBootstrap {
         ghostWalletWorkSignal.emitWake('explicit_refresh');
       }
 
-      if (pending.length > 0) ghostWalletWorkSignal.emitWake('local_work_enqueued');
+      if (pending.length > 0 || externalPending.length > 0) ghostWalletWorkSignal.emitWake('local_work_enqueued');
       this.verifiedChains = nextRows.map(row => row.chain as GhostWalletChain);
       this.pendingChains = pending;
+      this.externalBridgeVerifiedChains = externalVerified;
+      this.externalBridgePendingChains = externalPending;
       this.lastErrors = errors;
-      logger.info('[GhostWalletBootstrap] Matched-intent intermediary capability reconciled', {
+      this.bootstrapWork = workRows;
+      logger.info('[GhostWalletBootstrap] Atomic intermediary capabilities reconciled', {
         component: 'GhostWalletIntermediaryBootstrap',
         verifiedChains: this.verifiedChains,
         pendingChains: this.pendingChains,
+        externalBridgeVerifiedChains: this.externalBridgeVerifiedChains,
+        externalBridgePendingChains: this.externalBridgePendingChains,
+        work: workRows,
         routeLocalErrors: errors,
         automaticCreate2Bootstrap: true,
+        proactivePermissionlessBorrowerIngressBootstrap: true,
         pimlicoSponsoredDeployment: true,
         operatorCapitalRequired: false,
       });
-      this.schedule(pending.length > 0 || errors.length > 0 ? RETRY_MS : HEALTHY_RECHECK_MS);
+      this.schedule(
+        pending.length > 0 || externalPending.length > 0 || errors.length > 0
+          ? RETRY_MS
+          : HEALTHY_RECHECK_MS,
+      );
     } catch (error) {
       this.lastErrors = [{
         chain: 'ethereum',
@@ -277,11 +411,16 @@ export const ghostWalletIntermediaryBootstrap = new GhostWalletIntermediaryBoots
 export const GHOST_WALLET_INTERMEDIARY_BOOTSTRAP_POLICY = {
   deterministicCreate2Address: true,
   automaticDeployment: true,
+  proactivePermissionlessExternalCreditBridgeBootstrap: true,
+  borrowerInitiatedDemandIngress: true,
+  externalBorrowerFeedMandatory: false,
+  terminalWorkSafeRearm: true,
+  terminalWorkErrorVisible: true,
   deploymentGasAuthority: 'pimlico_sponsored_user_operation',
   operatorPrincipalAuthority: false,
   explicitConfigurationPreserved: true,
   runtimeRegistrationAfterIdentityVerification: true,
-  matchedIntentOnly: true,
+  matchedIntentOnly: false,
   zeroCapitalExecutionAuthority: false,
   routeLocalFailure: true,
 } as const;
