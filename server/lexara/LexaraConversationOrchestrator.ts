@@ -1,4 +1,5 @@
 import { callAIWithFallback } from '../aiSubAgent';
+import { generateZeroApiResponse, shouldUseZeroApiMode } from '../zeroApiIntelligence';
 import type { LawType as ExpertLawType } from '../../shared/legalCounselTypes';
 import { LAW_TYPE_DATA } from '../../shared/lawTypes';
 import { LEXARA_PERSONA } from '../../shared/lexaraVoicePersona';
@@ -98,8 +99,6 @@ export function inferJurisdiction(text: string): string | undefined {
   const fullState = STATE_NAMES.find(state => lower.includes(state.toLowerCase()));
   if (fullState) return fullState;
 
-  // Require uppercase abbreviations so ordinary words such as "in", "or", and
-  // "me" are never mistaken for Indiana, Oregon, or Maine.
   const upperAbbreviationMatch = text.match(/\b(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC)\b/);
   if (upperAbbreviationMatch) {
     return STATE_BY_ABBREVIATION[upperAbbreviationMatch[1]];
@@ -140,8 +139,6 @@ function buildLegalSystemPrompt(
   mappedLawType?: ExpertLawType,
   jurisdiction?: string,
 ): string {
-  // The domain and jurisdiction inserted into the system prompt must come from
-  // server-owned allowlists. Client-provided labels are intentionally ignored.
   const domainName = trustedDomainName(context.lawType);
   const behaviorMode = context.behaviorMode === 'personable'
     ? 'warm and conversational'
@@ -175,11 +172,26 @@ export async function generateLexaraConversationResponse(
   const systemPrompt = buildLegalSystemPrompt(context, mappedLawType, jurisdiction);
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
 
-  // The prior generic user dispatcher waited for every parallel provider before
-  // returning, even though its standard aggregation ultimately preferred
-  // Mistral. Live conversation now uses that same preferred provider first and
-  // falls back only when needed, removing slowest-provider latency without
-  // changing the normal answer source when Mistral is healthy.
+  // Preserve the platform's local zero-API capability. This is checked before
+  // remote fallback so a deployment with no configured model keys remains
+  // functional instead of burning through unavailable providers first.
+  if (shouldUseZeroApiMode()) {
+    const local = await generateZeroApiResponse(userPrompt, {
+      type: 'legal-consultation',
+    });
+    const localText = local.content?.trim();
+    if (!localText) throw new Error('LEXARA local intelligence returned an empty response');
+    return {
+      text: localText,
+      jurisdiction,
+      mappedLawType,
+    };
+  }
+
+  // The generic user dispatcher waits for every parallel provider before
+  // returning, even though its standard aggregation normally prefers Mistral.
+  // Live conversation therefore uses Mistral first and falls back only when
+  // necessary, avoiding slowest-provider latency on the ordinary successful path.
   const response = await callAIWithFallback(userPrompt, {
     taskName: 'lexara-live-conversation',
     systemPrompt,
