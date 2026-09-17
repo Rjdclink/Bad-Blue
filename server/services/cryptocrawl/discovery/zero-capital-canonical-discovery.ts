@@ -28,6 +28,8 @@ import { zeroCapitalRouteEvidenceRegistry } from '../optimization/zero-capital-r
 import { getProvenZeroCapitalGasFundingDecision } from '../runtime/system-owned-gas-funding-proof-wiring.js';
 import { executeSystemOwnedNativeTransaction } from '../execution/system-owned-native-transaction.js';
 
+type ReceiverPermissionCall = { to: string; data: string; value?: string | number | BigNumber };
+
 interface CanonicalZeroCapitalRuntime {
   configuredRoutes: ConfiguredZeroCapitalRoute[];
   providers: Map<SupportedChain, providers.JsonRpcProvider>;
@@ -44,6 +46,7 @@ interface CanonicalZeroCapitalRuntime {
   };
   receiverManager: {
     getReceiver: (chain: string) => string | null;
+    getCompositeReceiver: (chain: string) => string | null;
     getRecords: () => SponsoredReceiverRecord[];
     ensureReceiver: (input: {
       chain: any;
@@ -56,7 +59,12 @@ interface CanonicalZeroCapitalRuntime {
       receiver: string;
       provider: providers.JsonRpcProvider;
       routes: ConfiguredZeroCapitalRoute[];
-    }) => Promise<Array<{ to: string; data: string; value?: string | number | BigNumber }>>;
+    }) => Promise<ReceiverPermissionCall[]>;
+    buildMissingCompositePermissionCalls: (input: {
+      chain: any;
+      provider: providers.JsonRpcProvider;
+      routes: ConfiguredZeroCapitalRoute[];
+    }) => Promise<ReceiverPermissionCall[]>;
   };
   scanChain: (chain: SupportedChain, provider: providers.JsonRpcProvider) => Promise<ZeroCapitalOpportunity[]>;
   fromQuotedRoute: (quote: QuotedZeroCapitalRoute, blockTimestamp: number) => ZeroCapitalOpportunity;
@@ -180,7 +188,7 @@ async function executeSetupCalls(input: {
   provider: providers.JsonRpcProvider;
   wallet: Wallet;
   funding: GasFundingDecision;
-  calls: Array<{ to: string; data: string; value?: string | number | BigNumber }>;
+  calls: ReceiverPermissionCall[];
 }): Promise<void> {
   if (input.funding.strictZeroInitialCapitalEligible !== true || input.funding.operatorMonetaryInputRequired !== false) {
     throw new Error(`Strict zero-capital setup funding is unavailable: ${input.funding.reason}`);
@@ -220,6 +228,7 @@ async function ensureReceiverFleet(target: CanonicalZeroCapitalRuntime): Promise
     .filter(chain => chain !== 'europa' && supportsSponsoredReceiverChain(chain as any));
   let ready = 0;
   const failures: string[] = [];
+  const compositeFailures: string[] = [];
   for (const chain of chains) {
     const provider = target.providers.get(chain);
     const wallet = target.executionWallets.get(chain);
@@ -243,6 +252,32 @@ async function ensureReceiverFleet(target: CanonicalZeroCapitalRuntime): Promise
       if (calls.length > 0) {
         await executeSetupCalls({ target, chain, provider, wallet, funding, calls });
       }
+
+      // Composite setup is optional/additive. Its deployment and permission lane is
+      // intentionally separate so a split-route capability problem cannot demote a
+      // fully working standalone receiver on the same chain.
+      try {
+        const compositeCalls = await target.receiverManager.buildMissingCompositePermissionCalls({
+          chain: chain as any,
+          provider,
+          routes: chainRoutes,
+        });
+        if (compositeCalls.length > 0) {
+          await executeSetupCalls({ target, chain, provider, wallet, funding, calls: compositeCalls });
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        compositeFailures.push(`${chain}:${message}`);
+        logger.debug('[ZeroCapitalDiscovery] Composite receiver permission setup degraded locally', {
+          component: 'CanonicalZeroCapitalDiscovery',
+          chain,
+          error: message,
+          standaloneReceiverReady: true,
+          compositeOnlyFailure: true,
+          discoveryContinues: true,
+          executionAuthority: false,
+        });
+      }
       ready++;
     } catch (error) {
       failures.push(`${chain}:${error instanceof Error ? error.message : String(error)}`);
@@ -251,11 +286,15 @@ async function ensureReceiverFleet(target: CanonicalZeroCapitalRuntime): Promise
   readyReceiverChains = ready;
   if (ready === 0 && chains.length > 0) {
     logger.debug('[ZeroCapitalDiscovery] No strict zero-capital receiver chain is execution-ready; discovery remains active', {
-      component: 'CanonicalZeroCapitalDiscovery', failures, executionAuthority: false,
+      component: 'CanonicalZeroCapitalDiscovery', failures, compositeFailures, executionAuthority: false,
     });
-  } else if (failures.length > 0) {
-    logger.debug('[ZeroCapitalDiscovery] Receiver fleet is partially ready; failed chains remain discovery-only', {
-      component: 'CanonicalZeroCapitalDiscovery', readyReceiverChains: ready, failures,
+  } else if (failures.length > 0 || compositeFailures.length > 0) {
+    logger.debug('[ZeroCapitalDiscovery] Receiver fleet is partially ready; failures remain route-local', {
+      component: 'CanonicalZeroCapitalDiscovery',
+      readyReceiverChains: ready,
+      failures,
+      compositeFailures,
+      compositeFailureDemotesStandalone: false,
     });
   }
 }
@@ -645,6 +684,8 @@ export async function startCanonicalZeroCapitalDiscovery(): Promise<void> {
     eligibilityAuthority: 'fair_measured_rescue_then_canonical_flash_first_then_measured_alternative_capital_repricing',
     gasFundingAuthority: 'getProvenZeroCapitalGasFundingDecision',
     receiverSetupAuthority: 'canonical_discovery_resource_stage_with_system_owned_native_reservations',
+    compositeReceiverSetupAuthority: 'route_local_additive_zero_operator_capital_lane',
+    compositeReceiverFailureDemotesStandalone: false,
     alternativeCapitalAuthority: 'configured_onchain_intermediary_exact_simulation_only',
     alternativeCapitalDoesNotDisplaceStrictPositiveFlashSelection: true,
     nonProfitableFlashSelectionCompletesProfitabilitySearch: false,
@@ -715,5 +756,6 @@ export function getCanonicalZeroCapitalDiscoverySnapshot() {
     timedOutChainScanOwnershipReleased: true,
     lateTimedOutScanGenerationInvalidated: true,
     globalReceiverFailureBlocksProviderAdmission: false,
+    compositeReceiverFailureDemotesStandalone: false,
   };
 }
