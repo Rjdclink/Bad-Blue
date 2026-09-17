@@ -1,4 +1,4 @@
-import { generateUserText, TaskPriority } from '../aiProvider';
+import { callAIWithFallback } from '../aiSubAgent';
 import type { LawType as ExpertLawType } from '../../shared/legalCounselTypes';
 import { LAW_TYPE_DATA } from '../../shared/lawTypes';
 import { LEXARA_PERSONA } from '../../shared/lexaraVoicePersona';
@@ -158,24 +158,25 @@ export async function generateLexaraConversationResponse(
   const history = buildConversationHistory(context.previousMessages);
   const jurisdiction = normalizeJurisdiction(context.jurisdiction) || inferJurisdiction(`${history}\n${cleanPrompt}`);
   const systemPrompt = buildLegalSystemPrompt(context, mappedLawType, jurisdiction);
-
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
 
-  const response = await generateUserText(
-    'lexara-live-conversation',
-    userPrompt,
-    {
-      systemPrompt,
-      temperature: 0.25,
-      maxTokens: 1800,
-      useJSON: false,
-    },
-    TaskPriority.CRITICAL_USER,
-  );
+  // The prior generic user dispatcher waited for every parallel provider before
+  // returning, even though its standard aggregation ultimately preferred
+  // Mistral. Live conversation now uses that same preferred provider first and
+  // falls back only when needed, removing slowest-provider latency without
+  // changing the normal answer source when Mistral is healthy.
+  const response = await callAIWithFallback(userPrompt, {
+    taskName: 'lexara-live-conversation',
+    systemPrompt,
+    temperature: 0.25,
+    maxTokens: 1800,
+    useJSON: false,
+    preferredProvider: 'mistral',
+  });
 
-  const text = response.content?.trim();
+  const text = response.success ? response.content?.trim() : '';
   if (!text) {
-    throw new Error('LEXARA generated an empty response');
+    throw new Error(response.error || 'LEXARA generated an empty response');
   }
 
   return {
