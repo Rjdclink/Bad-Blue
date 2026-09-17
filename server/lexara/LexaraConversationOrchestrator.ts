@@ -1,5 +1,5 @@
 import { callAIWithFallback } from '../aiSubAgent';
-import { shouldUseZeroApiMode } from '../zeroApiIntelligence';
+import { callAI as callUnifiedAI } from '../unifiedAICaller';
 import type { LawType as ExpertLawType } from '../../shared/legalCounselTypes';
 import { LAW_TYPE_DATA } from '../../shared/lawTypes';
 import { mapProductLawTypeToExpert } from '../../shared/legalDomainMapping';
@@ -195,19 +195,9 @@ export async function generateLexaraConversationResponse(
   const systemPrompt = buildLegalSystemPrompt(context, mappedLawType, jurisdiction);
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
 
-  // The legacy Zero-API engine is a broad pattern/template fallback with
-  // hard-coded legal propositions. That is useful elsewhere as degraded
-  // guidance, but it is not authoritative enough for the canonical live legal
-  // conversation. Fail safe instead of presenting canned law as expert analysis.
-  if (shouldUseZeroApiMode()) {
-    return {
-      text: degradedLegalResponse(jurisdiction),
-      jurisdiction,
-      mappedLawType,
-    };
-  }
-
-  const response = await callAIWithFallback(userPrompt, {
+  // Fast, quality-first chain for the normal live path. Gemini is attempted
+  // first when configured; Groq/Mistral remain route-local fallbacks.
+  const primary = await callAIWithFallback(userPrompt, {
     taskName: 'lexara-live-conversation',
     systemPrompt,
     temperature: 0.25,
@@ -216,9 +206,33 @@ export async function generateLexaraConversationResponse(
     preferredProvider: 'gemini',
   });
 
-  const text = response.success ? response.content?.trim() : '';
+  let text = primary.success ? primary.content?.trim() : '';
+
+  // The repository also supports additional providers through its unified
+  // provider rotation. Use that only when the low-latency primary chain is
+  // exhausted, so an available alternate provider is not accidentally ignored.
   if (!text) {
-    throw new Error(response.error || 'LEXARA generated an empty response');
+    try {
+      const fallback = await callUnifiedAI({
+        prompt: userPrompt,
+        systemPrompt,
+        temperature: 0.25,
+        maxTokens: 1800,
+        context: 'user',
+        skipCache: true,
+        skipOptimization: true,
+      });
+      text = fallback.content?.trim() || '';
+    } catch {
+      text = '';
+    }
+  }
+
+  // Never substitute the legacy pattern/template Zero-API legal knowledge base
+  // for senior-counsel analysis. If every live model path is unavailable, fail
+  // safe rather than presenting canned law, citations, or deadlines as current.
+  if (!text) {
+    text = degradedLegalResponse(jurisdiction);
   }
 
   return {
