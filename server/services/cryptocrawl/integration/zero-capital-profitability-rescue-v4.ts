@@ -178,11 +178,11 @@ function adaptiveQuoteTimeoutMs(route: ConfiguredZeroCapitalRoute, deadlineAt: n
 
 function currentConcurrency(chain: SupportedChain): number {
   const maximum = maximumRescueConcurrency();
+  const floor = Math.min(maximum, baseRescueConcurrency());
   const state = concurrencyByChain.get(chain);
-  if (state) return Math.max(1, Math.min(maximum, state.limit));
-  const initial = Math.min(maximum, baseRescueConcurrency());
-  concurrencyByChain.set(chain, { limit: initial });
-  return initial;
+  if (state) return Math.max(floor, Math.min(maximum, state.limit));
+  concurrencyByChain.set(chain, { limit: floor });
+  return floor;
 }
 
 function updateConcurrency(
@@ -194,9 +194,13 @@ function updateConcurrency(
   budgetMs: number,
 ): number {
   const maximum = maximumRescueConcurrency();
-  let next = current;
+  const floor = Math.min(maximum, baseRescueConcurrency());
+  let next = Math.max(floor, current);
+  // Route-specific P95/timeout suppression already localizes slow quote work. A
+  // bad route must not collapse unrelated candidate throughput below the configured
+  // base lane width for the whole chain.
   if (timeoutRate >= 0.35) {
-    next = Math.max(1, current - 1);
+    next = Math.max(floor, current - 1);
   } else if (
     candidateCount > current
     && timeoutRate <= 0.15
@@ -929,6 +933,9 @@ export async function runZeroCapitalProfitabilityRescueV4(
     rpcLaunchReserveMs: rpcLaunchReserveMs(),
     deadlineLaunchSuppressions,
     concurrency, nextConcurrency, adaptiveConcurrency: true, timeoutRate,
+    candidateConcurrencyFloor: baseRescueConcurrency(),
+    slowRouteTimeoutCanCollapseChainBelowBase: false,
+    routeLatencyIsolation: 'route_id_p95_timeout_plus_chain_candidate_floor',
     targetedAttemptLimit: perCandidateAttemptLimit,
     configuredQuoteTimeoutCeilingMs: targetedQuoteTimeoutMs(), adaptiveRouteP95Timeouts: true,
     targetedQuoteAttempts, networkQuoteAttempts, hedgedWaveWidth: waveWidth, hedgedWaves, hedgedOutstandingAbandoned,
