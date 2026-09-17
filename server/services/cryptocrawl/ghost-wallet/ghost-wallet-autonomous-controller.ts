@@ -531,8 +531,6 @@ class GhostWalletAutonomousController {
               value: prepared.value,
             };
             if (!request.from) throw new Error('GHOST_WALLET_CONTROLLER_WALLET_UNAVAILABLE');
-            // estimateGas executes the target path and therefore doubles as the functional
-            // revert preflight. Native gas is never the final profitability authority.
             const [gasRaw, feeData] = await Promise.all([provider.estimateGas(request), provider.getFeeData()]);
             return { provider, gasRaw, pricing: resolveGhostWalletGasPricing(feeData) };
           },
@@ -541,17 +539,19 @@ class GhostWalletAutonomousController {
         const expectedFeePerGas = BigInt(preflight.pricing.expectedFeePerGas.toString());
         let economics: Awaited<ReturnType<typeof evaluateGhostWalletControllerEconomics>> | null = null;
         let advisoryError: string | null = null;
-        try {
-          economics = await evaluateGhostWalletControllerEconomics({
-            chain: input.mandate.chain,
-            provider: preflight.provider,
-            asset: input.mandate.asset,
-            gasUnits,
-            feePerGasWei: expectedFeePerGas,
-            expectedSpreadBaseUnits: requestedSpread,
-          });
-        } catch (error) {
-          advisoryError = error instanceof Error ? error.message : String(error);
+        if (mandateMaxFee === null) {
+          try {
+            economics = await evaluateGhostWalletControllerEconomics({
+              chain: input.mandate.chain,
+              provider: preflight.provider,
+              asset: input.mandate.asset,
+              gasUnits,
+              feePerGasWei: expectedFeePerGas,
+              expectedSpreadBaseUnits: requestedSpread,
+            });
+          } catch (error) {
+            advisoryError = error instanceof Error ? error.message : String(error);
+          }
         }
         const candidate: PreflightCandidate = {
           quote: routedQuote,
@@ -576,10 +576,6 @@ class GhostWalletAutonomousController {
           sourceKind: input.route.sourceKind, latencyMs: candidate.latencyMs, success: true,
           expectedNetProfitBaseUnits: economics?.expectedNetProfitBaseUnits ?? null,
         });
-
-        // Native economics are only a calibration/ranking hint. A signed borrower fee ceiling
-        // is passed through to the exact Pimlico gate even if this hint is negative, preventing
-        // native-gas false negatives. Unbounded mandates use the hint to improve first-pass spread.
         if (mandateMaxFee !== null || !economics || economics.approved) return candidate;
         const nextSpread = maxBigInt(requestedSpread + 1n, economics.gasCostAssetBaseUnits + 1n);
         if (nextSpread <= requestedSpread) return candidate;
@@ -792,6 +788,7 @@ export const GHOST_WALLET_AUTONOMOUS_CONTROLLER_POLICY = {
   configuredSpreadFloorDefaultBps: 0,
   perTransactionSpreadCalibrationFromNativeHint: true,
   signedFeeCeilingProfitSeekingWithinAuthorization: true,
+  signedFeeCeilingAdvisoryPriceIoRequired: false,
   globalSpreadConfigurationTransactionRequired: false,
   signedMandateExecutionCountEnforced: true,
   signedMandateCadenceEnforced: true,
