@@ -84,20 +84,22 @@ assert.match(fundingMesh, /hardSourceCountLimit: null/);
 assert.match(fundingMesh, /Promise\.allSettled/);
 assert.match(fundingMesh, /providerFailureRouteLocal: true/);
 
-// Controller candidate ranking remains bounded and strict-positive; final sponsored
-// UserOperation economics is rechecked by the execution worker.
+// Controller queueing is durable staging, not final economic admission. Native estimation
+// is functional/advisory only; exact sponsored UserOperation economics is the final gate.
 assert.match(controller, /intermediaryRole: 'middleman_only'/);
 assert.match(controller, /controllerOwnsInitiation: true/);
-assert.match(controller, /strictPositiveAllInNetBeforeQueue: true/);
+assert.match(controller, /strictPositiveAllInNetBeforeQueue: false/);
+assert.match(controller, /strictPositiveAllInNetBeforeSubmission: true/);
+assert.match(controller, /nativeGasEconomicsVetoAuthority: false/);
+assert.match(controller, /pimlicoSponsoredUserOperationFinalEconomicsAuthority: true/);
 assert.match(controller, /hardBpsProfitAdmissionFloor: false/);
 assert.match(controller, /configuredSpreadFloorDefaultBps: 0/);
 assert.match(controller, /signedMandateExecutionCountEnforced: true/);
 assert.match(controller, /signedMandateCadenceEnforced: true/);
 assert.match(controller, /signedMandateVersionIsolation: true/);
 assert.match(controller, /oneActiveExecutionPerMandate: true/);
-assert.match(controller, /provider\.call\(request\)/);
+assert.doesNotMatch(controller, /provider\.call\(request\)/);
 assert.match(controller, /provider\.estimateGas\(request\)/);
-assert.match(controller, /routeLocalFailure: true/);
 assert.match(controller, /zeroCapitalIntegration: false/);
 assert.match(controllerEconomics, /strictPositiveAllInNetRequired: true/);
 assert.match(controllerEconomics, /hardBpsProfitFloor: false/);
