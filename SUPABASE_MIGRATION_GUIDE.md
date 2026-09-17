@@ -287,7 +287,7 @@ GROQ_API_KEY=your-groq-key
 GEMINI_API_KEY=your-gemini-key
 ANTHROPIC_API_KEY=your-claude-key
 ADMIN_BYPASS_ID=$ADMIN85
-ADMIN_BYPASS_PASSWORD=SARBEAR
+ADMIN_BYPASS_PASSWORD=<configured master password>
 ```
 
 ### Phase 5: Update Package Dependencies
