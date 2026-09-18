@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { isAuthenticated } from '../auth';
 import { conductFullOSINT } from '../peopleSearch';
+import { unifiedSearch } from '../webSearchService';
 
 const router = Router();
 router.use(isAuthenticated);
@@ -23,7 +24,7 @@ function normalizeConfidence(value: unknown): number {
 function sourceForName(name: string): string {
   const lower = name.toLowerCase();
   if (lower.includes('exif') || lower.includes('media')) return 'exif_photo';
-  if (lower.includes('social')) return 'social_geotag';
+  if (lower.includes('social')) return 'social_media';
   if (lower.includes('camera')) return 'public_camera';
   if (lower.includes('satellite')) return 'satellite_imagery';
   return 'public_record';
@@ -147,17 +148,50 @@ router.post('/acquire', async (req: Request, res: Response) => {
   }
 
   const { target, details } = parsed.data;
-  const phone = details.match(PHONE_RE)?.[0];
+  const combinedTargetText = [target, details].filter(Boolean).join(' ');
+  const phone = combinedTargetText.match(PHONE_RE)?.[0];
   const searchQuery = GENERIC_TARGET_RE.test(target)
     ? details
     : target;
+  const broadQuery = [searchQuery, details].filter(Boolean).join(' ');
 
   try {
-    const report = await conductFullOSINT(searchQuery, {
-      location: details,
-      phone,
-      searchDepth: 4,
-    });
+    // SPECTRA treats discovery systems as parallel evidence sources. A failure
+    // in one adapter is local and never prevents other acquisition paths.
+    const [osintResult, webResult] = await Promise.allSettled([
+      conductFullOSINT(searchQuery, {
+        location: details,
+        phone,
+        searchDepth: 4,
+      }),
+      unifiedSearch(broadQuery, {
+        limit: 25,
+        category: 'general',
+        freshness: 'all',
+        timeout: 20_000,
+      }),
+    ]);
+
+    if (osintResult.status === 'rejected' && webResult.status === 'rejected') {
+      throw osintResult.reason || webResult.reason;
+    }
+
+    const report = osintResult.status === 'fulfilled'
+      ? osintResult.value
+      : {
+          identitySummary: { verificationStatus: 'Unknown' },
+          contactInformation: [],
+          locationHistory: [],
+          employmentAndEducation: [],
+          publicRecords: [],
+          onlineMentions: [],
+          socialMediaPresence: [],
+          sources: [],
+          confidenceScore: 0,
+          summary: '',
+        } as any;
+
+    const discoveryResults = webResult.status === 'fulfilled' ? webResult.value : [];
 
     const observations: any[] = [];
     for (const source of report.sources || []) {
@@ -165,6 +199,15 @@ router.post('/acquire', async (req: Request, res: Response) => {
         source?.data,
         String(source?.name || 'public_record'),
         normalizeConfidence(source?.confidence),
+        observations,
+      );
+    }
+
+    for (const result of discoveryResults) {
+      collectCoordinateObservations(
+        result?.metadata,
+        String(result?.title || 'web_discovery'),
+        normalizeConfidence((result?.relevanceScore ?? 0) / 100),
         observations,
       );
     }
@@ -183,7 +226,9 @@ router.post('/acquire', async (req: Request, res: Response) => {
       details,
       acquisition: {
         confidence: Math.max(0, Math.min(1, confidence)),
-        sourceCount: Array.isArray(report.sources) ? report.sources.length : 0,
+        sourceCount:
+          (Array.isArray(report.sources) ? report.sources.length : 0) +
+          discoveryResults.length,
         observationCount: locationObservations.length,
         summary: report.summary || '',
         verificationStatus: report.identitySummary?.verificationStatus || 'Unknown',
@@ -193,7 +238,16 @@ router.post('/acquire', async (req: Request, res: Response) => {
         contactInformation: report.contactInformation || [],
         locationHistory: report.locationHistory || [],
         publicRecords: report.publicRecords || [],
-        onlineMentions: report.onlineMentions || [],
+        onlineMentions: [
+          ...(report.onlineMentions || []),
+          ...discoveryResults.map(result => ({
+            title: result.title,
+            url: result.url,
+            snippet: result.snippet,
+            reliability: result.reliability,
+            relevanceScore: result.relevanceScore,
+          })),
+        ],
         socialMediaPresence: report.socialMediaPresence || [],
         employmentAndEducation: report.employmentAndEducation || [],
       },
