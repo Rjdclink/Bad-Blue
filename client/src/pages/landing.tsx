@@ -130,10 +130,10 @@ export default function Landing() {
                 {!iconError ? (
                   <img 
                     src="/images/Legal%20What%20Icon.png" 
-                    alt="LegalWhat - AI Legal Platform" 
+                    alt="Legal What? - AI Legal Platform" 
                     className="w-20 h-20 md:w-24 md:h-24 object-contain filter drop-shadow-[0_0_15px_rgba(255,255,255,0.4)]"
                     onError={(e) => {
-                      handleImageError(e, 'LegalWhat Icon');
+                      handleImageError(e, 'Legal What? Icon');
                       setIconError(true);
                     }}
                   />
@@ -150,7 +150,8 @@ export default function Landing() {
             Legal What? — AI Legal Tools for 30 Practice Areas
           </h1>
           <p className="text-white/95 text-base md:text-lg mb-8 leading-relaxed max-w-3xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-700 delay-500 drop-shadow-lg">
-            Explore legal information and AI-assisted tools across 30 practice areas, from Law Enforcement Accountability to Family Law, Immigration, Civil Rights, and beyond. Use two-way voice or text consultation, legal document tools, public-record research, and specialized search services.          </p>
+            Explore legal information and AI-assisted tools across 30 practice areas, from Law Enforcement Accountability to Family Law, Immigration, Civil Rights, and beyond. Use two-way voice or text consultation, legal document tools, public-record research, and specialized search services.
+          </p>
           <p className="text-white/90 text-sm md:text-base mb-8 leading-relaxed max-w-3xl mx-auto drop-shadow-lg">
             Legal What? also includes public-record background report generation, an AI-assisted People Finder with geolocation intelligence, and a nationwide criminal inmate locator alongside its legal research and document workflows.
           </p>
@@ -501,8 +502,8 @@ export default function Landing() {
           <div className="grid md:grid-cols-4 gap-8 mb-8">
             <div>
               <h3 className="font-semibold mb-4 flex items-center gap-2">
-                <Shield className="w-5 h-5" />
-                LegalWhat
+                <img src="/images/Legal%20What%20Icon.png" alt="" aria-hidden="true" className="w-7 h-7 object-contain" />
+                Legal What?
               </h3>
               <p className="text-sm text-muted-foreground">
                 AI-powered legal platform serving 30+ practice areas.
