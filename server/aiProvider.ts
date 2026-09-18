@@ -1,39 +1,9 @@
 /**
- * Unified AI Provider Module - Multi-Provider Collaboration (Parallel Orchestration)
- * Enforces token governance and coordinated provider execution
- * 
- * DISTRIBUTION TARGETS (for usage accounting, not sequential routing):
- * All AI providers are utilized equally across the system.
- * 
- * AVAILABLE PROVIDERS (December 2025):
- * Core Providers:
- * - Gemini: gemini-2.5-flash, gemini-2.5-pro, gemini-2.0-flash, gemini-3.0-flash-preview
- * - Claude: claude-haiku-4-5-20251001 (fast), claude-sonnet-4-6 (detailed), claude-opus-4-8 (powerful)
- * - Groq: llama-3.3-70b-versatile (newer, faster), llama-3.1-8b-instant (ultra-fast)
- * - Mistral: mistral-small-latest, mistral-large-latest
- * - DeepSeek: deepseek-chat, deepseek-coder
- * 
- * Platform Providers:
- * - OpenRouter: Access to multiple models via unified API
- * - HuggingFace: Open-source model hosting and inference
- * - LMAI: LM Studio / Local AI model integration
- * 
- * Additional Providers:
- * - Grok, Kimi, Qwen, Falcon, CodeLlama, GPT-NeoX
- * - Cohere, Together, Perplexity, Fireworks
- * - Cerebras, SambaNova
- * 
- * ZERO-API MODE (December 2025):
- * - PANTHEON operates WITHOUT external API dependencies when no keys are configured
- * - Uses local knowledge base, pattern matching, and template-based responses
- * - Provides full legal consultation, document generation, and search guidance
- * 
- * PARALLEL ORCHESTRATION:
- * - Providers are executed in parallel for the same task.
- * - Each provider uses its best-suited model and config based on task context and verbosity.
- * - Results are aggregated to produce a single final response.
- * - Token governor records each provider attempt (success/failure) with context and latency.
- * - All providers are utilized equally.
+ * Unified AI Provider Module.
+ *
+ * All service-level requests enter the capability-driven Harmony orchestrator.
+ * Current model IDs are owned by aiHarmonyModelRegistry; this file only holds
+ * transport-specific validation and route-local recovery behavior.
  */
 
 import { getGroqClient } from './groq';
@@ -359,7 +329,7 @@ export async function searchOfficerData(
 
 /**
  * Get the correct model for a provider, validating and falling back to defaults.
- * This ensures that if an incompatible model is passed (e.g., "gpt-4o-mini" to Mistral),
+ * This ensures that provider-incompatible model identifiers cannot leak across transports.
  * the provider's default model is used instead.
  * 
  * Task-aware model selection (December 2025):
@@ -441,16 +411,16 @@ function getProviderModel(provider: AIProvider, requestedModel?: string, complex
     // GEMINI: 3-tier selection based on complexity
     if (provider === AIProvider.GEMINI) {
       if (complexity === TaskComplexity.COMPREHENSIVE && providerConfig.pro) {
-        return providerConfig.pro; // gemini-2.5-pro for complex legal analysis
+        return providerConfig.pro;
       }
       if (complexity === TaskComplexity.LIGHTWEIGHT && providerConfig.lite) {
-        return providerConfig.lite; // gemini-2.0-flash-lite for simple queries
+        return providerConfig.lite;
       }
     }
 
     // GROQ: 2-tier selection (both Llama models are free)
     if (provider === AIProvider.GROQ && complexity === TaskComplexity.COMPREHENSIVE && providerConfig.comprehensive) {
-      return providerConfig.comprehensive; // llama-3.1-70b for reasoning
+      return providerConfig.comprehensive;
     }
 
     // MISTRAL: Only one free model - no selection needed
@@ -458,7 +428,7 @@ function getProviderModel(provider: AIProvider, requestedModel?: string, complex
 
     // CLAUDE: 2-tier selection based on complexity
     if (provider === AIProvider.CLAUDE && complexity === TaskComplexity.COMPREHENSIVE && providerConfig.comprehensive) {
-      return providerConfig.comprehensive; // claude-3-5-sonnet for detailed reasoning
+      return providerConfig.comprehensive;
     }
 
     return undefined;
