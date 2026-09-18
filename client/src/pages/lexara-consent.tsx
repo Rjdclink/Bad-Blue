@@ -22,6 +22,7 @@ export default function LexaraConsentPage() {
   const [preparing, setPreparing] = useState(false);
   const [micReady, setMicReady] = useState(false);
   const [speakerReady, setSpeakerReady] = useState(false);
+  const [voiceServiceReady, setVoiceServiceReady] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const prepareLiveConversation = useCallback(async () => {
@@ -29,7 +30,31 @@ export default function LexaraConsentPage() {
     setError(null);
 
     try {
-      const [audioUnlocked, stream] = await Promise.all([
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error('This browser cannot open a microphone.');
+      }
+
+      const standardsCaptureSupported =
+        'MediaRecorder' in window
+        && !!((window as any).AudioContext || (window as any).webkitAudioContext);
+      const browserSpeechSupported =
+        'SpeechRecognition' in window || 'webkitSpeechRecognition' in window;
+
+      if (!standardsCaptureSupported && !browserSpeechSupported) {
+        throw new Error('This browser is too old for live voice.');
+      }
+
+      const readinessPromise = fetch('/api/lexara/voice/live-readiness', {
+        method: 'GET',
+        cache: 'no-store',
+      })
+        .then(async response => {
+          if (!response.ok) return null;
+          return response.json();
+        })
+        .catch(() => null);
+
+      const [audioUnlocked, stream, readiness] = await Promise.all([
         unlockAudio(),
         navigator.mediaDevices.getUserMedia({
           audio: {
@@ -39,20 +64,26 @@ export default function LexaraConsentPage() {
           },
           video: false,
         }),
+        readinessPromise,
       ]);
 
       const microphoneGranted = stream.getAudioTracks().length > 0;
       stream.getTracks().forEach(track => track.stop());
 
+      const backendReady = readiness?.liveVoiceConfigured !== false;
       setMicReady(microphoneGranted);
       setSpeakerReady(audioUnlocked);
+      setVoiceServiceReady(readiness ? backendReady : null);
 
-      if (!microphoneGranted || !audioUnlocked) {
-        setError('LEXARA could not fully initialize microphone and audio playback. Check browser permissions and try again.');
+      if (!backendReady) {
+        setError('Voice is temporarily unavailable on the server. You can still continue by typing.');
+      } else if (!microphoneGranted || !audioUnlocked) {
+        setError('LEXARA could not fully prepare your microphone and sound. Check browser permissions and try again.');
       }
     } catch (permissionError: any) {
       setMicReady(false);
       setSpeakerReady(false);
+      setVoiceServiceReady(null);
       const name = String(permissionError?.name || '');
       setError(
         name === 'NotAllowedError' || name === 'PermissionDeniedError'
@@ -69,6 +100,7 @@ export default function LexaraConsentPage() {
     if (!checked) {
       setMicReady(false);
       setSpeakerReady(false);
+      setVoiceServiceReady(null);
       setError(null);
       return;
     }
@@ -76,10 +108,10 @@ export default function LexaraConsentPage() {
   }, [prepareLiveConversation]);
 
   const continueLive = useCallback(() => {
-    if (!domainId || !accepted || !micReady || !speakerReady) return;
+    if (!domainId || !accepted || !micReady || !speakerReady || voiceServiceReady === false) return;
     setLexaraLiveEnabled('true');
     setLocation(`/legal-consultation/${domainId}?live=true`);
-  }, [accepted, domainId, micReady, setLocation, speakerReady]);
+  }, [accepted, domainId, micReady, setLocation, speakerReady, voiceServiceReady]);
 
   const continueTextOnly = useCallback(() => {
     if (!domainId) return;
@@ -99,14 +131,14 @@ export default function LexaraConsentPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 text-white">
+    <div className="min-h-[100dvh] bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] text-white">
       <SEOHead
         title={`LEXARA Live Consent - ${domainInfo.name} | LegalWhat`}
         description="Prepare microphone and audio playback before entering a LEXARA live legal consultation."
         canonicalUrl={`https://legalwhat.com/lexara-consent/${domainId}`}
       />
 
-      <div className="mx-auto grid min-h-screen max-w-6xl grid-cols-1 lg:grid-cols-[1.05fr_0.95fr]">
+      <div className="mx-auto grid min-h-[100dvh] max-w-6xl grid-cols-1 lg:grid-cols-[1.05fr_0.95fr]">
         <section className="relative min-h-[38vh] overflow-hidden lg:min-h-screen">
           <img
             src="/images/oip.webp"
@@ -132,9 +164,12 @@ export default function LexaraConsentPage() {
               Back to law library
             </Button>
 
-            <h2 className="text-2xl font-bold">Consent to live conversation</h2>
-            <p className="mt-3 text-sm leading-relaxed text-slate-300">
-              LEXARA is an AI legal information and analysis assistant, not a licensed lawyer and not an attorney-client relationship. Verify important legal authorities and deadlines before relying on them.
+            <h2 className="text-2xl font-bold">Ready to talk?</h2>
+            <p className="mt-3 text-base leading-relaxed text-slate-200 sm:text-sm">
+              LEXARA needs your microphone so you can speak naturally, and sound enabled so you can hear her replies. You can switch to typing at any time.
+            </p>
+            <p className="mt-3 text-xs leading-relaxed text-slate-400">
+              LEXARA provides AI legal information and analysis, not an attorney-client relationship. Verify important authorities and deadlines before relying on them.
             </p>
 
             <div className="mt-6 rounded-2xl border border-cyan-500/20 bg-cyan-500/5 p-4">
@@ -147,7 +182,7 @@ export default function LexaraConsentPage() {
                   className="mt-1"
                 />
                 <Label htmlFor="lexara-live-consent" className="cursor-pointer text-sm leading-relaxed text-slate-200">
-                  I consent to microphone access for the live conversation and to enabling audio playback so I can hear LEXARA respond.
+                  I agree to let LEXARA use my microphone for this conversation and play her spoken replies.
                 </Label>
               </div>
             </div>
@@ -163,11 +198,17 @@ export default function LexaraConsentPage() {
               <div className="rounded-xl border border-white/10 bg-black/20 p-4">
                 <div className="flex items-center gap-2">
                   {speakerReady ? <Check className="h-5 w-5 text-emerald-400" /> : <Volume2 className="h-5 w-5 text-cyan-300" />}
-                  <span className="font-medium">Audio output</span>
+                  <span className="font-medium">Sound</span>
                 </div>
-                <p className="mt-2 text-xs text-slate-400">{speakerReady ? 'Ready' : 'Waiting for activation'}</p>
+                <p className="mt-2 text-xs text-slate-400">{speakerReady ? 'Ready' : 'Needs activation'}</p>
               </div>
             </div>
+
+            {voiceServiceReady === true && !preparing && (
+              <p className="mt-4 text-center text-xs text-emerald-300">
+                LEXARA voice is ready.
+              </p>
+            )}
 
             {preparing && (
               <div className="mt-4 flex items-center gap-2 rounded-xl border border-cyan-500/20 bg-cyan-500/10 p-3 text-sm text-cyan-200">
@@ -184,22 +225,33 @@ export default function LexaraConsentPage() {
 
             <Button
               onClick={continueLive}
-              disabled={!accepted || !micReady || !speakerReady || preparing}
-              className="mt-6 w-full py-6 text-base"
+              disabled={!accepted || !micReady || !speakerReady || voiceServiceReady === false || preparing}
+              className="mt-6 min-h-12 w-full touch-manipulation py-6 text-base"
             >
-              Enter LEXARA Live
+              Start conversation
             </Button>
             <Button
               variant="ghost"
               onClick={continueTextOnly}
               disabled={preparing}
-              className="mt-2 w-full text-slate-400 hover:text-slate-200"
+              className="mt-2 min-h-11 w-full touch-manipulation text-slate-400 hover:text-slate-200"
             >
-              Continue in text only
+              Use typing instead
             </Button>
 
+            {error && accepted && !preparing && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void prepareLiveConversation()}
+                className="mt-3 min-h-11 w-full touch-manipulation border-white/20 bg-white/5 text-white hover:bg-white/10"
+              >
+                Try audio setup again
+              </Button>
+            )}
+
             <p className="mt-4 text-center text-xs text-slate-500">
-              Browsers do not expose a separate general speaker permission; this page uses your consent gesture to unlock audio playback before the consultation loads.
+              Designed for modern Android and Apple phones and tablets, Macs, and Windows PCs. If voice cannot start, typing always remains available.
             </p>
           </div>
         </section>
