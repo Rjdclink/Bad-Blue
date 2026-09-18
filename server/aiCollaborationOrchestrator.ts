@@ -101,6 +101,32 @@ export type CollaborationRole = keyof typeof COLLABORATION_ROLES;
  */
 export type CollaborationProviderPolicy = 'default' | 'capability-first-no-google';
 
+const harmonyProviderCooldownUntil = new Map<AIProvider, number>();
+
+function harmonyProviderAvailable(provider: AIProvider): boolean {
+  return (harmonyProviderCooldownUntil.get(provider) || 0) <= Date.now();
+}
+
+function markHarmonyProviderFailure(provider: AIProvider, error: unknown): void {
+  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  const cooldownMs = /429|rate limit|quota/.test(message)
+    ? 60_000
+    : /401|invalid api key|authentication/.test(message)
+      ? 10 * 60_000
+      : /403|permission|blocked/.test(message)
+        ? 5 * 60_000
+        : /404|not found|retired|deprecated/.test(message)
+          ? 10 * 60_000
+          : /timeout|timed out|econnreset|fetch failed|socket/.test(message)
+            ? 5_000
+            : 15_000;
+  harmonyProviderCooldownUntil.set(provider, Date.now() + cooldownMs);
+}
+
+function markHarmonyProviderSuccess(provider: AIProvider): void {
+  harmonyProviderCooldownUntil.delete(provider);
+}
+
 function getAvailableProvidersForContext(
   context: UsageContext,
   providerPolicy: CollaborationProviderPolicy = 'default',
@@ -169,7 +195,12 @@ export class AICollaborationOrchestrator {
     
     // Filter providers by context
     const contextProviders = getAvailableProvidersForContext(context, options.providerPolicy);
-    const providers = availableProviders.filter(p => contextProviders.includes(p));
+    const eligibleProviders = availableProviders.filter(p => contextProviders.includes(p));
+    const healthyProviders = eligibleProviders.filter(harmonyProviderAvailable);
+    // Cooldowns are advisory availability evidence, not a permanent veto. If
+    // every route is cooling, allow the full eligible set rather than making
+    // LEXARA unavailable.
+    const providers = healthyProviders.length > 0 ? healthyProviders : eligibleProviders;
     
     if (providers.length === 0) {
       throw new Error(`No providers available for ${context} context`);
@@ -851,9 +882,14 @@ export class AICollaborationOrchestrator {
       if (!content) {
         success = false;
         content = `[${task.provider}] returned an empty response`;
+      } else {
+        markHarmonyProviderSuccess(task.provider);
       }
     } catch (error: any) {
-      const alternatives = (task.fallbackProviders || []).filter(provider => provider !== task.provider);
+      markHarmonyProviderFailure(task.provider, error);
+      const alternatives = (task.fallbackProviders || [])
+        .filter(provider => provider !== task.provider)
+        .filter(harmonyProviderAvailable);
       if (alternatives.length > 0) {
         try {
           const fallback = await Promise.any(
@@ -952,7 +988,7 @@ export class AICollaborationOrchestrator {
       case AIProvider.CLAUDE:
         return 'claude-haiku-4-5-20251001';
       case AIProvider.CLAUDE_OPUS:
-        return 'claude-opus-4-1-20250805';
+        return 'claude-opus-5';
       case AIProvider.GROQ:
         return 'llama-3.3-70b-versatile';
       case AIProvider.MISTRAL:
