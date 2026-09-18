@@ -97,6 +97,7 @@ const pointFeature = (frame: GeoFrame) => ({
     id: frame.id,
     confidence: clamp(frame.confidence ?? 0, 0, 1),
     source: frame.source,
+    observationKind: frame.observationKind || (frame.source === 'predicted' ? 'predicted' : 'observed'),
     timestamp: frame.timestamp.toISOString(),
     speed: frame.velocity?.speed ?? 0,
     heading: frame.velocity?.heading ?? 0,
@@ -256,7 +257,12 @@ function addRuntimeLayers(map: MapLibreMap) {
         'circle-radius': ['interpolate', ['linear'], ['zoom'], 3, 5, 18, 15],
         'circle-color': 'rgba(0,0,0,0)',
         'circle-stroke-width': 3,
-        'circle-stroke-color': '#34d399',
+        'circle-stroke-color': [
+          'case',
+          ['==', ['get', 'observationKind'], 'predicted'],
+          '#c084fc',
+          '#34d399',
+        ],
         'circle-opacity': 0.95,
       },
     });
@@ -437,6 +443,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
   const [streetPhoto, setStreetPhoto] = useState<KartaViewPhoto | null>(null);
   const [streetLoading, setStreetLoading] = useState(false);
   const lastFollowRef = useRef<[number, number] | null>(null);
+  const userInteractionUntilRef = useRef(0);
   const activeStyleRef = useRef(mapMode === 'dark' ? OPENFREEMAP_DARK : OPENFREEMAP_LIBERTY);
 
   const initialCenter = useMemo<[number, number]>(() => {
@@ -474,6 +481,16 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
       visualizePitch: true,
     }), 'top-left');
     map.addControl(new maplibregl.ScaleControl({ unit: 'imperial', maxWidth: 140 }), 'bottom-left');
+
+    const suspendFollow = () => {
+      // Let the operator freely pan/zoom/rotate without the next data tick
+      // snapping the camera back underneath their finger/mouse.
+      userInteractionUntilRef.current = Date.now() + 5000;
+    };
+    map.on('dragstart', suspendFollow);
+    map.on('zoomstart', suspendFollow);
+    map.on('rotatestart', suspendFollow);
+    map.on('pitchstart', suspendFollow);
 
     map.on('load', () => initializeRuntimeLayers(map));
     map.on('style.load', () => {
@@ -607,6 +624,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready || !lockOnTarget || !currentFrame) return;
+    if (Date.now() < userInteractionUntilRef.current) return;
 
     const next: [number, number] = [
       currentFrame.position.longitude,
@@ -673,10 +691,6 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
   return (
     <div className="absolute inset-0">
       <div ref={containerRef} className="absolute inset-0" />
-
-      <div className="pointer-events-none absolute left-3 top-3 z-10 rounded-md bg-slate-950/75 px-2 py-1 text-[10px] font-mono text-slate-300 backdrop-blur">
-        GPU MAP · {layers.terrain ? '3D TERRAIN' : '2D'} · {layers.weather ? 'RADAR ON' : 'RADAR OFF'} · {layers.earthObservation ? 'EARTH OBS' : 'BASE'}
-      </div>
 
       {layers.streetImagery && (
         <div className="absolute bottom-12 right-3 z-20 w-[min(360px,calc(100%-1.5rem))] overflow-hidden rounded-xl border border-slate-600/60 bg-slate-950/95 shadow-2xl backdrop-blur">
