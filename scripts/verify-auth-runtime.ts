@@ -20,6 +20,15 @@ const loginPageSource = readFileSync(new URL('../client/src/pages/login.tsx', im
 const subscriptionSuccessSource = readFileSync(new URL('../client/src/pages/subscription-success.tsx', import.meta.url), 'utf8');
 const appSource = readFileSync(new URL('../client/src/App.tsx', import.meta.url), 'utf8');
 const inmateRoutesSource = readFileSync(new URL('../server/routes/inmateSearch.routes.ts', import.meta.url), 'utf8');
+const legalCounselRoutesSource = readFileSync(new URL('../server/routes/legalCounsel.routes.ts', import.meta.url), 'utf8');
+const documentRoutesSource = readFileSync(new URL('../server/routes/document.routes.ts', import.meta.url), 'utf8');
+const evidenceRoutesSource = readFileSync(new URL('../server/routes/evidence.routes.ts', import.meta.url), 'utf8');
+const socialRoutesSource = readFileSync(new URL('../server/routes/socialIntelligence.routes.ts', import.meta.url), 'utf8');
+const locationRoutesSource = readFileSync(new URL('../server/routes/locationIntelligence.routes.ts', import.meta.url), 'utf8');
+const lexaraRoutesSource = readFileSync(new URL('../server/routes/lexara.routes.ts', import.meta.url), 'utf8');
+const lexaraChatRoutesSource = readFileSync(new URL('../server/routes/lexara.chat.routes.ts', import.meta.url), 'utf8');
+const voiceRoutesSource = readFileSync(new URL('../server/routes/voice.routes.ts', import.meta.url), 'utf8');
+const verificationRoutesSource = readFileSync(new URL('../server/routes/verification.routes.ts', import.meta.url), 'utf8');
 const adminRoutesSource = readFileSync(new URL('../server/routes/admin-console.routes.ts', import.meta.url), 'utf8');
 const railwayEnvSource = readFileSync(new URL('../.env.railway.example', import.meta.url), 'utf8');
 const deployPrepSource = readFileSync(new URL('../scripts/prepare-deployment.sh', import.meta.url), 'utf8');
@@ -57,6 +66,8 @@ assert.doesNotMatch(statelessLocalAuthSource, /authorization:\s*\x60Bearer \$\{a
 assert.match(statelessLocalAuthSource, /v:\s*2[\s\S]{0,400}hasPaidForAccess/, 'signed local session must carry safe user identity fields');
 assert.match(authSource, /getLocalUserByIdHttp\(/, 'paid access must revalidate durable user state after signed identity authentication');
 assert.match(authSource, /resolvePaidAccess/, 'one fresh paid-access decision must govern protected services');
+assert.match(authSource, /PAID_ACCESS_CACHE_TTL_MS\s*=\s*5_000/, 'high-frequency paid services must use a tightly bounded durable-state cache');
+assert.match(authSource, /invalidatePaidAccessCache/, 'subscription/admin changes must be able to invalidate cached paid state immediately');
 assert.match(authSource, /typeof req\?\.isAuthenticated === "function"/, 'identity checks must guard the optional Passport request method');
 assert.match(statelessLocalAuthSource, /BEGIN[\s\S]{0,2200}COMMIT[\s\S]{0,800}ROLLBACK/, 'PostgreSQL signup must remain transactional');
 assert.match(statelessLocalAuthSource, /LEGALWHAT_AUTH_SUPABASE_URL\s*\|\|\s*getConfig\(\)\.SUPABASE_URL/, 'local auth Edge transport must have a dedicated canonical Supabase project URL');
@@ -87,7 +98,23 @@ assert.match(subscriptionFlowSource, /isSuspended\(current\)/, 'suspended users 
 assert.match(subscriptionFlowSource, /identity-free subscription webhook/, 'identity-free ACTIVE webhooks must never grant access');
 assert.match(routesSource, /app\.post\('\/api\/osint\/full-search'[\s\S]{0,900}resolvePaidAccess\(req, res\)/, 'OSINT must enforce fresh paid access while preserving controlled responses');
 assert.match(inmateRoutesSource, /router\.post\('\/', isAuthenticated, apiRateLimit/, 'inmate search must require verified paid access');
+assert.match(legalCounselRoutesSource, /router\.use\(isAuthenticated\)/, 'legal counsel sessions must require verified paid access');
+assert.match(documentRoutesSource, /router\.post\('\/generate', isAuthenticated/, 'legal document generation must require verified paid access');
+assert.match(evidenceRoutesSource, /router\.post\('\/analyze', isAuthenticated/, 'evidence analysis must require verified paid access');
+assert.match(evidenceRoutesSource, /router\.post\('\/comprehensive-report', isAuthenticated/, 'evidence reports must require verified paid access');
+assert.match(socialRoutesSource, /router\.post\('\/search-username', isAuthenticated/, 'social intelligence search must require verified paid access');
+assert.match(locationRoutesSource, /router\.post\('\/api\/location-intel\/analyze', isAuthenticated/, 'location intelligence analysis must require verified paid access');
+assert.match(lexaraRoutesSource, /router\.use\(isAuthenticated\)/, 'LEXARA streaming/ASR services must require verified paid access');
+assert.match(lexaraChatRoutesSource, /router\.use\(isAuthenticated\)/, 'LEXARA conversational services must require verified paid access');
+assert.match(voiceRoutesSource, /'\/api\/lexara\/tts\/session',[\s\S]{0,80}isAuthenticated/, 'LEXARA TTS session creation must require verified paid access');
+assert.match(voiceRoutesSource, /'\/api\/lexara\/speak',[\s\S]{0,80}isAuthenticated/, 'LEXARA speech synthesis must require verified paid access');
+assert.match(voiceRoutesSource, /'\/api\/lexara\/tts\/stream',[\s\S]{0,80}isAuthenticated/, 'LEXARA TTS streaming must require verified paid access');
+assert.match(verificationRoutesSource, /router\.get\('\/people-search\/:reportId', isAuthenticated/, 'persisted people-search reports must require verified paid access');
+assert.match(verificationRoutesSource, /router\.get\('\/lexara\/session\/:sessionId', isAuthenticated/, 'persisted LEXARA history must require verified paid access');
+assert.match(verificationRoutesSource, /router\.get\('\/health', async/, 'verification health must remain independently observable');
 assert.match(adminRoutesSource, /hasPaidForAccess:\s*true,[\s\S]{0,80}status:\s*'active'/, 'admin subscription override must create an immediately usable access state');
+assert.match(adminRoutesSource, /invalidatePaidAccessCache\(userId\)/, 'admin subscription override changes must invalidate paid-access cache');
+assert.match(statelessLocalAuthSource, /activeAdminOverride[\s\S]{0,1200}effectivePaidAccess/, 'Square revocation must preserve a live admin override without weakening suspension');
 assert.match(railwayEnvSource, /SQUARE_SUBSCRIPTION_PLAN_VARIATION_ID=/, 'Railway example must document the required Square subscription plan variation');
 assert.match(deployPrepSource, /"SQUARE_SUBSCRIPTION_PLAN_VARIATION_ID"/, 'deployment preflight must validate the Square subscription plan variation');
 
