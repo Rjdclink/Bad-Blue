@@ -15,6 +15,7 @@
  * - Type-only imports are safe (removed at compile time)
  */
 import express, { Router, Request, Response } from 'express';
+import { isAuthenticated } from '../auth';
 
 // Type-only imports are safe - removed at compile time, no runtime effect
 import type { SearchQuery } from '../services/peopleSearch/types';
@@ -46,7 +47,7 @@ async function getProxyModule() {
  * NOTE: This proxies to the People Search Worker service.
  * If worker is unavailable, returns a 503 with clear error message.
  */
-router.post('/', async (req, res) => {
+router.post('/', isAuthenticated, async (req, res) => {
   let reportId: string | null = null;
 
   console.log('[PEOPLE SEARCH] Handler entered', {
@@ -65,7 +66,7 @@ router.post('/', async (req, res) => {
     // Validate configuration on first use (not at module load)
     validatePeopleSearchConfig();
     
-    const { firstName, lastName, city, state, age } = req.body;
+    const { firstName, lastName, city, state, phone, age } = req.body;
 
     // Validate required fields
     if (!firstName || !lastName) {
@@ -86,6 +87,10 @@ router.post('/', async (req, res) => {
 
     if (city) query.city = String(city).trim();
     if (state) query.state = String(state).trim();
+    if (phone) {
+      const normalizedPhone = String(phone).replace(/\D/g, '').slice(-15);
+      if (normalizedPhone.length >= 7) query.phone = normalizedPhone;
+    }
     if (age) {
       const parsedAge = parseInt(String(age), 10);
       if (!isNaN(parsedAge) && parsedAge > 0) {
