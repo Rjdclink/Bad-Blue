@@ -19,6 +19,8 @@ const subAgent = read('server/aiSubAgent.ts');
 const lexara = read('server/lexara/LexaraConversationOrchestrator.ts');
 const cryptoHarmony = read('server/services/cryptocrawl/ai/cryptocrawler-ai-harmony.ts');
 const forge = read('server/services/4ji-orchestrator/forge-ai.ts');
+const governor = read('server/aiTokenGovernor.ts');
+const tokenMetrics = read('server/repositories/tokenMetricsRepository.ts');
 
 const registrySection = registry.split('HARMONY_17_PARTICIPANTS')[1]?.split('if (HARMONY_17_PARTICIPANTS.length !== 17)')[0] || '';
 const participantCount = (registrySection.match(/provider:\s*PROVIDER\./g) || []).length;
@@ -63,10 +65,16 @@ must(
 );
 
 must(
+  provider.includes('getConfiguredHarmonyProviders().length > 0 || shouldUseZeroApiMode()') &&
+  !subAgent.includes('AUTONOMOUS_LIMIT_REACHED') &&
+  governor.includes('budget accounting must not hard-partition user vs.') &&
+  !governor.includes('AUTONOMOUS: Only Groq') &&
+  !governor.includes('USER: Only Gemini') &&
+  tokenMetrics.includes('workerTokens: number; workerRequests: number') &&
   subAgent.includes('Platform invariant: every service enters the shared capability-driven') &&
   subAgent.includes('generateUserText(') &&
   subAgent.indexOf('generateUserText(') < subAgent.indexOf('const providers: Array<{'),
-  'legacy AI fallback entry point delegates to Harmony before route-local compatibility recovery',
+  'legacy AI fallback and autonomous readiness delegate to context-neutral Harmony before route-local compatibility recovery',
 );
 
 must(
@@ -113,6 +121,8 @@ const activeRuntimeFiles = [
   'server/emailVerification.ts',
   'server/workerTokenBudget.ts',
   'server/services/cryptocrawl/ai/cryptocrawler-ai-harmony.ts',
+  'server/aiTokenGovernor.ts',
+  'server/repositories/tokenMetricsRepository.ts',
 ];
 
 const retiredOrSuperseded = [
