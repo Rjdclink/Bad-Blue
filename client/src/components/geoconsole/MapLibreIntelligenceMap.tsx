@@ -407,6 +407,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
   const [streetPhoto, setStreetPhoto] = useState<KartaViewPhoto | null>(null);
   const [streetLoading, setStreetLoading] = useState(false);
   const lastFollowRef = useRef<[number, number] | null>(null);
+  const activeStyleRef = useRef(mapMode === 'dark' ? OPENFREEMAP_DARK : OPENFREEMAP_LIBERTY);
 
   const initialCenter = useMemo<[number, number]>(() => {
     if (currentFrame) return [currentFrame.position.longitude, currentFrame.position.latitude];
@@ -484,21 +485,14 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     const map = mapRef.current;
     if (!map) return;
     const desired = mapMode === 'dark' ? OPENFREEMAP_DARK : OPENFREEMAP_LIBERTY;
-    const currentStyleName = (map.getStyle() as any)?.metadata?.['spectra-style-url'];
-    if (currentStyleName === desired) return;
+    if (activeStyleRef.current === desired) return;
 
-    // Only replace the vector style when entering/leaving dark mode. Satellite and
-    // hybrid are overlays so switching between them is instantaneous.
-    const isDarkStyle = currentStyleName === OPENFREEMAP_DARK;
-    if ((mapMode === 'dark') !== isDarkStyle) {
-      setReady(false);
-      map.setStyle(desired);
-      map.once('style.load', () => {
-        const style = map.getStyle() as any;
-        style.metadata = { ...(style.metadata || {}), 'spectra-style-url': desired };
-        initializeRuntimeLayers(map);
-      });
-    }
+    // Satellite/hybrid are instant raster overlays. Only the vector base style
+    // changes when crossing into or out of dark mode.
+    setReady(false);
+    activeStyleRef.current = desired;
+    map.setStyle(desired);
+    map.once('style.load', () => initializeRuntimeLayers(map));
   }, [mapMode, initializeRuntimeLayers]);
 
   useEffect(() => {
