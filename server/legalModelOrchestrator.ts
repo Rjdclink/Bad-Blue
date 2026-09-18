@@ -2,8 +2,9 @@
  * Legal Model Orchestrator - Enhanced with ML Intelligence
  * Enhanced multi-model orchestration specifically for legal tasks
  * 
- * Provides intelligent model selection, result fusion, and consensus building
- * for legal consultation, document generation, and evidence analysis.
+ * Provides capability scoring, result fusion, and consensus analysis for legal
+ * tasks while the shared Harmony orchestrator remains the sole execution
+ * authority over the complete configured model mesh.
  * 
  * Integrates ML workers for:
  * - Confidence scoring and ranking of model outputs
@@ -12,6 +13,13 @@
  */
 
 import { generateUserText, TaskPriority, TaskComplexity, UsageContext, type AITaskMetadata } from './aiProvider';
+import { AICollaborationOrchestrator } from './aiCollaborationOrchestrator';
+import {
+  HARMONY_17_PARTICIPANTS,
+  getConfiguredHarmonyParticipants,
+  getConfiguredHarmonyProviders,
+  type HarmonyCapability,
+} from './aiHarmonyModelRegistry';
 import { createLogger } from './logger';
 import {
   analyzeConfidence,
@@ -68,92 +76,79 @@ export interface ConsensusResult<T> {
 // MODEL CAPABILITY MATRIX
 // ============================================================================
 
-const MODEL_CAPABILITIES: ModelCapability[] = [
-  {
-    modelName: 'gemini-2.5-flash',
-    strengths: ['fact-extraction', 'evidence-analysis'],
-    weaknesses: ['legal-reasoning'],
-    costRating: 'low',
-    speedRating: 'fast',
-    accuracyRating: 85
-  },
-  {
-    modelName: 'claude-3-5-sonnet',
-    strengths: ['legal-consultation', 'legal-reasoning', 'document-generation'],
-    weaknesses: [],
-    costRating: 'high',
-    speedRating: 'medium',
-    accuracyRating: 95
-  },
-  {
-    modelName: 'groq-llama-3.3-70b',
-    strengths: ['legal-research', 'precedent-search', 'statute-interpretation'],
-    weaknesses: ['document-generation'],
-    costRating: 'low',
-    speedRating: 'fast',
-    accuracyRating: 88
-  },
-  {
-    modelName: 'mistral-small',
-    strengths: ['document-generation', 'fact-extraction'],
-    weaknesses: ['legal-reasoning'],
-    costRating: 'low',
-    speedRating: 'fast',
-    accuracyRating: 82
-  }
-];
+const LEGAL_TASK_CAPABILITIES: Record<LegalTaskType, readonly HarmonyCapability[]> = {
+  'legal-consultation': ['legal-analysis', 'deep-reasoning', 'verification'],
+  'document-generation': ['legal-analysis', 'structured-output'],
+  'evidence-analysis': ['multimodal', 'verification', 'deep-reasoning'],
+  'legal-research': ['research', 'verification', 'long-context'],
+  'fact-extraction': ['structured-output', 'verification'],
+  'legal-reasoning': ['legal-analysis', 'deep-reasoning'],
+  'precedent-search': ['research', 'verification'],
+  'statute-interpretation': ['legal-analysis', 'deep-reasoning', 'verification'],
+};
+
+const LEGAL_TASK_TYPES = Object.keys(LEGAL_TASK_CAPABILITIES) as LegalTaskType[];
+
+/**
+ * Compatibility metadata generated from the canonical Harmony registry.
+ * Neutral cost/accuracy defaults avoid fabricating provider-specific rankings.
+ */
+const MODEL_CAPABILITIES: ModelCapability[] = HARMONY_17_PARTICIPANTS.map(participant => ({
+  modelName: participant.model,
+  strengths: LEGAL_TASK_TYPES.filter(taskType =>
+    LEGAL_TASK_CAPABILITIES[taskType].some(capability => participant.capabilities.includes(capability)),
+  ),
+  weaknesses: [],
+  costRating: 'medium',
+  speedRating: participant.capabilities.includes('fast-chat') ? 'fast' : 'medium',
+  accuracyRating: 80,
+}));
 
 // ============================================================================
 // MODEL SELECTION ENGINE
 // ============================================================================
 
 /**
- * Select optimal models for a legal task
+ * Produce an advisory capability match for status/ML metadata. This does not
+ * restrict runtime participation: all configured Harmony participants still
+ * execute in the shared orchestrator.
  */
 export function selectModelsForTask(
   taskType: LegalTaskType,
   priority: TaskPriority,
   complexity: TaskComplexity
 ): ModelSelection {
-  // Filter models by task type strengths
-  const capableModels = MODEL_CAPABILITIES
-    .filter(model => model.strengths.includes(taskType))
-    .sort((a, b) => b.accuracyRating - a.accuracyRating);
+  const configured = getConfiguredHarmonyParticipants();
+  const pool = configured.length > 0 ? configured : [...HARMONY_17_PARTICIPANTS];
+  const required = LEGAL_TASK_CAPABILITIES[taskType];
 
-  // If no specific strengths, use all models sorted by accuracy
-  const sortedModels = capableModels.length > 0 
-    ? capableModels 
-    : [...MODEL_CAPABILITIES].sort((a, b) => b.accuracyRating - a.accuracyRating);
+  const scored = pool
+    .map(participant => {
+      let score = required.filter(capability => participant.capabilities.includes(capability)).length * 10;
+      if (
+        complexity === TaskComplexity.COMPREHENSIVE
+        && participant.capabilities.includes('deep-reasoning')
+      ) score += 4;
+      if (
+        priority >= TaskPriority.HIGH_USER
+        && participant.capabilities.includes('verification')
+      ) score += 2;
+      if (
+        priority <= TaskPriority.MEDIUM_BACKGROUND
+        && participant.capabilities.includes('fast-chat')
+      ) score += 1;
+      return { participant, score };
+    })
+    .sort((a, b) => b.score - a.score);
 
-  // Select primary based on priority and complexity
-  let primary: string;
-  let reasoning: string;
-
-  if (priority === TaskPriority.CRITICAL_USER || complexity === TaskComplexity.COMPREHENSIVE) {
-    // Use most accurate model for critical/complex tasks
-    primary = sortedModels[0].modelName;
-    reasoning = `Selected ${primary} for high accuracy on ${taskType} (critical/complex task)`;
-  } else if (priority === TaskPriority.LOW_BACKGROUND) {
-    // Use fastest, cheapest model for background tasks
-    const fastCheapModels = sortedModels.filter(m => m.speedRating === 'fast' && m.costRating === 'low');
-    primary = fastCheapModels.length > 0 ? fastCheapModels[0].modelName : sortedModels[0].modelName;
-    reasoning = `Selected ${primary} for speed and cost efficiency on ${taskType} (background task)`;
-  } else {
-    // Balance accuracy, speed, and cost for normal tasks
-    primary = sortedModels[0].modelName;
-    reasoning = `Selected ${primary} as optimal balance for ${taskType} (standard task)`;
-  }
-
-  // Select fallbacks
-  const fallback = sortedModels
-    .filter(m => m.modelName !== primary)
-    .slice(0, 2)
-    .map(m => m.modelName);
+  const primary = scored[0]?.participant.model || 'harmony-current';
+  const fallback = scored.slice(1).map(item => item.participant.model);
 
   return {
     primary,
     fallback,
-    reasoning
+    reasoning:
+      `Capability match for ${taskType}: ${primary}. Advisory only; full configured Harmony participation remains authoritative.`,
   };
 }
 
@@ -172,75 +167,119 @@ export async function executeWithConsensus<T>(
     temperature?: number;
     maxTokens?: number;
     useJSON?: boolean;
-    modelCount?: number; // Number of models to use (default: 3)
+    modelCount?: number; // Compatibility only; Harmony always uses every configured participant.
     parseResult?: (content: string) => T;
   } = {}
 ): Promise<ConsensusResult<T>> {
-  const modelCount = options.modelCount || 3;
-  
-  log.info('Executing task with consensus', { 
-    taskType: task.legalTaskType, 
-    modelCount 
+  const providers = getConfiguredHarmonyProviders();
+
+  log.info('Executing legal task through full Harmony consensus', {
+    taskType: task.legalTaskType,
+    configuredParticipants: providers.length,
   });
 
-  // Select models
-  const selection = selectModelsForTask(
-    task.legalTaskType,
-    task.priority,
-    task.complexity
-  );
-
-  const modelsToUse = [selection.primary, ...selection.fallback].slice(0, modelCount);
-
-  // Execute across all models in parallel
-  const modelPromises = modelsToUse.map(async (modelName) => {
-    try {
-      const response = await generateUserText(
-        `${task.legalTaskType}-consensus`,
-        prompt,
-        {
-          ...options,
-          model: modelName
-        },
-        task.priority
-      );
-
-      const parsed = options.parseResult 
-        ? options.parseResult(response.content)
-        : response.content as T;
-
-      return {
-        model: modelName,
-        result: parsed,
-        success: true,
-        reasoning: undefined
-      };
-    } catch (error) {
-      log.warn('Model execution failed', { model: modelName, error });
-      return {
-        model: modelName,
-        result: null as T,
-        success: false,
-        reasoning: error instanceof Error ? error.message : 'Unknown error'
-      };
-    }
-  });
-
-  const results = await Promise.all(modelPromises);
-  const successfulResults = results.filter(r => r.success);
-
-  if (successfulResults.length === 0) {
-    throw new Error('All models failed to execute task');
+  if (providers.length === 0) {
+    const response = await generateUserText(
+      `${task.legalTaskType}-consensus-local-fallback`,
+      prompt,
+      {
+        systemPrompt: options.systemPrompt,
+        temperature: options.temperature,
+        maxTokens: options.maxTokens,
+        useJSON: options.useJSON,
+      },
+      task.priority,
+    );
+    const parsed = options.parseResult
+      ? options.parseResult(response.content)
+      : response.content as T;
+    return {
+      result: parsed,
+      confidence: 0.5,
+      agreement: 1,
+      modelResults: [{ model: 'local-fallback', result: parsed }],
+      conflicts: ['No external Harmony participants were configured.'],
+      recommendation: 'needs-review',
+    };
   }
 
-  // Analyze consensus
+  const researchTask = ['legal-research', 'precedent-search', 'statute-interpretation'].includes(task.legalTaskType);
+  const orchestrated = await AICollaborationOrchestrator.orchestrateCollaboration(
+    `${task.legalTaskType}-consensus`,
+    prompt,
+    {
+      complexity: task.complexity as any,
+      priority:
+        task.priority >= TaskPriority.CRITICAL_USER ? 'critical'
+          : task.priority >= TaskPriority.HIGH_USER ? 'high'
+            : task.priority >= TaskPriority.MEDIUM_BACKGROUND ? 'medium'
+              : 'low',
+      context: task.context,
+      estimatedTokens: options.maxTokens,
+      needsLegalAnalysis: true,
+      needsVerification: true,
+      needsSearchGrounding: researchTask,
+      needsReasoning: true,
+      needsStructuredOutput: options.useJSON === true,
+      needsFastResponse: false,
+    } as any,
+    providers,
+    {
+      providerPolicy: 'capability-first',
+      systemPrompt: options.systemPrompt,
+    },
+  );
+
+  const successfulResults: Array<{
+    model: string;
+    result: T;
+    success: boolean;
+    reasoning?: string;
+  }> = [];
+
+  for (const contribution of orchestrated.contributions) {
+    if (contribution.role === 'harmony-synthesizer' || !contribution.success || !contribution.content?.trim()) {
+      continue;
+    }
+    try {
+      const parsed = options.parseResult
+        ? options.parseResult(contribution.content)
+        : contribution.content as T;
+      successfulResults.push({
+        model: contribution.model,
+        result: parsed,
+        success: true,
+      });
+    } catch (error) {
+      log.warn('Harmony contribution could not be parsed for consensus metadata', {
+        model: contribution.model,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (successfulResults.length === 0) {
+    throw new Error('Harmony produced no parseable legal-analysis contributions');
+  }
+
   const consensus = analyzeConsensus(successfulResults);
 
-  log.info('Consensus analysis complete', {
+  // Harmony synthesis is the final response authority. Participant agreement is
+  // retained as confidence metadata, never as a competing execution authority.
+  try {
+    consensus.result = options.parseResult
+      ? options.parseResult(orchestrated.finalAnswer)
+      : orchestrated.finalAnswer as T;
+  } catch {
+    // Keep the participant-derived consensus result if structured synthesis
+    // parsing fails; the parsing defect stays local instead of discarding all work.
+  }
+
+  log.info('Harmony legal consensus complete', {
     taskType: task.legalTaskType,
     agreement: consensus.agreement,
     confidence: consensus.confidence,
-    recommendation: consensus.recommendation
+    participants: successfulResults.length,
   });
 
   return consensus;
