@@ -17,20 +17,21 @@ interface SEOHeadProps {
   structuredData?: object;
   breadcrumbs?: BreadcrumbItem[];
   pageType?: "website" | "article" | "service" | "faq";
-  noIndex?: boolean; // For pages that should not be indexed (auth pages, admin, etc.)
-  ogImageAlt?: string; // Alt text for Open Graph image
-  twitterSite?: string; // Twitter @username
-  articlePublishedTime?: string; // For article pages
-  articleModifiedTime?: string; // For article pages
+  noIndex?: boolean;
+  ogImageAlt?: string;
+  twitterSite?: string;
+  articlePublishedTime?: string;
+  articleModifiedTime?: string;
 }
 
-const BASE_URL = "https://example.com";
-const TWITTER_SITE = "@BadBlueApp"; // Official Twitter handle
+const BASE_URL = "https://legalwhat.com";
+const SITE_NAME = "Legal What?";
+const DEFAULT_SHARE_IMAGE = `${BASE_URL}/images/Legal%20What%20Icon.png`;
 
 export function SEOHead({
   title,
   description,
-  keywords,
+  keywords: _keywords,
   ogTitle,
   ogDescription,
   ogType = "website",
@@ -38,120 +39,104 @@ export function SEOHead({
   canonicalUrl,
   structuredData,
   breadcrumbs,
-  pageType = "website",
+  pageType: _pageType = "website",
   noIndex = false,
   ogImageAlt,
   twitterSite,
   articlePublishedTime,
   articleModifiedTime,
 }: SEOHeadProps) {
-  const defaultOgImage = `${BASE_URL}/preview.png`;
-  const finalOgImage = ogImage || defaultOgImage;
-  const finalOgImageAlt = ogImageAlt || "BadBlue - AI-powered police accountability platform for filing complaints and civil rights lawsuits";
-  
-  // Default AI keywords to include on all pages
-  const aiKeywords = [
-    "7 provider AI system",
-    "parallel AI processing",
-    "Gemini Claude DeepSeek Grok Kimi Groq Mistral",
-    "AI coordination system",
-    "multi-AI analysis",
-    "AI legal team"
-  ];
-  
-  // Enhanced keywords including existing, new target keywords, and AI keywords
-  const enhancedKeywords = keywords ? 
-    `${keywords}, ${aiKeywords.join(", ")}, bad cops, cop assault, officer assault, law enforcement abuse, officer abuse, cop abuse, police misconduct, police brutality, excessive force, false arrest, civil rights violations, police accountability, file police complaint online, sue police officer, legal rights protection, justice accessibility, civil rights advocacy` :
-    `${aiKeywords.join(", ")}, police accountability, police misconduct, police brutality, bad cops, cop assault, officer assault, law enforcement abuse, officer abuse, cop abuse, excessive force, false arrest, civil rights violations, file police complaint online, sue police officer, legal rights protection service, transparent complaint filing system, civil rights advocacy tools, justice accessibility platform, legal empowerment for citizens`;
-  
   useEffect(() => {
-    // Set page title
-    document.title = title;
-
-    // Helper function to set or update meta tags
     const setMetaTag = (property: string, content: string, isProperty = false) => {
       const attribute = isProperty ? "property" : "name";
       let meta = document.querySelector(`meta[${attribute}="${property}"]`);
-      
       if (!meta) {
         meta = document.createElement("meta");
         meta.setAttribute(attribute, property);
         document.head.appendChild(meta);
       }
-      
       meta.setAttribute("content", content);
     };
 
-    // Set basic meta tags
-    setMetaTag("description", description);
-    setMetaTag("keywords", enhancedKeywords);
-    
-    // Set robots directive based on noIndex prop
-    const robotsDirective = noIndex 
-      ? "noindex, nofollow" 
-      : "index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1";
-    setMetaTag("robots", robotsDirective);
-    setMetaTag("googlebot", noIndex ? "noindex, nofollow" : "index, follow, max-snippet:-1, max-image-preview:large");
-    setMetaTag("bingbot", noIndex ? "noindex, nofollow" : "index, follow");
-    
-    setMetaTag("author", "BadBlue");
-    setMetaTag("language", "English");
-    setMetaTag("revisit-after", "1 days");
-    setMetaTag("rating", "General");
-    setMetaTag("distribution", "Global");
-    setMetaTag("referrer", "origin-when-cross-origin");
-    setMetaTag("format-detection", "telephone=no");
-    setMetaTag("HandheldFriendly", "True");
-    setMetaTag("MobileOptimized", "320");
-    setMetaTag("theme-color", "#1e40af");
-    setMetaTag("apple-mobile-web-app-capable", "yes");
-    setMetaTag("apple-mobile-web-app-status-bar-style", "black-translucent");
+    const removeMetaTag = (property: string, isProperty = false) => {
+      const attribute = isProperty ? "property" : "name";
+      document.querySelector(`meta[${attribute}="${property}"]`)?.remove();
+    };
 
-    // Set Open Graph tags for social media
+    const path = window.location.pathname || "/";
+    const inferredCanonical = new URL(path, `${BASE_URL}/`).toString();
+    const finalCanonical = canonicalUrl || inferredCanonical;
+    const finalOgImage = ogImage || DEFAULT_SHARE_IMAGE;
+    const finalOgImageAlt = ogImageAlt || "Legal What? legal technology platform logo";
+
+    document.title = title;
+    setMetaTag("description", description);
+    setMetaTag(
+      "robots",
+      noIndex
+        ? "noindex, nofollow"
+        : "index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1",
+    );
+    setMetaTag(
+      "googlebot",
+      noIndex
+        ? "noindex, nofollow"
+        : "index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1",
+    );
+    setMetaTag("bingbot", noIndex ? "noindex, nofollow" : "index, follow");
+    setMetaTag("author", SITE_NAME);
+    setMetaTag("referrer", "origin-when-cross-origin");
+
+    // Search engines don't use meta-keywords for ranking. Remove any legacy
+    // keyword-stuffed tag instead of emitting stale or misleading terms.
+    removeMetaTag("keywords");
+    removeMetaTag("revisit-after");
+    removeMetaTag("rating");
+    removeMetaTag("distribution");
+
     setMetaTag("og:title", ogTitle || title, true);
     setMetaTag("og:description", ogDescription || description, true);
     setMetaTag("og:type", ogType, true);
+    setMetaTag("og:url", finalCanonical, true);
+    setMetaTag("og:site_name", SITE_NAME, true);
+    setMetaTag("og:locale", "en_US", true);
     setMetaTag("og:image", finalOgImage, true);
-    if (canonicalUrl) {
-      setMetaTag("og:url", canonicalUrl, true);
-    }
+    setMetaTag("og:image:alt", finalOgImageAlt, true);
+    removeMetaTag("og:image:width", true);
+    removeMetaTag("og:image:height", true);
 
-    // Set Twitter Card tags with enhanced metadata
-    setMetaTag("twitter:card", "summary_large_image");
-    setMetaTag("twitter:site", twitterSite || TWITTER_SITE);
-    setMetaTag("twitter:creator", twitterSite || TWITTER_SITE);
+    setMetaTag("twitter:card", "summary");
     setMetaTag("twitter:title", ogTitle || title);
     setMetaTag("twitter:description", ogDescription || description);
     setMetaTag("twitter:image", finalOgImage);
     setMetaTag("twitter:image:alt", finalOgImageAlt);
-    
-    // Additional Open Graph metadata
-    setMetaTag("og:site_name", "BadBlue", true);
-    setMetaTag("og:locale", "en_US", true);
-    setMetaTag("og:image:alt", finalOgImageAlt, true);
-    setMetaTag("og:image:width", "1200", true);
-    setMetaTag("og:image:height", "630", true);
-    
-    // Article-specific metadata (for blog posts, news, etc.)
+    if (twitterSite) {
+      setMetaTag("twitter:site", twitterSite);
+      setMetaTag("twitter:creator", twitterSite);
+    } else {
+      removeMetaTag("twitter:site");
+      removeMetaTag("twitter:creator");
+    }
+
     if (articlePublishedTime) {
       setMetaTag("article:published_time", articlePublishedTime, true);
+    } else {
+      removeMetaTag("article:published_time", true);
     }
     if (articleModifiedTime) {
       setMetaTag("article:modified_time", articleModifiedTime, true);
+    } else {
+      removeMetaTag("article:modified_time", true);
     }
 
-    // Set canonical URL
-    if (canonicalUrl) {
-      let link = document.querySelector('link[rel="canonical"]');
-      if (!link) {
-        link = document.createElement("link");
-        link.setAttribute("rel", "canonical");
-        document.head.appendChild(link);
-      }
-      link.setAttribute("href", canonicalUrl);
+    let canonical = document.querySelector('link[rel="canonical"]');
+    if (!canonical) {
+      canonical = document.createElement("link");
+      canonical.setAttribute("rel", "canonical");
+      document.head.appendChild(canonical);
     }
+    canonical.setAttribute("href", finalCanonical);
 
-    // Add sitemap link reference (always point to root sitemap)
     let sitemapLink = document.querySelector('link[rel="sitemap"]');
     if (!sitemapLink) {
       sitemapLink = document.createElement("link");
@@ -161,35 +146,23 @@ export function SEOHead({
     }
     sitemapLink.setAttribute("href", `${BASE_URL}/sitemap.xml`);
 
-    // Add robots.txt link reference (always point to root robots.txt)
-    let robotsLink = document.querySelector('link[rel="robots"]');
-    if (!robotsLink) {
-      robotsLink = document.createElement("link");
-      robotsLink.setAttribute("rel", "robots");
-      document.head.appendChild(robotsLink);
-    }
-    robotsLink.setAttribute("href", `${BASE_URL}/robots.txt`);
-
-    // Add structured data (Schema.org)
+    let pageSchema = document.querySelector("script#page-schema");
     if (structuredData) {
-      let script = document.querySelector('script[type="application/ld+json"]');
-      if (!script) {
-        script = document.createElement("script");
-        script.setAttribute("type", "application/ld+json");
-        document.head.appendChild(script);
+      if (!pageSchema) {
+        pageSchema = document.createElement("script");
+        pageSchema.setAttribute("type", "application/ld+json");
+        pageSchema.setAttribute("id", "page-schema");
+        document.head.appendChild(pageSchema);
       }
-      script.textContent = JSON.stringify(structuredData);
+      pageSchema.textContent = JSON.stringify(structuredData);
+    } else {
+      pageSchema?.remove();
     }
 
-    // Add BreadcrumbList structured data for site navigation
-    const defaultBreadcrumbs: BreadcrumbItem[] = [
-      { name: "Home", url: BASE_URL }
-    ];
-    
-    const finalBreadcrumbs = breadcrumbs && breadcrumbs.length > 0 
-      ? [{ name: "Home", url: BASE_URL }, ...breadcrumbs]
-      : defaultBreadcrumbs;
-    
+    const finalBreadcrumbs = breadcrumbs && breadcrumbs.length > 0
+      ? [{ name: "Home", url: `${BASE_URL}/` }, ...breadcrumbs]
+      : [{ name: "Home", url: `${BASE_URL}/` }];
+
     const breadcrumbData = {
       "@context": "https://schema.org",
       "@type": "BreadcrumbList",
@@ -197,11 +170,11 @@ export function SEOHead({
         "@type": "ListItem",
         "position": index + 1,
         "name": crumb.name,
-        "item": crumb.url
-      }))
+        "item": crumb.url,
+      })),
     };
 
-    let breadcrumbScript = document.querySelector('script#breadcrumb-schema');
+    let breadcrumbScript = document.querySelector("script#breadcrumb-schema");
     if (!breadcrumbScript) {
       breadcrumbScript = document.createElement("script");
       breadcrumbScript.setAttribute("type", "application/ld+json");
@@ -210,29 +183,32 @@ export function SEOHead({
     }
     breadcrumbScript.textContent = JSON.stringify(breadcrumbData);
 
-    // NOTE: Organization and WebSite structured data are defined in index.html
-    // DO NOT duplicate them here - causes Google Search Console "duplicate field" errors
-    // FAQ structured data is handled by useFaqSchema hook on individual pages
-
-    // Add hreflang tags for language support
-    let hreflangEn = document.querySelector('link[hreflang="en"]');
-    if (!hreflangEn) {
-      hreflangEn = document.createElement("link");
-      hreflangEn.setAttribute("rel", "alternate");
-      hreflangEn.setAttribute("hreflang", "en");
-      document.head.appendChild(hreflangEn);
+    for (const lang of ["en", "x-default"]) {
+      let link = document.querySelector(`link[hreflang="${lang}"]`);
+      if (!link) {
+        link = document.createElement("link");
+        link.setAttribute("rel", "alternate");
+        link.setAttribute("hreflang", lang);
+        document.head.appendChild(link);
+      }
+      link.setAttribute("href", finalCanonical);
     }
-    hreflangEn.setAttribute("href", canonicalUrl || BASE_URL);
-
-    let hreflangXDefault = document.querySelector('link[hreflang="x-default"]');
-    if (!hreflangXDefault) {
-      hreflangXDefault = document.createElement("link");
-      hreflangXDefault.setAttribute("rel", "alternate");
-      hreflangXDefault.setAttribute("hreflang", "x-default");
-      document.head.appendChild(hreflangXDefault);
-    }
-    hreflangXDefault.setAttribute("href", canonicalUrl || BASE_URL);
-  }, [title, description, enhancedKeywords, ogTitle, ogDescription, ogType, finalOgImage, canonicalUrl, structuredData, breadcrumbs, pageType, noIndex, finalOgImageAlt, twitterSite, articlePublishedTime, articleModifiedTime]);
+  }, [
+    title,
+    description,
+    ogTitle,
+    ogDescription,
+    ogType,
+    ogImage,
+    canonicalUrl,
+    structuredData,
+    breadcrumbs,
+    noIndex,
+    ogImageAlt,
+    twitterSite,
+    articlePublishedTime,
+    articleModifiedTime,
+  ]);
 
   return null;
 }
