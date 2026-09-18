@@ -123,7 +123,6 @@ interface QuotaStatus {
     percentUsed: number;
     userUsed: number;
     autonomousUsed: number;
-    // GROQ POLICY: No autonomous limit - Groq reserved exclusively for autonomous functions
   };
   mistral: {
     used: number;
@@ -139,13 +138,13 @@ interface QuotaStatus {
     userUsed: number;
     autonomousUsed: number;
   };
-  // OpenRouter providers (USER context only)
+  // OpenRouter-backed providers
   deepseek: {
     used: number;
     limit: number;
     percentUsed: number;
     userUsed: number;
-    autonomousUsed: number; // Should be 0 - not allowed in autonomous
+    autonomousUsed: number;
   };
   grok: {
     used: number;
@@ -178,7 +177,6 @@ export interface ProviderRateProfile {
   percentUsed: number;
   isAvailable: boolean;
   autonomousUsed: number;
-  // GROQ POLICY: No autonomousLimit - Groq has unlimited capacity for autonomous functions
 }
 
 /**
@@ -192,22 +190,18 @@ export interface AdaptiveSearchDelayResult {
 
 class AITokenGovernorEnhanced {
   private static instance: AITokenGovernorEnhanced;
-  // Legacy compatibility flag retained for historical governor API shape. It
-  // no longer controls platform routing; Harmony is context-neutral.
-  private readonly GROQ_EXCLUSIVE_AUTONOMOUS = false;
-  
-  // Daily token limits for 7-way AI collaboration
-  private readonly MISTRAL_DAILY_TOKEN_LIMIT = 150000;  // AUTONOMOUS: ~50% of autonomous usage
-  private readonly GROQ_DAILY_TOKEN_LIMIT = 100000;     // AUTONOMOUS: Unlimited for autonomous functions
-  private readonly GEMINI_FLASH_LITE_DAILY_REQUEST_LIMIT = 1000; // USER: High-volume lightweight
-  private readonly GEMINI_FLASH_DAILY_REQUEST_LIMIT = 50;        // USER: Multimodal/advanced
-  private readonly GEMINI_DAILY_REQUEST_LIMIT = 50;     // Legacy - uses flash limit
-  private readonly CLAUDE_DAILY_TOKEN_LIMIT = 25000;    // USER: 5-10% of user usage
-  
-  // OpenRouter providers (USER context only - 50 RPD each)
-  private readonly DEEPSEEK_DAILY_REQUEST_LIMIT = 50;   // USER: Pattern recognition
-  private readonly GROK_DAILY_REQUEST_LIMIT = 50;       // USER: 2M context, multimodal
-  private readonly KIMI_DAILY_REQUEST_LIMIT = 50;       // USER: Structured extraction
+  // Legacy governor budget ceilings. These constrain accounting only; they do
+  // not partition providers by task context or override Harmony routing.
+  private readonly MISTRAL_DAILY_TOKEN_LIMIT = 150000;
+  private readonly GROQ_DAILY_TOKEN_LIMIT = 100000;
+  private readonly GEMINI_FLASH_LITE_DAILY_REQUEST_LIMIT = 1000;
+  private readonly GEMINI_FLASH_DAILY_REQUEST_LIMIT = 50;
+  private readonly GEMINI_DAILY_REQUEST_LIMIT = 50;
+  private readonly CLAUDE_DAILY_TOKEN_LIMIT = 25000;
+
+  private readonly DEEPSEEK_DAILY_REQUEST_LIMIT = 50;
+  private readonly GROK_DAILY_REQUEST_LIMIT = 50;
+  private readonly KIMI_DAILY_REQUEST_LIMIT = 50;
   
   // Requests per minute limits (conservative estimates for rate limiting)
   private readonly MISTRAL_RPM = 5;    // Conservative ~5 RPM
@@ -610,7 +604,7 @@ class AITokenGovernorEnhanced {
       }
     };
 
-    // Priority multiplier: critical/high user tasks get a boost for user-specialist providers
+    // Critical/high-priority work receives a small budget-efficiency boost.
     const priorityBoost = task.priority >= TaskPriority.HIGH_USER ? 1.05 : 1.0;
 
     // Get percent used for provider with safe defaults
@@ -659,10 +653,7 @@ class AITokenGovernorEnhanced {
     // Add 0.5 baseline so near-full providers aren't completely zero (but still de-prioritized)
     const efficiency = baseCapability * (0.5 + remainingFactor) * priorityBoost;
 
-    // Slightly prefer user-facing providers for user tasks (Gemini + Mistral for lightweight user tasks)
-    const userFaceBoost = (task.context === UsageContext.USER && task.isUserFacing) ? (provider === AIProvider.GEMINI ? 1.05 : 1.0) : 1.0;
-
-    return efficiency * userFaceBoost;
+    return efficiency;
   }
 
   /**
