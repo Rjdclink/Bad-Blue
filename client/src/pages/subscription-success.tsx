@@ -15,7 +15,11 @@ export default function SubscriptionSuccess() {
   const [message, setMessage] = useState("Verifying your LegalWhat subscription with Square...");
 
   const params = new URLSearchParams(window.location.search);
-  const orderId = params.get("orderId") || params.get("order_id") || "";
+  const orderId =
+    params.get("orderId") ||
+    params.get("order_id") ||
+    window.sessionStorage.getItem("legalwhat_pending_square_order_id") ||
+    "";
 
   const verifySubscription = async () => {
     if (!orderId) {
@@ -35,6 +39,7 @@ export default function SubscriptionSuccess() {
         if (data.active === true) {
           setState("active");
           setMessage("Subscription verified. Opening your LegalWhat law library...");
+          window.sessionStorage.removeItem("legalwhat_pending_square_order_id");
           await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
           await queryClient.refetchQueries({ queryKey: ["/api/auth/user"] });
           setLocation(data.redirectTo || "/welcome", { replace: true });
