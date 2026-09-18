@@ -1,372 +1,88 @@
-# BadBlue AI Architecture
+# LegalWhat AI Architecture
 
-## Overview
+## Canonical authority
 
-BadBlue implements a **7-way coordinated parallel AI system** that orchestrates multiple AI providers to complete complex tasks. The system maintains **100% free tier architecture** while providing intelligent model selection and graceful degradation.
+The platform uses one current-model registry: `server/aiHarmonyModelRegistry.ts`. It defines the 17 logical Harmony participants, their current model IDs, configuration probes, and capability declarations. Runtime services must not maintain a second provider-priority table or stale model catalog.
 
-## System Architecture
+Harmony is a **capability pool**, not a requirement to call every model on every request. A task advertises what it needs—legal analysis, verification, research, structured output, long context, coding, multimodal input, fast chat, or deep reasoning—and `server/aiCollaborationOrchestrator.ts` selects the smallest healthy subset that covers those capabilities. Other configured participants remain available for tasks where their strengths fit and for route-local recovery.
 
-### Context Separation
+## Current model defaults
 
-The system enforces strict context separation between autonomous and user-initiated tasks:
+Environment overrides remain authoritative. These are the canonical defaults as of 2026-09-18:
 
-| Context | Providers | Purpose |
-|---------|-----------|---------|
-| **AUTONOMOUS** | Groq + Mistral | Background tasks, worker jobs |
-| **USER** | Gemini + Claude + DeepSeek + Grok + Kimi | User-facing features |
+| Logical participant | Default model | Typical capabilities |
+|---|---|---|
+| Gemini | `gemini-3.8-flash` | fast chat, research, long context, multimodal, structured output |
+| Claude | `claude-sonnet-5` | legal analysis, deep reasoning, verification, coding |
+| Claude Opus | `claude-opus-5` | deep legal/reasoning work, verification |
+| Groq | `openai/gpt-oss-120b` | fast reasoning, coding, structured output |
+| Mistral | `mistral-small-2603` | fast chat, coding, agentic work, structured output |
+| DeepSeek | `deepseek/deepseek-v4.1-flash` | deep reasoning, coding, long context |
+| Grok | `x-ai/grok-4.6` | reasoning, research, multimodal |
+| Kimi | `moonshotai/kimi-k3` | reasoning, coding, long context, multimodal |
+| Qwen | `qwen/qwen3.8-max-0902` | reasoning, coding, long context, structured output |
+| OpenAI fast via OpenRouter | `openai/gpt-5.6-luna` | fast chat, legal analysis, structured output |
+| GPT-OSS | `openai/gpt-oss-120b` | fast/deep reasoning, coding |
+| OpenRouter auto | `openrouter/auto` | gateway-selected capability fallback |
+| Hugging Face | `openai/gpt-oss-120b:fastest` | reasoning, coding, structured output |
+| Cerebras | `gpt-oss-120b` | fast reasoning and coding |
+| SambaNova | `MiniMax-M3` | fast/deep reasoning, coding, multimodal |
+| Cohere | `command-a-plus-05-2026` | legal analysis, verification, research, structured output |
+| Together | `openai/gpt-oss-120b` | reasoning, coding, agentic work |
 
-### Provider Details
+## Orchestration rules
 
-#### AUTONOMOUS Providers (2-Way)
+1. **Capability first.** Provider identity is never a preference signal by itself.
+2. **Smallest sufficient subset.** Normal user turns use only the participants needed for the requested skills. Live LEXARA turns are intentionally bounded for latency.
+3. **One final response authority.** Specialist outputs are evidence. A synthesizer produces the service response when synthesis is needed.
+4. **Route-local failure.** One provider failing, throttling, or losing model access does not block unrelated routes.
+5. **Circuit breaking.** Repeatedly failing routes cool locally instead of being retried on every turn.
+6. **Bounded recovery.** A failed specialist gets at most one capability-matched alternate in the live path; no retry fan-out.
+7. **Context neutral.** User vs. autonomous context affects urgency/telemetry, not a hard provider silo.
+8. **Advisory ML.** Routing/ML workers may score capability fit, but they do not replace Harmony as execution authority.
+9. **Grounding is specialized evidence.** Crawlers and web-search adapters provide evidence when the task needs current external facts; they are not global prerequisites.
+10. **Service output stays task-shaped.** LEXARA answers directly and concisely; CryptoCrawler AI remains advisory to canonical economics/execution/settlement authorities.
 
-1. **Groq** (`llama-3.3-70b-versatile`)
-   - **Capacity**: Unlimited for autonomous functions
-   - **Strength**: Rapid analysis, fast inference
-   - **Use Case**: Primary autonomous provider
+## Core files
 
-2. **Mistral** (`mistral-small-latest`)
-   - **Capacity**: 150k tokens/day
-   - **Strength**: Balanced performance
-   - **Use Case**: Autonomous fallback
+- `server/aiHarmonyModelRegistry.ts` — current model/capability authority.
+- `server/aiModelSelector.ts` — capability scoring only.
+- `server/aiCollaborationOrchestrator.ts` — task-scoped Harmony collaboration and route-local failover.
+- `server/aiProvider.ts` — shared service entry point and direct transport adapters.
+- `server/aiTokenGovernor.ts` — quota/accounting compatibility layer; not a routing authority.
+- `server/legalModelOrchestrator.ts` — legal task metadata/consensus surfaces backed by Harmony.
+- `server/services/mlnlp/mlRoutingWorker.ts` — advisory capability scoring backed by the canonical registry.
 
-#### USER Providers (5-Way)
+## LEXARA live behavior
 
-1. **Gemini**
-   - `gemini-2.5-flash-lite`: 1000 RPD, ultra-fast, lightweight tasks
-   - `gemini-2.5-flash`: 50 RPD, multimodal, advanced tasks
-   - **Strength**: Google Search grounding, multimodal
+LEXARA uses the same Harmony pool but optimizes the live conversational path for human turn-taking:
 
-2. **Claude**
-   - `claude-3-5-haiku`: Fast responses, verification
-   - `claude-3-5-sonnet`: Advanced reasoning, legal analysis
-   - **Strength**: Superior reasoning, legal expertise
-
-3. **DeepSeek** (via OpenRouter)
-   - Model: `tngtech/deepseek-r1t2-chimera:free`
-   - **Capacity**: 50 RPD
-   - **Strength**: 671B params, pattern recognition
-
-4. **Grok** (via OpenRouter)
-   - Model: `x-ai/grok-4.1-fast:free`
-   - **Capacity**: 50 RPD
-   - **Strength**: 2M context, multimodal
-
-5. **Kimi** (via OpenRouter)
-   - Model: `moonshotai/kimi-k2:free`
-   - **Capacity**: 50 RPD
-   - **Strength**: 1T params, structured extraction
-
-### Total Free Capacity
-
-- **USER**: 1,300+ requests/day
-  - Gemini Flash Lite: 1000 RPD
-  - Gemini Flash: 50 RPD
-  - Claude: ~50 RPD
-  - DeepSeek: 50 RPD
-  - Grok: 50 RPD
-  - Kimi: 50 RPD
-- **AUTONOMOUS**: Unlimited (Groq) + 150k tokens/day (Mistral)
-
-## Core Components
-
-### AI Token Governor (`server/aiTokenGovernor.ts`)
-
-Manages quota allocation and provider selection based on context and task requirements.
-
-**Key Features:**
-- Context-aware provider blocking
-- Quota tracking per provider
-- Intelligent fallback chains
-- Connection pool optimization (single aggregated query)
-
-**Context Enforcement:**
-```typescript
-// AUTONOMOUS context: Only Groq and Mistral
-if (task.context === UsageContext.AUTONOMOUS) {
-  // Block: GEMINI, CLAUDE, DEEPSEEK, GROK, KIMI
-}
-
-// USER context: Only Gemini, Claude, DeepSeek, Grok, Kimi
-if (task.context === UsageContext.USER) {
-  // Block: GROQ, MISTRAL
-}
-```
-
-### AI Model Selector (`server/aiModelSelector.ts`)
-
-Scores providers across 11+ attributes to select optimal models for each task.
-
-**Task Attributes:**
-- `needsMultimodal` - Image/video processing
-- `needsLongContext` - Large document handling
-- `needsMassiveContext` - 2M+ token contexts
-- `needsStructuredOutput` - JSON/structured data
-- `needsCodeGeneration` - Code tasks
-- `needsCreativeWriting` - Creative content
-- `needsReasoning` - Complex analysis
-- `needsFastResponse` - Low latency
-- `needsVerification` - Fact-checking
-- `needsLegalAnalysis` - Legal expertise
-- `needsImageAnalysis` - Image understanding
-- `needsPatternRecognition` - Pattern detection
-- `needsDataExtraction` - Data parsing
-
-**Model Selection Logic:**
-```typescript
-// Gemini selection
-if (needsMultimodal || needsImageAnalysis) → gemini-2.5-flash (50 RPD)
-else → gemini-2.5-flash-lite (1000 RPD)
-
-// Claude selection
-if (needsLegalAnalysis || needsCreativeWriting) → claude-3-5-sonnet
-else → claude-3-5-haiku
-
-// OpenRouter selection
-if (needsMassiveContext) → Grok (2M context)
-if (needsStructuredOutput) → Kimi (extraction)
-if (needsPatternRecognition) → DeepSeek (reasoning)
-```
-
-### Collaboration Orchestrator (`server/aiCollaborationOrchestrator.ts`)
-
-Coordinates multi-provider tasks with role-based assignments.
-
-**Orchestration Strategies:**
-- `legal-analysis` - Claude Sonnet primary, verification chain
-- `multi-perspective` - Parallel provider queries
-- `context-split` - Grok for large context processing
-- `multimodal-focus` - Gemini/Grok for images
-- `parallel-race` - Fastest response wins
-- `verify-synthesize` - Cross-check and combine
-- `extract-format` - Kimi for structured extraction
-
-**Role Assignments:**
-| Role | Best Provider | Fallback |
-|------|--------------|----------|
-| image-analyst | Grok/Gemini | - |
-| rapid-searcher | Gemini Flash Lite | - |
-| context-processor | Grok | DeepSeek |
-| pattern-analyst | DeepSeek | - |
-| legal-analyst | Claude Sonnet | - |
-| verifier | Claude Haiku | - |
-| data-formatter | Kimi | - |
-| synthesizer | Best available | - |
-
-### OpenRouter Service (`server/openRouterService.ts`)
-
-Integrates DeepSeek, Grok, and Kimi via OpenRouter API.
-
-**Features:**
-- Circuit breakers (3 failures → 5min cooldown)
-- Manual rate limit tracking (50 RPD per model)
-- Exponential backoff for 429 errors
-- Officer-specific search function
-
-## Usage Examples
-
-### Officer Search (5-Way USER)
-
-```typescript
-// Uses intelligent model selection for officer searches
-const result = await searchOfficerInformation({
-  officerName: "John Smith",
-  state: "CA",
-  city: "Los Angeles",
-  includeGovernment: true,
-});
-
-// Orchestration flow:
-// 1. Gemini Flash Lite → Initial data harvest
-// 2. OpenRouter (DeepSeek/Grok/Kimi) → Supplemental search
-// 3. Claude Haiku → Verification
-// 4. Claude Sonnet → Synthesis (if legal analysis needed)
-```
-
-### Autonomous Task (2-Way)
-
-```typescript
-// Background worker task - only Groq/Mistral
-const budget = await aiTokenGovernor.getBudgetForTask({
-  taskName: 'daily-harvest',
-  priority: TaskPriority.MEDIUM_BACKGROUND,
-  complexity: TaskComplexity.MODERATE,
-  context: UsageContext.AUTONOMOUS, // Forces Groq/Mistral only
-});
-
-// Always uses Groq (unlimited) or Mistral (fallback)
-```
-
-### Legal Document Generation
-
-```typescript
-// Complex legal task - Claude Sonnet + verification
-const attrs: TaskAttributes = {
-  needsLegalAnalysis: true,
-  needsReasoning: true,
-  complexity: TaskComplexity.COMPREHENSIVE,
-  priority: TaskPriority.CRITICAL,
-};
-
-const result = await orchestrator.orchestrateCollaboration(
-  'legal-document',
-  documentPrompt,
-  attrs,
-  [AIProvider.CLAUDE, AIProvider.GEMINI]
-);
-
-// Uses 'legal-analysis' strategy:
-// 1. Claude Sonnet → Legal analysis
-// 2. DeepSeek → Pattern matching with precedents
-// 3. Claude Haiku → Verification
-```
+- a fast acknowledgement lane can speak once if deep analysis is not immediately ready;
+- presence checks such as “are you still there?” are separate control turns and do not mutate the active legal question;
+- later substantive turns are queued separately and analyzed in order;
+- ordinary answers default to the direct answer plus only material explanation;
+- grounded authority retrieval has a short conversational deadline and fails locally;
+- TTS/STT full duplex remains available with echo/artifact rejection and user barge-in.
 
 ## Configuration
 
-### Environment Variables
+At minimum configure the providers you intend to make available. Harmony automatically excludes unconfigured participants.
 
 ```bash
-# AUTONOMOUS providers
-GROQ_API_KEY=your-groq-key
-MISTRAL_API_KEY=your-mistral-key
-
-# USER providers (core)
-GEMINI_API_KEY=your-gemini-key
-ANTHROPIC_API_KEY=your-anthropic-key
-
-# USER providers (OpenRouter)
-OPENROUTER_API_KEY=your-openrouter-key
+GEMINI_API_KEY=...
+ANTHROPIC_API_KEY=...
+GROQ_API_KEY=...
+MISTRAL_API_KEY=...
+OPENROUTER_API_KEY=...
+HUGGINGFACE_API_TOKEN=...
+CEREBRAS_API_KEY=...
+SAMBANOVA_API_KEY=...
+COHERE_API_KEY=...
+TOGETHER_API_KEY=...
 ```
 
-### Provider Availability Check
+Model-specific environment overrides are supported by the canonical registry (for example `GEMINI_MODEL`, `CLAUDE_MODEL`, `CLAUDE_OPUS_MODEL`, `GROQ_CHAT_MODEL`, `MISTRAL_MODEL`, `DEEPSEEK_MODEL`, `GROK_MODEL`, `KIMI_MODEL`, and `QWEN_MODEL`).
 
-On startup, the system logs provider availability:
+## Regression guard
 
-```
-[AI Token Governor] Provider availability (7-way system):
-  AUTONOMOUS providers (2-way):
-    - Groq: ✓ Available
-    - Mistral: ✓ Available
-  USER providers (5-way):
-    - Gemini: ✓ Available
-    - Claude: ✓ Available
-    - DeepSeek: ✓ Available
-    - Grok: ✓ Available
-    - Kimi: ✓ Available
-```
-
-## Error Handling
-
-### Circuit Breakers
-
-Each provider has independent circuit breakers:
-- **Trigger**: 3 consecutive failures
-- **Cooldown**: 5 minutes
-- **Reset**: Automatic after successful request
-
-### Graceful Degradation
-
-1. **Primary provider fails** → Try next in priority order
-2. **All providers in context fail** → Return error with reason
-3. **Partial dependency failure** → Continue with available data
-
-### Rate Limit Handling
-
-- OpenRouter: Manual tracking (50 RPD limit)
-- Gemini: Adaptive cooldown with exponential backoff
-- Claude: Token-based quota tracking
-
-## Best Practices
-
-### Task Classification
-
-1. **Always specify context** - Ensures correct provider pool
-2. **Set appropriate complexity** - Affects model selection
-3. **Include task attributes** - Enables intelligent routing
-
-### Performance Optimization
-
-1. **Use Flash Lite for high-volume** - 1000 RPD vs 50 RPD
-2. **Batch similar requests** - Reduce API calls
-3. **Cache results** - 24-hour TTL for officer searches
-
-### Security Considerations
-
-1. **Context separation is enforced** - Cannot bypass programmatically
-2. **No sensitive data in prompts** - Redact before sending
-3. **Rate limits prevent abuse** - Per-provider tracking
-
-## Migration Notes
-
-### Deprecated: Bing Search API
-
-Bing Web Search API functions are deprecated due to HTTP 402 payment requirements:
-- `bingSearch()` → Returns empty, logs warning
-- `bingNewsSearch()` → Returns empty, logs warning
-
-**Replacement**: Use OpenRouter models or Gemini Search grounding.
-
-### Model Updates
-
-- Gemini default changed from `gemini-2.5-flash` to `gemini-2.5-flash-lite`
-- Pro model (`gemini-2.5-pro`) removed from default rotation due to 2-5 RPM limit
-
-## Troubleshooting
-
-### Common Issues
-
-1. **"No providers available for USER context"**
-   - Check: `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`
-   
-2. **"AUTONOMOUS_BLOCK" error**
-   - Task is trying to use USER provider in autonomous context
-   - Fix: Ensure correct `context` in task metadata
-
-3. **Rate limit errors**
-   - Wait for cooldown period (30s-5min)
-   - Switch to alternative provider
-
-4. **OpenRouter 429 errors**
-   - Daily limit reached (50 RPD per model)
-   - Wait for midnight UTC reset
-
-## Architecture Diagram
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     AI Token Governor                        │
-│  ┌─────────────────┐         ┌─────────────────┐           │
-│  │   AUTONOMOUS    │         │      USER       │           │
-│  │  ┌───────────┐  │         │  ┌───────────┐  │           │
-│  │  │   Groq    │  │         │  │  Gemini   │  │           │
-│  │  └───────────┘  │         │  └───────────┘  │           │
-│  │  ┌───────────┐  │         │  ┌───────────┐  │           │
-│  │  │  Mistral  │  │         │  │  Claude   │  │           │
-│  │  └───────────┘  │         │  └───────────┘  │           │
-│  └─────────────────┘         │  ┌───────────┐  │           │
-│                              │  │ DeepSeek  │  │           │
-│                              │  └───────────┘  │           │
-│                              │  ┌───────────┐  │           │
-│                              │  │   Grok    │  │           │
-│                              │  └───────────┘  │           │
-│                              │  ┌───────────┐  │           │
-│                              │  │   Kimi    │  │           │
-│                              │  └───────────┘  │           │
-│                              └─────────────────┘           │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    Model Selector                            │
-│  • Scores 9 models across 11+ attributes                    │
-│  • Context-aware selection                                  │
-│  • Intelligent fallback chains                              │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                Collaboration Orchestrator                    │
-│  • Role-based task assignment                               │
-│  • Dependency management                                     │
-│  • Result synthesis                                          │
-└─────────────────────────────────────────────────────────────┘
-```
+`npm run verify:ai-harmony` prevents stale active-runtime model IDs, context-based provider silos, and alternate execution authorities from silently returning.
