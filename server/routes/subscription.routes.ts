@@ -46,34 +46,28 @@ function userFromNote(note: unknown): string | null {
   return /^[A-Za-z0-9_-]{8,128}$/.test(id) ? id : null;
 }
 
-async function squareJson(square: any, path: string, init: RequestInit): Promise<any> {
-  const response = await square.fetch(path, init, { timeoutInSeconds: 10, maxRetries: 2 });
-  const raw = await response.text();
-  let body: any = {};
-  if (raw) {
-    try { body = JSON.parse(raw); } catch { body = {}; }
-  }
-  if (!response.ok) {
-    throw new Error(body?.errors?.[0]?.detail || `Square returned HTTP ${response.status}`);
-  }
-  return body;
-}
+const SQUARE_REQUEST_OPTIONS = { timeoutInSeconds: 10, maxRetries: 2 } as const;
 
-async function subscriptionsForCustomer(square: any, customerId: string, locationId: string): Promise<any[]> {
-  const body = await squareJson(square, "/v2/subscriptions/search", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      query: { filter: { customer_ids: [customerId], location_ids: [locationId] } },
-      limit: 100,
-    }),
-  });
-  return Array.isArray(body?.subscriptions) ? body.subscriptions : [];
+async function subscriptionsForCustomer(
+  square: ReturnType<typeof getSquareClient>,
+  customerId: string,
+  locationId: string,
+): Promise<any[]> {
+  const response = await square.subscriptions.search({
+    query: {
+      filter: {
+        customerIds: [customerId],
+        locationIds: [locationId],
+      },
+    },
+    limit: 100,
+  }, SQUARE_REQUEST_OPTIONS);
+  return Array.isArray(response?.subscriptions) ? response.subscriptions : [];
 }
 
 function activeMatchingSubscription(items: any[], variationId: string): any | null {
   return items.find((item) =>
-    String(item?.plan_variation_id || "") === variationId &&
+    String(item?.planVariationId || "") === variationId &&
     String(item?.status || "").toUpperCase() === "ACTIVE"
   ) || null;
 }
@@ -92,7 +86,7 @@ async function bindAndReconcile(id: string, customerId: string): Promise<{ activ
     hasPaidForAccess: false,
   });
 
-  const square = getSquareClient() as any;
+  const square = getSquareClient();
   const variationId = planVariationId();
   const items = await subscriptionsForCustomer(square, customerId, getSquareLocationId());
   const subscription = activeMatchingSubscription(items, variationId);
@@ -110,14 +104,14 @@ async function bindAndReconcile(id: string, customerId: string): Promise<{ activ
 }
 
 async function verifyCheckout(id: string, orderId: string): Promise<{ active: boolean; user: StatelessLocalUser }> {
-  const square = getSquareClient() as any;
-  const orderBody = await squareJson(square, `/v2/orders/${encodeURIComponent(orderId)}`, { method: "GET" });
+  const square = getSquareClient();
+  const orderBody = await square.orders.get({ orderId }, SQUARE_REQUEST_OPTIONS);
   const order = orderBody?.order;
   if (!order) throw new Error("Square order was not found");
-  if (String(order.location_id || "") !== getSquareLocationId()) throw new Error("Square order location does not match");
+  if (String(order.locationId || "") !== getSquareLocationId()) throw new Error("Square order location does not match");
 
   const tenders = Array.isArray(order.tenders) ? order.tenders : [];
-  const paymentId = String(tenders.find((t: any) => t?.payment_id)?.payment_id || "").trim();
+  const paymentId = String(tenders.find((t: any) => t?.paymentId)?.paymentId || "").trim();
   if (!paymentId) {
     return {
       active: false,
@@ -125,7 +119,7 @@ async function verifyCheckout(id: string, orderId: string): Promise<{ active: bo
     };
   }
 
-  const paymentBody = await squareJson(square, `/v2/payments/${encodeURIComponent(paymentId)}`, { method: "GET" });
+  const paymentBody = await square.payments.get({ paymentId }, SQUARE_REQUEST_OPTIONS);
   const payment = paymentBody?.payment;
   if (!payment) throw new Error("Square payment was not found");
   if (String(payment.status || "").toUpperCase() !== "COMPLETED") {
@@ -134,14 +128,14 @@ async function verifyCheckout(id: string, orderId: string): Promise<{ active: bo
       user: await updateLocalUserSubscriptionHttp({ userId: id, status: "pending_payment", hasPaidForAccess: false }),
     };
   }
-  if (String(payment.order_id || "") !== orderId) throw new Error("Square payment does not belong to this order");
+  if (String(payment.orderId || "") !== orderId) throw new Error("Square payment does not belong to this order");
   if (String(payment.note || "") !== noteForUser(id)) throw new Error("Square payment identity does not match");
-  if (Number(payment.amount_money?.amount || 0) !== SUBSCRIPTION_PRICE_CENTS ||
-      String(payment.amount_money?.currency || "").toUpperCase() !== "USD") {
+  if (Number(payment.amountMoney?.amount || 0) !== SUBSCRIPTION_PRICE_CENTS ||
+      String(payment.amountMoney?.currency || "").toUpperCase() !== "USD") {
     throw new Error("Square payment amount does not match the LegalWhat subscription");
   }
 
-  const customerId = String(payment.customer_id || order.customer_id || "").trim();
+  const customerId = String(payment.customerId || order.customerId || "").trim();
   if (!customerId) throw new Error("Square customer is missing from the completed payment");
   return bindAndReconcile(id, customerId);
 }
@@ -188,7 +182,7 @@ export async function handleLegalWhatSubscriptionWebhook(event: any): Promise<bo
     // Reconcile the customer's complete current Square state before revoking.
     // This prevents a stale/canceled older subscription event from disabling a
     // newer active LegalWhat subscription for the same customer.
-    const square = getSquareClient() as any;
+    const square = getSquareClient();
     const items = await subscriptionsForCustomer(square, customerId, getSquareLocationId());
     const activeSubscription = activeMatchingSubscription(items, variationId);
     if (activeSubscription) {
@@ -234,7 +228,7 @@ export function setupSubscriptionRoutes(app: Express): void {
         return res.json({ alreadyActive: true, redirectUrl: "/welcome" });
       }
 
-      const square = getSquareClient() as any;
+      const square = getSquareClient();
       const response = await square.checkout.paymentLinks.create({
         idempotencyKey: crypto.randomUUID(),
         quickPay: {
