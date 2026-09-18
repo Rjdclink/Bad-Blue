@@ -289,7 +289,6 @@ function Router() {
           <Route path="/support" component={Contact} />
           <Route path="/privacy" component={Privacy} />
           <Route path="/terms" component={Terms} />
-          <Route path="/legal-consultation" component={LegalConsultationPage} />
           <Route path="/faq" component={FAQPage} />
           <Route path="/petition/:slug" component={PetitionDetail} />
 
@@ -298,6 +297,7 @@ function Router() {
               <Route path="/administrator" component={AdminConsole} />
               <Route path="/admin" component={AdminConsole} />
               <Route path="/welcome" component={WelcomePage} />
+              <Route path="/legal-consultation" component={LegalConsultationPage} />
               <Route path="/lexara-consent/:domainId" component={LexaraConsentPage} />
               <Route path="/legal-tools" component={LegalToolsPage} />
               <Route path="/people-finder" component={SpectraPage} />
