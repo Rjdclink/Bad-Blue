@@ -224,6 +224,23 @@ function isPresenceControlTurn(value: string): boolean {
   return /^(?:(?:hey|hello)[, ]*)?(?:lexara[, ]*)?(?:are you (?:still )?there|you still there|you there|can you hear me|are you listening|hello|did you hear me|are you still working(?: on (?:this|it))?)[?.! ]*$/i.test(clean);
 }
 
+function splitTrailingPresenceControlTurn(value: string): { main: string; control: string } {
+  const trimmed = value.replace(/\s+/g, ' ').trim();
+  if (!trimmed) return { main: '', control: '' };
+  if (isPresenceControlTurn(trimmed)) return { main: '', control: trimmed };
+
+  const segments = trimmed.match(/[^.!?]+[.!?]?/g)?.map(segment => segment.trim()).filter(Boolean) || [];
+  if (segments.length < 2) return { main: trimmed, control: '' };
+
+  const last = segments[segments.length - 1];
+  if (!isPresenceControlTurn(last)) return { main: trimmed, control: '' };
+
+  return {
+    main: segments.slice(0, -1).join(' ').trim(),
+    control: last,
+  };
+}
+
 function mergeSpeechSegments(existing: string, incoming: string): string {
   const left = existing.replace(/\s+/g, ' ').trim();
   const right = incoming.replace(/\s+/g, ' ').trim();
@@ -391,6 +408,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const nonSemanticLexaraMessageIdsRef = useRef<Set<string>>(new Set());
   const currentTurnTextRef = useRef('');
   const analysisActiveRef = useRef(false);
+  const activeAnalysisNeedsReconciliationRef = useRef(false);
   const lastAcknowledgementRef = useRef<{ text: string; at: number }>({ text: '', at: 0 });
   const controlAcknowledgementSpeechRef = useRef<Promise<void> | null>(null);
   const responseEmotionRef = useRef<LEXARAEmotionHint>('authoritative');
@@ -418,7 +436,15 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     const text = voiceTurnBufferRef.current.trim();
     voiceTurnBufferRef.current = '';
     if (!text) return;
-    handleMessageRef.current(text);
+
+    // Some mobile/server STT chunks can contain the tail of a substantive turn
+    // plus a later conversational check-in. Keep the check-in as its own turn
+    // instead of grafting "are you still there?" onto the legal statement.
+    const split = splitTrailingPresenceControlTurn(text);
+    if (split.main) handleMessageRef.current(split.main);
+    if (split.control) {
+      window.setTimeout(() => handleMessageRef.current(split.control), 0);
+    }
   }, [clearVoiceTurnTimer]);
 
   const voiceMode = useVoiceMode({
@@ -693,6 +719,17 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
           }),
         });
         const data = response.ok ? await response.json() : null;
+        const acknowledgementKind = String(data?.kind || '');
+        if (
+          !presenceControl
+          && (acknowledgementKind === 'added-facts' || acknowledgementKind === 'analysis')
+        ) {
+          // A factual update can materially change the answer already being
+          // computed. Mark that answer stale, but keep the work alive until the
+          // update is safely queued; the next turn reconciles the new fact with
+          // the existing case context instead of presenting an obsolete result.
+          activeAnalysisNeedsReconciliationRef.current = true;
+        }
         const acknowledgement = String(data?.acknowledgement || '').trim();
         const normalizedAck = normalizeSpeechText(acknowledgement);
         const now = Date.now();
@@ -732,6 +769,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     const controller = new AbortController();
     currentRequestRef.current = controller;
     analysisActiveRef.current = true;
+    activeAnalysisNeedsReconciliationRef.current = false;
     let requestTimedOut = false;
     const requestTimeout = window.setTimeout(() => {
       requestTimedOut = true;
@@ -879,6 +917,18 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         setJurisdiction(data.jurisdiction);
       }
 
+      const reconcileBeforeAnswer =
+        activeAnalysisNeedsReconciliationRef.current
+        && pendingUserTurnQueueRef.current.length > 0;
+
+      // A new fact received during analysis can invalidate the answer that just
+      // finished. Do not speak a knowingly stale legal conclusion; the queued
+      // factual turn immediately re-runs the analysis against the accumulated
+      // case context. Presence checks and new questions do not trigger this.
+      if (reconcileBeforeAnswer) {
+        return;
+      }
+
       // Presence/control turns intentionally return the acknowledgement itself.
       // Do not render or speak the same sentence twice.
       const duplicateOfAcknowledgement =
@@ -924,6 +974,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       if (generation === generationRef.current) {
         currentRequestRef.current = null;
         analysisActiveRef.current = false;
+        activeAnalysisNeedsReconciliationRef.current = false;
         currentTurnTextRef.current = '';
         const pending = pendingUserTurnQueueRef.current.shift();
         if (pending?.text.trim()) {
@@ -1007,6 +1058,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     nonSemanticLexaraMessageIdsRef.current.clear();
     currentTurnTextRef.current = '';
     analysisActiveRef.current = false;
+    activeAnalysisNeedsReconciliationRef.current = false;
     controlAcknowledgementSpeechRef.current = null;
     lastAcknowledgementRef.current = { text: '', at: 0 };
     clearVoiceTurnBuffer();

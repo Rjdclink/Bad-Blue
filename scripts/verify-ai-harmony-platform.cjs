@@ -66,6 +66,7 @@ must(
   collaboration.includes('rankFallbackProviders') &&
   collaboration.includes('alternatives.slice(0, 1)') &&
   collaboration.includes('requestTimeoutMs') &&
+  collaboration.includes('maxFallbacks') &&
   collaboration.includes('withHarmonyDeadline') &&
   collaboration.includes('Promise.any') &&
   collaboration.includes("model: 'harmony-current'"),
