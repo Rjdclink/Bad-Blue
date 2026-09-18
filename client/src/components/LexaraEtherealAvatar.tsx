@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { cn } from '@/lib/utils';
 
 export type LEXARAEmotionHint = 'calm' | 'playful' | 'serious' | 'empathetic' | 'protective' | 'authoritative';
@@ -15,6 +15,13 @@ export interface LEXARAEtherealAvatarProps {
   className?: string;
   size?: 'sm' | 'md' | 'lg' | 'xl' | 'full';
 }
+
+const LEXARA_ATTORNEY_IMAGE_SOURCES = [
+  '/images/oip.webp?v=20260918-lexara3',
+  '/images/OIP.webp?v=20260918-lexara3',
+  '/images/OIP.comp12.webp?v=20260918-lexara3',
+  '/images/OIP.comp14.webp?v=20260918-lexara3',
+] as const;
 
 const SIZE_CONFIG = {
   sm: 'w-32 h-40',
@@ -35,6 +42,9 @@ export const LEXARAEtherealAvatar = memo(function LEXARAEtherealAvatar({
   className,
   size = 'full',
 }: LEXARAEtherealAvatarProps) {
+  const [imageIndex, setImageIndex] = useState(0);
+  const imageSrc = LEXARA_ATTORNEY_IMAGE_SOURCES[Math.min(imageIndex, LEXARA_ATTORNEY_IMAGE_SOURCES.length - 1)];
+
   return (
     <div
       className={cn(
@@ -45,10 +55,15 @@ export const LEXARAEtherealAvatar = memo(function LEXARAEtherealAvatar({
       aria-label="LEXARA professional legal assistant"
     >
       <img
-        src="/images/oip.webp"
-        alt="LEXARA professional attorney"
-        className="h-full w-full object-cover object-center"
+        src={imageSrc}
+        alt="LEXARA professional attorney seated behind her desk"
+        className="h-full w-full bg-slate-950 object-contain object-center"
         draggable={false}
+        decoding="async"
+        fetchPriority="high"
+        onError={() => {
+          setImageIndex(current => Math.min(current + 1, LEXARA_ATTORNEY_IMAGE_SOURCES.length - 1));
+        }}
       />
 
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-slate-950/85 via-slate-950/30 to-transparent" />
