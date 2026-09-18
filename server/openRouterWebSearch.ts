@@ -51,29 +51,18 @@ interface OpenRouterCompletion {
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 
 /**
- * OpenRouter Free-Tier Web Search Models
- * These models are optimized for web searching and information retrieval
- * Separate from the Gemini-based legal consultation system
- * 
- * Updated December 2025 with valid free models:
- * - qwen/qwen-2.5-72b-instruct:free - Qwen 2.5 72B instruct
- * - deepseek/deepseek-r1-0528:free - DeepSeek R1 reasoning model
- * - meta-llama/llama-3.3-70b-instruct:free - Meta Llama 3.3 70B
- * - google/gemma-2-9b-it:free - Google Gemma 2 9B IT
- * - microsoft/phi-4:free - Microsoft Phi-4
- * - mistralai/mistral-7b-instruct:free - Mistral 7B Instruct
- * - nousresearch/hermes-3-llama-3.1-405b:free - Hermes 3 (Llama 3.1 405B based)
- * - openchat/openchat-7b:free - OpenChat 7B
+ * Current OpenRouter analysis models used only when the dedicated server-side
+ * web-search tool is not requested. Keys remain stable for compatibility.
  */
 export const WEB_SEARCH_MODELS = {
-  QWEN_2_5_72B: 'qwen/qwen-2.5-72b-instruct:free',
-  DEEPSEEK_R1: 'tng/deepseek-r1t2-chimera:free',
-  LLAMA_3_3_70B: 'meta-llama/llama-4-maverick:free',
-  GEMMA_2_9B: 'google/gemma-2-9b-it:free',
-  PHI_4: 'microsoft/phi-4:free',
-  MISTRAL_7B: 'mistralai/mistral-7b-instruct:free',
-  HERMES_3_405B: 'nousresearch/hermes-3-llama-3.1-405b:free',
-  OPENCHAT_7B: 'openchat/openchat-7b:free',
+  QWEN_2_5_72B: 'qwen/qwen3.8-max-0902',
+  DEEPSEEK_R1: 'deepseek/deepseek-v4.1-flash',
+  LLAMA_3_3_70B: 'openai/gpt-oss-120b',
+  GEMMA_2_9B: 'google/gemini-3.8-flash',
+  PHI_4: 'openai/gpt-5.6-luna',
+  MISTRAL_7B: 'mistralai/mistral-medium-3.5',
+  HERMES_3_405B: 'x-ai/grok-4.6',
+  OPENCHAT_7B: 'moonshotai/kimi-k3',
 } as const;
 
 export type WebSearchModel = typeof WEB_SEARCH_MODELS[keyof typeof WEB_SEARCH_MODELS];
@@ -513,9 +502,9 @@ function aggregateResponses(results: ModelResult[]): string {
 }
 
 /**
- * Orchestrated parallel web search using all 6 free models
+ * Orchestrated parallel web analysis using the current compatibility model set
  * 
- * This function queries all available free-tier models in parallel and aggregates
+ * This function queries all configured current models in parallel and aggregates
  * their responses into a comprehensive result with confidence scoring.
  * 
  * @param query - The search query
@@ -555,9 +544,7 @@ export async function orchestratedWebSearch(
   }
 
   const results: ModelResult[] = [];
-  const allModels = Object.values(WEB_SEARCH_MODELS).filter(model => !model.startsWith('google/'));
-  // LEXARA authority grounding must not depend on Google-family models; the
-  // remaining OpenRouter providers retain independent multi-model coverage.
+  const allModels = Object.values(WEB_SEARCH_MODELS);
 
   // Enhanced system prompt for web search
   const systemPrompt = `You are an expert web researcher providing comprehensive, factual information. 

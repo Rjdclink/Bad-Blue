@@ -65,7 +65,7 @@ export interface HealthCheckResult {
 // Default model configurations
 const DEFAULT_MODELS: ModelConfig[] = [
   {
-    id: 'gemini-2.5-pro',
+    id: 'gemini-3.8-flash',
     name: 'Gemini 3 Pro',
     provider: 'gemini',
     status: 'online',
@@ -77,7 +77,7 @@ const DEFAULT_MODELS: ModelConfig[] = [
     maxBudget: 1000
   },
   {
-    id: 'gemini-2.5-flash',
+    id: 'gemini-3.8-flash',
     name: 'Gemini 3 Flash',
     provider: 'gemini',
     status: 'online',
@@ -89,8 +89,8 @@ const DEFAULT_MODELS: ModelConfig[] = [
     maxBudget: 2000
   },
   {
-    id: 'claude-3-sonnet',
-    name: 'Claude 3 Sonnet',
+    id: 'claude-sonnet-5',
+    name: 'Claude Sonnet 5',
     provider: 'anthropic',
     status: 'online',
     priority: 2,
@@ -101,8 +101,8 @@ const DEFAULT_MODELS: ModelConfig[] = [
     maxBudget: 500
   },
   {
-    id: 'groq-llama-70b',
-    name: 'Groq Llama 70B',
+    id: 'openai/gpt-oss-120b',
+    name: 'GPT-OSS 120B on Groq',
     provider: 'groq',
     status: 'online',
     priority: 3,
@@ -113,8 +113,8 @@ const DEFAULT_MODELS: ModelConfig[] = [
     maxBudget: 3000
   },
   {
-    id: 'mistral-7b',
-    name: 'Mistral 7B',
+    id: 'mistral-small-2603',
+    name: 'Mistral Small 4',
     provider: 'mistral',
     status: 'online',
     priority: 4,
@@ -143,42 +143,42 @@ const DEFAULT_ROUTES: RouteConfig[] = [
   {
     domain: 'legal',
     taskType: 'analysis',
-    primaryModelId: 'gemini-2.5-pro',
-    backupModelIds: ['claude-3-sonnet', 'groq-llama-70b', 'mistral-7b'],
+    primaryModelId: 'gemini-3.8-flash',
+    backupModelIds: ['claude-sonnet-5', 'openai/gpt-oss-120b', 'mistral-small-2603'],
     routingStrategy: 'dual',
-    weights: { 'gemini-2.5-pro': 1.0, 'claude-3-sonnet': 0.9, 'groq-llama-70b': 0.7 }
+    weights: { 'gemini-3.8-flash': 1.0, 'claude-sonnet-5': 0.9, 'openai/gpt-oss-120b': 0.7 }
   },
   {
     domain: 'legal',
     taskType: 'drafting',
-    primaryModelId: 'claude-3-sonnet',
-    backupModelIds: ['gemini-2.5-pro', 'gemini-2.5-flash', 'mistral-7b'],
+    primaryModelId: 'claude-sonnet-5',
+    backupModelIds: ['gemini-3.8-flash', 'gemini-3.8-flash', 'mistral-small-2603'],
     routingStrategy: 'single',
-    weights: { 'claude-3-sonnet': 1.0, 'gemini-2.5-pro': 0.95 }
+    weights: { 'claude-sonnet-5': 1.0, 'gemini-3.8-flash': 0.95 }
   },
   {
     domain: 'crypto',
     taskType: 'analysis',
-    primaryModelId: 'gemini-2.5-flash',
-    backupModelIds: ['groq-llama-70b', 'mistral-7b'],
+    primaryModelId: 'gemini-3.8-flash',
+    backupModelIds: ['openai/gpt-oss-120b', 'mistral-small-2603'],
     routingStrategy: 'single',
-    weights: { 'gemini-2.5-flash': 1.0, 'groq-llama-70b': 0.85 }
+    weights: { 'gemini-3.8-flash': 1.0, 'openai/gpt-oss-120b': 0.85 }
   },
   {
     domain: 'osint',
     taskType: 'summarization',
-    primaryModelId: 'groq-llama-70b',
-    backupModelIds: ['gemini-2.5-flash', 'mistral-7b'],
+    primaryModelId: 'openai/gpt-oss-120b',
+    backupModelIds: ['gemini-3.8-flash', 'mistral-small-2603'],
     routingStrategy: 'single',
-    weights: { 'groq-llama-70b': 1.0, 'gemini-2.5-flash': 0.9 }
+    weights: { 'openai/gpt-oss-120b': 1.0, 'gemini-3.8-flash': 0.9 }
   },
   {
     domain: 'general',
     taskType: 'chat',
-    primaryModelId: 'gemini-2.5-flash',
-    backupModelIds: ['claude-3-sonnet', 'groq-llama-70b', 'mistral-7b', 'local-llm'],
+    primaryModelId: 'gemini-3.8-flash',
+    backupModelIds: ['claude-sonnet-5', 'openai/gpt-oss-120b', 'mistral-small-2603', 'local-llm'],
     routingStrategy: 'single',
-    weights: { 'gemini-2.5-flash': 1.0, 'claude-3-sonnet': 0.9, 'groq-llama-70b': 0.85 }
+    weights: { 'gemini-3.8-flash': 1.0, 'claude-sonnet-5': 0.9, 'openai/gpt-oss-120b': 0.85 }
   }
 ];
 

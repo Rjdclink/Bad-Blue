@@ -1,19 +1,10 @@
 // server/gemini.ts
 
 /**
- * Gemini (Google) AI Service - MIGRATED to @google/genai SDK (Nov 30, 2025)
- * - Shared low-level client for entire application
- * - Supports text + JSON structured output
- * - Defaults to Gemini 3.8 Flash for current low-latency production use
- * 
- * Available Gemini Models (December 2025):
- * - gemini-3.8-flash (current stable Flash)
- * - gemini-2.5-pro (powerful model, advanced reasoning)
- * - gemini-2.0-flash (previous stable)
- * - gemini-3.0-flash-preview (preview features, experimental)
- * 
- * NOTE: @google/generative-ai is DEPRECATED (EOL Nov 30, 2025)
- * This file now uses the new unified @google/genai SDK
+ * Gemini (Google) AI Service using the @google/genai SDK.
+ * Defaults to the current stable Gemini 3.8 Flash model and accepts an explicit
+ * environment/model override. Older generations are not retained as hard-coded
+ * runtime fallbacks.
  */
 
 import { GoogleGenAI } from "@google/genai";
@@ -108,10 +99,6 @@ export async function callGemini(
   }
 
   // Primary model: gemini-3.8-flash (current stable Flash)
-  // Fallback models in order of preference:
-  // - gemini-2.5-pro (powerful model, advanced reasoning)
-  // - gemini-2.0-flash (previous stable)
-  // - gemini-3.0-flash-preview (preview features, experimental)
   const modelName = options.model || process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash";
   console.log(`[Gemini] Using model: ${modelName}`);
   const client = getGeminiClient();
@@ -254,7 +241,7 @@ Respond with a JSON object containing:
       : `User: ${userMessage}`;
 
     const response = await client.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash",
       contents: [
         { role: "user", parts: [{ text: `${systemPrompt}\n\n${fullPrompt}` }] }
       ],

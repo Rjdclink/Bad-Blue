@@ -1,6 +1,7 @@
 import { AICollaborationOrchestrator } from '../aiCollaborationOrchestrator';
-import { AIProvider, UsageContext } from '../aiTokenGovernor';
+import { UsageContext } from '../aiTokenGovernor';
 import { TaskComplexity, TaskPriority } from '../aiModelSelector';
+import { getConfiguredHarmonyProviders } from '../aiHarmonyModelRegistry';
 import type { LawType as ExpertLawType } from '../../shared/legalCounselTypes';
 import { LAW_TYPE_DATA } from '../../shared/lawTypes';
 import { mapProductLawTypeToExpert } from '../../shared/legalDomainMapping';
@@ -33,17 +34,85 @@ const MAX_HISTORY_MESSAGES = 16;
 const MAX_HISTORY_CHARACTERS = 14000;
 const MAX_PROMPT_CHARACTERS = 7000;
 
-function getLexaraHarmonyProviders(): AIProvider[] {
-  const providers: AIProvider[] = [];
-  if (process.env.ANTHROPIC_API_KEY?.trim() || process.env.CLAUDE_API_KEY?.trim()) {
-    providers.push(AIProvider.CLAUDE, AIProvider.CLAUDE_OPUS);
+export type LexaraAcknowledgementKind =
+  | 'presence'
+  | 'added-facts'
+  | 'new-question'
+  | 'analysis';
+
+export interface LexaraImmediateAcknowledgement {
+  text: string;
+  terminal: boolean;
+  kind: LexaraAcknowledgementKind;
+}
+
+function deterministicVariant(seed: string, options: string[]): string {
+  let hash = 0;
+  for (let index = 0; index < seed.length; index++) {
+    hash = ((hash << 5) - hash + seed.charCodeAt(index)) | 0;
   }
-  if (process.env.GROQ_API_KEY?.trim()) providers.push(AIProvider.GROQ);
-  if (process.env.MISTRAL_API_KEY?.trim()) providers.push(AIProvider.MISTRAL);
-  if (process.env.OPENROUTER_API_KEY?.trim()) {
-    providers.push(AIProvider.DEEPSEEK, AIProvider.GROK, AIProvider.KIMI, AIProvider.QWEN);
+  return options[Math.abs(hash) % options.length];
+}
+
+/**
+ * Fast conversational lane. It never makes a legal conclusion; it only gives
+ * the natural acknowledgement that a person would give while the deeper
+ * Harmony/legal-authority work continues.
+ */
+export function getLexaraImmediateAcknowledgement(prompt: string): LexaraImmediateAcknowledgement {
+  const clean = String(prompt || '').trim();
+  const normalized = clean.toLowerCase().replace(/\s+/g, ' ');
+  const presenceOnly = /^(?:hey[, ]*)?(?:lexara[, ]*)?(?:are you (?:still )?there|you still there|you there|can you hear me|are you listening|hello)[?.! ]*$/i.test(clean);
+
+  if (presenceOnly) {
+    return {
+      text: deterministicVariant(normalized, [
+        "Yes, I'm still here. I'm reviewing the facts you've provided.",
+        "I'm still here. I'm reviewing what you've told me and looking into it.",
+        "Yes. I'm here, and I'm continuing to analyze what you've provided.",
+      ]),
+      terminal: true,
+      kind: 'presence',
+    };
   }
-  return [...new Set(providers)];
+
+  const addedFactSignal = /\b(?:also|another thing|one more thing|and then|actually|but|however|i forgot|i should add|additional(?:ly)?|the other thing|what happened was)\b/i.test(clean);
+  const substantiveQuestion = /\?|\b(?:what|why|how|when|where|who|which|can|could|would|should|do|does|did|is|are|am|will|may)\b/i.test(clean);
+  const substantiveLength = clean.split(/\s+/).filter(Boolean).length;
+
+  if (addedFactSignal || (substantiveLength >= 20 && !substantiveQuestion)) {
+    return {
+      text: deterministicVariant(normalized, [
+        "I've got that. I'm incorporating it into the facts I'm reviewing.",
+        "I have that. I'm adding it to the facts and continuing the analysis.",
+        "Understood. I'm factoring that into the rest of what you've told me.",
+      ]),
+      terminal: false,
+      kind: 'added-facts',
+    };
+  }
+
+  if (substantiveQuestion) {
+    return {
+      text: deterministicVariant(normalized, [
+        "Let me look into that.",
+        "I'm looking into that now.",
+        "Let me analyze that with the facts you've already given me.",
+      ]),
+      terminal: false,
+      kind: 'new-question',
+    };
+  }
+
+  return {
+    text: deterministicVariant(normalized, [
+      "I'm reviewing the facts you've provided.",
+      "I'm reviewing what you've told me and analyzing it.",
+      "I've got it. I'm working through the facts now.",
+    ]),
+    terminal: false,
+    kind: 'analysis',
+  };
 }
 
 const STATE_BY_ABBREVIATION: Record<string, string> = {
@@ -231,11 +300,23 @@ export async function generateLexaraConversationResponse(
   }
 
   const mappedLawType = mapLexaraLawType(context.lawType);
+  const immediate = getLexaraImmediateAcknowledgement(cleanPrompt);
   const history = buildConversationHistory(context.previousMessages);
   const jurisdiction = inferJurisdiction(cleanPrompt)
     || normalizeJurisdiction(context.jurisdiction)
     || inferPriorUserJurisdiction(context.previousMessages);
   const domainName = trustedDomainName(context.lawType);
+
+  // Pure presence checks are conversational control turns, not legal-analysis
+  // jobs. Returning here prevents "Are you still there?" from launching a
+  // multi-model legal research cycle.
+  if (immediate.terminal) {
+    return {
+      text: immediate.text,
+      jurisdiction,
+      mappedLawType,
+    };
+  }
 
   // Source research is route-local and fail-open for ordinary conversation.
   // It uses the platform retrieval stack and never makes Google/Gemini a LEXARA
@@ -252,7 +333,7 @@ export async function generateLexaraConversationResponse(
   // Capability-first Harmony route. No model is globally preferred. The shared
   // Harmony engine assigns independent legal-analysis, verification, and synthesis
   // roles according to capability while provider failures remain local.
-  const harmonyProviders = getLexaraHarmonyProviders();
+  const harmonyProviders = getConfiguredHarmonyProviders();
   let text = '';
   if (harmonyProviders.length > 0) {
     try {
@@ -266,11 +347,11 @@ export async function generateLexaraConversationResponse(
           needsLegalAnalysis: true,
           needsVerification: true,
           needsReasoning: true,
-          needsFastResponse: true,
+          needsFastResponse: false,
         },
         harmonyProviders,
         {
-          providerPolicy: 'capability-first-no-google',
+          providerPolicy: 'capability-first',
           systemPrompt,
         },
       );

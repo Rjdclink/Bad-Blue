@@ -19,6 +19,7 @@ const exec = promisify(execCallback);
 
 import {
   generateAutonomousText,
+  generateUserText,
   canAutonomousProceed,
   getAutonomousRescheduleInfo,
   TaskPriority,
@@ -41,7 +42,7 @@ const STATE_FILE = path.join(SUBAGENT_DATA_DIR, 'state.json');
 const OFFICER_SEARCH_LOG = path.join(SUBAGENT_DATA_DIR, 'officerSearchLog.json');
 const LEARNING_DATA = path.join(SUBAGENT_DATA_DIR, 'learningData.json');
 
-const PREFERRED_MODEL = process.env.PREFERRED_MODEL || 'gpt-4o-mini';
+const PREFERRED_MODEL = process.env.PREFERRED_MODEL || 'openai/gpt-5.6-luna';
 const BING_API_KEY = process.env.BING_API_KEY || process.env.BING_SEARCH_KEY || '';
 const SUBAGENT_ALLOW_ADMIN_MODS = process.env.SUBAGENT_ALLOW_ADMIN_MODS === 'true';
 const WEB_SEARCH_ENABLED = process.env.WEB_SEARCH_ENABLED !== 'false';
@@ -222,7 +223,7 @@ async function fetchWithFallback(url: string, options?: any): Promise<any> {
 export interface AIFallbackResult {
   success: boolean;
   content?: string;
-  provider?: 'gemini' | 'groq' | 'mistral' | 'openrouter' | 'anthropic' | 'local';
+  provider?: 'harmony' | 'gemini' | 'groq' | 'mistral' | 'openrouter' | 'anthropic' | 'local';
   model?: string;
   tokensUsed?: number;
   error?: string;
@@ -327,8 +328,41 @@ export async function callAIWithFallback(
     type: 'aiFallbackStart', 
     taskName,
     promptLength: prompt.length,
-    preferredProvider: options.preferredProvider || 'openrouter'
+    preferredProvider: options.preferredProvider || 'capability-harmony'
   });
+
+  // Platform invariant: every service enters the shared capability-driven
+  // Harmony mesh first. This compatibility function remains only as a local
+  // recovery chain when the shared orchestrator itself cannot produce output.
+  try {
+    const harmonySystemPrompt = options.useJSON
+      ? `${options.systemPrompt || ''}\n\nReturn ONLY valid JSON. Do not wrap it in markdown.`
+      : options.systemPrompt;
+    const harmony = await generateUserText(
+      taskName,
+      prompt,
+      {
+        systemPrompt: harmonySystemPrompt,
+        temperature: options.temperature,
+        maxTokens: options.maxTokens,
+        useJSON: options.useJSON,
+      },
+      TaskPriority.HIGH_USER,
+    );
+    if (harmony.content?.trim()) {
+      fallbackChain.push('harmony:success');
+      return {
+        success: true,
+        content: harmony.content,
+        provider: 'harmony',
+        model: 'harmony-current',
+        tokensUsed: harmony.tokensUsed,
+        fallbackChain,
+      };
+    }
+  } catch (error) {
+    fallbackChain.push(`harmony:failed(${(error instanceof Error ? error.message : String(error)).slice(0, 50)})`);
+  }
 
   const providers: Array<{
     name: LiveFallbackProvider;
@@ -358,7 +392,7 @@ export async function callAIWithFallback(
           systemPrompt: options.systemPrompt,
           temperature: options.temperature,
           maxTokens: options.maxTokens,
-          model: process.env.LEXARA_CLAUDE_MODEL?.trim() || process.env.CLAUDE_MODEL?.trim() || 'claude-sonnet-4-6',
+          model: process.env.LEXARA_CLAUDE_MODEL?.trim() || process.env.CLAUDE_MODEL?.trim() || 'claude-sonnet-5',
           useJSON: options.useJSON,
         });
         return result.content;

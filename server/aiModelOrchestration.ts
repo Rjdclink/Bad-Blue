@@ -60,12 +60,12 @@ export interface OrchestrationResult {
 /**
  * Available AI models configuration
  * These are the free/open models integrated into the system
- * Updated December 2025: Gemini 3 models (newest flagship)
+ * Compatibility layer aligned to current Harmony model generations
  */
 export const AI_MODELS: AIModel[] = [
   // Google Gemini 3 - Primary for research and legal analysis (NEWEST)
   {
-    id: 'gemini-2.5-pro',
+    id: 'gemini-3.8-flash',
     name: 'Gemini 3 Pro',
     provider: 'gemini',
     roles: ['research', 'legal_analysis', 'summarization', 'reasoning'],
@@ -75,7 +75,7 @@ export const AI_MODELS: AIModel[] = [
     priority: 1
   },
   {
-    id: 'gemini-2.5-flash',
+    id: 'gemini-3.8-flash',
     name: 'Gemini 3 Flash',
     provider: 'gemini',
     roles: ['research', 'drafting', 'inference'],
@@ -87,8 +87,8 @@ export const AI_MODELS: AIModel[] = [
   
   // Anthropic Claude - Reasoning and empathy
   {
-    id: 'claude-3-sonnet',
-    name: 'Claude 3 Sonnet',
+    id: 'claude-sonnet-5',
+    name: 'Claude Sonnet 5',
     provider: 'anthropic',
     roles: ['reasoning', 'empathy', 'legal_analysis'],
     maxTokens: 4096,
@@ -97,8 +97,8 @@ export const AI_MODELS: AIModel[] = [
     priority: 2
   },
   {
-    id: 'claude-3-haiku',
-    name: 'Claude 3 Haiku',
+    id: 'claude-haiku-4-5-20251001',
+    name: 'Claude Haiku 4.5',
     provider: 'anthropic',
     roles: ['drafting', 'summarization'],
     maxTokens: 4096,
@@ -109,8 +109,8 @@ export const AI_MODELS: AIModel[] = [
   
   // OpenRouter Models - Various specialized tasks
   {
-    id: 'llama-3-70b',
-    name: 'Llama 3 70B',
+    id: 'deepseek/deepseek-v4.1-flash',
+    name: 'DeepSeek V4.1 Flash',
     provider: 'openrouter',
     roles: ['inference', 'reasoning', 'coding'],
     maxTokens: 4096,
@@ -119,8 +119,8 @@ export const AI_MODELS: AIModel[] = [
     priority: 2
   },
   {
-    id: 'llama-3.1-405b',
-    name: 'Llama 3.1 405B',
+    id: 'qwen/qwen3.8-max-0902',
+    name: 'Qwen3.8 Max',
     provider: 'openrouter',
     roles: ['research', 'legal_analysis', 'reasoning'],
     maxTokens: 8192,
@@ -131,8 +131,8 @@ export const AI_MODELS: AIModel[] = [
   
   // Groq - Fast inference
   {
-    id: 'groq-llama-70b',
-    name: 'Groq Llama 70B',
+    id: 'openai/gpt-oss-120b',
+    name: 'GPT-OSS 120B on Groq',
     provider: 'groq',
     roles: ['empathy', 'summarization', 'drafting'],
     maxTokens: 4096,
@@ -141,8 +141,8 @@ export const AI_MODELS: AIModel[] = [
     priority: 3
   },
   {
-    id: 'groq-llama-4-scout',
-    name: 'Groq Llama 4 Scout',
+    id: 'openai/gpt-oss-20b',
+    name: 'GPT-OSS 20B on Groq',
     provider: 'groq',
     roles: ['coding', 'inference'],
     maxTokens: 4096,
@@ -153,8 +153,8 @@ export const AI_MODELS: AIModel[] = [
   
   // Mistral - Specialized coding and inference
   {
-    id: 'mistral-7b',
-    name: 'Mistral 7B',
+    id: 'mistral-small-2603',
+    name: 'Mistral Small 4',
     provider: 'mistral',
     roles: ['coding', 'inference', 'drafting'],
     maxTokens: 4096,
@@ -163,8 +163,8 @@ export const AI_MODELS: AIModel[] = [
     priority: 4
   },
   {
-    id: 'mistral-medium',
-    name: 'Mistral Medium',
+    id: 'mistral-medium-3-5',
+    name: 'Mistral Medium 3.5',
     provider: 'mistral',
     roles: ['legal_analysis', 'research'],
     maxTokens: 4096,

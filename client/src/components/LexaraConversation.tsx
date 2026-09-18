@@ -12,6 +12,7 @@ import {
 import { getLexaraLiveEnabled } from '@/components/LexaraLiveConsentModal';
 import { analyzeUserSignals } from '@shared/lexaraVoicePersona';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/hooks/useAuth';
 
 interface LexaraConversationProps {
   lawTypeId?: string;
@@ -46,10 +47,10 @@ type ConversationPhase =
   | 'error';
 
 const CONVERSATION_STORAGE_SCHEMA_VERSION = 2;
-const BROWSER_FINAL_FALLBACK_SETTLE_MS = 2_200;
+const BROWSER_FINAL_FALLBACK_SETTLE_MS = 900;
 const SERVER_VOICE_TURN_SETTLE_MS = 500;
-const VOICE_END_GRACE_MS = 1_400;
-const INCOMPLETE_TURN_GRACE_MS = 3_200;
+const VOICE_END_GRACE_MS = 650;
+const INCOMPLETE_TURN_GRACE_MS = 2_400;
 const CHAT_TURN_TIMEOUT_MS = 45_000;
 const MAX_STORED_CONVERSATION_MESSAGES = 24;
 
@@ -176,6 +177,39 @@ function isSuspiciousGenericServerTranscript(
   return highNoSpeech
     || (short && (weakLogprob || weakConfidence))
     || (veryShort && !hasAcousticQuality);
+}
+
+function stripLikelyPhantomCloserTail(
+  text: string,
+  meta: VoiceTranscriptMeta,
+): string {
+  const trimmed = text.replace(/\s+/g, ' ').trim();
+  if (!trimmed) return '';
+
+  // STT can append stock closers heard from speaker leakage or hallucinated in
+  // trailing silence. Preserve the substantive prefix instead of discarding the
+  // whole turn (e.g. "Yeah, but she's a con. Thank you. Bye. Thank you.").
+  const repeatedCloserTail = /(?:[\s,.!?;:—-]*(?:thank\s+you|thanks|bye|goodbye|okay|ok)){2,}[\s.!?]*$/i;
+  const withoutRepeatedTail = trimmed.replace(repeatedCloserTail, '').trim();
+  if (withoutRepeatedTail !== trimmed) {
+    return withoutRepeatedTail;
+  }
+
+  const weakAcousticEvidence =
+    meta.startedDuringPlayback
+    || (typeof meta.noSpeechProbability === 'number' && meta.noSpeechProbability >= 0.35)
+    || (typeof meta.avgLogprob === 'number' && meta.avgLogprob <= -0.75)
+    || (typeof meta.confidence === 'number' && meta.confidence < 0.5);
+
+  if (weakAcousticEvidence) {
+    const singleCloserTail = /(?:[\s,.!?;:—-]+(?:thank\s+you|thanks|bye|goodbye))[\s.!?]*$/i;
+    const withoutSingleTail = trimmed.replace(singleCloserTail, '').trim();
+    if (withoutSingleTail && withoutSingleTail !== trimmed) {
+      return withoutSingleTail;
+    }
+  }
+
+  return trimmed;
 }
 
 function mergeSpeechSegments(existing: string, incoming: string): string {
@@ -305,7 +339,13 @@ function emotionFromUserText(text: string): LEXARAEmotionHint {
 }
 
 export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraConversationProps) {
-  const initialStateRef = useRef(loadStoredConversation(lawTypeId));
+  const { user } = useAuth();
+  const isMasterSession = Boolean((user as any)?.isMasterBypass);
+  const initialStateRef = useRef(
+    isMasterSession
+      ? { sessionId: makeSessionId(), jurisdiction: undefined, messages: [] as ConversationMessage[] }
+      : loadStoredConversation(lawTypeId),
+  );
   const storageKeyRef = useRef(conversationStorageKey(lawTypeId));
   const sessionIdRef = useRef(initialStateRef.current.sessionId);
 
@@ -388,7 +428,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       }
     },
     onTranscript: (text, isFinal, meta) => {
-      const observed = text.trim();
+      const observed = stripLikelyPhantomCloserTail(text, meta);
       if (!observed) return;
 
       // Keep the microphone live while LEXARA speaks, but never trust VAD/AEC
@@ -657,23 +697,62 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     setGaze('thinking');
 
     try {
-      const response = await fetch('/api/lexara/chat', {
+      const sharedContext = {
+        previousMessages,
+        lawType: lawTypeId,
+        lawTypeName,
+        jurisdiction,
+        sessionId: sessionIdRef.current,
+        behaviorMode: 'professional',
+      };
+
+      // Start the deep legal/Harmony path immediately, but do not make the user
+      // wait silently for it. The acknowledgement endpoint is deliberately
+      // sub-LLM and returns a context-aware conversational response right away.
+      const analysisPromise = fetch('/api/lexara/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
         body: JSON.stringify({
           prompt: message,
           includeAudio: false,
-          context: {
-            previousMessages,
-            lawType: lawTypeId,
-            lawTypeName,
-            jurisdiction,
-            sessionId: sessionIdRef.current,
-            behaviorMode: 'professional',
-          },
+          context: sharedContext,
         }),
       });
+
+      const acknowledgementPromise = fetch('/api/lexara/acknowledge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({ prompt: message, context: sharedContext }),
+      })
+        .then(async response => {
+          if (!response.ok) return null;
+          return response.json();
+        })
+        .catch(() => null);
+
+      const acknowledgementData = await acknowledgementPromise;
+      const acknowledgement = String(acknowledgementData?.acknowledgement || '').trim();
+      let acknowledgementSpeech: Promise<void> | null = null;
+      if (acknowledgement && generation === generationRef.current && !pendingUserTurnRef.current) {
+        appendMessage('lexara', acknowledgement);
+        setGaze('camera');
+        acknowledgementSpeech = speakLexara(acknowledgement, generation)
+          .catch(() => undefined)
+          .then(() => {
+            if (
+              generation === generationRef.current
+              && currentRequestRef.current
+              && !pendingUserTurnRef.current
+            ) {
+              setConversationPhase('thinking');
+              setGaze('thinking');
+            }
+          });
+      }
+
+      const response = await analysisPromise;
 
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
@@ -691,9 +770,21 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         setJurisdiction(data.jurisdiction);
       }
 
-      appendMessage('lexara', answer);
-      setGaze('camera');
-      await speakLexara(answer, generation);
+      // Presence/control turns intentionally return the acknowledgement itself.
+      // Do not render or speak the same sentence twice.
+      const duplicateOfAcknowledgement =
+        acknowledgement
+        && normalizeSpeechText(answer) === normalizeSpeechText(acknowledgement);
+
+      if (acknowledgementSpeech) {
+        await acknowledgementSpeech;
+      }
+
+      if (!duplicateOfAcknowledgement) {
+        appendMessage('lexara', answer);
+        setGaze('camera');
+        await speakLexara(answer, generation);
+      }
     } catch (error: any) {
       if (generation !== generationRef.current) return;
 
@@ -770,6 +861,34 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   }, [enableVoice, setConversationPhase]);
 
   useEffect(() => {
+    if (!isMasterSession || typeof window === 'undefined') return;
+
+    // Master-only privacy/state invariant: every law area and every fresh master
+    // login starts a new matter. Remove all persisted LEXARA session state, then
+    // rotate the in-memory session when the selected law area changes.
+    for (let index = window.sessionStorage.length - 1; index >= 0; index -= 1) {
+      const key = window.sessionStorage.key(index);
+      if (key?.startsWith('lexara-live-session:')) {
+        window.sessionStorage.removeItem(key);
+      }
+    }
+
+    currentRequestRef.current?.abort();
+    currentRequestRef.current = null;
+    generationRef.current += 1;
+    sessionIdRef.current = makeSessionId();
+    conversationRef.current = [];
+    setConversation([]);
+    setJurisdiction(undefined);
+    greetingRef.current = false;
+    pendingUserTurnRef.current = '';
+    pendingTurnAlreadyRenderedRef.current = false;
+    currentTurnTextRef.current = '';
+    clearVoiceTurnBuffer();
+  }, [clearVoiceTurnBuffer, isMasterSession, lawTypeId]);
+
+  useEffect(() => {
+    if (isMasterSession) return;
     try {
       const stored: StoredConversationState = {
         schemaVersion: CONVERSATION_STORAGE_SCHEMA_VERSION,
@@ -788,7 +907,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     } catch {
       // Session persistence is best-effort; live conversation still works without it.
     }
-  }, [conversation, jurisdiction]);
+  }, [conversation, isMasterSession, jurisdiction]);
 
   useEffect(() => {
     if (phase === 'initializing' || greetingRef.current) return;
@@ -919,7 +1038,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             <div className="flex justify-start">
               <div className="flex items-center gap-2 rounded-2xl border bg-card px-4 py-3 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                Reviewing the facts and law…
+                Continuing the analysis…
               </div>
             </div>
           )}

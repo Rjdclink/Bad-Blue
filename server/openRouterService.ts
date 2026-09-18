@@ -1,34 +1,26 @@
 /**
- * OpenRouter Service - Integration with OpenRouter API
- * 
- * Models (verify against openrouter.ai/models before deploy - free tier rotates often):
- * - Qwen 2.5 72B (qwen/qwen-2.5-72b-instruct:free) - Strong multilingual reasoning (FREE)
- * - DeepSeek R1T2 Chimera (tng/deepseek-r1t2-chimera:free) - Advanced reasoning model (FREE)
- * - Llama 4 Maverick (meta-llama/llama-4-maverick:free) - 256K context, multimodal (FREE)
- * - Grok 4 (x-ai/grok-4) - xAI reasoning model (PAID)
- * - Kimi K2 (moonshotai/kimi-k2-0905) - Moonshot 262K context model (PAID)
- * 
- * Features:
- * - Circuit breakers (3 failures → 5min cooldown)
- * - Manual rate limit tracking (50 req/day per model)
- * - Exponential backoff for 429 errors
- * - Officer-specific search function
+ * OpenRouter Service - Integration with OpenRouter API.
+ *
+ * Canonical model IDs come from aiHarmonyModelRegistry so service-specific
+ * search helpers cannot silently drift onto retired snapshots.
  */
 
 import { OpenRouter } from '@openrouter/sdk';
+import { CURRENT_AI_MODELS } from './aiHarmonyModelRegistry';
 
 // OpenRouter API Key
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 
 // Model identifiers - verify against openrouter.ai/models before deploy (free tier rotates often)
 export const OPENROUTER_MODELS = {
-  // Free tier models
-  QWEN: 'qwen/qwen-2.5-72b-instruct:free',
-  DEEPSEEK: 'tng/deepseek-r1t2-chimera:free',
-  LLAMA: 'meta-llama/llama-4-maverick:free',
-  // Paid models (available when credits exist)
-  GROK: 'x-ai/grok-4',
-  KIMI: 'moonshotai/kimi-k2-0905',
+  QWEN: CURRENT_AI_MODELS.qwen,
+  DEEPSEEK: CURRENT_AI_MODELS.deepseek,
+  // Keep the legacy "llama" helper operational without pinning another stale
+  // model family. Auto Router selects a healthy current general model.
+  LLAMA: CURRENT_AI_MODELS.openRouterAuto,
+  GROK: CURRENT_AI_MODELS.grok,
+  KIMI: CURRENT_AI_MODELS.kimi,
+  GPT5_FAST: CURRENT_AI_MODELS.openaiFastViaOpenRouter,
 } as const;
 
 // Service type - all OpenRouter models (free + paid)
@@ -131,7 +123,7 @@ export async function generateOpenRouterText(
         'X-Title': 'LegalWhat LEXARA',
       },
       body: JSON.stringify({
-        model: options.model?.trim() || process.env.OPENROUTER_LEXARA_MODEL?.trim() || 'openrouter/auto',
+        model: options.model?.trim() || process.env.OPENROUTER_LEXARA_MODEL?.trim() || CURRENT_AI_MODELS.openRouterAuto,
         ...(options.sessionId?.trim() ? { session_id: options.sessionId.trim().slice(0, 128) } : {}),
         messages,
         temperature: options.temperature ?? 0.25,
@@ -156,7 +148,7 @@ export async function generateOpenRouterText(
     autoRouterLastError = null;
     return {
       content,
-      model: String(data.model || options.model?.trim() || process.env.OPENROUTER_LEXARA_MODEL?.trim() || 'openrouter/auto'),
+      model: String(data.model || options.model?.trim() || process.env.OPENROUTER_LEXARA_MODEL?.trim() || CURRENT_AI_MODELS.openRouterAuto),
       latencyMs: Date.now() - startedAt,
     };
   } catch (error) {

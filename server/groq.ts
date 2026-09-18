@@ -9,7 +9,7 @@
 const DEFAULT_GROQ_MODEL =
   process.env.GROQ_CHAT_MODEL?.trim()
   || process.env.GROQ_MODEL?.trim()
-  || 'llama-3.3-70b-versatile';
+  || 'openai/gpt-oss-120b';
 
 interface GroqChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -65,10 +65,10 @@ async function resolveGroqModel(requestedModel: string, apiKey: string): Promise
   const capabilityCandidates = [
     requested,
     DEFAULT_GROQ_MODEL,
+    'openai/gpt-oss-120b',
+    'openai/gpt-oss-20b',
     'llama-3.3-70b-versatile',
     'llama-3.1-8b-instant',
-    'openai/gpt-oss-20b',
-    'openai/gpt-oss-120b',
   ]
     .map(normalizeGroqModelId)
     .filter((model, index, all) => !!model && all.indexOf(model) === index);

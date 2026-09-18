@@ -7,7 +7,7 @@
  * - Strict separation with no cross-domain control
  * - Shared optimized infrastructure, isolated execution
  * 
- * AI MODEL INTEGRATION (17+ Models):
+ * AI MODEL INTEGRATION: current Harmony generations
  * - Gemini 3 Pro Preview, Gemini 2.5 Flash, Gemini 1.5 Pro
  * - Claude 4.5 Opus (orchestrator), Claude 3.5 Sonnet, Claude 3.5 Haiku
  * - Groq LLaMA 3.3-70B Versatile, LLaMA 3.1-8B Instant
@@ -27,7 +27,10 @@ import { createLogger } from '../../logger';
 import { DomainFirewall, Domain } from './domain-firewall';
 import { AIProvider, TaskComplexity, TaskPriority, UsageContext, type AITaskMetadata } from '../../aiTokenGovernor';
 import { runProvider } from '../../aiProvider';
+import { AICollaborationOrchestrator } from '../../aiCollaborationOrchestrator';
+import { TaskComplexity as SelectorTaskComplexity, TaskPriority as SelectorTaskPriority } from '../../aiModelSelector';
 import { deepSeekSearch, grokSearch, kimiSearch, qwenSearch } from '../../openRouterService';
+import { CURRENT_AI_MODELS, getConfiguredHarmonyProviders } from '../../aiHarmonyModelRegistry';
 
 const log = createLogger('4JI-Orchestrator');
 
@@ -240,8 +243,8 @@ export class ForgeAI {
     const models: AIModelConfig[] = [
       // Gemini models
       {
-        id: 'gemini-2.5-pro',
-        name: 'Gemini 3 Pro Preview',
+        id: CURRENT_AI_MODELS.gemini,
+        name: 'Gemini 3.8 Flash',
         provider: AIProvider.GEMINI,
         capabilities: ['reasoning', 'visual-analysis', 'long-context', 'research', 'orchestration'],
         domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
@@ -251,8 +254,8 @@ export class ForgeAI {
         contextWindow: 1000000,
       },
       {
-        id: 'gemini-2.5-flash',
-        name: 'Gemini 2.5 Flash',
+        id: CURRENT_AI_MODELS.gemini,
+        name: 'Gemini 3.8 Flash',
         provider: AIProvider.GEMINI,
         capabilities: ['fast-inference', 'reasoning', 'data-extraction'],
         domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
@@ -264,8 +267,8 @@ export class ForgeAI {
       
       // Claude models
       {
-        id: 'claude-opus-4-1-20250805',
-        name: 'Claude Opus 4.1',
+        id: CURRENT_AI_MODELS.claudeDeep,
+        name: 'Claude Opus 5',
         provider: AIProvider.CLAUDE_OPUS,
         capabilities: ['reasoning', 'legal-analysis', 'creative-writing', 'orchestration', 'long-context'],
         domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
@@ -275,8 +278,8 @@ export class ForgeAI {
         contextWindow: 200000,
       },
       {
-        id: 'claude-sonnet-4-5-20250929',
-        name: 'Claude Sonnet 4.5',
+        id: CURRENT_AI_MODELS.claudeBalanced,
+        name: 'Claude Sonnet 5',
         provider: AIProvider.CLAUDE,
         capabilities: ['reasoning', 'legal-analysis', 'document-generation', 'verification'],
         domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
@@ -286,7 +289,7 @@ export class ForgeAI {
         contextWindow: 200000,
       },
       {
-        id: 'claude-haiku-4-5-20251001',
+        id: CURRENT_AI_MODELS.claudeFast,
         name: 'Claude Haiku 4.5',
         provider: AIProvider.CLAUDE,
         capabilities: ['fast-inference', 'verification', 'data-extraction'],
@@ -299,8 +302,8 @@ export class ForgeAI {
       
       // Groq models (autonomous priority)
       {
-        id: 'llama-3.3-70b-versatile',
-        name: 'LLaMA 3.3 70B Versatile',
+        id: CURRENT_AI_MODELS.groqDeep,
+        name: 'GPT-OSS 120B on Groq',
         provider: AIProvider.GROQ,
         capabilities: ['reasoning', 'coding', 'fast-inference', 'research'],
         domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
@@ -310,8 +313,8 @@ export class ForgeAI {
         contextWindow: 131072,
       },
       {
-        id: 'llama-3.1-8b-instant',
-        name: 'LLaMA 3.1 8B Instant',
+        id: CURRENT_AI_MODELS.groqFast,
+        name: 'GPT-OSS 20B on Groq',
         provider: AIProvider.GROQ,
         capabilities: ['fast-inference', 'data-extraction'],
         domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
@@ -323,8 +326,8 @@ export class ForgeAI {
       
       // Mistral models
       {
-        id: 'mistral-small-latest',
-        name: 'Mistral Small Latest',
+        id: CURRENT_AI_MODELS.mistralFast,
+        name: 'Mistral Small 4',
         provider: AIProvider.MISTRAL,
         capabilities: ['reasoning', 'coding', 'legal-analysis', 'fast-inference', 'data-extraction', 'verification'],
         domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
@@ -336,8 +339,8 @@ export class ForgeAI {
       
       // DeepSeek
       {
-        id: 'deepseek-r1t2',
-        name: 'DeepSeek R1T2 Chimera',
+        id: CURRENT_AI_MODELS.deepseek,
+        name: 'DeepSeek V4.1 Flash',
         provider: AIProvider.DEEPSEEK,
         capabilities: ['reasoning', 'coding', 'pattern-recognition'],
         domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
@@ -349,8 +352,8 @@ export class ForgeAI {
       
       // Grok (massive context)
       {
-        id: 'grok-4.1',
-        name: 'Grok 4.1 Fast',
+        id: CURRENT_AI_MODELS.grok,
+        name: 'Grok 4.6',
         provider: AIProvider.GROK,
         capabilities: ['long-context', 'visual-analysis', 'research'],
         domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
@@ -362,8 +365,8 @@ export class ForgeAI {
       
       // Kimi (structured output)
       {
-        id: 'kimi-k2',
-        name: 'Kimi K2',
+        id: CURRENT_AI_MODELS.kimi,
+        name: 'Kimi K3',
         provider: AIProvider.KIMI,
         capabilities: ['data-extraction', 'pattern-recognition', 'verification'],
         domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
@@ -375,8 +378,8 @@ export class ForgeAI {
       
       // GPT-5 Mini (fast inference)
       {
-        id: 'gpt5-mini',
-        name: 'GPT-5 Mini',
+        id: CURRENT_AI_MODELS.openaiFastViaOpenRouter,
+        name: 'GPT-5.6 Luna',
         provider: AIProvider.GPT5_MINI,
         capabilities: ['fast-inference', 'reasoning', 'pattern-recognition'],
         domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
@@ -388,8 +391,8 @@ export class ForgeAI {
       
       // Qwen (multilingual)
       {
-        id: 'qwen-72b',
-        name: 'Qwen 2.5 72B Instruct',
+        id: CURRENT_AI_MODELS.qwen,
+        name: 'Qwen3.8 Max',
         provider: AIProvider.QWEN,
         capabilities: ['reasoning', 'coding', 'long-context'],
         domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
@@ -401,8 +404,8 @@ export class ForgeAI {
       
       // Specialized: Crypto Crawler only
       {
-        id: 'llama-3.3-70b-versatile',
-        name: 'Trading AI Specialist',
+        id: CURRENT_AI_MODELS.groqDeep,
+        name: 'Trading AI Specialist (GPT-OSS 120B)',
         provider: AIProvider.GROQ,
         capabilities: ['trading-analysis', 'market-prediction', 'pattern-recognition'],
         domains: [Domain.CRYPTO_CRAWLER],
@@ -454,9 +457,8 @@ export class ForgeAI {
             return b.matchedCapabilities - a.matchedCapabilities;
           }
 
-          const priorityA = this.providerPriority(a.model.provider);
-          const priorityB = this.providerPriority(b.model.provider);
-          if (priorityA !== priorityB) return priorityA - priorityB;
+          // Tie-break only on task-relevant execution characteristics. Provider
+          // identity is never a preference signal.
           return this.speedRank(a.model.speedTier) - this.speedRank(b.model.speedTier);
         });
 
@@ -708,32 +710,9 @@ export class ForgeAI {
    */
   private static async executeWithModels(
     task: OrchestratedTask,
-    models: AIModelConfig[]
+    _models: AIModelConfig[]
   ): Promise<{ content: unknown; modelsUsed: string[]; tokensUsed: number; confidence: number }> {
-    if (models.length === 0) {
-      throw new Error(`No suitable models found for task ${task.id} with capabilities: ${task.requiredCapabilities.join(', ')}`);
-    }
-
-    const primaryModel = models[0];
-    log.debug('Executing with model', {
-      taskId: task.id,
-      model: primaryModel.id,
-    });
-
-    const execution = await this.executeSingleModel(primaryModel, task);
-    const content = execution.content;
-    const tokensUsed = execution.tokensUsed;
-
-    if (!content) {
-      throw new Error(`Model ${primaryModel.id} returned an empty response`);
-    }
-
-    return {
-      content,
-      modelsUsed: [primaryModel.id],
-      tokensUsed,
-      confidence: 0.8,
-    };
+    return this.executeHarmonyTask(task);
   }
 
   /**
@@ -742,84 +721,65 @@ export class ForgeAI {
   private static async executeRoleBased(
     task: OrchestratedTask
   ): Promise<{ content: unknown; modelsUsed: string[]; tokensUsed: number; confidence: number }> {
-    const requestedRoles = (task.roles || []).filter((role, index, roles) => roles.indexOf(role) === index);
-    const modelIds = new Set<string>();
+    // Roles contribute task requirements, not hard provider assignments. The
+    // shared Harmony mesh resolves the compatible participants dynamically.
+    return this.executeHarmonyTask(task);
+  }
 
-    for (const role of requestedRoles) {
-      const assignment = this.roleAssignments.get(role);
-      if (!assignment) {
-        throw new Error(`Role '${role}' is not configured in 4JI assignments`);
-      }
-
-      modelIds.add(assignment.primaryModelId);
-      for (const fallbackId of assignment.fallbackModelIds) {
-        modelIds.add(fallbackId);
-      }
+  private static async executeHarmonyTask(
+    task: OrchestratedTask,
+  ): Promise<{ content: unknown; modelsUsed: string[]; tokensUsed: number; confidence: number }> {
+    const providers = getConfiguredHarmonyProviders();
+    if (providers.length === 0) {
+      throw new Error('No configured Harmony providers are available for 4JI');
     }
 
-    const candidateModels = Array.from(modelIds)
-      .map(id => this.models.get(id))
-      .filter((model): model is AIModelConfig => Boolean(model))
-      .filter(model => model.domains.includes(task.domain));
+    const required = new Set(task.requiredCapabilities);
+    const response = await AICollaborationOrchestrator.orchestrateCollaboration(
+      `forge-${task.domain}-${task.type}`,
+      task.prompt,
+      {
+        context: task.priority >= TaskPriority.HIGH_USER ? UsageContext.USER : UsageContext.AUTONOMOUS,
+        complexity: required.has('reasoning') || required.has('legal-analysis')
+          ? SelectorTaskComplexity.COMPREHENSIVE
+          : SelectorTaskComplexity.MODERATE,
+        priority: task.priority >= TaskPriority.CRITICAL_USER
+          ? SelectorTaskPriority.CRITICAL
+          : task.priority >= TaskPriority.HIGH_USER
+            ? SelectorTaskPriority.HIGH
+            : task.priority >= TaskPriority.MEDIUM_BACKGROUND
+              ? SelectorTaskPriority.MEDIUM
+              : SelectorTaskPriority.LOW,
+        estimatedTokens: task.maxTokens,
+        needsReasoning: required.has('reasoning') || required.has('orchestration'),
+        needsCodeGeneration: required.has('coding'),
+        needsLegalAnalysis: required.has('legal-analysis') || task.domain === Domain.LEGAL_WHAT,
+        needsVerification: required.has('verification') || (task.roles || []).includes('review'),
+        needsPatternRecognition: required.has('pattern-recognition') || required.has('market-prediction'),
+        needsSearchGrounding: required.has('research'),
+        needsLongContext: required.has('long-context'),
+        needsMultimodal: required.has('visual-analysis'),
+        needsDataExtraction: required.has('data-extraction'),
+        needsStructuredOutput: required.has('data-extraction'),
+        needsFastResponse: required.has('fast-inference'),
+      },
+      providers,
+      {
+        providerPolicy: 'capability-first',
+        systemPrompt: task.systemPrompt,
+      },
+    );
 
-    if (candidateModels.length === 0) {
-      throw new Error(`No domain-compatible models found for roles: ${requestedRoles.join(', ')}`);
+    const successes = response.contributions.filter(entry => entry.success);
+    if (!response.finalAnswer?.trim() || successes.length === 0) {
+      throw new Error(`Harmony produced no usable 4JI result for ${task.id}`);
     }
-
-    const executionResults: ModelExecutionResult[] = [];
-    for (const model of candidateModels.slice(0, 3)) {
-      try {
-        executionResults.push(await this.executeSingleModel(model, task));
-      } catch (error) {
-        log.warn('Role-based candidate model failed', {
-          taskId: task.id,
-          model: model.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-
-    if (executionResults.length === 0) {
-      throw new Error(`All role-based models failed for task ${task.id}`);
-    }
-
-    if (executionResults.length === 1) {
-      return {
-        content: executionResults[0].content,
-        modelsUsed: [executionResults[0].model.id],
-        tokensUsed: executionResults[0].tokensUsed,
-        confidence: 0.78,
-      };
-    }
-
-    const reviewer = this.resolveReviewerModel(task.domain);
-    const consensusPrompt = `You are 4JI consensus resolver. Resolve disagreements between specialist model outputs and produce one final answer.
-Task type: ${task.type}
-Domain: ${task.domain}
-Original prompt: ${task.prompt}
-
-Candidate outputs:\n${executionResults
-      .map((result, index) => `Model ${index + 1} (${result.model.id}):\n${result.content}`)
-      .join('\n\n')}
-
-Return a single consolidated response.`;
-
-    const consensusExecution = await this.executeSingleModel(reviewer, {
-      ...task,
-      prompt: consensusPrompt,
-      requiredCapabilities: ['reasoning', 'verification'],
-    });
-
-    const modelsUsed = [
-      ...executionResults.map(result => result.model.id),
-      consensusExecution.model.id,
-    ];
 
     return {
-      content: consensusExecution.content,
-      modelsUsed,
-      tokensUsed: executionResults.reduce((sum, entry) => sum + entry.tokensUsed, 0) + consensusExecution.tokensUsed,
-      confidence: 0.88,
+      content: response.finalAnswer,
+      modelsUsed: Array.from(new Set(successes.map(entry => entry.model))),
+      tokensUsed: response.totalTokens,
+      confidence: successes.length / Math.max(1, response.contributions.length),
     };
   }
 

@@ -1,24 +1,8 @@
 /**
  * CRYPTOCRAWLER AI HARMONY INTEGRATION
- * 
- * Integrates the 17-model AI harmony system with the cryptocrawler for
- * enhanced market analysis, strategy optimization, and autonomous trading.
- * 
- * AI MODELS IN HARMONY:
- * - Claude 4.5 Opus: Complex reasoning, strategy synthesis
- * - GPT-5 Mini: Fast inference, pattern recognition
- * - Gemini 3 Pro/Flash: Multimodal analysis, search grounding
- * - Claude 3.5 Sonnet/Haiku: Legal analysis, verification
- * - DeepSeek R1T2: Pattern recognition, deep reasoning
- * - Grok 4.1: Large context, real-time analysis
- * - Kimi K2: Structured extraction, data processing
- * - GPT-OSS-120B: Large-scale reasoning
- * - Falcon-180B: Open-source analysis
- * - Code Llama 70B/34B: Smart contract analysis
- * - GPT-NeoX-20B: Efficient inference
- * - Qwen-72B: Multilingual, multimodal
- * - Groq (LLaMA 3.3): Ultra-fast autonomous operations
- * - Mistral Small: Efficient autonomous tasks
+ *
+ * Every analysis enters the platform-wide current-model Harmony mesh. Provider
+ * work is capability-assigned; no model is a fixed lead or mandatory path.
  */
 
 import logger from '../../../logger.js';
@@ -26,6 +10,7 @@ import { AIProvider, UsageContext } from '../../../aiTokenGovernor';
 import { AICollaborationOrchestrator, type CollaborationResult } from '../../../aiCollaborationOrchestrator';
 import { TaskComplexity, TaskPriority, type TaskAttributes } from '../../../aiModelSelector';
 import type { StrategyProfile, MarketCondition } from '../validation/monte-carlo-engine';
+import { getConfiguredHarmonyProviders } from '../../../aiHarmonyModelRegistry';
 
 // ============================================
 // AI HARMONY ROLE ASSIGNMENTS
@@ -124,51 +109,13 @@ export class CryptocrawlerAIHarmony {
     const taskId = `strategy-${Date.now()}`;
     const startTime = Date.now();
     
-    const models = [
-      AIProvider.CLAUDE_OPUS,
-      AIProvider.GPT5_MINI,
-      AIProvider.DEEPSEEK,
-      AIProvider.GEMINI
-    ];
-    
-    const prompt = `Analyze this trading strategy for profitability and risk:
-
-Strategy: ${strategy.name}
-- Success Rate: ${(strategy.baseSuccessRate * 100).toFixed(1)}%
-- Avg Profit: ${(strategy.avgProfitPerTrade * 100).toFixed(2)}%
-- Avg Loss: ${(strategy.avgLossPerTrade * 100).toFixed(2)}%
-- Trades/Day: ${strategy.tradesPerDay}
-- Execution Latency: ${strategy.executionLatency}ms
-
-Market Conditions:
-- Volatility: ${marketCondition.volatility}
-- Liquidity Score: ${marketCondition.liquidityScore}
-- Competition: ${marketCondition.competitorDensity}
-- Network Congestion: ${marketCondition.networkCongestion}
-
-Provide:
-1. Expected daily profit potential
-2. Risk assessment (1-10)
-3. Recommended adjustments
-4. Optimal market regime for this strategy`;
-
-    const contributions = new Map<AIProvider, any>();
-    
-    if (this.config.parallelExecution) {
-      const results = await Promise.all(
-        models.map(model => this.executeModelTask(model, prompt, 'strategy_analysis'))
-      );
-      results.forEach((result, idx) => {
-        contributions.set(models[idx], result);
-      });
-    } else {
-      for (const model of models) {
-        const result = await this.executeModelTask(model, prompt, 'strategy_analysis');
-        contributions.set(model, result);
-      }
-    }
-    
-    const synthesized = this.synthesizeStrategyAnalysis(contributions);
+    const harmony = await this.executeFullHarmony(prompt, 'strategy_analysis');
+    const contributions = harmony.contributions;
+    const synthesized = {
+      ...this.synthesizeStrategyAnalysis(contributions),
+      analysis: harmony.finalAnswer,
+      providersUsed: harmony.providersUsed,
+    };
     const consensusScore = this.calculateConsensus(contributions);
     
     const result: HarmonyResult = {
@@ -197,41 +144,13 @@ Provide:
     const taskId = `predict-${Date.now()}`;
     const startTime = Date.now();
     
-    const models = [
-      AIProvider.DEEPSEEK,
-      AIProvider.GPT5_MINI,
-      AIProvider.GROK,
-      AIProvider.QWEN
-    ];
-    
-    const prompt = `Predict market conditions for the next 24 hours:
-
-Current Conditions:
-- Volatility: ${currentCondition.volatility}
-- Liquidity: ${currentCondition.liquidityScore}
-- Competition: ${currentCondition.competitorDensity}
-- Network Load: ${currentCondition.networkCongestion}
-
-Historical Data Points: ${historicalData.length}
-
-Provide:
-1. Predicted regime (trending/ranging/volatile/crisis)
-2. Volatility forecast
-3. Liquidity forecast
-4. Confidence level (0-100%)
-5. Key risks to watch`;
-
-    const contributions = new Map<AIProvider, any>();
-    
-    const results = await Promise.all(
-      models.map(model => this.executeModelTask(model, prompt, 'market_prediction'))
-    );
-    
-    results.forEach((result, idx) => {
-      contributions.set(models[idx], result);
-    });
-    
-    const synthesized = this.synthesizeMarketPrediction(contributions);
+    const harmony = await this.executeFullHarmony(prompt, 'market_prediction');
+    const contributions = harmony.contributions;
+    const synthesized = {
+      ...this.synthesizeMarketPrediction(contributions),
+      analysis: harmony.finalAnswer,
+      providersUsed: harmony.providersUsed,
+    };
     const consensusScore = this.calculateConsensus(contributions);
     
     return {
@@ -257,40 +176,13 @@ Provide:
     const taskId = `risk-${Date.now()}`;
     const startTime = Date.now();
     
-    const models = [
-      AIProvider.GEMINI,
-      AIProvider.CLAUDE_OPUS,
-      AIProvider.CLAUDE,
-      AIProvider.GPT5_MINI
-    ];
-    
-    const strategyList = portfolio.map(s => `- ${s.name}: ${s.baseSuccessRate * 100}% win rate`).join('\n');
-    
-    const prompt = `Assess risk for this portfolio:
-
-Strategies:
-${strategyList}
-
-Total Exposure: $${exposure.toLocaleString()}
-
-Provide:
-1. Overall risk score (1-10)
-2. Maximum drawdown estimate
-3. Correlation risks
-4. Black swan vulnerability
-5. Recommended position limits`;
-
-    const contributions = new Map<AIProvider, any>();
-    
-    const results = await Promise.all(
-      models.map(model => this.executeModelTask(model, prompt, 'risk_assessment'))
-    );
-    
-    results.forEach((result, idx) => {
-      contributions.set(models[idx], result);
-    });
-    
-    const synthesized = this.synthesizeRiskAssessment(contributions);
+    const harmony = await this.executeFullHarmony(prompt, 'risk_assessment');
+    const contributions = harmony.contributions;
+    const synthesized = {
+      ...this.synthesizeRiskAssessment(contributions),
+      analysis: harmony.finalAnswer,
+      providersUsed: harmony.providersUsed,
+    };
     const consensusScore = this.calculateConsensus(contributions);
     
     return {
@@ -316,37 +208,13 @@ Provide:
     const taskId = `contract-${Date.now()}`;
     const startTime = Date.now();
     
-    const models = [
-      AIProvider.CODE_LLAMA,
-      AIProvider.GPT5_MINI,
-      AIProvider.DEEPSEEK,
-      AIProvider.CLAUDE
-    ];
-    
-    const prompt = `Analyze this smart contract for trading safety:
-
-Contract: ${contractAddress}
-${contractCode ? `Code:\n${contractCode.substring(0, 2000)}...` : ''}
-
-Check for:
-1. Reentrancy vulnerabilities
-2. Flash loan attack vectors
-3. MEV extraction risks
-4. Liquidity manipulation risks
-5. Admin key risks
-6. Overall safety score (1-100)`;
-
-    const contributions = new Map<AIProvider, any>();
-    
-    const results = await Promise.all(
-      models.map(model => this.executeModelTask(model, prompt, 'smart_contract_analysis'))
-    );
-    
-    results.forEach((result, idx) => {
-      contributions.set(models[idx], result);
-    });
-    
-    const synthesized = this.synthesizeContractAnalysis(contributions);
+    const harmony = await this.executeFullHarmony(prompt, 'smart_contract_analysis');
+    const contributions = harmony.contributions;
+    const synthesized = {
+      ...this.synthesizeContractAnalysis(contributions),
+      analysis: harmony.finalAnswer,
+      providersUsed: harmony.providersUsed,
+    };
     const consensusScore = this.calculateConsensus(contributions);
     
     return {
@@ -375,40 +243,13 @@ Check for:
     const taskId = `opportunity-${Date.now()}`;
     const startTime = Date.now();
     
-    const models = [
-      AIProvider.CLAUDE_OPUS,
-      AIProvider.GPT5_MINI,
-      AIProvider.GEMINI,
-      AIProvider.DEEPSEEK,
-      AIProvider.GROK
-    ];
-    
-    const prompt = `Score this trading opportunity:
-
-Type: ${opportunity.type}
-Expected Profit: ${(opportunity.expectedProfit * 100).toFixed(2)}%
-Risk Level: ${opportunity.risk}/10
-Time Window: ${opportunity.timeWindow}ms
-Requirements: ${opportunity.requirements.join(', ')}
-
-Provide:
-1. Overall score (0-100)
-2. Probability of success
-3. Risk-adjusted return
-4. Execute recommendation (yes/no/wait)
-5. Position size recommendation`;
-
-    const contributions = new Map<AIProvider, any>();
-    
-    const results = await Promise.all(
-      models.map(model => this.executeModelTask(model, prompt, 'opportunity_scoring'))
-    );
-    
-    results.forEach((result, idx) => {
-      contributions.set(models[idx], result);
-    });
-    
-    const synthesized = this.synthesizeOpportunityScore(contributions);
+    const harmony = await this.executeFullHarmony(prompt, 'opportunity_scoring');
+    const contributions = harmony.contributions;
+    const synthesized = {
+      ...this.synthesizeOpportunityScore(contributions),
+      analysis: harmony.finalAnswer,
+      providersUsed: harmony.providersUsed,
+    };
     const consensusScore = this.calculateConsensus(contributions);
     
     return {
@@ -427,6 +268,73 @@ Provide:
   // EXECUTION HELPERS
   // ============================================
   
+  private async executeFullHarmony(
+    prompt: string,
+    taskType: HarmonyTaskType,
+  ): Promise<{
+    contributions: Map<AIProvider, any>;
+    finalAnswer: string;
+    providersUsed: AIProvider[];
+  }> {
+    const providers = getConfiguredHarmonyProviders();
+    if (providers.length === 0) {
+      throw new Error('No configured Harmony providers are available');
+    }
+
+    const attributes: TaskAttributes = {
+      complexity: TaskComplexity.COMPREHENSIVE,
+      priority: TaskPriority.HIGH,
+      context: UsageContext.AUTONOMOUS,
+      needsReasoning: true,
+      needsVerification: true,
+      needsPatternRecognition: taskType === 'pattern_recognition' || taskType === 'market_prediction' || taskType === 'opportunity_scoring',
+      needsCodeGeneration: taskType === 'smart_contract_analysis',
+      needsStructuredOutput: true,
+    };
+
+    const response = await AICollaborationOrchestrator.orchestrateCollaboration(
+      `cryptocrawler-${taskType}`,
+      prompt,
+      attributes,
+      providers,
+      { providerPolicy: 'capability-first' },
+    );
+
+    const contributions = new Map<AIProvider, any>();
+    for (const result of response.contributions) {
+      if (result.role === 'harmony-synthesizer') continue;
+      const existing = contributions.get(result.provider);
+      if (!existing || (!existing.success && result.success)) {
+        contributions.set(result.provider, {
+          success: result.success,
+          content: result.content,
+          latencyMs: result.latencyMs,
+          model: result.model,
+          role: result.role,
+        });
+      }
+      const perf = this.modelPerformance.get(result.provider);
+      if (perf) {
+        if (result.success) {
+          perf.successes++;
+          perf.avgLatency = (perf.avgLatency * (perf.successes - 1) + result.latencyMs) / perf.successes;
+        } else {
+          perf.failures++;
+        }
+      }
+    }
+
+    return {
+      contributions,
+      finalAnswer: response.finalAnswer,
+      providersUsed: response.providersUsed,
+    };
+  }
+
+  /**
+   * Legacy route-local helper retained for compatibility. New CryptoCrawler
+   * analysis methods call executeFullHarmony() above.
+   */
   private async executeModelTask(
     provider: AIProvider,
     prompt: string,

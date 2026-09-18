@@ -18,6 +18,7 @@ const avatar = read('client/src/components/LexaraEtherealAvatar.tsx');
 const synthesis = read('client/src/hooks/useVoiceSynthesis.ts');
 const speechClient = read('client/src/lib/lexaraSpeechClient.ts');
 const lexaraRoutes = read('server/routes/lexara.routes.ts');
+const lexaraChatRoutes = read('server/routes/lexara.chat.routes.ts');
 const voiceRoutes = read('server/routes/voice.routes.ts');
 const orchestrator = read('server/lexara/LexaraConversationOrchestrator.ts');
 const openRouter = read('server/openRouterService.ts');
@@ -33,6 +34,7 @@ const voiceReliabilityReview = read('docs/LEXARA_VOICE_RELIABILITY_10_SOURCE_REV
 const turnGroundingReview = read('docs/LEXARA_TURN_GROUNDING_30_SOURCE_REVIEW_20260918.md');
 const harmonyReview = read('docs/LEXARA_HARMONY_STATIC_VOICE_10_SOURCE_REVIEW_20260918.md');
 const harmony = read('server/aiCollaborationOrchestrator.ts');
+const harmonyRegistry = read('server/aiHarmonyModelRegistry.ts');
 const claude = read('server/claude.ts');
 const groq = read('server/groq.ts');
 const routes = read('server/routes.ts');
@@ -42,6 +44,8 @@ const lexaraOverflowMigration = read('server/migrations/060_lexara_overflow_conv
 const aiProvider = read('server/aiProvider.ts');
 const conversationalReliabilityReview = read('docs/LEXARA_CONVERSATIONAL_RELIABILITY_10_SOURCE_REVIEW_20260918.md');
 const duplexReview = read('docs/LEXARA_DUPLEX_ORCHESTRATION_30_SOURCE_REVIEW_20260918.md');
+const harmonyRootReview = read('docs/LEXARA_HARMONY_ROOT_CAUSE_10_SOURCE_REVIEW_20260918.md');
+const harmonyImplementationReview = read('docs/LEXARA_HARMONY_IMPLEMENTATION_10_SOURCE_REVIEW_20260918.md');
 
 must(
   voiceMode.includes('preferServerRecognition') &&
@@ -67,13 +71,13 @@ must(
   'conversation storage is versioned to quarantine corrupt prior turns',
 );
 must(
-  voiceMode.includes('const SERVER_VAD_SILENCE_MS = 1_500') &&
-    conversation.includes('const BROWSER_FINAL_FALLBACK_SETTLE_MS = 2_200') &&
+  voiceMode.includes('const SERVER_VAD_SILENCE_MS = 900') &&
+    conversation.includes('const BROWSER_FINAL_FALLBACK_SETTLE_MS = 900') &&
     conversation.includes('const SERVER_VOICE_TURN_SETTLE_MS = 500') &&
-    conversation.includes('const VOICE_END_GRACE_MS = 1_400') &&
-    conversation.includes('const INCOMPLETE_TURN_GRACE_MS = 3_200') &&
+    conversation.includes('const VOICE_END_GRACE_MS = 650') &&
+    conversation.includes('const INCOMPLETE_TURN_GRACE_MS = 2_400') &&
     conversation.includes('isLikelyIncompleteUtterance'),
-  'voice endpointing tolerates natural pauses and defers incomplete thoughts before reasoning',
+  'voice endpointing reduces dead air while retaining a longer incomplete-thought grace path',
 );
 const liveTurnHandler = conversation.split('const handleUserMessage = useCallback')[1]?.split('handleMessageRef.current = handleUserMessage')[0] || '';
 must(
@@ -149,13 +153,15 @@ must(
 );
 must(
   orchestrator.includes('AICollaborationOrchestrator.orchestrateCollaboration') &&
-    orchestrator.includes("providerPolicy: 'capability-first-no-google'") &&
-    orchestrator.includes('getLexaraHarmonyProviders') &&
-    !orchestrator.includes("providers.push(AIProvider.GEMINI)") &&
-    harmony.includes("export type CollaborationProviderPolicy = 'default' | 'capability-first-no-google'") &&
+    orchestrator.includes("providerPolicy: 'capability-first'") &&
+    orchestrator.includes('getConfiguredHarmonyProviders') &&
+    harmony.includes("'capability-first'") &&
+    harmony.includes('Harmony invariant: every configured, healthy participant contributes') &&
+    harmony.includes("role: 'harmony-synthesizer'") &&
     harmony.includes('fallbackProviders') &&
-    harmony.includes('Promise.any'),
-  'Lexara reasoning uses capability-first Harmony with route-local non-Google failover',
+    harmony.includes('Promise.any') &&
+    harmonyRegistry.includes('HARMONY_17_PARTICIPANTS'),
+  'Lexara reasoning uses the full configured capability-driven Harmony mesh with route-local failover',
 );
 must(
   !authorityResearch.includes('GoogleGenAI') &&
@@ -181,19 +187,44 @@ must(
     groq.includes('normalizeGroqModelId') &&
     groq.includes('while (attempted.size < 6)') &&
     aiProvider.includes("prefixes: ['llama-', 'meta-llama/', 'openai/', 'qwen/']") &&
-    harmony.includes("'claude-opus-4-8'") &&
+    harmonyRegistry.includes("'claude-opus-5'") &&
     harmony.includes('harmonyProviderCooldownUntil') &&
     harmony.includes('markHarmonyProviderFailure'),
   'Harmony uses robust Claude content parsing, permission-aware Groq recursive recovery, and provider-local cooldowns',
 );
 must(
-  aiProvider.includes("'claude-sonnet-4-6'") &&
-    aiProvider.includes("'claude-opus-4-8'") &&
-    harmony.includes("'claude-opus-4-8'") &&
-    !aiProvider.includes("'claude-sonnet-5'") &&
-    !aiProvider.includes("'claude-opus-5'"),
-  'Harmony Anthropic routing uses documented current Sonnet/Opus IDs rather than retired or nonexistent aliases',
+  harmonyRegistry.includes("'claude-sonnet-5'") &&
+    harmonyRegistry.includes("'claude-opus-5'") &&
+    harmonyRegistry.includes("'gemini-3.8-flash'") &&
+    harmonyRegistry.includes("'deepseek/deepseek-v4.1-flash'") &&
+    harmonyRegistry.includes("'x-ai/grok-4.6'") &&
+    harmonyRegistry.includes("'moonshotai/kimi-k3'") &&
+    harmonyRegistry.includes("'qwen/qwen3.8-max-0902'") &&
+    harmonyRegistry.includes("'openai/gpt-5.6-luna'"),
+  'Harmony current-model registry pins verified 2026 provider generations',
 );
+must(
+  lexaraChatRoutes.includes("router.post('/acknowledge'") &&
+    orchestrator.includes('getLexaraImmediateAcknowledgement') &&
+    orchestrator.includes('presenceOnly') &&
+    conversation.includes("fetch('/api/lexara/acknowledge'") &&
+    conversation.includes('acknowledgementSpeech'),
+  'Lexara has an immediate spoken acknowledgement lane independent of deep legal analysis',
+);
+must(
+  conversation.includes('stripLikelyPhantomCloserTail') &&
+    conversation.includes('repeatedCloserTail') &&
+    conversation.includes('Thank you. Bye. Thank you.'),
+  'phantom repeated closer tails are stripped while preserving substantive user speech',
+);
+must(
+  conversation.includes('isMasterSession') &&
+    conversation.includes("key?.startsWith('lexara-live-session:')") &&
+    lexaraChatRoutes.includes("persistenceStatus: isMaster ? 'master-ephemeral' : 'queued'") &&
+    lexaraChatRoutes.includes('if (!isMaster)'),
+  'master Lexara matters are ephemeral and reset across law-area/session changes',
+);
+
 must(
   routes.includes("req.path.startsWith('/images/')") &&
     routes.includes("/\\.[a-z0-9]{2,8}$/i.test(req.path)"),
@@ -243,6 +274,12 @@ must(resolutionLines.length === 20, 'literal 20-source resolution review is pres
 const implementationSection = turnGroundingReview.split('## Implementation sources — exactly 10')[1]?.split('## Repo and production findings')[0] || '';
 const implementationLines = implementationSection.split('\n').filter(line => /^\d+\.\s/.test(line));
 must(implementationLines.length === 10, 'literal 10-source implementation review is present');
+const harmonyRootSourceSection = harmonyRootReview.split('## Sources — exactly 10')[1]?.split('## Resolution')[0] || '';
+const harmonyRootSourceLines = harmonyRootSourceSection.split('\n').filter(line => /^\d+\.\s/.test(line));
+must(harmonyRootSourceLines.length === 10, 'literal 10-source Harmony root-cause review is present');
+const harmonyImplementationSourceSection = harmonyImplementationReview.split('## Sources — exactly 10')[1]?.split('## Resolution sequence')[0] || '';
+const harmonyImplementationSourceLines = harmonyImplementationSourceSection.split('\n').filter(line => /^\d+\.\s/.test(line));
+must(harmonyImplementationSourceLines.length === 10, 'literal 10-source Harmony/Lexara implementation review is present');
 const harmonySourceSection = harmonyReview.split('## Sources — exactly 10')[1]?.split('## Implementation sequence')[0] || '';
 const harmonySourceLines = harmonySourceSection.split('\n').filter(line => /^\d+\.\s/.test(line));
 must(harmonySourceLines.length === 10, 'literal 10-source Harmony implementation review is present');

@@ -93,7 +93,7 @@ export class WorkerTokenBudget {
     try {
       await tokenMetricsRepository.recordUsage({
         provider: 'groq',
-        model: 'llama-3.3-70b-versatile',
+        model: process.env.GROQ_CHAT_MODEL?.trim() || process.env.GROQ_MODEL?.trim() || 'openai/gpt-oss-120b',
         tokensUsed: actualTokens,
         source: 'worker', // Tag as worker usage
         operation: operationName,

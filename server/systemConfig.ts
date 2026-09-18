@@ -256,14 +256,14 @@ export const AI_MODELS: Record<string, AIModelConfig> = {
   // Primary models for user interactions
   'gemini-pro': {
     provider: 'google',
-    model: 'gemini-2.5-pro',
+    model: 'gemini-3.8-flash',
     contextLength: 1000000,
     costPer1kTokens: 0.00125,
     capabilities: ['chat', 'analysis', 'coding', 'vision'],
   },
   'groq-llama': {
     provider: 'groq',
-    model: 'llama-3.3-70b-versatile',
+    model: 'openai/gpt-oss-120b',
     contextLength: 128000,
     costPer1kTokens: 0.0,
     capabilities: ['chat', 'analysis', 'fast'],
@@ -272,15 +272,15 @@ export const AI_MODELS: Record<string, AIModelConfig> = {
   // Autonomous/background models
   'mistral-large': {
     provider: 'mistral',
-    model: 'mistral-large-latest',
+    model: 'mistral-medium-3-5',
     contextLength: 128000,
     costPer1kTokens: 0.002,
     capabilities: ['chat', 'analysis', 'coding'],
   },
   // OpenRouter fallbacks
-  'deepseek-r1': {
+  'deepseek-current': {
     provider: 'openrouter',
-    model: 'tng/deepseek-r1t2-chimera:free',
+    model: 'deepseek/deepseek-v4.1-flash',
     contextLength: 164000,
     costPer1kTokens: 0,
     capabilities: ['chat', 'reasoning'],
@@ -291,7 +291,7 @@ export const AI_MODELS: Record<string, AIModelConfig> = {
 // Model selection priority
 export const AI_MODEL_PRIORITY = {
   user: ['gemini-pro', 'groq-llama', 'mistral-large'],
-  autonomous: ['groq-llama', 'mistral-large', 'deepseek-r1'],
+  autonomous: ['groq-llama', 'mistral-large', 'deepseek-current'],
   legal: ['gemini-pro', 'mistral-large'],
   analysis: ['gemini-pro', 'groq-llama'],
 };
