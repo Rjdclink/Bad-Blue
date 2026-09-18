@@ -26,6 +26,7 @@ export interface CityStateLocation {
   displayName: string;
   city: string;
   state: string;
+  accuracyMeters: number;
 }
 
 function normalizeSpaces(value: string): string {
@@ -151,6 +152,46 @@ export function extractFreeformLocationHint(input: string): string | null {
   return null;
 }
 
+function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const radius = 6_371_000;
+  const toRad = Math.PI / 180;
+  const phi1 = lat1 * toRad;
+  const phi2 = lat2 * toRad;
+  const dPhi = (lat2 - lat1) * toRad;
+  const dLambda = (lon2 - lon1) * toRad;
+  const a =
+    Math.sin(dPhi / 2) ** 2 +
+    Math.cos(phi1) * Math.cos(phi2) * Math.sin(dLambda / 2) ** 2;
+  return radius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function geocoderAccuracyMeters(
+  latitude: number,
+  longitude: number,
+  boundingbox?: string[],
+): number {
+  if (!Array.isArray(boundingbox) || boundingbox.length < 4) return 25_000;
+  const south = Number(boundingbox[0]);
+  const north = Number(boundingbox[1]);
+  const west = Number(boundingbox[2]);
+  const east = Number(boundingbox[3]);
+  if (![south, north, west, east].every(Number.isFinite)) return 25_000;
+
+  const corners = [
+    [south, west],
+    [south, east],
+    [north, west],
+    [north, east],
+  ] as const;
+  const radius = Math.max(
+    ...corners.map(([lat, lon]) => haversineMeters(latitude, longitude, lat, lon)),
+  );
+
+  // A regional candidate must never visually imply point precision. The
+  // geocoder's bounding box becomes its uncertainty radius, with a 1 km floor.
+  return Math.max(1_000, Math.min(500_000, radius || 25_000));
+}
+
 async function waitForGeocoderSlot(): Promise<void> {
   const elapsed = Date.now() - lastRequestAt;
   if (lastRequestAt && elapsed < 1000) {
@@ -163,6 +204,7 @@ async function queryGeocoder(url: URL): Promise<Array<{
   lat?: string;
   lon?: string;
   display_name?: string;
+  boundingbox?: string[];
 }>> {
   await waitForGeocoderSlot();
   const response = await fetch(url, {
@@ -177,6 +219,7 @@ async function queryGeocoder(url: URL): Promise<Array<{
     lat?: string;
     lon?: string;
     display_name?: string;
+    boundingbox?: string[];
   }>>;
 }
 
@@ -202,6 +245,7 @@ export async function geocodeFreeformLocation(input: string): Promise<CityStateL
     displayName: result?.display_name || query,
     city: query,
     state: '',
+    accuracyMeters: geocoderAccuracyMeters(latitude, longitude, result?.boundingbox),
   };
 }
 
@@ -229,5 +273,6 @@ export async function geocodeCityState(input: string): Promise<CityStateLocation
     displayName: result?.display_name || hint.query,
     city: hint.city,
     state: hint.state,
+    accuracyMeters: geocoderAccuracyMeters(latitude, longitude, result?.boundingbox),
   };
 }
