@@ -88,6 +88,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
   const serverSpeechStartedAtRef = useRef<number | null>(null);
   const serverSilenceStartedAtRef = useRef<number | null>(null);
   const serverSpeechActiveRef = useRef(false);
+  const serverVoiceStartNotifiedRef = useRef(false);
   const discardServerRecordingRef = useRef(false);
   const transcriptionAbortRef = useRef<AbortController | null>(null);
   const serverTranscriptionQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -185,10 +186,16 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
 
   const finishServerUtterance = useCallback((discard = false) => {
     const recorder = serverRecorderRef.current;
+    const hadSpeech = serverSpeechActiveRef.current;
     discardServerRecordingRef.current = discard;
     serverSpeechActiveRef.current = false;
     serverSpeechStartedAtRef.current = null;
     serverSilenceStartedAtRef.current = null;
+
+    if (hadSpeech && serverVoiceStartNotifiedRef.current) {
+      optionsRef.current.onVoiceEnd?.();
+    }
+    serverVoiceStartNotifiedRef.current = false;
 
     if (recorder && recorder.state !== 'inactive') {
       try {
@@ -246,6 +253,19 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
 
     try {
       recorder.start(250);
+      // A short confirmation window prevents incidental clicks/noise from
+      // cutting LEXARA off, while still making barge-in feel immediate.
+      window.setTimeout(() => {
+        if (
+          serverSpeechActiveRef.current
+          && !serverVoiceStartNotifiedRef.current
+          && serverSpeechStartedAtRef.current !== null
+          && performance.now() - serverSpeechStartedAtRef.current >= 140
+        ) {
+          serverVoiceStartNotifiedRef.current = true;
+          optionsRef.current.onVoiceStart?.();
+        }
+      }, 150);
     } catch (err) {
       serverRecorderRef.current = null;
       serverSpeechActiveRef.current = false;
@@ -435,13 +455,19 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       recognitionActiveRef.current = true;
       setIsListening(true);
       setError(null);
+    };
+
+    recognition.onspeechstart = () => {
       optionsRef.current.onVoiceStart?.();
+    };
+
+    recognition.onspeechend = () => {
+      optionsRef.current.onVoiceEnd?.();
     };
 
     recognition.onend = () => {
       recognitionActiveRef.current = false;
       setIsListening(false);
-      optionsRef.current.onVoiceEnd?.();
 
       clearRestartTimer();
       const continuous = optionsRef.current.continuous ?? true;
