@@ -226,23 +226,15 @@ export async function mergeOutputs(outputs: ModelOutput[]): Promise<string> {
     return valid[0].content;
   }
   
-  // Use primary output, enhanced by supplementary information
-  const primary = valid[0];
-  const supplementary = valid.slice(1);
-  
-  // Simple merge for now - in production, use AI to merge
-  const mergePrompt = `Synthesize these AI analysis outputs into a single coherent response:
+  const mergePrompt = `Synthesize these independent Harmony role analyses into a single coherent response.
 
-PRIMARY ANALYSIS (${primary.role}, confidence: ${primary.confidence}):
-${primary.content}
-
-SUPPLEMENTARY ANALYSES:
-${supplementary.map(s => `[${s.role}]: ${s.content}`).join('\n\n')}
+ANALYSES:
+${valid.map(s => `[${s.role}, confidence metadata: ${s.confidence}]: ${s.content}`).join('\n\n')}
 
 Create a unified response that:
-1. Prioritizes the primary analysis
-2. Incorporates unique insights from supplementary analyses
-3. Removes redundancy
+1. Weighs claims by evidentiary support and relevant capability, not provider identity or list order
+2. Reconciles disagreements conservatively
+3. Incorporates unique supported insights and removes redundancy
 4. Maintains professional legal tone`;
 
   try {
@@ -252,9 +244,9 @@ Create a unified response that:
       maxTokens: 4096
     });
     
-    return result.content || primary.content;
+    return result.content || valid[0].content;
   } catch {
-    return primary.content;
+    return valid[0].content;
   }
 }
 
