@@ -54,6 +54,7 @@ const INCOMPLETE_TURN_GRACE_MS = 2_400;
 const CHAT_TURN_TIMEOUT_MS = 15_000;
 const ACKNOWLEDGEMENT_SOFT_TIMEOUT_MS = 450;
 const ACKNOWLEDGEMENT_DEDUPE_MS = 8_000;
+const ACKNOWLEDGEMENT_COOLDOWN_MS = 2_500;
 const MAX_STORED_CONVERSATION_MESSAGES = 24;
 
 function makeMessageId(role: ConversationMessage['role']): string {
@@ -695,8 +696,10 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         const duplicateAck = normalizedAck
           && normalizedAck === lastAcknowledgementRef.current.text
           && now - lastAcknowledgementRef.current.at < ACKNOWLEDGEMENT_DEDUPE_MS;
+        const acknowledgementTooSoon = !presenceControl
+          && now - lastAcknowledgementRef.current.at < ACKNOWLEDGEMENT_COOLDOWN_MS;
 
-        if (acknowledgement && !duplicateAck) {
+        if (acknowledgement && !duplicateAck && !acknowledgementTooSoon) {
           lastAcknowledgementRef.current = { text: normalizedAck, at: now };
           appendMessage('lexara', acknowledgement);
           await speakLexara(acknowledgement, generationRef.current).catch(() => undefined);
@@ -804,8 +807,15 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         const duplicateAck = normalizedAck
           && normalizedAck === lastAcknowledgementRef.current.text
           && now - lastAcknowledgementRef.current.at < ACKNOWLEDGEMENT_DEDUPE_MS;
+        const acknowledgementTooSoon =
+          now - lastAcknowledgementRef.current.at < ACKNOWLEDGEMENT_COOLDOWN_MS;
 
-        if (acknowledgement && !duplicateAck && generation === generationRef.current) {
+        if (
+          acknowledgement
+          && !duplicateAck
+          && !acknowledgementTooSoon
+          && generation === generationRef.current
+        ) {
           lastAcknowledgementRef.current = { text: normalizedAck, at: now };
           appendMessage('lexara', acknowledgement);
           setGaze('camera');
