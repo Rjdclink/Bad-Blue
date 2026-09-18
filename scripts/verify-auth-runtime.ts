@@ -110,7 +110,12 @@ assert.match(subscriptionFlowSource, /isSuspended\(current\)/, 'suspended users 
 assert.match(subscriptionFlowSource, /completed-payment path binds this Square customer ID/, 'ACTIVE subscription webhook must finish activation only through the verified customer-to-user binding');
 assert.match(subscriptionFlowSource, /The just-fetched customer subscription set is the authority/, 'webhook delivery status must never outrank freshly fetched Square subscription state');
 assert.match(subscriptionFlowSource, /currentSubscription[\s\S]{0,500}canonicalState\(currentSubscription\.status\)/, 'stale Square events must reconcile from the current subscription object');
-assert.match(routesSource, /app\.post\('\/api\/osint\/full-search'[\s\S]{0,900}resolvePaidAccess\(req, res\)/, 'OSINT must enforce fresh paid access while preserving controlled responses');
+const osintRouteStart = routesSource.indexOf("app.post('/api/osint/full-search'");
+assert.ok(osintRouteStart >= 0, 'OSINT full-search route must remain registered');
+const osintAccessWindow = routesSource.slice(osintRouteStart, osintRouteStart + 4_000);
+assert.match(osintAccessWindow, /resolvePaidAccess\(req,\s*res\)/, 'OSINT must enforce fresh paid access');
+assert.match(osintAccessWindow, /!access\.authenticated\s*\|\|\s*!access\.authorized/, 'OSINT must reject unauthenticated or unpaid access');
+assert.match(osintAccessWindow, /return\s+res\.json\(/, 'OSINT must preserve its controlled response contract for blocked access');
 assert.match(inmateRoutesSource, /router\.post\('\/', isAuthenticated, apiRateLimit/, 'inmate search must require verified paid access');
 assert.match(legalCounselRoutesSource, /router\.use\(isAuthenticated\)/, 'legal counsel sessions must require verified paid access');
 assert.match(consultationRoutesSource, /'\/api\/legal-consultation',[\s\S]{0,80}isAuthenticated/, 'canonical legal consultation must require verified paid access');
