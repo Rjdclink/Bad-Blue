@@ -10,10 +10,14 @@ import {
   type GPSCoordinates 
 } from '../services/gpsIntelligence';
 import { createLogger } from '../logger';
+import { isAuthenticated } from '../auth';
 import { extractMediaMetadata } from '../services/locationIntelligence/MediaMetadataExtractor';
 
 const router = Router();
 const log = createLogger('GPSRoutes');
+
+// All geolocation/media-intelligence operations are authenticated surfaces.
+router.use(isAuthenticated);
 
 const mediaUpload = multer({
   dest: '/tmp/legalwhat-media',
