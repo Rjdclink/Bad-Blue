@@ -377,8 +377,8 @@ export async function generateLexaraConversationResponse(
           providerPolicy: 'capability-first',
           systemPrompt,
           maxParticipants: 2,
-          requestTimeoutMs: 2_800,
-          maxFallbacks: 0,
+          requestTimeoutMs: 4_000,
+          maxFallbacks: 1,
         },
       );
       if (!/^No successful responses from collaboration\.?$/i.test(harmony.finalAnswer.trim())) {
