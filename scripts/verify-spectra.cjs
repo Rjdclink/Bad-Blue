@@ -21,6 +21,7 @@ const welcome = read('client/src/pages/welcome.tsx');
 const app = read('client/src/App.tsx');
 const routes = read('server/routes/spectra.routes.ts');
 const serverRoutes = read('server/routes.ts');
+const masterPanels = read('client/src/components/MasterPanelNavigator.tsx');
 
 console.log('\nSPECTRA UNIFIED EXPERIENCE\n');
 
@@ -71,6 +72,18 @@ test('TSHPE routes converge on SPECTRA',
   app.includes('<Route path="/tshpe-locator" component={SpectraPage} />'));
 test('Geo-console public redirect converges on SPECTRA',
   app.includes("setLocation('/spectra', { replace: true })"));
+test('Legacy GeoConsole screens route to SPECTRA',
+  app.includes('<Route path="/geoconsole" component={SpectraPage} />') &&
+  app.includes('<Route path="/geoconsole-command" component={SpectraPage} />') &&
+  app.includes('<Route path="/geoconsole-process" component={SpectraPage} />') &&
+  app.includes('<Route path="/geoconsole-report" component={SpectraPage} />'));
+test('Folded geospatial tools are not separate master tabs',
+  !masterPanels.includes("label: 'GeoConsole'") &&
+  !masterPanels.includes("label: 'GeoConsole Command'") &&
+  !masterPanels.includes("label: 'GeoConsole Process'") &&
+  !masterPanels.includes("label: 'GeoConsole Report'") &&
+  !masterPanels.includes("label: 'Location Intelligence'") &&
+  !masterPanels.includes("label: 'TSHPE'"));
 
 test('SPECTRA acquisition API requires authentication',
   routes.includes('router.use(isAuthenticated)'));
