@@ -47,10 +47,17 @@ export function extractCityStateHint(input: string): { city: string; state: stri
   const text = normalizeSpaces(input);
   if (!text) return null;
 
-  const direct = text.match(/^(.{2,100}?)[,\s]+([A-Za-z]{2})$/);
-  if (direct) {
-    const state = normalizeState(direct[2]);
-    const city = cleanCity(direct[1]);
+  const commaSeparated = text.match(/^(.{2,100}?),\s*([A-Za-z]{2})$/);
+  if (commaSeparated) {
+    const state = normalizeState(commaSeparated[2]);
+    const city = cleanCity(commaSeparated[1]);
+    if (state && city.length >= 2) return { city, state, query: `${city}, ${state}` };
+  }
+
+  const compactCode = text.match(/^([A-Za-z][A-Za-z.'\-]*(?:\s+[A-Za-z][A-Za-z.'\-]*){0,2})\s+([A-Za-z]{2})$/);
+  if (compactCode && !/\b(?:phone|email|employer|company|works?|born|age)\b/i.test(text)) {
+    const state = normalizeState(compactCode[2]);
+    const city = cleanCity(compactCode[1]);
     if (state && city.length >= 2) return { city, state, query: `${city}, ${state}` };
   }
 
