@@ -19,6 +19,7 @@ const subscriptionFlowSource = readFileSync(new URL('../server/routes/subscripti
 const loginPageSource = readFileSync(new URL('../client/src/pages/login.tsx', import.meta.url), 'utf8');
 const subscriptionSuccessSource = readFileSync(new URL('../client/src/pages/subscription-success.tsx', import.meta.url), 'utf8');
 const appSource = readFileSync(new URL('../client/src/App.tsx', import.meta.url), 'utf8');
+const sampleConsultationSource = readFileSync(new URL('../client/src/components/SampleLegalConsultation.tsx', import.meta.url), 'utf8');
 const inmateRoutesSource = readFileSync(new URL('../server/routes/inmateSearch.routes.ts', import.meta.url), 'utf8');
 const legalCounselRoutesSource = readFileSync(new URL('../server/routes/legalCounsel.routes.ts', import.meta.url), 'utf8');
 const documentRoutesSource = readFileSync(new URL('../server/routes/document.routes.ts', import.meta.url), 'utf8');
@@ -70,7 +71,7 @@ assert.match(authSource, /PAID_ACCESS_CACHE_TTL_MS\s*=\s*5_000/, 'high-frequency
 assert.match(authSource, /invalidatePaidAccessCache/, 'subscription/admin changes must be able to invalidate cached paid state immediately');
 assert.match(authSource, /typeof req\?\.isAuthenticated === "function"/, 'identity checks must guard the optional Passport request method');
 assert.match(statelessLocalAuthSource, /BEGIN[\s\S]{0,2200}COMMIT[\s\S]{0,800}ROLLBACK/, 'PostgreSQL signup must remain transactional');
-assert.match(statelessLocalAuthSource, /LEGALWHAT_AUTH_SUPABASE_URL\s*\|\|\s*getConfig\(\)\.SUPABASE_URL/, 'local auth Edge transport must have a dedicated canonical Supabase project URL');
+assert.match(statelessLocalAuthSource, /process\.env\.LEGALWHAT_AUTH_SUPABASE_URL[\s\S]{0,180}getConfig\(\)\.LEGALWHAT_AUTH_SUPABASE_URL[\s\S]{0,180}getConfig\(\)\.SUPABASE_URL/, 'configured LegalWhat auth project must be authoritative for direct and Edge auth transports');
 assert.match(statelessLocalAuthSource, /'pending_payment',false/, 'new PostgreSQL accounts must remain payment-pending');
 assert.match(statelessLocalAuthSource, /status:\s*"pending_payment"[\s\S]{0,120}has_paid_for_access:\s*false/, 'new Supabase accounts must remain payment-pending');
 assert.match(statelessLocalAuthSource, /edgeAuthRequest\("set_subscription"/, 'subscription state must persist through the selected auth authority');
@@ -95,7 +96,7 @@ assert.match(appSource, /hasPaidForAccess === true[\s\S]{0,160}suspended/, 'clie
 assert.match(loginPageSource, /\/api\/subscription\/checkout/, 'signup/login UI must hand pending users to hosted Square checkout');
 assert.match(loginPageSource, /sessionStorage\.setItem\("legalwhat_pending_square_order_id"/, 'checkout must preserve Square order identity before redirect');
 assert.match(subscriptionFlowSource, /isSuspended\(current\)/, 'suspended users must be rejected before Square checkout or confirmation');
-assert.match(subscriptionFlowSource, /identity-free subscription webhook/, 'identity-free ACTIVE webhooks must never grant access');
+assert.match(subscriptionFlowSource, /completed-payment path binds this Square customer ID/, 'ACTIVE subscription webhook must finish activation only through the verified customer-to-user binding');
 assert.match(routesSource, /app\.post\('\/api\/osint\/full-search'[\s\S]{0,900}resolvePaidAccess\(req, res\)/, 'OSINT must enforce fresh paid access while preserving controlled responses');
 assert.match(inmateRoutesSource, /router\.post\('\/', isAuthenticated, apiRateLimit/, 'inmate search must require verified paid access');
 assert.match(legalCounselRoutesSource, /router\.use\(isAuthenticated\)/, 'legal counsel sessions must require verified paid access');
@@ -117,6 +118,9 @@ assert.match(adminRoutesSource, /invalidatePaidAccessCache\(userId\)/, 'admin su
 assert.match(statelessLocalAuthSource, /activeAdminOverride[\s\S]{0,1200}effectivePaidAccess/, 'Square revocation must preserve a live admin override without weakening suspension');
 assert.match(railwayEnvSource, /SQUARE_SUBSCRIPTION_PLAN_VARIATION_ID=/, 'Railway example must document the required Square subscription plan variation');
 assert.match(deployPrepSource, /"SQUARE_SUBSCRIPTION_PLAN_VARIATION_ID"/, 'deployment preflight must validate the Square subscription plan variation');
+assert.match(configSource, /SQUARE_WEBHOOK_SIGNATURE_KEY is required in production/, 'production must require the Square webhook verification key');
+assert.match(sampleConsultationSource, /\$25\.99\/month/, 'public subscription disclosure must match the $25.99 Square checkout price');
+assert.doesNotMatch(sampleConsultationSource, /\$19\.98/, 'stale public subscription pricing must not remain');
 
 const { setupAuth, isIdentityAuthenticated } = await import('../server/auth.js');
 
