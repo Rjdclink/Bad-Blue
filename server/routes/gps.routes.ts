@@ -27,7 +27,8 @@ const mediaUpload = multer({
   },
   fileFilter: (_req, file, callback) => {
     const accepted = file.mimetype.startsWith('image/') || file.mimetype.startsWith('video/');
-    callback(accepted ? null : new Error('Only image and video files are supported'), accepted);
+    if (accepted) callback(null, true);
+    else callback(new Error('Only image and video files are supported'));
   },
 });
 
