@@ -40,7 +40,7 @@ const DEFAULT_CONFIG: MonteCarloConfig = {
   stepSize: 10, // meters
   maxSpeed: 30, // m/s (~67 mph for driving)
   accelerationVariance: 2, // m/s²
-  directionVariance: Math.PI / 6, // 30 degrees
+  directionVariance: 30, // degrees
   terrainAwareness: false,
   roadNetworkConstraint: false,
   probabilityThreshold: 0.01,
@@ -698,8 +698,8 @@ export class MonteCarloPathEngine {
   }
 
   private normalizeAngle(angle: number): number {
-    while (angle > Math.PI) angle -= 2 * Math.PI;
-    while (angle < -Math.PI) angle += 2 * Math.PI;
+    while (angle > 180) angle -= 360;
+    while (angle < -180) angle += 360;
     return angle;
   }
 
