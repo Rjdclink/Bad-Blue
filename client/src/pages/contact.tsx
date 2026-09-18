@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Shield, Mail, Send, CheckCircle2, FileText, Scale, Users, Search, Home as HomeIcon } from "lucide-react";
+import { Mail, Send, CheckCircle2, FileText, Scale, Users, Search, Home as HomeIcon } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Link } from "wouter";
@@ -76,14 +76,14 @@ export default function Contact() {
     const contactPageSchema = {
       "@context": "https://schema.org",
       "@type": "ContactPage",
-      "name": "Contact BadBlue - Police Accountability Support",
-      "description": "Contact BadBlue for help with police misconduct complaints, §1983 civil rights lawsuits, FOIA requests, and officer resignation petitions. Affordable legal tools, fully remote.",
-      "url": "https://example.com/contact",
+      "name": "Contact Legal What? - Support",
+      "description": "Contact Legal What? for support with AI legal consultation, legal document tools, background reports, people-finding tools, inmate search, public records, and police accountability workflows.",
+      "url": "https://legalwhat.com/contact",
       "mainEntity": {
         "@type": "Organization",
-        "name": "BadBlue",
-        "description": "Legal accountability platform offering police misconduct complaints, officer resignation petitions, and §1983 civil rights lawsuit filings — cheaper than a civil rights attorney consult, fully remote.",
-        "url": "https://example.com",
+        "name": "Legal What?",
+        "description": "AI-assisted legal information and research platform with consultation, document, public-record, people-finding, background-report, inmate-search, and police-accountability tools.",
+        "url": "https://legalwhat.com",
         "email": "contact.badblue@gmail.com",
         "contactPoint": {
           "@type": "ContactPoint",
@@ -118,11 +118,11 @@ export default function Contact() {
   return (
     <div className="min-h-screen bg-background">
       <SEOHead
-        title="Bad Blue — Contact + Support + Misconduct Filing Help"
-        description="Contact BadBlue at contact.badblue@gmail.com for help with police misconduct complaints, §1983 civil rights lawsuits, FOIA requests, and petitions demanding officer resignation. Affordable alternative to attorneys, fully online — never leave home."
-        canonicalUrl="https://example.com/contact"
+        title="Contact Legal What? | Support"
+        description="Contact Legal What? for support with AI legal consultation, legal document tools, background reports, people-finding tools, inmate search, public records, and account questions."
+        canonicalUrl="https://legalwhat.com/contact"
         breadcrumbs={[
-          { name: "Contact & Support", url: "https://example.com/contact" }
+          { name: "Contact & Support", url: "https://legalwhat.com/contact" }
         ]}
       />
       
@@ -130,8 +130,8 @@ export default function Contact() {
       <header className="border-b bg-card sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2 cursor-pointer hover-elevate px-2 py-1 rounded-md">
-            <Shield className="w-6 h-6 text-primary" />
-            <span className="font-semibold text-lg">BadBlue</span>
+            <img src="/images/Legal%20What%20Icon.png" alt="" aria-hidden="true" className="w-8 h-8 object-contain" />
+            <span className="font-semibold text-lg">Legal What?</span>
           </Link>
           <nav className="hidden md:flex items-center gap-6">
             <Link href="/landing" className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1">
@@ -150,13 +150,11 @@ export default function Contact() {
 
       <main className="max-w-5xl mx-auto px-4 py-12">
         <PageBreadcrumbs currentPageName="Contact Us" />
-        {/* Hero Section - What BadBlue Does */}
+        {/* Hero Section - What Legal What? Does */}
         <div className="text-center mb-12">
-          <h1 className="text-4xl font-bold mb-4">Contact BadBlue</h1>
+          <h1 className="text-4xl font-bold mb-4">Contact Legal What?</h1>
           <p className="text-xl text-muted-foreground max-w-3xl mx-auto">
-            BadBlue is a police accountability platform that helps citizens file police misconduct complaints, 
-            generate 42 U.S.C. §1983 civil rights lawsuits, submit FOIA requests, and create petitions demanding 
-            officer resignation — all from the comfort of your home.
+            Legal What? is an AI-assisted legal information and research platform with tools for two-way legal consultation, document workflows, background reports, people finding, inmate searches, public records, and police accountability.
           </p>
         </div>
 
@@ -203,14 +201,14 @@ export default function Contact() {
           </Card>
         </div>
 
-        {/* Why BadBlue */}
+        {/* Why Legal What? */}
         <div className="bg-card rounded-lg p-8 mb-12 border">
-          <h2 className="text-2xl font-bold mb-4 text-center">Why Choose BadBlue?</h2>
+          <h2 className="text-2xl font-bold mb-4 text-center">Why Choose Legal What??</h2>
           <div className="grid md:grid-cols-2 gap-6">
             <div>
               <h3 className="font-semibold text-primary mb-2">Affordable Alternative to Attorneys</h3>
               <p className="text-muted-foreground">
-                Civil rights attorneys can charge $300-500/hour. BadBlue provides professional legal document 
+                Civil rights attorneys can charge $300-500/hour. Legal What? provides professional legal document 
                 preparation at a fraction of the cost, making police accountability accessible to everyone.
               </p>
             </div>
@@ -394,7 +392,7 @@ export default function Contact() {
               <div>
                 <h2 className="text-2xl font-bold mb-2">Message Sent Successfully!</h2>
                 <p className="text-muted-foreground mb-6">
-                  Thank you for contacting BadBlue. We've received your message and will respond within 24-48 hours.
+                  Thank you for contacting Legal What?. We've received your message and will respond within 24-48 hours.
                 </p>
                 <div className="flex flex-col sm:flex-row gap-3 justify-center">
                   <Button asChild variant="default" data-testid="button-back-home">
@@ -423,13 +421,13 @@ export default function Contact() {
           itemScope 
           itemType="https://schema.org/FAQPage"
         >
-          <h2>Frequently Asked Questions About BadBlue Police Accountability Tools</h2>
+          <h2>Frequently Asked Questions About Legal What? Police Accountability Tools</h2>
           
           <div itemScope itemProp="mainEntity" itemType="https://schema.org/Question">
             <h3 itemProp="name">How do I file a police misconduct complaint online?</h3>
             <div itemScope itemProp="acceptedAnswer" itemType="https://schema.org/Answer">
               <p itemProp="text">
-                BadBlue provides a streamlined online complaint filing system. After creating a free account, 
+                Legal What? provides a streamlined online complaint filing system. After creating a free account, 
                 navigate to the Complaint Form, describe the incident involving police misconduct, excessive force, 
                 or civil rights violations, and our AI will help format your complaint professionally. We automatically 
                 route completed complaints to the appropriate internal affairs division, civilian oversight board, 
@@ -440,12 +438,12 @@ export default function Contact() {
           </div>
 
           <div itemScope itemProp="mainEntity" itemType="https://schema.org/Question">
-            <h3 itemProp="name">What is a petition demanding officer resignation and how does BadBlue help?</h3>
+            <h3 itemProp="name">What is a petition demanding officer resignation and how does Legal What? help?</h3>
             <div itemScope itemProp="acceptedAnswer" itemType="https://schema.org/Answer">
               <p itemProp="text">
                 A resignation petition is a community-driven document calling for a specific police officer to 
                 resign from their position due to misconduct, abuse of power, or patterns of civil rights violations. 
-                BadBlue's petition tool allows you to create professional petitions, collect digital signatures from 
+                Legal What?'s petition tool allows you to create professional petitions, collect digital signatures from 
                 community members, and automatically deliver the completed petition to city council members, police 
                 oversight boards, and local officials. This grassroots approach empowers communities to demand 
                 accountability when internal processes fail.
@@ -459,7 +457,7 @@ export default function Contact() {
               <p itemProp="text">
                 Section 1983 of Title 42 of the United States Code allows citizens to sue government officials, 
                 including police officers, who violate their constitutional rights while acting under color of law. 
-                BadBlue's lawsuit generator creates U.S. District Court-compliant legal documents including the 
+                Legal What?'s lawsuit generator creates U.S. District Court-compliant legal documents including the 
                 complaint, summons, and civil cover sheet. Our system follows district-specific formatting rules 
                 for California, New York, Texas, and all federal districts. You can file the lawsuit yourself 
                 (pro se) or use our documents as a foundation when working with an attorney. This is an affordable 
@@ -469,11 +467,11 @@ export default function Contact() {
           </div>
 
           <div itemScope itemProp="mainEntity" itemType="https://schema.org/Question">
-            <h3 itemProp="name">What is a FOIA request and how can BadBlue help me file one?</h3>
+            <h3 itemProp="name">What is a FOIA request and how can Legal What? help me file one?</h3>
             <div itemScope itemProp="acceptedAnswer" itemType="https://schema.org/Answer">
               <p itemProp="text">
                 FOIA (Freedom of Information Act) requests allow citizens to obtain public records from government 
-                agencies, including police departments. BadBlue generates state-specific FOIA requests that comply 
+                agencies, including police departments. Legal What? generates state-specific FOIA requests that comply 
                 with your state's public records laws, including proper statutory citations, deadlines, and exemption 
                 references. Our system automatically looks up the correct FOIA officer or records custodian for your 
                 target agency and routes your request appropriately. Common requests include body camera footage, 
@@ -483,24 +481,24 @@ export default function Contact() {
           </div>
 
           <div itemScope itemProp="mainEntity" itemType="https://schema.org/Question">
-            <h3 itemProp="name">How much does BadBlue cost compared to hiring a civil rights attorney?</h3>
+            <h3 itemProp="name">How much does Legal What? cost compared to hiring a civil rights attorney?</h3>
             <div itemScope itemProp="acceptedAnswer" itemType="https://schema.org/Answer">
               <p itemProp="text">
                 Civil rights attorneys typically charge $300-500 per hour, with initial consultations alone costing 
-                $200 or more. Complex police misconduct cases can cost $5,000-50,000 in legal fees. BadBlue offers 
+                $200 or more. Complex police misconduct cases can cost $5,000-50,000 in legal fees. Legal What? offers 
                 individual services starting at affordable rates: complaint filing, FOIA requests, petition creation, 
                 and lawsuit document generation are each priced to be accessible to everyone. Our AI-powered legal 
-                consultation is free for registered users. BadBlue is designed to democratize access to police 
+                consultation is free for registered users. Legal What? is designed to democratize access to police 
                 accountability tools, ensuring that cost is not a barrier to seeking justice.
               </p>
             </div>
           </div>
 
           <div itemScope itemProp="mainEntity" itemType="https://schema.org/Question">
-            <h3 itemProp="name">Can I use BadBlue without leaving my home?</h3>
+            <h3 itemProp="name">Can I use Legal What? without leaving my home?</h3>
             <div itemScope itemProp="acceptedAnswer" itemType="https://schema.org/Answer">
               <p itemProp="text">
-                Yes, BadBlue is a fully remote police accountability platform. Every feature is accessible online: 
+                Yes, Legal What? is a fully remote police accountability platform. Every feature is accessible online: 
                 search for officers by name and state, file misconduct complaints, generate §1983 civil rights lawsuits, 
                 submit FOIA requests, and create resignation petitions — all from your computer or phone. Documents 
                 are delivered electronically to appropriate agencies. You never need to visit a law office, courthouse, 
@@ -527,7 +525,7 @@ export default function Contact() {
             <Link href="/terms" className="hover:text-foreground">Terms</Link>
           </div>
           <p className="text-center text-xs text-muted-foreground mt-4">
-            BadBlue — Affordable police accountability tools, fully online. Never leave home.
+            Legal What? — Affordable police accountability tools, fully online. Never leave home.
           </p>
         </div>
       </footer>

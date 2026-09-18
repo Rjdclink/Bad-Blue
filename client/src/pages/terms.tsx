@@ -1,4 +1,3 @@
-import { Shield } from "lucide-react";
 import { Link } from "wouter";
 import { SEOHead } from "@/components/SEOHead";
 import { PageBreadcrumbs } from "@/components/PageBreadcrumbs";
@@ -11,11 +10,11 @@ export default function Terms() {
   return (
     <div className="min-h-screen bg-background">
       <SEOHead
-        title="Bad Blue — Terms of Service | Legal Usage Agreement"
-        description="BadBlue terms of service for police misconduct complaint filing, §1983 civil rights lawsuits, FOIA requests, and officer resignation petitions. Understand your rights and responsibilities."
-        canonicalUrl="https://example.com/terms"
+        title="Terms of Service | Legal What?"
+        description="Read the Legal What? terms for AI-assisted legal information, consultation, document tools, public-record research, background reports, people searches, inmate search, and other services."
+        canonicalUrl="https://legalwhat.com/terms"
         breadcrumbs={[
-          { name: "Terms of Service", url: "https://example.com/terms" }
+          { name: "Terms of Service", url: "https://legalwhat.com/terms" }
         ]}
       />
       
@@ -23,8 +22,8 @@ export default function Terms() {
       <header className="border-b bg-card sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2 cursor-pointer hover-elevate px-2 py-1 rounded-md">
-            <Shield className="w-6 h-6 text-primary" />
-            <span className="font-semibold text-lg">BadBlue</span>
+            <img src="/images/Legal%20What%20Icon.png" alt="" aria-hidden="true" className="w-8 h-8 object-contain" />
+            <span className="font-semibold text-lg">Legal What?</span>
           </Link>
           <nav className="flex items-center gap-4">
             <Link href="/contact" className="text-sm text-muted-foreground hover:text-foreground">Contact</Link>
@@ -42,8 +41,8 @@ export default function Terms() {
           <section>
             <h2 className="text-2xl font-semibold mb-4">1. Acceptance of Terms</h2>
             <p className="text-muted-foreground leading-relaxed">
-              By accessing or using BadBlue ("the Platform"), you agree to be bound by these Terms of Service. 
-              BadBlue provides police accountability tools including police misconduct complaint filing, 
+              By accessing or using Legal What? ("the Platform"), you agree to be bound by these Terms of Service. 
+              Legal What? provides police accountability tools including police misconduct complaint filing, 
               42 U.S.C. §1983 civil rights lawsuit generation, FOIA request drafting, and petition creation 
               for demanding officer resignation. If you do not agree to these terms, do not use our services.
             </p>
@@ -52,7 +51,7 @@ export default function Terms() {
           <section>
             <h2 className="text-2xl font-semibold mb-4">2. Service Description</h2>
             <p className="text-muted-foreground leading-relaxed">
-              BadBlue is an affordable, fully remote alternative to traditional civil rights attorney consultations. 
+              Legal What? is an affordable, fully remote alternative to traditional civil rights attorney consultations. 
               Our platform offers:
             </p>
             <ul className="list-disc pl-6 space-y-2 text-muted-foreground mt-2">
@@ -68,12 +67,12 @@ export default function Terms() {
           <section>
             <h2 className="text-2xl font-semibold mb-4">3. Not Legal Advice</h2>
             <p className="text-muted-foreground leading-relaxed font-medium">
-              IMPORTANT: BadBlue does not provide legal advice. We are a legal document preparation and 
+              IMPORTANT: Legal What? does not provide legal advice. We are a legal document preparation and 
               information platform, not a law firm. Our AI-powered tools assist with document creation 
               but do not constitute attorney-client relationships.
             </p>
             <p className="text-muted-foreground leading-relaxed mt-2">
-              For complex civil rights cases, we recommend consulting with a licensed attorney. BadBlue 
+              For complex civil rights cases, we recommend consulting with a licensed attorney. Legal What? 
               is designed to make basic legal processes accessible and affordable for everyone, but 
               serious litigation may require professional legal representation.
             </p>
@@ -82,7 +81,7 @@ export default function Terms() {
           <section>
             <h2 className="text-2xl font-semibold mb-4">4. User Responsibilities</h2>
             <p className="text-muted-foreground leading-relaxed">
-              By using BadBlue, you agree to:
+              By using Legal What?, you agree to:
             </p>
             <ul className="list-disc pl-6 space-y-2 text-muted-foreground mt-2">
               <li>Provide accurate and truthful information in all complaints and legal documents</li>
@@ -110,7 +109,7 @@ export default function Terms() {
           <section>
             <h2 className="text-2xl font-semibold mb-4">6. Limitation of Liability</h2>
             <p className="text-muted-foreground leading-relaxed">
-              BadBlue is provided "as is" without warranties of any kind. We are not liable for:
+              Legal What? is provided "as is" without warranties of any kind. We are not liable for:
             </p>
             <ul className="list-disc pl-6 space-y-2 text-muted-foreground mt-2">
               <li>Outcomes of complaints, lawsuits, or petitions filed using our platform</li>
@@ -124,8 +123,8 @@ export default function Terms() {
           <section>
             <h2 className="text-2xl font-semibold mb-4">7. Intellectual Property</h2>
             <p className="text-muted-foreground leading-relaxed">
-              Documents generated using BadBlue are yours to use. However, the platform, AI models, 
-              templates, and underlying technology remain the property of BadBlue. You may not reverse 
+              Documents generated using Legal What? are yours to use. However, the platform, AI models, 
+              templates, and underlying technology remain the property of Legal What?. You may not reverse 
               engineer, copy, or redistribute our platform or services.
             </p>
           </section>
@@ -150,7 +149,7 @@ export default function Terms() {
           <section>
             <h2 className="text-2xl font-semibold mb-4">10. Changes to Terms</h2>
             <p className="text-muted-foreground leading-relaxed">
-              We may update these terms periodically. Continued use of BadBlue after changes constitutes 
+              We may update these terms periodically. Continued use of Legal What? after changes constitutes 
               acceptance of the new terms. We will notify users of significant changes via email.
             </p>
           </section>
@@ -164,7 +163,7 @@ export default function Terms() {
               Email: contact.badblue@gmail.com
             </p>
             <p className="text-muted-foreground mt-4">
-              BadBlue — Police accountability made affordable and accessible. File complaints, generate 
+              Legal What? — Police accountability made affordable and accessible. File complaints, generate 
               lawsuits, and demand accountability without leaving your home.
             </p>
           </section>
@@ -183,7 +182,7 @@ export default function Terms() {
             <Link href="/privacy" className="hover:text-foreground">Privacy Policy</Link>
           </div>
           <p className="text-center text-xs text-muted-foreground mt-4">
-            BadBlue — Affordable police accountability tools, fully online.
+            Legal What? — Affordable police accountability tools, fully online.
           </p>
         </div>
       </footer>

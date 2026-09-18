@@ -556,15 +556,15 @@ export default function ComplaintForm() {
   return (
     <div className="min-h-screen bg-background">
       <SEOHead
-        title="Bad Blue — File Misconduct Complaints Online"
+        title="Police Misconduct Complaint Tool | Legal What?"
         description="Generate professional police misconduct complaints with automatic routing to Internal Affairs, oversight boards, and command staff. Affordable alternative to attorneys, submit complaints online without leaving home."
         keywords="file police complaint online, file officer complaint online, police misconduct complaint form, officer misconduct grievance form, report police brutality, report officer assault, file complaint against police officer, file grievance against officer, excessive force police complaint, excessive force officer grievance, police harassment complaint, officer harassment grievance, false arrest police complaint, wrongful arrest officer complaint, police discrimination report, officer discrimination complaint, internal affairs complaint police, internal affairs grievance officer, file complaint police department, file grievance officer department, civilian complaint review board police, civilian complaint officer, report law enforcement misconduct, report officer misconduct, police accountability complaint, officer accountability grievance, police brutality complaint online, officer brutality grievance online, police assault complaint form, officer assault complaint form, police violence complaint, officer violence grievance, department misconduct complaint, department brutality grievance, complaint police excessive force, complaint officer assault, grievance police harassment, grievance officer discrimination, police complaint process online, officer grievance process online, submit police complaint online, submit officer grievance online, file formal police complaint, file formal officer grievance, police misconduct documentation, officer misconduct evidence, complaint against police online, complaint against officer online, police brutality report online, officer assault report online, police harassment grievance, officer harassment complaint, false arrest police report, wrongful detention officer complaint, police rights violation complaint, officer constitutional violation grievance, police abuse complaint online, officer abuse grievance online, police corruption complaint, officer corruption grievance, department accountability complaint, department misconduct grievance, how to file police complaint, how to file officer grievance, how to report police brutality, how to report officer assault, how to complain about police, how to complain about officer, police complaint help online, officer grievance help online, assistance filing police complaint, assistance filing officer grievance, guidance police complaint process, guidance officer grievance process, police complaint legal help, officer grievance legal advice, police misconduct complaint assistance, officer misconduct grievance support, file police brutality complaint, file officer assault grievance, submit police harassment complaint, submit officer discrimination grievance, police excessive force complaint form, officer assault complaint form online, police department complaint online, officer department grievance online"
-        ogTitle="File Police Misconduct Complaint Online | BadBlue"
+        ogTitle="Police Misconduct Complaint Tool | Legal What?"
         ogDescription="Report police brutality, excessive force, and civil rights violations. File formal complaints with automated routing to proper authorities."
-        canonicalUrl="https://example.com/complaints/new"
         structuredData={complaintFilingSchema}
         breadcrumbs={breadcrumbs}
         pageType="service"
+        noIndex
       />
       {/* Header */}
       <header className="border-b bg-card sticky top-0 z-50">
@@ -578,8 +578,8 @@ export default function ComplaintForm() {
             >
               <ArrowLeft className="w-5 h-5" />
             </Button>
-            <Shield className="w-6 h-6 text-primary" />
-            <span className="font-semibold text-lg">BadBlue</span>
+            <img src="/images/Legal%20What%20Icon.png" alt="Legal What?" className="w-8 h-8 object-contain" />
+            <span className="font-semibold text-lg">Legal What?</span>
           </div>
           
           <div className="flex items-center gap-2">

@@ -1,18 +1,18 @@
 /**
- * Central SEO Configuration for BadBlue
+ * Central SEO Configuration for Legal What?
  * Contains metadata for all routes including titles, descriptions, keywords, and breadcrumbs
  * 
  * SEO Strategy:
  * - Primary keywords: High-intent action phrases ("file police complaint", "sue police officer")
  * - Secondary keywords: Service-specific terms ("Section 1983", "FOIA request")
- * - LSI keywords: Related terms that add context ("from home", "no lawyers needed", "Bad Blue does all the work")
+ * - LSI keywords: Related terms that add context ("from home", "no lawyers needed", "Legal What? does all the work")
  * - All titles under 60 chars, descriptions under 160 chars
  */
 
-export const BASE_URL = "https://example.com";
-export const SITE_NAME = "Bad Blue";
-export const TWITTER_HANDLE = "@BadBlueApp";
-export const DEFAULT_OG_IMAGE = `${BASE_URL}/preview.png`;
+export const BASE_URL = "https://legalwhat.com";
+export const SITE_NAME = "Legal What?";
+export const TWITTER_HANDLE = "";
+export const DEFAULT_OG_IMAGE = `${BASE_URL}/images/Legal%20What%20Icon.png`;
 
 export interface BreadcrumbItem {
   name: string;
@@ -43,40 +43,36 @@ export interface PageSEO {
 
 export const GLOBAL_KEYWORDS: KeywordTaxonomy = {
   primary: [
-    "file police complaint online",
-    "sue police officer",
-    "police accountability",
-    "police misconduct",
-    "civil rights lawsuit"
+    "AI legal tools",
+    "AI legal consultation",
+    "legal document generator",
+    "people finder",
+    "inmate locator"
   ],
   secondary: [
-    "Section 1983 lawsuit",
-    "42 USC 1983",
-    "FOIA request",
-    "officer search",
-    "police brutality"
+    "background report",
+    "public records search",
+    "legal research",
+    "geolocation people finder",
+    "30 legal practice areas"
   ],
   lsi: [
-    "file from home",
-    "no lawyers needed",
-    "Bad Blue does all the work",
-    "affordable legal help",
-    "online complaint form",
-    "free police complaint",
-    "citizen complaint"
+    "voice legal consultation",
+    "text legal consultation",
+    "legal information platform",
+    "public record research tools",
+    "nationwide inmate search"
   ]
 };
 
 export const SEO_CONFIG: Record<string, PageSEO> = {
   "/": {
-    title: "Bad Blue | File Police Complaints From Home",
-    description: "File police complaints, Section 1983 lawsuits, FOIA requests from home. Bad Blue does all the work. No lawyers needed.",
-    keywords: "file police complaint online, police complaint form, report police misconduct, sue police officer, Section 1983 lawsuit, civil rights lawsuit, FOIA request, police accountability, file from home, no lawyers needed, Bad Blue does all the work",
-    keywordTaxonomy: {
-      primary: ["file police complaint online", "sue police officer", "police misconduct report"],
-      secondary: ["Section 1983 lawsuit", "FOIA request", "civil rights violation"],
-      lsi: ["file from home", "no lawyers needed", "Bad Blue does all the work", "free complaint form"]
-    },
+    title: "Legal What? | AI Legal Tools, People Finder & Inmate Locator",
+    description: "Explore 30 legal practice areas with two-way voice and text AI consultation, legal document tools, background reports, people-finding tools, and nationwide inmate search.",
+    keywords: "AI legal tools, AI legal consultation, legal document generator, background reports, people finder, inmate locator, public records search",
+    keywordTaxonomy: GLOBAL_KEYWORDS,
+    ogTitle: "Legal What? | AI Legal Tools, People Finder & Inmate Locator",
+    ogDescription: "Voice and text AI legal consultation across 30 practice areas, public-record research, people-finding tools, inmate search, and legal document tools.",
     ogType: "website",
     canonicalPath: "/",
     priority: 1.0,
@@ -85,23 +81,19 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
     includeInSitemap: true,
   },
   "/landing": {
-    title: "Bad Blue | Police Accountability Made Easy",
-    description: "Hold police accountable from home. File complaints, lawsuits, FOIA requests. AI officer search. Bad Blue does all the work.",
-    keywords: "police accountability platform, file police complaint, sue police, civil rights, police misconduct reporting, file from home, affordable legal help",
-    keywordTaxonomy: {
-      primary: ["police accountability", "file police complaint", "sue police officer"],
-      secondary: ["AI officer search", "legal document generation", "automated complaint filing"],
-      lsi: ["done from home", "no office visits", "we do all the work", "affordable alternative"]
-    },
+    title: "Legal What? | AI Legal Tools for 30 Practice Areas",
+    description: "Learn about Legal What? voice and text AI consultation, legal document tools, background reports, people-finding tools, inmate search, and public-record workflows.",
+    keywords: "Legal What, AI legal platform, 30 legal practice areas, voice legal consultation, people finder, inmate locator, background reports",
+    keywordTaxonomy: GLOBAL_KEYWORDS,
     ogType: "website",
-    canonicalPath: "/landing",
-    priority: 0.95,
+    canonicalPath: "/",
+    priority: 1.0,
     changefreq: "weekly",
-    breadcrumbs: [{ name: "Welcome", url: `${BASE_URL}/landing` }],
-    includeInSitemap: true,
+    breadcrumbs: [],
+    includeInSitemap: false,
   },
   "/officer": {
-    title: "Police Officer Search | Find Cop Records | Bad Blue",
+    title: "Police Officer Search | Find Cop Records | Legal What?",
     description: "Search police officers by name, badge, department. Find misconduct history from home. AI-powered officer lookup.",
     keywords: "police officer search, officer lookup, badge number search, police misconduct records, officer background check, find police officer, cop lookup, officer history, search cop by name, police database",
     keywordTaxonomy: {
@@ -114,11 +106,12 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
     priority: 0.9,
     changefreq: "daily",
     breadcrumbs: [{ name: "Officer Search", url: `${BASE_URL}/officer` }],
-    includeInSitemap: true,
+    noIndex: true,
+    includeInSitemap: false,
   },
   "/complaint-form": {
-    title: "File Police Complaint Online Free | Bad Blue",
-    description: "File police complaints from home. Auto-routes to authorities. No lawyers needed. Bad Blue does all the work.",
+    title: "File Police Complaint Online Free | Legal What?",
+    description: "File police complaints from home. Auto-routes to authorities. No lawyers needed. Legal What? does all the work.",
     keywords: "file police complaint, police complaint form, report police misconduct, police brutality complaint, internal affairs complaint, citizen complaint, how to file police complaint, online police complaint, free complaint form",
     keywordTaxonomy: {
       primary: ["file police complaint online", "police complaint form", "report police misconduct"],
@@ -130,10 +123,11 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
     priority: 0.9,
     changefreq: "weekly",
     breadcrumbs: [{ name: "File Complaint", url: `${BASE_URL}/complaint-form` }],
-    includeInSitemap: true,
+    noIndex: true,
+    includeInSitemap: false,
   },
   "/lawsuit-form": {
-    title: "Section 1983 Lawsuit Generator | Sue Police | Bad Blue",
+    title: "Section 1983 Lawsuit Generator | Sue Police | Legal What?",
     description: "Generate Section 1983 civil rights lawsuits from home. Court-ready documents. Affordable. No lawyers needed.",
     keywords: "Section 1983 lawsuit, sue police officer, civil rights lawsuit, 42 USC 1983, police brutality lawsuit, excessive force lawsuit, false arrest lawsuit, qualified immunity, how to sue police, file lawsuit from home",
     keywordTaxonomy: {
@@ -146,11 +140,12 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
     priority: 0.9,
     changefreq: "weekly",
     breadcrumbs: [{ name: "Generate Lawsuit", url: `${BASE_URL}/lawsuit-form` }],
-    includeInSitemap: true,
+    noIndex: true,
+    includeInSitemap: false,
   },
   "/foia-request-form": {
-    title: "FOIA Request Generator | Get Police Records | Bad Blue",
-    description: "Get police records with FOIA requests. Body cam footage, incident reports. Filed from home. Bad Blue does all the work.",
+    title: "FOIA Request Generator | Get Police Records | Legal What?",
+    description: "Get police records with FOIA requests. Body cam footage, incident reports. Filed from home. Legal What? does all the work.",
     keywords: "FOIA request, freedom of information, police records request, public records, police body camera footage, incident reports, arrest records, how to FOIA police, get police records, request body cam footage",
     keywordTaxonomy: {
       primary: ["FOIA request", "police records request", "get police records"],
@@ -162,10 +157,11 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
     priority: 0.9,
     changefreq: "weekly",
     breadcrumbs: [{ name: "FOIA Request", url: `${BASE_URL}/foia-request-form` }],
-    includeInSitemap: true,
+    noIndex: true,
+    includeInSitemap: false,
   },
   "/petitions": {
-    title: "Police Petitions | Demand Accountability | Bad Blue",
+    title: "Police Petitions | Demand Accountability | Legal What?",
     description: "Create and sign petitions for police accountability. Demand officer discipline and policy changes. Join your community.",
     keywords: "police petition, community petition, police accountability petition, officer termination petition, police reform petition, citizen petition, demand police accountability, sign petition",
     keywordTaxonomy: {
@@ -178,10 +174,11 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
     priority: 0.8,
     changefreq: "daily",
     breadcrumbs: [{ name: "Petitions", url: `${BASE_URL}/petitions` }],
-    includeInSitemap: true,
+    noIndex: true,
+    includeInSitemap: false,
   },
   "/evidence-hub": {
-    title: "Evidence Hub | Upload Police Misconduct Evidence | Bad Blue",
+    title: "Evidence Hub | Upload Police Misconduct Evidence | Legal What?",
     description: "Securely upload police misconduct evidence. Videos, photos, documents. Private and protected. Community evidence repository.",
     keywords: "police evidence upload, misconduct evidence, police video evidence, brutality evidence, share police misconduct, evidence repository, upload police video, secure evidence storage",
     keywordTaxonomy: {
@@ -194,11 +191,24 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
     priority: 0.8,
     changefreq: "daily",
     breadcrumbs: [{ name: "Evidence Hub", url: `${BASE_URL}/evidence-hub` }],
+    noIndex: true,
+    includeInSitemap: false,
+  },
+  "/legal-consultation": {
+    title: "LEXARA AI Legal Consultation | Legal What?",
+    description: "Have a two-way voice or text conversation with LEXARA for AI-assisted legal issue spotting, research support, follow-up questions, and case-analysis tools.",
+    keywords: "AI legal consultation, voice legal consultation, text legal consultation, LEXARA, legal issue spotting, legal research",
+    keywordTaxonomy: GLOBAL_KEYWORDS,
+    ogType: "service",
+    canonicalPath: "/legal-consultation",
+    priority: 0.9,
+    changefreq: "weekly",
+    breadcrumbs: [{ name: "AI Legal Consultation", url: `${BASE_URL}/legal-consultation` }],
     includeInSitemap: true,
   },
   "/contact": {
-    title: "Contact Bad Blue | Support & Help",
-    description: "Contact Bad Blue for help with police complaints, lawsuits, FOIA requests. We're here to support you.",
+    title: "Contact Legal What? | Support",
+    description: "Contact Legal What? for help with police complaints, lawsuits, FOIA requests. We're here to support you.",
     keywords: "contact bad blue, bad blue support, help with police complaint, police accountability help, customer support",
     ogType: "website",
     canonicalPath: "/contact",
@@ -219,8 +229,8 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
     includeInSitemap: true,
   },
   "/privacy": {
-    title: "Privacy Policy | Bad Blue",
-    description: "Bad Blue privacy policy. How we protect your data, evidence, and personal information. Your security is our priority.",
+    title: "Privacy Policy | Legal What?",
+    description: "Legal What? privacy policy. How we protect your data, evidence, and personal information. Your security is our priority.",
     keywords: "bad blue privacy policy, data protection, evidence privacy, personal information security",
     ogType: "website",
     canonicalPath: "/privacy",
@@ -230,8 +240,8 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
     includeInSitemap: true,
   },
   "/terms": {
-    title: "Terms of Service | Bad Blue",
-    description: "Bad Blue terms of service. Terms for using our police accountability platform and legal tools.",
+    title: "Terms of Service | Legal What?",
+    description: "Legal What? terms of service. Terms for using our police accountability platform and legal tools.",
     keywords: "bad blue terms of service, terms and conditions, user agreement, legal terms",
     ogType: "website",
     canonicalPath: "/terms",
@@ -241,8 +251,8 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
     includeInSitemap: true,
   },
   "/login": {
-    title: "Login | Bad Blue",
-    description: "Sign in to your Bad Blue account to access your complaints, lawsuits, and legal documents.",
+    title: "Login | Legal What?",
+    description: "Sign in to your Legal What? account to access your complaints, lawsuits, and legal documents.",
     canonicalPath: "/login",
     priority: 0.3,
     changefreq: "monthly",
@@ -251,8 +261,8 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
     includeInSitemap: false,
   },
   "/home": {
-    title: "Dashboard | Bad Blue",
-    description: "Your Bad Blue dashboard. Access your complaints, lawsuits, FOIA requests, and evidence uploads.",
+    title: "Dashboard | Legal What?",
+    description: "Your Legal What? dashboard. Access your complaints, lawsuits, FOIA requests, and evidence uploads.",
     canonicalPath: "/home",
     priority: 0.3,
     changefreq: "daily",
@@ -261,7 +271,7 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
     includeInSitemap: false,
   },
   "/petition-form": {
-    title: "Create Petition | Bad Blue",
+    title: "Create Petition | Legal What?",
     description: "Create a new police accountability petition. Gather community support for officer discipline or policy changes.",
     canonicalPath: "/petition-form",
     priority: 0.6,
@@ -274,7 +284,7 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
     includeInSitemap: false,
   },
   "/petition-workflow": {
-    title: "Petition Workflow | Bad Blue",
+    title: "Petition Workflow | Legal What?",
     description: "Manage your petition workflow and track signatures.",
     canonicalPath: "/petition-workflow",
     priority: 0.5,
@@ -315,15 +325,15 @@ export interface PageFaqConfig {
 export const PAGE_FAQ_CONFIG: Record<string, PageFaqConfig> = {
   "/officer": {
     name: "Police Officer Search FAQ",
-    description: "Frequently asked questions about searching for police officers with Bad Blue's 7-AI system.",
+    description: "Frequently asked questions about searching for police officers with Legal What?'s 7-AI system.",
     faqs: [
       {
-        question: "How does Bad Blue's 7-provider AI search for officers?",
-        answer: "Bad Blue runs 7 AI models in parallel: Gemini 2.5 Flash searches rapidly across databases, Claude 3.5 Sonnet analyzes legal records, DeepSeek R1T2's 671B parameters identify patterns, Grok 4.1 Fast processes 2M context of news/court records, Kimi K2's 1T parameters extract structured data, Groq Llama 3.3 provides unlimited-speed background processing, and Mistral Small verifies accuracy. Each AI contributes its specialty."
+        question: "How does Legal What?'s 7-provider AI search for officers?",
+        answer: "Legal What? runs 7 AI models in parallel: Gemini 2.5 Flash searches rapidly across databases, Claude 3.5 Sonnet analyzes legal records, DeepSeek R1T2's 671B parameters identify patterns, Grok 4.1 Fast processes 2M context of news/court records, Kimi K2's 1T parameters extract structured data, Groq Llama 3.3 provides unlimited-speed background processing, and Mistral Small verifies accuracy. Each AI contributes its specialty."
       },
       {
         question: "Why is 7-AI officer search better than single AI?",
-        answer: "Single AI misses details. Bad Blue's parallel system ensures comprehensive results: Gemini handles multimodal evidence quickly, Claude interprets legal implications, DeepSeek recognizes deep patterns, Grok processes massive document sets, Kimi extracts precise data, Groq maintains continuous processing, Mistral verifies everything. No detail escapes our 7-provider coordination."
+        answer: "Single AI misses details. Legal What?'s parallel system ensures comprehensive results: Gemini handles multimodal evidence quickly, Claude interprets legal implications, DeepSeek recognizes deep patterns, Grok processes massive document sets, Kimi extracts precise data, Groq maintains continuous processing, Mistral verifies everything. No detail escapes our 7-provider coordination."
       },
       {
         question: "Which AI models analyze officer records?",
@@ -331,7 +341,7 @@ export const PAGE_FAQ_CONFIG: Record<string, PageFaqConfig> = {
       },
       {
         question: "How do I search for a police officer?",
-        answer: "Enter the officer's name, badge number, or department. Bad Blue's 7-AI system activates instantly: Gemini searches fast, Claude analyzes legal context, DeepSeek finds patterns, Grok processes comprehensive databases, Kimi extracts structured information, Groq provides speed, Mistral verifies. Results appear within seconds with complete analysis from all providers."
+        answer: "Enter the officer's name, badge number, or department. Legal What?'s 7-AI system activates instantly: Gemini searches fast, Claude analyzes legal context, DeepSeek finds patterns, Grok processes comprehensive databases, Kimi extracts structured information, Groq provides speed, Mistral verifies. Results appear within seconds with complete analysis from all providers."
       },
       {
         question: "What information can the 7-AI system find?",
@@ -347,20 +357,20 @@ export const PAGE_FAQ_CONFIG: Record<string, PageFaqConfig> = {
       },
       {
         question: "Can I search officers in any state?",
-        answer: "Yes, all 50 states. Bad Blue's 7-AI system understands jurisdiction-specific databases: Grok processes state-specific records with 2M context, Kimi extracts data from varying state formats, Claude applies state legal frameworks, DeepSeek recognizes regional patterns, while Gemini, Groq, and Mistral ensure comprehensive nationwide coverage."
+        answer: "Yes, all 50 states. Legal What?'s 7-AI system understands jurisdiction-specific databases: Grok processes state-specific records with 2M context, Kimi extracts data from varying state formats, Claude applies state legal frameworks, DeepSeek recognizes regional patterns, while Gemini, Groq, and Mistral ensure comprehensive nationwide coverage."
       }
     ]
   },
   "/officer-search": {
     name: "Officer Search Page FAQ",
-    description: "Frequently asked questions about using Bad Blue's 7-AI officer search interface.",
+    description: "Frequently asked questions about using Legal What?'s 7-AI officer search interface.",
     faqs: [
       {
         question: "How does the 7-AI parallel search work?",
         answer: "When you search, all 7 AI models activate simultaneously: Gemini 2.5 Flash provides instant results, Claude 3.5 Sonnet analyzes legal implications, DeepSeek R1T2 performs deep pattern matching, Grok 4.1 Fast searches 2M context of databases, Kimi K2 extracts structured data, Groq Llama 3.3 maintains background processing, Mistral Small verifies accuracy."
       },
       {
-        question: "What makes Bad Blue's AI search revolutionary?",
+        question: "What makes Legal What?'s AI search revolutionary?",
         answer: "It's the world's first 7-provider parallel system for police accountability. Instead of one AI with limitations, you get Gemini's speed, Claude's legal expertise, DeepSeek's 671B parameter intelligence, Grok's massive context, Kimi's 1T parameter precision, Groq's unlimited speed, and Mistral's verification - all working together simultaneously."
       },
       {
@@ -379,7 +389,7 @@ export const PAGE_FAQ_CONFIG: Record<string, PageFaqConfig> = {
   },
   "/complaint-detail": {
     name: "Complaint Tracking FAQ",
-    description: "Frequently asked questions about tracking complaints with Bad Blue's 7-AI system.",
+    description: "Frequently asked questions about tracking complaints with Legal What?'s 7-AI system.",
     faqs: [
       {
         question: "How does the 7-AI system track my complaint?",
@@ -457,7 +467,7 @@ export const PAGE_FAQ_CONFIG: Record<string, PageFaqConfig> = {
   },
   "/petition-detail": {
     name: "Petition Detail FAQ",
-    description: "Frequently asked questions about petition tracking with Bad Blue's 7-AI system.",
+    description: "Frequently asked questions about petition tracking with Legal What?'s 7-AI system.",
     faqs: [
       {
         question: "How does the 7-AI system track petition progress?",
@@ -483,7 +493,7 @@ export const PAGE_FAQ_CONFIG: Record<string, PageFaqConfig> = {
   },
   "/petition-form": {
     name: "Create Petition FAQ",
-    description: "Frequently asked questions about creating petitions with Bad Blue's 7-AI assistance.",
+    description: "Frequently asked questions about creating petitions with Legal What?'s 7-AI assistance.",
     faqs: [
       {
         question: "How does the 7-AI system help create petitions?",
@@ -491,7 +501,7 @@ export const PAGE_FAQ_CONFIG: Record<string, PageFaqConfig> = {
       },
       {
         question: "Why use 7-AI for petition drafting?",
-        answer: "Single AI lacks depth. Bad Blue's parallel system ensures compelling petitions: Claude provides legal persuasion expertise, DeepSeek's 671B parameters identify winning patterns, Gemini optimizes format and media, Grok researches precedents, Kimi structures demands clearly, Groq enables rapid iteration, Mistral verifies claims. Maximum impact."
+        answer: "Single AI lacks depth. Legal What?'s parallel system ensures compelling petitions: Claude provides legal persuasion expertise, DeepSeek's 671B parameters identify winning patterns, Gemini optimizes format and media, Grok researches precedents, Kimi structures demands clearly, Groq enables rapid iteration, Mistral verifies claims. Maximum impact."
       },
       {
         question: "Which AI models help write petition text?",
@@ -509,7 +519,7 @@ export const PAGE_FAQ_CONFIG: Record<string, PageFaqConfig> = {
   },
   "/legal-consultation": {
     name: "AI Legal Consultation FAQ",
-    description: "Frequently asked questions about Bad Blue's 7-AI legal consultation service.",
+    description: "Frequently asked questions about Legal What?'s 7-AI legal consultation service.",
     faqs: [
       {
         question: "How does 7-AI legal consultation work?",
@@ -517,7 +527,7 @@ export const PAGE_FAQ_CONFIG: Record<string, PageFaqConfig> = {
       },
       {
         question: "Why is 7-provider AI consultation better than single AI?",
-        answer: "Single AI has knowledge gaps. Bad Blue's parallel system ensures comprehensive advice: Claude excels at legal reasoning, DeepSeek at complex analysis, Grok at exhaustive research, Kimi at data extraction, Gemini at multimodal evidence, Groq at speed, Mistral at verification. You get the best of all 7 models simultaneously."
+        answer: "Single AI has knowledge gaps. Legal What?'s parallel system ensures comprehensive advice: Claude excels at legal reasoning, DeepSeek at complex analysis, Grok at exhaustive research, Kimi at data extraction, Gemini at multimodal evidence, Groq at speed, Mistral at verification. You get the best of all 7 models simultaneously."
       },
       {
         question: "Which AI specializes in legal advice?",
@@ -529,7 +539,7 @@ export const PAGE_FAQ_CONFIG: Record<string, PageFaqConfig> = {
       },
       {
         question: "Is 7-AI consultation a replacement for lawyers?",
-        answer: "No. Bad Blue's 7-AI system provides legal information and analysis tools, not legal advice. Claude's reasoning, DeepSeek's analysis, and other AI insights are informational. For legal counsel, consult a licensed attorney. Our AI helps you understand options and prepare documents affordably."
+        answer: "No. Legal What?'s 7-AI system provides legal information and analysis tools, not legal advice. Claude's reasoning, DeepSeek's analysis, and other AI insights are informational. For legal counsel, consult a licensed attorney. Our AI helps you understand options and prepare documents affordably."
       },
       {
         question: "How accurate is the 7-AI legal analysis?",
@@ -543,15 +553,15 @@ export const PAGE_FAQ_CONFIG: Record<string, PageFaqConfig> = {
   },
   "/complaint-form": {
     name: "Police Complaint Filing FAQ with 7-AI",
-    description: "Frequently asked questions about filing police misconduct complaints with Bad Blue's 7-provider AI system.",
+    description: "Frequently asked questions about filing police misconduct complaints with Legal What?'s 7-provider AI system.",
     faqs: [
       {
-        question: "How does Bad Blue's 7-AI system help file complaints?",
+        question: "How does Legal What?'s 7-AI system help file complaints?",
         answer: "All 7 AI models work together: Claude 3.5 Sonnet drafts professional legal language, Gemini 2.5 Flash provides fast formatting, DeepSeek R1T2's 671B parameters analyze complaint strength, Grok 4.1 Fast researches proper authorities with 2M context, Kimi K2 structures complaint data precisely, Groq Llama 3.3 processes routing instantly, Mistral Small verifies accuracy."
       },
       {
         question: "Why is 7-provider AI better for complaint filing?",
-        answer: "Single AI lacks specialization. Bad Blue's parallel system ensures professional complaints: Claude excels at legal writing, DeepSeek optimizes based on successful patterns, Gemini handles multimodal evidence formatting, Grok finds the right authorities, Kimi structures data perfectly, Groq enables instant processing, Mistral verifies everything. Complete coverage."
+        answer: "Single AI lacks specialization. Legal What?'s parallel system ensures professional complaints: Claude excels at legal writing, DeepSeek optimizes based on successful patterns, Gemini handles multimodal evidence formatting, Grok finds the right authorities, Kimi structures data perfectly, Groq enables instant processing, Mistral verifies everything. Complete coverage."
       },
       {
         question: "Which AI models format my complaint?",
@@ -559,7 +569,7 @@ export const PAGE_FAQ_CONFIG: Record<string, PageFaqConfig> = {
       },
       {
         question: "How do I file a police complaint online?",
-        answer: "Fill out Bad Blue's form with incident details. Our 7-AI system activates: Claude drafts professional language, Gemini formats properly, DeepSeek strengthens arguments, Grok identifies correct authorities, Kimi structures routing data, Groq processes instantly, Mistral verifies accuracy. Document generated and routed automatically from home."
+        answer: "Fill out Legal What?'s form with incident details. Our 7-AI system activates: Claude drafts professional language, Gemini formats properly, DeepSeek strengthens arguments, Grok identifies correct authorities, Kimi structures routing data, Groq processes instantly, Mistral verifies accuracy. Document generated and routed automatically from home."
       },
       {
         question: "Where does my AI-generated complaint get sent?",
@@ -567,7 +577,7 @@ export const PAGE_FAQ_CONFIG: Record<string, PageFaqConfig> = {
       },
       {
         question: "Do I need a lawyer with 7-AI assistance?",
-        answer: "No. Bad Blue's 7-provider AI generates professional complaints meeting official requirements: Claude provides legal expertise, DeepSeek analyzes effectiveness, Gemini ensures proper formatting, Grok researches requirements, Kimi structures correctly, Groq processes instantly, Mistral verifies compliance. File complete complaints independently."
+        answer: "No. Legal What?'s 7-provider AI generates professional complaints meeting official requirements: Claude provides legal expertise, DeepSeek analyzes effectiveness, Gemini ensures proper formatting, Grok researches requirements, Kimi structures correctly, Groq processes instantly, Mistral verifies compliance. File complete complaints independently."
       },
       {
         question: "What happens after I file an AI-generated complaint?",
@@ -589,15 +599,15 @@ export const PAGE_FAQ_CONFIG: Record<string, PageFaqConfig> = {
   },
   "/lawsuit-form": {
     name: "Section 1983 Lawsuit FAQ with 7-AI Legal Team",
-    description: "Frequently asked questions about filing civil rights lawsuits with Bad Blue's 7-provider AI legal team.",
+    description: "Frequently asked questions about filing civil rights lawsuits with Legal What?'s 7-provider AI legal team.",
     faqs: [
       {
-        question: "How does Bad Blue's 7-AI legal team generate lawsuits?",
+        question: "How does Legal What?'s 7-AI legal team generate lawsuits?",
         answer: "All 7 AI models function as your legal team: Claude 3.5 Sonnet leads with legal reasoning and Section 1983 expertise, DeepSeek R1T2's 671B parameters perform deep case analysis, Grok 4.1 Fast researches 2M context of precedents, Gemini 2.5 Flash formats documents, Kimi K2 structures legal arguments, Groq Llama 3.3 processes instantly, Mistral Small verifies accuracy."
       },
       {
         question: "Why is 7-AI better than single AI for lawsuits?",
-        answer: "Section 1983 lawsuits are complex. Bad Blue's parallel system ensures comprehensive preparation: Claude specializes in legal reasoning and qualified immunity, DeepSeek's 671B parameters analyze case strength deeply, Grok's 2M context finds critical precedents, Gemini handles evidence, Kimi structures arguments, Groq enables speed, Mistral verifies. No single AI limitation affects your lawsuit."
+        answer: "Section 1983 lawsuits are complex. Legal What?'s parallel system ensures comprehensive preparation: Claude specializes in legal reasoning and qualified immunity, DeepSeek's 671B parameters analyze case strength deeply, Grok's 2M context finds critical precedents, Gemini handles evidence, Kimi structures arguments, Groq enables speed, Mistral verifies. No single AI limitation affects your lawsuit."
       },
       {
         question: "Which AI models are on the legal team?",
@@ -605,11 +615,11 @@ export const PAGE_FAQ_CONFIG: Record<string, PageFaqConfig> = {
       },
       {
         question: "What is a Section 1983 lawsuit?",
-        answer: "Section 1983 (42 U.S.C. § 1983) allows suing officers for civil rights violations. Bad Blue's 7-AI legal team helps you file: Claude analyzes violations and qualified immunity, DeepSeek evaluates case strength, Grok researches precedents, Gemini formats court documents, Kimi structures arguments, Groq processes instantly, Mistral verifies legal accuracy."
+        answer: "Section 1983 (42 U.S.C. § 1983) allows suing officers for civil rights violations. Legal What?'s 7-AI legal team helps you file: Claude analyzes violations and qualified immunity, DeepSeek evaluates case strength, Grok researches precedents, Gemini formats court documents, Kimi structures arguments, Groq processes instantly, Mistral verifies legal accuracy."
       },
       {
         question: "Can I file a lawsuit without a lawyer using AI?",
-        answer: "Yes, pro se (self-representation). Bad Blue's 7-AI legal team provides affordable alternative: Claude generates court-ready legal reasoning, DeepSeek optimizes strategy with 671B parameters, Grok researches requirements, Gemini formats for U.S. District Court, Kimi structures properly, Groq processes instantly, Mistral verifies compliance. Professional-grade documents."
+        answer: "Yes, pro se (self-representation). Legal What?'s 7-AI legal team provides affordable alternative: Claude generates court-ready legal reasoning, DeepSeek optimizes strategy with 671B parameters, Grok researches requirements, Gemini formats for U.S. District Court, Kimi structures properly, Groq processes instantly, Mistral verifies compliance. Professional-grade documents."
       },
       {
         question: "How does the AI handle qualified immunity?",
@@ -617,7 +627,7 @@ export const PAGE_FAQ_CONFIG: Record<string, PageFaqConfig> = {
       },
       {
         question: "How much does lawsuit generation cost vs lawyers?",
-        answer: "Court filing fees ~$400. Bad Blue's 7-AI legal team costs a fraction of attorney fees (typically $5,000-$50,000+). Get Claude's legal expertise, DeepSeek's analysis, Grok's research, Gemini's formatting, Kimi's structuring, Groq's speed, Mistral's verification - all for affordable subscription. Professional quality, accessible price."
+        answer: "Court filing fees ~$400. Legal What?'s 7-AI legal team costs a fraction of attorney fees (typically $5,000-$50,000+). Get Claude's legal expertise, DeepSeek's analysis, Grok's research, Gemini's formatting, Kimi's structuring, Groq's speed, Mistral's verification - all for affordable subscription. Professional quality, accessible price."
       },
       {
         question: "What damages can the AI help me recover?",
@@ -635,15 +645,15 @@ export const PAGE_FAQ_CONFIG: Record<string, PageFaqConfig> = {
   },
   "/foia-request-form": {
     name: "FOIA Request FAQ with 7-AI Automation",
-    description: "Frequently asked questions about requesting police records with Bad Blue's 7-provider AI automation system.",
+    description: "Frequently asked questions about requesting police records with Legal What?'s 7-provider AI automation system.",
     faqs: [
       {
-        question: "How does Bad Blue's 7-AI system automate FOIA requests?",
+        question: "How does Legal What?'s 7-AI system automate FOIA requests?",
         answer: "Complete automation from all 7 providers: Grok 4.1 Fast's 2M context identifies correct agencies, Claude 3.5 Sonnet drafts compliant legal language, DeepSeek R1T2 analyzes state-specific rules, Gemini 2.5 Flash formats requests, Kimi K2's 1T parameters extracts agency data, Groq Llama 3.3 processes routing instantly, Mistral Small verifies compliance."
       },
       {
         question: "Why is 7-provider AI better for FOIA requests?",
-        answer: "FOIA has complex state-specific rules. Bad Blue's parallel system ensures compliance: Grok researches agency-specific requirements, Claude applies legal frameworks, DeepSeek analyzes successful request patterns, Gemini formats properly, Kimi structures data, Groq processes instantly, Mistral verifies compliance. No jurisdiction-specific detail missed."
+        answer: "FOIA has complex state-specific rules. Legal What?'s parallel system ensures compliance: Grok researches agency-specific requirements, Claude applies legal frameworks, DeepSeek analyzes successful request patterns, Gemini formats properly, Kimi structures data, Groq processes instantly, Mistral verifies compliance. No jurisdiction-specific detail missed."
       },
       {
         question: "Which AI models handle FOIA automation?",
@@ -651,7 +661,7 @@ export const PAGE_FAQ_CONFIG: Record<string, PageFaqConfig> = {
       },
       {
         question: "What is a FOIA request?",
-        answer: "Freedom of Information Act requests demand government records. Bad Blue's 7-AI system handles everything: Grok identifies the right agency, Claude drafts compliant requests, DeepSeek applies state rules, Gemini formats, Kimi structures record descriptions, Groq processes instantly, Mistral verifies. Request body camera footage, reports, policies from home."
+        answer: "Freedom of Information Act requests demand government records. Legal What?'s 7-AI system handles everything: Grok identifies the right agency, Claude drafts compliant requests, DeepSeek applies state rules, Gemini formats, Kimi structures record descriptions, Groq processes instantly, Mistral verifies. Request body camera footage, reports, policies from home."
       },
       {
         question: "How do I request police body camera footage with AI?",
@@ -667,7 +677,7 @@ export const PAGE_FAQ_CONFIG: Record<string, PageFaqConfig> = {
       },
       {
         question: "Are there fees for AI-generated requests?",
-        answer: "Agencies may charge search and copying fees. Bad Blue's 7-AI system minimizes costs: Claude includes fee waiver language when applicable, DeepSeek analyzes fee reduction strategies, Grok researches agency fee schedules, Kimi structures cost-effective requests, Gemini formats fee waiver justifications, Groq processes negotiations, Mistral verifies cost calculations."
+        answer: "Agencies may charge search and copying fees. Legal What?'s 7-AI system minimizes costs: Claude includes fee waiver language when applicable, DeepSeek analyzes fee reduction strategies, Grok researches agency fee schedules, Kimi structures cost-effective requests, Gemini formats fee waiver justifications, Groq processes negotiations, Mistral verifies cost calculations."
       },
       {
         question: "What if my AI-generated request is denied?",
@@ -681,15 +691,15 @@ export const PAGE_FAQ_CONFIG: Record<string, PageFaqConfig> = {
   },
   "/petitions": {
     name: "Police Accountability Petitions FAQ with 7-AI",
-    description: "Frequently asked questions about creating and signing police accountability petitions with Bad Blue's 7-AI system.",
+    description: "Frequently asked questions about creating and signing police accountability petitions with Legal What?'s 7-AI system.",
     faqs: [
       {
-        question: "How does Bad Blue's 7-AI system help create petitions?",
+        question: "How does Legal What?'s 7-AI system help create petitions?",
         answer: "Complete petition assistance from all 7 providers: Claude 3.5 Sonnet crafts persuasive language, Gemini 2.5 Flash provides fast formatting and media, DeepSeek R1T2 analyzes successful petition patterns with 671B parameters, Grok 4.1 Fast researches similar campaigns, Kimi K2 structures demands clearly, Groq Llama 3.3 processes instantly, Mistral Small verifies accuracy."
       },
       {
         question: "Why use 7-AI for police accountability petitions?",
-        answer: "Single AI lacks persuasion optimization. Bad Blue's parallel system ensures maximum impact: Claude excels at persuasive writing, DeepSeek identifies winning patterns, Gemini optimizes visual presentation, Grok researches what works, Kimi structures clearly, Groq enables rapid iteration, Mistral verifies claims. Create petitions that get results."
+        answer: "Single AI lacks persuasion optimization. Legal What?'s parallel system ensures maximum impact: Claude excels at persuasive writing, DeepSeek identifies winning patterns, Gemini optimizes visual presentation, Grok researches what works, Kimi structures clearly, Groq enables rapid iteration, Mistral verifies claims. Create petitions that get results."
       },
       {
         question: "Which AI models help draft petition text?",
@@ -727,15 +737,15 @@ export const PAGE_FAQ_CONFIG: Record<string, PageFaqConfig> = {
   },
   "/evidence-hub": {
     name: "Evidence Hub FAQ with 7-AI Analysis",
-    description: "Frequently asked questions about uploading and sharing police misconduct evidence with Bad Blue's 7-AI analysis system.",
+    description: "Frequently asked questions about uploading and sharing police misconduct evidence with Legal What?'s 7-AI analysis system.",
     faqs: [
       {
-        question: "How does Bad Blue's 7-AI system analyze evidence?",
+        question: "How does Legal What?'s 7-AI system analyze evidence?",
         answer: "Complete multimodal analysis from all 7 providers: Gemini 2.5 Flash analyzes videos/photos/audio with multimodal AI, Claude 3.5 Sonnet evaluates legal significance, DeepSeek R1T2 identifies patterns with 671B parameters, Grok 4.1 Fast researches similar cases, Kimi K2 extracts metadata and structured information, Groq Llama 3.3 processes in real-time, Mistral Small verifies integrity."
       },
       {
         question: "Why is 7-provider AI better for evidence analysis?",
-        answer: "Single AI can't handle all evidence types. Bad Blue's parallel system ensures comprehensive analysis: Gemini excels at multimodal (video/photo/audio), Claude interprets legal value, DeepSeek recognizes patterns, Grok researches context, Kimi extracts metadata, Groq maintains speed, Mistral verifies authenticity. No detail missed."
+        answer: "Single AI can't handle all evidence types. Legal What?'s parallel system ensures comprehensive analysis: Gemini excels at multimodal (video/photo/audio), Claude interprets legal value, DeepSeek recognizes patterns, Grok researches context, Kimi extracts metadata, Groq maintains speed, Mistral verifies authenticity. No detail missed."
       },
       {
         question: "Which AI models analyze my evidence?",
@@ -772,58 +782,58 @@ export const PAGE_FAQ_CONFIG: Record<string, PageFaqConfig> = {
     ]
   },
   "/landing": {
-    name: "Bad Blue 7-Provider AI Platform FAQ",
-    description: "Frequently asked questions about Bad Blue's revolutionary 7-provider AI police accountability platform.",
+    name: "Legal What? 7-Provider AI Platform FAQ",
+    description: "Frequently asked questions about Legal What?'s revolutionary 7-provider AI police accountability platform.",
     faqs: [
       {
-        question: "How does Bad Blue's 7-provider AI system work?",
-        answer: "Bad Blue runs 7 AI models simultaneously: Gemini 2.5 Flash (Google) for fast multimodal analysis, Claude 3.5 Sonnet (Anthropic) for legal reasoning, DeepSeek R1T2 (671B parameters) for deep analysis, Grok 4.1 Fast (xAI) for 2M context processing, Kimi K2 (1T parameters) for data extraction, Groq Llama 3.3 for unlimited speed, and Mistral Small for verification. Each AI contributes its specialty for maximum accuracy."
+        question: "How does Legal What?'s 7-provider AI system work?",
+        answer: "Legal What? runs 7 AI models simultaneously: Gemini 2.5 Flash (Google) for fast multimodal analysis, Claude 3.5 Sonnet (Anthropic) for legal reasoning, DeepSeek R1T2 (671B parameters) for deep analysis, Grok 4.1 Fast (xAI) for 2M context processing, Kimi K2 (1T parameters) for data extraction, Groq Llama 3.3 for unlimited speed, and Mistral Small for verification. Each AI contributes its specialty for maximum accuracy."
       },
       {
         question: "Why is 7-provider AI better than single AI for police accountability?",
-        answer: "Single AI systems have limitations. Bad Blue's 7-provider parallel system leverages each AI's strengths: Gemini excels at speed, Claude at legal analysis, DeepSeek at reasoning, Grok at massive context, Kimi at structured data, Groq at speed, Mistral at accuracy. No detail is missed, providing 5× faster and 10× more comprehensive results."
+        answer: "Single AI systems have limitations. Legal What?'s 7-provider parallel system leverages each AI's strengths: Gemini excels at speed, Claude at legal analysis, DeepSeek at reasoning, Grok at massive context, Kimi at structured data, Groq at speed, Mistral at accuracy. No detail is missed, providing 5× faster and 10× more comprehensive results."
       },
       {
-        question: "Which specific AI models power Bad Blue?",
+        question: "Which specific AI models power Legal What??",
         answer: "Gemini 2.5 Flash (1M context), Claude 3.5 Sonnet (200k), DeepSeek R1T2 (671B params, 163k), Grok 4.1 Fast (2M), Kimi K2 (1T params, 256k), Groq Llama 3.3 (unlimited), Mistral Small. All execute simultaneously for parallel processing."
       },
       {
-        question: "What is Bad Blue?",
-        answer: "Bad Blue is the world's first 7-provider AI police accountability platform. Using parallel AI processing with Gemini, Claude, DeepSeek, Grok, Kimi, Groq, and Mistral, Bad Blue helps citizens file complaints, generate Section 1983 lawsuits, submit FOIA requests, and search for officer records. Do everything from home with unprecedented AI assistance."
+        question: "What is Legal What??",
+        answer: "Legal What? is the world's first 7-provider AI police accountability platform. Using parallel AI processing with Gemini, Claude, DeepSeek, Grok, Kimi, Groq, and Mistral, Legal What? helps citizens file complaints, generate Section 1983 lawsuits, submit FOIA requests, and search for officer records. Do everything from home with unprecedented AI assistance."
       },
       {
-        question: "How much does Bad Blue cost?",
+        question: "How much does Legal What? cost?",
         answer: "Many features are free, including 7-AI powered officer search and basic complaint filing. Premium features like lawsuit generation and advanced FOIA requests are available at affordable prices - a fraction of what lawyers charge. Our 7-AI system provides professional-grade analysis at accessible prices."
       },
       {
-        question: "Do I need legal experience to use Bad Blue?",
-        answer: "No legal experience needed. Bad Blue's 7-provider AI system guides you through every step. Claude handles legal reasoning, DeepSeek performs deep analysis, and Gemini provides fast multimodal processing to generate professional legal documents automatically. Our platform is designed for regular citizens."
+        question: "Do I need legal experience to use Legal What??",
+        answer: "No legal experience needed. Legal What?'s 7-provider AI system guides you through every step. Claude handles legal reasoning, DeepSeek performs deep analysis, and Gemini provides fast multimodal processing to generate professional legal documents automatically. Our platform is designed for regular citizens."
       },
       {
-        question: "Is Bad Blue available nationwide?",
-        answer: "Yes, Bad Blue covers all 50 states. Our 7-AI system has jurisdiction-specific rules for complaints, FOIA requests, and lawsuits. The AI models automatically apply the correct requirements for your location using Grok's 2M context window for comprehensive legal database processing."
+        question: "Is Legal What? available nationwide?",
+        answer: "Yes, Legal What? covers all 50 states. Our 7-AI system has jurisdiction-specific rules for complaints, FOIA requests, and lawsuits. The AI models automatically apply the correct requirements for your location using Grok's 2M context window for comprehensive legal database processing."
       },
       {
         question: "How fast is the 7-AI coordination system?",
-        answer: "With Groq Llama 3.3 providing unlimited-speed background processing, Gemini 2.5 Flash for ultra-fast multimodal analysis, and parallel execution across all 7 models, Bad Blue delivers results 5× faster than traditional single-AI systems while being 10× more comprehensive."
+        answer: "With Groq Llama 3.3 providing unlimited-speed background processing, Gemini 2.5 Flash for ultra-fast multimodal analysis, and parallel execution across all 7 models, Legal What? delivers results 5× faster than traditional single-AI systems while being 10× more comprehensive."
       },
       {
-        question: "How accurate is Bad Blue's AI analysis?",
+        question: "How accurate is Legal What?'s AI analysis?",
         answer: "The 7-provider parallel system ensures maximum accuracy. Each model cross-checks the others: Mistral Small provides verification, Claude ensures legal accuracy, DeepSeek's 671B parameters catch nuances, Kimi's 1T parameters extract structured data precisely, while Grok's 2M context processes massive document sets without missing details."
       },
       {
         question: "Can I trust AI-generated legal documents?",
-        answer: "Yes. Bad Blue's 7-AI coordination system provides enterprise-grade legal document generation. Claude 3.5 Sonnet specializes in legal reasoning, DeepSeek R1T2's 671B parameters ensure deep analysis, Gemini handles multimodal evidence, and Mistral Small verifies accuracy. All documents meet official court formatting requirements."
+        answer: "Yes. Legal What?'s 7-AI coordination system provides enterprise-grade legal document generation. Claude 3.5 Sonnet specializes in legal reasoning, DeepSeek R1T2's 671B parameters ensure deep analysis, Gemini handles multimodal evidence, and Mistral Small verifies accuracy. All documents meet official court formatting requirements."
       }
     ]
   },
   "/login": {
-    name: "Bad Blue Login & Access FAQ",
-    description: "Frequently asked questions about logging in and accessing Bad Blue's 7-provider AI platform.",
+    name: "Legal What? Login & Access FAQ",
+    description: "Frequently asked questions about logging in and accessing Legal What?'s 7-provider AI platform.",
     faqs: [
       {
-        question: "How do I access Bad Blue's 7-AI system?",
-        answer: "Simply create a free account or log in to access Bad Blue's revolutionary 7-provider AI coordination system. Once logged in, you can use Gemini, Claude, DeepSeek, Grok, Kimi, Groq, and Mistral simultaneously for officer searches, complaint filing, lawsuit generation, and FOIA requests."
+        question: "How do I access Legal What?'s 7-AI system?",
+        answer: "Simply create a free account or log in to access Legal What?'s revolutionary 7-provider AI coordination system. Once logged in, you can use Gemini, Claude, DeepSeek, Grok, Kimi, Groq, and Mistral simultaneously for officer searches, complaint filing, lawsuit generation, and FOIA requests."
       },
       {
         question: "What AI features are available after login?",
@@ -831,11 +841,11 @@ export const PAGE_FAQ_CONFIG: Record<string, PageFaqConfig> = {
       },
       {
         question: "Is my account information secure?",
-        answer: "Yes. Bad Blue uses bank-level encryption and secure authentication. Your personal information, case details, and evidence are protected with enterprise-grade security. Our 7-AI system processes your data securely without storing sensitive information unnecessarily."
+        answer: "Yes. Legal What? uses bank-level encryption and secure authentication. Your personal information, case details, and evidence are protected with enterprise-grade security. Our 7-AI system processes your data securely without storing sensitive information unnecessarily."
       },
       {
-        question: "Can I use Bad Blue on mobile devices?",
-        answer: "Yes, Bad Blue's 7-AI platform is fully mobile-responsive. Access all features including officer search, complaint filing, lawsuit generation, and FOIA requests from your phone or tablet. The AI coordination system works seamlessly across all devices."
+        question: "Can I use Legal What? on mobile devices?",
+        answer: "Yes, Legal What?'s 7-AI platform is fully mobile-responsive. Access all features including officer search, complaint filing, lawsuit generation, and FOIA requests from your phone or tablet. The AI coordination system works seamlessly across all devices."
       },
       {
         question: "What if I forget my password?",
@@ -844,15 +854,15 @@ export const PAGE_FAQ_CONFIG: Record<string, PageFaqConfig> = {
     ]
   },
   "/contact": {
-    name: "Contact Bad Blue Support FAQ",
-    description: "Frequently asked questions about contacting Bad Blue support and getting help with the 7-AI platform.",
+    name: "Contact Legal What? Support FAQ",
+    description: "Frequently asked questions about contacting Legal What? support and getting help with the 7-AI platform.",
     faqs: [
       {
-        question: "How can I get help with Bad Blue's 7-AI system?",
+        question: "How can I get help with Legal What?'s 7-AI system?",
         answer: "Contact our support team via the contact form for assistance with any feature. We can help you understand how Gemini, Claude, DeepSeek, Grok, Kimi, Groq, and Mistral work together to analyze your case, or troubleshoot any issues you're experiencing."
       },
       {
-        question: "What questions can Bad Blue's AI help me with?",
+        question: "What questions can Legal What?'s AI help me with?",
         answer: "Our 7-provider AI system can help with officer searches (all 7 AIs analyzing records), complaint drafting (Claude for legal language, Gemini for speed), lawsuit generation (DeepSeek for deep analysis, Claude for legal reasoning), FOIA requests (Grok for massive document processing, Kimi for data extraction), and evidence analysis (Gemini's multimodal capabilities)."
       },
       {
@@ -870,46 +880,46 @@ export const PAGE_FAQ_CONFIG: Record<string, PageFaqConfig> = {
     ]
   },
   "/terms": {
-    name: "Bad Blue Terms of Service FAQ",
-    description: "Frequently asked questions about Bad Blue's terms of service and AI usage policies.",
+    name: "Legal What? Terms of Service FAQ",
+    description: "Frequently asked questions about Legal What?'s terms of service and AI usage policies.",
     faqs: [
       {
-        question: "What are the terms for using Bad Blue's 7-AI system?",
-        answer: "By using Bad Blue, you agree to use our 7-provider AI coordination system (Gemini, Claude, DeepSeek, Grok, Kimi, Groq, Mistral) responsibly and lawfully. The AI-generated documents and analysis are tools to assist you, but you remain responsible for reviewing and verifying all information before submission."
+        question: "What are the terms for using Legal What?'s 7-AI system?",
+        answer: "By using Legal What?, you agree to use our 7-provider AI coordination system (Gemini, Claude, DeepSeek, Grok, Kimi, Groq, Mistral) responsibly and lawfully. The AI-generated documents and analysis are tools to assist you, but you remain responsible for reviewing and verifying all information before submission."
       },
       {
-        question: "Is Bad Blue a law firm?",
-        answer: "No. Bad Blue is a legal technology platform using 7-provider AI coordination to help you prepare documents and research. We do not provide legal advice. Claude's legal reasoning, DeepSeek's analysis, and other AI contributions are informational tools, not legal counsel. Always consult a licensed attorney for legal advice."
+        question: "Is Legal What? a law firm?",
+        answer: "No. Legal What? is a legal technology platform using 7-provider AI coordination to help you prepare documents and research. We do not provide legal advice. Claude's legal reasoning, DeepSeek's analysis, and other AI contributions are informational tools, not legal counsel. Always consult a licensed attorney for legal advice."
       },
       {
-        question: "What is Bad Blue's AI disclaimer?",
-        answer: "Bad Blue's 7 AI models (Gemini, Claude, DeepSeek, Grok, Kimi, Groq, Mistral) provide analysis and document generation based on training data and algorithms. While highly sophisticated, AI can make errors. You must review all AI-generated content before using it in legal proceedings. Bad Blue is not liable for AI errors or omissions."
+        question: "What is Legal What?'s AI disclaimer?",
+        answer: "Legal What?'s 7 AI models (Gemini, Claude, DeepSeek, Grok, Kimi, Groq, Mistral) provide analysis and document generation based on training data and algorithms. While highly sophisticated, AI can make errors. You must review all AI-generated content before using it in legal proceedings. Legal What? is not liable for AI errors or omissions."
       },
       {
-        question: "How does Bad Blue handle my data in the AI system?",
+        question: "How does Legal What? handle my data in the AI system?",
         answer: "Your data is processed by our 7-provider AI system for analysis and document generation. We use secure encryption and do not sell your data. The AI models process your information to provide services but do not retain your case details for training purposes. See our Privacy Policy for complete details."
       },
       {
-        question: "Can I cancel my Bad Blue subscription?",
+        question: "Can I cancel my Legal What? subscription?",
         answer: "Yes, you can cancel your subscription at any time. You'll retain access to the 7-AI system until the end of your billing period. All your saved data, searches, and documents remain accessible during your active subscription."
       },
       {
-        question: "What happens if Bad Blue's AI makes an error?",
-        answer: "While our 7-provider parallel system (with Mistral Small verification and cross-checking across all models) minimizes errors, you must review all AI-generated content. Bad Blue provides tools and assistance but you are responsible for accuracy of submitted documents. We recommend having an attorney review critical legal filings."
+        question: "What happens if Legal What?'s AI makes an error?",
+        answer: "While our 7-provider parallel system (with Mistral Small verification and cross-checking across all models) minimizes errors, you must review all AI-generated content. Legal What? provides tools and assistance but you are responsible for accuracy of submitted documents. We recommend having an attorney review critical legal filings."
       }
     ]
   },
   "/privacy": {
-    name: "Bad Blue Privacy Policy FAQ",
-    description: "Frequently asked questions about Bad Blue's privacy policy and AI data handling.",
+    name: "Legal What? Privacy Policy FAQ",
+    description: "Frequently asked questions about Legal What?'s privacy policy and AI data handling.",
     faqs: [
       {
-        question: "How does Bad Blue's 7-AI system handle my privacy?",
+        question: "How does Legal What?'s 7-AI system handle my privacy?",
         answer: "Your data is encrypted and processed securely by our 7 AI providers (Gemini, Claude, DeepSeek, Grok, Kimi, Groq, Mistral) only for providing services. We use enterprise-grade security and do not sell your personal information. AI processing happens in secure environments with strict data protection protocols."
       },
       {
-        question: "What data does Bad Blue's AI collect?",
-        answer: "Bad Blue collects data you provide (name, case details, evidence uploads) to power the 7-AI coordination system. This data is processed by Gemini for multimodal analysis, Claude for legal reasoning, DeepSeek for deep analysis, Grok for context processing, Kimi for data extraction, Groq for speed processing, and Mistral for verification."
+        question: "What data does Legal What?'s AI collect?",
+        answer: "Legal What? collects data you provide (name, case details, evidence uploads) to power the 7-AI coordination system. This data is processed by Gemini for multimodal analysis, Claude for legal reasoning, DeepSeek for deep analysis, Grok for context processing, Kimi for data extraction, Groq for speed processing, and Mistral for verification."
       },
       {
         question: "Are my AI searches and case details private?",
@@ -921,24 +931,24 @@ export const PAGE_FAQ_CONFIG: Record<string, PageFaqConfig> = {
       },
       {
         question: "How is my evidence stored securely?",
-        answer: "Evidence uploaded to Bad Blue is encrypted at rest and in transit. When processed by our 7-AI system (especially Gemini's multimodal capabilities for video/image analysis), encryption is maintained. Evidence is stored on secure servers with bank-level security standards."
+        answer: "Evidence uploaded to Legal What? is encrypted at rest and in transit. When processed by our 7-AI system (especially Gemini's multimodal capabilities for video/image analysis), encryption is maintained. Evidence is stored on secure servers with bank-level security standards."
       },
       {
-        question: "Can I delete my data from Bad Blue's AI system?",
+        question: "Can I delete my data from Legal What?'s AI system?",
         answer: "Yes, you can request deletion of your account and all associated data at any time. We will remove your information from our systems and ensure it's no longer processed by our 7 AI providers. Some data may be retained for legal compliance as required by law."
       },
       {
-        question: "Does Bad Blue comply with privacy regulations?",
-        answer: "Yes, Bad Blue complies with GDPR, CCPA, and other privacy regulations. Our 7-provider AI system is designed with privacy-by-design principles. You have rights to access, correct, delete, and port your data. Contact us to exercise these rights."
+        question: "Does Legal What? comply with privacy regulations?",
+        answer: "Yes, Legal What? complies with GDPR, CCPA, and other privacy regulations. Our 7-provider AI system is designed with privacy-by-design principles. You have rights to access, correct, delete, and port your data. Contact us to exercise these rights."
       }
     ]
   },
   "/home": {
-    name: "Bad Blue Dashboard FAQ",
-    description: "Frequently asked questions about using the Bad Blue dashboard and 7-AI features.",
+    name: "Legal What? Dashboard FAQ",
+    description: "Frequently asked questions about using the Legal What? dashboard and 7-AI features.",
     faqs: [
       {
-        question: "What can I do from my Bad Blue dashboard?",
+        question: "What can I do from my Legal What? dashboard?",
         answer: "Your dashboard provides access to all 7-AI powered features: officer searches using parallel AI analysis, complaint filing with Claude's legal formatting, lawsuit generation with DeepSeek's deep reasoning, FOIA requests with Grok's massive context processing, evidence uploads with Gemini's multimodal analysis, and petition tracking."
       },
       {
@@ -961,10 +971,10 @@ export const PAGE_FAQ_CONFIG: Record<string, PageFaqConfig> = {
   },
   "/history": {
     name: "Search History FAQ",
-    description: "Frequently asked questions about Bad Blue's 7-AI powered search history and tracking.",
+    description: "Frequently asked questions about Legal What?'s 7-AI powered search history and tracking.",
     faqs: [
       {
-        question: "How does Bad Blue's 7-AI system track my search history?",
+        question: "How does Legal What?'s 7-AI system track my search history?",
         answer: "Every officer search you perform is saved with complete AI analysis from all 7 providers. Review which insights came from Gemini's fast analysis, Claude's legal context, DeepSeek's deep patterns, Grok's comprehensive research, Kimi's data extraction, Groq's speed processing, and Mistral's verification."
       },
       {

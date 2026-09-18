@@ -3,7 +3,6 @@ import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { 
-  Shield, 
   FileText, 
   Search, 
   Scale, 
@@ -21,7 +20,7 @@ import { SEOHead } from "@/components/SEOHead";
  * LegalWhat Home Page - Access Zone A
  * Authentication: canonical platform master session
  * Role: LEGALWHAT_ROOT
- * Purpose: LegalWhat platform interface with AI legal operations
+ * Purpose: Legal What? platform interface with AI legal operations
  */
 export default function LegalWhatHome() {
   const [, setLocation] = useLocation();
@@ -91,8 +90,9 @@ export default function LegalWhatHome() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
       <SEOHead
-        title="LegalWhat - AI Legal Operations Center"
-        description="Access AI-powered legal tools for civil rights advocacy and law enforcement accountability"
+        title="Legal What? | Legal Tools Dashboard"
+        description="Access Legal What? AI-assisted legal research, document, consultation, and public-record tools across 30 legal practice areas."
+        noIndex
       />
 
       {/* Header */}
@@ -100,11 +100,15 @@ export default function LegalWhatHome() {
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600">
-                <Shield className="w-8 h-8 text-white" />
+              <div className="p-1 rounded-lg bg-white/10 border border-white/20">
+                <img
+                  src="/images/Legal%20What%20Icon.png"
+                  alt="Legal What?"
+                  className="w-10 h-10 object-contain"
+                />
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-white">LegalWhat</h1>
+                <h1 className="text-2xl font-bold text-white">Legal What?</h1>
                 <p className="text-sm text-blue-300">AI Legal Operations Center</p>
               </div>
             </div>
@@ -134,7 +138,7 @@ export default function LegalWhatHome() {
             <span className="text-blue-300">AI Subsystem Active - Legal Mode</span>
           </div>
           <h2 className="text-4xl font-bold text-white mb-4">
-            Welcome to LegalWhat Operations
+            Welcome to Legal What? Operations
           </h2>
           <p className="text-xl text-gray-300 max-w-2xl mx-auto">
             Your AI-powered command center for civil rights advocacy and law enforcement accountability.
@@ -245,7 +249,7 @@ export default function LegalWhatHome() {
       {/* Footer */}
       <footer className="border-t border-white/10 py-6 mt-12">
         <div className="container mx-auto px-4 text-center text-gray-400 text-sm">
-          <p>LegalWhat AI Legal Operations Center • Access Zone A • LEGALWHAT_ROOT</p>
+          <p>Legal What? AI Legal Operations Center • Access Zone A • LEGALWHAT_ROOT</p>
         </div>
       </footer>
     </div>

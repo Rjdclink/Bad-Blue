@@ -139,8 +139,9 @@ export default function Login() {
   return (
     <div className="min-h-screen relative">
       <SEOHead
-        title="Login - LegalWhat AI Legal Platform"
-        description="Sign in to access AI-powered legal tools, document generation, and legal consultation services"
+        title="Login | Legal What?"
+        description="Sign in to access Legal What? AI-assisted legal tools, document workflows, public-record research, and consultation services"
+        noIndex
       />
 
       <div
@@ -158,8 +159,8 @@ export default function Login() {
         <div className="w-full max-w-md">
           <div className="text-center mb-6">
             <div className="inline-flex items-center gap-2 mb-4">
-              <Shield className="w-10 h-10 text-white" />
-              <h1 className="text-3xl font-bold text-white">LegalWhat</h1>
+              <img src="/images/Legal%20What%20Icon.png" alt="Legal What?" className="w-12 h-12 object-contain" />
+              <h1 className="text-3xl font-bold text-white">Legal What?</h1>
             </div>
             <p className="text-gray-200 text-sm">AI-Powered Legal Platform</p>
           </div>

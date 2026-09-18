@@ -792,24 +792,24 @@ startupTrace('routes_registration_completed');
       const { SEO_CONFIG, BASE_URL } = await import("../shared/seoConfig");
       
       res.type("application/xml");
-      const today = new Date().toISOString().split('T')[0];
       
-      const sitemapEntries = Object.entries(SEO_CONFIG)
-        .filter(([_, config]) => config.includeInSitemap && !config.noIndex)
-        .sort((a, b) => b[1].priority - a[1].priority);
+      const canonicalPaths = Array.from(new Set(
+        Object.values(SEO_CONFIG)
+          .filter((config) => config.includeInSitemap && !config.noIndex)
+          .map((config) => config.canonicalPath)
+      ));
 
-      const urls = sitemapEntries.map(([path, config]) => `
+      const urls = canonicalPaths.map((path) => `
   <url>
     <loc>${BASE_URL}${path}</loc>
-    <lastmod>${today}</lastmod>
-    <changefreq>${config.changefreq}</changefreq>
-    <priority>${config.priority.toFixed(1)}</priority>
   </url>`).join('');
 
+      // Do not emit synthetic freshness, priority, or change-frequency signals.
+      // Search engines can infer crawl priority from links/content; lastmod must
+      // only be used when it reflects the page's actual modification time.
       const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
-        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
-  <!-- Dynamic Sitemap Generated from SEO_CONFIG ${today} -->${urls}
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <!-- Canonical public URLs from SEO_CONFIG -->${urls}
 </urlset>`;
 
       res.send(sitemap);

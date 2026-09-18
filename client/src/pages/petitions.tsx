@@ -51,13 +51,13 @@ export default function Petitions() {
   return (
     <div className="container mx-auto p-6">
       <SEOHead
-        title="Officer Resignation Petitions | BadBlue - Police Accountability Platform"
+        title="Officer Accountability Petitions | Legal What?"
         description="View and sign community-driven officer resignation petitions. When officers receive multiple complaints, petitions are automatically created for accountability and department review."
         keywords="police officer petition, officer resignation petition, police accountability petition, community petition police, sign petition police officer, officer complaint petition, police misconduct petition, bad cop petition, officer removal petition, police department accountability"
-        canonicalUrl="https://example.com/petitions"
         structuredData={petitionServiceSchema}
         breadcrumbs={breadcrumbs}
         pageType="service"
+        noIndex
       />
       <div className="max-w-4xl mx-auto space-y-6">
         <PageBreadcrumbs currentPageName="Petitions" />
