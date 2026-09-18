@@ -57,7 +57,8 @@
     "docker:test": "node scripts/puppeteer-healthcheck.js",
     "docker:dev": "docker-compose up --build",
     "verify:master-access": "npm run verify:master-auth && node scripts/verify-master-access-navigation.cjs",
-    "verify:auth-runtime": "tsx scripts/verify-auth-runtime.ts"
+    "verify:auth-runtime": "tsx scripts/verify-auth-runtime.ts",
+    "verify:geoconsole": "node scripts/verify-geoconsole.cjs && node scripts/verify-geoconsole-e2e.cjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",
