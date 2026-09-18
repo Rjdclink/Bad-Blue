@@ -293,14 +293,12 @@ async function callMistralFallback(
 }
 
 /**
- * Primary fallback chain: Gemini → Groq → Mistral
- * 
- * This function implements a robust fallback strategy that:
- * 1. Attempts Gemini first (if available and not rate-limited)
- * 2. On 429 (rate limit) or 5xx error, switches to Groq
- * 3. On Groq failure, switches to Mistral
- * 4. Logs each fallback attempt with [AI Fallback] prefix
- * 5. Returns the successful response or null only if all providers fail
+ * Health-aware platform fallback chain.
+ *
+ * OpenRouter is the preferred current-model gateway for LEXARA; direct
+ * Anthropic, Groq, Mistral, and Gemini routes remain independent fallbacks.
+ * Failed routes enter bounded cooldowns instead of adding dead latency to
+ * every subsequent user turn.
  */
 export async function callAIWithFallback(
   prompt: string,
@@ -313,7 +311,7 @@ export async function callAIWithFallback(
     type: 'aiFallbackStart', 
     taskName,
     promptLength: prompt.length,
-    preferredProvider: options.preferredProvider || 'gemini'
+    preferredProvider: options.preferredProvider || 'openrouter'
   });
 
   const providers: Array<{
@@ -344,7 +342,7 @@ export async function callAIWithFallback(
           systemPrompt: options.systemPrompt,
           temperature: options.temperature,
           maxTokens: options.maxTokens,
-          model: process.env.LEXARA_CLAUDE_MODEL?.trim() || 'claude-sonnet-4-6',
+          model: process.env.LEXARA_CLAUDE_MODEL?.trim() || process.env.CLAUDE_MODEL?.trim() || 'claude-sonnet-5',
           useJSON: options.useJSON,
         });
         return result.content;
