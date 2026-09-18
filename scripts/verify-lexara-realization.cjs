@@ -24,6 +24,7 @@ const openRouter = read('server/openRouterService.ts');
 const systemConfig = read('server/systemConfig.ts');
 const voicePipeline = read('server/lexara/LexaraVoicePipeline.ts');
 const review = read('docs/LEXARA_INTENT_REALIZATION_30_SOURCE_REVIEW_20260918.md');
+const voiceReliabilityReview = read('docs/LEXARA_VOICE_RELIABILITY_10_SOURCE_REVIEW_20260918.md');
 
 must(
   voiceMode.indexOf("if (isSpeechRecognitionSupported())") <
@@ -37,6 +38,19 @@ must(
 must(
   conversation.includes('CONVERSATION_STORAGE_SCHEMA_VERSION = 2'),
   'conversation storage is versioned to quarantine corrupt prior turns',
+);
+must(
+  voiceMode.includes('const SERVER_VAD_SILENCE_MS = 550') &&
+    conversation.includes('const SERVER_VOICE_TURN_SETTLE_MS = 120') &&
+    conversation.includes('const BROWSER_VOICE_TURN_SETTLE_MS = 350'),
+  'voice endpointing removes the previous fixed 1.75-second delay',
+);
+must(
+  voiceMode.includes('avgLogprob?: number') &&
+    voiceMode.includes('noSpeechProbability?: number') &&
+    conversation.includes('weakLogprob') &&
+    conversation.includes('highNoSpeech'),
+  'STT acoustic evidence reaches transcript admission',
 );
 must(
   conversation.includes('isSuspiciousGenericServerTranscript') &&
@@ -60,8 +74,10 @@ must(
 );
 must(
   speechClient.includes('async resume(): Promise<void>') &&
-    speechClient.includes('pause(): void'),
-  'single ElevenLabs playback channel owns pause/resume',
+    speechClient.includes('pause(): void') &&
+    speechClient.includes('getLexaraPlaybackAudioElement') &&
+    !speechClient.includes('const audio = new Audio(audioUrl)'),
+  'single persistent user-unlocked ElevenLabs playback channel owns pause/resume',
 );
 must(
   lexaraRoutes.includes("form.append('response_format', 'verbose_json')") &&
@@ -70,9 +86,9 @@ must(
   'STT hallucination rejection uses speech evidence before acceptance',
 );
 must(
-  lexaraRoutes.indexOf("name: 'elevenlabs-scribe'") <
-    lexaraRoutes.indexOf("name: 'groq-whisper'"),
-  'paid ElevenLabs Scribe is preferred with Groq Whisper fallback',
+  lexaraRoutes.indexOf("name: 'groq-whisper'") <
+    lexaraRoutes.indexOf("name: 'elevenlabs-scribe'"),
+  'low-latency Groq Whisper is preferred with ElevenLabs Scribe fallback',
 );
 must(
   voiceRoutes.includes('/api/lexara/tts/session') &&
@@ -97,6 +113,9 @@ must(
 const sourceSection = review.split('## Sources — exactly 30')[1] || '';
 const sourceLines = sourceSection.split('\n').filter(line => /^\d+\.\s/.test(line));
 must(sourceLines.length === 30, 'literal 30-source implementation review is present');
+const voiceSourceSection = voiceReliabilityReview.split('## Sources — exactly 10')[1] || '';
+const voiceSourceLines = voiceSourceSection.split('\n').filter(line => /^\d+\.\s/.test(line));
+must(voiceSourceLines.length === 10, 'literal 10-source voice reliability review is present');
 
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA realization verification passed.');
