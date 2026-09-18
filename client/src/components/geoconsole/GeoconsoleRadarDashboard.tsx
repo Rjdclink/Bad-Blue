@@ -70,8 +70,7 @@ const TILE_LAYERS: Record<string, { url: string; attribution: string }> = {
 const SPEED_COLORS = { stationary: '#3b82f6', walking: '#22c55e', running: '#eab308', cycling: '#f97316', driving: '#ef4444' };
 const MPS_TO_MPH = 2.237;
 
-const SOURCE_KEYS = ['device_gps', 'wifi_handoff', 'public_record', 'interpolated'] as const;
-type SourceKey = typeof SOURCE_KEYS[number];
+const DEFAULT_SOURCE_VISIBILITY: Record<string, boolean> = {};
 
 // ============================================================================
 // HELPERS
@@ -235,6 +234,26 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
   const [progressMsg, setProgressMsg] = useState('');
   const [lockOnTarget, setLockOnTarget] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(true);
+
+  const applyMapPreset = useCallback((preset: 'satellite' | 'terrain' | 'weather' | 'evidence' | 'street') => {
+    if (preset === 'satellite') {
+      setMapMode('satellite');
+      setLayerCfg(prev => ({ ...prev, satellite: true, terrain: false, buildings: false, weather: false, streetImagery: false }));
+    } else if (preset === 'terrain') {
+      setMapMode('hybrid');
+      setLayerCfg(prev => ({ ...prev, satellite: true, terrain: true, buildings: true, weather: false, streetImagery: false }));
+    } else if (preset === 'weather') {
+      setMapMode('hybrid');
+      setLayerCfg(prev => ({ ...prev, satellite: true, terrain: true, weather: true, streetImagery: false }));
+    } else if (preset === 'evidence') {
+      setMapMode('dark');
+      setLayerCfg(prev => ({ ...prev, satellite: false, terrain: false, buildings: false, weather: false, heatmap: true, markers: true, uncertainty: true, futurecast: true, streetImagery: false }));
+    } else {
+      setMapMode('street');
+      setLayerCfg(prev => ({ ...prev, satellite: false, terrain: false, weather: false, buildings: true, streetImagery: true }));
+    }
+  }, []);
 
   // Respond to external navigation ("nav links") from the embedding page.
   useEffect(() => {
@@ -263,26 +282,20 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
   }, [isFullscreen]);
 
   // Source filter ("signal links")
-  const [sourceCfg, setSourceCfg] = useState<Record<SourceKey, boolean>>({
-    device_gps: true,
-    wifi_handoff: true,
-    public_record: true,
-    interpolated: true,
-  });
+  const [sourceCfg, setSourceCfg] = useState<Record<string, boolean>>(DEFAULT_SOURCE_VISIBILITY);
 
-  const sourceEnabled = useCallback((s: string) => {
-    if ((SOURCE_KEYS as readonly string[]).includes(s)) return sourceCfg[s as SourceKey];
-    // Default allow for unknown/extra sources so we don't silently hide data.
-    return true;
-  }, [sourceCfg]);
+  const sourceEnabled = useCallback((source: string) => sourceCfg[source] !== false, [sourceCfg]);
+
+  const presentSources = useMemo(
+    () => Array.from(new Set([...state.trail, ...state.futurecast].map(frame => frame.source))).sort(),
+    [state.trail, state.futurecast]
+  );
 
   // Derive the frames actually rendered (filters affect map + stats + sources panel)
   const renderData = useMemo(() => {
     const trailWithIndex = state.trail.map((f, idx) => ({ f, idx }));
     const filteredTrail = trailWithIndex.filter(({ f }) => sourceEnabled(f.source));
-    const filteredFuturecast = sourceEnabled('interpolated')
-      ? state.futurecast
-      : [];
+    const filteredFuturecast = state.futurecast.filter(frame => sourceEnabled(frame.source));
 
     const current = filteredTrail.length > 0 ? filteredTrail[filteredTrail.length - 1].f : null;
 
@@ -541,51 +554,41 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
   const { currentFrame } = renderData;
   const stats = renderData.stats;
 
-  // Link status states for satellite, geo, fix, signal, and nav connections
-  const [linkStatus, setLinkStatus] = useState({
-    sat: { active: false, signal: 0, label: 'Satellite Link' },
-    geo: { active: false, signal: 0, label: 'Geo Link' },
-    fix: { active: false, signal: 0, label: 'Fix Link' },
-    signal: { active: false, signal: 0, label: 'Signal Link' },
-    nav: { active: false, signal: 0, label: 'Nav Link' },
-  });
+  const telemetryStatus = useMemo(() => {
+    const current = renderData.currentFrame;
+    const ageSeconds = current
+      ? Math.max(0, Math.round((Date.now() - current.timestamp.getTime()) / 1000))
+      : null;
+    const accuracy = current?.position.accuracy;
+    const sources = new Set(renderData.trail.map(frame => frame.source));
+    const forecastConfidence = renderData.futurecast.length
+      ? renderData.futurecast.reduce((sum, frame) => sum + frame.confidence, 0) / renderData.futurecast.length
+      : null;
 
-  // Connect and activate links based on data availability
-  useEffect(() => {
-    const hasData = state.trail.length > 0;
-    const hasLiveData = state.isLive;
-    const hasGPS = state.trail.some(f => f.source === 'device_gps');
-    const hasWifi = state.trail.some(f => f.source === 'wifi_handoff');
-    const hasPublicRecord = state.trail.some(f => f.source === 'public_record');
-    
-    setLinkStatus({
-      sat: { 
-        active: hasData && (hasGPS || state.trail.some(f => f.source === 'satellite_imagery')), 
-        signal: hasData ? Math.min(100, 60 + state.trail.length * 2) : 0,
-        label: 'Satellite Link'
+    const formatAge = (seconds: number | null) => {
+      if (seconds === null) return '—';
+      if (seconds < 60) return `${seconds}s`;
+      if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+      return `${Math.round(seconds / 3600)}h`;
+    };
+    const formatAccuracy = (meters: number | undefined) => {
+      if (meters === undefined || !Number.isFinite(meters)) return '—';
+      return meters < 1000 ? `${Math.round(meters)}m` : `${(meters / 1000).toFixed(1)}km`;
+    };
+
+    return {
+      obs: { active: renderData.trail.length > 0, value: String(renderData.trail.length), label: 'Timestamped observations' },
+      age: { active: ageSeconds !== null, value: formatAge(ageSeconds), label: 'Age of latest observation' },
+      acc: { active: accuracy !== undefined, value: formatAccuracy(accuracy), label: 'Reported horizontal accuracy' },
+      src: { active: sources.size > 0, value: String(sources.size), label: 'Independent source classes present' },
+      nav: {
+        active: forecastConfidence !== null,
+        value: forecastConfidence !== null ? `${Math.round(forecastConfidence * 100)}%` : '—',
+        label: 'Average Futurecast confidence',
       },
-      geo: { 
-        active: hasData, 
-        signal: hasData ? Math.min(100, 50 + state.stats.totalDistance / 100) : 0,
-        label: 'Geo Link'
-      },
-      fix: { 
-        active: hasData && state.currentFrame !== null, 
-        signal: state.currentFrame ? Math.min(100, state.currentFrame.confidence * 100) : 0,
-        label: 'Fix Link'
-      },
-      signal: { 
-        active: hasWifi || hasGPS, 
-        signal: hasLiveData ? 95 : hasData ? 70 : 0,
-        label: 'Signal Link'
-      },
-      nav: { 
-        active: hasData && state.futurecast.length > 0, 
-        signal: state.futurecast.length > 0 ? Math.min(100, 50 + state.futurecast.length * 5) : 0,
-        label: 'Nav Link'
-      },
-    });
-  }, [state.trail, state.isLive, state.currentFrame, state.futurecast, state.stats.totalDistance]);
+    };
+  }, [renderData.currentFrame, renderData.trail, renderData.futurecast, state._version]);
+
 
   return (
     <div
@@ -606,21 +609,20 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
           </div>
         </div>
         
-        {/* Link Status Indicators - SAT, GEO, FIX, SIGNAL, NAV */}
-        <div className="flex items-center gap-1">
-          {Object.entries(linkStatus).map(([key, link]) => (
-            <div 
-              key={key} 
+        <div className="hidden lg:flex items-center gap-1">
+          {Object.entries(telemetryStatus).map(([key, item]) => (
+            <div
+              key={key}
               className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-mono ${
-                link.active 
-                  ? 'bg-green-500/20 text-green-400 border border-green-500/30' 
+                item.active
+                  ? 'bg-green-500/15 text-green-300 border border-green-500/25'
                   : 'bg-slate-700/50 text-slate-500 border border-slate-600/30'
               }`}
-              title={`${link.label}: ${link.signal}%`}
+              title={item.label}
             >
-              <span className={`w-1.5 h-1.5 rounded-full ${link.active ? 'bg-green-400 animate-pulse' : 'bg-slate-500'}`} />
+              <span className={`w-1.5 h-1.5 rounded-full ${item.active ? 'bg-green-400' : 'bg-slate-500'}`} />
               <span className="uppercase">{key}</span>
-              {link.active && <span className="text-[10px] opacity-70">{link.signal}%</span>}
+              <span className="text-[10px] opacity-80">{item.value}</span>
             </div>
           ))}
         </div>
@@ -630,7 +632,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
             <Activity className="w-3 h-3 mr-1" />{isLive ? 'LIVE' : isPlaying ? 'Playing' : 'Paused'}
           </Badge>
           <Badge variant="outline" className="text-xs bg-purple-500/20 text-purple-400">{currentIndex + 1}/{totalFrames}</Badge>
-          <div className="flex bg-slate-800/50 rounded-lg p-1">
+          <div className="hidden xl:flex bg-slate-800/50 rounded-lg p-1">
             {(['satellite', 'hybrid', 'street', 'dark'] as MapMode[]).map(m => (
               <button key={m} onClick={() => setMapMode(m)} className={`px-2 py-1 text-xs rounded ${mapMode === m ? 'bg-cyan-500/30 text-cyan-400' : 'text-slate-400 hover:text-white'}`}>
                 {m.charAt(0).toUpperCase() + m.slice(1)}
@@ -650,7 +652,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
       </div>
 
       {/* Main - Full Viewport Stretch */}
-      <div className="flex flex-1 min-h-0 overflow-hidden">
+      <div className="relative flex flex-1 min-h-0 overflow-hidden">
         {/* Map Container - Stretches to Fill Available Space */}
         <div className="flex-1 relative min-h-0 min-w-0">
           <MapLibreIntelligenceMap
@@ -662,14 +664,32 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
             isLive={state.isLive}
             lockOnTarget={lockOnTarget}
           />
-          {/* Layer Quick Toggle */}
-          <div className="absolute bottom-3 left-3 z-10 bg-slate-800/90 border border-slate-600/50 rounded-lg px-2 py-1">
-            <span className="text-xs text-slate-400">Layers</span>
+          <div className="absolute bottom-3 left-3 right-3 z-10 flex items-end justify-between gap-2 pointer-events-none">
+            <div className="pointer-events-auto flex max-w-[calc(100%-3rem)] gap-1 overflow-x-auto rounded-xl border border-slate-600/50 bg-slate-900/90 p-1 shadow-xl backdrop-blur">
+              {(['satellite', 'terrain', 'weather', 'evidence', 'street'] as const).map(preset => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => applyMapPreset(preset)}
+                  className="min-h-10 shrink-0 rounded-lg px-3 text-xs font-medium text-slate-200 hover:bg-cyan-500/20 hover:text-cyan-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                >
+                  {preset.charAt(0).toUpperCase() + preset.slice(1)}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => setInspectorOpen(value => !value)}
+              className="pointer-events-auto min-h-10 min-w-10 rounded-xl border border-slate-600/50 bg-slate-900/90 px-3 text-xs font-medium text-slate-200 shadow-xl backdrop-blur hover:bg-slate-800"
+              aria-expanded={inspectorOpen}
+            >
+              {inspectorOpen ? 'Hide' : 'Info'}
+            </button>
           </div>
         </div>
 
-        {/* Stats Panel - Collapsible Sidebar */}
-        <div className="w-64 xl:w-72 border-l border-slate-700/50 flex flex-col bg-slate-900/50 min-h-0 overflow-y-auto flex-shrink-0">
+        {/* Context inspector: docked on desktop, overlay on mobile. */}
+        {inspectorOpen && <div className="absolute md:relative inset-y-0 right-0 z-20 w-[min(88vw,20rem)] md:w-64 xl:w-72 border-l border-slate-700/50 flex flex-col bg-slate-950/95 md:bg-slate-900/70 min-h-0 overflow-y-auto flex-shrink-0 shadow-2xl md:shadow-none backdrop-blur">
           {/* Controls */}
           <div className="p-2 border-b border-slate-700/50">
             <div className="flex items-center justify-between mb-2">
@@ -682,7 +702,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
                   variant="outline"
                   size="sm"
                   onClick={() => setLockOnTarget(v => !v)}
-                  className={`h-6 text-xs ${lockOnTarget ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' : 'bg-slate-800/50 border-slate-700 text-slate-300'}`}
+                  className={`min-h-10 text-xs ${lockOnTarget ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' : 'bg-slate-800/50 border-slate-700 text-slate-300'}`}
                   title={lockOnTarget ? 'FIX lock: on (auto-recenter)' : 'FIX lock: off'}
                 >
                   FIX
@@ -691,7 +711,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
                   variant="outline"
                   size="sm"
                   onClick={actions.toggleLive}
-                  className={`h-6 text-xs ${isLive ? 'bg-green-500/20 text-green-400 border-green-500/40' : 'bg-slate-800/50 border-slate-700 text-slate-300'}`}
+                  className={`min-h-10 text-xs ${isLive ? 'bg-green-500/20 text-green-400 border-green-500/40' : 'bg-slate-800/50 border-slate-700 text-slate-300'}`}
                 >
                   {isLive ? 'LIVE' : 'GO LIVE'}
                 </Button>
@@ -705,7 +725,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
               {Object.entries(layerCfg).map(([k, v]) => (
                 <div key={k} className="flex items-center justify-between py-0.5">
                   <span className="text-[11px] text-slate-400 capitalize">{k}</span>
-                  <Switch checked={v} onCheckedChange={c => setLayerCfg(p => ({ ...p, [k]: c }))} className="scale-[0.65]" />
+                  <Switch checked={v} onCheckedChange={c => setLayerCfg(p => ({ ...p, [k]: c }))} className="" />
                 </div>
               ))}
             </div>
@@ -747,9 +767,10 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
               <Target className="w-3 h-3 text-cyan-400" />
               Sources
             </h3>
-            {SOURCE_KEYS.map((s) => {
-              const hasAny = state.trail.some(f => f.source === s);
-              const enabled = sourceCfg[s];
+            {presentSources.length === 0 && <p className="text-[11px] text-slate-500">No timestamped sources yet.</p>}
+            {presentSources.map((s) => {
+              const hasAny = state.trail.some(f => f.source === s) || state.futurecast.some(f => f.source === s);
+              const enabled = sourceEnabled(s);
               return (
                 <button
                   key={s}
@@ -777,7 +798,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
               );
             })}
           </div>
-        </div>
+        </div>}
       </div>
 
       {/* Timeline */}
@@ -785,13 +806,13 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
         {processing && <div className="mb-2"><span className="text-xs text-slate-400">{progressMsg}</span><Progress value={50} className="h-1 mt-1" /></div>}
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center gap-1 bg-slate-800/50 rounded-lg p-1">
-            <Button variant="ghost" size="icon" onClick={actions.stop} className="h-7 w-7 text-slate-400 hover:text-white"><SkipBack className="w-3 h-3" /></Button>
-            <Button variant="ghost" size="icon" onClick={stepBack} className="h-7 w-7 text-slate-400 hover:text-white"><ChevronLeft className="w-3 h-3" /></Button>
-            <Button variant="ghost" size="icon" onClick={isPlaying ? actions.pause : actions.play} className={`h-8 w-8 ${isPlaying ? 'text-cyan-400 bg-cyan-500/20' : 'text-white'}`}>
+            <Button variant="ghost" size="icon" onClick={actions.stop} className="h-10 w-10 text-slate-400 hover:text-white"><SkipBack className="w-3 h-3" /></Button>
+            <Button variant="ghost" size="icon" onClick={stepBack} className="h-10 w-10 text-slate-400 hover:text-white"><ChevronLeft className="w-3 h-3" /></Button>
+            <Button variant="ghost" size="icon" onClick={isPlaying ? actions.pause : actions.play} className={`h-10 w-10 ${isPlaying ? 'text-cyan-400 bg-cyan-500/20' : 'text-white'}`}>
               {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
             </Button>
-            <Button variant="ghost" size="icon" onClick={stepForward} className="h-7 w-7 text-slate-400 hover:text-white"><ChevronRight className="w-3 h-3" /></Button>
-            <Button variant="ghost" size="icon" onClick={() => actions.seekTo(totalFrames - 1)} className="h-7 w-7 text-slate-400 hover:text-white"><SkipForward className="w-3 h-3" /></Button>
+            <Button variant="ghost" size="icon" onClick={stepForward} className="h-10 w-10 text-slate-400 hover:text-white"><ChevronRight className="w-3 h-3" /></Button>
+            <Button variant="ghost" size="icon" onClick={() => actions.seekTo(totalFrames - 1)} className="h-10 w-10 text-slate-400 hover:text-white"><SkipForward className="w-3 h-3" /></Button>
           </div>
           <div className="flex-1 min-w-[200px]">
             <Slider value={[currentIndex]} min={0} max={Math.max(0, totalFrames - 1)} step={1} onValueChange={([v]) => actions.seekTo(v)} className="cursor-pointer" />
@@ -813,64 +834,25 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
         </div>
       </div>
 
-      {/* System Capabilities - Link Status Panel */}
-      <div className="px-3 py-2 border-t border-slate-700/50 bg-slate-800/50 flex-shrink-0">
-        <h3 className="text-xs font-semibold text-slate-400 mb-2">System Capabilities</h3>
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
-          {/* Multimodal Fusion */}
-          <div className={`p-2 rounded border ${linkStatus.geo.active ? 'bg-green-500/10 border-green-500/30' : 'bg-slate-800/50 border-slate-700/50'}`}>
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-300">Multimodal Fusion</span>
-              <Badge variant="outline" className={`text-[10px] h-4 ${linkStatus.geo.active ? 'bg-green-500/20 text-green-400' : 'bg-slate-700/50 text-slate-500'}`}>
-                {linkStatus.geo.active ? 'Active' : 'Idle'}
-              </Badge>
+      <div className="hidden lg:block px-3 py-2 border-t border-slate-700/50 bg-slate-800/50 flex-shrink-0">
+        <div className="grid grid-cols-5 gap-2">
+          {[
+            { label: 'GPU Map', active: true, detail: 'MapLibre WebGL renderer' },
+            { label: '3D Terrain', active: layerCfg.terrain, detail: 'DEM terrain + hillshade' },
+            { label: 'Weather Radar', active: layerCfg.weather, detail: 'NEXRAD mosaic overlay' },
+            { label: 'Futurecast', active: state.futurecast.length > 0, detail: 'Server-authoritative prediction' },
+            { label: 'Uncertainty', active: layerCfg.uncertainty && !!currentFrame?.position.accuracy, detail: 'Reported accuracy region' },
+          ].map(item => (
+            <div key={item.label} className={`p-2 rounded border ${item.active ? 'bg-green-500/10 border-green-500/30' : 'bg-slate-800/50 border-slate-700/50'}`}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-slate-300">{item.label}</span>
+                <Badge variant="outline" className={`text-[10px] h-4 ${item.active ? 'bg-green-500/20 text-green-400' : 'bg-slate-700/50 text-slate-500'}`}>
+                  {item.active ? 'On' : 'Off'}
+                </Badge>
+              </div>
+              <p className="text-[10px] text-slate-500 mt-1">{item.detail}</p>
             </div>
-            <p className="text-[10px] text-slate-500 mt-1">Combine GPS, EXIF, Wi-Fi, Bluetooth</p>
-          </div>
-
-          {/* Monte Carlo Interpolation */}
-          <div className={`p-2 rounded border ${linkStatus.fix.active ? 'bg-green-500/10 border-green-500/30' : 'bg-slate-800/50 border-slate-700/50'}`}>
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-300">Monte Carlo</span>
-              <Badge variant="outline" className={`text-[10px] h-4 ${linkStatus.fix.active ? 'bg-green-500/20 text-green-400' : 'bg-slate-700/50 text-slate-500'}`}>
-                {linkStatus.fix.active ? 'Active' : 'Idle'}
-              </Badge>
-            </div>
-            <p className="text-[10px] text-slate-500 mt-1">Probabilistic path reconstruction</p>
-          </div>
-
-          {/* Futurecast Prediction */}
-          <div className={`p-2 rounded border ${linkStatus.nav.active ? 'bg-green-500/10 border-green-500/30' : 'bg-slate-800/50 border-slate-700/50'}`}>
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-300">Futurecast</span>
-              <Badge variant="outline" className={`text-[10px] h-4 ${linkStatus.nav.active ? 'bg-green-500/20 text-green-400' : 'bg-slate-700/50 text-slate-500'}`}>
-                {linkStatus.nav.active ? 'Active' : 'Idle'}
-              </Badge>
-            </div>
-            <p className="text-[10px] text-slate-500 mt-1">6-hour trajectory forecasting</p>
-          </div>
-
-          {/* Satellite Link */}
-          <div className={`p-2 rounded border ${linkStatus.sat.active ? 'bg-green-500/10 border-green-500/30' : 'bg-slate-800/50 border-slate-700/50'}`}>
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-300">Satellite Imagery</span>
-              <Badge variant="outline" className={`text-[10px] h-4 ${linkStatus.sat.active ? 'bg-green-500/20 text-green-400' : 'bg-slate-700/50 text-slate-500'}`}>
-                {linkStatus.sat.active ? 'Active' : 'Idle'}
-              </Badge>
-            </div>
-            <p className="text-[10px] text-slate-500 mt-1">Sentinel, NASA, USGS layers</p>
-          </div>
-
-          {/* Signal Processing */}
-          <div className={`p-2 rounded border ${linkStatus.signal.active ? 'bg-green-500/10 border-green-500/30' : 'bg-slate-800/50 border-slate-700/50'}`}>
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-300">Signal Fusion</span>
-              <Badge variant="outline" className={`text-[10px] h-4 ${linkStatus.signal.active ? 'bg-green-500/20 text-green-400' : 'bg-slate-700/50 text-slate-500'}`}>
-                {linkStatus.signal.active ? 'Active' : 'Idle'}
-              </Badge>
-            </div>
-            <p className="text-[10px] text-slate-500 mt-1">Kalman filter signal processing</p>
-          </div>
+          ))}
         </div>
       </div>
     </div>
