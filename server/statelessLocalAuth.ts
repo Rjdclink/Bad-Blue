@@ -17,13 +17,18 @@ export interface StatelessLocalUser {
   hasPaidForAccess: boolean;
 }
 
-export interface StatelessLocalSession {
-  id: string;
+export interface StatelessLocalSession extends StatelessLocalUser {
+  sessionVersion: 2;
 }
 
 interface LocalSessionPayload {
-  v: 1;
+  v: 2;
   uid: string;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  status: string;
+  hasPaidForAccess: boolean;
   exp: number;
   nonce: string;
 }
@@ -33,11 +38,57 @@ let clientSelection: Promise<SupabaseClient> | null = null;
 
 type LocalAuthBackend =
   | { kind: "supabase"; client: SupabaseClient }
+  | { kind: "edge" }
   | { kind: "postgres" };
 
 let authBackend: LocalAuthBackend | null = null;
 let authBackendSelection: Promise<LocalAuthBackend> | null = null;
 const AUTH_DB_QUERY_TIMEOUT_MS = 4_000;
+const AUTH_EDGE_TIMEOUT_MS = 4_000;
+const AUTH_EDGE_FUNCTION = "legalwhat-local-auth";
+
+interface EdgeAuthResponse {
+  ok?: boolean;
+  user?: StatelessLocalUser | null;
+  error?: string;
+}
+
+async function edgeAuthRequest(
+  action: "probe" | "login" | "register",
+  payload: Record<string, unknown> = {},
+): Promise<EdgeAuthResponse> {
+  const url = String(getConfig().SUPABASE_URL || "").trim();
+  const anonKey = String(process.env.SUPABASE_ANON_KEY || "").trim();
+  if (!url || !anonKey) throw new Error("Supabase Edge authentication is not configured");
+
+  const response = await fetch(`${url.replace(/\/$/, "")}/functions/v1/${AUTH_EDGE_FUNCTION}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      apikey: anonKey,
+      authorization: `Bearer ${anonKey}`,
+      "x-client-info": "legalwhat-railway-auth",
+    },
+    body: JSON.stringify({ action, ...payload }),
+    signal: AbortSignal.timeout(AUTH_EDGE_TIMEOUT_MS),
+  });
+
+  let body: EdgeAuthResponse;
+  try {
+    body = await response.json() as EdgeAuthResponse;
+  } catch {
+    throw new Error(`Supabase Edge authentication returned HTTP ${response.status}`);
+  }
+
+  if (!response.ok || body.ok !== true) {
+    throw new Error(body.error || `Supabase Edge authentication returned HTTP ${response.status}`);
+  }
+  return body;
+}
+
+async function probeEdgeAuthStore(): Promise<void> {
+  await edgeAuthRequest("probe");
+}
 
 async function authDbQuery(text: string, values: unknown[] = []): Promise<any> {
   return pool.query({
@@ -124,15 +175,26 @@ async function resolveLocalAuthBackend(): Promise<LocalAuthBackend> {
       httpError = error;
     }
 
+    let edgeError: unknown = null;
+    try {
+      await probeEdgeAuthStore();
+      authBackend = { kind: "edge" };
+      console.warn("[AUTH] Direct Supabase server credential unavailable; using project-local Supabase Edge authentication authority");
+      return authBackend;
+    } catch (error) {
+      edgeError = error;
+    }
+
     try {
       await probePostgresAuthStore();
       authBackend = { kind: "postgres" };
-      console.warn("[AUTH] Supabase HTTP server credential unavailable; using bounded canonical PostgreSQL auth store");
+      console.warn("[AUTH] Supabase HTTP and Edge authentication unavailable; using bounded canonical PostgreSQL auth store");
       return authBackend;
     } catch (postgresError) {
       const httpMessage = httpError instanceof Error ? httpError.message : String(httpError || "unavailable");
+      const edgeMessage = edgeError instanceof Error ? edgeError.message : String(edgeError || "unavailable");
       const postgresMessage = postgresError instanceof Error ? postgresError.message : String(postgresError || "unavailable");
-      throw new Error(`LegalWhat authentication stores unavailable: http=${httpMessage}; postgres=${postgresMessage}`);
+      throw new Error(`LegalWhat authentication stores unavailable: http=${httpMessage}; edge=${edgeMessage}; postgres=${postgresMessage}`);
     }
   })();
 
@@ -168,6 +230,10 @@ function mapUser(row: any): StatelessLocalUser {
 
 export async function probeLocalAuthStoreHttp(): Promise<void> {
   const backend = await resolveLocalAuthBackend();
+  if (backend.kind === "edge") {
+    await probeEdgeAuthStore();
+    return;
+  }
   if (backend.kind === "postgres") {
     await probePostgresAuthStore();
     return;
@@ -185,6 +251,9 @@ export async function getLocalUserByIdHttp(userId: string): Promise<StatelessLoc
   if (!userId) return null;
   const backend = await resolveLocalAuthBackend();
 
+  if (backend.kind === "edge") {
+    throw new Error("Edge authentication backend does not expose arbitrary user lookup");
+  }
   if (backend.kind === "postgres") {
     const result = await authDbQuery(
       "SELECT id,email,first_name,last_name,status,has_paid_for_access FROM users WHERE id = $1 LIMIT 1",
@@ -206,6 +275,11 @@ export async function authenticateLocalUserHttp(email: string, password: string)
   const normalizedEmail = normalizeEmail(email);
   if (!password) return null;
   const backend = await resolveLocalAuthBackend();
+
+  if (backend.kind === "edge") {
+    const result = await edgeAuthRequest("login", { email: normalizedEmail, password });
+    return result.user || null;
+  }
 
   if (backend.kind === "postgres") {
     const userResult = await authDbQuery(
@@ -274,6 +348,18 @@ export async function registerLocalUserHttp(
   if (String(password || "").length < 8) throw new Error("Password must be at least 8 characters");
 
   const backend = await resolveLocalAuthBackend();
+
+  if (backend.kind === "edge") {
+    const result = await edgeAuthRequest("register", {
+      email: normalizedEmail,
+      password,
+      firstName: normalizedFirstName,
+      lastName: normalizedLastName,
+    });
+    if (!result.user) throw new Error("Registration failed");
+    return result.user;
+  }
+
   const userId = crypto.randomUUID();
   const authId = crypto.randomUUID();
   const salt = await bcrypt.genSalt(BCRYPT_SALT_ROUNDS);
@@ -386,8 +472,13 @@ function safeEquals(left: string, right: string): boolean {
 
 export function createLocalSessionToken(user: StatelessLocalUser, now = Date.now()): string {
   const payload: LocalSessionPayload = {
-    v: 1,
+    v: 2,
     uid: user.id,
+    email: user.email,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    status: user.status,
+    hasPaidForAccess: user.hasPaidForAccess,
     exp: now + LOCAL_SESSION_TTL_MS,
     nonce: crypto.randomBytes(24).toString("base64url"),
   };
@@ -402,9 +493,17 @@ export function verifyLocalSessionToken(token: string | null | undefined, now = 
 
   try {
     const payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as LocalSessionPayload;
-    if (payload.v !== 1 || !Number.isSafeInteger(payload.exp) || payload.exp <= now) return null;
-    if (!payload.uid || !/^[A-Za-z0-9_-]{20,}$/.test(payload.nonce || "")) return null;
-    return { id: String(payload.uid) };
+    if (payload.v !== 2 || !Number.isSafeInteger(payload.exp) || payload.exp <= now) return null;
+    if (!payload.uid || !payload.email || !/^[A-Za-z0-9_-]{20,}$/.test(payload.nonce || "")) return null;
+    return {
+      id: String(payload.uid),
+      email: String(payload.email),
+      firstName: payload.firstName == null ? null : String(payload.firstName),
+      lastName: payload.lastName == null ? null : String(payload.lastName),
+      status: String(payload.status || "active"),
+      hasPaidForAccess: payload.hasPaidForAccess !== false,
+      sessionVersion: 2,
+    };
   } catch {
     return null;
   }
@@ -424,6 +523,12 @@ export async function purgeLocalTestUsersBeforeHttp(cutoffIso: string): Promise<
   if (!Number.isFinite(cutoff.getTime())) throw new Error("Invalid local-test-user purge cutoff");
 
   const backend = await resolveLocalAuthBackend();
+
+  if (backend.kind === "edge") {
+    // Maintenance deletion is intentionally not exposed through the public
+    // login Edge Function. This historical cleanup is optional after cutoff.
+    return 0;
+  }
 
   if (backend.kind === "postgres") {
     const dbClient = await pool.connect();
