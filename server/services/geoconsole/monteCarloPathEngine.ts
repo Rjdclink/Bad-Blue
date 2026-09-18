@@ -694,7 +694,7 @@ export class MonteCarloPathEngine {
     const y = Math.sin(Δλ) * Math.cos(φ2);
     const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
     
-    return Math.atan2(y, x);
+    return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
   }
 
   private normalizeAngle(angle: number): number {
