@@ -21,6 +21,7 @@ export type IntelligenceMapMode = 'satellite' | 'hybrid' | 'street' | 'dark';
 
 export interface IntelligenceLayerState {
   satellite: boolean;
+  earthObservation: boolean;
   trail: boolean;
   heatmap: boolean;
   markers: boolean;
@@ -69,6 +70,10 @@ const TERRAIN_TILES =
   (import.meta.env?.VITE_TERRAIN_TILES_URL as string | undefined) ||
   'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png';
 
+const NASA_GIBS_TEMPLATE =
+  (import.meta.env?.VITE_NASA_GIBS_TILES_URL as string | undefined) ||
+  'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_CorrectedReflectance_TrueColor/default/{date}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg';
+
 const WEATHER_RADAR_TILES =
   (import.meta.env?.VITE_WEATHER_RADAR_TILES_URL as string | undefined) ||
   'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::USCOMP-N0Q-0/{z}/{x}/{y}.png';
@@ -78,6 +83,9 @@ const KARTAVIEW_API =
   'https://api.openstreetcam.org/2.0/photo/';
 
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
+
+const utcDateKey = (date: Date) => date.toISOString().slice(0, 10);
+const nasaGibsTilesFor = (date: Date) => NASA_GIBS_TEMPLATE.replace('{date}', utcDateKey(date));
 
 const pointFeature = (frame: GeoFrame) => ({
   type: 'Feature' as const,
@@ -302,6 +310,28 @@ function addRuntimeLayers(map: MapLibreMap) {
     }, map.getStyle().layers?.find(layer => layer.type === 'symbol')?.id);
   }
 
+  if (!map.getSource('spectra-earth-observation')) {
+    map.addSource('spectra-earth-observation', {
+      type: 'raster',
+      tiles: [nasaGibsTilesFor(new Date())],
+      tileSize: 256,
+      minzoom: 1,
+      maxzoom: 9,
+      attribution: 'NASA GIBS / MODIS Terra',
+    });
+  }
+  if (!map.getLayer('spectra-earth-observation')) {
+    map.addLayer({
+      id: 'spectra-earth-observation',
+      type: 'raster',
+      source: 'spectra-earth-observation',
+      paint: {
+        'raster-opacity': 0.72,
+        'raster-fade-duration': 150,
+      },
+    }, map.getStyle().layers?.find(layer => layer.type === 'symbol')?.id);
+  }
+
   if (!map.getSource('spectra-terrain-dem')) {
     map.addSource('spectra-terrain-dem', {
       type: 'raster-dem',
@@ -518,6 +548,16 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
       features: currentFrame ? [pointFeature(currentFrame)] : [],
     });
 
+    if (currentFrame) {
+      const earthSource = map.getSource('spectra-earth-observation') as any;
+      const nextTile = nasaGibsTilesFor(currentFrame.timestamp);
+      const previousTile = earthSource?.__spectraTile as string | undefined;
+      if (earthSource?.setTiles && previousTile !== nextTile) {
+        earthSource.setTiles([nextTile]);
+        earthSource.__spectraTile = nextTile;
+      }
+    }
+
     const accuracy = currentFrame?.position.accuracy;
     safeSetData(map, 'spectra-uncertainty', {
       type: 'FeatureCollection',
@@ -536,6 +576,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     if (!map || !ready) return;
 
     setVisibility(map, 'spectra-trail-line', layers.trail);
+    setVisibility(map, 'spectra-earth-observation', layers.earthObservation);
     setVisibility(map, 'spectra-observation-heat', layers.heatmap);
     setVisibility(map, 'spectra-observation-points', layers.markers);
     setVisibility(map, 'spectra-futurecast-line', layers.futurecast);
@@ -634,7 +675,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
       <div ref={containerRef} className="absolute inset-0" />
 
       <div className="pointer-events-none absolute left-3 top-3 z-10 rounded-md bg-slate-950/75 px-2 py-1 text-[10px] font-mono text-slate-300 backdrop-blur">
-        GPU MAP · {layers.terrain ? '3D TERRAIN' : '2D'} · {layers.weather ? 'RADAR ON' : 'RADAR OFF'}
+        GPU MAP · {layers.terrain ? '3D TERRAIN' : '2D'} · {layers.weather ? 'RADAR ON' : 'RADAR OFF'} · {layers.earthObservation ? 'EARTH OBS' : 'BASE'}
       </div>
 
       {layers.streetImagery && (
