@@ -248,7 +248,7 @@ export default function GeoconsolePage() {
                 {[
                   { name: 'Multimodal Fusion', desc: 'Combine GPS, EXIF, Wi-Fi, Bluetooth', active: true },
                   { name: 'Monte Carlo Interpolation', desc: 'Probabilistic path reconstruction', active: true },
-                  { name: 'Futurecast Prediction', desc: '6-hour trajectory forecasting', active: true },
+                  { name: 'Futurecast Prediction', desc: '1-hour trajectory forecasting', active: true },
                   { name: 'Weather Radar Timeline', desc: 'Animated playback controls', active: true },
                   { name: 'Satellite Imagery', desc: 'Sentinel, NASA, USGS layers', active: true },
                   { name: 'Public Camera Integration', desc: 'Traffic, city, DOT cameras', active: false },
