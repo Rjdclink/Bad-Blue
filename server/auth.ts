@@ -86,6 +86,31 @@ function localSessionIdentity(req: any): StatelessLocalSession | null {
 }
 
 const BLOCKED_ACCESS_STATUSES = new Set(["suspended", "past_due", "canceled", "expired"]);
+const PAID_ACCESS_CACHE_TTL_MS = 5_000;
+const paidAccessCache = new Map<string, { user: StatelessLocalUser; expiresAt: number }>();
+
+export function invalidatePaidAccessCache(userId?: string | null): void {
+  const id = String(userId || "").trim();
+  if (id) paidAccessCache.delete(id);
+  else paidAccessCache.clear();
+}
+
+function cachePaidAccessUser(user: StatelessLocalUser): void {
+  paidAccessCache.set(user.id, {
+    user,
+    expiresAt: Date.now() + PAID_ACCESS_CACHE_TTL_MS,
+  });
+}
+
+function cachedPaidAccessUser(userId: string): StatelessLocalUser | null {
+  const cached = paidAccessCache.get(userId);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    paidAccessCache.delete(userId);
+    return null;
+  }
+  return cached.user;
+}
 
 export function hasPaidServiceAccess(user: Pick<StatelessLocalUser, "status" | "hasPaidForAccess"> | any): boolean {
   if (!user || user.hasPaidForAccess !== true) return false;
@@ -178,8 +203,9 @@ export async function refreshRequestUser(req: any, res?: any): Promise<any | nul
   const id = getPlatformUserId(current);
   if (!id) return null;
 
-  const fresh = await getLocalUserByIdHttp(id);
+  const fresh = cachedPaidAccessUser(id) || await getLocalUserByIdHttp(id);
   if (!fresh) return null;
+  cachePaidAccessUser(fresh);
 
   const nextUser = {
     ...current,
@@ -344,6 +370,7 @@ export async function setupAuth(app: Express) {
       if (!user) return res.status(401).json({ message: "Invalid email or password" });
 
       setLocalCookie(res, createLocalSessionToken(user));
+      cachePaidAccessUser(user);
       clearMasterCookie(res);
       return res.json({
         success: true,
@@ -368,6 +395,7 @@ export async function setupAuth(app: Express) {
       // directly into verified Square subscription checkout without re-entering
       // credentials. Pending users remain fail-closed until Square is confirmed.
       setLocalCookie(res, createLocalSessionToken(user));
+      cachePaidAccessUser(user);
       clearMasterCookie(res);
       return res.status(201).json({
         success: true,
@@ -435,6 +463,7 @@ export async function setupAuth(app: Express) {
         clearLocalCookie(res);
         return res.json(null);
       }
+      cachePaidAccessUser(fresh);
       if (localStateChanged(localSession, fresh)) {
         issueLocalSessionCookie(res, fresh);
       }
