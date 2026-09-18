@@ -6,6 +6,7 @@ export class AdvancedSearchService {
     location?: string;
     department?: string;
     badge?: string;
+    phone?: string;
   }): string[] {
     const dorks: string[] = [];
     const escapedName = `"${name}"`;
@@ -24,6 +25,17 @@ export class AdvancedSearchService {
     if (options?.badge) {
       dorks.push(`"badge ${options.badge}" ${escapedName}`);
       dorks.push(`"badge number ${options.badge}"`);
+    }
+
+    if (options?.phone) {
+      const phoneDigits = options.phone.replace(/\D/g, '');
+      if (phoneDigits.length >= 10) {
+        const national = phoneDigits.slice(-10);
+        const formatted = `(${national.slice(0, 3)}) ${national.slice(3, 6)}-${national.slice(6)}`;
+        dorks.push(`${escapedName} "${formatted}"`);
+        dorks.push(`${escapedName} "${national}"`);
+        if (options.location) dorks.push(`"${formatted}" "${options.location}"`);
+      }
     }
 
     // Public records databases

@@ -20,6 +20,7 @@ import {
   FusedLocation,
   InterpolatedPath,
   MotionTrail,
+  TrailPoint,
   LocationIntelligenceReport,
   GeoconsoleOrchestrationConfig,
   OrchestrationState,
@@ -41,11 +42,11 @@ const MPS_TO_MPH = 2.237; // meters per second to miles per hour
 
 // Default timeline configuration
 const DEFAULT_TIMELINE_CONFIG: TimelineConfig = {
-  historyDays: 3,
-  futurecastHours: 6,
+  historyDays: 3, // retained for reports/analytics, not the operator playback window
+  futurecastHours: 1,
   playbackSpeed: 60, // 1 minute = 1 second
   animationFps: 30,
-  trailFadeSeconds: 86400, // 24 hours
+  trailFadeSeconds: 3600, // rolling previous hour
 };
 
 // Default orchestration configuration
@@ -61,7 +62,9 @@ const DEFAULT_ORCHESTRATION_CONFIG: GeoconsoleOrchestrationConfig = {
 
 // Processing configuration
 const DEFAULT_PROCESSING_CONFIG = {
-  maxGapMinutes: 30, // Interpolate gaps longer than this
+  minInterpolationGapSeconds: 60,
+  maxInterpolationGapMinutes: 30,
+  maxInterpolationSpeedMps: 90,
   clusterRadius: 50, // meters for frequent location clustering
   anomalySpeedThreshold: 50, // m/s for speed anomaly detection
   largeGapHours: 12, // hours for gap anomaly detection
@@ -120,6 +123,42 @@ export class HybridGeoconsole extends EventEmitter {
     });
   }
 
+  private selectPrimaryFusedTimeline(locations: FusedLocation[]): FusedLocation[] {
+    if (locations.length <= 1) return [...locations];
+
+    const sorted = [...locations].sort(
+      (a, b) => a.point.timestamp.getTime() - b.point.timestamp.getTime()
+    );
+    const groups: FusedLocation[][] = [];
+    let group: FusedLocation[] = [];
+    let groupStart = 0;
+    const eventWindowMs = 5_000;
+
+    for (const location of sorted) {
+      const timestamp = location.point.timestamp.getTime();
+      if (group.length === 0 || timestamp - groupStart <= eventWindowMs) {
+        if (group.length === 0) groupStart = timestamp;
+        group.push(location);
+      } else {
+        groups.push(group);
+        group = [location];
+        groupStart = timestamp;
+      }
+    }
+    if (group.length) groups.push(group);
+
+    // Alternate hypotheses remain available in fusedLocations. Only the most
+    // strongly supported candidate per event window can drive physical motion.
+    return groups.map(candidates =>
+      [...candidates].sort((a, b) =>
+        b.qualityScore - a.qualityScore ||
+        b.point.confidence - a.point.confidence ||
+        (a.point.accuracy ?? Number.MAX_SAFE_INTEGER) -
+          (b.point.accuracy ?? Number.MAX_SAFE_INTEGER)
+      )[0]
+    );
+  }
+
   /**
    * Process raw location inputs through the full pipeline
    */
@@ -128,6 +167,7 @@ export class HybridGeoconsole extends EventEmitter {
     sessionId?: string
   ): Promise<{
     fusedLocations: FusedLocation[];
+    primaryFusedLocations: FusedLocation[];
     trail: MotionTrail;
     futurecast: GPSPoint[];
   }> {
@@ -145,22 +185,31 @@ export class HybridGeoconsole extends EventEmitter {
         throw new Error('No valid locations after fusion');
       }
 
-      // Step 2: Generate motion trail with interpolation
-      this.emitProgress(taskId, 'interpolation', 40, 'Running Monte Carlo path interpolation...');
-      const sortedPoints = fusedLocations
+      // Step 2: Keep alternate hypotheses, but resolve one physical timeline.
+      const primaryFusedLocations = this.selectPrimaryFusedTimeline(fusedLocations);
+
+      this.emitProgress(taskId, 'interpolation', 40, 'Reconstructing supported movement gaps...');
+      const sortedPoints = primaryFusedLocations
         .map(f => f.point)
         .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-      
-      // Interpolate gaps in the data
+
       const interpolatedPoints = await this.interpolateGaps(sortedPoints);
       
       // Step 3: Generate motion trail
       this.emitProgress(taskId, 'trail', 60, 'Generating motion trail...');
       const trail = await this.monteCarloEngine.generateMotionTrail(interpolatedPoints);
       
-      // Step 4: Generate futurecast
+      // Step 4: Futurecast only from the latest continuous evidence segment.
       this.emitProgress(taskId, 'futurecast', 80, 'Computing futurecast prediction...');
-      const recentPoints = interpolatedPoints.slice(-20);
+      let continuousStart = 0;
+      for (let i = interpolatedPoints.length - 1; i >= 0; i--) {
+        const gapBefore = Number(interpolatedPoints[i].metadata?.gapBeforeSeconds || 0);
+        if (gapBefore > 0) {
+          continuousStart = i;
+          break;
+        }
+      }
+      const recentPoints = interpolatedPoints.slice(continuousStart).slice(-20);
       const futurecast = await this.monteCarloEngine.generateFuturecast(
         recentPoints,
         this.timelineConfig.futurecastHours
@@ -181,7 +230,7 @@ export class HybridGeoconsole extends EventEmitter {
         processingTime: Date.now() - startTime,
       });
 
-      return { fusedLocations, trail, futurecast };
+      return { fusedLocations, primaryFusedLocations, trail, futurecast };
     } catch (error) {
       log.error('Location processing failed', { taskId, error });
       this.emitProgress(taskId, 'error', 0, `Processing failed: ${error}`);
@@ -200,16 +249,64 @@ export class HybridGeoconsole extends EventEmitter {
     for (let i = 1; i < points.length; i++) {
       const prev = points[i - 1];
       const curr = points[i];
-      const gapMinutes = (curr.timestamp.getTime() - prev.timestamp.getTime()) / 60000;
+      const gapSeconds = (curr.timestamp.getTime() - prev.timestamp.getTime()) / 1000;
+      const gapMinutes = gapSeconds / 60;
+      const distanceMeters = this.haversineDistance(
+        prev.latitude,
+        prev.longitude,
+        curr.latitude,
+        curr.longitude,
+      );
+      const requiredSpeed = gapSeconds > 0
+        ? distanceMeters / gapSeconds
+        : Number.POSITIVE_INFINITY;
 
-      if (gapMinutes > DEFAULT_PROCESSING_CONFIG.maxGapMinutes) {
-        // Run Monte Carlo interpolation for this gap
+      const kindOf = (point: GPSPoint): GPSPoint['observationKind'] =>
+        point.observationKind || (
+          point.source === 'historical_location' || point.source === 'public_record'
+            ? 'historical'
+            : point.source === 'interpolated'
+              ? 'interpolated'
+              : point.source === 'predicted'
+                ? 'predicted'
+                : 'observed'
+        );
+      const supportsMotion =
+        kindOf(prev) === 'observed' &&
+        kindOf(curr) === 'observed';
+
+      const discontinuityReason =
+        gapSeconds <= 0
+          ? 'non_monotonic_event_time'
+          : !supportsMotion
+            ? 'unsupported_evidence_continuity'
+            : requiredSpeed > DEFAULT_PROCESSING_CONFIG.maxInterpolationSpeedMps
+              ? 'implausible_required_speed'
+              : gapMinutes > DEFAULT_PROCESSING_CONFIG.maxInterpolationGapMinutes
+                ? 'gap_exceeds_interpolation_window'
+                : null;
+
+      if (discontinuityReason) {
+        result.push({
+          ...curr,
+          metadata: {
+            ...(curr.metadata || {}),
+            gapBeforeSeconds: Math.max(1, gapSeconds),
+            continuity: 'discontinuous',
+            discontinuityReason,
+            requiredSpeedMps: Number.isFinite(requiredSpeed) ? requiredSpeed : undefined,
+          },
+        });
+        continue;
+      }
+
+      if (gapSeconds >= DEFAULT_PROCESSING_CONFIG.minInterpolationGapSeconds) {
         const path = await this.monteCarloEngine.interpolatePath(prev, curr);
-        
-        // Add interpolated points (excluding start and end)
         for (let j = 1; j < path.interpolatedPoints.length - 1; j++) {
           result.push(path.interpolatedPoints[j]);
         }
+        result.push(curr);
+        continue;
       }
 
       result.push(curr);
@@ -358,13 +455,31 @@ export class HybridGeoconsole extends EventEmitter {
         }
       }
 
+      const clusterConfidence =
+        cluster.reduce((sum, point) => sum + point.confidence, 0) / cluster.length;
+      const clusterAccuracy = Math.max(
+        DEFAULT_PROCESSING_CONFIG.clusterRadius,
+        ...cluster.map(point => point.accuracy ?? DEFAULT_PROCESSING_CONFIG.clusterRadius)
+      );
+
       frequentLocations.push({
         position: {
           latitude: avgLat,
           longitude: avgLng,
-          timestamp: sorted[0].timestamp,
-          source: 'device_gps',
-          confidence: 0.9,
+          accuracy: clusterAccuracy,
+          timestamp: sorted[sorted.length - 1].timestamp,
+          source: 'historical_location',
+          confidence: Math.max(0.05, Math.min(0.85, clusterConfidence * 0.8)),
+          observationKind: 'inferred',
+          correlationGroup: 'report:frequent_location_cluster',
+          provenance: {
+            provider: 'canonical_geoconsole_report',
+            transformedBy: ['spatial_cluster_centroid'],
+          },
+          metadata: {
+            inferredCentroid: true,
+            contributingPoints: cluster.length,
+          },
         },
         visitCount: cluster.length,
         totalDuration,
@@ -381,78 +496,35 @@ export class HybridGeoconsole extends EventEmitter {
    * Analyze motion patterns
    */
   private analyzeMotionPattern(points: GPSPoint[], trail?: MotionTrail): MotionPattern {
-    // Determine primary mode of transport
-    let walkingTime = 0, drivingTime = 0, transitTime = 0, stationaryTime = 0;
-    
+    let walkingTime = 0;
+    let drivingTime = 0;
+    let transitTime = 0;
+
     if (trail) {
       for (const segment of trail.segments) {
         switch (segment.segmentType) {
-          case 'walking': walkingTime += segment.duration; break;
-          case 'driving': drivingTime += segment.duration; break;
-          case 'transit': transitTime += segment.duration; break;
-          case 'stationary': stationaryTime += segment.duration; break;
+          case 'walking': walkingTime += Math.max(0, segment.duration); break;
+          case 'driving': drivingTime += Math.max(0, segment.duration); break;
+          case 'transit': transitTime += Math.max(0, segment.duration); break;
         }
       }
     }
 
     const totalTime = walkingTime + drivingTime + transitTime;
     let primaryMode: MotionPattern['primaryMode'] = 'mixed';
-    
-    if (walkingTime > totalTime * 0.6) primaryMode = 'walking';
-    else if (drivingTime > totalTime * 0.6) primaryMode = 'driving';
-    else if (transitTime > totalTime * 0.6) primaryMode = 'transit';
-
-    // Analyze activity by hour of day
-    const hourlyActivity: number[] = Array(24).fill(0);
-    for (const point of points) {
-      const hour = point.timestamp.getHours();
-      hourlyActivity[hour]++;
-    }
-
-    // Find active periods
-    const activityPeriods: { start: number; end: number; activity: string }[] = [];
-    let periodStart = -1;
-    
-    for (let h = 0; h < 24; h++) {
-      if (hourlyActivity[h] > 0 && periodStart === -1) {
-        periodStart = h;
-      } else if (hourlyActivity[h] === 0 && periodStart !== -1) {
-        activityPeriods.push({
-          start: periodStart,
-          end: h,
-          activity: primaryMode,
-        });
-        periodStart = -1;
-      }
-    }
-    
-    if (periodStart !== -1) {
-      activityPeriods.push({
-        start: periodStart,
-        end: 24,
-        activity: primaryMode,
-      });
-    }
-
-    // Analyze by day of week
-    const weekdayPattern: Record<string, number[]> = {};
-    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    
-    for (const point of points) {
-      const day = days[point.timestamp.getDay()];
-      const hour = point.timestamp.getHours();
-      
-      if (!weekdayPattern[day]) {
-        weekdayPattern[day] = Array(24).fill(0);
-      }
-      weekdayPattern[day][hour]++;
+    if (totalTime > 0) {
+      if (walkingTime > totalTime * 0.6) primaryMode = 'walking';
+      else if (drivingTime > totalTime * 0.6) primaryMode = 'driving';
+      else if (transitTime > totalTime * 0.6) primaryMode = 'transit';
     }
 
     return {
       primaryMode,
-      activityPeriods,
-      weekdayPattern,
-      regularRoutes: [], // Would require more complex analysis
+      // Time-of-day routines require a verified target-local timezone. They are
+      // intentionally left empty rather than using the server's timezone.
+      activityPeriods: [],
+      weekdayPattern: {},
+      regularRoutes: [],
     };
   }
 
@@ -492,24 +564,6 @@ export class HybridGeoconsole extends EventEmitter {
           location: sorted[i - 1],
           description: `${gap.toFixed(1)} hour gap in location data`,
           severity: gap > DEFAULT_PROCESSING_CONFIG.largeGapHours * 2 ? 'high' : 'medium',
-        });
-      }
-    }
-
-    // Detect unusual times (late night activity if unusual)
-    const lateNightPoints = points.filter(p => {
-      const hour = p.timestamp.getHours();
-      return hour >= 1 && hour <= 5;
-    });
-
-    if (lateNightPoints.length > 0 && lateNightPoints.length < points.length * 0.1) {
-      for (const point of lateNightPoints) {
-        anomalies.push({
-          type: 'unusual_time',
-          timestamp: point.timestamp,
-          location: point,
-          description: 'Activity detected during unusual hours (1-5 AM)',
-          severity: 'low',
         });
       }
     }
@@ -559,7 +613,6 @@ export class HybridGeoconsole extends EventEmitter {
   private generateGeoJSON(points: GPSPoint[], trail?: MotionTrail): GeoJSONFeatureCollection {
     const features: GeoJSONFeatureCollection['features'] = [];
 
-    // Add point features
     for (const point of points) {
       features.push({
         type: 'Feature',
@@ -571,30 +624,44 @@ export class HybridGeoconsole extends EventEmitter {
           timestamp: point.timestamp.toISOString(),
           source: point.source,
           confidence: point.confidence,
+          accuracy: point.accuracy,
+          observationKind: point.observationKind,
           altitude: point.altitude,
         },
       });
     }
 
-    // Add trail as LineString
     if (trail && trail.points.length > 1) {
-      features.push({
-        type: 'Feature',
-        geometry: {
-          type: 'LineString',
-          coordinates: trail.points.map(p => [
-            p.position.longitude,
-            p.position.latitude,
-          ]),
-        },
-        properties: {
-          type: 'motion_trail',
-          startTime: trail.startTime.toISOString(),
-          endTime: trail.endTime.toISOString(),
-          totalDistance: trail.totalDistance,
-          averageSpeed: trail.averageSpeed,
-        },
-      });
+      const segments: TrailPoint[][] = [];
+      let segment: TrailPoint[] = [];
+      for (const trailPoint of trail.points) {
+        const gapBefore = Number(trailPoint.position.metadata?.gapBeforeSeconds || 0);
+        if (gapBefore > 0 && segment.length > 0) {
+          if (segment.length > 1) segments.push(segment);
+          segment = [];
+        }
+        segment.push(trailPoint);
+      }
+      if (segment.length > 1) segments.push(segment);
+
+      for (const continuous of segments) {
+        features.push({
+          type: 'Feature',
+          geometry: {
+            type: 'LineString',
+            coordinates: continuous.map(point => [
+              point.position.longitude,
+              point.position.latitude,
+            ]),
+          },
+          properties: {
+            type: 'motion_trail',
+            startTime: continuous[0].position.timestamp.toISOString(),
+            endTime: continuous[continuous.length - 1].position.timestamp.toISOString(),
+            supportedContinuity: true,
+          },
+        });
+      }
     }
 
     return {
@@ -619,6 +686,7 @@ export class HybridGeoconsole extends EventEmitter {
   private calculateTotalDistance(points: GPSPoint[]): number {
     let total = 0;
     for (let i = 1; i < points.length; i++) {
+      if (Number(points[i].metadata?.gapBeforeSeconds || 0) > 0) continue;
       total += this.haversineDistance(
         points[i - 1].latitude, points[i - 1].longitude,
         points[i].latitude, points[i].longitude
@@ -647,11 +715,18 @@ export class HybridGeoconsole extends EventEmitter {
   private calculateDataQuality(points: GPSPoint[]): number {
     if (points.length === 0) return 0;
 
-    const avgConfidence = points.reduce((sum, p) => sum + p.confidence, 0) / points.length;
-    const sources = new Set(points.map(p => p.source)).size;
-    const sourceBonus = Math.min(sources * 0.1, 0.3);
-    
-    return Math.min(avgConfidence + sourceBonus, 1);
+    const avgConfidence =
+      points.reduce((sum, point) => sum + Math.max(0, Math.min(1, point.confidence)), 0) /
+      points.length;
+    const independentGroups = new Set(
+      points.map(point =>
+        point.correlationGroup ||
+        `${point.source}:${point.provenance?.provider || 'unknown'}`
+      )
+    ).size;
+    const independenceBonus = Math.min(Math.max(0, independentGroups - 1) * 0.04, 0.12);
+
+    return Math.max(0, Math.min(1, avgConfidence + independenceBonus));
   }
 
   private emitProgress(taskId: string, stage: string, progress: number, message: string): void {

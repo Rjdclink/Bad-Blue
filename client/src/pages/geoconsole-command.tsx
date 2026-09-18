@@ -569,7 +569,7 @@ export default function GeoconsoleCommandCenter() {
             <CardHeader className="py-3">
               <CardTitle className="text-sm uppercase tracking-wider flex items-center gap-2" style={{ color: COLORS.secondary }}>
                 <TrendingUp className="w-4 h-4" />
-                6-HOUR FUTURECAST
+                1-HOUR FUTURECAST
               </CardTitle>
             </CardHeader>
             <CardContent>

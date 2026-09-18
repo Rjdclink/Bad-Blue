@@ -1,19 +1,15 @@
 /**
- * GeoConsole Link Connections Verification Test
- * Test 2: Verifies all link connections and data flow
+ * SPECTRA / GeoConsole connection verification.
+ * Verifies real data flow rather than synthetic SAT/GEO/FIX/SIGNAL percentages.
  */
 
 const fs = require('fs');
 const path = require('path');
 
-console.log('============================================================');
-console.log('GEOCONSOLE LINK CONNECTIONS TEST (TEST 2)');
-console.log('============================================================\n');
-
 let passed = 0;
 let failed = 0;
-
-function test(name, condition) {
+const read = rel => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+const test = (name, condition) => {
   if (condition) {
     console.log(`✅ ${name}`);
     passed++;
@@ -21,98 +17,74 @@ function test(name, condition) {
     console.log(`❌ ${name}`);
     failed++;
   }
-}
+};
 
-// Load dashboard content
-const dashboardPath = path.join(__dirname, '../client/src/components/geoconsole/GeoconsoleRadarDashboard.tsx');
-const dashboardContent = fs.readFileSync(dashboardPath, 'utf8');
+const spectra = read('client/src/pages/spectra.tsx');
+const dashboard = read('client/src/components/geoconsole/GeoconsoleRadarDashboard.tsx');
+const map = read('client/src/components/geoconsole/MapLibreIntelligenceMap.tsx');
+const runtime = read('client/src/hooks/useGeoRuntime.ts');
+const routes = read('server/routes/geoconsole.routes.ts');
+const spectraRoutes = read('server/routes/spectra.routes.ts');
+const engine = read('server/services/geoconsole/index.ts');
+const fusion = read('server/services/geoconsole/inputFusionEngine.ts');
 
-// Test SAT Link Connection
-console.log('\n📡 SAT LINK CONNECTION');
-console.log('----------------------------------------');
-test('SAT link tracks satellite_imagery source', dashboardContent.includes("satellite_imagery"));
-test('SAT link has signal strength calculation', dashboardContent.includes("sat:") && dashboardContent.includes("signal:"));
-test('SAT link updates based on GPS data', dashboardContent.includes("hasGPS"));
-test('SAT link displays in header', dashboardContent.includes('SAT') && dashboardContent.includes("key={key}"));
+console.log('\nSPECTRA / GEOCONSOLE CONNECTIONS\n');
 
-// Test GEO Link Connection
-console.log('\n🌍 GEO LINK CONNECTION');
-console.log('----------------------------------------');
-test('GEO link tracks total distance', dashboardContent.includes("state.stats.totalDistance"));
-test('GEO link active when data exists', dashboardContent.includes("geo:") && dashboardContent.includes("active: hasData"));
-test('GEO link connected to multimodal fusion', dashboardContent.includes("Multimodal Fusion"));
+test('Conversation submits to SPECTRA acquisition API',
+  spectra.includes("fetch('/api/spectra/acquire'"));
+test('Acquisition returns timestamped observations and regional candidates',
+  spectraRoutes.includes('locationObservations') &&
+  spectraRoutes.includes('candidateLocations'));
+test('SPECTRA passes evidence into canonical dashboard',
+  spectra.includes('initialData={observations}') &&
+  spectra.includes('candidateLocations={candidateLocations}'));
 
-// Test FIX Link Connection
-console.log('\n📍 FIX LINK CONNECTION');
-console.log('----------------------------------------');
-test('FIX link tracks current frame', dashboardContent.includes("state.currentFrame"));
-test('FIX link shows confidence', dashboardContent.includes("currentFrame.confidence"));
-test('FIX link active when position is locked', dashboardContent.includes("fix:") && dashboardContent.includes("currentFrame !== null"));
-test('FIX link connected to Monte Carlo', dashboardContent.includes("Monte Carlo"));
+test('Dashboard feeds canonical MapLibre renderer',
+  dashboard.includes('<MapLibreIntelligenceMap'));
+test('Map receives trail, Futurecast, candidates and uncertainty',
+  dashboard.includes('trail={renderData.trail}') &&
+  dashboard.includes('futurecast={renderData.futurecast}') &&
+  dashboard.includes('candidateLocations={candidateLocations}') &&
+  map.includes('spectra-uncertainty'));
+test('Map follow mode is released by actual user interaction',
+  map.includes('event?.originalEvent') &&
+  map.includes('onUserInteraction?.()'));
+test('Global swipe navigation does not steal map gestures',
+  map.includes('data-gesture-navigation="ignore"'));
 
-// Test SIGNAL Link Connection
-console.log('\n📶 SIGNAL LINK CONNECTION');
-console.log('----------------------------------------');
-test('SIGNAL link tracks WiFi handoff', dashboardContent.includes("wifi_handoff"));
-test('SIGNAL link tracks device GPS', dashboardContent.includes("device_gps"));
-test('SIGNAL link higher when live', dashboardContent.includes("hasLiveData ? 95"));
-test('SIGNAL link connected to Kalman filter', dashboardContent.includes("Kalman filter") || dashboardContent.includes("Signal Fusion"));
+test('Runtime submits evidence to canonical process endpoint',
+  runtime.includes("fetch('/api/geoconsole/process'"));
+test('Process endpoint invokes HybridGeoconsole',
+  routes.includes('hybridGeoconsole.processLocationData'));
+test('HybridGeoconsole invokes fusion, trail and Futurecast engines',
+  engine.includes('fuseInputs(inputs)') &&
+  engine.includes('generateMotionTrail') &&
+  engine.includes('generateFuturecast'));
+test('Process response returns canonical session and signed primary timeline',
+  routes.includes('sessionId: effectiveSessionId') &&
+  routes.includes('primaryFusedLocations: signedPrimaryFusedLocations'));
+test('Runtime renders processed trail frames',
+  runtime.includes('payload?.data?.trail?.points'));
 
-// Test NAV Link Connection
-console.log('\n🧭 NAV LINK CONNECTION');
-console.log('----------------------------------------');
-test('NAV link tracks futurecast data', dashboardContent.includes("state.futurecast"));
-test('NAV link active when predictions available', dashboardContent.includes("nav:") && dashboardContent.includes("futurecast.length > 0"));
-test('NAV link connected to trajectory forecasting', dashboardContent.includes("trajectory forecasting") || dashboardContent.includes("Futurecast"));
+test('Fusion tracks correlated evidence groups',
+  fusion.includes('correlationGroup') &&
+  fusion.includes('independentRepresentatives'));
+test('Dashboard telemetry is evidence-derived, not fixed signal percentages',
+  dashboard.includes('Independent evidence groups represented') &&
+  !dashboard.includes('hasLiveData ? 95') &&
+  !dashboard.includes('setLinkStatus'));
+test('Futurecast confidence shown in telemetry comes from prediction frames',
+  dashboard.includes('forecastConfidence') &&
+  dashboard.includes('renderData.futurecast.reduce'));
 
-// Test Data Flow
-console.log('\n📊 DATA FLOW VERIFICATION');
-console.log('----------------------------------------');
-test('Link status updates via useEffect', dashboardContent.includes("useEffect") && dashboardContent.includes("setLinkStatus"));
-test('Link status depends on trail data', dashboardContent.includes("[state.trail") || dashboardContent.includes("state.trail,"));
-test('Link status depends on isLive', dashboardContent.includes("state.isLive") || dashboardContent.includes("isLive"));
-test('Link status depends on futurecast', dashboardContent.includes("state.futurecast"));
-test('Link status depends on stats', dashboardContent.includes("state.stats"));
+test('Street imagery client goes through authenticated server adapter',
+  map.includes('/api/geoconsole/street-imagery') &&
+  routes.includes("router.get('/street-imagery'"));
+test('Earth observation time follows selected evidence time',
+  map.includes('nasaGibsTilesFor(currentFrame.timestamp)'));
+test('Regional candidates never enter the timed motion trail',
+  spectraRoutes.includes('if (locationObservations.length === 0)') &&
+  spectraRoutes.includes("basis: 'regional_context'"));
 
-// Test API Connections
-console.log('\n🔗 API ENDPOINT CONNECTIONS');
-console.log('----------------------------------------');
-
-const routesPath = path.join(__dirname, '../server/routes/geoconsole.routes.ts');
-const routesContent = fs.readFileSync(routesPath, 'utf8');
-
-test('Process endpoint handles multimodal fusion', routesContent.includes("processLocationData"));
-test('Process endpoint returns fusedLocations', routesContent.includes("fusedLocations"));
-test('Process endpoint returns trail data', routesContent.includes("trail:"));
-test('Process endpoint returns futurecast', routesContent.includes("futurecast"));
-test('Interpolate endpoint uses Monte Carlo', routesContent.includes("monteCarloPathEngine.interpolatePath"));
-test('Futurecast endpoint generates predictions', routesContent.includes("monteCarloPathEngine.generateFuturecast"));
-
-// Test Service Layer Connections
-console.log('\n⚙️ SERVICE LAYER CONNECTIONS');
-console.log('----------------------------------------');
-
-const indexPath = path.join(__dirname, '../server/services/geoconsole/index.ts');
-const indexContent = fs.readFileSync(indexPath, 'utf8');
-
-test('HybridGeoconsole uses InputFusionEngine', indexContent.includes("InputFusionEngine"));
-test('HybridGeoconsole uses MonteCarloPathEngine', indexContent.includes("MonteCarloPathEngine"));
-test('HybridGeoconsole generates futurecast', indexContent.includes("generateFuturecast"));
-test('HybridGeoconsole generates intelligence reports', indexContent.includes("generateIntelligenceReport"));
-test('HybridGeoconsole interpolates gaps', indexContent.includes("interpolateGaps"));
-
-console.log('\n============================================================');
-console.log('SUMMARY');
-console.log('============================================================');
-console.log(`Passed: ${passed}`);
-console.log(`Failed: ${failed}`);
-console.log(`Total:  ${passed + failed}`);
-console.log('');
-
-if (failed === 0) {
-  console.log('✅ ALL LINK CONNECTION TESTS PASSED');
-  process.exit(0);
-} else {
-  console.log('❌ SOME TESTS FAILED');
-  process.exit(1);
-}
+console.log(`\nPassed: ${passed}  Failed: ${failed}\n`);
+process.exit(failed === 0 ? 0 : 1);

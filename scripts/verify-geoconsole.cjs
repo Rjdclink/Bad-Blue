@@ -1,17 +1,17 @@
 /**
- * GeoConsole Verification Script
- * Verifies that all GeoConsole components and links are properly connected
+ * SPECTRA / GeoConsole architecture verification.
+ * Static invariants only: no network calls, deployment, or sample data.
  */
 
 const fs = require('fs');
 const path = require('path');
 
-console.log('============================================================');
-console.log('GEOCONSOLE VERIFICATION TEST');
-console.log('============================================================\n');
-
 let passed = 0;
 let failed = 0;
+
+function read(rel) {
+  return fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+}
 
 function test(name, condition) {
   if (condition) {
@@ -23,85 +23,105 @@ function test(name, condition) {
   }
 }
 
-// Test 1: GeoconsoleRadarDashboard exists and has link status
-const dashboardPath = path.join(__dirname, '../client/src/components/geoconsole/GeoconsoleRadarDashboard.tsx');
-const dashboardContent = fs.readFileSync(dashboardPath, 'utf8');
+const dashboard = read('client/src/components/geoconsole/GeoconsoleRadarDashboard.tsx');
+const map = read('client/src/components/geoconsole/MapLibreIntelligenceMap.tsx');
+const runtime = read('client/src/hooks/useGeoRuntime.ts');
+const tshpe = read('client/src/hooks/useTSHPELocator.ts');
+const routes = read('server/routes/geoconsole.routes.ts');
+const gpsRoutes = read('server/routes/gps.routes.ts');
+const fusion = read('server/services/geoconsole/inputFusionEngine.ts');
+const futurecast = read('server/services/geoconsole/monteCarloPathEngine.ts');
+const media = read('server/services/locationIntelligence/MediaMetadataExtractor.ts');
+const app = read('client/src/App.tsx');
+const spectra = read('client/src/pages/spectra.tsx');
+const spectraRoutes = read('server/routes/spectra.routes.ts');
+const peopleRoute = read('server/routes/peopleSearch.routes.ts');
+const peopleTypes = read('server/services/peopleSearch/types.ts');
 
-test('Dashboard file exists', fs.existsSync(dashboardPath));
-test('Dashboard has SAT link status', dashboardContent.includes("sat: {") && dashboardContent.includes("Satellite Link"));
-test('Dashboard has GEO link status', dashboardContent.includes("geo: {") && dashboardContent.includes("Geo Link"));
-test('Dashboard has FIX link status', dashboardContent.includes("fix: {") && dashboardContent.includes("Fix Link"));
-test('Dashboard has SIGNAL link status', dashboardContent.includes("signal: {") && dashboardContent.includes("Signal Link"));
-test('Dashboard has NAV link status', dashboardContent.includes("nav: {") && dashboardContent.includes("Nav Link"));
-test('Dashboard uses full viewport stretch', dashboardContent.includes('h-full') && dashboardContent.includes('flex-1'));
-test('Dashboard has System Capabilities panel', dashboardContent.includes('System Capabilities'));
+console.log('\nSPECTRA / GEOCONSOLE INVARIANTS\n');
 
-// Test 2: People Finder page integrates GeoConsole correctly
-const peoplefinderPath = path.join(__dirname, '../client/src/pages/people-finder.tsx');
-const peoplefinderContent = fs.readFileSync(peoplefinderPath, 'utf8');
+test('Primary dashboard uses canonical MapLibre renderer',
+  dashboard.includes('MapLibreIntelligenceMap'));
+test('Primary dashboard does not import Leaflet',
+  !dashboard.includes("from 'leaflet'"));
+test('MapLibre provides real terrain',
+  map.includes("type: 'raster-dem'") && map.includes('map.setTerrain'));
+test('MapLibre provides 3D building extrusion',
+  map.includes("type: 'fill-extrusion'"));
+test('MapLibre distinguishes predicted observations',
+  map.includes('observationKind') && map.includes("'predicted'"));
+test('Manual map gestures release follow mode',
+  map.includes('onUserInteraction?.()') && dashboard.includes('setLockOnTarget(false)'));
+test('Street imagery is hidden behind internal adapter',
+  map.includes('/api/geoconsole/street-imagery') && !map.includes('api.openstreetcam.org'));
+test('Earth observation layer is time-aware',
+  map.includes('NASA_GIBS_TEMPLATE') && map.includes('nasaGibsTilesFor'));
 
-test('People Finder imports GeoconsoleRadarDashboard', peoplefinderContent.includes("import { GeoconsoleRadarDashboard }"));
-test('People Finder has full viewport height for GeoConsole', peoplefinderContent.includes('h-[calc(100vh-280px)]'));
-test('People Finder has minimum height constraint', peoplefinderContent.includes('min-h-[600px]'));
+test('Runtime uses rolling previous hour',
+  runtime.includes('ONE_HOUR_MS = 60 * 60 * 1000'));
+test('Runtime futurecast horizon is one hour',
+  runtime.includes('FUTURECAST_HOURS = 1'));
+test('Runtime automatically invokes canonical processing',
+  runtime.includes("fetch('/api/geoconsole/process'"));
+test('Runtime renders server processed trail',
+  runtime.includes('payload?.data?.trail?.points'));
+test('Runtime futurecast uses server authority',
+  runtime.includes("fetch('/api/geoconsole/futurecast'"));
+test('Runtime contains no mock-frame generator',
+  !runtime.includes('generateMockFrames'));
 
-// Test 3: Server routes exist
-const routesPath = path.join(__dirname, '../server/routes.ts');
-const routesContent = fs.readFileSync(routesPath, 'utf8');
+test('TSHPE has no random weighting authority',
+  !tshpe.includes('Math.random()') && !tshpe.includes('MonteCarloSimulator'));
+test('TSHPE has no client IP-geolocation dependency',
+  !tshpe.includes('ipapi.co'));
+test('TSHPE routes observations through canonical GeoConsole',
+  tshpe.includes("fetch('/api/geoconsole/process'"));
 
-test('Server has geoconsole routes import', routesContent.includes('geoconsole.routes'));
-test('Server registers /api/geoconsole endpoint', routesContent.includes("/api/geoconsole"));
+test('GeoConsole routes require authentication',
+  routes.includes('router.use(isAuthenticated)'));
+test('GPS/media routes require authentication',
+  gpsRoutes.includes('router.use(isAuthenticated)'));
+test('People-search route requires authentication',
+  peopleRoute.includes("router.post('/', isAuthenticated"));
+test('Process response includes signed actual trail frames',
+  routes.includes('points: signedTrailPoints') &&
+  routes.includes('signServerEvidence'));
+test('Street imagery adapter is provider-neutral to client',
+  routes.includes("router.get('/street-imagery'"));
 
-// Test 4: Geoconsole API routes exist
-const geoconsoleRoutesPath = path.join(__dirname, '../server/routes/geoconsole.routes.ts');
-const geoconsoleRoutesContent = fs.readFileSync(geoconsoleRoutesPath, 'utf8');
+test('Fusion uses correlation groups',
+  fusion.includes('correlationKey') && fusion.includes('correlationGroup'));
+test('Fusion uses source-specific modeled accuracy',
+  fusion.includes('defaultAccuracyMeters') && fusion.includes('effectiveAccuracyMeters'));
+test('Fusion confidence uses independent evidence',
+  fusion.includes('independentRepresentatives'));
+test('Fusion does not decay historical reconstruction against wall clock',
+  !fusion.includes('Date.now() - point.timestamp.getTime()'));
+test('Single-source positions receive modeled accuracy',
+  fusion.includes('accuracy: this.effectiveAccuracyMeters(point)'));
+test('Futurecast defaults to one hour',
+  futurecast.includes('hours: number = 1'));
+test('Futurecast uses five-minute frames',
+  futurecast.includes('const stepMinutes = 5'));
+test('Futurecast is explicitly classified as predicted',
+  futurecast.includes("observationKind: 'predicted'"));
 
-test('Geoconsole routes file exists', fs.existsSync(geoconsoleRoutesPath));
-test('Has /process endpoint', geoconsoleRoutesContent.includes("router.post('/process'"));
-test('Has /status endpoint', geoconsoleRoutesContent.includes("router.get('/status'"));
-test('Has /interpolate endpoint', geoconsoleRoutesContent.includes("router.post('/interpolate'"));
-test('Has /futurecast endpoint', geoconsoleRoutesContent.includes("router.post('/futurecast'"));
-test('Has /report endpoint', geoconsoleRoutesContent.includes("router.post('/report'"));
+test('Media pipeline extracts capture metadata',
+  media.includes('dateTimeOriginal') && media.includes('gpsDateStamp'));
+test('Media pipeline extracts device metadata',
+  media.includes('serialNumber') && media.includes('lensModel'));
+test('Upload route does not accept client filesystem paths',
+  !gpsRoutes.includes("router.post('/extract'"));
 
-// Test 5: Geoconsole services exist
-const geoconsoleIndexPath = path.join(__dirname, '../server/services/geoconsole/index.ts');
-const signalFusionPath = path.join(__dirname, '../server/services/geoconsole/signalFusionEngine.ts');
-const inputFusionPath = path.join(__dirname, '../server/services/geoconsole/inputFusionEngine.ts');
-const monteCarloPath = path.join(__dirname, '../server/services/geoconsole/monteCarloPathEngine.ts');
+test('People Finder compatibility route converges on SPECTRA',
+  app.includes('<Route path="/people-finder" component={SpectraPage} />'));
+test('SPECTRA does not promote regional hints into timed observations',
+  spectra.includes('candidateLocations={candidateLocations}') &&
+  spectraRoutes.includes('if (locationObservations.length === 0)') &&
+  spectraRoutes.includes("basis: 'regional_context'"));
+test('Phone is part of canonical People Search query and SPECTRA extraction',
+  peopleTypes.includes('phone?: string') &&
+  spectraRoutes.includes('extractPhoneNumber'));
 
-test('Geoconsole service index exists', fs.existsSync(geoconsoleIndexPath));
-test('Signal fusion engine exists', fs.existsSync(signalFusionPath));
-test('Input fusion engine exists', fs.existsSync(inputFusionPath));
-test('Monte Carlo path engine exists', fs.existsSync(monteCarloPath));
-
-// Test 6: useGeoRuntime hook exists and is properly configured
-const geoRuntimePath = path.join(__dirname, '../client/src/hooks/useGeoRuntime.ts');
-const geoRuntimeContent = fs.readFileSync(geoRuntimePath, 'utf8');
-
-test('useGeoRuntime hook exists', fs.existsSync(geoRuntimePath));
-test('useGeoRuntime has GeoFrame interface', geoRuntimeContent.includes('interface GeoFrame'));
-test('useGeoRuntime has play/pause actions', geoRuntimeContent.includes('play:') && geoRuntimeContent.includes('pause:'));
-test('useGeoRuntime has futurecast support', geoRuntimeContent.includes('generateFuturecast'));
-
-// Test 7: Shared types exist
-const sharedTypesPath = path.join(__dirname, '../shared/geoconsoleTypes.ts');
-const sharedTypesContent = fs.readFileSync(sharedTypesPath, 'utf8');
-
-test('Shared geoconsole types exist', fs.existsSync(sharedTypesPath));
-test('GPSPoint interface exists', sharedTypesContent.includes('interface GPSPoint'));
-test('DataSource type exists', sharedTypesContent.includes('type DataSource'));
-
-console.log('\n============================================================');
-console.log('SUMMARY');
-console.log('============================================================');
-console.log(`Passed: ${passed}`);
-console.log(`Failed: ${failed}`);
-console.log(`Total:  ${passed + failed}`);
-console.log('');
-
-if (failed === 0) {
-  console.log('✅ ALL GEOCONSOLE VERIFICATION TESTS PASSED');
-  process.exit(0);
-} else {
-  console.log('❌ SOME TESTS FAILED');
-  process.exit(1);
-}
+console.log(`\nPassed: ${passed}  Failed: ${failed}\n`);
+process.exit(failed === 0 ? 0 : 1);

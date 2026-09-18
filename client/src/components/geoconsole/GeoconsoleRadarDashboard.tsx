@@ -1,29 +1,24 @@
 /**
- * SPECTRA GeoConsole Radar Dashboard
- * 
- * Production-grade satellite tracking with TIGHT map lifecycle:
- * - Map created ONCE on mount, stored in ref
- * - Updates bound to DATA MUTATIONS (frame index, version), not UI flags
- * - No memoization that could freeze updates
- * - Direct imperative map updates on every frame change
+ * SPECTRA GeoConsole
+ *
+ * Operator shell over the canonical MapLibre renderer and server-side
+ * geospatial fusion/prediction pipeline. Technical subsystems stay behind
+ * the map while the operator receives one coherent timeline and map state.
  */
 
-import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
-import 'leaflet.heat';
+import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
 import {
   Play, Pause, SkipBack, SkipForward, Clock, Activity, Layers,
-  RefreshCw, Download, Satellite, Radio, Crosshair, Zap, Target,
-  ChevronLeft, ChevronRight, Maximize2, Minimize2,
+  Download, Satellite, Radio, Crosshair, Zap, Target,
+  ChevronLeft, ChevronRight, Maximize2, Minimize2, FileText, X,
 } from 'lucide-react';
 import { useGeoRuntime, type GeoFrame } from '@/hooks/useGeoRuntime';
-import type { GPSPoint } from '@shared/geoconsoleTypes';
+import type { GPSPoint, LocationCandidate } from '@shared/geoconsoleTypes';
+import MapLibreIntelligenceMap from './MapLibreIntelligenceMap';
 
 // ============================================================================
 // TYPES
@@ -31,21 +26,30 @@ import type { GPSPoint } from '@shared/geoconsoleTypes';
 
 interface GeoconsoleProps {
   initialData?: GPSPoint[];
+  candidateLocations?: LocationCandidate[];
   onProcess?: (data: GPSPoint[]) => Promise<void>;
   /**
    * Optional nav mode provided by the parent "People Finder" GeoConsole tabs.
    * When set, the dashboard will respond by switching to the appropriate view defaults.
    */
   navMode?: 'timeline' | 'map' | 'satellite';
+  spectraShell?: boolean;
+  subject?: string;
 }
 
 interface LayerState {
   satellite: boolean;
+  earthObservation: boolean;
   trail: boolean;
   heatmap: boolean;
   markers: boolean;
   futurecast: boolean;
   reticle: boolean;
+  weather: boolean;
+  terrain: boolean;
+  buildings: boolean;
+  uncertainty: boolean;
+  streetImagery: boolean;
 }
 
 type MapMode = 'satellite' | 'hybrid' | 'street' | 'dark';
@@ -54,18 +58,10 @@ type MapMode = 'satellite' | 'hybrid' | 'street' | 'dark';
 // CONSTANTS
 // ============================================================================
 
-const TILE_LAYERS: Record<string, { url: string; attribution: string }> = {
-  satellite: { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attribution: '© Esri' },
-  street: { url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '© OpenStreetMap' },
-  dark: { url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', attribution: '© CartoDB' },
-  labels: { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', attribution: '' },
-};
-
-const SPEED_COLORS = { stationary: '#3b82f6', walking: '#22c55e', running: '#eab308', cycling: '#f97316', driving: '#ef4444' };
 const MPS_TO_MPH = 2.237;
 
-const SOURCE_KEYS = ['device_gps', 'wifi_handoff', 'public_record', 'interpolated'] as const;
-type SourceKey = typeof SOURCE_KEYS[number];
+const DEFAULT_SOURCE_VISIBILITY: Record<string, boolean> = {};
+const EMPTY_GPS_POINTS: GPSPoint[] = [];
 
 // ============================================================================
 // HELPERS
@@ -75,7 +71,6 @@ const formatTime = (date: Date): string => new Intl.DateTimeFormat('en-US', { mo
 const formatDuration = (s: number): string => { const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return h > 0 ? `${h}h ${m}m` : `${m}m`; };
 const formatDistance = (m: number): string => m >= 1609.34 ? `${(m / 1609.34).toFixed(2)} mi` : m >= 1000 ? `${(m / 1000).toFixed(2)} km` : `${Math.round(m)} m`;
 const formatSpeed = (mps: number): string => `${(mps * MPS_TO_MPH).toFixed(1)} mph`;
-const getSpeedColor = (speed: number): string => speed < 0.5 ? SPEED_COLORS.stationary : speed < 2 ? SPEED_COLORS.walking : speed < 5 ? SPEED_COLORS.running : speed < 10 ? SPEED_COLORS.cycling : SPEED_COLORS.driving;
 
 const haversineDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
   const R = 6371000;
@@ -88,147 +83,117 @@ const haversineDistance = (lat1: number, lon1: number, lat2: number, lon2: numbe
 };
 
 // ============================================================================
-// ICONS
-// ============================================================================
-
-const createReticleIcon = (color: string, size = 40): L.DivIcon => L.divIcon({
-  className: 'geo-reticle',
-  html: `<div style="width:${size}px;height:${size}px;"><svg viewBox="0 0 100 100" style="width:100%;height:100%;filter:drop-shadow(0 0 8px ${color});"><circle cx="50" cy="50" r="45" fill="none" stroke="${color}" stroke-width="2" opacity="0.3"/><circle cx="50" cy="50" r="30" fill="none" stroke="${color}" stroke-width="2" opacity="0.5"/><circle cx="50" cy="50" r="15" fill="none" stroke="${color}" stroke-width="2"/><circle cx="50" cy="50" r="5" fill="${color}"/><line x1="50" y1="0" x2="50" y2="35" stroke="${color}" stroke-width="2"/><line x1="50" y1="65" x2="50" y2="100" stroke="${color}" stroke-width="2"/><line x1="0" y1="50" x2="35" y2="50" stroke="${color}" stroke-width="2"/><line x1="65" y1="50" x2="100" y2="50" stroke="${color}" stroke-width="2"/></svg></div>`,
-  iconSize: [size, size],
-  iconAnchor: [size / 2, size / 2],
-});
-
-const createDotIcon = (color: string, size = 10, opacity = 1): L.DivIcon => L.divIcon({
-  className: 'geo-dot',
-  html: `<div style="width:${size}px;height:${size}px;background:${color};border-radius:50%;border:2px solid white;box-shadow:0 0 6px ${color};opacity:${opacity};"></div>`,
-  iconSize: [size, size],
-  iconAnchor: [size / 2, size / 2],
-});
-
-// ============================================================================
-// MAP LAYER MANAGEMENT (Imperative - no React dependency)
-// ============================================================================
-
-interface MapLayerRefs {
-  trailSegments: L.Polyline[];
-  heatLayer: L.Layer | null;
-  currentMarker: L.Marker | null;
-  trailMarkers: L.Marker[];
-  futurecastLine: L.Polyline | null;
-  futurecastMarkers: L.Marker[];
-}
-
-// Clear all dynamic layers
-function clearLayers(map: L.Map, refs: MapLayerRefs): void {
-  refs.trailSegments.forEach(s => map.removeLayer(s));
-  refs.trailSegments = [];
-  if (refs.heatLayer) { map.removeLayer(refs.heatLayer); refs.heatLayer = null; }
-  if (refs.currentMarker) { map.removeLayer(refs.currentMarker); refs.currentMarker = null; }
-  refs.trailMarkers.forEach(m => map.removeLayer(m));
-  refs.trailMarkers = [];
-  if (refs.futurecastLine) { map.removeLayer(refs.futurecastLine); refs.futurecastLine = null; }
-  refs.futurecastMarkers.forEach(m => map.removeLayer(m));
-  refs.futurecastMarkers = [];
-}
-
-// Update map with current frame data - CALLED ON EVERY FRAME CHANGE
-function renderFrame(
-  map: L.Map,
-  refs: MapLayerRefs,
-  currentFrame: GeoFrame | null,
-  trail: GeoFrame[],
-  futurecast: GeoFrame[],
-  layerCfg: LayerState,
-  isLive: boolean,
-  lockOnTarget: boolean
-): void {
-  // Always clear first - no conditional
-  clearLayers(map, refs);
-
-  // If no data, done
-  if (!currentFrame && trail.length === 0) return;
-
-  // Trail segments with speed coloring
-  if (layerCfg.trail && trail.length > 1) {
-    for (let i = 1; i < trail.length; i++) {
-      const prev = trail[i - 1];
-      const curr = trail[i];
-      const segment = L.polyline(
-        [[prev.position.latitude, prev.position.longitude], [curr.position.latitude, curr.position.longitude]],
-        { color: getSpeedColor(curr.velocity?.speed || 0), weight: 4, opacity: 0.3 + (i / trail.length) * 0.7 }
-      ).addTo(map);
-      refs.trailSegments.push(segment);
-    }
-  }
-
-  // Heatmap
-  if (layerCfg.heatmap && trail.length > 0) {
-    const data = trail.map((f, i) => [f.position.latitude, f.position.longitude, 0.3 + (i / trail.length) * 0.7] as [number, number, number]);
-    refs.heatLayer = (L as any).heatLayer(data, { radius: 25, blur: 15, maxZoom: 17, gradient: { 0: '#0000ff', 0.25: '#00ffff', 0.5: '#00ff00', 0.75: '#ffff00', 1: '#ff0000' } }).addTo(map);
-  }
-
-  // Trail markers (sampled)
-  if (layerCfg.markers && trail.length > 0) {
-    const step = Math.max(1, Math.floor(trail.length / 15));
-    for (let i = 0; i < trail.length; i += step) {
-      const f = trail[i];
-      const marker = L.marker([f.position.latitude, f.position.longitude], { icon: createDotIcon(getSpeedColor(f.velocity?.speed || 0), 10, 0.3 + (i / trail.length) * 0.7) }).addTo(map);
-      marker.bindPopup(`<b>${formatTime(f.timestamp)}</b><br/>Speed: ${formatSpeed(f.velocity?.speed || 0)}`);
-      refs.trailMarkers.push(marker);
-    }
-  }
-
-  // Futurecast
-  if (layerCfg.futurecast && futurecast.length > 0) {
-    refs.futurecastLine = L.polyline(futurecast.map(f => [f.position.latitude, f.position.longitude] as [number, number]), { color: '#a855f7', weight: 3, opacity: 0.6, dashArray: '10, 10' }).addTo(map);
-    futurecast.forEach((f, i) => {
-      const marker = L.marker([f.position.latitude, f.position.longitude], { icon: createDotIcon('#a855f7', 8, 0.8 - (i / futurecast.length) * 0.5) }).addTo(map);
-      marker.bindPopup(`<b>Predicted: ${formatTime(f.timestamp)}</b><br/>Conf: ${(f.confidence * 100).toFixed(0)}%`);
-      refs.futurecastMarkers.push(marker);
-    });
-  }
-
-  // Current position reticle
-  if (layerCfg.reticle && currentFrame) {
-    refs.currentMarker = L.marker(
-      [currentFrame.position.latitude, currentFrame.position.longitude],
-      { icon: createReticleIcon(isLive ? '#00ff00' : '#00f0ff', 50), zIndexOffset: 1000 }
-    ).addTo(map);
-    
-    // Pan to current (when "FIX" lock is enabled)
-    if (lockOnTarget) {
-      map.panTo([currentFrame.position.latitude, currentFrame.position.longitude], { animate: true, duration: 0.2 });
-    }
-  }
-
-  // Force redraw (guard zero-sized containers to avoid leaflet.heat canvas errors)
-  try {
-    const size = map.getSize();
-    if (size.x > 0 && size.y > 0) map.invalidateSize();
-  } catch {
-    // ignore
-  }
-}
-
-// ============================================================================
 // COMPONENT
 // ============================================================================
 
-export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialData = [], onProcess, navMode }) => {
+export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
+  initialData = EMPTY_GPS_POINTS,
+  candidateLocations = [],
+  onProcess: _onProcess,
+  navMode,
+  spectraShell = false,
+  subject = 'SPECTRA target',
+}) => {
   // Runtime hook - source of truth for frames
   const [state, actions] = useGeoRuntime(initialData, { tickInterval: 500, playbackSpeed: 1, interpolationEnabled: true, predictiveEnabled: true });
 
   useEffect(() => {
-    actions.loadData(initialData);
+    void actions.loadData(initialData);
   }, [actions.loadData, initialData]);
 
   // UI state (not affecting frame data)
   const [mapMode, setMapMode] = useState<MapMode>('satellite');
-  const [layerCfg, setLayerCfg] = useState<LayerState>({ satellite: true, trail: true, heatmap: true, markers: true, futurecast: true, reticle: true });
-  const [processing, setProcessing] = useState(false);
-  const [progressMsg, setProgressMsg] = useState('');
+  const [layerCfg, setLayerCfg] = useState<LayerState>({ satellite: true, earthObservation: false, trail: true, heatmap: true, markers: true, futurecast: true, reticle: true, weather: false, terrain: true, buildings: true, uncertainty: true, streetImagery: false });
   const [lockOnTarget, setLockOnTarget] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(() =>
+    spectraShell ? false : (typeof window === 'undefined' ? true : window.innerWidth >= 768)
+  );
+  const [timelineOffsetMinutes, setTimelineOffsetMinutes] = useState(0);
+  const [timelinePlaying, setTimelinePlaying] = useState(false);
+  const [timelinePlaybackSpeed, setTimelinePlaybackSpeed] = useState(1);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [quickLayersOpen, setQuickLayersOpen] = useState(false);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [intelligenceReport, setIntelligenceReport] = useState<any>(null);
+
+  useEffect(() => {
+    setReportOpen(false);
+    setQuickLayersOpen(false);
+    setIntelligenceReport(null);
+    setReportError(null);
+  }, [state.sessionId]);
+
+  const loadIntelligenceReport = useCallback(async () => {
+    if (!state.sessionId) return;
+    setQuickLayersOpen(false);
+    if (reportOpen && intelligenceReport) {
+      setReportOpen(false);
+      return;
+    }
+
+    setReportOpen(true);
+    if (intelligenceReport) return;
+
+    setReportLoading(true);
+    setReportError(null);
+    try {
+      const response = await fetch('/api/geoconsole/report', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: state.sessionId,
+          subject,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload?.success) {
+        throw new Error(payload?.error || 'Location intelligence report failed.');
+      }
+      setIntelligenceReport(payload.data);
+    } catch (error) {
+      setReportError(
+        error instanceof Error ? error.message : 'Location intelligence report failed.'
+      );
+    } finally {
+      setReportLoading(false);
+    }
+  }, [intelligenceReport, reportOpen, state.sessionId, subject]);
+
+  const exportIntelligenceReport = useCallback(() => {
+    if (!intelligenceReport) return;
+    const blob = new Blob(
+      [JSON.stringify(intelligenceReport, null, 2)],
+      { type: 'application/json' }
+    );
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `spectra-location-intelligence-${Date.now()}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }, [intelligenceReport]);
+
+  const applyMapPreset = useCallback((preset: 'satellite' | 'terrain' | 'weather' | 'evidence' | 'street') => {
+    if (preset === 'satellite') {
+      setMapMode('satellite');
+      setLayerCfg(prev => ({ ...prev, satellite: true, earthObservation: false, terrain: false, buildings: false, weather: false, streetImagery: false }));
+    } else if (preset === 'terrain') {
+      setMapMode('hybrid');
+      setLayerCfg(prev => ({ ...prev, satellite: true, earthObservation: false, terrain: true, buildings: true, weather: false, streetImagery: false }));
+    } else if (preset === 'weather') {
+      setMapMode('hybrid');
+      setLayerCfg(prev => ({ ...prev, satellite: true, earthObservation: false, terrain: true, weather: true, streetImagery: false }));
+    } else if (preset === 'evidence') {
+      setMapMode('dark');
+      setLayerCfg(prev => ({ ...prev, satellite: false, earthObservation: false, terrain: false, buildings: false, weather: false, heatmap: true, markers: true, uncertainty: true, futurecast: true, streetImagery: false }));
+    } else {
+      setMapMode('street');
+      setLayerCfg(prev => ({ ...prev, satellite: false, earthObservation: false, terrain: false, weather: false, buildings: true, streetImagery: true }));
+    }
+  }, []);
 
   // Respond to external navigation ("nav links") from the embedding page.
   useEffect(() => {
@@ -238,353 +203,302 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
     // timeline mode focuses playback; we keep the operator-selected base layer.
   }, [navMode]);
 
-  // Fullscreen mode: lock body scroll and force Leaflet to re-measure.
+  // Fullscreen mode only controls page scroll; MapLibre resizes itself.
   useEffect(() => {
-    const map = mapRef.current;
     const previousOverflow = document.body.style.overflow;
     if (isFullscreen) document.body.style.overflow = 'hidden';
-    const t = window.setTimeout(() => {
-      try {
-        map?.invalidateSize();
-      } catch {
-        // ignore
-      }
-    }, 50);
     return () => {
-      window.clearTimeout(t);
       document.body.style.overflow = previousOverflow;
     };
   }, [isFullscreen]);
 
   // Source filter ("signal links")
-  const [sourceCfg, setSourceCfg] = useState<Record<SourceKey, boolean>>({
-    device_gps: true,
-    wifi_handoff: true,
-    public_record: true,
-    interpolated: true,
-  });
+  const [sourceCfg, setSourceCfg] = useState<Record<string, boolean>>(DEFAULT_SOURCE_VISIBILITY);
 
-  const sourceEnabled = useCallback((s: string) => {
-    if ((SOURCE_KEYS as readonly string[]).includes(s)) return sourceCfg[s as SourceKey];
-    // Default allow for unknown/extra sources so we don't silently hide data.
-    return true;
-  }, [sourceCfg]);
+  const sourceEnabled = useCallback((source: string) => sourceCfg[source] !== false, [sourceCfg]);
 
-  // Derive the frames actually rendered (filters affect map + stats + sources panel)
+  const presentSources = useMemo(
+    () => Array.from(new Set([...state.trail, ...state.futurecast].map(frame => frame.source))).sort(),
+    [state.trail, state.futurecast]
+  );
+
+  // Derive the frames actually rendered. Filtering a source may remove an
+  // intermediate observation, so the remaining points are explicitly separated
+  // instead of being connected as if the hidden evidence never existed.
   const renderData = useMemo(() => {
-    const trailWithIndex = state.trail.map((f, idx) => ({ f, idx }));
-    const filteredTrail = trailWithIndex.filter(({ f }) => sourceEnabled(f.source));
-    const filteredFuturecast = sourceEnabled('interpolated')
-      ? state.futurecast
-      : [];
+    const trailWithIndex = state.trail.map((frame, index) => ({ frame, index }));
+    const filtered = trailWithIndex.filter(({ frame }) => sourceEnabled(frame.source));
+    const renderedTrail = filtered.map((entry, filteredIndex) => {
+      if (filteredIndex === 0) return entry.frame;
+      const previous = filtered[filteredIndex - 1];
+      if (entry.index === previous.index + 1) return entry.frame;
 
-    const current = filteredTrail.length > 0 ? filteredTrail[filteredTrail.length - 1].f : null;
+      const gapSeconds = Math.max(
+        1,
+        (entry.frame.timestamp.getTime() - previous.frame.timestamp.getTime()) / 1000,
+      );
+      return {
+        ...entry.frame,
+        metadata: {
+          ...(entry.frame.metadata || {}),
+          gapBeforeSeconds: Math.max(
+            gapSeconds,
+            Number(entry.frame.metadata?.gapBeforeSeconds || 0),
+          ),
+          continuity: 'filtered_discontinuity',
+        },
+      };
+    });
 
-    // Stats computed over the rendered trail
+    const filteredFuturecast = state.futurecast.filter(frame => sourceEnabled(frame.source));
+    const current = renderedTrail.length > 0 ? renderedTrail[renderedTrail.length - 1] : null;
+
     let totalDistance = 0;
+    let supportedDuration = 0;
     let maxSpeed = 0;
     const speeds: number[] = [];
-    for (let i = 1; i < filteredTrail.length; i++) {
-      const prev = filteredTrail[i - 1].f;
-      const curr = filteredTrail[i].f;
-      totalDistance += haversineDistance(
-        prev.position.latitude, prev.position.longitude,
-        curr.position.latitude, curr.position.longitude
-      );
-      if (curr.velocity?.speed) {
+
+    for (let i = 1; i < renderedTrail.length; i++) {
+      const prev = renderedTrail[i - 1];
+      const curr = renderedTrail[i];
+      const gapBreak = Number(curr.metadata?.gapBeforeSeconds || 0) > 0;
+      if (!gapBreak) {
+        totalDistance += haversineDistance(
+          prev.position.latitude,
+          prev.position.longitude,
+          curr.position.latitude,
+          curr.position.longitude,
+        );
+        const elapsed = (curr.timestamp.getTime() - prev.timestamp.getTime()) / 1000;
+        if (elapsed > 0) supportedDuration += elapsed;
+      }
+      if (curr.velocity?.speed !== undefined && !gapBreak) {
         speeds.push(curr.velocity.speed);
         maxSpeed = Math.max(maxSpeed, curr.velocity.speed);
       }
     }
-    const duration = filteredTrail.length >= 2
-      ? (filteredTrail[filteredTrail.length - 1].f.timestamp.getTime() - filteredTrail[0].f.timestamp.getTime()) / 1000
-      : 0;
-    const averageSpeed = speeds.length > 0 ? speeds.reduce((a, b) => a + b, 0) / speeds.length : 0;
+
+    const averageSpeed = supportedDuration > 0
+      ? totalDistance / supportedDuration
+      : speeds.length > 0
+        ? speeds.reduce((a, b) => a + b, 0) / speeds.length
+        : 0;
 
     return {
-      trail: filteredTrail.map(x => x.f),
+      trail: renderedTrail,
       currentFrame: current,
       futurecast: filteredFuturecast,
-      stats: { totalDistance, averageSpeed, maxSpeed, duration },
-      // for timeline list interaction
-      trailIndices: filteredTrail.map(x => x.idx),
+      stats: {
+        totalDistance,
+        averageSpeed,
+        maxSpeed,
+        duration: supportedDuration,
+      },
+      trailIndices: filtered.map(entry => entry.index),
     };
   }, [state.trail, state.futurecast, sourceEnabled]);
 
-  // Map refs - single instance
-  const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<L.Map | null>(null);
-  const tileRef = useRef<L.TileLayer | null>(null);
-  const labelsRef = useRef<L.TileLayer | null>(null);
-  const layerRefs = useRef<MapLayerRefs>({ trailSegments: [], heatLayer: null, currentMarker: null, trailMarkers: [], futurecastLine: null, futurecastMarkers: [] });
-  const initRef = useRef(false);
+  const timelineFrames = useMemo(
+    () => [...renderData.trail, ...renderData.futurecast]
+      .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime()),
+    [renderData.trail, renderData.futurecast]
+  );
 
-  // Prevent post-unmount timeouts from touching Leaflet/state
-  const mountedRef = useRef(true);
-  const initInvalidateTimeoutRef = useRef<number | null>(null);
-  const visibleInvalidateTimeoutRef = useRef<number | null>(null);
-  const processResetTimeoutRef = useRef<number | null>(null);
+  const observedAnchor = renderData.trail.length > 0
+    ? renderData.trail[renderData.trail.length - 1]
+    : null;
+  const observedAnchorMs = observedAnchor?.timestamp.getTime() ?? Date.now();
+  const anchorIsCurrent = !!observedAnchor && Math.abs(Date.now() - observedAnchorMs) <= 5 * 60_000;
+  const timelineCenterLabel = anchorIsCurrent ? 'Now' : 'Latest';
 
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      if (initInvalidateTimeoutRef.current) {
-        window.clearTimeout(initInvalidateTimeoutRef.current);
-        initInvalidateTimeoutRef.current = null;
-      }
-      if (visibleInvalidateTimeoutRef.current) {
-        window.clearTimeout(visibleInvalidateTimeoutRef.current);
-        visibleInvalidateTimeoutRef.current = null;
-      }
-      if (processResetTimeoutRef.current) {
-        window.clearTimeout(processResetTimeoutRef.current);
-        processResetTimeoutRef.current = null;
-      }
-    };
-  }, []);
+  const timelineFrame = useMemo(() => {
+    if (timelineFrames.length === 0) return null;
 
-  // === MAP INITIALIZATION (ONCE) ===
-  // PRODUCTION: Map center is determined dynamically from actual data
-  // No hardcoded coordinates - center defaults to world view until real data arrives
-  useEffect(() => {
-    if (!containerRef.current || initRef.current) return;
-    initRef.current = true;
+    const targetMs = observedAnchorMs + timelineOffsetMinutes * 60_000;
+    const pool = timelineOffsetMinutes > 0
+      ? timelineFrames.filter(frame =>
+          frame.observationKind === 'predicted' || frame.source === 'predicted'
+        )
+      : timelineFrames.filter(frame =>
+          frame.observationKind !== 'predicted' && frame.source !== 'predicted'
+        );
 
-    // Determine initial center from data or use world view (no hardcoded locations)
-    const getInitialCenter = (): [number, number] => {
-      // If we have initial data, center on first point
-      if (initialData && initialData.length > 0) {
-        const firstPoint = initialData[0];
-        return [firstPoint.latitude, firstPoint.longitude];
-      }
-      // No data: default to world view (0,0 with low zoom)
-      return [0, 0];
-    };
-    
-    const initialCenter = getInitialCenter();
-    const initialZoom = initialData && initialData.length > 0 ? 14 : 2;
+    if (pool.length === 0) return null;
 
-    const map = L.map(containerRef.current, { center: initialCenter, zoom: initialZoom, zoomControl: false, attributionControl: false });
-    L.control.zoom({ position: 'topleft' }).addTo(map);
-
-    tileRef.current = L.tileLayer(TILE_LAYERS.satellite.url, { maxZoom: 19 }).addTo(map);
-    labelsRef.current = L.tileLayer(TILE_LAYERS.labels.url, { maxZoom: 19 }).addTo(map);
-    mapRef.current = map;
-
-    // CSS
-    const style = document.createElement('style');
-    style.id = 'geo-styles';
-    style.textContent = '.geo-reticle,.geo-dot{background:transparent!important;border:none!important;}';
-    if (!document.getElementById('geo-styles')) document.head.appendChild(style);
-
-    initInvalidateTimeoutRef.current = window.setTimeout(() => {
-      if (!mountedRef.current) return;
-      // Avoid calling into Leaflet after map has been removed
-      if (mapRef.current === map) map.invalidateSize();
-    }, 100);
-
-    return () => {
-      if (initInvalidateTimeoutRef.current) {
-        window.clearTimeout(initInvalidateTimeoutRef.current);
-        initInvalidateTimeoutRef.current = null;
-      }
-      // Ensure dynamic layers are removed before teardown
-      try {
-        clearLayers(map, layerRefs.current);
-      } catch {
-        // ignore
-      }
-      map.remove();
-      mapRef.current = null;
-      initRef.current = false;
-    };
-  }, []);
-
-  // === TILE LAYER CHANGE ===
-  useEffect(() => {
-    if (!mapRef.current || !tileRef.current) return;
-    const effectiveMapMode: MapMode =
-      !layerCfg.satellite && (mapMode === 'satellite' || mapMode === 'hybrid')
-        ? 'street'
-        : mapMode;
-
-    const cfg = effectiveMapMode === 'hybrid' ? TILE_LAYERS.satellite : TILE_LAYERS[effectiveMapMode];
-    tileRef.current.setUrl(cfg.url);
-    
-    if (labelsRef.current) {
-      if (layerCfg.satellite && (effectiveMapMode === 'satellite' || effectiveMapMode === 'hybrid')) {
-        if (!mapRef.current.hasLayer(labelsRef.current)) labelsRef.current.addTo(mapRef.current);
-      } else {
-        if (mapRef.current.hasLayer(labelsRef.current)) mapRef.current.removeLayer(labelsRef.current);
+    let nearest = pool[0];
+    let nearestDistance = Math.abs(nearest.timestamp.getTime() - targetMs);
+    for (let i = 1; i < pool.length; i++) {
+      const distance = Math.abs(pool[i].timestamp.getTime() - targetMs);
+      if (distance < nearestDistance) {
+        nearest = pool[i];
+        nearestDistance = distance;
       }
     }
-    mapRef.current.invalidateSize();
-  }, [mapMode, layerCfg.satellite]);
 
-  // === FRAME UPDATE - BOUND TO DATA, NOT FLAGS ===
-  // Dependencies: currentIndex, _version (mutation counter), trail length, layerCfg
-  // This ensures updates fire on actual data changes
+    // 5-minute Futurecast frames and reconstructed history should put evidence
+    // close to the selected minute. Never snap across a large empty interval.
+    return nearestDistance <= 5 * 60_000 ? nearest : null;
+  }, [timelineFrames, observedAnchorMs, timelineOffsetMinutes]);
+
+  const timelineIsPrediction = !!timelineFrame && (
+    timelineFrame.observationKind === 'predicted' ||
+    timelineFrame.source === 'predicted'
+  );
+
   useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-
-    // Direct render - no memoization, no debounce
-    renderFrame(
-      map,
-      layerRefs.current,
-      renderData.currentFrame,
-      renderData.trail,
-      renderData.futurecast,
-      layerCfg,
-      state.isLive,
-      lockOnTarget
-    );
-
-  }, [
-    state.currentIndex,
-    state._version,
-    state.trail.length,
-    state.futurecast.length,
-    layerCfg,
-    state.isLive,
-    state.currentFrame,
-    renderData,
-    lockOnTarget,
-  ]);
-
-  // === RESIZE/VISIBILITY ===
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    const safeInvalidate = () => {
-      const el = containerRef.current;
-      if (!el) return;
-      // If the container is temporarily hidden or not laid out, skip.
-      if (el.offsetWidth === 0 || el.offsetHeight === 0) return;
-      try {
-        map.invalidateSize();
-      } catch {
-        // ignore
-      }
-    };
-    const onResize = () => safeInvalidate();
-    const onVisible = () => {
-      if (document.visibilityState !== 'visible') return;
-      if (visibleInvalidateTimeoutRef.current) {
-        window.clearTimeout(visibleInvalidateTimeoutRef.current);
-        visibleInvalidateTimeoutRef.current = null;
-      }
-      visibleInvalidateTimeoutRef.current = window.setTimeout(() => {
-        if (!mountedRef.current) return;
-        if (mapRef.current === map) safeInvalidate();
-      }, 50);
-    };
-    window.addEventListener('resize', onResize);
-    document.addEventListener('visibilitychange', onVisible);
-    return () => {
-      window.removeEventListener('resize', onResize);
-      document.removeEventListener('visibilitychange', onVisible);
-      if (visibleInvalidateTimeoutRef.current) {
-        window.clearTimeout(visibleInvalidateTimeoutRef.current);
-        visibleInvalidateTimeoutRef.current = null;
-      }
-    };
-  }, []);
-
-  // === STEP HANDLERS ===
-  const stepBack = useCallback(() => actions.seekTo(Math.max(0, state.currentIndex - 1)), [actions, state.currentIndex]);
-  const stepForward = useCallback(() => actions.seekTo(Math.min(state.totalFrames - 1, state.currentIndex + 1)), [actions, state.currentIndex, state.totalFrames]);
-
-  // === PROCESS/EXPORT ===
-  const handleProcess = useCallback(async () => {
-    if (state.trail.length === 0) return;
-    setProcessing(true);
-    setProgressMsg('Processing...');
-    try {
-      const res = await fetch('/api/geoconsole/process', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ inputs: state.trail.map(f => ({ latitude: f.position.latitude, longitude: f.position.longitude, timestamp: f.timestamp.toISOString(), source: f.source, confidence: f.confidence })) }),
+    if (!timelinePlaying) return;
+    const delay = Math.max(100, Math.round(1000 / Math.max(0.25, timelinePlaybackSpeed)));
+    const timer = window.setInterval(() => {
+      setTimelineOffsetMinutes(current => {
+        if (current >= 60) {
+          setTimelinePlaying(false);
+          return 60;
+        }
+        return Math.min(60, current + 1);
       });
-      if (res.ok) { setProgressMsg('Done!'); if (onProcess) await onProcess(state.trail as any); }
-      else setProgressMsg('Error');
-    } catch (e) { setProgressMsg('Error'); }
-    finally {
-      if (processResetTimeoutRef.current) {
-        window.clearTimeout(processResetTimeoutRef.current);
-        processResetTimeoutRef.current = null;
-      }
-      processResetTimeoutRef.current = window.setTimeout(() => {
-        if (!mountedRef.current) return;
-        setProcessing(false);
-        setProgressMsg('');
-      }, 2000);
-    }
-  }, [state.trail, onProcess]);
+    }, delay);
+    return () => window.clearInterval(timer);
+  }, [timelinePlaying, timelinePlaybackSpeed]);
 
+
+
+  // === EXPORT ===
   const handleExport = useCallback(() => {
     const frames = actions.exportTrail();
-    const geo = { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'LineString', coordinates: frames.map(f => [f.position.longitude, f.position.latitude]) }, properties: { frames: frames.length } }] };
-    const blob = new Blob([JSON.stringify(geo, null, 2)], { type: 'application/json' });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `geo-${Date.now()}.geojson`; a.click();
-  }, [actions]);
+    const pointFeatures = frames.map(frame => ({
+      type: 'Feature',
+      geometry: {
+        type: 'Point',
+        coordinates: [
+          frame.position.longitude,
+          frame.position.latitude,
+          ...(frame.position.altitude !== undefined ? [frame.position.altitude] : []),
+        ],
+      },
+      properties: {
+        timestamp: frame.timestamp.toISOString(),
+        receivedAt: frame.receivedAt?.toISOString(),
+        source: frame.source,
+        confidence: frame.confidence,
+        accuracy: frame.position.accuracy,
+        verticalAccuracy: frame.position.verticalAccuracy,
+        observationKind: frame.observationKind,
+        correlationGroup: frame.correlationGroup,
+        provenance: frame.provenance,
+        metadata: frame.metadata,
+      },
+    }));
 
-  // Destructure
-  const { isPlaying, isLive, timeline, totalFrames, currentIndex } = state;
-  const { currentFrame } = renderData;
+    const trailSegments: GeoFrame[][] = [];
+    let exportSegment: GeoFrame[] = [];
+    for (const frame of frames) {
+      if (Number(frame.metadata?.gapBeforeSeconds || 0) > 0 && exportSegment.length > 0) {
+        if (exportSegment.length > 1) trailSegments.push(exportSegment);
+        exportSegment = [];
+      }
+      exportSegment.push(frame);
+    }
+    if (exportSegment.length > 1) trailSegments.push(exportSegment);
+
+    const trailFeature = trailSegments.map(segment => ({
+      type: 'Feature',
+      geometry: {
+        type: 'LineString',
+        coordinates: segment.map(frame => [
+          frame.position.longitude,
+          frame.position.latitude,
+          ...(frame.position.altitude !== undefined ? [frame.position.altitude] : []),
+        ]),
+      },
+      properties: {
+        kind: 'observed_trail',
+        frames: segment.length,
+        supportedContinuity: true,
+      },
+    }));
+
+    const predictionFeatures = state.futurecast.map(frame => ({
+      type: 'Feature',
+      geometry: {
+        type: 'Point',
+        coordinates: [frame.position.longitude, frame.position.latitude],
+      },
+      properties: {
+        kind: 'prediction',
+        timestamp: frame.timestamp.toISOString(),
+        confidence: frame.confidence,
+        accuracy: frame.position.accuracy,
+        source: frame.source,
+        metadata: frame.metadata,
+      },
+    }));
+
+    const geo = {
+      type: 'FeatureCollection',
+      features: [...trailFeature, ...pointFeatures, ...predictionFeatures],
+    };
+    const blob = new Blob([JSON.stringify(geo, null, 2)], { type: 'application/geo+json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `spectra-${Date.now()}.geojson`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [actions, state.futurecast]);
+
+  const { isLive } = state;
   const stats = renderData.stats;
 
-  // Link status states for satellite, geo, fix, signal, and nav connections
-  const [linkStatus, setLinkStatus] = useState({
-    sat: { active: false, signal: 0, label: 'Satellite Link' },
-    geo: { active: false, signal: 0, label: 'Geo Link' },
-    fix: { active: false, signal: 0, label: 'Fix Link' },
-    signal: { active: false, signal: 0, label: 'Signal Link' },
-    nav: { active: false, signal: 0, label: 'Nav Link' },
-  });
+  const telemetryStatus = useMemo(() => {
+    const current = renderData.currentFrame;
+    const ageSeconds = current
+      ? Math.max(0, Math.round((Date.now() - current.timestamp.getTime()) / 1000))
+      : null;
+    const accuracy = current?.position.accuracy;
+    const independentGroups = new Set(
+      renderData.trail.map(frame =>
+        frame.correlationGroup ||
+        `${frame.source}:${frame.provenance?.provider || 'unknown'}`
+      )
+    );
+    const forecastConfidence = renderData.futurecast.length
+      ? renderData.futurecast.reduce((sum, frame) => sum + frame.confidence, 0) / renderData.futurecast.length
+      : null;
 
-  // Connect and activate links based on data availability
-  useEffect(() => {
-    const hasData = state.trail.length > 0;
-    const hasLiveData = state.isLive;
-    const hasGPS = state.trail.some(f => f.source === 'device_gps');
-    const hasWifi = state.trail.some(f => f.source === 'wifi_handoff');
-    const hasPublicRecord = state.trail.some(f => f.source === 'public_record');
-    
-    setLinkStatus({
-      sat: { 
-        active: hasData && (hasGPS || state.trail.some(f => f.source === 'satellite_imagery')), 
-        signal: hasData ? Math.min(100, 60 + state.trail.length * 2) : 0,
-        label: 'Satellite Link'
+    const formatAge = (seconds: number | null) => {
+      if (seconds === null) return '—';
+      if (seconds < 60) return `${seconds}s`;
+      if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+      return `${Math.round(seconds / 3600)}h`;
+    };
+    const formatAccuracy = (meters: number | undefined) => {
+      if (meters === undefined || !Number.isFinite(meters)) return '—';
+      return meters < 1000 ? `${Math.round(meters)}m` : `${(meters / 1000).toFixed(1)}km`;
+    };
+
+    return {
+      obs: { active: renderData.trail.length > 0, value: String(renderData.trail.length), label: 'Timestamped observations' },
+      age: { active: ageSeconds !== null, value: formatAge(ageSeconds), label: 'Age of latest observation' },
+      acc: { active: accuracy !== undefined, value: formatAccuracy(accuracy), label: 'Reported horizontal accuracy' },
+      src: {
+        active: independentGroups.size > 0,
+        value: String(independentGroups.size),
+        label: 'Independent evidence groups represented',
       },
-      geo: { 
-        active: hasData, 
-        signal: hasData ? Math.min(100, 50 + state.stats.totalDistance / 100) : 0,
-        label: 'Geo Link'
+      nav: {
+        active: forecastConfidence !== null,
+        value: forecastConfidence !== null ? `${Math.round(forecastConfidence * 100)}%` : '—',
+        label: 'Average Futurecast confidence',
       },
-      fix: { 
-        active: hasData && state.currentFrame !== null, 
-        signal: state.currentFrame ? Math.min(100, state.currentFrame.confidence * 100) : 0,
-        label: 'Fix Link'
-      },
-      signal: { 
-        active: hasWifi || hasGPS, 
-        signal: hasLiveData ? 95 : hasData ? 70 : 0,
-        label: 'Signal Link'
-      },
-      nav: { 
-        active: hasData && state.futurecast.length > 0, 
-        signal: state.futurecast.length > 0 ? Math.min(100, 50 + state.futurecast.length * 5) : 0,
-        label: 'Nav Link'
-      },
-    });
-  }, [state.trail, state.isLive, state.currentFrame, state.futurecast, state.stats.totalDistance]);
+    };
+  }, [renderData.currentFrame, renderData.trail, renderData.futurecast, state._version]);
+
 
   return (
     <div
       className={`${isFullscreen ? 'fixed inset-0 z-[5000]' : ''} flex flex-col h-full min-h-0 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white overflow-hidden`}
     >
+      {!spectraShell && <>
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-slate-700/50 bg-slate-900/80 flex-shrink-0">
         <div className="flex items-center gap-3">
@@ -600,31 +514,36 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
           </div>
         </div>
         
-        {/* Link Status Indicators - SAT, GEO, FIX, SIGNAL, NAV */}
-        <div className="flex items-center gap-1">
-          {Object.entries(linkStatus).map(([key, link]) => (
-            <div 
-              key={key} 
+        <div className="hidden lg:flex items-center gap-1">
+          {Object.entries(telemetryStatus).map(([key, item]) => (
+            <div
+              key={key}
               className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-mono ${
-                link.active 
-                  ? 'bg-green-500/20 text-green-400 border border-green-500/30' 
+                item.active
+                  ? 'bg-green-500/15 text-green-300 border border-green-500/25'
                   : 'bg-slate-700/50 text-slate-500 border border-slate-600/30'
               }`}
-              title={`${link.label}: ${link.signal}%`}
+              title={item.label}
             >
-              <span className={`w-1.5 h-1.5 rounded-full ${link.active ? 'bg-green-400 animate-pulse' : 'bg-slate-500'}`} />
+              <span className={`w-1.5 h-1.5 rounded-full ${item.active ? 'bg-green-400' : 'bg-slate-500'}`} />
               <span className="uppercase">{key}</span>
-              {link.active && <span className="text-[10px] opacity-70">{link.signal}%</span>}
+              <span className="text-[10px] opacity-80">{item.value}</span>
             </div>
           ))}
         </div>
 
         <div className="flex items-center gap-2">
-          <Badge variant="outline" className={`text-xs ${isLive ? 'bg-green-500/20 text-green-400 animate-pulse' : isPlaying ? 'bg-cyan-500/20 text-cyan-400' : 'bg-slate-700/50 text-slate-400'}`}>
-            <Activity className="w-3 h-3 mr-1" />{isLive ? 'LIVE' : isPlaying ? 'Playing' : 'Paused'}
+          <Badge variant="outline" className={`text-xs ${isLive ? 'bg-green-500/20 text-green-400 animate-pulse' : timelinePlaying ? 'bg-cyan-500/20 text-cyan-400' : 'bg-slate-700/50 text-slate-400'}`}>
+            <Activity className="w-3 h-3 mr-1" />{isLive ? 'LIVE' : timelinePlaying ? 'Playing' : 'Ready'}
           </Badge>
-          <Badge variant="outline" className="text-xs bg-purple-500/20 text-purple-400">{currentIndex + 1}/{totalFrames}</Badge>
-          <div className="flex bg-slate-800/50 rounded-lg p-1">
+          <Badge variant="outline" className="text-xs bg-purple-500/20 text-purple-400">
+            {timelineOffsetMinutes === 0
+              ? timelineCenterLabel.toUpperCase()
+              : timelineOffsetMinutes > 0
+                ? `+${timelineOffsetMinutes}m`
+                : `${timelineOffsetMinutes}m`}
+          </Badge>
+          <div className="hidden xl:flex bg-slate-800/50 rounded-lg p-1">
             {(['satellite', 'hybrid', 'street', 'dark'] as MapMode[]).map(m => (
               <button key={m} onClick={() => setMapMode(m)} className={`px-2 py-1 text-xs rounded ${mapMode === m ? 'bg-cyan-500/30 text-cyan-400' : 'text-slate-400 hover:text-white'}`}>
                 {m.charAt(0).toUpperCase() + m.slice(1)}
@@ -642,35 +561,195 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
           </Button>
         </div>
       </div>
+      </>}
 
       {/* Main - Full Viewport Stretch */}
-      <div className="flex flex-1 min-h-0 overflow-hidden">
+      <div className="relative flex flex-1 min-h-0 overflow-hidden">
         {/* Map Container - Stretches to Fill Available Space */}
         <div className="flex-1 relative min-h-0 min-w-0">
-          <div ref={containerRef} className="absolute inset-0 z-0" style={{ background: '#1a1a2e' }} />
-          {/* Zoom Controls Overlay */}
-          <div className="absolute top-3 left-3 z-10 flex flex-col gap-1">
-            <button 
-              onClick={() => mapRef.current?.zoomIn()} 
-              className="w-8 h-8 bg-slate-800/90 border border-slate-600/50 rounded text-white hover:bg-slate-700 flex items-center justify-center"
+          <MapLibreIntelligenceMap
+            currentFrame={timelineFrame}
+            trail={renderData.trail}
+            futurecast={renderData.futurecast}
+            candidateLocations={candidateLocations}
+            mapMode={mapMode}
+            layers={layerCfg}
+            isLive={state.isLive}
+            lockOnTarget={lockOnTarget}
+            onUserInteraction={() => setLockOnTarget(false)}
+          />
+          {spectraShell && (
+            <>
+              <div className="absolute right-3 top-3 z-20 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setReportOpen(false);
+                    setQuickLayersOpen(value => !value);
+                  }}
+                  className="flex h-11 w-11 items-center justify-center rounded-full border border-slate-600/60 bg-slate-950/85 text-slate-200 shadow-xl backdrop-blur hover:bg-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                  title="Map layers"
+                  aria-label="Map layers"
+                  aria-expanded={quickLayersOpen}
+                >
+                  <Layers className="h-4 w-4" />
+                </button>
+                {state.sessionId && (
+                  <button
+                    type="button"
+                    onClick={() => void loadIntelligenceReport()}
+                    className="flex h-11 w-11 items-center justify-center rounded-full border border-slate-600/60 bg-slate-950/85 text-slate-200 shadow-xl backdrop-blur hover:bg-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                    title="Location intelligence report"
+                    aria-label="Location intelligence report"
+                    aria-expanded={reportOpen}
+                  >
+                    <FileText className="h-4 w-4" />
+                  </button>
+                )}
+                {!lockOnTarget && (timelineFrame || candidateLocations.length > 0) && (
+                  <button
+                    type="button"
+                    onClick={() => setLockOnTarget(true)}
+                    className="flex h-11 w-11 items-center justify-center rounded-full border border-slate-600/60 bg-slate-950/85 text-cyan-300 shadow-xl backdrop-blur hover:bg-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                    title="Recenter target"
+                    aria-label="Recenter target"
+                  >
+                    <Target className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+
+              {quickLayersOpen && (
+                <div className="absolute right-3 top-16 z-30 w-[min(280px,calc(100%-1.5rem))] rounded-xl border border-slate-700/70 bg-slate-950/95 p-3 shadow-2xl backdrop-blur">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-xs font-semibold text-slate-100">Map view</p>
+                      <p className="text-[10px] text-slate-500">Choose a clear preset</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setQuickLayersOpen(false)}
+                      className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white"
+                      aria-label="Close map layers"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(['satellite', 'terrain', 'weather', 'evidence', 'street'] as const).map(preset => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => {
+                          applyMapPreset(preset);
+                          setQuickLayersOpen(false);
+                        }}
+                        className="min-h-11 rounded-lg border border-slate-700 bg-slate-900 px-3 text-left text-xs font-medium capitalize text-slate-200 hover:border-cyan-500/40 hover:bg-cyan-500/10 hover:text-cyan-200"
+                      >
+                        {preset}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {reportOpen && state.sessionId && (
+                <div className="absolute right-3 top-16 z-30 w-[min(340px,calc(100%-1.5rem))] rounded-xl border border-slate-700/70 bg-slate-950/95 p-3 shadow-2xl backdrop-blur">
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-xs font-semibold text-slate-100">Location Intelligence</p>
+                      <p className="text-[10px] text-slate-500">Canonical evidence report</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setReportOpen(false)}
+                      className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white"
+                      aria-label="Close location intelligence report"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  {reportLoading ? (
+                    <p className="py-5 text-center text-xs text-slate-400">Generating report…</p>
+                  ) : reportError ? (
+                    <p className="rounded-lg border border-rose-500/20 bg-rose-500/10 p-2 text-xs text-rose-300">
+                      {reportError}
+                    </p>
+                  ) : intelligenceReport ? (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="rounded-lg bg-slate-900 p-2">
+                          <p className="text-[10px] text-slate-500">Locations</p>
+                          <p className="text-sm font-semibold text-cyan-300">
+                            {intelligenceReport.summary?.totalLocations ?? 0}
+                          </p>
+                        </div>
+                        <div className="rounded-lg bg-slate-900 p-2">
+                          <p className="text-[10px] text-slate-500">Distinct areas</p>
+                          <p className="text-sm font-semibold text-cyan-300">
+                            {intelligenceReport.summary?.uniqueLocations ?? 0}
+                          </p>
+                        </div>
+                        <div className="rounded-lg bg-slate-900 p-2">
+                          <p className="text-[10px] text-slate-500">Supported distance</p>
+                          <p className="text-sm font-semibold text-cyan-300">
+                            {formatDistance(Number(intelligenceReport.summary?.totalDistance || 0))}
+                          </p>
+                        </div>
+                        <div className="rounded-lg bg-slate-900 p-2">
+                          <p className="text-[10px] text-slate-500">Data quality</p>
+                          <p className="text-sm font-semibold text-cyan-300">
+                            {Math.round(Number(intelligenceReport.summary?.dataQuality || 0) * 100)}%
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex justify-between text-[11px] text-slate-400">
+                        <span>{intelligenceReport.frequentLocations?.length ?? 0} repeated areas</span>
+                        <span>{intelligenceReport.anomalies?.length ?? 0} evidence anomalies</span>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={exportIntelligenceReport}
+                        className="w-full border-slate-700 bg-slate-900 text-slate-200"
+                      >
+                        <Download className="mr-1 h-3.5 w-3.5" />
+                        Export full report
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </>
+          )}
+          {!spectraShell && <div className="absolute bottom-3 left-3 right-3 z-10 flex items-end justify-between gap-2 pointer-events-none">
+            <div className="pointer-events-auto flex max-w-[calc(100%-3rem)] gap-1 overflow-x-auto rounded-xl border border-slate-600/50 bg-slate-900/90 p-1 shadow-xl backdrop-blur">
+              {(['satellite', 'terrain', 'weather', 'evidence', 'street'] as const).map(preset => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => applyMapPreset(preset)}
+                  className="min-h-10 shrink-0 rounded-lg px-3 text-xs font-medium text-slate-200 hover:bg-cyan-500/20 hover:text-cyan-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                >
+                  {preset.charAt(0).toUpperCase() + preset.slice(1)}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => setInspectorOpen(value => !value)}
+              className="pointer-events-auto min-h-10 min-w-10 rounded-xl border border-slate-600/50 bg-slate-900/90 px-3 text-xs font-medium text-slate-200 shadow-xl backdrop-blur hover:bg-slate-800"
+              aria-expanded={inspectorOpen}
             >
-              +
+              {inspectorOpen ? 'Hide' : 'Info'}
             </button>
-            <button 
-              onClick={() => mapRef.current?.zoomOut()} 
-              className="w-8 h-8 bg-slate-800/90 border border-slate-600/50 rounded text-white hover:bg-slate-700 flex items-center justify-center"
-            >
-              −
-            </button>
-          </div>
-          {/* Layer Quick Toggle */}
-          <div className="absolute bottom-3 left-3 z-10 bg-slate-800/90 border border-slate-600/50 rounded-lg px-2 py-1">
-            <span className="text-xs text-slate-400">Layers</span>
-          </div>
+          </div>}
         </div>
 
-        {/* Stats Panel - Collapsible Sidebar */}
-        <div className="w-64 xl:w-72 border-l border-slate-700/50 flex flex-col bg-slate-900/50 min-h-0 overflow-y-auto flex-shrink-0">
+        {/* Context inspector: docked on desktop, overlay on mobile. */}
+        {!spectraShell && inspectorOpen && <div className="absolute md:relative inset-y-0 right-0 z-20 w-[min(88vw,20rem)] md:w-64 xl:w-72 border-l border-slate-700/50 flex flex-col bg-slate-950/95 md:bg-slate-900/70 min-h-0 overflow-y-auto flex-shrink-0 shadow-2xl md:shadow-none backdrop-blur">
           {/* Controls */}
           <div className="p-2 border-b border-slate-700/50">
             <div className="flex items-center justify-between mb-2">
@@ -683,7 +762,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
                   variant="outline"
                   size="sm"
                   onClick={() => setLockOnTarget(v => !v)}
-                  className={`h-6 text-xs ${lockOnTarget ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' : 'bg-slate-800/50 border-slate-700 text-slate-300'}`}
+                  className={`min-h-10 text-xs ${lockOnTarget ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' : 'bg-slate-800/50 border-slate-700 text-slate-300'}`}
                   title={lockOnTarget ? 'FIX lock: on (auto-recenter)' : 'FIX lock: off'}
                 >
                   FIX
@@ -692,7 +771,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
                   variant="outline"
                   size="sm"
                   onClick={actions.toggleLive}
-                  className={`h-6 text-xs ${isLive ? 'bg-green-500/20 text-green-400 border-green-500/40' : 'bg-slate-800/50 border-slate-700 text-slate-300'}`}
+                  className={`min-h-10 text-xs ${isLive ? 'bg-green-500/20 text-green-400 border-green-500/40' : 'bg-slate-800/50 border-slate-700 text-slate-300'}`}
                 >
                   {isLive ? 'LIVE' : 'GO LIVE'}
                 </Button>
@@ -705,22 +784,36 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
               </div>
               {Object.entries(layerCfg).map(([k, v]) => (
                 <div key={k} className="flex items-center justify-between py-0.5">
-                  <span className="text-[11px] text-slate-400 capitalize">{k}</span>
-                  <Switch checked={v} onCheckedChange={c => setLayerCfg(p => ({ ...p, [k]: c }))} className="scale-[0.65]" />
+                  <span className="text-[11px] text-slate-400 capitalize">{k.replace(/([A-Z])/g, ' $1').trim()}</span>
+                  <Switch checked={v} onCheckedChange={c => setLayerCfg(p => ({ ...p, [k]: c }))} className="" />
                 </div>
               ))}
             </div>
           </div>
 
           {/* Position */}
-          {currentFrame && (
+          {timelineFrame && (
             <div className="p-2 border-b border-slate-700/50">
               <h3 className="text-xs font-medium mb-1.5 flex items-center gap-1.5"><Crosshair className="w-3 h-3 text-cyan-400" />Position</h3>
               <div className="space-y-0.5 text-[11px] font-mono bg-slate-800/30 rounded-lg p-1.5 border border-slate-700/40">
-                <p><span className="text-slate-500">LAT:</span> <span className="text-cyan-400">{currentFrame.position.latitude.toFixed(6)}</span></p>
-                <p><span className="text-slate-500">LNG:</span> <span className="text-cyan-400">{currentFrame.position.longitude.toFixed(6)}</span></p>
-                <p><span className="text-slate-500">SPD:</span> <span className="text-green-400">{formatSpeed(currentFrame.velocity?.speed || 0)}</span></p>
-                <p><span className="text-slate-500">HDG:</span> <span className="text-purple-400">{(currentFrame.velocity?.heading || 0).toFixed(1)}°</span></p>
+                <p><span className="text-slate-500">LAT:</span> <span className="text-cyan-400">{timelineFrame.position.latitude.toFixed(6)}</span></p>
+                <p><span className="text-slate-500">LNG:</span> <span className="text-cyan-400">{timelineFrame.position.longitude.toFixed(6)}</span></p>
+                <p>
+                  <span className="text-slate-500">SPD:</span>{' '}
+                  <span className="text-green-400">
+                    {timelineFrame.velocity?.speed !== undefined
+                      ? formatSpeed(timelineFrame.velocity.speed)
+                      : '—'}
+                  </span>
+                </p>
+                <p>
+                  <span className="text-slate-500">HDG:</span>{' '}
+                  <span className="text-purple-400">
+                    {timelineFrame.velocity?.heading !== undefined
+                      ? `${timelineFrame.velocity.heading.toFixed(1)}°`
+                      : '—'}
+                  </span>
+                </p>
               </div>
             </div>
           )}
@@ -741,16 +834,17 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
             </div>
             {state.futurecast.length > 0 ? (
               <div className="space-y-0.5">{state.futurecast.slice(0, 4).map((f, i) => (<div key={i} className="flex items-center text-[11px] bg-slate-800/30 rounded p-1"><Clock className="w-2.5 h-2.5 text-slate-500 mr-1" /><span className="text-slate-400 flex-1">{formatTime(f.timestamp)}</span><span className="text-purple-400">{(f.confidence * 100).toFixed(0)}%</span></div>))}</div>
-            ) : <p className="text-[11px] text-slate-500">Play to generate</p>}
+            ) : <p className="text-[11px] text-slate-500">Needs three continuous observations</p>}
           </div>
           <div className="p-2 flex-1 min-h-0 overflow-auto">
             <h3 className="text-xs font-medium mb-1.5 flex items-center gap-1.5">
               <Target className="w-3 h-3 text-cyan-400" />
               Sources
             </h3>
-            {SOURCE_KEYS.map((s) => {
-              const hasAny = state.trail.some(f => f.source === s);
-              const enabled = sourceCfg[s];
+            {presentSources.length === 0 && <p className="text-[11px] text-slate-500">No timestamped sources yet.</p>}
+            {presentSources.map((s) => {
+              const hasAny = state.trail.some(f => f.source === s) || state.futurecast.some(f => f.source === s);
+              const enabled = sourceEnabled(s);
               return (
                 <button
                   key={s}
@@ -778,102 +872,97 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
               );
             })}
           </div>
-        </div>
+        </div>}
       </div>
 
-      {/* Timeline */}
-      <div className="p-2 border-t border-slate-700/50 bg-slate-900/80 flex-shrink-0">
-        {processing && <div className="mb-2"><span className="text-xs text-slate-400">{progressMsg}</span><Progress value={50} className="h-1 mt-1" /></div>}
+      {/* Rolling previous-hour / one-hour Futurecast timeline */}
+      {(!spectraShell || timelineFrames.length > 0) && <div className="p-2 border-t border-slate-700/50 bg-slate-900/80 flex-shrink-0">
+
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center gap-1 bg-slate-800/50 rounded-lg p-1">
-            <Button variant="ghost" size="icon" onClick={actions.stop} className="h-7 w-7 text-slate-400 hover:text-white"><SkipBack className="w-3 h-3" /></Button>
-            <Button variant="ghost" size="icon" onClick={stepBack} className="h-7 w-7 text-slate-400 hover:text-white"><ChevronLeft className="w-3 h-3" /></Button>
-            <Button variant="ghost" size="icon" onClick={isPlaying ? actions.pause : actions.play} className={`h-8 w-8 ${isPlaying ? 'text-cyan-400 bg-cyan-500/20' : 'text-white'}`}>
-              {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+            <Button variant="ghost" size="icon" onClick={() => setTimelineOffsetMinutes(-60)} className="h-10 w-10 text-slate-400 hover:text-white"><SkipBack className="w-3 h-3" /></Button>
+            <Button variant="ghost" size="icon" onClick={() => setTimelineOffsetMinutes(value => Math.max(-60, value - 5))} className="h-10 w-10 text-slate-400 hover:text-white"><ChevronLeft className="w-3 h-3" /></Button>
+            <Button variant="ghost" size="icon" onClick={() => setTimelinePlaying(v => !v)} className={`h-10 w-10 ${timelinePlaying ? 'text-cyan-400 bg-cyan-500/20' : 'text-white'}`}>
+              {timelinePlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
             </Button>
-            <Button variant="ghost" size="icon" onClick={stepForward} className="h-7 w-7 text-slate-400 hover:text-white"><ChevronRight className="w-3 h-3" /></Button>
-            <Button variant="ghost" size="icon" onClick={() => actions.seekTo(totalFrames - 1)} className="h-7 w-7 text-slate-400 hover:text-white"><SkipForward className="w-3 h-3" /></Button>
+            <Button variant="ghost" size="icon" onClick={() => setTimelineOffsetMinutes(value => Math.min(60, value + 5))} className="h-10 w-10 text-slate-400 hover:text-white"><ChevronRight className="w-3 h-3" /></Button>
+            <Button variant="ghost" size="icon" onClick={() => setTimelineOffsetMinutes(60)} className="h-10 w-10 text-slate-400 hover:text-white"><SkipForward className="w-3 h-3" /></Button>
           </div>
+
           <div className="flex-1 min-w-[200px]">
-            <Slider value={[currentIndex]} min={0} max={Math.max(0, totalFrames - 1)} step={1} onValueChange={([v]) => actions.seekTo(v)} className="cursor-pointer" />
+            <Slider
+              value={[timelineOffsetMinutes]}
+              min={-60}
+              max={60}
+              step={1}
+              onValueChange={([value]) => {
+                setTimelineOffsetMinutes(value);
+                setTimelinePlaying(false);
+              }}
+              className="cursor-pointer"
+            />
             <div className="flex justify-between mt-0.5 text-[10px] text-slate-500">
-              <span>{formatTime(timeline.start)}</span>
-              <span className="text-cyan-400 font-medium">{formatTime(timeline.current)}</span>
-              <span>{formatTime(timeline.end)}</span>
+              <span>-1 hour</span>
+              <span className={timelineIsPrediction ? 'text-purple-300 font-medium' : 'text-cyan-400 font-medium'}>
+                {timelineFrame
+                  ? `${formatTime(timelineFrame.timestamp)} · ${timelineIsPrediction ? 'Futurecast' : 'Observed'}`
+                  : timelineOffsetMinutes > 0
+                    ? 'No Futurecast'
+                    : 'No observation'}
+              </span>
+              <span>+1 hour</span>
             </div>
           </div>
-          <select onChange={e => actions.setPlaybackSpeed(Number(e.target.value))} defaultValue={1} className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs">
-            <option value={0.5}>0.5x</option><option value={1}>1x</option><option value={2}>2x</option><option value={5}>5x</option><option value={10}>10x</option>
-          </select>
-          <Button variant="outline" size="sm" onClick={handleProcess} disabled={processing || totalFrames === 0} className="bg-slate-800/50 border-slate-700 h-7 text-xs">
-            <RefreshCw className={`w-3 h-3 mr-1 ${processing ? 'animate-spin' : ''}`} />Process
+
+          {!spectraShell && <select
+            onChange={e => setTimelinePlaybackSpeed(Number(e.target.value))}
+            value={timelinePlaybackSpeed}
+            className="bg-slate-800 border border-slate-700 rounded px-2 py-2 text-xs min-h-10"
+            aria-label="Timeline playback speed"
+          >
+            <option value={0.5}>0.5x</option>
+            <option value={1}>1x</option>
+            <option value={2}>2x</option>
+            <option value={5}>5x</option>
+            <option value={10}>10x</option>
+          </select>}
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setTimelineOffsetMinutes(0)}
+            disabled={timelineFrames.length === 0}
+            className="bg-slate-800/50 border-slate-700 min-h-10 text-xs"
+          >
+            {timelineCenterLabel}
           </Button>
-          <Button variant="outline" size="sm" onClick={handleExport} disabled={totalFrames === 0} className="bg-slate-800/50 border-slate-700 h-7 text-xs">
+          {!spectraShell && <Button variant="outline" size="sm" onClick={handleExport} disabled={timelineFrames.length === 0} className="bg-slate-800/50 border-slate-700 min-h-10 text-xs">
             <Download className="w-3 h-3 mr-1" />Export
-          </Button>
+          </Button>}
         </div>
-      </div>
+      </div>}
 
-      {/* System Capabilities - Link Status Panel */}
-      <div className="px-3 py-2 border-t border-slate-700/50 bg-slate-800/50 flex-shrink-0">
-        <h3 className="text-xs font-semibold text-slate-400 mb-2">System Capabilities</h3>
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
-          {/* Multimodal Fusion */}
-          <div className={`p-2 rounded border ${linkStatus.geo.active ? 'bg-green-500/10 border-green-500/30' : 'bg-slate-800/50 border-slate-700/50'}`}>
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-300">Multimodal Fusion</span>
-              <Badge variant="outline" className={`text-[10px] h-4 ${linkStatus.geo.active ? 'bg-green-500/20 text-green-400' : 'bg-slate-700/50 text-slate-500'}`}>
-                {linkStatus.geo.active ? 'Active' : 'Idle'}
-              </Badge>
+      {!spectraShell && <div className="hidden lg:block px-3 py-2 border-t border-slate-700/50 bg-slate-800/50 flex-shrink-0">
+        <div className="grid grid-cols-5 gap-2">
+          {[
+            { label: 'GPU Map', active: true, detail: 'MapLibre WebGL renderer' },
+            { label: '3D Terrain', active: layerCfg.terrain, detail: 'DEM terrain + hillshade' },
+            { label: 'Weather Context', active: true, detail: 'Radar data available to SPECTRA in background' },
+            { label: 'Futurecast', active: state.futurecast.length > 0, detail: 'Server-authoritative prediction' },
+            { label: 'Confidence', active: !!timelineFrame?.position.accuracy, detail: 'Confidence derived from source quality and agreement' },
+          ].map(item => (
+            <div key={item.label} className={`p-2 rounded border ${item.active ? 'bg-green-500/10 border-green-500/30' : 'bg-slate-800/50 border-slate-700/50'}`}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-slate-300">{item.label}</span>
+                <Badge variant="outline" className={`text-[10px] h-4 ${item.active ? 'bg-green-500/20 text-green-400' : 'bg-slate-700/50 text-slate-500'}`}>
+                  {item.active ? 'On' : 'Off'}
+                </Badge>
+              </div>
+              <p className="text-[10px] text-slate-500 mt-1">{item.detail}</p>
             </div>
-            <p className="text-[10px] text-slate-500 mt-1">Combine GPS, EXIF, Wi-Fi, Bluetooth</p>
-          </div>
-
-          {/* Monte Carlo Interpolation */}
-          <div className={`p-2 rounded border ${linkStatus.fix.active ? 'bg-green-500/10 border-green-500/30' : 'bg-slate-800/50 border-slate-700/50'}`}>
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-300">Monte Carlo</span>
-              <Badge variant="outline" className={`text-[10px] h-4 ${linkStatus.fix.active ? 'bg-green-500/20 text-green-400' : 'bg-slate-700/50 text-slate-500'}`}>
-                {linkStatus.fix.active ? 'Active' : 'Idle'}
-              </Badge>
-            </div>
-            <p className="text-[10px] text-slate-500 mt-1">Probabilistic path reconstruction</p>
-          </div>
-
-          {/* Futurecast Prediction */}
-          <div className={`p-2 rounded border ${linkStatus.nav.active ? 'bg-green-500/10 border-green-500/30' : 'bg-slate-800/50 border-slate-700/50'}`}>
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-300">Futurecast</span>
-              <Badge variant="outline" className={`text-[10px] h-4 ${linkStatus.nav.active ? 'bg-green-500/20 text-green-400' : 'bg-slate-700/50 text-slate-500'}`}>
-                {linkStatus.nav.active ? 'Active' : 'Idle'}
-              </Badge>
-            </div>
-            <p className="text-[10px] text-slate-500 mt-1">6-hour trajectory forecasting</p>
-          </div>
-
-          {/* Satellite Link */}
-          <div className={`p-2 rounded border ${linkStatus.sat.active ? 'bg-green-500/10 border-green-500/30' : 'bg-slate-800/50 border-slate-700/50'}`}>
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-300">Satellite Imagery</span>
-              <Badge variant="outline" className={`text-[10px] h-4 ${linkStatus.sat.active ? 'bg-green-500/20 text-green-400' : 'bg-slate-700/50 text-slate-500'}`}>
-                {linkStatus.sat.active ? 'Active' : 'Idle'}
-              </Badge>
-            </div>
-            <p className="text-[10px] text-slate-500 mt-1">Sentinel, NASA, USGS layers</p>
-          </div>
-
-          {/* Signal Processing */}
-          <div className={`p-2 rounded border ${linkStatus.signal.active ? 'bg-green-500/10 border-green-500/30' : 'bg-slate-800/50 border-slate-700/50'}`}>
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-300">Signal Fusion</span>
-              <Badge variant="outline" className={`text-[10px] h-4 ${linkStatus.signal.active ? 'bg-green-500/20 text-green-400' : 'bg-slate-700/50 text-slate-500'}`}>
-                {linkStatus.signal.active ? 'Active' : 'Idle'}
-              </Badge>
-            </div>
-            <p className="text-[10px] text-slate-500 mt-1">Kalman filter signal processing</p>
-          </div>
+          ))}
         </div>
-      </div>
+      </div>}
     </div>
   );
 };

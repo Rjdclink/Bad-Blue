@@ -379,16 +379,16 @@ export default function WelcomePage() {
           </button>
         </div>
 
-        {/* People Finder - Styled with Quiet 3D */}
+        {/* SPECTRA - unified location intelligence */}
         <div className="mb-8 sm:mb-12">
           <div className="flex items-center gap-2 mb-4 justify-center">
             <Badge variant="secondary" className="text-sm bg-white/10 text-white/90 border border-white/20 backdrop-blur-sm px-4 py-1">
-              Universal Research Tool
+              Unified Location Intelligence
             </Badge>
           </div>
           <button
             className="feature-card-quiet3d w-full text-left relative cursor-pointer rounded-2xl overflow-hidden group focus:outline-none focus:ring-2 focus:ring-white/30 focus:ring-offset-2 focus:ring-offset-black"
-            onClick={() => setLocation('/people-finder')}
+            onClick={() => setLocation('/spectra')}
             style={{
               // Neutral dark base with material gradient
               background: 'linear-gradient(180deg, rgba(255,255,255,0.08), rgba(0,0,0,0.15))',
@@ -425,26 +425,24 @@ export default function WelcomePage() {
                 <div className="flex items-center gap-3 mb-3">
                   <Shield className="h-8 w-8 text-white/70" />
                   <h3 className="quiet3d-heading text-2xl text-white/90">
-                    People Finder - Global Identity Intelligence
+                    SPECTRA
                   </h3>
                 </div>
                 <p className="text-base text-white/60 mb-4">
-                  Advanced AI-powered people search tool. Find witnesses, experts, parties, or any individual 
-                  relevant to your legal matter. Aggregates data from public records, court filings, social media, 
-                  professional networks, and more. Works across all legal areas.
+                  Unified conversational target acquisition and location intelligence. Tell SPECTRA what you want to locate, provide whatever information you know, and SPECTRA automatically correlates available evidence and presents the best-supported result on an interactive map.
                 </p>
                 <div className="flex flex-wrap gap-2">
                   <Badge variant="secondary" className="text-xs bg-white/5 text-white/70 border border-white/10">
-                    Multi-Source Search
+                    Conversational Acquisition
                   </Badge>
                   <Badge variant="secondary" className="text-xs bg-white/5 text-white/70 border border-white/10">
-                    AI Entity Resolution
+                    Multi-Source Fusion
                   </Badge>
                   <Badge variant="secondary" className="text-xs bg-white/5 text-white/70 border border-white/10">
-                    Professional Dossiers
+                    1-Hour Playback
                   </Badge>
                   <Badge variant="secondary" className="text-xs bg-white/5 text-white/70 border border-white/10">
-                    Legal Research Ready
+                    3D Geospatial View
                   </Badge>
                 </div>
               </div>

@@ -101,18 +101,11 @@ const LegalDocumentCreator = lazyWithRetry(() => import("@/pages/legal-document-
 const WelcomePage = lazyWithRetry(() => import("@/pages/welcome"), 'WelcomePage');
 const LexaraConsentPage = lazyWithRetry(() => import("@/pages/lexara-consent"), 'LexaraConsent');
 const LegalToolsPage = lazyWithRetry(() => import("@/pages/legal-tools"), 'LegalTools');
-const PeopleFinderPage = lazyWithRetry(() => import("@/pages/people-finder"), 'PeopleFinder');
 const PantheonPage = lazyWithRetry(() => import("@/pages/pantheon"), 'Pantheon');
 const ConsultationPage = lazyWithRetry(() => import("@/pages/legal-consultation"), 'Consultation');
 const SpectraPage = lazyWithRetry(() => import("@/pages/spectra"), 'Spectra');
-const GeoConsolePage = lazyWithRetry(() => import("@/pages/geoconsole"), 'GeoConsole');
-const GeoConsoleCommandPage = lazyWithRetry(() => import("@/pages/geoconsole-command"), 'GeoConsoleCommand');
-const GeoConsoleProcessPage = lazyWithRetry(() => import("@/pages/geoconsole-process"), 'GeoConsoleProcess');
-const GeoConsoleReportPage = lazyWithRetry(() => import("@/pages/geoconsole-report"), 'GeoConsoleReport');
 const SubscriptionSuccess = lazyWithRetry(() => import("@/pages/subscription-success"), 'SubscriptionSuccess');
 const FAQPage = lazyWithRetry(() => import("@/pages/faq"), 'FAQ');
-const LocationIntelPage = lazyWithRetry(() => import("@/pages/location-intel"), 'LocationIntel');
-const TSHPELocatorPage = lazyWithRetry(() => import("@/pages/tshpe-locator"), 'TSHPELocator');
 const InmateLocatorPage = lazyWithRetry(() => import("@/pages/inmate-locator"), 'InmateLocator');
 const InmateLocatorV2Page = lazyWithRetry(() => import("@/pages/inmate-locator-v2"), 'InmateLocatorV2');
 const CryptoCrawlerV2Dashboard = lazyWithRetry(() => import("@/pages/cryptocrawler-v2"), 'CryptoCrawlerV2');
@@ -136,7 +129,7 @@ const PageLoader = () => <PageSkeleton />;
 function GeoConsoleRedirect() {
   const [, setLocation] = useLocation();
   useEffect(() => {
-    setLocation('/legal-consultation?geo=true', { replace: true });
+    setLocation('/spectra', { replace: true });
   }, [setLocation]);
   return null;
 }
@@ -282,7 +275,6 @@ function Router() {
         <Switch>
           <Route path="/" component={Landing} />
           <Route path="/landing" component={Landing} />
-          {import.meta.env.DEV && !isMasterSession && <Route path="/geoconsole" component={GeoConsolePage} />}
 
           <Route path="/subscription-success" component={SubscriptionSuccess} />
           <Route path="/control-room" component={GatedControlRoom} />
@@ -303,20 +295,20 @@ function Router() {
               <Route path="/welcome" component={WelcomePage} />
               <Route path="/lexara-consent/:domainId" component={LexaraConsentPage} />
               <Route path="/legal-tools" component={LegalToolsPage} />
-              <Route path="/people-finder" component={PeopleFinderPage} />
+              <Route path="/people-finder" component={SpectraPage} />
               <Route path="/pantheon" component={PantheonPage} />
               {/* LEXARA Viewport intentionally remains retired; /legal-consultation is canonical. */}
               <Route path="/spectra" component={SpectraPage} />
               <Route path="/geo-console" component={GeoConsoleRedirect} />
               <Route path="/legal-consultation/:domainId" component={ConsultationPage} />
-              {isMasterSession && <Route path="/geoconsole" component={GeoConsolePage} />}
-              {isMasterSession && <Route path="/geoconsole-command" component={GeoConsoleCommandPage} />}
-              {isMasterSession && <Route path="/geoconsole-process" component={GeoConsoleProcessPage} />}
-              {isMasterSession && <Route path="/geoconsole-report" component={GeoConsoleReportPage} />}
-              <Route path="/location-intel" component={LocationIntelPage} />
-              <Route path="/tshpe" component={TSHPELocatorPage} />
-              <Route path="/tshpe-locator" component={TSHPELocatorPage} />
-              <Route path="/positioning" component={TSHPELocatorPage} />
+              {isMasterSession && <Route path="/geoconsole" component={SpectraPage} />}
+              {isMasterSession && <Route path="/geoconsole-command" component={SpectraPage} />}
+              {isMasterSession && <Route path="/geoconsole-process" component={SpectraPage} />}
+              {isMasterSession && <Route path="/geoconsole-report" component={SpectraPage} />}
+              <Route path="/location-intel" component={SpectraPage} />
+              <Route path="/tshpe" component={SpectraPage} />
+              <Route path="/tshpe-locator" component={SpectraPage} />
+              <Route path="/positioning" component={SpectraPage} />
               <Route path="/inmate-locator" component={InmateLocatorPage} />
               <Route path="/inmate-locator/dashboard" component={InmateLocatorPage} />
               <Route path="/inmate-locator-v2" component={InmateLocatorV2Page} />

@@ -20,7 +20,12 @@ export interface GeoFrame {
     longitude: number;
     altitude?: number;
     accuracy?: number;
+    verticalAccuracy?: number;
   };
+  receivedAt?: Date;
+  observationKind?: GPSPoint['observationKind'];
+  correlationGroup?: string;
+  provenance?: GPSPoint['provenance'];
   velocity?: {
     speed: number;
     heading: number;
@@ -40,6 +45,7 @@ export interface GeoRuntimeConfig {
 }
 
 export interface GeoRuntimeState {
+  sessionId: string | null;
   isPlaying: boolean;
   isLive: boolean;
   currentFrame: GeoFrame | null;
@@ -63,7 +69,7 @@ export interface GeoRuntimeActions {
   seekTo: (index: number) => void;
   seekToTime: (time: Date) => void;
   setPlaybackSpeed: (speed: number) => void;
-  loadData: (points: GPSPoint[]) => void;
+  loadData: (points: GPSPoint[]) => Promise<void>;
   refresh: () => Promise<void>;
   exportTrail: () => GeoFrame[];
 }
@@ -71,6 +77,9 @@ export interface GeoRuntimeActions {
 // ============================================================================
 // CONSTANTS
 // ============================================================================
+
+const ONE_HOUR_MS = 60 * 60 * 1000;
+const FUTURECAST_HOURS = 1;
 
 const DEFAULT_CONFIG: GeoRuntimeConfig = {
   tickInterval: 500,
@@ -106,72 +115,9 @@ const calculateBearing = (lat1: number, lon1: number, lat2: number, lon2: number
   return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
 };
 
-// Generate futurecast predictions
-const generateFuturecast = (recentFrames: GeoFrame[], hoursAhead = 6): GeoFrame[] => {
-  if (recentFrames.length < 3) return [];
-
-  const predictions: GeoFrame[] = [];
-  const intervalMinutes = 15;
-  const numPredictions = Math.ceil((hoursAhead * 60) / intervalMinutes);
-  
-  // Calculate average velocity
-  const velocities: { speed: number; heading: number }[] = [];
-  for (let i = 1; i < Math.min(recentFrames.length, 10); i++) {
-    const prev = recentFrames[recentFrames.length - i - 1];
-    const curr = recentFrames[recentFrames.length - i];
-    const dist = haversineDistance(prev.position.latitude, prev.position.longitude, curr.position.latitude, curr.position.longitude);
-    const timeDiff = (curr.timestamp.getTime() - prev.timestamp.getTime()) / 1000;
-    if (timeDiff > 0) {
-      velocities.push({
-        speed: dist / timeDiff,
-        heading: calculateBearing(prev.position.latitude, prev.position.longitude, curr.position.latitude, curr.position.longitude),
-      });
-    }
-  }
-
-  if (velocities.length === 0) return [];
-
-  let totalWeight = 0, avgSpeed = 0, avgHeadingX = 0, avgHeadingY = 0;
-  velocities.forEach((v, i) => {
-    const weight = velocities.length - i;
-    totalWeight += weight;
-    avgSpeed += v.speed * weight;
-    avgHeadingX += Math.cos(v.heading * Math.PI / 180) * weight;
-    avgHeadingY += Math.sin(v.heading * Math.PI / 180) * weight;
-  });
-  avgSpeed /= totalWeight;
-  const avgHeading = Math.atan2(avgHeadingY, avgHeadingX) * 180 / Math.PI;
-
-  const lastFrame = recentFrames[recentFrames.length - 1];
-  let lat = lastFrame.position.latitude;
-  let lng = lastFrame.position.longitude;
-  const baseTime = lastFrame.timestamp.getTime();
-
-  for (let i = 1; i <= numPredictions; i++) {
-    const timestamp = new Date(baseTime + i * intervalMinutes * 60 * 1000);
-    const confidence = Math.max(0.3, 0.9 - (i / numPredictions) * 0.6);
-    const jitter = (i / numPredictions) * 0.001;
-    const heading = avgHeading + (Math.random() - 0.5) * 30 * (i / numPredictions);
-    
-    const distanceM = avgSpeed * intervalMinutes * 60;
-    const distanceDeg = distanceM / 111000;
-    
-    lat += Math.cos(heading * Math.PI / 180) * distanceDeg + (Math.random() - 0.5) * jitter;
-    lng += Math.sin(heading * Math.PI / 180) * distanceDeg / Math.cos(lat * Math.PI / 180) + (Math.random() - 0.5) * jitter;
-
-    predictions.push({
-      id: generateId(),
-      timestamp,
-      position: { latitude: lat, longitude: lng, accuracy: 50 + i * 20 },
-      velocity: { speed: avgSpeed * (0.8 + Math.random() * 0.4), heading },
-      source: 'interpolated',
-      confidence,
-      metadata: { predicted: true, hoursAhead: (i * intervalMinutes) / 60 },
-    });
-  }
-
-  return predictions;
-};
+// The server endpoint is the sole Futurecast authority. If it is unavailable,
+// SPECTRA preserves the observations and shows no prediction rather than
+// manufacturing a second prediction path in the browser.
 
 // ============================================================================
 // HOOK
@@ -188,6 +134,7 @@ export function useGeoRuntime(
   // Core state - frames array (IMMUTABLE updates only)
   const [frames, setFrames] = useState<GeoFrame[]>([]);
   const [futurecastFrames, setFuturecastFrames] = useState<GeoFrame[]>([]);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   
   // Index state - this is what drives frame selection
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -205,6 +152,7 @@ export function useGeoRuntime(
   // Refs for interval (not state to avoid re-render loops)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const framesRef = useRef<GeoFrame[]>(frames);
+  const liveFuturecastLastRequestRef = useRef(0);
   
   // Keep ref in sync with state
   useEffect(() => {
@@ -226,13 +174,30 @@ export function useGeoRuntime(
           longitude: point.longitude,
           altitude: point.altitude,
           accuracy: point.accuracy,
+          verticalAccuracy: point.verticalAccuracy,
         },
+        receivedAt: point.receivedAt ? new Date(point.receivedAt) : undefined,
+        observationKind: point.observationKind,
+        correlationGroup: point.correlationGroup,
+        provenance: point.provenance,
         source: point.source,
         confidence: point.confidence,
         metadata: point.metadata as Record<string, unknown>,
       };
 
-      if (i > 0) {
+      const suppliedVelocity = point.metadata?.velocity as
+        | { speed?: unknown; heading?: unknown }
+        | undefined;
+      if (
+        suppliedVelocity &&
+        Number.isFinite(Number(suppliedVelocity.speed)) &&
+        Number.isFinite(Number(suppliedVelocity.heading))
+      ) {
+        frame.velocity = {
+          speed: Number(suppliedVelocity.speed),
+          heading: Number(suppliedVelocity.heading),
+        };
+      } else if (i > 0 && Number(point.metadata?.gapBeforeSeconds || 0) <= 0) {
         const prev = sorted[i - 1];
         const dist = haversineDistance(prev.latitude, prev.longitude, point.latitude, point.longitude);
         const timeDiff = (new Date(point.timestamp).getTime() - new Date(prev.timestamp).getTime()) / 1000;
@@ -248,16 +213,110 @@ export function useGeoRuntime(
     });
   }, []);
 
-  // Load data - REAL DATA ONLY
-  const loadData = useCallback((points: GPSPoint[]) => {
+  const futurecastRequestRef = useRef(0);
+
+  const predictionPayloadToFrames = useCallback((predictions: any[]): GeoFrame[] => (
+    predictions
+      .map((point: any) => ({
+        id: generateId(),
+        timestamp: new Date(point.timestamp),
+        position: {
+          latitude: Number(point.latitude),
+          longitude: Number(point.longitude),
+          altitude: point.altitude !== undefined ? Number(point.altitude) : undefined,
+          accuracy: point.accuracy !== undefined ? Number(point.accuracy) : undefined,
+          verticalAccuracy: point.verticalAccuracy !== undefined ? Number(point.verticalAccuracy) : undefined,
+        },
+        receivedAt: point.receivedAt ? new Date(point.receivedAt) : undefined,
+        observationKind: point.observationKind || 'predicted',
+        correlationGroup: point.correlationGroup,
+        provenance: point.provenance,
+        velocity: (
+          Number.isFinite(Number(point?.metadata?.averageSpeedMps)) ||
+          Number.isFinite(Number(point?.metadata?.averageHeadingDegrees))
+        ) ? {
+          speed: Number.isFinite(Number(point?.metadata?.averageSpeedMps))
+            ? Number(point.metadata.averageSpeedMps)
+            : 0,
+          heading: Number.isFinite(Number(point?.metadata?.averageHeadingDegrees))
+            ? Number(point.metadata.averageHeadingDegrees)
+            : 0,
+        } : undefined,
+        source: point.source || 'predicted',
+        confidence: Number(point.confidence ?? 0),
+        metadata: {
+          ...(point.metadata || {}),
+          predicted: true,
+          authority: 'server',
+        },
+      }))
+      .filter((frame: GeoFrame) =>
+        Number.isFinite(frame.position.latitude) &&
+        Number.isFinite(frame.position.longitude) &&
+        Number.isFinite(frame.timestamp.getTime())
+      )
+  ), []);
+
+  const requestAuthoritativeFuturecast = useCallback(async (sourceFrames: GeoFrame[]) => {
+    if (!cfg.predictiveEnabled || sourceFrames.length < 3) {
+      setFuturecastFrames([]);
+      return;
+    }
+
+    const requestId = ++futurecastRequestRef.current;
+    const recent = continuousTail(sourceFrames, 20);
+
+    try {
+      const response = await fetch('/api/geoconsole/futurecast', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          hours: FUTURECAST_HOURS,
+          recentPoints: recent.map(frame => ({
+            latitude: frame.position.latitude,
+            longitude: frame.position.longitude,
+            altitude: frame.position.altitude,
+            accuracy: frame.position.accuracy,
+            verticalAccuracy: frame.position.verticalAccuracy,
+            timestamp: frame.timestamp.toISOString(),
+            receivedAt: frame.receivedAt?.toISOString(),
+            source: frame.source,
+            confidence: frame.confidence,
+            observationKind: frame.observationKind,
+            correlationGroup: frame.correlationGroup,
+            provenance: frame.provenance,
+            metadata: frame.metadata,
+          })),
+        }),
+      });
+
+      if (!response.ok) throw new Error(`Futurecast request failed: ${response.status}`);
+      const payload = await response.json();
+      if (requestId !== futurecastRequestRef.current) return;
+
+      const predictions = Array.isArray(payload?.data?.predictions)
+        ? payload.data.predictions
+        : [];
+
+      setFuturecastFrames(predictionPayloadToFrames(predictions));
+    } catch {
+      if (requestId !== futurecastRequestRef.current) return;
+      setFuturecastFrames([]);
+    }
+  }, [cfg.predictiveEnabled, predictionPayloadToFrames]);
+
+  // Load data through the canonical server fusion pipeline automatically.
+  const loadData = useCallback(async (points: GPSPoint[]) => {
     setStatus('loading');
     setError(null);
 
     try {
-      // No data = empty state
       if (points.length === 0) {
+        framesRef.current = [];
         setFrames([]);
         setFuturecastFrames([]);
+        setSessionId(null);
         setCurrentIndex(0);
         setIsPlaying(false);
         setIsLive(false);
@@ -265,11 +324,101 @@ export function useGeoRuntime(
         setStatus('idle');
         return;
       }
-      
-      // Convert real GPS points to frames
-      let newFrames = convertToFrames(points);
 
+      let canonicalPoints = points;
+      let canonicalFuturecast: GeoFrame[] | null = null;
+      setSessionId(null);
+
+      try {
+        const response = await fetch('/api/geoconsole/process', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            inputs: points.map(point => ({
+              ...point,
+              timestamp: new Date(point.timestamp).toISOString(),
+              receivedAt: point.receivedAt ? new Date(point.receivedAt).toISOString() : undefined,
+              provenance: point.provenance
+                ? {
+                    ...point.provenance,
+                    capturedAt: point.provenance.capturedAt
+                      ? new Date(point.provenance.capturedAt).toISOString()
+                      : undefined,
+                  }
+                : undefined,
+            })),
+          }),
+        });
+
+        if (response.ok) {
+          const payload = await response.json();
+          const canonicalSessionId =
+            typeof payload?.data?.sessionId === 'string' && payload.data.sessionId.trim()
+              ? payload.data.sessionId
+              : null;
+          setSessionId(canonicalSessionId);
+
+          const processedTrail = Array.isArray(payload?.data?.trail?.points)
+            ? payload.data.trail.points
+            : [];
+          const processedPoints = processedTrail
+            .map((entry: any) => {
+              const point = entry?.position || entry;
+              if (!point) return null;
+              return {
+                ...point,
+                source: entry?.interpolated ? 'interpolated' : point.source,
+                observationKind: entry?.interpolated
+                  ? 'interpolated'
+                  : point.observationKind,
+                metadata: {
+                  ...(point.metadata || {}),
+                  velocity: entry?.velocity,
+                  trailOpacity: entry?.opacity,
+                  trailColor: entry?.color,
+                },
+              };
+            })
+            .filter((point: any) =>
+              point &&
+              Number.isFinite(Number(point.latitude)) &&
+              Number.isFinite(Number(point.longitude)) &&
+              point.timestamp
+            );
+
+          const fusedLocations = Array.isArray(payload?.data?.fusedLocations)
+            ? payload.data.fusedLocations
+            : [];
+          const fusedPoints = fusedLocations
+            .map((entry: any) => entry?.point || entry)
+            .filter((point: any) =>
+              Number.isFinite(Number(point?.latitude)) &&
+              Number.isFinite(Number(point?.longitude)) &&
+              point?.timestamp
+            );
+
+          if (processedPoints.length > 0) {
+            canonicalPoints = processedPoints as GPSPoint[];
+          } else if (fusedPoints.length > 0) {
+            canonicalPoints = fusedPoints as GPSPoint[];
+          }
+
+          const predictions = Array.isArray(payload?.data?.futurecast)
+            ? payload.data.futurecast
+            : [];
+          if (predictions.length > 0) {
+            canonicalFuturecast = predictionPayloadToFrames(predictions);
+          }
+        }
+      } catch {
+        // Raw observations remain valid fallback input when the fusion endpoint
+        // is temporarily unavailable. No synthetic positions are introduced.
+      }
+
+      let newFrames = convertToFrames(canonicalPoints);
       if (newFrames.length === 0) {
+        framesRef.current = [];
         setFrames([]);
         setFuturecastFrames([]);
         setCurrentIndex(0);
@@ -280,42 +429,38 @@ export function useGeoRuntime(
         return;
       }
 
-      // Limit buffer
+      const latestObservedMs = newFrames[newFrames.length - 1].timestamp.getTime();
+      newFrames = newFrames.filter(
+        frame => frame.timestamp.getTime() >= latestObservedMs - ONE_HOUR_MS
+      );
+
       if (newFrames.length > cfg.maxFrameBuffer) {
         newFrames = newFrames.slice(-cfg.maxFrameBuffer);
       }
 
-      // IMMUTABLE: Set new array reference
+      framesRef.current = [...newFrames];
       setFrames([...newFrames]);
-      setCurrentIndex(0);
+      setCurrentIndex(Math.max(0, newFrames.length - 1));
       setVersion(v => v + 1);
 
-      // Generate futurecast
-      if (cfg.predictiveEnabled && newFrames.length >= 3) {
-        setFuturecastFrames([...generateFuturecast(newFrames)]);
+      if (canonicalFuturecast && canonicalFuturecast.length > 0) {
+        setFuturecastFrames(canonicalFuturecast);
+      } else {
+        void requestAuthoritativeFuturecast(newFrames);
       }
 
       setStatus('idle');
-      console.log(`[GeoRuntime] Loaded ${newFrames.length} frames`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Load failed');
       setStatus('error');
     }
-  }, [convertToFrames, cfg.maxFrameBuffer, cfg.predictiveEnabled]);
+  }, [
+    convertToFrames,
+    cfg.maxFrameBuffer,
+    predictionPayloadToFrames,
+    requestAuthoritativeFuturecast,
+  ]);
 
-  // Ref to hold initialData for mount-only effect
-  const initialDataRef = useRef(initialData);
-  const loadDataRef = useRef(loadData);
-  
-  // Keep refs in sync
-  useEffect(() => {
-    loadDataRef.current = loadData;
-  }, [loadData]);
-
-  // Initialize on mount only
-  useEffect(() => {
-    loadDataRef.current(initialDataRef.current);
-  }, []); // Intentionally empty - mount only
 
   // Tick function - advances index
   const tick = useCallback(() => {
@@ -408,22 +553,48 @@ export function useGeoRuntime(
         const newFrame: GeoFrame = {
           id: generateId(),
           timestamp: now,
-          position: { latitude, longitude, altitude, accuracy },
+          position: {
+            latitude,
+            longitude,
+            altitude,
+            accuracy,
+            verticalAccuracy: Number.isFinite(coords.altitudeAccuracy) ? coords.altitudeAccuracy ?? undefined : undefined,
+          },
+          receivedAt: new Date(),
+          observationKind: 'observed',
+          correlationGroup: 'browser:navigator.geolocation',
+          provenance: {
+            provider: 'navigator.geolocation',
+            capturedAt: now.toISOString(),
+          },
           velocity: speed !== undefined || heading !== undefined
             ? { speed: speed ?? 0, heading: heading ?? 0 }
             : undefined,
           source: 'device_gps',
           confidence,
-          metadata: { live: true, provider: 'navigator.geolocation' },
+          metadata: {
+            live: true,
+            provider: 'navigator.geolocation',
+            headingAccuracyAvailable: false,
+          },
         };
 
-        setFrames((prev) => {
-          const updated = [...prev, newFrame];
-          const trimmed = updated.length > cfg.maxFrameBuffer ? updated.slice(-cfg.maxFrameBuffer) : updated;
-          // Live mode should always track the latest available fix.
-          setCurrentIndex(trimmed.length - 1);
-          return trimmed;
-        });
+        const cutoff = newFrame.timestamp.getTime() - ONE_HOUR_MS;
+        const updated = [...framesRef.current, newFrame]
+          .filter(frame => frame.timestamp.getTime() >= cutoff);
+        const trimmed = updated.length > cfg.maxFrameBuffer ? updated.slice(-cfg.maxFrameBuffer) : updated;
+        framesRef.current = trimmed;
+        setFrames([...trimmed]);
+        setCurrentIndex(trimmed.length - 1);
+
+        const nowMs = Date.now();
+        if (
+          trimmed.length >= 3 &&
+          nowMs - liveFuturecastLastRequestRef.current >= 30_000
+        ) {
+          liveFuturecastLastRequestRef.current = nowMs;
+          void requestAuthoritativeFuturecast(trimmed);
+        }
 
         setStatus('playing');
         setError(null);
@@ -447,7 +618,7 @@ export function useGeoRuntime(
         // ignore
       }
     };
-  }, [isLive, cfg.autoFetch, cfg.maxFrameBuffer]);
+  }, [isLive, cfg.autoFetch, cfg.maxFrameBuffer, requestAuthoritativeFuturecast]);
 
   // === DERIVED STATE (computed from index + frames) ===
   
@@ -459,18 +630,15 @@ export function useGeoRuntime(
   // Trail - all frames up to current index (IMMUTABLE slice)
   const trail = frames.slice(0, currentIndex + 1);
 
-  // Timeline
-  const timeline = frames.length > 0
-    ? {
-        start: frames[0].timestamp,
-        end: frames[frames.length - 1].timestamp,
-        current: currentFrame?.timestamp || frames[0].timestamp,
-      }
-    : {
-        start: new Date(),
-        end: new Date(),
-        current: new Date(),
-      };
+  // Weather-map-style window: previous hour through one-hour Futurecast.
+  const anchorTime = frames.length > 0
+    ? frames[frames.length - 1].timestamp
+    : new Date();
+  const timeline = {
+    start: new Date(anchorTime.getTime() - ONE_HOUR_MS),
+    end: new Date(anchorTime.getTime() + ONE_HOUR_MS),
+    current: currentFrame?.timestamp || anchorTime,
+  };
 
   // Stats - computed from trail
   const stats = (() => {
@@ -485,10 +653,12 @@ export function useGeoRuntime(
     for (let i = 1; i < trail.length; i++) {
       const prev = trail[i - 1];
       const curr = trail[i];
-      totalDistance += haversineDistance(
-        prev.position.latitude, prev.position.longitude,
-        curr.position.latitude, curr.position.longitude
-      );
+      if (Number(curr.metadata?.gapBeforeSeconds || 0) <= 0) {
+        totalDistance += haversineDistance(
+          prev.position.latitude, prev.position.longitude,
+          curr.position.latitude, curr.position.longitude
+        );
+      }
       if (curr.velocity?.speed) {
         speeds.push(curr.velocity.speed);
         maxSpeed = Math.max(maxSpeed, curr.velocity.speed);
@@ -525,15 +695,19 @@ export function useGeoRuntime(
 
   const toggleLive = useCallback(() => {
     setIsLive(prev => {
-      if (!prev) {
-        // Can't go live without frames
-        if (framesRef.current.length === 0) return prev;
-        // Going live - jump to end
-        setCurrentIndex(framesRef.current.length - 1);
+      const next = !prev;
+      if (next) {
+        // LIVE can start from an empty buffer; navigator.geolocation supplies
+        // the first real observation instead of requiring synthetic seed data.
+        setCurrentIndex(Math.max(0, framesRef.current.length - 1));
         setIsPlaying(true);
+        setStatus(framesRef.current.length > 0 ? 'playing' : 'loading');
+      } else {
+        setIsPlaying(false);
+        setStatus(framesRef.current.length > 0 ? 'paused' : 'idle');
       }
       setVersion(v => v + 1);
-      return !prev;
+      return next;
     });
   }, []);
 
@@ -568,16 +742,14 @@ export function useGeoRuntime(
   const refresh = useCallback(async () => {
     setStatus('loading');
     try {
-      if (cfg.predictiveEnabled && frames.length >= 3) {
-        setFuturecastFrames([...generateFuturecast(frames)]);
-      }
+      await requestAuthoritativeFuturecast(frames);
       setStatus('idle');
       setVersion(v => v + 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Refresh failed');
       setStatus('error');
     }
-  }, [frames, cfg.predictiveEnabled]);
+  }, [frames, requestAuthoritativeFuturecast]);
 
   const exportTrail = useCallback(() => {
     return [...trail];
@@ -586,6 +758,7 @@ export function useGeoRuntime(
   // === RETURN STATE & ACTIONS ===
 
   const state: GeoRuntimeState = {
+    sessionId,
     isPlaying,
     isLive,
     currentFrame,

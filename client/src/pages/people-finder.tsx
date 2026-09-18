@@ -10,31 +10,12 @@ import { AppHeader } from "@/components/AppHeader";
 import { GeoconsoleRadarDashboard } from "@/components/geoconsole";
 import type { GPSPoint } from '@shared/geoconsoleTypes';
 
-interface CityStateLocation {
-  latitude: number;
-  longitude: number;
-  displayName: string;
-}
-
-function parseLatLng(input: string): [number, number] | null {
-  const match = input.match(/(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)/);
-  if (!match) return null;
-
-  const latitude = Number(match[1]);
-  const longitude = Number(match[2]);
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
-  if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;
-
-  return [latitude, longitude];
-}
-
 export default function PeopleFinderPage() {
   const [, setLocation] = useLocation();
   
   // PASS 3: Add missing state to prevent crash
   const [searchResults, setSearchResults] = useState<any>(null);
   const [searchQuery, setSearchQuery] = useState({ name: '', location: '' });
-  const [resolvedLocation, setResolvedLocation] = useState<CityStateLocation | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -62,69 +43,50 @@ export default function PeopleFinderPage() {
     setIsLoading(false);
   }, []);
   
-  useEffect(() => {
-    if (!searchQuery.name || !searchQuery.location) {
-      setResolvedLocation(null);
-      return;
-    }
 
-    let cancelled = false;
-    setResolvedLocation(null);
-
-    void fetch('/api/geoconsole/geocode-city-state', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ location: searchQuery.location }),
-    })
-      .then(async response => ({ response, payload: await response.json().catch(() => null) }))
-      .then(({ response, payload }) => {
-        if (!cancelled && response.ok && payload?.success) {
-          setResolvedLocation(payload.data as CityStateLocation);
-        }
-      })
-      .catch(() => undefined);
-
-    return () => {
-      cancelled = true;
-    };
-  }, [searchQuery]);
-
-  // Convert person location history to GPSPoints for GeoConsole
+  // Only timestamped location observations belong on the live GeoConsole.
+  // City/state and legacy locationHistory strings remain search context; they are
+  // not converted into fake current-time positions.
   const getGeoConsoleData = useCallback((): GPSPoint[] => {
-    const manualPoint: GPSPoint[] = resolvedLocation ? [{
-      latitude: resolvedLocation.latitude,
-      longitude: resolvedLocation.longitude,
-      timestamp: new Date(),
-      source: 'manual_input',
-      confidence: 0.7,
-      metadata: {
-        label: searchQuery.name || 'Subject',
-        raw: searchQuery.location,
-        displayName: resolvedLocation.displayName,
-        locationKind: 'last_known_location',
-      },
-    }] : [];
+    const observations = Array.isArray(searchResults?.locationObservations)
+      ? searchResults.locationObservations
+      : [];
 
-    if (!searchResults?.locationHistory?.length) return manualPoint;
+    return observations
+      .map((raw: any, idx: number) => {
+        const latitude = Number(raw?.latitude);
+        const longitude = Number(raw?.longitude);
+        const timestamp = new Date(raw?.timestamp || raw?.observedAt || '');
+        if (
+          !Number.isFinite(latitude) ||
+          !Number.isFinite(longitude) ||
+          latitude < -90 || latitude > 90 ||
+          longitude < -180 || longitude > 180 ||
+          !Number.isFinite(timestamp.getTime())
+        ) {
+          return null;
+        }
 
-    const reportedPoints = searchResults.locationHistory
-      .map((raw: string, idx: number) => {
-        const coord = parseLatLng(raw);
-        if (!coord) return null;
         return {
-          latitude: coord[0],
-          longitude: coord[1],
-          timestamp: new Date(),
-          source: 'public_record' as const,
-          confidence: 0.8,
-          metadata: { raw, index: idx },
+          latitude,
+          longitude,
+          altitude: Number.isFinite(Number(raw?.altitude)) ? Number(raw.altitude) : undefined,
+          accuracy: Number.isFinite(Number(raw?.accuracy)) ? Number(raw.accuracy) : undefined,
+          timestamp,
+          source: raw?.source || 'historical_location',
+          confidence: Math.max(0, Math.min(1, Number(raw?.confidence ?? 0.5))),
+          observationKind: raw?.observationKind || 'observed',
+          correlationGroup: raw?.correlationGroup,
+          provenance: raw?.provenance,
+          metadata: {
+            ...(raw?.metadata || {}),
+            index: idx,
+            subject: searchQuery.name || 'Subject',
+          },
         } as GPSPoint;
       })
-      .filter((p: GPSPoint | null): p is GPSPoint => !!p);
-
-    return [...manualPoint, ...reportedPoints];
-  }, [resolvedLocation, searchQuery, searchResults]);
+      .filter((point: GPSPoint | null): point is GPSPoint => !!point);
+  }, [searchQuery.name, searchResults]);
 
   const geoConsolePoints = useMemo(() => getGeoConsoleData(), [getGeoConsoleData]);
   const geoConsoleStatus: 'idle' | 'loading' | 'ready' =

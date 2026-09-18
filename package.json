@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "NODE_ENV=development tsx server/index.ts",
     "dev:worker": "NODE_ENV=development tsx workers/peopleSearchWorker/index.ts",
-    "prebuild": "npm run verify:auth-runtime && npm run verify:master-access && node scripts/cryptocrawl/verify-deployment-preflight.cjs && node scripts/cryptocrawl/verify-self-funded-capital-authority.cjs && node scripts/cryptocrawl/verify-compound-runtime-profitability-repairs.cjs && tsx server/services/cryptocrawl/testing/verify-autonomous-stage-progression.ts && tsx scripts/cryptocrawl/verify-profit-ladder-terminal-evidence.ts && tsx scripts/cryptocrawl/verify-runtime-readiness-policy.ts && node scripts/cryptocrawl/verify-zero-capital-bps-propagation.cjs && node scripts/cryptocrawl/verify-bootstrap-execution-history.cjs && node scripts/cryptocrawl/verify-unified-multileg-adaptive-engine.cjs && node scripts/cryptocrawl/verify-research-bps-transform-reassessment.cjs",
+    "prebuild": "npm run verify:auth-runtime && npm run verify:master-access && npm run verify:geoconsole && node scripts/cryptocrawl/verify-deployment-preflight.cjs && node scripts/cryptocrawl/verify-self-funded-capital-authority.cjs && node scripts/cryptocrawl/verify-compound-runtime-profitability-repairs.cjs && tsx server/services/cryptocrawl/testing/verify-autonomous-stage-progression.ts && tsx scripts/cryptocrawl/verify-profit-ladder-terminal-evidence.ts && tsx scripts/cryptocrawl/verify-runtime-readiness-policy.ts && node scripts/cryptocrawl/verify-zero-capital-bps-propagation.cjs && node scripts/cryptocrawl/verify-bootstrap-execution-history.cjs && node scripts/cryptocrawl/verify-unified-multileg-adaptive-engine.cjs && node scripts/cryptocrawl/verify-research-bps-transform-reassessment.cjs",
     "build": "vite build && npm run build:server && npm run build:worker && npm run build:skale-pow-worker",
     "build:server": "node scripts/cryptocrawl/build-server-overflow-authority.mjs server/index.ts dist/index.js",
     "build:worker": "esbuild workers/peopleSearchWorker/index.ts --bundle --platform=node --target=node20 --outfile=dist/peopleSearchWorker.js --format=esm --packages=external --define:process.env.NODE_ENV=\"'production'\"",
@@ -57,7 +57,9 @@
     "docker:test": "node scripts/puppeteer-healthcheck.js",
     "docker:dev": "docker-compose up --build",
     "verify:master-access": "npm run verify:master-auth && node scripts/verify-master-access-navigation.cjs",
-    "verify:auth-runtime": "tsx scripts/verify-auth-runtime.ts"
+    "verify:auth-runtime": "tsx scripts/verify-auth-runtime.ts",
+    "verify:geoconsole": "node scripts/verify-geoconsole.cjs && node scripts/verify-geoconsole-e2e.cjs && node scripts/verify-geoconsole-links.cjs && node scripts/verify-production-mode.cjs && node scripts/verify-spectra.cjs",
+    "verify:spectra": "node scripts/verify-spectra.cjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",

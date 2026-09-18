@@ -6,14 +6,23 @@
  */
 
 import { Router, Request, Response } from 'express';
+import { randomUUID } from 'crypto';
 import { z } from 'zod';
 import { hybridGeoconsole } from '../services/geoconsole';
 import { GPSPoint, DataSource } from '../services/geoconsole/types';
 import { assessLocationQuality } from '../services/geoconsole/location-quality';
 import { selectCrawlerPlan } from '../services/crawlers/CrawlerSelectionUtility';
 import { createLogger } from '../logger';
+import { isAuthenticated } from '../auth';
+import {
+  normalizeClientEvidence,
+  signServerEvidence,
+} from '../services/geoconsole/evidence-proof';
 
 const router = Router();
+
+// GeoConsole contains sensitive location evidence; require an authenticated session.
+router.use(isAuthenticated);
 const log = createLogger('GeoconsoleRoutes');
 
 // ============ VALIDATION SCHEMAS ============
@@ -25,12 +34,29 @@ const gpsPointSchema = z.object({
   accuracy: z.number().optional(),
   timestamp: z.string().transform(s => new Date(s)),
   source: z.enum([
-    'device_gps', 'exif_photo', 'exif_video', 'xmp_sidecar', 'json_sidecar',
-    'wifi_handoff', 'bluetooth_proximity', 'accelerometer', 'browser_timestamp',
-    'social_media', 'public_camera', 'traffic_cam', 'satellite_imagery',
-    'public_record', 'manual_input', 'interpolated'
+    'device_gps', 'gnss_fix', 'gnss_raw',
+    'exif_photo', 'exif_video', 'xmp_sidecar', 'json_sidecar',
+    'wifi_handoff', 'wifi_rssi', 'wifi_rtt', 'wifi_fingerprint',
+    'cellular', 'cell_serving', 'cell_neighbor',
+    'uwb_range', 'uwb_direction',
+    'bluetooth_proximity', 'ble_rssi', 'ble_aoa',
+    'accelerometer', 'imu_gyro', 'magnetometer', 'barometer',
+    'browser_geolocation', 'browser_timestamp', 'network_region',
+    'social_media', 'social_geotag', 'visual_detection', 'vehicle_telemetry',
+    'public_camera', 'traffic_cam', 'satellite_imagery', 'historical_location',
+    'public_record', 'manual_input', 'interpolated', 'predicted'
   ]),
   confidence: z.number().min(0).max(1),
+  verticalAccuracy: z.number().nonnegative().optional(),
+  receivedAt: z.string().transform(s => new Date(s)).optional(),
+  observationKind: z.enum(['observed', 'inferred', 'interpolated', 'predicted', 'historical']).optional(),
+  correlationGroup: z.string().max(200).optional(),
+  provenance: z.object({
+    provider: z.string().optional(),
+    recordId: z.string().optional(),
+    capturedAt: z.string().transform(s => new Date(s)).optional(),
+    transformedBy: z.array(z.string()).optional(),
+  }).optional(),
   metadata: z.record(z.unknown()).optional(),
 });
 
@@ -51,7 +77,7 @@ const reportRequestSchema = z.object({
 const configUpdateSchema = z.object({
   timeline: z.object({
     historyDays: z.number().min(1).max(30).optional(),
-    futurecastHours: z.number().min(1).max(48).optional(),
+    futurecastHours: z.number().min(1).max(1).optional(),
     playbackSpeed: z.number().min(1).max(3600).optional(),
     animationFps: z.number().min(1).max(60).optional(),
     trailFadeSeconds: z.number().min(3600).max(604800).optional(),
@@ -68,6 +94,59 @@ const configUpdateSchema = z.object({
 });
 
 // ============ API ENDPOINTS ============
+
+/**
+ * GET /api/geoconsole/street-imagery
+ * Provider-neutral nearest public street image adapter.
+ */
+router.get('/street-imagery', async (req: Request, res: Response) => {
+  const validation = z.object({
+    lat: z.coerce.number().min(-90).max(90),
+    lng: z.coerce.number().min(-180).max(180),
+  }).safeParse(req.query);
+
+  if (!validation.success) {
+    return res.status(400).json({ success: false, error: 'Invalid coordinates' });
+  }
+
+  const { lat, lng } = validation.data;
+  const endpoint = process.env.KARTAVIEW_API_URL || 'https://api.openstreetcam.org/2.0/photo/';
+  const params = new URLSearchParams({
+    lat: String(lat),
+    lng: String(lng),
+    zoomLevel: '18',
+    join: 'sequence',
+    orderBy: 'id',
+    orderDirection: 'desc',
+  });
+
+  try {
+    const response = await fetch(`${endpoint}?${params.toString()}`, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(6000),
+    });
+
+    if (!response.ok) {
+      return res.status(502).json({ success: false, error: 'Street imagery provider unavailable' });
+    }
+
+    const payload: any = await response.json();
+    const data = payload?.result?.data;
+    const photo = Array.isArray(data) ? data[0] : data;
+
+    return res.json({
+      success: true,
+      data: photo || null,
+      metadata: {
+        provider: 'public_street_imagery',
+        timestamp: new Date(),
+      },
+    });
+  } catch (error) {
+    log.warn('Street imagery lookup failed', { error });
+    return res.status(502).json({ success: false, error: 'Street imagery unavailable' });
+  }
+});
 
 /**
  * POST /api/geoconsole/process
@@ -88,13 +167,16 @@ router.post('/process', async (req: Request, res: Response) => {
     }
 
     const { inputs, sessionId } = validation.data;
+    const effectiveSessionId = sessionId || randomUUID();
 
     // Convert validated data to GPSPoint array
-    const gpsPoints: GPSPoint[] = inputs.map(input => ({
-      ...input,
-      timestamp: input.timestamp,
-      source: input.source as DataSource,
-    }));
+    const gpsPoints: GPSPoint[] = inputs.map(input =>
+      normalizeClientEvidence({
+        ...input,
+        timestamp: input.timestamp,
+        source: input.source as DataSource,
+      })
+    );
 
     const quality = assessLocationQuality(gpsPoints);
     const crawlerSelection = selectCrawlerPlan({
@@ -105,26 +187,43 @@ router.post('/process', async (req: Request, res: Response) => {
     log.info('Processing location data', {
       inputCount: gpsPoints.length,
       acceptedCount: quality.acceptedCount,
-      sessionId,
+      sessionId: effectiveSessionId,
     });
 
-    const result = await hybridGeoconsole.processLocationData(quality.points, sessionId);
+    const result = await hybridGeoconsole.processLocationData(quality.points, effectiveSessionId);
+    const signedFusedLocations = result.fusedLocations.map(location => ({
+      ...location,
+      point: signServerEvidence(location.point),
+    }));
+    const signedPrimaryFusedLocations = result.primaryFusedLocations.map(location => ({
+      ...location,
+      point: signServerEvidence(location.point),
+    }));
+    const signedTrailPoints = result.trail.points.map(trailPoint => ({
+      ...trailPoint,
+      position: signServerEvidence(trailPoint.position),
+    }));
+    const signedFuturecast = result.futurecast.map(signServerEvidence);
 
     res.json({
       success: true,
       data: {
-        fusedLocations: result.fusedLocations,
+        sessionId: effectiveSessionId,
+        fusedLocations: signedFusedLocations,
+        primaryFusedLocations: signedPrimaryFusedLocations,
         trail: {
           id: result.trail.id,
-          pointCount: result.trail.points.length,
+          pointCount: signedTrailPoints.length,
           startTime: result.trail.startTime,
           endTime: result.trail.endTime,
           totalDistance: result.trail.totalDistance,
           averageSpeed: result.trail.averageSpeed,
+          maxSpeed: result.trail.maxSpeed,
+          points: signedTrailPoints,
           segments: result.trail.segments,
           stops: result.trail.stops,
         },
-        futurecast: result.futurecast,
+        futurecast: signedFuturecast,
         inputQuality: {
           acceptedCount: quality.acceptedCount,
           rejectedCount: quality.rejectedCount,
@@ -208,11 +307,16 @@ router.get('/status', async (req: Request, res: Response) => {
         orchestration: state,
         capabilities: {
           multimodalFusion: true,
+          uncertaintyAwareFusion: true,
           monteCarloInterpolation: true,
           futurecastPrediction: true,
-          weatherRadarTimeline: true,
+          mapRenderer: 'maplibre',
+          terrain3d: true,
           satelliteImagery: true,
-          publicCameraIntegration: true,
+          earthObservationTimeline: true,
+          weatherRadarOverlay: true,
+          streetImagery: true,
+          publicCameraIntegration: false,
         },
       },
     });
@@ -310,8 +414,14 @@ router.post('/interpolate', async (req: Request, res: Response) => {
     const { monteCarloPathEngine } = await import('../services/geoconsole/monteCarloPathEngine');
     
     const path = await monteCarloPathEngine.interpolatePath(
-      { ...startPoint, source: startPoint.source as DataSource },
-      { ...endPoint, source: endPoint.source as DataSource },
+      normalizeClientEvidence({
+        ...startPoint,
+        source: startPoint.source as DataSource,
+      }),
+      normalizeClientEvidence({
+        ...endPoint,
+        source: endPoint.source as DataSource,
+      }),
       config
     );
 
@@ -354,7 +464,7 @@ router.post('/futurecast', async (req: Request, res: Response) => {
   try {
     const schema = z.object({
       recentPoints: z.array(gpsPointSchema).min(3),
-      hours: z.number().min(1).max(48).optional(),
+      hours: z.number().min(1).max(1).optional(),
     });
 
     const validation = schema.safeParse(req.body);
@@ -367,21 +477,23 @@ router.post('/futurecast', async (req: Request, res: Response) => {
       });
     }
 
-    const { recentPoints, hours = 6 } = validation.data;
+    const { recentPoints, hours = 1 } = validation.data;
 
     const { monteCarloPathEngine } = await import('../services/geoconsole/monteCarloPathEngine');
     
-    const gpsPoints: GPSPoint[] = recentPoints.map(p => ({
-      ...p,
-      source: p.source as DataSource,
-    }));
+    const gpsPoints: GPSPoint[] = recentPoints.map(p =>
+      normalizeClientEvidence({
+        ...p,
+        source: p.source as DataSource,
+      })
+    );
 
     const futurecast = await monteCarloPathEngine.generateFuturecast(gpsPoints, hours);
 
     res.json({
       success: true,
       data: {
-        predictions: futurecast,
+        predictions: futurecast.map(signServerEvidence),
         hours,
         confidence: futurecast.length > 0 
           ? futurecast.reduce((sum, p) => sum + p.confidence, 0) / futurecast.length 

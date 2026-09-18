@@ -96,12 +96,15 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
   const urlParams = new URLSearchParams(window.location.search);
   const nameParam = urlParams.get('name') || '';
   const locationParam = urlParams.get('location') || '';
+  const phoneParam = urlParams.get('phone') || '';
+  const initialNameParts = nameParam.trim().split(/\s+/).filter(Boolean);
+  const initialLocationParts = locationParam.split(',').map(part => part.trim());
   
-  const [name, setName] = useState(nameParam);
-  const [location, setLocation] = useState(locationParam);
-  const [department, setDepartment] = useState("");
-  const [profileUrl, setProfileUrl] = useState("");
-  const [additionalInfo, setAdditionalInfo] = useState("");
+  const [firstName, setFirstName] = useState(initialNameParts[0] || '');
+  const [lastName, setLastName] = useState(initialNameParts.slice(1).join(' '));
+  const [city, setCity] = useState(initialLocationParts[0] || '');
+  const [state, setState] = useState(initialLocationParts[1] || '');
+  const [phone, setPhone] = useState(phoneParam);
   const [results, setResults] = useState<PeopleSearchReport | null>(null);
   const [emptyState, setEmptyState] = useState<PeopleFinderEmptyState | null>(null);
 
@@ -133,7 +136,7 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
   // We still prefill from query params to support deep-linking, but execution must be explicit.
 
   const searchMutation = useMutation({
-    mutationFn: async (searchData: { name: string; location?: string; department?: string; domain?: string; profileUrl?: string }) => {
+    mutationFn: async (searchData: { firstName: string; lastName: string; city?: string; state?: string; phone?: string }) => {
       const requestStart = Date.now();
       console.log('[PEOPLE FINDER SEARCH] Request started', {
         timestamp: new Date().toISOString(),
@@ -193,7 +196,10 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
       
       // Notify parent component of results
       if (onResults) {
-        onResults(report, { name: name.trim(), location: location.trim() });
+        onResults(report, {
+          name: [firstName.trim(), lastName.trim()].filter(Boolean).join(' '),
+          location: [city.trim(), state.trim()].filter(Boolean).join(', '),
+        });
       }
       
       if (report) {
@@ -220,26 +226,29 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
         code: 'unavailable',
         message: 'Search service is temporarily unavailable. Please try again.',
       });
-      if (onResults) onResults(null, { name: name.trim(), location: location.trim() });
+      if (onResults) onResults(null, {
+        name: [firstName.trim(), lastName.trim()].filter(Boolean).join(' '),
+        location: [city.trim(), state.trim()].filter(Boolean).join(', '),
+      });
     },
   });
 
   const handleSearch = () => {
-    if (!name.trim()) {
+    if (!firstName.trim() || !lastName.trim()) {
       toast({
         title: "Name Required",
-        description: "Please enter a name to search",
+        description: "Please enter both first and last name.",
         variant: "destructive",
       });
       return;
     }
 
     searchMutation.mutate({
-      name: name.trim(),
-      location: location.trim() || undefined,
-      department: department.trim() || undefined,
-      domain: additionalInfo.trim() || undefined,
-      profileUrl: profileUrl.trim() || undefined,
+      firstName: firstName.trim(),
+      lastName: lastName.trim(),
+      city: city.trim() || undefined,
+      state: state.trim() || undefined,
+      phone: phone.trim() || undefined,
     });
   };
 
@@ -262,90 +271,96 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <User className="w-6 h-6" />
-            People Finder - Global Identity Intelligence
+            People Finder
           </CardTitle>
           <CardDescription>
-            Search public records, social media, professional networks, and online mentions to build comprehensive identity reports
+            Enter the five identity anchors below. The system correlates available records and location evidence automatically.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid gap-4">
-            <div className="grid gap-2">
-              <Label htmlFor="name">Full Name *</Label>
-              <Input
-                id="name"
-                placeholder="e.g., John Smith"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                onKeyPress={handleKeyPress}
-              />
+            <div className="grid md:grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="firstName">First Name *</Label>
+                <Input
+                  id="firstName"
+                  autoComplete="given-name"
+                  placeholder="John"
+                  value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)}
+                  onKeyDown={handleKeyPress}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="lastName">Last Name *</Label>
+                <Input
+                  id="lastName"
+                  autoComplete="family-name"
+                  placeholder="Smith"
+                  value={lastName}
+                  onChange={(e) => setLastName(e.target.value)}
+                  onKeyDown={handleKeyPress}
+                />
+              </div>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="city">City</Label>
+                <Input
+                  id="city"
+                  autoComplete="address-level2"
+                  placeholder="Chicago"
+                  value={city}
+                  onChange={(e) => setCity(e.target.value)}
+                  onKeyDown={handleKeyPress}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="state">State</Label>
+                <Input
+                  id="state"
+                  autoComplete="address-level1"
+                  placeholder="IL"
+                  value={state}
+                  onChange={(e) => setState(e.target.value)}
+                  onKeyDown={handleKeyPress}
+                />
+              </div>
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="location">Last Known City, State (Optional)</Label>
+              <Label htmlFor="phone">Phone Number</Label>
               <Input
-                id="location"
-                placeholder="e.g., New York, NY"
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
-                onKeyPress={handleKeyPress}
-              />
-            </div>
-
-            <div className="grid gap-2">
-              <Label htmlFor="department">Organization/Employer (Optional)</Label>
-              <Input
-                id="department"
-                placeholder="e.g., Company name, agency, organization"
-                value={department}
-                onChange={(e) => setDepartment(e.target.value)}
-                onKeyPress={handleKeyPress}
-              />
-            </div>
-
-            <div className="grid gap-2">
-              <Label htmlFor="profileUrl">Profile URL Seed (Recommended)</Label>
-              <Input
-                id="profileUrl"
-                placeholder="https://example.com/profile or https://linkedin.com/in/..."
-                value={profileUrl}
-                onChange={(e) => setProfileUrl(e.target.value)}
-                onKeyPress={handleKeyPress}
+                id="phone"
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                placeholder="(555) 555-0123"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                onKeyDown={handleKeyPress}
               />
               <p className="text-xs text-muted-foreground">
-                Seed-first mode: Provide a single canonical profile URL to crawl (one-pass, 10s max).
-              </p>
-            </div>
-
-            <div className="grid gap-2">
-              <Label htmlFor="additionalInfo">Verified Domain Homepage (Optional)</Label>
-              <Input
-                id="additionalInfo"
-                placeholder="https://example.com"
-                value={additionalInfo}
-                onChange={(e) => setAdditionalInfo(e.target.value)}
-                onKeyPress={handleKeyPress}
-              />
-              <p className="text-xs text-muted-foreground">
-                Used only if no explicit profile URL seed is supplied. Must include scheme (https://).
+                Used as an identity-correlation anchor when supplied.
               </p>
             </div>
 
             <Button
               onClick={handleSearch}
               disabled={searchMutation.isPending}
-              className="w-full"
+              className="w-full min-h-11"
               size="lg"
             >
               {searchMutation.isPending ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Searching Intelligence Sources...
+                  Searching…
                 </>
               ) : (
                 <>
                   <Search className="w-4 h-4 mr-2" />
-                  Search
+                  Find Person
                 </>
               )}
             </Button>
@@ -390,12 +405,8 @@ export default function PeopleFinderSearch({ onBack, onResults }: PeopleFinderSe
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-muted-foreground">
-                  Seed-first mode requires exactly one canonical seed. Provide either:
+                  No matching data was returned for the identity anchors supplied. Refine the name, city/state, or phone number and search again.
                 </p>
-                <ul className="mt-2 text-sm text-muted-foreground list-disc pl-5 space-y-1">
-                  <li>Explicit profile URL (recommended)</li>
-                  <li>Verified domain homepage</li>
-                </ul>
               </CardContent>
             </Card>
           )}

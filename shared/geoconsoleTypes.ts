@@ -11,30 +11,70 @@ export interface GPSPoint {
   longitude: number;
   altitude?: number;
   accuracy?: number;
+  verticalAccuracy?: number;
   timestamp: Date | string;
+  receivedAt?: Date | string;
   source: DataSource;
   confidence: number;
+  observationKind?: 'observed' | 'inferred' | 'interpolated' | 'predicted' | 'historical';
+  correlationGroup?: string;
+  provenance?: {
+    provider?: string;
+    recordId?: string;
+    capturedAt?: Date | string;
+    transformedBy?: string[];
+  };
   metadata?: Record<string, unknown>;
+}
+
+export interface LocationCandidate {
+  latitude: number;
+  longitude: number;
+  label: string;
+  confidence: number;
+  basis: 'regional_context' | 'recorded_address' | 'inferred_location';
+  accuracyMeters?: number;
 }
 
 export type DataSource = 
   | 'device_gps'
+  | 'gnss_fix'
+  | 'gnss_raw'
   | 'exif_photo'
   | 'exif_video'
   | 'xmp_sidecar'
   | 'json_sidecar'
   | 'wifi_handoff'
+  | 'wifi_rssi'
+  | 'wifi_rtt'
+  | 'wifi_fingerprint'
+  | 'cellular'
+  | 'cell_serving'
+  | 'cell_neighbor'
+  | 'uwb_range'
+  | 'uwb_direction'
   | 'bluetooth_proximity'
+  | 'ble_rssi'
+  | 'ble_aoa'
   | 'accelerometer'
+  | 'imu_gyro'
+  | 'magnetometer'
+  | 'barometer'
+  | 'browser_geolocation'
   | 'browser_timestamp'
+  | 'network_region'
   | 'social_media'
+  | 'social_geotag'
+  | 'visual_detection'
+  | 'vehicle_telemetry'
   | 'public_camera'
   | 'traffic_cam'
   | 'satellite_imagery'
+  | 'historical_location'
   | 'public_record'
   | 'manual_input'
-  | 'interpolated';
-
+  | 'interpolated'
+  | 'predicted';
 // ================= MOTION TRAIL TYPES =================
 
 export interface TrailPoint {
@@ -90,10 +130,16 @@ export interface TimelineState {
 
 export interface LayerConfig {
   satellite: boolean;
+  earthObservation?: boolean;
   trail: boolean;
   heatmap: boolean;
   markers: boolean;
   futurecast: boolean;
+  weather?: boolean;
+  terrain?: boolean;
+  buildings?: boolean;
+  uncertainty?: boolean;
+  streetImagery?: boolean;
 }
 
 // ================= API TYPES =================
@@ -106,7 +152,14 @@ export interface GeoconsoleProcessRequest {
 export interface GeoconsoleProcessResponse {
   success: boolean;
   data?: {
+    sessionId: string;
     fusedLocations: Array<{
+      point: GPSPoint;
+      contributingSources: DataSource[];
+      fusionMethod: string;
+      qualityScore: number;
+    }>;
+    primaryFusedLocations: Array<{
       point: GPSPoint;
       contributingSources: DataSource[];
       fusionMethod: string;
@@ -119,6 +172,8 @@ export interface GeoconsoleProcessResponse {
       endTime: Date | string;
       totalDistance: number;
       averageSpeed: number;
+      maxSpeed: number;
+      points: TrailPoint[];
       segments: TrailSegment[];
       stops: StopPoint[];
     };

@@ -20,6 +20,51 @@ export interface LocationCluster {
   frequencyScore: number;
 }
 
+function parseExifTimestamp(tags: any): Date | undefined {
+  const gpsDate = tags.GPSDateStamp?.description;
+  const gpsTime = tags.GPSTimeStamp?.description;
+
+  if (typeof gpsDate === 'string' && typeof gpsTime === 'string') {
+    const dateMatch = gpsDate.match(/(\d{4})[:\-](\d{2})[:\-](\d{2})/);
+    const timeParts = gpsTime.match(/\d+(?:\.\d+)?/g)?.map(Number) || [];
+    if (dateMatch && timeParts.length >= 3 && timeParts.every(Number.isFinite)) {
+      const millis = Date.UTC(
+        Number(dateMatch[1]),
+        Number(dateMatch[2]) - 1,
+        Number(dateMatch[3]),
+        Math.floor(timeParts[0]),
+        Math.floor(timeParts[1]),
+        Math.floor(timeParts[2]),
+        Math.round((timeParts[2] % 1) * 1000),
+      );
+      const parsed = new Date(millis);
+      if (Number.isFinite(parsed.getTime())) return parsed;
+    }
+  }
+
+  const original = tags.DateTimeOriginal?.description;
+  const offset = tags.OffsetTimeOriginal?.description;
+  if (typeof original !== 'string') return undefined;
+
+  const match = original.match(
+    /^(\d{4})[:\-](\d{2})[:\-](\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?$/,
+  );
+  if (!match) return undefined;
+
+  // DateTimeOriginal has no absolute timezone unless OffsetTimeOriginal exists.
+  // Do not manufacture an absolute event time from server-local timezone.
+  if (typeof offset !== 'string' || !/^[+-]\d{2}:?\d{2}$/.test(offset.trim())) {
+    return undefined;
+  }
+
+  const normalizedOffset = offset.includes(':')
+    ? offset.trim()
+    : `${offset.slice(0, 3)}:${offset.slice(3)}`;
+  const iso = `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}${normalizedOffset}`;
+  const parsed = new Date(iso);
+  return Number.isFinite(parsed.getTime()) ? parsed : undefined;
+}
+
 export interface GeoHeatmap {
   clusters: LocationCluster[];
   boundingBox: {
@@ -64,13 +109,13 @@ export async function extractGPSFromFile(filePath: string): Promise<GPSCoordinat
       typeof lonRefStr === 'string' ? lonRefStr : undefined
     );
     
-    if (!latitude || !longitude) return null;
+    if (latitude === null || longitude === null) return null;
     
     return {
       latitude,
       longitude,
       altitude: tags.GPSAltitude?.description ? parseFloat(tags.GPSAltitude.description) : undefined,
-      timestamp: tags.DateTimeOriginal?.description ? new Date(tags.DateTimeOriginal.description) : undefined,
+      timestamp: parseExifTimestamp(tags),
       device: tags.Make?.description && tags.Model?.description 
         ? `${tags.Make.description} ${tags.Model.description}` 
         : undefined,

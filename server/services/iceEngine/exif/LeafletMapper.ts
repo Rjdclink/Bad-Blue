@@ -50,7 +50,7 @@ export class LeafletMapper {
   <div class="date-overlay">
     <strong>Case ${caseId}</strong><br/>
     ${locations.length} Evidence Location(s)<br/>
-    ${locations.map(l => `📍 ${l.timestamp.toLocaleDateString()}`).join('<br/>')}
+    ${locations.map(l => `📍 ${l.timestamp ? l.timestamp.toLocaleDateString() : 'Capture time unavailable'}`).join('<br/>')}
   </div>
   <div id="map"></div>
   
@@ -71,7 +71,7 @@ export class LeafletMapper {
       const directionStr = loc.direction ? `🧭 ${loc.direction}°<br/>` : '';
       return `
       const marker${idx} = L.marker([${loc.latitude}, ${loc.longitude}])
-        .bindPopup('<b>Evidence ${idx + 1}</b><br/>📅 ${loc.timestamp.toLocaleString()}<br/>📸 ${loc.device?.make || 'Unknown'} ${loc.device?.model || ''}<br/>📍 ${loc.latitude.toFixed(6)}, ${loc.longitude.toFixed(6)}<br/>${altitudeStr}${directionStr}<small>Uploaded by: ${loc.source.uploadedBy}</small>');
+        .bindPopup('<b>Evidence ${idx + 1}</b><br/>📅 ${loc.timestamp ? loc.timestamp.toLocaleString() : 'Capture time unavailable'}<br/>📸 ${loc.device?.make || 'Unknown'} ${loc.device?.model || ''}<br/>📍 ${loc.latitude.toFixed(6)}, ${loc.longitude.toFixed(6)}<br/>${altitudeStr}${directionStr}<small>Uploaded by: ${loc.source.uploadedBy}</small>');
       markers.addLayer(marker${idx});
     `;
     }).join('\n')}

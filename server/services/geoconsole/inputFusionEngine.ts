@@ -13,28 +13,51 @@ import {
   FusedLocation,
   BoundingBox,
 } from './types';
+import { createHash } from 'crypto';
 import { createLogger } from '../../logger';
 
 const log = createLogger('InputFusionEngine');
 
 // Default source priorities and confidence weights
 const DEFAULT_SOURCE_CONFIGS: DataSourceConfig[] = [
-  { source: 'device_gps', enabled: true, priority: 10, confidenceWeight: 0.95 },
-  { source: 'exif_photo', enabled: true, priority: 9, confidenceWeight: 0.90 },
-  { source: 'exif_video', enabled: true, priority: 9, confidenceWeight: 0.88 },
-  { source: 'xmp_sidecar', enabled: true, priority: 8, confidenceWeight: 0.85 },
-  { source: 'json_sidecar', enabled: true, priority: 8, confidenceWeight: 0.85 },
-  { source: 'wifi_handoff', enabled: true, priority: 6, confidenceWeight: 0.70 },
-  { source: 'bluetooth_proximity', enabled: true, priority: 5, confidenceWeight: 0.60 },
-  { source: 'accelerometer', enabled: true, priority: 4, confidenceWeight: 0.50 },
-  { source: 'browser_timestamp', enabled: true, priority: 3, confidenceWeight: 0.40 },
-  { source: 'social_media', enabled: true, priority: 7, confidenceWeight: 0.75 },
-  { source: 'public_camera', enabled: true, priority: 6, confidenceWeight: 0.70 },
-  { source: 'traffic_cam', enabled: true, priority: 6, confidenceWeight: 0.70 },
-  { source: 'satellite_imagery', enabled: true, priority: 5, confidenceWeight: 0.60 },
-  { source: 'public_record', enabled: true, priority: 8, confidenceWeight: 0.80 },
-  { source: 'manual_input', enabled: true, priority: 7, confidenceWeight: 0.75 },
-  { source: 'interpolated', enabled: true, priority: 2, confidenceWeight: 0.30 },
+  { source: 'device_gps', enabled: true, priority: 10, confidenceWeight: 0.96 },
+  { source: 'gnss_fix', enabled: true, priority: 10, confidenceWeight: 0.98 },
+  { source: 'gnss_raw', enabled: true, priority: 9, confidenceWeight: 0.94 },
+  { source: 'exif_photo', enabled: true, priority: 8, confidenceWeight: 0.82 },
+  { source: 'exif_video', enabled: true, priority: 8, confidenceWeight: 0.82 },
+  { source: 'xmp_sidecar', enabled: true, priority: 7, confidenceWeight: 0.72 },
+  { source: 'json_sidecar', enabled: true, priority: 7, confidenceWeight: 0.72 },
+  { source: 'wifi_handoff', enabled: true, priority: 5, confidenceWeight: 0.55 },
+  { source: 'wifi_rssi', enabled: true, priority: 6, confidenceWeight: 0.62 },
+  { source: 'wifi_rtt', enabled: true, priority: 9, confidenceWeight: 0.92 },
+  { source: 'wifi_fingerprint', enabled: true, priority: 7, confidenceWeight: 0.78 },
+  { source: 'cellular', enabled: true, priority: 4, confidenceWeight: 0.45 },
+  { source: 'cell_serving', enabled: true, priority: 5, confidenceWeight: 0.52 },
+  { source: 'cell_neighbor', enabled: true, priority: 4, confidenceWeight: 0.44 },
+  { source: 'uwb_range', enabled: true, priority: 10, confidenceWeight: 0.98 },
+  { source: 'uwb_direction', enabled: true, priority: 10, confidenceWeight: 0.98 },
+  { source: 'bluetooth_proximity', enabled: true, priority: 4, confidenceWeight: 0.45 },
+  { source: 'ble_rssi', enabled: true, priority: 5, confidenceWeight: 0.52 },
+  { source: 'ble_aoa', enabled: true, priority: 8, confidenceWeight: 0.86 },
+  { source: 'accelerometer', enabled: true, priority: 3, confidenceWeight: 0.30 },
+  { source: 'imu_gyro', enabled: true, priority: 3, confidenceWeight: 0.30 },
+  { source: 'magnetometer', enabled: true, priority: 3, confidenceWeight: 0.30 },
+  { source: 'barometer', enabled: true, priority: 4, confidenceWeight: 0.40 },
+  { source: 'browser_geolocation', enabled: true, priority: 8, confidenceWeight: 0.84 },
+  { source: 'browser_timestamp', enabled: true, priority: 2, confidenceWeight: 0.15 },
+  { source: 'network_region', enabled: true, priority: 2, confidenceWeight: 0.18 },
+  { source: 'social_media', enabled: true, priority: 3, confidenceWeight: 0.28 },
+  { source: 'social_geotag', enabled: true, priority: 6, confidenceWeight: 0.64 },
+  { source: 'visual_detection', enabled: true, priority: 6, confidenceWeight: 0.64 },
+  { source: 'vehicle_telemetry', enabled: true, priority: 9, confidenceWeight: 0.90 },
+  { source: 'public_camera', enabled: true, priority: 5, confidenceWeight: 0.56 },
+  { source: 'traffic_cam', enabled: true, priority: 5, confidenceWeight: 0.56 },
+  { source: 'satellite_imagery', enabled: true, priority: 4, confidenceWeight: 0.42 },
+  { source: 'historical_location', enabled: true, priority: 2, confidenceWeight: 0.16 },
+  { source: 'public_record', enabled: true, priority: 2, confidenceWeight: 0.16 },
+  { source: 'manual_input', enabled: true, priority: 3, confidenceWeight: 0.30 },
+  { source: 'interpolated', enabled: true, priority: 1, confidenceWeight: 0.10 },
+  { source: 'predicted', enabled: true, priority: 1, confidenceWeight: 0.08 },
 ];
 
 // Earth radius in meters
@@ -78,6 +101,94 @@ export class InputFusionEngine {
       sources: this.config.sources.length,
       conflictResolution: this.config.conflictResolution,
     });
+  }
+
+  private defaultAccuracyMeters(source: DataSource): number {
+    switch (source) {
+      case 'uwb_range':
+      case 'uwb_direction': return 1.5;
+      case 'wifi_rtt': return 2.5;
+      case 'gnss_fix':
+      case 'device_gps': return 12;
+      case 'browser_geolocation': return 25;
+      case 'ble_aoa': return 8;
+      case 'wifi_fingerprint': return 35;
+      case 'wifi_rssi':
+      case 'wifi_handoff': return 80;
+      case 'vehicle_telemetry': return 20;
+      case 'cell_serving':
+      case 'cell_neighbor':
+      case 'cellular': return 1500;
+      case 'social_geotag': return 250;
+      case 'exif_photo':
+      case 'exif_video':
+      case 'xmp_sidecar':
+      case 'json_sidecar': return 40;
+      case 'network_region': return 25_000;
+      case 'historical_location':
+      case 'public_record':
+      case 'manual_input': return 5_000;
+      case 'interpolated':
+      case 'predicted': return 500;
+      default: return 250;
+    }
+  }
+
+  private effectiveAccuracyMeters(point: GPSPoint): number {
+    const reported = Number(point.accuracy);
+    if (Number.isFinite(reported) && reported > 0) return Math.max(0.5, reported);
+    return this.defaultAccuracyMeters(point.source);
+  }
+
+  private correlationKey(point: GPSPoint): string {
+    return point.correlationGroup || `${point.source}:${point.provenance?.provider || 'unknown'}`;
+  }
+
+  private fusedObservationKind(points: GPSPoint[]): GPSPoint['observationKind'] {
+    const kinds = new Set(points.map(point =>
+      point.observationKind || (
+        point.source === 'predicted' ? 'predicted' :
+        point.source === 'interpolated' ? 'interpolated' :
+        point.source === 'historical_location' || point.source === 'public_record'
+          ? 'historical'
+          : 'observed'
+      )
+    ));
+
+    if (kinds.has('observed')) return 'observed';
+    if (kinds.size === 1 && kinds.has('historical')) return 'historical';
+    if (kinds.size === 1 && kinds.has('predicted')) return 'predicted';
+    if (kinds.size === 1 && kinds.has('interpolated')) return 'interpolated';
+    return 'inferred';
+  }
+
+  private measurementWeight(point: GPSPoint, correlationCount = 1, referenceTimeMs = point.timestamp.getTime()): number {
+    const config = this.sourceConfigs.get(point.source);
+    const prior = config?.confidenceWeight ?? 0.25;
+    const confidence = Math.max(0.001, Math.min(1, point.confidence));
+    const accuracy = this.effectiveAccuracyMeters(point);
+
+    // Information-like weighting: precise measurements contribute more without
+    // allowing tiny claimed accuracies to explode the estimate.
+    const precision = 1 / Math.pow(Math.max(1.5, accuracy), 2);
+
+    // Freshness is relative to the event-time group being reconstructed, not
+    // wall-clock time. Old evidence remains usable for historical reconstruction.
+    const ageSeconds = Math.max(0, (referenceTimeMs - point.timestamp.getTime()) / 1000);
+    const halfLifeSeconds =
+      point.observationKind === 'historical' ? 30 * 24 * 3600 :
+      point.observationKind === 'predicted' ? 15 * 60 :
+      6 * 3600;
+    const freshness = Math.pow(0.5, ageSeconds / halfLifeSeconds);
+
+    const kindFactor =
+      point.observationKind === 'predicted' ? 0.25 :
+      point.observationKind === 'interpolated' ? 0.35 :
+      point.observationKind === 'historical' ? 0.30 :
+      point.observationKind === 'inferred' ? 0.55 :
+      1;
+
+    return prior * confidence * precision * freshness * kindFactor / Math.max(1, correlationCount);
   }
 
   /**
@@ -203,7 +314,18 @@ export class InputFusionEngine {
           points[j].latitude, points[j].longitude
         );
 
-        if (distance <= this.config.deduplicationRadius) {
+        const overlapRadius = Math.max(
+          this.config.deduplicationRadius,
+          Math.min(
+            2_000,
+            Math.sqrt(
+              this.effectiveAccuracyMeters(points[i]) *
+              this.effectiveAccuracyMeters(points[j])
+            )
+          )
+        );
+
+        if (distance <= overlapRadius) {
           group.push(points[j]);
           assigned.add(j);
         }
@@ -220,13 +342,23 @@ export class InputFusionEngine {
    */
   private fuseGroup(points: GPSPoint[]): FusedLocation | null {
     if (points.length === 0) return null;
-    if (points.length === 1) {
+
+    const normalizedPoints = points.map(point => ({
+      ...point,
+      accuracy: this.effectiveAccuracyMeters(point),
+    }));
+
+    if (normalizedPoints.length === 1) {
+      const only = normalizedPoints[0];
       return {
-        point: points[0],
-        contributingSources: [points[0].source],
+        point: {
+          ...only,
+          confidence: this.calculateConsensusConfidence(normalizedPoints),
+        },
+        contributingSources: [only.source],
         fusionMethod: 'single_source',
-        rawInputs: points,
-        qualityScore: points[0].confidence,
+        rawInputs: normalizedPoints,
+        qualityScore: this.calculateQualityScore(normalizedPoints, only),
       };
     }
 
@@ -235,29 +367,29 @@ export class InputFusionEngine {
 
     switch (fusionMethod) {
       case 'weighted_average':
-        fusedPoint = this.weightedAverageFusion(points);
+        fusedPoint = this.weightedAverageFusion(normalizedPoints);
         break;
       case 'highest_confidence':
-        fusedPoint = this.highestConfidenceFusion(points);
+        fusedPoint = this.highestConfidenceFusion(normalizedPoints);
         break;
       case 'most_recent':
-        fusedPoint = this.mostRecentFusion(points);
+        fusedPoint = this.mostRecentFusion(normalizedPoints);
         break;
       case 'consensus':
-        fusedPoint = this.consensusFusion(points);
+        fusedPoint = this.consensusFusion(normalizedPoints);
         break;
       default:
-        fusedPoint = this.weightedAverageFusion(points);
+        fusedPoint = this.weightedAverageFusion(normalizedPoints);
     }
 
-    const contributingSources = [...new Set(points.map(p => p.source))];
-    const qualityScore = this.calculateQualityScore(points, fusedPoint);
+    const contributingSources = [...new Set(normalizedPoints.map(p => p.source))];
+    const qualityScore = this.calculateQualityScore(normalizedPoints, fusedPoint);
 
     return {
       point: fusedPoint,
       contributingSources,
       fusionMethod,
-      rawInputs: points,
+      rawInputs: normalizedPoints,
       qualityScore,
     };
   }
@@ -266,39 +398,71 @@ export class InputFusionEngine {
    * Weighted average fusion - combine positions based on source weights
    */
   private weightedAverageFusion(points: GPSPoint[]): GPSPoint {
+    const correlationCounts = new Map<string, number>();
+    for (const point of points) {
+      const key = this.correlationKey(point);
+      correlationCounts.set(key, (correlationCounts.get(key) || 0) + 1);
+    }
+
+    const referenceTimeMs = Math.max(...points.map(point => point.timestamp.getTime()));
+
     let totalWeight = 0;
     let weightedLat = 0;
-    let weightedLng = 0;
+    let weightedLngSin = 0;
+    let weightedLngCos = 0;
     let weightedAlt = 0;
-    let altCount = 0;
+    let altitudeWeight = 0;
+    let timestampWeight = 0;
+    let weightedTimestamp = 0;
+    let bestPoint = points[0];
+    let bestWeight = -Infinity;
 
     for (const point of points) {
-      const config = this.sourceConfigs.get(point.source);
-      const weight = (config?.confidenceWeight || 0.5) * point.confidence;
-      
-      weightedLat += point.latitude * weight;
-      weightedLng += point.longitude * weight;
-      totalWeight += weight;
+      const key = this.correlationKey(point);
+      const weight = this.measurementWeight(point, correlationCounts.get(key) || 1, referenceTimeMs);
+      if (weight <= 0 || !Number.isFinite(weight)) continue;
 
-      if (point.altitude !== undefined) {
+      weightedLat += point.latitude * weight;
+      const longitudeRadians = point.longitude * DEG_TO_RAD;
+      weightedLngSin += Math.sin(longitudeRadians) * weight;
+      weightedLngCos += Math.cos(longitudeRadians) * weight;
+      totalWeight += weight;
+      weightedTimestamp += point.timestamp.getTime() * weight;
+      timestampWeight += weight;
+
+      if (point.altitude !== undefined && Number.isFinite(point.altitude)) {
         weightedAlt += point.altitude * weight;
-        altCount++;
+        altitudeWeight += weight;
+      }
+      if (weight > bestWeight) {
+        bestWeight = weight;
+        bestPoint = point;
       }
     }
 
-    // Calculate average timestamp
-    const avgTimestamp = new Date(
-      points.reduce((sum, p) => sum + p.timestamp.getTime(), 0) / points.length
-    );
+    if (totalWeight <= 0) return { ...bestPoint };
 
     return {
       latitude: weightedLat / totalWeight,
-      longitude: weightedLng / totalWeight,
-      altitude: altCount > 0 ? weightedAlt / totalWeight : undefined,
+      longitude: this.normalizeLongitude(
+        Math.atan2(weightedLngSin, weightedLngCos) / DEG_TO_RAD
+      ),
+      altitude: altitudeWeight > 0 ? weightedAlt / altitudeWeight : undefined,
       accuracy: this.calculateFusedAccuracy(points),
-      timestamp: avgTimestamp,
-      source: 'device_gps', // Primary source attribution
-      confidence: totalWeight / points.length,
+      timestamp: new Date(weightedTimestamp / Math.max(timestampWeight, Number.EPSILON)),
+      source: bestPoint.source,
+      confidence: this.calculateConsensusConfidence(points),
+      observationKind: this.fusedObservationKind(points),
+      correlationGroup: `fusion:${[...new Set(points.map(point => this.correlationKey(point)))].sort().join('|')}`,
+      provenance: {
+        provider: 'canonical_geoconsole_fusion',
+        transformedBy: ['correlation_aware_inverse_variance'],
+      },
+      metadata: {
+        fusion: 'correlation_aware_inverse_variance',
+        contributingCount: points.length,
+        contributingSources: [...new Set(points.map(point => point.source))],
+      },
     };
   }
 
@@ -339,27 +503,45 @@ export class InputFusionEngine {
    */
   private consensusFusion(points: GPSPoint[]): GPSPoint {
     const lats = points.map(p => p.latitude).sort((a, b) => a - b);
-    const lngs = points.map(p => p.longitude).sort((a, b) => a - b);
+    const referenceLongitude = points[0].longitude;
+    const unwrappedLongitudes = points
+      .map(point => this.unwrapLongitude(point.longitude, referenceLongitude))
+      .sort((a, b) => a - b);
     const mid = Math.floor(points.length / 2);
 
     const medianLat = points.length % 2 === 0
       ? (lats[mid - 1] + lats[mid]) / 2
       : lats[mid];
-    
-    const medianLng = points.length % 2 === 0
-      ? (lngs[mid - 1] + lngs[mid]) / 2
-      : lngs[mid];
+
+    const medianLongitudeUnwrapped = points.length % 2 === 0
+      ? (unwrappedLongitudes[mid - 1] + unwrappedLongitudes[mid]) / 2
+      : unwrappedLongitudes[mid];
+    const medianLng = this.normalizeLongitude(medianLongitudeUnwrapped);
 
     const avgTimestamp = new Date(
       points.reduce((sum, p) => sum + p.timestamp.getTime(), 0) / points.length
     );
 
+    const representative = this.independentRepresentatives(points)
+      .sort((a, b) => this.measurementWeight(b) - this.measurementWeight(a))[0] || points[0];
+
     return {
       latitude: medianLat,
       longitude: medianLng,
+      accuracy: this.calculateFusedAccuracy(points),
       timestamp: avgTimestamp,
-      source: 'device_gps',
+      source: representative.source,
       confidence: this.calculateConsensusConfidence(points),
+      observationKind: this.fusedObservationKind(points),
+      correlationGroup: `fusion:consensus:${[...new Set(points.map(point => this.correlationKey(point)))].sort().join('|')}`,
+      provenance: {
+        provider: 'canonical_geoconsole_fusion',
+        transformedBy: ['consensus_median'],
+      },
+      metadata: {
+        fusion: 'consensus_median',
+        contributingSources: [...new Set(points.map(point => point.source))],
+      },
     };
   }
 
@@ -367,52 +549,129 @@ export class InputFusionEngine {
    * Calculate fused accuracy from multiple readings
    */
   private calculateFusedAccuracy(points: GPSPoint[]): number {
-    const accuracies = points
-      .filter(p => p.accuracy !== undefined)
-      .map(p => p.accuracy!);
-    
-    if (accuracies.length === 0) return 15; // Default 15m
+    // Combine independent correlation groups in information space. Multiple
+    // observations from the same provider/device group do not receive a false
+    // sqrt(N) accuracy bonus.
+    const bestAccuracyByGroup = new Map<string, number>();
+    for (const point of points) {
+      const key = this.correlationKey(point);
+      const accuracy = this.effectiveAccuracyMeters(point);
+      const existing = bestAccuracyByGroup.get(key);
+      if (existing === undefined || accuracy < existing) bestAccuracyByGroup.set(key, accuracy);
+    }
 
-    // Fused accuracy improves with more sources (RSS reduction)
-    const rss = Math.sqrt(
-      accuracies.reduce((sum, a) => sum + a * a, 0) / accuracies.length
-    );
-    
-    // Improvement factor based on number of sources
-    const improvementFactor = Math.sqrt(accuracies.length);
-    return rss / improvementFactor;
+    let information = 0;
+    for (const accuracy of bestAccuracyByGroup.values()) {
+      information += 1 / Math.pow(Math.max(1.5, accuracy), 2);
+    }
+    return information > 0 ? Math.sqrt(1 / information) : 5_000;
   }
 
   /**
    * Calculate quality score for fused location
    */
-  private calculateQualityScore(points: GPSPoint[], fused: GPSPoint): number {
-    // Base score from confidence
-    let score = fused.confidence;
+  private independentRepresentatives(points: GPSPoint[]): GPSPoint[] {
+    const representatives = new Map<string, GPSPoint>();
 
-    // Bonus for multiple sources
-    const uniqueSources = new Set(points.map(p => p.source)).size;
-    score *= (1 + 0.1 * Math.min(uniqueSources - 1, 4));
+    for (const point of points) {
+      const key = this.correlationKey(point);
+      const current = representatives.get(key);
+      if (!current) {
+        representatives.set(key, point);
+        continue;
+      }
 
-    // Penalty for high spread
-    const spread = this.calculateSpread(points);
-    if (spread > 50) score *= 0.8;
-    else if (spread > 20) score *= 0.9;
+      const currentAccuracy = this.effectiveAccuracyMeters(current);
+      const candidateAccuracy = this.effectiveAccuracyMeters(point);
+      if (
+        candidateAccuracy < currentAccuracy ||
+        (candidateAccuracy === currentAccuracy && point.confidence > current.confidence)
+      ) {
+        representatives.set(key, point);
+      }
+    }
 
-    return Math.min(score, 1);
+    return [...representatives.values()];
   }
 
   /**
-   * Calculate consensus confidence
+   * Calculate quality score for fused location without rewarding duplicated feeds.
+   */
+  private calculateQualityScore(points: GPSPoint[], fused: GPSPoint): number {
+    const independent = this.independentRepresentatives(points);
+    const independentCount = independent.length;
+    const consensus = this.calculateConsensusConfidence(points);
+    const fusedAccuracy = Math.max(1, fused.accuracy ?? this.calculateFusedAccuracy(points));
+    const medianAccuracy = [...independent]
+      .map(point => this.effectiveAccuracyMeters(point))
+      .sort((a, b) => a - b)[Math.floor(Math.max(0, independentCount - 1) / 2)] || fusedAccuracy;
+
+    // Precision improvement only helps when it comes from independent evidence.
+    const precisionGain = Math.min(1, medianAccuracy / fusedAccuracy);
+    const independenceFactor = independentCount <= 1
+      ? 0.75
+      : Math.min(1, 0.82 + Math.log2(independentCount) * 0.08);
+
+    return Math.max(0, Math.min(1, consensus * (0.85 + 0.15 * precisionGain) * independenceFactor));
+  }
+
+  /**
+   * Consensus is based on agreement relative to each source's claimed/expected
+   * uncertainty, not fixed meter thresholds.
    */
   private calculateConsensusConfidence(points: GPSPoint[]): number {
-    // High confidence if points are tightly clustered
-    const spread = this.calculateSpread(points);
-    if (spread < 5) return 0.95;
-    if (spread < 10) return 0.85;
-    if (spread < 20) return 0.75;
-    if (spread < 50) return 0.60;
-    return 0.40;
+    const independent = this.independentRepresentatives(points);
+    if (independent.length === 0) return 0;
+
+    if (independent.length === 1) {
+      const only = independent[0];
+      const kindPenalty =
+        only.observationKind === 'predicted' ? 0.35 :
+        only.observationKind === 'interpolated' ? 0.45 :
+        only.observationKind === 'historical' ? 0.55 :
+        only.observationKind === 'inferred' ? 0.70 :
+        1;
+      const sourcePrior = this.sourceConfigs.get(only.source)?.confidenceWeight ?? 0.25;
+      return Math.max(0, Math.min(1, only.confidence * sourcePrior * kindPenalty));
+    }
+
+    let normalizedDisagreementSum = 0;
+    let pairCount = 0;
+
+    for (let i = 0; i < independent.length; i++) {
+      for (let j = i + 1; j < independent.length; j++) {
+        const a = independent[i];
+        const b = independent[j];
+        const distance = this.haversineDistance(a.latitude, a.longitude, b.latitude, b.longitude);
+        const expectedSigma = Math.sqrt(
+          Math.pow(this.effectiveAccuracyMeters(a), 2) +
+          Math.pow(this.effectiveAccuracyMeters(b), 2)
+        );
+        normalizedDisagreementSum += distance / Math.max(1, expectedSigma);
+        pairCount++;
+      }
+    }
+
+    const normalizedDisagreement = pairCount > 0
+      ? normalizedDisagreementSum / pairCount
+      : 0;
+    const agreement = Math.exp(-0.5 * normalizedDisagreement * normalizedDisagreement);
+
+    const confidenceMean = independent.reduce((sum, point) => {
+      const sourcePrior = this.sourceConfigs.get(point.source)?.confidenceWeight ?? 0.25;
+      const kindFactor =
+        point.observationKind === 'predicted' ? 0.25 :
+        point.observationKind === 'interpolated' ? 0.35 :
+        point.observationKind === 'historical' ? 0.30 :
+        point.observationKind === 'inferred' ? 0.55 :
+        1;
+      return sum + Math.max(0, Math.min(1, point.confidence)) * sourcePrior * kindFactor;
+    }, 0) / independent.length;
+
+    // Independent corroboration can strengthen confidence, but never manufacture
+    // certainty when the underlying observations disagree.
+    const corroboration = Math.min(1, 0.88 + 0.04 * Math.min(3, independent.length - 1));
+    return Math.max(0, Math.min(1, confidenceMean * agreement * corroboration));
   }
 
   /**
@@ -430,6 +689,20 @@ export class InputFusionEngine {
       }
     }
     return maxDistance;
+  }
+
+  private normalizeLongitude(longitude: number): number {
+    let normalized = longitude;
+    while (normalized > 180) normalized -= 360;
+    while (normalized <= -180) normalized += 360;
+    return normalized;
+  }
+
+  private unwrapLongitude(longitude: number, reference: number): number {
+    let unwrapped = longitude;
+    while (unwrapped - reference > 180) unwrapped -= 360;
+    while (unwrapped - reference < -180) unwrapped += 360;
+    return unwrapped;
   }
 
   /**
@@ -471,13 +744,32 @@ export class InputFusionEngine {
    * Generate cache key for fusion results
    */
   private generateCacheKey(inputs: GPSPoint[]): string {
-    // Use hash of sorted input coordinates and timestamps
-    const sortedInputs = [...inputs].sort((a, b) => 
-      a.latitude - b.latitude || a.longitude - b.longitude
-    );
-    return sortedInputs.slice(0, 10).map(p => 
-      `${p.latitude.toFixed(4)},${p.longitude.toFixed(4)},${p.timestamp.getTime()}`
-    ).join('|');
+    // Every evidence item participates in the key. Truncating the set can reuse
+    // a fusion result after new evidence arrives, which is unacceptable for a
+    // location authority.
+    const canonical = [...inputs]
+      .sort((a, b) =>
+        a.timestamp.getTime() - b.timestamp.getTime() ||
+        a.latitude - b.latitude ||
+        a.longitude - b.longitude ||
+        a.source.localeCompare(b.source)
+      )
+      .map(point => [
+        point.timestamp.getTime(),
+        point.latitude.toFixed(7),
+        point.longitude.toFixed(7),
+        point.altitude ?? '',
+        point.accuracy ?? '',
+        point.source,
+        point.confidence.toFixed(6),
+        point.observationKind ?? '',
+        point.correlationGroup ?? '',
+        point.provenance?.provider ?? '',
+        point.provenance?.recordId ?? '',
+      ].join(','))
+      .join('|');
+
+    return createHash('sha256').update(canonical).digest('hex');
   }
 
   /**
