@@ -49,7 +49,13 @@ interface StreamingAudioSession {
 }
 
 const SERVER_TTS_FETCH_TIMEOUT_MS = 20_000;
+const MOBILE_SESSION_BUFFER_TIMEOUT_MS = 12_000;
 const MIN_PLAYBACK_WATCHDOG_MS = 10_000;
+
+function shouldBufferLexaraPlaybackOnThisDevice(): boolean {
+  return typeof navigator !== 'undefined'
+    && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+}
 const MAX_PLAYBACK_WATCHDOG_MS = 240_000;
 
 export function useVoiceSynthesis(): VoiceSynthesisResult {
@@ -146,6 +152,20 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     }
   }, []);
 
+  const bufferStreamingSessionForMobile = useCallback(async (audioUrl: string): Promise<Blob> => {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), MOBILE_SESSION_BUFFER_TIMEOUT_MS);
+    try {
+      const response = await fetch(audioUrl, { signal: controller.signal });
+      if (!response.ok) throw new Error(`LEXARA buffered playback failed (${response.status})`);
+      const blob = await response.blob();
+      if (!blob.size) throw new Error('LEXARA buffered playback returned empty audio');
+      return blob;
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }, []);
+
   const fetchServerAudio = useCallback(async (text: string): Promise<ServerAudio> => {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), SERVER_TTS_FETCH_TIMEOUT_MS);
@@ -198,10 +218,21 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     try {
       const session = await createStreamingAudioSession(text);
       if (turnId !== activeTurnRef.current) return;
-      playback = LexaraServerTTS.play({ audioUrl: session.audioUrl }).then<PlaybackOutcome>(() => 'ended');
+
+      if (shouldBufferLexaraPlaybackOnThisDevice()) {
+        // The observed production stream finishes in well under a second, so on
+        // mobile it is better to absorb that tiny delay once and play from a
+        // complete local Blob than risk repeated media-buffer starvation while
+        // microphone capture and echo cancellation are active.
+        const blob = await bufferStreamingSessionForMobile(session.audioUrl);
+        if (turnId !== activeTurnRef.current) return;
+        playback = LexaraServerTTS.play(blob).then<PlaybackOutcome>(() => 'ended');
+      } else {
+        playback = LexaraServerTTS.play({ audioUrl: session.audioUrl }).then<PlaybackOutcome>(() => 'ended');
+      }
     } catch {
       // Route-local recovery: retain the proven buffered endpoint if streaming
-      // session creation is unavailable, without switching acoustic identity.
+      // session creation/buffering is unavailable, without switching acoustic identity.
       const audio = await fetchServerAudio(text);
       if (turnId !== activeTurnRef.current) return;
       expectedDuration = audio.durationMs || expectedDuration;
@@ -230,7 +261,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
 
     setIsSpeaking(false);
     options.onEnd?.();
-  }, [clearPlaybackWatchdog, createStreamingAudioSession, fetchServerAudio, makeInterruptionPromise, makePlaybackWatchdog]);
+  }, [bufferStreamingSessionForMobile, clearPlaybackWatchdog, createStreamingAudioSession, fetchServerAudio, makeInterruptionPromise, makePlaybackWatchdog]);
 
   const speak = useCallback(async (
     text: string,

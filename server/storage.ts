@@ -73,7 +73,6 @@ import {
   type LexaraConversation,
   type InsertLexaraConversation,
 } from "@shared/schema";
-import crypto from "crypto";
 
 // Define types for PublicEvidence (Corrupt Law Enforcement & Informant Hub)
 type PublicEvidence = {
@@ -1611,6 +1610,7 @@ export class DatabaseStorage implements IStorage {
     context?: any;
   }): Promise<LexaraConversation> {
     const values = {
+      id: crypto.randomUUID(),
       userId: data.userId || null,
       sessionId: data.sessionId || null,
       userPrompt: data.userPrompt,
@@ -1624,24 +1624,49 @@ export class DatabaseStorage implements IStorage {
       createdAt: new Date(),
     };
 
-    try {
-      const [conversation] = await db
-        .insert(lexaraConversations)
-        .values(values)
-        .returning();
-      return conversation;
-    } catch (error: any) {
-      const code = error?.code || error?.cause?.code;
-      if (code !== 'XX000') throw error;
+    const transientCodes = new Set([
+      'XX000',
+      '08000',
+      '08003',
+      '08006',
+      '57P01',
+      'ECONNRESET',
+      'ETIMEDOUT',
+      'EPIPE',
+    ]);
+    let lastError: any;
 
-      // Supabase/Supavisor can occasionally surface an internal_error on a
-      // compound INSERT ... RETURNING path. Retry once as a plain insert with
-      // an application-generated id; conversation persistence remains
-      // route-local and never blocks the live response.
-      const id = crypto.randomUUID();
-      await db.insert(lexaraConversations).values({ ...values, id });
-      return { id, ...values } as LexaraConversation;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        const [conversation] = await db
+          .insert(lexaraConversations)
+          .values(values)
+          .returning();
+        return conversation;
+      } catch (error: any) {
+        lastError = error;
+        const code = String(error?.code || error?.cause?.code || '');
+        const message = String(error?.message || error?.cause?.message || '');
+        const transient = transientCodes.has(code)
+          || /connection|timeout|terminated|socket|internal error/i.test(message);
+
+        console.warn('[LEXARA Persistence] insert attempt failed', {
+          attempt,
+          code: code || null,
+          message: message.slice(0, 500) || null,
+          detail: String(error?.detail || error?.cause?.detail || '').slice(0, 500) || null,
+          hint: String(error?.hint || error?.cause?.hint || '').slice(0, 500) || null,
+          causeCode: error?.cause?.code || null,
+          causeMessage: String(error?.cause?.message || '').slice(0, 500) || null,
+          transient,
+        });
+
+        if (!transient || attempt >= 3) break;
+        await new Promise(resolve => setTimeout(resolve, attempt * 250));
+      }
     }
+
+    throw lastError;
   }
 
   /**

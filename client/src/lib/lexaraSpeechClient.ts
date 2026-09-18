@@ -62,6 +62,38 @@ function getLexaraPlaybackAudioElement(): HTMLAudioElement {
 
 const SILENT_AUDIO_BASE64 = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
 
+function reportLexaraPlaybackEvent(event: string, audio?: HTMLAudioElement | null): void {
+  if (typeof window === 'undefined') return;
+  const payload = JSON.stringify({
+    event,
+    currentTime: audio && Number.isFinite(audio.currentTime) ? Number(audio.currentTime.toFixed(3)) : null,
+    readyState: audio?.readyState ?? null,
+    networkState: audio?.networkState ?? null,
+    paused: audio?.paused ?? null,
+    source: audio?.src?.startsWith('blob:') ? 'buffered' : 'streaming',
+    userAgent: navigator.userAgent.slice(0, 220),
+  });
+
+  try {
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon(
+        '/api/lexara/voice/playback-event',
+        new Blob([payload], { type: 'application/json' }),
+      );
+      return;
+    }
+  } catch {
+    // Best-effort telemetry must never affect playback.
+  }
+
+  void fetch('/api/lexara/voice/playback-event', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: payload,
+    keepalive: true,
+  }).catch(() => undefined);
+}
+
 export async function getLexaraSharedAudioContext(): Promise<AudioContext> {
   if (!audioContext || audioContext.state === 'closed') {
     audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -238,25 +270,35 @@ export const LexaraServerTTS = {
       audio.onplay = () => {
         if (playbackState.currentAudio !== audio) return;
         playbackState.isPlaying = true;
+        reportLexaraPlaybackEvent('play', audio);
         Lexara.notify(Lexara.events.SPEAKING_START);
       };
       audio.onplaying = () => {
         if (playbackState.currentAudio !== audio) return;
+        reportLexaraPlaybackEvent('playing', audio);
         console.debug('[LEXARA Audio] playing', {
           startupMs: Math.round(performance.now() - playbackStartedAt),
         });
       };
       audio.onwaiting = () => {
         if (playbackState.currentAudio !== audio) return;
+        reportLexaraPlaybackEvent('waiting', audio);
         console.warn('[LEXARA Audio] waiting for buffered audio');
       };
       audio.onstalled = () => {
         if (playbackState.currentAudio !== audio) return;
+        reportLexaraPlaybackEvent('stalled', audio);
         console.warn('[LEXARA Audio] media stream stalled');
       };
 
-      audio.onended = () => finish('resolve');
-      audio.onerror = error => finish('reject', error);
+      audio.onended = () => {
+        reportLexaraPlaybackEvent('ended', audio);
+        finish('resolve');
+      };
+      audio.onerror = error => {
+        reportLexaraPlaybackEvent('error', audio);
+        finish('reject', error);
+      };
 
       audio.play().catch(error => finish('reject', error));
     });
@@ -288,6 +330,7 @@ export const LexaraServerTTS = {
 
     if (audio) {
       try {
+        if (!audio.paused) reportLexaraPlaybackEvent('interrupted', audio);
         audio.pause();
         audio.currentTime = 0;
       } catch {
