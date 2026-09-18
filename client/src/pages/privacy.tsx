@@ -1,4 +1,3 @@
-import { Shield } from "lucide-react";
 import { Link } from "wouter";
 import { SEOHead } from "@/components/SEOHead";
 import { PageBreadcrumbs } from "@/components/PageBreadcrumbs";
@@ -11,11 +10,11 @@ export default function Privacy() {
   return (
     <div className="min-h-screen bg-background">
       <SEOHead
-        title="Bad Blue — Privacy Policy | Data Protection & User Rights"
-        description="BadBlue privacy policy: how we protect your data during police misconduct complaints, §1983 civil rights lawsuits, FOIA requests, and officer resignation petitions. Your privacy matters."
-        canonicalUrl="https://example.com/privacy"
+        title="Privacy Policy | Legal What?"
+        description="Read the Legal What? privacy policy for account data, AI-assisted legal tools, uploaded documents, public-record research, background reports, people searches, and other platform services."
+        canonicalUrl="https://legalwhat.com/privacy"
         breadcrumbs={[
-          { name: "Privacy Policy", url: "https://example.com/privacy" }
+          { name: "Privacy Policy", url: "https://legalwhat.com/privacy" }
         ]}
       />
       
@@ -23,8 +22,8 @@ export default function Privacy() {
       <header className="border-b bg-card sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2 cursor-pointer hover-elevate px-2 py-1 rounded-md">
-            <Shield className="w-6 h-6 text-primary" />
-            <span className="font-semibold text-lg">BadBlue</span>
+            <img src="/images/Legal%20What%20Icon.png" alt="" aria-hidden="true" className="w-8 h-8 object-contain" />
+            <span className="font-semibold text-lg">Legal What?</span>
           </Link>
           <nav className="flex items-center gap-4">
             <Link href="/contact" className="text-sm text-muted-foreground hover:text-foreground">Contact</Link>
@@ -42,7 +41,7 @@ export default function Privacy() {
           <section>
             <h2 className="text-2xl font-semibold mb-4">1. Introduction</h2>
             <p className="text-muted-foreground leading-relaxed">
-              BadBlue ("we," "our," or "us") is a police accountability platform that provides tools for filing 
+              Legal What? ("we," "our," or "us") is a police accountability platform that provides tools for filing 
               police misconduct complaints, generating 42 U.S.C. §1983 civil rights lawsuits, submitting FOIA requests, 
               and creating petitions demanding officer resignation. We are committed to protecting your privacy and 
               personal information while you use our affordable, fully remote legal empowerment services.
@@ -153,7 +152,7 @@ export default function Privacy() {
               Email: contact.badblue@gmail.com
             </p>
             <p className="text-muted-foreground mt-4">
-              BadBlue is an affordable alternative to hiring a civil rights attorney. Our fully remote platform 
+              Legal What? is an affordable alternative to hiring a civil rights attorney. Our fully remote platform 
               means you never need to leave home to pursue police accountability.
             </p>
           </section>
@@ -172,7 +171,7 @@ export default function Privacy() {
             <Link href="/privacy" className="hover:text-foreground font-medium text-foreground">Privacy Policy</Link>
           </div>
           <p className="text-center text-xs text-muted-foreground mt-4">
-            BadBlue — Affordable police accountability tools, fully online.
+            Legal What? — Affordable police accountability tools, fully online.
           </p>
         </div>
       </footer>
