@@ -34,6 +34,7 @@ const legalModelOrchestrator = read('server/legalModelOrchestrator.ts');
 const mlRoutingWorker = read('server/services/mlnlp/mlRoutingWorker.ts');
 const constants = read('server/constants.ts');
 const openRouterService = read('server/openRouterService.ts');
+const harmonyWarmup = read('server/aiHarmonyWarmup.ts');
 
 const registrySection = registry.split('HARMONY_17_PARTICIPANTS')[1]?.split('if (HARMONY_17_PARTICIPANTS.length !== 17)')[0] || '';
 const participantCount = (registrySection.match(/provider:\s*PROVIDER\./g) || []).length;
@@ -56,6 +57,15 @@ for (const model of [
 ]) {
   must(registry.includes(model), `current Harmony registry includes ${model}`);
 }
+
+must(
+  harmonyWarmup.includes('prewarmHarmonyProviders') &&
+    harmonyWarmup.includes('isHarmonyProviderWarmHealthy') &&
+    harmonyWarmup.includes('warmGroqModelCatalog') &&
+    collaboration.includes('isHarmonyProviderWarmHealthy') &&
+    serverIndex.includes('prewarmHarmonyProviders()'),
+  'Harmony prewarms live model catalogs without making warmup a startup dependency',
+);
 
 must(
   collaboration.includes('selectProvidersForTask') &&
