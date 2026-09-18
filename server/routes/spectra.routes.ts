@@ -14,6 +14,18 @@ const acquireSchema = z.object({
 });
 
 const PHONE_RE = /(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}/;
+
+function normalizeTargetIntent(value: string): string {
+  const cleaned = value
+    .trim()
+    .replace(/^(?:please\s+)?(?:i\s+(?:need|want)\s+(?:you\s+)?to\s+)?(?:find|locate|track|look\s+for)\s+/i, '')
+    .replace(/^(?:i(?:'m|\s+am)\s+looking\s+for)\s+/i, '')
+    .replace(/^(?:where\s+is|where's)\s+/i, '')
+    .replace(/[?.!]+$/g, '')
+    .trim();
+  return cleaned || value.trim();
+}
+
 const GENERIC_TARGET_RE = /^(?:(?:a|an|the|my|their|his|her)\s+)?(?:person|individual|business|company|organization|vehicle|car|truck|device|object|place|address|thing|property|phone|phone number|target)$/i;
 
 function normalizeConfidence(value: unknown): number {
@@ -149,11 +161,12 @@ router.post('/acquire', async (req: Request, res: Response) => {
   }
 
   const { target, details } = parsed.data;
-  const combinedTargetText = [target, details].filter(Boolean).join(' ');
+  const normalizedTarget = normalizeTargetIntent(target);
+  const combinedTargetText = [normalizedTarget, details].filter(Boolean).join(' ');
   const phone = combinedTargetText.match(PHONE_RE)?.[0];
-  const searchQuery = GENERIC_TARGET_RE.test(target)
+  const searchQuery = GENERIC_TARGET_RE.test(normalizedTarget)
     ? details
-    : target;
+    : normalizedTarget;
   const broadQuery = [searchQuery, details].filter(Boolean).join(' ');
 
   try {
