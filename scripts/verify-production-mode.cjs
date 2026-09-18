@@ -70,7 +70,7 @@ test('Observed, historical, inferred and interpolated evidence are visually clas
   map.includes("'interpolated', '#94a3b8'"));
 test('Weather and earth-observation layers follow the selected timeline',
   map.includes('weatherRadarTilesFor') &&
-  map.includes('/c/tile.py/1.0.0/{layer}') &&
+  map.includes('/cache/tile.py/1.0.0/{layer}') &&
   dashboard.includes('displayTime={timelineContextTime}'));
 test('Satellite attribution is explicit and configurable',
   map.includes('VITE_SATELLITE_ATTRIBUTION') &&
