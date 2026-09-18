@@ -294,6 +294,61 @@ export class AICollaborationOrchestrator {
       systemPrompt: options.systemPrompt,
       fallbackProviders: providers.filter(provider => provider !== task.provider),
     }));
+
+    // Harmony invariant: every configured, healthy participant contributes to
+    // every orchestrated service task. Task builders can assign specialist
+    // roles, but they are not allowed to silently exclude the rest of the mesh.
+    const representedProviders = new Set(tasks.map(task => task.provider));
+    for (const provider of providers) {
+      if (representedProviders.has(provider)) continue;
+      const capabilities = getHarmonyCapabilities(provider);
+      const role = capabilities.includes('verification')
+        ? 'verifier'
+        : capabilities.includes('research')
+          ? 'rapid-searcher'
+          : capabilities.includes('coding') && attributes.needsCodeGeneration
+            ? 'code-generator'
+            : 'pattern-analyst';
+      tasks.push({
+        id: `${taskName}-harmony-peer-${provider}`,
+        provider,
+        model: this.getDefaultModelForProvider(provider),
+        role,
+        prompt: `Contribute an independent ${role} perspective to this task. Focus on your strongest relevant capabilities, identify uncertainty, and do not fabricate facts or sources.\n\n${query}`,
+        systemPrompt: options.systemPrompt,
+        priority: 1,
+        fallbackProviders: providers.filter(candidate => candidate !== provider),
+        attributes,
+      });
+    }
+
+    // A final capability-selected synthesizer sees every successful contribution.
+    // This is the only global answer authority; individual provider output is
+    // evidence, not a competing final response.
+    const allContributionIds = tasks.map(task => task.id);
+    if (allContributionIds.length > 1) {
+      const finalProvider = this.selectProviderByCapabilities(
+        providers,
+        attributes.needsLegalAnalysis
+          ? ['legal-analysis', 'deep-reasoning', 'verification']
+          : attributes.needsCodeGeneration
+            ? ['coding', 'deep-reasoning', 'verification']
+            : ['deep-reasoning', 'verification', 'structured-output'],
+      );
+      const maxPriority = Math.max(...tasks.map(task => task.priority), 1);
+      tasks.push({
+        id: `${taskName}-harmony-final`,
+        provider: finalProvider,
+        model: this.getDefaultModelForProvider(finalProvider),
+        role: 'harmony-synthesizer',
+        prompt: 'Synthesize every successful Harmony contribution below into one accurate, coherent answer. Reconcile disagreements conservatively, distinguish verified facts from inference, preserve material uncertainty, and never mention internal provider names or orchestration.\n\n[Results will be provided]',
+        systemPrompt: options.systemPrompt,
+        priority: maxPriority + 1,
+        dependencies: allContributionIds,
+        fallbackProviders: providers.filter(candidate => candidate !== finalProvider),
+        attributes: { ...attributes, needsVerification: true },
+      });
+    }
     
     // Execute tasks
     const results = await this.executeCollaborationTasks(tasks, attributes);
@@ -1069,7 +1124,10 @@ export class AICollaborationOrchestrator {
       return 'No successful responses from collaboration.';
     }
     
-    // For race strategy, use first result
+    const harmonyFinal = successfulResults.find(result => result.role === 'harmony-synthesizer');
+    if (harmonyFinal?.content?.trim()) return harmonyFinal.content.trim();
+
+    // If the final synthesis route itself failed, preserve route-local success.
     if (strategy === 'parallel-race') {
       return successfulResults[0].content;
     }
