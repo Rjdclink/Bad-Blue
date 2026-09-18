@@ -445,3 +445,7 @@ export function stopBpsCompressionMeshForTests(): void {
   stopZeroCapitalRecoveryObservability();
   installed = false;
 }
+
+export function stopBpsCompressionMesh(): void {
+  stopBpsCompressionMeshForTests();
+}
