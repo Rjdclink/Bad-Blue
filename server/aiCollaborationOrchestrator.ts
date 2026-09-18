@@ -36,6 +36,7 @@ export interface CollaborationTask {
   attributes: TaskAttributes;
   timeout?: number;
   requestTimeoutMs?: number;
+  maxFallbacks?: number;
 }
 
 /**
@@ -285,6 +286,7 @@ export class AICollaborationOrchestrator {
       systemPrompt?: string;
       maxParticipants?: number;
       requestTimeoutMs?: number;
+      maxFallbacks?: number;
     } = {},
   ): Promise<OrchestratedResponse> {
     const startTime = Date.now();
@@ -321,6 +323,7 @@ export class AICollaborationOrchestrator {
       ...task,
       systemPrompt: options.systemPrompt,
       requestTimeoutMs: task.requestTimeoutMs || options.requestTimeoutMs || task.timeout,
+      maxFallbacks: task.maxFallbacks ?? options.maxFallbacks,
       // Failover can use any healthy capability-compatible route from the pool,
       // including routes not selected for the first attempt.
       fallbackProviders: candidateProviders.filter(provider => provider !== task.provider),
@@ -360,6 +363,7 @@ export class AICollaborationOrchestrator {
         dependencies: allContributionIds,
         fallbackProviders: candidateProviders.filter(candidate => candidate !== finalProvider),
         requestTimeoutMs: options.requestTimeoutMs,
+        maxFallbacks: options.maxFallbacks,
         attributes: { ...attributes, needsVerification: true },
       });
     }
@@ -1144,7 +1148,7 @@ export class AICollaborationOrchestrator {
           .filter(provider => provider !== task.provider)
           .filter(harmonyProviderAvailable),
       );
-      if (alternatives.length > 0) {
+      if ((task.maxFallbacks ?? 1) > 0 && alternatives.length > 0) {
         // One capability-matched alternate is enough for route-local recovery.
         // A failed provider must not create a retry fan-out or hold the user
         // hostage while multiple unhealthy routes are retried.
@@ -1158,6 +1162,7 @@ export class AICollaborationOrchestrator {
                   provider,
                   model: this.getDefaultModelForProvider(provider),
                   fallbackProviders: [],
+                  maxFallbacks: 0,
                 },
                 completedTasks,
               );
