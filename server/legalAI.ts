@@ -1,5 +1,5 @@
 // Advanced Legal AI System - Sophisticated Legal Analysis Platform
-// Using unified 4-way AI provider with automatic distribution
+// Uses the full configured capability-driven Harmony mesh
 import { 
   generateUserText,
   TaskPriority
@@ -24,9 +24,9 @@ import {
 
 
 /**
- * Unified legal AI generation using the governor
- * Automatically handles Gemini-first, Groq-backup strategy
- * Records all usage with USER context for proper tracking
+ * Unified legal AI generation through the platform Harmony entry point.
+ * Provider participation is capability-driven; no service-local fallback order
+ * or model preference is authoritative here.
  */
 async function generateLegalContent(
   taskName: string,
@@ -35,7 +35,7 @@ async function generateLegalContent(
   expectJSON: boolean = false
 ): Promise<string> {
   try {
-    // Use the unified provider with USER context for all legal AI
+    // Use the unified Harmony entry point for user-facing legal analysis
     const response = await generateUserText(
       `legal-${taskName}`,
       prompt,
@@ -239,7 +239,7 @@ Please provide (in plain, everyday language):
 
 IMPORTANT: Write your entire response in plain English, as if explaining to someone with no legal knowledge. Avoid legal jargon. When you must use a legal term, immediately explain it in simple words. This is not legal advice and the person should consult an attorney.`;
 
-  // Use unified 4-way AI provider system (Mistral 50%, Groq 30-35%, Gemini 10%, Claude 5-10%)
+  // Use the complete configured Harmony mesh; provider identity is not statically weighted here.
   try {
     const response = await generateUserText(
       'legal-issue-analysis',
