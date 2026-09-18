@@ -3,6 +3,12 @@ import {pipeline} from '../integration/master-pipeline';
 import { gasOracle, balanceMonitor, networkHealth } from '../bridge';
 import { zeroCapitalEngine } from '../core/zero-capital-engine';
 import { ensureCryptocrawlOverflowRuntimeSchema } from '../runtime/cryptocrawl-overflow-runtime-schema.js';
+import {
+  activateCanonicalCryptoCrawlerRuntimeWiring,
+  deactivateCanonicalCryptoCrawlerRuntimeWiring,
+  getCanonicalCryptoCrawlerActivationState,
+} from '../integration/canonical-runtime-wiring.js';
+import { ensureTelemetryBootstrap } from '../integration/telemetry-bootstrap.js';
 import { getCryptocrawlGovernance, initializeGovernance } from '../governance/index.js';
 import { stageManager } from '../governance/stage-management.js';
 import { GovernanceError } from '../governance/types.js';
@@ -35,6 +41,7 @@ router.get('/status', (req, res) => {
     control: {
       operatorStartRequired: true,
       automaticStartEnabled: false,
+      ...getCanonicalCryptoCrawlerActivationState(),
     },
     cryptoCrawl: cryptoCrawlState.getStatus(),
     startedAt: systemState.running ? new Date(systemState.startedAt).toISOString() : null,
@@ -400,6 +407,7 @@ export async function stopCryptoCrawlerRuntime(): Promise<{ stopped: boolean; fa
     Promise.resolve(zeroCapitalEngine.stop()),
     Promise.resolve(autonomousFaucet.stop()),
     cryptoCrawlState.disable(),
+    deactivateCanonicalCryptoCrawlerRuntimeWiring(),
   ]);
   const failures = results
     .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
@@ -408,7 +416,9 @@ export async function stopCryptoCrawlerRuntime(): Promise<{ stopped: boolean; fa
   const stopped =
     !zeroCapitalEngine.getState().isRunning &&
     !pipeline.isRunning() &&
-    !cryptoCrawlState.getStatus().enabled;
+    !autonomousFaucet.isActive() &&
+    !cryptoCrawlState.getStatus().enabled &&
+    !getCanonicalCryptoCrawlerActivationState().activationAllowed;
 
   if (stopped) {
     notifyCryptocrawlerComplete();
@@ -528,6 +538,8 @@ export async function startCryptoCrawlerRuntime(): Promise<CryptoCrawlerStartRes
   systemState.lastError = null;
 
   try {
+    activateCanonicalCryptoCrawlerRuntimeWiring();
+    void ensureTelemetryBootstrap();
     console.log('[CryptoCrawl] Starting crawler dependencies');
     await cryptoCrawlState.enable();
 
