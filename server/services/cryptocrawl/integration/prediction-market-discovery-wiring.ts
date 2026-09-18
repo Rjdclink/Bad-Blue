@@ -3,12 +3,12 @@ import {
   discoverPredictionMarketParityOpportunities,
   type PredictionParityOpportunity,
 } from '../discovery/prediction-market-opportunity-generator.js';
-import { ensureStageOneVeloraRecovery } from '../discovery/stage-one-dex-mempool-velora-recovery.js';
+import { ensureStageOneVeloraRecovery, stopStageOneVeloraRecovery } from '../discovery/stage-one-dex-mempool-velora-recovery.js';
 import {
   ensureKalshiSystemWiring,
   refreshKalshiSystemEvidenceNow,
 } from './kalshi-system-wiring.js';
-import { ensureStageOneSpreadObservability } from './stage-one-spread-observability.js';
+import { ensureStageOneSpreadObservability, stopStageOneSpreadObservability } from './stage-one-spread-observability.js';
 
 let timer: NodeJS.Timeout | null = null;
 let inFlight: Promise<void> | null = null;
@@ -114,4 +114,11 @@ export function ensurePredictionMarketDiscoveryWiring(): void {
     executionAuthority: false,
     exactNetProfitAuthority: false,
   });
+}
+
+export function stopPredictionMarketDiscoveryWiring(): void {
+  if (timer) clearInterval(timer);
+  timer = null;
+  stopStageOneVeloraRecovery();
+  stopStageOneSpreadObservability();
 }
