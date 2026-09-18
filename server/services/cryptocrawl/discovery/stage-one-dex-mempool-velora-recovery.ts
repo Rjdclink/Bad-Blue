@@ -415,3 +415,7 @@ export function ensureStageOneVeloraRecovery(): void {
     syntheticEconomicsAllowed: false,
   });
 }
+export function stopStageOneVeloraRecovery(): void {
+  if (timer) clearInterval(timer);
+  timer = null;
+}
