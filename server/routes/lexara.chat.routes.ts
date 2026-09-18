@@ -13,6 +13,7 @@ import {
   type LexaraConversationMessage,
 } from '../lexara/LexaraConversationOrchestrator';
 import { MASTER_USER_ID } from '../masterPassword';
+import { getConfiguredHarmonyParticipants } from '../aiHarmonyModelRegistry';
 
 const router = express.Router();
 const log = createLogger('LEXARARoutes');
@@ -225,9 +226,16 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
 });
 
 router.get('/status', (_req: Request, res: Response) => {
+  const configuredHarmonyParticipants = getConfiguredHarmonyParticipants().length;
   res.json({
     success: true,
     status: 'active',
+    harmony: {
+      configuredParticipants: configuredHarmonyParticipants,
+      expectedParticipants: 17,
+      fullHarmonyConfigured: configuredHarmonyParticipants === 17,
+      routing: 'capability-first',
+    },
     kernel: {
       name: LEXARA_KERNEL.identity.name,
       age: LEXARA_KERNEL.identity.age,
