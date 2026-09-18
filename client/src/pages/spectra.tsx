@@ -87,11 +87,23 @@ export default function SpectraPage() {
 
   const speakIfEnabled = useCallback((text: string) => {
     if (!voiceMode.isEnabled) return;
+
+    voiceMode.suspendListening();
     voiceSynthesis.speak(text, {
       context: 'guidance',
       autoPlay: true,
-    }).catch(() => undefined);
-  }, [voiceMode.isEnabled, voiceSynthesis]);
+      assistantName: 'SPECTRA',
+      onEnd: () => voiceMode.resumeListening(),
+      onError: () => voiceMode.resumeListening(),
+    }).catch(() => {
+      voiceMode.resumeListening();
+    });
+  }, [
+    voiceMode.isEnabled,
+    voiceMode.resumeListening,
+    voiceMode.suspendListening,
+    voiceSynthesis,
+  ]);
 
   const resetSession = useCallback(() => {
     requestRef.current += 1;
