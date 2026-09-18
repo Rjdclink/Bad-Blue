@@ -114,7 +114,13 @@ export default function Login() {
       return;
     }
 
-    await beginSubscriptionCheckout();
+    subscriptionResumeStarted.current = true;
+    try {
+      await beginSubscriptionCheckout();
+    } catch (error) {
+      subscriptionResumeStarted.current = false;
+      throw error;
+    }
   };
 
   const handleLogin = async (e: FormEvent) => {
@@ -178,7 +184,12 @@ export default function Login() {
           description: "Continue to Square to activate your LegalWhat subscription.",
         });
         subscriptionResumeStarted.current = true;
-        await beginSubscriptionCheckout();
+        try {
+          await beginSubscriptionCheckout();
+        } catch (error) {
+          subscriptionResumeStarted.current = false;
+          throw error;
+        }
       } else {
         const data = await response.json();
         throw new Error(data.error || data.message || "Signup failed");
