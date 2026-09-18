@@ -2,6 +2,7 @@ import crypto from "crypto";
 import bcrypt from "bcrypt";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { getConfig } from "./config";
+import { pool } from "./db";
 
 export const LOCAL_SESSION_COOKIE = "legalwhat_user";
 const LOCAL_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -27,8 +28,31 @@ interface LocalSessionPayload {
   nonce: string;
 }
 
-let client: SupabaseClient | null | undefined;
+let client: SupabaseClient | undefined;
 let clientSelection: Promise<SupabaseClient> | null = null;
+
+type LocalAuthBackend =
+  | { kind: "supabase"; client: SupabaseClient }
+  | { kind: "postgres" };
+
+let authBackend: LocalAuthBackend | null = null;
+let authBackendSelection: Promise<LocalAuthBackend> | null = null;
+const AUTH_DB_QUERY_TIMEOUT_MS = 4_000;
+
+async function authDbQuery(text: string, values: unknown[] = []): Promise<any> {
+  return pool.query({
+    text,
+    values,
+    query_timeout: AUTH_DB_QUERY_TIMEOUT_MS,
+  } as any);
+}
+
+async function probePostgresAuthStore(): Promise<void> {
+  await Promise.all([
+    authDbQuery("SELECT id FROM users LIMIT 1"),
+    authDbQuery("SELECT id FROM auth_accounts LIMIT 1"),
+  ]);
+}
 
 function buildPrimarySupabaseClient(url: string, key: string): SupabaseClient {
   return createClient(url, key, {
@@ -45,7 +69,6 @@ function buildPrimarySupabaseClient(url: string, key: string): SupabaseClient {
 
 async function primarySupabaseClient(): Promise<SupabaseClient> {
   if (client) return client;
-  if (client === null) throw new Error("Primary Supabase HTTP authentication is not configured");
   if (clientSelection) return clientSelection;
 
   // Prefer Supabase's modern server-only secret key, while retaining the legacy
@@ -59,7 +82,6 @@ async function primarySupabaseClient(): Promise<SupabaseClient> {
   ].filter((value, index, values) => value && values.indexOf(value) === index);
 
   if (!url || !keys.length) {
-    client = null;
     throw new Error("Primary Supabase HTTP authentication is not configured");
   }
 
@@ -78,7 +100,6 @@ async function primarySupabaseClient(): Promise<SupabaseClient> {
       lastError = usersProbe.error?.message || accountsProbe.error?.message || lastError;
     }
 
-    client = null;
     throw new Error(`No configured Supabase server key can access the LegalWhat authentication store: ${lastError}`);
   })();
 
@@ -86,6 +107,39 @@ async function primarySupabaseClient(): Promise<SupabaseClient> {
     return await clientSelection;
   } finally {
     clientSelection = null;
+  }
+}
+
+async function resolveLocalAuthBackend(): Promise<LocalAuthBackend> {
+  if (authBackend) return authBackend;
+  if (authBackendSelection) return authBackendSelection;
+
+  authBackendSelection = (async () => {
+    let httpError: unknown = null;
+    try {
+      const supabase = await primarySupabaseClient();
+      authBackend = { kind: "supabase", client: supabase };
+      return authBackend;
+    } catch (error) {
+      httpError = error;
+    }
+
+    try {
+      await probePostgresAuthStore();
+      authBackend = { kind: "postgres" };
+      console.warn("[AUTH] Supabase HTTP server credential unavailable; using bounded canonical PostgreSQL auth store");
+      return authBackend;
+    } catch (postgresError) {
+      const httpMessage = httpError instanceof Error ? httpError.message : String(httpError || "unavailable");
+      const postgresMessage = postgresError instanceof Error ? postgresError.message : String(postgresError || "unavailable");
+      throw new Error(`LegalWhat authentication stores unavailable: http=${httpMessage}; postgres=${postgresMessage}`);
+    }
+  })();
+
+  try {
+    return await authBackendSelection;
+  } finally {
+    authBackendSelection = null;
   }
 }
 
@@ -113,10 +167,15 @@ function mapUser(row: any): StatelessLocalUser {
 }
 
 export async function probeLocalAuthStoreHttp(): Promise<void> {
-  const supabase = await primarySupabaseClient();
+  const backend = await resolveLocalAuthBackend();
+  if (backend.kind === "postgres") {
+    await probePostgresAuthStore();
+    return;
+  }
+
   const [usersProbe, accountsProbe] = await Promise.all([
-    supabase.from("users").select("id").limit(1),
-    supabase.from("auth_accounts").select("id").limit(1),
+    backend.client.from("users").select("id").limit(1),
+    backend.client.from("auth_accounts").select("id").limit(1),
   ]);
   if (usersProbe.error) throw new Error(`Users store probe failed: ${usersProbe.error.message}`);
   if (accountsProbe.error) throw new Error(`Auth accounts store probe failed: ${accountsProbe.error.message}`);
@@ -124,8 +183,17 @@ export async function probeLocalAuthStoreHttp(): Promise<void> {
 
 export async function getLocalUserByIdHttp(userId: string): Promise<StatelessLocalUser | null> {
   if (!userId) return null;
-  const supabase = await primarySupabaseClient();
-  const { data, error } = await supabase
+  const backend = await resolveLocalAuthBackend();
+
+  if (backend.kind === "postgres") {
+    const result = await authDbQuery(
+      "SELECT id,email,first_name,last_name,status,has_paid_for_access FROM users WHERE id = $1 LIMIT 1",
+      [userId],
+    );
+    return result.rows?.[0] ? mapUser(result.rows[0]) : null;
+  }
+
+  const { data, error } = await backend.client
     .from("users")
     .select("id,email,first_name,last_name,status,has_paid_for_access")
     .eq("id", userId)
@@ -137,9 +205,35 @@ export async function getLocalUserByIdHttp(userId: string): Promise<StatelessLoc
 export async function authenticateLocalUserHttp(email: string, password: string): Promise<StatelessLocalUser | null> {
   const normalizedEmail = normalizeEmail(email);
   if (!password) return null;
-  const supabase = await primarySupabaseClient();
+  const backend = await resolveLocalAuthBackend();
 
-  const { data: userRow, error: userError } = await supabase
+  if (backend.kind === "postgres") {
+    const userResult = await authDbQuery(
+      "SELECT id,email,first_name,last_name,status,has_paid_for_access FROM users WHERE lower(email) = $1 LIMIT 1",
+      [normalizedEmail],
+    );
+    const userRow = userResult.rows?.[0];
+    if (!userRow) return null;
+
+    const authResult = await authDbQuery(
+      "SELECT id,user_id,password_hash FROM auth_accounts WHERE user_id = $1 AND auth_type = 'local' LIMIT 1",
+      [userRow.id],
+    );
+    const authRow = authResult.rows?.[0];
+    if (!authRow?.password_hash) return null;
+
+    const valid = await bcrypt.compare(password, String(authRow.password_hash));
+    if (!valid) return null;
+
+    const now = new Date().toISOString();
+    void Promise.allSettled([
+      authDbQuery("UPDATE users SET last_login_at = $1, updated_at = $1 WHERE id = $2", [now, userRow.id]),
+      authDbQuery("UPDATE auth_accounts SET last_login_at = $1, updated_at = $1 WHERE id = $2", [now, authRow.id]),
+    ]);
+    return mapUser(userRow);
+  }
+
+  const { data: userRow, error: userError } = await backend.client
     .from("users")
     .select("id,email,first_name,last_name,status,has_paid_for_access")
     .eq("email", normalizedEmail)
@@ -147,7 +241,7 @@ export async function authenticateLocalUserHttp(email: string, password: string)
   if (userError) throw new Error(`User lookup failed: ${userError.message}`);
   if (!userRow) return null;
 
-  const { data: authRow, error: authError } = await supabase
+  const { data: authRow, error: authError } = await backend.client
     .from("auth_accounts")
     .select("id,user_id,password_hash")
     .eq("user_id", userRow.id)
@@ -160,12 +254,9 @@ export async function authenticateLocalUserHttp(email: string, password: string)
   if (!valid) return null;
 
   const now = new Date().toISOString();
-  // Login telemetry must not extend the credential-validation critical path.
-  // These writes are best-effort metadata updates; authentication success is
-  // already established once bcrypt verification completes.
   void Promise.allSettled([
-    supabase.from("users").update({ last_login_at: now, updated_at: now }).eq("id", userRow.id),
-    supabase.from("auth_accounts").update({ last_login_at: now, updated_at: now }).eq("id", authRow.id),
+    backend.client.from("users").update({ last_login_at: now, updated_at: now }).eq("id", userRow.id),
+    backend.client.from("auth_accounts").update({ last_login_at: now, updated_at: now }).eq("id", authRow.id),
   ]);
 
   return mapUser(userRow);
@@ -182,8 +273,53 @@ export async function registerLocalUserHttp(
   const normalizedLastName = normalizeName(lastName, "Last name");
   if (String(password || "").length < 8) throw new Error("Password must be at least 8 characters");
 
-  const supabase = await primarySupabaseClient();
-  const { data: existing, error: lookupError } = await supabase
+  const backend = await resolveLocalAuthBackend();
+  const userId = crypto.randomUUID();
+  const authId = crypto.randomUUID();
+  const salt = await bcrypt.genSalt(BCRYPT_SALT_ROUNDS);
+  const passwordHash = await bcrypt.hash(password, salt);
+  const now = new Date().toISOString();
+
+  if (backend.kind === "postgres") {
+    const dbClient = await pool.connect();
+    try {
+      await dbClient.query("BEGIN");
+      await dbClient.query(`SET LOCAL statement_timeout = '${AUTH_DB_QUERY_TIMEOUT_MS}ms'`);
+
+      const existing = await dbClient.query(
+        "SELECT id FROM users WHERE lower(email) = $1 LIMIT 1",
+        [normalizedEmail],
+      );
+      if (existing.rows?.length) throw new Error("Email already registered");
+
+      const inserted = await dbClient.query(
+        `INSERT INTO users
+           (id,email,first_name,last_name,profile_image_url,status,has_paid_for_access,created_at,updated_at)
+         VALUES ($1,$2,$3,$4,NULL,'active',true,$5,$5)
+         RETURNING id,email,first_name,last_name,status,has_paid_for_access`,
+        [userId, normalizedEmail, normalizedFirstName, normalizedLastName, now],
+      );
+
+      await dbClient.query(
+        `INSERT INTO auth_accounts
+           (id,user_id,auth_type,username,password_hash,password_salt,created_at,updated_at)
+         VALUES ($1,$2,'local',$3,$4,$5,$6,$6)`,
+        [authId, userId, `local-${userId}`, passwordHash, salt, now],
+      );
+      await dbClient.query("COMMIT");
+      return mapUser(inserted.rows[0]);
+    } catch (error: any) {
+      await dbClient.query("ROLLBACK").catch(() => undefined);
+      if (error?.code === "23505" || error?.message === "Email already registered") {
+        throw new Error("Email already registered");
+      }
+      throw error;
+    } finally {
+      dbClient.release();
+    }
+  }
+
+  const { data: existing, error: lookupError } = await backend.client
     .from("users")
     .select("id")
     .eq("email", normalizedEmail)
@@ -191,13 +327,7 @@ export async function registerLocalUserHttp(
   if (lookupError) throw new Error(`User lookup failed: ${lookupError.message}`);
   if (existing) throw new Error("Email already registered");
 
-  const userId = crypto.randomUUID();
-  const authId = crypto.randomUUID();
-  const salt = await bcrypt.genSalt(BCRYPT_SALT_ROUNDS);
-  const passwordHash = await bcrypt.hash(password, salt);
-  const now = new Date().toISOString();
-
-  const { data: userRow, error: userError } = await supabase
+  const { data: userRow, error: userError } = await backend.client
     .from("users")
     .insert({
       id: userId,
@@ -218,7 +348,7 @@ export async function registerLocalUserHttp(
     throw new Error(`User registration failed: ${userError?.message || "unknown error"}`);
   }
 
-  const { error: authError } = await supabase.from("auth_accounts").insert({
+  const { error: authError } = await backend.client.from("auth_accounts").insert({
     id: authId,
     user_id: userId,
     auth_type: "local",
@@ -230,7 +360,7 @@ export async function registerLocalUserHttp(
   });
 
   if (authError) {
-    await supabase.from("users").delete().eq("id", userId);
+    await backend.client.from("users").delete().eq("id", userId);
     if (authError.code === "23505") throw new Error("Email already registered");
     throw new Error(`Authentication registration failed: ${authError.message}`);
   }
@@ -293,8 +423,41 @@ export async function purgeLocalTestUsersBeforeHttp(cutoffIso: string): Promise<
   const cutoff = new Date(cutoffIso);
   if (!Number.isFinite(cutoff.getTime())) throw new Error("Invalid local-test-user purge cutoff");
 
-  const supabase = await primarySupabaseClient();
-  const { data: localAccounts, error: accountError } = await supabase
+  const backend = await resolveLocalAuthBackend();
+
+  if (backend.kind === "postgres") {
+    const dbClient = await pool.connect();
+    try {
+      await dbClient.query("BEGIN");
+      await dbClient.query(`SET LOCAL statement_timeout = '${AUTH_DB_QUERY_TIMEOUT_MS}ms'`);
+
+      const candidate = await dbClient.query(
+        `SELECT DISTINCT u.id
+           FROM users u
+           JOIN auth_accounts a ON a.user_id = u.id AND a.auth_type = 'local'
+          WHERE u.created_at < $1`,
+        [cutoff.toISOString()],
+      );
+      const ids = (candidate.rows || []).map((row: any) => String(row.id || "")).filter(Boolean);
+      if (!ids.length) {
+        await dbClient.query("COMMIT");
+        return 0;
+      }
+
+      await dbClient.query("DELETE FROM public_evidence WHERE user_id = ANY($1::varchar[])", [ids]);
+      await dbClient.query("DELETE FROM document_creator_sessions WHERE user_id = ANY($1::varchar[])", [ids]);
+      await dbClient.query("DELETE FROM users WHERE id = ANY($1::varchar[])", [ids]);
+      await dbClient.query("COMMIT");
+      return ids.length;
+    } catch (error) {
+      await dbClient.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      dbClient.release();
+    }
+  }
+
+  const { data: localAccounts, error: accountError } = await backend.client
     .from("auth_accounts")
     .select("user_id")
     .eq("auth_type", "local");
@@ -303,7 +466,7 @@ export async function purgeLocalTestUsersBeforeHttp(cutoffIso: string): Promise<
   const localUserIds = [...new Set((localAccounts || []).map((row: any) => String(row.user_id || "")).filter(Boolean))];
   if (!localUserIds.length) return 0;
 
-  const { data: candidateUsers, error: userError } = await supabase
+  const { data: candidateUsers, error: userError } = await backend.client
     .from("users")
     .select("id,created_at")
     .in("id", localUserIds)
@@ -313,16 +476,14 @@ export async function purgeLocalTestUsersBeforeHttp(cutoffIso: string): Promise<
   const ids = (candidateUsers || []).map((row: any) => String(row.id || "")).filter(Boolean);
   if (!ids.length) return 0;
 
-  // Two legacy tables have non-cascading user foreign keys. Remove only rows
-  // owned by the authorized pre-cutoff local test identities before deleting
-  // the user records; all other user-owned tables cascade or set-null.
   for (const table of ["public_evidence", "document_creator_sessions"]) {
-    const { error } = await supabase.from(table).delete().in("user_id", ids);
+    const { error } = await backend.client.from(table).delete().in("user_id", ids);
     if (error) throw new Error(`Local account cleanup failed for ${table}: ${error.message}`);
   }
 
-  const { error: deleteError } = await supabase.from("users").delete().in("id", ids);
+  const { error: deleteError } = await backend.client.from("users").delete().in("id", ids);
   if (deleteError) throw new Error(`Local account cleanup user delete failed: ${deleteError.message}`);
 
   return ids.length;
 }
+
