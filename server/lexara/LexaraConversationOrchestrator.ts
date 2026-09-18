@@ -241,10 +241,11 @@ export async function generateLexaraConversationResponse(
     taskName: 'lexara-live-conversation',
     systemPrompt,
     temperature: 0.25,
-    maxTokens: 1800,
+    maxTokens: 1100,
     useJSON: false,
     preferredProvider: 'openrouter',
     sessionId: context.sessionId,
+    timeoutMs: 10_000,
   });
 
   let text = primary.success ? primary.content?.trim() : '';
