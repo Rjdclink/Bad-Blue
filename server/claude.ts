@@ -48,10 +48,14 @@ export async function callClaude(
       ? '\n\nIMPORTANT: Respond ONLY with valid JSON. No markdown, no explanations, just raw JSON.'
       : '';
     
+    const model = options.model || process.env.CLAUDE_MODEL?.trim() || 'claude-haiku-4-5-20251001';
+    const samplingControlsDeprecated = /claude-(?:opus|sonnet|haiku)-5|claude-opus-4-(?:7|8|9)/i.test(model);
     const response = await client.messages.create({
-      model: options.model || process.env.CLAUDE_MODEL?.trim() || 'claude-haiku-4-5-20251001',
+      model,
       max_tokens: options.maxTokens || 2000,
-      temperature: options.temperature || 0.7,
+      ...(!samplingControlsDeprecated && options.temperature !== undefined
+        ? { temperature: options.temperature }
+        : {}),
       system: systemPrompt + jsonInstruction,
       messages: [
         {
