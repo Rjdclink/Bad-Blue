@@ -415,26 +415,10 @@ async function initializeServices(): Promise<void> {
     console.warn('[STARTUP] ⚠ CryptoCrawler Cryptara governance bridge unavailable:', error?.message ?? error);
   }
 
-  let automaticCryptoCrawlerRuntimeRequired = false;
-  try {
-    const { stageManager } = await import('./services/cryptocrawl/governance/stage-management.js');
-    automaticCryptoCrawlerRuntimeRequired = stageManager.isAutomaticallyActivated() && stageManager.getCurrentStage() >= 2;
-    if (automaticCryptoCrawlerRuntimeRequired) {
-      const { startCryptoCrawlerRuntime } = await import('./services/cryptocrawl/api/admin-api.js');
-      const result = await startCryptoCrawlerRuntime();
-      const alreadyRunning = result.status === 409
-        && String(result.payload.lifecycle || '').toUpperCase() === 'RUNNING';
-      if (!result.success && !alreadyRunning) {
-        throw new Error(`Required CryptoCrawler automatic runtime resume failed: ${String(result.payload.error || 'unknown startup failure')}`);
-      }
-    }
-  } catch (error: any) {
-    if (automaticCryptoCrawlerRuntimeRequired) {
-      console.error('[STARTUP] ❌ Required CryptoCrawler automatic runtime resume failed:', error?.message ?? error);
-      throw error;
-    }
-    console.warn('[STARTUP] ⚠ CryptoCrawler automatic runtime resume unavailable but not required for this deployment:', error?.message ?? error);
-  }
+  // CryptoCrawler is an operator-controlled runtime. Process/bootstrap readiness
+  // initializes shared dependencies only; discovery/execution must remain stopped
+  // until an authenticated master explicitly presses Start on the dashboard.
+  console.log('[STARTUP] ✓ CryptoCrawler runtime remains STOPPED pending explicit master start');
 
   try {
     const { badblueWorker } = await import('./badblueWorker');
