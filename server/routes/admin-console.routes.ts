@@ -13,6 +13,7 @@ import { db } from '../db';
 import * as schema from '@shared/schema';
 import { eq, desc, sql, and } from 'drizzle-orm';
 import { storage } from '../storage';
+import { invalidatePaidAccessCache } from '../auth';
 
 const router = Router();
 
@@ -237,6 +238,8 @@ router.post('/users/:userId/subscription-override', async (req: Request, res: Re
 
       console.log(`[AdminAPI] Subscription override DISABLED for user ${userId}`);
     }
+
+    invalidatePaidAccessCache(userId);
 
     res.json({
       success: true,
