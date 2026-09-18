@@ -27,7 +27,9 @@ import {
   verifyLocalSessionToken,
   purgeLocalTestUsersBeforeHttp,
   probeLocalAuthStoreHttp,
+  getLocalUserByIdHttp,
   type StatelessLocalSession,
+  type StatelessLocalUser,
 } from "./statelessLocalAuth";
 
 
@@ -81,6 +83,20 @@ function attachMasterIdentity(req: any): boolean {
 
 function localSessionIdentity(req: any): StatelessLocalSession | null {
   return verifyLocalSessionToken(readCookie(req, LOCAL_SESSION_COOKIE));
+}
+
+const BLOCKED_ACCESS_STATUSES = new Set(["suspended", "past_due", "canceled", "expired"]);
+
+export function hasPaidServiceAccess(user: Pick<StatelessLocalUser, "status" | "hasPaidForAccess"> | any): boolean {
+  if (!user || user.hasPaidForAccess !== true) return false;
+  const status = String(user.status || "").trim().toLowerCase();
+  return !BLOCKED_ACCESS_STATUSES.has(status);
+}
+
+function requestHasIdentity(req: any): boolean {
+  return typeof req?.isAuthenticated === "function" &&
+    req.isAuthenticated() === true &&
+    Boolean(getPlatformUserId(req.user));
 }
 
 function attachLocalIdentity(req: any): boolean {
@@ -143,6 +159,83 @@ function setLocalCookie(res: any, token: string): void {
 
 export function issueLocalSessionCookie(res: any, user: Parameters<typeof createLocalSessionToken>[0]): void {
   setLocalCookie(res, createLocalSessionToken(user));
+}
+
+function localStateChanged(current: any, fresh: StatelessLocalUser): boolean {
+  return String(current?.status || "") !== fresh.status ||
+    current?.hasPaidForAccess !== fresh.hasPaidForAccess ||
+    String(current?.email || "") !== fresh.email ||
+    (current?.firstName ?? null) !== fresh.firstName ||
+    (current?.lastName ?? null) !== fresh.lastName;
+}
+
+export async function refreshRequestUser(req: any, res?: any): Promise<any | null> {
+  if (!requestHasIdentity(req)) return null;
+
+  const current = req.user as any;
+  if (current?.isMasterBypass || current?.isAdminBypass || current?.isAdmin) return current;
+
+  const id = getPlatformUserId(current);
+  if (!id) return null;
+
+  const fresh = await getLocalUserByIdHttp(id);
+  if (!fresh) return null;
+
+  const nextUser = {
+    ...current,
+    id: fresh.id,
+    email: fresh.email,
+    firstName: fresh.firstName,
+    lastName: fresh.lastName,
+    status: fresh.status,
+    hasPaidForAccess: fresh.hasPaidForAccess,
+    claims: {
+      ...(current?.claims || {}),
+      sub: fresh.id,
+      email: fresh.email,
+    },
+  };
+
+  req.user = nextUser;
+  req.isAuthenticated = () => true;
+
+  if (res && readCookie(req, LOCAL_SESSION_COOKIE) && localStateChanged(current, fresh)) {
+    issueLocalSessionCookie(res, fresh);
+  }
+
+  return nextUser;
+}
+
+export async function resolvePaidAccess(req: any, res?: any): Promise<{
+  authenticated: boolean;
+  authorized: boolean;
+  reason: "ok" | "unauthenticated" | "subscription_required" | "auth_store_unavailable";
+  user: any | null;
+}> {
+  if (!requestHasIdentity(req)) {
+    return { authenticated: false, authorized: false, reason: "unauthenticated", user: null };
+  }
+
+  const current = req.user as any;
+  if (current?.isMasterBypass || current?.isAdminBypass || current?.isAdmin) {
+    return { authenticated: true, authorized: true, reason: "ok", user: current };
+  }
+
+  try {
+    const fresh = await refreshRequestUser(req, res);
+    if (!fresh) {
+      return { authenticated: false, authorized: false, reason: "unauthenticated", user: null };
+    }
+    return {
+      authenticated: true,
+      authorized: hasPaidServiceAccess(fresh),
+      reason: hasPaidServiceAccess(fresh) ? "ok" : "subscription_required",
+      user: fresh,
+    };
+  } catch (error) {
+    console.error("[AUTH] Paid-access freshness check unavailable:", error instanceof Error ? error.message : String(error));
+    return { authenticated: true, authorized: false, reason: "auth_store_unavailable", user: current };
+  }
 }
 
 function clearLocalCookie(res: any): void {
@@ -255,7 +348,7 @@ export async function setupAuth(app: Express) {
       return res.json({
         success: true,
         user,
-        hasActiveSubscription: user.hasPaidForAccess && user.status === "active",
+        hasActiveSubscription: hasPaidServiceAccess(user),
       });
     } catch (error) {
       console.error("[AUTH] HTTP local login unavailable:", error instanceof Error ? error.message : String(error));
@@ -333,23 +426,36 @@ export async function setupAuth(app: Express) {
       return next();
     }
 
-    // New local sessions carry only safe user fields inside an HMAC-signed,
-    // HttpOnly cookie. Auth status therefore cannot fail merely because a
-    // database or API transport is temporarily unavailable after login.
-    return res.json({
-      id: localSession.id,
-      email: localSession.email,
-      firstName: localSession.firstName,
-      lastName: localSession.lastName,
-      profileImageUrl: null,
-      status: localSession.status,
-      hasPaidForAccess: localSession.hasPaidForAccess,
-      accessPaymentId: null,
-      accessPaidAt: null,
-      lastLoginAt: null,
-      createdAt: null,
-      updatedAt: null,
-    });
+    // Revalidate durable access state on every auth-status refresh so a Square
+    // cancellation, pause, administrative suspension, or override takes effect
+    // without waiting for the signed identity cookie to expire.
+    try {
+      const fresh = await getLocalUserByIdHttp(localSession.id);
+      if (!fresh) {
+        clearLocalCookie(res);
+        return res.json(null);
+      }
+      if (localStateChanged(localSession, fresh)) {
+        issueLocalSessionCookie(res, fresh);
+      }
+      return res.json({
+        id: fresh.id,
+        email: fresh.email,
+        firstName: fresh.firstName,
+        lastName: fresh.lastName,
+        profileImageUrl: null,
+        status: fresh.status,
+        hasPaidForAccess: fresh.hasPaidForAccess,
+        accessPaymentId: null,
+        accessPaidAt: null,
+        lastLoginAt: null,
+        createdAt: null,
+        updatedAt: null,
+      });
+    } catch (error) {
+      console.error("[AUTH] Durable auth-state refresh unavailable:", error instanceof Error ? error.message : String(error));
+      return res.status(503).json({ message: "Authentication state is temporarily unavailable" });
+    }
   });
 
   const canonicalLogout = (req: any, res: any) => {
@@ -416,23 +522,24 @@ export async function setupAuth(app: Express) {
 }
 
 export const isIdentityAuthenticated: RequestHandler = async (req, res, next) => {
-  if (!req.isAuthenticated() || !getPlatformUserId(req.user)) {
+  if (!requestHasIdentity(req)) {
     return res.status(401).json({ message: "Unauthorized" });
   }
   return next();
 };
 
 export const isAuthenticated: RequestHandler = async (req, res, next) => {
-  if (!req.isAuthenticated() || !getPlatformUserId(req.user)) {
+  const decision = await resolvePaidAccess(req, res);
+  if (!decision.authenticated) {
     return res.status(401).json({ message: "Unauthorized" });
   }
-
-  const user = req.user as any;
-  if (user?.isMasterBypass || user?.isAdminBypass || user?.isAdmin) {
-    return next();
-  }
-
-  if (user?.status !== "active" || user?.hasPaidForAccess !== true) {
+  if (!decision.authorized) {
+    if (decision.reason === "auth_store_unavailable") {
+      return res.status(503).json({
+        message: "Authentication state is temporarily unavailable",
+        code: "AUTH_STATE_UNAVAILABLE",
+      });
+    }
     return res.status(402).json({
       message: "Active LegalWhat subscription required",
       code: "SUBSCRIPTION_REQUIRED",
@@ -443,7 +550,7 @@ export const isAuthenticated: RequestHandler = async (req, res, next) => {
 };
 
 export const adminAuthMiddleware: RequestHandler = async (req, res, next) => {
-  if (!req.isAuthenticated()) {
+  if (!requestHasIdentity(req)) {
     return res.status(401).json({ message: "Unauthorized" });
   }
 
