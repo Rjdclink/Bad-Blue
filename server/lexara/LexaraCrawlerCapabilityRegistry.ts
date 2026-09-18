@@ -105,6 +105,9 @@ export const LEXARA_CRAWLER_CAPABILITY_POOL: readonly LexaraCrawlerDescriptor[] 
   c('ice', 'IceCrawler', 'pantheon-secondary', 'server/services/pantheon/crawlers/ice.ts', ['structured-extraction', 'public-records', 'change-detection'], 'retrieval', 'fast'),
   c('hydra', 'HydraCrawler', 'pantheon-secondary', 'server/services/pantheon/crawlers/hydra.ts', ['web-discovery', 'deep-crawl'], 'retrieval', 'deep'),
   c('wraith', 'WraithCrawler', 'pantheon-secondary', 'server/services/pantheon/crawlers/wraith.ts', ['web-discovery', 'verification'], 'retrieval', 'fast'),
+  c('farm', 'FarmCrawler', 'pantheon-secondary', 'server/services/pantheon/crawlers/utility.ts', ['verification', 'structured-extraction', 'change-detection'], 'retrieval', 'fast', always, 'Public-evidence fingerprinting and deduplication only.'),
+  c('phantom', 'PhantomCrawler', 'pantheon-secondary', 'server/services/pantheon/crawlers/utility.ts', ['web-discovery', 'verification'], 'retrieval', 'fast'),
+  c('nova', 'NovaCrawler', 'pantheon-secondary', 'server/services/pantheon/crawlers/utility.ts', ['web-discovery', 'legal-authority'], 'retrieval', 'instant'),
 
   c('razor-identity', 'IdentityRazor', 'razor', 'server/services/pantheon/razors/implementations.ts', ['identity', 'structured-extraction'], 'extractor', 'instant'),
   c('razor-contact', 'ContactRazor', 'razor', 'server/services/pantheon/razors/implementations.ts', ['contact', 'structured-extraction'], 'extractor', 'instant'),
