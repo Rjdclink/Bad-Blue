@@ -122,6 +122,20 @@ async function gracefulShutdown(signal: string): Promise<void> {
     }
 
     try {
+      const { stopCryptoCrawlerRuntime, systemState } = await import('./services/cryptocrawl/api/admin-api.js');
+      if (systemState.lifecycle !== 'STOPPED') {
+        const runtimeStop = await stopCryptoCrawlerRuntime();
+        if (!runtimeStop.stopped) {
+          console.warn('[SHUTDOWN] CryptoCrawler stop left unresolved components:', runtimeStop.failures);
+        } else {
+          console.log('[SHUTDOWN] CryptoCrawler stopped');
+        }
+      }
+    } catch (e) {
+      console.warn('[SHUTDOWN] Error stopping CryptoCrawler:', e);
+    }
+
+    try {
       const { persistenceManager } = await import('./persistenceManager');
       await persistenceManager.stop();
       console.log('[SHUTDOWN] Persistence manager stopped');
