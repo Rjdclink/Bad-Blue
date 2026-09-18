@@ -14,7 +14,7 @@ import { Badge } from '@/components/ui/badge';
 import {
   Play, Pause, SkipBack, SkipForward, Clock, Activity, Layers,
   Download, Satellite, Radio, Crosshair, Zap, Target,
-  ChevronLeft, ChevronRight, Maximize2, Minimize2,
+  ChevronLeft, ChevronRight, Maximize2, Minimize2, FileText, X,
 } from 'lucide-react';
 import { useGeoRuntime, type GeoFrame } from '@/hooks/useGeoRuntime';
 import type { GPSPoint, LocationCandidate } from '@shared/geoconsoleTypes';
@@ -34,6 +34,7 @@ interface GeoconsoleProps {
    */
   navMode?: 'timeline' | 'map' | 'satellite';
   spectraShell?: boolean;
+  subject?: string;
 }
 
 interface LayerState {
@@ -85,7 +86,14 @@ const haversineDistance = (lat1: number, lon1: number, lat2: number, lon2: numbe
 // COMPONENT
 // ============================================================================
 
-export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialData = EMPTY_GPS_POINTS, candidateLocations = [], onProcess: _onProcess, navMode, spectraShell = false }) => {
+export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
+  initialData = EMPTY_GPS_POINTS,
+  candidateLocations = [],
+  onProcess: _onProcess,
+  navMode,
+  spectraShell = false,
+  subject = 'SPECTRA target',
+}) => {
   // Runtime hook - source of truth for frames
   const [state, actions] = useGeoRuntime(initialData, { tickInterval: 500, playbackSpeed: 1, interpolationEnabled: true, predictiveEnabled: true });
 
@@ -104,6 +112,66 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
   const [timelineOffsetMinutes, setTimelineOffsetMinutes] = useState(0);
   const [timelinePlaying, setTimelinePlaying] = useState(false);
   const [timelinePlaybackSpeed, setTimelinePlaybackSpeed] = useState(1);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [intelligenceReport, setIntelligenceReport] = useState<any>(null);
+
+  useEffect(() => {
+    setReportOpen(false);
+    setIntelligenceReport(null);
+    setReportError(null);
+  }, [state.sessionId]);
+
+  const loadIntelligenceReport = useCallback(async () => {
+    if (!state.sessionId) return;
+    if (reportOpen && intelligenceReport) {
+      setReportOpen(false);
+      return;
+    }
+
+    setReportOpen(true);
+    if (intelligenceReport) return;
+
+    setReportLoading(true);
+    setReportError(null);
+    try {
+      const response = await fetch('/api/geoconsole/report', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: state.sessionId,
+          subject,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload?.success) {
+        throw new Error(payload?.error || 'Location intelligence report failed.');
+      }
+      setIntelligenceReport(payload.data);
+    } catch (error) {
+      setReportError(
+        error instanceof Error ? error.message : 'Location intelligence report failed.'
+      );
+    } finally {
+      setReportLoading(false);
+    }
+  }, [intelligenceReport, reportOpen, state.sessionId, subject]);
+
+  const exportIntelligenceReport = useCallback(() => {
+    if (!intelligenceReport) return;
+    const blob = new Blob(
+      [JSON.stringify(intelligenceReport, null, 2)],
+      { type: 'application/json' }
+    );
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `spectra-location-intelligence-${Date.now()}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }, [intelligenceReport]);
 
   const applyMapPreset = useCallback((preset: 'satellite' | 'terrain' | 'weather' | 'evidence' | 'street') => {
     if (preset === 'satellite') {
@@ -507,16 +575,104 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
             lockOnTarget={lockOnTarget}
             onUserInteraction={() => setLockOnTarget(false)}
           />
-          {spectraShell && !lockOnTarget && (timelineFrame || candidateLocations.length > 0) && (
-            <button
-              type="button"
-              onClick={() => setLockOnTarget(true)}
-              className="absolute right-3 top-3 z-20 flex h-11 w-11 items-center justify-center rounded-full border border-slate-600/60 bg-slate-950/85 text-cyan-300 shadow-xl backdrop-blur hover:bg-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
-              title="Recenter target"
-              aria-label="Recenter target"
-            >
-              <Target className="h-4 w-4" />
-            </button>
+          {spectraShell && (
+            <>
+              <div className="absolute right-3 top-3 z-20 flex items-center gap-2">
+                {state.sessionId && (
+                  <button
+                    type="button"
+                    onClick={() => void loadIntelligenceReport()}
+                    className="flex h-11 w-11 items-center justify-center rounded-full border border-slate-600/60 bg-slate-950/85 text-slate-200 shadow-xl backdrop-blur hover:bg-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                    title="Location intelligence report"
+                    aria-label="Location intelligence report"
+                    aria-expanded={reportOpen}
+                  >
+                    <FileText className="h-4 w-4" />
+                  </button>
+                )}
+                {!lockOnTarget && (timelineFrame || candidateLocations.length > 0) && (
+                  <button
+                    type="button"
+                    onClick={() => setLockOnTarget(true)}
+                    className="flex h-11 w-11 items-center justify-center rounded-full border border-slate-600/60 bg-slate-950/85 text-cyan-300 shadow-xl backdrop-blur hover:bg-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                    title="Recenter target"
+                    aria-label="Recenter target"
+                  >
+                    <Target className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+
+              {reportOpen && state.sessionId && (
+                <div className="absolute right-3 top-16 z-30 w-[min(340px,calc(100%-1.5rem))] rounded-xl border border-slate-700/70 bg-slate-950/95 p-3 shadow-2xl backdrop-blur">
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-xs font-semibold text-slate-100">Location Intelligence</p>
+                      <p className="text-[10px] text-slate-500">Canonical evidence report</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setReportOpen(false)}
+                      className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white"
+                      aria-label="Close location intelligence report"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  {reportLoading ? (
+                    <p className="py-5 text-center text-xs text-slate-400">Generating report…</p>
+                  ) : reportError ? (
+                    <p className="rounded-lg border border-rose-500/20 bg-rose-500/10 p-2 text-xs text-rose-300">
+                      {reportError}
+                    </p>
+                  ) : intelligenceReport ? (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="rounded-lg bg-slate-900 p-2">
+                          <p className="text-[10px] text-slate-500">Locations</p>
+                          <p className="text-sm font-semibold text-cyan-300">
+                            {intelligenceReport.summary?.totalLocations ?? 0}
+                          </p>
+                        </div>
+                        <div className="rounded-lg bg-slate-900 p-2">
+                          <p className="text-[10px] text-slate-500">Distinct areas</p>
+                          <p className="text-sm font-semibold text-cyan-300">
+                            {intelligenceReport.summary?.uniqueLocations ?? 0}
+                          </p>
+                        </div>
+                        <div className="rounded-lg bg-slate-900 p-2">
+                          <p className="text-[10px] text-slate-500">Supported distance</p>
+                          <p className="text-sm font-semibold text-cyan-300">
+                            {formatDistance(Number(intelligenceReport.summary?.totalDistance || 0))}
+                          </p>
+                        </div>
+                        <div className="rounded-lg bg-slate-900 p-2">
+                          <p className="text-[10px] text-slate-500">Data quality</p>
+                          <p className="text-sm font-semibold text-cyan-300">
+                            {Math.round(Number(intelligenceReport.summary?.dataQuality || 0) * 100)}%
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex justify-between text-[11px] text-slate-400">
+                        <span>{intelligenceReport.frequentLocations?.length ?? 0} repeated areas</span>
+                        <span>{intelligenceReport.anomalies?.length ?? 0} evidence anomalies</span>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={exportIntelligenceReport}
+                        className="w-full border-slate-700 bg-slate-900 text-slate-200"
+                      >
+                        <Download className="mr-1 h-3.5 w-3.5" />
+                        Export full report
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </>
           )}
           {!spectraShell && <div className="absolute bottom-3 left-3 right-3 z-10 flex items-end justify-between gap-2 pointer-events-none">
             <div className="pointer-events-auto flex max-w-[calc(100%-3rem)] gap-1 overflow-x-auto rounded-xl border border-slate-600/50 bg-slate-900/90 p-1 shadow-xl backdrop-blur">
