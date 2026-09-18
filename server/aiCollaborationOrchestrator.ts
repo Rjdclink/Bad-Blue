@@ -1016,7 +1016,6 @@ export class AICollaborationOrchestrator {
         }
         case AIProvider.CEREBRAS:
         case AIProvider.SAMBANOVA:
-        case AIProvider.TOGETHER:
         case AIProvider.HUGGINGFACE: {
           const result = await callOpenAICompatibleHarmonyProvider(
             task.provider,
@@ -1030,7 +1029,35 @@ export class AICollaborationOrchestrator {
           break;
         }
         case AIProvider.COHERE: {
-          const result = await callCohereHarmony(task.model, prompt, task.systemPrompt, 1100);
+          const result = process.env.COHERE_API_KEY?.trim()
+            ? await callCohereHarmony(task.model, prompt, task.systemPrompt, 1100)
+            : await callOpenAICompatibleHarmonyProvider(
+                AIProvider.HUGGINGFACE,
+                CURRENT_AI_MODELS.cohereViaHuggingFace,
+                prompt,
+                task.systemPrompt,
+                1100,
+              );
+          content = result.content;
+          tokensUsed = result.tokensUsed;
+          break;
+        }
+        case AIProvider.TOGETHER: {
+          const result = process.env.TOGETHER_API_KEY?.trim()
+            ? await callOpenAICompatibleHarmonyProvider(
+                AIProvider.TOGETHER,
+                task.model,
+                prompt,
+                task.systemPrompt,
+                1100,
+              )
+            : await callOpenAICompatibleHarmonyProvider(
+                AIProvider.HUGGINGFACE,
+                CURRENT_AI_MODELS.togetherViaHuggingFace,
+                prompt,
+                task.systemPrompt,
+                1100,
+              );
           content = result.content;
           tokensUsed = result.tokensUsed;
           break;
