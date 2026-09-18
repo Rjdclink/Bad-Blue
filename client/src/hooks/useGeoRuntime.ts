@@ -548,7 +548,12 @@ export function useGeoRuntime(
           if (heading === undefined) heading = calculateBearing(last.position.latitude, last.position.longitude, latitude, longitude);
         }
 
-        const confidence = accuracy !== undefined ? clamp(1 - accuracy / 100, 0.1, 1) : 0.85;
+        // Keep local rendering consistent with server evidence normalization:
+        // browser geolocation is useful direct evidence but never receives more
+        // than 0.75 prior confidence before corroboration.
+        const confidence = accuracy !== undefined
+          ? clamp(1 - accuracy / 100, 0.1, 0.75)
+          : 0.75;
 
         const newFrame: GeoFrame = {
           id: generateId(),
@@ -567,15 +572,17 @@ export function useGeoRuntime(
             provider: 'navigator.geolocation',
             capturedAt: now.toISOString(),
           },
-          velocity: speed !== undefined || heading !== undefined
-            ? { speed: speed ?? 0, heading: heading ?? 0 }
+          velocity: speed !== undefined && heading !== undefined
+            ? { speed, heading }
             : undefined,
-          source: 'device_gps',
+          source: 'browser_geolocation',
           confidence,
           metadata: {
             live: true,
             provider: 'navigator.geolocation',
             headingAccuracyAvailable: false,
+            providerSpeedMps: Number.isFinite(coords.speed) ? coords.speed : undefined,
+            providerHeadingDegrees: Number.isFinite(coords.heading) ? coords.heading : undefined,
           },
         };
 
@@ -647,28 +654,40 @@ export function useGeoRuntime(
     }
 
     let totalDistance = 0;
+    let supportedDuration = 0;
     let maxSpeed = 0;
     const speeds: number[] = [];
 
     for (let i = 1; i < trail.length; i++) {
       const prev = trail[i - 1];
       const curr = trail[i];
-      if (Number(curr.metadata?.gapBeforeSeconds || 0) <= 0) {
+      const gapBreak = Number(curr.metadata?.gapBeforeSeconds || 0) > 0;
+      if (!gapBreak) {
         totalDistance += haversineDistance(
           prev.position.latitude, prev.position.longitude,
           curr.position.latitude, curr.position.longitude
         );
+        const elapsed = (curr.timestamp.getTime() - prev.timestamp.getTime()) / 1000;
+        if (elapsed > 0) supportedDuration += elapsed;
       }
-      if (curr.velocity?.speed) {
+      if (!gapBreak && curr.velocity?.speed !== undefined) {
         speeds.push(curr.velocity.speed);
         maxSpeed = Math.max(maxSpeed, curr.velocity.speed);
       }
     }
 
-    const duration = (trail[trail.length - 1].timestamp.getTime() - trail[0].timestamp.getTime()) / 1000;
-    const averageSpeed = speeds.length > 0 ? speeds.reduce((a, b) => a + b, 0) / speeds.length : 0;
+    const averageSpeed = supportedDuration > 0
+      ? totalDistance / supportedDuration
+      : speeds.length > 0
+        ? speeds.reduce((a, b) => a + b, 0) / speeds.length
+        : 0;
 
-    return { totalDistance, averageSpeed, maxSpeed, duration };
+    return {
+      totalDistance,
+      averageSpeed,
+      maxSpeed,
+      duration: supportedDuration,
+    };
   })();
 
   // === ACTIONS ===

@@ -134,10 +134,54 @@ export class InputFusionEngine {
     }
   }
 
+  private minimumReportedAccuracyMeters(source: DataSource): number {
+    switch (source) {
+      case 'uwb_range':
+      case 'uwb_direction': return 0.25;
+      case 'wifi_rtt': return 1;
+      case 'gnss_fix':
+      case 'gnss_raw': return 1.5;
+      case 'device_gps':
+      case 'browser_geolocation': return 3;
+      case 'vehicle_telemetry': return 3;
+      case 'exif_photo':
+      case 'exif_video':
+      case 'xmp_sidecar':
+      case 'json_sidecar': return 5;
+      case 'ble_aoa': return 3;
+      case 'wifi_fingerprint': return 10;
+      case 'wifi_rssi':
+      case 'wifi_handoff': return 25;
+      case 'cell_serving':
+      case 'cell_neighbor':
+      case 'cellular': return 100;
+      case 'social_geotag': return 25;
+      case 'social_media':
+      case 'public_camera':
+      case 'traffic_cam':
+      case 'visual_detection': return 100;
+      case 'network_region': return 5_000;
+      case 'historical_location':
+      case 'public_record':
+      case 'manual_input': return 500;
+      case 'interpolated':
+      case 'predicted': return 5;
+      default: return 5;
+    }
+  }
+
   private effectiveAccuracyMeters(point: GPSPoint): number {
+    const modeled = this.defaultAccuracyMeters(point.source);
     const reported = Number(point.accuracy);
-    if (Number.isFinite(reported) && reported > 0) return Math.max(0.5, reported);
-    return this.defaultAccuracyMeters(point.source);
+    if (!Number.isFinite(reported) || reported <= 0) return modeled;
+
+    // Accuracy supplied by third-party metadata is evidence, not authority.
+    // Preserve honest coarse values while preventing a weak source from
+    // claiming precision its source class cannot substantiate.
+    return Math.max(
+      this.minimumReportedAccuracyMeters(point.source),
+      reported,
+    );
   }
 
   private correlationKey(point: GPSPoint): string {

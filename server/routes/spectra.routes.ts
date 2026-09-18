@@ -14,6 +14,8 @@ import {
   signServerEvidence,
 } from '../services/geoconsole/evidence-proof';
 import type { GPSPoint } from '../services/geoconsole/types';
+import { inputFusionEngine } from '../services/geoconsole/inputFusionEngine';
+import { assessLocationQuality } from '../services/geoconsole/location-quality';
 
 const router = Router();
 router.use(isAuthenticated);
@@ -47,6 +49,40 @@ const acquireSchema = z.object({
 
 const PHONE_CANDIDATE_RE = /(?:\+\d{1,3}[\s().-]*)?(?:\d[\s().-]*){7,15}/;
 
+const configuredOsintTimeout = Number(process.env.SPECTRA_OSINT_TIMEOUT_MS);
+const SPECTRA_OSINT_TIMEOUT_MS = Number.isFinite(configuredOsintTimeout)
+  ? Math.max(15_000, configuredOsintTimeout)
+  : 90_000;
+
+async function settleWithin<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<
+  | { status: 'fulfilled'; value: T }
+  | { status: 'rejected'; reason: unknown }
+> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise.then(
+        value => ({ status: 'fulfilled' as const, value }),
+        reason => ({ status: 'rejected' as const, reason }),
+      ),
+      new Promise<{ status: 'rejected'; reason: Error }>(resolve => {
+        timer = setTimeout(() => {
+          resolve({
+            status: 'rejected',
+            reason: new Error(`${label} timed out after ${timeoutMs}ms`),
+          });
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function extractPhoneNumber(value: string): string | undefined {
   const candidate = value.match(PHONE_CANDIDATE_RE)?.[0]?.trim();
   if (!candidate) return undefined;
@@ -78,16 +114,167 @@ function targetSubject(value: string): string {
   return subject.length >= 2 ? subject : value.trim();
 }
 
+function extractLikelyName(value: string): string | null {
+  const text = value.replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+
+  const labeled = text.match(
+    /\b(?:name|person|target|individual)\s*(?::|=|\-|is)\s*([A-Za-z][A-Za-z'’.-]+(?:\s+[A-Za-z][A-Za-z'’.-]+){1,3})/i,
+  );
+  if (labeled?.[1]) return labeled[1].trim();
+
+  const withoutPhone = (() => {
+    const phone = extractPhoneNumber(text);
+    return phone ? text.replace(phone, ' ') : text;
+  })();
+  const firstSegment = withoutPhone.split(/[,;|\n]/)[0]
+    .replace(/\b(?:phone|number|cell|mobile)\b.*$/i, '')
+    .replace(/\b(?:last\s+known|located|lives?|from|near|around)\b.*$/i, '')
+    .replace(/^[^A-Za-z]+|[^A-Za-z'’.-]+$/g, '')
+    .trim();
+
+  const looksLikeLocation =
+    Boolean(extractCityStateHint(firstSegment)) ||
+    /\b(?:address|street|st|road|rd|avenue|ave|boulevard|blvd|city|state|county|country|zip|postal)\b/i
+      .test(firstSegment);
+
+  if (
+    !looksLikeLocation &&
+    /^[A-Za-z][A-Za-z'’.-]+(?:\s+[A-Za-z][A-Za-z'’.-]+){1,3}$/.test(firstSegment)
+  ) {
+    return firstSegment;
+  }
+
+  return null;
+}
+
+function discoverySourceKey(result: any): string {
+  try {
+    if (result?.url) return new URL(String(result.url)).hostname.toLowerCase();
+  } catch {
+    // Malformed URL falls back to title-based identity.
+  }
+  return String(result?.title || result?.source || 'web-discovery').trim().toLowerCase();
+}
+
+function dedupeDiscoveryResults(results: any[]): any[] {
+  const seen = new Set<string>();
+  return results.filter(result => {
+    const key = result?.url
+      ? String(result.url).trim().toLowerCase()
+      : `${String(result?.title || '').trim().toLowerCase()}|${String(result?.snippet || '').slice(0, 180).trim().toLowerCase()}`;
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function buildDiscoveryQueries(args: {
+  resolvedName: string;
+  normalizedTarget: string;
+  details: string;
+  phone?: string;
+}): { firstPass: string[]; secondPass: string[] } {
+  const { resolvedName, normalizedTarget, details, phone } = args;
+  const quotedName = resolvedName ? `"${resolvedName}"` : '';
+  const quotedPhone = phone ? `"${phone}"` : '';
+  const phoneDigits = phone?.replace(/\D/g, '') || '';
+  const compactDetails = details.replace(/\s+/g, ' ').trim();
+  const strongIdentityAnchor = quotedName || quotedPhone;
+  const genericTarget = GENERIC_TARGET_RE.test(normalizedTarget);
+
+  const firstPass = [
+    [quotedName, quotedPhone].filter(Boolean).join(' '),
+    [strongIdentityAnchor, compactDetails].filter(Boolean).join(' '),
+    !genericTarget ? [normalizedTarget, compactDetails].filter(Boolean).join(' ') : compactDetails,
+    phoneDigits.length >= 7 ? `"${phoneDigits}"` : '',
+  ].filter(Boolean);
+
+  // Do not launch generic internet-wide "public records" searches when the
+  // operator supplied only a category such as "person" plus a location. Those
+  // queries create noise rather than target evidence. Broadening resumes once
+  // a name or phone anchor exists.
+  const secondPass = strongIdentityAnchor ? [
+    [strongIdentityAnchor, 'public records address location'].join(' '),
+    [strongIdentityAnchor, 'social profile biography location'].join(' '),
+    [strongIdentityAnchor, 'contact directory'].join(' '),
+    [strongIdentityAnchor, 'property court business records'].join(' '),
+  ] : [];
+
+  return {
+    firstPass: [...new Set(firstPass)],
+    secondPass: [...new Set(secondPass)],
+  };
+}
+
+async function runDiscoveryPass(queries: string[]): Promise<{
+  results: any[];
+  attempted: number;
+  failed: number;
+}> {
+  const settled = await Promise.allSettled(
+    queries.map(query =>
+      unifiedSearch(query, {
+        limit: 25,
+        category: 'general',
+        freshness: 'all',
+        timeout: 20_000,
+      })
+    )
+  );
+
+  const results: any[] = [];
+  let failed = 0;
+  for (const result of settled) {
+    if (result.status === 'fulfilled') results.push(...result.value);
+    else failed += 1;
+  }
+
+  return {
+    results: dedupeDiscoveryResults(results),
+    attempted: queries.length,
+    failed,
+  };
+}
+
 function normalizeConfidence(value: unknown): number {
   const n = Number(value);
   if (!Number.isFinite(n)) return 0.5;
   return n > 1 ? Math.max(0, Math.min(1, n / 100)) : Math.max(0, Math.min(1, n));
 }
 
-function sourceForName(name: string): string {
-  const lower = name.toLowerCase();
-  if (lower.includes('exif') || lower.includes('media')) return 'exif_photo';
-  if (lower.includes('social')) return 'social_media';
+function sourceForObservation(
+  name: string,
+  object: Record<string, any>,
+  contextPath: string,
+): string {
+  const lower = [
+    name,
+    contextPath,
+    String(object.platform || ''),
+    String(object.source || ''),
+    String(object.type || ''),
+    String(object.kind || ''),
+  ].join(' ').toLowerCase();
+
+  const isSocial =
+    /\b(?:instagram|facebook|twitter|tiktok|strava|social)\b/i.test(lower);
+  const explicitSocialLocation =
+    isSocial &&
+    /\b(?:gps|geo|geotag|location|place|check[- ]?in|coordinate)\b/i.test(lower);
+  if (explicitSocialLocation) return 'social_geotag';
+  if (isSocial) return 'social_media';
+
+  // "social media" must never be mistaken for uploaded media/EXIF. Restrict
+  // media classification to explicit artifact/metadata language.
+  if (
+    /\b(?:exif|xmp|iptc|photo|image|video|quicktime)\b/i.test(lower) ||
+    /\b(?:uploaded|attached)\s+media\b/i.test(lower) ||
+    /\bmedia\s+metadata\b/i.test(lower)
+  ) {
+    return /\bvideo|quicktime\b/i.test(lower) ? 'exif_video' : 'exif_photo';
+  }
+
   if (lower.includes('camera')) return 'public_camera';
   if (lower.includes('satellite')) return 'satellite_imagery';
   return 'public_record';
@@ -100,9 +287,32 @@ function explicitTimestamp(value: any): Date | null {
     value?.capturedAt ??
     value?.dateTimeOriginal ??
     value?.datetime;
-  if (!raw) return null;
-  const date = new Date(raw);
-  return Number.isFinite(date.getTime()) ? date : null;
+  if (raw === undefined || raw === null || raw === '') return null;
+
+  let date: Date;
+  if (raw instanceof Date) {
+    date = raw;
+  } else if (
+    typeof raw === 'number' ||
+    (typeof raw === 'string' && /^\d{9,16}$/.test(raw.trim()))
+  ) {
+    const numeric = Number(raw);
+    if (!Number.isFinite(numeric)) return null;
+    const milliseconds = numeric < 100_000_000_000
+      ? numeric * 1000
+      : numeric;
+    date = new Date(milliseconds);
+  } else {
+    date = new Date(raw);
+  }
+
+  const time = date.getTime();
+  if (!Number.isFinite(time)) return null;
+
+  const earliest = Date.UTC(1900, 0, 1);
+  const latest = Date.now() + 24 * 60 * 60 * 1000;
+  if (time < earliest || time > latest) return null;
+  return date;
 }
 
 function collectCoordinateObservations(
@@ -173,7 +383,7 @@ function collectCoordinateObservations(
     );
     const altitude = Number(object.altitude ?? object.gpsAltitude ?? object.GPSAltitude);
 
-    const source = sourceForName(sourceName);
+    const source = sourceForObservation(sourceName, object, contextPath);
     const observationKind =
       source === 'public_record' || source === 'historical_location'
         ? 'historical'
@@ -236,40 +446,6 @@ function dedupeObservations(points: any[]): any[] {
   });
 }
 
-function locationEvidenceConfidence(points: any[]): number {
-  if (!points.length) return 0;
-
-  const representatives = new Map<string, number>();
-  for (const point of points) {
-    const confidence = Math.max(0, Math.min(1, Number(point.confidence) || 0));
-    const kindFactor =
-      point.observationKind === 'historical' ? 0.55 :
-      point.observationKind === 'inferred' ? 0.65 :
-      point.observationKind === 'interpolated' ? 0.45 :
-      point.observationKind === 'predicted' ? 0.25 :
-      1;
-    const adjusted = confidence * kindFactor;
-    const key =
-      String(point.correlationGroup || '') ||
-      `${point.source || 'unknown'}:${point.provenance?.provider || 'unknown'}`;
-    representatives.set(key, Math.max(representatives.get(key) || 0, adjusted));
-  }
-
-  const values = [...representatives.values()];
-  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
-  const corroborationBonus = Math.min(0.08, Math.max(0, values.length - 1) * 0.02);
-  return Math.max(0, Math.min(0.95, mean + corroborationBonus));
-}
-
-function discoverySourceKey(result: any): string {
-  try {
-    if (result?.url) return new URL(String(result.url)).hostname.toLowerCase();
-  } catch {
-    // Fall back to the result title when URL metadata is malformed.
-  }
-  return String(result?.title || 'web-discovery').trim().toLowerCase();
-}
-
 router.post('/acquire', async (req: Request, res: Response) => {
   const parsed = acquireSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -288,32 +464,36 @@ router.post('/acquire', async (req: Request, res: Response) => {
     ? normalizedTarget.replace(targetPhone, '').replace(/[\s,;:()\-.]+/g, '')
     : normalizedTarget;
   const targetIsPhone = Boolean(targetPhone) && remainingTarget.length === 0;
+  const genericTarget = GENERIC_TARGET_RE.test(normalizedTarget);
+  const suppliedName = extractLikelyName(details);
   const subject = targetSubject(normalizedTarget);
-  const searchQuery = GENERIC_TARGET_RE.test(normalizedTarget) || targetIsPhone
-    ? details
+  const resolvedName = genericTarget || targetIsPhone
+    ? suppliedName || ''
     : subject;
-  const broadQuery = [normalizedTarget, details].filter(Boolean).join(' ');
+  const searchQuery = resolvedName || details;
+  const resolvedTargetLabel = resolvedName || phone || normalizedTarget;
+  const discoveryQueries = buildDiscoveryQueries({
+    resolvedName: resolvedName || '',
+    normalizedTarget,
+    details,
+    phone,
+  });
 
   try {
     // SPECTRA treats discovery systems as parallel evidence sources. A failure
     // in one adapter is local and never prevents other acquisition paths.
-    const [osintResult, webResult] = await Promise.allSettled([
-      conductFullOSINT(searchQuery, {
-        location: details,
-        phone,
-        searchDepth: 4,
-      }),
-      unifiedSearch(broadQuery, {
-        limit: 25,
-        category: 'general',
-        freshness: 'all',
-        timeout: 20_000,
-      }),
+    const [osintResult, firstPass] = await Promise.all([
+      settleWithin(
+        conductFullOSINT(searchQuery, {
+          location: details,
+          phone,
+          searchDepth: 4,
+        }),
+        SPECTRA_OSINT_TIMEOUT_MS,
+        'Deep OSINT acquisition',
+      ),
+      runDiscoveryPass(discoveryQueries.firstPass),
     ]);
-
-    if (osintResult.status === 'rejected' && webResult.status === 'rejected') {
-      throw osintResult.reason || webResult.reason;
-    }
 
     const report = osintResult.status === 'fulfilled'
       ? osintResult.value
@@ -330,7 +510,39 @@ router.post('/acquire', async (req: Request, res: Response) => {
           summary: '',
         } as any;
 
-    const discoveryResults = webResult.status === 'fulfilled' ? webResult.value : [];
+    let discoveryResults = firstPass.results;
+    let discoveryQueriesAttempted = firstPass.attempted;
+    let discoveryQueriesFailed = firstPass.failed;
+    let discoveryPasses = 1;
+
+    // Broaden automatically when the first discovery wave is still narrow.
+    // Each query is isolated: one failed provider/query never suppresses the
+    // evidence already returned by the other branches.
+    const firstPassSourceCount = new Set(
+      discoveryResults.map(discoverySourceKey).filter(Boolean)
+    ).size;
+    if (
+      discoveryResults.length < 40 ||
+      firstPassSourceCount < 12 ||
+      (Array.isArray(report.sources) ? report.sources.length : 0) < 8
+    ) {
+      const secondPass = await runDiscoveryPass(discoveryQueries.secondPass);
+      discoveryResults = dedupeDiscoveryResults([
+        ...discoveryResults,
+        ...secondPass.results,
+      ]);
+      discoveryQueriesAttempted += secondPass.attempted;
+      discoveryQueriesFailed += secondPass.failed;
+      discoveryPasses += 1;
+    }
+
+    if (
+      osintResult.status === 'rejected' &&
+      discoveryResults.length === 0 &&
+      discoveryQueriesFailed >= discoveryQueriesAttempted
+    ) {
+      throw osintResult.reason || new Error('All discovery paths failed');
+    }
 
     const observations: any[] = directEvidence.map(point => {
       const normalized = normalizeClientEvidence({
@@ -380,8 +592,30 @@ router.post('/acquire', async (req: Request, res: Response) => {
       );
     }
 
-    const locationObservations = dedupeObservations(observations)
+    const normalizedLocationObservations: GPSPoint[] = dedupeObservations(observations)
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+      .map(point => ({
+        ...point,
+        timestamp: new Date(point.timestamp),
+        receivedAt: point.receivedAt ? new Date(point.receivedAt) : undefined,
+        provenance: point.provenance
+          ? {
+              ...point.provenance,
+              capturedAt: point.provenance.capturedAt
+                ? new Date(point.provenance.capturedAt)
+                : undefined,
+            }
+          : undefined,
+      }));
+
+    const locationQuality = assessLocationQuality(normalizedLocationObservations);
+    const qualityLocationObservations = locationQuality.points;
+
+    const fusedLocationEvidence = qualityLocationObservations.length > 0
+      ? await inputFusionEngine.fuseInputs(qualityLocationObservations)
+      : [];
+
+    const locationObservations = qualityLocationObservations
       .map(point => signServerEvidence(point));
 
     const candidateLocations: Array<{
@@ -443,9 +677,26 @@ router.post('/acquire', async (req: Request, res: Response) => {
     const identityConfidence = Number.isFinite(confidenceRaw)
       ? Math.max(0, Math.min(1, confidenceRaw > 1 ? confidenceRaw / 100 : confidenceRaw))
       : 0;
-    const locationConfidence = locationObservations.length > 0
-      ? locationEvidenceConfidence(locationObservations)
-      : candidateLocations[0]?.confidence ?? 0;
+    const latestFusedTimestamp = fusedLocationEvidence.reduce(
+      (latest, location) => Math.max(latest, location.point.timestamp.getTime()),
+      Number.NEGATIVE_INFINITY,
+    );
+    const latestFusedCandidates = Number.isFinite(latestFusedTimestamp)
+      ? fusedLocationEvidence.filter(location =>
+          Math.abs(location.point.timestamp.getTime() - latestFusedTimestamp) <= 5_000
+        )
+      : [];
+    const canonicalLatest = [...latestFusedCandidates]
+      .sort((a, b) =>
+        b.qualityScore - a.qualityScore ||
+        b.point.confidence - a.point.confidence ||
+        (a.point.accuracy ?? Number.MAX_SAFE_INTEGER) -
+          (b.point.accuracy ?? Number.MAX_SAFE_INTEGER)
+      )[0];
+
+    const locationConfidence = canonicalLatest?.qualityScore
+      ?? candidateLocations[0]?.confidence
+      ?? 0;
 
     const sourceKeys = new Set<string>();
     for (const point of directEvidence) {
@@ -454,6 +705,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
       );
     }
     for (const source of report.sources || []) {
+      if (normalizeConfidence(source?.confidence) <= 0) continue;
       sourceKeys.add(String(source?.name || 'osint-source').trim().toLowerCase());
     }
     for (const result of discoveryResults) {
@@ -464,6 +716,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
       success: true,
       target,
       details,
+      resolvedTargetLabel,
       acquisition: {
         identityConfidence,
         locationConfidence,
@@ -473,6 +726,11 @@ router.post('/acquire', async (req: Request, res: Response) => {
           (Array.isArray(report.sources) ? report.sources.length : 0) +
           discoveryResults.length,
         observationCount: locationObservations.length,
+        rejectedObservationCount: locationQuality.rejectedCount,
+        qualityIssueCount: locationQuality.issues.length,
+        discoveryPasses,
+        discoveryQueriesAttempted,
+        discoveryQueriesFailed,
         summary: report.summary || '',
         verificationStatus: report.identitySummary?.verificationStatus || 'Unknown',
       },

@@ -120,10 +120,30 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
   const discardServerRecordingRef = useRef(false);
   const transcriptionAbortRef = useRef<AbortController | null>(null);
   const serverTranscriptionQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const recentFinalTranscriptRef = useRef<{ normalized: string; at: number } | null>(null);
 
   useEffect(() => {
     optionsRef.current = options;
   }, [options]);
+
+  const emitTranscript = useCallback((
+    value: string,
+    isFinal: boolean,
+    meta: VoiceTranscriptMeta,
+  ) => {
+    const cleaned = value.replace(/\s+/g, ' ').trim();
+    if (!cleaned) return;
+
+    if (isFinal) {
+      const normalized = cleaned.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      const recent = recentFinalTranscriptRef.current;
+      const now = Date.now();
+      if (normalized && recent?.normalized === normalized && now - recent.at < 4_000) return;
+      recentFinalTranscriptRef.current = { normalized, at: now };
+    }
+
+    optionsRef.current.onTranscript?.(cleaned, isFinal, meta);
+  }, []);
 
   const clearRestartTimer = useCallback(() => {
     if (restartTimerRef.current !== null) {
@@ -193,7 +213,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       resetTransientRecovery();
       setTranscript(prev => (prev ? `${prev} ${value}` : value));
       setInterimTranscript('');
-      optionsRef.current.onTranscript?.(value, true, {
+      emitTranscript(value, true, {
         engine: 'server',
         provider: typeof payload?.provider === 'string' ? payload.provider : undefined,
         speechDurationMs,
@@ -209,7 +229,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
         transcriptionAbortRef.current = null;
       }
     }
-  }, [resetTransientRecovery]);
+  }, [emitTranscript, resetTransientRecovery]);
 
   const queueServerTranscription = useCallback((blob: Blob, speechDurationMs: number) => {
     serverTranscriptionQueueRef.current = serverTranscriptionQueueRef.current
@@ -547,17 +567,23 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
 
       if (finalText.trim()) {
         const finalValue = finalText.trim();
-        const confidence = Number(event.results?.[event.resultIndex]?.[0]?.confidence);
+        const finalResult = event.results[Math.max(event.resultIndex, event.results.length - 1)];
+        const confidence = Number(finalResult?.[0]?.confidence);
         setTranscript(prev => (prev ? `${prev} ${finalValue}` : finalValue));
         setInterimTranscript(interimText.trim());
-        optionsRef.current.onTranscript?.(finalValue, true, {
+        emitTranscript(finalValue, true, {
           engine: 'browser',
           confidence: Number.isFinite(confidence) ? confidence : undefined,
+          provider: 'browser-speech-recognition',
         });
       } else {
-        setInterimTranscript(interimText.trim());
-        if (interimText.trim()) {
-          optionsRef.current.onTranscript?.(interimText.trim(), false, { engine: 'browser' });
+        const interimValue = interimText.trim();
+        setInterimTranscript(interimValue);
+        if (interimValue) {
+          emitTranscript(interimValue, false, {
+            engine: 'browser',
+            provider: 'browser-speech-recognition',
+          });
         }
       }
     };
@@ -624,6 +650,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     return recognition;
   }, [
     clearRestartTimer,
+    emitTranscript,
     isServerRecognitionSupported,
     isSpeechRecognitionSupported,
     resetTransientRecovery,
