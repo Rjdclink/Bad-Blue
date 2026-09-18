@@ -22,7 +22,7 @@ const envSchema = z.object({
   // Production safety is enforced in loadConfig() with explicit checks.
   DATABASE_URL: z.string().optional().default(''),
   SUPABASE_DATABASE_URL: z.string().optional().default(''),
-  SUPABASE_URL: z.string().optional(),
+  SUPABASE_URL: z.string().url('SUPABASE_URL must be a valid URL').optional(),
   SUPABASE_DB_URL: z.string().optional().default(''),
   
   // Application
@@ -174,6 +174,22 @@ export function loadConfig(): Config {
       if (!isSupabasePostgresConnectionString(dbUrl)) {
         throw new Error(`${dbUrlSource} must be a Supabase Postgres connection string in production`);
       }
+
+      const supabaseProjectUrl = String(config.SUPABASE_URL || '').trim();
+      if (!supabaseProjectUrl || !isHttpUrl(supabaseProjectUrl)) {
+        throw new Error('SUPABASE_URL is required in production and must be the HTTP(S) Supabase project API URL, not a Postgres connection string');
+      }
+      const parsedSupabaseProjectUrl = new URL(supabaseProjectUrl);
+      if (parsedSupabaseProjectUrl.protocol !== 'https:') {
+        throw new Error('SUPABASE_URL must use https:// in production');
+      }
+      const serverSupabaseKey = String(
+        process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || ''
+      ).trim();
+      if (!serverSupabaseKey) {
+        throw new Error('SUPABASE_SECRET_KEY or SUPABASE_SERVICE_ROLE_KEY is required in production for server-side LegalWhat authentication');
+      }
+
       if (!config.SQUARE_ACCESS_TOKEN || !config.SQUARE_ACCESS_TOKEN.trim()) {
         throw new Error('SQUARE_ACCESS_TOKEN is required in production');
       }

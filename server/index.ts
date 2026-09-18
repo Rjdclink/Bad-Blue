@@ -71,6 +71,7 @@ let startupError: string | null = null;
 let backgroundInitializationError: string | null = null;
 let databaseInitialized = false;
 let overflowDatabaseReady = false;
+let authStoreReady = false;
 let databaseRuntimeMode: DatabaseRuntimeMode = 'initializing';
 let httpServer: Server | null = null;
 
@@ -598,12 +599,13 @@ startupTrace('health_route_registered');
 
 app.get("/api/ready", (_req, res) => {
   const usableDataPlane = databaseInitialized || overflowDatabaseReady;
-  if (isFullyInitialized && usableDataPlane && !isShuttingDown && !startupError) {
+  if (isFullyInitialized && usableDataPlane && authStoreReady && !isShuttingDown && !startupError) {
     res.status(200).json({
       ready: true,
       fullyInitialized: true,
       databaseInitialized,
       overflowDatabaseReady,
+      authStoreReady,
       databaseMode: databaseRuntimeMode,
     });
   } else {
@@ -612,6 +614,7 @@ app.get("/api/ready", (_req, res) => {
       fullyInitialized: isFullyInitialized,
       databaseInitialized,
       overflowDatabaseReady,
+      authStoreReady,
       databaseMode: databaseRuntimeMode,
       shuttingDown: isShuttingDown,
       startupError,
@@ -724,6 +727,41 @@ startupTrace('routes_import_completed');
 startupTrace('routes_registration_started');
 await registerRoutes(app);
 startupTrace('routes_registration_completed');
+
+  // Authentication is part of the public application surface, so a replacement
+  // deployment must prove the Supabase HTTP data API can initialize and read the
+  // two tables required by local login before Railway is allowed to promote it.
+  startupTrace('auth_store_readiness_started');
+  {
+    const { probeLocalAuthStoreHttp } = await import('./statelessLocalAuth');
+    let lastAuthStoreError: unknown = null;
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      try {
+        await probeLocalAuthStoreHttp();
+        authStoreReady = true;
+        startupTrace('auth_store_ready', { attempt });
+        console.log('[STARTUP] ✓ LegalWhat authentication store ready');
+        break;
+      } catch (error) {
+        lastAuthStoreError = error;
+        startupTrace('auth_store_readiness_retry', {
+          attempt,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        if (attempt < 4) {
+          await new Promise(resolve => setTimeout(resolve, attempt * 750));
+        }
+      }
+    }
+    if (!authStoreReady) {
+      const detail = lastAuthStoreError instanceof Error
+        ? lastAuthStoreError.message
+        : String(lastAuthStoreError || 'unknown authentication store error');
+      startupTrace('auth_store_readiness_failed', { error: detail });
+      throw new Error(`LegalWhat authentication store is not ready: ${detail}`);
+    }
+  }
+
   // With overflow proxy mode active, route and worker code may request primary
   // information normally; the bootstrap gateway prevents direct primary acquisition.
   
