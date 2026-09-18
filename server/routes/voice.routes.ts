@@ -26,6 +26,7 @@ const log = createLogger('VoiceRoutes');
 interface LexaraTTSStreamSession {
   text: string;
   createdAt: number;
+  attempts: number;
 }
 
 const lexaraTTSStreamSessions = new Map<string, LexaraTTSStreamSession>();
@@ -63,7 +64,7 @@ export function setupVoiceRoutes(app: Express): void {
 
       pruneLexaraTTSSessions();
       const id = crypto.randomUUID();
-      lexaraTTSStreamSessions.set(id, { text, createdAt: Date.now() });
+      lexaraTTSStreamSessions.set(id, { text, createdAt: Date.now(), attempts: 0 });
       return res.json({
         success: true,
         audioUrl: `/api/lexara/tts/session/${id}`,
@@ -84,8 +85,12 @@ export function setupVoiceRoutes(app: Express): void {
       pruneLexaraTTSSessions();
       const id = String(req.params.id || '');
       const session = lexaraTTSStreamSessions.get(id);
-      lexaraTTSStreamSessions.delete(id);
       if (!session) return res.status(404).json({ error: 'TTS session expired or unavailable' });
+      if (session.attempts >= 2) {
+        lexaraTTSStreamSessions.delete(id);
+        return res.status(410).json({ error: 'TTS session retry limit reached' });
+      }
+      session.attempts += 1;
 
       const apiKey = process.env.ELEVENLABS_API_KEY?.trim();
       const voiceId = process.env.ELEVENLABS_VOICE_ID?.trim();
@@ -143,6 +148,10 @@ export function setupVoiceRoutes(app: Express): void {
           upstreamLatencyMs: Date.now() - startedAt,
           textLength: session.text.length,
         });
+
+        const retireSession = () => lexaraTTSStreamSessions.delete(id);
+        res.once('finish', retireSession);
+        res.once('close', retireSession);
 
         res.status(200);
         res.setHeader('Content-Type', upstream.headers.get('content-type') || 'audio/mpeg');

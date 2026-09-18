@@ -31,11 +31,8 @@ const SIZE_CONFIG = {
   full: 'w-full h-full min-h-[400px]',
 };
 
-/**
- * Compatibility name retained because the live conversation already imports it,
- * but the visual is intentionally the established professional attorney image.
- */
-export const LEXARAEtherealAvatar = memo(function LEXARAEtherealAvatar({
+/** Canonical LEXARA visual: the established professional attorney at her desk. */
+export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
   isSpeaking = false,
   isListening = false,
   isThinking = false,
@@ -99,4 +96,8 @@ export function LEXARAStatusIndicator({
   );
 }
 
-export default LEXARAEtherealAvatar;
+// Backward-compatible alias for dormant legacy imports. The canonical live
+// consultation path uses LEXARAAttorneyPortrait and never renders an ethereal SVG.
+export const LEXARAEtherealAvatar = LEXARAAttorneyPortrait;
+
+export default LEXARAAttorneyPortrait;

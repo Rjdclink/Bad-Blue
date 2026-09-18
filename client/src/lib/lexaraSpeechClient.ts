@@ -50,6 +50,15 @@ const playbackState: PlaybackState = {
 };
 
 let audioContext: AudioContext | null = null;
+let playbackAudioElement: HTMLAudioElement | null = null;
+
+function getLexaraPlaybackAudioElement(): HTMLAudioElement {
+  if (!playbackAudioElement) {
+    playbackAudioElement = new Audio();
+    playbackAudioElement.preload = 'auto';
+  }
+  return playbackAudioElement;
+}
 
 const SILENT_AUDIO_BASE64 = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
 
@@ -71,10 +80,16 @@ export async function unlockAudio(): Promise<boolean> {
   try {
     await getLexaraSharedAudioContext();
 
-    const silentAudio = new Audio(SILENT_AUDIO_BASE64);
-    silentAudio.volume = 0.001;
-    await silentAudio.play();
-    silentAudio.pause();
+    // Unlock the same media element that will later play LEXARA. Mobile
+    // autoplay permission is tied to user activation and cannot be assumed to
+    // carry from a disposable silent element to a newly-created Audio object.
+    const playbackAudio = getLexaraPlaybackAudioElement();
+    playbackAudio.src = SILENT_AUDIO_BASE64;
+    playbackAudio.volume = 0.001;
+    await playbackAudio.play();
+    playbackAudio.pause();
+    playbackAudio.currentTime = 0;
+    playbackAudio.volume = 1;
 
     playbackState.audioUnlocked = true;
     return true;
@@ -149,7 +164,10 @@ export const LexaraServerTTS = {
     this.stop();
 
     if (!playbackState.audioUnlocked) {
-      await unlockAudio();
+      const unlocked = await unlockAudio();
+      if (!unlocked) {
+        throw new Error('LEXARA audio playback requires a user interaction');
+      }
     }
 
     let audioUrl: string;
@@ -177,7 +195,10 @@ export const LexaraServerTTS = {
       return;
     }
 
-    const audio = new Audio(audioUrl);
+    const audio = getLexaraPlaybackAudioElement();
+    audio.src = audioUrl;
+    audio.volume = 1;
+    audio.load();
     playbackState.currentAudio = audio;
     playbackState.currentObjectUrl = shouldRevokeUrl ? audioUrl : null;
     playbackState.isPlaying = false;
