@@ -557,7 +557,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const isListening = phase === 'listening' && recognitionListening;
 
   return (
-    <div className="mx-auto grid h-[calc(100dvh-73px)] max-w-7xl grid-cols-1 grid-rows-[minmax(260px,42dvh)_minmax(0,1fr)] overflow-hidden lg:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.75fr)] lg:grid-rows-1">
+    <div className="mx-auto grid h-[calc(100dvh-73px)] max-w-7xl grid-cols-1 grid-rows-[minmax(220px,38dvh)_minmax(0,1fr)] overflow-hidden lg:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.75fr)] lg:grid-rows-1">
       <section className="relative flex min-h-0 items-center justify-center overflow-hidden bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 p-3 sm:p-6 lg:min-h-full">
         <div className="absolute inset-0 opacity-40">
           <div className="absolute left-1/4 top-1/4 h-80 w-80 rounded-full bg-cyan-500/10 blur-3xl" />
@@ -607,7 +607,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
           </div>
         </div>
 
-        <div ref={conversationScrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
+        <div ref={conversationScrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-4" aria-live="polite">
           {conversation.map(message => (
             <div
               key={message.id}
@@ -653,14 +653,14 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
           <div ref={messageEndRef} />
         </div>
 
-        <div className="border-t p-4">
+        <div className="border-t px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
           {liveEnabled && !voiceReady && (
             <Button
               type="button"
               variant="outline"
               size="sm"
               onClick={() => void enableVoice()}
-              className="mb-3 w-full gap-2"
+              className="mb-3 min-h-11 w-full gap-2 touch-manipulation text-base sm:text-sm"
             >
               <Mic className="h-4 w-4" />
               Re-enable microphone
@@ -672,10 +672,14 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
               value={userInput}
               onChange={event => setUserInput(event.target.value)}
               placeholder="Type or speak naturally…"
-              className="min-w-0 flex-1 rounded-full border bg-background px-4 py-2.5 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+              className="min-w-0 flex-1 rounded-full border bg-background px-4 py-3 text-base outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring sm:text-sm"
               aria-label="Message LEXARA"
+              enterKeyHint="send"
+              autoComplete="off"
+              autoCapitalize="sentences"
+              spellCheck
             />
-            <Button type="submit" size="icon" className="h-10 w-10 rounded-full" disabled={!userInput.trim()}>
+            <Button type="submit" size="icon" className="h-11 w-11 shrink-0 touch-manipulation rounded-full" disabled={!userInput.trim()} aria-label="Send message">
               <Send className="h-4 w-4" />
             </Button>
           </form>
