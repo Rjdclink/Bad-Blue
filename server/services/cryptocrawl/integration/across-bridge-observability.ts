@@ -26,3 +26,7 @@ export function ensureAcrossBridgeObservability(): void {
   timer = setInterval(emitAcrossBridgeEvidenceHealth, intervalMs);
   timer.unref?.();
 }
+export function stopAcrossBridgeObservability(): void {
+  if (timer) clearInterval(timer);
+  timer = null;
+}
