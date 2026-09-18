@@ -22,6 +22,7 @@ const app = read('client/src/App.tsx');
 const routes = read('server/routes/spectra.routes.ts');
 const serverRoutes = read('server/routes.ts');
 const masterPanels = read('client/src/components/MasterPanelNavigator.tsx');
+const voiceMode = read('client/src/hooks/useVoiceMode.ts');
 
 console.log('\nSPECTRA UNIFIED EXPERIENCE\n');
 
@@ -53,7 +54,12 @@ test('Voice is optional rather than mandatory',
 test('Voice turn-taking prevents SPECTRA from transcribing itself',
   spectra.includes('voiceSynthesis.isLoading || voiceSynthesis.isSpeaking') &&
   spectra.includes('!voiceMode.isSuspended') &&
-  spectra.includes('voiceMode.suspendListening()'));
+  spectra.includes('voiceMode.suspendListening()') &&
+  spectra.includes('lastSpokenTextRef'));
+test('Voice recognition suppresses duplicate finals and exposes confidence',
+  voiceMode.includes('recentFinalTranscriptRef') &&
+  voiceMode.includes('confidence?: number') &&
+  spectra.includes('meta.confidence < 0.45'));
 test('Media intelligence is folded into the conversation',
   spectra.includes('/api/gps/extract-upload') &&
   spectra.includes('handleMediaEvidence') &&
@@ -65,6 +71,15 @@ test('Conversation remains primary before acquisition',
   spectra.includes("const showMap =") &&
   spectra.includes("phase === 'acquiring'") &&
   spectra.includes("phase === 'active'"));
+test('Map is visible and progressively populated during acquisition',
+  spectra.includes("phase === 'acquiring' ||") &&
+  spectra.includes('/api/geoconsole/geocode-city-state') &&
+  spectra.includes('Regional context mapped; broadening identity discovery') &&
+  spectra.includes('Acquired so far'));
+test('Direct media evidence is sent to the server and preserved immediately',
+  spectra.includes('directEvidence: extraEvidence.map') &&
+  routes.includes('directEvidenceSchema') &&
+  routes.includes('directEvidence.map'));
 test('Regional candidates remain separate from timed observations',
   spectra.includes('candidateLocations={candidateLocations}') &&
   routes.includes('candidateLocations') &&
@@ -105,24 +120,40 @@ test('Folded geospatial tools are not separate master tabs',
 
 test('SPECTRA acquisition API requires authentication',
   routes.includes('router.use(isAuthenticated)'));
-test('SPECTRA acquisition uses existing OSINT engine',
-  routes.includes('conductFullOSINT'));
+test('SPECTRA acquisition uses existing OSINT engine with a route-local timeout',
+  routes.includes('conductFullOSINT') &&
+  routes.includes('settleWithin(') &&
+  routes.includes('SPECTRA_OSINT_TIMEOUT_MS'));
 test('SPECTRA broad discovery runs independently of deep OSINT',
+  routes.includes('runDiscoveryPass') &&
   routes.includes('Promise.allSettled') &&
   routes.includes('unifiedSearch') &&
   routes.includes("category: 'general'"));
-test('Generic target classes defer identity details to second response',
-  routes.includes('GENERIC_TARGET_RE') &&
-  routes.includes('GENERIC_TARGET_RE.test(normalizedTarget) || targetIsPhone') &&
-  routes.includes('const searchQuery'));
+test('SPECTRA automatically broadens when the first discovery pass is narrow',
+  routes.includes('firstPassSourceCount < 12') &&
+  routes.includes('discoveryQueries.secondPass') &&
+  routes.includes('discoveryPasses += 1'));
+test('Generic target classes resolve identity without treating city/state as a person name',
+  routes.includes('const genericTarget = GENERIC_TARGET_RE.test(normalizedTarget)') &&
+  routes.includes('extractLikelyName(details)') &&
+  routes.includes('looksLikeLocation') &&
+  routes.includes('extractCityStateHint(firstSegment)') &&
+  routes.includes('resolvedTargetLabel') &&
+  routes.includes('const searchQuery = resolvedName || details'));
 test('SPECTRA only maps qualified explicitly timestamped coordinates',
   routes.includes('explicitTimestamp') &&
   routes.includes('hasLocationContext') &&
   routes.includes('Number.isFinite(latitude)') &&
   routes.includes('timestamp'));
-test('Location confidence is independent-evidence aware',
-  routes.includes('locationEvidenceConfidence') &&
-  routes.includes('correlationGroup'));
+test('Timestamp normalization handles Unix seconds and rejects implausible dates',
+  routes.includes('numeric < 100_000_000_000') &&
+  routes.includes('Date.UTC(1900, 0, 1)') &&
+  routes.includes('Date.now() + 24 * 60 * 60 * 1000'));
+test('Canonical fusion is the sole location-confidence authority',
+  routes.includes('inputFusionEngine.fuseInputs') &&
+  routes.includes('canonicalLatest?.qualityScore') &&
+  !routes.includes('function locationEvidenceConfidence') &&
+  !spectra.includes('combinedLocationConfidence'));
 test('Independent evidence is preserved while duplicate source counting is prevented',
   routes.includes('const evidenceGroup =') &&
   spectra.includes('const evidenceGroup =') &&
