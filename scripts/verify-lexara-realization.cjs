@@ -30,6 +30,11 @@ const voicePipeline = read('server/lexara/LexaraVoicePipeline.ts');
 const review = read('docs/LEXARA_INTENT_REALIZATION_30_SOURCE_REVIEW_20260918.md');
 const voiceReliabilityReview = read('docs/LEXARA_VOICE_RELIABILITY_10_SOURCE_REVIEW_20260918.md');
 const turnGroundingReview = read('docs/LEXARA_TURN_GROUNDING_30_SOURCE_REVIEW_20260918.md');
+const harmonyReview = read('docs/LEXARA_HARMONY_STATIC_VOICE_10_SOURCE_REVIEW_20260918.md');
+const harmony = read('server/aiCollaborationOrchestrator.ts');
+const claude = read('server/claude.ts');
+const groq = read('server/groq.ts');
+const routes = read('server/routes.ts');
 
 must(
   voiceMode.indexOf("if (isSpeechRecognitionSupported())") <
@@ -72,8 +77,11 @@ must(
   'server STT turns pass admission checks before conversation mutation',
 );
 must(
-  conversation.includes("meta.engine === 'browser' || isFinal"),
-  'barge-in is transcript-confirmed rather than acoustic-energy-confirmed',
+  conversation.includes('Never interrupt LEXARA on an interim browser hypothesis') &&
+    conversation.includes("if (phaseRef.current === 'speaking')") &&
+    conversation.includes('weakBrowserEvidence') &&
+    conversation.includes('weakServerEvidence'),
+  'barge-in requires final echo-screened speech evidence rather than interim hypotheses',
 );
 must(
   avatar.includes('LEXARA_ATTORNEY_IMAGE_SOURCES') &&
@@ -106,29 +114,53 @@ must(
 );
 must(
   voiceRoutes.includes('/api/lexara/tts/session') &&
-    voiceRoutes.includes('/stream?output_format=mp3_44100_128'),
-  'TTS is proxied as progressive ElevenLabs streaming media',
+    voiceRoutes.includes("ELEVENLABS_TTS_OUTPUT_FORMAT") &&
+    voiceRoutes.includes("'mp3_22050_32'"),
+  'TTS is progressive ElevenLabs streaming with mobile-efficient default bitrate',
 );
 must(
   voiceRoutes.includes('/api/lexara/voice/profile'),
   'configured ElevenLabs production voice can be validated',
 );
 must(
-  orchestrator.includes("preferredProvider: 'openrouter'") &&
-    openRouter.includes("'openrouter/auto'"),
-  'Lexara reasoning uses current platform model routing before direct fallbacks',
+  orchestrator.includes('AICollaborationOrchestrator.orchestrateCollaboration') &&
+    orchestrator.includes("providerPolicy: 'capability-first-no-google'") &&
+    orchestrator.includes('getLexaraHarmonyProviders') &&
+    !orchestrator.includes("providers.push(AIProvider.GEMINI)") &&
+    harmony.includes("export type CollaborationProviderPolicy = 'default' | 'capability-first-no-google'") &&
+    harmony.includes('fallbackProviders') &&
+    harmony.includes('Promise.any'),
+  'Lexara reasoning uses capability-first Harmony with route-local non-Google failover',
 );
 must(
   !authorityResearch.includes('GoogleGenAI') &&
-    authorityResearch.includes('unifiedSearch') &&
-    authorityResearch.includes('PANTHEON crawler first') &&
+    authorityResearch.includes('FIRECRAWL_API_KEY') &&
+    authorityResearch.includes("https://api.firecrawl.dev/v1/search") &&
+    authorityResearch.includes('orchestratedWebSearch') &&
+    authorityResearch.includes('never sends a plain-text query') &&
     webSearch.includes('useOnlinePlugin: true'),
-  'legal authority research uses canonical retrieval/provider orchestration with no Google-specific dependency',
+  'legal authority research separates discovery from URL-only crawling with no Google-specific dependency',
 );
 must(
   openRouter.includes('cancellationShaped') &&
     conversation.includes('pendingUserTurnRef'),
   'request cancellation cannot poison the live provider mesh',
+);
+must(
+  claude.includes('samplingControlsDeprecated') &&
+    groq.includes("https://api.groq.com/openai/v1/models"),
+  'provider adapters normalize current Claude parameters and discover active Groq models',
+);
+must(
+  routes.includes("req.path.startsWith('/images/')") &&
+    routes.includes("/\\.[a-z0-9]{2,8}$/i.test(req.path)"),
+  'SPA routing cannot intercept WEBP or other static assets',
+);
+must(
+  speechClient.includes("audio.onwaiting") &&
+    speechClient.includes("audio.onstalled") &&
+    speechClient.includes("audio.onplaying"),
+  'mobile audio playback exposes waiting/stalled/playing telemetry',
 );
 must(
   viteConfig.includes('publicDir: path.resolve(__dirname, "public")') &&
@@ -154,6 +186,9 @@ must(resolutionLines.length === 20, 'literal 20-source resolution review is pres
 const implementationSection = turnGroundingReview.split('## Implementation sources — exactly 10')[1]?.split('## Repo and production findings')[0] || '';
 const implementationLines = implementationSection.split('\n').filter(line => /^\d+\.\s/.test(line));
 must(implementationLines.length === 10, 'literal 10-source implementation review is present');
+const harmonySourceSection = harmonyReview.split('## Sources — exactly 10')[1]?.split('## Implementation sequence')[0] || '';
+const harmonySourceLines = harmonySourceSection.split('\n').filter(line => /^\d+\.\s/.test(line));
+must(harmonySourceLines.length === 10, 'literal 10-source Harmony implementation review is present');
 
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA realization verification passed.');
