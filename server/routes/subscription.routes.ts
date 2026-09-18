@@ -199,10 +199,25 @@ export async function handleLegalWhatSubscriptionWebhook(event: any): Promise<bo
     const items = await subscriptionsForCustomer(square, customerId, getSquareLocationId());
     const activeSubscription = activeMatchingSubscription(items, variationId);
     if (activeSubscription) {
-      // Never grant access from an identity-free subscription webhook. Initial
-      // activation is bound to the application user by the verified payment note
-      // or checkout confirmation. This also prevents a stale ACTIVE delivery from
-      // overriding an administrative suspension.
+      // The completed-payment path binds this Square customer ID to the LegalWhat
+      // user. Once Square's current state becomes ACTIVE, that durable binding is
+      // sufficient to finish activation even if the browser has already closed.
+      // Unknown customers are ignored here; their payment webhook can bind them
+      // later and immediately reconcile this same current Square state.
+      try {
+        await persistSubscriptionState({
+          squareCustomerId: customerId,
+          squareSubscriptionId: String(activeSubscription.id || subscriptionId),
+          squarePlanVariationId: variationId,
+          status: "active",
+          hasPaidForAccess: true,
+        });
+      } catch (error) {
+        if (/User not found for Square subscription/i.test(error instanceof Error ? error.message : String(error))) {
+          return true;
+        }
+        throw error;
+      }
       return true;
     }
 
