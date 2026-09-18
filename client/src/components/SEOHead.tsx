@@ -28,6 +28,63 @@ const BASE_URL = "https://legalwhat.com";
 const SITE_NAME = "Legal What?";
 const DEFAULT_SHARE_IMAGE = `${BASE_URL}/images/Legal%20What%20Icon.png`;
 
+const PRIVATE_ROUTES = new Set([
+  "/login",
+  "/subscription-success",
+  "/administrator",
+  "/admin",
+  "/welcome",
+  "/legal-tools",
+  "/people-finder",
+  "/spectra",
+  "/geo-console",
+  "/location-intel",
+  "/tshpe",
+  "/tshpe-locator",
+  "/positioning",
+  "/inmate-locator",
+  "/inmate-locator/dashboard",
+  "/inmate-locator-v2",
+  "/cryptocrawler",
+  "/cryptocrawler-v2",
+  "/control-room",
+  "/orchestrator-console",
+  "/badblue",
+  "/home",
+  "/dashboard",
+  "/officer-search",
+  "/complaints",
+  "/complaint-form",
+  "/complaint",
+  "/lawsuit-form",
+  "/lawsuit",
+  "/petition-form",
+  "/petition-workflow",
+  "/petitions",
+  "/foia-request",
+  "/foia",
+  "/legal-document-creator",
+  "/history",
+  "/evidence-hub",
+]);
+
+const PRIVATE_PREFIXES = [
+  "/admin-",
+  "/lexara-consent/",
+  "/legal-consultation/",
+  "/geoconsole",
+  "/cryptocrawler-dashboard",
+  "/officer/",
+  "/complaint/",
+  "/lawsuit/",
+  "/petition-edit/",
+  "/confirmation/",
+];
+
+function isPrivateRoute(path: string): boolean {
+  return PRIVATE_ROUTES.has(path) || PRIVATE_PREFIXES.some((prefix) => path.startsWith(prefix));
+}
+
 export function SEOHead({
   title,
   description,
@@ -66,6 +123,7 @@ export function SEOHead({
     const path = window.location.pathname || "/";
     const inferredCanonical = new URL(path, `${BASE_URL}/`).toString();
     const finalCanonical = canonicalUrl || inferredCanonical;
+    const effectiveNoIndex = noIndex || isPrivateRoute(path);
     const finalOgImage = ogImage || DEFAULT_SHARE_IMAGE;
     const finalOgImageAlt = ogImageAlt || "Legal What? legal technology platform logo";
 
@@ -73,17 +131,17 @@ export function SEOHead({
     setMetaTag("description", description);
     setMetaTag(
       "robots",
-      noIndex
+      effectiveNoIndex
         ? "noindex, nofollow"
         : "index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1",
     );
     setMetaTag(
       "googlebot",
-      noIndex
+      effectiveNoIndex
         ? "noindex, nofollow"
         : "index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1",
     );
-    setMetaTag("bingbot", noIndex ? "noindex, nofollow" : "index, follow");
+    setMetaTag("bingbot", effectiveNoIndex ? "noindex, nofollow" : "index, follow");
     setMetaTag("author", SITE_NAME);
     setMetaTag("referrer", "origin-when-cross-origin");
 
