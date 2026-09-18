@@ -521,7 +521,18 @@ async function persistPostgresSubscriptionState(
   }
   if (!userId) throw new Error("User not found for Square subscription");
 
-  if (!update.hasPaidForAccess) {
+  const currentUserResult = await dbClient.query(
+    "SELECT status,has_paid_for_access FROM users WHERE id = $1 LIMIT 1",
+    [userId],
+  );
+  if (!currentUserResult.rows?.[0]) throw new Error("Subscription user was not found");
+
+  const administrativelySuspended =
+    String(currentUserResult.rows[0].status || "").toLowerCase() === "suspended";
+  const effectiveUserStatus = administrativelySuspended ? "suspended" : update.status;
+  const effectivePaidAccess = administrativelySuspended ? false : update.hasPaidForAccess;
+
+  if (!effectivePaidAccess) {
     await dbClient.query(
       `UPDATE users
           SET status=$1,
@@ -529,7 +540,7 @@ async function persistPostgresSubscriptionState(
               square_customer_id=COALESCE($2,square_customer_id),
               updated_at=NOW()
         WHERE id=$3`,
-      [update.status, update.squareCustomerId, userId],
+      [effectiveUserStatus, update.squareCustomerId, userId],
     );
   }
 
@@ -557,7 +568,7 @@ async function persistPostgresSubscriptionState(
     }
   }
 
-  if (update.hasPaidForAccess) {
+  if (effectivePaidAccess) {
     const updated = await dbClient.query(
       `UPDATE users
           SET status=$1,
@@ -566,7 +577,7 @@ async function persistPostgresSubscriptionState(
               updated_at=NOW()
         WHERE id=$3
         RETURNING id,email,first_name,last_name,status,has_paid_for_access`,
-      [update.status, update.squareCustomerId, userId],
+      [effectiveUserStatus, update.squareCustomerId, userId],
     );
     if (!updated.rows?.[0]) throw new Error("Subscription user update failed");
     return mapUser(updated.rows[0]);
@@ -630,14 +641,28 @@ async function persistSupabaseSubscriptionState(
   }
   if (!userId) throw new Error("User not found for Square subscription");
 
+  const { data: currentUser, error: currentUserError } = await supabase
+    .from("users")
+    .select("status,has_paid_for_access")
+    .eq("id", userId)
+    .single();
+  if (currentUserError || !currentUser) {
+    throw new Error(`Subscription user lookup failed: ${currentUserError?.message || "unknown error"}`);
+  }
+
+  const administrativelySuspended =
+    String(currentUser.status || "").toLowerCase() === "suspended";
+  const effectiveUserStatus = administrativelySuspended ? "suspended" : update.status;
+  const effectivePaidAccess = administrativelySuspended ? false : update.hasPaidForAccess;
+
   const userPatch: Record<string, unknown> = {
-    status: update.status,
-    has_paid_for_access: update.hasPaidForAccess,
+    status: effectiveUserStatus,
+    has_paid_for_access: effectivePaidAccess,
     updated_at: new Date().toISOString(),
   };
   if (update.squareCustomerId) userPatch.square_customer_id = update.squareCustomerId;
 
-  if (!update.hasPaidForAccess) {
+  if (!effectivePaidAccess) {
     const { error } = await supabase.from("users").update(userPatch).eq("id", userId);
     if (error) throw new Error(`Subscription access update failed: ${error.message}`);
   }
@@ -678,7 +703,7 @@ async function persistSupabaseSubscriptionState(
     }
   }
 
-  if (update.hasPaidForAccess) {
+  if (effectivePaidAccess) {
     const { data: userRow, error: userError } = await supabase
       .from("users")
       .update(userPatch)
