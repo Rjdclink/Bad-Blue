@@ -223,7 +223,7 @@ async function fetchWithFallback(url: string, options?: any): Promise<any> {
 export interface AIFallbackResult {
   success: boolean;
   content?: string;
-  provider?: 'gemini' | 'groq' | 'mistral' | 'openrouter' | 'anthropic' | 'local';
+  provider?: 'harmony' | 'gemini' | 'groq' | 'mistral' | 'openrouter' | 'anthropic' | 'local';
   model?: string;
   tokensUsed?: number;
   error?: string;
@@ -354,8 +354,8 @@ export async function callAIWithFallback(
       return {
         success: true,
         content: harmony.content,
-        provider: 'openrouter',
-        model: 'harmony',
+        provider: 'harmony',
+        model: 'harmony-current',
         tokensUsed: harmony.tokensUsed,
         fallbackChain,
       };
