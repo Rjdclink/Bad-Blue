@@ -28,6 +28,13 @@ function normalizeTargetIntent(value: string): string {
 
 const GENERIC_TARGET_RE = /^(?:(?:a|an|the|my|their|his|her)\s+)?(?:person|individual|business|company|organization|vehicle|car|truck|device|object|place|address|thing|property|phone|phone number|target)$/i;
 
+function targetSubject(value: string): string {
+  const withoutPhone = value.replace(PHONE_RE, ' ').replace(/\s+/g, ' ').trim();
+  const contextual = withoutPhone.match(/^(.+?)\s+(?:in|near|around|located\s+in)\s+.+$/i);
+  const subject = contextual?.[1]?.trim() || withoutPhone;
+  return subject.length >= 2 ? subject : value.trim();
+}
+
 function normalizeConfidence(value: unknown): number {
   const n = Number(value);
   if (!Number.isFinite(n)) return 0.5;
@@ -164,10 +171,12 @@ router.post('/acquire', async (req: Request, res: Response) => {
   const normalizedTarget = normalizeTargetIntent(target);
   const combinedTargetText = [normalizedTarget, details].filter(Boolean).join(' ');
   const phone = combinedTargetText.match(PHONE_RE)?.[0];
-  const searchQuery = GENERIC_TARGET_RE.test(normalizedTarget)
+  const targetIsPhone = PHONE_RE.test(normalizedTarget);
+  const subject = targetSubject(normalizedTarget);
+  const searchQuery = GENERIC_TARGET_RE.test(normalizedTarget) || targetIsPhone
     ? details
-    : normalizedTarget;
-  const broadQuery = [searchQuery, details].filter(Boolean).join(' ');
+    : subject;
+  const broadQuery = [normalizedTarget, details].filter(Boolean).join(' ');
 
   try {
     // SPECTRA treats discovery systems as parallel evidence sources. A failure
@@ -242,6 +251,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
     // current observation.
     if (locationObservations.length === 0) {
       const locationHints = [
+        normalizedTarget,
         details,
         ...(Array.isArray(report.locationHistory) ? report.locationHistory : []),
       ]
