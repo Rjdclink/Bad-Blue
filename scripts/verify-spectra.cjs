@@ -22,6 +22,7 @@ const app = read('client/src/App.tsx');
 const routes = read('server/routes/spectra.routes.ts');
 const serverRoutes = read('server/routes.ts');
 const masterPanels = read('client/src/components/MasterPanelNavigator.tsx');
+const voiceMode = read('client/src/hooks/useVoiceMode.ts');
 
 console.log('\nSPECTRA UNIFIED EXPERIENCE\n');
 
@@ -53,7 +54,13 @@ test('Voice is optional rather than mandatory',
 test('Voice turn-taking prevents SPECTRA from transcribing itself',
   spectra.includes('voiceSynthesis.isLoading || voiceSynthesis.isSpeaking') &&
   spectra.includes('!voiceMode.isSuspended') &&
-  spectra.includes('voiceMode.suspendListening()'));
+  spectra.includes('voiceMode.suspendListening()') &&
+  spectra.includes('lastSpokenTextRef'));
+test('Voice recognition suppresses duplicate finals and weak scored transcripts',
+  voiceMode.includes('recentFinalTranscriptRef') &&
+  voiceMode.includes('emitTranscript') &&
+  spectra.includes('meta.confidence < 0.45') &&
+  spectra.includes('recentVoiceTurnRef'));
 test('Media intelligence is folded into the conversation',
   spectra.includes('/api/gps/extract-upload') &&
   spectra.includes('handleMediaEvidence') &&
@@ -65,6 +72,22 @@ test('Conversation remains primary before acquisition',
   spectra.includes("const showMap =") &&
   spectra.includes("phase === 'acquiring'") &&
   spectra.includes("phase === 'active'"));
+test('Map is visible and progressively populated during acquisition',
+  spectra.includes("phase === 'acquiring' ||") &&
+  spectra.includes('/api/geoconsole/geocode-city-state') &&
+  spectra.includes('Regional context mapped; broadening identity discovery') &&
+  spectra.includes('Acquired so far') &&
+  spectra.includes('previewRegionCandidate'));
+test('Late regional previews cannot overwrite completed acquisition evidence',
+  spectra.includes('completedRequestRef.current === requestId') &&
+  spectra.includes('completedRequestRef.current = requestId'));
+test('Resolved identity is carried into the live map subject',
+  spectra.includes("subject={resolvedTargetLabel || target || 'SPECTRA target'}") &&
+  spectra.includes('setResolvedTargetLabel(payload.resolvedTargetLabel'));
+test('Direct media evidence is sent to the server and preserved immediately',
+  spectra.includes('directEvidence: extraEvidence.map') &&
+  routes.includes('directEvidenceSchema') &&
+  routes.includes('directEvidence.map'));
 test('Regional candidates remain separate from timed observations',
   spectra.includes('candidateLocations={candidateLocations}') &&
   routes.includes('candidateLocations') &&
@@ -108,13 +131,22 @@ test('SPECTRA acquisition API requires authentication',
 test('SPECTRA acquisition uses existing OSINT engine',
   routes.includes('conductFullOSINT'));
 test('SPECTRA broad discovery runs independently of deep OSINT',
+  routes.includes('runDiscoveryPass') &&
   routes.includes('Promise.allSettled') &&
   routes.includes('unifiedSearch') &&
   routes.includes("category: 'general'"));
-test('Generic target classes defer identity details to second response',
-  routes.includes('GENERIC_TARGET_RE') &&
-  routes.includes('GENERIC_TARGET_RE.test(normalizedTarget) || targetIsPhone') &&
-  routes.includes('const searchQuery'));
+test('SPECTRA automatically broadens when the first discovery pass is narrow',
+  routes.includes('firstPassSourceCount < 12') &&
+  routes.includes('discoveryQueries.secondPass') &&
+  routes.includes('discoveryPasses += 1'));
+test('Generic target classes resolve the actual identity from the second response',
+  routes.includes('const genericTarget = GENERIC_TARGET_RE.test(normalizedTarget)') &&
+  routes.includes('extractLikelyName(details)') &&
+  routes.includes('resolvedTargetLabel') &&
+  routes.includes('const searchQuery = resolvedName || details'));
+test('Labelled identity parsing stops before phone and location clauses',
+  routes.includes("last\\s+known|lives?|from|near|around|in") &&
+  routes.includes("return candidate"));
 test('SPECTRA only maps qualified explicitly timestamped coordinates',
   routes.includes('explicitTimestamp') &&
   routes.includes('hasLocationContext') &&
