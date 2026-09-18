@@ -35,9 +35,9 @@ const harmony = read('server/aiCollaborationOrchestrator.ts');
 const claude = read('server/claude.ts');
 const groq = read('server/groq.ts');
 const routes = read('server/routes.ts');
-const config = read('server/config.ts');
-const db = read('server/db.ts');
 const storage = read('server/storage.ts');
+const overflowSchema = read('server/services/cryptocrawl/runtime/cryptocrawl-overflow-runtime-schema.ts');
+const lexaraOverflowMigration = read('server/migrations/060_lexara_overflow_conversation_history.sql');
 const aiProvider = read('server/aiProvider.ts');
 const conversationalReliabilityReview = read('docs/LEXARA_CONVERSATIONAL_RELIABILITY_10_SOURCE_REVIEW_20260918.md');
 
@@ -189,12 +189,16 @@ must(
   'attorney portrait is included in production assets and missing assets cannot masquerade as SPA HTML',
 );
 must(
-  config.includes('SUPABASE_DATABASE_URL_OVERFLOW') &&
-    config.includes('SUPABASE_SECRET_KEY_OVERFLOW') &&
-    db.includes("'lexara_conversations'") &&
+  storage.includes('db as overflowRuntimeDb') &&
+    storage.includes('isOverflowRuntimeDatabaseConfigured') &&
+    storage.includes('await overflowRuntimeDb') &&
     storage.includes('[LEXARA Persistence] insert attempt failed') &&
-    storage.includes('for (let attempt = 1; attempt <= 3; attempt += 1)'),
-  'Lexara persistence is bound to Overflow authority, schema-verified, retryable, and diagnostically complete',
+    storage.includes('for (let attempt = 1; attempt <= 3; attempt += 1)') &&
+    overflowSchema.includes("'public.lexara_conversations'") &&
+    overflowSchema.includes("'060_lexara_overflow_conversation_history.sql'") &&
+    lexaraOverflowMigration.includes('CREATE TABLE IF NOT EXISTS public.lexara_conversations') &&
+    lexaraOverflowMigration.includes('Deliberately omits a users-table foreign key'),
+  'Lexara persistence uses the existing canonical Overflow runtime DB without collapsing the explicit Primary archive boundary',
 );
 must(
   systemConfig.includes("DEFAULT_VOICE_PROVIDER = 'elevenlabs'") &&
