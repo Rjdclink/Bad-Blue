@@ -9,9 +9,6 @@
  */
 
 import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
-import 'leaflet.heat';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
@@ -60,14 +57,6 @@ type MapMode = 'satellite' | 'hybrid' | 'street' | 'dark';
 // CONSTANTS
 // ============================================================================
 
-const TILE_LAYERS: Record<string, { url: string; attribution: string }> = {
-  satellite: { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attribution: '© Esri' },
-  street: { url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '© OpenStreetMap' },
-  dark: { url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', attribution: '© CartoDB' },
-  labels: { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', attribution: '' },
-};
-
-const SPEED_COLORS = { stationary: '#3b82f6', walking: '#22c55e', running: '#eab308', cycling: '#f97316', driving: '#ef4444' };
 const MPS_TO_MPH = 2.237;
 
 const DEFAULT_SOURCE_VISIBILITY: Record<string, boolean> = {};
@@ -80,7 +69,6 @@ const formatTime = (date: Date): string => new Intl.DateTimeFormat('en-US', { mo
 const formatDuration = (s: number): string => { const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return h > 0 ? `${h}h ${m}m` : `${m}m`; };
 const formatDistance = (m: number): string => m >= 1609.34 ? `${(m / 1609.34).toFixed(2)} mi` : m >= 1000 ? `${(m / 1000).toFixed(2)} km` : `${Math.round(m)} m`;
 const formatSpeed = (mps: number): string => `${(mps * MPS_TO_MPH).toFixed(1)} mph`;
-const getSpeedColor = (speed: number): string => speed < 0.5 ? SPEED_COLORS.stationary : speed < 2 ? SPEED_COLORS.walking : speed < 5 ? SPEED_COLORS.running : speed < 10 ? SPEED_COLORS.cycling : SPEED_COLORS.driving;
 
 const haversineDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
   const R = 6371000;
@@ -91,129 +79,6 @@ const haversineDistance = (lat1: number, lon1: number, lat2: number, lon2: numbe
   const a = Math.sin(Δφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
-
-// ============================================================================
-// ICONS
-// ============================================================================
-
-const createReticleIcon = (color: string, size = 40): L.DivIcon => L.divIcon({
-  className: 'geo-reticle',
-  html: `<div style="width:${size}px;height:${size}px;"><svg viewBox="0 0 100 100" style="width:100%;height:100%;filter:drop-shadow(0 0 8px ${color});"><circle cx="50" cy="50" r="45" fill="none" stroke="${color}" stroke-width="2" opacity="0.3"/><circle cx="50" cy="50" r="30" fill="none" stroke="${color}" stroke-width="2" opacity="0.5"/><circle cx="50" cy="50" r="15" fill="none" stroke="${color}" stroke-width="2"/><circle cx="50" cy="50" r="5" fill="${color}"/><line x1="50" y1="0" x2="50" y2="35" stroke="${color}" stroke-width="2"/><line x1="50" y1="65" x2="50" y2="100" stroke="${color}" stroke-width="2"/><line x1="0" y1="50" x2="35" y2="50" stroke="${color}" stroke-width="2"/><line x1="65" y1="50" x2="100" y2="50" stroke="${color}" stroke-width="2"/></svg></div>`,
-  iconSize: [size, size],
-  iconAnchor: [size / 2, size / 2],
-});
-
-const createDotIcon = (color: string, size = 10, opacity = 1): L.DivIcon => L.divIcon({
-  className: 'geo-dot',
-  html: `<div style="width:${size}px;height:${size}px;background:${color};border-radius:50%;border:2px solid white;box-shadow:0 0 6px ${color};opacity:${opacity};"></div>`,
-  iconSize: [size, size],
-  iconAnchor: [size / 2, size / 2],
-});
-
-// ============================================================================
-// MAP LAYER MANAGEMENT (Imperative - no React dependency)
-// ============================================================================
-
-interface MapLayerRefs {
-  trailSegments: L.Polyline[];
-  heatLayer: L.Layer | null;
-  currentMarker: L.Marker | null;
-  trailMarkers: L.Marker[];
-  futurecastLine: L.Polyline | null;
-  futurecastMarkers: L.Marker[];
-}
-
-// Clear all dynamic layers
-function clearLayers(map: L.Map, refs: MapLayerRefs): void {
-  refs.trailSegments.forEach(s => map.removeLayer(s));
-  refs.trailSegments = [];
-  if (refs.heatLayer) { map.removeLayer(refs.heatLayer); refs.heatLayer = null; }
-  if (refs.currentMarker) { map.removeLayer(refs.currentMarker); refs.currentMarker = null; }
-  refs.trailMarkers.forEach(m => map.removeLayer(m));
-  refs.trailMarkers = [];
-  if (refs.futurecastLine) { map.removeLayer(refs.futurecastLine); refs.futurecastLine = null; }
-  refs.futurecastMarkers.forEach(m => map.removeLayer(m));
-  refs.futurecastMarkers = [];
-}
-
-// Update map with current frame data - CALLED ON EVERY FRAME CHANGE
-function renderFrame(
-  map: L.Map,
-  refs: MapLayerRefs,
-  currentFrame: GeoFrame | null,
-  trail: GeoFrame[],
-  futurecast: GeoFrame[],
-  layerCfg: LayerState,
-  isLive: boolean,
-  lockOnTarget: boolean
-): void {
-  // Always clear first - no conditional
-  clearLayers(map, refs);
-
-  // If no data, done
-  if (!currentFrame && trail.length === 0) return;
-
-  // Trail segments with speed coloring
-  if (layerCfg.trail && trail.length > 1) {
-    for (let i = 1; i < trail.length; i++) {
-      const prev = trail[i - 1];
-      const curr = trail[i];
-      const segment = L.polyline(
-        [[prev.position.latitude, prev.position.longitude], [curr.position.latitude, curr.position.longitude]],
-        { color: getSpeedColor(curr.velocity?.speed || 0), weight: 4, opacity: 0.3 + (i / trail.length) * 0.7 }
-      ).addTo(map);
-      refs.trailSegments.push(segment);
-    }
-  }
-
-  // Heatmap
-  if (layerCfg.heatmap && trail.length > 0) {
-    const data = trail.map((f, i) => [f.position.latitude, f.position.longitude, 0.3 + (i / trail.length) * 0.7] as [number, number, number]);
-    refs.heatLayer = (L as any).heatLayer(data, { radius: 25, blur: 15, maxZoom: 17, gradient: { 0: '#0000ff', 0.25: '#00ffff', 0.5: '#00ff00', 0.75: '#ffff00', 1: '#ff0000' } }).addTo(map);
-  }
-
-  // Trail markers (sampled)
-  if (layerCfg.markers && trail.length > 0) {
-    const step = Math.max(1, Math.floor(trail.length / 15));
-    for (let i = 0; i < trail.length; i += step) {
-      const f = trail[i];
-      const marker = L.marker([f.position.latitude, f.position.longitude], { icon: createDotIcon(getSpeedColor(f.velocity?.speed || 0), 10, 0.3 + (i / trail.length) * 0.7) }).addTo(map);
-      marker.bindPopup(`<b>${formatTime(f.timestamp)}</b><br/>Speed: ${formatSpeed(f.velocity?.speed || 0)}`);
-      refs.trailMarkers.push(marker);
-    }
-  }
-
-  // Futurecast
-  if (layerCfg.futurecast && futurecast.length > 0) {
-    refs.futurecastLine = L.polyline(futurecast.map(f => [f.position.latitude, f.position.longitude] as [number, number]), { color: '#a855f7', weight: 3, opacity: 0.6, dashArray: '10, 10' }).addTo(map);
-    futurecast.forEach((f, i) => {
-      const marker = L.marker([f.position.latitude, f.position.longitude], { icon: createDotIcon('#a855f7', 8, 0.8 - (i / futurecast.length) * 0.5) }).addTo(map);
-      marker.bindPopup(`<b>Predicted: ${formatTime(f.timestamp)}</b><br/>Conf: ${(f.confidence * 100).toFixed(0)}%`);
-      refs.futurecastMarkers.push(marker);
-    });
-  }
-
-  // Current position reticle
-  if (layerCfg.reticle && currentFrame) {
-    refs.currentMarker = L.marker(
-      [currentFrame.position.latitude, currentFrame.position.longitude],
-      { icon: createReticleIcon(isLive ? '#00ff00' : '#00f0ff', 50), zIndexOffset: 1000 }
-    ).addTo(map);
-    
-    // Pan to current (when "FIX" lock is enabled)
-    if (lockOnTarget) {
-      map.panTo([currentFrame.position.latitude, currentFrame.position.longitude], { animate: true, duration: 0.2 });
-    }
-  }
-
-  // Force redraw (guard zero-sized containers to avoid leaflet.heat canvas errors)
-  try {
-    const size = map.getSize();
-    if (size.x > 0 && size.y > 0) map.invalidateSize();
-  } catch {
-    // ignore
-  }
-}
 
 // ============================================================================
 // COMPONENT
@@ -263,20 +128,11 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
     // timeline mode focuses playback; we keep the operator-selected base layer.
   }, [navMode]);
 
-  // Fullscreen mode: lock body scroll and force Leaflet to re-measure.
+  // Fullscreen mode only controls page scroll; MapLibre resizes itself.
   useEffect(() => {
-    const map = mapRef.current;
     const previousOverflow = document.body.style.overflow;
     if (isFullscreen) document.body.style.overflow = 'hidden';
-    const t = window.setTimeout(() => {
-      try {
-        map?.invalidateSize();
-      } catch {
-        // ignore
-      }
-    }, 50);
     return () => {
-      window.clearTimeout(t);
       document.body.style.overflow = previousOverflow;
     };
   }, [isFullscreen]);
@@ -330,183 +186,16 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
     };
   }, [state.trail, state.futurecast, sourceEnabled]);
 
-  // Map refs - single instance
-  const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<L.Map | null>(null);
-  const tileRef = useRef<L.TileLayer | null>(null);
-  const labelsRef = useRef<L.TileLayer | null>(null);
-  const layerRefs = useRef<MapLayerRefs>({ trailSegments: [], heatLayer: null, currentMarker: null, trailMarkers: [], futurecastLine: null, futurecastMarkers: [] });
-  const initRef = useRef(false);
-
-  // Prevent post-unmount timeouts from touching Leaflet/state
   const mountedRef = useRef(true);
-  const initInvalidateTimeoutRef = useRef<number | null>(null);
-  const visibleInvalidateTimeoutRef = useRef<number | null>(null);
   const processResetTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      if (initInvalidateTimeoutRef.current) {
-        window.clearTimeout(initInvalidateTimeoutRef.current);
-        initInvalidateTimeoutRef.current = null;
-      }
-      if (visibleInvalidateTimeoutRef.current) {
-        window.clearTimeout(visibleInvalidateTimeoutRef.current);
-        visibleInvalidateTimeoutRef.current = null;
-      }
       if (processResetTimeoutRef.current) {
         window.clearTimeout(processResetTimeoutRef.current);
         processResetTimeoutRef.current = null;
-      }
-    };
-  }, []);
-
-  // === MAP INITIALIZATION (ONCE) ===
-  // PRODUCTION: Map center is determined dynamically from actual data
-  // No hardcoded coordinates - center defaults to world view until real data arrives
-  useEffect(() => {
-    if (!containerRef.current || initRef.current) return;
-    initRef.current = true;
-
-    // Determine initial center from data or use world view (no hardcoded locations)
-    const getInitialCenter = (): [number, number] => {
-      // If we have initial data, center on first point
-      if (initialData && initialData.length > 0) {
-        const firstPoint = initialData[0];
-        return [firstPoint.latitude, firstPoint.longitude];
-      }
-      // No data: default to world view (0,0 with low zoom)
-      return [0, 0];
-    };
-    
-    const initialCenter = getInitialCenter();
-    const initialZoom = initialData && initialData.length > 0 ? 14 : 2;
-
-    const map = L.map(containerRef.current, { center: initialCenter, zoom: initialZoom, zoomControl: false, attributionControl: false });
-    L.control.zoom({ position: 'topleft' }).addTo(map);
-
-    tileRef.current = L.tileLayer(TILE_LAYERS.satellite.url, { maxZoom: 19 }).addTo(map);
-    labelsRef.current = L.tileLayer(TILE_LAYERS.labels.url, { maxZoom: 19 }).addTo(map);
-    mapRef.current = map;
-
-    // CSS
-    const style = document.createElement('style');
-    style.id = 'geo-styles';
-    style.textContent = '.geo-reticle,.geo-dot{background:transparent!important;border:none!important;}';
-    if (!document.getElementById('geo-styles')) document.head.appendChild(style);
-
-    initInvalidateTimeoutRef.current = window.setTimeout(() => {
-      if (!mountedRef.current) return;
-      // Avoid calling into Leaflet after map has been removed
-      if (mapRef.current === map) map.invalidateSize();
-    }, 100);
-
-    return () => {
-      if (initInvalidateTimeoutRef.current) {
-        window.clearTimeout(initInvalidateTimeoutRef.current);
-        initInvalidateTimeoutRef.current = null;
-      }
-      // Ensure dynamic layers are removed before teardown
-      try {
-        clearLayers(map, layerRefs.current);
-      } catch {
-        // ignore
-      }
-      map.remove();
-      mapRef.current = null;
-      initRef.current = false;
-    };
-  }, []);
-
-  // === TILE LAYER CHANGE ===
-  useEffect(() => {
-    if (!mapRef.current || !tileRef.current) return;
-    const effectiveMapMode: MapMode =
-      !layerCfg.satellite && (mapMode === 'satellite' || mapMode === 'hybrid')
-        ? 'street'
-        : mapMode;
-
-    const cfg = effectiveMapMode === 'hybrid' ? TILE_LAYERS.satellite : TILE_LAYERS[effectiveMapMode];
-    tileRef.current.setUrl(cfg.url);
-    
-    if (labelsRef.current) {
-      if (layerCfg.satellite && (effectiveMapMode === 'satellite' || effectiveMapMode === 'hybrid')) {
-        if (!mapRef.current.hasLayer(labelsRef.current)) labelsRef.current.addTo(mapRef.current);
-      } else {
-        if (mapRef.current.hasLayer(labelsRef.current)) mapRef.current.removeLayer(labelsRef.current);
-      }
-    }
-    mapRef.current.invalidateSize();
-  }, [mapMode, layerCfg.satellite]);
-
-  // === FRAME UPDATE - BOUND TO DATA, NOT FLAGS ===
-  // Dependencies: currentIndex, _version (mutation counter), trail length, layerCfg
-  // This ensures updates fire on actual data changes
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-
-    // Direct render - no memoization, no debounce
-    renderFrame(
-      map,
-      layerRefs.current,
-      renderData.currentFrame,
-      renderData.trail,
-      renderData.futurecast,
-      layerCfg,
-      state.isLive,
-      lockOnTarget
-    );
-
-  }, [
-    state.currentIndex,
-    state._version,
-    state.trail.length,
-    state.futurecast.length,
-    layerCfg,
-    state.isLive,
-    state.currentFrame,
-    renderData,
-    lockOnTarget,
-  ]);
-
-  // === RESIZE/VISIBILITY ===
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    const safeInvalidate = () => {
-      const el = containerRef.current;
-      if (!el) return;
-      // If the container is temporarily hidden or not laid out, skip.
-      if (el.offsetWidth === 0 || el.offsetHeight === 0) return;
-      try {
-        map.invalidateSize();
-      } catch {
-        // ignore
-      }
-    };
-    const onResize = () => safeInvalidate();
-    const onVisible = () => {
-      if (document.visibilityState !== 'visible') return;
-      if (visibleInvalidateTimeoutRef.current) {
-        window.clearTimeout(visibleInvalidateTimeoutRef.current);
-        visibleInvalidateTimeoutRef.current = null;
-      }
-      visibleInvalidateTimeoutRef.current = window.setTimeout(() => {
-        if (!mountedRef.current) return;
-        if (mapRef.current === map) safeInvalidate();
-      }, 50);
-    };
-    window.addEventListener('resize', onResize);
-    document.addEventListener('visibilitychange', onVisible);
-    return () => {
-      window.removeEventListener('resize', onResize);
-      document.removeEventListener('visibilitychange', onVisible);
-      if (visibleInvalidateTimeoutRef.current) {
-        window.clearTimeout(visibleInvalidateTimeoutRef.current);
-        visibleInvalidateTimeoutRef.current = null;
       }
     };
   }, []);
