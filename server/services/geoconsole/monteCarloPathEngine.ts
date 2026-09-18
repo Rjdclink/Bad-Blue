@@ -578,7 +578,7 @@ export class MonteCarloPathEngine {
    */
   async generateFuturecast(
     recentPoints: GPSPoint[],
-    hours: number = 6
+    hours: number = 1
   ): Promise<GPSPoint[]> {
     if (recentPoints.length < 3) return [];
 
@@ -621,7 +621,7 @@ export class MonteCarloPathEngine {
     const avgHeading = (Math.atan2(headingY, headingX) * 180 / Math.PI + 360) % 360;
     const latest = recent[recent.length - 1];
     const baseTime = latest.timestamp.getTime();
-    const stepMinutes = 15;
+    const stepMinutes = 5;
     const steps = Math.max(1, Math.floor((hours * 60) / stepMinutes));
     const baseAccuracy = Math.max(5, latest.accuracy ?? 35);
 
