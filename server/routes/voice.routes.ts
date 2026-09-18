@@ -20,6 +20,7 @@ import {
 import { createLogger } from '../logger';
 import { synthesizeLexaraSpeech } from '../lexara/LexaraTTSRouter';
 import type { SpeechContext } from '@shared/lexaraVoicePersona';
+import { isAuthenticated } from '../auth';
 
 const log = createLogger('VoiceRoutes');
 
@@ -76,6 +77,7 @@ export function setupVoiceRoutes(app: Express): void {
    */
   app.post(
     '/api/lexara/tts/session',
+    isAuthenticated,
     asyncHandler(async (req: Request, res: Response) => {
       const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
       if (!text) return res.status(400).json({ error: 'Text is required for TTS synthesis' });
@@ -224,6 +226,7 @@ export function setupVoiceRoutes(app: Express): void {
    */
   app.post(
     '/api/lexara/speak',
+    isAuthenticated,
     asyncHandler(async (req: Request, res: Response) => {
       const {
         text,
@@ -319,6 +322,7 @@ export function setupVoiceRoutes(app: Express): void {
    */
   app.post(
     '/api/lexara/tts/stream',
+    isAuthenticated,
     asyncHandler(async (req: Request, res: Response) => {
       const { text, stability, similarityBoost, style } = req.body;
 
