@@ -109,17 +109,17 @@ export interface AIModelConfig {
 
 /**
  * AI Models available for orchestration
- * Updated December 2025: Gemini 3 models (newest flagship)
+ * Compatibility registry aligned to the current Harmony model generation
  */
 const AI_MODELS: AIModelConfig[] = [
-  { modelId: 'gemini-2.5-pro', role: 'research', priority: 1, available: true },
-  { modelId: 'gemini-2.5-pro', role: 'legal_analysis', priority: 1, available: true },
-  { modelId: 'claude-opus-4-1-20250805', role: 'reasoning', priority: 1, available: true },
-  { modelId: 'claude-sonnet-4-5-20250929', role: 'drafting', priority: 1, available: true },
-  { modelId: 'llama-3.3-70b-versatile', role: 'inference', priority: 2, available: true },
-  { modelId: 'mistral-small-latest', role: 'coding', priority: 2, available: true },
-  { modelId: 'grok-4.1', role: 'empathy', priority: 3, available: true },
-  { modelId: 'qwen-72b', role: 'legal_analysis', priority: 3, available: true },
+  { modelId: 'gemini-3.8-flash', role: 'research', priority: 1, available: true },
+  { modelId: 'gemini-3.8-flash', role: 'legal_analysis', priority: 1, available: true },
+  { modelId: 'claude-opus-5', role: 'reasoning', priority: 1, available: true },
+  { modelId: 'claude-sonnet-5', role: 'drafting', priority: 1, available: true },
+  { modelId: 'openai/gpt-oss-120b', role: 'inference', priority: 2, available: true },
+  { modelId: 'mistral-small-2603', role: 'coding', priority: 2, available: true },
+  { modelId: 'x-ai/grok-4.6', role: 'empathy', priority: 3, available: true },
+  { modelId: 'qwen/qwen3.8-max-0902', role: 'legal_analysis', priority: 3, available: true },
 ];
 
 type DomainKnowledgeBase = {
