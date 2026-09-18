@@ -25,6 +25,7 @@ export const PRODUCT_TO_EXPERT_LAW_TYPE: Partial<Record<ProductLawType, ExpertLa
   'employment-labor-law': 'employment-law',
   'military-veterans-law': 'military-law',
   'foia-open-records-law': 'administrative-law',
+  'procedural-law': 'procedural-law',
   'intellectual-property-law': 'intellectual-property',
   'public-housing-law': 'landlord-tenant',
   'securities-law': 'business-law',
