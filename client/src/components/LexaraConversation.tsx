@@ -51,7 +51,10 @@ const BROWSER_FINAL_FALLBACK_SETTLE_MS = 900;
 const SERVER_VOICE_TURN_SETTLE_MS = 500;
 const VOICE_END_GRACE_MS = 650;
 const INCOMPLETE_TURN_GRACE_MS = 2_400;
-const CHAT_TURN_TIMEOUT_MS = 45_000;
+const CHAT_TURN_TIMEOUT_MS = 15_000;
+const ACKNOWLEDGEMENT_SOFT_TIMEOUT_MS = 450;
+const ACKNOWLEDGEMENT_DEDUPE_MS = 8_000;
+const ACKNOWLEDGEMENT_COOLDOWN_MS = 2_500;
 const MAX_STORED_CONVERSATION_MESSAGES = 24;
 
 function makeMessageId(role: ConversationMessage['role']): string {
@@ -179,37 +182,46 @@ function isSuspiciousGenericServerTranscript(
     || (veryShort && !hasAcousticQuality);
 }
 
-function stripLikelyPhantomCloserTail(
+function sanitizeLikelySpeechArtifacts(
   text: string,
   meta: VoiceTranscriptMeta,
 ): string {
   const trimmed = text.replace(/\s+/g, ' ').trim();
   if (!trimmed) return '';
 
-  // STT can append stock closers heard from speaker leakage or hallucinated in
-  // trailing silence. Preserve the substantive prefix instead of discarding the
-  // whole turn (e.g. "Yeah, but she's a con. Thank you. Bye. Thank you.").
-  const repeatedCloserTail = /(?:[\s,.!?;:—-]*(?:thank\s+you|thanks|bye|goodbye|okay|ok)){2,}[\s.!?]*$/i;
-  const withoutRepeatedTail = trimmed.replace(repeatedCloserTail, '').trim();
-  if (withoutRepeatedTail !== trimmed) {
-    return withoutRepeatedTail;
-  }
-
+  const segments = trimmed.match(/[^.!?]+[.!?]?/g)?.map(segment => segment.trim()).filter(Boolean) || [trimmed];
+  const genericSegment = /^(?:thank\s+you(?:\s*,?\s*[a-z]+)?|thanks(?:\s*,?\s*[a-z]+)?|okay|ok|bye|goodbye)[.!?]*$/i;
+  const generatedDeparture = /^(?:(?:i'm|i\s+am)\s+going\s+to\s+go|i\s+have\s+to\s+go)[.!?]*$/i;
+  const genericCount = segments.filter(segment => genericSegment.test(segment)).length;
   const weakAcousticEvidence =
     meta.startedDuringPlayback
     || (typeof meta.noSpeechProbability === 'number' && meta.noSpeechProbability >= 0.35)
     || (typeof meta.avgLogprob === 'number' && meta.avgLogprob <= -0.75)
     || (typeof meta.confidence === 'number' && meta.confidence < 0.5);
 
-  if (weakAcousticEvidence) {
-    const singleCloserTail = /(?:[\s,.!?;:—-]+(?:thank\s+you|thanks|bye|goodbye))[\s.!?]*$/i;
-    const withoutSingleTail = trimmed.replace(singleCloserTail, '').trim();
-    if (withoutSingleTail && withoutSingleTail !== trimmed) {
-      return withoutSingleTail;
-    }
+  // Whisper/browser STT commonly hallucinates stock closers in quiet or
+  // speaker-leakage audio. If the same turn contains repeated generic closers,
+  // treat those fragments as contamination wherever they occur, not only at the
+  // tail. Preserve the substantive clauses and genuine control questions.
+  if (genericCount >= 2 || weakAcousticEvidence) {
+    const cleaned = segments.filter(segment => {
+      if (genericSegment.test(segment)) return false;
+      if (genericCount >= 2 && generatedDeparture.test(segment)) return false;
+      return true;
+    });
+    const substantive = cleaned.join(' ').replace(/\s+/g, ' ').trim();
+    if (substantive) return substantive;
   }
 
+  // A single generic closer remains valid user speech unless the acoustic
+  // evidence is weak. This preserves real "thank you" or "goodbye" turns.
+  if (weakAcousticEvidence && genericSegment.test(trimmed)) return '';
   return trimmed;
+}
+
+function isPresenceControlTurn(value: string): boolean {
+  const clean = value.trim();
+  return /^(?:(?:hey|hello)[, ]*)?(?:lexara[, ]*)?(?:are you (?:still )?there|you still there|you there|can you hear me|are you listening|hello|did you hear me|are you still working(?: on (?:this|it))?)[?.! ]*$/i.test(clean);
 }
 
 function mergeSpeechSegments(existing: string, incoming: string): string {
@@ -374,9 +386,13 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const voiceTurnBufferRef = useRef('');
   const voiceTurnTimerRef = useRef<number | null>(null);
   const voiceEndPendingRef = useRef(false);
-  const pendingUserTurnRef = useRef('');
-  const pendingTurnAlreadyRenderedRef = useRef(false);
+  const pendingUserTurnQueueRef = useRef<Array<{ text: string; messageId: string }>>([]);
+  const currentPreRenderedTurnIdRef = useRef<string | null>(null);
+  const nonSemanticLexaraMessageIdsRef = useRef<Set<string>>(new Set());
   const currentTurnTextRef = useRef('');
+  const analysisActiveRef = useRef(false);
+  const lastAcknowledgementRef = useRef<{ text: string; at: number }>({ text: '', at: 0 });
+  const controlAcknowledgementSpeechRef = useRef<Promise<void> | null>(null);
   const responseEmotionRef = useRef<LEXARAEmotionHint>('authoritative');
   const activeLexaraSpeechRef = useRef('');
   const recentLexaraSpeechRef = useRef<{ text: string; expiresAt: number }>({ text: '', expiresAt: 0 });
@@ -428,7 +444,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       }
     },
     onTranscript: (text, isFinal, meta) => {
-      const observed = stripLikelyPhantomCloserTail(text, meta);
+      const observed = sanitizeLikelySpeechArtifacts(text, meta);
       if (!observed) return;
 
       // Keep the microphone live while LEXARA speaks, but never trust VAD/AEC
@@ -463,17 +479,18 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       if (meta.startedDuringPlayback && typeof meta.utteranceId === 'number') {
         const alreadyValidated = validatedBargeInUtterancesRef.current.has(meta.utteranceId);
         if (!alreadyValidated) {
-          // A recording that began while LEXARA was speaking is presumptively
-          // speaker leakage until a transcript proves otherwise. A strong final
-          // transcript can still validate a short interruption that ended before
-          // the 700ms probe snapshot was available.
+          // A recording that began during playback is admitted only when the
+          // final transcript itself is strong and does not match recent LEXARA
+          // speech. Do not require playback to still be active by the time the
+          // server transcript returns; that race was dropping genuine short
+          // interruptions on mobile.
           if (
-            phaseRef.current === 'speaking'
+            isFinal
             && !isSuspiciousGenericServerTranscript(observed, meta)
             && isStrongBargeIn(observed, meta)
           ) {
             validatedBargeInUtterancesRef.current.add(meta.utteranceId);
-            autoInterruptRef.current();
+            if (phaseRef.current === 'speaking') autoInterruptRef.current();
           } else {
             return;
           }
@@ -571,7 +588,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     setPhase(next);
   }, []);
 
-  const appendMessage = useCallback((role: ConversationMessage['role'], content: string) => {
+  const appendMessage = useCallback((role: ConversationMessage['role'], content: string): string => {
     const nextMessage: ConversationMessage = {
       id: makeMessageId(role),
       role,
@@ -584,6 +601,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       conversationRef.current = next;
       return next;
     });
+    return nextMessage.id;
   }, []);
 
   const enableVoice = useCallback(async () => {
@@ -632,8 +650,13 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       recentLexaraSpeechRef.current = { text, expiresAt: Date.now() + 8_000 };
       resumeListening();
       if (generation === undefined || generation === generationRef.current) {
-        setConversationPhase('listening');
-        setEmotion('calm');
+        if (analysisActiveRef.current) {
+          setConversationPhase('thinking');
+          setGaze('thinking');
+        } else {
+          setConversationPhase('listening');
+          setEmotion('calm');
+        }
       }
     }
   }, [clearVoiceTurnBuffer, liveEnabled, resumeListening, setConversationPhase, speak, voiceReady]);
@@ -642,23 +665,59 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     const message = rawMessage.trim();
     if (!message) return;
 
-    // If recognition produces a late continuation after a turn was committed,
-    // fold it into the same user turn instead of aborting active reasoning.
+    // Speech that arrives while legal analysis is running is a new conversational
+    // turn, never a continuation silently grafted onto the prior blue bubble.
+    // Presence/control checks are answered immediately without cancelling,
+    // restarting, or mutating the in-flight legal analysis.
     if (currentRequestRef.current) {
-      const base = pendingUserTurnRef.current || currentTurnTextRef.current;
-      const combined = mergeSpeechSegments(base, message);
-      pendingUserTurnRef.current = combined;
-      setConversation(previous => {
-        const next = [...previous];
-        for (let index = next.length - 1; index >= 0; index -= 1) {
-          if (next[index].role === 'user') {
-            next[index] = { ...next[index], content: combined };
-            break;
+      userSpeechObservedRef.current = true;
+      clearVoiceTurnBuffer();
+      const userMessageId = appendMessage('user', message);
+      setUserInput('');
+      setErrorMessage(null);
+
+      const presenceControl = isPresenceControlTurn(message);
+      if (!presenceControl) {
+        // Preserve each interruption as its own turn. Distinct questions/facts
+        // must never be concatenated into one fabricated user statement.
+        pendingUserTurnQueueRef.current.push({ text: message, messageId: userMessageId });
+      }
+
+      try {
+        const response = await fetch('/api/lexara/acknowledge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt: message,
+            context: { analysisActive: analysisActiveRef.current },
+          }),
+        });
+        const data = response.ok ? await response.json() : null;
+        const acknowledgement = String(data?.acknowledgement || '').trim();
+        const normalizedAck = normalizeSpeechText(acknowledgement);
+        const now = Date.now();
+        const duplicateAck = normalizedAck
+          && normalizedAck === lastAcknowledgementRef.current.text
+          && now - lastAcknowledgementRef.current.at < ACKNOWLEDGEMENT_DEDUPE_MS;
+        const acknowledgementTooSoon = !presenceControl
+          && now - lastAcknowledgementRef.current.at < ACKNOWLEDGEMENT_COOLDOWN_MS;
+
+        if (acknowledgement && !duplicateAck && !acknowledgementTooSoon) {
+          lastAcknowledgementRef.current = { text: normalizedAck, at: now };
+          const acknowledgementMessageId = appendMessage('lexara', acknowledgement);
+          nonSemanticLexaraMessageIdsRef.current.add(acknowledgementMessageId);
+          const controlSpeech = speakLexara(acknowledgement, generationRef.current)
+            .catch(() => undefined);
+          controlAcknowledgementSpeechRef.current = controlSpeech;
+          await controlSpeech;
+          if (controlAcknowledgementSpeechRef.current === controlSpeech) {
+            controlAcknowledgementSpeechRef.current = null;
           }
         }
-        conversationRef.current = next;
-        return next;
-      });
+      } catch {
+        // The active legal analysis remains authoritative even if the lightweight
+        // conversational acknowledgement route fails.
+      }
       return;
     }
 
@@ -672,6 +731,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
     const controller = new AbortController();
     currentRequestRef.current = controller;
+    analysisActiveRef.current = true;
     let requestTimedOut = false;
     const requestTimeout = window.setTimeout(() => {
       requestTimedOut = true;
@@ -679,17 +739,26 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     }, CHAT_TURN_TIMEOUT_MS);
 
     currentTurnTextRef.current = message;
-    const previousMessages = conversationRef.current.map(item => ({
-      role: item.role,
-      content: item.content,
-    }));
+    const preRenderedMessageId = currentPreRenderedTurnIdRef.current;
+    currentPreRenderedTurnIdRef.current = null;
+    const excludedQueuedUserIds = new Set<string>([
+      ...(preRenderedMessageId ? [preRenderedMessageId] : []),
+      ...pendingUserTurnQueueRef.current.map(turn => turn.messageId),
+    ]);
+    const previousMessages = conversationRef.current
+      .filter(item =>
+        !(item.role === 'user' && excludedQueuedUserIds.has(item.id))
+        && !nonSemanticLexaraMessageIdsRef.current.has(item.id)
+      )
+      .map(item => ({
+        role: item.role,
+        content: item.content,
+      }));
 
     const userEmotion = emotionFromUserText(message);
     responseEmotionRef.current = userEmotion === 'calm' ? 'authoritative' : userEmotion;
 
-    const alreadyRendered = pendingTurnAlreadyRenderedRef.current;
-    pendingTurnAlreadyRenderedRef.current = false;
-    if (!alreadyRendered) appendMessage('user', message);
+    if (!preRenderedMessageId) appendMessage('user', message);
     setUserInput('');
     setErrorMessage(null);
     setConversationPhase('thinking');
@@ -724,7 +793,10 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
-        body: JSON.stringify({ prompt: message, context: sharedContext }),
+        body: JSON.stringify({
+          prompt: message,
+          context: { ...sharedContext, analysisActive: false },
+        }),
       })
         .then(async response => {
           if (!response.ok) return null;
@@ -732,27 +804,62 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         })
         .catch(() => null);
 
-      const acknowledgementData = await acknowledgementPromise;
-      const acknowledgement = String(acknowledgementData?.acknowledgement || '').trim();
+      let analysisSettled = false;
+      const trackedAnalysisPromise = analysisPromise.finally(() => {
+        analysisSettled = true;
+      });
+
+      const firstEvent = await Promise.race([
+        trackedAnalysisPromise.then(() => 'analysis' as const),
+        new Promise<'ack'>(resolve => {
+          window.setTimeout(() => resolve('ack'), ACKNOWLEDGEMENT_SOFT_TIMEOUT_MS);
+        }),
+      ]);
+
+      let acknowledgement = '';
       let acknowledgementSpeech: Promise<void> | null = null;
-      if (acknowledgement && generation === generationRef.current && !pendingUserTurnRef.current) {
-        appendMessage('lexara', acknowledgement);
-        setGaze('camera');
-        acknowledgementSpeech = speakLexara(acknowledgement, generation)
-          .catch(() => undefined)
-          .then(() => {
-            if (
-              generation === generationRef.current
-              && currentRequestRef.current
-              && !pendingUserTurnRef.current
-            ) {
-              setConversationPhase('thinking');
-              setGaze('thinking');
-            }
-          });
+      if (firstEvent === 'ack' && !analysisSettled) {
+        const acknowledgementData = await Promise.race([
+          acknowledgementPromise,
+          new Promise<null>(resolve => {
+            window.setTimeout(() => resolve(null), 250);
+          }),
+        ]);
+        acknowledgement = String(acknowledgementData?.acknowledgement || '').trim();
+        const normalizedAck = normalizeSpeechText(acknowledgement);
+        const now = Date.now();
+        const duplicateAck = normalizedAck
+          && normalizedAck === lastAcknowledgementRef.current.text
+          && now - lastAcknowledgementRef.current.at < ACKNOWLEDGEMENT_DEDUPE_MS;
+        const acknowledgementTooSoon =
+          now - lastAcknowledgementRef.current.at < ACKNOWLEDGEMENT_COOLDOWN_MS;
+
+        if (
+          acknowledgement
+          && !duplicateAck
+          && !acknowledgementTooSoon
+          && generation === generationRef.current
+        ) {
+          lastAcknowledgementRef.current = { text: normalizedAck, at: now };
+          const acknowledgementMessageId = appendMessage('lexara', acknowledgement);
+          nonSemanticLexaraMessageIdsRef.current.add(acknowledgementMessageId);
+          setGaze('camera');
+          acknowledgementSpeech = speakLexara(acknowledgement, generation)
+            .catch(() => undefined)
+            .then(() => {
+              if (
+                generation === generationRef.current
+                && currentRequestRef.current
+                && !activeLexaraSpeechRef.current
+              ) {
+                setConversationPhase('thinking');
+                setGaze('thinking');
+              }
+            });
+        }
       }
 
-      const response = await analysisPromise;
+      const response = await trackedAnalysisPromise;
 
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
@@ -761,7 +868,9 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
       const data = await response.json();
       if (generation !== generationRef.current) return;
-      if (pendingUserTurnRef.current) return;
+      // Model/research work is complete before TTS begins. A barge-in during
+      // answer playback is a new turn, not an "analysis still running" check-in.
+      analysisActiveRef.current = false;
 
       const answer = String(data?.response || '').trim();
       if (!answer) throw new Error('LEXARA returned an empty response');
@@ -776,11 +885,23 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         acknowledgement
         && normalizeSpeechText(answer) === normalizeSpeechText(acknowledgement);
 
-      if (acknowledgementSpeech) {
-        await acknowledgementSpeech;
+      if (acknowledgementSpeech && !duplicateOfAcknowledgement) {
+        // Do not make the substantive answer wait for filler audio. The voice
+        // engine resolves the interrupted acknowledgement and the answer takes
+        // the floor immediately.
+        stopSpeaking();
       }
 
       if (!duplicateOfAcknowledgement) {
+        // A check-in acknowledgement may still be speaking when the deep answer
+        // becomes ready. Wait for every currently-active control acknowledgement
+        // so LEXARA never talks over herself or cuts off the user's check-in.
+        while (controlAcknowledgementSpeechRef.current) {
+          const controlSpeech = controlAcknowledgementSpeechRef.current;
+          await controlSpeech;
+          if (controlAcknowledgementSpeechRef.current === controlSpeech) break;
+        }
+
         appendMessage('lexara', answer);
         setGaze('camera');
         await speakLexara(answer, generation);
@@ -802,12 +923,12 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       window.clearTimeout(requestTimeout);
       if (generation === generationRef.current) {
         currentRequestRef.current = null;
+        analysisActiveRef.current = false;
         currentTurnTextRef.current = '';
-        const pending = pendingUserTurnRef.current.trim();
-        pendingUserTurnRef.current = '';
-        if (pending) {
-          pendingTurnAlreadyRenderedRef.current = true;
-          window.setTimeout(() => handleMessageRef.current(pending), 0);
+        const pending = pendingUserTurnQueueRef.current.shift();
+        if (pending?.text.trim()) {
+          currentPreRenderedTurnIdRef.current = pending.messageId;
+          window.setTimeout(() => handleMessageRef.current(pending.text), 0);
         }
       }
     }
@@ -881,9 +1002,13 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     setConversation([]);
     setJurisdiction(undefined);
     greetingRef.current = false;
-    pendingUserTurnRef.current = '';
-    pendingTurnAlreadyRenderedRef.current = false;
+    pendingUserTurnQueueRef.current = [];
+    currentPreRenderedTurnIdRef.current = null;
+    nonSemanticLexaraMessageIdsRef.current.clear();
     currentTurnTextRef.current = '';
+    analysisActiveRef.current = false;
+    controlAcknowledgementSpeechRef.current = null;
+    lastAcknowledgementRef.current = { text: '', at: 0 };
     clearVoiceTurnBuffer();
   }, [clearVoiceTurnBuffer, isMasterSession, lawTypeId]);
 

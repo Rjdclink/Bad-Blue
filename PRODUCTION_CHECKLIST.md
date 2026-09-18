@@ -42,40 +42,16 @@
 
 #### 1. OpenRouter (FREE - 4 models)
 - [ ] `OPENROUTER_API_KEY` configured
-- [ ] API key tested and working
-- [ ] All 4 models verified:
-  - [ ] Kimi K2 (`moonshot/kimi-k2:free`) - Moonshot AI
-  - [ ] DeepSeek R1 Chimera (`deepseek/deepseek-r1t2-chimera:free`)
-  - [ ] Grok Fast (`x-ai/grok-4.1-fast:free`) - xAI
-  - [ ] Qwen 72B (`qwen/qwen-2.5-72b-instruct:free`) - Alibaba
-
-#### 2. Gemini (FREE - 3 models)
-- [ ] `GEMINI_API_KEY` configured
-- [ ] API key tested and working
-- [ ] All 3 models verified (2.5 series):
-  - [ ] gemini-2.5-pro - Most capable
-  - [ ] gemini-2.5-flash - Fast and powerful
-  - [ ] gemini-2.5-flash-lite - Fastest (1000 RPD)
-
-#### 3. Groq (FREE - 2 models)
-- [ ] `GROQ_API_KEY` configured
-- [ ] API key tested and working
-- [ ] All 2 models verified:
-  - [ ] llama-3.3-70b-versatile - Most capable
-  - [ ] llama-3.1-8b-instant - Fastest
-
-#### 4. Mistral (FREE - 1 model)
-- [ ] `MISTRAL_API_KEY` configured
-- [ ] API key tested and working
-- [ ] Model verified:
-  - [ ] mistral-large-latest - High performance
-
-#### 5. Anthropic (PAID - Optional)
-- [ ] `ANTHROPIC_API_KEY` configured (if using)
-- [ ] API key tested and working (if using)
-- [ ] Models available:
-  - [ ] claude-3-5-sonnet-latest
-  - [ ] claude-3-5-haiku-latest
+- [ ] `OPENROUTER_API_KEY` configured when OpenRouter-backed participants are expected
+- [ ] `GEMINI_API_KEY` or `GOOGLE_API_KEY` configured when Gemini is expected
+- [ ] `GROQ_API_KEY` configured when Groq/GPT-OSS transport is expected
+- [ ] `MISTRAL_API_KEY` configured when Mistral is expected
+- [ ] `ANTHROPIC_API_KEY` or `CLAUDE_API_KEY` configured when Claude participants are expected
+- [ ] Optional provider credentials configured as needed: Hugging Face, Cerebras, SambaNova, Cohere, Together
+- [ ] `npm run verify:ai-harmony` passes
+- [ ] Health/status reports the expected configured Harmony participant count
+- [ ] Current registry models verified rather than copied into a second checklist
+- [ ] Provider failures remain route-local and do not block unrelated participants
 
 ### Payment (Square)
 - [ ] `SQUARE_ACCESS_TOKEN` configured

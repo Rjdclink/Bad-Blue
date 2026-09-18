@@ -46,6 +46,7 @@ const conversationalReliabilityReview = read('docs/LEXARA_CONVERSATIONAL_RELIABI
 const duplexReview = read('docs/LEXARA_DUPLEX_ORCHESTRATION_30_SOURCE_REVIEW_20260918.md');
 const harmonyRootReview = read('docs/LEXARA_HARMONY_ROOT_CAUSE_10_SOURCE_REVIEW_20260918.md');
 const harmonyImplementationReview = read('docs/LEXARA_HARMONY_IMPLEMENTATION_10_SOURCE_REVIEW_20260918.md');
+const realtimeCapabilityReview = read('docs/LEXARA_REALTIME_CAPABILITY_HARMONY_20_SOURCE_REVIEW_20260918.md');
 
 must(
   voiceMode.includes('preferServerRecognition') &&
@@ -83,7 +84,7 @@ const liveTurnHandler = conversation.split('const handleUserMessage = useCallbac
 must(
   voiceMode.includes('browserFinalResultIndexesRef') &&
     conversation.includes('mergeSpeechSegments') &&
-    conversation.includes('pendingUserTurnRef') &&
+    conversation.includes('pendingUserTurnQueueRef') &&
     !liveTurnHandler.includes('currentRequestRef.current?.abort()'),
   'final STT segments are owned/de-overlapped and continuations cannot create chat abort storms',
 );
@@ -156,12 +157,15 @@ must(
     orchestrator.includes("providerPolicy: 'capability-first'") &&
     orchestrator.includes('getConfiguredHarmonyProviders') &&
     harmony.includes("'capability-first'") &&
-    harmony.includes('Harmony invariant: every configured, healthy participant contributes') &&
+    harmony.includes('selectProvidersForTask') &&
+    harmony.includes('AIModelSelector.scoreProvidersForTask') &&
     harmony.includes("role: 'harmony-synthesizer'") &&
-    harmony.includes('fallbackProviders') &&
-    harmony.includes('Promise.any') &&
-    harmonyRegistry.includes('HARMONY_17_PARTICIPANTS'),
-  'Lexara reasoning uses the full configured capability-driven Harmony mesh with route-local failover',
+    harmony.includes('alternatives.slice(0, 1)') &&
+    harmony.includes('withHarmonyDeadline') &&
+    harmonyRegistry.includes('HARMONY_17_PARTICIPANTS') &&
+    orchestrator.includes('maxParticipants: 2') &&
+    orchestrator.includes('requestTimeoutMs: 3_500'),
+  'Lexara draws from the full 17-participant capability pool while each live turn uses a small capability-matched subset with one synthesis authority and bounded route-local failover',
 );
 must(
   !authorityResearch.includes('GoogleGenAI') &&
@@ -176,7 +180,7 @@ must(
 );
 must(
   openRouter.includes('cancellationShaped') &&
-    conversation.includes('pendingUserTurnRef'),
+    conversation.includes('pendingUserTurnQueueRef'),
   'request cancellation cannot poison the live provider mesh',
 );
 must(
@@ -212,11 +216,27 @@ must(
   'Lexara has an immediate spoken acknowledgement lane independent of deep legal analysis',
 );
 must(
-  conversation.includes('stripLikelyPhantomCloserTail') &&
-    conversation.includes('repeatedCloserTail') &&
-    conversation.includes('Thank you. Bye. Thank you.'),
-  'phantom repeated closer tails are stripped while preserving substantive user speech',
+  conversation.includes('sanitizeLikelySpeechArtifacts') &&
+    conversation.includes('genericCount >= 2') &&
+    conversation.includes('generatedDeparture') &&
+    conversation.includes('meta.startedDuringPlayback'),
+  'repeated phantom courtesy/departure fragments are stripped anywhere in contaminated speech while substantive user content is preserved',
 );
+must(
+  lexaraChatRoutes.includes('analysisActive') &&
+    orchestrator.includes('Hold on a minute') &&
+    conversation.includes('pendingUserTurnQueueRef.current.push({ text: message, messageId: userMessageId })') &&
+    conversation.includes('pendingUserTurnQueueRef.current.shift()') &&
+    conversation.includes('ACKNOWLEDGEMENT_DEDUPE_MS') &&
+    conversation.includes('ACKNOWLEDGEMENT_SOFT_TIMEOUT_MS') &&
+    conversation.includes('controlAcknowledgementSpeechRef') &&
+    !liveTurnHandler.includes('if (pendingUserTurnRef.current) return;') &&
+    orchestrator.includes('Default to 2-5 concise spoken sentences') &&
+    orchestrator.includes('Do not say "thank you," "goodbye,"') &&
+    authorityResearch.includes('const RESEARCH_TIMEOUT_MS = 1_800'),
+  'active-analysis check-ins remain separate turns, substantive interruptions queue independently, filler is deduplicated, answers are concise/direct, and authority research cannot dominate live latency',
+);
+
 must(
   conversation.includes('isMasterSession') &&
     conversation.includes("key?.startsWith('lexara-live-session:')") &&
@@ -292,6 +312,13 @@ must(duplexResolutionLines.length === 20, 'literal 20-source duplex resolution r
 const duplexImplementationSection = duplexReview.split('## Implementation sources — exactly 10')[1]?.split('## Chosen implementation sequence')[0] || '';
 const duplexImplementationLines = duplexImplementationSection.split('\n').filter(line => /^\d+\.\s/.test(line));
 must(duplexImplementationLines.length === 10, 'literal 10-source duplex implementation review is present');
+
+const realtimeResolutionSection = realtimeCapabilityReview.split('## Root-cause/resolution sources — exactly 10')[1]?.split('## Resolutions')[0] || '';
+const realtimeResolutionLines = realtimeResolutionSection.split('\n').filter(line => /^\d+\.\s/.test(line));
+must(realtimeResolutionLines.length === 10, 'literal 10-source realtime root-cause/resolution review is present');
+const realtimeImplementationSection = realtimeCapabilityReview.split('## Implementation sources — exactly 10')[1]?.split('## Implementation sequence')[0] || '';
+const realtimeImplementationLines = realtimeImplementationSection.split('\n').filter(line => /^\d+\.\s/.test(line));
+must(realtimeImplementationLines.length === 10, 'literal 10-source realtime implementation review is present');
 
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA realization verification passed.');

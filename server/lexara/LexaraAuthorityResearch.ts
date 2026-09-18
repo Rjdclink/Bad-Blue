@@ -24,7 +24,7 @@ export interface LexaraAuthorityResearchContext {
 const MAX_RESEARCH_PROMPT_CHARACTERS = 6_000;
 const MAX_RESEARCH_SUMMARY_CHARACTERS = 7_000;
 const MAX_AUTHORITY_SOURCES = 8;
-const RESEARCH_TIMEOUT_MS = 4_000;
+const RESEARCH_TIMEOUT_MS = 1_800;
 
 const AUTHORITY_SENSITIVE_PATTERN = /\b(?:cite|citation|source|authority|case\s*law|precedent|holding|statute|statutory|code\s+section|regulation|c\.f\.r\.|u\.s\.c\.|court\s+rule|rule\s+\d|legal\s+standard|elements?\s+of|controlling\s+law|current\s+law|recent\s+law|supreme\s+court|circuit\s+court|appellate\s+court|statute\s+of\s+limitations|limitations\s+period|filing\s+deadline|appeal\s+deadline|notice\s+deadline|deadline|jurisdiction|venue|preemption)\b/i;
 
@@ -147,8 +147,9 @@ async function discoverAuthoritySources(query: string): Promise<LexaraAuthorityS
     }
   };
 
-  // Run independent discovery paths in parallel. A slow crawler can no longer
-  // consume its full timeout before the web-search fallback even begins.
+  // Run independent discovery paths in parallel under a conversational latency
+  // budget. Authority discovery is valuable evidence, but a slow crawler must
+  // never hold the live spoken answer hostage.
   const [firecrawlResult, openRouterResult] = await Promise.all([
     firecrawlDiscovery(),
     openRouterDiscovery(),

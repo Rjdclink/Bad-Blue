@@ -61,12 +61,12 @@ import { analyzeConfidence, type ModelOutput } from './services/mlnlp';
 
 const outputs: ModelOutput[] = [
   {
-    modelName: 'claude-3-5-sonnet',
+    modelName: 'claude-sonnet-5',
     response: 'Legal analysis text...',
     timestamp: new Date()
   },
   {
-    modelName: 'gemini-2.0-flash',
+    modelName: 'gemini-3.8-flash',
     response: 'Similar legal analysis...',
     timestamp: new Date()
   }
@@ -74,14 +74,14 @@ const outputs: ModelOutput[] = [
 
 const analysis = await analyzeConfidence(outputs, 'legal consultation context');
 
-console.log(analysis.recommendation.primaryModel); // 'claude-3-5-sonnet'
+console.log(analysis.recommendation.primaryModel); // 'claude-sonnet-5'
 console.log(analysis.consensusScore); // 0.85
 console.log(analysis.conflicts); // []
 ```
 
 ### 2. ML Routing Worker (`mlRoutingWorker.ts`)
 
-**Purpose:** Intelligently routes tasks to the most appropriate AI models based on capabilities, performance history, and task requirements.
+**Purpose:** Produces advisory capability scores and routing metadata from the canonical Harmony registry. Runtime execution authority remains with the shared Harmony orchestrator.
 
 #### Key Features
 
@@ -90,11 +90,11 @@ console.log(analysis.conflicts); // []
   - Tracks specializations and strengths
   - Maintains performance history (success rate, response time)
 
-- **Intelligent Routing:**
+- **Capability Advice:**
   - Considers task type, complexity, and priority
-  - Selects optimal model based on requirements
-  - Recommends parallelization for high-value tasks
-  - Provides fallback options
+  - Scores capability fit without creating a second model authority
+  - May recommend parallelization metadata
+  - Does not narrow the runtime Harmony capability pool
 
 - **Adaptive Learning:**
   - Updates model capabilities based on actual performance
@@ -118,10 +118,10 @@ const task: Task = {
 
 const routing = await routeTask(task);
 
-console.log(routing.decision.primaryModel); // 'claude-3-5-sonnet'
-console.log(routing.decision.reasoning); // 'Selected for strong legal reasoning...'
-console.log(routing.decision.shouldParallelize); // true
-console.log(routing.decision.parallelModels); // ['claude', 'gemini', 'groq']
+console.log(routing.decision.primaryModel); // advisory capability match, e.g. 'claude-sonnet-5'
+console.log(routing.decision.reasoning); // capability-fit explanation
+console.log(routing.decision.shouldParallelize); // advisory metadata only
+// Runtime execution still uses the task-scoped Harmony subset.
 ```
 
 ### 3. ML Clustering Worker (`mlClusteringWorker.ts`)
