@@ -10,8 +10,15 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { useToast } from './use-toast';
 import { getLexaraSharedAudioContext } from '@/lib/lexaraSpeechClient';
 
+export interface VoiceTranscriptMeta {
+  engine: LexaraVoiceEngine;
+  provider?: string;
+  confidence?: number;
+  speechDurationMs?: number;
+}
+
 export interface VoiceModeOptions {
-  onTranscript?: (text: string, isFinal: boolean) => void;
+  onTranscript?: (text: string, isFinal: boolean, meta: VoiceTranscriptMeta) => void;
   onError?: (error: Error) => void;
   onVoiceStart?: () => void;
   onVoiceEnd?: () => void;
@@ -95,6 +102,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
   const serverSilenceStartedAtRef = useRef<number | null>(null);
   const serverSpeechActiveRef = useRef(false);
   const serverVoiceStartNotifiedRef = useRef(false);
+  const serverLastSpeechDurationMsRef = useRef(0);
   const serverNoiseFloorRef = useRef(0.006);
   const serverLastAboveThresholdAtRef = useRef(0);
   const discardServerRecordingRef = useRef(false);
@@ -139,7 +147,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     setIsListening(false);
   }, []);
 
-  const transcribeServerBlob = useCallback(async (blob: Blob) => {
+  const transcribeServerBlob = useCallback(async (blob: Blob, speechDurationMs: number) => {
     if (!blob.size || !enabledRef.current) return;
 
     const controller = new AbortController();
@@ -155,6 +163,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
             : 'webm';
 
       form.append('audio', blob, `lexara-turn.${extension}`);
+      form.append('speechDurationMs', String(Math.max(0, Math.round(speechDurationMs))));
       const response = await fetch('/api/lexara/transcribe-file', {
         method: 'POST',
         body: form,
@@ -172,7 +181,11 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       resetTransientRecovery();
       setTranscript(prev => (prev ? `${prev} ${value}` : value));
       setInterimTranscript('');
-      optionsRef.current.onTranscript?.(value, true);
+      optionsRef.current.onTranscript?.(value, true, {
+        engine: 'server',
+        provider: typeof payload?.provider === 'string' ? payload.provider : undefined,
+        speechDurationMs,
+      });
     } catch (err) {
       if ((err as Error)?.name === 'AbortError') return;
       const nextError = err instanceof Error ? err : new Error('Speech transcription failed');
@@ -186,15 +199,19 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     }
   }, [resetTransientRecovery]);
 
-  const queueServerTranscription = useCallback((blob: Blob) => {
+  const queueServerTranscription = useCallback((blob: Blob, speechDurationMs: number) => {
     serverTranscriptionQueueRef.current = serverTranscriptionQueueRef.current
       .catch(() => undefined)
-      .then(() => transcribeServerBlob(blob));
+      .then(() => transcribeServerBlob(blob, speechDurationMs));
   }, [transcribeServerBlob]);
 
   const finishServerUtterance = useCallback((discard = false) => {
     const recorder = serverRecorderRef.current;
     const hadSpeech = serverSpeechActiveRef.current;
+    const speechStartedAt = serverSpeechStartedAtRef.current;
+    if (hadSpeech && speechStartedAt !== null) {
+      serverLastSpeechDurationMsRef.current = Math.max(0, performance.now() - speechStartedAt);
+    }
     discardServerRecordingRef.current = discard;
     serverSpeechActiveRef.current = false;
     serverSpeechStartedAtRef.current = null;
@@ -257,7 +274,9 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
 
       const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || 'audio/webm' });
       discardServerRecordingRef.current = false;
-      if (blob.size > 600) queueServerTranscription(blob);
+      if (blob.size > 600) {
+        queueServerTranscription(blob, serverLastSpeechDurationMsRef.current);
+      }
     };
 
     try {
@@ -274,7 +293,8 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
           && now - serverLastAboveThresholdAtRef.current <= SERVER_VOICE_RECENCY_MS
         ) {
           serverVoiceStartNotifiedRef.current = true;
-          optionsRef.current.onVoiceStart?.();
+          // Candidate acoustic activity is intentionally not surfaced as an
+          // interruption. Only a transcript can prove this is user speech.
         }
       }, SERVER_VOICE_CONFIRM_MS + 10);
     } catch (err) {
@@ -520,12 +540,18 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
 
       if (finalText.trim()) {
         const finalValue = finalText.trim();
+        const confidence = Number(event.results?.[event.resultIndex]?.[0]?.confidence);
         setTranscript(prev => (prev ? `${prev} ${finalValue}` : finalValue));
         setInterimTranscript(interimText.trim());
-        optionsRef.current.onTranscript?.(finalValue, true);
+        optionsRef.current.onTranscript?.(finalValue, true, {
+          engine: 'browser',
+          confidence: Number.isFinite(confidence) ? confidence : undefined,
+        });
       } else {
         setInterimTranscript(interimText.trim());
-        if (interimText.trim()) optionsRef.current.onTranscript?.(interimText.trim(), false);
+        if (interimText.trim()) {
+          optionsRef.current.onTranscript?.(interimText.trim(), false, { engine: 'browser' });
+        }
       }
     };
 
@@ -617,18 +643,18 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       });
       setHasPermission(true);
 
-      // Standards-based capture is the canonical path across modern Android,
-      // iOS/iPadOS, macOS and Windows browsers. Browser SpeechRecognition is
-      // deliberately only a fallback because its support/behavior is uneven.
-      if (isServerRecognitionSupported()) {
-        await initializeServerRecognition(stream);
-        engineRef.current = 'server';
-        setEngine('server');
-      } else if (isSpeechRecognitionSupported()) {
+      // Preserve the proven native speech path wherever the browser exposes
+      // it. Standards-based MediaRecorder/server STT remains a route-local
+      // fallback for browsers whose speech service is absent or repeatedly fails.
+      if (isSpeechRecognitionSupported()) {
         stream.getTracks().forEach(track => track.stop());
         initializeSpeechRecognition();
         engineRef.current = 'browser';
         setEngine('browser');
+      } else if (isServerRecognitionSupported()) {
+        await initializeServerRecognition(stream);
+        engineRef.current = 'server';
+        setEngine('server');
       } else {
         stream.getTracks().forEach(track => track.stop());
         throw new Error('Live speech input is unavailable on this browser. Text mode remains available.');
