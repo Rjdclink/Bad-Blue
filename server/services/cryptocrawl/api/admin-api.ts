@@ -32,6 +32,10 @@ router.get('/status', (req, res) => {
     running: systemState.running,
     lifecycle: systemState.lifecycle,
     lastError: systemState.lastError,
+    control: {
+      operatorStartRequired: true,
+      automaticStartEnabled: false,
+    },
     cryptoCrawl: cryptoCrawlState.getStatus(),
     startedAt: systemState.running ? new Date(systemState.startedAt).toISOString() : null,
     uptime: systemState.running ? Date.now() - systemState.startedAt : 0,
@@ -428,14 +432,28 @@ type CryptoCrawlerStartResult = {
 };
 
 export async function startCryptoCrawlerRuntime(): Promise<CryptoCrawlerStartResult> {
+  if (systemState.lifecycle === 'RUNNING') {
+    return {
+      success: true,
+      status: 200,
+      payload: {
+        success: true,
+        message: 'CryptoCrawler is already running',
+        lifecycle: systemState.lifecycle,
+        startedAt: systemState.startedAt ? new Date(systemState.startedAt).toISOString() : null,
+        cryptoCrawl: cryptoCrawlState.getStatus(),
+      },
+    };
+  }
+
   if (systemState.lifecycle !== 'STOPPED' && systemState.lifecycle !== 'FAILED') {
     return {
       success: false,
       status: 409,
       payload: {
-      success: false,
-      error: `CryptoCrawler is ${systemState.lifecycle.toLowerCase()}`,
-      lifecycle: systemState.lifecycle,
+        success: false,
+        error: `CryptoCrawler lifecycle transition already in progress: ${systemState.lifecycle.toLowerCase()}`,
+        lifecycle: systemState.lifecycle,
       },
     };
   }
@@ -606,25 +624,10 @@ export async function startCryptoCrawlerRuntime(): Promise<CryptoCrawlerStartRes
   }
 }
 
-async function startAutomaticCryptoCrawlerRuntime(reason: string): Promise<void> {
-  if (!governance.isAutomaticallyActivated() || stageManager.getCurrentStage() < 2) return;
-  const result = await startCryptoCrawlerRuntime();
-  if (!result.success && result.status !== 409) {
-    console.warn('[CryptoCrawl] Automatic runtime activation failed', { reason, error: result.payload.error });
-  }
-}
-
-stageManager.on('stage-advanced', event => {
-  if (event.automatic === true) {
-    void startAutomaticCryptoCrawlerRuntime(`stage_advanced:${event.previousStage}->${event.currentStage}`);
-  }
-});
-
-stageManager.on('unpaused', event => {
-  if (event.automatic === true) {
-    void startAutomaticCryptoCrawlerRuntime(`automatic_activation:${event.stage}`);
-  }
-});
+// Runtime activation is intentionally operator-only. Stage advancement, unpause,
+ // governance AUTOMATIC mode, process restart, and Railway replacement deploys may
+ // change eligibility, but none of them may start CryptoCrawler. The authenticated
+ // master start endpoint below is the sole lifecycle-entry authority.
 
 // POST /admin/crypto/start - Start governed on-chain monitoring.
 router.post('/start', async (_req, res) => {
@@ -635,7 +638,15 @@ router.post('/start', async (_req, res) => {
 // POST /admin/crypto/stop - Stop the exact components started by this controller.
 router.post('/stop', async (_req, res) => {
   if (systemState.lifecycle === 'STOPPED') {
-    return res.status(409).json({ success: false, error: 'CryptoCrawler is already stopped' });
+    return res.status(200).json({
+      success: true,
+      message: 'CryptoCrawler is already stopped',
+      lifecycle: systemState.lifecycle,
+      uptime: 0,
+      failures: [],
+      cryptoCrawl: cryptoCrawlState.getStatus(),
+      pantheon: getPantheonSystemStatus(),
+    });
   }
 
   const uptime = systemState.startedAt ? Date.now() - systemState.startedAt : 0;
