@@ -19,6 +19,7 @@ import {
 } from '../services/inmateSearch';
 import type { InmateSearchQuery } from '../services/inmateSearch/types';
 import { apiRateLimit } from '../rateLimit';
+import { isAuthenticated } from '../auth';
 import { sendValidationError, sendNoResults, sendUpstreamUnavailable, sendSystemError } from '../lib/apiResponse';
 
 // EXPLICIT: Express Router initialization - no globals, no assumptions
@@ -45,7 +46,7 @@ const InmateSearchSchema = z.object({
  * POST /api/inmate-search
  * Search for inmates across federal and state correctional systems
  */
-router.post('/', apiRateLimit, async (req, res) => {
+router.post('/', isAuthenticated, apiRateLimit, async (req, res) => {
   // Declare reportId outside try block for error handling access
   const startTime = Date.now();
   const correlationId = crypto.randomBytes(16).toString('hex');
