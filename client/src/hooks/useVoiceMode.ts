@@ -359,6 +359,56 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     }
   }, [finishServerUtterance, stopServerVad]);
 
+  const switchToServerRecognition = useCallback(async (): Promise<boolean> => {
+    if (!isServerRecognitionSupported()) return false;
+
+    const previousEngine = engineRef.current;
+    engineRef.current = 'server';
+    clearRestartTimer();
+
+    try {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.abort();
+        } catch {
+          // Browser recognizer may already be stopped.
+        }
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: { ideal: 1 },
+        },
+        video: false,
+      });
+
+      await initializeServerRecognition(stream);
+      recognitionActiveRef.current = false;
+      setEngine('server');
+      setError(null);
+      resetTransientRecovery();
+
+      if (shouldBeListening()) startServerVad();
+      return true;
+    } catch {
+      cleanupServerRecognition(true);
+      engineRef.current = previousEngine;
+      setEngine(previousEngine);
+      return false;
+    }
+  }, [
+    cleanupServerRecognition,
+    clearRestartTimer,
+    initializeServerRecognition,
+    isServerRecognitionSupported,
+    resetTransientRecovery,
+    shouldBeListening,
+    startServerVad,
+  ]);
+
   const initializeSpeechRecognition = useCallback(() => {
     if (!isSpeechRecognitionSupported()) {
       throw new Error('Browser speech recognition is unavailable');
@@ -450,6 +500,21 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
 
       if (code === 'network') {
         networkFailureCountRef.current += 1;
+
+        // Browser speech services can be unavailable even when microphone
+        // capture works. After two transport failures, move the conversation
+        // to the device-neutral server transcription path automatically.
+        if (networkFailureCountRef.current >= 2 && isServerRecognitionSupported()) {
+          void switchToServerRecognition().then(switched => {
+            if (!switched) {
+              engineRef.current = 'browser';
+              setEngine('browser');
+            }
+          });
+          setError(null);
+          return;
+        }
+
         restartDelayRef.current = Math.min(
           MAX_NETWORK_RESTART_DELAY_MS,
           BASE_RESTART_DELAY_MS * (2 ** Math.min(networkFailureCountRef.current, 6)),
@@ -472,7 +537,14 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
 
     recognitionRef.current = recognition;
     return recognition;
-  }, [clearRestartTimer, isSpeechRecognitionSupported, resetTransientRecovery, shouldBeListening]);
+  }, [
+    clearRestartTimer,
+    isServerRecognitionSupported,
+    isSpeechRecognitionSupported,
+    resetTransientRecovery,
+    shouldBeListening,
+    switchToServerRecognition,
+  ]);
 
   const enableVoice = useCallback(async () => {
     setError(null);
