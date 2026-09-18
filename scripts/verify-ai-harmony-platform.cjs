@@ -47,15 +47,19 @@ must(
   collaboration.includes("role: 'harmony-synthesizer'") &&
   collaboration.includes('getConfiguredHarmonyProviders') &&
   collaboration.includes('fallbackProviders') &&
-  collaboration.includes('Promise.any'),
-  'shared orchestrator requires full configured participation, one final synthesis authority, and route-local failover',
+  collaboration.includes('rankFallbackProviders') &&
+  collaboration.includes('alternatives.slice(0, 3)') &&
+  collaboration.includes('Promise.any') &&
+  collaboration.includes("model: 'harmony-current'"),
+  'shared orchestrator requires full configured participation, one final synthesis authority, bounded route-local failover, and full-mesh legacy quick calls',
 );
 
 must(
+  collaboration.includes("Return ONLY valid JSON with no markdown fences") &&
   provider.includes("providerPolicy: 'capability-first'") &&
   provider.includes("await import('./aiCollaborationOrchestrator')") &&
   !provider.includes('AUTONOMOUS_BLOCK_GEMINI'),
-  'platform AI entry point routes through capability-first Harmony without context-based provider exclusion',
+  'platform AI entry point routes through capability-first Harmony, preserves structured JSON, and has no context-based provider exclusion',
 );
 
 must(
