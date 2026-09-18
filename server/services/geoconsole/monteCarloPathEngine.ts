@@ -490,17 +490,36 @@ export class MonteCarloPathEngine {
       const window = path.slice(start, end);
       
       const avgLat = window.reduce((sum, p) => sum + p.latitude, 0) / window.length;
-      const avgLng = window.reduce((sum, p) => sum + p.longitude, 0) / window.length;
-      
+      const referenceLongitude = path[i].longitude;
+      const avgLngUnwrapped =
+        window.reduce(
+          (sum, p) => sum + this.unwrapLongitude(p.longitude, referenceLongitude),
+          0,
+        ) / window.length;
+
       smoothed.push({
         ...path[i],
         latitude: avgLat,
-        longitude: avgLng,
+        longitude: this.normalizeLongitude(avgLngUnwrapped),
       });
     }
     
     smoothed.push(path[path.length - 1]);
     return smoothed;
+  }
+
+  private normalizeLongitude(longitude: number): number {
+    let normalized = longitude;
+    while (normalized > 180) normalized -= 360;
+    while (normalized <= -180) normalized += 360;
+    return normalized;
+  }
+
+  private unwrapLongitude(longitude: number, reference: number): number {
+    let unwrapped = longitude;
+    while (unwrapped - reference > 180) unwrapped -= 360;
+    while (unwrapped - reference < -180) unwrapped += 360;
+    return unwrapped;
   }
 
   /**
@@ -530,11 +549,15 @@ export class MonteCarloPathEngine {
       Math.min(0.85, endpointConfidence * Math.exp(-0.45 * gapHours) * 0.75)
     );
 
+    const endLongitudeUnwrapped = this.unwrapLongitude(end.longitude, start.longitude);
+
     for (let i = 1; i < numSteps; i++) {
       const progress = i / numSteps;
       points.push({
         latitude: start.latitude + (end.latitude - start.latitude) * progress,
-        longitude: start.longitude + (end.longitude - start.longitude) * progress,
+        longitude: this.normalizeLongitude(
+          start.longitude + (endLongitudeUnwrapped - start.longitude) * progress
+        ),
         accuracy: Math.max(
           start.accuracy ?? 25,
           end.accuracy ?? 25,
@@ -605,6 +628,7 @@ export class MonteCarloPathEngine {
     const segments: TrailSegment[] = [];
     const stops: StopPoint[] = [];
     let totalDistance = 0;
+    let supportedDuration = 0;
     let currentSegmentStart = 0;
     let currentSegmentType: TrailSegment['segmentType'] = 'unknown';
 
@@ -643,6 +667,7 @@ export class MonteCarloPathEngine {
           point.longitude
         );
         totalDistance += distance;
+        if (timeDelta > 0) supportedDuration += timeDelta;
 
         const newType = this.classifyActivity(speed);
         if (currentSegmentType === 'unknown') {
@@ -712,7 +737,7 @@ export class MonteCarloPathEngine {
       startTime: sortedPoints[0].timestamp,
       endTime: sortedPoints[sortedPoints.length - 1].timestamp,
       totalDistance,
-      averageSpeed: duration > 0 ? totalDistance / duration : 0,
+      averageSpeed: supportedDuration > 0 ? totalDistance / supportedDuration : 0,
       maxSpeed: Math.max(0, ...trailPoints.map(point => point.velocity?.speed || 0)),
       stops,
       segments,
