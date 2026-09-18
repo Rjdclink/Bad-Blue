@@ -108,9 +108,18 @@ export function serveStatic(app: Express) {
   console.log(`[serveStatic] Serving static files from: ${distPath}`);
   app.use(express.static(distPath));
 
-  // fall through to index.html if the file doesn't exist
-  app.use("*", (_req, res) => {
+  // Fall through to index.html only for SPA navigation. Missing static
+  // assets must be real 404s so <img onError> and other fallback logic can
+  // advance instead of receiving index.html with HTTP 200.
+  app.use("*", (req, res) => {
+    const pathname = req.path || '';
+    const looksLikeStaticAsset = pathname.startsWith('/images/')
+      || pathname.startsWith('/assets/')
+      || /\\.[a-z0-9]{2,8}$/i.test(pathname);
+    if (looksLikeStaticAsset) {
+      return res.status(404).type('text/plain').send('Static asset not found');
+    }
     const indexPath = path.resolve(distPath!, "index.html");
-    res.sendFile(indexPath);
+    return res.sendFile(indexPath);
   });
 }
