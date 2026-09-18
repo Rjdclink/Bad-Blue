@@ -37,6 +37,9 @@ const harmony = read('server/aiCollaborationOrchestrator.ts');
 const harmonyRegistry = read('server/aiHarmonyModelRegistry.ts');
 const claude = read('server/claude.ts');
 const groq = read('server/groq.ts');
+const harmonyWarmup = read('server/aiHarmonyWarmup.ts');
+const crawlerRegistry = read('server/lexara/LexaraCrawlerCapabilityRegistry.ts');
+const pacer = read('server/services/criminalRecords/sources/PACERScraper.ts');
 const routes = read('server/routes.ts');
 const storage = read('server/storage.ts');
 const overflowSchema = read('server/services/cryptocrawl/runtime/cryptocrawl-overflow-runtime-schema.ts');
@@ -72,11 +75,11 @@ must(
   'conversation storage is versioned to quarantine corrupt prior turns',
 );
 must(
-  voiceMode.includes('const SERVER_VAD_SILENCE_MS = 900') &&
-    conversation.includes('const BROWSER_FINAL_FALLBACK_SETTLE_MS = 900') &&
+  voiceMode.includes('const SERVER_VAD_SILENCE_MS = 1_500') &&
+    conversation.includes('const BROWSER_FINAL_FALLBACK_SETTLE_MS = 2_200') &&
     conversation.includes('const SERVER_VOICE_TURN_SETTLE_MS = 500') &&
-    conversation.includes('const VOICE_END_GRACE_MS = 650') &&
-    conversation.includes('const INCOMPLETE_TURN_GRACE_MS = 2_400') &&
+    conversation.includes('const VOICE_END_GRACE_MS = 1_400') &&
+    conversation.includes('const INCOMPLETE_TURN_GRACE_MS = 3_200') &&
     conversation.includes('isLikelyIncompleteUtterance'),
   'voice endpointing reduces dead air while retaining a longer incomplete-thought grace path',
 );
@@ -165,8 +168,11 @@ must(
     harmonyRegistry.includes('HARMONY_17_PARTICIPANTS') &&
     orchestrator.includes('maxParticipants: 2') &&
     orchestrator.includes('estimatedTokens: 450') &&
-    orchestrator.includes('requestTimeoutMs: 2_800') &&
-    orchestrator.includes('maxFallbacks: 0'),
+    orchestrator.includes('requestTimeoutMs: 4_000') &&
+    orchestrator.includes('maxFallbacks: 1') &&
+    harmonyWarmup.includes('prewarmHarmonyProviders') &&
+    harmonyWarmup.includes('isHarmonyProviderWarmHealthy') &&
+    groq.includes('warmGroqModelCatalog'),
   'Lexara draws from the full 17-participant capability pool while each live turn uses a small capability-matched subset with one synthesis authority and bounded route-local failover',
 );
 must(
@@ -179,6 +185,26 @@ must(
     modernWebSearch.includes('deprecated') &&
     webSearch.includes('useOnlinePlugin: true'),
   'legal authority research races independent discovery paths and uses the current non-Google OpenRouter web-search server tool',
+);
+must(
+  crawlerRegistry.includes('LEXARA_CRAWLER_CAPABILITY_POOL') &&
+    crawlerRegistry.includes("'PACERScraper'") &&
+    crawlerRegistry.includes("'InstantLegalCrawler'") &&
+    crawlerRegistry.includes("'AdaptiveCrawler'") &&
+    crawlerRegistry.includes("'IdentityRazor'") &&
+    crawlerRegistry.includes("'SpiderFoot'") &&
+    crawlerRegistry.includes("'GravityCrawler'") &&
+    authorityResearch.includes('selectLexaraCrawlerPlan') &&
+    authorityResearch.includes('pantheonRetrievalAdapter.retrieve'),
+  'Lexara owns one need-driven crawler capability pool spanning legal, PANTHEON, extractor, external, people/criminal, and read-only crypto evidence tools',
+);
+must(
+  pacer.includes('pacer.login.uscourts.gov/services/cso-auth') &&
+    pacer.includes('pcl.uscourts.gov/pcl-public-api/rest') &&
+    pacer.includes("'X-NEXT-GEN-CSO'") &&
+    pacer.includes('/parties/find?page=0') &&
+    !pacer.includes("page.goto('https://pacer.uscourts.gov/'"),
+  'PACER uses the supported Authentication/PCL APIs rather than the placeholder homepage scraper',
 );
 must(
   openRouter.includes('cancellationShaped') &&
@@ -239,7 +265,8 @@ must(
     !liveTurnHandler.includes('if (pendingUserTurnRef.current) return;') &&
     orchestrator.includes('Default to 2-5 concise spoken sentences') &&
     orchestrator.includes('Do not say "thank you," "goodbye,"') &&
-    authorityResearch.includes('const RESEARCH_TIMEOUT_MS = 1_800'),
+    authorityResearch.includes('const RESEARCH_TIMEOUT_MS = 2_200') &&
+    conversation.includes("acknowledgementKind === 'presence'"),
   'active-analysis check-ins remain separate turns, substantive interruptions queue independently, filler is deduplicated, answers are concise/direct, and authority research cannot dominate live latency',
 );
 
