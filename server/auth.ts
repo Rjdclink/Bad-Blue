@@ -415,12 +415,30 @@ export async function setupAuth(app: Express) {
   }
 }
 
+export const isIdentityAuthenticated: RequestHandler = async (req, res, next) => {
+  if (!req.isAuthenticated() || !getPlatformUserId(req.user)) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+  return next();
+};
+
 export const isAuthenticated: RequestHandler = async (req, res, next) => {
   if (!req.isAuthenticated() || !getPlatformUserId(req.user)) {
     return res.status(401).json({ message: "Unauthorized" });
   }
 
-  // User is authenticated - continue
+  const user = req.user as any;
+  if (user?.isMasterBypass || user?.isAdminBypass || user?.isAdmin) {
+    return next();
+  }
+
+  if (user?.status !== "active" || user?.hasPaidForAccess !== true) {
+    return res.status(402).json({
+      message: "Active LegalWhat subscription required",
+      code: "SUBSCRIPTION_REQUIRED",
+    });
+  }
+
   return next();
 };
 
