@@ -828,7 +828,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     streetPhoto?.fileurlProc || streetPhoto?.fileurl || streetPhoto?.fileurlTh || null;
 
   return (
-    <div className="absolute inset-0">
+    <div className="absolute inset-0" data-gesture-navigation="ignore">
       <div ref={containerRef} className="absolute inset-0" />
 
       {rendererRecovering && (
