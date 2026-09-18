@@ -453,15 +453,17 @@ router.post('/transcribe-file', lexaraVoiceUpload.single('audio'), async (req: R
       quality?: { avgLogprob?: number; noSpeechProbability?: number };
     }>;
   }> = [
-    {
-      name: 'groq-whisper',
-      configured: !!process.env.GROQ_API_KEY?.trim(),
-      transcribe: () => transcribeWithGroq(file),
-    },
+    // Paid ElevenLabs Scribe is the preferred server-side compatibility path.
+    // Groq Whisper remains an independent, already-proven route-local fallback.
     {
       name: 'elevenlabs-scribe',
       configured: !!process.env.ELEVENLABS_API_KEY?.trim(),
       transcribe: () => transcribeWithElevenLabs(file),
+    },
+    {
+      name: 'groq-whisper',
+      configured: !!process.env.GROQ_API_KEY?.trim(),
+      transcribe: () => transcribeWithGroq(file),
     },
   ];
 
