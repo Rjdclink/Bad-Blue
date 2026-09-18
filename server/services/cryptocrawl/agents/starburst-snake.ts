@@ -23,7 +23,23 @@ class SnakeAgent {
     this.state = parentState || { depth: 0, spawned: [] };
   }
 
-  async crawl(): Promise<void> {}
+  async crawl(): Promise<void> {
+    // Compatibility crawler is observational only. It records the opportunity
+    // metadata it was asked to inspect and never authorizes or performs a trade.
+    this.state = {
+      ...this.state,
+      lastObservation: {
+        target: this.target,
+        chain: this.chain,
+        priority: this.priority,
+        observedAt: Date.now(),
+      },
+    };
+  }
+
+  getObservation(): Record<string, any> | null {
+    return this.state.lastObservation || null;
+  }
 
   shed(): SnakeAgent {
     return new SnakeAgent({
