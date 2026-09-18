@@ -80,7 +80,7 @@ export default function EvidenceHub() {
     "description": "Community platform for uploading and sharing evidence of law enforcement corruption, misconduct, and informant documents. All media types accepted including photos, videos, audio recordings, and documents.",
     "provider": {
       "@type": "Organization",
-      "name": "BadBlue"
+      "name": "Legal What?"
     },
     "serviceType": "Corruption & Informant Evidence Repository",
     "areaServed": {
