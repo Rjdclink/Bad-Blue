@@ -379,7 +379,7 @@ export default function WelcomePage() {
           </button>
         </div>
 
-        {/* People Finder - Styled with Quiet 3D */}
+        {/* SPECTRA - unified location intelligence */}
         <div className="mb-8 sm:mb-12">
           <div className="flex items-center gap-2 mb-4 justify-center">
             <Badge variant="secondary" className="text-sm bg-white/10 text-white/90 border border-white/20 backdrop-blur-sm px-4 py-1">
