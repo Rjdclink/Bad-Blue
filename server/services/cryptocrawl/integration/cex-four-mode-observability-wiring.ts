@@ -10,6 +10,7 @@ import { evaluateCexFourModeMatrix, type CexModeEconomics } from '../intelligenc
 import { buildAdaptiveProfitabilitySearchPolicy, type AdaptiveProfitabilitySearchPolicy } from '../optimization/adaptive-profitability-search-policy.js';
 
 let timer: NodeJS.Timeout | null = null;
+let active = false;
 let running = false;
 let latest: CexModeEconomics[] = [];
 let nextIntervalMs = 15_000;
@@ -361,7 +362,7 @@ export function getCexFourModeSnapshot(): CexModeEconomics[] {
 }
 
 function scheduleNext(): void {
-  if (process.env.NO_INTERVALS === 'true') return;
+  if (!active || process.env.NO_INTERVALS === 'true') return;
   timer = setTimeout(() => {
     timer = null;
     void observeFailClosed().finally(scheduleNext);
@@ -370,7 +371,14 @@ function scheduleNext(): void {
 }
 
 export function ensureCexFourModeObservabilityWiring(): void {
-  if (timer || process.env.CRYPTOCRAWL_CEX_MODE_MATRIX_ENABLED === 'false') return;
+  if (active || process.env.CRYPTOCRAWL_CEX_MODE_MATRIX_ENABLED === 'false') return;
+  active = true;
   nextIntervalMs = baseIntervalMs();
   void observeFailClosed().finally(scheduleNext);
+}
+
+export function stopCexFourModeObservabilityWiring(): void {
+  active = false;
+  if (timer) clearTimeout(timer);
+  timer = null;
 }
