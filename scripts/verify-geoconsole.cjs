@@ -83,8 +83,9 @@ test('GPS/media routes require authentication',
   gpsRoutes.includes('router.use(isAuthenticated)'));
 test('People-search route requires authentication',
   peopleRoute.includes("router.post('/', isAuthenticated"));
-test('Process response includes actual trail frames',
-  routes.includes('points: result.trail.points'));
+test('Process response includes signed actual trail frames',
+  routes.includes('points: signedTrailPoints') &&
+  routes.includes('signServerEvidence'));
 test('Street imagery adapter is provider-neutral to client',
   routes.includes("router.get('/street-imagery'"));
 
