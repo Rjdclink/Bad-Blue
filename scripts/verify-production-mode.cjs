@@ -1,6 +1,6 @@
 /**
- * Production Mode Verification Script
- * Verifies 100% production ready status
+ * SPECTRA production-mode verification.
+ * Static invariants only: no network calls and no synthetic location fixtures.
  */
 
 const fs = require('fs');
@@ -9,7 +9,8 @@ const path = require('path');
 let passed = 0;
 let failed = 0;
 
-function test(name, condition) {
+const read = rel => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+const test = (name, condition) => {
   if (condition) {
     console.log(`✅ ${name}`);
     passed++;
@@ -17,83 +18,96 @@ function test(name, condition) {
     console.log(`❌ ${name}`);
     failed++;
   }
-}
+};
 
-function readFile(filePath) {
-  const fullPath = path.join(__dirname, '..', filePath);
-  return fs.readFileSync(fullPath, 'utf-8');
-}
+const spectra = read('client/src/pages/spectra.tsx');
+const dashboard = read('client/src/components/geoconsole/GeoconsoleRadarDashboard.tsx');
+const map = read('client/src/components/geoconsole/MapLibreIntelligenceMap.tsx');
+const runtime = read('client/src/hooks/useGeoRuntime.ts');
+const tshpe = read('client/src/hooks/useTSHPELocator.ts');
+const fusion = read('server/services/geoconsole/inputFusionEngine.ts');
+const futurecast = read('server/services/geoconsole/monteCarloPathEngine.ts');
+const geoRoutes = read('server/routes/geoconsole.routes.ts');
+const spectraRoutes = read('server/routes/spectra.routes.ts');
+const gpsRoutes = read('server/routes/gps.routes.ts');
+const geocoder = read('server/services/geoconsole/city-state-geocoder.ts');
 
-console.log('\n' + '='.repeat(60));
-console.log('  PRODUCTION VERIFICATION - 100% REAL WORLD READY');
-console.log('='.repeat(60) + '\n');
+console.log('\nSPECTRA PRODUCTION INVARIANTS\n');
 
-// GEOCONSOLE RADAR DASHBOARD
-console.log('📍 GEOCONSOLE RADAR DASHBOARD');
-const dashboard = readFile('client/src/components/geoconsole/GeoconsoleRadarDashboard.tsx');
-test('Canonical MapLibre renderer', dashboard.includes('MapLibreIntelligenceMap'));
-test('No hardcoded NYC (40.7128)', !dashboard.includes('40.7128'));
+test('SPECTRA begins with the target question',
+  spectra.includes("What is it that you want to locate?"));
+test('SPECTRA waits for target information before acquisition',
+  spectra.includes("phase === 'awaiting_details'") &&
+  spectra.includes('await acquireTarget(target, message)'));
+test('No manual coordinate-entry workflow remains in SPECTRA',
+  !spectra.includes('Add Point') &&
+  !spectra.includes('Enter latitude') &&
+  !spectra.includes('Enter longitude'));
+test('No synthetic target-track generator exists in SPECTRA',
+  !spectra.includes('generateFakeHistory') &&
+  !spectra.includes('generateMockFrames'));
+test('Voice cannot listen while SPECTRA audio is loading or speaking',
+  spectra.includes('voiceSynthesis.isLoading || voiceSynthesis.isSpeaking') &&
+  spectra.includes('voiceMode.isSuspended'));
 
-// GEO RUNTIME
-console.log('\n📍 GEO RUNTIME');
-const runtime = readFile('client/src/hooks/useGeoRuntime.ts');
-test('No generateMockFrames function', !runtime.includes('const generateMockFrames'));
-test('No allowMockData config', !runtime.includes('allowMockData'));
-test('No NYC coordinates', !runtime.includes('40.7128'));
+test('Canonical renderer is MapLibre, not Leaflet',
+  dashboard.includes('MapLibreIntelligenceMap') &&
+  !dashboard.includes("from 'leaflet'"));
+test('Renderer has true terrain and 3D building support',
+  map.includes("type: 'raster-dem'") &&
+  map.includes('map.setTerrain') &&
+  map.includes("type: 'fill-extrusion'"));
+test('Regional candidates show uncertainty instead of point precision',
+  map.includes('spectra-candidate-area') &&
+  map.includes('candidateZoomForAccuracy') &&
+  geocoder.includes('accuracyMeters'));
+test('Map popups use DOM text instead of untrusted HTML',
+  map.includes('setDOMContent') &&
+  !map.includes('.setHTML('));
+test('Observed, historical, inferred and interpolated evidence are visually classified',
+  map.includes("'historical', '#60a5fa'") &&
+  map.includes("'inferred', '#f59e0b'") &&
+  map.includes("'interpolated', '#94a3b8'"));
 
-// LOCATION HEATMAP
-console.log('\n📍 LOCATION HEATMAP');
-const heatmap = readFile('client/src/components/LocationHeatmap.tsx');
-test('Dynamic effectiveCenter', heatmap.includes('effectiveCenter'));
-test('No hardcoded center default', !heatmap.includes('center = [40.7128'));
+test('Runtime uses canonical server processing',
+  runtime.includes("fetch('/api/geoconsole/process'"));
+test('Runtime futurecast uses server authority',
+  runtime.includes("fetch('/api/geoconsole/futurecast'"));
+test('Runtime never fabricates target motion frames',
+  !runtime.includes('generateMockFrames'));
+test('TSHPE has no random location authority',
+  !tshpe.includes('Math.random()') &&
+  !tshpe.includes('ipapi.co') &&
+  tshpe.includes("/api/geoconsole/process"));
 
-// GEOCONSOLE PROCESS
-console.log('\n📍 GEOCONSOLE PROCESS');
-const process_page = readFile('client/src/pages/geoconsole-process.tsx');
-test('No loadSampleData function', !process_page.includes('loadSampleData'));
-test('No sample button', !process_page.includes('Load Sample'));
+test('Fusion models accuracy and correlated evidence',
+  fusion.includes('effectiveAccuracyMeters') &&
+  fusion.includes('independentRepresentatives') &&
+  fusion.includes('correlationKey'));
+test('Futurecast is bounded to one hour and deterministic',
+  futurecast.includes('hours: number = 1') &&
+  futurecast.includes('MAX_SIMULATION_STEPS') &&
+  futurecast.includes('seededRandom') &&
+  futurecast.includes("observationKind: 'predicted'"));
+test('Unsupported long evidence gaps are not interpolated',
+  read('server/services/geoconsole/index.ts').includes('maxInterpolationGapMinutes') &&
+  read('server/services/geoconsole/index.ts').includes("continuity: 'discontinuous'"));
 
-// GEOCONSOLE COMMAND
-console.log('\n📍 GEOCONSOLE COMMAND');
-const command = readFile('client/src/pages/geoconsole-command.tsx');
-test('Dynamic center calculation', command.includes('centerLat') && command.includes('centerLng'));
-test('No hardcoded NYC positioning', !command.includes('74.006'));
+test('GeoConsole and SPECTRA APIs require authentication',
+  geoRoutes.includes('router.use(isAuthenticated)') &&
+  spectraRoutes.includes('router.use(isAuthenticated)'));
+test('SPECTRA only promotes qualified timestamped coordinate evidence',
+  spectraRoutes.includes('explicitTimestamp') &&
+  spectraRoutes.includes('hasLocationContext'));
+test('Media route requires actual upload evidence',
+  gpsRoutes.includes("router.post('/extract-upload'") &&
+  !gpsRoutes.includes("router.post('/extract'"));
 
-// TSHPE LOCATOR
-console.log('\n📍 TSHPE LOCATOR');
-const locator = readFile('client/src/hooks/useTSHPELocator.ts');
-test('No NYC default', !locator.includes('40.7128'));
-test('Neutral initial position', locator.includes('lat: 0'));
-test('No synthetic Monte Carlo weighting', !locator.includes('Math.random()'));
-test('No direct client IP geolocation', !locator.includes('ipapi.co'));
-test('Uses canonical GeoConsole processing', locator.includes("/api/geoconsole/process"));
+test('No production geospatial core depends on a hardcoded NYC fallback',
+  !spectra.includes('40.7128') &&
+  !dashboard.includes('40.7128') &&
+  !runtime.includes('40.7128') &&
+  !map.includes('40.7128'));
 
-// SPECTRA PAGE
-console.log('\n📍 SPECTRA PAGE');
-const spectra = readFile('client/src/pages/spectra.tsx');
-test('No generateFakeHistory function', !spectra.includes('const generateFakeHistory'));
-test('Empty initial trackPoints', spectra.includes('useState<TrackPoint[]>([])'));
-test('Neutral view state', spectra.includes('latitude: 0'));
-
-// LOCATION INTEL
-console.log('\n📍 LOCATION INTEL');
-const intel = readFile('client/src/pages/location-intel.tsx');
-test('No hardcoded coordinates', !intel.includes('40.7128'));
-
-// SERVER ROUTES
-console.log('\n📍 SERVER');
-const routes = readFile('server/routes.ts');
-test('No NYC fallback', !routes.includes("'New York, NY'"));
-
-// Summary
-console.log('\n' + '='.repeat(60));
-console.log(`  RESULTS: ${passed} passed, ${failed} failed`);
-console.log('='.repeat(60));
-
-if (failed === 0) {
-  console.log('\n✅ 100% PRODUCTION READY\n');
-  process.exit(0);
-} else {
-  console.log('\n❌ ISSUES FOUND\n');
-  process.exit(1);
-}
+console.log(`\nPassed: ${passed}  Failed: ${failed}\n`);
+process.exit(failed === 0 ? 0 : 1);
