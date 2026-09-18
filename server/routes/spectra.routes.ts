@@ -56,8 +56,7 @@ function explicitTimestamp(value: any): Date | null {
     value?.observedAt ??
     value?.capturedAt ??
     value?.dateTimeOriginal ??
-    value?.datetime ??
-    value?.date;
+    value?.datetime;
   if (!raw) return null;
   const date = new Date(raw);
   return Number.isFinite(date.getTime()) ? date : null;
@@ -115,6 +114,12 @@ function collectCoordinateObservations(
     );
     const altitude = Number(object.altitude ?? object.gpsAltitude ?? object.GPSAltitude);
 
+    const source = sourceForName(sourceName);
+    const observationKind =
+      source === 'public_record' || source === 'historical_location'
+        ? 'historical'
+        : 'observed';
+
     out.push({
       latitude,
       longitude,
@@ -122,9 +127,9 @@ function collectCoordinateObservations(
       accuracy: Number.isFinite(accuracy) && accuracy > 0 ? accuracy : undefined,
       timestamp: timestamp.toISOString(),
       receivedAt: new Date().toISOString(),
-      source: sourceForName(sourceName),
+      source,
       confidence,
-      observationKind: 'observed',
+      observationKind,
       correlationGroup: `spectra:${sourceName.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`,
       provenance: {
         provider: sourceName,
@@ -279,16 +284,23 @@ router.post('/acquire', async (req: Request, res: Response) => {
     }
 
     const confidenceRaw = Number(report.confidenceScore);
-    const confidence = Number.isFinite(confidenceRaw)
-      ? (confidenceRaw > 1 ? confidenceRaw / 100 : confidenceRaw)
+    const identityConfidence = Number.isFinite(confidenceRaw)
+      ? Math.max(0, Math.min(1, confidenceRaw > 1 ? confidenceRaw / 100 : confidenceRaw))
       : 0;
+    const locationConfidence = locationObservations.length > 0
+      ? locationObservations.reduce(
+          (sum, point) => sum + Math.max(0, Math.min(1, Number(point.confidence) || 0)),
+          0
+        ) / locationObservations.length
+      : candidateLocations[0]?.confidence ?? 0;
 
     return res.json({
       success: true,
       target,
       details,
       acquisition: {
-        confidence: Math.max(0, Math.min(1, confidence)),
+        identityConfidence,
+        locationConfidence,
         sourceCount:
           (Array.isArray(report.sources) ? report.sources.length : 0) +
           discoveryResults.length,
