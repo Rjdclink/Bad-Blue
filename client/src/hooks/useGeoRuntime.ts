@@ -311,6 +311,17 @@ export function useGeoRuntime(
         observationKind: point.observationKind || 'predicted',
         correlationGroup: point.correlationGroup,
         provenance: point.provenance,
+        velocity: (
+          Number.isFinite(Number(point?.metadata?.averageSpeedMps)) ||
+          Number.isFinite(Number(point?.metadata?.averageHeadingDegrees))
+        ) ? {
+          speed: Number.isFinite(Number(point?.metadata?.averageSpeedMps))
+            ? Number(point.metadata.averageSpeedMps)
+            : 0,
+          heading: Number.isFinite(Number(point?.metadata?.averageHeadingDegrees))
+            ? Number(point.metadata.averageHeadingDegrees)
+            : 0,
+        } : undefined,
         source: point.source || 'predicted',
         confidence: Number(point.confidence ?? 0),
         metadata: {
