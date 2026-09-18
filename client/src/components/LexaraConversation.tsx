@@ -391,6 +391,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const currentTurnTextRef = useRef('');
   const analysisActiveRef = useRef(false);
   const lastAcknowledgementRef = useRef<{ text: string; at: number }>({ text: '', at: 0 });
+  const controlAcknowledgementSpeechRef = useRef<Promise<void> | null>(null);
   const responseEmotionRef = useRef<LEXARAEmotionHint>('authoritative');
   const activeLexaraSpeechRef = useRef('');
   const recentLexaraSpeechRef = useRef<{ text: string; expiresAt: number }>({ text: '', expiresAt: 0 });
@@ -861,6 +862,15 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       }
 
       if (!duplicateOfAcknowledgement) {
+        // A check-in acknowledgement may still be speaking when the deep answer
+        // becomes ready. Wait for every currently-active control acknowledgement
+        // so LEXARA never talks over herself or cuts off the user's check-in.
+        while (controlAcknowledgementSpeechRef.current) {
+          const controlSpeech = controlAcknowledgementSpeechRef.current;
+          await controlSpeech;
+          if (controlAcknowledgementSpeechRef.current === controlSpeech) break;
+        }
+
         appendMessage('lexara', answer);
         setGaze('camera');
         await speakLexara(answer, generation);
