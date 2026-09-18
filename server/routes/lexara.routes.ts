@@ -18,6 +18,7 @@
  */
 
 import express, { Request, Response } from 'express';
+import multer from 'multer';
 import { logger } from '../logger';
 import { LEXARA_KERNEL, mergePersonaWithKernel } from '../lexara/personaKernel';
 import { lexaraSpeakTest } from '../lexara/LexaraTTSRouter';
@@ -25,6 +26,29 @@ import { callAIWithFallback } from '../aiSubAgent';
 import { LEXARA_PERSONA } from '../../shared/lexaraVoicePersona';
 
 const router = express.Router();
+
+const lexaraVoiceUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 },
+  fileFilter: (_req, file, callback) => {
+    const type = String(file.mimetype || '').toLowerCase();
+    if (type.startsWith('audio/') || type === 'application/octet-stream') {
+      callback(null, true);
+      return;
+    }
+    callback(new Error('Unsupported audio format'));
+  },
+});
+
+function extensionForAudioMime(mimeType: string): string {
+  const type = mimeType.toLowerCase();
+  if (type.includes('mp4') || type.includes('m4a')) return 'm4a';
+  if (type.includes('ogg')) return 'ogg';
+  if (type.includes('wav')) return 'wav';
+  if (type.includes('mpeg') || type.includes('mp3')) return 'mp3';
+  return 'webm';
+}
+
 
 // Store active stream sessions with persona attached
 const activeSessions = new Map<string, {
@@ -256,6 +280,199 @@ router.post('/audio-chunk', express.raw({ type: 'application/octet-stream', limi
       error: 'Failed to process audio chunk',
     });
   }
+});
+
+/**
+ * GET /api/lexara/voice/live-readiness
+ * Cheap capability check used by the consent interstitial. It never exposes
+ * credentials and does not spend provider quota.
+ */
+router.get('/voice/live-readiness', (_req: Request, res: Response) => {
+  const groqConfigured = !!process.env.GROQ_API_KEY?.trim();
+  const elevenLabsConfigured = !!process.env.ELEVENLABS_API_KEY?.trim();
+  const elevenLabsVoiceConfigured = !!process.env.ELEVENLABS_VOICE_ID?.trim();
+
+  return res.json({
+    success: true,
+    speechInputConfigured: groqConfigured || elevenLabsConfigured,
+    speechOutputConfigured: elevenLabsConfigured && elevenLabsVoiceConfigured,
+    liveVoiceConfigured:
+      (groqConfigured || elevenLabsConfigured)
+      && elevenLabsConfigured
+      && elevenLabsVoiceConfigured,
+    inputProviders: [
+      ...(groqConfigured ? ['groq-whisper'] : []),
+      ...(elevenLabsConfigured ? ['elevenlabs-scribe'] : []),
+    ],
+    outputProvider: elevenLabsConfigured && elevenLabsVoiceConfigured ? 'elevenlabs' : null,
+  });
+});
+
+function makeVoiceUploadForm(file: Express.Multer.File): {
+  form: FormData;
+  mimeType: string;
+  extension: string;
+} {
+  const mimeType = String(file.mimetype || 'audio/webm');
+  const extension = extensionForAudioMime(mimeType);
+  const form = new FormData();
+  const audioBytes = new Uint8Array(file.buffer);
+  form.append('file', new Blob([audioBytes], { type: mimeType }), `lexara-turn.${extension}`);
+  return { form, mimeType, extension };
+}
+
+async function transcribeWithGroq(file: Express.Multer.File): Promise<{
+  text: string;
+  provider: string;
+  model: string;
+}> {
+  const apiKey = process.env.GROQ_API_KEY?.trim();
+  if (!apiKey) throw new Error('Groq speech-to-text is not configured');
+
+  const { form } = makeVoiceUploadForm(file);
+  const model = process.env.GROQ_STT_MODEL?.trim() || 'whisper-large-v3-turbo';
+  form.append('model', model);
+  form.append('language', 'en');
+  form.append('response_format', 'json');
+  form.append('temperature', '0');
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12_000);
+  try {
+    const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: form,
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const detail = (await response.text()).slice(0, 500);
+      throw new Error(`Groq STT ${response.status}: ${detail}`);
+    }
+
+    const result = await response.json() as { text?: string };
+    return {
+      text: String(result?.text || '').trim(),
+      provider: 'groq-whisper',
+      model,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function transcribeWithElevenLabs(file: Express.Multer.File): Promise<{
+  text: string;
+  provider: string;
+  model: string;
+}> {
+  const apiKey = process.env.ELEVENLABS_API_KEY?.trim();
+  if (!apiKey) throw new Error('ElevenLabs speech-to-text is not configured');
+
+  const { form } = makeVoiceUploadForm(file);
+  const model = process.env.ELEVENLABS_STT_MODEL?.trim() || 'scribe_v2';
+  form.append('model_id', model);
+  form.append('language_code', 'eng');
+  form.append('diarize', 'false');
+  form.append('tag_audio_events', 'false');
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const response = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
+      method: 'POST',
+      headers: { 'xi-api-key': apiKey },
+      body: form,
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const detail = (await response.text()).slice(0, 500);
+      throw new Error(`ElevenLabs STT ${response.status}: ${detail}`);
+    }
+
+    const result = await response.json() as { text?: string };
+    return {
+      text: String(result?.text || '').trim(),
+      provider: 'elevenlabs-scribe',
+      model,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * POST /api/lexara/transcribe-file
+ * Standards-based cross-device speech recognition. Groq Whisper is the fast
+ * primary route; ElevenLabs Scribe is an independent route-local fallback.
+ */
+router.post('/transcribe-file', lexaraVoiceUpload.single('audio'), async (req: Request, res: Response) => {
+  const file = (req as Request & { file?: Express.Multer.File }).file;
+  if (!file?.buffer?.length) {
+    return res.status(400).json({
+      success: false,
+      error: 'audio file is required',
+    });
+  }
+
+  const providers: Array<{
+    name: string;
+    configured: boolean;
+    transcribe: () => Promise<{ text: string; provider: string; model: string }>;
+  }> = [
+    {
+      name: 'groq-whisper',
+      configured: !!process.env.GROQ_API_KEY?.trim(),
+      transcribe: () => transcribeWithGroq(file),
+    },
+    {
+      name: 'elevenlabs-scribe',
+      configured: !!process.env.ELEVENLABS_API_KEY?.trim(),
+      transcribe: () => transcribeWithElevenLabs(file),
+    },
+  ];
+
+  const configured = providers.filter(provider => provider.configured);
+  if (!configured.length) {
+    return res.status(503).json({
+      success: false,
+      error: 'Server speech recognition is temporarily unavailable',
+    });
+  }
+
+  const failures: Array<{ provider: string; error: string }> = [];
+  for (const provider of configured) {
+    try {
+      const result = await provider.transcribe();
+      if (!result.text) {
+        failures.push({ provider: provider.name, error: 'empty transcript' });
+        continue;
+      }
+
+      return res.json({
+        success: true,
+        transcript: result.text,
+        isFinal: true,
+        provider: result.provider,
+        model: result.model,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failures.push({ provider: provider.name, error: message });
+      logger.warn('[LEXARA] Speech transcription provider failed locally', {
+        provider: provider.name,
+        error: message,
+      });
+    }
+  }
+
+  logger.error('[LEXARA] All speech transcription providers failed', { failures });
+  return res.status(502).json({
+    success: false,
+    error: 'Speech transcription is temporarily unavailable',
+  });
 });
 
 /**
