@@ -1,36 +1,10 @@
 # Legal What? - search crawler directives
-# Public marketing and informational pages are crawlable. Authenticated,
-# administrative, API, and account-specific surfaces are intentionally excluded.
+# HTML pages remain crawlable so their page-level noindex directives can be read.
+# API endpoints are not search content.
 
 User-agent: *
 Allow: /
 Disallow: /api/
-Disallow: /login
-Disallow: /subscription-success
-Disallow: /administrator
-Disallow: /admin
-Disallow: /admin-
-Disallow: /home
-Disallow: /dashboard
-Disallow: /history
-Disallow: /welcome
-Disallow: /legal-tools
-Disallow: /lexara-consent
-Disallow: /people-finder
-Disallow: /spectra
-Disallow: /location-intel
-Disallow: /tshpe
-Disallow: /positioning
-Disallow: /inmate-locator
-Disallow: /cryptocrawler
-Disallow: /control-room
-Disallow: /orchestrator-console
-Disallow: /complaints
-Disallow: /complaint
-Disallow: /lawsuit
-Disallow: /petition-form
-Disallow: /petition-workflow
-Disallow: /evidence-hub
 Disallow: /*.map$
 
 Sitemap: https://legalwhat.com/sitemap.xml
