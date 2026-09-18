@@ -299,32 +299,25 @@ async function callHuggingFace(
   temperature: number = 0.7,
   maxTokens: number = 2000
 ): Promise<{ content: string; tokensUsed?: number }> {
-  const fullPrompt = systemPrompt ? `${systemPrompt}\n\nUser: ${prompt}\n\nAssistant:` : prompt;
-  
-  const response = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
+  const messages: Array<{ role: string; content: string }> = [];
+  if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
+  messages.push({ role: 'user', content: prompt });
+
+  const response = await fetch('https://router.huggingface.co/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      inputs: fullPrompt,
-      parameters: {
-        temperature,
-        max_new_tokens: maxTokens,
-        return_full_text: false,
-      },
-    }),
+    body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens }),
   });
-
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`HuggingFace API error (${response.status}): ${errorText}`);
+    throw new Error(`HuggingFace Router error (${response.status}): ${(await response.text()).slice(0, 500)}`);
   }
-
   const data = await response.json();
   return {
-    content: Array.isArray(data) ? data[0]?.generated_text || '' : data.generated_text || '',
+    content: data.choices?.[0]?.message?.content || '',
+    tokensUsed: data.usage?.total_tokens,
   };
 }
 
