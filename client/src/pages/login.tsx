@@ -81,8 +81,20 @@ export default function Login() {
       return;
     }
 
-    if (authenticatedUser.status === "active" && authenticatedUser.hasPaidForAccess === true) {
+    const status = String(authenticatedUser.status || "").toLowerCase();
+    const hasPaidAccess =
+      authenticatedUser.hasPaidForAccess === true &&
+      !["suspended", "past_due", "canceled", "expired"].includes(status);
+    if (hasPaidAccess) {
       setLocation("/welcome", { replace: true });
+      return;
+    }
+    if (status === "suspended") {
+      toast({
+        title: "Account suspended",
+        description: "Subscription checkout is unavailable for this account.",
+        variant: "destructive",
+      });
       return;
     }
 
