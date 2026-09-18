@@ -1,5 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
+import multer from 'multer';
+import { unlink } from 'node:fs/promises';
 import { 
   extractGPSFromFile, 
   clusterLocations, 
@@ -8,9 +10,22 @@ import {
   type GPSCoordinates 
 } from '../services/gpsIntelligence';
 import { createLogger } from '../logger';
+import { extractMediaMetadata } from '../services/locationIntelligence/MediaMetadataExtractor';
 
 const router = Router();
 const log = createLogger('GPSRoutes');
+
+const mediaUpload = multer({
+  dest: '/tmp/legalwhat-media',
+  limits: {
+    fileSize: 75 * 1024 * 1024,
+    files: 1,
+  },
+  fileFilter: (_req, file, callback) => {
+    const accepted = file.mimetype.startsWith('image/') || file.mimetype.startsWith('video/');
+    callback(accepted ? null : new Error('Only image and video files are supported'), accepted);
+  },
+});
 
 const coordinatesSchema = z.object({
   latitude: z.number().min(-90).max(90),
@@ -45,6 +60,70 @@ router.post('/extract', async (req: Request, res: Response) => {
   } catch (error) {
     log.error('GPS extraction failed', error);
     res.status(500).json({ error: 'GPS extraction failed' });
+  }
+});
+
+/**
+ * POST /api/gps/extract-upload
+ * Extract broad media metadata and emit a canonical location observation when
+ * the uploaded media contains both coordinates and a capture timestamp.
+ */
+router.post('/extract-upload', mediaUpload.single('file'), async (req: Request, res: Response) => {
+  const uploaded = req.file;
+  if (!uploaded) return res.status(400).json({ error: 'Media file required' });
+
+  try {
+    const metadata = await extractMediaMetadata(uploaded.path, uploaded.originalname);
+    const gps = metadata.gps;
+
+    const source = uploaded.mimetype.startsWith('video/') ? 'exif_video' : 'exif_photo';
+    const captureTimestamp = gps?.timestamp && Number.isFinite(gps.timestamp.getTime())
+      ? gps.timestamp
+      : undefined;
+
+    const point = gps && captureTimestamp
+      ? {
+          latitude: gps.latitude,
+          longitude: gps.longitude,
+          altitude: gps.altitude,
+          accuracy: gps.accuracy || metadata.positioning.horizontalErrorMeters,
+          timestamp: captureTimestamp.toISOString(),
+          receivedAt: new Date().toISOString(),
+          source,
+          confidence: metadata.positioning.horizontalErrorMeters
+            ? Math.max(0.45, Math.min(0.95, 1 - metadata.positioning.horizontalErrorMeters / 250))
+            : 0.78,
+          observationKind: 'observed',
+          correlationGroup: `media:${uploaded.originalname}:${captureTimestamp.toISOString()}`,
+          provenance: {
+            provider: 'uploaded_media',
+            capturedAt: captureTimestamp.toISOString(),
+            transformedBy: [metadata.extractor],
+          },
+          metadata: {
+            fileName: uploaded.originalname,
+            device: metadata.device,
+            movement: metadata.movement,
+            positioning: metadata.positioning,
+            capture: metadata.capture,
+            image: metadata.image,
+            provenance: metadata.provenance,
+          },
+        }
+      : null;
+
+    return res.json({
+      success: true,
+      hasGPS: !!gps,
+      hasCaptureTimestamp: !!captureTimestamp,
+      point,
+      metadata,
+    });
+  } catch (error) {
+    log.error('Media metadata extraction failed', error);
+    return res.status(500).json({ error: 'Media metadata extraction failed' });
+  } finally {
+    await unlink(uploaded.path).catch(() => undefined);
   }
 });
 
