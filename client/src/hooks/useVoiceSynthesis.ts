@@ -25,6 +25,7 @@ export interface VoiceSynthesisOptions {
   onEnd?: () => void;
   onError?: (error: Error) => void;
   userInput?: string;
+  assistantName?: string;
 }
 
 export interface VoiceSynthesisResult {
@@ -407,7 +408,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
       options.onError?.(nextError);
 
       toast({
-        title: 'LEXARA Voice Temporarily Unavailable',
+        title: `${options.assistantName || 'LEXARA'} Voice Temporarily Unavailable`,
         description: 'The consultation will continue in text without switching to a different voice.',
         variant: 'destructive',
       });
