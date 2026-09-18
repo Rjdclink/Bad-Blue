@@ -584,24 +584,107 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
           />
           <span>{statusLabel}</span>
         </div>
-
-        {isSpeaking && (
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            onClick={interruptLexara}
-            className="absolute bottom-4 right-4 z-20 gap-2"
-          >
-            <Square className="h-3.5 w-3.5" />
-            Interrupt
-          </Button>
-        )}
       </section>
 
       <section className="flex min-h-0 flex-col border-t bg-background lg:min-h-full lg:border-l lg:border-t-0">
         <div className="border-b px-5 py-4">
-          <div className="flex items-cen      </section>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="font-semibold">LEXARA Consultation</h2>
+              <p className="text-xs text-muted-foreground">
+                {lawTypeName || 'Legal analysis'}{jurisdiction ? ` · ${jurisdiction}` : ''}
+              </p>
+            </div>
+            <div className={cn(
+              'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs',
+              liveEnabled && voiceReady
+                ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                : 'bg-muted text-muted-foreground',
+            )}>
+              {liveEnabled && voiceReady ? <Mic className="h-3.5 w-3.5" /> : <MicOff className="h-3.5 w-3.5" />}
+              {liveEnabled && voiceReady ? 'Voice live' : 'Text mode'}
+            </div>
+          </div>
+        </div>
+
+        <div ref={conversationScrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
+          {conversation.map(message => (
+            <div
+              key={message.id}
+              className={cn('flex', message.role === 'user' ? 'justify-end' : 'justify-start')}
+            >
+              <div
+                className={cn(
+                  'max-w-[92%] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm',
+                  message.role === 'user'
+                    ? 'bg-primary text-primary-foreground'
+                    : 'border bg-card text-card-foreground',
+                )}
+              >
+                {message.content}
+              </div>
+            </div>
+          ))}
+
+          {interimTranscript && !isSpeaking && (
+            <div className="flex justify-end">
+              <div className="max-w-[92%] rounded-2xl bg-muted px-4 py-3 text-sm italic text-muted-foreground">
+                {interimTranscript}…
+              </div>
+            </div>
+          )}
+
+          {isThinking && (
+            <div className="flex justify-start">
+              <div className="flex items-center gap-2 rounded-2xl border bg-card px-4 py-3 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Reviewing the facts and law…
+              </div>
+            </div>
+          )}
+
+          {errorMessage && (
+            <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{errorMessage}</span>
+            </div>
+          )}
+
+          <div ref={messageEndRef} />
+        </div>
+
+        <div className="border-t p-4">
+          {liveEnabled && !voiceReady && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void enableVoice()}
+              className="mb-3 w-full gap-2"
+            >
+              <Mic className="h-4 w-4" />
+              Re-enable microphone
+            </Button>
+          )}
+
+          <form onSubmit={submitText} className="flex gap-2">
+            <input
+              value={userInput}
+              onChange={event => setUserInput(event.target.value)}
+              placeholder="Type or speak naturally…"
+              className="min-w-0 flex-1 rounded-full border bg-background px-4 py-2.5 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label="Message LEXARA"
+            />
+            <Button type="submit" size="icon" className="h-10 w-10 rounded-full" disabled={!userInput.trim()}>
+              <Send className="h-4 w-4" />
+            </Button>
+          </form>
+
+          <p className="mt-2 text-center text-[11px] text-muted-foreground">
+            AI legal information and analysis. Verify controlling authority before relying on a citation or deadline.
+          </p>
+        </div>
+      </section>
     </div>
   );
 }
