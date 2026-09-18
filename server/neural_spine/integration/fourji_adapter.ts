@@ -20,6 +20,7 @@ import {
   NeuralSynapse
 } from '../spine_hub';
 import { makeInputFingerprint, makeContextHash } from '../context_fingerprint';
+import { getConfiguredHarmonyParticipants, HARMONY_17_PARTICIPANTS } from '../../aiHarmonyModelRegistry';
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -392,19 +393,13 @@ class FourJiAdapter {
       intent: taskType
     });
 
-    if (patterns.length === 0) {
-      return {
-        models: ['gemini-pro', 'claude-sonnet'],  // Default ensemble
-        routingStrategy: 'primary-fallback',
-        confidence: 0.5
-      };
-    }
+    const configured = getConfiguredHarmonyParticipants();
+    const participants = configured.length > 0 ? configured : [...HARMONY_17_PARTICIPANTS];
 
-    // Default with confidence from patterns
     return {
-      models: ['gemini-pro', 'claude-sonnet', 'groq-llama'],
-      routingStrategy: 'weighted',
-      confidence: patterns[0].confidence
+      models: participants.map(participant => participant.model),
+      routingStrategy: 'capability-driven-full-harmony',
+      confidence: patterns.length > 0 ? patterns[0].confidence : 0.5
     };
   }
 
