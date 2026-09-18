@@ -160,6 +160,11 @@ test('Canonical fusion is the sole location-confidence authority',
   routes.includes('canonicalLatest?.qualityScore') &&
   !routes.includes('function locationEvidenceConfidence') &&
   !spectra.includes('combinedLocationConfidence'));
+test('SPECTRA applies canonical location-quality checks before headline confidence',
+  routes.includes('assessLocationQuality(normalizedLocationObservations)') &&
+  routes.includes('qualityLocationObservations') &&
+  routes.includes('rejectedObservationCount') &&
+  routes.includes('qualityIssueCount'));
 test('Unsigned client location claims cannot manufacture precision',
   evidenceProof.includes('Math.max(5_000, reportedAccuracy)') &&
   evidenceProof.includes("source: 'manual_input'") &&
@@ -191,6 +196,11 @@ test('Production media fallback is installed and parses QuickTime ISO-6709',
   dockerfile.includes('libimage-exiftool-perl') &&
   exifTool.includes('parseIso6709') &&
   exifTool.includes('metadata.GPSCoordinates'));
+test('Partial media GPS falls through to ExifTool for absolute GPS UTC recovery',
+  read('server/services/locationIntelligence/MediaMetadataExtractor.ts').includes('!gps.timestamp') &&
+  exifTool.includes('parseGpsUtcTimestamp') &&
+  exifTool.includes('metadata.GPSDateStamp') &&
+  exifTool.includes('metadata.GPSTimeStamp'));
 test('Independent evidence is preserved while duplicate source counting is prevented',
   routes.includes('const evidenceGroup =') &&
   spectra.includes('const evidenceGroup =') &&
