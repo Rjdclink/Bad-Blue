@@ -116,7 +116,17 @@ export function getHarmonyWarmStatus(): HarmonyWarmStatus[] {
  * and found unusable is suppressed until the next warmup or a successful call.
  */
 export function isHarmonyProviderWarmHealthy(provider: AIProvider): boolean {
-  return warmStatus.get(provider)?.state !== 'degraded';
+  const status = warmStatus.get(provider);
+  if (!status || status.state !== 'degraded') return true;
+
+  // A catalog/API outage during startup must not quarantine a provider forever.
+  // After a short TTL the route becomes eligible for one live trial while a
+  // background refresh updates the resolved model/health state.
+  if (Date.now() - status.checkedAt > 60_000) {
+    void prewarmHarmonyProviders().catch(() => undefined);
+    return true;
+  }
+  return false;
 }
 
 export function markHarmonyProviderWarmSuccess(provider: AIProvider): void {
