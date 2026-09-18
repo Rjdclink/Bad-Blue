@@ -806,7 +806,13 @@ export class AICollaborationOrchestrator {
         }
         case AIProvider.CLAUDE_OPUS: {
           // Claude Opus shares the Claude API, just with a more capable model id
-          const response = await runProvider(AIProvider.CLAUDE, prompt, { model: task.model }, 2000, taskMetadata);
+          const response = await runProvider(
+            AIProvider.CLAUDE,
+            prompt,
+            { model: task.model, systemPrompt: task.systemPrompt },
+            task.timeout ? Math.min(task.timeout, 1800) : 1100,
+            taskMetadata,
+          );
           content = response.content;
           tokensUsed = response.tokensUsed;
           break;
