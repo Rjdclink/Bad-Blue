@@ -113,6 +113,10 @@ export class ExifToolExtractor {
         undefined,
     };
 
+    const gpsUtcTimestamp = this.parseGpsUtcTimestamp(
+      metadata.GPSDateStamp,
+      metadata.GPSTimeStamp,
+    );
     const rawTimestamp =
       metadata.GPSDateTime ||
       metadata.DateTimeOriginal ||
@@ -120,7 +124,7 @@ export class ExifToolExtractor {
       metadata.MediaCreateDate ||
       metadata.TrackCreateDate;
 
-    const timestamp = this.parseTimestamp(rawTimestamp);
+    const timestamp = gpsUtcTimestamp || this.parseTimestamp(rawTimestamp);
     if (timestamp) location.timestamp = timestamp;
 
     return location;
@@ -138,6 +142,29 @@ export class ExifToolExtractor {
     if (typeof value !== 'string') return null;
     const parsed = Number.parseFloat(value);
     return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  private parseGpsUtcTimestamp(dateValue: unknown, timeValue: unknown): Date | undefined {
+    if (typeof dateValue !== 'string' || typeof timeValue !== 'string') return undefined;
+
+    const dateMatch = dateValue.trim().match(/^(\d{4})[:\-](\d{2})[:\-](\d{2})$/);
+    const timeParts = timeValue.match(/\d+(?:\.\d+)?/g)?.map(Number) || [];
+    if (!dateMatch || timeParts.length < 3 || !timeParts.every(Number.isFinite)) {
+      return undefined;
+    }
+
+    const seconds = timeParts[2];
+    const millis = Date.UTC(
+      Number(dateMatch[1]),
+      Number(dateMatch[2]) - 1,
+      Number(dateMatch[3]),
+      Math.floor(timeParts[0]),
+      Math.floor(timeParts[1]),
+      Math.floor(seconds),
+      Math.round((seconds % 1) * 1000),
+    );
+    const parsed = new Date(millis);
+    return Number.isFinite(parsed.getTime()) ? parsed : undefined;
   }
 
   private parseTimestamp(value: unknown): Date | undefined {
