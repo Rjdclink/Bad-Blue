@@ -59,6 +59,16 @@ interface KartaViewPhoto {
   shotDate?: string;
 }
 
+type MapProviderState = 'primary' | 'fallback' | 'unavailable';
+
+interface MapProviderStatus {
+  basemap: MapProviderState;
+  satellite: MapProviderState;
+  earthObservation: MapProviderState;
+  terrain: MapProviderState;
+  weather: MapProviderState;
+}
+
 const OPENFREEMAP_LIBERTY =
   (import.meta.env?.VITE_MAP_STYLE_URL as string | undefined) ||
   'https://tiles.openfreemap.org/styles/liberty';
@@ -76,6 +86,9 @@ const SATELLITE_ATTRIBUTION =
   (CUSTOM_SATELLITE_TILES
     ? 'Satellite imagery'
     : 'Esri, Maxar, Earthstar Geographics, and the GIS User Community');
+
+const SATELLITE_FALLBACK_TILES =
+  'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_CorrectedReflectance_TrueColor/default/{date}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg';
 
 const TERRAIN_TILES =
   (import.meta.env?.VITE_TERRAIN_TILES_URL as string | undefined) ||
@@ -681,6 +694,20 @@ function setVisibility(map: MapLibreMap, id: string, visible: boolean) {
   }
 }
 
+const providerSourceKey = (sourceId: string | undefined): keyof MapProviderStatus | null => {
+  if (!sourceId) return null;
+  if (sourceId === 'spectra-satellite') return 'satellite';
+  if (sourceId === 'spectra-earth-observation') return 'earthObservation';
+  if (sourceId === 'spectra-terrain-dem') return 'terrain';
+  if (sourceId === 'spectra-weather-radar') return 'weather';
+  return null;
+};
+
+function setRasterTiles(map: MapLibreMap, sourceId: string, tiles: string[]) {
+  const source = map.getSource(sourceId) as any;
+  if (source?.setTiles) source.setTiles(tiles);
+}
+
 export const MapLibreIntelligenceMap: React.FC<Props> = ({
   currentFrame,
   trail,
@@ -699,9 +726,18 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
   const [streetPhoto, setStreetPhoto] = useState<KartaViewPhoto | null>(null);
   const [streetLoading, setStreetLoading] = useState(false);
   const [rendererRecovering, setRendererRecovering] = useState(false);
+  const [providerStatus, setProviderStatus] = useState<MapProviderStatus>({
+    basemap: 'primary',
+    satellite: 'primary',
+    earthObservation: 'primary',
+    terrain: 'primary',
+    weather: 'primary',
+  });
   const lastFollowRef = useRef<[number, number] | null>(null);
   const userInteractionUntilRef = useRef(0);
   const streetRequestRef = useRef(0);
+  const providerFailureCountRef = useRef<Record<string, number>>({});
+  const providerFallbackAppliedRef = useRef<Set<string>>(new Set());
   const activeStyleRef = useRef(mapMode === 'dark' ? OPENFREEMAP_DARK : OPENFREEMAP_LIBERTY);
   const displayTimeMs = displayTime?.getTime() ?? null;
 
@@ -721,6 +757,42 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     addRuntimeLayers(map);
     setReady(true);
   }, []);
+
+  const markProviderState = useCallback((
+    key: keyof MapProviderStatus,
+    state: MapProviderState,
+  ) => {
+    setProviderStatus(previous =>
+      previous[key] === state ? previous : { ...previous, [key]: state }
+    );
+  }, []);
+
+  const applySourceFallback = useCallback((
+    map: MapLibreMap,
+    sourceId: string,
+  ): boolean => {
+    if (providerFallbackAppliedRef.current.has(sourceId)) return false;
+
+    const now = new Date();
+    if (sourceId === 'spectra-satellite') {
+      const fallback = SATELLITE_FALLBACK_TILES.replace('{date}', utcDateKey(now));
+      setRasterTiles(map, sourceId, [fallback]);
+      providerFallbackAppliedRef.current.add(sourceId);
+      markProviderState('satellite', 'fallback');
+      return true;
+    }
+
+    if (sourceId === 'spectra-weather-radar' && CUSTOM_WEATHER_RADAR_TEMPLATE) {
+      setRasterTiles(map, sourceId, [
+        WEATHER_RADAR_LIVE_TEMPLATE.replace('{layer}', 'ridge::USCOMP-N0Q-0'),
+      ]);
+      providerFallbackAppliedRef.current.add(sourceId);
+      markProviderState('weather', 'fallback');
+      return true;
+    }
+
+    return false;
+  }, [markProviderState]);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -774,6 +846,53 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     map.on('rotatestart', suspendFollow);
     map.on('pitchstart', suspendFollow);
 
+    const handleMapError = (event: any) => {
+      const sourceId = String(event?.sourceId || event?.source?.id || '');
+      const key = providerSourceKey(sourceId);
+
+      if (!key) {
+        const message = String(event?.error?.message || event?.error || '');
+        if (
+          message &&
+          activeStyleRef.current !== OPENFREEMAP_LIBERTY &&
+          !providerFallbackAppliedRef.current.has('basemap')
+        ) {
+          providerFallbackAppliedRef.current.add('basemap');
+          activeStyleRef.current = OPENFREEMAP_LIBERTY;
+          markProviderState('basemap', 'fallback');
+          setReady(false);
+          map.setStyle(OPENFREEMAP_LIBERTY);
+        }
+        return;
+      }
+
+      const nextCount = (providerFailureCountRef.current[sourceId] || 0) + 1;
+      providerFailureCountRef.current[sourceId] = nextCount;
+      if (nextCount < 3) return;
+
+      if (applySourceFallback(map, sourceId)) {
+        providerFailureCountRef.current[sourceId] = 0;
+        return;
+      }
+
+      markProviderState(key, 'unavailable');
+      if (sourceId === 'spectra-terrain-dem') {
+        try {
+          map.setTerrain(null);
+        } catch {
+          // Source-local failure: other map capabilities continue.
+        }
+        setVisibility(map, 'spectra-hillshade', false);
+      } else if (sourceId === 'spectra-weather-radar') {
+        setVisibility(map, 'spectra-weather-radar', false);
+      } else if (sourceId === 'spectra-earth-observation') {
+        setVisibility(map, 'spectra-earth-observation', false);
+      } else if (sourceId === 'spectra-satellite') {
+        setVisibility(map, 'spectra-satellite', false);
+      }
+    };
+
+    map.on('error', handleMapError);
     map.on('load', () => initializeRuntimeLayers(map));
     map.on('style.load', () => {
       if (!map.isStyleLoaded()) return;
@@ -834,6 +953,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     return () => {
       canvas.removeEventListener('webglcontextlost', handleContextLost, false);
       canvas.removeEventListener('webglcontextrestored', handleContextRestored, false);
+      map.off('error', handleMapError);
       popup.remove();
       map.remove();
       mapRef.current = null;
@@ -1130,6 +1250,21 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
   return (
     <div className="absolute inset-0" data-gesture-navigation="ignore">
       <div ref={containerRef} className="absolute inset-0" />
+
+      {Object.values(providerStatus).some(state => state !== 'primary') && (
+        <div
+          data-testid="map-provider-status"
+          className="pointer-events-none absolute left-3 top-3 z-20 max-w-[min(420px,calc(100%-1.5rem))] rounded-lg border border-slate-700/70 bg-slate-950/90 px-3 py-2 text-[10px] text-slate-300 shadow-lg backdrop-blur"
+        >
+          {Object.entries(providerStatus)
+            .filter(([, state]) => state !== 'primary')
+            .map(([provider, state]) => (
+              <div key={provider}>
+                {provider.replace(/([A-Z])/g, ' $1')}: {state}
+              </div>
+            ))}
+        </div>
+      )}
 
       {rendererRecovering && (
         <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm">
