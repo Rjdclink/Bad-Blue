@@ -9,6 +9,7 @@ import { orderBookEvolutionStore } from '../validation/order-book-evolution-stor
 import { getComputationalSearchPlan } from './computational-reactor-wiring.js';
 
 let timer: NodeJS.Timeout | null = null;
+let active = false;
 let running = false;
 let lastAuctionLogAt = 0;
 
@@ -129,6 +130,7 @@ async function observeOnce(): Promise<void> {
 }
 
 function scheduleNext(): void {
+  if (!active) return;
   const plan = adaptivePlan();
   timer = setTimeout(async () => {
     await observeOnce();
@@ -138,7 +140,8 @@ function scheduleNext(): void {
 }
 
 export function ensureOrderBookEvolutionWiring(): void {
-  if (timer) return;
+  if (active) return;
+  active = true;
   void observeOnce().finally(() => scheduleNext());
   logger.info('[OrderBookEvolution] Adaptive measured short-horizon book observer installed', {
     component: 'OrderBookEvolutionWiring',
@@ -157,4 +160,10 @@ export function ensureOrderBookEvolutionWiring(): void {
     syntheticTransitions: false,
     executionAuthority: false,
   });
+}
+
+export function stopOrderBookEvolutionWiring(): void {
+  active = false;
+  if (timer) clearTimeout(timer);
+  timer = null;
 }
