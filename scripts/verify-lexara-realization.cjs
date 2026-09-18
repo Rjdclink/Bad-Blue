@@ -225,10 +225,12 @@ must(
 must(
   lexaraChatRoutes.includes('analysisActive') &&
     orchestrator.includes('Hold on a minute') &&
-    conversation.includes('pendingUserTurnQueueRef.current.push(message)') &&
-    conversation.includes("pendingUserTurnQueueRef.current.shift()") &&
+    conversation.includes('pendingUserTurnQueueRef.current.push({ text: message, messageId: userMessageId })') &&
+    conversation.includes('pendingUserTurnQueueRef.current.shift()') &&
     conversation.includes('ACKNOWLEDGEMENT_DEDUPE_MS') &&
     conversation.includes('ACKNOWLEDGEMENT_SOFT_TIMEOUT_MS') &&
+    conversation.includes('controlAcknowledgementSpeechRef') &&
+    !liveTurnHandler.includes('if (pendingUserTurnRef.current) return;') &&
     orchestrator.includes('Default to 2-5 concise spoken sentences') &&
     orchestrator.includes('Do not say "thank you," "goodbye,"') &&
     authorityResearch.includes('const RESEARCH_TIMEOUT_MS = 1_800'),
