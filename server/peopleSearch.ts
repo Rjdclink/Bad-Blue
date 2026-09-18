@@ -238,6 +238,7 @@ export async function conductEnhancedPeopleSearch(
     department?: string;
     badge?: string;
     location?: string;
+    phone?: string;
   },
   config: Partial<SearchConfig> = {}
 ): Promise<PeopleSearchReport & { 
@@ -926,6 +927,7 @@ export async function conductFullOSINT(
     department?: string;
     badge?: string;
     location?: string;
+    phone?: string;
     domain?: string;
     searchDepth?: number; // 1-4, default 2
   }
@@ -971,6 +973,18 @@ export async function conductFullOSINT(
   // Run base enhanced search with depth-aware crawler selection
   // Run base enhanced search with depth-aware crawler selection
   const enhancedReport = await conductEnhancedPeopleSearch(searchQuery, options);
+
+  if (options?.phone) {
+    const digits = options.phone.replace(/\D/g, '');
+    if (digits.length >= 10) {
+      enhancedReport.sources.push({
+        name: 'User-supplied phone correlation anchor',
+        data: { normalizedLast10: digits.slice(-10), discovered: false },
+        confidence: 0,
+        timestamp: new Date(),
+      });
+    }
+  }
 
   try {
     // Validate searchQuery before processing
