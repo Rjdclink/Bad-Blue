@@ -20,8 +20,6 @@ const exec = promisify(execCallback);
 import {
   generateAutonomousText,
   generateUserText,
-  canAutonomousProceed,
-  getAutonomousRescheduleInfo,
   TaskPriority,
 } from './aiProvider';
 import { unifiedSearch, searchOfficerRecords, searchTechnicalGuidance, isWebSearchAvailable } from './webSearchService';
@@ -569,15 +567,9 @@ export async function callAIWithGovernor(
   opts?: { systemPrompt?: string; temperature?: number; model?: string }
 ): Promise<{ success: boolean; content?: string; error?: string }> {
   try {
-    const canProceed = await canAutonomousProceed();
-    if (!canProceed) {
-      const rescheduleInfo = await getAutonomousRescheduleInfo();
-      return {
-        success: false,
-        error: `AUTONOMOUS_LIMIT_REACHED: ${rescheduleInfo.reason}. Resume in ${Math.round(rescheduleInfo.delayMs / 1000 / 60)} minutes.`,
-      };
-    }
-
+    // Full Harmony owns autonomous availability. A single-provider quota must
+    // never veto work while another configured participant or the local engine
+    // can serve it.
     const model = opts?.model || PREFERRED_MODEL;
 
     const response = await generateAutonomousText(
@@ -988,162 +980,28 @@ export function getConfiguredGeminiModel(): string {
 }
 
 /**
- * Enhanced callGeminiAPI with automatic fallback to Groq and Mistral
- * 
- * This function now uses the full fallback chain when:
- * 1. Gemini API key is not configured
- * 2. All Gemini model candidates fail
- * 3. Rate limits (429) or server errors (5xx) are encountered
+ * Legacy Gemini-named compatibility wrapper.
+ *
+ * Historical callers still use this symbol, but platform execution enters the
+ * full Harmony mesh first. The name is preserved only to avoid breaking old
+ * call sites while model/provider authority remains centralized.
  */
 async function callGeminiAPI(
   prompt: string,
   options: { maxTokens?: number; temperature?: number; allowFallback?: boolean; useFallbackChain?: boolean } = {}
 ): Promise<{ success: boolean; response?: string; error?: string; modelTried?: string[]; provider?: string }> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  const { maxTokens=8192, temperature=0.7, allowFallback=true, useFallbackChain=true } = options;
-  
-  // If Gemini is not configured or rate limited, use fallback chain immediately
-  if (!apiKey || isGeminiRateLimited()) {
-    if (!useFallbackChain) {
-      return { success: false, error: apiKey ? 'Gemini is rate limited' : 'GEMINI_API_KEY not configured' };
-    }
-    
-    console.log(`[AI Fallback] Gemini ${!apiKey ? 'not configured' : 'rate limited'}, using fallback chain`);
-    const fallbackResult = await callAIWithFallback(prompt, {
-      maxTokens,
-      temperature,
-      taskName: 'gemini-api-fallback'
-    });
-    
-    return {
-      success: fallbackResult.success,
-      response: fallbackResult.content,
-      error: fallbackResult.error,
-      provider: fallbackResult.provider,
-      modelTried: fallbackResult.fallbackChain
-    };
-  }
-  
-  const tried: string[] = [];
-  let lastError: string = '';
-  let isRateLimitError = false;
-  
-  const attempt = async (model: string): Promise<{ retry: boolean; success?: boolean; response?: string; error?: string; isRateLimit?: boolean }> => {
-    tried.push(model);
-    try {
-      const resp = await fetchWithFallback(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-        {
-          method:'POST',
-          headers:{ 
-            'Content-Type':'application/json',
-            'x-goog-api-key': apiKey
-          },
-          body: JSON.stringify({
-            contents:[{ role:'user', parts:[{ text: prompt }] }],
-            generationConfig:{ maxOutputTokens:maxTokens, temperature },
-            safetySettings:[
-              { category:'HARM_CATEGORY_HARASSMENT', threshold:'BLOCK_NONE' },
-              { category:'HARM_CATEGORY_HATE_SPEECH', threshold:'BLOCK_NONE' },
-              { category:'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold:'BLOCK_NONE' },
-              { category:'HARM_CATEGORY_DANGEROUS_CONTENT', threshold:'BLOCK_NONE' }
-            ]
-          })
-        }
-      );
-      
-      if (!resp.ok) {
-        const errText = await resp.text();
-        const status = resp.status;
-        
-        // Detect rate limit or server errors
-        if (status === 429 || (status >= 500 && status < 600)) {
-          console.warn(`[AI Fallback] Gemini ${model} returned ${status}: ${errText.substring(0, 100)}`);
-          return { retry: false, error: `Gemini ${status}: ${errText}`, isRateLimit: status === 429 };
-        }
-        
-        if ((status === 404 || /model/i.test(errText)) && allowFallback) {
-          return { retry: true, error: `Model ${model} not found` };
-        }
-        
-        return { retry: false, error: `Gemini API error: ${status} - ${errText}` };
-      }
-      
-      const data = await resp.json() as any;
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!text) return { retry: false, error: 'No response text from Gemini' };
-      
-      activeGeminiModel = model;
-      await trackUsage({ action: 'gemini_call', model, tokens: text.length/4, provider: 'gemini' });
-      return { retry: false, success: true, response: text };
-    } catch (e: any) {
-      const errorMsg = e?.message || String(e);
-      
-      // Check for rate limit indicators in error message
-      if (
-        errorMsg.includes('429') ||
-        errorMsg.toLowerCase().includes('rate limit') ||
-        errorMsg.toLowerCase().includes('quota') ||
-        errorMsg.toLowerCase().includes('resource_exhausted')
-      ) {
-        console.warn(`[AI Fallback] Gemini ${model} rate limited: ${errorMsg.substring(0, 100)}`);
-        return { retry: false, error: errorMsg, isRateLimit: true };
-      }
-      
-      if (/model/i.test(errorMsg) && allowFallback) {
-        return { retry: true, error: errorMsg };
-      }
-      
-      return { retry: false, error: errorMsg };
-    }
-  };
-  
-  // Try all Gemini model candidates
-  for (const model of GEMINI_MODEL_CANDIDATES) {
-    const r = await attempt(model);
-    if (r.success) {
-      return { success: true, response: r.response, modelTried: tried, provider: 'gemini' };
-    }
-    
-    lastError = r.error || 'Unknown error';
-    if (r.isRateLimit) isRateLimitError = true;
-    
-    if (!r.retry) break;
-  }
-  
-  // All Gemini attempts failed - use fallback chain if enabled
-  if (useFallbackChain) {
-    console.log(`[AI Fallback] All Gemini models failed (${tried.join(', ')}), trying fallback providers...`);
-    
-    const fallbackResult = await callAIWithFallback(prompt, {
-      maxTokens,
-      temperature,
-      preferredProvider: 'groq', // Skip Gemini since we already tried it
-      taskName: 'gemini-api-fallback'
-    });
-    
-    if (fallbackResult.success) {
-      return {
-        success: true,
-        response: fallbackResult.content,
-        provider: fallbackResult.provider,
-        modelTried: [...tried, ...(fallbackResult.fallbackChain || [])]
-      };
-    }
-    
-    return {
-      success: false,
-      error: `All providers failed. Gemini: ${lastError}. ${fallbackResult.error}`,
-      modelTried: [...tried, ...(fallbackResult.fallbackChain || [])]
-    };
-  }
-  
-  return { 
-    success: false, 
-    error: isRateLimitError 
-      ? `Gemini rate limited: ${lastError}` 
-      : `All Gemini model candidates failed: ${tried.join(', ')}. Error: ${lastError}`, 
-    modelTried: tried 
+  const result = await callAIWithFallback(prompt, {
+    maxTokens: options.maxTokens ?? 8192,
+    temperature: options.temperature ?? 0.7,
+    taskName: 'legacy-gemini-compat',
+  });
+
+  return {
+    success: result.success,
+    response: result.content,
+    error: result.error,
+    provider: result.provider,
+    modelTried: result.fallbackChain,
   };
 }
 

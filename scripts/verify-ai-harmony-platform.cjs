@@ -19,6 +19,15 @@ const subAgent = read('server/aiSubAgent.ts');
 const lexara = read('server/lexara/LexaraConversationOrchestrator.ts');
 const cryptoHarmony = read('server/services/cryptocrawl/ai/cryptocrawler-ai-harmony.ts');
 const forge = read('server/services/4ji-orchestrator/forge-ai.ts');
+const governor = read('server/aiTokenGovernor.ts');
+const tokenMetrics = read('server/repositories/tokenMetricsRepository.ts');
+const efficientAI = read('server/efficientAI.ts');
+const factCheck = read('server/services/factCheckEngine.ts');
+const officerCollector = read('server/officerDataCollector.ts');
+const groq = read('server/groq.ts');
+const fullSystemTest = read('server/fullSystemTest.ts');
+const quickDiagnostic = read('server/quickDiagnostic.ts');
+const runDiagnostics = read('server/runDiagnostics.ts');
 
 const registrySection = registry.split('HARMONY_17_PARTICIPANTS')[1]?.split('if (HARMONY_17_PARTICIPANTS.length !== 17)')[0] || '';
 const participantCount = (registrySection.match(/provider:\s*PROVIDER\./g) || []).length;
@@ -63,10 +72,16 @@ must(
 );
 
 must(
+  provider.includes('getConfiguredHarmonyProviders().length > 0 || shouldUseZeroApiMode()') &&
+  !subAgent.includes('AUTONOMOUS_LIMIT_REACHED') &&
+  governor.includes('budget accounting must not hard-partition user vs.') &&
+  !governor.includes('AUTONOMOUS: Only Groq') &&
+  !governor.includes('USER: Only Gemini') &&
+  tokenMetrics.includes('workerTokens: number; workerRequests: number') &&
   subAgent.includes('Platform invariant: every service enters the shared capability-driven') &&
   subAgent.includes('generateUserText(') &&
   subAgent.indexOf('generateUserText(') < subAgent.indexOf('const providers: Array<{'),
-  'legacy AI fallback entry point delegates to Harmony before route-local compatibility recovery',
+  'legacy AI fallback and autonomous readiness delegate to context-neutral Harmony before route-local compatibility recovery',
 );
 
 must(
@@ -88,6 +103,31 @@ must(
   forge.includes("providerPolicy: 'capability-first'") &&
   !forge.includes('const priorityA = this.providerPriority'),
   '4JI Forge execution uses shared capability Harmony rather than static provider ranking',
+);
+
+must(
+  efficientAI.includes('generateAutonomousText') &&
+  efficientAI.includes('generateUserText') &&
+  !efficientAI.includes('generateGroqStructuredResponse') &&
+  factCheck.includes('AICollaborationOrchestrator.orchestrateCollaboration') &&
+  factCheck.includes('getConfiguredHarmonyProviders') &&
+  !factCheck.includes("from '../gemini'") &&
+  !factCheck.includes("from '../claude'") &&
+  !factCheck.includes('generateGroqLegalConsultation') &&
+  officerCollector.includes('runGroundedOfficerSearch') &&
+  officerCollector.includes('generateOfficerSearchContent') &&
+  !officerCollector.includes('generateGroqStructuredResponse') &&
+  !officerCollector.includes('Groq-only'),
+  'legacy worker, legal fact-check, and officer-analysis services cannot bypass Harmony or reintroduce Groq-only execution',
+);
+
+must(
+  !groq.includes("'llama-3.1-8b-instant'") &&
+  !groq.includes("'llama-3.3-70b-versatile'") &&
+  !fullSystemTest.includes("'llama-3.1-8b-instant'") &&
+  !quickDiagnostic.includes("'llama-3.1-8b-instant'") &&
+  !runDiagnostics.includes("'llama-3.1-8b-instant'"),
+  'shutdown Groq developer-tier Llama model IDs are absent from runtime and diagnostic fallbacks',
 );
 
 const activeRuntimeFiles = [
@@ -113,6 +153,13 @@ const activeRuntimeFiles = [
   'server/emailVerification.ts',
   'server/workerTokenBudget.ts',
   'server/services/cryptocrawl/ai/cryptocrawler-ai-harmony.ts',
+  'server/aiTokenGovernor.ts',
+  'server/repositories/tokenMetricsRepository.ts',
+  'server/efficientAI.ts',
+  'server/services/factCheckEngine.ts',
+  'server/fullSystemTest.ts',
+  'server/quickDiagnostic.ts',
+  'server/runDiagnostics.ts',
 ];
 
 const retiredOrSuperseded = [
@@ -126,6 +173,8 @@ const retiredOrSuperseded = [
   /kimi-k2/i,
   /gpt-4o-mini/i,
   /mistral-7b/i,
+  /llama-3\.1-8b-instant/i,
+  /llama-3\.3-70b-versatile/i,
 ];
 
 for (const path of activeRuntimeFiles) {

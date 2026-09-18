@@ -1,13 +1,10 @@
 import { 
-  searchOfficerData,
   generateUserText,
   TaskPriority
 } from './aiProvider';
 import { GoogleGenAI } from "@google/genai";
 import { EventEmitter } from "events";
 import type { OfficerProfile, InsertOfficerProfile } from "@shared/schema";
-import { rateLimitTracker } from "./rateLimitTracker";
-import { isGroqAvailable, generateGroqStructuredResponse } from "./groq";
 import { getEnv } from './config';
 
 let geminiClient: GoogleGenAI | null = null;
@@ -27,7 +24,6 @@ export interface CollectionProgress {
 // In-memory cache for compiled officer profiles
 const profileCache = new Map<string, { profile: OfficerProfile; timestamp: number }>();
 const CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
-const MAX_CACHE_SIZE = 500;
 
 function getGeminiClient(): GoogleGenAI {
   if (!geminiClient) {
@@ -42,7 +38,7 @@ function getGeminiClient(): GoogleGenAI {
 
 /**
  * Helper function to use unified AI provider for officer searches
- * All officer searches are user-initiated, so they use USER context
+ * Officer research enters the shared Harmony mesh; grounded search is a specialized evidence adapter.
  */
 async function generateOfficerSearchContent(
   searchType: string,
@@ -66,6 +62,42 @@ async function generateOfficerSearchContent(
     console.error(`[Officer Search] Error in ${searchType}:`, error);
     throw error;
   }
+}
+
+async function runGroundedOfficerSearch(
+  searchType: string,
+  prompt: string,
+): Promise<{ text: string; sources: string[] }> {
+  if (process.env.GEMINI_API_KEY?.trim()) {
+    try {
+      const client = getGeminiClient();
+      const response = await client.models.generateContent({
+        model: process.env.GEMINI_MODEL?.trim() || 'gemini-3.8-flash',
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        config: {
+          temperature: 0,
+          tools: [{ googleSearch: {} }],
+        },
+      });
+
+      const sources: string[] = [];
+      const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+      for (const chunk of chunks) {
+        const uri = (chunk as any).web?.uri;
+        if (uri) sources.push(uri);
+      }
+      return { text: response.text || '', sources: Array.from(new Set(sources)) };
+    } catch (error) {
+      console.warn(`[Officer Search] Google-grounded ${searchType} failed; falling back to Harmony:`, error);
+    }
+  }
+
+  const text = await generateOfficerSearchContent(
+    `${searchType}-harmony-fallback`,
+    prompt,
+    'Analyze only supported public-record evidence. Do not invent records, identifiers, cases, URLs, or source provenance.',
+  );
+  return { text, sources: [] };
 }
 
 function getCacheKey(officerName: string, department?: string, location?: string): string {
@@ -114,7 +146,7 @@ interface CompiledOfficerData {
 
 /**
  * Search FOIA databases and transparency portals for officer information
- * USES GEMINI: Critical search requiring live web search and source verification
+ * Uses grounded web search when available, with full-Harmony fallback
  */
 async function searchFOIADatabases(
   officerName: string,
@@ -156,29 +188,7 @@ Extract:
 
 Provide detailed information with specific sources. Be thorough and accurate.`;
 
-  const client = getGeminiClient();
-  const response = await client.models.generateContent({
-    model: process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash",
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
-    config: {
-      temperature: 0.0,
-      tools: [{ googleSearch: {} }]
-    },
-  });
-
-  const text = response.text || "";
-  const sources: string[] = [];
-  
-  try {
-    const candidate = response.candidates?.[0];
-    if (candidate?.groundingMetadata?.groundingChunks) {
-      for (const chunk of candidate.groundingMetadata.groundingChunks) {
-        if ((chunk as any).web?.uri) sources.push((chunk as any).web.uri);
-      }
-    }
-  } catch (e) {
-    console.log('[FOIA Search] Could not extract sources:', e);
-  }
+  const { text, sources } = await runGroundedOfficerSearch('foia', prompt);
 
   // Extract badge number and rank from the narrative
   const badgeMatch = text.match(/badge\s*(?:number|#|no\.?)?\s*[:\-]?\s*(\d+)/i);
@@ -199,7 +209,7 @@ Provide detailed information with specific sources. Be thorough and accurate.`;
 
 /**
  * Search news articles and media coverage
- * USES GROQ: Narratives can come from training data, doesn't need live search
+ * Uses the full Harmony mesh for analysis
  */
 async function searchNewsArticles(
   officerName: string,
@@ -241,24 +251,23 @@ Extract:
 
 Provide comprehensive coverage with source links.`;
 
-  const text = await generateGroqStructuredResponse(prompt, "");
-  const sources: string[] = []; // Groq doesn't provide grounding sources like Gemini
+  const { text, sources } = await runGroundedOfficerSearch('news-search', prompt);
 
   return {
     category: 'News',
     data: {
       narrative: text,
-      articleCount: 0, // Groq doesn't provide source count
+      articleCount: sources.length,
       sources: sources
     },
     sources,
-    reliability: 70 // Base reliability for Groq without grounding
+    reliability: sources.length > 0 ? 85 : 30
   };
 }
 
 /**
  * Search court records and legal databases
- * USES GROQ: Case information can come from training data
+ * Uses the full Harmony mesh and rejects unsupported case details
  */
 async function searchCourtRecords(
   officerName: string,
@@ -302,8 +311,7 @@ Extract:
 
 Provide detailed case information with court record sources.`;
 
-  const text = await generateGroqStructuredResponse(prompt, "");
-  const sources: string[] = []; // Groq doesn't provide grounding sources like Gemini
+  const { text, sources } = await runGroundedOfficerSearch('court-record-search', prompt);
 
   return {
     category: 'CourtRecords',
@@ -313,13 +321,13 @@ Provide detailed case information with court record sources.`;
       sources: sources
     },
     sources,
-    reliability: 65 // Base reliability for Groq without grounding
+    reliability: sources.length > 0 ? 88 : 25
   };
 }
 
 /**
  * Search police department rosters and personnel records
- * USES GEMINI: Critical for verified employment and badge numbers
+ * Uses grounded web search when available, with full-Harmony fallback
  */
 async function searchDepartmentRosters(
   officerName: string,
@@ -365,29 +373,7 @@ Extract:
 
 Provide accurate roster information with official sources.`;
 
-  const client = getGeminiClient();
-  const response = await client.models.generateContent({
-    model: process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash",
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
-    config: {
-      temperature: 0.0,
-      tools: [{ googleSearch: {} }]
-    },
-  });
-
-  const text = response.text || "";
-  const sources: string[] = [];
-  
-  try {
-    const candidate = response.candidates?.[0];
-    if (candidate?.groundingMetadata?.groundingChunks) {
-      for (const chunk of candidate.groundingMetadata.groundingChunks) {
-        if ((chunk as any).web?.uri) sources.push((chunk as any).web.uri);
-      }
-    }
-  } catch (e) {
-    console.log('[Department Roster Search] Could not extract sources:', e);
-  }
+  const { text, sources } = await runGroundedOfficerSearch('department-roster', prompt);
 
   return {
     category: 'DepartmentRoster',
@@ -402,7 +388,7 @@ Provide accurate roster information with official sources.`;
 
 /**
  * Search disciplinary records and internal affairs databases
- * USES GROQ: Narratives can come from training data
+ * Uses the full Harmony mesh for analysis
  */
 async function searchDisciplinaryRecords(
   officerName: string,
@@ -447,8 +433,7 @@ Extract:
 
 Provide detailed incident information with verifiable sources.`;
 
-  const text = await generateGroqStructuredResponse(prompt, "");
-  const sources: string[] = []; // Groq doesn't provide grounding sources like Gemini
+  const { text, sources } = await runGroundedOfficerSearch('disciplinary-search', prompt);
 
   return {
     category: 'Disciplinary',
@@ -458,13 +443,13 @@ Provide detailed incident information with verifiable sources.`;
       sources: sources
     },
     sources,
-    reliability: 68 // Base reliability for Groq without grounding
+    reliability: sources.length > 0 ? 88 : 25
   };
 }
 
 /**
  * Verify and cross-reference information across sources
- * USES GEMINI: Critical final verification step
+ * Uses the full Harmony mesh to cross-check collected evidence
  */
 async function verifyAndCrossReference(
   officerName: string,
@@ -509,16 +494,11 @@ Provide:
 
 Be critical and prioritize accuracy over comprehensiveness.`;
 
-  const client = getGeminiClient();
-  const response = await client.models.generateContent({
-    model: process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash",
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
-    config: {
-      temperature: 0.0,
-    },
-  });
-
-  const text = response.text || "";
+  const text = await generateOfficerSearchContent(
+    'verification',
+    prompt,
+    'Cross-check only the evidence supplied in the prompt. Do not add unsupported facts, records, or sources.',
+  );
 
   // Extract verified information
   const badgeMatch = text.match(/badge\s*(?:number|#|no\.?)?\s*[:\-]?\s*(\d+)/i);
@@ -557,7 +537,7 @@ function calculateDataQualityScore(results: DatabaseSearchResult[]): number {
 
 /**
  * Main function to compile comprehensive officer data from all public sources
- * @param autonomousMode When true, uses ONLY Groq (no Gemini) to prevent quota exhaustion. Skips web-dependent searches.
+ * @param autonomousMode Compatibility flag. Autonomous and user-initiated collection now share the same capability-driven Harmony and grounded-search paths.
  */
 export async function compileOfficerData(
   officerName: string,
@@ -591,48 +571,14 @@ export async function compileOfficerData(
     }
   }
   
-  // AUTONOMOUS MODE: Use ONLY Groq (no Gemini) to prevent quota exhaustion
-  // Skips web-dependent searches (FOIA, Rosters, Verification) that require Gemini's Google Search
   if (autonomousMode) {
-    console.log(`[Officer Data Collector] 🤖 AUTONOMOUS MODE: Using Groq-only for ${officerName}`);
-    console.log(`[Officer Data Collector] Skipping web searches (FOIA/Rosters/Verify) to prevent Gemini quota exhaustion`);
-    
-    const [newsResults, courtResults, disciplinaryResults] = await Promise.all([
-      searchNewsArticles(officerName, department, location, collectionId),
-      searchCourtRecords(officerName, department, location, collectionId),
-      searchDisciplinaryRecords(officerName, department, location, collectionId)
-    ]);
-    
-    const allResults = [newsResults, courtResults, disciplinaryResults];
-    const allSources = Array.from(new Set(allResults.flatMap(r => r.sources)));
-    const dataQualityScore = calculateDataQualityScore(allResults);
-    
-    const compiledData: CompiledOfficerData = {
-      officerName,
-      badgeNumber: undefined,
-      department: department || undefined,
-      rank: undefined,
-      location: location || undefined,
-      careerData: undefined,
-      incidents: disciplinaryResults.data,
-      courtCases: courtResults.data,
-      newsMentions: newsResults.data,
-      communityComplaints: {
-        summary: disciplinaryResults.data.narrative,
-        incidentCount: disciplinaryResults.data.incidentCount
-      },
-      sources: allSources,
-      dataQualityScore
-    };
-    
-    console.log(`[Officer Data Collector] ✓ Autonomous compilation complete. Quality: ${dataQualityScore}, Sources: ${allSources.length} (Groq-only)`);
-    return compiledData;
+    console.log(`[Officer Data Collector] Autonomous collection uses the same full Harmony and grounded-search capabilities for ${officerName}`);
   }
   
-  // STANDARD MODE: Full hybrid search (Gemini + Groq)
-  console.log(`[Officer Data Collector] Starting hybrid data collection for ${officerName} (Gemini: FOIA/Rosters/Verify, Groq: News/Court/Disciplinary)`);
+  // Full capability search: grounded evidence adapters + Harmony analysis
+  console.log(`[Officer Data Collector] Starting capability-driven data collection for ${officerName}`);
   
-  // Run all searches in parallel for performance (hybrid: 3 Gemini + 3 Groq)
+  // Run independent evidence/search paths in parallel; failure stays route-local where supported.
   const [foiaResults, newsResults, courtResults, rosterResults, disciplinaryResults] = await Promise.all([
     searchFOIADatabases(officerName, department, location, collectionId),
     searchNewsArticles(officerName, department, location, collectionId),

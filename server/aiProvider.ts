@@ -167,13 +167,24 @@ export async function generateJSON<T = any>(
  * Check if autonomous functions can proceed
  */
 export async function canAutonomousProceed(): Promise<boolean> {
-  return aiTokenGovernor.canAutonomousUseGroq();
+  // Autonomous work is a platform capability, not a Groq-specific privilege.
+  // If any Harmony participant is configured, or the local Zero-API engine is
+  // available, background work may proceed and route-local health handles the
+  // individual transports.
+  return getConfiguredHarmonyProviders().length > 0 || shouldUseZeroApiMode();
 }
 
 /**
  * Get rescheduling information for autonomous functions
  */
 export async function getAutonomousRescheduleInfo(): Promise<{ shouldReschedule: boolean; delayMs: number; reason: string; }> {
+  if (await canAutonomousProceed()) {
+    return {
+      shouldReschedule: false,
+      delayMs: 0,
+      reason: 'Harmony or local intelligence is available',
+    };
+  }
   return aiTokenGovernor.shouldRescheduleAutonomous();
 }
 
