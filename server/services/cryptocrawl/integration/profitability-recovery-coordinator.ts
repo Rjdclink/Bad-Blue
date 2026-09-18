@@ -309,3 +309,7 @@ export function ensureProfitabilityRecoveryCoordinator(): void {
     timer.unref?.();
   }
 }
+export function stopProfitabilityRecoveryCoordinator(): void {
+  if (timer) clearInterval(timer);
+  timer = null;
+}
