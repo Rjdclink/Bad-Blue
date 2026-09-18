@@ -149,7 +149,7 @@ interface CompiledOfficerData {
 
 /**
  * Search FOIA databases and transparency portals for officer information
- * USES GEMINI: Critical search requiring live web search and source verification
+ * Uses grounded web search when available, with full-Harmony fallback
  */
 async function searchFOIADatabases(
   officerName: string,
@@ -191,29 +191,7 @@ Extract:
 
 Provide detailed information with specific sources. Be thorough and accurate.`;
 
-  const client = getGeminiClient();
-  const response = await client.models.generateContent({
-    model: process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash",
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
-    config: {
-      temperature: 0.0,
-      tools: [{ googleSearch: {} }]
-    },
-  });
-
-  const text = response.text || "";
-  const sources: string[] = [];
-  
-  try {
-    const candidate = response.candidates?.[0];
-    if (candidate?.groundingMetadata?.groundingChunks) {
-      for (const chunk of candidate.groundingMetadata.groundingChunks) {
-        if ((chunk as any).web?.uri) sources.push((chunk as any).web.uri);
-      }
-    }
-  } catch (e) {
-    console.log('[FOIA Search] Could not extract sources:', e);
-  }
+  const { text, sources } = await runGroundedOfficerSearch('foia', prompt);
 
   // Extract badge number and rank from the narrative
   const badgeMatch = text.match(/badge\s*(?:number|#|no\.?)?\s*[:\-]?\s*(\d+)/i);
@@ -234,7 +212,7 @@ Provide detailed information with specific sources. Be thorough and accurate.`;
 
 /**
  * Search news articles and media coverage
- * USES GROQ: Narratives can come from training data, doesn't need live search
+ * Uses the full Harmony mesh for analysis
  */
 async function searchNewsArticles(
   officerName: string,
@@ -276,8 +254,12 @@ Extract:
 
 Provide comprehensive coverage with source links.`;
 
-  const text = await generateGroqStructuredResponse(prompt, "");
-  const sources: string[] = []; // Groq doesn't provide grounding sources like Gemini
+  const text = await generateOfficerSearchContent(
+    'news-search',
+    prompt,
+    'Use only supported public information. Identify uncertainty and do not invent source links.',
+  );
+  const sources: string[] = [];
 
   return {
     category: 'News',
@@ -293,7 +275,7 @@ Provide comprehensive coverage with source links.`;
 
 /**
  * Search court records and legal databases
- * USES GROQ: Case information can come from training data
+ * Uses the full Harmony mesh and rejects unsupported case details
  */
 async function searchCourtRecords(
   officerName: string,
@@ -337,8 +319,12 @@ Extract:
 
 Provide detailed case information with court record sources.`;
 
-  const text = await generateGroqStructuredResponse(prompt, "");
-  const sources: string[] = []; // Groq doesn't provide grounding sources like Gemini
+  const text = await generateOfficerSearchContent(
+    'court-record-search',
+    prompt,
+    'Do not invent cases, docket numbers, outcomes, citations, or source links. Distinguish facts from uncertainty.',
+  );
+  const sources: string[] = [];
 
   return {
     category: 'CourtRecords',
@@ -354,7 +340,7 @@ Provide detailed case information with court record sources.`;
 
 /**
  * Search police department rosters and personnel records
- * USES GEMINI: Critical for verified employment and badge numbers
+ * Uses grounded web search when available, with full-Harmony fallback
  */
 async function searchDepartmentRosters(
   officerName: string,
@@ -400,29 +386,7 @@ Extract:
 
 Provide accurate roster information with official sources.`;
 
-  const client = getGeminiClient();
-  const response = await client.models.generateContent({
-    model: process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash",
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
-    config: {
-      temperature: 0.0,
-      tools: [{ googleSearch: {} }]
-    },
-  });
-
-  const text = response.text || "";
-  const sources: string[] = [];
-  
-  try {
-    const candidate = response.candidates?.[0];
-    if (candidate?.groundingMetadata?.groundingChunks) {
-      for (const chunk of candidate.groundingMetadata.groundingChunks) {
-        if ((chunk as any).web?.uri) sources.push((chunk as any).web.uri);
-      }
-    }
-  } catch (e) {
-    console.log('[Department Roster Search] Could not extract sources:', e);
-  }
+  const { text, sources } = await runGroundedOfficerSearch('department-roster', prompt);
 
   return {
     category: 'DepartmentRoster',
@@ -437,7 +401,7 @@ Provide accurate roster information with official sources.`;
 
 /**
  * Search disciplinary records and internal affairs databases
- * USES GROQ: Narratives can come from training data
+ * Uses the full Harmony mesh for analysis
  */
 async function searchDisciplinaryRecords(
   officerName: string,
@@ -482,8 +446,12 @@ Extract:
 
 Provide detailed incident information with verifiable sources.`;
 
-  const text = await generateGroqStructuredResponse(prompt, "");
-  const sources: string[] = []; // Groq doesn't provide grounding sources like Gemini
+  const text = await generateOfficerSearchContent(
+    'disciplinary-search',
+    prompt,
+    'Do not invent complaints, disciplinary records, incidents, findings, or source links.',
+  );
+  const sources: string[] = [];
 
   return {
     category: 'Disciplinary',
@@ -499,7 +467,7 @@ Provide detailed incident information with verifiable sources.`;
 
 /**
  * Verify and cross-reference information across sources
- * USES GEMINI: Critical final verification step
+ * Uses the full Harmony mesh to cross-check collected evidence
  */
 async function verifyAndCrossReference(
   officerName: string,
@@ -544,16 +512,11 @@ Provide:
 
 Be critical and prioritize accuracy over comprehensiveness.`;
 
-  const client = getGeminiClient();
-  const response = await client.models.generateContent({
-    model: process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash",
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
-    config: {
-      temperature: 0.0,
-    },
-  });
-
-  const text = response.text || "";
+  const text = await generateOfficerSearchContent(
+    'verification',
+    prompt,
+    'Cross-check only the evidence supplied in the prompt. Do not add unsupported facts, records, or sources.',
+  );
 
   // Extract verified information
   const badgeMatch = text.match(/badge\s*(?:number|#|no\.?)?\s*[:\-]?\s*(\d+)/i);
