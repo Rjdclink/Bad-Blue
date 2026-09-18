@@ -91,6 +91,59 @@ const configUpdateSchema = z.object({
 // ============ API ENDPOINTS ============
 
 /**
+ * GET /api/geoconsole/street-imagery
+ * Provider-neutral nearest public street image adapter.
+ */
+router.get('/street-imagery', async (req: Request, res: Response) => {
+  const validation = z.object({
+    lat: z.coerce.number().min(-90).max(90),
+    lng: z.coerce.number().min(-180).max(180),
+  }).safeParse(req.query);
+
+  if (!validation.success) {
+    return res.status(400).json({ success: false, error: 'Invalid coordinates' });
+  }
+
+  const { lat, lng } = validation.data;
+  const endpoint = process.env.KARTAVIEW_API_URL || 'https://api.openstreetcam.org/2.0/photo/';
+  const params = new URLSearchParams({
+    lat: String(lat),
+    lng: String(lng),
+    zoomLevel: '18',
+    join: 'sequence',
+    orderBy: 'id',
+    orderDirection: 'desc',
+  });
+
+  try {
+    const response = await fetch(`${endpoint}?${params.toString()}`, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(6000),
+    });
+
+    if (!response.ok) {
+      return res.status(502).json({ success: false, error: 'Street imagery provider unavailable' });
+    }
+
+    const payload: any = await response.json();
+    const data = payload?.result?.data;
+    const photo = Array.isArray(data) ? data[0] : data;
+
+    return res.json({
+      success: true,
+      data: photo || null,
+      metadata: {
+        provider: 'public_street_imagery',
+        timestamp: new Date(),
+      },
+    });
+  } catch (error) {
+    log.warn('Street imagery lookup failed', { error });
+    return res.status(502).json({ success: false, error: 'Street imagery unavailable' });
+  }
+});
+
+/**
  * POST /api/geoconsole/process
  * Process raw location inputs through the full pipeline
  */
