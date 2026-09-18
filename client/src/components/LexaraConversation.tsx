@@ -704,7 +704,13 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         if (acknowledgement && !duplicateAck && !acknowledgementTooSoon) {
           lastAcknowledgementRef.current = { text: normalizedAck, at: now };
           appendMessage('lexara', acknowledgement);
-          await speakLexara(acknowledgement, generationRef.current).catch(() => undefined);
+          const controlSpeech = speakLexara(acknowledgement, generationRef.current)
+            .catch(() => undefined);
+          controlAcknowledgementSpeechRef.current = controlSpeech;
+          await controlSpeech;
+          if (controlAcknowledgementSpeechRef.current === controlSpeech) {
+            controlAcknowledgementSpeechRef.current = null;
+          }
         }
       } catch {
         // The active legal analysis remains authoritative even if the lightweight
@@ -994,6 +1000,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     currentPreRenderedTurnIdRef.current = null;
     currentTurnTextRef.current = '';
     analysisActiveRef.current = false;
+    controlAcknowledgementSpeechRef.current = null;
     lastAcknowledgementRef.current = { text: '', at: 0 };
     clearVoiceTurnBuffer();
   }, [clearVoiceTurnBuffer, isMasterSession, lawTypeId]);
