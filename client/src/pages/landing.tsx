@@ -251,6 +251,94 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* Search-visible service overview: truthful, user-facing capability content */}
+      <section className="py-16 px-4 bg-background" aria-labelledby="legalwhat-services">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center mb-10">
+            <h2 id="legalwhat-services" className="text-3xl md:text-4xl font-bold mb-4">
+              AI Legal Help, Public-Record Research, People Finding & Inmate Search
+            </h2>
+            <p className="text-muted-foreground max-w-3xl mx-auto leading-relaxed">
+              Legal What? combines legal information and document tools with specialized public-record research services so users can move from a legal question to relevant records, people, facilities, and documents in one platform.
+            </p>
+          </div>
+
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <Card>
+              <CardHeader>
+                <Scale className="w-8 h-8 text-primary mb-2" aria-hidden="true" />
+                <CardTitle>Two-Way AI Legal Consultation</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  Have a voice or text conversation with LEXARA across 30 legal practice areas. The system can ask follow-up questions, analyze the facts you provide, surface legal issues, and connect you with deeper case-analysis and research tools.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <FileText className="w-8 h-8 text-primary mb-2" aria-hidden="true" />
+                <CardTitle>Legal Document Tools</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  Build and organize legal documents and public-record requests with AI-assisted drafting workflows, including police-accountability complaints, Section 1983 materials, FOIA requests, petitions, and broader legal-document support.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <Database className="w-8 h-8 text-primary mb-2" aria-hidden="true" />
+                <CardTitle>Background Report Generator</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  Generate research-oriented background reports from available public-record and identity sources to organize information about a person, record trail, or related legal research target.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <Search className="w-8 h-8 text-primary mb-2" aria-hidden="true" />
+                <CardTitle>People Finder & Geolocation Research</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  Use Legal What?'s People Finder and SPECTRA workflows to search across multiple sources and assemble location-relevant information about a target from lawful, available data.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <Users className="w-8 h-8 text-primary mb-2" aria-hidden="true" />
+                <CardTitle>Nationwide Inmate Locator</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  Search federal and state correctional sources for inmate and facility information, including available custody, location, release-date, and correctional-facility details.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <Shield className="w-8 h-8 text-primary mb-2" aria-hidden="true" />
+                <CardTitle>Police & Public-Record Research</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  Research officers and public records, prepare misconduct-related materials, organize evidence, and use dedicated accountability workflows alongside the platform's broader legal tools.
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      </section>
+
       {/* LEXARA Visual Showcase Section */}
       <section className="relative py-20 px-4 mt-16 overflow-hidden">
         {/* Background Image with Dark Overlay */}
