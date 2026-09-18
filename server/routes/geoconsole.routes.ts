@@ -25,14 +25,21 @@ const router = Router();
 router.use(isAuthenticated);
 const log = createLogger('GeoconsoleRoutes');
 
+const validDateString = z.string()
+  .min(1)
+  .refine(value => Number.isFinite(Date.parse(value)), {
+    message: 'Invalid date/time value',
+  })
+  .transform(value => new Date(value));
+
 // ============ VALIDATION SCHEMAS ============
 
 const gpsPointSchema = z.object({
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),
   altitude: z.number().optional(),
-  accuracy: z.number().optional(),
-  timestamp: z.string().transform(s => new Date(s)),
+  accuracy: z.number().positive().max(5_000_000).optional(),
+  timestamp: validDateString,
   source: z.enum([
     'device_gps', 'gnss_fix', 'gnss_raw',
     'exif_photo', 'exif_video', 'xmp_sidecar', 'json_sidecar',
@@ -48,29 +55,31 @@ const gpsPointSchema = z.object({
   ]),
   confidence: z.number().min(0).max(1),
   verticalAccuracy: z.number().nonnegative().optional(),
-  receivedAt: z.string().transform(s => new Date(s)).optional(),
+  receivedAt: validDateString.optional(),
   observationKind: z.enum(['observed', 'inferred', 'interpolated', 'predicted', 'historical']).optional(),
   correlationGroup: z.string().max(200).optional(),
   provenance: z.object({
     provider: z.string().optional(),
     recordId: z.string().optional(),
-    capturedAt: z.string().transform(s => new Date(s)).optional(),
+    capturedAt: validDateString.optional(),
     transformedBy: z.array(z.string()).optional(),
   }).optional(),
   metadata: z.record(z.unknown()).optional(),
 });
 
 const processRequestSchema = z.object({
-  inputs: z.array(gpsPointSchema),
-  sessionId: z.string().optional(),
+  inputs: z.array(gpsPointSchema).min(1).max(2000),
+  sessionId: z.string().min(1).max(200).optional(),
 });
 
 const reportRequestSchema = z.object({
-  sessionId: z.string(),
-  subject: z.string().min(1),
+  sessionId: z.string().min(1).max(200),
+  subject: z.string().min(1).max(500),
   timeRange: z.object({
-    start: z.string().transform(s => new Date(s)),
-    end: z.string().transform(s => new Date(s)),
+    start: validDateString,
+    end: validDateString,
+  }).refine(range => range.end.getTime() >= range.start.getTime(), {
+    message: 'Time range end must not precede start',
   }).optional(),
 });
 
@@ -393,7 +402,7 @@ router.post('/interpolate', async (req: Request, res: Response) => {
       startPoint: gpsPointSchema,
       endPoint: gpsPointSchema,
       config: z.object({
-        iterations: z.number().min(100).max(10000).optional(),
+        iterations: z.number().int().min(100).max(1000).optional(),
         maxSpeed: z.number().min(1).max(100).optional(),
       }).optional(),
     });
@@ -409,6 +418,13 @@ router.post('/interpolate', async (req: Request, res: Response) => {
     }
 
     const { startPoint, endPoint, config } = validation.data;
+
+    if (endPoint.timestamp.getTime() <= startPoint.timestamp.getTime()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Interpolation endPoint must be later than startPoint',
+      });
+    }
 
     // Use the Monte Carlo engine directly
     const { monteCarloPathEngine } = await import('../services/geoconsole/monteCarloPathEngine');
@@ -463,7 +479,7 @@ router.post('/futurecast', async (req: Request, res: Response) => {
 
   try {
     const schema = z.object({
-      recentPoints: z.array(gpsPointSchema).min(3),
+      recentPoints: z.array(gpsPointSchema).min(3).max(100),
       hours: z.number().min(1).max(1).optional(),
     });
 
