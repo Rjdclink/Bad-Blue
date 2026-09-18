@@ -12,6 +12,8 @@ delete process.env.PURGE_LOCAL_TEST_USERS_BEFORE;
 const authSource = readFileSync(new URL('../server/auth.ts', import.meta.url), 'utf8');
 const routesSource = readFileSync(new URL('../server/routes.ts', import.meta.url), 'utf8');
 const subscriptionAuthSource = readFileSync(new URL('../server/routes/auth.routes.ts', import.meta.url), 'utf8');
+const configSource = readFileSync(new URL('../server/config.ts', import.meta.url), 'utf8');
+const indexSource = readFileSync(new URL('../server/index.ts', import.meta.url), 'utf8');
 const legacyLocalAuth = new URL('../server/localAuth.ts', import.meta.url);
 
 assert.equal(existsSync(legacyLocalAuth), false, 'obsolete Passport local auth module must remain removed');
@@ -20,6 +22,13 @@ assert.doesNotMatch(routesSource, /app\.post\(["']\/api\/login\/local["']/);
 assert.doesNotMatch(routesSource, /app\.post\(["']\/api\/register\/local["']/);
 assert.doesNotMatch(subscriptionAuthSource, /router\.post\(["']\/signup["']/);
 assert.doesNotMatch(subscriptionAuthSource, /router\.(?:get|post)\(["']\/logout["']/);
+assert.match(configSource, /SUPABASE_URL:\s*z\.string\(\)\.url\(/, 'Supabase project URL must be syntactically validated');
+assert.match(configSource, /SUPABASE_URL is required in production and must be the HTTP\(S\) Supabase project API URL/, 'production must reject database URLs in SUPABASE_URL');
+assert.match(configSource, /parsedSupabaseProjectUrl\.protocol\s*!==\s*'https:'/, 'production Supabase auth URL must require HTTPS');
+assert.match(configSource, /SUPABASE_SECRET_KEY\s*\|\|\s*process\.env\.SUPABASE_SERVICE_ROLE_KEY/, 'server auth credential must be required');
+assert.match(indexSource, /authStoreReady/, 'strict readiness must track the authentication store');
+assert.match(indexSource, /probeLocalAuthStoreHttp/, 'startup must probe the real authentication store');
+assert.match(indexSource, /isFullyInitialized\s*&&\s*usableDataPlane\s*&&\s*authStoreReady/, 'Railway readiness must require working authentication');
 
 const { setupAuth } = await import('../server/auth.js');
 
