@@ -1,5 +1,5 @@
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Camera, Loader2, Mic, MicOff, Send, Square } from 'lucide-react';
+import { AlertCircle, Loader2, Mic, MicOff, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useVoiceMode } from '@/hooks/useVoiceMode';
 import { useVoiceSynthesis } from '@/hooks/useVoiceSynthesis';
@@ -44,7 +44,7 @@ type ConversationPhase =
   | 'text-only'
   | 'error';
 
-const VOICE_TURN_SETTLE_MS = 600;
+const VOICE_TURN_SETTLE_MS = 850;
 const CHAT_TURN_TIMEOUT_MS = 45_000;
 const MAX_STORED_CONVERSATION_MESSAGES = 24;
 
@@ -118,6 +118,30 @@ function friendlyError(error: unknown): string {
   return 'LEXARA could not complete that turn. Please try again.';
 }
 
+function normalizeSpeechText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function looksLikeLexaraEcho(candidate: string, spokenText: string): boolean {
+  const normalizedCandidate = normalizeSpeechText(candidate);
+  const normalizedSpoken = normalizeSpeechText(spokenText);
+  if (!normalizedCandidate || !normalizedSpoken) return false;
+
+  const candidateWords = normalizedCandidate.split(' ').filter(Boolean);
+  if (candidateWords.length === 1) {
+    const word = candidateWords[0];
+    return word.length >= 5 && normalizedSpoken.split(' ').includes(word);
+  }
+
+  const spokenWords = new Set(normalizedSpoken.split(' ').filter(Boolean));
+  const overlap = candidateWords.filter(word => spokenWords.has(word)).length / candidateWords.length;
+  return overlap >= 0.75 || normalizedSpoken.includes(normalizedCandidate);
+}
+
 function emotionFromUserText(text: string): LEXARAEmotionHint {
   try {
     const emotionalState = analyzeUserSignals(text)?.signals?.emotionalState;
@@ -142,7 +166,6 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const [jurisdiction, setJurisdiction] = useState<string | undefined>(initialStateRef.current.jurisdiction);
   const [liveEnabled, setLiveEnabled] = useState(false);
   const [voiceReady, setVoiceReady] = useState(false);
-  const [cameraReady, setCameraReady] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [audioLevel, setAudioLevel] = useState(0);
   const [emotion, setEmotion] = useState<LEXARAEmotionHint>('calm');
@@ -156,12 +179,14 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const greetingRef = useRef(initialStateRef.current.messages.length > 0);
   const userSpeechObservedRef = useRef(false);
   const handleMessageRef = useRef<(text: string) => void>(() => undefined);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const cameraStreamRef = useRef<MediaStream | null>(null);
   const messageEndRef = useRef<HTMLDivElement>(null);
+  const conversationScrollRef = useRef<HTMLDivElement>(null);
   const voiceTurnBufferRef = useRef('');
   const voiceTurnTimerRef = useRef<number | null>(null);
   const responseEmotionRef = useRef<LEXARAEmotionHint>('authoritative');
+  const activeLexaraSpeechRef = useRef('');
+  const autoInterruptRef = useRef<() => void>(() => undefined);
+  const lastFinalVoiceSegmentRef = useRef<{ text: string; at: number }>({ text: '', at: 0 });
 
   const clearVoiceTurnTimer = useCallback(() => {
     if (voiceTurnTimerRef.current !== null) {
@@ -179,7 +204,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     clearVoiceTurnTimer();
     const text = voiceTurnBufferRef.current.trim();
     voiceTurnBufferRef.current = '';
-    if (!text || phaseRef.current === 'speaking') return;
+    if (!text) return;
     handleMessageRef.current(text);
   }, [clearVoiceTurnTimer]);
 
@@ -187,24 +212,46 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     continuous: true,
     interimResults: true,
     onTranscript: (text, isFinal) => {
-      if (phaseRef.current === 'speaking') return;
-
       const observed = text.trim();
-      if (observed) userSpeechObservedRef.current = true;
+      if (!observed) return;
 
-      // Web Speech can emit several finalized segments during one human turn.
-      // Accumulate them and require a brief quiet interval before dispatching so
-      // a natural pause does not create multiple overlapping legal questions.
+      // Keep the microphone live while LEXARA speaks. Browser echo cancellation
+      // removes most speaker leakage; this lexical guard rejects residual TTS
+      // echoes so genuine user speech can automatically barge in.
+      if (
+        phaseRef.current === 'speaking'
+        && looksLikeLexaraEcho(observed, activeLexaraSpeechRef.current)
+      ) {
+        return;
+      }
+
+      userSpeechObservedRef.current = true;
+
+      if (phaseRef.current === 'speaking') {
+        autoInterruptRef.current();
+      }
+
+      // Interim speech is enough to stop LEXARA, but only finalized segments are
+      // submitted to legal reasoning.
       if (!isFinal) {
         clearVoiceTurnTimer();
         return;
       }
 
-      const segment = observed;
-      if (!segment) return;
+      const normalized = normalizeSpeechText(observed);
+      const now = Date.now();
+      if (
+        normalized
+        && normalized === lastFinalVoiceSegmentRef.current.text
+        && now - lastFinalVoiceSegmentRef.current.at < 1_800
+      ) {
+        return;
+      }
+      lastFinalVoiceSegmentRef.current = { text: normalized, at: now };
+
       voiceTurnBufferRef.current = voiceTurnBufferRef.current
-        ? `${voiceTurnBufferRef.current} ${segment}`
-        : segment;
+        ? `${voiceTurnBufferRef.current} ${observed}`
+        : observed;
 
       clearVoiceTurnTimer();
       voiceTurnTimerRef.current = window.setTimeout(flushVoiceTurn, VOICE_TURN_SETTLE_MS);
@@ -221,7 +268,6 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     enableVoice: enableRecognition,
     startListening,
     stopListening,
-    suspendListening,
     resumeListening,
     isListening: recognitionListening,
     interimTranscript,
@@ -254,29 +300,6 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     });
   }, []);
 
-  const startCamera = useCallback(async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 480 },
-          height: { ideal: 360 },
-          facingMode: 'user',
-        },
-        audio: false,
-      });
-
-      cameraStreamRef.current?.getTracks().forEach(track => track.stop());
-      cameraStreamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play().catch(() => undefined);
-      }
-      setCameraReady(true);
-    } catch {
-      setCameraReady(false);
-    }
-  }, []);
-
   const enableVoice = useCallback(async () => {
     try {
       await enableRecognition();
@@ -300,7 +323,10 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     }
 
     clearVoiceTurnBuffer();
-    suspendListening();
+    activeLexaraSpeechRef.current = text;
+    // Full-duplex: recognition stays live while LEXARA speaks so natural
+    // barge-in can be detected without a button.
+    resumeListening();
     if (generation === undefined || generation === generationRef.current) {
       setConversationPhase('speaking');
       setEmotion(responseEmotionRef.current);
@@ -313,13 +339,14 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         autoPlay: true,
       });
     } finally {
+      activeLexaraSpeechRef.current = '';
       resumeListening();
       if (generation === undefined || generation === generationRef.current) {
         setConversationPhase('listening');
         setEmotion('calm');
       }
     }
-  }, [clearVoiceTurnBuffer, liveEnabled, resumeListening, setConversationPhase, speak, suspendListening, voiceReady]);
+  }, [clearVoiceTurnBuffer, liveEnabled, resumeListening, setConversationPhase, speak, voiceReady]);
 
   const handleUserMessage = useCallback(async (rawMessage: string) => {
     const message = rawMessage.trim();
@@ -417,13 +444,13 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
   handleMessageRef.current = handleUserMessage;
 
-  const interruptLexara = useCallback(() => {
+  autoInterruptRef.current = () => {
     stopSpeaking();
     resumeListening();
     setConversationPhase(liveEnabled && voiceReady ? 'listening' : 'text-only');
     setEmotion('calm');
     setGaze('camera');
-  }, [liveEnabled, resumeListening, setConversationPhase, stopSpeaking, voiceReady]);
+  };
 
   const sendGreeting = useCallback(async () => {
     if (greetingRef.current || userSpeechObservedRef.current || conversationRef.current.length > 0) return;
@@ -454,13 +481,13 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       }
 
       setConversationPhase('initializing');
-      await Promise.allSettled([startCamera(), enableVoice()]);
+      await enableVoice();
     };
 
     initialize().catch(() => {
       setConversationPhase('text-only');
     });
-  }, [enableVoice, setConversationPhase, startCamera]);
+  }, [enableVoice, setConversationPhase]);
 
   useEffect(() => {
     try {
@@ -493,27 +520,19 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   }, [phase, sendGreeting]);
 
   useEffect(() => {
-    if (!synthesisSpeaking) {
-      setAudioLevel(recognitionListening ? 0.12 : 0);
-      return;
-    }
-
-    const timer = window.setInterval(() => {
-      setAudioLevel(0.3 + Math.random() * 0.45);
-    }, 90);
-
-    return () => window.clearInterval(timer);
+    setAudioLevel(synthesisSpeaking ? 0.45 : recognitionListening ? 0.12 : 0);
   }, [recognitionListening, synthesisSpeaking]);
 
   useEffect(() => {
-    messageEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    const scroller = conversationScrollRef.current;
+    if (!scroller) return;
+    scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
   }, [conversation, interimTranscript, phase]);
 
   useEffect(() => {
     return () => {
       currentRequestRef.current?.abort();
       clearVoiceTurnBuffer();
-      cameraStreamRef.current?.getTracks().forEach(track => track.stop());
       stopSpeaking();
       stopListening();
     };
@@ -538,14 +557,14 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const isListening = phase === 'listening' && recognitionListening;
 
   return (
-    <div className="mx-auto grid min-h-[calc(100vh-73px)] max-w-7xl grid-cols-1 overflow-hidden lg:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.75fr)]">
-      <section className="relative flex min-h-[50vh] items-center justify-center overflow-hidden bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 p-6 lg:min-h-full">
+    <div className="mx-auto grid h-[calc(100dvh-73px)] max-w-7xl grid-cols-1 grid-rows-[minmax(260px,42dvh)_minmax(0,1fr)] overflow-hidden lg:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.75fr)] lg:grid-rows-1">
+      <section className="relative flex min-h-0 items-center justify-center overflow-hidden bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 p-3 sm:p-6 lg:min-h-full">
         <div className="absolute inset-0 opacity-40">
           <div className="absolute left-1/4 top-1/4 h-80 w-80 rounded-full bg-cyan-500/10 blur-3xl" />
           <div className="absolute bottom-1/4 right-1/4 h-96 w-96 rounded-full bg-indigo-400/10 blur-3xl" />
         </div>
 
-        <div className="relative z-10 h-[420px] w-full max-w-lg sm:h-[520px]">
+        <div className="relative z-10 h-full w-full max-w-lg">
           <LEXARAEtherealAvatar
             isSpeaking={isSpeaking}
             isListening={isListening}
@@ -565,33 +584,9 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
           />
           <span>{statusLabel}</span>
         </div>
-
-        {liveEnabled && (
-          <div className="absolute bottom-4 left-4 z-20 h-24 w-32 overflow-hidden rounded-xl border border-white/15 bg-slate-950/80 shadow-xl sm:h-28 sm:w-40">
-            <video ref={videoRef} muted playsInline autoPlay className="h-full w-full object-cover" />
-            {!cameraReady && (
-              <div className="absolute inset-0 flex items-center justify-center text-slate-500">
-                <Camera className="h-5 w-5" />
-              </div>
-            )}
-          </div>
-        )}
-
-        {isSpeaking && (
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            onClick={interruptLexara}
-            className="absolute bottom-4 right-4 z-20 gap-2"
-          >
-            <Square className="h-3.5 w-3.5" />
-            Interrupt
-          </Button>
-        )}
       </section>
 
-      <section className="flex min-h-[50vh] flex-col border-l bg-background lg:min-h-full">
+      <section className="flex min-h-0 flex-col border-t bg-background lg:min-h-full lg:border-l lg:border-t-0">
         <div className="border-b px-5 py-4">
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -612,7 +607,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
           </div>
         </div>
 
-        <div className="flex-1 space-y-3 overflow-y-auto p-4">
+        <div ref={conversationScrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
           {conversation.map(message => (
             <div
               key={message.id}
@@ -676,7 +671,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             <input
               value={userInput}
               onChange={event => setUserInput(event.target.value)}
-              placeholder={isSpeaking ? 'Type to interrupt or add a fact…' : 'Type or speak naturally…'}
+              placeholder="Type or speak naturally…"
               className="min-w-0 flex-1 rounded-full border bg-background px-4 py-2.5 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
               aria-label="Message LEXARA"
             />

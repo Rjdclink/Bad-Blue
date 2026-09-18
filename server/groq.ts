@@ -6,6 +6,8 @@
  * to completely eliminate any dependency on the OpenAI package
  */
 
+const DEFAULT_GROQ_MODEL = process.env.GROQ_MODEL?.trim() || 'openai/gpt-oss-120b';
+
 interface GroqChatMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
@@ -156,7 +158,7 @@ Always note that your guidance is informational and users should consult a licen
     });
 
     return await callGroqAPI({
-      model: 'llama-3.3-70b-versatile', // Best for legal reasoning
+      model: DEFAULT_GROQ_MODEL, // Best for legal reasoning
       messages: [
         { role: 'system', content: legalSystemPrompt },
         { role: 'user', content: prompt },
@@ -192,7 +194,7 @@ Generate a complete, legally-formatted document.`;
 
   try {
     return await callGroqAPI({
-      model: 'llama-3.3-70b-versatile',
+      model: DEFAULT_GROQ_MODEL,
       messages: [
         {
           role: 'system',
@@ -240,7 +242,7 @@ export async function generateGroqStructuredResponse(
 
   try {
     return await callGroqAPI({
-      model: 'llama-3.3-70b-versatile',
+      model: DEFAULT_GROQ_MODEL,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: prompt },
@@ -275,7 +277,7 @@ CRITICAL: You MUST respond with valid JSON only. Do not include any text before 
 
   try {
     const text = await callGroqAPI({
-      model: 'llama-3.3-70b-versatile',
+      model: DEFAULT_GROQ_MODEL,
       messages: [
         { role: 'system', content: jsonSystemPrompt },
         { role: 'user', content: prompt },

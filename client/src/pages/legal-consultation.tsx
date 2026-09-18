@@ -19,7 +19,14 @@ export default function LegalConsultationPage() {
   const search = useSearch();
   const [, params] = useRoute('/legal-consultation/:domainId');
   const [showLiveConsent, setShowLiveConsent] = useState(false);
-  const [liveEnabled, setLiveEnabled] = useState(() => getLexaraLiveEnabled() === 'true');
+  const requestedLiveMode = useMemo(() => new URLSearchParams(search).get('live'), [search]);
+  const [liveEnabled, setLiveEnabled] = useState(() => (
+    requestedLiveMode === 'true'
+      ? true
+      : requestedLiveMode === 'false'
+        ? false
+        : getLexaraLiveEnabled() === 'true'
+  ));
   const [conversationMount, setConversationMount] = useState(0);
 
   const domainId = params?.domainId;

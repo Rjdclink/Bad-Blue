@@ -6,10 +6,10 @@
  * Each book is directly clickable to navigate to the legal consultation page
  * Integrates with existing BadBlue functionality
  * 
- * Now includes Lexara Live consent modal for first-time legal consultation users
+ * Routes legal consultations through the required LEXARA live-consent interstitial.
  */
 
-import { useState, useCallback } from "react";
+import { useCallback } from "react";
 import { useLocation } from "wouter";
 import { Badge } from "@/components/ui/badge";
 import { ArrowRight, Shield } from "lucide-react";
@@ -17,10 +17,6 @@ import { LAW_TYPE_DATA, type LawTypeInfo } from "@shared/lawTypes";
 import { SEOHead } from "@/components/SEOHead";
 import { useAuth } from "@/hooks/useAuth";
 import { AppHeader } from "@/components/AppHeader";
-import LexaraLiveConsentModal, { 
-  hasLexaraLiveConsent,
-  getLexaraLiveEnabled 
-} from "@/components/LexaraLiveConsentModal";
 
 // Color palette - 30 distinct colors assigned to ensure no adjacent similar colors
 const BOOK_COLORS = [
@@ -194,10 +190,7 @@ const BookSpine = ({
 export default function WelcomePage() {
   const { user } = useAuth();
   const [, setLocation] = useLocation();
-  
-  // Consent modal state
-  const [showConsentModal, setShowConsentModal] = useState(false);
-  const [pendingLawAreaId, setPendingLawAreaId] = useState<string | null>(null);
+
 
   // Sort law types alphabetically by name
   const sortedLawTypes = [...LAW_TYPE_DATA].sort((a, b) => 
@@ -216,38 +209,19 @@ export default function WelcomePage() {
     }).filter(Boolean) as [string, string][]
   );
 
-  // Handle consent completion
-  const handleConsentComplete = useCallback((enabled: boolean) => {
-    setShowConsentModal(false);
-    
-    if (pendingLawAreaId) {
-      // Navigate to legal consultation with live mode param
-      setLocation(`/legal-consultation/${pendingLawAreaId}?live=${enabled}`);
-      setPendingLawAreaId(null);
-    }
-  }, [pendingLawAreaId, setLocation]);
-
-  // Handle book click - show consent modal if needed, otherwise navigate
+  // Every legal book enters the explicit microphone/audio setup page before
+  // the consultation. Stored consent never bypasses this transition.
   const handleBookClick = useCallback((lawTypeId: string) => {
     const selectedType = LAW_TYPE_DATA.find(type => type.id === lawTypeId);
-    if (selectedType) {
-      // Force Law Enforcement to go directly to BadBlue tools
-      if (selectedType.id === 'law-enforcement-accountability') {
-        setLocation('/badblue');
-        return;
-      }
-      
-      // Check if user has already made a consent choice
-      if (hasLexaraLiveConsent()) {
-        // Already consented - navigate with their preference
-        const liveEnabled = getLexaraLiveEnabled() === 'true';
-        setLocation(`/legal-consultation/${selectedType.id}?live=${liveEnabled}`);
-      } else {
-        // Show consent modal for first-time users
-        setPendingLawAreaId(selectedType.id);
-        setShowConsentModal(true);
-      }
+    if (!selectedType) return;
+
+    // Law Enforcement remains the dedicated BadBlue workflow.
+    if (selectedType.id === 'law-enforcement-accountability') {
+      setLocation('/badblue');
+      return;
     }
+
+    setLocation(`/lexara-consent/${selectedType.id}`);
   }, [setLocation]);
 
   return (
@@ -576,16 +550,6 @@ export default function WelcomePage() {
         </div>
       </footer>
       
-      {/* Lexara Live Consent Modal */}
-      <LexaraLiveConsentModal
-        isOpen={showConsentModal}
-        onClose={() => {
-          setShowConsentModal(false);
-          setPendingLawAreaId(null);
-        }}
-        onConsent={handleConsentComplete}
-        targetLawArea={pendingLawAreaId || undefined}
-      />
     </div>
   );
 }

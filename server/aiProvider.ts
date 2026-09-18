@@ -538,25 +538,25 @@ function getProviderModel(provider: AIProvider, requestedModel?: string, complex
   }>> = {
     [AIProvider.GEMINI]: {
       prefixes: ['gemini'],
-      lite: 'gemini-2.5-flash',             // FREE: Fast inference, high throughput
-      default: 'gemini-2.5-flash',          // FREE: Balanced, best reasoning
-      pro: 'gemini-3.0-flash-preview'       // FREE: Preview features (experimental)
+      lite: 'gemini-3.8-flash',
+      default: 'gemini-3.8-flash',
+      pro: 'gemini-3.8-flash'
     },
     [AIProvider.GROQ]: {
-      prefixes: ['llama', 'gemma', 'qwen'], // mixtral removed: decommissioned by Groq
-      default: 'llama-3.3-70b-versatile', // FREE: Newer, faster
-      comprehensive: 'llama-3.1-8b-instant' // FREE: Ultra-fast
+      prefixes: ['openai/', 'qwen/'],
+      default: 'openai/gpt-oss-120b',
+      comprehensive: 'openai/gpt-oss-120b'
     },
     [AIProvider.MISTRAL]: {
       prefixes: ['mistral', 'codestral', 'pixtral', 'open-'],
-      default: 'mistral-small-latest'     // FREE: Only free tier model available
+      default: 'mistral-small-2603'
     },
     [AIProvider.CLAUDE]: {
       prefixes: ['claude'],
-      lite: 'claude-haiku-4-5-20251001',          // Fast responses
-      default: 'claude-sonnet-4-5-20250929',      // Advanced reasoning
-      comprehensive: 'claude-sonnet-4-5-20250929', // Advanced reasoning
-      pro: 'claude-opus-4-1-20250805'             // Most powerful Claude model
+      lite: 'claude-haiku-4-5-20251001',
+      default: 'claude-sonnet-4-6',
+      comprehensive: 'claude-sonnet-4-6',
+      pro: 'claude-opus-4-8'
     },
     // OpenRouter free models (December 2025)
     [AIProvider.DEEPSEEK]: {

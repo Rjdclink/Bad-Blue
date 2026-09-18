@@ -99,6 +99,7 @@ const PetitionEdit = lazyWithRetry(() => import("@/pages/petition-edit"), 'Petit
 const LegalConsultationPage = lazyWithRetry(() => import("@/pages/legal-consultation"), 'LegalConsultation');
 const LegalDocumentCreator = lazyWithRetry(() => import("@/pages/legal-document-creator"), 'LegalDocumentCreator');
 const WelcomePage = lazyWithRetry(() => import("@/pages/welcome"), 'WelcomePage');
+const LexaraConsentPage = lazyWithRetry(() => import("@/pages/lexara-consent"), 'LexaraConsent');
 const LegalToolsPage = lazyWithRetry(() => import("@/pages/legal-tools"), 'LegalTools');
 const PeopleFinderPage = lazyWithRetry(() => import("@/pages/people-finder"), 'PeopleFinder');
 const PantheonPage = lazyWithRetry(() => import("@/pages/pantheon"), 'Pantheon');
@@ -300,6 +301,7 @@ function Router() {
               <Route path="/administrator" component={AdminConsole} />
               <Route path="/admin" component={AdminConsole} />
               <Route path="/welcome" component={WelcomePage} />
+              <Route path="/lexara-consent/:domainId" component={LexaraConsentPage} />
               <Route path="/legal-tools" component={LegalToolsPage} />
               <Route path="/people-finder" component={PeopleFinderPage} />
               <Route path="/pantheon" component={PantheonPage} />

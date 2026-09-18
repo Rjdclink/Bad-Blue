@@ -137,35 +137,33 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
     }
 
     const userId = (req as any).user?.id || (req as any).user?.claims?.sub;
-    let conversationId: string | null = null;
-    let persistenceSuccess = true;
 
-    try {
-      const { storage } = await import('../storage');
-      const conversation = await storage.createLexaraConversation({
-        userId,
-        sessionId,
-        userPrompt: prompt,
-        lexaraResponse: responseText,
-        audioGenerated: !!audioData,
-        audioBase64: audioData?.audioBase64 || undefined,
-        audioDurationMs: audioData?.durationMs || undefined,
-        model,
-        // Persist only server-reviewed metadata. The complete client-supplied
-        // previous-message array and arbitrary context never become trusted DB
-        // metadata by being spread into this record.
-        context: {
-          lawType: lawType || null,
-          jurisdiction: conversationResult.jurisdiction || jurisdiction || null,
-          mappedLawType: conversationResult.mappedLawType || null,
-          behaviorMode,
-        },
-      });
-      conversationId = conversation.id;
-    } catch (dbError) {
-      persistenceSuccess = false;
-      log.error('[LEXARA] Failed to persist conversation', { error: dbError });
-    }
+    // Persistence is audit/recovery work, not conversational-path authority.
+    // Return the legal turn immediately and persist asynchronously so a slow or
+    // degraded database can never add seconds of dead air to LEXARA Live.
+    void (async () => {
+      try {
+        const { storage } = await import('../storage');
+        await storage.createLexaraConversation({
+          userId,
+          sessionId,
+          userPrompt: prompt,
+          lexaraResponse: responseText,
+          audioGenerated: !!audioData,
+          audioBase64: audioData?.audioBase64 || undefined,
+          audioDurationMs: audioData?.durationMs || undefined,
+          model,
+          context: {
+            lawType: lawType || null,
+            jurisdiction: conversationResult.jurisdiction || jurisdiction || null,
+            mappedLawType: conversationResult.mappedLawType || null,
+            behaviorMode,
+          },
+        });
+      } catch (dbError) {
+        log.error('[LEXARA] Failed to persist conversation asynchronously', { error: dbError });
+      }
+    })();
 
     return res.json({
       success: true,
@@ -174,8 +172,9 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       audio: audioData,
       jurisdiction: conversationResult.jurisdiction,
       mappedLawType: conversationResult.mappedLawType,
-      conversationId,
-      persistenceSuccess,
+      conversationId: null,
+      persistenceSuccess: null,
+      persistenceStatus: 'queued',
       jobCompleted: true,
       jobStatus: 'completed',
     });
