@@ -20,6 +20,7 @@ import {
   FusedLocation,
   InterpolatedPath,
   MotionTrail,
+  TrailPoint,
   LocationIntelligenceReport,
   GeoconsoleOrchestrationConfig,
   OrchestrationState,
