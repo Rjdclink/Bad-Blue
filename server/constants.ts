@@ -93,16 +93,16 @@ export const OPENROUTER_MODELS = {
   // Best model from each provider via OpenRouter
   GROQ_LLAMA: 'openai/gpt-oss-120b',                     // Legacy key -> current high-capability open model
   GOOGLE_GEMINI: 'google/gemini-3.8-flash',              // Current stable Gemini Flash
-  NVIDIA_NEMOTRON: 'nvidia/llama-3.1-nemotron-70b-instruct:free', // NVIDIA - Best: Nemotron 70B
+  NVIDIA_NEMOTRON: 'openai/gpt-oss-120b',               // Legacy alias -> current open reasoning model
   OPENAI_GPT4O: 'openai/gpt-5.6-luna',                   // Legacy key -> current fast OpenAI model
   MISTRAL_LARGE: 'mistralai/mistral-medium-3.5',          // Current frontier-class Mistral
   DEEPSEEK_R1: 'deepseek/deepseek-v4.1-flash',           // Current DeepSeek Flash
   ANTHROPIC_CLAUDE: 'anthropic/claude-sonnet-5',         // Current Claude Sonnet
   PERPLEXITY_SONAR: 'perplexity/sonar-pro',             // Perplexity - Best: Sonar Pro (web-grounded)
   QWEN_72B: 'qwen/qwen3.8-max-0902',                     // Legacy key -> current Qwen3.8 Max
-  CLOUDFLARE_LLAMA: 'cloudflare/llama-3.1-70b-instruct', // Cloudflare - Best: Llama 3.1 70B
-  SAMBANOVA_LLAMA: 'sambanova/llama-3.1-405b-instruct', // SambaNova - Best: Llama 3.1 405B
-  GOOGLE_GEMMA: 'google/gemma-2-27b-it:free',           // Google Vertex - Best: Gemma 2 27B
+  CLOUDFLARE_LLAMA: 'openrouter/auto',                  // Legacy alias -> current gateway-selected model
+  SAMBANOVA_LLAMA: 'MiniMax-M3',                        // Legacy alias -> current SambaNova participant
+  GOOGLE_GEMMA: 'google/gemini-3.8-flash',              // Legacy alias -> current Gemini participant
 } as const;
 
 // ==================== LAW TYPES ====================

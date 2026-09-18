@@ -1,14 +1,16 @@
 /**
  * ML Routing Worker for Orchestration
  * 
- * Intelligently routes tasks to the most appropriate models/agents based on:
- * - Task type and complexity
- * - Historical performance data
- * - Model capabilities
- * - Current load and availability
+ * Produces advisory capability matches over the canonical Harmony registry.
+ * Runtime execution still uses the complete configured Harmony mesh; this
+ * worker must never become an alternate model authority.
  */
 
 import { createLogger } from '../../logger';
+import {
+  HARMONY_17_PARTICIPANTS,
+  type HarmonyCapability,
+} from '../../aiHarmonyModelRegistry';
 
 const log = createLogger('MLRoutingWorker');
 
@@ -74,72 +76,65 @@ export interface RoutingResult {
 // MODEL CAPABILITY DEFINITIONS
 // ============================================================================
 
-const MODEL_CAPABILITIES: ModelCapability[] = [
-  {
-    modelName: 'gemini-2.5-flash',
+function hasCapability(
+  capabilities: readonly HarmonyCapability[],
+  capability: HarmonyCapability,
+): boolean {
+  return capabilities.includes(capability);
+}
+
+/**
+ * Compatibility scoring view over the canonical 17-participant Harmony registry.
+ *
+ * These values are capability-derived heuristics only. They never select a
+ * provider as an execution authority; runtime model participation is owned by
+ * the Harmony orchestrator.
+ */
+const MODEL_CAPABILITIES: ModelCapability[] = HARMONY_17_PARTICIPANTS.map(participant => {
+  const capabilities = participant.capabilities;
+  const legalReasoning =
+    hasCapability(capabilities, 'legal-analysis') ? 1
+      : hasCapability(capabilities, 'deep-reasoning') ? 0.9
+        : hasCapability(capabilities, 'verification') ? 0.82
+          : 0.65;
+  const factExtraction =
+    hasCapability(capabilities, 'structured-output') ? 1
+      : hasCapability(capabilities, 'verification') ? 0.92
+        : hasCapability(capabilities, 'research') ? 0.86
+          : 0.7;
+  const documentGeneration =
+    hasCapability(capabilities, 'legal-analysis') && hasCapability(capabilities, 'structured-output') ? 1
+      : hasCapability(capabilities, 'legal-analysis') ? 0.94
+        : hasCapability(capabilities, 'structured-output') ? 0.9
+          : 0.72;
+  const dataAnalysis =
+    hasCapability(capabilities, 'deep-reasoning') ? 0.98
+      : hasCapability(capabilities, 'research') ? 0.92
+        : hasCapability(capabilities, 'verification') ? 0.88
+          : 0.72;
+  const speed = hasCapability(capabilities, 'fast-chat') ? 1 : 0.7;
+
+  return {
+    modelName: participant.model,
     capabilities: {
-      legalReasoning: 0.85,
-      factExtraction: 0.95,
-      documentGeneration: 0.90,
-      dataAnalysis: 0.92,
-      multilingual: 0.90,
-      speed: 0.95,
-      costEfficiency: 0.90
-    },
-    specializations: ['fact-extraction', 'data-analysis', 'fast-processing'],
-    averageResponseTime: 700,
-    successRate: 0.88,
-    availability: 'available'
-  },
-  {
-    modelName: 'claude-3-5-sonnet',
-    capabilities: {
-      legalReasoning: 0.95,
-      factExtraction: 0.85,
-      documentGeneration: 0.95,
-      dataAnalysis: 0.85,
-      multilingual: 0.80,
-      speed: 0.70,
-      costEfficiency: 0.50
-    },
-    specializations: ['legal-reasoning', 'document-generation', 'complex-analysis'],
-    averageResponseTime: 2000,
-    successRate: 0.95,
-    availability: 'available'
-  },
-  {
-    modelName: 'groq-llama-3.3-70b',
-    capabilities: {
-      legalReasoning: 0.85,
-      factExtraction: 0.80,
-      documentGeneration: 0.75,
-      dataAnalysis: 0.85,
+      legalReasoning,
+      factExtraction,
+      documentGeneration,
+      dataAnalysis,
+      // The registry does not currently assert language coverage, so keep this
+      // neutral rather than inventing provider-specific multilingual rankings.
       multilingual: 0.75,
-      speed: 0.98,
-      costEfficiency: 0.95
+      speed,
+      // Cost is governed separately. Keep the routing heuristic neutral so
+      // capability, not an invented price ranking, drives this worker.
+      costEfficiency: 0.5,
     },
-    specializations: ['fast-inference', 'legal-research', 'real-time-processing'],
-    averageResponseTime: 500,
-    successRate: 0.87,
-    availability: 'available'
-  },
-  {
-    modelName: 'mistral-small',
-    capabilities: {
-      legalReasoning: 0.70,
-      factExtraction: 0.75,
-      documentGeneration: 0.80,
-      dataAnalysis: 0.70,
-      multilingual: 0.85,
-      speed: 0.90,
-      costEfficiency: 0.95
-    },
-    specializations: ['document-generation', 'summarization', 'cost-effective'],
-    averageResponseTime: 1000,
-    successRate: 0.82,
-    availability: 'available'
-  }
-];
+    specializations: [...capabilities],
+    averageResponseTime: hasCapability(capabilities, 'fast-chat') ? 750 : 1500,
+    successRate: 0.9,
+    availability: participant.configured() ? 'available' : 'offline',
+  };
+});
 
 // ============================================================================
 // ROUTING LOGIC FUNCTIONS

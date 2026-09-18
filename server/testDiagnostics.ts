@@ -2,6 +2,7 @@
 // Tests all external services with actual API calls
 // MIGRATED to @google/genai SDK (Nov 30, 2025) - @google/generative-ai is deprecated
 
+import { CURRENT_AI_MODELS } from './aiHarmonyModelRegistry';
 import { db } from './db';
 import { sql } from 'drizzle-orm';
 import { getSquareClient, getSquareLocationId } from './squareClient';
@@ -177,7 +178,7 @@ export async function runComprehensiveDiagnostics(): Promise<{
       const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 
       const result = await genAI.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: CURRENT_AI_MODELS.gemini,
         contents: [{ role: 'user', parts: [{ text: 'Respond with just "OK" if working' }] }],
         config: { temperature: 0.0 }
       });
@@ -191,7 +192,7 @@ export async function runComprehensiveDiagnostics(): Promise<{
           message: 'Gemini API working correctly',
           responseTime: geminiTime,
           details: {
-            model: 'gemini-2.5-flash',
+            model: CURRENT_AI_MODELS.gemini,
             responseLength: text.length
           }
         });
@@ -246,7 +247,7 @@ export async function runComprehensiveDiagnostics(): Promise<{
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
+          model: CURRENT_AI_MODELS.groqDeep,
           messages: [{ role: 'user', content: 'Respond with just "OK" if working' }],
           temperature: 0,
           max_tokens: 10,
@@ -284,7 +285,7 @@ export async function runComprehensiveDiagnostics(): Promise<{
             message: 'Groq API working correctly',
             responseTime: groqTime,
             details: {
-              model: 'llama-3.3-70b-versatile',
+              model: CURRENT_AI_MODELS.groqDeep,
               responseLength: responseText.length
             }
           });

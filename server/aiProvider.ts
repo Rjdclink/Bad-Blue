@@ -10,7 +10,6 @@ import { getGroqClient } from './groq';
 import { callMistral } from './mistral';
 import { callClaude } from './claude';
 import { callGemini as callGeminiService } from './gemini';
-import { callAI as callUnifiedAI } from './unifiedAICaller';
 import { 
   aiTokenGovernor, 
   AIProvider, 
@@ -291,7 +290,7 @@ export async function generateUserText(
 }
 
 /**
- * Generate text for autonomous functions (parallel across Groq+Mistral+Claude)
+ * Generate text for autonomous functions through the complete configured Harmony mesh.
  */
 export async function generateAutonomousText(
   taskName: string,
@@ -529,43 +528,4 @@ function budgetVerbosity(options: GenerateOptions): 'concise' | 'standard' | 'de
     if (options.temperature >= 0.9) return 'detailed';
   }
   return 'standard';
-}
-
-/**
- * Aggregate multiple provider responses into a single final output.
- * Simple heuristic: prioritize based on context and verbosity.
- * - Autonomous: prefer Groq (reasoning + speed), then Mistral, then Claude.
- * - User detailed: prefer Claude Sonnet > Mistral > Groq > Gemini.
- * - User standard/concise: prefer Mistral > Groq > Gemini > Claude Haiku.
- */
-function aggregateResponses(
-  responses: AIResponse[],
-  task: AITaskMetadata,
-  verbosity: 'concise' | 'standard' | 'detailed'
-): AIResponse {
-  const byProvider = new Map<AIProvider, AIResponse>();
-  for (const r of responses) byProvider.set(r.provider, r);
-
-  const pick = (providers: AIProvider[]): AIResponse | null => {
-    for (const p of providers) {
-      const r = byProvider.get(p);
-      if (r && r.content?.trim()) return r;
-    }
-    return null;
-  };
-
-  if (task.context === UsageContext.AUTONOMOUS) {
-    const choice = pick([AIProvider.GROQ, AIProvider.MISTRAL, AIProvider.CLAUDE]);
-    if (choice) return choice;
-  } else if (verbosity === 'detailed') {
-    const choice = pick([AIProvider.CLAUDE, AIProvider.MISTRAL, AIProvider.GROQ, AIProvider.GEMINI]);
-    if (choice) return choice;
-  } else {
-    const choice = pick([AIProvider.MISTRAL, AIProvider.GROQ, AIProvider.GEMINI, AIProvider.CLAUDE]);
-    if (choice) return choice;
-  }
-
-  // Fallback: longest content as proxy for completeness
-  const longest = responses.reduce((a, b) => (b.content.length > a.content.length ? b : a));
-  return longest;
 }

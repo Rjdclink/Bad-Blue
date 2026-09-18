@@ -11,6 +11,7 @@ import { evidenceStorage } from './evidenceStorage';
 import { searchOfficer } from './officerSearch';
 import { analyzeLegalIssue } from './legalAI';
 import { getGroqClient } from './groq';
+import { CURRENT_AI_MODELS } from './aiHarmonyModelRegistry';
 // Note: The following import was commented out as it was not directly used and might cause build issues.
 // If needed, it should be properly configured or removed.
 // import { GoogleGenerativeAI } from '@google/generative-ai'; 
@@ -394,7 +395,7 @@ class ComprehensiveDiagnostics {
         const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
         const result = await genAI.models.generateContent({
-          model: 'gemini-2.5-flash',
+          model: CURRENT_AI_MODELS.gemini,
           contents: [{ role: 'user', parts: [{ text: 'Respond with OK if working' }] }]
         });
         const text = result.text || '';
@@ -429,7 +430,7 @@ class ComprehensiveDiagnostics {
 
         const completion = await groq.chat.completions.create({
           messages: [{ role: 'user', content: 'Respond with OK if working' }],
-          model: 'llama-3.3-70b-versatile',
+          model: CURRENT_AI_MODELS.groqDeep,
           max_tokens: 10,
           temperature: 0,
         });
@@ -551,7 +552,7 @@ class ComprehensiveDiagnostics {
 
         const startTime = Date.now();
         const result = await genAI.models.generateContent({
-          model: 'gemini-2.5-flash',
+          model: CURRENT_AI_MODELS.gemini,
           contents: [{ role: 'user', parts: [{ text: 'What is 2+2? Answer with just the number.' }] }]
         });
         const text = result.text || '';
@@ -591,7 +592,7 @@ class ComprehensiveDiagnostics {
         const startTime = Date.now();
         const completion = await groq.chat.completions.create({
           messages: [{ role: 'user', content: 'What is 3+3? Answer with just the number.' }],
-          model: 'llama-3.3-70b-versatile',
+          model: CURRENT_AI_MODELS.groqDeep,
           max_tokens: 10,
           temperature: 0,
         });

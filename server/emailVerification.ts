@@ -1,5 +1,9 @@
 // Email Verification Service for Police Department Contact Information
-// Uses web search and web fetch to verify official contact emails
+// Uses crawler-backed evidence discovery plus the full Harmony mesh for
+// evidence-constrained selection. No single model is an authority.
+
+import { unifiedSearch, type EnhancedSearchResult } from './webSearchService';
+import { generateUserText, TaskPriority } from './aiProvider';
 
 interface VerificationResult {
   verified: boolean;
@@ -7,6 +11,82 @@ interface VerificationResult {
   source: string | null;
   confidence: 'high' | 'medium' | 'low';
   notes?: string;
+}
+
+function safeHostname(value: string): string {
+  try {
+    return new URL(value).hostname.toLowerCase().replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+}
+
+function normalizeUrl(value: string): string {
+  try {
+    const parsed = new URL(value);
+    parsed.hash = '';
+    return parsed.toString();
+  } catch {
+    return '';
+  }
+}
+
+function searchEvidence(results: EnhancedSearchResult[]): Array<{
+  title: string;
+  url: string;
+  snippet: string;
+}> {
+  return results
+    .filter(result => !!result.url)
+    .map(result => ({
+      title: result.title || '',
+      url: normalizeUrl(result.url),
+      snippet: [result.snippet, result.aiSummary].filter(Boolean).join(' ').slice(0, 1200),
+    }))
+    .filter(result => !!result.url);
+}
+
+function parseJsonObject(text: string): Record<string, any> | null {
+  const cleaned = String(text || '')
+    .trim()
+    .replace(/^\`\`\`(?:json)?\s*/i, '')
+    .replace(/\s*\`\`\`$/i, '')
+    .trim();
+  try {
+    const parsed = JSON.parse(cleaned);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    try {
+      const parsed = JSON.parse(match[0]);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+}
+
+function extractEmailsFromEvidence(results: EnhancedSearchResult[]): string[] {
+  const emails = new Set<string>();
+  const emailRegex = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
+
+  for (const result of results) {
+    const text = [
+      result.title,
+      result.url,
+      result.snippet,
+      result.aiSummary,
+      result.metadata ? JSON.stringify(result.metadata) : '',
+    ].filter(Boolean).join(' ');
+
+    for (const match of text.match(emailRegex) || []) {
+      const normalized = match.toLowerCase().replace(/[),.;:]+$/g, '');
+      if (isValidEmail(normalized)) emails.add(normalized);
+    }
+  }
+
+  return [...emails];
 }
 
 /**
@@ -107,47 +187,49 @@ async function findOfficialWebsite(
   state: string,
   agencyType: 'police' | 'sheriff' | 'trooper'
 ): Promise<string | null> {
-  const { GoogleGenAI } = await import("@google/genai");
+  const departmentName = formatSearchQuery(city, state, agencyType);
+  const results = await unifiedSearch(
+    `${departmentName} official government website contact`,
+    {
+      limit: 12,
+      category: 'general',
+      freshness: 'all',
+      timeout: 20000,
+    },
+  );
 
-  if (!process.env.GEMINI_API_KEY) {
-    console.log('GEMINI_API_KEY not configured for email verification');
-    return null;
-  }
+  const evidence = searchEvidence(results);
+  if (evidence.length === 0) return null;
 
-  const client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
-  const searchQuery = `${formatSearchQuery(city, state, agencyType)} official website contact email`;
-  console.log(`Searching for: ${searchQuery}`);
+  const exactCandidates = evidence.map(item => item.url);
+  const response = await generateUserText(
+    'department-email-official-site-verification',
+    `Identify the official website for ${departmentName} using ONLY the crawler evidence below.
+Do not invent or alter a URL. Prefer an official .gov or the agency/city/county's clearly official domain.
+If no candidate is sufficiently supported, return null.
 
-  try {
-    const response = await client.models.generateContent({
-      model: process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash",
-      contents: [{ 
-        role: "user", 
-        parts: [{ text: `Find the official website for ${formatSearchQuery(city, state, agencyType)}. 
+CANDIDATES:
+${JSON.stringify(evidence)}
 
-      Look for:
-      - Official .gov website URL
-      - Official city/county government website
-      - Verified police department website
+Return JSON only:
+{"websiteUrl":"exact candidate URL or null","confidence":"high|medium|low","reason":"brief evidence-based reason"}`,
+    {
+      systemPrompt:
+        'You are verifying public-agency contact evidence. Use only supplied evidence and never invent URLs.',
+      temperature: 0,
+      useJSON: true,
+      maxTokens: 1200,
+    },
+    TaskPriority.HIGH_USER,
+  );
 
-      Return JSON:
-      {
-        "websiteUrl": "full URL or null",
-        "confidence": "high|medium|low"
-      }` }]
-      }],
-      config: { 
-        temperature: 0.1,
-        responseMimeType: "application/json" 
-      }
-    });
+  const parsed = parseJsonObject(response.content);
+  const chosen = typeof parsed?.websiteUrl === 'string' ? normalizeUrl(parsed.websiteUrl) : '';
+  if (chosen && exactCandidates.includes(chosen)) return chosen;
 
-    const result = JSON.parse(response.text || '{}');
-    return result.websiteUrl;
-  } catch (error) {
-    console.error('Error finding official website:', error);
-    return null;
-  }
+  // Fail-local deterministic recovery: prefer a crawler-returned .gov candidate.
+  const govCandidate = exactCandidates.find(url => safeHostname(url).endsWith('.gov'));
+  return govCandidate || exactCandidates[0] || null;
 }
 
 /**
@@ -158,48 +240,55 @@ async function extractContactEmail(
   url: string,
   departmentName: string
 ): Promise<string | null> {
-  const { GoogleGenAI } = await import("@google/genai");
+  const hostname = safeHostname(url);
+  if (!hostname) return null;
 
-  if (!process.env.GEMINI_API_KEY) {
-    console.log('GEMINI_API_KEY not configured for email extraction');
-    return null;
-  }
+  const results = await unifiedSearch(
+    `site:${hostname} "${departmentName}" internal affairs administration contact email`,
+    {
+      limit: 15,
+      category: 'general',
+      freshness: 'all',
+      timeout: 20000,
+    },
+  );
 
-  const client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
-  console.log(`Extracting contact email from: ${url}`);
+  const candidates = extractEmailsFromEvidence(results);
+  if (candidates.length === 0) return null;
 
-  try {
-    const response = await client.models.generateContent({
-      model: process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash",
-      contents: [{ 
-        role: "user", 
-        parts: [{ text: `Extract the official contact email for ${departmentName} from their website at ${url}.
+  const evidence = searchEvidence(results);
+  const response = await generateUserText(
+    'department-email-contact-verification',
+    `Select the best official contact email for ${departmentName} from the EXACT candidate list below.
+Priority when supported by evidence: Internal Affairs, records/public information, administration, then general contact.
+Do not invent an address and do not return an email that is not in CANDIDATE_EMAILS.
 
-      Look for:
-      - Internal Affairs email (highest priority)
-      - Chief/Administration email
-      - General contact email
-      - Prefer .gov email addresses
+OFFICIAL WEBSITE: ${url}
+CANDIDATE_EMAILS: ${JSON.stringify(candidates)}
+SEARCH EVIDENCE: ${JSON.stringify(evidence)}
 
-      Return JSON:
-      {
-        "email": "email@domain.gov or null",
-        "emailType": "internal_affairs|admin|general|null",
-        "confidence": "high|medium|low"
-      }` }]
-      }],
-      config: { 
-        temperature: 0.1,
-        responseMimeType: "application/json" 
-      }
-    });
+Return JSON only:
+{"email":"exact candidate email or null","emailType":"internal_affairs|records|admin|general|null","confidence":"high|medium|low"}`,
+    {
+      systemPrompt:
+        'You verify public-agency contact information from supplied evidence only. Never fabricate an email address.',
+      temperature: 0,
+      useJSON: true,
+      maxTokens: 1200,
+    },
+    TaskPriority.HIGH_USER,
+  );
 
-    const result = JSON.parse(response.text || '{}');
-    return result.email && isValidEmail(result.email) ? result.email : null;
-  } catch (error) {
-    console.error('Error extracting email:', error);
-    return null;
-  }
+  const parsed = parseJsonObject(response.content);
+  const chosen = typeof parsed?.email === 'string' ? parsed.email.toLowerCase().trim() : '';
+  if (chosen && candidates.includes(chosen) && isValidEmail(chosen)) return chosen;
+
+  // Fail-local deterministic recovery: prefer same-domain/.gov evidence, never
+  // generate an unobserved address.
+  return candidates.find(email => {
+    const domain = email.split('@')[1]?.toLowerCase() || '';
+    return domain === hostname || hostname.endsWith(`.${domain}`) || domain.endsWith('.gov');
+  }) || candidates[0] || null;
 }
 
 /**

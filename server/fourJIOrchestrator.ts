@@ -19,6 +19,11 @@ import { pathToFileURL } from 'url';
 
 // Import AI providers for multi-model orchestration
 import { callAIWithFallback, type AIFallbackResult } from './aiSubAgent';
+import {
+  HARMONY_17_PARTICIPANTS,
+  getConfiguredHarmonyParticipants,
+  type HarmonyCapability,
+} from './aiHarmonyModelRegistry';
 
 // Import Bit Neural Pathway System
 import { initializeBitNeuralPathways, shutdownBitNeuralPathways, getBitNeuralPathwayManager } from './bitNeuralPathways';
@@ -103,7 +108,6 @@ export interface CrawlerUpdate {
 export interface AIModelConfig {
   modelId: string;
   role: 'research' | 'reasoning' | 'inference' | 'empathy' | 'drafting' | 'coding' | 'legal_analysis';
-  priority: number;
   available: boolean;
 }
 
@@ -111,16 +115,25 @@ export interface AIModelConfig {
  * AI Models available for orchestration
  * Compatibility registry aligned to the current Harmony model generation
  */
-const AI_MODELS: AIModelConfig[] = [
-  { modelId: 'gemini-3.8-flash', role: 'research', priority: 1, available: true },
-  { modelId: 'gemini-3.8-flash', role: 'legal_analysis', priority: 1, available: true },
-  { modelId: 'claude-opus-5', role: 'reasoning', priority: 1, available: true },
-  { modelId: 'claude-sonnet-5', role: 'drafting', priority: 1, available: true },
-  { modelId: 'openai/gpt-oss-120b', role: 'inference', priority: 2, available: true },
-  { modelId: 'mistral-small-2603', role: 'coding', priority: 2, available: true },
-  { modelId: 'x-ai/grok-4.6', role: 'empathy', priority: 3, available: true },
-  { modelId: 'qwen/qwen3.8-max-0902', role: 'legal_analysis', priority: 3, available: true },
-];
+const ROLE_CAPABILITIES: Record<AIModelConfig['role'], readonly HarmonyCapability[]> = {
+  research: ['research', 'verification'],
+  reasoning: ['deep-reasoning', 'verification'],
+  inference: ['deep-reasoning', 'structured-output'],
+  empathy: ['fast-chat', 'long-context'],
+  drafting: ['legal-analysis', 'structured-output'],
+  coding: ['coding', 'deep-reasoning'],
+  legal_analysis: ['legal-analysis', 'verification', 'deep-reasoning'],
+};
+
+const AI_MODELS: AIModelConfig[] = HARMONY_17_PARTICIPANTS.flatMap(participant =>
+  (Object.keys(ROLE_CAPABILITIES) as AIModelConfig['role'][])
+    .filter(role => ROLE_CAPABILITIES[role].some(capability => participant.capabilities.includes(capability)))
+    .map(role => ({
+      modelId: participant.model,
+      role,
+      available: participant.configured(),
+    })),
+);
 
 type DomainKnowledgeBase = {
   domain: string;
@@ -758,16 +771,23 @@ export async function optimizeVisuals(): Promise<{
 }
 
 /**
- * Get best AI model for a specific task
+ * Get an advisory capability match for a specific task. Runtime execution is
+ * still performed by the complete configured Harmony mesh.
  */
 export function getBestModelForTask(
   role: AIModelConfig['role']
 ): AIModelConfig | null {
-  const availableModels = AI_MODELS
-    .filter(m => m.role === role && m.available)
-    .sort((a, b) => a.priority - b.priority);
-  
-  return availableModels[0] || null;
+  const configured = getConfiguredHarmonyParticipants();
+  const pool = configured.length > 0 ? configured : [...HARMONY_17_PARTICIPANTS];
+  const required = ROLE_CAPABILITIES[role];
+  const scored = pool
+    .map(participant => ({
+      participant,
+      score: required.filter(capability => participant.capabilities.includes(capability)).length,
+    }))
+    .sort((a, b) => b.score - a.score);
+  const selected = scored[0]?.participant;
+  return selected ? { modelId: selected.model, role, available: selected.configured() } : null;
 }
 
 /**
