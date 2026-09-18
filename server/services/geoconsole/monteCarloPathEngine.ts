@@ -389,10 +389,11 @@ export class MonteCarloPathEngine {
           ? 0
           : Math.max(0, Math.min(latCells - 1,
               Math.floor((point.latitude - bounds.south) / latRange * latCells)));
+        const pointLongitude = this.unwrapLongitude(point.longitude, start.longitude);
         const lngIdx = lngCells === 1
           ? 0
           : Math.max(0, Math.min(lngCells - 1,
-              Math.floor((point.longitude - bounds.west) / lngRange * lngCells)));
+              Math.floor((pointLongitude - bounds.west) / lngRange * lngCells)));
 
         grid[latIdx][lngIdx]++;
         totalVisits++;
@@ -401,9 +402,10 @@ export class MonteCarloPathEngine {
           peakLat = latCells === 1
             ? (bounds.north + bounds.south) / 2
             : bounds.south + (latIdx + 0.5) * latRange / latCells;
-          peakLng = lngCells === 1
+          const peakLongitudeUnwrapped = lngCells === 1
             ? (bounds.east + bounds.west) / 2
             : bounds.west + (lngIdx + 0.5) * lngRange / lngCells;
+          peakLng = this.normalizeLongitude(peakLongitudeUnwrapped);
         }
       }
     }
@@ -465,7 +467,9 @@ export class MonteCarloPathEngine {
     
     for (const point of path) {
       const latIdx = Math.floor((point.latitude - bounds.south) / latRange * (latCells - 1));
-      const lngIdx = Math.floor((point.longitude - bounds.west) / lngRange * (lngCells - 1));
+      const referenceLongitude = (bounds.west + bounds.east) / 2;
+      const pointLongitude = this.unwrapLongitude(point.longitude, referenceLongitude);
+      const lngIdx = Math.floor((pointLongitude - bounds.west) / lngRange * (lngCells - 1));
       
       if (latIdx >= 0 && latIdx < latCells && lngIdx >= 0 && lngIdx < lngCells) {
         score += grid[latIdx][lngIdx];
@@ -896,7 +900,7 @@ export class MonteCarloPathEngine {
 
     return {
       lat: (φ2 * 180) / Math.PI,
-      lng: (λ2 * 180) / Math.PI,
+      lng: this.normalizeLongitude((λ2 * 180) / Math.PI),
     };
   }
 
@@ -987,21 +991,25 @@ export class MonteCarloPathEngine {
   }
 
   private calculateBounds(simulations: GPSPoint[][], start: GPSPoint, end: GPSPoint): BoundingBox {
+    const referenceLongitude = start.longitude;
+    const startLongitude = this.unwrapLongitude(start.longitude, referenceLongitude);
+    const endLongitude = this.unwrapLongitude(end.longitude, referenceLongitude);
+
     let north = Math.max(start.latitude, end.latitude);
     let south = Math.min(start.latitude, end.latitude);
-    let east = Math.max(start.longitude, end.longitude);
-    let west = Math.min(start.longitude, end.longitude);
+    let east = Math.max(startLongitude, endLongitude);
+    let west = Math.min(startLongitude, endLongitude);
 
     for (const path of simulations) {
       for (const point of path) {
+        const longitude = this.unwrapLongitude(point.longitude, referenceLongitude);
         north = Math.max(north, point.latitude);
         south = Math.min(south, point.latitude);
-        east = Math.max(east, point.longitude);
-        west = Math.min(west, point.longitude);
+        east = Math.max(east, longitude);
+        west = Math.min(west, longitude);
       }
     }
 
-    // Add 10% padding
     const latPad = Math.max((north - south) * 0.1, 1e-6);
     const lngPad = Math.max((east - west) * 0.1, 1e-6);
 
@@ -1014,16 +1022,22 @@ export class MonteCarloPathEngine {
   }
 
   private calculateBoundsFromPoints(points: GPSPoint[]): BoundingBox {
-    // Initialize with extreme values that will be replaced
-    // north starts at minimum (-90), south at maximum (90)
-    // east starts at minimum (-180), west at maximum (180)
-    let north = -90, south = 90, east = -180, west = 180;
-    
-    for (const point of points) {
+    if (points.length === 0) {
+      return { north: 0, south: 0, east: 0, west: 0 };
+    }
+
+    const referenceLongitude = points[0].longitude;
+    let north = points[0].latitude;
+    let south = points[0].latitude;
+    let east = this.unwrapLongitude(points[0].longitude, referenceLongitude);
+    let west = east;
+
+    for (const point of points.slice(1)) {
+      const longitude = this.unwrapLongitude(point.longitude, referenceLongitude);
       north = Math.max(north, point.latitude);
       south = Math.min(south, point.latitude);
-      east = Math.max(east, point.longitude);
-      west = Math.min(west, point.longitude);
+      east = Math.max(east, longitude);
+      west = Math.min(west, longitude);
     }
 
     return { north, south, east, west };
