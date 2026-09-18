@@ -36,7 +36,8 @@ assert.match(runtime, /ensureCryptocrawlOverflowRuntimeSchema/);
 assert.match(runtime, /getCryptocrawlOverflowRuntimeSchemaSnapshot/);
 assert.match(runtime, /startOverflowSchemaRepair/);
 assert.doesNotMatch(build, /gateReplacement|importReplacement|source\.replace\(importNeedle/);
-assert.match(index, /Required CryptoCrawler automatic runtime resume failed/);
+assert.match(index, /CryptoCrawler runtime remains STOPPED pending explicit master start/);
+assert.doesNotMatch(index, /Required CryptoCrawler automatic runtime resume failed/);
 
 // Near-miss funding rescue may reprice gross-positive routes, but ZERO_CAPITAL_ATOMIC
 // now has one exact finish line after the locked Stage-1 classifier: strictly-positive
