@@ -21,6 +21,13 @@ const cryptoHarmony = read('server/services/cryptocrawl/ai/cryptocrawler-ai-harm
 const forge = read('server/services/4ji-orchestrator/forge-ai.ts');
 const governor = read('server/aiTokenGovernor.ts');
 const tokenMetrics = read('server/repositories/tokenMetricsRepository.ts');
+const efficientAI = read('server/efficientAI.ts');
+const factCheck = read('server/services/factCheckEngine.ts');
+const officerCollector = read('server/officerDataCollector.ts');
+const groq = read('server/groq.ts');
+const fullSystemTest = read('server/fullSystemTest.ts');
+const quickDiagnostic = read('server/quickDiagnostic.ts');
+const runDiagnostics = read('server/runDiagnostics.ts');
 
 const registrySection = registry.split('HARMONY_17_PARTICIPANTS')[1]?.split('if (HARMONY_17_PARTICIPANTS.length !== 17)')[0] || '';
 const participantCount = (registrySection.match(/provider:\s*PROVIDER\./g) || []).length;
@@ -98,6 +105,31 @@ must(
   '4JI Forge execution uses shared capability Harmony rather than static provider ranking',
 );
 
+must(
+  efficientAI.includes('generateAutonomousText') &&
+  efficientAI.includes('generateUserText') &&
+  !efficientAI.includes('generateGroqStructuredResponse') &&
+  factCheck.includes('AICollaborationOrchestrator.orchestrateCollaboration') &&
+  factCheck.includes('getConfiguredHarmonyProviders') &&
+  !factCheck.includes("from '../gemini'") &&
+  !factCheck.includes("from '../claude'") &&
+  !factCheck.includes('generateGroqLegalConsultation') &&
+  officerCollector.includes('runGroundedOfficerSearch') &&
+  officerCollector.includes('generateOfficerSearchContent') &&
+  !officerCollector.includes('generateGroqStructuredResponse') &&
+  !officerCollector.includes('Groq-only'),
+  'legacy worker, legal fact-check, and officer-analysis services cannot bypass Harmony or reintroduce Groq-only execution',
+);
+
+must(
+  !groq.includes("'llama-3.1-8b-instant'") &&
+  !groq.includes("'llama-3.3-70b-versatile'") &&
+  !fullSystemTest.includes("'llama-3.1-8b-instant'") &&
+  !quickDiagnostic.includes("'llama-3.1-8b-instant'") &&
+  !runDiagnostics.includes("'llama-3.1-8b-instant'"),
+  'shutdown Groq developer-tier Llama model IDs are absent from runtime and diagnostic fallbacks',
+);
+
 const activeRuntimeFiles = [
   'server/aiProvider.ts',
   'server/aiSubAgent.ts',
@@ -123,6 +155,11 @@ const activeRuntimeFiles = [
   'server/services/cryptocrawl/ai/cryptocrawler-ai-harmony.ts',
   'server/aiTokenGovernor.ts',
   'server/repositories/tokenMetricsRepository.ts',
+  'server/efficientAI.ts',
+  'server/services/factCheckEngine.ts',
+  'server/fullSystemTest.ts',
+  'server/quickDiagnostic.ts',
+  'server/runDiagnostics.ts',
 ];
 
 const retiredOrSuperseded = [
@@ -136,6 +173,8 @@ const retiredOrSuperseded = [
   /kimi-k2/i,
   /gpt-4o-mini/i,
   /mistral-7b/i,
+  /llama-3\.1-8b-instant/i,
+  /llama-3\.3-70b-versatile/i,
 ];
 
 for (const path of activeRuntimeFiles) {
