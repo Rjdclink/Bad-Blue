@@ -47,6 +47,28 @@ function boundedVoiceSetting(name: string, fallback: number): number {
 
 export function setupVoiceRoutes(app: Express): void {
   /**
+   * POST /api/lexara/voice/playback-event
+   * Browser playback telemetry for diagnosing mobile buffer starvation and
+   * distinguishing intentional barge-in from media stalls.
+   */
+  app.post('/api/lexara/voice/playback-event', (req: Request, res: Response) => {
+    const event = typeof req.body?.event === 'string' ? req.body.event.trim().slice(0, 32) : '';
+    const allowed = new Set(['play', 'playing', 'waiting', 'stalled', 'ended', 'error', 'interrupted']);
+    if (!allowed.has(event)) return res.status(204).end();
+
+    log.info('[LEXARA Audio] playback event', {
+      event,
+      currentTime: Number.isFinite(Number(req.body?.currentTime)) ? Number(req.body.currentTime) : null,
+      readyState: Number.isFinite(Number(req.body?.readyState)) ? Number(req.body.readyState) : null,
+      networkState: Number.isFinite(Number(req.body?.networkState)) ? Number(req.body.networkState) : null,
+      paused: typeof req.body?.paused === 'boolean' ? req.body.paused : null,
+      source: req.body?.source === 'buffered' ? 'buffered' : 'streaming',
+      client: typeof req.body?.userAgent === 'string' ? req.body.userAgent.slice(0, 220) : null,
+    });
+    return res.status(204).end();
+  });
+
+  /**
    * POST /api/lexara/tts/session
    * Create a one-use playback URL. The subsequent GET is a normal media URL,
    * allowing HTMLAudioElement to begin playback while ElevenLabs is still
@@ -95,7 +117,7 @@ export function setupVoiceRoutes(app: Express): void {
       const apiKey = process.env.ELEVENLABS_API_KEY?.trim();
       const voiceId = process.env.ELEVENLABS_VOICE_ID?.trim();
       const modelId = process.env.ELEVENLABS_TTS_MODEL?.trim() || 'eleven_flash_v2_5';
-      const outputFormat = process.env.ELEVENLABS_TTS_OUTPUT_FORMAT?.trim() || 'mp3_22050_32';
+      const outputFormat = process.env.ELEVENLABS_TTS_OUTPUT_FORMAT?.trim() || 'mp3_44100_128';
       if (!apiKey || !voiceId) return res.status(503).json({ error: 'LEXARA voice is not configured' });
 
       const controller = new AbortController();
