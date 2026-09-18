@@ -42,6 +42,7 @@ interface Props {
   layers: IntelligenceLayerState;
   isLive: boolean;
   lockOnTarget: boolean;
+  onUserInteraction?: () => void;
 }
 
 interface KartaViewPhoto {
@@ -436,6 +437,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
   layers,
   isLive,
   lockOnTarget,
+  onUserInteraction,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -483,9 +485,10 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     map.addControl(new maplibregl.ScaleControl({ unit: 'imperial', maxWidth: 140 }), 'bottom-left');
 
     const suspendFollow = () => {
-      // Let the operator freely pan/zoom/rotate without the next data tick
-      // snapping the camera back underneath their finger/mouse.
-      userInteractionUntilRef.current = Date.now() + 5000;
+      // Manual map gestures release follow mode. Re-centering only resumes if
+      // the operator explicitly turns FIX back on.
+      userInteractionUntilRef.current = Number.POSITIVE_INFINITY;
+      onUserInteraction?.();
     };
     map.on('dragstart', suspendFollow);
     map.on('zoomstart', suspendFollow);
@@ -620,6 +623,10 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
       duration: 450,
     });
   }, [ready, layers, mapMode]);
+
+  useEffect(() => {
+    if (lockOnTarget) userInteractionUntilRef.current = 0;
+  }, [lockOnTarget]);
 
   useEffect(() => {
     const map = mapRef.current;
