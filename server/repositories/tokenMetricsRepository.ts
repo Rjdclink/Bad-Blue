@@ -221,7 +221,7 @@ export async function getTodayUsageBySource(
  * This replaces 11 parallel queries with a single efficient query.
  */
 export async function getAllQuotaMetrics(): Promise<{
-  gemini: { tokens: number; requests: number; userTokens: number; userRequests: number };
+  gemini: { tokens: number; requests: number; userTokens: number; userRequests: number; workerTokens: number; workerRequests: number };
   groq: { tokens: number; requests: number; userTokens: number; userRequests: number; workerTokens: number; workerRequests: number };
   mistral: { tokens: number; requests: number; userTokens: number; userRequests: number; workerTokens: number; workerRequests: number };
   claude: { tokens: number; requests: number; userTokens: number; userRequests: number; workerTokens: number; workerRequests: number };
@@ -242,7 +242,7 @@ export async function getAllQuotaMetrics(): Promise<{
       .groupBy(aiUsageMetrics.provider, aiUsageMetrics.source);
 
     const metrics = {
-      gemini: { tokens: 0, requests: 0, userTokens: 0, userRequests: 0 },
+      gemini: { tokens: 0, requests: 0, userTokens: 0, userRequests: 0, workerTokens: 0, workerRequests: 0 },
       groq: { tokens: 0, requests: 0, userTokens: 0, userRequests: 0, workerTokens: 0, workerRequests: 0 },
       mistral: { tokens: 0, requests: 0, userTokens: 0, userRequests: 0, workerTokens: 0, workerRequests: 0 },
       claude: { tokens: 0, requests: 0, userTokens: 0, userRequests: 0, workerTokens: 0, workerRequests: 0 },
@@ -259,10 +259,8 @@ export async function getAllQuotaMetrics(): Promise<{
         metrics[provider].userTokens = row.tokens || 0;
         metrics[provider].userRequests = row.requests || 0;
       } else if (row.source === 'worker') {
-        if (provider !== 'gemini') {
-          (metrics[provider] as any).workerTokens = row.tokens || 0;
-          (metrics[provider] as any).workerRequests = row.requests || 0;
-        }
+        (metrics[provider] as any).workerTokens = row.tokens || 0;
+        (metrics[provider] as any).workerRequests = row.requests || 0;
       }
     }
 
@@ -270,7 +268,7 @@ export async function getAllQuotaMetrics(): Promise<{
   } catch (error) {
     console.error('[Token Metrics] Error getting all quota metrics:', error);
     return {
-      gemini: { tokens: 0, requests: 0, userTokens: 0, userRequests: 0 },
+      gemini: { tokens: 0, requests: 0, userTokens: 0, userRequests: 0, workerTokens: 0, workerRequests: 0 },
       groq: { tokens: 0, requests: 0, userTokens: 0, userRequests: 0, workerTokens: 0, workerRequests: 0 },
       mistral: { tokens: 0, requests: 0, userTokens: 0, userRequests: 0, workerTokens: 0, workerRequests: 0 },
       claude: { tokens: 0, requests: 0, userTokens: 0, userRequests: 0, workerTokens: 0, workerRequests: 0 },
