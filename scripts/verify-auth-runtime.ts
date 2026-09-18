@@ -40,6 +40,7 @@ assert.match(statelessLocalAuthSource, /resolveLocalAuthBackend/, 'local auth ba
 assert.match(statelessLocalAuthSource, /project-local Supabase Edge authentication authority/, 'invalid direct Supabase credentials must fail over to the project-local Edge authority');
 assert.match(statelessLocalAuthSource, /Supabase HTTP and Edge authentication unavailable; using bounded canonical PostgreSQL auth store/, 'Edge failure must retain bounded canonical PostgreSQL as the final fallback');
 assert.match(statelessLocalAuthSource, /AUTH_EDGE_FUNCTION\s*=\s*"legalwhat-local-auth"/, 'Edge auth function name must remain explicit and build-locked');
+assert.match(statelessLocalAuthSource, /AUTH_EDGE_TIMEOUT_MS\s*=\s*15_000/, 'Edge auth cold-start timeout must remain bounded but deployment-tolerant');
 assert.match(statelessLocalAuthSource, /x-legalwhat-auth-secret[\s\S]{0,120}edgeSecret/, 'Edge invocation must use the private shared secret');
 assert.doesNotMatch(statelessLocalAuthSource, /authorization:\s*\x60Bearer \$\{anonKey\}\x60/, 'legacy JWT invocation must not remain the Edge authority');
 assert.match(statelessLocalAuthSource, /v:\s*2[\s\S]{0,400}hasPaidForAccess/, 'signed local session must carry safe user identity fields');
