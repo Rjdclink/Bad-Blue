@@ -61,7 +61,8 @@ const DEFAULT_ORCHESTRATION_CONFIG: GeoconsoleOrchestrationConfig = {
 
 // Processing configuration
 const DEFAULT_PROCESSING_CONFIG = {
-  maxGapMinutes: 30, // Interpolate gaps longer than this
+  minInterpolationGapSeconds: 60,
+  maxInterpolationGapMinutes: 30,
   clusterRadius: 50, // meters for frequent location clustering
   anomalySpeedThreshold: 50, // m/s for speed anomaly detection
   largeGapHours: 12, // hours for gap anomaly detection
@@ -120,6 +121,42 @@ export class HybridGeoconsole extends EventEmitter {
     });
   }
 
+  private selectPrimaryFusedTimeline(locations: FusedLocation[]): FusedLocation[] {
+    if (locations.length <= 1) return [...locations];
+
+    const sorted = [...locations].sort(
+      (a, b) => a.point.timestamp.getTime() - b.point.timestamp.getTime()
+    );
+    const groups: FusedLocation[][] = [];
+    let group: FusedLocation[] = [];
+    let groupStart = 0;
+    const eventWindowMs = 60_000;
+
+    for (const location of sorted) {
+      const timestamp = location.point.timestamp.getTime();
+      if (group.length === 0 || timestamp - groupStart <= eventWindowMs) {
+        if (group.length === 0) groupStart = timestamp;
+        group.push(location);
+      } else {
+        groups.push(group);
+        group = [location];
+        groupStart = timestamp;
+      }
+    }
+    if (group.length) groups.push(group);
+
+    // Alternate hypotheses remain available in fusedLocations. Only the most
+    // strongly supported candidate per event window can drive physical motion.
+    return groups.map(candidates =>
+      [...candidates].sort((a, b) =>
+        b.qualityScore - a.qualityScore ||
+        b.point.confidence - a.point.confidence ||
+        (a.point.accuracy ?? Number.MAX_SAFE_INTEGER) -
+          (b.point.accuracy ?? Number.MAX_SAFE_INTEGER)
+      )[0]
+    );
+  }
+
   /**
    * Process raw location inputs through the full pipeline
    */
@@ -128,6 +165,7 @@ export class HybridGeoconsole extends EventEmitter {
     sessionId?: string
   ): Promise<{
     fusedLocations: FusedLocation[];
+    primaryFusedLocations: FusedLocation[];
     trail: MotionTrail;
     futurecast: GPSPoint[];
   }> {
@@ -145,22 +183,31 @@ export class HybridGeoconsole extends EventEmitter {
         throw new Error('No valid locations after fusion');
       }
 
-      // Step 2: Generate motion trail with interpolation
-      this.emitProgress(taskId, 'interpolation', 40, 'Running Monte Carlo path interpolation...');
-      const sortedPoints = fusedLocations
+      // Step 2: Keep alternate hypotheses, but resolve one physical timeline.
+      const primaryFusedLocations = this.selectPrimaryFusedTimeline(fusedLocations);
+
+      this.emitProgress(taskId, 'interpolation', 40, 'Reconstructing supported movement gaps...');
+      const sortedPoints = primaryFusedLocations
         .map(f => f.point)
         .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-      
-      // Interpolate gaps in the data
+
       const interpolatedPoints = await this.interpolateGaps(sortedPoints);
       
       // Step 3: Generate motion trail
       this.emitProgress(taskId, 'trail', 60, 'Generating motion trail...');
       const trail = await this.monteCarloEngine.generateMotionTrail(interpolatedPoints);
       
-      // Step 4: Generate futurecast
+      // Step 4: Futurecast only from the latest continuous evidence segment.
       this.emitProgress(taskId, 'futurecast', 80, 'Computing futurecast prediction...');
-      const recentPoints = interpolatedPoints.slice(-20);
+      let continuousStart = 0;
+      for (let i = interpolatedPoints.length - 1; i >= 0; i--) {
+        const gapBefore = Number(interpolatedPoints[i].metadata?.gapBeforeSeconds || 0);
+        if (gapBefore > 0) {
+          continuousStart = i;
+          break;
+        }
+      }
+      const recentPoints = interpolatedPoints.slice(continuousStart).slice(-20);
       const futurecast = await this.monteCarloEngine.generateFuturecast(
         recentPoints,
         this.timelineConfig.futurecastHours
@@ -181,7 +228,7 @@ export class HybridGeoconsole extends EventEmitter {
         processingTime: Date.now() - startTime,
       });
 
-      return { fusedLocations, trail, futurecast };
+      return { fusedLocations, primaryFusedLocations, trail, futurecast };
     } catch (error) {
       log.error('Location processing failed', { taskId, error });
       this.emitProgress(taskId, 'error', 0, `Processing failed: ${error}`);
@@ -200,16 +247,31 @@ export class HybridGeoconsole extends EventEmitter {
     for (let i = 1; i < points.length; i++) {
       const prev = points[i - 1];
       const curr = points[i];
-      const gapMinutes = (curr.timestamp.getTime() - prev.timestamp.getTime()) / 60000;
+      const gapSeconds = (curr.timestamp.getTime() - prev.timestamp.getTime()) / 1000;
+      const gapMinutes = gapSeconds / 60;
 
-      if (gapMinutes > DEFAULT_PROCESSING_CONFIG.maxGapMinutes) {
-        // Run Monte Carlo interpolation for this gap
+      if (
+        gapSeconds >= DEFAULT_PROCESSING_CONFIG.minInterpolationGapSeconds &&
+        gapMinutes <= DEFAULT_PROCESSING_CONFIG.maxInterpolationGapMinutes
+      ) {
         const path = await this.monteCarloEngine.interpolatePath(prev, curr);
-        
-        // Add interpolated points (excluding start and end)
         for (let j = 1; j < path.interpolatedPoints.length - 1; j++) {
           result.push(path.interpolatedPoints[j]);
         }
+        result.push(curr);
+        continue;
+      }
+
+      if (gapMinutes > DEFAULT_PROCESSING_CONFIG.maxInterpolationGapMinutes) {
+        result.push({
+          ...curr,
+          metadata: {
+            ...(curr.metadata || {}),
+            gapBeforeSeconds: gapSeconds,
+            continuity: 'discontinuous',
+          },
+        });
+        continue;
       }
 
       result.push(curr);
