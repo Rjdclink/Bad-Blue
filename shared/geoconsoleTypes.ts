@@ -11,30 +11,61 @@ export interface GPSPoint {
   longitude: number;
   altitude?: number;
   accuracy?: number;
+  verticalAccuracy?: number;
   timestamp: Date | string;
+  receivedAt?: Date | string;
   source: DataSource;
   confidence: number;
+  observationKind?: 'observed' | 'inferred' | 'interpolated' | 'predicted' | 'historical';
+  correlationGroup?: string;
+  provenance?: {
+    provider?: string;
+    recordId?: string;
+    capturedAt?: Date | string;
+    transformedBy?: string[];
+  };
   metadata?: Record<string, unknown>;
 }
 
 export type DataSource = 
   | 'device_gps'
+  | 'gnss_fix'
+  | 'gnss_raw'
   | 'exif_photo'
   | 'exif_video'
   | 'xmp_sidecar'
   | 'json_sidecar'
   | 'wifi_handoff'
+  | 'wifi_rssi'
+  | 'wifi_rtt'
+  | 'wifi_fingerprint'
+  | 'cellular'
+  | 'cell_serving'
+  | 'cell_neighbor'
+  | 'uwb_range'
+  | 'uwb_direction'
   | 'bluetooth_proximity'
+  | 'ble_rssi'
+  | 'ble_aoa'
   | 'accelerometer'
+  | 'imu_gyro'
+  | 'magnetometer'
+  | 'barometer'
+  | 'browser_geolocation'
   | 'browser_timestamp'
+  | 'network_region'
   | 'social_media'
+  | 'social_geotag'
+  | 'visual_detection'
+  | 'vehicle_telemetry'
   | 'public_camera'
   | 'traffic_cam'
   | 'satellite_imagery'
+  | 'historical_location'
   | 'public_record'
   | 'manual_input'
-  | 'interpolated';
-
+  | 'interpolated'
+  | 'predicted';
 // ================= MOTION TRAIL TYPES =================
 
 export interface TrailPoint {
