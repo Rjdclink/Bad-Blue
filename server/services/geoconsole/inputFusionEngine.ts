@@ -139,7 +139,11 @@ export class InputFusionEngine {
     return this.defaultAccuracyMeters(point.source);
   }
 
-  private measurementWeight(point: GPSPoint, correlationCount = 1): number {
+  private correlationKey(point: GPSPoint): string {
+    return this.correlationKey(point);
+  }
+
+  private measurementWeight(point: GPSPoint, correlationCount = 1, referenceTimeMs = point.timestamp.getTime()): number {
     const config = this.sourceConfigs.get(point.source);
     const prior = config?.confidenceWeight ?? 0.25;
     const confidence = Math.max(0.001, Math.min(1, point.confidence));
@@ -149,7 +153,9 @@ export class InputFusionEngine {
     // allowing tiny claimed accuracies to explode the estimate.
     const precision = 1 / Math.pow(Math.max(1.5, accuracy), 2);
 
-    const ageSeconds = Math.max(0, (Date.now() - point.timestamp.getTime()) / 1000);
+    // Freshness is relative to the event-time group being reconstructed, not
+    // wall-clock time. Old evidence remains usable for historical reconstruction.
+    const ageSeconds = Math.max(0, (referenceTimeMs - point.timestamp.getTime()) / 1000);
     const halfLifeSeconds =
       point.observationKind === 'historical' ? 30 * 24 * 3600 :
       point.observationKind === 'predicted' ? 15 * 60 :
@@ -365,9 +371,11 @@ export class InputFusionEngine {
   private weightedAverageFusion(points: GPSPoint[]): GPSPoint {
     const correlationCounts = new Map<string, number>();
     for (const point of points) {
-      const key = point.correlationGroup || `${point.source}:${point.provenance?.provider || 'unknown'}`;
+      const key = this.correlationKey(point);
       correlationCounts.set(key, (correlationCounts.get(key) || 0) + 1);
     }
+
+    const referenceTimeMs = Math.max(...points.map(point => point.timestamp.getTime()));
 
     let totalWeight = 0;
     let weightedLat = 0;
@@ -380,8 +388,8 @@ export class InputFusionEngine {
     let bestWeight = -Infinity;
 
     for (const point of points) {
-      const key = point.correlationGroup || `${point.source}:${point.provenance?.provider || 'unknown'}`;
-      const weight = this.measurementWeight(point, correlationCounts.get(key) || 1);
+      const key = this.correlationKey(point);
+      const weight = this.measurementWeight(point, correlationCounts.get(key) || 1, referenceTimeMs);
       if (weight <= 0 || !Number.isFinite(weight)) continue;
 
       weightedLat += point.latitude * weight;
@@ -488,7 +496,7 @@ export class InputFusionEngine {
     // sqrt(N) accuracy bonus.
     const bestAccuracyByGroup = new Map<string, number>();
     for (const point of points) {
-      const key = point.correlationGroup || `${point.source}:${point.provenance?.provider || 'unknown'}`;
+      const key = this.correlationKey(point);
       const accuracy = this.effectiveAccuracyMeters(point);
       const existing = bestAccuracyByGroup.get(key);
       if (existing === undefined || accuracy < existing) bestAccuracyByGroup.set(key, accuracy);
@@ -504,33 +512,101 @@ export class InputFusionEngine {
   /**
    * Calculate quality score for fused location
    */
-  private calculateQualityScore(points: GPSPoint[], fused: GPSPoint): number {
-    // Base score from confidence
-    let score = fused.confidence;
+  private independentRepresentatives(points: GPSPoint[]): GPSPoint[] {
+    const representatives = new Map<string, GPSPoint>();
 
-    // Bonus for multiple sources
-    const uniqueSources = new Set(points.map(p => p.source)).size;
-    score *= (1 + 0.1 * Math.min(uniqueSources - 1, 4));
+    for (const point of points) {
+      const key = this.correlationKey(point);
+      const current = representatives.get(key);
+      if (!current) {
+        representatives.set(key, point);
+        continue;
+      }
 
-    // Penalty for high spread
-    const spread = this.calculateSpread(points);
-    if (spread > 50) score *= 0.8;
-    else if (spread > 20) score *= 0.9;
+      const currentAccuracy = this.effectiveAccuracyMeters(current);
+      const candidateAccuracy = this.effectiveAccuracyMeters(point);
+      if (
+        candidateAccuracy < currentAccuracy ||
+        (candidateAccuracy === currentAccuracy && point.confidence > current.confidence)
+      ) {
+        representatives.set(key, point);
+      }
+    }
 
-    return Math.min(score, 1);
+    return [...representatives.values()];
   }
 
   /**
-   * Calculate consensus confidence
+   * Calculate quality score for fused location without rewarding duplicated feeds.
+   */
+  private calculateQualityScore(points: GPSPoint[], fused: GPSPoint): number {
+    const independent = this.independentRepresentatives(points);
+    const independentCount = independent.length;
+    const consensus = this.calculateConsensusConfidence(points);
+    const fusedAccuracy = Math.max(1, fused.accuracy ?? this.calculateFusedAccuracy(points));
+    const medianAccuracy = [...independent]
+      .map(point => this.effectiveAccuracyMeters(point))
+      .sort((a, b) => a - b)[Math.floor(Math.max(0, independentCount - 1) / 2)] || fusedAccuracy;
+
+    // Precision improvement only helps when it comes from independent evidence.
+    const precisionGain = Math.min(1, medianAccuracy / fusedAccuracy);
+    const independenceFactor = independentCount <= 1
+      ? 0.75
+      : Math.min(1, 0.82 + Math.log2(independentCount) * 0.08);
+
+    return Math.max(0, Math.min(1, consensus * (0.85 + 0.15 * precisionGain) * independenceFactor));
+  }
+
+  /**
+   * Consensus is based on agreement relative to each source's claimed/expected
+   * uncertainty, not fixed meter thresholds.
    */
   private calculateConsensusConfidence(points: GPSPoint[]): number {
-    // High confidence if points are tightly clustered
-    const spread = this.calculateSpread(points);
-    if (spread < 5) return 0.95;
-    if (spread < 10) return 0.85;
-    if (spread < 20) return 0.75;
-    if (spread < 50) return 0.60;
-    return 0.40;
+    const independent = this.independentRepresentatives(points);
+    if (independent.length === 0) return 0;
+
+    if (independent.length === 1) {
+      const only = independent[0];
+      const kindPenalty =
+        only.observationKind === 'predicted' ? 0.35 :
+        only.observationKind === 'interpolated' ? 0.45 :
+        only.observationKind === 'historical' ? 0.55 :
+        only.observationKind === 'inferred' ? 0.70 :
+        1;
+      return Math.max(0, Math.min(1, only.confidence * kindPenalty));
+    }
+
+    let normalizedDisagreementSum = 0;
+    let pairCount = 0;
+
+    for (let i = 0; i < independent.length; i++) {
+      for (let j = i + 1; j < independent.length; j++) {
+        const a = independent[i];
+        const b = independent[j];
+        const distance = this.haversineDistance(a.latitude, a.longitude, b.latitude, b.longitude);
+        const expectedSigma = Math.sqrt(
+          Math.pow(this.effectiveAccuracyMeters(a), 2) +
+          Math.pow(this.effectiveAccuracyMeters(b), 2)
+        );
+        normalizedDisagreementSum += distance / Math.max(1, expectedSigma);
+        pairCount++;
+      }
+    }
+
+    const normalizedDisagreement = pairCount > 0
+      ? normalizedDisagreementSum / pairCount
+      : 0;
+    const agreement = Math.exp(-0.5 * normalizedDisagreement * normalizedDisagreement);
+
+    const confidenceMean = independent.reduce(
+      (sum, point) => sum + Math.max(0, Math.min(1, point.confidence)),
+      0
+    ) / independent.length;
+
+    // Independent corroboration can strengthen confidence, but never manufacture
+    // certainty when the underlying observations disagree.
+    const corroboration = Math.min(1, 0.88 + 0.04 * Math.min(3, independent.length - 1));
+    return Math.max(0, Math.min(1, confidenceMean * agreement * corroboration));
   }
 
   /**
