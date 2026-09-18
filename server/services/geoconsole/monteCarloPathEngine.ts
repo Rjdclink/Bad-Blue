@@ -660,8 +660,15 @@ export class MonteCarloPathEngine {
         longitude: newPos.lng,
         accuracy: baseAccuracy + Math.max(25, distance * 0.08) * i,
         timestamp: new Date(baseTime + i * stepMinutes * 60 * 1000),
+        receivedAt: new Date(),
         source: 'predicted',
         confidence: Math.max(0.08, 0.88 * Math.exp(-2.2 * horizonRatio)),
+        observationKind: 'predicted',
+        correlationGroup: 'prediction:deterministic_recency_weighted_motion',
+        provenance: {
+          provider: 'canonical_geoconsole_futurecast',
+          transformedBy: ['deterministic_recency_weighted_motion'],
+        },
         metadata: {
           predicted: true,
           model: 'deterministic_recency_weighted_motion',
