@@ -239,6 +239,11 @@ function isStrongBargeIn(text: string, meta: VoiceTranscriptMeta): boolean {
   const explicit = /^(?:wait|stop|no|hold on|hang on|actually|but wait|let me finish)\b/.test(normalized);
   if (explicit) return true;
 
+  const genericAcknowledgements = new Set([
+    'thank you', 'thanks', 'okay', 'ok', 'yes', 'yeah', 'yep', 'bye', 'goodbye', 'you',
+  ]);
+  if (genericAcknowledgements.has(normalized)) return false;
+
   const words = normalized.split(' ').filter(Boolean);
   if (words.length < 2) return false;
 
@@ -328,7 +333,6 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const conversationScrollRef = useRef<HTMLDivElement>(null);
   const voiceTurnBufferRef = useRef('');
   const voiceTurnTimerRef = useRef<number | null>(null);
-  const bargeInCandidateTimerRef = useRef<number | null>(null);
   const voiceEndPendingRef = useRef(false);
   const pendingUserTurnRef = useRef('');
   const pendingTurnAlreadyRenderedRef = useRef(false);
@@ -343,13 +347,6 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     if (voiceTurnTimerRef.current !== null) {
       window.clearTimeout(voiceTurnTimerRef.current);
       voiceTurnTimerRef.current = null;
-    }
-  }, []);
-
-  const clearBargeInCandidateTimer = useCallback(() => {
-    if (bargeInCandidateTimerRef.current !== null) {
-      window.clearTimeout(bargeInCandidateTimerRef.current);
-      bargeInCandidateTimerRef.current = null;
     }
   }, []);
 
@@ -370,29 +367,15 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const voiceMode = useVoiceMode({
     continuous: true,
     interimResults: true,
-    onVoiceStart: meta => {
-      // A renewed speech burst means the user has not finished the turn yet.
+    shouldProbeBargeIn: () => phaseRef.current === 'speaking',
+    onVoiceStart: () => {
+      // Voice activity means the user may be continuing a turn, so cancel any
+      // pending commit. It does NOT own interruption authority: speaker echo can
+      // also create VAD energy even when the microphone reports AEC enabled.
       voiceEndPendingRef.current = false;
       clearVoiceTurnTimer();
-      clearBargeInCandidateTimer();
-
-      // Mobile/server mode has controllable VAD plus the actual selected
-      // echo-cancellation setting. Sustained activity on an echo-cancelled mic
-      // is strong enough to yield the conversational floor quickly, while the
-      // final transcript below still decides what text is committed.
-      if (
-        phaseRef.current === 'speaking'
-        && meta.engine === 'server'
-        && meta.echoCancellation === true
-      ) {
-        bargeInCandidateTimerRef.current = window.setTimeout(() => {
-          bargeInCandidateTimerRef.current = null;
-          if (phaseRef.current === 'speaking') autoInterruptRef.current();
-        }, 350);
-      }
     },
     onVoiceEnd: () => {
-      clearBargeInCandidateTimer();
       voiceEndPendingRef.current = true;
       clearVoiceTurnTimer();
       const buffered = voiceTurnBufferRef.current.trim();
@@ -407,15 +390,29 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       const observed = text.trim();
       if (!observed) return;
 
-      // Keep the microphone live while LEXARA speaks. Browser echo cancellation
-      // removes most speaker leakage; this lexical guard rejects residual TTS
-      // echoes so genuine user speech can automatically barge in.
+      // Keep the microphone live while LEXARA speaks, but never trust VAD/AEC
+      // alone. A transcript must first survive lexical echo rejection before it
+      // can become either a barge-in probe or an authoritative user turn.
       const echoReference = activeLexaraSpeechRef.current
         || (Date.now() <= recentLexaraSpeechRef.current.expiresAt
           ? recentLexaraSpeechRef.current.text
           : '');
 
       if (echoReference && looksLikeLexaraEcho(observed, echoReference)) {
+        return;
+      }
+
+      if (meta.bargeInProbe) {
+        // Probe transcripts are non-destructive snapshots of the recording.
+        // They may yield the conversational floor, but never become user text;
+        // the complete recording remains authoritative after the user finishes.
+        if (
+          phaseRef.current === 'speaking'
+          && !isSuspiciousGenericServerTranscript(observed, meta)
+          && isStrongBargeIn(observed, meta)
+        ) {
+          autoInterruptRef.current();
+        }
         return;
       }
 
@@ -789,12 +786,11 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   useEffect(() => {
     return () => {
       currentRequestRef.current?.abort();
-      clearBargeInCandidateTimer();
       clearVoiceTurnBuffer();
       stopSpeaking();
       stopListening();
     };
-  }, [clearBargeInCandidateTimer, clearVoiceTurnBuffer, stopListening, stopSpeaking]);
+  }, [clearVoiceTurnBuffer, stopListening, stopSpeaking]);
 
   const statusLabel = useMemo(() => {
     if (phase === 'initializing') return 'Preparing live consultation';
