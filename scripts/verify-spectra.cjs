@@ -25,6 +25,10 @@ const masterPanels = read('client/src/components/MasterPanelNavigator.tsx');
 const voiceMode = read('client/src/hooks/useVoiceMode.ts');
 const evidenceProof = read('server/services/geoconsole/evidence-proof.ts');
 const intelligenceMap = read('client/src/components/geoconsole/MapLibreIntelligenceMap.tsx');
+const runtime = read('client/src/hooks/useGeoRuntime.ts');
+const fusion = read('server/services/geoconsole/inputFusionEngine.ts');
+const dockerfile = read('Dockerfile');
+const exifTool = read('server/services/locationIntelligence/ExifToolExtractor.ts');
 
 console.log('\nSPECTRA UNIFIED EXPERIENCE\n');
 
@@ -168,6 +172,25 @@ test('Failed map providers stay locally disabled across UI updates',
   intelligenceMap.includes("providerStatus.terrain !== 'unavailable'") &&
   intelligenceMap.includes("providerStatus.weather !== 'unavailable'") &&
   intelligenceMap.includes("providerStatus.satellite !== 'unavailable'"));
+test('Social media cannot be mislabeled as EXIF and explicit social geotags are distinct',
+  routes.includes('const isSocial =') &&
+  routes.includes("return 'social_geotag'") &&
+  routes.includes("return 'social_media'") &&
+  routes.includes('media classification to explicit artifact/metadata language'));
+test('Canonical fusion clamps optimistic third-party precision',
+  fusion.includes('minimumReportedAccuracyMeters') &&
+  fusion.includes("case 'social_geotag': return 25") &&
+  fusion.includes("case 'public_record':") &&
+  fusion.includes('this.minimumReportedAccuracyMeters(point.source)'));
+test('Live browser fixes use browser evidence semantics without fabricated velocity components',
+  runtime.includes("source: 'browser_geolocation'") &&
+  runtime.includes('clamp(1 - accuracy / 100, 0.1, 0.75)') &&
+  runtime.includes('speed !== undefined && heading !== undefined') &&
+  !runtime.includes('{ speed: speed ?? 0, heading: heading ?? 0 }'));
+test('Production media fallback is installed and parses QuickTime ISO-6709',
+  dockerfile.includes('libimage-exiftool-perl') &&
+  exifTool.includes('parseIso6709') &&
+  exifTool.includes('metadata.GPSCoordinates'));
 test('Independent evidence is preserved while duplicate source counting is prevented',
   routes.includes('const evidenceGroup =') &&
   spectra.includes('const evidenceGroup =') &&
