@@ -3,7 +3,12 @@ import { z } from 'zod';
 import { isAuthenticated } from '../auth';
 import { conductFullOSINT } from '../peopleSearch';
 import { unifiedSearch } from '../webSearchService';
-import { extractCityStateHint, geocodeCityState } from '../services/geoconsole/city-state-geocoder';
+import {
+  extractCityStateHint,
+  extractFreeformLocationHint,
+  geocodeCityState,
+  geocodeFreeformLocation,
+} from '../services/geoconsole/city-state-geocoder';
 
 const router = Router();
 router.use(isAuthenticated);
@@ -255,31 +260,44 @@ router.post('/acquire', async (req: Request, res: Response) => {
     // available, but they never enter the motion timeline or masquerade as a
     // current observation.
     if (locationObservations.length === 0) {
-      const locationHints = [
+      const locationInputs = [
         normalizedTarget,
         details,
         ...(Array.isArray(report.locationHistory) ? report.locationHistory : []),
-      ]
-        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-        .map(value => extractCityStateHint(value))
-        .filter((value): value is NonNullable<ReturnType<typeof extractCityStateHint>> => Boolean(value));
+      ].filter(
+        (value): value is string =>
+          typeof value === 'string' && value.trim().length > 0
+      );
 
-      const firstHint = locationHints[0];
-      if (firstHint) {
-        try {
-          const region = await geocodeCityState(firstHint.query);
-          if (region) {
-            candidateLocations.push({
-              latitude: region.latitude,
-              longitude: region.longitude,
-              label: region.displayName,
-              confidence: 0.35,
-              basis: 'regional_context',
-            });
+      try {
+        const structuredHint = locationInputs
+          .map(value => extractCityStateHint(value))
+          .find((value): value is NonNullable<ReturnType<typeof extractCityStateHint>> => Boolean(value));
+
+        let region = structuredHint
+          ? await geocodeCityState(structuredHint.query)
+          : null;
+
+        if (!region) {
+          const freeformInput = locationInputs.find(value =>
+            Boolean(extractFreeformLocationHint(value))
+          );
+          if (freeformInput) {
+            region = await geocodeFreeformLocation(freeformInput);
           }
-        } catch {
-          // Geocoder failure is route-local. SPECTRA still returns all other evidence.
         }
+
+        if (region) {
+          candidateLocations.push({
+            latitude: region.latitude,
+            longitude: region.longitude,
+            label: region.displayName,
+            confidence: 0.35,
+            basis: 'regional_context',
+          });
+        }
+      } catch {
+        // Geocoder failure is route-local. SPECTRA still returns all other evidence.
       }
     }
 
