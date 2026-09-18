@@ -608,7 +608,7 @@ export default function SpectraPage() {
               <div className="font-medium text-cyan-200">Acquired so far</div>
               <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
                 <span>Target description ✓</span>
-                <span>Identity details ✓</span>
+                <span>Details received ✓</span>
                 <span>{/\d[\d\s().+-]{6,}\d/.test(details) ? 'Phone anchor ✓' : 'Phone anchor —'}</span>
                 <span>{candidateLocations.length > 0 ? 'Regional context ✓' : 'Regional context searching'}</span>
                 <span>{observations.length > 0 ? `${observations.length} timed observation${observations.length === 1 ? '' : 's'} ✓` : 'Timed evidence searching'}</span>
