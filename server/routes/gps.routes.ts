@@ -43,31 +43,6 @@ const coordinatesSchema = z.object({
 const gpsArraySchema = z.array(coordinatesSchema);
 
 /**
- * POST /api/gps/extract
- * Extract GPS from uploaded file
- */
-router.post('/extract', async (req: Request, res: Response) => {
-  try {
-    const { filePath } = req.body;
-    
-    if (!filePath) {
-      return res.status(400).json({ error: 'File path required' });
-    }
-
-    const gps = await extractGPSFromFile(filePath);
-    
-    if (!gps) {
-      return res.json({ hasGPS: false, message: 'No GPS data found in file' });
-    }
-
-    res.json({ hasGPS: true, coordinates: gps });
-  } catch (error) {
-    log.error('GPS extraction failed', error);
-    res.status(500).json({ error: 'GPS extraction failed' });
-  }
-});
-
-/**
  * POST /api/gps/extract-upload
  * Extract broad media metadata and emit a canonical location observation when
  * the uploaded media contains both coordinates and a capture timestamp.
