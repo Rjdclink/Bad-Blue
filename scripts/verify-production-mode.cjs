@@ -73,8 +73,10 @@ test('Runtime uses canonical server processing',
   runtime.includes("fetch('/api/geoconsole/process'"));
 test('Runtime futurecast uses server authority',
   runtime.includes("fetch('/api/geoconsole/futurecast'"));
-test('Runtime never fabricates target motion frames',
-  !runtime.includes('generateMockFrames'));
+test('Runtime never fabricates target motion or fallback predictions',
+  !runtime.includes('generateMockFrames') &&
+  !runtime.includes('generateLocalFuturecastFallback') &&
+  !runtime.includes("authority: 'client_fallback'"));
 test('TSHPE has no random location authority',
   !tshpe.includes('Math.random()') &&
   !tshpe.includes('ipapi.co') &&
@@ -89,8 +91,11 @@ test('Futurecast is bounded to one hour and deterministic',
   futurecast.includes('MAX_SIMULATION_STEPS') &&
   futurecast.includes('seededRandom') &&
   futurecast.includes("observationKind: 'predicted'"));
-test('Unsupported long evidence gaps are not interpolated',
+test('Unsupported, implausible and long evidence gaps are not interpolated',
   read('server/services/geoconsole/index.ts').includes('maxInterpolationGapMinutes') &&
+  read('server/services/geoconsole/index.ts').includes('maxInterpolationSpeedMps') &&
+  read('server/services/geoconsole/index.ts').includes('unsupported_evidence_continuity') &&
+  read('server/services/geoconsole/index.ts').includes('implausible_required_speed') &&
   read('server/services/geoconsole/index.ts').includes("continuity: 'discontinuous'"));
 
 test('GeoConsole and SPECTRA APIs require authentication',
@@ -99,8 +104,11 @@ test('GeoConsole and SPECTRA APIs require authentication',
 test('SPECTRA only promotes qualified timestamped coordinate evidence',
   spectraRoutes.includes('explicitTimestamp') &&
   spectraRoutes.includes('hasLocationContext'));
-test('Media route requires actual upload evidence',
+test('Media evidence is upload-derived, signed and carried into SPECTRA acquisition',
   gpsRoutes.includes("router.post('/extract-upload'") &&
+  gpsRoutes.includes('signServerEvidence') &&
+  spectraRoutes.includes('directEvidence') &&
+  spectraRoutes.includes('normalizeClientEvidence') &&
   !gpsRoutes.includes("router.post('/extract'"));
 
 test('No production geospatial core depends on a hardcoded NYC fallback',
