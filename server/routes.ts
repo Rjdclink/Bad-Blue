@@ -56,6 +56,7 @@ import { setupFMIRoutes } from "./routes/fmi.routes";
 import { setupConsultationRoutes } from "./routes/consultation.routes";
 import { setupAuthRoutes } from "./routes/auth.routes";
 import { setupPlansRoutes } from "./routes/plans.routes";
+import { setupSubscriptionRoutes, handleLegalWhatSubscriptionWebhook } from "./routes/subscription.routes";
 import { conductFullOSINT } from "./peopleSearch";
 import { setupVoiceRoutes } from "./routes/voice.routes";
 import cryptoWiringRoutes from "./routes/cryptoWiring.routes";
@@ -898,6 +899,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================
   setupAuthRoutes(app); // Signup and user status
   setupPlansRoutes(app); // Active subscription plans
+  setupSubscriptionRoutes(app); // Square-hosted LegalWhat subscription lifecycle
 
   // ============================================
   // LEGAL COUNSEL ROUTES (Phase 1A)
@@ -2712,7 +2714,7 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
         return res.status(500).send("Webhook configuration error");
       }
 
-      const notificationUrl = process.env.SQUARE_WEBHOOK_NOTIFICATION_URL || `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+      const notificationUrl = process.env.SQUARE_WEBHOOK_NOTIFICATION_URL || `${getBaseURL().replace(/\/$/, '')}/api/webhooks/square`;
       
       // Construct string to sign: notification_url + raw_body (no separator)
       const stringToSign = notificationUrl + rawBody.toString('utf8');
@@ -2744,6 +2746,12 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
       const eventType = event.type;
 
       console.log(`[Square Webhook] Received event: ${eventType}`);
+
+      // LegalWhat recurring subscriptions are reconciled before the legacy
+      // one-time purchase switch. Unrelated Square events fall through unchanged.
+      if (await handleLegalWhatSubscriptionWebhook(event)) {
+        return res.json({ received: true });
+      }
 
       // Handle payment.created and payment.updated events
       if (eventType === 'payment.created' || eventType === 'payment.updated') {
