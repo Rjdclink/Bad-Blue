@@ -57,6 +57,14 @@ test('Media intelligence is folded into the conversation',
 test('SPECTRA map exposes simplified shell',
   dashboard.includes('spectraShell?: boolean') &&
   dashboard.includes('!spectraShell && inspectorOpen'));
+test('Conversation remains primary before acquisition',
+  spectra.includes("const showMap =") &&
+  spectra.includes("phase === 'acquiring'") &&
+  spectra.includes("phase === 'active'"));
+test('Regional candidates remain separate from timed observations',
+  spectra.includes('candidateLocations={candidateLocations}') &&
+  routes.includes('candidateLocations') &&
+  routes.includes("basis: 'regional_context'"));
 test('One-hour previous/future timeline remains available',
   dashboard.includes('min={-60}') && dashboard.includes('max={60}'));
 
@@ -72,6 +80,11 @@ test('TSHPE routes converge on SPECTRA',
   app.includes('<Route path="/tshpe-locator" component={SpectraPage} />'));
 test('Geo-console public redirect converges on SPECTRA',
   app.includes("setLocation('/spectra', { replace: true })"));
+test('No stale GeoConsole component reference remains in App',
+  !app.includes('GeoConsolePage') &&
+  !app.includes('GeoConsoleCommandPage') &&
+  !app.includes('GeoConsoleProcessPage') &&
+  !app.includes('GeoConsoleReportPage'));
 test('Legacy GeoConsole screens route to SPECTRA',
   app.includes('<Route path="/geoconsole" component={SpectraPage} />') &&
   app.includes('<Route path="/geoconsole-command" component={SpectraPage} />') &&
@@ -89,6 +102,10 @@ test('SPECTRA acquisition API requires authentication',
   routes.includes('router.use(isAuthenticated)'));
 test('SPECTRA acquisition uses existing OSINT engine',
   routes.includes('conductFullOSINT'));
+test('SPECTRA broad discovery runs independently of deep OSINT',
+  routes.includes('Promise.allSettled') &&
+  routes.includes('unifiedSearch') &&
+  routes.includes("category: 'general'"));
 test('Generic target classes defer identity details to second response',
   routes.includes('GENERIC_TARGET_RE') &&
   routes.includes('const searchQuery = GENERIC_TARGET_RE.test(target)'));
