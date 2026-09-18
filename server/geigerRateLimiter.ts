@@ -72,13 +72,9 @@ const FREE_PROVIDERS: ProviderConfig[] = [
     name: 'groq',
     endpoint: 'https://api.groq.com/openai/v1/chat/completions',
     models: [
-      'llama-3.3-70b-versatile',
-      'llama-3.1-8b-instant',
-      'meta-llama/llama-4-scout-17b-16e-instruct',
-      'gemma2-9b-it',
-      'qwen/qwen3-32b',
-      'playai-tts',
-      'playai-tts-arabic',
+      process.env.GROQ_MODEL?.trim() || 'openai/gpt-oss-120b',
+      'openai/gpt-oss-20b',
+      'qwen/qwen3.6-27b',
       'whisper-large-v3',
       'whisper-large-v3-turbo'
     ],
@@ -92,7 +88,7 @@ const FREE_PROVIDERS: ProviderConfig[] = [
   {
     name: 'gemini',
     endpoint: 'https://generativelanguage.googleapis.com/v1beta/models',
-    models: ['gemini-2.0-flash-exp', 'gemini-1.5-flash', 'gemini-1.5-flash-8b'],
+    models: [process.env.GEMINI_MODEL?.trim() || 'gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash'],
     rpmLimit: 15,
     rpdLimit: 1500,
     apiKeyEnv: 'GEMINI_API_KEY',
@@ -102,7 +98,7 @@ const FREE_PROVIDERS: ProviderConfig[] = [
   {
     name: 'mistral',
     endpoint: 'https://api.mistral.ai/v1/chat/completions',
-    models: ['mistral-small-latest', 'open-mistral-7b'],
+    models: [process.env.MISTRAL_MODEL?.trim() || 'mistral-small-2603', 'mistral-medium-3-5'],
     rpmLimit: 5,
     rpdLimit: 500,
     apiKeyEnv: 'MISTRAL_API_KEY',
@@ -112,7 +108,7 @@ const FREE_PROVIDERS: ProviderConfig[] = [
   {
     name: 'claude',
     endpoint: 'https://api.anthropic.com/v1/messages',
-    models: ['claude-3-haiku-20240307'],
+    models: [process.env.LEXARA_CLAUDE_MODEL?.trim() || 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
     rpmLimit: 5,
     rpdLimit: 100,
     tpdLimit: 25000,
@@ -158,7 +154,7 @@ const FREE_PROVIDERS: ProviderConfig[] = [
   {
     name: 'cerebras',
     endpoint: 'https://api.cerebras.ai/v1/chat/completions',
-    models: ['llama3.1-8b', 'llama3.1-70b'],
+    models: ['gpt-oss-120b'],
     rpmLimit: 30,
     rpdLimit: 1000,
     apiKeyEnv: 'CEREBRAS_API_KEY',
@@ -168,19 +164,14 @@ const FREE_PROVIDERS: ProviderConfig[] = [
   {
     name: 'sambanova',
     endpoint: 'https://api.sambanova.ai/v1/chat/completions',
-    models: [
-      'Meta-Llama-3.1-8B-Instruct',
-      'Meta-Llama-3.1-70B-Instruct',
-      'DeepSeek-V3-32K',
-      'DeepSeek-chat',
-      'DeepSeek-coder',
-      'Mistral-large'
-    ],
+    // SambaNova's hosted catalog changes independently. Require an explicit
+    // runtime model instead of silently selecting a retired hard-coded ID.
+    models: process.env.SAMBANOVA_MODEL?.trim() ? [process.env.SAMBANOVA_MODEL.trim()] : [],
     rpmLimit: 20,
     rpdLimit: 500,
     apiKeyEnv: 'SAMBANOVA_API_KEY',
     priority: 5,  // Equal priority for balanced utilization
-    isAvailable: () => !!process.env.SAMBANOVA_API_KEY,
+    isAvailable: () => !!process.env.SAMBANOVA_API_KEY && !!process.env.SAMBANOVA_MODEL?.trim(),
   },
 ];
 
