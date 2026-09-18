@@ -33,6 +33,11 @@ assert.match(indexSource, /isFullyInitialized\s*&&\s*usableDataPlane\s*&&\s*auth
 assert.match(statelessLocalAuthSource, /SUPABASE_SECRET_KEY[\s\S]{0,180}SUPABASE_SERVICE_ROLE_KEY/, 'modern Supabase secret key must be preferred before legacy service_role');
 assert.match(statelessLocalAuthSource, /candidate\.from\("users"\)[\s\S]{0,240}candidate\.from\("auth_accounts"\)/, 'server key selection must validate both authentication tables before authority is cached');
 assert.match(statelessLocalAuthSource, /No configured Supabase server key can access the LegalWhat authentication store/, 'invalid server keys must fail closed');
+assert.match(statelessLocalAuthSource, /type LocalAuthBackend[\s\S]{0,220}kind: "postgres"/, 'local auth must retain a bounded PostgreSQL fallback');
+assert.match(statelessLocalAuthSource, /AUTH_DB_QUERY_TIMEOUT_MS\s*=\s*4_000/, 'PostgreSQL auth fallback must be latency bounded');
+assert.match(statelessLocalAuthSource, /resolveLocalAuthBackend/, 'local auth backend selection must be centralized');
+assert.match(statelessLocalAuthSource, /Supabase HTTP server credential unavailable; using bounded canonical PostgreSQL auth store/, 'HTTP credential failure must fail over to canonical PostgreSQL instead of 503');
+assert.match(statelessLocalAuthSource, /BEGIN[\s\S]{0,2200}COMMIT[\s\S]{0,800}ROLLBACK/, 'PostgreSQL signup must remain transactional');
 
 const { setupAuth } = await import('../server/auth.js');
 
