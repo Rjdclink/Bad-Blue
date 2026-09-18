@@ -529,8 +529,31 @@ async function persistPostgresSubscriptionState(
 
   const administrativelySuspended =
     String(currentUserResult.rows[0].status || "").toLowerCase() === "suspended";
-  const effectiveUserStatus = administrativelySuspended ? "suspended" : update.status;
-  const effectivePaidAccess = administrativelySuspended ? false : update.hasPaidForAccess;
+  let activeAdminOverride = false;
+  if (!update.hasPaidForAccess && !administrativelySuspended) {
+    try {
+      const overrideResult = await dbClient.query(
+        `SELECT id FROM user_subscriptions
+          WHERE user_id=$1 AND is_active=true AND payment_id IS NULL
+          LIMIT 1`,
+        [userId],
+      );
+      activeAdminOverride = Boolean(overrideResult.rows?.[0]?.id);
+    } catch {
+      // A missing legacy override table must never block a Square revocation.
+      activeAdminOverride = false;
+    }
+  }
+  const effectiveUserStatus = administrativelySuspended
+    ? "suspended"
+    : activeAdminOverride
+      ? "active"
+      : update.status;
+  const effectivePaidAccess = administrativelySuspended
+    ? false
+    : activeAdminOverride
+      ? true
+      : update.hasPaidForAccess;
 
   if (!effectivePaidAccess) {
     await dbClient.query(
@@ -652,8 +675,28 @@ async function persistSupabaseSubscriptionState(
 
   const administrativelySuspended =
     String(currentUser.status || "").toLowerCase() === "suspended";
-  const effectiveUserStatus = administrativelySuspended ? "suspended" : update.status;
-  const effectivePaidAccess = administrativelySuspended ? false : update.hasPaidForAccess;
+  let activeAdminOverride = false;
+  if (!update.hasPaidForAccess && !administrativelySuspended) {
+    const { data: override } = await supabase
+      .from("user_subscriptions")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("is_active", true)
+      .is("payment_id", null)
+      .limit(1)
+      .maybeSingle();
+    activeAdminOverride = Boolean(override?.id);
+  }
+  const effectiveUserStatus = administrativelySuspended
+    ? "suspended"
+    : activeAdminOverride
+      ? "active"
+      : update.status;
+  const effectivePaidAccess = administrativelySuspended
+    ? false
+    : activeAdminOverride
+      ? true
+      : update.hasPaidForAccess;
 
   const userPatch: Record<string, unknown> = {
     status: effectiveUserStatus,
