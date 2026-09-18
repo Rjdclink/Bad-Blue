@@ -58,6 +58,7 @@ type MapMode = 'satellite' | 'hybrid' | 'street' | 'dark';
 const MPS_TO_MPH = 2.237;
 
 const DEFAULT_SOURCE_VISIBILITY: Record<string, boolean> = {};
+const EMPTY_GPS_POINTS: GPSPoint[] = [];
 
 // ============================================================================
 // HELPERS
@@ -82,12 +83,12 @@ const haversineDistance = (lat1: number, lon1: number, lat2: number, lon2: numbe
 // COMPONENT
 // ============================================================================
 
-export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialData = [], onProcess: _onProcess, navMode }) => {
+export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialData = EMPTY_GPS_POINTS, onProcess: _onProcess, navMode }) => {
   // Runtime hook - source of truth for frames
   const [state, actions] = useGeoRuntime(initialData, { tickInterval: 500, playbackSpeed: 1, interpolationEnabled: true, predictiveEnabled: true });
 
   useEffect(() => {
-    actions.loadData(initialData);
+    void actions.loadData(initialData);
   }, [actions.loadData, initialData]);
 
   // UI state (not affecting frame data)
