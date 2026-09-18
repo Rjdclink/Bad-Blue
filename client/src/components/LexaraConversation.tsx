@@ -185,6 +185,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const voiceTurnTimerRef = useRef<number | null>(null);
   const responseEmotionRef = useRef<LEXARAEmotionHint>('authoritative');
   const activeLexaraSpeechRef = useRef('');
+  const recentLexaraSpeechRef = useRef<{ text: string; expiresAt: number }>({ text: '', expiresAt: 0 });
   const autoInterruptRef = useRef<() => void>(() => undefined);
   const lastFinalVoiceSegmentRef = useRef<{ text: string; at: number }>({ text: '', at: 0 });
 
@@ -218,10 +219,12 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       // Keep the microphone live while LEXARA speaks. Browser echo cancellation
       // removes most speaker leakage; this lexical guard rejects residual TTS
       // echoes so genuine user speech can automatically barge in.
-      if (
-        phaseRef.current === 'speaking'
-        && looksLikeLexaraEcho(observed, activeLexaraSpeechRef.current)
-      ) {
+      const echoReference = activeLexaraSpeechRef.current
+        || (Date.now() <= recentLexaraSpeechRef.current.expiresAt
+          ? recentLexaraSpeechRef.current.text
+          : '');
+
+      if (echoReference && looksLikeLexaraEcho(observed, echoReference)) {
         return;
       }
 
@@ -324,6 +327,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
     clearVoiceTurnBuffer();
     activeLexaraSpeechRef.current = text;
+    recentLexaraSpeechRef.current = { text, expiresAt: Number.POSITIVE_INFINITY };
     // Full-duplex: recognition stays live while LEXARA speaks so natural
     // barge-in can be detected without a button.
     resumeListening();
@@ -340,6 +344,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       });
     } finally {
       activeLexaraSpeechRef.current = '';
+      recentLexaraSpeechRef.current = { text, expiresAt: Date.now() + 8_000 };
       resumeListening();
       if (generation === undefined || generation === generationRef.current) {
         setConversationPhase('listening');
