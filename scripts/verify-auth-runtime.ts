@@ -59,6 +59,8 @@ assert.match(statelessLocalAuthSource, /status:\s*"pending_payment"[\s\S]{0,120}
 assert.match(statelessLocalAuthSource, /edgeAuthRequest\("set_subscription"/, 'subscription state must persist through the selected auth authority');
 assert.match(statelessLocalAuthSource, /Paid access requires a verified active Square subscription/, 'paid access must fail closed without verified Square subscription identity');
 assert.match(authSource, /app\.post\("\/api\/local-register"[\s\S]{0,900}setLocalCookie\(res, createLocalSessionToken\(user\)\)/, 'signup must establish the pending authenticated checkout session');
+assert.match(authSource, /isIdentityAuthenticated[\s\S]{0,1000}SUBSCRIPTION_REQUIRED/, 'ordinary authenticated services must require verified paid access');
+assert.match(subscriptionFlowSource, /isIdentityAuthenticated/, 'pending users must retain access to subscription activation routes');
 assert.match(subscriptionFlowSource, /subscriptionPlanId:\s*planVariationId\(\)/, 'Square hosted checkout must use the configured subscription plan variation');
 assert.match(subscriptionFlowSource, /paymentNote:\s*noteForUser\(id\)/, 'Square checkout must carry an application-user reconciliation key');
 assert.match(subscriptionFlowSource, /app\.post\("\/api\/subscription\/confirm"/, 'server-side Square confirmation route is missing');
