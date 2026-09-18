@@ -16,7 +16,7 @@ try {
   
   console.log('Sending test request...');
   const response = await client.models.generateContent({
-    model: "gemini-2.5-flash",
+    model: "gemini-3.8-flash",
     contents: [{ role: "user", parts: [{ text: "Respond with just 'OK' if working" }] }]
   });
   
