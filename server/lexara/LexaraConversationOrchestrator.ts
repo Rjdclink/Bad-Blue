@@ -1,5 +1,4 @@
 import { callAIWithFallback } from '../aiSubAgent';
-import { callAI as callUnifiedAI } from '../unifiedAICaller';
 import type { LawType as ExpertLawType } from '../../shared/legalCounselTypes';
 import { LAW_TYPE_DATA } from '../../shared/lawTypes';
 import { mapProductLawTypeToExpert } from '../../shared/legalDomainMapping';
@@ -234,38 +233,18 @@ export async function generateLexaraConversationResponse(
     + formatAuthorityResearchForSystem(authorityResearch);
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
 
-  // Fast, quality-first chain for the normal live path. Gemini is attempted
-  // first when configured; Groq/Mistral remain route-local fallbacks.
+  // Quality-first, low-latency chain for the normal live path. Active Claude,
+  // Groq, and Mistral models are preferred; Gemini remains a route-local fallback.
   const primary = await callAIWithFallback(userPrompt, {
     taskName: 'lexara-live-conversation',
     systemPrompt,
     temperature: 0.25,
     maxTokens: 1800,
     useJSON: false,
-    preferredProvider: 'gemini',
+    preferredProvider: 'anthropic',
   });
 
   let text = primary.success ? primary.content?.trim() : '';
-
-  // The repository also supports additional providers through its unified
-  // provider rotation. Use that only when the low-latency primary chain is
-  // exhausted, so an available alternate provider is not accidentally ignored.
-  if (!text) {
-    try {
-      const fallback = await callUnifiedAI({
-        prompt: userPrompt,
-        systemPrompt,
-        temperature: 0.25,
-        maxTokens: 1800,
-        context: 'user',
-        skipCache: true,
-        skipOptimization: true,
-      });
-      text = fallback.content?.trim() || '';
-    } catch {
-      text = '';
-    }
-  }
 
   // Never substitute the legacy pattern/template Zero-API legal knowledge base
   // for senior-counsel analysis. If every live model path is unavailable, fail
