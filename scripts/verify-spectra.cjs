@@ -49,6 +49,10 @@ test('SPECTRA supports natural text input',
   spectra.includes('Tell SPECTRA what you want to locate'));
 test('Voice is optional rather than mandatory',
   spectra.includes('toggleVoice') && !spectra.includes('getUserMedia({'));
+test('Media intelligence is folded into the conversation',
+  spectra.includes('/api/gps/extract-upload') &&
+  spectra.includes('handleMediaEvidence') &&
+  spectra.includes('Paperclip'));
 test('SPECTRA map exposes simplified shell',
   dashboard.includes('spectraShell?: boolean') &&
   dashboard.includes('!spectraShell && inspectorOpen'));
@@ -72,6 +76,9 @@ test('SPECTRA acquisition API requires authentication',
   routes.includes('router.use(isAuthenticated)'));
 test('SPECTRA acquisition uses existing OSINT engine',
   routes.includes('conductFullOSINT'));
+test('Generic target classes defer identity details to second response',
+  routes.includes('GENERIC_TARGET_RE') &&
+  routes.includes('const searchQuery = GENERIC_TARGET_RE.test(target)'));
 test('SPECTRA only maps explicitly timestamped coordinates',
   routes.includes('explicitTimestamp') &&
   routes.includes('Number.isFinite(latitude)') &&
