@@ -35,6 +35,7 @@ export interface CollaborationTask {
   systemPrompt?: string;
   priority: number;
   dependencies?: string[];
+  fallbackProviders?: AIProvider[];
   attributes: TaskAttributes;
   timeout?: number;
 }
@@ -184,7 +185,13 @@ export class AICollaborationOrchestrator {
       attributes,
       providers,
       strategy
-    ).map(task => ({ ...task, systemPrompt: options.systemPrompt }));
+    ).map(task => ({
+      ...task,
+      systemPrompt: options.systemPrompt,
+      fallbackProviders: options.providerPolicy === 'capability-first-no-google'
+        ? providers.filter(provider => provider !== task.provider)
+        : undefined,
+    }));
     
     // Execute tasks
     const results = await this.executeCollaborationTasks(tasks, attributes);
@@ -840,6 +847,37 @@ export class AICollaborationOrchestrator {
         content = `[${task.provider}] returned an empty response`;
       }
     } catch (error: any) {
+      const alternatives = (task.fallbackProviders || []).filter(provider => provider !== task.provider);
+      if (alternatives.length > 0) {
+        try {
+          const fallback = await Promise.any(
+            alternatives.map(async provider => {
+              const candidate = await this.executeTask(
+                {
+                  ...task,
+                  provider,
+                  model: this.getDefaultModelForProvider(provider),
+                  fallbackProviders: [],
+                },
+                completedTasks,
+              );
+              if (!candidate.success || !candidate.content.trim()) {
+                throw new Error(candidate.error || candidate.content || `${provider} returned no usable response`);
+              }
+              return candidate;
+            }),
+          );
+          return {
+            ...fallback,
+            taskId: task.id,
+            role: task.role,
+          };
+        } catch {
+          // Every compatible alternative failed. Preserve the original failure
+          // below; the collaboration layer may still have other successful roles.
+        }
+      }
+
       success = false;
       content = `[${task.provider}] error: ${error?.message || 'Unknown error'}`;
     }
