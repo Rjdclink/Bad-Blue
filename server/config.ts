@@ -23,6 +23,7 @@ const envSchema = z.object({
   DATABASE_URL: z.string().optional().default(''),
   SUPABASE_DATABASE_URL: z.string().optional().default(''),
   SUPABASE_URL: z.string().url('SUPABASE_URL must be a valid URL').optional(),
+  LEGALWHAT_AUTH_SUPABASE_URL: z.string().url('LEGALWHAT_AUTH_SUPABASE_URL must be a valid URL').optional(),
   SUPABASE_DB_URL: z.string().optional().default(''),
   
   // Application
@@ -46,6 +47,7 @@ const envSchema = z.object({
   SQUARE_APPLICATION_ID: z.string().optional().default(''),
   SQUARE_ENVIRONMENT: z.enum(['production', 'sandbox']).default('production'),
   SQUARE_WEBHOOK_SIGNATURE_KEY: z.string().optional(),
+  SQUARE_SUBSCRIPTION_PLAN_VARIATION_ID: z.string().optional().default(''),
   
   // Email
   GWSMTP_USER: z.string().email().optional(),
@@ -199,6 +201,9 @@ export function loadConfig(): Config {
       }
       if (!config.SQUARE_APPLICATION_ID || !config.SQUARE_APPLICATION_ID.trim()) {
         throw new Error('SQUARE_APPLICATION_ID is required in production');
+      }
+      if (!config.SQUARE_SUBSCRIPTION_PLAN_VARIATION_ID || !config.SQUARE_SUBSCRIPTION_PLAN_VARIATION_ID.trim()) {
+        throw new Error('SQUARE_SUBSCRIPTION_PLAN_VARIATION_ID is required in production');
       }
     }
     // Note: Using console.log here intentionally as logger is not yet initialized during bootstrap
