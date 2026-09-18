@@ -62,12 +62,19 @@ async function resolveGroqModel(requestedModel: string, apiKey: string): Promise
 
   const requested = normalizeGroqModelId(requestedModel);
   const models = groqModelCatalogCache?.models;
+  const discoveredTextModels = models
+    ? [...models].filter(model =>
+        !/whisper|speech|tts|playai|guard|moderation|compound/i.test(model)
+      )
+    : [];
+
   const capabilityCandidates = [
     requested,
     DEFAULT_GROQ_MODEL,
     'openai/gpt-oss-120b',
-    'qwen/qwen3.6-27b',
     'openai/gpt-oss-20b',
+    'qwen/qwen3.6-27b',
+    ...discoveredTextModels,
   ]
     .map(normalizeGroqModelId)
     .filter((model, index, all) => !!model && all.indexOf(model) === index);
@@ -190,6 +197,24 @@ export function getGroqClient(): any {
  */
 export function isGroqAvailable(): boolean {
   return !!process.env.GROQ_API_KEY;
+}
+
+/**
+ * Warm and validate the live model catalog without spending inference tokens.
+ * This is best-effort readiness data; chat still retains route-local fallback.
+ */
+export async function warmGroqModelCatalog(): Promise<{ ready: boolean; model?: string; error?: string }> {
+  const apiKey = process.env.GROQ_API_KEY?.trim();
+  if (!apiKey) return { ready: false, error: 'not configured' };
+  try {
+    const model = await resolveGroqModel(DEFAULT_GROQ_MODEL, apiKey);
+    return { ready: true, model };
+  } catch (error) {
+    return {
+      ready: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 /**
