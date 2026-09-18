@@ -37,6 +37,7 @@ const railwayEnvSource = readFileSync(new URL('../.env.railway.example', import.
 const deployPrepSource = readFileSync(new URL('../scripts/prepare-deployment.sh', import.meta.url), 'utf8');
 const migrationReconcilerSource = readFileSync(new URL('../server/migrations/reconcileAppSchema.ts', import.meta.url), 'utf8');
 const retiredFreeAccessSource = readFileSync(new URL('../server/migrations/freeAccessForAll.ts', import.meta.url), 'utf8');
+const authEdgeSource = readFileSync(new URL('../supabase/functions/legalwhat-local-auth/index.ts', import.meta.url), 'utf8');
 const legacyLocalAuth = new URL('../server/localAuth.ts', import.meta.url);
 
 assert.equal(existsSync(legacyLocalAuth), false, 'obsolete Passport local auth module must remain removed');
@@ -99,6 +100,7 @@ assert.match(subscriptionFlowSource, /app\.post\("\/api\/subscription\/confirm"/
 assert.match(subscriptionFlowSource, /handleLegalWhatSubscriptionWebhook/, 'Square subscription webhook reconciliation is missing');
 assert.match(subscriptionSuccessSource, /\/api\/subscription\/confirm/, 'Square return page must verify the subscription server-side');
 assert.match(subscriptionSuccessSource, /legalwhat_pending_square_order_id/, 'Square return must recover a stored order ID if the redirect query omits it');
+assert.match(subscriptionSuccessSource, /openLibraryIfDurablyActive[\s\S]{0,1200}\/api\/auth\/user/, 'Square return must recover from durable webhook activation when browser order state is unavailable');
 assert.match(appSource, /isAuthenticated\s*&&\s*hasPaidAccess/, 'private LegalWhat routes must require verified paid access');
 assert.match(appSource, /<Route path="\/legal-consultation" component=\{LegalConsultationPage\} \/>/, 'public LegalWhat consultation discovery route must remain available for SEO and conversion');
 assert.match(appSource, /hasPaidForAccess === true[\s\S]{0,160}suspended/, 'client paid-access gate must honor explicit overrides while blocking suspended/revoked states');
@@ -138,6 +140,9 @@ assert.doesNotMatch(sampleConsultationSource, /\$19\.98/, 'stale public subscrip
 assert.doesNotMatch(migrationReconcilerSource, /runFreeAccessMigration|Free Access for All Users/, 'startup schema reconciliation must never re-grant universal paid access');
 assert.doesNotMatch(retiredFreeAccessSource, /\.update\(users\)|hasPaidForAccess:\s*true/, 'retired free-access migration must remain non-mutating');
 assert.match(retiredFreeAccessSource, /retired; no user access state was changed/, 'legacy free-access migration must be explicitly retired');
+assert.match(authEdgeSource, /RAILWAY_AUTH_SECRET_SHA256/, 'LegalWhat Edge auth must store only a one-way verifier for the Railway caller secret');
+assert.doesNotMatch(authEdgeSource, /RAILWAY_AUTH_SECRET\s*=\s*["']/, 'LegalWhat Edge auth source must never contain the plaintext Railway caller secret');
+assert.match(authEdgeSource, /crypto\.subtle\.digest\("SHA-256"/, 'LegalWhat Edge auth must verify the caller secret through the one-way digest');
 
 const { setupAuth, isIdentityAuthenticated } = await import('../server/auth.js');
 
