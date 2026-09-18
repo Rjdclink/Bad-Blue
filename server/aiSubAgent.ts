@@ -77,14 +77,26 @@ function markProviderSuccess(name: LiveFallbackProvider): void {
   providerCooldownUntil.delete(name);
 }
 
+function isCancellationShapedError(error: unknown): boolean {
+  const name = error instanceof Error ? error.name.toLowerCase() : '';
+  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  return name === 'aborterror'
+    || /operation was aborted|request was aborted|client.*closed|cancelled|canceled/.test(message);
+}
+
 function markProviderFailure(name: LiveFallbackProvider, error: unknown): void {
+  // User/request cancellation says nothing about provider health. Never poison
+  // global provider availability because a conversational turn was cancelled.
+  if (isCancellationShapedError(error)) return;
+
   const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
   const failures = (providerFailureCount.get(name) || 0) + 1;
   providerFailureCount.set(name, failures);
 
   const hardFailure = /invalid api key|401|403|not found|does not exist|permission|blocked|retired|deprecated/.test(message);
   const rateLimited = /429|rate limit|quota|resource_exhausted/.test(message);
-  const base = hardFailure ? 10 * 60_000 : rateLimited ? 2 * 60_000 : 30_000;
+  const transientTimeout = /timeout|timed out|etimedout|econnreset|fetch failed/.test(message);
+  const base = hardFailure ? 10 * 60_000 : rateLimited ? 2 * 60_000 : transientTimeout ? 5_000 : 30_000;
   providerCooldownUntil.set(name, Date.now() + Math.min(base * Math.max(1, failures), 15 * 60_000));
 }
 
@@ -228,6 +240,7 @@ export interface AIFallbackOptions {
   useJSON?: boolean;
   taskName?: string;
   sessionId?: string;
+  timeoutMs?: number;
 }
 
 /**
@@ -249,7 +262,10 @@ function shouldFallbackOnError(error: any): boolean {
     msg.includes('internal server error') ||
     msg.includes('service unavailable') ||
     msg.includes('bad gateway') ||
-    msg.includes('timeout')
+    msg.includes('timeout') ||
+    msg.includes('aborted') ||
+    msg.includes('cancelled') ||
+    msg.includes('canceled')
   );
 }
 
@@ -328,7 +344,7 @@ export async function callAIWithFallback(
           systemPrompt: options.systemPrompt,
           temperature: options.temperature,
           maxTokens: options.maxTokens,
-          timeoutMs: 18_000,
+          timeoutMs: options.timeoutMs ?? 12_000,
           sessionId: options.sessionId,
         });
         return result.content;

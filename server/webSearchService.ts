@@ -253,7 +253,7 @@ async function fallbackToOpenRouterSearch(
   }
 
   try {
-    const searchResult = await orchestratedWebSearch(query, { timeout: options.timeout });
+    const searchResult = await orchestratedWebSearch(query, { timeout: options.timeout, useOnlinePlugin: true });
     recordSuccess('openrouter-websearch');
 
     return [{
