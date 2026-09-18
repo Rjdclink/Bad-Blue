@@ -985,6 +985,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/crypto', cryptoWiringRoutes);
 
   // ============================================
+  // SPECTRA ROUTES - Unified target acquisition
+  // ============================================
+  const spectraRoutes = await import('./routes/spectra.routes');
+  app.use('/api/spectra', spectraRoutes.default);
+
+  // ============================================
   // GEOCONSOLE ROUTES - Hybrid GPS Intelligence
   // ============================================
   const geoconsoleRoutes = await import('./routes/geoconsole.routes');
