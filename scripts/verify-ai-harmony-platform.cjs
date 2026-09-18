@@ -28,6 +28,12 @@ const groq = read('server/groq.ts');
 const fullSystemTest = read('server/fullSystemTest.ts');
 const quickDiagnostic = read('server/quickDiagnostic.ts');
 const runDiagnostics = read('server/runDiagnostics.ts');
+const systemConfig = read('server/systemConfig.ts');
+const serverIndex = read('server/index.ts');
+const legalModelOrchestrator = read('server/legalModelOrchestrator.ts');
+const mlRoutingWorker = read('server/services/mlnlp/mlRoutingWorker.ts');
+const constants = read('server/constants.ts');
+const openRouterService = read('server/openRouterService.ts');
 
 const registrySection = registry.split('HARMONY_17_PARTICIPANTS')[1]?.split('if (HARMONY_17_PARTICIPANTS.length !== 17)')[0] || '';
 const participantCount = (registrySection.match(/provider:\s*PROVIDER\./g) || []).length;
@@ -122,6 +128,25 @@ must(
 );
 
 must(
+  systemConfig.includes('HARMONY_17_PARTICIPANTS') &&
+  systemConfig.includes('getConfiguredHarmonyParticipants') &&
+  !systemConfig.includes("user: ['gemini-pro'") &&
+  serverIndex.includes('participantCount: HARMONY_17_PARTICIPANTS.length') &&
+  serverIndex.includes('configuredCount: getConfiguredHarmonyParticipants().length') &&
+  legalModelOrchestrator.includes('getConfiguredHarmonyProviders') &&
+  legalModelOrchestrator.includes('AICollaborationOrchestrator.orchestrateCollaboration') &&
+  legalModelOrchestrator.includes('full configured Harmony mesh') &&
+  mlRoutingWorker.includes('HARMONY_17_PARTICIPANTS.map') &&
+  mlRoutingWorker.includes('runtime model participation is owned by') &&
+  !constants.includes('llama-3.1-nemotron') &&
+  !constants.includes('cloudflare/llama-3.1') &&
+  !constants.includes('sambanova/llama-3.1') &&
+  openRouterService.includes("isCircuitOpen('grok')") &&
+  openRouterService.includes("isCircuitOpen('kimi')"),
+  'system config, health, legal ML metadata, compatibility aliases, and OpenRouter status all derive from current Harmony authority without stale local model priorities',
+);
+
+must(
   !groq.includes("'llama-3.1-8b-instant'") &&
   !groq.includes("'llama-3.3-70b-versatile'") &&
   !fullSystemTest.includes("'llama-3.1-8b-instant'") &&
@@ -160,6 +185,12 @@ const activeRuntimeFiles = [
   'server/fullSystemTest.ts',
   'server/quickDiagnostic.ts',
   'server/runDiagnostics.ts',
+  'server/index.ts',
+  'server/badblueWorker.ts',
+  'server/legalModelOrchestrator.ts',
+  'server/services/mlnlp/mlRoutingWorker.ts',
+  'server/comprehensiveDiagnostics.ts',
+  'server/testDiagnostics.ts',
 ];
 
 const retiredOrSuperseded = [
@@ -167,6 +198,7 @@ const retiredOrSuperseded = [
   /gemini-2\.0/i,
   /claude-opus-4-1-20250805/i,
   /claude-3-sonnet/i,
+  /claude-3-5-sonnet/i,
   /qwen-2\.5-72/i,
   /deepseek-r1t2/i,
   /grok-4\.1/i,
@@ -175,6 +207,10 @@ const retiredOrSuperseded = [
   /mistral-7b/i,
   /llama-3\.1-8b-instant/i,
   /llama-3\.3-70b-versatile/i,
+  /groq-llama-3\.3-70b/i,
+  /llama-3\.1-nemotron/i,
+  /cloudflare\/llama-3\.1/i,
+  /sambanova\/llama-3\.1/i,
 ];
 
 for (const path of activeRuntimeFiles) {
