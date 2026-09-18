@@ -18,7 +18,15 @@ const acquireSchema = z.object({
   details: z.string().trim().min(1).max(4000),
 });
 
-const PHONE_RE = /(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}/;
+const PHONE_CANDIDATE_RE = /(?:\+\d{1,3}[\s().-]*)?(?:\d[\s().-]*){7,15}/;
+
+function extractPhoneNumber(value: string): string | undefined {
+  const candidate = value.match(PHONE_CANDIDATE_RE)?.[0]?.trim();
+  if (!candidate) return undefined;
+  const digits = candidate.replace(/\D/g, '');
+  if (digits.length < 7 || digits.length > 15) return undefined;
+  return candidate.replace(/[\s.,;:-]+$/g, '');
+}
 
 function normalizeTargetIntent(value: string): string {
   const cleaned = value
@@ -34,7 +42,10 @@ function normalizeTargetIntent(value: string): string {
 const GENERIC_TARGET_RE = /^(?:(?:a|an|the|my|their|his|her)\s+)?(?:person|individual|business|company|organization|vehicle|car|truck|device|object|place|address|thing|property|phone|phone number|target)$/i;
 
 function targetSubject(value: string): string {
-  const withoutPhone = value.replace(PHONE_RE, ' ').replace(/\s+/g, ' ').trim();
+  const phone = extractPhoneNumber(value);
+  const withoutPhone = (phone ? value.replace(phone, ' ') : value)
+    .replace(/\s+/g, ' ')
+    .trim();
   const contextual = withoutPhone.match(/^(.+?)\s+(?:in|near|around|located\s+in)\s+.+$/i);
   const subject = contextual?.[1]?.trim() || withoutPhone;
   return subject.length >= 2 ? subject : value.trim();
@@ -74,12 +85,13 @@ function collectCoordinateObservations(
   out: any[],
   depth = 0,
   seen = new Set<object>(),
+  contextPath = '',
 ) {
   if (depth > 7 || value == null || out.length >= 250) return;
 
   if (Array.isArray(value)) {
     for (const item of value) {
-      collectCoordinateObservations(item, sourceName, confidence, out, depth + 1, seen);
+      collectCoordinateObservations(item, sourceName, confidence, out, depth + 1, seen, contextPath);
       if (out.length >= 250) break;
     }
     return;
@@ -104,8 +116,23 @@ function collectCoordinateObservations(
     object.GPSLongitude
   );
   const timestamp = explicitTimestamp(object);
+  const locationContext = [
+    sourceName,
+    contextPath,
+    String(object.type || ''),
+    String(object.kind || ''),
+    String(object.category || ''),
+  ].join(' ').toLowerCase();
+  const hasLocationContext =
+    /\b(?:gps|geo|geotag|location|position|coordinate|check[- ]?in|trajectory|track|place|address)\b/i
+      .test(locationContext) ||
+    object.gpsLatitude !== undefined ||
+    object.GPSLatitude !== undefined ||
+    object.gpsLongitude !== undefined ||
+    object.GPSLongitude !== undefined;
 
   if (
+    hasLocationContext &&
     Number.isFinite(latitude) &&
     Number.isFinite(longitude) &&
     latitude >= -90 && latitude <= 90 &&
@@ -147,8 +174,17 @@ function collectCoordinateObservations(
     });
   }
 
-  for (const child of Object.values(object)) {
-    collectCoordinateObservations(child, sourceName, confidence, out, depth + 1, seen);
+  for (const [key, child] of Object.entries(object)) {
+    const nextPath = contextPath ? `${contextPath}.${key}` : key;
+    collectCoordinateObservations(
+      child,
+      sourceName,
+      confidence,
+      out,
+      depth + 1,
+      seen,
+      nextPath,
+    );
     if (out.length >= 250) break;
   }
 }
@@ -168,6 +204,40 @@ function dedupeObservations(points: any[]): any[] {
   });
 }
 
+function locationEvidenceConfidence(points: any[]): number {
+  if (!points.length) return 0;
+
+  const representatives = new Map<string, number>();
+  for (const point of points) {
+    const confidence = Math.max(0, Math.min(1, Number(point.confidence) || 0));
+    const kindFactor =
+      point.observationKind === 'historical' ? 0.55 :
+      point.observationKind === 'inferred' ? 0.65 :
+      point.observationKind === 'interpolated' ? 0.45 :
+      point.observationKind === 'predicted' ? 0.25 :
+      1;
+    const adjusted = confidence * kindFactor;
+    const key =
+      String(point.correlationGroup || '') ||
+      `${point.source || 'unknown'}:${point.provenance?.provider || 'unknown'}`;
+    representatives.set(key, Math.max(representatives.get(key) || 0, adjusted));
+  }
+
+  const values = [...representatives.values()];
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const corroborationBonus = Math.min(0.08, Math.max(0, values.length - 1) * 0.02);
+  return Math.max(0, Math.min(0.95, mean + corroborationBonus));
+}
+
+function discoverySourceKey(result: any): string {
+  try {
+    if (result?.url) return new URL(String(result.url)).hostname.toLowerCase();
+  } catch {
+    // Fall back to the result title when URL metadata is malformed.
+  }
+  return String(result?.title || 'web-discovery').trim().toLowerCase();
+}
+
 router.post('/acquire', async (req: Request, res: Response) => {
   const parsed = acquireSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -180,8 +250,12 @@ router.post('/acquire', async (req: Request, res: Response) => {
   const { target, details } = parsed.data;
   const normalizedTarget = normalizeTargetIntent(target);
   const combinedTargetText = [normalizedTarget, details].filter(Boolean).join(' ');
-  const phone = combinedTargetText.match(PHONE_RE)?.[0];
-  const targetIsPhone = PHONE_RE.test(normalizedTarget);
+  const phone = extractPhoneNumber(combinedTargetText);
+  const targetPhone = extractPhoneNumber(normalizedTarget);
+  const remainingTarget = targetPhone
+    ? normalizedTarget.replace(targetPhone, '').replace(/[\s,;:()\-.]+/g, '')
+    : normalizedTarget;
+  const targetIsPhone = Boolean(targetPhone) && remainingTarget.length === 0;
   const subject = targetSubject(normalizedTarget);
   const searchQuery = GENERIC_TARGET_RE.test(normalizedTarget) || targetIsPhone
     ? details
@@ -254,6 +328,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
       label: string;
       confidence: number;
       basis: 'regional_context';
+      accuracyMeters: number;
     }> = [];
 
     // Regional hints are useful when precise timestamped coordinates are not
@@ -294,6 +369,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
             label: region.displayName,
             confidence: 0.35,
             basis: 'regional_context',
+            accuracyMeters: region.accuracyMeters,
           });
         }
       } catch {
@@ -306,11 +382,16 @@ router.post('/acquire', async (req: Request, res: Response) => {
       ? Math.max(0, Math.min(1, confidenceRaw > 1 ? confidenceRaw / 100 : confidenceRaw))
       : 0;
     const locationConfidence = locationObservations.length > 0
-      ? locationObservations.reduce(
-          (sum, point) => sum + Math.max(0, Math.min(1, Number(point.confidence) || 0)),
-          0
-        ) / locationObservations.length
+      ? locationEvidenceConfidence(locationObservations)
       : candidateLocations[0]?.confidence ?? 0;
+
+    const sourceKeys = new Set<string>();
+    for (const source of report.sources || []) {
+      sourceKeys.add(String(source?.name || 'osint-source').trim().toLowerCase());
+    }
+    for (const result of discoveryResults) {
+      sourceKeys.add(discoverySourceKey(result));
+    }
 
     return res.json({
       success: true,
@@ -319,7 +400,8 @@ router.post('/acquire', async (req: Request, res: Response) => {
       acquisition: {
         identityConfidence,
         locationConfidence,
-        sourceCount:
+        sourceCount: sourceKeys.size,
+        evidenceItemCount:
           (Array.isArray(report.sources) ? report.sources.length : 0) +
           discoveryResults.length,
         observationCount: locationObservations.length,
