@@ -467,3 +467,13 @@ export function ensureEconomicTransformationWiring(): void {
     timer.unref?.();
   }
 }
+
+export function stopEconomicTransformationWiring(): void {
+  if (timer) clearInterval(timer);
+  if (candidateRefreshTimer) clearTimeout(candidateRefreshTimer);
+  timer = null;
+  candidateRefreshTimer = null;
+  candidateSubscription?.();
+  candidateSubscription = null;
+  stopUniversalBpsRescueCoordinator();
+}
