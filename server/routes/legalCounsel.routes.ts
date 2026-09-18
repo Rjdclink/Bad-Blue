@@ -25,8 +25,10 @@ import {
 import { factCheckClaim, quickFactCheck } from '../services/factCheckEngine';
 import { getExpertProfile, generateExpertPrompt } from '../services/legalExpertSystem';
 import { LAW_TYPES } from '../../shared/legalCounselTypes';
+import { isAuthenticated } from '../auth';
 
 const router = Router();
+router.use(isAuthenticated);
 
 // Valid US state codes
 const US_STATE_CODES = [
