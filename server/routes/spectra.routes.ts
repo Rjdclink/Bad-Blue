@@ -9,14 +9,40 @@ import {
   geocodeCityState,
   geocodeFreeformLocation,
 } from '../services/geoconsole/city-state-geocoder';
-import { signServerEvidence } from '../services/geoconsole/evidence-proof';
+import {
+  normalizeClientEvidence,
+  signServerEvidence,
+} from '../services/geoconsole/evidence-proof';
+import type { GPSPoint } from '../services/geoconsole/types';
 
 const router = Router();
 router.use(isAuthenticated);
 
+const directEvidenceSchema = z.object({
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  altitude: z.number().optional(),
+  accuracy: z.number().positive().max(1_000_000).optional(),
+  verticalAccuracy: z.number().nonnegative().max(1_000_000).optional(),
+  timestamp: z.string().datetime(),
+  receivedAt: z.string().datetime().optional(),
+  source: z.enum(['exif_photo', 'exif_video', 'xmp_sidecar', 'json_sidecar']),
+  confidence: z.number().min(0).max(1),
+  observationKind: z.enum(['observed', 'historical']).optional(),
+  correlationGroup: z.string().max(300).optional(),
+  provenance: z.object({
+    provider: z.string().max(200).optional(),
+    recordId: z.string().max(300).optional(),
+    capturedAt: z.string().datetime().optional(),
+    transformedBy: z.array(z.string().max(120)).max(20).optional(),
+  }).optional(),
+  metadata: z.record(z.unknown()).optional(),
+});
+
 const acquireSchema = z.object({
   target: z.string().trim().min(1).max(500),
   details: z.string().trim().min(1).max(4000),
+  directEvidence: z.array(directEvidenceSchema).max(20).default([]),
 });
 
 const PHONE_CANDIDATE_RE = /(?:\+\d{1,3}[\s().-]*)?(?:\d[\s().-]*){7,15}/;
@@ -248,7 +274,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
     });
   }
 
-  const { target, details } = parsed.data;
+  const { target, details, directEvidence } = parsed.data;
   const normalizedTarget = normalizeTargetIntent(target);
   const combinedTargetText = [normalizedTarget, details].filter(Boolean).join(' ');
   const phone = extractPhoneNumber(combinedTargetText);
@@ -301,7 +327,36 @@ router.post('/acquire', async (req: Request, res: Response) => {
 
     const discoveryResults = webResult.status === 'fulfilled' ? webResult.value : [];
 
-    const observations: any[] = [];
+    const observations: any[] = directEvidence.map(point => {
+      const normalized = normalizeClientEvidence({
+        ...point,
+        timestamp: new Date(point.timestamp),
+        receivedAt: point.receivedAt ? new Date(point.receivedAt) : undefined,
+        provenance: point.provenance
+          ? {
+              ...point.provenance,
+              capturedAt: point.provenance.capturedAt
+                ? new Date(point.provenance.capturedAt)
+                : undefined,
+            }
+          : undefined,
+      } as GPSPoint);
+
+      return {
+        ...normalized,
+        timestamp: normalized.timestamp.toISOString(),
+        receivedAt: normalized.receivedAt?.toISOString(),
+        provenance: normalized.provenance
+          ? {
+              ...normalized.provenance,
+              capturedAt: normalized.provenance.capturedAt instanceof Date
+                ? normalized.provenance.capturedAt.toISOString()
+                : normalized.provenance.capturedAt,
+            }
+          : undefined,
+      };
+    });
+
     for (const source of report.sources || []) {
       collectCoordinateObservations(
         source?.data,
@@ -388,6 +443,11 @@ router.post('/acquire', async (req: Request, res: Response) => {
       : candidateLocations[0]?.confidence ?? 0;
 
     const sourceKeys = new Set<string>();
+    for (const point of directEvidence) {
+      sourceKeys.add(
+        String(point.correlationGroup || `media:${point.source}`).trim().toLowerCase()
+      );
+    }
     for (const source of report.sources || []) {
       sourceKeys.add(String(source?.name || 'osint-source').trim().toLowerCase());
     }
@@ -404,6 +464,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
         locationConfidence,
         sourceCount: sourceKeys.size,
         evidenceItemCount:
+          directEvidence.length +
           (Array.isArray(report.sources) ? report.sources.length : 0) +
           discoveryResults.length,
         observationCount: locationObservations.length,
