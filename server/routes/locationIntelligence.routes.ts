@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { exifToolExtractor } from '../services/locationIntelligence/ExifToolExtractor';
 import { locationAggregator, type LocationPoint } from '../services/locationIntelligence/LocationAggregator';
+import { isAuthenticated } from '../auth';
 
 const router = Router();
 
@@ -16,7 +17,7 @@ const analyzeRequestSchema = z.object({
   })).optional().default([]),
 });
 
-router.post('/api/location-intel/analyze', async (req, res) => {
+router.post('/api/location-intel/analyze', isAuthenticated, async (req, res) => {
   try {
     const validation = analyzeRequestSchema.safeParse(req.body);
     
