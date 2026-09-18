@@ -1,58 +1,36 @@
-# BadBlue - Police Accountability Platform
-# Last updated: 2025-11-30
+# Legal What? - search crawler directives
+# Public marketing and informational pages are crawlable. Authenticated,
+# administrative, API, and account-specific surfaces are intentionally excluded.
 
-# Allow all search engine crawlers
 User-agent: *
 Allow: /
-Allow: /landing
-Allow: /officer
-Allow: /complaint-form
-Allow: /lawsuit-form
-Allow: /foia-request-form
-Allow: /petitions
-Allow: /evidence-hub
-Allow: /contact
-Allow: /privacy
-Allow: /terms
-
-# Block auth and admin pages from indexing
-Disallow: /login
-Disallow: /home
-Disallow: /history
-Disallow: /complaints
-Disallow: /complaint-detail
-Disallow: /lawsuit-detail
-Disallow: /petition-form
-Disallow: /petition-edit
-Disallow: /petition-workflow
-Disallow: /confirmation
-Disallow: /admin-*
 Disallow: /api/
-
-# Block development and staging resources
-Disallow: /*.json$
+Disallow: /login
+Disallow: /subscription-success
+Disallow: /administrator
+Disallow: /admin
+Disallow: /admin-
+Disallow: /home
+Disallow: /dashboard
+Disallow: /history
+Disallow: /welcome
+Disallow: /legal-tools
+Disallow: /lexara-consent
+Disallow: /people-finder
+Disallow: /spectra
+Disallow: /location-intel
+Disallow: /tshpe
+Disallow: /positioning
+Disallow: /inmate-locator
+Disallow: /cryptocrawler
+Disallow: /control-room
+Disallow: /orchestrator-console
+Disallow: /complaints
+Disallow: /complaint
+Disallow: /lawsuit
+Disallow: /petition-form
+Disallow: /petition-workflow
+Disallow: /evidence-hub
 Disallow: /*.map$
 
-# Crawl-delay for politeness (optional - 1 second between requests)
-Crawl-delay: 1
-
-# Sitemap location
-Sitemap: https://example.com/sitemap.xml
-
-# Googlebot-specific directives
-User-agent: Googlebot
-Allow: /
-Disallow: /login
-Disallow: /home
-Disallow: /history
-Disallow: /admin-*
-Disallow: /api/
-
-# Bingbot-specific directives
-User-agent: Bingbot
-Allow: /
-Disallow: /login
-Disallow: /home
-Disallow: /history
-Disallow: /admin-*
-Disallow: /api/
+Sitemap: https://legalwhat.com/sitemap.xml
