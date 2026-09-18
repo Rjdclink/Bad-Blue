@@ -1045,7 +1045,7 @@ class AITokenGovernorEnhanced {
   }
 
   /**
-   * Get provider rate profiles for all 4 providers
+   * Get rate profiles for every provider tracked by the legacy quota governor
    * Returns comprehensive rate limiting information for adaptive search delay calculations
    */
   public async getProviderRateProfiles(): Promise<ProviderRateProfile[]> {
@@ -1124,6 +1124,60 @@ class AITokenGovernorEnhanced {
           percentUsed: quotaStatus.claude.percentUsed,
           isAvailable: this.isProviderAvailable(AIProvider.CLAUDE) && quotaStatus.claude.percentUsed < 95,
           autonomousUsed: quotaStatus.claude.autonomousUsed
+        },
+        {
+          provider: AIProvider.DEEPSEEK,
+          requestsPerMinute: this.DEEPSEEK_RPM,
+          tokensPerMinute: this.DEEPSEEK_TPM,
+          dailyTokenLimit: this.DEEPSEEK_DAILY_REQUEST_LIMIT * 1000,
+          dailyRequestLimit: this.DEEPSEEK_DAILY_REQUEST_LIMIT,
+          currentUsage: {
+            tokens: quotaStatus.deepseek.used * 1000,
+            requests: quotaStatus.deepseek.used,
+          },
+          remainingCapacity: {
+            tokens: Math.max(0, (quotaStatus.deepseek.limit - quotaStatus.deepseek.used) * 1000),
+            requests: Math.max(0, quotaStatus.deepseek.limit - quotaStatus.deepseek.used),
+          },
+          percentUsed: quotaStatus.deepseek.percentUsed,
+          isAvailable: this.isProviderAvailable(AIProvider.DEEPSEEK) && quotaStatus.deepseek.percentUsed < 95,
+          autonomousUsed: quotaStatus.deepseek.autonomousUsed,
+        },
+        {
+          provider: AIProvider.GROK,
+          requestsPerMinute: this.GROK_RPM,
+          tokensPerMinute: this.GROK_TPM,
+          dailyTokenLimit: this.GROK_DAILY_REQUEST_LIMIT * 1000,
+          dailyRequestLimit: this.GROK_DAILY_REQUEST_LIMIT,
+          currentUsage: {
+            tokens: quotaStatus.grok.used * 1000,
+            requests: quotaStatus.grok.used,
+          },
+          remainingCapacity: {
+            tokens: Math.max(0, (quotaStatus.grok.limit - quotaStatus.grok.used) * 1000),
+            requests: Math.max(0, quotaStatus.grok.limit - quotaStatus.grok.used),
+          },
+          percentUsed: quotaStatus.grok.percentUsed,
+          isAvailable: this.isProviderAvailable(AIProvider.GROK) && quotaStatus.grok.percentUsed < 95,
+          autonomousUsed: quotaStatus.grok.autonomousUsed,
+        },
+        {
+          provider: AIProvider.KIMI,
+          requestsPerMinute: this.KIMI_RPM,
+          tokensPerMinute: this.KIMI_TPM,
+          dailyTokenLimit: this.KIMI_DAILY_REQUEST_LIMIT * 1000,
+          dailyRequestLimit: this.KIMI_DAILY_REQUEST_LIMIT,
+          currentUsage: {
+            tokens: quotaStatus.kimi.used * 1000,
+            requests: quotaStatus.kimi.used,
+          },
+          remainingCapacity: {
+            tokens: Math.max(0, (quotaStatus.kimi.limit - quotaStatus.kimi.used) * 1000),
+            requests: Math.max(0, quotaStatus.kimi.limit - quotaStatus.kimi.used),
+          },
+          percentUsed: quotaStatus.kimi.percentUsed,
+          isAvailable: this.isProviderAvailable(AIProvider.KIMI) && quotaStatus.kimi.percentUsed < 95,
+          autonomousUsed: quotaStatus.kimi.autonomousUsed,
         }
       ];
 
