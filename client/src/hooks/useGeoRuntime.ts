@@ -420,6 +420,34 @@ export function useGeoRuntime(
 
         if (response.ok) {
           const payload = await response.json();
+          const processedTrail = Array.isArray(payload?.data?.trail?.points)
+            ? payload.data.trail.points
+            : [];
+          const processedPoints = processedTrail
+            .map((entry: any) => {
+              const point = entry?.position || entry;
+              if (!point) return null;
+              return {
+                ...point,
+                source: entry?.interpolated ? 'interpolated' : point.source,
+                observationKind: entry?.interpolated
+                  ? 'interpolated'
+                  : point.observationKind,
+                metadata: {
+                  ...(point.metadata || {}),
+                  velocity: entry?.velocity,
+                  trailOpacity: entry?.opacity,
+                  trailColor: entry?.color,
+                },
+              };
+            })
+            .filter((point: any) =>
+              point &&
+              Number.isFinite(Number(point.latitude)) &&
+              Number.isFinite(Number(point.longitude)) &&
+              point.timestamp
+            );
+
           const fusedLocations = Array.isArray(payload?.data?.fusedLocations)
             ? payload.data.fusedLocations
             : [];
@@ -431,7 +459,9 @@ export function useGeoRuntime(
               point?.timestamp
             );
 
-          if (fusedPoints.length > 0) {
+          if (processedPoints.length > 0) {
+            canonicalPoints = processedPoints as GPSPoint[];
+          } else if (fusedPoints.length > 0) {
             canonicalPoints = fusedPoints as GPSPoint[];
           }
 
