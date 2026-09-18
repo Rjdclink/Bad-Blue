@@ -66,6 +66,7 @@ export default function LegalConsultationPage() {
               onClick={() => setLocation(domainId ? '/welcome' : '/')}
               data-testid="button-back"
               aria-label="Go back"
+              className="h-11 w-11 touch-manipulation"
             >
               <ArrowLeft className="h-5 w-5" />
             </Button>
@@ -84,12 +85,14 @@ export default function LegalConsultationPage() {
                 className="min-h-11 gap-2 touch-manipulation"
               >
                 <Mic className="h-4 w-4" />
-                Enable voice
+                <span className="sm:hidden">Voice</span>
+                <span className="hidden sm:inline">Enable voice</span>
               </Button>
             )}
             <Button
               variant="outline"
               onClick={() => setLocation(toolsMode ? canonicalPath : `${canonicalPath}?mode=tools`)}
+              className="min-h-11 touch-manipulation"
             >
               <span className="sm:hidden">{toolsMode ? 'Live' : 'Tools'}</span>
               <span className="hidden sm:inline">{toolsMode ? 'Live conversation' : 'Case tools'}</span>
