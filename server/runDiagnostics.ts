@@ -147,7 +147,7 @@ class BadBlueDiagnostics {
         
         const response = await groq.chat.completions.create({
           messages: [{ role: 'user', content: 'Say OK' }],
-          model: 'llama-3.1-8b-instant',
+          model: process.env.GROQ_FAST_MODEL?.trim() || process.env.GROQ_CHAT_MODEL?.trim() || 'openai/gpt-oss-20b',
           max_tokens: 10
         });
         
@@ -161,7 +161,7 @@ class BadBlueDiagnostics {
 
     // Test Gemini
     if (!process.env.GEMINI_API_KEY) {
-      this.log('AI:Gemini', 'WARN', 'GEMINI_API_KEY not configured (using Groq fallback)');
+      this.log('AI:Gemini', 'WARN', 'GEMINI_API_KEY not configured');
     } else {
       this.log('AI:Gemini', 'PASS', 'API key configured');
     }
