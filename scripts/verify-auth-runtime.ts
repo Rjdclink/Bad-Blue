@@ -14,6 +14,7 @@ const routesSource = readFileSync(new URL('../server/routes.ts', import.meta.url
 const subscriptionAuthSource = readFileSync(new URL('../server/routes/auth.routes.ts', import.meta.url), 'utf8');
 const configSource = readFileSync(new URL('../server/config.ts', import.meta.url), 'utf8');
 const indexSource = readFileSync(new URL('../server/index.ts', import.meta.url), 'utf8');
+const statelessLocalAuthSource = readFileSync(new URL('../server/statelessLocalAuth.ts', import.meta.url), 'utf8');
 const legacyLocalAuth = new URL('../server/localAuth.ts', import.meta.url);
 
 assert.equal(existsSync(legacyLocalAuth), false, 'obsolete Passport local auth module must remain removed');
@@ -29,6 +30,9 @@ assert.match(configSource, /SUPABASE_SECRET_KEY\s*\|\|\s*process\.env\.SUPABASE_
 assert.match(indexSource, /authStoreReady/, 'strict readiness must track the authentication store');
 assert.match(indexSource, /probeLocalAuthStoreHttp/, 'startup must probe the real authentication store');
 assert.match(indexSource, /isFullyInitialized\s*&&\s*usableDataPlane\s*&&\s*authStoreReady/, 'Railway readiness must require working authentication');
+assert.match(statelessLocalAuthSource, /SUPABASE_SECRET_KEY[\s\S]{0,180}SUPABASE_SERVICE_ROLE_KEY/, 'modern Supabase secret key must be preferred before legacy service_role');
+assert.match(statelessLocalAuthSource, /candidate\.from\("users"\)[\s\S]{0,240}candidate\.from\("auth_accounts"\)/, 'server key selection must validate both authentication tables before authority is cached');
+assert.match(statelessLocalAuthSource, /No configured Supabase server key can access the LegalWhat authentication store/, 'invalid server keys must fail closed');
 
 const { setupAuth } = await import('../server/auth.js');
 
