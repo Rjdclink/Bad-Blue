@@ -2,7 +2,12 @@ import crypto from "crypto";
 import type { Express, Request, Response } from "express";
 import { getSquareClient, getSquareLocationId } from "../squareClient";
 import { getBaseUrl, getConfig } from "../config";
-import { hasPaidServiceAccess, isIdentityAuthenticated, issueLocalSessionCookie } from "../auth";
+import {
+  hasPaidServiceAccess,
+  invalidatePaidAccessCache,
+  isIdentityAuthenticated,
+  issueLocalSessionCookie,
+} from "../auth";
 import {
   getLocalUserByIdHttp,
   updateLocalUserSubscriptionHttp,
@@ -12,6 +17,14 @@ import {
 const SUBSCRIPTION_NAME = "LegalWhat Subscription";
 const SUBSCRIPTION_PRICE_CENTS = 2599;
 const PAYMENT_NOTE_PREFIX = "legalwhat-subscription:";
+
+async function persistSubscriptionState(
+  update: Parameters<typeof updateLocalUserSubscriptionHttp>[0],
+): Promise<StatelessLocalUser> {
+  const user = await updateLocalUserSubscriptionHttp(update);
+  invalidatePaidAccessCache(user.id);
+  return user;
+}
 
 function planVariationId(): string {
   const value = String(getConfig().SQUARE_SUBSCRIPTION_PLAN_VARIATION_ID || "").trim();
@@ -79,7 +92,7 @@ async function bindAndReconcile(id: string, customerId: string): Promise<{ activ
     return { active: false, user: currentUser };
   }
 
-  const pendingUser = await updateLocalUserSubscriptionHttp({
+  const pendingUser = await persistSubscriptionState({
     userId: id,
     squareCustomerId: customerId,
     status: "pending_payment",
@@ -92,7 +105,7 @@ async function bindAndReconcile(id: string, customerId: string): Promise<{ activ
   const subscription = activeMatchingSubscription(items, variationId);
   if (!subscription) return { active: false, user: pendingUser };
 
-  const user = await updateLocalUserSubscriptionHttp({
+  const user = await persistSubscriptionState({
     userId: id,
     squareCustomerId: customerId,
     squareSubscriptionId: String(subscription.id || ""),
@@ -115,7 +128,7 @@ async function verifyCheckout(id: string, orderId: string): Promise<{ active: bo
   if (!paymentId) {
     return {
       active: false,
-      user: await updateLocalUserSubscriptionHttp({ userId: id, status: "pending_payment", hasPaidForAccess: false }),
+      user: await persistSubscriptionState({ userId: id, status: "pending_payment", hasPaidForAccess: false }),
     };
   }
 
@@ -125,7 +138,7 @@ async function verifyCheckout(id: string, orderId: string): Promise<{ active: bo
   if (String(payment.status || "").toUpperCase() !== "COMPLETED") {
     return {
       active: false,
-      user: await updateLocalUserSubscriptionHttp({ userId: id, status: "pending_payment", hasPaidForAccess: false }),
+      user: await persistSubscriptionState({ userId: id, status: "pending_payment", hasPaidForAccess: false }),
     };
   }
   if (String(payment.orderId || "") !== orderId) throw new Error("Square payment does not belong to this order");
@@ -194,7 +207,7 @@ export async function handleLegalWhatSubscriptionWebhook(event: any): Promise<bo
     }
 
     const state = canonicalState(subscription.status);
-    await updateLocalUserSubscriptionHttp({
+    await persistSubscriptionState({
       squareCustomerId: customerId,
       squareSubscriptionId: subscriptionId,
       squarePlanVariationId: variationId,
