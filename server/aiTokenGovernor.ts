@@ -1,20 +1,10 @@
 /**
- * AI Token Governor Module - Database-Integrated Version
- * Implements 4-way AI collaboration with context-aware routing:
- * 
- * GROQ POLICY (Nov 30, 2025):
- * - Groq is EXCLUSIVELY for autonomous functions (no rate limit)
- * - USER searches: Gemini → Mistral → Claude → Groq (Groq last resort only)
- * - AUTONOMOUS: Groq → Mistral → Claude → Gemini (Groq first priority)
- * 
- * FULLY INTEGRATED WITH DATABASE - No JSON file storage
- * Thread-safe for concurrent requests
- * 
- * CONNECTION POOL OPTIMIZATION (Nov 30, 2025):
- * - Uses single aggregated SQL query instead of 11 parallel queries
- * - Memoization with 30-second TTL to prevent excessive DB calls
- * - Mutex lock prevents concurrent getQuotaStatus() calls from overlapping
- * - Resolves MaxClientsInSessionMode errors from PgBouncer pool exhaustion
+ * AI Token Governor Module.
+ *
+ * Tracks token/request budgets and provider health for legacy callers. Provider
+ * identity is not an execution authority: the shared Harmony orchestrator owns
+ * task routing, and budget accounting must not hard-partition user vs.
+ * autonomous work into different provider silos.
  */
 
 import * as tokenMetrics from './repositories/tokenMetricsRepository';
@@ -237,10 +227,8 @@ class AITokenGovernorEnhanced {
   private readonly GROK_TPM = Math.floor(50000 / 1440);     // ~35 TPM
   private readonly KIMI_TPM = Math.floor(50000 / 1440);     // ~35 TPM
   
-  // Target distribution percentages - ALL PROVIDERS UTILIZED EQUALLY
-  // CONTEXT SEPARATION POLICY:
-  // - AUTONOMOUS: Only Groq + Mistral (no USER providers)
-  // - USER: Only Gemini + Claude + DeepSeek + Grok + Kimi (no AUTONOMOUS providers)
+  // Legacy target distribution percentages. Harmony now owns provider choice;
+  // these values influence accounting only and never create context exclusions.
   private readonly MISTRAL_TARGET_PERCENT = 20;  // Equal distribution
   private readonly GROQ_TARGET_PERCENT = 20;     // Equal distribution
   private readonly GEMINI_TARGET_PERCENT = 20;   // Equal distribution
@@ -789,42 +777,26 @@ class AITokenGovernorEnhanced {
    * - If a single provider is clearly superior (efficiency > 1.1 * next best), allocate whole task to it.
    * - Otherwise, split across top N providers proportionally to efficiency.
    * 
-   * CONTEXT SEPARATION:
-   * - AUTONOMOUS: Only Groq/Mistral
-   * - USER: Only Gemini/Claude/DeepSeek/Grok/Kimi
+   * Budget orchestration is context-neutral. Context affects priority and
+   * telemetry, not provider eligibility.
    */
   private async orchestrateProviders(
     task: AITaskMetadata,
     requiredBudgetEstimate: number,
     quotaStatus: QuotaStatus
   ): Promise<Array<{ provider: AIProvider; maxTokens: number; proportion?: number }>> {
-    // Build list of available providers based on context
+    // Build a context-neutral availability view. Harmony decides which
+    // capability participates in a task; the governor only reports whether a
+    // tracked transport has remaining budget.
     const availability: Partial<Record<AIProvider, boolean>> = {
-      // AUTONOMOUS providers
-      [AIProvider.GROQ]: this.isProviderAvailable(AIProvider.GROQ), // No quota check - unlimited for autonomous
+      [AIProvider.GROQ]: this.isProviderAvailable(AIProvider.GROQ),
       [AIProvider.MISTRAL]: this.isProviderAvailable(AIProvider.MISTRAL) && quotaStatus.mistral.percentUsed < 99,
-      // USER providers
       [AIProvider.GEMINI]: this.isProviderAvailable(AIProvider.GEMINI) && quotaStatus.gemini.percentUsed < 99,
       [AIProvider.CLAUDE]: this.isProviderAvailable(AIProvider.CLAUDE) && quotaStatus.claude.percentUsed < 99,
       [AIProvider.DEEPSEEK]: this.isProviderAvailable(AIProvider.DEEPSEEK) && quotaStatus.deepseek.percentUsed < 99,
       [AIProvider.GROK]: this.isProviderAvailable(AIProvider.GROK) && quotaStatus.grok.percentUsed < 99,
       [AIProvider.KIMI]: this.isProviderAvailable(AIProvider.KIMI) && quotaStatus.kimi.percentUsed < 99,
     };
-
-    // CONTEXT SEPARATION: Hard block based on context
-    if (task.context === UsageContext.AUTONOMOUS) {
-      // AUTONOMOUS: Only Groq and Mistral - block all USER providers
-      availability[AIProvider.GEMINI] = false;
-      availability[AIProvider.CLAUDE] = false;
-      availability[AIProvider.DEEPSEEK] = false;
-      availability[AIProvider.GROK] = false;
-      availability[AIProvider.KIMI] = false;
-      // Groq is always available for autonomous if API key exists (no quota check)
-    } else if (task.context === UsageContext.USER) {
-      // USER: Only Gemini, Claude, DeepSeek, Grok, Kimi - block AUTONOMOUS providers
-      availability[AIProvider.GROQ] = false;
-      availability[AIProvider.MISTRAL] = false;
-    }
 
     // Build candidate list from available providers
     const candidates = (Object.keys(availability) as AIProvider[])
@@ -940,9 +912,8 @@ class AITokenGovernorEnhanced {
     try {
       const quotaStatus = await this.getQuotaStatus();
       
-      // CONTEXT SEPARATION: Different handling for AUTONOMOUS vs USER
-      // AUTONOMOUS: Only Groq + Mistral
-      // USER: Only Gemini + Claude + DeepSeek + Grok + Kimi
+      // Budgeting is context-neutral; context is retained for telemetry and
+      // priority only.
 
       // Estimate required budget as expectedTokens or derived from complexity
       const complexityBudgets = {
@@ -956,52 +927,35 @@ class AITokenGovernorEnhanced {
       const allocations = await this.orchestrateProviders(task, estimated, quotaStatus);
 
       if (!allocations || allocations.length === 0) {
-        // CONTEXT-SPECIFIC FALLBACK
-        if (task.context === UsageContext.USER) {
-          console.log('[AI Governor] USER search: forcing 5-way fallback chain (Gemini → Claude → DeepSeek → Grok → Kimi)');
-          
-          // USER fallback - NO Groq or Mistral
-          const fallbackOrder = [AIProvider.GEMINI, AIProvider.CLAUDE, AIProvider.DEEPSEEK, AIProvider.GROK, AIProvider.KIMI];
-          for (const provider of fallbackOrder) {
-            if (this.isProviderAvailable(provider)) {
-              console.log(`[AI Governor] USER fallback: using ${provider}`);
-              return {
-                provider,
-                maxTokens: estimated,
-                verbosityLevel: 'standard',
-                shouldProceed: true,
-                providersAllocation: [{ provider, maxTokens: estimated }],
-                deferralReason: undefined
-              };
-            }
-          }
-        } else if (task.context === UsageContext.AUTONOMOUS) {
-          console.log('[AI Governor] AUTONOMOUS: forcing 2-way fallback chain (Groq → Mistral)');
-          
-          // AUTONOMOUS fallback - NO USER providers
-          const fallbackOrder = [AIProvider.GROQ, AIProvider.MISTRAL];
-          for (const provider of fallbackOrder) {
-            if (this.isProviderAvailable(provider)) {
-              console.log(`[AI Governor] AUTONOMOUS fallback: using ${provider}`);
-              return {
-                provider,
-                maxTokens: estimated,
-                verbosityLevel: 'standard',
-                shouldProceed: true,
-                providersAllocation: [{ provider, maxTokens: estimated }],
-                deferralReason: undefined
-              };
-            }
+        const fallbackOrder = [
+          AIProvider.GROQ,
+          AIProvider.MISTRAL,
+          AIProvider.GEMINI,
+          AIProvider.CLAUDE,
+          AIProvider.DEEPSEEK,
+          AIProvider.GROK,
+          AIProvider.KIMI,
+        ];
+        for (const provider of fallbackOrder) {
+          if (this.isProviderAvailable(provider)) {
+            return {
+              provider,
+              maxTokens: estimated,
+              verbosityLevel: 'standard',
+              shouldProceed: true,
+              providersAllocation: [{ provider, maxTokens: estimated }],
+              deferralReason: undefined,
+            };
           }
         }
-        
-        // No providers available for context
+
         return {
-          provider: task.context === UsageContext.USER ? AIProvider.GEMINI : AIProvider.GROQ,
-          maxTokens: 0,
-          verbosityLevel: 'concise',
-          shouldProceed: false,
-          deferralReason: `No ${task.context} providers available`
+          provider: AIProvider.OPENROUTER,
+          maxTokens: estimated,
+          verbosityLevel: 'standard',
+          shouldProceed: true,
+          providersAllocation: [],
+          deferralReason: 'No tracked provider budget; Harmony/local fallback remains authoritative',
         };
       }
 
