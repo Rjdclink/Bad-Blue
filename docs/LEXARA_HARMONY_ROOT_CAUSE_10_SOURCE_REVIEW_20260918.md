@@ -20,8 +20,8 @@ This first pass cross-references the live repository/provider catalog against cu
 4. Mistral — Model changelog (Mistral Small 4 / Medium 3.5): https://docs.mistral.ai/resources/changelogs
 5. DeepSeek — API changelog (V4.1 Flash release and retired prior Flash IDs): https://api-docs.deepseek.com/updates/
 6. xAI — Grok 4.6 API documentation: https://docs.x.ai/developers/grok-4-6
-7. OpenRouter — Kimi K3 model route: https://openrouter.ai/moonshotai/kimi-k3-20260715
-8. OpenRouter — Qwen3.8 Max (0902) model comparison/route evidence: https://openrouter.ai/compare/google/gemini-3.8-flash/qwen/qwen3.8-max-0902
+7. OpenRouter — Kimi K3 model route: https://openrouter.ai/moonshotai/kimi-k3
+8. OpenRouter — Qwen3.8 Max (0902) model comparison/route evidence: https://openrouter.ai/qwen/qwen3.8-max-0902
 9. Cohere — Command A+ current production model: https://docs.cohere.com/docs/command-a-plus
 10. Hugging Face — Inference Providers and provider-selection routing: https://huggingface.co/docs/inference-providers/index
 
