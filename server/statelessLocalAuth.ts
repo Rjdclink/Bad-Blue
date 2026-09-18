@@ -21,6 +21,15 @@ export interface StatelessLocalSession extends StatelessLocalUser {
   sessionVersion: 2;
 }
 
+export interface LocalSubscriptionStateUpdate {
+  userId?: string;
+  squareCustomerId?: string | null;
+  squareSubscriptionId?: string | null;
+  squarePlanVariationId?: string | null;
+  status: string;
+  hasPaidForAccess: boolean;
+}
+
 interface LocalSessionPayload {
   v: 2;
   uid: string;
@@ -57,10 +66,10 @@ interface EdgeAuthResponse {
 }
 
 async function edgeAuthRequest(
-  action: "probe" | "login" | "register",
+  action: "probe" | "login" | "register" | "user" | "set_subscription",
   payload: Record<string, unknown> = {},
 ): Promise<EdgeAuthResponse> {
-  const url = String(getConfig().SUPABASE_URL || "").trim();
+  const url = String(process.env.LEGALWHAT_AUTH_SUPABASE_URL || getConfig().SUPABASE_URL || "").trim();
   const edgeSecret = String(process.env.LEGALWHAT_EDGE_AUTH_SECRET || "").trim();
   if (!url || !edgeSecret) throw new Error("Supabase Edge authentication is not configured");
 
@@ -128,7 +137,12 @@ async function primarySupabaseClient(): Promise<SupabaseClient> {
   // service_role key as a bounded rotation fallback. A stale legacy key must not
   // shadow a valid modern key. Candidate keys are validated against both tables
   // required by LegalWhat local authentication before one becomes authoritative.
-  const url = String(getConfig().SUPABASE_URL || "").trim();
+  const url = String(
+    process.env.LEGALWHAT_AUTH_SUPABASE_URL ||
+    getConfig().LEGALWHAT_AUTH_SUPABASE_URL ||
+    getConfig().SUPABASE_URL ||
+    ""
+  ).trim();
   const keys = [
     String(process.env.SUPABASE_SECRET_KEY || "").trim(),
     String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim(),
@@ -168,7 +182,31 @@ async function resolveLocalAuthBackend(): Promise<LocalAuthBackend> {
   if (authBackendSelection) return authBackendSelection;
 
   authBackendSelection = (async () => {
+    const dedicatedAuthConfigured = Boolean(
+      String(
+        process.env.LEGALWHAT_AUTH_SUPABASE_URL ||
+        getConfig().LEGALWHAT_AUTH_SUPABASE_URL ||
+        ""
+      ).trim()
+    );
+    const edgeSecretConfigured = Boolean(String(process.env.LEGALWHAT_EDGE_AUTH_SECRET || "").trim());
+
+    let edgeError: unknown = null;
     let httpError: unknown = null;
+
+    // An explicitly configured LegalWhat auth project is the canonical identity
+    // authority. Prefer its private Edge function so a server key belonging to the
+    // general application project cannot silently redirect signups elsewhere.
+    if (dedicatedAuthConfigured && edgeSecretConfigured) {
+      try {
+        await probeEdgeAuthStore();
+        authBackend = { kind: "edge" };
+        return authBackend;
+      } catch (error) {
+        edgeError = error;
+      }
+    }
+
     try {
       const supabase = await primarySupabaseClient();
       authBackend = { kind: "supabase", client: supabase };
@@ -177,14 +215,17 @@ async function resolveLocalAuthBackend(): Promise<LocalAuthBackend> {
       httpError = error;
     }
 
-    let edgeError: unknown = null;
-    try {
-      await probeEdgeAuthStore();
-      authBackend = { kind: "edge" };
-      console.warn("[AUTH] Direct Supabase server credential unavailable; using project-local Supabase Edge authentication authority");
-      return authBackend;
-    } catch (error) {
-      edgeError = error;
+    // When no dedicated Edge authority was attempted above, retain it as the
+    // bounded fallback for deployments using the application Supabase project.
+    if (!dedicatedAuthConfigured || !edgeSecretConfigured) {
+      try {
+        await probeEdgeAuthStore();
+        authBackend = { kind: "edge" };
+        console.warn("[AUTH] Direct Supabase server credential unavailable; using project-local Supabase Edge authentication authority");
+        return authBackend;
+      } catch (error) {
+        edgeError = error;
+      }
     }
 
     try {
@@ -225,8 +266,8 @@ function mapUser(row: any): StatelessLocalUser {
     email: String(row.email || ""),
     firstName: row.first_name == null ? null : String(row.first_name),
     lastName: row.last_name == null ? null : String(row.last_name),
-    status: String(row.status || "active"),
-    hasPaidForAccess: row.has_paid_for_access !== false,
+    status: String(row.status || "pending_payment"),
+    hasPaidForAccess: row.has_paid_for_access === true,
   };
 }
 
@@ -254,7 +295,8 @@ export async function getLocalUserByIdHttp(userId: string): Promise<StatelessLoc
   const backend = await resolveLocalAuthBackend();
 
   if (backend.kind === "edge") {
-    throw new Error("Edge authentication backend does not expose arbitrary user lookup");
+    const result = await edgeAuthRequest("user", { userId });
+    return result.user || null;
   }
   if (backend.kind === "postgres") {
     const result = await authDbQuery(
@@ -383,7 +425,7 @@ export async function registerLocalUserHttp(
       const inserted = await dbClient.query(
         `INSERT INTO users
            (id,email,first_name,last_name,profile_image_url,status,has_paid_for_access,created_at,updated_at)
-         VALUES ($1,$2,$3,$4,NULL,'active',true,$5,$5)
+         VALUES ($1,$2,$3,$4,NULL,'pending_payment',false,$5,$5)
          RETURNING id,email,first_name,last_name,status,has_paid_for_access`,
         [userId, normalizedEmail, normalizedFirstName, normalizedLastName, now],
       );
@@ -423,8 +465,8 @@ export async function registerLocalUserHttp(
       first_name: normalizedFirstName,
       last_name: normalizedLastName,
       profile_image_url: null,
-      status: "active",
-      has_paid_for_access: true,
+      status: "pending_payment",
+      has_paid_for_access: false,
       created_at: now,
       updated_at: now,
     })
@@ -454,6 +496,341 @@ export async function registerLocalUserHttp(
   }
 
   return mapUser(userRow);
+}
+
+function normalizeSubscriptionUpdate(update: LocalSubscriptionStateUpdate): LocalSubscriptionStateUpdate {
+  const status = String(update.status || "").trim().toLowerCase();
+  if (!status) throw new Error("Subscription status is required");
+  const normalized: LocalSubscriptionStateUpdate = {
+    userId: update.userId ? String(update.userId).trim() : undefined,
+    squareCustomerId: update.squareCustomerId ? String(update.squareCustomerId).trim() : null,
+    squareSubscriptionId: update.squareSubscriptionId ? String(update.squareSubscriptionId).trim() : null,
+    squarePlanVariationId: update.squarePlanVariationId ? String(update.squarePlanVariationId).trim() : null,
+    status,
+    hasPaidForAccess: update.hasPaidForAccess === true,
+  };
+
+  if (!normalized.userId && !normalized.squareCustomerId) {
+    throw new Error("Subscription update requires a user or Square customer");
+  }
+  if (normalized.hasPaidForAccess && (
+    normalized.status !== "active" ||
+    !normalized.squareSubscriptionId ||
+    !normalized.squarePlanVariationId
+  )) {
+    throw new Error("Paid access requires a verified active Square subscription");
+  }
+  return normalized;
+}
+
+async function ensurePostgresSubscriptionPlan(dbClient: any, squarePlanVariationId: string): Promise<number> {
+  const existing = await dbClient.query(
+    "SELECT id FROM plans WHERE square_plan_id = $1 AND is_active = true ORDER BY id DESC LIMIT 1",
+    [squarePlanVariationId],
+  );
+  if (existing.rows?.[0]?.id) return Number(existing.rows[0].id);
+
+  const inserted = await dbClient.query(
+    `INSERT INTO plans (name,price,currency,interval,square_plan_id,is_active,created_at)
+     VALUES ('LegalWhat Subscription',2599,'USD','monthly',$1,true,NOW())
+     RETURNING id`,
+    [squarePlanVariationId],
+  );
+  return Number(inserted.rows[0].id);
+}
+
+async function persistPostgresSubscriptionState(
+  dbClient: any,
+  update: LocalSubscriptionStateUpdate,
+): Promise<StatelessLocalUser> {
+  let userId = update.userId || "";
+  if (!userId) {
+    const lookup = await dbClient.query(
+      "SELECT id FROM users WHERE square_customer_id = $1 LIMIT 1",
+      [update.squareCustomerId],
+    );
+    userId = String(lookup.rows?.[0]?.id || "");
+  }
+  if (!userId) throw new Error("User not found for Square subscription");
+
+  const currentUserResult = await dbClient.query(
+    "SELECT status,has_paid_for_access FROM users WHERE id = $1 LIMIT 1",
+    [userId],
+  );
+  if (!currentUserResult.rows?.[0]) throw new Error("Subscription user was not found");
+
+  const administrativelySuspended =
+    String(currentUserResult.rows[0].status || "").toLowerCase() === "suspended";
+  let activeAdminOverride = false;
+  if (!update.hasPaidForAccess && !administrativelySuspended) {
+    try {
+      const overrideResult = await dbClient.query(
+        `SELECT id FROM user_subscriptions
+          WHERE user_id=$1 AND is_active=true AND payment_id IS NULL
+          LIMIT 1`,
+        [userId],
+      );
+      activeAdminOverride = Boolean(overrideResult.rows?.[0]?.id);
+    } catch {
+      // A missing legacy override table must never block a Square revocation.
+      activeAdminOverride = false;
+    }
+  }
+  const effectiveUserStatus = administrativelySuspended
+    ? "suspended"
+    : activeAdminOverride
+      ? "active"
+      : update.status;
+  const effectivePaidAccess = administrativelySuspended
+    ? false
+    : activeAdminOverride
+      ? true
+      : update.hasPaidForAccess;
+
+  if (!effectivePaidAccess) {
+    await dbClient.query(
+      `UPDATE users
+          SET status=$1,
+              has_paid_for_access=false,
+              square_customer_id=COALESCE($2,square_customer_id),
+              updated_at=NOW()
+        WHERE id=$3`,
+      [effectiveUserStatus, update.squareCustomerId, userId],
+    );
+  }
+
+  if (update.squareSubscriptionId && update.squarePlanVariationId) {
+    const planId = await ensurePostgresSubscriptionPlan(dbClient, update.squarePlanVariationId);
+    const existingSubscription = await dbClient.query(
+      "SELECT id FROM subscriptions WHERE square_subscription_id = $1 LIMIT 1",
+      [update.squareSubscriptionId],
+    );
+    if (existingSubscription.rows?.[0]?.id) {
+      await dbClient.query(
+        `UPDATE subscriptions
+            SET plan_id=$1,status=$2,square_subscription_id=$3,
+                start_date=COALESCE(start_date,NOW()),updated_at=NOW()
+          WHERE id=$4`,
+        [planId, update.status, update.squareSubscriptionId, existingSubscription.rows[0].id],
+      );
+    } else {
+      await dbClient.query(
+        `INSERT INTO subscriptions
+           (user_id,plan_id,status,square_subscription_id,start_date,created_at,updated_at)
+         VALUES ($1,$2,$3,$4,NOW(),NOW(),NOW())`,
+        [userId, planId, update.status, update.squareSubscriptionId],
+      );
+    }
+  }
+
+  if (effectivePaidAccess) {
+    const updated = await dbClient.query(
+      `UPDATE users
+          SET status=$1,
+              has_paid_for_access=true,
+              square_customer_id=COALESCE($2,square_customer_id),
+              updated_at=NOW()
+        WHERE id=$3
+        RETURNING id,email,first_name,last_name,status,has_paid_for_access`,
+      [effectiveUserStatus, update.squareCustomerId, userId],
+    );
+    if (!updated.rows?.[0]) throw new Error("Subscription user update failed");
+    return mapUser(updated.rows[0]);
+  }
+
+  const refreshed = await dbClient.query(
+    "SELECT id,email,first_name,last_name,status,has_paid_for_access FROM users WHERE id = $1 LIMIT 1",
+    [userId],
+  );
+  if (!refreshed.rows?.[0]) throw new Error("Subscription user refresh failed");
+  return mapUser(refreshed.rows[0]);
+}
+
+async function ensureSupabaseSubscriptionPlan(
+  supabase: SupabaseClient,
+  squarePlanVariationId: string,
+): Promise<number> {
+  const { data: existing, error: lookupError } = await supabase
+    .from("plans")
+    .select("id")
+    .eq("square_plan_id", squarePlanVariationId)
+    .eq("is_active", true)
+    .order("id", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (lookupError) throw new Error(`Subscription plan lookup failed: ${lookupError.message}`);
+  if (existing?.id) return Number(existing.id);
+
+  const { data: inserted, error: insertError } = await supabase
+    .from("plans")
+    .insert({
+      name: "LegalWhat Subscription",
+      price: 2599,
+      currency: "USD",
+      interval: "monthly",
+      square_plan_id: squarePlanVariationId,
+      is_active: true,
+    })
+    .select("id")
+    .single();
+  if (insertError || !inserted?.id) {
+    throw new Error(`Subscription plan creation failed: ${insertError?.message || "unknown error"}`);
+  }
+  return Number(inserted.id);
+}
+
+async function persistSupabaseSubscriptionState(
+  supabase: SupabaseClient,
+  update: LocalSubscriptionStateUpdate,
+): Promise<StatelessLocalUser> {
+  let userId = update.userId || "";
+  if (!userId) {
+    const { data: userLookup, error: lookupError } = await supabase
+      .from("users")
+      .select("id")
+      .eq("square_customer_id", update.squareCustomerId)
+      .limit(1)
+      .maybeSingle();
+    if (lookupError) throw new Error(`Square customer lookup failed: ${lookupError.message}`);
+    userId = String(userLookup?.id || "");
+  }
+  if (!userId) throw new Error("User not found for Square subscription");
+
+  const { data: currentUser, error: currentUserError } = await supabase
+    .from("users")
+    .select("status,has_paid_for_access")
+    .eq("id", userId)
+    .single();
+  if (currentUserError || !currentUser) {
+    throw new Error(`Subscription user lookup failed: ${currentUserError?.message || "unknown error"}`);
+  }
+
+  const administrativelySuspended =
+    String(currentUser.status || "").toLowerCase() === "suspended";
+  let activeAdminOverride = false;
+  if (!update.hasPaidForAccess && !administrativelySuspended) {
+    const { data: override } = await supabase
+      .from("user_subscriptions")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("is_active", true)
+      .is("payment_id", null)
+      .limit(1)
+      .maybeSingle();
+    activeAdminOverride = Boolean(override?.id);
+  }
+  const effectiveUserStatus = administrativelySuspended
+    ? "suspended"
+    : activeAdminOverride
+      ? "active"
+      : update.status;
+  const effectivePaidAccess = administrativelySuspended
+    ? false
+    : activeAdminOverride
+      ? true
+      : update.hasPaidForAccess;
+
+  const userPatch: Record<string, unknown> = {
+    status: effectiveUserStatus,
+    has_paid_for_access: effectivePaidAccess,
+    updated_at: new Date().toISOString(),
+  };
+  if (update.squareCustomerId) userPatch.square_customer_id = update.squareCustomerId;
+
+  if (!effectivePaidAccess) {
+    const { error } = await supabase.from("users").update(userPatch).eq("id", userId);
+    if (error) throw new Error(`Subscription access update failed: ${error.message}`);
+  }
+
+  if (update.squareSubscriptionId && update.squarePlanVariationId) {
+    const planId = await ensureSupabaseSubscriptionPlan(supabase, update.squarePlanVariationId);
+    const { data: existingSubscription, error: subLookupError } = await supabase
+      .from("subscriptions")
+      .select("id")
+      .eq("square_subscription_id", update.squareSubscriptionId)
+      .limit(1)
+      .maybeSingle();
+    if (subLookupError) throw new Error(`Subscription lookup failed: ${subLookupError.message}`);
+
+    if (existingSubscription?.id) {
+      const { error } = await supabase
+        .from("subscriptions")
+        .update({
+          plan_id: planId,
+          status: update.status,
+          square_subscription_id: update.squareSubscriptionId,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", existingSubscription.id);
+      if (error) throw new Error(`Subscription update failed: ${error.message}`);
+    } else {
+      const now = new Date().toISOString();
+      const { error } = await supabase.from("subscriptions").insert({
+        user_id: userId,
+        plan_id: planId,
+        status: update.status,
+        square_subscription_id: update.squareSubscriptionId,
+        start_date: now,
+        created_at: now,
+        updated_at: now,
+      });
+      if (error) throw new Error(`Subscription creation failed: ${error.message}`);
+    }
+  }
+
+  if (effectivePaidAccess) {
+    const { data: userRow, error: userError } = await supabase
+      .from("users")
+      .update(userPatch)
+      .eq("id", userId)
+      .select("id,email,first_name,last_name,status,has_paid_for_access")
+      .single();
+    if (userError || !userRow) {
+      throw new Error(`Subscription user update failed: ${userError?.message || "unknown error"}`);
+    }
+    return mapUser(userRow);
+  }
+
+  const { data: userRow, error: userError } = await supabase
+    .from("users")
+    .select("id,email,first_name,last_name,status,has_paid_for_access")
+    .eq("id", userId)
+    .single();
+  if (userError || !userRow) {
+    throw new Error(`Subscription user refresh failed: ${userError?.message || "unknown error"}`);
+  }
+  return mapUser(userRow);
+}
+
+export async function updateLocalUserSubscriptionHttp(
+  rawUpdate: LocalSubscriptionStateUpdate,
+): Promise<StatelessLocalUser> {
+  const update = normalizeSubscriptionUpdate(rawUpdate);
+  const backend = await resolveLocalAuthBackend();
+
+  if (backend.kind === "edge") {
+    const result = await edgeAuthRequest("set_subscription", update as unknown as Record<string, unknown>);
+    if (!result.user) throw new Error("Subscription persistence failed");
+    return result.user;
+  }
+
+  if (backend.kind === "postgres") {
+    const dbClient = await pool.connect();
+    try {
+      await dbClient.query("BEGIN");
+      await dbClient.query(`SET LOCAL statement_timeout = '${AUTH_DB_QUERY_TIMEOUT_MS}ms'`);
+      const user = await persistPostgresSubscriptionState(dbClient, update);
+      await dbClient.query("COMMIT");
+      return user;
+    } catch (error) {
+      await dbClient.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      dbClient.release();
+    }
+  }
+
+  return persistSupabaseSubscriptionState(backend.client, update);
 }
 
 function sessionSecret(): string {
@@ -502,8 +879,8 @@ export function verifyLocalSessionToken(token: string | null | undefined, now = 
       email: String(payload.email),
       firstName: payload.firstName == null ? null : String(payload.firstName),
       lastName: payload.lastName == null ? null : String(payload.lastName),
-      status: String(payload.status || "active"),
-      hasPaidForAccess: payload.hasPaidForAccess !== false,
+      status: String(payload.status || "pending_payment"),
+      hasPaidForAccess: payload.hasPaidForAccess === true,
       sessionVersion: 2,
     };
   } catch {
