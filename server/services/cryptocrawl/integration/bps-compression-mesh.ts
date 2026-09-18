@@ -3,7 +3,7 @@ import { getCoordinationPoolStats, getPoolStats } from '../../../db.js';
 import { getDynamicZeroCapitalDiscoveryState } from '../discovery/dynamic-zero-capital-routes.js';
 import { getCachedCexFeeEvidence, type CexFeeEvidence } from '../intelligence/cex-fee-resolver.js';
 import { getOkxPrivateAuthoritySnapshot } from '../intelligence/cex-private-authority.js';
-import { ensureOkxRpiFeeAdvisory, getOkxRpiFeeOpportunities } from '../intelligence/okx-rpi-fee-advisory.js';
+import { ensureOkxRpiFeeAdvisory, getOkxRpiFeeOpportunities, stopOkxRpiFeeAdvisory } from '../intelligence/okx-rpi-fee-advisory.js';
 import { buildFeeSurfaceHyperdynamicStrategyPlan, type FeeSurfaceHyperdynamicStrategyPlan } from '../optimization/fee-surface-hyperdynamic-strategy-engine.js';
 import { buildHyperdynamicBpsPlan, type HyperdynamicBpsInput, type HyperdynamicBpsPlan } from '../optimization/hyperdynamic-bps-solution-engine.js';
 import { buildMarginalBpsAllocation, type MarginalBpsAllocation } from '../optimization/marginal-bps-allocator.js';
@@ -12,6 +12,7 @@ import {
   ensureZeroCapitalRecoveryObservability,
   getZeroCapitalRecoverySnapshot,
   onZeroCapitalRecoveryUpdate,
+  stopZeroCapitalRecoveryObservability,
 } from './zero-capital-recovery-observability.js';
 
 export interface BpsCompressionMeshSnapshot {
@@ -440,5 +441,7 @@ export function stopBpsCompressionMeshForTests(): void {
   recoveryRefreshTimer = null;
   unsubscribeRecoveryUpdate?.();
   unsubscribeRecoveryUpdate = null;
+  stopOkxRpiFeeAdvisory();
+  stopZeroCapitalRecoveryObservability();
   installed = false;
 }
