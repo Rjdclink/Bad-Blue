@@ -57,6 +57,10 @@ const SPEED_THRESHOLDS = {
 
 // Cache configuration
 const MAX_PATH_CACHE_SIZE = 100;
+const MAX_SIMULATION_STEPS = 240;
+const MAX_HEATMAP_AXIS_CELLS = 512;
+const MIN_HEATMAP_RESOLUTION_METERS = 20;
+const OPERATOR_TRAIL_WINDOW_MS = 60 * 60 * 1000;
 
 /**
  * Monte Carlo Path Interpolation Engine
@@ -184,86 +188,161 @@ export class MonteCarloPathEngine {
   /**
    * Run Monte Carlo simulations
    */
+  private seededRandom(seedText: string): () => number {
+    let seed = 2166136261;
+    for (let i = 0; i < seedText.length; i++) {
+      seed ^= seedText.charCodeAt(i);
+      seed = Math.imul(seed, 16777619);
+    }
+
+    return () => {
+      seed += 0x6D2B79F5;
+      let t = seed;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  /**
+   * Run bounded, reproducible Monte Carlo simulations. Compute is adaptive so a
+   * long evidence gap cannot allocate millions of intermediate points.
+   */
   private runSimulations(
     start: GPSPoint,
     end: GPSPoint,
     config: MonteCarloConfig
   ): GPSPoint[][] {
-    const simulations: GPSPoint[][] = [];
-    const timeDelta = end.timestamp.getTime() - start.timestamp.getTime();
-    const steps = Math.ceil(timeDelta / 1000 / (config.stepSize / config.maxSpeed));
+    const timeDeltaSeconds = Math.max(
+      1,
+      (end.timestamp.getTime() - start.timestamp.getTime()) / 1000
+    );
+    const directDistance = this.haversineDistance(
+      start.latitude,
+      start.longitude,
+      end.latitude,
+      end.longitude
+    );
 
-    for (let i = 0; i < config.iterations; i++) {
-      const path = this.simulateSinglePath(start, end, steps, config);
-      simulations.push(path);
+    const spatialSteps = Math.ceil(directDistance / Math.max(5, config.stepSize));
+    const temporalSteps = Math.ceil(timeDeltaSeconds / 15);
+    const steps = Math.max(
+      4,
+      Math.min(MAX_SIMULATION_STEPS, Math.max(spatialSteps, temporalSteps))
+    );
+    const iterations = Math.max(50, Math.min(1000, Math.floor(config.iterations)));
+    const seedBase = this.getCacheKey(start, end);
+
+    const simulations: GPSPoint[][] = [];
+    for (let i = 0; i < iterations; i++) {
+      const random = this.seededRandom(`${seedBase}:${i}`);
+      simulations.push(this.simulateSinglePath(start, end, steps, config, random));
     }
 
     return simulations;
   }
 
   /**
-   * Simulate a single random walk path
+   * Simulate one reconstruction hypothesis between two known observations.
    */
   private simulateSinglePath(
     start: GPSPoint,
     end: GPSPoint,
     steps: number,
-    config: MonteCarloConfig
+    config: MonteCarloConfig,
+    random: () => number
   ): GPSPoint[] {
     const path: GPSPoint[] = [start];
-    
+    const timeDelta = Math.max(1, end.timestamp.getTime() - start.timestamp.getTime());
+    const timeStep = timeDelta / steps;
+    const directDistance = this.haversineDistance(
+      start.latitude,
+      start.longitude,
+      end.latitude,
+      end.longitude
+    );
+    const observedSpeed = directDistance / (timeDelta / 1000);
+
     let currentLat = start.latitude;
     let currentLng = start.longitude;
     let currentHeading = this.calculateBearing(
-      start.latitude, start.longitude,
-      end.latitude, end.longitude
+      start.latitude,
+      start.longitude,
+      end.latitude,
+      end.longitude
     );
-    let currentSpeed = config.maxSpeed * 0.5;
-    
-    const timeDelta = end.timestamp.getTime() - start.timestamp.getTime();
-    const timeStep = timeDelta / steps;
+    let currentSpeed = Math.max(
+      0.1,
+      Math.min(config.maxSpeed, Number.isFinite(observedSpeed) ? observedSpeed : config.maxSpeed * 0.25)
+    );
+
+    const endpointConfidence = Math.max(
+      0.05,
+      Math.min(1, Math.min(start.confidence ?? 0.5, end.confidence ?? 0.5))
+    );
+    const gapHours = timeDelta / 3_600_000;
+    const gapPenalty = Math.exp(-0.35 * gapHours);
 
     for (let step = 1; step < steps; step++) {
-      // Add random variation to heading (biased toward destination)
       const targetBearing = this.calculateBearing(
-        currentLat, currentLng,
-        end.latitude, end.longitude
+        currentLat,
+        currentLng,
+        end.latitude,
+        end.longitude
       );
-      
-      // Blend current heading with target heading
+
       const headingDiff = this.normalizeAngle(targetBearing - currentHeading);
-      const blendFactor = 0.3 + Math.random() * 0.4; // 30-70% toward target
-      currentHeading += headingDiff * blendFactor;
-      
-      // Add random heading variation
-      currentHeading += (Math.random() - 0.5) * config.directionVariance;
-      
-      // Add random speed variation
-      const speedChange = (Math.random() - 0.5) * config.accelerationVariance;
-      currentSpeed = Math.max(0.5, Math.min(config.maxSpeed, currentSpeed + speedChange));
-      
-      // Calculate distance for this step
+      const blendFactor = 0.35 + random() * 0.35;
+      currentHeading = (currentHeading + headingDiff * blendFactor + 360) % 360;
+      currentHeading = (
+        currentHeading +
+        (random() - 0.5) * config.directionVariance +
+        360
+      ) % 360;
+
+      const speedChange = (random() - 0.5) * config.accelerationVariance;
+      currentSpeed = Math.max(0.05, Math.min(config.maxSpeed, currentSpeed + speedChange));
+
       const distance = currentSpeed * (timeStep / 1000);
-      
-      // Move to new position
       const newPos = this.movePoint(currentLat, currentLng, currentHeading, distance);
       currentLat = newPos.lat;
       currentLng = newPos.lng;
-      
-      // Create interpolated point
-      const timestamp = new Date(start.timestamp.getTime() + step * timeStep);
+
+      const progress = step / steps;
+      const midpointPenalty = 1 - 0.45 * Math.sin(Math.PI * progress);
+      const confidence = Math.max(
+        0.05,
+        Math.min(0.8, endpointConfidence * gapPenalty * midpointPenalty * 0.75)
+      );
+      const accuracy = Math.max(
+        start.accuracy ?? 25,
+        end.accuracy ?? 25,
+        directDistance * 0.08 * Math.sin(Math.PI * progress)
+      );
+
       path.push({
         latitude: currentLat,
         longitude: currentLng,
-        timestamp,
-        source: 'predicted',
-        confidence: 0.5 * (1 - step / steps), // Confidence decreases over time
+        accuracy,
+        timestamp: new Date(start.timestamp.getTime() + step * timeStep),
+        receivedAt: new Date(),
+        source: 'interpolated',
+        confidence,
+        observationKind: 'interpolated',
+        correlationGroup: 'interpolation:monte_carlo',
+        provenance: {
+          provider: 'canonical_geoconsole_interpolator',
+          transformedBy: ['bounded_seeded_monte_carlo'],
+        },
+        metadata: {
+          interpolation: true,
+          method: 'bounded_seeded_monte_carlo',
+          progress,
+        },
       });
     }
 
-    // Ensure path ends at destination
     path.push(end);
-    
     return path;
   }
 
@@ -275,48 +354,67 @@ export class MonteCarloPathEngine {
     start: GPSPoint,
     end: GPSPoint
   ): ProbabilityHeatmap {
-    // Calculate bounds with padding
     const bounds = this.calculateBounds(simulations, start, end);
-    const resolution = 20; // meters per cell
-    
-    // Calculate grid dimensions
-    const latRange = bounds.north - bounds.south;
-    const lngRange = bounds.east - bounds.west;
-    const latCells = Math.ceil(latRange * 111000 / resolution);
-    const lngCells = Math.ceil(lngRange * 111000 * Math.cos(start.latitude * Math.PI / 180) / resolution);
-    
-    // Initialize grid
-    const grid: number[][] = Array(latCells).fill(null).map(() => Array(lngCells).fill(0));
-    
-    // Count visits per cell
+    const rawLatRange = Math.abs(bounds.north - bounds.south);
+    const rawLngRange = Math.abs(bounds.east - bounds.west);
+    const latRange = Math.max(rawLatRange, 1e-9);
+    const lngRange = Math.max(rawLngRange, 1e-9);
+
+    const latMeters = Math.max(1, rawLatRange * 111_000);
+    const lngMeters = Math.max(
+      1,
+      rawLngRange * 111_000 * Math.max(0.05, Math.abs(Math.cos(start.latitude * DEG_TO_RAD)))
+    );
+    const resolution = Math.max(
+      MIN_HEATMAP_RESOLUTION_METERS,
+      Math.ceil(latMeters / MAX_HEATMAP_AXIS_CELLS),
+      Math.ceil(lngMeters / MAX_HEATMAP_AXIS_CELLS)
+    );
+    const latCells = Math.max(1, Math.min(MAX_HEATMAP_AXIS_CELLS, Math.ceil(latMeters / resolution)));
+    const lngCells = Math.max(1, Math.min(MAX_HEATMAP_AXIS_CELLS, Math.ceil(lngMeters / resolution)));
+
+    const grid: number[][] = Array.from(
+      { length: latCells },
+      () => Array(lngCells).fill(0)
+    );
+
     let maxCount = 0;
     let peakLat = start.latitude;
     let peakLng = start.longitude;
-    
+    let totalVisits = 0;
+
     for (const path of simulations) {
       for (const point of path) {
-        const latIdx = Math.floor((point.latitude - bounds.south) / latRange * (latCells - 1));
-        const lngIdx = Math.floor((point.longitude - bounds.west) / lngRange * (lngCells - 1));
-        
-        if (latIdx >= 0 && latIdx < latCells && lngIdx >= 0 && lngIdx < lngCells) {
-          grid[latIdx][lngIdx]++;
-          if (grid[latIdx][lngIdx] > maxCount) {
-            maxCount = grid[latIdx][lngIdx];
-            peakLat = bounds.south + (latIdx + 0.5) * latRange / latCells;
-            peakLng = bounds.west + (lngIdx + 0.5) * lngRange / lngCells;
-          }
+        const latIdx = latCells === 1
+          ? 0
+          : Math.max(0, Math.min(latCells - 1,
+              Math.floor((point.latitude - bounds.south) / latRange * latCells)));
+        const lngIdx = lngCells === 1
+          ? 0
+          : Math.max(0, Math.min(lngCells - 1,
+              Math.floor((point.longitude - bounds.west) / lngRange * lngCells)));
+
+        grid[latIdx][lngIdx]++;
+        totalVisits++;
+        if (grid[latIdx][lngIdx] > maxCount) {
+          maxCount = grid[latIdx][lngIdx];
+          peakLat = latCells === 1
+            ? (bounds.north + bounds.south) / 2
+            : bounds.south + (latIdx + 0.5) * latRange / latCells;
+          peakLng = lngCells === 1
+            ? (bounds.east + bounds.west) / 2
+            : bounds.west + (lngIdx + 0.5) * lngRange / lngCells;
         }
       }
     }
-    
-    // Normalize to probabilities
-    const totalVisits = simulations.length * (simulations[0]?.length || 1);
+
+    const denominator = Math.max(1, totalVisits);
     for (let i = 0; i < latCells; i++) {
       for (let j = 0; j < lngCells; j++) {
-        grid[i][j] = grid[i][j] / totalVisits;
+        grid[i][j] /= denominator;
       }
     }
-    
+
     return {
       bounds,
       resolution,
@@ -324,7 +422,7 @@ export class MonteCarloPathEngine {
       peakProbability: {
         lat: peakLat,
         lng: peakLng,
-        value: maxCount / totalVisits,
+        value: maxCount / denominator,
       },
     };
   }
@@ -360,8 +458,8 @@ export class MonteCarloPathEngine {
   private scorePath(path: GPSPoint[], heatmap: ProbabilityHeatmap): number {
     let score = 0;
     const { bounds, grid } = heatmap;
-    const latRange = bounds.north - bounds.south;
-    const lngRange = bounds.east - bounds.west;
+    const latRange = Math.max(Math.abs(bounds.north - bounds.south), 1e-9);
+    const lngRange = Math.max(Math.abs(bounds.east - bounds.west), 1e-9);
     const latCells = grid.length;
     const lngCells = grid[0]?.length || 1;
     
@@ -374,7 +472,7 @@ export class MonteCarloPathEngine {
       }
     }
     
-    return score / path.length;
+    return path.length > 0 ? score / path.length : 0;
   }
 
   /**
@@ -415,23 +513,54 @@ export class MonteCarloPathEngine {
   ): InterpolatedPath {
     const points: GPSPoint[] = [start];
     const numSteps = 10;
-    const timeDelta = end.timestamp.getTime() - start.timestamp.getTime();
-    
+    const timeDelta = Math.max(1, end.timestamp.getTime() - start.timestamp.getTime());
+    const directDistance = this.haversineDistance(
+      start.latitude,
+      start.longitude,
+      end.latitude,
+      end.longitude
+    );
+    const endpointConfidence = Math.max(
+      0.05,
+      Math.min(1, Math.min(start.confidence ?? 0.5, end.confidence ?? 0.5))
+    );
+    const gapHours = timeDelta / 3_600_000;
+    const pathConfidence = Math.max(
+      0.05,
+      Math.min(0.85, endpointConfidence * Math.exp(-0.45 * gapHours) * 0.75)
+    );
+
     for (let i = 1; i < numSteps; i++) {
-      const t = i / numSteps;
+      const progress = i / numSteps;
       points.push({
-        latitude: start.latitude + (end.latitude - start.latitude) * t,
-        longitude: start.longitude + (end.longitude - start.longitude) * t,
-        timestamp: new Date(start.timestamp.getTime() + timeDelta * t),
-        source: 'predicted',
-        confidence: 0.8,
+        latitude: start.latitude + (end.latitude - start.latitude) * progress,
+        longitude: start.longitude + (end.longitude - start.longitude) * progress,
+        accuracy: Math.max(
+          start.accuracy ?? 25,
+          end.accuracy ?? 25,
+          directDistance * 0.05 * Math.sin(Math.PI * progress)
+        ),
+        timestamp: new Date(start.timestamp.getTime() + timeDelta * progress),
+        receivedAt: new Date(),
+        source: 'interpolated',
+        confidence: Math.max(0.05, pathConfidence * (1 - 0.25 * Math.sin(Math.PI * progress))),
+        observationKind: 'interpolated',
+        correlationGroup: 'interpolation:linear',
+        provenance: {
+          provider: 'canonical_geoconsole_interpolator',
+          transformedBy: ['linear_interpolation'],
+        },
+        metadata: {
+          interpolation: true,
+          method: 'linear',
+          progress,
+        },
       });
     }
-    
+
     points.push(end);
-    
     const bounds = this.calculateBoundsFromPoints(points);
-    
+
     return {
       id: pathId,
       startPoint: start,
@@ -439,23 +568,20 @@ export class MonteCarloPathEngine {
       interpolatedPoints: points,
       probabilityDistribution: {
         bounds,
-        resolution: 10,
+        resolution: Math.max(10, Math.ceil(directDistance / 64)),
         grid: [[1]],
         peakProbability: {
           lat: (start.latitude + end.latitude) / 2,
           lng: (start.longitude + end.longitude) / 2,
-          value: 1,
+          value: pathConfidence,
         },
       },
-      confidence: 0.9,
+      confidence: pathConfidence,
       method: 'linear',
       metadata: {
         iterations: 1,
         computeTime: 1,
-        pathLength: this.haversineDistance(
-          start.latitude, start.longitude,
-          end.latitude, end.longitude
-        ),
+        pathLength: directDistance,
         estimatedDuration: timeDelta / 1000,
       },
     };
@@ -498,6 +624,7 @@ export class MonteCarloPathEngine {
     const trailPoints: TrailPoint[] = [];
     const segments: TrailSegment[] = [];
     const stops: StopPoint[] = [];
+    const latestEventTime = sortedPoints[sortedPoints.length - 1].timestamp.getTime();
     
     let totalDistance = 0;
     let currentSegmentStart = 0;
@@ -549,10 +676,9 @@ export class MonteCarloPathEngine {
         }
       }
 
-      // Calculate opacity for trail fade effect
-      const age = Date.now() - point.timestamp.getTime();
-      const maxAge = 3 * 24 * 60 * 60 * 1000; // 3 days
-      const opacity = Math.max(0.1, 1 - age / maxAge);
+      // Fade relative to the reconstructed event window, never wall-clock age.
+      const age = Math.max(0, latestEventTime - point.timestamp.getTime());
+      const opacity = Math.max(0.1, 1 - age / OPERATOR_TRAIL_WINDOW_MS);
 
       trailPoints.push({
         position: point,
@@ -603,48 +729,72 @@ export class MonteCarloPathEngine {
   ): Promise<GPSPoint[]> {
     if (recentPoints.length < 3) return [];
 
-    const sorted = [...recentPoints]
-      .filter(point => Number.isFinite(point.timestamp.getTime()))
-      .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-    const recent = sorted.slice(-10);
-    if (recent.length < 3) return [];
+    const usable = recentPoints
+      .filter(point =>
+        Number.isFinite(point.timestamp.getTime()) &&
+        point.observationKind !== 'predicted' &&
+        point.source !== 'predicted'
+      )
+      .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+      .slice(-12);
+    if (usable.length < 3) return [];
 
-    // Recency-weighted deterministic motion estimate. Heading is averaged on the
-    // unit circle so 359° and 1° correctly produce ~0° instead of 180°.
     let totalWeight = 0;
     let weightedSpeed = 0;
     let headingX = 0;
     let headingY = 0;
+    const maxPlausibleSpeed = Math.max(80, this.config.maxSpeed * 3);
 
-    for (let i = 1; i < recent.length; i++) {
-      const older = recent[i - 1];
-      const newer = recent[i];
+    const kindWeight = (point: GPSPoint): number => {
+      switch (point.observationKind) {
+        case 'observed': return 1;
+        case 'inferred': return 0.65;
+        case 'interpolated': return 0.45;
+        case 'historical': return 0.35;
+        default: return point.source === 'interpolated' ? 0.45 : 0.8;
+      }
+    };
+
+    for (let i = 1; i < usable.length; i++) {
+      const older = usable[i - 1];
+      const newer = usable[i];
       const elapsedSeconds = (newer.timestamp.getTime() - older.timestamp.getTime()) / 1000;
       if (elapsedSeconds <= 0) continue;
 
       const speed = this.calculateSpeed(older, newer);
+      if (!Number.isFinite(speed) || speed > maxPlausibleSpeed) continue;
+
       const heading = this.calculateBearing(
         older.latitude,
         older.longitude,
         newer.latitude,
         newer.longitude
       );
-      const weight = i; // newer transitions carry more weight
+      const evidenceConfidence = Math.sqrt(
+        Math.max(0.01, Math.min(1, older.confidence ?? 0.5)) *
+        Math.max(0.01, Math.min(1, newer.confidence ?? 0.5))
+      );
+      const sourceWeight = Math.min(kindWeight(older), kindWeight(newer));
+      const recencyWeight = i / Math.max(1, usable.length - 1);
+      const weight = evidenceConfidence * sourceWeight * (0.35 + 0.65 * recencyWeight);
+      if (weight <= 0) continue;
+
       totalWeight += weight;
       weightedSpeed += speed * weight;
-      headingX += Math.cos(heading * Math.PI / 180) * weight;
-      headingY += Math.sin(heading * Math.PI / 180) * weight;
+      headingX += Math.cos(heading * DEG_TO_RAD) * weight;
+      headingY += Math.sin(heading * DEG_TO_RAD) * weight;
     }
 
-    if (totalWeight === 0) return [];
+    if (totalWeight <= 0) return [];
 
-    const avgSpeed = weightedSpeed / totalWeight;
+    const avgSpeed = Math.max(0, Math.min(maxPlausibleSpeed, weightedSpeed / totalWeight));
     const avgHeading = (Math.atan2(headingY, headingX) * 180 / Math.PI + 360) % 360;
-    const latest = recent[recent.length - 1];
+    const latest = usable[usable.length - 1];
     const baseTime = latest.timestamp.getTime();
     const stepMinutes = 5;
-    const steps = Math.max(1, Math.floor((hours * 60) / stepMinutes));
+    const steps = Math.max(1, Math.min(12, Math.floor((Math.min(hours, 1) * 60) / stepMinutes)));
     const baseAccuracy = Math.max(5, latest.accuracy ?? 35);
+    const baseConfidence = Math.max(0.1, Math.min(0.95, latest.confidence ?? 0.5));
 
     const futurePoints: GPSPoint[] = [];
     let currentLat = latest.latitude;
@@ -662,7 +812,7 @@ export class MonteCarloPathEngine {
         timestamp: new Date(baseTime + i * stepMinutes * 60 * 1000),
         receivedAt: new Date(),
         source: 'predicted',
-        confidence: Math.max(0.08, 0.88 * Math.exp(-2.2 * horizonRatio)),
+        confidence: Math.max(0.05, baseConfidence * Math.exp(-2.2 * horizonRatio)),
         observationKind: 'predicted',
         correlationGroup: 'prediction:deterministic_recency_weighted_motion',
         provenance: {
@@ -675,6 +825,7 @@ export class MonteCarloPathEngine {
           horizonMinutes: i * stepMinutes,
           averageSpeedMps: avgSpeed,
           averageHeadingDegrees: avgHeading,
+          weightedTransitions: totalWeight,
         },
       };
 
@@ -704,17 +855,18 @@ export class MonteCarloPathEngine {
   }
 
   private movePoint(lat: number, lng: number, bearing: number, distance: number): { lat: number; lng: number } {
-    const φ1 = (lat * Math.PI) / 180;
-    const λ1 = (lng * Math.PI) / 180;
+    const φ1 = lat * DEG_TO_RAD;
+    const λ1 = lng * DEG_TO_RAD;
+    const θ = bearing * DEG_TO_RAD;
     const d = distance / EARTH_RADIUS;
 
     const φ2 = Math.asin(
       Math.sin(φ1) * Math.cos(d) +
-      Math.cos(φ1) * Math.sin(d) * Math.cos(bearing)
+      Math.cos(φ1) * Math.sin(d) * Math.cos(θ)
     );
-    
+
     const λ2 = λ1 + Math.atan2(
-      Math.sin(bearing) * Math.sin(d) * Math.cos(φ1),
+      Math.sin(θ) * Math.sin(d) * Math.cos(φ1),
       Math.cos(d) - Math.sin(φ1) * Math.sin(φ2)
     );
 
@@ -785,13 +937,18 @@ export class MonteCarloPathEngine {
             path[i].latitude, path[i].longitude,
             sim[i].latitude, sim[i].longitude
           );
-          if (dist < 50) matches++;
+          const tolerance = Math.max(
+            25,
+            path[i].accuracy ?? 0,
+            sim[i].accuracy ?? 0
+          );
+          if (dist <= tolerance) matches++;
         }
       }
-      if (matches / path.length > 0.8) consistentPaths++;
+      if (path.length > 0 && matches / path.length > 0.8) consistentPaths++;
     }
     
-    return consistentPaths / simulations.length;
+    return simulations.length > 0 ? consistentPaths / simulations.length : 0;
   }
 
   private calculatePathLength(points: GPSPoint[]): number {
@@ -821,8 +978,8 @@ export class MonteCarloPathEngine {
     }
 
     // Add 10% padding
-    const latPad = (north - south) * 0.1;
-    const lngPad = (east - west) * 0.1;
+    const latPad = Math.max((north - south) * 0.1, 1e-6);
+    const lngPad = Math.max((east - west) * 0.1, 1e-6);
 
     return {
       north: north + latPad,
