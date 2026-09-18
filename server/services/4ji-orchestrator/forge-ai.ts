@@ -27,8 +27,10 @@ import { createLogger } from '../../logger';
 import { DomainFirewall, Domain } from './domain-firewall';
 import { AIProvider, TaskComplexity, TaskPriority, UsageContext, type AITaskMetadata } from '../../aiTokenGovernor';
 import { runProvider } from '../../aiProvider';
+import { AICollaborationOrchestrator } from '../../aiCollaborationOrchestrator';
+import { TaskComplexity as SelectorTaskComplexity, TaskPriority as SelectorTaskPriority } from '../../aiModelSelector';
 import { deepSeekSearch, grokSearch, kimiSearch, qwenSearch } from '../../openRouterService';
-import { CURRENT_AI_MODELS } from '../../aiHarmonyModelRegistry';
+import { CURRENT_AI_MODELS, getConfiguredHarmonyProviders } from '../../aiHarmonyModelRegistry';
 
 const log = createLogger('4JI-Orchestrator');
 
@@ -455,9 +457,8 @@ export class ForgeAI {
             return b.matchedCapabilities - a.matchedCapabilities;
           }
 
-          const priorityA = this.providerPriority(a.model.provider);
-          const priorityB = this.providerPriority(b.model.provider);
-          if (priorityA !== priorityB) return priorityA - priorityB;
+          // Tie-break only on task-relevant execution characteristics. Provider
+          // identity is never a preference signal.
           return this.speedRank(a.model.speedTier) - this.speedRank(b.model.speedTier);
         });
 
@@ -709,32 +710,9 @@ export class ForgeAI {
    */
   private static async executeWithModels(
     task: OrchestratedTask,
-    models: AIModelConfig[]
+    _models: AIModelConfig[]
   ): Promise<{ content: unknown; modelsUsed: string[]; tokensUsed: number; confidence: number }> {
-    if (models.length === 0) {
-      throw new Error(`No suitable models found for task ${task.id} with capabilities: ${task.requiredCapabilities.join(', ')}`);
-    }
-
-    const primaryModel = models[0];
-    log.debug('Executing with model', {
-      taskId: task.id,
-      model: primaryModel.id,
-    });
-
-    const execution = await this.executeSingleModel(primaryModel, task);
-    const content = execution.content;
-    const tokensUsed = execution.tokensUsed;
-
-    if (!content) {
-      throw new Error(`Model ${primaryModel.id} returned an empty response`);
-    }
-
-    return {
-      content,
-      modelsUsed: [primaryModel.id],
-      tokensUsed,
-      confidence: 0.8,
-    };
+    return this.executeHarmonyTask(task);
   }
 
   /**
@@ -743,84 +721,65 @@ export class ForgeAI {
   private static async executeRoleBased(
     task: OrchestratedTask
   ): Promise<{ content: unknown; modelsUsed: string[]; tokensUsed: number; confidence: number }> {
-    const requestedRoles = (task.roles || []).filter((role, index, roles) => roles.indexOf(role) === index);
-    const modelIds = new Set<string>();
+    // Roles contribute task requirements, not hard provider assignments. The
+    // shared Harmony mesh resolves the compatible participants dynamically.
+    return this.executeHarmonyTask(task);
+  }
 
-    for (const role of requestedRoles) {
-      const assignment = this.roleAssignments.get(role);
-      if (!assignment) {
-        throw new Error(`Role '${role}' is not configured in 4JI assignments`);
-      }
-
-      modelIds.add(assignment.primaryModelId);
-      for (const fallbackId of assignment.fallbackModelIds) {
-        modelIds.add(fallbackId);
-      }
+  private static async executeHarmonyTask(
+    task: OrchestratedTask,
+  ): Promise<{ content: unknown; modelsUsed: string[]; tokensUsed: number; confidence: number }> {
+    const providers = getConfiguredHarmonyProviders();
+    if (providers.length === 0) {
+      throw new Error('No configured Harmony providers are available for 4JI');
     }
 
-    const candidateModels = Array.from(modelIds)
-      .map(id => this.models.get(id))
-      .filter((model): model is AIModelConfig => Boolean(model))
-      .filter(model => model.domains.includes(task.domain));
+    const required = new Set(task.requiredCapabilities);
+    const response = await AICollaborationOrchestrator.orchestrateCollaboration(
+      `forge-${task.domain}-${task.type}`,
+      task.prompt,
+      {
+        context: task.priority >= TaskPriority.HIGH_USER ? UsageContext.USER : UsageContext.AUTONOMOUS,
+        complexity: required.has('reasoning') || required.has('legal-analysis')
+          ? SelectorTaskComplexity.COMPREHENSIVE
+          : SelectorTaskComplexity.MODERATE,
+        priority: task.priority >= TaskPriority.CRITICAL_USER
+          ? SelectorTaskPriority.CRITICAL
+          : task.priority >= TaskPriority.HIGH_USER
+            ? SelectorTaskPriority.HIGH
+            : task.priority >= TaskPriority.MEDIUM_BACKGROUND
+              ? SelectorTaskPriority.MEDIUM
+              : SelectorTaskPriority.LOW,
+        estimatedTokens: task.maxTokens,
+        needsReasoning: required.has('reasoning') || required.has('orchestration'),
+        needsCodeGeneration: required.has('coding'),
+        needsLegalAnalysis: required.has('legal-analysis') || task.domain === Domain.LEGAL_WHAT,
+        needsVerification: required.has('verification') || (task.roles || []).includes('review'),
+        needsPatternRecognition: required.has('pattern-recognition') || required.has('market-prediction'),
+        needsSearchGrounding: required.has('research'),
+        needsLongContext: required.has('long-context'),
+        needsMultimodal: required.has('visual-analysis'),
+        needsDataExtraction: required.has('data-extraction'),
+        needsStructuredOutput: required.has('data-extraction'),
+        needsFastResponse: required.has('fast-inference'),
+      },
+      providers,
+      {
+        providerPolicy: 'capability-first',
+        systemPrompt: task.systemPrompt,
+      },
+    );
 
-    if (candidateModels.length === 0) {
-      throw new Error(`No domain-compatible models found for roles: ${requestedRoles.join(', ')}`);
+    const successes = response.contributions.filter(entry => entry.success);
+    if (!response.finalAnswer?.trim() || successes.length === 0) {
+      throw new Error(`Harmony produced no usable 4JI result for ${task.id}`);
     }
-
-    const executionResults: ModelExecutionResult[] = [];
-    for (const model of candidateModels.slice(0, 3)) {
-      try {
-        executionResults.push(await this.executeSingleModel(model, task));
-      } catch (error) {
-        log.warn('Role-based candidate model failed', {
-          taskId: task.id,
-          model: model.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-
-    if (executionResults.length === 0) {
-      throw new Error(`All role-based models failed for task ${task.id}`);
-    }
-
-    if (executionResults.length === 1) {
-      return {
-        content: executionResults[0].content,
-        modelsUsed: [executionResults[0].model.id],
-        tokensUsed: executionResults[0].tokensUsed,
-        confidence: 0.78,
-      };
-    }
-
-    const reviewer = this.resolveReviewerModel(task.domain);
-    const consensusPrompt = `You are 4JI consensus resolver. Resolve disagreements between specialist model outputs and produce one final answer.
-Task type: ${task.type}
-Domain: ${task.domain}
-Original prompt: ${task.prompt}
-
-Candidate outputs:\n${executionResults
-      .map((result, index) => `Model ${index + 1} (${result.model.id}):\n${result.content}`)
-      .join('\n\n')}
-
-Return a single consolidated response.`;
-
-    const consensusExecution = await this.executeSingleModel(reviewer, {
-      ...task,
-      prompt: consensusPrompt,
-      requiredCapabilities: ['reasoning', 'verification'],
-    });
-
-    const modelsUsed = [
-      ...executionResults.map(result => result.model.id),
-      consensusExecution.model.id,
-    ];
 
     return {
-      content: consensusExecution.content,
-      modelsUsed,
-      tokensUsed: executionResults.reduce((sum, entry) => sum + entry.tokensUsed, 0) + consensusExecution.tokensUsed,
-      confidence: 0.88,
+      content: response.finalAnswer,
+      modelsUsed: Array.from(new Set(successes.map(entry => entry.model))),
+      tokensUsed: response.totalTokens,
+      confidence: successes.length / Math.max(1, response.contributions.length),
     };
   }
 
