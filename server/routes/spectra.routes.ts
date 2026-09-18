@@ -261,6 +261,107 @@ function locationEvidenceConfidence(points: any[]): number {
   return Math.max(0, Math.min(0.95, mean + corroborationBonus));
 }
 
+function extractLikelyName(value: string): string | null {
+  const text = value.replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+
+  const labeled = text.match(
+    /\b(?:name|person|target|individual)\s*(?::|=|\-|is)\s*([A-Za-z][A-Za-z'’.-]+(?:\s+[A-Za-z][A-Za-z'’.-]+){1,3})/i,
+  );
+  if (labeled?.[1]) return labeled[1].trim();
+
+  const withoutPhone = (() => {
+    const phone = extractPhoneNumber(text);
+    return phone ? text.replace(phone, ' ') : text;
+  })();
+  const firstSegment = withoutPhone.split(/[;|\n]/)[0]
+    .replace(/\b(?:phone|number|cell|mobile)\b.*$/i, '')
+    .replace(/\b(?:last\s+known|located|lives?|from|near|around)\b.*$/i, '')
+    .replace(/^[^A-Za-z]+|[^A-Za-z'’.-]+$/g, '')
+    .trim();
+
+  if (
+    /^[A-Za-z][A-Za-z'’.-]+(?:\s+[A-Za-z][A-Za-z'’.-]+){1,3}$/.test(firstSegment)
+  ) {
+    return firstSegment;
+  }
+
+  return null;
+}
+
+function dedupeDiscoveryResults(results: any[]): any[] {
+  const seen = new Set<string>();
+  return results.filter(result => {
+    const key = result?.url
+      ? String(result.url).trim().toLowerCase()
+      : `${String(result?.title || '').trim().toLowerCase()}|${String(result?.snippet || '').slice(0, 180).trim().toLowerCase()}`;
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function buildDiscoveryQueries(args: {
+  resolvedName: string;
+  normalizedTarget: string;
+  details: string;
+  phone?: string;
+}): { firstPass: string[]; secondPass: string[] } {
+  const { resolvedName, normalizedTarget, details, phone } = args;
+  const quotedName = resolvedName ? `"${resolvedName}"` : '';
+  const phoneDigits = phone?.replace(/\D/g, '') || '';
+  const compactDetails = details.replace(/\s+/g, ' ').trim();
+
+  const firstPass = [
+    [quotedName, phone ? `"${phone}"` : ''].filter(Boolean).join(' '),
+    [quotedName, compactDetails].filter(Boolean).join(' '),
+    [normalizedTarget, compactDetails].filter(Boolean).join(' '),
+    phoneDigits.length >= 7 ? `"${phoneDigits}"` : '',
+  ].filter(Boolean);
+
+  const secondPass = [
+    [quotedName, 'public records address location'].filter(Boolean).join(' '),
+    [quotedName, 'social profile biography location'].filter(Boolean).join(' '),
+    [quotedName, phone ? `"${phone}"` : '', 'contact directory'].filter(Boolean).join(' '),
+    [quotedName, 'property court business records'].filter(Boolean).join(' '),
+  ].filter(Boolean);
+
+  return {
+    firstPass: [...new Set(firstPass)],
+    secondPass: [...new Set(secondPass)],
+  };
+}
+
+async function runDiscoveryPass(queries: string[]): Promise<{
+  results: any[];
+  attempted: number;
+  failed: number;
+}> {
+  const settled = await Promise.allSettled(
+    queries.map(query =>
+      unifiedSearch(query, {
+        limit: 25,
+        category: 'general',
+        freshness: 'all',
+        timeout: 20_000,
+      })
+    )
+  );
+
+  const results: any[] = [];
+  let failed = 0;
+  for (const result of settled) {
+    if (result.status === 'fulfilled') results.push(...result.value);
+    else failed += 1;
+  }
+
+  return {
+    results: dedupeDiscoveryResults(results),
+    attempted: queries.length,
+    failed,
+  };
+}
+
 function discoverySourceKey(result: any): string {
   try {
     if (result?.url) return new URL(String(result.url)).hostname.toLowerCase();
@@ -288,32 +389,37 @@ router.post('/acquire', async (req: Request, res: Response) => {
     ? normalizedTarget.replace(targetPhone, '').replace(/[\s,;:()\-.]+/g, '')
     : normalizedTarget;
   const targetIsPhone = Boolean(targetPhone) && remainingTarget.length === 0;
+  const genericTarget = GENERIC_TARGET_RE.test(normalizedTarget);
+  const suppliedName = extractLikelyName(details);
   const subject = targetSubject(normalizedTarget);
-  const searchQuery = GENERIC_TARGET_RE.test(normalizedTarget) || targetIsPhone
-    ? details
+  const resolvedName = genericTarget || targetIsPhone
+    ? suppliedName || targetSubject(details)
     : subject;
-  const broadQuery = [normalizedTarget, details].filter(Boolean).join(' ');
+  const searchQuery = resolvedName || details;
+  const resolvedTargetLabel = resolvedName || phone || normalizedTarget;
+  const discoveryQueries = buildDiscoveryQueries({
+    resolvedName: resolvedName || '',
+    normalizedTarget,
+    details,
+    phone,
+  });
 
   try {
     // SPECTRA treats discovery systems as parallel evidence sources. A failure
     // in one adapter is local and never prevents other acquisition paths.
-    const [osintResult, webResult] = await Promise.allSettled([
-      conductFullOSINT(searchQuery, {
-        location: details,
-        phone,
-        searchDepth: 4,
-      }),
-      unifiedSearch(broadQuery, {
-        limit: 25,
-        category: 'general',
-        freshness: 'all',
-        timeout: 20_000,
-      }),
+    const [osintResult, firstPass] = await Promise.all([
+      Promise.resolve(
+        conductFullOSINT(searchQuery, {
+          location: details,
+          phone,
+          searchDepth: 4,
+        })
+      ).then(
+        value => ({ status: 'fulfilled' as const, value }),
+        reason => ({ status: 'rejected' as const, reason }),
+      ),
+      runDiscoveryPass(discoveryQueries.firstPass),
     ]);
-
-    if (osintResult.status === 'rejected' && webResult.status === 'rejected') {
-      throw osintResult.reason || webResult.reason;
-    }
 
     const report = osintResult.status === 'fulfilled'
       ? osintResult.value
@@ -330,7 +436,36 @@ router.post('/acquire', async (req: Request, res: Response) => {
           summary: '',
         } as any;
 
-    const discoveryResults = webResult.status === 'fulfilled' ? webResult.value : [];
+    let discoveryResults = firstPass.results;
+    let discoveryQueriesAttempted = firstPass.attempted;
+    let discoveryQueriesFailed = firstPass.failed;
+    let discoveryPasses = 1;
+
+    const firstPassSourceCount = new Set(
+      discoveryResults.map(discoverySourceKey).filter(Boolean)
+    ).size;
+    if (
+      discoveryResults.length < 40 ||
+      firstPassSourceCount < 12 ||
+      (Array.isArray(report.sources) ? report.sources.length : 0) < 8
+    ) {
+      const secondPass = await runDiscoveryPass(discoveryQueries.secondPass);
+      discoveryResults = dedupeDiscoveryResults([
+        ...discoveryResults,
+        ...secondPass.results,
+      ]);
+      discoveryQueriesAttempted += secondPass.attempted;
+      discoveryQueriesFailed += secondPass.failed;
+      discoveryPasses += 1;
+    }
+
+    if (
+      osintResult.status === 'rejected' &&
+      discoveryResults.length === 0 &&
+      discoveryQueriesFailed >= discoveryQueriesAttempted
+    ) {
+      throw osintResult.reason || new Error('All discovery paths failed');
+    }
 
     const observations: any[] = directEvidence.map(point => {
       const normalized = normalizeClientEvidence({
@@ -464,6 +599,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
       success: true,
       target,
       details,
+      resolvedTargetLabel,
       acquisition: {
         identityConfidence,
         locationConfidence,
@@ -473,6 +609,9 @@ router.post('/acquire', async (req: Request, res: Response) => {
           (Array.isArray(report.sources) ? report.sources.length : 0) +
           discoveryResults.length,
         observationCount: locationObservations.length,
+        discoveryPasses,
+        discoveryQueriesAttempted,
+        discoveryQueriesFailed,
         summary: report.summary || '',
         verificationStatus: report.identitySummary?.verificationStatus || 'Unknown',
       },
