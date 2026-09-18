@@ -24,7 +24,7 @@ export interface LexaraAuthorityResearchContext {
 const MAX_RESEARCH_PROMPT_CHARACTERS = 6_000;
 const MAX_RESEARCH_SUMMARY_CHARACTERS = 7_000;
 const MAX_AUTHORITY_SOURCES = 8;
-const RESEARCH_TIMEOUT_MS = 5_500;
+const RESEARCH_TIMEOUT_MS = 4_000;
 
 const AUTHORITY_SENSITIVE_PATTERN = /\b(?:cite|citation|source|authority|case\s*law|precedent|holding|statute|statutory|code\s+section|regulation|c\.f\.r\.|u\.s\.c\.|court\s+rule|rule\s+\d|legal\s+standard|elements?\s+of|controlling\s+law|current\s+law|recent\s+law|supreme\s+court|circuit\s+court|appellate\s+court|statute\s+of\s+limitations|limitations\s+period|filing\s+deadline|appeal\s+deadline|notice\s+deadline|deadline|jurisdiction|venue|preemption)\b/i;
 
@@ -72,29 +72,19 @@ function cleanUrl(value: unknown): string | null {
 }
 
 async function discoverAuthoritySources(query: string): Promise<LexaraAuthoritySource[]> {
-  const seen = new Set<string>();
-  const sources: LexaraAuthoritySource[] = [];
-  const add = (urlValue: unknown, title: string, excerpt?: string) => {
-    const url = cleanUrl(urlValue);
-    if (!url || seen.has(url) || sources.length >= MAX_AUTHORITY_SOURCES) return;
-    seen.add(url);
-    sources.push({
-      title: (title || 'Legal authority source').trim().slice(0, 240),
-      url,
-      kind: classifySource(url),
-      excerpt: excerpt?.trim().slice(0, 900) || undefined,
-    });
-  };
+  type Discovered = { url: string; title: string; excerpt?: string };
 
-  const firecrawlKey = process.env.FIRECRAWL_API_KEY?.trim();
-  if (firecrawlKey) {
+  const firecrawlDiscovery = async (): Promise<Discovered[]> => {
+    const apiKey = process.env.FIRECRAWL_API_KEY?.trim();
+    if (!apiKey) return [];
+
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), RESEARCH_TIMEOUT_MS);
     try {
       const response = await fetch('https://api.firecrawl.dev/v1/search', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${firecrawlKey}`,
+          Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -107,49 +97,81 @@ async function discoverAuthoritySources(query: string): Promise<LexaraAuthorityS
         }),
         signal: controller.signal,
       });
-      if (response.ok) {
-        const payload = await response.json() as {
-          data?: Array<{
-            url?: string;
-            title?: string;
-            description?: string;
-            markdown?: string;
-          }>;
-        };
-        for (const item of payload.data || []) {
-          add(item.url, item.title || 'Legal authority source', item.description || item.markdown);
-        }
-      } else {
+      if (!response.ok) {
         console.warn('[LEXARA Authority] Firecrawl discovery unavailable', { status: response.status });
+        return [];
       }
+
+      const payload = await response.json() as {
+        data?: Array<{
+          url?: string;
+          title?: string;
+          description?: string;
+          markdown?: string;
+        }>;
+      };
+      return (payload.data || []).flatMap(item => {
+        const url = cleanUrl(item.url);
+        if (!url) return [];
+        return [{
+          url,
+          title: item.title || 'Legal authority source',
+          excerpt: item.description || item.markdown,
+        }];
+      });
     } catch (error) {
       console.warn('[LEXARA Authority] Firecrawl discovery failed route-locally', {
         error: error instanceof Error ? error.message : String(error),
       });
+      return [];
     } finally {
       clearTimeout(timer);
     }
-  }
+  };
 
-  if (sources.length > 0) return sources;
-
-  // Route-local non-Google fallback. This performs actual web search and admits
-  // only URLs returned by the search layer; it never sends a plain-text query
-  // into a URL-only crawler.
-  try {
-    const search = await orchestratedWebSearch(query, {
-      useOnlinePlugin: true,
-      timeout: RESEARCH_TIMEOUT_MS,
-    });
-    for (const url of search.sources) {
-      add(url, 'Web-discovered legal authority');
+  const openRouterDiscovery = async (): Promise<Discovered[]> => {
+    try {
+      const search = await orchestratedWebSearch(query, {
+        useOnlinePlugin: true,
+        timeout: RESEARCH_TIMEOUT_MS,
+      });
+      return search.sources.flatMap(urlValue => {
+        const url = cleanUrl(urlValue);
+        return url ? [{ url, title: 'Web-discovered legal authority' }] : [];
+      });
+    } catch (error) {
+      console.warn('[LEXARA Authority] OpenRouter web discovery unavailable', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
     }
-  } catch (error) {
-    console.warn('[LEXARA Authority] OpenRouter web discovery fallback unavailable', {
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
+  };
 
+  // Run independent discovery paths in parallel. A slow crawler can no longer
+  // consume its full timeout before the web-search fallback even begins.
+  const [firecrawlResult, openRouterResult] = await Promise.all([
+    firecrawlDiscovery(),
+    openRouterDiscovery(),
+  ]);
+
+  const seen = new Set<string>();
+  const sources: LexaraAuthoritySource[] = [];
+  const add = (item: Discovered) => {
+    const url = cleanUrl(item.url);
+    if (!url || seen.has(url) || sources.length >= MAX_AUTHORITY_SOURCES) return;
+    seen.add(url);
+    sources.push({
+      title: item.title.trim().slice(0, 240) || 'Legal authority source',
+      url,
+      kind: classifySource(url),
+      excerpt: item.excerpt?.trim().slice(0, 900) || undefined,
+    });
+  };
+
+  // Prefer official-source-rich Firecrawl discovery when both return quickly,
+  // then fill remaining capacity from OpenRouter's current web-search tool.
+  for (const item of firecrawlResult) add(item);
+  for (const item of openRouterResult) add(item);
   return sources;
 }
 
