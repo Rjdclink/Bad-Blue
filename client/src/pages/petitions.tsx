@@ -35,7 +35,7 @@ export default function Petitions() {
     "description": "Community-driven platform for officer resignation petitions. When officers receive multiple complaints, automatic petitions are created for community signatures calling for accountability and department review.",
     "provider": {
       "@type": "Organization",
-      "name": "BadBlue"
+      "name": "Legal What?"
     },
     "serviceType": "Police Accountability Petition Platform",
     "areaServed": {
