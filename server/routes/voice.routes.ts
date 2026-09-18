@@ -88,7 +88,10 @@ export function setupVoiceRoutes(app: Express): void {
 
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 30_000);
-      req.once('close', () => controller.abort());
+      req.once('aborted', () => controller.abort());
+      res.once('close', () => {
+        if (!res.writableEnded) controller.abort();
+      });
 
       try {
         const upstream = await fetch(
