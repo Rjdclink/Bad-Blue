@@ -324,19 +324,32 @@ export default function SpectraPage() {
   }, [messages, phase]);
 
   useEffect(() => {
-    if (voiceSynthesis.isSpeaking) {
-      voiceMode.stopListening();
+    // Keep the microphone suspended from the instant a SPECTRA turn starts
+    // loading until audible playback has fully ended. This prevents the
+    // recognizer from hearing SPECTRA's own voice or restarting during TTS fetch.
+    if (voiceSynthesis.isLoading || voiceSynthesis.isSpeaking) {
+      if (voiceMode.isEnabled && !voiceMode.isSuspended) {
+        voiceMode.suspendListening();
+      }
       return;
     }
-    if (voiceMode.isEnabled && !voiceMode.isListening && phase !== 'acquiring') {
+
+    if (
+      voiceMode.isEnabled &&
+      !voiceMode.isListening &&
+      !voiceMode.isSuspended &&
+      phase !== 'acquiring'
+    ) {
       voiceMode.startListening();
     }
   }, [
     phase,
     voiceMode.isEnabled,
     voiceMode.isListening,
+    voiceMode.isSuspended,
     voiceMode.startListening,
-    voiceMode.stopListening,
+    voiceMode.suspendListening,
+    voiceSynthesis.isLoading,
     voiceSynthesis.isSpeaking,
   ]);
 
