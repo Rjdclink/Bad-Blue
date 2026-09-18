@@ -21,7 +21,14 @@
 import { AIProvider, UsageContext, TaskPriority as GovernorTaskPriority, TaskComplexity as GovernorTaskComplexity } from './aiTokenGovernor';
 import { AIModelSelector, TaskAttributes, TaskComplexity, TaskPriority } from './aiModelSelector';
 import { runProvider, type AITaskMetadata } from './aiProvider';
-import { generateOpenRouterText, OPENROUTER_MODELS } from './openRouterService';
+import { generateOpenRouterText } from './openRouterService';
+import {
+  CURRENT_AI_MODELS,
+  getConfiguredHarmonyProviders,
+  getCurrentModelForProvider,
+  getHarmonyCapabilities,
+  getOpenRouterModelForProvider,
+} from './aiHarmonyModelRegistry';
 
 /**
  * Collaboration task definition
@@ -99,7 +106,7 @@ export type CollaborationRole = keyof typeof COLLABORATION_ROLES;
 /**
  * Get available providers based on context
  */
-export type CollaborationProviderPolicy = 'default' | 'capability-first-no-google';
+export type CollaborationProviderPolicy = 'default' | 'capability-first' | 'capability-first-no-google';
 
 const harmonyProviderCooldownUntil = new Map<AIProvider, number>();
 
@@ -128,48 +135,114 @@ function markHarmonyProviderSuccess(provider: AIProvider): void {
 }
 
 function getAvailableProvidersForContext(
-  context: UsageContext,
-  providerPolicy: CollaborationProviderPolicy = 'default',
+  _context: UsageContext,
+  _providerPolicy: CollaborationProviderPolicy = 'capability-first',
 ): AIProvider[] {
-  if (providerPolicy === 'capability-first-no-google') {
-    // LEXARA/Harmony policy: use every real configured provider family that can
-    // contribute the required capability, but never make Google/Gemini a
-    // dependency. Provider/model choice is made by capability/role scoring.
-    return [
-      AIProvider.CLAUDE,
-      AIProvider.CLAUDE_OPUS,
-      AIProvider.GROQ,
-      AIProvider.MISTRAL,
-      AIProvider.DEEPSEEK,
-      AIProvider.GROK,
-      AIProvider.KIMI,
-      AIProvider.QWEN,
-    ];
-  }
+  // Platform-wide Harmony is capability-driven. User/autonomous context no
+  // longer partitions providers into artificial fixed-priority silos.
+  return getConfiguredHarmonyProviders();
+}
 
-  if (context === UsageContext.AUTONOMOUS) {
-    // AUTONOMOUS: Groq, Mistral, and open-source models
-    return [
-      AIProvider.GROQ, 
-      AIProvider.MISTRAL,
-      AIProvider.GPT_OSS,
-      AIProvider.FALCON,
-      AIProvider.CODE_LLAMA,
-      AIProvider.GPT_NEOX,
-      AIProvider.QWEN,
-    ];
-  } else {
-    // USER: Full harmony - all premium models
-    return [
-      AIProvider.GEMINI,
-      AIProvider.CLAUDE,
-      AIProvider.CLAUDE_OPUS,
-      AIProvider.DEEPSEEK,
-      AIProvider.GROK,
-      AIProvider.KIMI,
-      AIProvider.GPT5_MINI,
-      AIProvider.QWEN,
-    ];
+async function callOpenAICompatibleHarmonyProvider(
+  provider: AIProvider,
+  model: string,
+  prompt: string,
+  systemPrompt: string | undefined,
+  maxTokens: number,
+): Promise<{ content: string; tokensUsed: number }> {
+  const configs: Partial<Record<AIProvider, { baseUrl: string; key?: string }>> = {
+    [AIProvider.CEREBRAS]: {
+      baseUrl: 'https://api.cerebras.ai/v1',
+      key: process.env.CEREBRAS_API_KEY?.trim(),
+    },
+    [AIProvider.SAMBANOVA]: {
+      baseUrl: (process.env.SAMBANOVA_BASE_URL?.trim() || 'https://api.sambanova.ai/v1').replace(/\/$/, ''),
+      key: process.env.SAMBANOVA_API_KEY?.trim(),
+    },
+    [AIProvider.TOGETHER]: {
+      baseUrl: 'https://api.together.xyz/v1',
+      key: process.env.TOGETHER_API_KEY?.trim(),
+    },
+    [AIProvider.HUGGINGFACE]: {
+      baseUrl: 'https://router.huggingface.co/v1',
+      key: process.env.HUGGINGFACE_API_TOKEN?.trim() || process.env.HUGGINGFACE_API_KEY?.trim(),
+    },
+  };
+  const config = configs[provider];
+  if (!config?.key) throw new Error(`${provider} is not configured`);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8_000);
+  try {
+    const response = await fetch(`${config.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.key}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
+          { role: 'user', content: prompt },
+        ],
+        max_tokens: maxTokens,
+      }),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`${provider} HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`);
+    }
+    const payload = await response.json() as any;
+    const content = String(payload?.choices?.[0]?.message?.content || '').trim();
+    if (!content) throw new Error(`${provider} returned no text`);
+    return {
+      content,
+      tokensUsed: Number(payload?.usage?.total_tokens || Math.ceil(content.length / 4)),
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function callCohereHarmony(
+  model: string,
+  prompt: string,
+  systemPrompt: string | undefined,
+  maxTokens: number,
+): Promise<{ content: string; tokensUsed: number }> {
+  const key = process.env.COHERE_API_KEY?.trim();
+  if (!key) throw new Error('cohere is not configured');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8_000);
+  try {
+    const response = await fetch('https://api.cohere.com/v2/chat', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        messages: [
+          ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
+          { role: 'user', content: prompt },
+        ],
+        max_tokens: maxTokens,
+      }),
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`cohere HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`);
+    const payload = await response.json() as any;
+    const content = String(
+      payload?.message?.content?.find?.((part: any) => part?.type === 'text')?.text
+      || payload?.message?.content?.[0]?.text
+      || '',
+    ).trim();
+    if (!content) throw new Error('cohere returned no text');
+    const tokensUsed = Number(
+      (payload?.usage?.tokens?.input_tokens || 0) + (payload?.usage?.tokens?.output_tokens || 0),
+    ) || Math.ceil(content.length / 4);
+    return { content, tokensUsed };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -195,7 +268,7 @@ export class AICollaborationOrchestrator {
     
     // Filter providers by context
     const contextProviders = getAvailableProvidersForContext(context, options.providerPolicy);
-    const eligibleProviders = availableProviders.filter(p => contextProviders.includes(p));
+    const eligibleProviders = Array.from(new Set([...availableProviders, ...contextProviders]));
     const healthyProviders = eligibleProviders.filter(harmonyProviderAvailable);
     // Cooldowns are advisory availability evidence, not a permanent veto. If
     // every route is cooling, allow the full eligible set rather than making
@@ -219,9 +292,7 @@ export class AICollaborationOrchestrator {
     ).map(task => ({
       ...task,
       systemPrompt: options.systemPrompt,
-      fallbackProviders: options.providerPolicy === 'capability-first-no-google'
-        ? providers.filter(provider => provider !== task.provider)
-        : undefined,
+      fallbackProviders: providers.filter(provider => provider !== task.provider),
     }));
     
     // Execute tasks
@@ -348,57 +419,53 @@ export class AICollaborationOrchestrator {
     providers: AIProvider[]
   ): CollaborationTask[] {
     const tasks: CollaborationTask[] = [];
-    const context = attrs.context || UsageContext.USER;
-    
-    // Capability-first legal analysis: independent analyst and verifier run in
-    // parallel, then a synthesis role combines only successful evidence. No
-    // provider/model is globally preferred; role capability scoring decides.
-    const legalAssignment = AIModelSelector.assignRole('legal-analyst', context, providers);
-    if (legalAssignment) {
+
+    // Every healthy configured Harmony participant gets a parallel specialist
+    // role. The role is selected from declared capabilities, never provider order.
+    for (const provider of providers) {
+      const capabilities = getHarmonyCapabilities(provider);
+      const role = capabilities.includes('legal-analysis')
+        ? 'legal-analyst'
+        : capabilities.includes('verification')
+          ? 'verifier'
+          : capabilities.includes('research')
+            ? 'rapid-searcher'
+            : 'pattern-analyst';
+      const focus = role === 'legal-analyst'
+        ? 'Analyze legal issues, defenses, procedure, uncertainty, and the highest-value missing fact.'
+        : role === 'verifier'
+          ? 'Stress-test assumptions, jurisdiction, legal support, factual gaps, and citation reliability.'
+          : role === 'rapid-searcher'
+            ? 'Identify what current authority or external facts would materially change the analysis; never invent a source.'
+            : 'Independently reason through the facts, competing explanations, and overlooked implications.';
+
       tasks.push({
-        id: `${taskName}-legal-analysis`,
-        provider: legalAssignment.provider,
-        model: legalAssignment.model,
-        role: 'legal-analyst',
-        prompt: `Analyze the following legal conversation turn. Apply only grounded authority supplied in the prompt, identify issues, defenses, weaknesses, procedure, and the highest-value missing fact. Do not invent citations.\n\n${query}`,
+        id: `${taskName}-harmony-${provider}`,
+        provider,
+        model: this.getDefaultModelForProvider(provider),
+        role,
+        prompt: `${focus} Use only authority actually supplied in the prompt and never fabricate citations.\n\n${query}`,
         priority: 1,
-        attributes: { ...attrs, needsLegalAnalysis: true, needsReasoning: true },
+        attributes: { ...attrs, needsLegalAnalysis: true, needsVerification: true, needsReasoning: true },
       });
     }
 
-    const verifierPool = legalAssignment
-      ? providers.filter(provider => provider !== legalAssignment.provider)
-      : providers;
-    const verifierAssignment = AIModelSelector.assignRole('verifier', context, verifierPool.length ? verifierPool : providers);
-    if (verifierAssignment) {
+    if (tasks.length > 0) {
+      const dependencies = tasks.map(task => task.id);
+      const synthProvider = this.selectProviderByCapabilities(
+        providers,
+        ['legal-analysis', 'deep-reasoning', 'verification'],
+      );
       tasks.push({
-        id: `${taskName}-verification`,
-        provider: verifierAssignment.provider,
-        model: verifierAssignment.model,
-        role: 'verifier',
-        prompt: `Independently stress-test the following legal conversation turn. Flag unsupported assumptions, jurisdiction problems, missing facts, and any proposition that requires primary-authority verification. Do not invent citations.\n\n${query}`,
-        priority: 1,
-        attributes: { ...attrs, needsVerification: true, needsReasoning: true },
+        id: `${taskName}-synthesis`,
+        provider: synthProvider,
+        model: this.getDefaultModelForProvider(synthProvider),
+        role: 'synthesizer',
+        prompt: 'Synthesize the successful Harmony analyses below into one natural spoken LEXARA answer. Resolve disagreement conservatively, preserve uncertainty, distinguish facts from inference, never invent authority, and do not mention internal providers.\n\n[Results will be provided]',
+        priority: 2,
+        dependencies,
+        attributes: { ...attrs, needsLegalAnalysis: true, needsVerification: true, needsReasoning: true },
       });
-    }
-
-    const dependencies = tasks.filter(task => task.priority === 1).map(task => task.id);
-    if (dependencies.length > 0) {
-      const used = new Set(tasks.map(task => task.provider));
-      const synthesisPool = providers.filter(provider => !used.has(provider));
-      const synthesisAssignment = AIModelSelector.assignRole('synthesizer', context, synthesisPool.length ? synthesisPool : providers);
-      if (synthesisAssignment) {
-        tasks.push({
-          id: `${taskName}-synthesis`,
-          provider: synthesisAssignment.provider,
-          model: synthesisAssignment.model,
-          role: 'synthesizer',
-          prompt: `Synthesize the successful analyses below into one natural spoken LEXARA answer. Resolve disagreements conservatively, preserve uncertainty, never invent authority, and do not mention the internal provider roles.\n\n[Results will be provided]`,
-          priority: 2,
-          dependencies,
-          attributes: { ...attrs, needsLegalAnalysis: true, needsVerification: true, needsReasoning: true },
-        });
-      }
     }
 
     return tasks;
@@ -417,7 +484,7 @@ export class AICollaborationOrchestrator {
     
     // Each provider gives their perspective
     let priority = 1;
-    for (const provider of providers.slice(0, 3)) {
+    for (const provider of providers) {
       const model = this.getDefaultModelForProvider(provider);
       tasks.push({
         id: `${taskName}-perspective-${provider}`,
@@ -533,7 +600,7 @@ export class AICollaborationOrchestrator {
     const tasks: CollaborationTask[] = [];
     
     // All providers race in parallel
-    for (const provider of providers.slice(0, 3)) {
+    for (const provider of providers) {
       const model = this.getDefaultModelForProvider(provider);
       tasks.push({
         id: `${taskName}-race-${provider}`,
@@ -836,7 +903,6 @@ export class AICollaborationOrchestrator {
           break;
         }
         case AIProvider.CLAUDE_OPUS: {
-          // Claude Opus shares the Claude API, just with a more capable model id
           const response = await runProvider(
             AIProvider.CLAUDE,
             prompt,
@@ -851,14 +917,15 @@ export class AICollaborationOrchestrator {
         case AIProvider.DEEPSEEK:
         case AIProvider.QWEN:
         case AIProvider.GROK:
-        case AIProvider.KIMI: {
-          const model = task.provider === AIProvider.DEEPSEEK
-            ? OPENROUTER_MODELS.DEEPSEEK
-            : task.provider === AIProvider.QWEN
-              ? OPENROUTER_MODELS.QWEN
-              : task.provider === AIProvider.GROK
-                ? OPENROUTER_MODELS.GROK
-                : OPENROUTER_MODELS.KIMI;
+        case AIProvider.KIMI:
+        case AIProvider.GPT5_MINI:
+        case AIProvider.OPENROUTER:
+        case AIProvider.FALCON:
+        case AIProvider.CODE_LLAMA:
+        case AIProvider.GPT_NEOX:
+        case AIProvider.PERPLEXITY:
+        case AIProvider.FIREWORKS: {
+          const model = getOpenRouterModelForProvider(task.provider) || CURRENT_AI_MODELS.openRouterAuto;
           const result = await generateOpenRouterText(prompt, {
             model,
             systemPrompt: task.systemPrompt,
@@ -866,15 +933,65 @@ export class AICollaborationOrchestrator {
             timeoutMs: 7_500,
           });
           content = result.content;
+          tokensUsed = Math.ceil(content.length / 4);
+          break;
+        }
+        case AIProvider.GPT_OSS: {
+          if (process.env.GROQ_API_KEY?.trim()) {
+            const response = await runProvider(
+              AIProvider.GROQ,
+              prompt,
+              { model: CURRENT_AI_MODELS.groqDeep, systemPrompt: task.systemPrompt },
+              task.timeout ? Math.min(task.timeout, 1800) : 1100,
+              taskMetadata,
+            );
+            content = response.content;
+            tokensUsed = response.tokensUsed;
+          } else {
+            const result = await generateOpenRouterText(prompt, {
+              model: 'openai/gpt-oss-120b',
+              systemPrompt: task.systemPrompt,
+              maxTokens: 1100,
+              timeoutMs: 7_500,
+            });
+            content = result.content;
+            tokensUsed = Math.ceil(content.length / 4);
+          }
+          break;
+        }
+        case AIProvider.CEREBRAS:
+        case AIProvider.SAMBANOVA:
+        case AIProvider.TOGETHER:
+        case AIProvider.HUGGINGFACE: {
+          const result = await callOpenAICompatibleHarmonyProvider(
+            task.provider,
+            task.model,
+            prompt,
+            task.systemPrompt,
+            1100,
+          );
+          content = result.content;
+          tokensUsed = result.tokensUsed;
+          break;
+        }
+        case AIProvider.COHERE: {
+          const result = await callCohereHarmony(task.model, prompt, task.systemPrompt, 1100);
+          content = result.content;
+          tokensUsed = result.tokensUsed;
           break;
         }
         default: {
-          // No real integration exists for this provider (e.g. Falcon, GPT-OSS, Code Llama).
-          // Degrade to Groq rather than fabricating a response.
-          console.warn(`[AI Collaboration] No integration for provider "${task.provider}", falling back to Groq`);
-          const response = await runProvider(AIProvider.GROQ, prompt, {}, 2000, taskMetadata);
-          content = response.content;
-          tokensUsed = response.tokensUsed;
+          if (!process.env.OPENROUTER_API_KEY?.trim()) {
+            throw new Error(`No live transport is configured for Harmony participant ${task.provider}`);
+          }
+          const result = await generateOpenRouterText(prompt, {
+            model: CURRENT_AI_MODELS.openRouterAuto,
+            systemPrompt: task.systemPrompt,
+            maxTokens: 1100,
+            timeoutMs: 7_500,
+          });
+          content = result.content;
+          tokensUsed = Math.ceil(content.length / 4);
           break;
         }
       }
@@ -978,42 +1095,26 @@ export class AICollaborationOrchestrator {
     return `Collaborative Analysis (${strategy}):\n\n${combined}`;
   }
   
+  private static selectProviderByCapabilities(
+    providers: AIProvider[],
+    desired: Array<ReturnType<typeof getHarmonyCapabilities>[number]>,
+  ): AIProvider {
+    return [...providers]
+      .map(provider => ({
+        provider,
+        score: desired.reduce(
+          (sum, capability) => sum + (getHarmonyCapabilities(provider).includes(capability) ? 1 : 0),
+          0,
+        ),
+      }))
+      .sort((a, b) => b.score - a.score)[0]?.provider || providers[0];
+  }
+
   /**
    * Get default model for a provider
    */
   private static getDefaultModelForProvider(provider: AIProvider): string {
-    switch (provider) {
-      case AIProvider.GEMINI:
-        return 'gemini-2.5-pro';
-      case AIProvider.CLAUDE:
-        return 'claude-haiku-4-5-20251001';
-      case AIProvider.CLAUDE_OPUS:
-        return 'claude-opus-4-8';
-      case AIProvider.GROQ:
-        return 'llama-3.3-70b-versatile';
-      case AIProvider.MISTRAL:
-        return 'mistral-small-latest';
-      case AIProvider.DEEPSEEK:
-        return 'deepseek-r1t2-chimera';
-      case AIProvider.GROK:
-        return 'grok-4.1-fast';
-      case AIProvider.KIMI:
-        return 'kimi-k2';
-      case AIProvider.GPT_OSS:
-        return 'gpt-oss-120b';
-      case AIProvider.FALCON:
-        return 'falcon-180b';
-      case AIProvider.CODE_LLAMA:
-        return 'code-llama-70b';
-      case AIProvider.GPT_NEOX:
-        return 'gpt-neox-20b';
-      case AIProvider.QWEN:
-        return 'qwen-72b';
-      case AIProvider.GPT5_MINI:
-        return 'gpt-5-mini';
-      default:
-        return 'unknown';
-    }
+    return getCurrentModelForProvider(provider);
   }
   
   /**
