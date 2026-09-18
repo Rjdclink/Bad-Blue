@@ -19,11 +19,16 @@ export interface VoiceTranscriptMeta {
   noSpeechProbability?: number;
 }
 
+export interface VoiceActivityMeta {
+  engine: LexaraVoiceEngine;
+  echoCancellation?: boolean;
+}
+
 export interface VoiceModeOptions {
   onTranscript?: (text: string, isFinal: boolean, meta: VoiceTranscriptMeta) => void;
   onError?: (error: Error) => void;
-  onVoiceStart?: () => void;
-  onVoiceEnd?: () => void;
+  onVoiceStart?: (meta: VoiceActivityMeta) => void;
+  onVoiceEnd?: (meta: VoiceActivityMeta) => void;
   continuous?: boolean;
   interimResults?: boolean;
 }
@@ -126,6 +131,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
   const transcriptionAbortRef = useRef<AbortController | null>(null);
   const serverTranscriptionQueueRef = useRef<Promise<void>>(Promise.resolve());
   const serverRecognitionEpochRef = useRef(0);
+  const serverEchoCancellationRef = useRef<boolean | undefined>(undefined);
   const recentFinalTranscriptRef = useRef<{ normalized: string; at: number } | null>(null);
 
   useEffect(() => {
@@ -272,7 +278,10 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     serverLastAboveThresholdAtRef.current = 0;
 
     if (hadSpeech && serverVoiceStartNotifiedRef.current) {
-      optionsRef.current.onVoiceEnd?.();
+      optionsRef.current.onVoiceEnd?.({
+        engine: 'server',
+        echoCancellation: serverEchoCancellationRef.current,
+      });
     }
     serverVoiceStartNotifiedRef.current = false;
 
@@ -346,8 +355,15 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
           && now - serverLastAboveThresholdAtRef.current <= SERVER_VOICE_RECENCY_MS
         ) {
           serverVoiceStartNotifiedRef.current = true;
-          // Candidate acoustic activity is intentionally not surfaced as an
-          // interruption. Only a transcript can prove this is user speech.
+          // Surface sustained microphone activity so the conversation layer can
+          // cancel a pending turn commit immediately. On server/mobile mode the
+          // callback also carries the actual echo-cancellation setting, allowing
+          // deliberate barge-in to be handled without treating every noise spike
+          // as an interruption.
+          optionsRef.current.onVoiceStart?.({
+            engine: 'server',
+            echoCancellation: serverEchoCancellationRef.current,
+          });
         }
       }, SERVER_VOICE_CONFIRM_MS + 10);
     } catch (err) {
@@ -447,6 +463,11 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
 
     const source = audioContext.createMediaStreamSource(stream);
     serverAudioSourceRef.current = source;
+    const audioTrack = stream.getAudioTracks()[0];
+    const settings = audioTrack?.getSettings?.();
+    serverEchoCancellationRef.current = typeof settings?.echoCancellation === 'boolean'
+      ? settings.echoCancellation
+      : undefined;
     const analyser = audioContext.createAnalyser();
     analyser.fftSize = 512;
     analyser.smoothingTimeConstant = 0.72;
@@ -473,6 +494,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     serverAudioSourceRef.current = null;
     serverAudioContextRef.current = null;
     serverAnalyserRef.current = null;
+    serverEchoCancellationRef.current = undefined;
 
     if (stopTracks) {
       serverStreamRef.current?.getTracks().forEach(track => track.stop());
@@ -550,7 +572,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
 
     recognition.onspeechstart = () => {
       browserSpeechStartedAtRef.current = performance.now();
-      optionsRef.current.onVoiceStart?.();
+      optionsRef.current.onVoiceStart?.({ engine: 'browser' });
     };
 
     recognition.onspeechend = () => {
@@ -561,7 +583,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
         );
       }
       browserSpeechStartedAtRef.current = null;
-      optionsRef.current.onVoiceEnd?.();
+      optionsRef.current.onVoiceEnd?.({ engine: 'browser' });
     };
 
     recognition.onend = () => {
