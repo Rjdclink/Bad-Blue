@@ -20,7 +20,12 @@ export interface GeoFrame {
     longitude: number;
     altitude?: number;
     accuracy?: number;
+    verticalAccuracy?: number;
   };
+  receivedAt?: Date;
+  observationKind?: GPSPoint['observationKind'];
+  correlationGroup?: string;
+  provenance?: GPSPoint['provenance'];
   velocity?: {
     speed: number;
     heading: number;
@@ -257,7 +262,12 @@ export function useGeoRuntime(
           longitude: point.longitude,
           altitude: point.altitude,
           accuracy: point.accuracy,
+          verticalAccuracy: point.verticalAccuracy,
         },
+        receivedAt: point.receivedAt ? new Date(point.receivedAt) : undefined,
+        observationKind: point.observationKind,
+        correlationGroup: point.correlationGroup,
+        provenance: point.provenance,
         source: point.source,
         confidence: point.confidence,
         metadata: point.metadata as Record<string, unknown>,
@@ -302,9 +312,14 @@ export function useGeoRuntime(
             longitude: frame.position.longitude,
             altitude: frame.position.altitude,
             accuracy: frame.position.accuracy,
+            verticalAccuracy: frame.position.verticalAccuracy,
             timestamp: frame.timestamp.toISOString(),
+            receivedAt: frame.receivedAt?.toISOString(),
             source: frame.source,
             confidence: frame.confidence,
+            observationKind: frame.observationKind,
+            correlationGroup: frame.correlationGroup,
+            provenance: frame.provenance,
             metadata: frame.metadata,
           })),
         }),
@@ -326,8 +341,13 @@ export function useGeoRuntime(
           longitude: Number(point.longitude),
           altitude: point.altitude !== undefined ? Number(point.altitude) : undefined,
           accuracy: point.accuracy !== undefined ? Number(point.accuracy) : undefined,
+          verticalAccuracy: point.verticalAccuracy !== undefined ? Number(point.verticalAccuracy) : undefined,
         },
-        source: point.source || 'interpolated',
+        receivedAt: point.receivedAt ? new Date(point.receivedAt) : undefined,
+        observationKind: point.observationKind || 'predicted',
+        correlationGroup: point.correlationGroup,
+        provenance: point.provenance,
+        source: point.source || 'predicted',
         confidence: Number(point.confidence ?? 0),
         metadata: {
           ...(point.metadata || {}),
@@ -501,13 +521,30 @@ export function useGeoRuntime(
         const newFrame: GeoFrame = {
           id: generateId(),
           timestamp: now,
-          position: { latitude, longitude, altitude, accuracy },
+          position: {
+            latitude,
+            longitude,
+            altitude,
+            accuracy,
+            verticalAccuracy: Number.isFinite(coords.altitudeAccuracy) ? coords.altitudeAccuracy ?? undefined : undefined,
+          },
+          receivedAt: new Date(),
+          observationKind: 'observed',
+          correlationGroup: 'browser:navigator.geolocation',
+          provenance: {
+            provider: 'navigator.geolocation',
+            capturedAt: now.toISOString(),
+          },
           velocity: speed !== undefined || heading !== undefined
             ? { speed: speed ?? 0, heading: heading ?? 0 }
             : undefined,
           source: 'device_gps',
           confidence,
-          metadata: { live: true, provider: 'navigator.geolocation' },
+          metadata: {
+            live: true,
+            provider: 'navigator.geolocation',
+            headingAccuracyAvailable: false,
+          },
         };
 
         setFrames((prev) => {
