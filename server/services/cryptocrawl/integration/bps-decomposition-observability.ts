@@ -145,3 +145,7 @@ export function ensureBpsDecompositionObservability(): void {
     timer = setInterval(refresh, intervalMs); timer.unref?.();
   }
 }
+export function stopBpsDecompositionObservability(): void {
+  if (timer) clearInterval(timer);
+  timer = null;
+}
