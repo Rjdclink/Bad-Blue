@@ -53,10 +53,10 @@ test('HybridGeoconsole -> motion trail',
   hybrid.includes('generateMotionTrail'));
 test('HybridGeoconsole -> Futurecast',
   hybrid.includes('generateFuturecast'));
-test('/process returns fused locations, trail and futurecast',
-  routes.includes('fusedLocations: result.fusedLocations') &&
-  routes.includes('points: result.trail.points') &&
-  routes.includes('futurecast: result.futurecast'));
+test('/process returns signed fused locations, trail and Futurecast',
+  routes.includes('fusedLocations: signedFusedLocations') &&
+  routes.includes('points: signedTrailPoints') &&
+  routes.includes('futurecast: signedFuturecast'));
 test('Runtime consumes processed trail',
   runtime.includes('processedTrail'));
 test('Runtime consumes process Futurecast',
