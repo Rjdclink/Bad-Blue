@@ -7,7 +7,7 @@
  * - Defaults to Gemini 3.8 Flash for current low-latency production use
  * 
  * Available Gemini Models (December 2025):
- * - gemini-2.5-flash (fast and intelligent, current stable)
+ * - gemini-3.8-flash (current stable Flash)
  * - gemini-2.5-pro (powerful model, advanced reasoning)
  * - gemini-2.0-flash (previous stable)
  * - gemini-3.0-flash-preview (preview features, experimental)
@@ -26,7 +26,9 @@ export interface GeminiOptions {
   useJSON?: boolean;
 }
 
-const GEMINI_API_KEY = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY || '';
+// GEMINI_API_KEY is the canonical credential for this service. GOOGLE_API_KEY
+// remains a compatibility fallback only when the canonical key is absent.
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
 
 export function isGeminiAvailable(): boolean {
   return !!GEMINI_API_KEY;
@@ -105,7 +107,7 @@ export async function callGemini(
     throw new GeminiRateLimitError('Gemini is rate limited - use fallback provider');
   }
 
-  // Primary model: gemini-2.5-flash (fast and intelligent, current stable)
+  // Primary model: gemini-3.8-flash (current stable Flash)
   // Fallback models in order of preference:
   // - gemini-2.5-pro (powerful model, advanced reasoning)
   // - gemini-2.0-flash (previous stable)
