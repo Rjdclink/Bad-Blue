@@ -58,6 +58,18 @@ const SERVER_VOICE_RECENCY_MS = 90;
 const SERVER_MAX_UTTERANCE_MS = 45_000;
 const SERVER_TRANSCRIBE_TIMEOUT_MS = 18_000;
 
+function preferredMicrophoneConstraints(): MediaTrackConstraints {
+  const supported = navigator.mediaDevices?.getSupportedConstraints?.() || {};
+  const constraints: MediaTrackConstraints = {};
+
+  if (supported.echoCancellation) constraints.echoCancellation = true;
+  if (supported.noiseSuppression) constraints.noiseSuppression = true;
+  if (supported.autoGainControl) constraints.autoGainControl = true;
+  if (supported.channelCount) constraints.channelCount = { ideal: 1 };
+
+  return constraints;
+}
+
 function preferredRecordingMimeType(): string | undefined {
   if (!('MediaRecorder' in window)) return undefined;
   const candidates = [
@@ -442,12 +454,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       }
 
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          channelCount: { ideal: 1 },
-        },
+        audio: preferredMicrophoneConstraints(),
         video: false,
       });
 
@@ -633,12 +640,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       }
 
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          channelCount: { ideal: 1 },
-        },
+        audio: preferredMicrophoneConstraints(),
         video: false,
       });
       setHasPermission(true);
