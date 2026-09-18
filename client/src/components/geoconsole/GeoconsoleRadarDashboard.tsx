@@ -8,15 +8,14 @@
  * - Direct imperative map updates on every frame change
  */
 
-import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
+import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
 import {
   Play, Pause, SkipBack, SkipForward, Clock, Activity, Layers,
-  RefreshCw, Download, Satellite, Radio, Crosshair, Zap, Target,
+  Download, Satellite, Radio, Crosshair, Zap, Target,
   ChevronLeft, ChevronRight, Maximize2, Minimize2,
 } from 'lucide-react';
 import { useGeoRuntime, type GeoFrame } from '@/hooks/useGeoRuntime';
@@ -85,7 +84,7 @@ const haversineDistance = (lat1: number, lon1: number, lat2: number, lon2: numbe
 // COMPONENT
 // ============================================================================
 
-export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialData = [], onProcess, navMode }) => {
+export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialData = [], onProcess: _onProcess, navMode }) => {
   // Runtime hook - source of truth for frames
   const [state, actions] = useGeoRuntime(initialData, { tickInterval: 500, playbackSpeed: 1, interpolationEnabled: true, predictiveEnabled: true });
 
@@ -96,8 +95,6 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
   // UI state (not affecting frame data)
   const [mapMode, setMapMode] = useState<MapMode>('satellite');
   const [layerCfg, setLayerCfg] = useState<LayerState>({ satellite: true, earthObservation: false, trail: true, heatmap: true, markers: true, futurecast: true, reticle: true, weather: false, terrain: true, buildings: true, uncertainty: true, streetImagery: false });
-  const [processing, setProcessing] = useState(false);
-  const [progressMsg, setProgressMsg] = useState('');
   const [lockOnTarget, setLockOnTarget] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(true);
@@ -232,74 +229,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
   );
 
 
-  const mountedRef = useRef(true);
-  const processResetTimeoutRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      if (processResetTimeoutRef.current) {
-        window.clearTimeout(processResetTimeoutRef.current);
-        processResetTimeoutRef.current = null;
-      }
-    };
-  }, []);
-
-  // === STEP HANDLERS ===
-  const stepBack = useCallback(() => actions.seekTo(Math.max(0, state.currentIndex - 1)), [actions, state.currentIndex]);
-  const stepForward = useCallback(() => actions.seekTo(Math.min(state.totalFrames - 1, state.currentIndex + 1)), [actions, state.currentIndex, state.totalFrames]);
-
-  // === PROCESS/EXPORT ===
-  const frameToPoint = useCallback((frame: GeoFrame): GPSPoint => ({
-    latitude: frame.position.latitude,
-    longitude: frame.position.longitude,
-    altitude: frame.position.altitude,
-    accuracy: frame.position.accuracy,
-    verticalAccuracy: frame.position.verticalAccuracy,
-    timestamp: frame.timestamp.toISOString(),
-    receivedAt: frame.receivedAt?.toISOString(),
-    source: frame.source,
-    confidence: frame.confidence,
-    observationKind: frame.observationKind,
-    correlationGroup: frame.correlationGroup,
-    provenance: frame.provenance,
-    metadata: frame.metadata,
-  }), []);
-
-  const handleProcess = useCallback(async () => {
-    if (state.trail.length === 0) return;
-    setProcessing(true);
-    setProgressMsg('Processing...');
-    try {
-      const inputs = state.trail.map(frameToPoint);
-      const res = await fetch('/api/geoconsole/process', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ inputs }),
-      });
-      if (res.ok) {
-        setProgressMsg('Done!');
-        if (onProcess) await onProcess(inputs);
-      } else {
-        setProgressMsg('Error');
-      }
-    } catch {
-      setProgressMsg('Error');
-    } finally {
-      if (processResetTimeoutRef.current) {
-        window.clearTimeout(processResetTimeoutRef.current);
-        processResetTimeoutRef.current = null;
-      }
-      processResetTimeoutRef.current = window.setTimeout(() => {
-        if (!mountedRef.current) return;
-        setProcessing(false);
-        setProgressMsg('');
-      }, 2000);
-    }
-  }, [state.trail, onProcess, frameToPoint]);
-
+  // === EXPORT ===
   const handleExport = useCallback(() => {
     const frames = actions.exportTrail();
     const pointFeatures = frames.map(frame => ({
@@ -368,9 +298,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
     URL.revokeObjectURL(url);
   }, [actions, state.futurecast]);
 
-  // Destructure
-  const { isPlaying, isLive, timeline, totalFrames, currentIndex } = state;
-  const { currentFrame } = renderData;
+  const { isLive } = state;
   const stats = renderData.stats;
 
   const telemetryStatus = useMemo(() => {
@@ -447,10 +375,12 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
         </div>
 
         <div className="flex items-center gap-2">
-          <Badge variant="outline" className={`text-xs ${isLive ? 'bg-green-500/20 text-green-400 animate-pulse' : isPlaying ? 'bg-cyan-500/20 text-cyan-400' : 'bg-slate-700/50 text-slate-400'}`}>
-            <Activity className="w-3 h-3 mr-1" />{isLive ? 'LIVE' : isPlaying ? 'Playing' : 'Paused'}
+          <Badge variant="outline" className={`text-xs ${isLive ? 'bg-green-500/20 text-green-400 animate-pulse' : timelinePlaying ? 'bg-cyan-500/20 text-cyan-400' : 'bg-slate-700/50 text-slate-400'}`}>
+            <Activity className="w-3 h-3 mr-1" />{isLive ? 'LIVE' : timelinePlaying ? 'Playing' : 'Ready'}
           </Badge>
-          <Badge variant="outline" className="text-xs bg-purple-500/20 text-purple-400">{currentIndex + 1}/{totalFrames}</Badge>
+          <Badge variant="outline" className="text-xs bg-purple-500/20 text-purple-400">
+            {timelineFrames.length ? timelineCursor + 1 : 0}/{timelineFrames.length}
+          </Badge>
           <div className="hidden xl:flex bg-slate-800/50 rounded-lg p-1">
             {(['satellite', 'hybrid', 'street', 'dark'] as MapMode[]).map(m => (
               <button key={m} onClick={() => setMapMode(m)} className={`px-2 py-1 text-xs rounded ${mapMode === m ? 'bg-cyan-500/30 text-cyan-400' : 'text-slate-400 hover:text-white'}`}>
@@ -558,7 +488,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
                 <p><span className="text-slate-500">LAT:</span> <span className="text-cyan-400">{timelineFrame.position.latitude.toFixed(6)}</span></p>
                 <p><span className="text-slate-500">LNG:</span> <span className="text-cyan-400">{timelineFrame.position.longitude.toFixed(6)}</span></p>
                 <p><span className="text-slate-500">SPD:</span> <span className="text-green-400">{formatSpeed(timelineFrame.velocity?.speed || 0)}</span></p>
-                <p><span className="text-slate-500">HDG:</span> <span className="text-purple-400">{(currentFrame.velocity?.heading || 0).toFixed(1)}°</span></p>
+                <p><span className="text-slate-500">HDG:</span> <span className="text-purple-400">{(timelineFrame?.velocity?.heading || 0).toFixed(1)}°</span></p>
               </div>
             </div>
           )}
@@ -622,7 +552,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
 
       {/* Rolling previous-hour / one-hour Futurecast timeline */}
       <div className="p-2 border-t border-slate-700/50 bg-slate-900/80 flex-shrink-0">
-        {processing && <div className="mb-2"><span className="text-xs text-slate-400">{progressMsg}</span><Progress value={50} className="h-1 mt-1" /></div>}
+
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center gap-1 bg-slate-800/50 rounded-lg p-1">
             <Button variant="ghost" size="icon" onClick={() => setTimelineCursor(0)} className="h-10 w-10 text-slate-400 hover:text-white"><SkipBack className="w-3 h-3" /></Button>
@@ -689,9 +619,9 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
           {[
             { label: 'GPU Map', active: true, detail: 'MapLibre WebGL renderer' },
             { label: '3D Terrain', active: layerCfg.terrain, detail: 'DEM terrain + hillshade' },
-            { label: 'Weather Radar', active: layerCfg.weather, detail: 'NEXRAD mosaic overlay' },
+            { label: 'Weather Context', active: true, detail: 'Radar data available to SPECTRA in background' },
             { label: 'Futurecast', active: state.futurecast.length > 0, detail: 'Server-authoritative prediction' },
-            { label: 'Uncertainty', active: layerCfg.uncertainty && !!currentFrame?.position.accuracy, detail: 'Reported accuracy region' },
+            { label: 'Confidence', active: !!timelineFrame?.position.accuracy, detail: 'Confidence derived from source quality and agreement' },
           ].map(item => (
             <div key={item.label} className={`p-2 rounded border ${item.active ? 'bg-green-500/10 border-green-500/30' : 'bg-slate-800/50 border-slate-700/50'}`}>
               <div className="flex items-center justify-between gap-2">
