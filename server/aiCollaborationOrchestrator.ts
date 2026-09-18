@@ -320,7 +320,7 @@ export class AICollaborationOrchestrator {
     ).map(task => ({
       ...task,
       systemPrompt: options.systemPrompt,
-      requestTimeoutMs: task.requestTimeoutMs || options.requestTimeoutMs,
+      requestTimeoutMs: task.requestTimeoutMs || options.requestTimeoutMs || task.timeout,
       // Failover can use any healthy capability-compatible route from the pool,
       // including routes not selected for the first attempt.
       fallbackProviders: candidateProviders.filter(provider => provider !== task.provider),
@@ -955,13 +955,20 @@ export class AICollaborationOrchestrator {
     let content = '';
     let tokensUsed = 0;
     let success = true;
+    const maxTokens = Math.max(
+      96,
+      Math.min(
+        1_800,
+        Number(task.attributes.estimatedTokens || 1_100),
+      ),
+    );
 
     try {
       if (!harmonyProviderAvailable(task.provider)) {
         throw new Error(`${task.provider} is cooling down after a recent route failure`);
       }
 
-      const outputTokenLimit = task.timeout ? Math.min(task.timeout, 1800) : 1100;
+      const outputTokenLimit = maxTokens;
       switch (task.provider) {
         case AIProvider.GEMINI:
         case AIProvider.GROQ:
