@@ -17,7 +17,7 @@ while ((match = entryPattern.exec(registry))) {
   entries.push({ id: match[1], name: match[2], path: match[3] });
 }
 
-if (entries.length < 60) fail(`crawler capability pool unexpectedly small: ${entries.length}`);
+if (entries.length < 63) fail(`crawler capability pool unexpectedly small: ${entries.length}`);
 else ok(`crawler capability pool inventories ${entries.length} executable/callable capabilities`);
 
 const ids = new Set();
@@ -40,7 +40,8 @@ const requiredNames = [
   'FastPeopleSearchScraper', 'TruePeopleSearchScraper', 'WhitePagesScraper', 'SocialMediaScraperService',
   'Firecrawl', 'OpenRouter Web Search', 'SpiderFoot', 'Puppeteer', 'Apify', 'Crawl4AI Adaptive Pattern',
   'CainCrawler', 'ConjoinedTwinCrawler', 'EnhancedMicroCrawler', 'CainTwinHybrid', 'GravityCrawler',
-  'DiscoBallCrawler', 'Starburst Dynamic Crawler Pool',
+  'DiscoBallCrawler', 'Starburst Dynamic Crawler Pool', 'Starburst Micro-Crawlers',
+  'Verification Crawlers', 'SnakeAgent Legacy Crawler',
 ];
 for (const name of requiredNames) {
   if (!entries.some(entry => entry.name === name)) fail(`missing crawler capability: ${name}`);
@@ -76,6 +77,13 @@ for (const name of ['FarmCrawler', 'PhantomCrawler', 'NovaCrawler']) {
   if (!utility.includes(`class ${name}`)) fail(`${name} has no concrete implementation`);
 }
 if (!process.exitCode) ok('previously declaration-only PANTHEON species have concrete bounded implementations');
+
+const payoutVerification = fs.readFileSync('server/services/cryptocrawl/compensation/compensationGuarantee.ts', 'utf8');
+if (payoutVerification.includes('Math.random() > 0.05')) fail('verification crawlers still use simulated random truth');
+if (!payoutVerification.includes('Read-only deterministic evidence verification')) fail('verification crawlers are not deterministic/read-only');
+const snake = fs.readFileSync('server/services/cryptocrawl/agents/starburst-snake.ts', 'utf8');
+if (!snake.includes('lastObservation') || !snake.includes('getObservation()')) fail('legacy Snake crawler remains inert');
+if (!process.exitCode) ok('legacy/verification crawler capabilities are deterministic and observational');
 
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA crawler capability verification passed.');
