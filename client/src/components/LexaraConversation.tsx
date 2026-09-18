@@ -260,10 +260,14 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       voiceTurnTimerRef.current = window.setTimeout(flushVoiceTurn, VOICE_TURN_SETTLE_MS);
     },
     onError: error => {
-      const message = String(error.message).toLowerCase();
-      if (message.includes('permission') || message.includes('audio-capture')) {
+      const message = String(error.message || '');
+      const normalized = message.toLowerCase();
+      if (normalized.includes('permission') || normalized.includes('audio-capture')) {
         setVoiceReady(false);
+        setErrorMessage('Microphone access is off. Turn it on to keep talking, or continue by typing.');
+        return;
       }
+      setErrorMessage('I’m having trouble hearing you right now. You can keep typing while voice recovers.');
     },
   });
 
@@ -307,11 +311,13 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     try {
       await enableRecognition();
       setVoiceReady(true);
+      setErrorMessage(null);
       startListening();
       setConversationPhase('listening');
       return true;
-    } catch {
+    } catch (error) {
       setVoiceReady(false);
+      setErrorMessage(friendlyError(error));
       setConversationPhase('text-only');
       return false;
     }
@@ -668,7 +674,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
               className="mb-3 min-h-11 w-full gap-2 touch-manipulation text-base sm:text-sm"
             >
               <Mic className="h-4 w-4" />
-              Re-enable microphone
+              Start microphone
             </Button>
           )}
 
