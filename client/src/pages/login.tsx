@@ -62,6 +62,10 @@ export default function Login() {
       throw new Error("Square returned an invalid checkout destination");
     }
 
+    const orderId = String(data.orderId || "").trim();
+    if (orderId) {
+      window.sessionStorage.setItem("legalwhat_pending_square_order_id", orderId);
+    }
     window.location.assign(checkoutUrl.toString());
   }, [setLocation]);
 
