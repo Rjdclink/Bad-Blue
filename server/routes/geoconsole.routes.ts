@@ -12,8 +12,12 @@ import { GPSPoint, DataSource } from '../services/geoconsole/types';
 import { assessLocationQuality } from '../services/geoconsole/location-quality';
 import { selectCrawlerPlan } from '../services/crawlers/CrawlerSelectionUtility';
 import { createLogger } from '../logger';
+import { isAuthenticated } from '../auth';
 
 const router = Router();
+
+// GeoConsole contains sensitive location evidence; require an authenticated session.
+router.use(isAuthenticated);
 const log = createLogger('GeoconsoleRoutes');
 
 // ============ VALIDATION SCHEMAS ============
