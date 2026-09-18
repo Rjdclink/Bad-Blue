@@ -8,7 +8,7 @@
  * AVAILABLE PROVIDERS (December 2025):
  * Core Providers:
  * - Gemini: gemini-2.5-flash, gemini-2.5-pro, gemini-2.0-flash, gemini-3.0-flash-preview
- * - Claude: claude-haiku-4-5-20251001 (fast), claude-sonnet-4-5-20250929 (detailed), claude-opus-4-1-20250805 (powerful)
+ * - Claude: claude-haiku-4-5-20251001 (fast), claude-sonnet-4-6 (detailed), claude-opus-4-8 (powerful)
  * - Groq: llama-3.3-70b-versatile (newer, faster), llama-3.1-8b-instant (ultra-fast)
  * - Mistral: mistral-small-latest, mistral-large-latest
  * - DeepSeek: deepseek-chat, deepseek-coder
@@ -554,9 +554,9 @@ function getProviderModel(provider: AIProvider, requestedModel?: string, complex
     [AIProvider.CLAUDE]: {
       prefixes: ['claude'],
       lite: 'claude-haiku-4-5-20251001',
-      default: process.env.CLAUDE_MODEL?.trim() || 'claude-sonnet-5',
-      comprehensive: process.env.LEXARA_CLAUDE_MODEL?.trim() || 'claude-sonnet-5',
-      pro: 'claude-opus-5'
+      default: process.env.CLAUDE_MODEL?.trim() || 'claude-sonnet-4-6',
+      comprehensive: process.env.LEXARA_CLAUDE_MODEL?.trim() || 'claude-sonnet-4-6',
+      pro: 'claude-opus-4-8'
     },
     // OpenRouter free models (December 2025)
     [AIProvider.DEEPSEEK]: {
