@@ -47,7 +47,7 @@ export default function LegalConsultationPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-[100dvh] bg-background">
       <SEOHead
         title={domainInfo ? `LEXARA - ${domainInfo.name} Legal Consultation | LegalWhat` : 'LEXARA - AI-Powered Legal Consultation | LegalWhat'}
         description={domainInfo ? `Talk with LEXARA about ${domainInfo.name}. Get conversational AI legal analysis, issue spotting, targeted follow-up questions, and access to full case-analysis tools.` : 'Talk with LEXARA for conversational AI legal analysis, issue spotting, targeted follow-up questions, and full case-analysis tools.'}
@@ -57,8 +57,8 @@ export default function LegalConsultationPage() {
         canonicalUrl={`https://legalwhat.com${canonicalPath}`}
       />
 
-      <header className="sticky top-0 z-50 border-b bg-card">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-4">
+      <header className="sticky top-0 z-50 border-b bg-card pt-[env(safe-area-inset-top)]">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-2 px-2 py-3 sm:gap-3 sm:px-4 sm:py-4">
           <div className="flex min-w-0 items-center gap-2">
             <Button
               variant="ghost"
@@ -66,6 +66,7 @@ export default function LegalConsultationPage() {
               onClick={() => setLocation(domainId ? '/welcome' : '/')}
               data-testid="button-back"
               aria-label="Go back"
+              className="h-11 w-11 touch-manipulation"
             >
               <ArrowLeft className="h-5 w-5" />
             </Button>
@@ -81,22 +82,26 @@ export default function LegalConsultationPage() {
               <Button
                 variant="outline"
                 onClick={() => setShowLiveConsent(true)}
-                className="gap-2"
+                className="min-h-11 gap-2 touch-manipulation"
               >
                 <Mic className="h-4 w-4" />
-                Enable voice
+                <span className="sm:hidden">Voice</span>
+                <span className="hidden sm:inline">Enable voice</span>
               </Button>
             )}
             <Button
               variant="outline"
               onClick={() => setLocation(toolsMode ? canonicalPath : `${canonicalPath}?mode=tools`)}
+              className="min-h-11 touch-manipulation"
             >
-              {toolsMode ? 'Live conversation' : 'Case tools'}
+              <span className="sm:hidden">{toolsMode ? 'Live' : 'Tools'}</span>
+              <span className="hidden sm:inline">{toolsMode ? 'Live conversation' : 'Case tools'}</span>
             </Button>
             <Button
               variant="outline"
               onClick={() => setLocation('/login')}
               data-testid="button-login"
+              className="hidden min-h-11 touch-manipulation sm:inline-flex"
             >
               Sign In
             </Button>
