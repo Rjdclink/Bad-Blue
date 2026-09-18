@@ -2,7 +2,7 @@ import crypto from "crypto";
 import type { Express, Request, Response } from "express";
 import { getSquareClient, getSquareLocationId } from "../squareClient";
 import { getBaseUrl, getConfig } from "../config";
-import { isAuthenticated, issueLocalSessionCookie } from "../auth";
+import { isIdentityAuthenticated, issueLocalSessionCookie } from "../auth";
 import { updateLocalUserSubscriptionHttp, type StatelessLocalUser } from "../statelessLocalAuth";
 
 const SUBSCRIPTION_NAME = "LegalWhat Subscription";
@@ -182,7 +182,7 @@ export async function handleLegalWhatSubscriptionWebhook(event: any): Promise<bo
 }
 
 export function setupSubscriptionRoutes(app: Express): void {
-  app.post("/api/subscription/checkout", isAuthenticated, async (req: Request, res: Response) => {
+  app.post("/api/subscription/checkout", isIdentityAuthenticated, async (req: Request, res: Response) => {
     try {
       if ((req.user as any)?.isMasterBypass) return res.json({ alreadyActive: true, redirectUrl: "/welcome" });
 
@@ -221,7 +221,7 @@ export function setupSubscriptionRoutes(app: Express): void {
     }
   });
 
-  app.post("/api/subscription/confirm", isAuthenticated, async (req: Request, res: Response) => {
+  app.post("/api/subscription/confirm", isIdentityAuthenticated, async (req: Request, res: Response) => {
     try {
       if ((req.user as any)?.isMasterBypass) return res.json({ active: true, redirectTo: "/welcome" });
 
