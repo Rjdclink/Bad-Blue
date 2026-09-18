@@ -150,7 +150,8 @@ export async function extractMediaMetadata(
     // instead of accepting a partial ExifReader parse as "complete".
     const containerMetadataPreferred =
       /\.(?:mp4|mov|m4v|3gp|3g2|avi|mkv|webm)$/i.test(fileName) ||
-      !gps;
+      !gps ||
+      !gps.timestamp;
     if (
       containerMetadataPreferred &&
       await exifToolExtractor.checkInstalled().catch(() => false)
