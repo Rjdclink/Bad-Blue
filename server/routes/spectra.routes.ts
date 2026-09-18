@@ -12,7 +12,7 @@ const acquireSchema = z.object({
 });
 
 const PHONE_RE = /(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}/;
-const GENERIC_TARGET_RE = /^(?:(?:a|an|the)\s+)?(?:person|individual|business|company|organization|vehicle|car|place|address|thing|property|phone|phone number|target)$/i;
+const GENERIC_TARGET_RE = /^(?:(?:a|an|the|my|their|his|her)\s+)?(?:person|individual|business|company|organization|vehicle|car|truck|device|object|place|address|thing|property|phone|phone number|target)$/i;
 
 function normalizeConfidence(value: unknown): number {
   const n = Number(value);
