@@ -104,10 +104,6 @@ const LegalToolsPage = lazyWithRetry(() => import("@/pages/legal-tools"), 'Legal
 const PantheonPage = lazyWithRetry(() => import("@/pages/pantheon"), 'Pantheon');
 const ConsultationPage = lazyWithRetry(() => import("@/pages/legal-consultation"), 'Consultation');
 const SpectraPage = lazyWithRetry(() => import("@/pages/spectra"), 'Spectra');
-const GeoConsolePage = lazyWithRetry(() => import("@/pages/geoconsole"), 'GeoConsole');
-const GeoConsoleCommandPage = lazyWithRetry(() => import("@/pages/geoconsole-command"), 'GeoConsoleCommand');
-const GeoConsoleProcessPage = lazyWithRetry(() => import("@/pages/geoconsole-process"), 'GeoConsoleProcess');
-const GeoConsoleReportPage = lazyWithRetry(() => import("@/pages/geoconsole-report"), 'GeoConsoleReport');
 const SubscriptionSuccess = lazyWithRetry(() => import("@/pages/subscription-success"), 'SubscriptionSuccess');
 const FAQPage = lazyWithRetry(() => import("@/pages/faq"), 'FAQ');
 const InmateLocatorPage = lazyWithRetry(() => import("@/pages/inmate-locator"), 'InmateLocator');
@@ -306,10 +302,10 @@ function Router() {
               <Route path="/spectra" component={SpectraPage} />
               <Route path="/geo-console" component={GeoConsoleRedirect} />
               <Route path="/legal-consultation/:domainId" component={ConsultationPage} />
-              {isMasterSession && <Route path="/geoconsole" component={GeoConsolePage} />}
-              {isMasterSession && <Route path="/geoconsole-command" component={GeoConsoleCommandPage} />}
-              {isMasterSession && <Route path="/geoconsole-process" component={GeoConsoleProcessPage} />}
-              {isMasterSession && <Route path="/geoconsole-report" component={GeoConsoleReportPage} />}
+              {isMasterSession && <Route path="/geoconsole" component={SpectraPage} />}
+              {isMasterSession && <Route path="/geoconsole-command" component={SpectraPage} />}
+              {isMasterSession && <Route path="/geoconsole-process" component={SpectraPage} />}
+              {isMasterSession && <Route path="/geoconsole-report" component={SpectraPage} />}
               <Route path="/location-intel" component={SpectraPage} />
               <Route path="/tshpe" component={SpectraPage} />
               <Route path="/tshpe-locator" component={SpectraPage} />
