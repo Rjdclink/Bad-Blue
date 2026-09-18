@@ -79,10 +79,6 @@ const WEATHER_RADAR_TILES =
   (import.meta.env?.VITE_WEATHER_RADAR_TILES_URL as string | undefined) ||
   'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::USCOMP-N0Q-0/{z}/{x}/{y}.png';
 
-const KARTAVIEW_API =
-  (import.meta.env?.VITE_KARTAVIEW_API_URL as string | undefined) ||
-  'https://api.openstreetcam.org/2.0/photo/';
-
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 
 const utcDateKey = (date: Date) => date.toISOString().slice(0, 10);
@@ -666,18 +662,15 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     const params = new URLSearchParams({
       lat: String(currentFrame.position.latitude),
       lng: String(currentFrame.position.longitude),
-      zoomLevel: '18',
-      join: 'sequence',
-      orderBy: 'id',
-      orderDirection: 'desc',
     });
 
-    fetch(`${KARTAVIEW_API}?${params.toString()}`, { signal: controller.signal })
+    fetch(`/api/geoconsole/street-imagery?${params.toString()}`, {
+      credentials: 'include',
+      signal: controller.signal,
+    })
       .then(response => response.ok ? response.json() : Promise.reject(new Error('Street imagery unavailable')))
       .then(payload => {
-        const data = payload?.result?.data;
-        const photo = Array.isArray(data) ? data[0] : data;
-        setStreetPhoto(photo || null);
+        setStreetPhoto(payload?.data || null);
       })
       .catch(error => {
         if (error?.name !== 'AbortError') setStreetPhoto(null);
@@ -703,7 +696,6 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
         <div className="absolute bottom-12 right-3 z-20 w-[min(360px,calc(100%-1.5rem))] overflow-hidden rounded-xl border border-slate-600/60 bg-slate-950/95 shadow-2xl backdrop-blur">
           <div className="flex items-center justify-between border-b border-slate-700/60 px-3 py-2">
             <span className="text-xs font-semibold text-slate-200">Street Imagery</span>
-            <span className="text-[10px] text-slate-500">KartaView</span>
           </div>
           {streetLoading ? (
             <div className="p-5 text-center text-xs text-slate-400">Finding nearest public street image…</div>
