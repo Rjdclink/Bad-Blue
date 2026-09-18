@@ -6,6 +6,7 @@
  */
 
 import { Router, Request, Response } from 'express';
+import { randomUUID } from 'crypto';
 import { z } from 'zod';
 import { hybridGeoconsole } from '../services/geoconsole';
 import { GPSPoint, DataSource } from '../services/geoconsole/types';
@@ -72,7 +73,7 @@ const reportRequestSchema = z.object({
 const configUpdateSchema = z.object({
   timeline: z.object({
     historyDays: z.number().min(1).max(30).optional(),
-    futurecastHours: z.number().min(1).max(48).optional(),
+    futurecastHours: z.number().min(1).max(1).optional(),
     playbackSpeed: z.number().min(1).max(3600).optional(),
     animationFps: z.number().min(1).max(60).optional(),
     trailFadeSeconds: z.number().min(3600).max(604800).optional(),
@@ -162,6 +163,7 @@ router.post('/process', async (req: Request, res: Response) => {
     }
 
     const { inputs, sessionId } = validation.data;
+    const effectiveSessionId = sessionId || randomUUID();
 
     // Convert validated data to GPSPoint array
     const gpsPoints: GPSPoint[] = inputs.map(input => ({
@@ -179,15 +181,17 @@ router.post('/process', async (req: Request, res: Response) => {
     log.info('Processing location data', {
       inputCount: gpsPoints.length,
       acceptedCount: quality.acceptedCount,
-      sessionId,
+      sessionId: effectiveSessionId,
     });
 
-    const result = await hybridGeoconsole.processLocationData(quality.points, sessionId);
+    const result = await hybridGeoconsole.processLocationData(quality.points, effectiveSessionId);
 
     res.json({
       success: true,
       data: {
+        sessionId: effectiveSessionId,
         fusedLocations: result.fusedLocations,
+        primaryFusedLocations: result.primaryFusedLocations,
         trail: {
           id: result.trail.id,
           pointCount: result.trail.points.length,
@@ -435,7 +439,7 @@ router.post('/futurecast', async (req: Request, res: Response) => {
   try {
     const schema = z.object({
       recentPoints: z.array(gpsPointSchema).min(3),
-      hours: z.number().min(1).max(48).optional(),
+      hours: z.number().min(1).max(1).optional(),
     });
 
     const validation = schema.safeParse(req.body);
