@@ -104,6 +104,7 @@ async function runStage1E2E({ executablePath }) {
 
       const reqCounts = {
         osint: 0,
+        spectra: 0,
         inmate: 0,
       };
 
@@ -111,6 +112,7 @@ async function runStage1E2E({ executablePath }) {
         const url = req.url();
         const method = req.method();
         if (method === 'POST' && url.includes('/api/osint/full-search')) reqCounts.osint += 1;
+        if (method === 'POST' && url.includes('/api/spectra/acquire')) reqCounts.spectra += 1;
         if (method === 'POST' && url.includes('/api/inmate-search')) reqCounts.inmate += 1;
       });
 
@@ -164,32 +166,54 @@ async function runStage1E2E({ executablePath }) {
       console.log('✓ Refresh did not re-fire Pantheon search');
 
       // -----------------------
-      // 2) People Finder
+      // 2) SPECTRA (People Finder compatibility route)
       // -----------------------
-      console.log('\n▶ People Finder');
-      reqCounts.osint = 0;
+      console.log('\n▶ SPECTRA');
+      reqCounts.spectra = 0;
       await page.goto(`${baseUrl}/people-finder`, { waitUntil: 'networkidle2' });
-      await page.waitForSelector('#name', { timeout: 30000 });
-      await sleep(1500);
+      await page.waitForSelector('[data-testid="spectra-console"]', { timeout: 30000 });
+      await page.waitForFunction(
+        () => document.body?.innerText.includes('What is it that you want to locate?'),
+        { timeout: 30000 },
+      );
       const pfPath = await page.evaluate(() => window.location.pathname);
-      if (pfPath !== '/people-finder') throw new Error(`People Finder redirected unexpectedly: ${pfPath}`);
+      if (pfPath !== '/people-finder') {
+        throw new Error(`SPECTRA compatibility route changed unexpectedly: ${pfPath}`);
+      }
 
-      await page.click('#name', { clickCount: 3 });
-      await page.type('#name', 'Jane Doe', { delay: 10 });
-      await clickButtonByText(page, 'Search');
+      const spectraInput = '[data-testid="spectra-input"]';
+      await page.type(spectraInput, 'Jane Doe', { delay: 10 });
+      await page.click('[data-testid="spectra-send"]');
+      await page.waitForFunction(
+        () => document.body?.innerText.includes('What information can you give me about the target?'),
+        { timeout: 30000 },
+      );
 
-      await page.waitForFunction(() => document.body && document.body.innerText.includes('Identity Summary'), { timeout: 60000 });
-      if (reqCounts.osint !== 1) throw new Error(`People Finder: expected 1 OSINT run, saw ${reqCounts.osint}`);
-      await sleep(1500);
-      const stillHasIdentity = await page.evaluate(() => document.body && document.body.innerText.includes('Identity Summary'));
-      if (!stillHasIdentity) throw new Error('People Finder: results disappeared after rendering');
-      console.log('✓ Search populated and stayed rendered; no redirect');
+      await page.type(spectraInput, 'Last known in Omaha, Nebraska', { delay: 10 });
+      await page.click('[data-testid="spectra-send"]');
 
-      // Refresh must not re-fire searches
+      await page.waitForFunction(
+        () => {
+          const text = document.body?.innerText || '';
+          return text.includes('Regional candidate mapped') ||
+            text.includes('location-evidence confidence') ||
+            text.includes('do not yet have timestamped coordinate evidence') ||
+            text.includes('could not complete that acquisition');
+        },
+        { timeout: 90000 },
+      );
+      if (reqCounts.spectra !== 1) {
+        throw new Error(`SPECTRA: expected 1 acquisition run, saw ${reqCounts.spectra}`);
+      }
+      console.log('✓ Two-turn SPECTRA flow executed once and remained rendered');
+
+      // Refresh must not silently re-run target acquisition.
       await page.reload({ waitUntil: 'networkidle2' });
       await sleep(1000);
-      if (reqCounts.osint !== 1) throw new Error(`People Finder: refresh re-fired OSINT (${reqCounts.osint})`);
-      console.log('✓ Refresh did not re-fire People Finder search');
+      if (reqCounts.spectra !== 1) {
+        throw new Error(`SPECTRA: refresh re-fired acquisition (${reqCounts.spectra})`);
+      }
+      console.log('✓ Refresh did not re-fire SPECTRA acquisition');
 
       // -----------------------
       // 3) Inmate Locator
