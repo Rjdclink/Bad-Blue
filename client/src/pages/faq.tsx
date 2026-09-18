@@ -1,7 +1,7 @@
 /**
- * LegalWhat FAQ Page
+ * Legal What? FAQ Page
  * 
- * Comprehensive FAQ page for LegalWhat platform
+ * Comprehensive FAQ page for Legal What? platform
  * Includes P.A.N.T.H.E.O.N. 13-AI system, core AI systems, and all 30 law types
  */
 
@@ -116,7 +116,7 @@ export default function FAQPage() {
             <div>
               <p className="mb-4">
                 P.A.N.T.H.E.O.N. (Parallel Autonomous Network for Tactical Heuristic Eidolon Operations Network) is 
-                LegalWhat's revolutionary 13-AI orchestration framework. Unlike traditional single-model AI systems, 
+                Legal What?'s revolutionary 13-AI orchestration framework. Unlike traditional single-model AI systems, 
                 P.A.N.T.H.E.O.N. runs 13 different AI models in parallel, cross-computational tandem to provide 
                 the most accurate, comprehensive, and reliable legal intelligence available.
               </p>
@@ -156,7 +156,7 @@ export default function FAQPage() {
         },
         {
           question: "Why use 13 different AI models?",
-          answer: "Different AI models excel at different tasks. Some are better at legal reasoning, others at document analysis, and others at understanding context. By using 13 models in tandem, LegalWhat ensures that your legal matter is analyzed from every possible angle, with multiple layers of verification. This redundancy also ensures system reliability - if one model is unavailable, the others continue working seamlessly."
+          answer: "Different AI models excel at different tasks. Some are better at legal reasoning, others at document analysis, and others at understanding context. By using 13 models in tandem, Legal What? ensures that your legal matter is analyzed from every possible angle, with multiple layers of verification. This redundancy also ensures system reliability - if one model is unavailable, the others continue working seamlessly."
         }
       ]
     },
@@ -172,7 +172,7 @@ export default function FAQPage() {
                 <span className="font-bold">LEXARA</span> <span className="text-sm text-muted-foreground">(Legal Expert AI Resource Advisor)</span>
               </p>
               <p>
-                LEXARA is LegalWhat's primary legal consultation AI. Powered by the P.A.N.T.H.E.O.N. framework, 
+                LEXARA is Legal What?'s primary legal consultation AI. Powered by the P.A.N.T.H.E.O.N. framework, 
                 LEXARA provides comprehensive legal guidance across all 30 law types. It analyzes your situation, 
                 explains relevant laws, identifies your rights, suggests legal strategies, and provides 
                 jurisdiction-specific advice tailored to your location.
@@ -188,7 +188,7 @@ export default function FAQPage() {
                 <span className="font-bold">C.A.D.E.</span> <span className="text-sm text-muted-foreground">(Case Adaptive Drafting Entity)</span>
               </p>
               <p>
-                C.A.D.E. is LegalWhat's jurisprudential drafting intelligence engine. This procedural law-aware, 
+                C.A.D.E. is Legal What?'s jurisprudential drafting intelligence engine. This procedural law-aware, 
                 content-adaptive, jurisdiction-specific legal authoring machine operates as co-counsel to LEXARA. 
                 C.A.D.E. drafts legal documents including complaints, motions, contracts, and pleadings with 
                 court-ready formatting and proper legal citations.
@@ -204,7 +204,7 @@ export default function FAQPage() {
                 <span className="font-bold">F.M.I.</span> <span className="text-sm text-muted-foreground">(Forensic Media Intelligence)</span>
               </p>
               <p>
-                F.M.I. is LegalWhat's evidence analysis system. It analyzes videos, photos, audio files, and 
+                F.M.I. is Legal What?'s evidence analysis system. It analyzes videos, photos, audio files, and 
                 documents to extract legally relevant information. F.M.I. can identify people, objects, locations, 
                 timestamps, detect alterations, transcribe audio, perform OCR on documents, and generate detailed 
                 forensic reports suitable for legal proceedings.
@@ -220,7 +220,7 @@ export default function FAQPage() {
                 <span className="font-bold">I-DRIVE</span> <span className="text-sm text-muted-foreground">(Identity Data Retrieval & Investigative Examiner)</span>
               </p>
               <p>
-                I-DRIVE is LegalWhat's advanced people and identity search tool. It aggregates data from public 
+                I-DRIVE is Legal What?'s advanced people and identity search tool. It aggregates data from public 
                 records, court filings, social media, professional networks, and more to create comprehensive 
                 dossiers on individuals. I-DRIVE is essential for finding witnesses, researching opposing parties, 
                 locating experts, and conducting due diligence.
@@ -235,11 +235,11 @@ export default function FAQPage() {
       icon: Scale,
       items: [
         {
-          question: "What areas of law does LegalWhat cover?",
+          question: "What areas of law does Legal What? cover?",
           answer: (
             <div>
               <p className="mb-4">
-                LegalWhat provides AI-powered legal assistance across 30 comprehensive areas of law:
+                Legal What? provides AI-powered legal assistance across 30 comprehensive areas of law:
               </p>
               <div className="grid sm:grid-cols-2 gap-3">
                 {LAW_TYPE_DATA.map((lawType, index) => (
@@ -271,7 +271,7 @@ export default function FAQPage() {
         },
         {
           question: "What makes Law Enforcement Accountability special?",
-          answer: "Law Enforcement Accountability is LegalWhat's featured specialty, operating under the BadBlue brand. This comprehensive subset includes specialized tools for police misconduct cases, including officer database search, automated complaint filing, Section 1983 lawsuit generation, FOIA requests for police records, and community petitions. BadBlue combines all of LegalWhat's AI systems with domain-specific expertise in civil rights and police accountability law."
+          answer: "Law Enforcement Accountability is Legal What?'s featured specialty, operating under the BadBlue brand. This comprehensive subset includes specialized tools for police misconduct cases, including officer database search, automated complaint filing, Section 1983 lawsuit generation, FOIA requests for police records, and community petitions. BadBlue combines all of Legal What?'s AI systems with domain-specific expertise in civil rights and police accountability law."
         }
       ]
     },
@@ -280,7 +280,7 @@ export default function FAQPage() {
       icon: ArrowRight,
       items: [
         {
-          question: "How do I get started with LegalWhat?",
+          question: "How do I get started with Legal What??",
           answer: (
             <div>
               <ol className="list-decimal list-inside space-y-2">
@@ -303,12 +303,12 @@ export default function FAQPage() {
           )
         },
         {
-          question: "Do I need legal experience to use LegalWhat?",
-          answer: "No legal experience is required. LegalWhat is designed for everyone, from individuals with no legal background to experienced legal professionals. Our AI systems guide you through every step, explain legal concepts in plain language, and provide templates and examples. However, for complex matters, we always recommend consulting with a licensed attorney."
+          question: "Do I need legal experience to use Legal What??",
+          answer: "No legal experience is required. Legal What? is designed for everyone, from individuals with no legal background to experienced legal professionals. Our AI systems guide you through every step, explain legal concepts in plain language, and provide templates and examples. However, for complex matters, we always recommend consulting with a licensed attorney."
         },
         {
-          question: "Can I use LegalWhat on mobile devices?",
-          answer: "Yes! LegalWhat is fully responsive and works seamlessly on smartphones, tablets, and desktop computers. Access your account, consult with LEXARA, draft documents, and use all features from any device with an internet connection."
+          question: "Can I use Legal What? on mobile devices?",
+          answer: "Yes! Legal What? is fully responsive and works seamlessly on smartphones, tablets, and desktop computers. Access your account, consult with LEXARA, draft documents, and use all features from any device with an internet connection."
         }
       ]
     },
@@ -317,8 +317,8 @@ export default function FAQPage() {
       icon: DollarSign,
       items: [
         {
-          question: "How much does LegalWhat cost?",
-          answer: "LegalWhat offers flexible pricing options to fit your needs. We provide free access to basic consultations with LEXARA. Premium features including advanced document drafting with C.A.D.E., comprehensive evidence analysis with F.M.I., and unlimited identity searches with I-DRIVE are available through affordable subscription plans. Special pricing is available for specific services like complaints, lawsuits, and FOIA requests."
+          question: "How much does Legal What? cost?",
+          answer: "Legal What? offers flexible pricing options to fit your needs. We provide free access to basic consultations with LEXARA. Premium features including advanced document drafting with C.A.D.E., comprehensive evidence analysis with F.M.I., and unlimited identity searches with I-DRIVE are available through affordable subscription plans. Special pricing is available for specific services like complaints, lawsuits, and FOIA requests."
         },
         {
           question: "Is there a free trial?",
@@ -336,11 +336,11 @@ export default function FAQPage() {
       items: [
         {
           question: "Is my information secure?",
-          answer: "Absolutely. LegalWhat uses bank-level encryption (AES-256) to protect all your data. Your legal information, documents, and communications are encrypted both in transit and at rest. We comply with GDPR, CCPA, and other privacy regulations. Our servers are hosted in secure, SOC 2 certified data centers."
+          answer: "Absolutely. Legal What? uses bank-level encryption (AES-256) to protect all your data. Your legal information, documents, and communications are encrypted both in transit and at rest. We comply with GDPR, CCPA, and other privacy regulations. Our servers are hosted in secure, SOC 2 certified data centers."
         },
         {
           question: "Who can see my legal information?",
-          answer: "Your legal information is completely private and confidential. Only you can access your account and data. LegalWhat staff cannot view your consultations or documents. We never share, sell, or disclose your information to third parties except as required by law or with your explicit consent."
+          answer: "Your legal information is completely private and confidential. Only you can access your account and data. Legal What? staff cannot view your consultations or documents. We never share, sell, or disclose your information to third parties except as required by law or with your explicit consent."
         },
         {
           question: "Do you keep logs of my consultations?",
@@ -357,19 +357,19 @@ export default function FAQPage() {
       icon: Sparkles,
       items: [
         {
-          question: "What can LegalWhat help me with?",
-          answer: "LegalWhat can help with legal consultations, document drafting, evidence analysis, people searches, understanding your rights, filing complaints, drafting lawsuits, requesting public records, researching case law, understanding statutes, preparing for court, negotiating settlements, and much more across all 30 law types."
+          question: "What can Legal What? help me with?",
+          answer: "Legal What? can help with legal consultations, document drafting, evidence analysis, people searches, understanding your rights, filing complaints, drafting lawsuits, requesting public records, researching case law, understanding statutes, preparing for court, negotiating settlements, and much more across all 30 law types."
         },
         {
           question: "How accurate is the AI legal advice?",
-          answer: "LegalWhat's P.A.N.T.H.E.O.N. system provides highly accurate legal information by cross-validating responses across 13 different AI models. However, AI cannot account for every nuance of your specific situation. The information provided is for educational and informational purposes. For critical legal decisions, always consult with a licensed attorney in your jurisdiction."
+          answer: "Legal What?'s P.A.N.T.H.E.O.N. system provides highly accurate legal information by cross-validating responses across 13 different AI models. However, AI cannot account for every nuance of your specific situation. The information provided is for educational and informational purposes. For critical legal decisions, always consult with a licensed attorney in your jurisdiction."
         },
         {
-          question: "Does LegalWhat work in my state/country?",
-          answer: "LegalWhat covers all 50 US states, Washington D.C., and US territories. Our AI systems are trained on jurisdiction-specific laws and procedures. For international users, LegalWhat can provide general legal information and US law guidance, but we recommend consulting local legal professionals for matters governed by foreign law."
+          question: "Does Legal What? work in my state/country?",
+          answer: "Legal What? covers all 50 US states, Washington D.C., and US territories. Our AI systems are trained on jurisdiction-specific laws and procedures. For international users, Legal What? can provide general legal information and US law guidance, but we recommend consulting local legal professionals for matters governed by foreign law."
         },
         {
-          question: "Can LegalWhat analyze video/photo evidence?",
+          question: "Can Legal What? analyze video/photo evidence?",
           answer: "Yes! F.M.I. (Forensic Media Intelligence) can analyze videos, photos, audio files, and documents. Upload your evidence files and F.M.I. will extract timestamps, identify people and objects, detect alterations, transcribe audio, perform OCR on text, and generate detailed forensic reports. This is especially useful for police misconduct cases, personal injury claims, and contract disputes."
         }
       ]
@@ -379,14 +379,14 @@ export default function FAQPage() {
       icon: AlertTriangle,
       items: [
         {
-          question: "Is LegalWhat a law firm?",
+          question: "Is Legal What? a law firm?",
           answer: (
             <div>
               <p className="font-semibold text-red-600 dark:text-red-400 mb-2">
-                NO. LegalWhat is NOT a law firm.
+                NO. Legal What? is NOT a law firm.
               </p>
               <p>
-                LegalWhat is a legal technology platform that provides AI-powered legal information, document 
+                Legal What? is a legal technology platform that provides AI-powered legal information, document 
                 preparation tools, and legal research assistance. We do not provide legal advice, legal representation, 
                 or legal services. We are not attorneys and do not form an attorney-client relationship with users.
               </p>
@@ -398,24 +398,24 @@ export default function FAQPage() {
           answer: (
             <div>
               <p className="font-semibold text-red-600 dark:text-red-400 mb-2">
-                NO. LegalWhat does NOT provide legal advice.
+                NO. Legal What? does NOT provide legal advice.
               </p>
               <p>
-                The information provided by LegalWhat's AI systems is for educational and informational purposes only. 
+                The information provided by Legal What?'s AI systems is for educational and informational purposes only. 
                 It is not legal advice and should not be relied upon as such. Every legal situation is unique, and 
                 laws vary by jurisdiction. You should consult with a licensed attorney in your area for advice about 
-                your specific situation. Using LegalWhat does not create an attorney-client relationship.
+                your specific situation. Using Legal What? does not create an attorney-client relationship.
               </p>
             </div>
           )
         },
         {
           question: "Should I hire a lawyer?",
-          answer: "For complex legal matters, serious charges, or cases involving significant money or rights, we strongly recommend consulting with a licensed attorney. LegalWhat can help you understand your situation, prepare initial documents, and conduct research, but it cannot replace the personalized advice and representation of a qualified attorney who can review all the details of your specific case."
+          answer: "For complex legal matters, serious charges, or cases involving significant money or rights, we strongly recommend consulting with a licensed attorney. Legal What? can help you understand your situation, prepare initial documents, and conduct research, but it cannot replace the personalized advice and representation of a qualified attorney who can review all the details of your specific case."
         },
         {
-          question: "What if I use LegalWhat and something goes wrong?",
-          answer: "LegalWhat provides tools and information to assist you, but you are responsible for your own legal decisions and actions. We make no warranties about the accuracy, completeness, or reliability of the information provided. We are not liable for any outcomes resulting from your use of our platform. Always verify critical information with a licensed attorney and understand the risks before taking legal action."
+          question: "What if I use Legal What? and something goes wrong?",
+          answer: "Legal What? provides tools and information to assist you, but you are responsible for your own legal decisions and actions. We make no warranties about the accuracy, completeness, or reliability of the information provided. We are not liable for any outcomes resulting from your use of our platform. Always verify critical information with a licensed attorney and understand the risks before taking legal action."
         }
       ]
     }
@@ -432,13 +432,13 @@ export default function FAQPage() {
       </div>
 
       <SEOHead
-        title="FAQ - LegalWhat AI Legal Platform"
-        description="Frequently asked questions about LegalWhat's P.A.N.T.H.E.O.N. 13-AI system, LEXARA consultation, C.A.D.E. document drafting, F.M.I. evidence analysis, and I-DRIVE identity search."
+        title="Legal What? FAQ | AI Legal Tools & Search Services"
+        description="Frequently asked questions about Legal What? AI legal consultation, document tools, public-record research, background reports, people finding, inmate search, and platform features."
       />
 
       {/* Header */}
       <AppHeader 
-        title="LegalWhat FAQ" 
+        title="Legal What? FAQ" 
         fallbackRoute="/landing"
         className="bg-black/50 backdrop-blur-md border-b border-white/20"
       />
@@ -458,7 +458,7 @@ export default function FAQPage() {
             />
           </h1>
           <p className="text-lg sm:text-xl text-white/90 max-w-3xl mx-auto mb-6">
-            Everything you need to know about LegalWhat's revolutionary AI-powered legal platform
+            Everything you need to know about Legal What?'s revolutionary AI-powered legal platform
           </p>
           <div className="flex flex-wrap justify-center gap-3">
             {CORE_SYSTEMS.map((system) => (
@@ -562,7 +562,7 @@ export default function FAQPage() {
           <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-2 border-primary/20">
             <CardHeader>
               <CardTitle className="text-2xl sm:text-3xl">
-                Ready to Get Started with LegalWhat?
+                Ready to Get Started with Legal What??
               </CardTitle>
               <CardDescription className="text-base">
                 Experience the power of P.A.N.T.H.E.O.N. AI and get instant legal assistance
