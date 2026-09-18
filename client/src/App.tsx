@@ -213,8 +213,10 @@ function GatedControlRoom() {
 function Router() {
   const { user, isAuthenticated, isLoading } = useAuth();
   const isMasterSession = Boolean((user as any)?.isMasterBypass);
+  const userStatus = String((user as any)?.status || "").toLowerCase();
   const hasPaidAccess = isMasterSession || Boolean(
-    (user as any)?.status === "active" && (user as any)?.hasPaidForAccess === true,
+    (user as any)?.hasPaidForAccess === true &&
+    !["suspended", "past_due", "canceled", "expired"].includes(userStatus),
   );
 
   // Swipe routing remains available to ordinary authenticated sessions, but is
