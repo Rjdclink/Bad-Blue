@@ -41,7 +41,7 @@ function getGeminiClient(): GoogleGenAI {
 
 /**
  * Helper function to use unified AI provider for officer searches
- * All officer searches are user-initiated, so they use USER context
+ * Officer research enters the shared Harmony mesh; grounded search is a specialized evidence adapter.
  */
 async function generateOfficerSearchContent(
   searchType: string,
@@ -91,12 +91,12 @@ async function runGroundedOfficerSearch(
       }
       return { text: response.text || '', sources: Array.from(new Set(sources)) };
     } catch (error) {
-      console.warn(\`[Officer Search] Google-grounded \${searchType} failed; falling back to Harmony:\`, error);
+      console.warn(`[Officer Search] Google-grounded ${searchType} failed; falling back to Harmony:`, error);
     }
   }
 
   const text = await generateOfficerSearchContent(
-    \`\${searchType}-harmony-fallback\`,
+    `${searchType}-harmony-fallback`,
     prompt,
     'Analyze only supported public-record evidence. Do not invent records, identifiers, cases, URLs, or source provenance.',
   );
