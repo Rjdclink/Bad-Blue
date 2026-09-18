@@ -20,8 +20,6 @@ const exec = promisify(execCallback);
 import {
   generateAutonomousText,
   generateUserText,
-  canAutonomousProceed,
-  getAutonomousRescheduleInfo,
   TaskPriority,
 } from './aiProvider';
 import { unifiedSearch, searchOfficerRecords, searchTechnicalGuidance, isWebSearchAvailable } from './webSearchService';
