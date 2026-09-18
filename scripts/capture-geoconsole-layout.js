@@ -16,62 +16,100 @@ function resolveChromiumPath() {
     '/usr/bin/chromium-browser',
   ].filter(Boolean);
 
-  const fromDisk = candidates.find((p) => {
+  return candidates.find(candidate => {
     try {
-      return fs.existsSync(p);
+      return fs.existsSync(candidate);
     } catch {
       return false;
     }
-  });
-
-  return fromDisk || puppeteer.executablePath?.() || undefined;
+  }) || puppeteer.executablePath?.() || undefined;
 }
 
 async function waitForHttpOk(url, timeoutMs) {
   const start = Date.now();
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
+  while (Date.now() - start <= timeoutMs) {
     try {
-      const res = await fetch(url, { redirect: 'manual' });
-      if (res.ok) return;
+      const response = await fetch(url, { redirect: 'manual' });
+      if (response.ok) return;
     } catch {
-      // ignore
+      // Server is still starting.
     }
+    await new Promise(resolve => setTimeout(resolve, 300));
+  }
+  throw new Error(`Timed out waiting for ${url}`);
+}
 
-    if (Date.now() - start > timeoutMs) {
-      throw new Error(`Timed out waiting for ${url}`);
-    }
-
-    await new Promise((r) => setTimeout(r, 250));
+async function stopProcess(processHandle) {
+  if (!processHandle || processHandle.killed) return;
+  try {
+    processHandle.kill('SIGTERM');
+    await Promise.race([
+      once(processHandle, 'exit'),
+      new Promise(resolve => setTimeout(resolve, 5_000)),
+    ]);
+    if (!processHandle.killed) processHandle.kill('SIGKILL');
+  } catch {
+    // Best-effort cleanup only.
   }
 }
 
 async function main() {
-  const outPath = path.resolve(process.cwd(), 'artifacts', 'ui_geoconsole_layout.png');
-  fs.mkdirSync(path.dirname(outPath), { recursive: true });
-
   const executablePath = resolveChromiumPath();
   if (!executablePath) {
     throw new Error('No Chromium/Chrome executable found. Set PUPPETEER_EXECUTABLE_PATH.');
   }
 
-  // Start Vite dev server (client-only) on a fixed port.
+  const loginEmail = String(process.env.LEGALWHAT_E2E_EMAIL || '').trim();
+  const loginPassword = String(process.env.LEGALWHAT_E2E_PASSWORD || '').trim();
+  if (!loginEmail || !loginPassword) {
+    throw new Error(
+      'Authenticated SPECTRA capture requires LEGALWHAT_E2E_EMAIL and LEGALWHAT_E2E_PASSWORD.'
+    );
+  }
+  if (!String(process.env.SESSION_SECRET || '').trim()) {
+    throw new Error('Authenticated SPECTRA capture requires SESSION_SECRET.');
+  }
+  const hasDatabase = [
+    process.env.SUPABASE_DATABASE_URL,
+    process.env.SUPABASE_DB_URL,
+    process.env.DATABASE_URL,
+  ].some(value => String(value || '').trim());
+  if (!hasDatabase) {
+    throw new Error('Authenticated SPECTRA capture requires database configuration.');
+  }
+
   const port = Number(process.env.UI_PREVIEW_PORT || 4173);
   const baseUrl = `http://127.0.0.1:${port}`;
-  const capturePath = process.env.UI_CAPTURE_PATH || '/geoconsole';
+  const capturePath = process.env.UI_CAPTURE_PATH || '/spectra';
+  const outPath = path.resolve(
+    process.cwd(),
+    process.env.UI_CAPTURE_OUTPUT || 'artifacts/ui_spectra_layout.png'
+  );
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
 
-  const vite = spawn(
-    process.platform === 'win32' ? 'npx.cmd' : 'npx',
-    ['vite', '--host', '127.0.0.1', '--port', String(port), '--strictPort'],
+  // Use the full application server, not Vite-only preview. SPECTRA is an
+  // authenticated surface and visual proof must exercise the same auth/router
+  // contract as the actual application.
+  const server = spawn(
+    process.platform === 'win32' ? 'npm.cmd' : 'npm',
+    ['run', 'dev'],
     {
       cwd: process.cwd(),
-      env: { ...process.env, NODE_ENV: 'development' },
-      stdio: 'inherit',
+      env: {
+        ...process.env,
+        PORT: String(port),
+        NODE_ENV: 'development',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
     }
   );
 
+  const serverLogs = [];
+  server.stdout?.on('data', data => serverLogs.push(String(data)));
+  server.stderr?.on('data', data => serverLogs.push(String(data)));
+
   try {
-    await waitForHttpOk(`${baseUrl}/`, 60_000);
+    await waitForHttpOk(`${baseUrl}/api/health`, 90_000);
 
     const browser = await puppeteer.launch({
       executablePath,
@@ -81,73 +119,62 @@ async function main() {
 
     try {
       const page = await browser.newPage();
-      const errors = [];
-      page.on('pageerror', (err) => errors.push(`[pageerror] ${err?.message || String(err)}`));
-      page.on('console', (msg) => {
-        if (msg.type() === 'error') errors.push(`[console.error] ${msg.text()}`);
+      const browserErrors = [];
+      page.on('pageerror', error => browserErrors.push(`[pageerror] ${error?.message || String(error)}`));
+      page.on('console', message => {
+        if (message.type() === 'error') browserErrors.push(`[console.error] ${message.text()}`);
       });
+
       await page.setViewport({ width: 1600, height: 1000, deviceScaleFactor: 1 });
 
+      await page.goto(`${baseUrl}/login`, { waitUntil: 'networkidle2' });
+      await page.waitForSelector('#login-email', { timeout: 30_000 });
+      await page.type('#login-email', loginEmail);
+      await page.type('#login-password', loginPassword);
+      await page.click('button[type="submit"]');
+      await page.waitForFunction(
+        () => window.location.pathname !== '/login',
+        { timeout: 30_000 }
+      );
+
       await page.goto(`${baseUrl}${capturePath}`, { waitUntil: 'networkidle2' });
+      await page.waitForSelector('[data-testid="spectra-console"]', { timeout: 45_000 });
+      await page.waitForFunction(
+        () => {
+          const text = document.body?.innerText || '';
+          return text.includes('SPECTRA Console') &&
+            text.includes('What is it that you want to locate?');
+        },
+        { timeout: 45_000 }
+      );
 
-      // Confirm the key widgets exist (route-sensitive).
-      await page.waitForFunction((capturePath) => {
-        const bodyText = document.body?.innerText || '';
-        const hasGeoConsole = bodyText.includes('SPECTRA GeoConsole');
-
-        // Dedicated /geoconsole page: require both timeline buttons.
-        if (String(capturePath).startsWith('/geoconsole')) {
-          const hasTitle = bodyText.includes('Hybrid Geoconsole') || hasGeoConsole;
-          const hasExport = bodyText.includes('Export');
-          const hasProcess = bodyText.includes('Process');
-          return hasTitle && hasExport && hasProcess;
-        }
-
-        // Embedded contexts (e.g. /people-finder): require the embedded console title.
-        return hasGeoConsole;
-      }, { timeout: 90_000 }, capturePath);
-
-      // If Vite/runtime overlays appear, remove them so the screenshot proves
-      // widget visibility (layout-only verification).
-      await page.evaluate(() => {
-        try {
-          document.querySelector('vite-error-overlay')?.remove();
-          document.querySelectorAll('[data-vite-error-overlay]').forEach((n) => n.remove());
-        } catch {
-          // ignore
-        }
-      });
-      await new Promise((r) => setTimeout(r, 100));
-
-      // Fail if we saw known stability errors during render.
-      const fatal = errors.find((e) => e.includes('getImageData') || e.includes('leaflet.heat'));
-      if (fatal) {
-        throw new Error(`GeoConsole render error: ${fatal}`);
+      const fatalErrors = browserErrors.filter(error =>
+        error.includes('getImageData') ||
+        error.includes('leaflet.heat') ||
+        error.includes('Uncaught') ||
+        error.includes('TypeError')
+      );
+      if (fatalErrors.length) {
+        throw new Error(`SPECTRA render error: ${fatalErrors.join(' | ')}`);
       }
 
       await page.screenshot({ path: outPath, fullPage: true });
-
-      // Log the output path for evidence capture.
-      console.log(`[UI_CAPTURE] wrote ${outPath}`);
+      console.log(`[SPECTRA_CAPTURE] wrote ${outPath}`);
     } finally {
       await browser.close();
     }
-  } finally {
-    // Best-effort shutdown.
-    try {
-      vite.kill('SIGTERM');
-      await Promise.race([
-        once(vite, 'exit'),
-        new Promise((r) => setTimeout(r, 2000)),
-      ]);
-      if (!vite.killed) vite.kill('SIGKILL');
-    } catch {
-      // ignore
+  } catch (error) {
+    if (serverLogs.length) {
+      console.error('\n--- SPECTRA capture server log tail ---');
+      console.error(serverLogs.slice(-100).join(''));
     }
+    throw error;
+  } finally {
+    await stopProcess(server);
   }
 }
 
-main().catch((err) => {
-  console.error('[UI_CAPTURE] failed:', err);
+main().catch(error => {
+  console.error('[SPECTRA_CAPTURE] failed:', error);
   process.exit(1);
 });
