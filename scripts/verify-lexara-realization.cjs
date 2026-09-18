@@ -164,7 +164,9 @@ must(
     harmony.includes('withHarmonyDeadline') &&
     harmonyRegistry.includes('HARMONY_17_PARTICIPANTS') &&
     orchestrator.includes('maxParticipants: 2') &&
-    orchestrator.includes('requestTimeoutMs: 3_500'),
+    orchestrator.includes('estimatedTokens: 450') &&
+    orchestrator.includes('requestTimeoutMs: 2_800') &&
+    orchestrator.includes('maxFallbacks: 0'),
   'Lexara draws from the full 17-participant capability pool while each live turn uses a small capability-matched subset with one synthesis authority and bounded route-local failover',
 );
 must(
@@ -227,6 +229,10 @@ must(
     orchestrator.includes('Hold on a minute') &&
     conversation.includes('pendingUserTurnQueueRef.current.push({ text: message, messageId: userMessageId })') &&
     conversation.includes('pendingUserTurnQueueRef.current.shift()') &&
+    conversation.includes('splitTrailingPresenceControlTurn') &&
+    conversation.includes('nonSemanticLexaraMessageIdsRef') &&
+    conversation.includes('activeAnalysisNeedsReconciliationRef') &&
+    conversation.includes("acknowledgementKind === 'added-facts'") &&
     conversation.includes('ACKNOWLEDGEMENT_DEDUPE_MS') &&
     conversation.includes('ACKNOWLEDGEMENT_SOFT_TIMEOUT_MS') &&
     conversation.includes('controlAcknowledgementSpeechRef') &&
