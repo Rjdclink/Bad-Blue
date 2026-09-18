@@ -80,8 +80,11 @@ test('Futurecast confidence shown in telemetry comes from prediction frames',
 test('Street imagery client goes through authenticated server adapter',
   map.includes('/api/geoconsole/street-imagery') &&
   routes.includes("router.get('/street-imagery'"));
-test('Earth observation time follows selected evidence time',
-  map.includes('nasaGibsTilesFor(currentFrame.timestamp)'));
+test('Earth observation and radar context follow the selected timeline time',
+  dashboard.includes('displayTime={timelineContextTime}') &&
+  map.includes('const contextTime = displayTimeMs !== null') &&
+  map.includes('nasaGibsTilesFor(contextTime)') &&
+  map.includes('weatherRadarTilesFor(contextTime)'));
 test('Regional candidates never enter the timed motion trail',
   spectraRoutes.includes('if (locationObservations.length === 0)') &&
   spectraRoutes.includes("basis: 'regional_context'"));
