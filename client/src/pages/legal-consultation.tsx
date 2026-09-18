@@ -58,7 +58,7 @@ export default function LegalConsultationPage() {
       />
 
       <header className="sticky top-0 z-50 border-b bg-card pt-[env(safe-area-inset-top)]">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-4">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-2 px-2 py-3 sm:gap-3 sm:px-4 sm:py-4">
           <div className="flex min-w-0 items-center gap-2">
             <Button
               variant="ghost"
@@ -91,12 +91,14 @@ export default function LegalConsultationPage() {
               variant="outline"
               onClick={() => setLocation(toolsMode ? canonicalPath : `${canonicalPath}?mode=tools`)}
             >
-              {toolsMode ? 'Live conversation' : 'Case tools'}
+              <span className="sm:hidden">{toolsMode ? 'Live' : 'Tools'}</span>
+              <span className="hidden sm:inline">{toolsMode ? 'Live conversation' : 'Case tools'}</span>
             </Button>
             <Button
               variant="outline"
               onClick={() => setLocation('/login')}
               data-testid="button-login"
+              className="hidden min-h-11 touch-manipulation sm:inline-flex"
             >
               Sign In
             </Button>
