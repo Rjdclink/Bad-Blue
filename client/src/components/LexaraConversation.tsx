@@ -224,6 +224,23 @@ function isPresenceControlTurn(value: string): boolean {
   return /^(?:(?:hey|hello)[, ]*)?(?:lexara[, ]*)?(?:are you (?:still )?there|you still there|you there|can you hear me|are you listening|hello|did you hear me|are you still working(?: on (?:this|it))?)[?.! ]*$/i.test(clean);
 }
 
+function splitTrailingPresenceControlTurn(value: string): { main: string; control: string } {
+  const trimmed = value.replace(/\s+/g, ' ').trim();
+  if (!trimmed) return { main: '', control: '' };
+  if (isPresenceControlTurn(trimmed)) return { main: '', control: trimmed };
+
+  const segments = trimmed.match(/[^.!?]+[.!?]?/g)?.map(segment => segment.trim()).filter(Boolean) || [];
+  if (segments.length < 2) return { main: trimmed, control: '' };
+
+  const last = segments[segments.length - 1];
+  if (!isPresenceControlTurn(last)) return { main: trimmed, control: '' };
+
+  return {
+    main: segments.slice(0, -1).join(' ').trim(),
+    control: last,
+  };
+}
+
 function mergeSpeechSegments(existing: string, incoming: string): string {
   const left = existing.replace(/\s+/g, ' ').trim();
   const right = incoming.replace(/\s+/g, ' ').trim();
@@ -418,7 +435,15 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     const text = voiceTurnBufferRef.current.trim();
     voiceTurnBufferRef.current = '';
     if (!text) return;
-    handleMessageRef.current(text);
+
+    // Some mobile/server STT chunks can contain the tail of a substantive turn
+    // plus a later conversational check-in. Keep the check-in as its own turn
+    // instead of grafting "are you still there?" onto the legal statement.
+    const split = splitTrailingPresenceControlTurn(text);
+    if (split.main) handleMessageRef.current(split.main);
+    if (split.control) {
+      window.setTimeout(() => handleMessageRef.current(split.control), 0);
+    }
   }, [clearVoiceTurnTimer]);
 
   const voiceMode = useVoiceMode({
