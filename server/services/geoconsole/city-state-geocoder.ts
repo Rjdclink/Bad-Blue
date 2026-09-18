@@ -56,14 +56,35 @@ export function extractCityStateHint(input: string): { city: string; state: stri
 
   const lower = text.toLowerCase();
   for (const stateName of STATE_NAMES) {
-    const stateIndex = lower.search(new RegExp(`\\b${stateName.replace(/ /g, '\\s+')}\\b`, 'i'));
-    if (stateIndex < 0) continue;
+    const stateRegex = new RegExp(`\\b${stateName.replace(/ /g, '\\s+')}\\b`, 'i');
+    const stateMatch = stateRegex.exec(text);
+    if (!stateMatch) continue;
 
-    const before = text.slice(0, stateIndex).trim();
-    const cityMatch = before.match(/(?:^|[,;.]|\b(?:in|at|from|near|around)\s+)([A-Za-z][A-Za-z.'\-]*(?:\s+[A-Za-z][A-Za-z.'\-]*){0,3})\s*$/i);
-    const city = cleanCity(cityMatch?.[1] || before.split(/[,;.]/).pop() || '');
     const state = STATE_ABBREVIATIONS[stateName];
-    if (city.length >= 2 && city.length <= 100) return { city, state, query: `${city}, ${state}` };
+    const before = text.slice(0, stateMatch.index).trim();
+    const after = text.slice(stateMatch.index + stateMatch[0].length).trim();
+
+    // "Sanborn Iowa" / "Sanborn, Iowa" as the whole supplied hint.
+    if (!after) {
+      const directCity = cleanCity(before.replace(/[,;]\s*$/, ''));
+      if (
+        directCity.length >= 2 &&
+        directCity.length <= 100 &&
+        !/\b(?:phone|email|employer|company|works?|born|age)\b/i.test(directCity)
+      ) {
+        return { city: directCity, state, query: `${directCity}, ${state}` };
+      }
+    }
+
+    // Within a longer sentence, require explicit location language so a state
+    // name used in an employer/person name is not mistaken for geography.
+    const cityMatch = before.match(
+      /(?:^|[,;.]|\b(?:in|at|from|near|around|city(?:\s+of)?)\s+)([A-Za-z][A-Za-z.'\-]*(?:\s+[A-Za-z][A-Za-z.'\-]*){0,3})\s*$/i,
+    );
+    const city = cleanCity(cityMatch?.[1] || '');
+    if (city.length >= 2 && city.length <= 100) {
+      return { city, state, query: `${city}, ${state}` };
+    }
   }
 
   const codePattern = /\b([A-Z]{2})\b/gi;
@@ -72,8 +93,8 @@ export function extractCityStateHint(input: string): { city: string; state: stri
     const state = normalizeState(match[1]);
     if (!state) continue;
     const before = text.slice(0, match.index).trim();
-    const cityMatch = before.match(/(?:^|[,;.]|\b(?:in|at|from|near|around)\s+)([A-Za-z][A-Za-z.'\-]*(?:\s+[A-Za-z][A-Za-z.'\-]*){0,3})\s*$/i);
-    const city = cleanCity(cityMatch?.[1] || before.split(/[,;.]/).pop() || '');
+    const cityMatch = before.match(/(?:^|[,;.]|\b(?:in|at|from|near|around|city(?:\s+of)?)\s+)([A-Za-z][A-Za-z.'\-]*(?:\s+[A-Za-z][A-Za-z.'\-]*){0,3})\s*$/i);
+    const city = cleanCity(cityMatch?.[1] || '');
     if (city.length >= 2 && city.length <= 100) return { city, state, query: `${city}, ${state}` };
   }
 
