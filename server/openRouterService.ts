@@ -61,6 +61,16 @@ const rateLimitState: Record<OpenRouterModel, RateLimitState> = {
   kimi: { requests: 0, lastReset: new Date(), failures: 0, lastFailure: 0, disabled: false },
 };
 
+export interface OpenRouterTextResult {
+  content: string;
+  model: string;
+  latencyMs: number;
+}
+
+const AUTO_ROUTER_COOLDOWN_MS = 60_000;
+let autoRouterCooldownUntil = 0;
+let autoRouterLastError: string | null = null;
+
 // OpenRouter client singleton
 let openRouterClient: OpenRouter | null = null;
 
@@ -74,6 +84,88 @@ function getOpenRouterClient(): OpenRouter {
     throw new Error('OpenRouter API not configured - missing OPENROUTER_API_KEY');
   }
   return openRouterClient;
+}
+
+/**
+ * Canonical text generation route for latency-sensitive user-facing work.
+ * OpenRouter's current Auto Router keeps model selection fresh and delegates
+ * model/provider failover to the gateway rather than freezing another local
+ * model catalog in LEXARA.
+ */
+export async function generateOpenRouterText(
+  prompt: string,
+  options: {
+    systemPrompt?: string;
+    temperature?: number;
+    maxTokens?: number;
+    timeoutMs?: number;
+    sessionId?: string;
+  } = {},
+): Promise<OpenRouterTextResult> {
+  if (!OPENROUTER_API_KEY) {
+    throw new Error('OpenRouter API not configured - missing OPENROUTER_API_KEY');
+  }
+  if (Date.now() < autoRouterCooldownUntil) {
+    throw new Error(`OpenRouter auto router cooling down: ${autoRouterLastError || 'recent failure'}`);
+  }
+
+  const controller = new AbortController();
+  const timeoutMs = Math.max(4_000, Math.min(options.timeoutMs ?? 18_000, 30_000));
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const startedAt = Date.now();
+
+  try {
+    const messages: Array<{ role: 'system' | 'user'; content: string }> = [];
+    if (options.systemPrompt?.trim()) {
+      messages.push({ role: 'system', content: options.systemPrompt.trim() });
+    }
+    messages.push({ role: 'user', content: prompt });
+
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': process.env.PUBLIC_BASE_URL?.trim() || 'https://legalwhat.com',
+        'X-Title': 'LegalWhat LEXARA',
+      },
+      body: JSON.stringify({
+        model: process.env.OPENROUTER_LEXARA_MODEL?.trim() || 'openrouter/auto',
+        ...(options.sessionId?.trim() ? { session_id: options.sessionId.trim().slice(0, 128) } : {}),
+        messages,
+        temperature: options.temperature ?? 0.25,
+        max_tokens: options.maxTokens ?? 1800,
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const detail = (await response.text()).slice(0, 600);
+      throw new Error(`OpenRouter API error (${response.status}): ${detail}`);
+    }
+
+    const data = await response.json() as {
+      model?: string;
+      choices?: Array<{ message?: { content?: string | null } }>;
+    };
+    const content = String(data.choices?.[0]?.message?.content || '').trim();
+    if (!content) throw new Error('OpenRouter returned an empty response');
+
+    autoRouterCooldownUntil = 0;
+    autoRouterLastError = null;
+    return {
+      content,
+      model: String(data.model || process.env.OPENROUTER_LEXARA_MODEL?.trim() || 'openrouter/auto'),
+      latencyMs: Date.now() - startedAt,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    autoRouterLastError = message;
+    autoRouterCooldownUntil = Date.now() + AUTO_ROUTER_COOLDOWN_MS;
+    throw error instanceof Error ? error : new Error(message);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**

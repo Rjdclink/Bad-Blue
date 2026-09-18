@@ -6,7 +6,10 @@
  * to completely eliminate any dependency on the OpenAI package
  */
 
-const DEFAULT_GROQ_MODEL = process.env.GROQ_MODEL?.trim() || 'openai/gpt-oss-120b';
+const DEFAULT_GROQ_MODEL =
+  process.env.GROQ_CHAT_MODEL?.trim()
+  || process.env.GROQ_MODEL?.trim()
+  || 'qwen/qwen3.6-27b';
 
 interface GroqChatMessage {
   role: 'system' | 'user' | 'assistant';

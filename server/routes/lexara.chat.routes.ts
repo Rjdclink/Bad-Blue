@@ -95,6 +95,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       lawTypeName,
       jurisdiction,
       behaviorMode,
+      sessionId,
     });
 
     const responseText = conversationResult.text;

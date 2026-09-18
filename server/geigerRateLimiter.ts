@@ -72,9 +72,9 @@ const FREE_PROVIDERS: ProviderConfig[] = [
     name: 'groq',
     endpoint: 'https://api.groq.com/openai/v1/chat/completions',
     models: [
-      process.env.GROQ_MODEL?.trim() || 'openai/gpt-oss-120b',
+      process.env.GROQ_CHAT_MODEL?.trim() || process.env.GROQ_MODEL?.trim() || 'qwen/qwen3.6-27b',
+      'qwen/qwen3.8-27b',
       'openai/gpt-oss-20b',
-      'qwen/qwen3.6-27b',
       'whisper-large-v3',
       'whisper-large-v3-turbo'
     ],
@@ -108,7 +108,7 @@ const FREE_PROVIDERS: ProviderConfig[] = [
   {
     name: 'claude',
     endpoint: 'https://api.anthropic.com/v1/messages',
-    models: [process.env.LEXARA_CLAUDE_MODEL?.trim() || 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
+    models: [process.env.LEXARA_CLAUDE_MODEL?.trim() || process.env.CLAUDE_MODEL?.trim() || 'claude-sonnet-5', 'claude-haiku-4-5-20251001'],
     rpmLimit: 5,
     rpdLimit: 100,
     tpdLimit: 25000,

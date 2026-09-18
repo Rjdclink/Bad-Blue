@@ -325,6 +325,10 @@ async function transcribeWithGroq(file: Express.Multer.File): Promise<{
   text: string;
   provider: string;
   model: string;
+  quality?: {
+    avgLogprob?: number;
+    noSpeechProbability?: number;
+  };
 }> {
   const apiKey = process.env.GROQ_API_KEY?.trim();
   if (!apiKey) throw new Error('Groq speech-to-text is not configured');
@@ -333,7 +337,8 @@ async function transcribeWithGroq(file: Express.Multer.File): Promise<{
   const model = process.env.GROQ_STT_MODEL?.trim() || 'whisper-large-v3-turbo';
   form.append('model', model);
   form.append('language', 'en');
-  form.append('response_format', 'json');
+  form.append('response_format', 'verbose_json');
+  form.append('timestamp_granularities[]', 'segment');
   form.append('temperature', '0');
 
   const controller = new AbortController();
@@ -351,11 +356,32 @@ async function transcribeWithGroq(file: Express.Multer.File): Promise<{
       throw new Error(`Groq STT ${response.status}: ${detail}`);
     }
 
-    const result = await response.json() as { text?: string };
+    const result = await response.json() as {
+      text?: string;
+      segments?: Array<{
+        avg_logprob?: number;
+        no_speech_prob?: number;
+      }>;
+    };
+    const segments = Array.isArray(result.segments) ? result.segments : [];
+    const avgLogprobValues = segments
+      .map(segment => Number(segment.avg_logprob))
+      .filter(Number.isFinite);
+    const noSpeechValues = segments
+      .map(segment => Number(segment.no_speech_prob))
+      .filter(Number.isFinite);
+    const avgLogprob = avgLogprobValues.length
+      ? avgLogprobValues.reduce((sum, value) => sum + value, 0) / avgLogprobValues.length
+      : undefined;
+    const noSpeechProbability = noSpeechValues.length
+      ? Math.max(...noSpeechValues)
+      : undefined;
+
     return {
       text: String(result?.text || '').trim(),
       provider: 'groq-whisper',
       model,
+      quality: { avgLogprob, noSpeechProbability },
     };
   } finally {
     clearTimeout(timer);
@@ -420,17 +446,24 @@ router.post('/transcribe-file', lexaraVoiceUpload.single('audio'), async (req: R
   const providers: Array<{
     name: string;
     configured: boolean;
-    transcribe: () => Promise<{ text: string; provider: string; model: string }>;
+    transcribe: () => Promise<{
+      text: string;
+      provider: string;
+      model: string;
+      quality?: { avgLogprob?: number; noSpeechProbability?: number };
+    }>;
   }> = [
-    {
-      name: 'groq-whisper',
-      configured: !!process.env.GROQ_API_KEY?.trim(),
-      transcribe: () => transcribeWithGroq(file),
-    },
+    // Paid ElevenLabs Scribe is the preferred server-side compatibility path.
+    // Groq Whisper remains an independent, already-proven route-local fallback.
     {
       name: 'elevenlabs-scribe',
       configured: !!process.env.ELEVENLABS_API_KEY?.trim(),
       transcribe: () => transcribeWithElevenLabs(file),
+    },
+    {
+      name: 'groq-whisper',
+      configured: !!process.env.GROQ_API_KEY?.trim(),
+      transcribe: () => transcribeWithGroq(file),
     },
   ];
 
@@ -451,12 +484,45 @@ router.post('/transcribe-file', lexaraVoiceUpload.single('audio'), async (req: R
         continue;
       }
 
+      const speechDurationMs = Math.max(0, Number(req.body?.speechDurationMs || 0));
+      const noSpeechProbability = result.quality?.noSpeechProbability;
+      const avgLogprob = result.quality?.avgLogprob;
+
+      // Reject evidence that strongly resembles silence/non-speech or an
+      // extremely low-confidence Whisper hallucination before it can ever
+      // become a user turn.
+      if (
+        result.provider === 'groq-whisper'
+        && (
+          (Number.isFinite(noSpeechProbability) && Number(noSpeechProbability) >= 0.72)
+          || (Number.isFinite(avgLogprob) && Number(avgLogprob) <= -1.15)
+        )
+      ) {
+        logger.info('[LEXARA] Rejected low-evidence speech transcript', {
+          provider: result.provider,
+          noSpeechProbability,
+          avgLogprob,
+          speechDurationMs,
+        });
+        return res.json({
+          success: true,
+          transcript: '',
+          isFinal: false,
+          rejected: true,
+          rejectionReason: 'low_speech_evidence',
+          provider: result.provider,
+          model: result.model,
+        });
+      }
+
       return res.json({
         success: true,
         transcript: result.text,
         isFinal: true,
         provider: result.provider,
         model: result.model,
+        speechDurationMs,
+        quality: result.quality,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

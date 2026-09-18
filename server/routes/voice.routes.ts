@@ -10,6 +10,8 @@
  */
 
 import { type Express, type Request, type Response } from 'express';
+import crypto from 'crypto';
+import { Readable } from 'stream';
 import { asyncHandler } from '../errorHandler';
 import { 
   getVoiceSynthesisService,
@@ -21,7 +23,157 @@ import type { SpeechContext } from '@shared/lexaraVoicePersona';
 
 const log = createLogger('VoiceRoutes');
 
+interface LexaraTTSStreamSession {
+  text: string;
+  createdAt: number;
+}
+
+const lexaraTTSStreamSessions = new Map<string, LexaraTTSStreamSession>();
+const LEXARA_TTS_STREAM_SESSION_TTL_MS = 60_000;
+
+function pruneLexaraTTSSessions(): void {
+  const cutoff = Date.now() - LEXARA_TTS_STREAM_SESSION_TTL_MS;
+  for (const [id, session] of lexaraTTSStreamSessions) {
+    if (session.createdAt < cutoff) lexaraTTSStreamSessions.delete(id);
+  }
+}
+
+function boundedVoiceSetting(name: string, fallback: number): number {
+  const parsed = Number(process.env[name]);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, Math.min(1, parsed));
+}
+
 export function setupVoiceRoutes(app: Express): void {
+  /**
+   * POST /api/lexara/tts/session
+   * Create a one-use playback URL. The subsequent GET is a normal media URL,
+   * allowing HTMLAudioElement to begin playback while ElevenLabs is still
+   * streaming audio instead of waiting for a complete Blob.
+   */
+  app.post(
+    '/api/lexara/tts/session',
+    asyncHandler(async (req: Request, res: Response) => {
+      const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+      if (!text) return res.status(400).json({ error: 'Text is required for TTS synthesis' });
+      if (text.length > 5000) return res.status(400).json({ error: 'Text too long. Maximum 5000 characters.' });
+      if (!process.env.ELEVENLABS_API_KEY?.trim() || !process.env.ELEVENLABS_VOICE_ID?.trim()) {
+        return res.status(503).json({ error: 'LEXARA voice is not configured' });
+      }
+
+      pruneLexaraTTSSessions();
+      const id = crypto.randomUUID();
+      lexaraTTSStreamSessions.set(id, { text, createdAt: Date.now() });
+      return res.json({
+        success: true,
+        audioUrl: `/api/lexara/tts/session/${id}`,
+        provider: 'elevenlabs',
+        voiceId: process.env.ELEVENLABS_VOICE_ID,
+        model: process.env.ELEVENLABS_TTS_MODEL?.trim() || 'eleven_flash_v2_5',
+      });
+    }),
+  );
+
+  /**
+   * GET /api/lexara/tts/session/:id
+   * Proxy ElevenLabs' real streaming TTS response directly to the browser.
+   */
+  app.get(
+    '/api/lexara/tts/session/:id',
+    asyncHandler(async (req: Request, res: Response) => {
+      pruneLexaraTTSSessions();
+      const id = String(req.params.id || '');
+      const session = lexaraTTSStreamSessions.get(id);
+      lexaraTTSStreamSessions.delete(id);
+      if (!session) return res.status(404).json({ error: 'TTS session expired or unavailable' });
+
+      const apiKey = process.env.ELEVENLABS_API_KEY?.trim();
+      const voiceId = process.env.ELEVENLABS_VOICE_ID?.trim();
+      const modelId = process.env.ELEVENLABS_TTS_MODEL?.trim() || 'eleven_flash_v2_5';
+      if (!apiKey || !voiceId) return res.status(503).json({ error: 'LEXARA voice is not configured' });
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 45_000);
+      const clearTimer = () => clearTimeout(timer);
+      req.once('aborted', () => controller.abort());
+      res.once('finish', clearTimer);
+      res.once('close', () => {
+        clearTimer();
+        if (!res.writableEnded) controller.abort();
+      });
+
+      const startedAt = Date.now();
+      try {
+        const upstream = await fetch(
+          `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream?output_format=mp3_44100_128`,
+          {
+            method: 'POST',
+            headers: {
+              'xi-api-key': apiKey,
+              'Content-Type': 'application/json',
+              Accept: 'audio/mpeg',
+            },
+            body: JSON.stringify({
+              text: session.text,
+              model_id: modelId,
+              voice_settings: {
+                stability: boundedVoiceSetting('ELEVENLABS_VOICE_STABILITY', 0.5),
+                similarity_boost: boundedVoiceSetting('ELEVENLABS_VOICE_SIMILARITY', 0.8),
+                style: boundedVoiceSetting('ELEVENLABS_VOICE_STYLE', 0.15),
+                use_speaker_boost: true,
+              },
+            }),
+            signal: controller.signal,
+          },
+        );
+
+        if (!upstream.ok || !upstream.body) {
+          const detail = (await upstream.text()).slice(0, 500);
+          log.warn('[VoiceRoutes] ElevenLabs streaming TTS failed', {
+            status: upstream.status,
+            detail,
+          });
+          return res.status(502).json({ error: 'LEXARA voice streaming failed' });
+        }
+
+        log.info('[VoiceRoutes] ElevenLabs stream opened', {
+          provider: 'elevenlabs',
+          voiceId,
+          modelId,
+          upstreamLatencyMs: Date.now() - startedAt,
+          textLength: session.text.length,
+        });
+
+        res.status(200);
+        res.setHeader('Content-Type', upstream.headers.get('content-type') || 'audio/mpeg');
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('X-Provider', 'elevenlabs');
+        res.setHeader('X-Voice-Id', voiceId);
+        res.setHeader('X-TTS-Model', modelId);
+
+        const readable = Readable.fromWeb(upstream.body as any);
+        readable.on('error', error => {
+          log.warn('[VoiceRoutes] Streaming TTS pipe error', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          if (!res.headersSent) res.status(502).end();
+          else res.end();
+        });
+        readable.pipe(res);
+      } catch (error) {
+        clearTimer();
+        if (res.headersSent) {
+          log.warn('[VoiceRoutes] Streaming TTS terminated after headers', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          res.end();
+          return;
+        }
+        throw error;
+      }
+    }),
+  );
+
   
   /**
    * POST /api/lexara/speak
@@ -190,6 +342,102 @@ export function setupVoiceRoutes(app: Express): void {
         });
       }
     })
+  );
+
+  /**
+   * GET /api/lexara/voice/profile
+   * Validate the configured ElevenLabs voice and expose non-secret lifecycle
+   * metadata so the production voice can be verified before use/training work.
+   */
+  app.get(
+    '/api/lexara/voice/profile',
+    asyncHandler(async (_req: Request, res: Response) => {
+      const apiKey = process.env.ELEVENLABS_API_KEY?.trim();
+      const voiceId = process.env.ELEVENLABS_VOICE_ID?.trim();
+      if (!apiKey || !voiceId) {
+        return res.status(503).json({
+          available: false,
+          provider: 'elevenlabs',
+          reason: 'not_configured',
+        });
+      }
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8_000);
+      try {
+        const response = await fetch(
+          `https://api.elevenlabs.io/v1/voices/${encodeURIComponent(voiceId)}`,
+          {
+            method: 'GET',
+            headers: { 'xi-api-key': apiKey },
+            signal: controller.signal,
+          },
+        );
+
+        if (!response.ok) {
+          const detail = (await response.text()).slice(0, 400);
+          log.warn('[VoiceRoutes] Configured ElevenLabs voice validation failed', {
+            voiceId,
+            status: response.status,
+            detail,
+          });
+          return res.status(response.status === 404 ? 404 : 502).json({
+            available: false,
+            provider: 'elevenlabs',
+            voiceId,
+            reason: 'voice_validation_failed',
+            status: response.status,
+          });
+        }
+
+        const voice = await response.json() as {
+          name?: string;
+          category?: string;
+          is_owner?: boolean;
+          fine_tuning?: {
+            state?: Record<string, string> | string;
+            verification_failures?: string[];
+          };
+          labels?: Record<string, string>;
+          settings?: {
+            stability?: number;
+            similarity_boost?: number;
+            style?: number;
+            use_speaker_boost?: boolean;
+          };
+        };
+
+        return res.json({
+          available: true,
+          provider: 'elevenlabs',
+          voiceId,
+          name: voice.name || null,
+          category: voice.category || null,
+          isOwner: voice.is_owner ?? null,
+          fineTuning: voice.fine_tuning?.state ?? null,
+          verificationFailures: voice.fine_tuning?.verification_failures?.length || 0,
+          labels: voice.labels || {},
+          settings: voice.settings || null,
+          productionModel: process.env.ELEVENLABS_TTS_MODEL?.trim() || 'eleven_flash_v2_5',
+          professionalClone:
+            String(voice.category || '').toLowerCase().includes('professional')
+            || String(voice.category || '').toLowerCase().includes('cloned'),
+        });
+      } catch (error) {
+        log.warn('[VoiceRoutes] ElevenLabs voice validation request failed', {
+          voiceId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return res.status(502).json({
+          available: false,
+          provider: 'elevenlabs',
+          voiceId,
+          reason: 'voice_validation_unreachable',
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+    }),
   );
 
   /**

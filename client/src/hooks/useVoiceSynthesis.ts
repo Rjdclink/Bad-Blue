@@ -1,9 +1,8 @@
 /**
  * useVoiceSynthesis Hook
  *
- * Server TTS is preferred, with a zero-cost browser voice fallback. The promise
- * returned by speak() represents the audible turn and is bounded so a missing
- * browser/audio completion event can never strand the microphone in suspension.
+ * ElevenLabs is LEXARA's single acoustic identity. Streaming media playback is
+ * preferred; the buffered endpoint remains a route-local recovery path.
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
@@ -12,10 +11,6 @@ import type { SpeechContext } from '@shared/lexaraVoicePersona';
 import {
   LexaraServerTTS,
   Lexara,
-  analyzeUserSentiment,
-  applyEmotionalModulation,
-  type UserSentiment,
-  type PersonaKernelSpeech,
 } from '@/lib/lexaraSpeechClient';
 
 export interface VoiceSynthesisOptions {
@@ -48,15 +43,11 @@ interface ServerAudio {
   durationMs: number | null;
 }
 
-const FEMALE_VOICE_HINTS = [
-  'female', 'woman', 'samantha', 'karen', 'fiona', 'tessa', 'moira',
-  'victoria', 'alex', 'allison', 'ava', 'susan', 'zira', 'hazel',
-  'jenny', 'aria', 'sara', 'joanna', 'amy', 'emma', 'ivy', 'kendra',
-  'kimberly', 'salli', 'nicole', 'veena', 'aditi', 'raveena',
-  'google uk english female', 'google us english female',
-];
+interface StreamingAudioSession {
+  audioUrl: string;
+  voiceId: string | null;
+}
 
-const LEXARA_VOICE_STORAGE_KEY = 'lexara-voice-profile';
 const SERVER_TTS_FETCH_TIMEOUT_MS = 20_000;
 const MIN_PLAYBACK_WATCHDOG_MS = 10_000;
 const MAX_PLAYBACK_WATCHDOG_MS = 240_000;
@@ -69,8 +60,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
   const [error, setError] = useState<Error | null>(null);
   const [provider, setProvider] = useState<string | null>(null);
 
-  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
-  const emotionalStateRef = useRef<PersonaKernelSpeech | null>(null);
+
   const interruptionResolverRef = useRef<(() => void) | null>(null);
   const playbackWatchdogRef = useRef<number | null>(null);
   const activeTurnRef = useRef(0);
@@ -94,11 +84,6 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     interruptActiveWait();
     LexaraServerTTS.stop();
 
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
-    utteranceRef.current = null;
-
     setIsSpeaking(false);
     setIsPaused(false);
     setIsLoading(false);
@@ -106,103 +91,14 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
   }, [clearPlaybackWatchdog, interruptActiveWait]);
 
   const pause = useCallback(() => {
-    if (utteranceRef.current && 'speechSynthesis' in window) {
-      window.speechSynthesis.pause();
-      setIsPaused(true);
-    }
+    LexaraServerTTS.pause();
+    setIsPaused(true);
   }, []);
 
   const resume = useCallback(() => {
-    if (utteranceRef.current && 'speechSynthesis' in window) {
-      window.speechSynthesis.resume();
-      setIsPaused(false);
-    }
-  }, []);
-
-  const selectFemaleVoice = useCallback((voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null => {
-    if (!voices.length) return null;
-
-    for (const voice of voices) {
-      const name = voice.name.toLowerCase();
-      if (FEMALE_VOICE_HINTS.some(hint => name.includes(hint))) {
-        return voice;
-      }
-    }
-
-    return voices.find(voice => voice.lang.toLowerCase().startsWith('en')) || voices[0] || null;
-  }, []);
-
-  const waitForVoices = useCallback(async (timeoutMs = 900): Promise<SpeechSynthesisVoice[]> => {
-    if (!('speechSynthesis' in window)) return [];
-
-    const existing = window.speechSynthesis.getVoices();
-    if (existing.length) return existing;
-
-    return new Promise(resolve => {
-      let settled = false;
-      let timer: number | null = null;
-
-      const finish = () => {
-        if (settled) return;
-        settled = true;
-        if (timer !== null) window.clearTimeout(timer);
-        window.speechSynthesis.removeEventListener('voiceschanged', onVoicesChanged as any);
-        resolve(window.speechSynthesis.getVoices());
-      };
-      const onVoicesChanged = () => {
-        if (window.speechSynthesis.getVoices().length) finish();
-      };
-
-      timer = window.setTimeout(finish, timeoutMs);
-      window.speechSynthesis.addEventListener('voiceschanged', onVoicesChanged as any);
-    });
-  }, []);
-
-  const getLexaraVoice = useCallback((): SpeechSynthesisVoice | null => {
-    if (!('speechSynthesis' in window)) return null;
-    const voices = window.speechSynthesis.getVoices();
-    if (!voices.length) return null;
-
-    try {
-      const cachedVoiceId = localStorage.getItem(LEXARA_VOICE_STORAGE_KEY);
-      if (cachedVoiceId) {
-        const cached = voices.find(voice => voice.voiceURI === cachedVoiceId);
-        if (cached) return cached;
-      }
-    } catch {
-      // localStorage is optional.
-    }
-
-    const selected = selectFemaleVoice(voices);
-    if (selected) {
-      try {
-        localStorage.setItem(LEXARA_VOICE_STORAGE_KEY, selected.voiceURI);
-      } catch {
-        // localStorage is optional.
-      }
-    }
-    return selected;
-  }, [selectFemaleVoice]);
-
-  const getModulatedVoiceSettings = useCallback((userSentiment: UserSentiment) => {
-    const personaKernel = {
-      speech: {
-        timbre: 'female-youth',
-        texture: 'breathy-soft with slight sparkle',
-        pacing: 'natural human cadence',
-        intonation: 'emotional, expressive, non-robotic',
-      },
-    };
-
-    const modulated = applyEmotionalModulation(personaKernel, userSentiment);
-    emotionalStateRef.current = modulated;
-
-    let pitch = 1.2;
-    let rate = 0.95;
-    if (modulated.pitch === 'bright') pitch = 1.3;
-    if (modulated.pitch === 'lower-soft') pitch = 1.1;
-    if (modulated.pacing === 'slower') rate = 0.85;
-    return { pitch, rate };
+    void LexaraServerTTS.resume()
+      .then(() => setIsPaused(false))
+      .catch(() => setIsPaused(false));
   }, []);
 
   const makeInterruptionPromise = useCallback((): Promise<PlaybackOutcome> => {
@@ -225,6 +121,30 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
       }, boundedTimeout);
     });
   }, [clearPlaybackWatchdog]);
+
+  const createStreamingAudioSession = useCallback(async (text: string): Promise<StreamingAudioSession> => {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 8_000);
+
+    try {
+      const response = await fetch('/api/lexara/tts/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+        signal: controller.signal,
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || typeof payload?.audioUrl !== 'string') {
+        throw new Error(payload?.error || 'LEXARA streaming voice session could not start');
+      }
+      return {
+        audioUrl: payload.audioUrl,
+        voiceId: typeof payload?.voiceId === 'string' ? payload.voiceId : null,
+      };
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }, []);
 
   const fetchServerAudio = useCallback(async (text: string): Promise<ServerAudio> => {
     const controller = new AbortController();
@@ -272,16 +192,26 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     options: VoiceSynthesisOptions,
     turnId: number,
   ): Promise<void> => {
-    const audio = await fetchServerAudio(text);
-    if (turnId !== activeTurnRef.current) return;
+    let playback: Promise<PlaybackOutcome>;
+    let expectedDuration = Math.max(5_000, text.length * 70);
+
+    try {
+      const session = await createStreamingAudioSession(text);
+      if (turnId !== activeTurnRef.current) return;
+      playback = LexaraServerTTS.play({ audioUrl: session.audioUrl }).then<PlaybackOutcome>(() => 'ended');
+    } catch {
+      // Route-local recovery: retain the proven buffered endpoint if streaming
+      // session creation is unavailable, without switching acoustic identity.
+      const audio = await fetchServerAudio(text);
+      if (turnId !== activeTurnRef.current) return;
+      expectedDuration = audio.durationMs || expectedDuration;
+      playback = LexaraServerTTS.play(audio.blob).then<PlaybackOutcome>(() => 'ended');
+    }
 
     setProvider('elevenlabs');
     setIsLoading(false);
     setIsSpeaking(true);
     options.onStart?.();
-
-    const expectedDuration = audio.durationMs || Math.max(5_000, text.length * 70);
-    const playback = LexaraServerTTS.play(audio.blob).then<PlaybackOutcome>(() => 'ended');
     const outcome = await Promise.race([
       playback,
       makeInterruptionPromise(),
@@ -300,84 +230,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
 
     setIsSpeaking(false);
     options.onEnd?.();
-  }, [clearPlaybackWatchdog, fetchServerAudio, makeInterruptionPromise, makePlaybackWatchdog]);
-
-  const speakWithBrowser = useCallback(async (
-    text: string,
-    options: VoiceSynthesisOptions,
-    turnId: number,
-  ): Promise<void> => {
-    if (!('speechSynthesis' in window)) {
-      throw new Error('Browser speech synthesis is not supported');
-    }
-
-    window.speechSynthesis.cancel();
-    await waitForVoices();
-    if (turnId !== activeTurnRef.current) return;
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    utteranceRef.current = utterance;
-
-    const voice = getLexaraVoice();
-    if (voice) utterance.voice = voice;
-
-    const sentiment = options.userInput
-      ? analyzeUserSentiment(options.userInput)
-      : { positive: false, stress: false, confusion: false };
-    const { pitch, rate } = getModulatedVoiceSettings(sentiment);
-    utterance.pitch = pitch;
-    utterance.rate = rate;
-    utterance.volume = 1;
-
-    const playback = new Promise<PlaybackOutcome>((resolve, reject) => {
-      utterance.onstart = () => {
-        if (turnId !== activeTurnRef.current) return;
-        setProvider('browser-lexara');
-        setIsLoading(false);
-        setIsSpeaking(true);
-        Lexara.notify(Lexara.events.SPEAKING_START);
-        options.onStart?.();
-      };
-
-      utterance.onend = () => {
-        utteranceRef.current = null;
-        resolve('ended');
-      };
-
-      utterance.onerror = event => {
-        utteranceRef.current = null;
-        if (event.error === 'canceled' || event.error === 'interrupted') {
-          resolve('interrupted');
-          return;
-        }
-        reject(new Error(`Speech synthesis error: ${event.error}`));
-      };
-
-      window.speechSynthesis.speak(utterance);
-    });
-
-    const estimatedDuration = Math.max(8_000, text.length * 85);
-    const outcome = await Promise.race([
-      playback,
-      makeInterruptionPromise(),
-      makePlaybackWatchdog(estimatedDuration + 12_000),
-    ]);
-
-    clearPlaybackWatchdog();
-    interruptionResolverRef.current = null;
-
-    if (turnId !== activeTurnRef.current || outcome === 'interrupted') return;
-    if (outcome === 'timeout') {
-      window.speechSynthesis.cancel();
-      utteranceRef.current = null;
-      setIsSpeaking(false);
-      return;
-    }
-
-    setIsSpeaking(false);
-    Lexara.notify(Lexara.events.SPEAKING_END);
-    options.onEnd?.();
-  }, [clearPlaybackWatchdog, getLexaraVoice, getModulatedVoiceSettings, makeInterruptionPromise, makePlaybackWatchdog, waitForVoices]);
+  }, [clearPlaybackWatchdog, createStreamingAudioSession, fetchServerAudio, makeInterruptionPromise, makePlaybackWatchdog]);
 
   const speak = useCallback(async (
     text: string,

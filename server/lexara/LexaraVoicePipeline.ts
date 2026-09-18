@@ -167,7 +167,7 @@ class ElevenLabsTTSProvider {
   private available: boolean = false;
   private lastCheck: number = 0;
   private lastError?: string;
-  private modelId: string = 'eleven_multilingual_v2';
+  private modelId: string = process.env.ELEVENLABS_TTS_MODEL?.trim() || 'eleven_flash_v2_5';
 
   constructor() {
     this.initializeClient();

@@ -101,6 +101,7 @@ export const LAW_TYPES = [
   'contract-law',
   'tort-law',
   'administrative-law',
+  'procedural-law',
   'constitutional-law',
   'consumer-protection',
   'landlord-tenant',

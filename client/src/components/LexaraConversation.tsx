@@ -26,6 +26,7 @@ interface ConversationMessage {
 }
 
 interface StoredConversationState {
+  schemaVersion: number;
   sessionId: string;
   jurisdiction?: string;
   messages: Array<{
@@ -44,6 +45,7 @@ type ConversationPhase =
   | 'text-only'
   | 'error';
 
+const CONVERSATION_STORAGE_SCHEMA_VERSION = 2;
 const VOICE_TURN_SETTLE_MS = 850;
 const CHAT_TURN_TIMEOUT_MS = 45_000;
 const MAX_STORED_CONVERSATION_MESSAGES = 24;
@@ -85,6 +87,10 @@ function loadStoredConversation(lawTypeId?: string): {
     if (!raw) return fallback;
 
     const parsed = JSON.parse(raw) as Partial<StoredConversationState>;
+    if (parsed.schemaVersion !== CONVERSATION_STORAGE_SCHEMA_VERSION) {
+      window.sessionStorage.removeItem(conversationStorageKey(lawTypeId));
+      return fallback;
+    }
     const sessionId = typeof parsed.sessionId === 'string' && parsed.sessionId.trim()
       ? parsed.sessionId.trim().slice(0, 128)
       : fallback.sessionId;
@@ -124,6 +130,31 @@ function normalizeSpeechText(value: string): string {
     .replace(/[^a-z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function isSuspiciousGenericServerTranscript(
+  text: string,
+  speechDurationMs?: number,
+): boolean {
+  const normalized = normalizeSpeechText(text);
+  if (!normalized) return true;
+
+  const generic = new Set([
+    'thank you',
+    'thanks',
+    'okay',
+    'ok',
+    'bye',
+    'goodbye',
+    'you',
+  ]);
+
+  // Do not blacklist natural language. Only treat these common hallucination
+  // shapes as suspicious when the captured speech evidence was extremely short.
+  return generic.has(normalized)
+    && typeof speechDurationMs === 'number'
+    && speechDurationMs > 0
+    && speechDurationMs < 900;
 }
 
 function looksLikeLexaraEcho(candidate: string, spokenText: string): boolean {
@@ -213,11 +244,10 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     continuous: true,
     interimResults: true,
     onVoiceStart: () => {
-      if (phaseRef.current === 'speaking') {
-        autoInterruptRef.current();
-      }
+      // Acoustic energy alone is not proof of user speech. Interruption is
+      // transcript-confirmed below so LEXARA cannot cut herself off.
     },
-    onTranscript: (text, isFinal) => {
+    onTranscript: (text, isFinal, meta) => {
       const observed = text.trim();
       if (!observed) return;
 
@@ -233,18 +263,27 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         return;
       }
 
-      userSpeechObservedRef.current = true;
+      if (
+        isFinal
+        && meta.engine === 'server'
+        && isSuspiciousGenericServerTranscript(observed, meta.speechDurationMs)
+      ) {
+        return;
+      }
 
-      if (phaseRef.current === 'speaking') {
+      // Browser interim text is strong enough to confirm a real barge-in after
+      // echo rejection. Batch/server STT only interrupts once the final
+      // transcript is accepted.
+      if (phaseRef.current === 'speaking' && (meta.engine === 'browser' || isFinal)) {
         autoInterruptRef.current();
       }
 
-      // Interim speech is enough to stop LEXARA, but only finalized segments are
-      // submitted to legal reasoning.
       if (!isFinal) {
         clearVoiceTurnTimer();
         return;
       }
+
+      userSpeechObservedRef.current = true;
 
       const normalized = normalizeSpeechText(observed);
       const now = Date.now();
@@ -508,6 +547,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   useEffect(() => {
     try {
       const stored: StoredConversationState = {
+        schemaVersion: CONVERSATION_STORAGE_SCHEMA_VERSION,
         sessionId: sessionIdRef.current,
         jurisdiction,
         messages: conversation

@@ -29,6 +29,7 @@ import { callGemini as callGeminiService, isGeminiAvailable, isGeminiRateLimited
 import { callMistral, isMistralAvailable } from './mistral';
 import { callClaude, isClaudeAvailable } from './claude';
 import { isGroqAvailable, generateGroqStructuredResponse } from './groq';
+import { generateOpenRouterText, isOpenRouterAvailable } from './openRouterService';
 import selfImprovementEngine, { type AIProviderName, type OutcomeContext } from './selfImprovementEngine';
 
 const SUBAGENT_DATA_DIR = path.join(process.cwd(), 'data', 'subagent');
@@ -62,6 +63,30 @@ let officerSearchTimeout: NodeJS.Timeout | null = null;
 let dailyScrapeTimeout: NodeJS.Timeout | null = null;
 let trainingQueueInterval: NodeJS.Timeout | null = null;
 let activeGeminiModel: string | null = null;
+
+type LiveFallbackProvider = 'openrouter' | 'anthropic' | 'groq' | 'mistral' | 'gemini';
+const providerCooldownUntil = new Map<LiveFallbackProvider, number>();
+const providerFailureCount = new Map<LiveFallbackProvider, number>();
+
+function providerCanRun(name: LiveFallbackProvider): boolean {
+  return Date.now() >= (providerCooldownUntil.get(name) || 0);
+}
+
+function markProviderSuccess(name: LiveFallbackProvider): void {
+  providerFailureCount.set(name, 0);
+  providerCooldownUntil.delete(name);
+}
+
+function markProviderFailure(name: LiveFallbackProvider, error: unknown): void {
+  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  const failures = (providerFailureCount.get(name) || 0) + 1;
+  providerFailureCount.set(name, failures);
+
+  const hardFailure = /invalid api key|401|403|not found|does not exist|permission|blocked|retired|deprecated/.test(message);
+  const rateLimited = /429|rate limit|quota|resource_exhausted/.test(message);
+  const base = hardFailure ? 10 * 60_000 : rateLimited ? 2 * 60_000 : 30_000;
+  providerCooldownUntil.set(name, Date.now() + Math.min(base * Math.max(1, failures), 15 * 60_000));
+}
 
 const TRAINING_QUEUE_INTERVAL_MS = Number(process.env.TRAINING_QUEUE_INTERVAL_MS || 60 * 60 * 1000);  // Doubled from 30 min for 50% Groq reduction
 const TRAINING_QUEUE_BATCH_SIZE = Number(process.env.TRAINING_QUEUE_BATCH_SIZE || 5);  // Halved from 10 for 50% Groq reduction
@@ -202,6 +227,7 @@ export interface AIFallbackOptions {
   preferredProvider?: 'gemini' | 'groq' | 'mistral' | 'openrouter' | 'anthropic' | 'local';
   useJSON?: boolean;
   taskName?: string;
+  sessionId?: string;
 }
 
 /**
@@ -267,14 +293,12 @@ async function callMistralFallback(
 }
 
 /**
- * Primary fallback chain: Gemini → Groq → Mistral
- * 
- * This function implements a robust fallback strategy that:
- * 1. Attempts Gemini first (if available and not rate-limited)
- * 2. On 429 (rate limit) or 5xx error, switches to Groq
- * 3. On Groq failure, switches to Mistral
- * 4. Logs each fallback attempt with [AI Fallback] prefix
- * 5. Returns the successful response or null only if all providers fail
+ * Health-aware platform fallback chain.
+ *
+ * OpenRouter is the preferred current-model gateway for LEXARA; direct
+ * Anthropic, Groq, Mistral, and Gemini routes remain independent fallbacks.
+ * Failed routes enter bounded cooldowns instead of adding dead latency to
+ * every subsequent user turn.
  */
 export async function callAIWithFallback(
   prompt: string,
@@ -287,23 +311,38 @@ export async function callAIWithFallback(
     type: 'aiFallbackStart', 
     taskName,
     promptLength: prompt.length,
-    preferredProvider: options.preferredProvider || 'gemini'
+    preferredProvider: options.preferredProvider || 'openrouter'
   });
 
   const providers: Array<{
-    name: 'gemini' | 'groq' | 'mistral' | 'anthropic';
+    name: LiveFallbackProvider;
     isAvailable: () => boolean;
     call: () => Promise<string>;
+    model?: () => string | undefined;
   }> = [
     {
+      name: 'openrouter',
+      isAvailable: () => isOpenRouterAvailable() && providerCanRun('openrouter'),
+      call: async () => {
+        const result = await generateOpenRouterText(prompt, {
+          systemPrompt: options.systemPrompt,
+          temperature: options.temperature,
+          maxTokens: options.maxTokens,
+          timeoutMs: 18_000,
+          sessionId: options.sessionId,
+        });
+        return result.content;
+      },
+    },
+    {
       name: 'anthropic',
-      isAvailable: () => isClaudeAvailable(),
+      isAvailable: () => isClaudeAvailable() && providerCanRun('anthropic'),
       call: async () => {
         const result = await callClaude(prompt, {
           systemPrompt: options.systemPrompt,
           temperature: options.temperature,
           maxTokens: options.maxTokens,
-          model: process.env.LEXARA_CLAUDE_MODEL?.trim() || 'claude-sonnet-4-6',
+          model: process.env.LEXARA_CLAUDE_MODEL?.trim() || process.env.CLAUDE_MODEL?.trim() || 'claude-sonnet-5',
           useJSON: options.useJSON,
         });
         return result.content;
@@ -311,17 +350,17 @@ export async function callAIWithFallback(
     },
     {
       name: 'groq',
-      isAvailable: () => isGroqAvailable(),
+      isAvailable: () => isGroqAvailable() && providerCanRun('groq'),
       call: async () => callGroqFallback(prompt, options)
     },
     {
       name: 'mistral',
-      isAvailable: () => isMistralAvailable(),
+      isAvailable: () => isMistralAvailable() && providerCanRun('mistral'),
       call: async () => callMistralFallback(prompt, options)
     },
     {
       name: 'gemini',
-      isAvailable: () => isGeminiAvailable() && !isGeminiRateLimited(),
+      isAvailable: () => isGeminiAvailable() && !isGeminiRateLimited() && providerCanRun('gemini'),
       call: async () => {
         return await callGeminiService(prompt, {
           systemPrompt: options.systemPrompt,
@@ -333,8 +372,8 @@ export async function callAIWithFallback(
       }
     },
   ];
-  // Reorder based on preferred provider
-  if (options.preferredProvider && options.preferredProvider !== 'gemini') {
+  // Reorder based on preferred provider.
+  if (options.preferredProvider) {
     const preferredIdx = providers.findIndex(p => p.name === options.preferredProvider);
     if (preferredIdx > 0) {
       const preferred = providers.splice(preferredIdx, 1)[0];
@@ -347,9 +386,12 @@ export async function callAIWithFallback(
   for (const provider of providers) {
     // Check if provider is available
     if (!provider.isAvailable()) {
-      const reason = provider.name === 'gemini'
-        ? (isGeminiRateLimited() ? 'rate-limited' : 'not configured')
-        : 'not configured';
+      const cooling = !providerCanRun(provider.name);
+      const reason = cooling
+        ? 'cooldown'
+        : provider.name === 'gemini'
+          ? (isGeminiRateLimited() ? 'rate-limited' : 'not configured')
+          : 'not configured';
       console.log(`[AI Fallback] Skipping ${provider.name}: ${reason}`);
       fallbackChain.push(`${provider.name}:skipped(${reason})`);
       continue;
@@ -362,6 +404,7 @@ export async function callAIWithFallback(
       const latencyMs = Date.now() - startTime;
 
       console.log(`[AI Fallback] Success with ${provider.name} (${latencyMs}ms)`);
+      markProviderSuccess(provider.name);
       fallbackChain.push(`${provider.name}:success`);
 
       await appendLog({
@@ -389,6 +432,7 @@ export async function callAIWithFallback(
     } catch (error: any) {
       const errorMsg = error?.message || String(error);
       console.warn(`[AI Fallback] ${provider.name} failed: ${errorMsg}`);
+      markProviderFailure(provider.name, error);
       fallbackChain.push(`${provider.name}:failed(${errorMsg.substring(0, 50)})`);
       lastError = error;
 
