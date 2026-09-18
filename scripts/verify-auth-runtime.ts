@@ -26,17 +26,23 @@ assert.doesNotMatch(subscriptionAuthSource, /router\.(?:get|post)\(["']\/logout[
 assert.match(configSource, /SUPABASE_URL:\s*z\.string\(\)\.url\(/, 'Supabase project URL must be syntactically validated');
 assert.match(configSource, /SUPABASE_URL is required in production and must be the HTTP\(S\) Supabase project API URL/, 'production must reject database URLs in SUPABASE_URL');
 assert.match(configSource, /parsedSupabaseProjectUrl\.protocol\s*!==\s*'https:'/, 'production Supabase auth URL must require HTTPS');
-assert.match(configSource, /SUPABASE_SECRET_KEY\s*\|\|\s*process\.env\.SUPABASE_SERVICE_ROLE_KEY/, 'server auth credential must be required');
+assert.match(configSource, /SUPABASE_SECRET_KEY\s*\|\|\s*process\.env\.SUPABASE_SERVICE_ROLE_KEY/, 'direct server auth credential support must remain available');
+assert.match(configSource, /SUPABASE_ANON_KEY/, 'project-local Edge auth invocation credential must be supported');
 assert.match(indexSource, /authStoreReady/, 'strict readiness must track the authentication store');
 assert.match(indexSource, /probeLocalAuthStoreHttp/, 'startup must probe the real authentication store');
 assert.match(indexSource, /isFullyInitialized\s*&&\s*usableDataPlane\s*&&\s*authStoreReady/, 'Railway readiness must require working authentication');
 assert.match(statelessLocalAuthSource, /SUPABASE_SECRET_KEY[\s\S]{0,180}SUPABASE_SERVICE_ROLE_KEY/, 'modern Supabase secret key must be preferred before legacy service_role');
 assert.match(statelessLocalAuthSource, /candidate\.from\("users"\)[\s\S]{0,240}candidate\.from\("auth_accounts"\)/, 'server key selection must validate both authentication tables before authority is cached');
 assert.match(statelessLocalAuthSource, /No configured Supabase server key can access the LegalWhat authentication store/, 'invalid server keys must fail closed');
-assert.match(statelessLocalAuthSource, /type LocalAuthBackend[\s\S]{0,220}kind: "postgres"/, 'local auth must retain a bounded PostgreSQL fallback');
+assert.match(statelessLocalAuthSource, /type LocalAuthBackend[\s\S]{0,260}kind: "edge"[\s\S]{0,120}kind: "postgres"/, 'local auth must retain Edge and bounded PostgreSQL fallbacks');
 assert.match(statelessLocalAuthSource, /AUTH_DB_QUERY_TIMEOUT_MS\s*=\s*4_000/, 'PostgreSQL auth fallback must be latency bounded');
 assert.match(statelessLocalAuthSource, /resolveLocalAuthBackend/, 'local auth backend selection must be centralized');
-assert.match(statelessLocalAuthSource, /Supabase HTTP server credential unavailable; using bounded canonical PostgreSQL auth store/, 'HTTP credential failure must fail over to canonical PostgreSQL instead of 503');
+assert.match(statelessLocalAuthSource, /project-local Supabase Edge authentication authority/, 'invalid direct Supabase credentials must fail over to the project-local Edge authority');
+assert.match(statelessLocalAuthSource, /Supabase HTTP and Edge authentication unavailable; using bounded canonical PostgreSQL auth store/, 'Edge failure must retain bounded canonical PostgreSQL as the final fallback');
+assert.match(statelessLocalAuthSource, /AUTH_EDGE_FUNCTION\s*=\s*"legalwhat-local-auth"/, 'Edge auth function name must remain explicit and build-locked');
+assert.match(statelessLocalAuthSource, /authorization:\s*\x60Bearer \$\{anonKey\}\x60/, 'Edge invocation must use the project JWT credential');
+assert.match(statelessLocalAuthSource, /v:\s*2[\s\S]{0,400}hasPaidForAccess/, 'signed local session must carry safe user identity fields');
+assert.doesNotMatch(authSource, /getLocalUserByIdHttp\(/, 'authenticated status must not reacquire the database after a signed local login');
 assert.match(statelessLocalAuthSource, /BEGIN[\s\S]{0,2200}COMMIT[\s\S]{0,800}ROLLBACK/, 'PostgreSQL signup must remain transactional');
 
 const { setupAuth } = await import('../server/auth.js');
