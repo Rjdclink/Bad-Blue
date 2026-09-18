@@ -137,7 +137,12 @@ async function primarySupabaseClient(): Promise<SupabaseClient> {
   // service_role key as a bounded rotation fallback. A stale legacy key must not
   // shadow a valid modern key. Candidate keys are validated against both tables
   // required by LegalWhat local authentication before one becomes authoritative.
-  const url = String(getConfig().SUPABASE_URL || "").trim();
+  const url = String(
+    process.env.LEGALWHAT_AUTH_SUPABASE_URL ||
+    getConfig().LEGALWHAT_AUTH_SUPABASE_URL ||
+    getConfig().SUPABASE_URL ||
+    ""
+  ).trim();
   const keys = [
     String(process.env.SUPABASE_SECRET_KEY || "").trim(),
     String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim(),
