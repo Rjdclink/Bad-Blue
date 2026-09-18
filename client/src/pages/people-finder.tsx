@@ -10,31 +10,12 @@ import { AppHeader } from "@/components/AppHeader";
 import { GeoconsoleRadarDashboard } from "@/components/geoconsole";
 import type { GPSPoint } from '@shared/geoconsoleTypes';
 
-interface CityStateLocation {
-  latitude: number;
-  longitude: number;
-  displayName: string;
-}
-
-function parseLatLng(input: string): [number, number] | null {
-  const match = input.match(/(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)/);
-  if (!match) return null;
-
-  const latitude = Number(match[1]);
-  const longitude = Number(match[2]);
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
-  if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;
-
-  return [latitude, longitude];
-}
-
 export default function PeopleFinderPage() {
   const [, setLocation] = useLocation();
   
   // PASS 3: Add missing state to prevent crash
   const [searchResults, setSearchResults] = useState<any>(null);
   const [searchQuery, setSearchQuery] = useState({ name: '', location: '' });
-  const [resolvedLocation, setResolvedLocation] = useState<CityStateLocation | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -62,33 +43,6 @@ export default function PeopleFinderPage() {
     setIsLoading(false);
   }, []);
   
-  useEffect(() => {
-    if (!searchQuery.name || !searchQuery.location) {
-      setResolvedLocation(null);
-      return;
-    }
-
-    let cancelled = false;
-    setResolvedLocation(null);
-
-    void fetch('/api/geoconsole/geocode-city-state', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ location: searchQuery.location }),
-    })
-      .then(async response => ({ response, payload: await response.json().catch(() => null) }))
-      .then(({ response, payload }) => {
-        if (!cancelled && response.ok && payload?.success) {
-          setResolvedLocation(payload.data as CityStateLocation);
-        }
-      })
-      .catch(() => undefined);
-
-    return () => {
-      cancelled = true;
-    };
-  }, [searchQuery]);
 
   // Only timestamped location observations belong on the live GeoConsole.
   // City/state and legacy locationHistory strings remain search context; they are
