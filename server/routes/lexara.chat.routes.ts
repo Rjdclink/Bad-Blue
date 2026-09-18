@@ -166,7 +166,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
     }
 
     const requestUserId = (req as any).user?.id || (req as any).user?.claims?.sub;
-    const isMaster = requestUserId === MASTER_USER_ID;
+    const isMaster = Boolean((req as any).user?.isMasterBypass) || requestUserId === MASTER_USER_ID;
 
     // Master consultations are intentionally ephemeral. They are never written
     // to conversation storage, so login/relogin and law-area changes cannot
