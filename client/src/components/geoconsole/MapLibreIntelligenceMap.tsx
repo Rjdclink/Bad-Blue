@@ -102,8 +102,11 @@ const pointFeature = (frame: GeoFrame) => ({
     source: frame.source,
     observationKind: frame.observationKind || (frame.source === 'predicted' ? 'predicted' : 'observed'),
     timestamp: frame.timestamp.toISOString(),
-    speed: frame.velocity?.speed ?? 0,
-    heading: frame.velocity?.heading ?? 0,
+    speed: frame.velocity?.speed,
+    heading: frame.velocity?.heading,
+    accuracy: frame.position.accuracy,
+    provider: frame.provenance?.provider || '',
+    correlationGroup: frame.correlationGroup || '',
   },
 });
 
@@ -180,6 +183,37 @@ function circleFeature(lng: number, lat: number, radiusMeters: number, steps = 6
   };
 }
 
+function candidateZoomForAccuracy(accuracyMeters?: number): number {
+  const accuracy = Number(accuracyMeters);
+  if (!Number.isFinite(accuracy) || accuracy <= 0) return 8;
+  if (accuracy >= 200_000) return 4.5;
+  if (accuracy >= 100_000) return 5.5;
+  if (accuracy >= 50_000) return 6.5;
+  if (accuracy >= 20_000) return 7.5;
+  if (accuracy >= 5_000) return 9;
+  if (accuracy >= 1_000) return 11;
+  return 13;
+}
+
+function popupTextNode(lines: Array<{ label?: string; value: string }>): HTMLDivElement {
+  const root = document.createElement('div');
+  root.style.font = '12px system-ui';
+  root.style.minWidth = '170px';
+
+  lines.forEach((line, index) => {
+    if (index > 0) root.appendChild(document.createElement('br'));
+    if (line.label) {
+      const strong = document.createElement('strong');
+      strong.textContent = line.label;
+      root.appendChild(strong);
+      root.appendChild(document.createTextNode(' '));
+    }
+    root.appendChild(document.createTextNode(line.value));
+  });
+
+  return root;
+}
+
 function safeSetData(map: MapLibreMap, sourceId: string, data: any) {
   const source = map.getSource(sourceId) as GeoJSONSource | undefined;
   if (source) source.setData(data);
@@ -240,10 +274,28 @@ function addRuntimeLayers(map: MapLibreMap) {
       minzoom: 8,
       paint: {
         'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 2.5, 18, 7],
-        'circle-color': '#22d3ee',
+        'circle-color': [
+          'match',
+          ['get', 'observationKind'],
+          'historical', '#60a5fa',
+          'inferred', '#f59e0b',
+          'interpolated', '#94a3b8',
+          'predicted', '#c084fc',
+          '#22d3ee',
+        ],
         'circle-stroke-color': '#ffffff',
-        'circle-stroke-width': 1,
-        'circle-opacity': 0.8,
+        'circle-stroke-width': [
+          'case',
+          ['==', ['get', 'observationKind'], 'interpolated'],
+          0.5,
+          1,
+        ],
+        'circle-opacity': [
+          'case',
+          ['==', ['get', 'observationKind'], 'interpolated'],
+          0.55,
+          0.85,
+        ],
       },
     });
   }
@@ -288,6 +340,33 @@ function addRuntimeLayers(map: MapLibreMap) {
       data: { type: 'FeatureCollection', features: [] },
     });
   }
+  if (!map.getLayer('spectra-candidate-area')) {
+    map.addLayer({
+      id: 'spectra-candidate-area',
+      type: 'fill',
+      source: 'spectra-candidates',
+      filter: ['==', ['geometry-type'], 'Polygon'],
+      paint: {
+        'fill-color': '#fbbf24',
+        'fill-opacity': 0.09,
+      },
+    });
+  }
+  if (!map.getLayer('spectra-candidate-area-outline')) {
+    map.addLayer({
+      id: 'spectra-candidate-area-outline',
+      type: 'line',
+      source: 'spectra-candidates',
+      filter: ['==', ['geometry-type'], 'Polygon'],
+      paint: {
+        'line-color': '#fbbf24',
+        'line-width': 1.5,
+        'line-opacity': 0.65,
+        'line-dasharray': [2, 2],
+      },
+    });
+  }
+
   if (!map.getLayer('spectra-candidate-points')) {
     map.addLayer({
       id: 'spectra-candidate-points',
@@ -534,7 +613,11 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
       container: containerRef.current,
       style: mapMode === 'dark' ? OPENFREEMAP_DARK : OPENFREEMAP_LIBERTY,
       center: initialCenter,
-      zoom: currentFrame || trail.length ? 14 : candidateLocations.length ? 10 : 2,
+      zoom: currentFrame || trail.length
+        ? 14
+        : candidateLocations.length
+          ? candidateZoomForAccuracy(candidateLocations[0].accuracyMeters)
+          : 2,
       pitch: layers.terrain || layers.buildings ? 52 : 0,
       bearing: 0,
       antialias: typeof navigator === 'undefined' || !navigator.hardwareConcurrency || navigator.hardwareConcurrency > 4,
@@ -586,14 +669,19 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
       const coordinates = feature.geometry.coordinates.slice() as [number, number];
       const label = String(feature.properties?.label || 'Regional candidate');
       const confidence = Math.round(Number(feature.properties?.confidence || 0) * 100);
+      const accuracyMeters = Number(feature.properties?.accuracyMeters);
+      const areaText = Number.isFinite(accuracyMeters)
+        ? accuracyMeters < 1000
+          ? `±${Math.round(accuracyMeters)} m region`
+          : `±${(accuracyMeters / 1000).toFixed(1)} km region`
+        : 'Regional estimate';
       popup
         .setLngLat(coordinates)
-        .setHTML(
-          '<div style="font:12px system-ui;min-width:160px">' +
-          '<b>' + label + '</b><br/>' +
-          'Regional confidence: ' + confidence + '%' +
-          '</div>'
-        )
+        .setDOMContent(popupTextNode([
+          { label: 'Regional candidate:', value: label },
+          { label: 'Uncertainty:', value: areaText },
+          { label: 'Evidence confidence:', value: `${confidence}%` },
+        ]))
         .addTo(map);
     });
 
@@ -604,15 +692,22 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
       const source = String(feature.properties?.source || 'observation');
       const confidence = Math.round(Number(feature.properties?.confidence || 0) * 100);
       const timestamp = String(feature.properties?.timestamp || '');
+      const observationKind = String(feature.properties?.observationKind || 'observed');
+      const accuracy = Number(feature.properties?.accuracy);
+      const provider = String(feature.properties?.provider || '');
       popup
         .setLngLat(coordinates)
-        .setHTML(
-          '<div style="font:12px system-ui;min-width:160px">' +
-          '<b>' + source.replace(/_/g, ' ') + '</b><br/>' +
-          'Confidence: ' + confidence + '%<br/>' +
-          (timestamp ? new Date(timestamp).toLocaleString() : '') +
-          '</div>'
-        )
+        .setDOMContent(popupTextNode([
+          { label: 'Evidence:', value: source.replace(/_/g, ' ') },
+          { label: 'Classification:', value: observationKind },
+          ...(provider ? [{ label: 'Provider:', value: provider }] : []),
+          ...(Number.isFinite(accuracy) ? [{
+            label: 'Horizontal accuracy:',
+            value: accuracy < 1000 ? `±${Math.round(accuracy)} m` : `±${(accuracy / 1000).toFixed(1)} km`,
+          }] : []),
+          { label: 'Confidence:', value: `${confidence}%` },
+          ...(timestamp ? [{ label: 'Time:', value: new Date(timestamp).toLocaleString() }] : []),
+        ]))
         .addTo(map);
     });
 
@@ -666,18 +761,40 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     });
     safeSetData(map, 'spectra-candidates', {
       type: 'FeatureCollection',
-      features: candidateLocations.map(candidate => ({
-        type: 'Feature' as const,
-        geometry: {
-          type: 'Point' as const,
-          coordinates: [candidate.longitude, candidate.latitude],
-        },
-        properties: {
+      features: candidateLocations.flatMap(candidate => {
+        const properties = {
           label: candidate.label,
           confidence: clamp(candidate.confidence, 0, 1),
           basis: candidate.basis,
-        },
-      })),
+          accuracyMeters: candidate.accuracyMeters,
+        };
+        const point = {
+          type: 'Feature' as const,
+          geometry: {
+            type: 'Point' as const,
+            coordinates: [candidate.longitude, candidate.latitude],
+          },
+          properties,
+        };
+        const radius = Number(candidate.accuracyMeters);
+        if (!Number.isFinite(radius) || radius <= 0) return [point];
+
+        const area = circleFeature(
+          candidate.longitude,
+          candidate.latitude,
+          clamp(radius, 1_000, 500_000),
+        );
+        return [
+          {
+            ...area,
+            properties: {
+              ...area.properties,
+              ...properties,
+            },
+          },
+          point,
+        ];
+      }),
     });
 
     if (currentFrame) {
@@ -715,6 +832,8 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     setVisibility(map, 'spectra-futurecast-points', layers.futurecast);
     setVisibility(map, 'spectra-current-ring', layers.reticle);
     setVisibility(map, 'spectra-candidate-points', candidateLocations.length > 0);
+    setVisibility(map, 'spectra-candidate-area', candidateLocations.length > 0);
+    setVisibility(map, 'spectra-candidate-area-outline', candidateLocations.length > 0);
     setVisibility(map, 'spectra-uncertainty-fill', layers.uncertainty);
     setVisibility(map, 'spectra-uncertainty-outline', layers.uncertainty);
     setVisibility(map, 'spectra-weather-radar', layers.weather);
@@ -757,7 +876,10 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     lastFollowRef.current = next;
     map.easeTo({
       center: next,
-      zoom: Math.max(map.getZoom(), 10),
+      zoom: Math.max(
+        Math.min(map.getZoom(), 13),
+        candidateZoomForAccuracy(candidate.accuracyMeters),
+      ),
       duration: 500,
       essential: true,
     });
