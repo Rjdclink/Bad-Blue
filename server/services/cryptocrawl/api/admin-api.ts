@@ -391,7 +391,7 @@ router.post('/mode', (req, res) => {
   });
 });
 
-async function stopCryptoCrawlerRuntime(): Promise<{ stopped: boolean; failures: string[] }> {
+export async function stopCryptoCrawlerRuntime(): Promise<{ stopped: boolean; failures: string[] }> {
   systemState.lifecycle = 'STOPPING';
   systemState.running = false;
 
@@ -629,9 +629,26 @@ export async function startCryptoCrawlerRuntime(): Promise<CryptoCrawlerStartRes
  // change eligibility, but none of them may start CryptoCrawler. The authenticated
  // master start endpoint below is the sole lifecycle-entry authority.
 
+let lifecycleCommandTail: Promise<void> = Promise.resolve();
+
+async function serializeLifecycleCommand<T>(command: () => Promise<T>): Promise<T> {
+  const previous = lifecycleCommandTail;
+  let release!: () => void;
+  lifecycleCommandTail = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  await previous;
+  try {
+    return await command();
+  } finally {
+    release();
+  }
+}
+
 // POST /admin/crypto/start - Start governed on-chain monitoring.
 router.post('/start', async (_req, res) => {
-  const result = await startCryptoCrawlerRuntime();
+  const result = await serializeLifecycleCommand(() => startCryptoCrawlerRuntime());
   return res.status(result.status).json(result.payload);
 });
 
@@ -650,7 +667,7 @@ router.post('/stop', async (_req, res) => {
   }
 
   const uptime = systemState.startedAt ? Date.now() - systemState.startedAt : 0;
-  const result = await stopCryptoCrawlerRuntime();
+  const result = await serializeLifecycleCommand(() => stopCryptoCrawlerRuntime());
 
   return res.status(result.stopped ? 200 : 503).json({
     success: result.stopped,
