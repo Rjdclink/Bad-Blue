@@ -160,8 +160,15 @@ export async function generateOpenRouterText(
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    autoRouterLastError = message;
-    autoRouterCooldownUntil = Date.now() + AUTO_ROUTER_COOLDOWN_MS;
+    const name = error instanceof Error ? error.name.toLowerCase() : '';
+    const cancellationShaped = name === 'aborterror'
+      || /operation was aborted|request was aborted|cancelled|canceled/i.test(message);
+    // A request-local timeout/cancellation is not evidence that OpenRouter is
+    // unhealthy for subsequent turns. Only genuine provider failures cool it.
+    if (!cancellationShaped) {
+      autoRouterLastError = message;
+      autoRouterCooldownUntil = Date.now() + AUTO_ROUTER_COOLDOWN_MS;
+    }
     throw error instanceof Error ? error : new Error(message);
   } finally {
     clearTimeout(timer);
