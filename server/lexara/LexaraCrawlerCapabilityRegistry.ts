@@ -129,10 +129,10 @@ export const LEXARA_CRAWLER_CAPABILITY_POOL: readonly LexaraCrawlerDescriptor[] 
   c('public-record', 'PublicRecordScraper', 'legal', 'server/services/iceEngine/scraping/PublicRecordScraper.ts', ['public-records', 'change-detection'], 'retrieval', 'fast'),
 
   c('pacer', 'PACERScraper', 'criminal', 'server/services/criminalRecords/sources/PACERScraper.ts', ['federal-docket', 'criminal-records', 'case-law'], 'retrieval', 'deep', hasPacer, 'PACER is billable in production and executes only when credentials are configured.'),
-  c('state-court', 'StateCourtScraper', 'criminal', 'server/services/criminalRecords/sources/StateCourtScraper.ts', ['criminal-records', 'case-law'], 'retrieval', 'deep', hasBrowser),
-  c('county-court', 'CountyCourtScraper', 'criminal', 'server/services/criminalRecords/sources/CountyCourtScraper.ts', ['criminal-records', 'case-law'], 'retrieval', 'deep', hasBrowser),
-  c('warrant-database', 'WarrantDatabaseScraper', 'criminal', 'server/services/criminalRecords/sources/WarrantDatabaseScraper.ts', ['criminal-records', 'public-records'], 'retrieval', 'deep', hasBrowser),
-  c('sex-offender-registry', 'SexOffenderRegistryScraper', 'criminal', 'server/services/criminalRecords/sources/SexOffenderRegistryScraper.ts', ['criminal-records', 'public-records'], 'retrieval', 'deep', hasBrowser),
+  c('state-court', 'StateCourtScraper', 'criminal', 'server/services/criminalRecords/sources/StateCourtScraper.ts', ['criminal-records', 'case-law'], 'retrieval', 'deep', always),
+  c('county-court', 'CountyCourtScraper', 'criminal', 'server/services/criminalRecords/sources/CountyCourtScraper.ts', ['criminal-records', 'case-law'], 'retrieval', 'deep', always),
+  c('warrant-database', 'WarrantDatabaseScraper', 'criminal', 'server/services/criminalRecords/sources/WarrantDatabaseScraper.ts', ['criminal-records', 'public-records'], 'retrieval', 'deep', always),
+  c('sex-offender-registry', 'SexOffenderRegistryScraper', 'criminal', 'server/services/criminalRecords/sources/SexOffenderRegistryScraper.ts', ['criminal-records', 'public-records'], 'retrieval', 'deep', always),
 
   c('fast-people-search', 'FastPeopleSearchScraper', 'people', 'server/services/peopleSearch/sources/FastPeopleSearchScraper.ts', ['people-search', 'identity', 'contact', 'address'], 'retrieval', 'deep', hasBrowser),
   c('true-people-search', 'TruePeopleSearchScraper', 'people', 'server/services/peopleSearch/sources/TruePeopleSearchScraper.ts', ['people-search', 'identity', 'contact', 'address'], 'retrieval', 'deep', hasBrowser),
