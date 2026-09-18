@@ -46,9 +46,10 @@ type ConversationPhase =
   | 'error';
 
 const CONVERSATION_STORAGE_SCHEMA_VERSION = 2;
-const BROWSER_FINAL_FALLBACK_SETTLE_MS = 1_200;
-const SERVER_VOICE_TURN_SETTLE_MS = 180;
-const VOICE_END_GRACE_MS = 650;
+const BROWSER_FINAL_FALLBACK_SETTLE_MS = 2_200;
+const SERVER_VOICE_TURN_SETTLE_MS = 500;
+const VOICE_END_GRACE_MS = 1_400;
+const INCOMPLETE_TURN_GRACE_MS = 3_200;
 const CHAT_TURN_TIMEOUT_MS = 45_000;
 const MAX_STORED_CONVERSATION_MESSAGES = 24;
 
@@ -207,6 +208,47 @@ function mergeSpeechSegments(existing: string, incoming: string): string {
   return `${left} ${right}`;
 }
 
+function isLikelyIncompleteUtterance(value: string): boolean {
+  const normalized = normalizeSpeechText(value);
+  if (!normalized) return false;
+  const words = normalized.split(' ').filter(Boolean);
+  const last = words[words.length - 1] || '';
+
+  if (/^(?:i|we)\s+(?:was|were|am|had|have|got|went|started|tried|wanted|needed|saw|heard|told|asked|thought)$/.test(normalized)) {
+    return true;
+  }
+
+  const trailingConnectors = new Set([
+    'and', 'but', 'because', 'so', 'then', 'when', 'while', 'after', 'before',
+    'if', 'unless', 'although', 'though', 'with', 'without', 'to', 'from', 'at',
+    'in', 'on', 'for', 'of', 'the', 'a', 'an', 'my', 'our', 'his', 'her',
+    'their', 'that', 'which', 'who',
+  ]);
+  if (trailingConnectors.has(last)) return true;
+
+  if (words.length <= 2 && /^(?:i|we|he|she|they|it)\s+(?:was|were|is|are|had|have|did|do|can|could|would|should|will)$/.test(normalized)) {
+    return true;
+  }
+
+  return false;
+}
+
+function isStrongBargeIn(text: string, meta: VoiceTranscriptMeta): boolean {
+  const normalized = normalizeSpeechText(text);
+  if (!normalized) return false;
+  const explicit = /^(?:wait|stop|no|hold on|hang on|actually|but wait|let me finish)\b/.test(normalized);
+  if (explicit) return true;
+
+  const words = normalized.split(' ').filter(Boolean);
+  if (words.length < 2) return false;
+
+  if (typeof meta.speechDurationMs === 'number' && meta.speechDurationMs < 350) return false;
+  if (typeof meta.confidence === 'number' && meta.confidence < 0.5) return false;
+  if (typeof meta.noSpeechProbability === 'number' && meta.noSpeechProbability >= 0.35) return false;
+  if (typeof meta.avgLogprob === 'number' && meta.avgLogprob <= -0.85) return false;
+  return true;
+}
+
 function looksLikeLexaraEcho(candidate: string, spokenText: string): boolean {
   const normalizedCandidate = normalizeSpeechText(candidate);
   const normalizedSpoken = normalizeSpeechText(spokenText);
@@ -309,8 +351,12 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     onVoiceEnd: () => {
       voiceEndPendingRef.current = true;
       clearVoiceTurnTimer();
-      if (voiceTurnBufferRef.current.trim()) {
-        voiceTurnTimerRef.current = window.setTimeout(flushVoiceTurn, VOICE_END_GRACE_MS);
+      const buffered = voiceTurnBufferRef.current.trim();
+      if (buffered) {
+        const settleMs = isLikelyIncompleteUtterance(buffered)
+          ? INCOMPLETE_TURN_GRACE_MS
+          : VOICE_END_GRACE_MS;
+        voiceTurnTimerRef.current = window.setTimeout(flushVoiceTurn, settleMs);
       }
     },
     onTranscript: (text, isFinal, meta) => {
@@ -350,16 +396,11 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       }
 
       if (phaseRef.current === 'speaking') {
-        const words = normalizeSpeechText(observed).split(' ').filter(Boolean);
-        const weakBrowserEvidence = meta.engine === 'browser'
-          && typeof meta.confidence === 'number'
-          && meta.confidence < 0.45;
-        const weakServerEvidence = meta.engine === 'server'
-          && (
-            (typeof meta.speechDurationMs === 'number' && meta.speechDurationMs < 300)
-            || (typeof meta.noSpeechProbability === 'number' && meta.noSpeechProbability >= 0.45)
-          );
-        if (words.length === 0 || weakBrowserEvidence || weakServerEvidence) return;
+        // True barge-in remains first-class, but speaker echo and tiny final STT
+        // fragments are not allowed to chop LEXARA's playback. A deliberate
+        // interruption must survive lexical echo rejection above and carry
+        // enough final acoustic/transcript evidence to own the floor.
+        if (!isStrongBargeIn(observed, meta)) return;
         autoInterruptRef.current();
       }
 
@@ -379,11 +420,14 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       voiceTurnBufferRef.current = mergeSpeechSegments(voiceTurnBufferRef.current, observed);
 
       clearVoiceTurnTimer();
-      const settleMs = meta.engine === 'server'
-        ? SERVER_VOICE_TURN_SETTLE_MS
-        : voiceEndPendingRef.current
-          ? VOICE_END_GRACE_MS
-          : BROWSER_FINAL_FALLBACK_SETTLE_MS;
+      const bufferedTurn = voiceTurnBufferRef.current.trim();
+      const settleMs = isLikelyIncompleteUtterance(bufferedTurn)
+        ? INCOMPLETE_TURN_GRACE_MS
+        : meta.engine === 'server'
+          ? SERVER_VOICE_TURN_SETTLE_MS
+          : voiceEndPendingRef.current
+            ? VOICE_END_GRACE_MS
+            : BROWSER_FINAL_FALLBACK_SETTLE_MS;
       voiceTurnTimerRef.current = window.setTimeout(flushVoiceTurn, settleMs);
     },
     onError: error => {
