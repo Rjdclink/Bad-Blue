@@ -64,6 +64,7 @@ const DEFAULT_ORCHESTRATION_CONFIG: GeoconsoleOrchestrationConfig = {
 const DEFAULT_PROCESSING_CONFIG = {
   minInterpolationGapSeconds: 60,
   maxInterpolationGapMinutes: 30,
+  maxInterpolationSpeedMps: 90,
   clusterRadius: 50, // meters for frequent location clustering
   anomalySpeedThreshold: 50, // m/s for speed anomaly detection
   largeGapHours: 12, // hours for gap anomaly detection
@@ -250,28 +251,61 @@ export class HybridGeoconsole extends EventEmitter {
       const curr = points[i];
       const gapSeconds = (curr.timestamp.getTime() - prev.timestamp.getTime()) / 1000;
       const gapMinutes = gapSeconds / 60;
+      const distanceMeters = this.haversineDistance(
+        prev.latitude,
+        prev.longitude,
+        curr.latitude,
+        curr.longitude,
+      );
+      const requiredSpeed = gapSeconds > 0
+        ? distanceMeters / gapSeconds
+        : Number.POSITIVE_INFINITY;
 
-      if (
-        gapSeconds >= DEFAULT_PROCESSING_CONFIG.minInterpolationGapSeconds &&
-        gapMinutes <= DEFAULT_PROCESSING_CONFIG.maxInterpolationGapMinutes
-      ) {
+      const kindOf = (point: GPSPoint): GPSPoint['observationKind'] =>
+        point.observationKind || (
+          point.source === 'historical_location' || point.source === 'public_record'
+            ? 'historical'
+            : point.source === 'interpolated'
+              ? 'interpolated'
+              : point.source === 'predicted'
+                ? 'predicted'
+                : 'observed'
+        );
+      const supportsMotion =
+        kindOf(prev) === 'observed' &&
+        kindOf(curr) === 'observed';
+
+      const discontinuityReason =
+        gapSeconds <= 0
+          ? 'non_monotonic_event_time'
+          : !supportsMotion
+            ? 'unsupported_evidence_continuity'
+            : requiredSpeed > DEFAULT_PROCESSING_CONFIG.maxInterpolationSpeedMps
+              ? 'implausible_required_speed'
+              : gapMinutes > DEFAULT_PROCESSING_CONFIG.maxInterpolationGapMinutes
+                ? 'gap_exceeds_interpolation_window'
+                : null;
+
+      if (discontinuityReason) {
+        result.push({
+          ...curr,
+          metadata: {
+            ...(curr.metadata || {}),
+            gapBeforeSeconds: Math.max(1, gapSeconds),
+            continuity: 'discontinuous',
+            discontinuityReason,
+            requiredSpeedMps: Number.isFinite(requiredSpeed) ? requiredSpeed : undefined,
+          },
+        });
+        continue;
+      }
+
+      if (gapSeconds >= DEFAULT_PROCESSING_CONFIG.minInterpolationGapSeconds) {
         const path = await this.monteCarloEngine.interpolatePath(prev, curr);
         for (let j = 1; j < path.interpolatedPoints.length - 1; j++) {
           result.push(path.interpolatedPoints[j]);
         }
         result.push(curr);
-        continue;
-      }
-
-      if (gapMinutes > DEFAULT_PROCESSING_CONFIG.maxInterpolationGapMinutes) {
-        result.push({
-          ...curr,
-          metadata: {
-            ...(curr.metadata || {}),
-            gapBeforeSeconds: gapSeconds,
-            continuity: 'discontinuous',
-          },
-        });
         continue;
       }
 
