@@ -107,14 +107,40 @@ const pointFeature = (frame: GeoFrame) => ({
   },
 });
 
-const lineFeature = (frames: GeoFrame[]) => ({
-  type: 'Feature' as const,
-  geometry: {
-    type: 'LineString' as const,
-    coordinates: frames.map(frame => [frame.position.longitude, frame.position.latitude]),
-  },
-  properties: {},
-});
+const lineFeature = (frames: GeoFrame[], splitOnGaps = false) => {
+  const segments: number[][][] = [];
+  let segment: number[][] = [];
+
+  for (const frame of frames) {
+    const gapBefore = Number(frame.metadata?.gapBeforeSeconds || 0);
+    if (splitOnGaps && gapBefore > 0 && segment.length > 0) {
+      if (segment.length > 1) segments.push(segment);
+      segment = [];
+    }
+    segment.push([frame.position.longitude, frame.position.latitude]);
+  }
+  if (segment.length > 1) segments.push(segment);
+
+  if (splitOnGaps && segments.length > 1) {
+    return {
+      type: 'Feature' as const,
+      geometry: {
+        type: 'MultiLineString' as const,
+        coordinates: segments,
+      },
+      properties: {},
+    };
+  }
+
+  return {
+    type: 'Feature' as const,
+    geometry: {
+      type: 'LineString' as const,
+      coordinates: frames.map(frame => [frame.position.longitude, frame.position.latitude]),
+    },
+    properties: {},
+  };
+};
 
 function circleFeature(lng: number, lat: number, radiusMeters: number, steps = 64) {
   const coordinates: [number, number][] = [];
@@ -611,7 +637,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
 
     safeSetData(map, 'spectra-trail', {
       type: 'FeatureCollection',
-      features: trail.length > 1 ? [lineFeature(trail)] : [],
+      features: trail.length > 1 ? [lineFeature(trail, true)] : [],
     });
     safeSetData(map, 'spectra-observations', {
       type: 'FeatureCollection',
