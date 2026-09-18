@@ -96,13 +96,13 @@ export default function EvidenceHub() {
   return (
     <div className="min-h-screen bg-background">
       <SEOHead
-        title="Corrupt Law Enforcement & Informant Hub | BadBlue"
+        title="Law Enforcement Evidence Hub | Legal What?"
         description="Community platform for uploading evidence of law enforcement corruption and informant documents. All media types accepted."
         keywords="police corruption evidence, law enforcement misconduct evidence, police brutality video, body camera footage, police abuse documentation, informant documents, snitch evidence, police misconduct photos, officer corruption proof, police accountability evidence"
-        canonicalUrl="https://example.com/evidence-hub"
         structuredData={evidenceHubSchema}
         breadcrumbs={breadcrumbs}
         pageType="service"
+        noIndex
       />
       
       <header className="border-b bg-card sticky top-0 z-50">
