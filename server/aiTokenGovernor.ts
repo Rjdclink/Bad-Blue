@@ -359,13 +359,10 @@ class AITokenGovernorEnhanced {
   }
 
   /**
-   * Check if autonomous functions can use Groq
-   * GROQ POLICY: No rate limit - only checks API key availability
+   * Legacy transport-specific availability probe retained for callers that
+   * explicitly ask about Groq. It is not a platform autonomy gate.
    */
   public async canAutonomousUseGroq(): Promise<boolean> {
-    // GROQ POLICY: No rate limit for autonomous functions
-    // Groq is exclusively for autonomous use with unlimited capacity
-    // Only check if Groq API key is available
     return this.isProviderAvailable(AIProvider.GROQ);
   }
 
@@ -416,15 +413,13 @@ class AITokenGovernorEnhanced {
       // Get OpenRouter status for the 3 new providers
       const openRouterStatus = getOpenRouterStatus();
       
-      // GROQ POLICY: No autonomous limit - Groq is exclusively for autonomous functions
-
       return {
         gemini: {
           used: metrics.gemini.requests,
           limit: this.GEMINI_DAILY_REQUEST_LIMIT,
           percentUsed: (metrics.gemini.requests / this.GEMINI_DAILY_REQUEST_LIMIT) * 100,
           userUsed: metrics.gemini.userRequests,
-          autonomousUsed: 0 // Autonomous should never use Gemini
+          autonomousUsed: metrics.gemini.workerRequests
         },
         groq: {
           used: metrics.groq.tokens,
@@ -432,7 +427,7 @@ class AITokenGovernorEnhanced {
           percentUsed: (metrics.groq.tokens / this.GROQ_DAILY_TOKEN_LIMIT) * 100,
           userUsed: metrics.groq.userTokens,
           autonomousUsed: metrics.groq.workerTokens
-          // GROQ POLICY: No autonomousLimit or autonomousPercentUsed - unlimited for autonomous
+          // Historical field retained for quota telemetry
         },
         mistral: {
           used: metrics.mistral.tokens,
@@ -715,7 +710,7 @@ class AITokenGovernorEnhanced {
    *
    * Strategy:
    * - Compute efficiency scores for all available providers (0 for ineligible).
-   * - Filter out providers with 0 efficiency based on context separation.
+   * - Filter out providers with no remaining budget efficiency.
    * - If a single provider is clearly superior (efficiency > 1.1 * next best), allocate whole task to it.
    * - Otherwise, split across top N providers proportionally to efficiency.
    * 
