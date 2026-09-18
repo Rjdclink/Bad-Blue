@@ -233,15 +233,16 @@ export async function generateLexaraConversationResponse(
     + formatAuthorityResearchForSystem(authorityResearch);
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
 
-  // Quality-first, low-latency chain for the normal live path. Active Claude,
-  // Groq, and Mistral models are preferred; Gemini remains a route-local fallback.
+  // Quality-first, low-latency live route. OpenRouter's current auto router is
+  // preferred so LEXARA uses the platform's live model mesh rather than a stale
+  // direct-provider sequence. Direct providers remain route-local fallbacks.
   const primary = await callAIWithFallback(userPrompt, {
     taskName: 'lexara-live-conversation',
     systemPrompt,
     temperature: 0.25,
     maxTokens: 1800,
     useJSON: false,
-    preferredProvider: 'anthropic',
+    preferredProvider: 'openrouter',
   });
 
   let text = primary.success ? primary.content?.trim() : '';
