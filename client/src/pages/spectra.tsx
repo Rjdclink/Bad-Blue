@@ -34,6 +34,7 @@ interface AcquisitionResponse {
     identityConfidence: number;
     locationConfidence: number;
     sourceCount: number;
+    evidenceItemCount?: number;
     observationCount: number;
     summary: string;
     verificationStatus: string;
@@ -454,10 +455,13 @@ export default function SpectraPage() {
           )}
         </section>}
 
-        <section className={showMap
-          ? 'min-h-0 flex flex-col bg-slate-950'
-          : 'min-h-0 flex w-full max-w-2xl flex-col bg-slate-950 sm:border-x sm:border-slate-800'
-        }>
+        <section
+          data-testid="spectra-console"
+          className={showMap
+            ? 'min-h-0 flex flex-col bg-slate-950'
+            : 'min-h-0 flex w-full max-w-2xl flex-col bg-slate-950 sm:border-x sm:border-slate-800'
+          }
+        >
           <div className="px-4 py-3 border-b border-slate-800">
             <div className="flex items-center justify-between gap-2">
               <div>
@@ -557,6 +561,7 @@ export default function SpectraPage() {
                 <Paperclip className="h-4 w-4" />
               </Button>
               <textarea
+                data-testid="spectra-input"
                 value={input}
                 onChange={event => setInput(event.target.value)}
                 onPaste={event => {
@@ -581,6 +586,7 @@ export default function SpectraPage() {
                 className="min-h-11 max-h-28 flex-1 resize-none rounded-2xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-cyan-500/50"
               />
               <Button
+                data-testid="spectra-send"
                 type="submit"
                 size="icon"
                 disabled={!input.trim() || phase === 'acquiring'}
