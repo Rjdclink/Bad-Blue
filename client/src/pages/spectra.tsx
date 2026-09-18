@@ -57,6 +57,7 @@ export default function SpectraPage() {
   const [lastError, setLastError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const requestRef = useRef(0);
+  const messageHandlerRef = useRef<(message: string) => void>(() => undefined);
 
   const voiceSynthesis = useVoiceSynthesis();
   const voiceMode = useVoiceMode({
@@ -64,7 +65,7 @@ export default function SpectraPage() {
     interimResults: true,
     onTranscript: (text, isFinal) => {
       if (isFinal && text.trim()) {
-        void handleUserMessage(text.trim());
+        messageHandlerRef.current(text.trim());
       }
     },
   });
@@ -186,6 +187,12 @@ export default function SpectraPage() {
     speakIfEnabled,
     target,
   ]);
+
+  useEffect(() => {
+    messageHandlerRef.current = (message: string) => {
+      void handleUserMessage(message);
+    };
+  }, [handleUserMessage]);
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
