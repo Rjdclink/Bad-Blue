@@ -196,6 +196,19 @@ function candidateZoomForAccuracy(accuracyMeters?: number): number {
   return 13;
 }
 
+function observationZoomForAccuracy(accuracyMeters?: number): number {
+  const accuracy = Number(accuracyMeters);
+  if (!Number.isFinite(accuracy) || accuracy <= 0) return 13;
+  if (accuracy >= 100_000) return 5.5;
+  if (accuracy >= 50_000) return 6.5;
+  if (accuracy >= 20_000) return 7.5;
+  if (accuracy >= 5_000) return 9;
+  if (accuracy >= 1_000) return 11;
+  if (accuracy >= 250) return 13;
+  if (accuracy >= 50) return 14.5;
+  return 16;
+}
+
 function popupTextNode(lines: Array<{ label?: string; value: string }>): HTMLDivElement {
   const root = document.createElement('div');
   root.style.font = '12px system-ui';
@@ -614,11 +627,13 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
       container: containerRef.current,
       style: mapMode === 'dark' ? OPENFREEMAP_DARK : OPENFREEMAP_LIBERTY,
       center: initialCenter,
-      zoom: currentFrame || trail.length
-        ? 14
-        : candidateLocations.length
-          ? candidateZoomForAccuracy(candidateLocations[0].accuracyMeters)
-          : 2,
+      zoom: currentFrame
+        ? observationZoomForAccuracy(currentFrame.position.accuracy)
+        : trail.length
+          ? observationZoomForAccuracy(trail[trail.length - 1].position.accuracy)
+          : candidateLocations.length
+            ? candidateZoomForAccuracy(candidateLocations[0].accuracyMeters)
+            : 2,
       pitch: layers.terrain || layers.buildings ? 52 : 0,
       bearing: 0,
       antialias: typeof navigator === 'undefined' || !navigator.hardwareConcurrency || navigator.hardwareConcurrency > 4,
@@ -903,7 +918,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     lastFollowRef.current = next;
     map.easeTo({
       center: next,
-      zoom: Math.max(map.getZoom(), 15),
+      zoom: observationZoomForAccuracy(currentFrame.position.accuracy),
       bearing: isLive && currentFrame.velocity?.heading !== undefined
         ? currentFrame.velocity.heading
         : map.getBearing(),
