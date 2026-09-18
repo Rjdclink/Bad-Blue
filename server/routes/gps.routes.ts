@@ -12,6 +12,7 @@ import {
 import { createLogger } from '../logger';
 import { isAuthenticated } from '../auth';
 import { extractMediaMetadata } from '../services/locationIntelligence/MediaMetadataExtractor';
+import { signServerEvidence } from '../services/geoconsole/evidence-proof';
 
 const router = Router();
 const log = createLogger('GPSRoutes');
@@ -62,7 +63,7 @@ router.post('/extract-upload', mediaUpload.single('file'), async (req: Request, 
       : undefined;
 
     const point = gps && captureTimestamp
-      ? {
+      ? signServerEvidence({
           latitude: gps.latitude,
           longitude: gps.longitude,
           altitude: gps.altitude,
@@ -89,7 +90,7 @@ router.post('/extract-upload', mediaUpload.single('file'), async (req: Request, 
             image: metadata.image,
             provenance: metadata.provenance,
           },
-        }
+        })
       : null;
 
     return res.json({
