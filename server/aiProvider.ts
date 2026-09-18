@@ -543,9 +543,9 @@ function getProviderModel(provider: AIProvider, requestedModel?: string, complex
       pro: 'gemini-3.8-flash'
     },
     [AIProvider.GROQ]: {
-      prefixes: ['openai/', 'qwen/'],
-      default: process.env.GROQ_CHAT_MODEL?.trim() || 'qwen/qwen3.6-27b',
-      comprehensive: process.env.GROQ_CHAT_MODEL?.trim() || 'qwen/qwen3.6-27b'
+      prefixes: ['llama-', 'meta-llama/', 'openai/', 'qwen/'],
+      default: process.env.GROQ_CHAT_MODEL?.trim() || 'llama-3.3-70b-versatile',
+      comprehensive: process.env.GROQ_CHAT_MODEL?.trim() || 'llama-3.3-70b-versatile'
     },
     [AIProvider.MISTRAL]: {
       prefixes: ['mistral', 'codestral', 'pixtral', 'open-'],
