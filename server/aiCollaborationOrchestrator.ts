@@ -928,7 +928,17 @@ export class AICollaborationOrchestrator {
         results.push(firstSuccessful);
         completedTasks.set(firstSuccessful.taskId, firstSuccessful);
 
-        const synthesis = await this.executeTask(fastSynthesisTask, completedTasks);
+        const synthesis = await this.executeTask(
+          {
+            ...fastSynthesisTask,
+            // The first successful hedge has just proven both availability and
+            // low latency for this exact turn. Reuse that healthy route for the
+            // single synthesis pass instead of switching to an unproven route.
+            provider: firstSuccessful.provider,
+            model: this.getDefaultModelForProvider(firstSuccessful.provider),
+          },
+          completedTasks,
+        );
         results.push(synthesis);
 
         // Observe the slower hedge without awaiting it on the user-facing path.
