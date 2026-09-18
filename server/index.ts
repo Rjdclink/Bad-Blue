@@ -599,7 +599,11 @@ startupTrace('health_route_registered');
 
 app.get("/api/ready", (_req, res) => {
   const usableDataPlane = databaseInitialized || overflowDatabaseReady;
-  if (isFullyInitialized && usableDataPlane && authStoreReady && !isShuttingDown && !startupError) {
+  // Local credential-store degradation is route-local. Stateless master recovery
+  // remains available without the ordinary auth store, so Railway readiness must
+  // reflect whether the application/data plane is usable rather than globally
+  // failing because one login backend is degraded.
+  if (isFullyInitialized && usableDataPlane && !isShuttingDown && !startupError) {
     res.status(200).json({
       ready: true,
       fullyInitialized: true,
@@ -728,39 +732,47 @@ startupTrace('routes_registration_started');
 await registerRoutes(app);
 startupTrace('routes_registration_completed');
 
-  // Authentication is part of the public application surface, so a replacement
-  // deployment must prove the Supabase HTTP data API can initialize and read the
-  // two tables required by local login before Railway is allowed to promote it.
+  // Local-account authentication is intentionally route-local. Master recovery is
+  // stateless and must remain available even when the ordinary credential store is
+  // degraded. Probe local auth in the background for observability/recovery without
+  // turning a scoped dependency outage into a whole-application deployment failure.
   startupTrace('auth_store_readiness_started');
-  {
+  void (async () => {
     const { probeLocalAuthStoreHttp } = await import('./statelessLocalAuth');
     let lastAuthStoreError: unknown = null;
-    for (let attempt = 1; attempt <= 4; attempt += 1) {
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
       try {
         await probeLocalAuthStoreHttp();
         authStoreReady = true;
         startupTrace('auth_store_ready', { attempt });
-        console.log('[STARTUP] ✓ LegalWhat authentication store ready');
-        break;
+        console.log('[STARTUP] ✓ LegalWhat local authentication store ready');
+        return;
       } catch (error) {
         lastAuthStoreError = error;
         startupTrace('auth_store_readiness_retry', {
           attempt,
           error: error instanceof Error ? error.message : String(error),
         });
-        if (attempt < 4) {
-          await new Promise(resolve => setTimeout(resolve, attempt * 750));
+        if (attempt < 2) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
         }
       }
     }
-    if (!authStoreReady) {
-      const detail = lastAuthStoreError instanceof Error
-        ? lastAuthStoreError.message
-        : String(lastAuthStoreError || 'unknown authentication store error');
-      startupTrace('auth_store_readiness_failed', { error: detail });
-      throw new Error(`LegalWhat authentication store is not ready: ${detail}`);
-    }
-  }
+
+    const detail = lastAuthStoreError instanceof Error
+      ? lastAuthStoreError.message
+      : String(lastAuthStoreError || 'unknown authentication store error');
+    startupTrace('auth_store_degraded_route_local', { error: detail });
+    console.warn('[STARTUP] ⚠ Local authentication store unavailable; stateless master recovery remains available and local login stays fail-closed', {
+      error: detail,
+    });
+  })().catch((error) => {
+    const detail = error instanceof Error ? error.message : String(error);
+    startupTrace('auth_store_probe_background_failed', { error: detail });
+    console.warn('[STARTUP] ⚠ Background local-auth probe failed; master recovery remains available', {
+      error: detail,
+    });
+  });
 
   // With overflow proxy mode active, route and worker code may request primary
   // information normally; the bootstrap gateway prevents direct primary acquisition.
