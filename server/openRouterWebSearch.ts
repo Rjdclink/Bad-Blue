@@ -373,9 +373,73 @@ async function callWebSearchModel(
  * Extract URLs from text
  */
 function extractUrls(text: string): string[] {
-  const urlRegex = /(https?:\/\/[^\s]+)/g;
+  const urlRegex = /(https?:\/\/[^\s"'<>\\]+)/g;
   const matches = text.match(urlRegex);
-  return matches ? Array.from(new Set(matches)) : [];
+  return matches ? Array.from(new Set(matches.map(url => url.replace(/[),.;]+$/, '')))) : [];
+}
+
+function collectUrls(value: unknown, output = new Set<string>()): Set<string> {
+  if (typeof value === 'string') {
+    for (const url of extractUrls(value)) output.add(url);
+    return output;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectUrls(item, output);
+    return output;
+  }
+  if (value && typeof value === 'object') {
+    for (const item of Object.values(value as Record<string, unknown>)) {
+      collectUrls(item, output);
+    }
+  }
+  return output;
+}
+
+async function callCurrentWebSearchTool(
+  query: string,
+  timeoutMs: number,
+): Promise<{ answer: string; sources: string[] }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': process.env.PUBLIC_APP_URL?.trim() || 'https://legalwhat.com',
+        'X-Title': 'Legal What LEXARA Authority Research',
+      },
+      body: JSON.stringify({
+        model: process.env.OPENROUTER_WEB_SEARCH_MODEL?.trim() || 'openrouter/auto',
+        messages: [
+          {
+            role: 'system',
+            content: 'Find current, verifiable web evidence. Prefer primary official sources. Never invent a URL.',
+          },
+          { role: 'user', content: query },
+        ],
+        tools: [{ type: 'openrouter:web_search' }],
+        temperature: 0.2,
+        max_tokens: 1800,
+      }),
+      signal: controller.signal,
+    });
+
+    const payload = await response.json().catch(() => ({})) as any;
+    if (!response.ok) {
+      throw new Error(`OpenRouter web search tool ${response.status}: ${JSON.stringify(payload).slice(0, 500)}`);
+    }
+
+    const answer = String(payload?.choices?.[0]?.message?.content || '').trim();
+    const sources = [...collectUrls(payload)].filter(url => /^https?:\/\//i.test(url));
+    if (!answer && sources.length === 0) {
+      throw new Error('OpenRouter web search tool returned no usable evidence');
+    }
+    return { answer, sources };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -473,6 +537,23 @@ export async function orchestratedWebSearch(
   }
 
   const startTime = Date.now();
+
+  if (options?.useOnlinePlugin) {
+    // :online model variants and the legacy web plugin are deprecated. Use the
+    // current OpenRouter server-side web-search tool so LEXARA is not coupled
+    // to a stale hard-coded free-model catalog.
+    const current = await callCurrentWebSearchTool(query, options.timeout || 10_000);
+    console.log(`[OpenRouter WebSearch] Current server-tool search completed in ${Date.now() - startTime}ms`);
+    return {
+      query,
+      results: [],
+      aggregatedAnswer: current.answer,
+      sources: current.sources,
+      confidence: current.sources.length > 0 ? 1 : 0.5,
+      timestamp: new Date(),
+    };
+  }
+
   const results: ModelResult[] = [];
   const allModels = Object.values(WEB_SEARCH_MODELS).filter(model => !model.startsWith('google/'));
   // LEXARA authority grounding must not depend on Google-family models; the
