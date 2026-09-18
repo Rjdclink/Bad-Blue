@@ -7,7 +7,7 @@ export interface LocationData {
   altitude?: number;
   direction?: number;
   speed?: number;
-  timestamp: Date;
+  timestamp?: Date;
   device?: {
     make?: string;
     model?: string;
@@ -41,9 +41,9 @@ export class ExifExtractor {
         altitude: result.tags.GPSAltitude,
         direction: result.tags.GPSImgDirection,
         speed: result.tags.GPSSpeed,
-        timestamp: result.tags.DateTimeOriginal 
-          ? new Date(result.tags.DateTimeOriginal * 1000) 
-          : new Date(),
+        timestamp: result.tags.DateTimeOriginal
+          ? new Date(result.tags.DateTimeOriginal * 1000)
+          : undefined,
         device: {
           make: result.tags.Make,
           model: result.tags.Model,
