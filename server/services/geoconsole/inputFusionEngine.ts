@@ -323,13 +323,23 @@ export class InputFusionEngine {
    */
   private fuseGroup(points: GPSPoint[]): FusedLocation | null {
     if (points.length === 0) return null;
-    if (points.length === 1) {
+
+    const normalizedPoints = points.map(point => ({
+      ...point,
+      accuracy: this.effectiveAccuracyMeters(point),
+    }));
+
+    if (normalizedPoints.length === 1) {
+      const only = normalizedPoints[0];
       return {
-        point: points[0],
-        contributingSources: [points[0].source],
+        point: {
+          ...only,
+          confidence: this.calculateConsensusConfidence(normalizedPoints),
+        },
+        contributingSources: [only.source],
         fusionMethod: 'single_source',
-        rawInputs: points,
-        qualityScore: points[0].confidence,
+        rawInputs: normalizedPoints,
+        qualityScore: this.calculateQualityScore(normalizedPoints, only),
       };
     }
 
@@ -338,29 +348,29 @@ export class InputFusionEngine {
 
     switch (fusionMethod) {
       case 'weighted_average':
-        fusedPoint = this.weightedAverageFusion(points);
+        fusedPoint = this.weightedAverageFusion(normalizedPoints);
         break;
       case 'highest_confidence':
-        fusedPoint = this.highestConfidenceFusion(points);
+        fusedPoint = this.highestConfidenceFusion(normalizedPoints);
         break;
       case 'most_recent':
-        fusedPoint = this.mostRecentFusion(points);
+        fusedPoint = this.mostRecentFusion(normalizedPoints);
         break;
       case 'consensus':
-        fusedPoint = this.consensusFusion(points);
+        fusedPoint = this.consensusFusion(normalizedPoints);
         break;
       default:
         fusedPoint = this.weightedAverageFusion(points);
     }
 
-    const contributingSources = [...new Set(points.map(p => p.source))];
-    const qualityScore = this.calculateQualityScore(points, fusedPoint);
+    const contributingSources = [...new Set(normalizedPoints.map(p => p.source))];
+    const qualityScore = this.calculateQualityScore(normalizedPoints, fusedPoint);
 
     return {
       point: fusedPoint,
       contributingSources,
       fusionMethod,
-      rawInputs: points,
+      rawInputs: normalizedPoints,
       qualityScore,
     };
   }
@@ -573,7 +583,8 @@ export class InputFusionEngine {
         only.observationKind === 'historical' ? 0.55 :
         only.observationKind === 'inferred' ? 0.70 :
         1;
-      return Math.max(0, Math.min(1, only.confidence * kindPenalty));
+      const sourcePrior = this.sourceConfigs.get(only.source)?.confidenceWeight ?? 0.25;
+      return Math.max(0, Math.min(1, only.confidence * sourcePrior * kindPenalty));
     }
 
     let normalizedDisagreementSum = 0;
@@ -598,10 +609,16 @@ export class InputFusionEngine {
       : 0;
     const agreement = Math.exp(-0.5 * normalizedDisagreement * normalizedDisagreement);
 
-    const confidenceMean = independent.reduce(
-      (sum, point) => sum + Math.max(0, Math.min(1, point.confidence)),
-      0
-    ) / independent.length;
+    const confidenceMean = independent.reduce((sum, point) => {
+      const sourcePrior = this.sourceConfigs.get(point.source)?.confidenceWeight ?? 0.25;
+      const kindFactor =
+        point.observationKind === 'predicted' ? 0.25 :
+        point.observationKind === 'interpolated' ? 0.35 :
+        point.observationKind === 'historical' ? 0.30 :
+        point.observationKind === 'inferred' ? 0.55 :
+        1;
+      return sum + Math.max(0, Math.min(1, point.confidence)) * sourcePrior * kindFactor;
+    }, 0) / independent.length;
 
     // Independent corroboration can strengthen confidence, but never manufacture
     // certainty when the underlying observations disagree.
