@@ -103,6 +103,10 @@ type InsertPublicEvidence = {
   description?: string | null;
 };
 import { db, isDatabaseConfigured } from "./db";
+import {
+  db as overflowRuntimeDb,
+  isCryptocrawlRuntimeDatabaseConfigured as isOverflowRuntimeDatabaseConfigured,
+} from "./services/cryptocrawl/runtime/cryptocrawl-runtime-database";
 import { eq, desc, and, gte, sql } from "drizzle-orm";
 
 // Validate database connection on module load
@@ -1609,6 +1613,10 @@ export class DatabaseStorage implements IStorage {
     model?: string;
     context?: any;
   }): Promise<LexaraConversation> {
+    if (!isOverflowRuntimeDatabaseConfigured) {
+      throw new Error('LEXARA Overflow persistence is not configured');
+    }
+
     const values = {
       id: crypto.randomUUID(),
       userId: data.userId || null,
@@ -1638,7 +1646,7 @@ export class DatabaseStorage implements IStorage {
 
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
-        const [conversation] = await db
+        const [conversation] = await overflowRuntimeDb
           .insert(lexaraConversations)
           .values(values)
           .returning();
@@ -1673,7 +1681,7 @@ export class DatabaseStorage implements IStorage {
    * Get Lexara conversation by ID
    */
   async getLexaraConversation(conversationId: string): Promise<LexaraConversation | undefined> {
-    const [conversation] = await db
+    const [conversation] = await overflowRuntimeDb
       .select()
       .from(lexaraConversations)
       .where(eq(lexaraConversations.id, conversationId))
@@ -1685,7 +1693,7 @@ export class DatabaseStorage implements IStorage {
    * Get user's Lexara conversation history
    */
   async getUserLexaraConversations(userId: string, limit = 50): Promise<LexaraConversation[]> {
-    return await db
+    return await overflowRuntimeDb
       .select()
       .from(lexaraConversations)
       .where(eq(lexaraConversations.userId, userId))
@@ -1697,7 +1705,7 @@ export class DatabaseStorage implements IStorage {
    * Get Lexara conversations by session ID
    */
   async getLexaraConversationsBySession(sessionId: string, limit = 100): Promise<LexaraConversation[]> {
-    return await db
+    return await overflowRuntimeDb
       .select()
       .from(lexaraConversations)
       .where(eq(lexaraConversations.sessionId, sessionId))
