@@ -57,7 +57,12 @@ try {
   }, issuedAt);
   const localIdentityFromToken = verifyLocalSessionToken(localToken, issuedAt + 1);
   assert.equal(localIdentityFromToken?.id, 'local-user-id');
-  assert.deepEqual(Object.keys(localIdentityFromToken || {}).sort(), ['id']);
+  assert.equal(localIdentityFromToken?.email, 'local@example.com');
+  assert.equal(localIdentityFromToken?.firstName, 'Local');
+  assert.equal(localIdentityFromToken?.lastName, 'User');
+  assert.equal(localIdentityFromToken?.status, 'active');
+  assert.equal(localIdentityFromToken?.hasPaidForAccess, true);
+  assert.equal(localIdentityFromToken?.sessionVersion, 2);
   assert.equal(verifyLocalSessionToken(localToken + 'x', issuedAt + 1), null);
 
   process.env.ADMIN_BYPASS_EMAIL = 'bypass@example.com';
