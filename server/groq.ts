@@ -64,7 +64,7 @@ async function resolveGroqModel(requestedModel: string, apiKey: string): Promise
   const models = groqModelCatalogCache?.models;
   const discoveredTextModels = models
     ? [...models].filter(model =>
-        !/whisper|speech|tts|playai|guard|moderation|compound/i.test(model)
+        !/whisper|speech|tts|audio|playai|orpheus|canopylabs|guard|moderation|compound/i.test(model)
       )
     : [];
 
@@ -135,10 +135,17 @@ async function callGroqAPI(request: GroqChatCompletionRequest): Promise<string> 
     if (response.ok) break;
     errorText = await response.text();
 
-    if (
-      response.status === 403
-      && /model_permission_blocked_(?:project|org)|model.*blocked/i.test(errorText)
-    ) {
+    const routeLocalModelFailure =
+      (
+        response.status === 403
+        && /model_permission_blocked_(?:project|org)|model.*blocked/i.test(errorText)
+      )
+      || (
+        response.status === 400
+        && /model_terms_required|requires terms acceptance|accept the terms|not supported.*chat|chat.*not supported/i.test(errorText)
+      );
+
+    if (routeLocalModelFailure) {
       groqBlockedModels.add(model);
       continue;
     }
