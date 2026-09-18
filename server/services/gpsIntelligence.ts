@@ -109,7 +109,7 @@ export async function extractGPSFromFile(filePath: string): Promise<GPSCoordinat
       typeof lonRefStr === 'string' ? lonRefStr : undefined
     );
     
-    if (!latitude || !longitude) return null;
+    if (latitude === null || longitude === null) return null;
     
     return {
       latitude,
