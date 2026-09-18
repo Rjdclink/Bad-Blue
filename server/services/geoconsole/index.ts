@@ -41,11 +41,11 @@ const MPS_TO_MPH = 2.237; // meters per second to miles per hour
 
 // Default timeline configuration
 const DEFAULT_TIMELINE_CONFIG: TimelineConfig = {
-  historyDays: 3,
-  futurecastHours: 6,
+  historyDays: 3, // retained for reports/analytics, not the operator playback window
+  futurecastHours: 1,
   playbackSpeed: 60, // 1 minute = 1 second
   animationFps: 30,
-  trailFadeSeconds: 86400, // 24 hours
+  trailFadeSeconds: 3600, // rolling previous hour
 };
 
 // Default orchestration configuration
