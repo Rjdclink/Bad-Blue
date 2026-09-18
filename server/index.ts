@@ -23,7 +23,11 @@ dotenv.config();
 
 import { loadConfig } from './config';
 import { getAIModel } from './systemConfig';
-import { OPENROUTER_MODELS as BEST_MODELS_PER_PROVIDER } from './constants';
+import {
+  CURRENT_AI_MODELS,
+  HARMONY_17_PARTICIPANTS,
+  getConfiguredHarmonyParticipants,
+} from './aiHarmonyModelRegistry';
 
 // CRITICAL: Validate configuration before anything else
 // Note: Using console.log here intentionally as logger is not yet initialized during bootstrap
@@ -578,10 +582,20 @@ app.get("/api/health", (req, res) => {
       anthropicConfigured: !!process.env.ANTHROPIC_API_KEY,
     },
     aiProviders: {
-      gemini: { model: 'gemini-2.5-pro', available: !!process.env.GEMINI_API_KEY },
-      groq: { model: 'llama-3.3-70b-versatile', available: !!process.env.GROQ_API_KEY },
-      mistral: { model: 'mistral-small-latest', available: !!process.env.MISTRAL_API_KEY },
-      claude: { model: 'claude-haiku-4-5-20251001', available: !!process.env.ANTHROPIC_API_KEY },
+      gemini: { model: CURRENT_AI_MODELS.gemini, available: !!(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY) },
+      groq: { model: CURRENT_AI_MODELS.groqDeep, available: !!process.env.GROQ_API_KEY },
+      mistral: { model: CURRENT_AI_MODELS.mistralFast, available: !!process.env.MISTRAL_API_KEY },
+      claude: { model: CURRENT_AI_MODELS.claudeBalanced, available: !!(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY) },
+    },
+    harmony: {
+      participantCount: HARMONY_17_PARTICIPANTS.length,
+      configuredCount: getConfiguredHarmonyParticipants().length,
+      participants: HARMONY_17_PARTICIPANTS.map(participant => ({
+        provider: participant.provider,
+        model: participant.model,
+        configured: participant.configured(),
+        capabilities: participant.capabilities,
+      })),
     },
     recommendedModelsByUseCase: {
       user: getAIModel('user'),
@@ -589,7 +603,9 @@ app.get("/api/health", (req, res) => {
       legal: getAIModel('legal'),
       analysis: getAIModel('analysis'),
     },
-    bestModelPerProvider: BEST_MODELS_PER_PROVIDER,
+    bestModelPerProvider: Object.fromEntries(
+      HARMONY_17_PARTICIPANTS.map(participant => [participant.provider, participant.model]),
+    ),
   });
 });
 
