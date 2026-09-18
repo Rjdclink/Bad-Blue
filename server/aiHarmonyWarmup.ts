@@ -5,7 +5,7 @@ import {
 } from './aiHarmonyModelRegistry';
 import { warmGroqModelCatalog } from './groq';
 
-export type HarmonyWarmState = 'unknown' | 'ready' | 'degraded';
+export type HarmonyWarmState = 'unknown' | 'catalog' | 'ready' | 'degraded';
 
 export interface HarmonyWarmStatus {
   provider: AIProvider;
@@ -79,7 +79,7 @@ function record(
     ...(error ? { error } : {}),
   };
   warmStatus.set(provider, value);
-  if (state === 'ready' && model) resolvedModels.set(provider, model);
+  if ((state === 'ready' || state === 'catalog') && model) resolvedModels.set(provider, model);
   return value;
 }
 
@@ -172,7 +172,7 @@ export async function prewarmHarmonyProviders(): Promise<HarmonyWarmStatus[]> {
             provider,
             result.model || model,
             startedAt,
-            result.ready ? 'ready' : 'degraded',
+            result.ready ? 'catalog' : 'degraded',
             result.error,
           );
         }
@@ -181,7 +181,7 @@ export async function prewarmHarmonyProviders(): Promise<HarmonyWarmStatus[]> {
           const catalog = await getOpenRouterCatalog();
           if (catalog.size === 0) return record(provider, model, startedAt, 'degraded', 'OpenRouter catalog unavailable');
           if (provider === AIProvider.OPENROUTER) {
-            return record(provider, 'openrouter/auto', startedAt, 'ready');
+            return record(provider, 'openrouter/auto', startedAt, 'catalog');
           }
 
           const predicates: Array<(candidate: string) => boolean> = provider === AIProvider.DEEPSEEK
@@ -201,7 +201,7 @@ export async function prewarmHarmonyProviders(): Promise<HarmonyWarmStatus[]> {
             provider,
             resolved || model,
             startedAt,
-            resolved ? 'ready' : 'degraded',
+            resolved ? 'catalog' : 'degraded',
             resolved ? undefined : `no live capability-compatible OpenRouter model for ${provider}`,
           );
         }
@@ -217,7 +217,7 @@ export async function prewarmHarmonyProviders(): Promise<HarmonyWarmStatus[]> {
           const resolved = chooseCatalogModel(catalog, model, [
             candidate => /gemini/i.test(candidate) && !/embedding|imagen|veo|tts|audio/i.test(candidate),
           ]);
-          return record(provider, resolved || model, startedAt, resolved ? 'ready' : 'degraded', resolved ? undefined : 'no live compatible Gemini model');
+          return record(provider, resolved || model, startedAt, resolved ? 'catalog' : 'degraded', resolved ? undefined : 'no live compatible Gemini model');
         }
 
         if (provider === AIProvider.CLAUDE || provider === AIProvider.CLAUDE_OPUS) {
@@ -233,7 +233,7 @@ export async function prewarmHarmonyProviders(): Promise<HarmonyWarmStatus[]> {
             candidate => wantsOpus ? /opus/i.test(candidate) : /sonnet/i.test(candidate),
             candidate => /claude/i.test(candidate),
           ]);
-          return record(provider, resolved || model, startedAt, resolved ? 'ready' : 'degraded', resolved ? undefined : 'no live compatible Anthropic model');
+          return record(provider, resolved || model, startedAt, resolved ? 'catalog' : 'degraded', resolved ? undefined : 'no live compatible Anthropic model');
         }
 
         if (provider === AIProvider.MISTRAL) {
@@ -248,7 +248,7 @@ export async function prewarmHarmonyProviders(): Promise<HarmonyWarmStatus[]> {
             candidate => /mistral.*small/i.test(candidate),
             candidate => /mistral/i.test(candidate) && !/embed|moderation/i.test(candidate),
           ]);
-          return record(provider, resolved || model, startedAt, resolved ? 'ready' : 'degraded', resolved ? undefined : 'no live compatible Mistral model');
+          return record(provider, resolved || model, startedAt, resolved ? 'catalog' : 'degraded', resolved ? undefined : 'no live compatible Mistral model');
         }
 
         const openAICompatible: Partial<Record<AIProvider, { url: string; key?: string }>> = {
@@ -273,7 +273,7 @@ export async function prewarmHarmonyProviders(): Promise<HarmonyWarmStatus[]> {
                 candidate => /gpt-oss|command|mistral|minimax|llama|qwen/i.test(candidate),
                 () => true,
               ]);
-          return record(provider, resolved || model, startedAt, resolved ? 'ready' : 'degraded', resolved ? undefined : 'no live compatible model in provider catalog');
+          return record(provider, resolved || model, startedAt, resolved ? 'catalog' : 'degraded', resolved ? undefined : 'no live compatible model in provider catalog');
         }
 
         // Cohere/Together can intentionally ride the configured Hugging Face
@@ -283,7 +283,7 @@ export async function prewarmHarmonyProviders(): Promise<HarmonyWarmStatus[]> {
           (provider === AIProvider.COHERE || provider === AIProvider.TOGETHER)
           && (process.env.HUGGINGFACE_API_TOKEN?.trim() || process.env.HUGGINGFACE_API_KEY?.trim())
         ) {
-          return record(provider, model, startedAt, 'ready');
+          return record(provider, model, startedAt, 'catalog');
         }
 
         return record(provider, model, startedAt, 'unknown');

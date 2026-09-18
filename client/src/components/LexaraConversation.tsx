@@ -47,12 +47,12 @@ type ConversationPhase =
   | 'error';
 
 const CONVERSATION_STORAGE_SCHEMA_VERSION = 2;
-const BROWSER_FINAL_FALLBACK_SETTLE_MS = 2_200;
-const SERVER_VOICE_TURN_SETTLE_MS = 500;
-const VOICE_END_GRACE_MS = 1_400;
-const INCOMPLETE_TURN_GRACE_MS = 3_200;
-const CHAT_TURN_TIMEOUT_MS = 15_000;
-const ACKNOWLEDGEMENT_SOFT_TIMEOUT_MS = 1_200;
+const BROWSER_FINAL_FALLBACK_SETTLE_MS = 1_200;
+const SERVER_VOICE_TURN_SETTLE_MS = 300;
+const VOICE_END_GRACE_MS = 850;
+const INCOMPLETE_TURN_GRACE_MS = 2_200;
+const CHAT_TURN_TIMEOUT_MS = 10_000;
+const ACKNOWLEDGEMENT_SOFT_TIMEOUT_MS = 450;
 const ACKNOWLEDGEMENT_DEDUPE_MS = 8_000;
 const ACKNOWLEDGEMENT_COOLDOWN_MS = 2_500;
 const MAX_STORED_CONVERSATION_MESSAGES = 24;
@@ -493,6 +493,24 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         return;
       }
 
+      // Speaker-tail leakage can be transcribed as a plausible stock closer even
+      // when lexical echo matching misses it. During or immediately after LEXARA
+      // playback, short generic courtesy fragments are non-semantic unless the
+      // user produces a substantive turn. The server independently verifies the
+      // same suspicious class with the secondary ASR route.
+      const normalizedObserved = normalizeSpeechText(observed);
+      const genericPlaybackTail = new Set([
+        'thank you', 'thanks', 'okay', 'ok', 'bye', 'goodbye', 'you',
+      ]);
+      if (
+        meta.engine === 'server'
+        && echoReference
+        && genericPlaybackTail.has(normalizedObserved)
+        && (meta.startedDuringPlayback || (meta.speechDurationMs || 0) < 1_200)
+      ) {
+        return;
+      }
+
       if (meta.bargeInProbe) {
         // Probe transcripts are non-destructive snapshots of the recording.
         // They may yield the conversational floor, but never become user text;
@@ -712,9 +730,13 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
       const presenceControl = isPresenceControlTurn(message);
       if (!presenceControl) {
-        // Preserve each interruption as its own turn. Distinct questions/facts
-        // must never be concatenated into one fabricated user statement.
+        // Preserve each interruption as its own turn, then cancel the superseded
+        // generation immediately. The queued turn inherits the accumulated
+        // conversation facts and starts as soon as the abort unwinds instead of
+        // waiting for obsolete legal work to finish and be discarded.
         pendingUserTurnQueueRef.current.push({ text: message, messageId: userMessageId });
+        activeAnalysisNeedsReconciliationRef.current = true;
+        currentRequestRef.current.abort();
       }
 
       try {
@@ -747,7 +769,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         const acknowledgementTooSoon = !presenceControl
           && now - lastAcknowledgementRef.current.at < ACKNOWLEDGEMENT_COOLDOWN_MS;
 
-        if (presenceControl && acknowledgement && !duplicateAck && !acknowledgementTooSoon) {
+        if (acknowledgement && !duplicateAck && !acknowledgementTooSoon) {
           lastAcknowledgementRef.current = { text: normalizedAck, at: now };
           const acknowledgementMessageId = appendMessage('lexara', acknowledgement);
           nonSemanticLexaraMessageIdsRef.current.add(acknowledgementMessageId);
@@ -871,10 +893,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             window.setTimeout(() => resolve(null), 250);
           }),
         ]);
-        const acknowledgementKind = String(acknowledgementData?.kind || '');
-        acknowledgement = acknowledgementKind === 'presence'
-          ? String(acknowledgementData?.acknowledgement || '').trim()
-          : '';
+        acknowledgement = String(acknowledgementData?.acknowledgement || '').trim();
         const normalizedAck = normalizeSpeechText(acknowledgement);
         const now = Date.now();
         const duplicateAck = normalizedAck

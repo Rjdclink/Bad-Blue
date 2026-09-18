@@ -424,8 +424,9 @@ async function initializeServices(): Promise<void> {
   void prewarmHarmonyProviders()
     .then(statuses => {
       const ready = statuses.filter(status => status.state === 'ready').length;
+      const catalog = statuses.filter(status => status.state === 'catalog').length;
       const degraded = statuses.filter(status => status.state === 'degraded').length;
-      console.log(`[HARMONY] Provider prewarm complete: ${ready} ready, ${degraded} degraded`);
+      console.log(`[HARMONY] Provider prewarm complete: ${ready} inference-ready, ${catalog} catalog-eligible, ${degraded} degraded`);
     })
     .catch(error => {
       console.warn('[HARMONY] Provider prewarm failed route-locally:', error instanceof Error ? error.message : String(error));

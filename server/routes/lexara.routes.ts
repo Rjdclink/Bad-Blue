@@ -506,6 +506,7 @@ router.post('/transcribe-file', lexaraVoiceUpload.single('audio'), async (req: R
 
       const speechDurationMs = Math.max(0, Number(req.body?.speechDurationMs || 0));
       const bargeInProbe = req.body?.bargeInProbe === 'true';
+      const startedDuringPlayback = req.body?.startedDuringPlayback === 'true';
       const noSpeechProbability = result.quality?.noSpeechProbability;
       const avgLogprob = result.quality?.avgLogprob;
 
@@ -513,6 +514,63 @@ router.post('/transcribe-file', lexaraVoiceUpload.single('audio'), async (req: R
       const hasLogprob = Number.isFinite(avgLogprob);
       const noSpeech = hasNoSpeech ? Number(noSpeechProbability) : undefined;
       const logprob = hasLogprob ? Number(avgLogprob) : undefined;
+
+      // Generic closers are a high-frequency hallucination/echo shape in voice
+      // agents. Verify only this suspicious class with the independent ASR route
+      // instead of doubling latency for every normal utterance.
+      const normalizeTranscript = (value: string) =>
+        value.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+      const normalizedTranscript = normalizeTranscript(result.text);
+      const suspiciousGeneric = new Set([
+        'thank you', 'thanks', 'okay', 'ok', 'bye', 'goodbye', 'you',
+      ]).has(normalizedTranscript);
+
+      if (
+        provider.name === 'groq-whisper'
+        && suspiciousGeneric
+        && (startedDuringPlayback || speechDurationMs < 1_200)
+      ) {
+        const verifier = providers.find(candidate => candidate.name === 'elevenlabs-scribe' && candidate.configured);
+        if (verifier) {
+          try {
+            const verification = await verifier.transcribe();
+            const verified = normalizeTranscript(verification.text);
+            if (!verified || verified !== normalizedTranscript) {
+              logger.info('[LEXARA] Rejected suspicious generic transcript after ASR disagreement', {
+                primary: normalizedTranscript,
+                secondary: verified,
+                speechDurationMs,
+                startedDuringPlayback,
+              });
+              return res.json({
+                success: true,
+                transcript: '',
+                isFinal: false,
+                rejected: true,
+                rejectionReason: 'generic_transcript_disagreement',
+                provider: result.provider,
+                model: result.model,
+                bargeInProbe,
+              });
+            }
+          } catch (verificationError) {
+            logger.info('[LEXARA] Suppressed suspicious generic transcript when verifier was unavailable', {
+              primary: normalizedTranscript,
+              error: verificationError instanceof Error ? verificationError.message : String(verificationError),
+            });
+            return res.json({
+              success: true,
+              transcript: '',
+              isFinal: false,
+              rejected: true,
+              rejectionReason: 'generic_transcript_unverified',
+              provider: result.provider,
+              model: result.model,
+              bargeInProbe,
+            });
+          }
+        }
+      }
 
       // Reject only when the acoustic evidence is jointly poor. A long spoken
       // explanation with noSpeech≈0 must not be discarded solely because one

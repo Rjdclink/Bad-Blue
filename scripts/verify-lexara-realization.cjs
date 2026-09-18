@@ -50,6 +50,7 @@ const duplexReview = read('docs/LEXARA_DUPLEX_ORCHESTRATION_30_SOURCE_REVIEW_202
 const harmonyRootReview = read('docs/LEXARA_HARMONY_ROOT_CAUSE_10_SOURCE_REVIEW_20260918.md');
 const harmonyImplementationReview = read('docs/LEXARA_HARMONY_IMPLEMENTATION_10_SOURCE_REVIEW_20260918.md');
 const realtimeCapabilityReview = read('docs/LEXARA_REALTIME_CAPABILITY_HARMONY_20_SOURCE_REVIEW_20260918.md');
+const integratedRealtimeReview = read('docs/LEXARA_INTEGRATED_REALTIME_IMPLEMENTATION_10_SOURCE_REVIEW_20260918.md');
 
 must(
   voiceMode.includes('preferServerRecognition') &&
@@ -60,7 +61,7 @@ must(
 must(
   voiceMode.includes('serverEchoCancellationRef') &&
     voiceMode.includes('shouldProbeBargeIn?: () => boolean') &&
-    voiceMode.includes('SERVER_BARGE_IN_PROBE_MS = 700') &&
+    voiceMode.includes('SERVER_BARGE_IN_PROBE_MS = 450') &&
     voiceMode.includes('recorder.requestData()') &&
     voiceMode.includes('bargeInProbe: true') &&
     voiceMode.includes('startedDuringPlayback') &&
@@ -75,11 +76,11 @@ must(
   'conversation storage is versioned to quarantine corrupt prior turns',
 );
 must(
-  voiceMode.includes('const SERVER_VAD_SILENCE_MS = 1_500') &&
-    conversation.includes('const BROWSER_FINAL_FALLBACK_SETTLE_MS = 2_200') &&
-    conversation.includes('const SERVER_VOICE_TURN_SETTLE_MS = 500') &&
-    conversation.includes('const VOICE_END_GRACE_MS = 1_400') &&
-    conversation.includes('const INCOMPLETE_TURN_GRACE_MS = 3_200') &&
+  voiceMode.includes('const SERVER_VAD_SILENCE_MS = 1_000') &&
+    conversation.includes('const BROWSER_FINAL_FALLBACK_SETTLE_MS = 1_200') &&
+    conversation.includes('const SERVER_VOICE_TURN_SETTLE_MS = 300') &&
+    conversation.includes('const VOICE_END_GRACE_MS = 850') &&
+    conversation.includes('const INCOMPLETE_TURN_GRACE_MS = 2_200') &&
     conversation.includes('isLikelyIncompleteUtterance'),
   'voice endpointing reduces dead air while retaining a longer incomplete-thought grace path',
 );
@@ -88,8 +89,8 @@ must(
   voiceMode.includes('browserFinalResultIndexesRef') &&
     conversation.includes('mergeSpeechSegments') &&
     conversation.includes('pendingUserTurnQueueRef') &&
-    !liveTurnHandler.includes('currentRequestRef.current?.abort()'),
-  'final STT segments are owned/de-overlapped and continuations cannot create chat abort storms',
+    liveTurnHandler.includes('currentRequestRef.current.abort()'),
+  'final STT segments are owned/de-overlapped and substantive interruptions cancel only superseded analysis generations',
 );
 must(
   voiceMode.includes('avgLogprob?: number') &&
@@ -140,8 +141,10 @@ must(
 );
 must(
   lexaraRoutes.indexOf("name: 'groq-whisper'") <
-    lexaraRoutes.indexOf("name: 'elevenlabs-scribe'"),
-  'low-latency Groq Whisper is preferred with ElevenLabs Scribe fallback',
+    lexaraRoutes.indexOf("name: 'elevenlabs-scribe'") &&
+    lexaraRoutes.includes('generic_transcript_disagreement') &&
+    lexaraRoutes.includes('startedDuringPlayback'),
+  'low-latency Groq Whisper is preferred while suspicious generic closers receive route-local ElevenLabs verification',
 );
 must(
   voiceRoutes.includes('/api/lexara/tts/session') &&
@@ -168,10 +171,14 @@ must(
     harmonyRegistry.includes('HARMONY_17_PARTICIPANTS') &&
     orchestrator.includes('maxParticipants: 2') &&
     orchestrator.includes('estimatedTokens: 450') &&
-    orchestrator.includes('requestTimeoutMs: 4_000') &&
-    orchestrator.includes('maxFallbacks: 1') &&
+    orchestrator.includes('requestTimeoutMs: 2_200') &&
+    orchestrator.includes('maxFallbacks: 0') &&
+    harmony.includes('fastSynthesisTask') &&
+    harmony.includes('harmonyProviderRuntimeScore') &&
+    harmony.includes('task.requestTimeoutMs || task.timeout || options.requestTimeoutMs') &&
     harmonyWarmup.includes('prewarmHarmonyProviders') &&
     harmonyWarmup.includes('isHarmonyProviderWarmHealthy') &&
+    harmonyWarmup.includes("'catalog'") &&
     groq.includes('warmGroqModelCatalog'),
   'Lexara draws from the full 17-participant capability pool while each live turn uses a small capability-matched subset with one synthesis authority and bounded route-local failover',
 );
@@ -214,9 +221,13 @@ must(
 must(
   claude.includes('samplingControlsDeprecated') &&
     claude.includes("block.type === 'text'") &&
+    claude.includes("response.stop_reason === 'max_tokens'") &&
+    claude.includes('blockTypes') &&
     groq.includes("https://api.groq.com/openai/v1/models") &&
     groq.includes('groqBlockedModels') &&
     groq.includes('normalizeGroqModelId') &&
+    groq.includes('orpheus|canopylabs') &&
+    groq.includes('model_terms_required') &&
     groq.includes('while (attempted.size < 6)') &&
     aiProvider.includes("prefixes: ['llama-', 'meta-llama/', 'openai/', 'qwen/']") &&
     harmonyRegistry.includes("'claude-opus-5'") &&
@@ -265,9 +276,10 @@ must(
     !liveTurnHandler.includes('if (pendingUserTurnRef.current) return;') &&
     orchestrator.includes('Default to 2-5 concise spoken sentences') &&
     orchestrator.includes('Do not say "thank you," "goodbye,"') &&
+    orchestrator.includes('LIVE_RESEARCH_BUDGET_MS = 700') &&
     authorityResearch.includes('const RESEARCH_TIMEOUT_MS = 2_200') &&
-    conversation.includes("acknowledgementKind === 'presence'"),
-  'active-analysis check-ins remain separate turns, substantive interruptions queue independently, filler is deduplicated, answers are concise/direct, and authority research cannot dominate live latency',
+    conversation.includes("acknowledgement = String(acknowledgementData?.acknowledgement || '').trim()"),
+  'active-analysis turns are cancellable, acknowledgements remain non-semantic but conversational, answers are concise/direct, and authority research is bounded off the live latency tail',
 );
 
 must(
@@ -353,5 +365,9 @@ const realtimeImplementationSection = realtimeCapabilityReview.split('## Impleme
 const realtimeImplementationLines = realtimeImplementationSection.split('\n').filter(line => /^\d+\.\s/.test(line));
 must(realtimeImplementationLines.length === 10, 'literal 10-source realtime implementation review is present');
 
+
+const integratedRealtimeSourceSection = integratedRealtimeReview.split('## Sources — exactly 10')[1]?.split('## Implementation sequence')[0] || '';
+const integratedRealtimeSourceLines = integratedRealtimeSourceSection.split('\n').filter(line => /^\d+\.\s/.test(line));
+must(integratedRealtimeSourceLines.length === 10, 'literal 10-source integrated realtime implementation review is present');
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA realization verification passed.');

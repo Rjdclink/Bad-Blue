@@ -51,9 +51,9 @@ export async function callClaude(
     
     const model = options.model || CURRENT_AI_MODELS.claudeBalanced;
     const samplingControlsDeprecated = /claude-(?:opus|sonnet|haiku)-5|claude-opus-4-(?:7|8|9)/i.test(model);
-    const response = await client.messages.create({
+    const createMessage = (maxTokens: number) => client.messages.create({
       model,
-      max_tokens: options.maxTokens || 2000,
+      max_tokens: maxTokens,
       ...(!samplingControlsDeprecated && options.temperature !== undefined
         ? { temperature: options.temperature }
         : {}),
@@ -66,19 +66,38 @@ export async function callClaude(
       ]
     });
 
-    // Claude responses are arrays of content blocks. Thinking/tool blocks may
-    // precede the final text, so content[0] is not a safe assumption.
-    const content = response.content
-      .flatMap(block =>
-        block.type === 'text' && typeof (block as any).text === 'string'
-          ? [(block as any).text]
-          : []
-      )
-      .join('\n')
-      .trim();
+    const extractText = (message: Awaited<ReturnType<typeof createMessage>>) =>
+      message.content
+        .flatMap(block =>
+          block.type === 'text' && typeof (block as any).text === 'string'
+            ? [(block as any).text]
+            : []
+        )
+        .join('\n')
+        .trim();
+
+    let response = await createMessage(options.maxTokens || 2000);
+    let content = extractText(response);
+
+    // A successful HTTP response can legitimately end without a text block.
+    // Treat stop_reason as protocol state, not as an undifferentiated provider
+    // failure. If the model spent the entire budget before producing text, make
+    // one bounded continuation-sized retry; every other state remains local and
+    // is surfaced with enough metadata for the circuit breaker to classify it.
+    if (!content && response.stop_reason === 'max_tokens') {
+      const retryBudget = Math.min(
+        4000,
+        Math.max(3000, (options.maxTokens || 2000) * 2),
+      );
+      response = await createMessage(retryBudget);
+      content = extractText(response);
+    }
 
     if (!content) {
-      throw new Error('Claude returned no text content block');
+      const blockTypes = response.content.map(block => block.type).join(',') || 'none';
+      throw new Error(
+        `Claude returned no text content block (stop_reason=${response.stop_reason || 'unknown'}, blocks=${blockTypes})`,
+      );
     }
 
     const tokensUsed = response.usage.input_tokens + response.usage.output_tokens;

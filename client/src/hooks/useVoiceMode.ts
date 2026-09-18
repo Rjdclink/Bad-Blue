@@ -62,14 +62,14 @@ const MAX_NETWORK_RESTART_DELAY_MS = 5_000;
 const SERVER_VAD_MIN_THRESHOLD = 0.014;
 const SERVER_VAD_MAX_THRESHOLD = 0.075;
 const SERVER_VAD_NOISE_MULTIPLIER = 2.8;
-const SERVER_VAD_SILENCE_MS = 1_500;
+const SERVER_VAD_SILENCE_MS = 1_000;
 const SERVER_MIN_SPEECH_MS = 220;
-const SERVER_VOICE_CONFIRM_MS = 140;
+const SERVER_VOICE_CONFIRM_MS = 120;
 const SERVER_VOICE_RECENCY_MS = 90;
 const SERVER_MAX_UTTERANCE_MS = 45_000;
-const SERVER_TRANSCRIBE_TIMEOUT_MS = 18_000;
-const SERVER_BARGE_IN_PROBE_MS = 700;
-const SERVER_BARGE_IN_PROBE_TIMEOUT_MS = 4_500;
+const SERVER_TRANSCRIBE_TIMEOUT_MS = 10_000;
+const SERVER_BARGE_IN_PROBE_MS = 450;
+const SERVER_BARGE_IN_PROBE_TIMEOUT_MS = 2_500;
 
 function preferredMicrophoneConstraints(): MediaTrackConstraints {
   const supported = navigator.mediaDevices?.getSupportedConstraints?.() || {};
@@ -98,6 +98,7 @@ function makeServerTranscriptionForm(
   blob: Blob,
   speechDurationMs: number,
   bargeInProbe = false,
+  startedDuringPlayback = false,
 ): FormData {
   const form = new FormData();
   const mimeType = blob.type || preferredRecordingMimeType() || 'audio/webm';
@@ -109,6 +110,7 @@ function makeServerTranscriptionForm(
   form.append('audio', blob, `lexara-turn.${extension}`);
   form.append('speechDurationMs', String(Math.max(0, Math.round(speechDurationMs))));
   if (bargeInProbe) form.append('bargeInProbe', 'true');
+  if (startedDuringPlayback) form.append('startedDuringPlayback', 'true');
   return form;
 }
 
@@ -233,7 +235,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     const timer = window.setTimeout(() => controller.abort(), SERVER_TRANSCRIBE_TIMEOUT_MS);
 
     try {
-      const form = makeServerTranscriptionForm(blob, speechDurationMs);
+      const form = makeServerTranscriptionForm(blob, speechDurationMs, false, startedDuringPlayback);
       const response = await fetch('/api/lexara/transcribe-file', {
         method: 'POST',
         body: form,
@@ -321,7 +323,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     try {
       const response = await fetch('/api/lexara/transcribe-file', {
         method: 'POST',
-        body: makeServerTranscriptionForm(blob, speechDurationMs, true),
+        body: makeServerTranscriptionForm(blob, speechDurationMs, true, true),
         signal: controller.signal,
       });
       const payload = await response.json().catch(() => ({}));
