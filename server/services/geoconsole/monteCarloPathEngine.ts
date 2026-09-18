@@ -599,7 +599,9 @@ export class MonteCarloPathEngine {
         grid: [[1]],
         peakProbability: {
           lat: (start.latitude + end.latitude) / 2,
-          lng: (start.longitude + end.longitude) / 2,
+          lng: this.normalizeLongitude(
+            (start.longitude + endLongitudeUnwrapped) / 2
+          ),
           value: pathConfidence,
         },
       },
