@@ -33,6 +33,7 @@ export interface LexaraConversationResult {
 const MAX_HISTORY_MESSAGES = 16;
 const MAX_HISTORY_CHARACTERS = 14000;
 const MAX_PROMPT_CHARACTERS = 7000;
+const LIVE_RESEARCH_BUDGET_MS = 700;
 
 export type LexaraAcknowledgementKind =
   | 'presence'
@@ -98,9 +99,9 @@ export function getLexaraImmediateAcknowledgement(
             "Got it. I'm adding that fact to what I'm reviewing.",
           ])
         : deterministicVariant(normalized, [
+            "Thank you for that information. I'm adding it to the facts and checking how it changes the analysis.",
             "I've got that. I'm incorporating it into the facts I'm reviewing.",
-            "I have that. I'm adding it to the facts and continuing the analysis.",
-            "Understood. I'm factoring that into the rest of what you've told me.",
+            "Thank you for those facts. I'm factoring them into what I'm checking now.",
           ]),
       terminal: false,
       kind: 'added-facts',
@@ -116,8 +117,8 @@ export function getLexaraImmediateAcknowledgement(
             "I heard that. I'm including it in what I'm working through now.",
           ])
         : deterministicVariant(normalized, [
-            "Let me look into that.",
-            "I'm looking into that now.",
+            "Thank you. Let me look into that with the facts you've already given me.",
+            "I'm checking that now.",
             "Let me analyze that with the facts you've already given me.",
           ]),
       terminal: false,
@@ -316,6 +317,7 @@ export async function generateLexaraConversationResponse(
   prompt: string,
   context: LexaraConversationContext = {},
 ): Promise<LexaraConversationResult> {
+  const turnStartedAt = Date.now();
   const cleanPrompt = clampText(prompt || '', MAX_PROMPT_CHARACTERS);
   if (!cleanPrompt) {
     throw new Error('Prompt is required');
@@ -343,10 +345,16 @@ export async function generateLexaraConversationResponse(
   // Source research is route-local and fail-open for ordinary conversation.
   // It uses the platform retrieval stack and never makes Google/Gemini a LEXARA
   // dependency. A search outage must not kill the dialogue.
-  const authorityResearch = await researchLegalAuthority(cleanPrompt, {
+  const researchStartedAt = Date.now();
+  const authorityResearchPromise = researchLegalAuthority(cleanPrompt, {
     jurisdiction,
     domainName,
   });
+  const authorityResearch = await Promise.race([
+    authorityResearchPromise,
+    new Promise<null>(resolve => setTimeout(() => resolve(null), LIVE_RESEARCH_BUDGET_MS)),
+  ]);
+  const researchWaitMs = Date.now() - researchStartedAt;
 
   const systemPrompt = buildLegalSystemPrompt(context, mappedLawType, jurisdiction)
     + formatAuthorityResearchForSystem(authorityResearch);
@@ -357,6 +365,7 @@ export async function generateLexaraConversationResponse(
   // roles according to capability while provider failures remain local.
   const harmonyProviders = getConfiguredHarmonyProviders();
   let text = '';
+  const harmonyStartedAt = Date.now();
   if (harmonyProviders.length > 0) {
     try {
       const harmony = await AICollaborationOrchestrator.orchestrateCollaboration(
@@ -377,8 +386,8 @@ export async function generateLexaraConversationResponse(
           providerPolicy: 'capability-first',
           systemPrompt,
           maxParticipants: 2,
-          requestTimeoutMs: 4_000,
-          maxFallbacks: 1,
+          requestTimeoutMs: 2_200,
+          maxFallbacks: 0,
         },
       );
       if (!/^No successful responses from collaboration\.?$/i.test(harmony.finalAnswer.trim())) {
@@ -394,6 +403,15 @@ export async function generateLexaraConversationResponse(
   // Never substitute legacy template knowledge for current legal reasoning. If
   // every live Harmony path is unavailable, fail safe rather than inventing law.
   if (!text) text = degradedLegalResponse(jurisdiction);
+
+  console.info('[LEXARA Performance] live turn', {
+    researchWaitMs,
+    harmonyMs: Date.now() - harmonyStartedAt,
+    totalMs: Date.now() - turnStartedAt,
+    grounded: !!authorityResearch,
+    providersConfigured: harmonyProviders.length,
+    degraded: /^The live legal-reasoning service is temporarily unavailable/.test(text),
+  });
 
   return {
     text,
