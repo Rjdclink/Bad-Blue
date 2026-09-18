@@ -1011,12 +1011,16 @@ export class AICollaborationOrchestrator {
         }
         case AIProvider.GPT_OSS: {
           if (process.env.GROQ_API_KEY?.trim()) {
-            const response = await runProvider(
-              AIProvider.GROQ,
-              prompt,
-              { model: CURRENT_AI_MODELS.groqDeep, systemPrompt: task.systemPrompt },
-              task.timeout ? Math.min(task.timeout, 1800) : 1100,
-              taskMetadata,
+            const response = await withHarmonyDeadline(
+              runProvider(
+                AIProvider.GROQ,
+                prompt,
+                { model: CURRENT_AI_MODELS.groqDeep, systemPrompt: task.systemPrompt },
+                task.timeout ? Math.min(task.timeout, 1800) : 1100,
+                taskMetadata,
+              ),
+              task.requestTimeoutMs || 6_000,
+              task.provider,
             );
             content = response.content;
             tokensUsed = response.tokensUsed;
@@ -1035,47 +1039,59 @@ export class AICollaborationOrchestrator {
         case AIProvider.CEREBRAS:
         case AIProvider.SAMBANOVA:
         case AIProvider.HUGGINGFACE: {
-          const result = await callOpenAICompatibleHarmonyProvider(
+          const result = await withHarmonyDeadline(
+            callOpenAICompatibleHarmonyProvider(
+              task.provider,
+              task.model,
+              prompt,
+              task.systemPrompt,
+              1100,
+            ),
+            task.requestTimeoutMs || 6_000,
             task.provider,
-            task.model,
-            prompt,
-            task.systemPrompt,
-            1100,
           );
           content = result.content;
           tokensUsed = result.tokensUsed;
           break;
         }
         case AIProvider.COHERE: {
-          const result = process.env.COHERE_API_KEY?.trim()
-            ? await callCohereHarmony(task.model, prompt, task.systemPrompt, 1100)
-            : await callOpenAICompatibleHarmonyProvider(
-                AIProvider.HUGGINGFACE,
-                CURRENT_AI_MODELS.cohereViaHuggingFace,
-                prompt,
-                task.systemPrompt,
-                1100,
-              );
+          const result = await withHarmonyDeadline(
+            process.env.COHERE_API_KEY?.trim()
+              ? callCohereHarmony(task.model, prompt, task.systemPrompt, 1100)
+              : callOpenAICompatibleHarmonyProvider(
+                  AIProvider.HUGGINGFACE,
+                  CURRENT_AI_MODELS.cohereViaHuggingFace,
+                  prompt,
+                  task.systemPrompt,
+                  1100,
+                ),
+            task.requestTimeoutMs || 6_000,
+            task.provider,
+          );
           content = result.content;
           tokensUsed = result.tokensUsed;
           break;
         }
         case AIProvider.TOGETHER: {
-          const result = process.env.TOGETHER_API_KEY?.trim()
-            ? await callOpenAICompatibleHarmonyProvider(
-                AIProvider.TOGETHER,
-                task.model,
-                prompt,
-                task.systemPrompt,
-                1100,
-              )
-            : await callOpenAICompatibleHarmonyProvider(
-                AIProvider.HUGGINGFACE,
-                CURRENT_AI_MODELS.togetherViaHuggingFace,
-                prompt,
-                task.systemPrompt,
-                1100,
-              );
+          const result = await withHarmonyDeadline(
+            process.env.TOGETHER_API_KEY?.trim()
+              ? callOpenAICompatibleHarmonyProvider(
+                  AIProvider.TOGETHER,
+                  task.model,
+                  prompt,
+                  task.systemPrompt,
+                  1100,
+                )
+              : callOpenAICompatibleHarmonyProvider(
+                  AIProvider.HUGGINGFACE,
+                  CURRENT_AI_MODELS.togetherViaHuggingFace,
+                  prompt,
+                  task.systemPrompt,
+                  1100,
+                ),
+            task.requestTimeoutMs || 6_000,
+            task.provider,
+          );
           content = result.content;
           tokensUsed = result.tokensUsed;
           break;
