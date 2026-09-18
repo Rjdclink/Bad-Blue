@@ -165,7 +165,7 @@ export class MonteCarloPathEngine {
       confidence: this.calculatePathConfidence(simulations, interpolatedPoints),
       method: 'monte_carlo',
       metadata: {
-        iterations: config.iterations,
+        iterations: simulations.length,
         computeTime: Date.now() - startTime,
         pathLength: this.calculatePathLength(interpolatedPoints),
         estimatedDuration: timeDelta / 1000,
