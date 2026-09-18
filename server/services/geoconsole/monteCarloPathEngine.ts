@@ -465,11 +465,32 @@ export class MonteCarloPathEngine {
    * Generate complete motion trail from points
    */
   async generateMotionTrail(points: GPSPoint[]): Promise<MotionTrail> {
-    if (points.length < 2) {
-      throw new Error('At least 2 points required for motion trail');
+    if (points.length === 0) {
+      throw new Error('At least 1 point required for motion trail');
     }
 
     const trailId = randomUUID();
+
+    if (points.length === 1) {
+      const point = points[0];
+      return {
+        id: trailId,
+        points: [{
+          position: point,
+          velocity: { speed: 0, heading: 0 },
+          interpolated: point.source === 'interpolated',
+          opacity: 1,
+          color: this.getSpeedColor(0),
+        }],
+        startTime: point.timestamp,
+        endTime: point.timestamp,
+        totalDistance: 0,
+        averageSpeed: 0,
+        maxSpeed: 0,
+        stops: [],
+        segments: [],
+      };
+    }
     const sortedPoints = [...points].sort(
       (a, b) => a.timestamp.getTime() - b.timestamp.getTime()
     );
