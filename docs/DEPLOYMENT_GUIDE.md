@@ -132,51 +132,20 @@ OPENROUTER_API_KEY=sk-or-v1-xxxxxxxxxxxxxxxxxxxx
 ```
 Get key: [openrouter.ai/keys](https://openrouter.ai/keys)
 
-Models available:
-- `moonshot/kimi-k2:free`
-- `deepseek/deepseek-r1t2-chimera:free`
-- `x-ai/grok-4.1-fast:free`
-- `qwen/qwen-2.5-72b-instruct:free`
+Current Harmony model defaults are owned by `server/aiHarmonyModelRegistry.ts`; do not maintain a separate deployment-time model list. Configure the provider credentials you intend to expose to Harmony:
 
-**2. Gemini (FREE - 3 models)**
-```bash
-GEMINI_API_KEY=AIzaSyxxxxxxxxxxxxxxxxxxxx
-```
-Get key: [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+- OpenRouter: `OPENROUTER_API_KEY`
+- Gemini: `GEMINI_API_KEY` or `GOOGLE_API_KEY`
+- Groq: `GROQ_API_KEY`
+- Mistral: `MISTRAL_API_KEY`
+- Anthropic: `ANTHROPIC_API_KEY` or `CLAUDE_API_KEY`
+- Hugging Face: `HUGGINGFACE_API_TOKEN` or `HUGGINGFACE_API_KEY`
+- Cerebras: `CEREBRAS_API_KEY`
+- SambaNova: `SAMBANOVA_API_KEY`
+- Cohere: `COHERE_API_KEY`
+- Together: `TOGETHER_API_KEY`
 
-Models available:
-- `gemini-2.5-pro`
-- `gemini-2.5-flash`
-- `gemini-2.5-flash-lite`
-
-**3. Groq (FREE - 2 models)**
-```bash
-GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxx
-```
-Get key: [console.groq.com/keys](https://console.groq.com/keys)
-
-Models available:
-- `llama-3.3-70b-versatile`
-- `llama-3.1-8b-instant`
-
-**4. Mistral (FREE - 1 model)**
-```bash
-MISTRAL_API_KEY=xxxxxxxxxxxxxxxxxxxx
-```
-Get key: [console.mistral.ai/api-keys](https://console.mistral.ai/api-keys)
-
-Model available:
-- `mistral-large-latest`
-
-**5. Anthropic (PAID - Optional)**
-```bash
-ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxxxxxxxxx  # Optional
-```
-Get key: [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys)
-
-Models available:
-- `claude-3-5-sonnet-latest`
-- `claude-3-5-haiku-latest`
+Canonical defaults currently include `gemini-3.8-flash`, `claude-sonnet-5`, `claude-opus-5`, `openai/gpt-oss-120b`, `mistral-small-2603`, `deepseek/deepseek-v4.1-flash`, `x-ai/grok-4.6`, `moonshotai/kimi-k3`, `qwen/qwen3.8-max-0902`, and `openai/gpt-5.6-luna`, plus the registry's current gateway/provider-specific participants.
 
 #### Square Payment Processing (if using payments)
 ```bash
@@ -307,7 +276,7 @@ curl -X POST https://your-app.railway.app/api/ai/test \
 # Test Gemini
 curl -X POST https://your-app.railway.app/api/ai/test \
   -H "Content-Type: application/json" \
-  -d '{"provider": "gemini", "model": "gemini-2.5-flash"}'
+  -d '{"provider": "gemini", "model": "gemini-3.8-flash"}'
 ```
 
 ---
