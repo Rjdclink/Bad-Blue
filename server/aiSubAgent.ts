@@ -41,7 +41,7 @@ const STATE_FILE = path.join(SUBAGENT_DATA_DIR, 'state.json');
 const OFFICER_SEARCH_LOG = path.join(SUBAGENT_DATA_DIR, 'officerSearchLog.json');
 const LEARNING_DATA = path.join(SUBAGENT_DATA_DIR, 'learningData.json');
 
-const PREFERRED_MODEL = process.env.PREFERRED_MODEL || 'gpt-4o-mini';
+const PREFERRED_MODEL = process.env.PREFERRED_MODEL || 'openai/gpt-5.6-luna';
 const BING_API_KEY = process.env.BING_API_KEY || process.env.BING_SEARCH_KEY || '';
 const SUBAGENT_ALLOW_ADMIN_MODS = process.env.SUBAGENT_ALLOW_ADMIN_MODS === 'true';
 const WEB_SEARCH_ENABLED = process.env.WEB_SEARCH_ENABLED !== 'false';
@@ -358,7 +358,7 @@ export async function callAIWithFallback(
           systemPrompt: options.systemPrompt,
           temperature: options.temperature,
           maxTokens: options.maxTokens,
-          model: process.env.LEXARA_CLAUDE_MODEL?.trim() || process.env.CLAUDE_MODEL?.trim() || 'claude-sonnet-4-6',
+          model: process.env.LEXARA_CLAUDE_MODEL?.trim() || process.env.CLAUDE_MODEL?.trim() || 'claude-sonnet-5',
           useJSON: options.useJSON,
         });
         return result.content;
