@@ -29,6 +29,10 @@
 import { EventEmitter } from 'events';
 import { createLogger } from '../../logger';
 import { selectCrawlerPlan, type CrawlerSelectionPlan } from '../crawlers/CrawlerSelectionUtility';
+import {
+  getLexaraCrawlerReadiness,
+  selectLexaraCrawlerPlan,
+} from '../../lexara/LexaraCrawlerCapabilityRegistry';
 import { FMI, getFMI, type EvidenceInput, type EvidenceAnalysisResult } from './fmi';
 import { CADE, getCADE, type DraftRequest, type DraftResult } from './cade';
 import { 
@@ -74,6 +78,7 @@ export interface LegalResearchResult {
   processingTimeMs: number;
   source: 'lexara';
   crawlerSelection: CrawlerSelectionPlan;
+  crawlerCapabilities: string[];
 }
 
 export interface DocumentGenerationRequest {
@@ -320,19 +325,17 @@ export class Lexara extends EventEmitter {
    * Perform legal crawling (internal method)
    */
   private async performLegalCrawling(): Promise<void> {
-    // This method would integrate with the existing legalCrawler.ts
-    // For now, it serves as a placeholder for the ALEXARA-controlled legal crawling
-    
-    const crawlDurationMs = this.config.crawlerDurationMinutes * 60 * 1000;
-    const startTime = Date.now();
-    
-    // Simulate crawling for the configured duration
-    while (Date.now() - startTime < crawlDurationMs) {
-      // In production: crawl legal databases, case law, statutes
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-    
+    // Background cycles refresh capability/readiness state only. Actual crawling
+    // is demand-driven by the user's legal task, so idle Lexara never burns five
+    // minutes pretending to crawl or adds avoidable network load.
+    const readiness = getLexaraCrawlerReadiness();
     this.status.lastCrawlTime = new Date();
+    this.emit('crawler:readiness', {
+      checkedAt: this.status.lastCrawlTime,
+      total: readiness.length,
+      configured: readiness.filter(crawler => crawler.configured).length,
+      crawlers: readiness,
+    });
   }
 
   /**
@@ -376,6 +379,12 @@ export class Lexara extends EventEmitter {
         depth: request.context?.thorough === true ? 4 : 2,
         targetCount: 1,
       });
+      const crawlerCapabilities = selectLexaraCrawlerPlan({
+        prompt: request.query,
+        jurisdiction: request.jurisdiction,
+        domainName: request.lawType,
+        maxCrawlers: request.context?.thorough === true ? 12 : 8,
+      });
       const requestedLawType = request.lawType;
       const lawType = requestedLawType === 'statute' || requestedLawType === 'case_law' ||
         requestedLawType === 'regulation' || requestedLawType === 'constitution'
@@ -404,6 +413,7 @@ export class Lexara extends EventEmitter {
         processingTimeMs: Date.now() - startTime,
         source: 'lexara',
         crawlerSelection,
+        crawlerCapabilities: crawlerCapabilities.map(crawler => crawler.id),
       };
 
       this.emit('research:completed', { request, result });
