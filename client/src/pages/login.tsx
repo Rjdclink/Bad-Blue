@@ -117,6 +117,12 @@ export default function Login() {
     }
 
     const data = await response.json();
+    const needsSubscriptionCheckout = !data.accessZone && data.hasActiveSubscription !== true;
+    if (needsSubscriptionCheckout) {
+      // Own checkout before auth-query invalidation can rerender this page and
+      // start the resume effect in parallel.
+      subscriptionResumeStarted.current = true;
+    }
     await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
 
     const redirectPath = data.accessZone ? (data.redirectRoute || "/welcome") : "/welcome";
@@ -125,12 +131,11 @@ export default function Login() {
       description: data.accessZone ? "Master access enabled." : "Welcome back!",
     });
 
-    if (data.accessZone || data.hasActiveSubscription === true) {
+    if (!needsSubscriptionCheckout) {
       setLocation(redirectPath);
       return;
     }
 
-    subscriptionResumeStarted.current = true;
     try {
       await beginSubscriptionCheckout();
     } catch (error) {
@@ -194,12 +199,12 @@ export default function Login() {
 
       if (response.ok) {
         await response.json();
+        subscriptionResumeStarted.current = true;
         await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
         toast({
           title: "Account created",
           description: "Continue to Square to activate your LegalWhat subscription.",
         });
-        subscriptionResumeStarted.current = true;
         try {
           await beginSubscriptionCheckout();
         } catch (error) {
