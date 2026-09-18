@@ -28,6 +28,7 @@ import {
   HARMONY_17_PARTICIPANTS,
   getConfiguredHarmonyParticipants,
 } from './aiHarmonyModelRegistry';
+import { getHarmonyWarmStatus, prewarmHarmonyProviders } from './aiHarmonyWarmup';
 
 // CRITICAL: Validate configuration before anything else
 // Note: Using console.log here intentionally as logger is not yet initialized during bootstrap
@@ -417,6 +418,18 @@ async function initializeServices(): Promise<void> {
   console.log('[STARTUP] ℹ Playwright validation delegated to People Search Worker');
   console.log('[STARTUP] ℹ Use /api/people-search/health to check worker status at runtime');
 
+  // Warm provider model catalogs and transport capability state in the
+  // background. It never gates Railway readiness or the conversation path.
+  void prewarmHarmonyProviders()
+    .then(statuses => {
+      const ready = statuses.filter(status => status.state === 'ready').length;
+      const degraded = statuses.filter(status => status.state === 'degraded').length;
+      console.log(`[HARMONY] Provider prewarm complete: ${ready} ready, ${degraded} degraded`);
+    })
+    .catch(error => {
+      console.warn('[HARMONY] Provider prewarm failed route-locally:', error instanceof Error ? error.message : String(error));
+    });
+
   try {
     const { persistenceManager } = await import('./persistenceManager');
     await persistenceManager.start();
@@ -596,6 +609,7 @@ app.get("/api/health", (req, res) => {
         configured: participant.configured(),
         capabilities: participant.capabilities,
       })),
+      warmStatus: getHarmonyWarmStatus(),
     },
     recommendedModelsByUseCase: {
       user: getAIModel('user'),
