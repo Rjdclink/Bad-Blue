@@ -35,26 +35,37 @@ const harmony = read('server/aiCollaborationOrchestrator.ts');
 const claude = read('server/claude.ts');
 const groq = read('server/groq.ts');
 const routes = read('server/routes.ts');
+const config = read('server/config.ts');
+const db = read('server/db.ts');
+const storage = read('server/storage.ts');
+const aiProvider = read('server/aiProvider.ts');
+const conversationalReliabilityReview = read('docs/LEXARA_CONVERSATIONAL_RELIABILITY_10_SOURCE_REVIEW_20260918.md');
 
 must(
-  voiceMode.indexOf("if (isSpeechRecognitionSupported())") <
-    voiceMode.indexOf("else if (isServerRecognitionSupported())"),
-  'proven browser speech path remains primary with server fallback',
+  voiceMode.includes('preferServerRecognition') &&
+    voiceMode.includes('/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)') &&
+    voiceMode.includes("engineRef.current = 'server'"),
+  'mobile voice uses controllable server endpointing while desktop retains browser recognition',
 );
 must(
-  voiceMode.includes("Candidate acoustic activity is intentionally not surfaced as an"),
-  'raw server VAD cannot own interruption authority',
+  voiceMode.includes('serverEchoCancellationRef') &&
+    voiceMode.includes("optionsRef.current.onVoiceStart?.({") &&
+    conversation.includes('bargeInCandidateTimerRef') &&
+    conversation.includes("meta.echoCancellation === true"),
+  'sustained echo-cancelled server voice activity can yield the floor without raw-noise interruption',
 );
 must(
   conversation.includes('CONVERSATION_STORAGE_SCHEMA_VERSION = 2'),
   'conversation storage is versioned to quarantine corrupt prior turns',
 );
 must(
-  voiceMode.includes('const SERVER_VAD_SILENCE_MS = 850') &&
-    conversation.includes('const BROWSER_FINAL_FALLBACK_SETTLE_MS = 1_200') &&
-    conversation.includes('const SERVER_VOICE_TURN_SETTLE_MS = 180') &&
-    conversation.includes('const VOICE_END_GRACE_MS = 650'),
-  'voice endpointing waits for a complete natural utterance without restoring the old double-delay',
+  voiceMode.includes('const SERVER_VAD_SILENCE_MS = 1_500') &&
+    conversation.includes('const BROWSER_FINAL_FALLBACK_SETTLE_MS = 2_200') &&
+    conversation.includes('const SERVER_VOICE_TURN_SETTLE_MS = 500') &&
+    conversation.includes('const VOICE_END_GRACE_MS = 1_400') &&
+    conversation.includes('const INCOMPLETE_TURN_GRACE_MS = 3_200') &&
+    conversation.includes('isLikelyIncompleteUtterance'),
+  'voice endpointing tolerates natural pauses and defers incomplete thoughts before reasoning',
 );
 const liveTurnHandler = conversation.split('const handleUserMessage = useCallback')[1]?.split('handleMessageRef.current = handleUserMessage')[0] || '';
 must(
@@ -77,11 +88,11 @@ must(
   'server STT turns pass admission checks before conversation mutation',
 );
 must(
-  conversation.includes('Never interrupt LEXARA on an interim browser hypothesis') &&
+  conversation.includes('isStrongBargeIn') &&
     conversation.includes("if (phaseRef.current === 'speaking')") &&
-    conversation.includes('weakBrowserEvidence') &&
-    conversation.includes('weakServerEvidence'),
-  'barge-in requires final echo-screened speech evidence rather than interim hypotheses',
+    conversation.includes('orderedEchoRatio') &&
+    conversation.includes('autoInterruptRef.current()'),
+  'barge-in is preserved with final acoustic evidence and sequence-aware echo rejection',
 );
 must(
   avatar.includes('LEXARA_ATTORNEY_IMAGE_SOURCES') &&
@@ -115,8 +126,10 @@ must(
 must(
   voiceRoutes.includes('/api/lexara/tts/session') &&
     voiceRoutes.includes("ELEVENLABS_TTS_OUTPUT_FORMAT") &&
-    voiceRoutes.includes("'mp3_22050_32'"),
-  'TTS is progressive ElevenLabs streaming with mobile-efficient default bitrate',
+    voiceRoutes.includes("'mp3_44100_128'") &&
+    synthesis.includes('shouldBufferLexaraPlaybackOnThisDevice') &&
+    synthesis.includes('bufferStreamingSessionForMobile'),
+  'ElevenLabs uses full-quality audio with buffered mobile playback and progressive desktop streaming',
 );
 must(
   voiceRoutes.includes('/api/lexara/voice/profile'),
@@ -148,8 +161,13 @@ must(
 );
 must(
   claude.includes('samplingControlsDeprecated') &&
-    groq.includes("https://api.groq.com/openai/v1/models"),
-  'provider adapters normalize current Claude parameters and discover active Groq models',
+    groq.includes("https://api.groq.com/openai/v1/models") &&
+    groq.includes('groqBlockedModels') &&
+    aiProvider.includes("prefixes: ['llama-', 'meta-llama/', 'openai/', 'qwen/']") &&
+    harmony.includes("'claude-opus-5'") &&
+    harmony.includes('harmonyProviderCooldownUntil') &&
+    harmony.includes('markHarmonyProviderFailure'),
+  'Harmony uses active Claude IDs, Groq project-aware model recovery, and provider-local cooldowns',
 );
 must(
   routes.includes("req.path.startsWith('/images/')") &&
@@ -159,14 +177,24 @@ must(
 must(
   speechClient.includes("audio.onwaiting") &&
     speechClient.includes("audio.onstalled") &&
-    speechClient.includes("audio.onplaying"),
-  'mobile audio playback exposes waiting/stalled/playing telemetry',
+    speechClient.includes("audio.onplaying") &&
+    speechClient.includes("reportLexaraPlaybackEvent") &&
+    voiceRoutes.includes("/api/lexara/voice/playback-event"),
+  'mobile audio playback exposes waiting/stalled/playing telemetry to production',
 );
 must(
   viteConfig.includes('publicDir: path.resolve(__dirname, "public")') &&
     fs.existsSync('public/images/oip.webp') &&
     serverVite.includes('Static asset not found'),
   'attorney portrait is included in production assets and missing assets cannot masquerade as SPA HTML',
+);
+must(
+  config.includes('SUPABASE_DATABASE_URL_OVERFLOW') &&
+    config.includes('SUPABASE_SECRET_KEY_OVERFLOW') &&
+    db.includes("'lexara_conversations'") &&
+    storage.includes('[LEXARA Persistence] insert attempt failed') &&
+    storage.includes('for (let attempt = 1; attempt <= 3; attempt += 1)'),
+  'Lexara persistence is bound to Overflow authority, schema-verified, retryable, and diagnostically complete',
 );
 must(
   systemConfig.includes("DEFAULT_VOICE_PROVIDER = 'elevenlabs'") &&
@@ -189,6 +217,9 @@ must(implementationLines.length === 10, 'literal 10-source implementation review
 const harmonySourceSection = harmonyReview.split('## Sources — exactly 10')[1]?.split('## Implementation sequence')[0] || '';
 const harmonySourceLines = harmonySourceSection.split('\n').filter(line => /^\d+\.\s/.test(line));
 must(harmonySourceLines.length === 10, 'literal 10-source Harmony implementation review is present');
+const conversationalSourceSection = conversationalReliabilityReview.split('## Sources — exactly 10')[1]?.split('## Production evidence cross-check')[0] || '';
+const conversationalSourceLines = conversationalSourceSection.split('\n').filter(line => /^\d+\.\s/.test(line));
+must(conversationalSourceLines.length === 10, 'literal 10-source conversational reliability review is present');
 
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA realization verification passed.');
