@@ -1,4 +1,6 @@
-import { callAIWithFallback } from '../aiSubAgent';
+import { AICollaborationOrchestrator } from '../aiCollaborationOrchestrator';
+import { AIProvider, UsageContext } from '../aiTokenGovernor';
+import { TaskComplexity, TaskPriority } from '../aiModelSelector';
 import type { LawType as ExpertLawType } from '../../shared/legalCounselTypes';
 import { LAW_TYPE_DATA } from '../../shared/lawTypes';
 import { mapProductLawTypeToExpert } from '../../shared/legalDomainMapping';
@@ -30,6 +32,19 @@ export interface LexaraConversationResult {
 const MAX_HISTORY_MESSAGES = 16;
 const MAX_HISTORY_CHARACTERS = 14000;
 const MAX_PROMPT_CHARACTERS = 7000;
+
+function getLexaraHarmonyProviders(): AIProvider[] {
+  const providers: AIProvider[] = [];
+  if (process.env.ANTHROPIC_API_KEY?.trim() || process.env.CLAUDE_API_KEY?.trim()) {
+    providers.push(AIProvider.CLAUDE, AIProvider.CLAUDE_OPUS);
+  }
+  if (process.env.GROQ_API_KEY?.trim()) providers.push(AIProvider.GROQ);
+  if (process.env.MISTRAL_API_KEY?.trim()) providers.push(AIProvider.MISTRAL);
+  if (process.env.OPENROUTER_API_KEY?.trim()) {
+    providers.push(AIProvider.DEEPSEEK, AIProvider.GROK, AIProvider.KIMI, AIProvider.QWEN);
+  }
+  return [...new Set(providers)];
+}
 
 const STATE_BY_ABBREVIATION: Record<string, string> = {
   AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California',
@@ -222,9 +237,9 @@ export async function generateLexaraConversationResponse(
     || inferPriorUserJurisdiction(context.previousMessages);
   const domainName = trustedDomainName(context.lawType);
 
-  // Source research is route-local and fail-open for ordinary conversation. It
-  // activates only for authority-sensitive/high-consequence turns and only when
-  // Google grounding is configured. A search outage must not kill the dialogue.
+  // Source research is route-local and fail-open for ordinary conversation.
+  // It uses the platform retrieval stack and never makes Google/Gemini a LEXARA
+  // dependency. A search outage must not kill the dialogue.
   const authorityResearch = await researchLegalAuthority(cleanPrompt, {
     jurisdiction,
     domainName,
@@ -234,28 +249,44 @@ export async function generateLexaraConversationResponse(
     + formatAuthorityResearchForSystem(authorityResearch);
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
 
-  // Quality-first, low-latency live route. OpenRouter's current auto router is
-  // preferred so LEXARA uses the platform's live model mesh rather than a stale
-  // direct-provider sequence. Direct providers remain route-local fallbacks.
-  const primary = await callAIWithFallback(userPrompt, {
-    taskName: 'lexara-live-conversation',
-    systemPrompt,
-    temperature: 0.25,
-    maxTokens: 1100,
-    useJSON: false,
-    preferredProvider: 'openrouter',
-    sessionId: context.sessionId,
-    timeoutMs: 10_000,
-  });
-
-  let text = primary.success ? primary.content?.trim() : '';
-
-  // Never substitute the legacy pattern/template Zero-API legal knowledge base
-  // for senior-counsel analysis. If every live model path is unavailable, fail
-  // safe rather than presenting canned law, citations, or deadlines as current.
-  if (!text) {
-    text = degradedLegalResponse(jurisdiction);
+  // Capability-first Harmony route. No model is globally preferred. The shared
+  // Harmony engine assigns independent legal-analysis, verification, and synthesis
+  // roles according to capability while provider failures remain local.
+  const harmonyProviders = getLexaraHarmonyProviders();
+  let text = '';
+  if (harmonyProviders.length > 0) {
+    try {
+      const harmony = await AICollaborationOrchestrator.orchestrateCollaboration(
+        'lexara-live-conversation',
+        userPrompt,
+        {
+          context: UsageContext.USER,
+          complexity: TaskComplexity.COMPREHENSIVE,
+          priority: TaskPriority.CRITICAL,
+          needsLegalAnalysis: true,
+          needsVerification: true,
+          needsReasoning: true,
+          needsFastResponse: true,
+        },
+        harmonyProviders,
+        {
+          providerPolicy: 'capability-first-no-google',
+          systemPrompt,
+        },
+      );
+      if (!/^No successful responses from collaboration\.?$/i.test(harmony.finalAnswer.trim())) {
+        text = harmony.finalAnswer.trim();
+      }
+    } catch (error) {
+      console.warn('[LEXARA Harmony] Live provider collaboration unavailable', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
+
+  // Never substitute legacy template knowledge for current legal reasoning. If
+  // every live Harmony path is unavailable, fail safe rather than inventing law.
+  if (!text) text = degradedLegalResponse(jurisdiction);
 
   return {
     text,
