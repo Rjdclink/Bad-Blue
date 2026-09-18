@@ -12,6 +12,7 @@ delete process.env.PURGE_LOCAL_TEST_USERS_BEFORE;
 const authSource = readFileSync(new URL('../server/auth.ts', import.meta.url), 'utf8');
 const routesSource = readFileSync(new URL('../server/routes.ts', import.meta.url), 'utf8');
 const subscriptionAuthSource = readFileSync(new URL('../server/routes/auth.routes.ts', import.meta.url), 'utf8');
+const legacySubscriptionMiddlewareSource = readFileSync(new URL('../server/middleware/auth.ts', import.meta.url), 'utf8');
 const configSource = readFileSync(new URL('../server/config.ts', import.meta.url), 'utf8');
 const indexSource = readFileSync(new URL('../server/index.ts', import.meta.url), 'utf8');
 const statelessLocalAuthSource = readFileSync(new URL('../server/statelessLocalAuth.ts', import.meta.url), 'utf8');
@@ -70,6 +71,10 @@ assert.doesNotMatch(statelessLocalAuthSource, /authorization:\s*\x60Bearer \$\{a
 assert.match(statelessLocalAuthSource, /v:\s*2[\s\S]{0,400}hasPaidForAccess/, 'signed local session must carry safe user identity fields');
 assert.match(authSource, /getLocalUserByIdHttp\(/, 'paid access must revalidate durable user state after signed identity authentication');
 assert.match(authSource, /resolvePaidAccess/, 'one fresh paid-access decision must govern protected services');
+assert.match(subscriptionAuthSource, /refreshRequestUser/, 'legacy auth status route must delegate durable user state to canonical auth');
+assert.doesNotMatch(subscriptionAuthSource, /db\.query|subscriptions\s+s\s+JOIN\s+plans/i, 'legacy auth status route must not become an independent database subscription authority');
+assert.match(legacySubscriptionMiddlewareSource, /canonicalPaidAccess/, 'legacy subscription middleware must delegate paid access to canonical auth');
+assert.doesNotMatch(legacySubscriptionMiddlewareSource, /SELECT\s+status\s+FROM\s+users|SELECT\s+id\s+FROM\s+subscriptions/i, 'legacy subscription middleware must not read subscription authority directly');
 assert.match(authSource, /PAID_ACCESS_CACHE_TTL_MS\s*=\s*5_000/, 'high-frequency paid services must use a tightly bounded durable-state cache');
 assert.match(authSource, /invalidatePaidAccessCache/, 'subscription/admin changes must be able to invalidate cached paid state immediately');
 assert.match(authSource, /typeof req\?\.isAuthenticated === "function"/, 'identity checks must guard the optional Passport request method');
@@ -124,6 +129,7 @@ assert.match(adminRoutesSource, /invalidatePaidAccessCache\(userId\)/, 'admin su
 assert.match(statelessLocalAuthSource, /activeAdminOverride[\s\S]{0,1200}effectivePaidAccess/, 'Square revocation must preserve a live admin override without weakening suspension');
 assert.match(railwayEnvSource, /SQUARE_SUBSCRIPTION_PLAN_VARIATION_ID=/, 'Railway example must document the required Square subscription plan variation');
 assert.match(deployPrepSource, /"SQUARE_SUBSCRIPTION_PLAN_VARIATION_ID"/, 'deployment preflight must validate the Square subscription plan variation');
+assert.match(deployPrepSource, /"SQUARE_WEBHOOK_SIGNATURE_KEY"/, 'deployment preflight must validate the Square webhook verification key');
 assert.match(configSource, /SQUARE_WEBHOOK_SIGNATURE_KEY is required in production/, 'production must require the Square webhook verification key');
 assert.match(sampleConsultationSource, /\$25\.99\/month/, 'public subscription disclosure must match the $25.99 Square checkout price');
 assert.doesNotMatch(sampleConsultationSource, /\$19\.98/, 'stale public subscription pricing must not remain');
