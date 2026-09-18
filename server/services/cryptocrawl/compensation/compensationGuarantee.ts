@@ -253,11 +253,37 @@ export class CompensationGuaranteeSystem extends EventEmitter {
     crawlerId: string,
     transaction: PayoutTransaction
   ): Promise<boolean> {
-    // Simulate crawler verification
-    await new Promise(resolve => setTimeout(resolve, 100));
-    
-    // 95% success rate for verification
-    return Math.random() > 0.05;
+    // Read-only deterministic evidence verification. This crawler never submits,
+    // retries, settles, or authorizes a payout; canonical settlement remains the
+    // sole source of execution truth.
+    const amount = Number(transaction.amount);
+    const baseEvidenceValid =
+      Boolean(crawlerId)
+      && Boolean(transaction.id)
+      && Boolean(transaction.cycleId)
+      && Boolean(transaction.walletAddress?.trim())
+      && Boolean(transaction.token?.trim())
+      && Boolean(transaction.chain?.trim())
+      && Number.isFinite(amount)
+      && amount > 0
+      && Number.isFinite(transaction.timestamp)
+      && transaction.timestamp > 0
+      && Number.isFinite(transaction.confirmations)
+      && transaction.confirmations >= 0
+      && Number.isFinite(transaction.attempts)
+      && transaction.attempts >= 0;
+
+    if (!baseEvidenceValid) return false;
+
+    if (transaction.status === 'confirmed') {
+      return Boolean(transaction.txHash?.trim()) && transaction.confirmations > 0;
+    }
+
+    if (transaction.status === 'sent') {
+      return Boolean(transaction.txHash?.trim());
+    }
+
+    return transaction.status === 'pending' || transaction.status === 'failed';
   }
 
   /**
