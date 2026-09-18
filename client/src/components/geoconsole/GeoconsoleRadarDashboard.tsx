@@ -1,11 +1,9 @@
 /**
- * SPECTRA GeoConsole Radar Dashboard
- * 
- * Production-grade satellite tracking with TIGHT map lifecycle:
- * - Map created ONCE on mount, stored in ref
- * - Updates bound to DATA MUTATIONS (frame index, version), not UI flags
- * - No memoization that could freeze updates
- * - Direct imperative map updates on every frame change
+ * SPECTRA GeoConsole
+ *
+ * Operator shell over the canonical MapLibre renderer and server-side
+ * geospatial fusion/prediction pipeline. Technical subsystems stay behind
+ * the map while the operator receives one coherent timeline and map state.
  */
 
 import React, { useMemo, useState, useEffect, useCallback } from 'react';
