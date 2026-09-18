@@ -8,7 +8,6 @@ import {
 } from '../server/masterPassword.js';
 import { isAdminBypass } from '../server/adminAuth.js';
 import { getPlatformUserId, normalizePlatformUser } from '../server/authIdentity.js';
-import { createLocalSessionToken, verifyLocalSessionToken } from '../server/statelessLocalAuth.js';
 
 const previous = {
   sessionSecret: process.env.SESSION_SECRET,
@@ -20,6 +19,10 @@ const previous = {
 
 try {
   process.env.SESSION_SECRET = 'test-session-secret-that-is-longer-than-thirty-two-characters';
+
+  // statelessLocalAuth now has a bounded PostgreSQL fallback, so load it only
+  // after test configuration exists. Static ESM imports execute before this block.
+  const { createLocalSessionToken, verifyLocalSessionToken } = await import('../server/statelessLocalAuth.js');
 
   // Master access is password-only and sourced exclusively from the deployment
   // secret. Email has no role in the credential check.
