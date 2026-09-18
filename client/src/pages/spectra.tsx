@@ -46,6 +46,31 @@ interface AcquisitionResponse {
 const FIRST_PROMPT = 'What is it that you want to locate?';
 const DETAILS_PROMPT = 'What information can you give me about the target?';
 
+function combinedLocationConfidence(points: GPSPoint[], fallback = 0): number {
+  if (points.length === 0) return Math.max(0, Math.min(1, fallback));
+
+  const groups = new Map<string, number>();
+  for (const point of points) {
+    const kindFactor =
+      point.observationKind === 'historical' ? 0.55 :
+      point.observationKind === 'inferred' ? 0.65 :
+      point.observationKind === 'interpolated' ? 0.45 :
+      point.observationKind === 'predicted' ? 0.25 :
+      1;
+    const adjusted =
+      Math.max(0, Math.min(1, Number(point.confidence) || 0)) * kindFactor;
+    const key =
+      point.correlationGroup ||
+      `${point.source}:${point.provenance?.provider || 'unknown'}`;
+    groups.set(key, Math.max(groups.get(key) || 0, adjusted));
+  }
+
+  const values = [...groups.values()];
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const corroboration = Math.min(0.08, Math.max(0, values.length - 1) * 0.02);
+  return Math.max(fallback, Math.min(0.95, mean + corroboration));
+}
+
 function makeMessage(role: Message['role'], content: string): Message {
   return {
     id: `${role}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -170,14 +195,32 @@ export default function SpectraPage() {
         (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
       );
 
+      const serverLocationConfidence = payload.acquisition?.locationConfidence ?? 0;
+      const mergedLocationConfidence = combinedLocationConfidence(
+        points,
+        serverLocationConfidence,
+      );
+      const directEvidenceGroups = new Set(
+        extraEvidence.map(point =>
+          point.correlationGroup ||
+          `${point.source}:${point.provenance?.provider || 'uploaded_media'}`
+        )
+      );
+
       setObservations(points);
       setCandidateLocations(Array.isArray(payload.candidateLocations) ? payload.candidateLocations : []);
-      setConfidence(payload.acquisition?.locationConfidence ?? null);
-      setSourceCount(payload.acquisition?.sourceCount ?? 0);
+      setConfidence(
+        points.length > 0 || serverLocationConfidence > 0
+          ? mergedLocationConfidence
+          : null
+      );
+      setSourceCount(
+        (payload.acquisition?.sourceCount ?? 0) + directEvidenceGroups.size
+      );
       setPhase('active');
 
-      const certainty = payload.acquisition?.locationConfidence != null
-        ? Math.round(payload.acquisition.locationConfidence * 100)
+      const certainty = points.length > 0 || serverLocationConfidence > 0
+        ? Math.round(mergedLocationConfidence * 100)
         : null;
 
       const regionalCandidates = Array.isArray(payload.candidateLocations)
