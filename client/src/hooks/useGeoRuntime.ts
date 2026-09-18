@@ -133,7 +133,7 @@ const movePoint = (lat: number, lng: number, bearing: number, distanceMeters: nu
   return { latitude: lat2 * 180 / Math.PI, longitude: lng2 * 180 / Math.PI };
 };
 
-const generateLocalFuturecastFallback = (recentFrames: GeoFrame[], hoursAhead = 6): GeoFrame[] => {
+const generateLocalFuturecastFallback = (recentFrames: GeoFrame[], hoursAhead = FUTURECAST_HOURS): GeoFrame[] => {
   if (recentFrames.length < 3) return [];
 
   const recent = [...recentFrames]
@@ -492,19 +492,6 @@ export function useGeoRuntime(
     requestAuthoritativeFuturecast,
   ]);
 
-  // Ref to hold initialData for mount-only effect
-  const initialDataRef = useRef(initialData);
-  const loadDataRef = useRef(loadData);
-  
-  // Keep refs in sync
-  useEffect(() => {
-    loadDataRef.current = loadData;
-  }, [loadData]);
-
-  // Initialize on mount only
-  useEffect(() => {
-    loadDataRef.current(initialDataRef.current);
-  }, []); // Intentionally empty - mount only
 
   // Tick function - advances index
   const tick = useCallback(() => {
