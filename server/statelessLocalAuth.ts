@@ -28,21 +28,10 @@ interface LocalSessionPayload {
 }
 
 let client: SupabaseClient | null | undefined;
+let clientSelection: Promise<SupabaseClient> | null = null;
 
-function primarySupabaseClient(): SupabaseClient {
-  if (client) return client;
-  if (client === null) throw new Error("Primary Supabase HTTP authentication is not configured");
-
-  // getConfig() captured the original LegalWhat project URL during bootstrap,
-  // before CryptoCrawler compatibility code may remap legacy process.env names.
-  const url = String(getConfig().SUPABASE_URL || "").trim();
-  const key = String(process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || "").trim();
-  if (!url || !key) {
-    client = null;
-    throw new Error("Primary Supabase HTTP authentication is not configured");
-  }
-
-  client = createClient(url, key, {
+function buildPrimarySupabaseClient(url: string, key: string): SupabaseClient {
+  return createClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
     global: {
       headers: { "X-Client-Info": "legalwhat-server-auth" },
@@ -52,7 +41,52 @@ function primarySupabaseClient(): SupabaseClient {
       }),
     },
   });
-  return client;
+}
+
+async function primarySupabaseClient(): Promise<SupabaseClient> {
+  if (client) return client;
+  if (client === null) throw new Error("Primary Supabase HTTP authentication is not configured");
+  if (clientSelection) return clientSelection;
+
+  // Prefer Supabase's modern server-only secret key, while retaining the legacy
+  // service_role key as a bounded rotation fallback. A stale legacy key must not
+  // shadow a valid modern key. Candidate keys are validated against both tables
+  // required by LegalWhat local authentication before one becomes authoritative.
+  const url = String(getConfig().SUPABASE_URL || "").trim();
+  const keys = [
+    String(process.env.SUPABASE_SECRET_KEY || "").trim(),
+    String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim(),
+  ].filter((value, index, values) => value && values.indexOf(value) === index);
+
+  if (!url || !keys.length) {
+    client = null;
+    throw new Error("Primary Supabase HTTP authentication is not configured");
+  }
+
+  clientSelection = (async () => {
+    let lastError = "no valid server key";
+    for (const key of keys) {
+      const candidate = buildPrimarySupabaseClient(url, key);
+      const [usersProbe, accountsProbe] = await Promise.all([
+        candidate.from("users").select("id").limit(1),
+        candidate.from("auth_accounts").select("id").limit(1),
+      ]);
+      if (!usersProbe.error && !accountsProbe.error) {
+        client = candidate;
+        return candidate;
+      }
+      lastError = usersProbe.error?.message || accountsProbe.error?.message || lastError;
+    }
+
+    client = null;
+    throw new Error(`No configured Supabase server key can access the LegalWhat authentication store: ${lastError}`);
+  })();
+
+  try {
+    return await clientSelection;
+  } finally {
+    clientSelection = null;
+  }
 }
 
 function normalizeEmail(email: string): string {
@@ -79,7 +113,7 @@ function mapUser(row: any): StatelessLocalUser {
 }
 
 export async function probeLocalAuthStoreHttp(): Promise<void> {
-  const supabase = primarySupabaseClient();
+  const supabase = await primarySupabaseClient();
   const [usersProbe, accountsProbe] = await Promise.all([
     supabase.from("users").select("id").limit(1),
     supabase.from("auth_accounts").select("id").limit(1),
@@ -90,7 +124,7 @@ export async function probeLocalAuthStoreHttp(): Promise<void> {
 
 export async function getLocalUserByIdHttp(userId: string): Promise<StatelessLocalUser | null> {
   if (!userId) return null;
-  const supabase = primarySupabaseClient();
+  const supabase = await primarySupabaseClient();
   const { data, error } = await supabase
     .from("users")
     .select("id,email,first_name,last_name,status,has_paid_for_access")
@@ -103,7 +137,7 @@ export async function getLocalUserByIdHttp(userId: string): Promise<StatelessLoc
 export async function authenticateLocalUserHttp(email: string, password: string): Promise<StatelessLocalUser | null> {
   const normalizedEmail = normalizeEmail(email);
   if (!password) return null;
-  const supabase = primarySupabaseClient();
+  const supabase = await primarySupabaseClient();
 
   const { data: userRow, error: userError } = await supabase
     .from("users")
@@ -148,7 +182,7 @@ export async function registerLocalUserHttp(
   const normalizedLastName = normalizeName(lastName, "Last name");
   if (String(password || "").length < 8) throw new Error("Password must be at least 8 characters");
 
-  const supabase = primarySupabaseClient();
+  const supabase = await primarySupabaseClient();
   const { data: existing, error: lookupError } = await supabase
     .from("users")
     .select("id")
@@ -259,7 +293,7 @@ export async function purgeLocalTestUsersBeforeHttp(cutoffIso: string): Promise<
   const cutoff = new Date(cutoffIso);
   if (!Number.isFinite(cutoff.getTime())) throw new Error("Invalid local-test-user purge cutoff");
 
-  const supabase = primarySupabaseClient();
+  const supabase = await primarySupabaseClient();
   const { data: localAccounts, error: accountError } = await supabase
     .from("auth_accounts")
     .select("user_id")
