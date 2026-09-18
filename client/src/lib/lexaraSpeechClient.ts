@@ -53,17 +53,23 @@ let audioContext: AudioContext | null = null;
 
 const SILENT_AUDIO_BASE64 = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
 
+export async function getLexaraSharedAudioContext(): Promise<AudioContext> {
+  if (!audioContext || audioContext.state === 'closed') {
+    audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+  }
+
+  if (audioContext.state === 'suspended') {
+    await audioContext.resume();
+  }
+
+  return audioContext;
+}
+
 export async function unlockAudio(): Promise<boolean> {
   if (playbackState.audioUnlocked) return true;
 
   try {
-    if (!audioContext) {
-      audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-    }
-
-    if (audioContext.state === 'suspended') {
-      await audioContext.resume();
-    }
+    await getLexaraSharedAudioContext();
 
     const silentAudio = new Audio(SILENT_AUDIO_BASE64);
     silentAudio.volume = 0.001;
