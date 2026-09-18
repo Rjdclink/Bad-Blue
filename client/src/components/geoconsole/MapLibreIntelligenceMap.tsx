@@ -40,6 +40,7 @@ interface Props {
   trail: GeoFrame[];
   futurecast: GeoFrame[];
   candidateLocations?: LocationCandidate[];
+  displayTime?: Date;
   mapMode: IntelligenceMapMode;
   layers: IntelligenceLayerState;
   isLive: boolean;
@@ -65,9 +66,16 @@ const OPENFREEMAP_DARK =
   (import.meta.env?.VITE_MAP_DARK_STYLE_URL as string | undefined) ||
   'https://tiles.openfreemap.org/styles/dark';
 
+const CUSTOM_SATELLITE_TILES =
+  import.meta.env?.VITE_SATELLITE_TILES_URL as string | undefined;
 const SATELLITE_TILES =
-  (import.meta.env?.VITE_SATELLITE_TILES_URL as string | undefined) ||
+  CUSTOM_SATELLITE_TILES ||
   'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+const SATELLITE_ATTRIBUTION =
+  (import.meta.env?.VITE_SATELLITE_ATTRIBUTION as string | undefined) ||
+  (CUSTOM_SATELLITE_TILES
+    ? 'Satellite imagery'
+    : 'Esri, Maxar, Earthstar Geographics, and the GIS User Community');
 
 const TERRAIN_TILES =
   (import.meta.env?.VITE_TERRAIN_TILES_URL as string | undefined) ||
@@ -77,9 +85,12 @@ const NASA_GIBS_TEMPLATE =
   (import.meta.env?.VITE_NASA_GIBS_TILES_URL as string | undefined) ||
   'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_CorrectedReflectance_TrueColor/default/{date}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg';
 
-const WEATHER_RADAR_TILES =
-  (import.meta.env?.VITE_WEATHER_RADAR_TILES_URL as string | undefined) ||
-  'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::USCOMP-N0Q-0/{z}/{x}/{y}.png';
+const CUSTOM_WEATHER_RADAR_TEMPLATE =
+  import.meta.env?.VITE_WEATHER_RADAR_TILES_URL as string | undefined;
+const WEATHER_RADAR_LIVE_TEMPLATE =
+  'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/{layer}/{z}/{x}/{y}.png';
+const WEATHER_RADAR_ARCHIVE_TEMPLATE =
+  'https://mesonet.agron.iastate.edu/c/tile.py/1.0.0/{layer}/{z}/{x}/{y}.png';
 
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 
@@ -88,6 +99,40 @@ const nasaGibsTilesFor = (date: Date) => {
   // Earth-observation imagery is historical/current, never a forecast image.
   const bounded = date.getTime() > Date.now() ? new Date() : date;
   return NASA_GIBS_TEMPLATE.replace('{date}', utcDateKey(bounded));
+};
+
+const pad2 = (value: number) => String(value).padStart(2, '0');
+
+const weatherRadarTilesFor = (date: Date) => {
+  // IEM uses a short-cache endpoint for changing "latest" layers and recommends
+  // the long-cache endpoint for timestamp-stable archived layers. Future
+  // positions clamp to latest observed radar; SPECTRA never invents radar.
+  const now = Date.now();
+  const boundedMs = Math.min(date.getTime(), now);
+  const isLatest = now - boundedMs < 7 * 60_000;
+
+  let layer: string;
+  if (isLatest) {
+    layer = 'ridge::USCOMP-N0Q-0';
+  } else {
+    const rounded = new Date(boundedMs);
+    rounded.setUTCSeconds(0, 0);
+    rounded.setUTCMinutes(Math.floor(rounded.getUTCMinutes() / 5) * 5);
+    const stamp =
+      `${rounded.getUTCFullYear()}` +
+      `${pad2(rounded.getUTCMonth() + 1)}` +
+      `${pad2(rounded.getUTCDate())}` +
+      `${pad2(rounded.getUTCHours())}` +
+      `${pad2(rounded.getUTCMinutes())}`;
+    layer = `ridge::USCOMP-N0Q-${stamp}`;
+  }
+
+  const template =
+    CUSTOM_WEATHER_RADAR_TEMPLATE ||
+    (isLatest ? WEATHER_RADAR_LIVE_TEMPLATE : WEATHER_RADAR_ARCHIVE_TEMPLATE);
+  return template.includes('{layer}')
+    ? template.replace('{layer}', layer)
+    : template;
 };
 
 const pointFeature = (frame: GeoFrame) => ({
@@ -174,7 +219,9 @@ function circleFeature(lng: number, lat: number, radiusMeters: number, steps = 6
       Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(latRad),
       Math.cos(angularDistance) - Math.sin(latRad) * Math.sin(pointLat)
     );
-    coordinates.push([pointLng * 180 / Math.PI, pointLat * 180 / Math.PI]);
+    const pointLngDegrees = pointLng * 180 / Math.PI;
+    const normalizedLng = ((pointLngDegrees + 540) % 360) - 180;
+    coordinates.push([normalizedLng, pointLat * 180 / Math.PI]);
   }
 
   return {
@@ -320,6 +367,47 @@ function addRuntimeLayers(map: MapLibreMap) {
       data: { type: 'FeatureCollection', features: [] },
     });
   }
+  if (!map.getSource('spectra-futurecast-uncertainty')) {
+    map.addSource('spectra-futurecast-uncertainty', {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] },
+    });
+  }
+  if (!map.getLayer('spectra-futurecast-uncertainty-fill')) {
+    map.addLayer({
+      id: 'spectra-futurecast-uncertainty-fill',
+      type: 'fill',
+      source: 'spectra-futurecast-uncertainty',
+      paint: {
+        'fill-color': '#c084fc',
+        'fill-opacity': [
+          'interpolate',
+          ['linear'],
+          ['coalesce', ['get', 'confidence'], 0.25],
+          0, 0.025,
+          1, 0.14,
+        ],
+      },
+    });
+  }
+  if (!map.getLayer('spectra-futurecast-uncertainty-outline')) {
+    map.addLayer({
+      id: 'spectra-futurecast-uncertainty-outline',
+      type: 'line',
+      source: 'spectra-futurecast-uncertainty',
+      paint: {
+        'line-color': '#c084fc',
+        'line-width': 1,
+        'line-opacity': [
+          'interpolate',
+          ['linear'],
+          ['coalesce', ['get', 'confidence'], 0.25],
+          0, 0.12,
+          1, 0.45,
+        ],
+      },
+    });
+  }
   if (!map.getLayer('spectra-futurecast-line')) {
     map.addLayer({
       id: 'spectra-futurecast-line',
@@ -386,6 +474,7 @@ function addRuntimeLayers(map: MapLibreMap) {
       id: 'spectra-candidate-points',
       type: 'circle',
       source: 'spectra-candidates',
+      filter: ['==', ['geometry-type'], 'Point'],
       paint: {
         'circle-radius': ['interpolate', ['linear'], ['zoom'], 3, 6, 16, 11],
         'circle-color': 'rgba(251,191,36,0.18)',
@@ -434,7 +523,12 @@ function addRuntimeLayers(map: MapLibreMap) {
       type: 'fill',
       source: 'spectra-uncertainty',
       paint: {
-        'fill-color': '#22d3ee',
+        'fill-color': [
+          'case',
+          ['==', ['get', 'observationKind'], 'predicted'],
+          '#c084fc',
+          '#22d3ee',
+        ],
         'fill-opacity': 0.12,
       },
     });
@@ -445,7 +539,12 @@ function addRuntimeLayers(map: MapLibreMap) {
       type: 'line',
       source: 'spectra-uncertainty',
       paint: {
-        'line-color': '#67e8f9',
+        'line-color': [
+          'case',
+          ['==', ['get', 'observationKind'], 'predicted'],
+          '#d8b4fe',
+          '#67e8f9',
+        ],
         'line-width': 2,
         'line-opacity': 0.65,
       },
@@ -458,7 +557,7 @@ function addRuntimeLayers(map: MapLibreMap) {
       tiles: [SATELLITE_TILES],
       tileSize: 256,
       maxzoom: 19,
-      attribution: 'Satellite imagery © source contributors',
+      attribution: SATELLITE_ATTRIBUTION,
     });
   }
   if (!map.getLayer('spectra-satellite')) {
@@ -517,7 +616,7 @@ function addRuntimeLayers(map: MapLibreMap) {
   if (!map.getSource('spectra-weather-radar')) {
     map.addSource('spectra-weather-radar', {
       type: 'raster',
-      tiles: [WEATHER_RADAR_TILES],
+      tiles: [weatherRadarTilesFor(new Date())],
       tileSize: 256,
       minzoom: 1,
       maxzoom: 12,
@@ -587,6 +686,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
   trail,
   futurecast,
   candidateLocations = [],
+  displayTime,
   mapMode,
   layers,
   isLive,
@@ -601,7 +701,9 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
   const [rendererRecovering, setRendererRecovering] = useState(false);
   const lastFollowRef = useRef<[number, number] | null>(null);
   const userInteractionUntilRef = useRef(0);
+  const streetRequestRef = useRef(0);
   const activeStyleRef = useRef(mapMode === 'dark' ? OPENFREEMAP_DARK : OPENFREEMAP_LIBERTY);
+  const displayTimeMs = displayTime?.getTime() ?? null;
 
   const initialCenter = useMemo<[number, number]>(() => {
     if (currentFrame) return [currentFrame.position.longitude, currentFrame.position.latitude];
@@ -773,6 +875,27 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
         ? [lineFeature(futurecast), ...futurecast.map(pointFeature)]
         : [],
     });
+    safeSetData(map, 'spectra-futurecast-uncertainty', {
+      type: 'FeatureCollection',
+      features: futurecast.flatMap(frame => {
+        const accuracy = Number(frame.position.accuracy);
+        if (!Number.isFinite(accuracy) || accuracy <= 0) return [];
+        const area = circleFeature(
+          frame.position.longitude,
+          frame.position.latitude,
+          clamp(accuracy, 5, 250_000),
+        );
+        return [{
+          ...area,
+          properties: {
+            ...area.properties,
+            confidence: clamp(frame.confidence ?? 0, 0, 1),
+            timestamp: frame.timestamp.toISOString(),
+            horizonMinutes: frame.metadata?.horizonMinutes ?? null,
+          },
+        }];
+      }),
+    });
     safeSetData(map, 'spectra-current', {
       type: 'FeatureCollection',
       features: currentFrame ? [pointFeature(currentFrame)] : [],
@@ -815,28 +938,46 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
       }),
     });
 
-    if (currentFrame) {
-      const earthSource = map.getSource('spectra-earth-observation') as any;
-      const nextTile = nasaGibsTilesFor(currentFrame.timestamp);
-      const previousTile = earthSource?.__spectraTile as string | undefined;
-      if (earthSource?.setTiles && previousTile !== nextTile) {
-        earthSource.setTiles([nextTile]);
-        earthSource.__spectraTile = nextTile;
-      }
+    const contextTime = displayTimeMs !== null
+      ? new Date(displayTimeMs)
+      : currentFrame?.timestamp || new Date();
+
+    const earthSource = map.getSource('spectra-earth-observation') as any;
+    const nextEarthTile = nasaGibsTilesFor(contextTime);
+    const previousEarthTile = earthSource?.__spectraTile as string | undefined;
+    if (earthSource?.setTiles && previousEarthTile !== nextEarthTile) {
+      earthSource.setTiles([nextEarthTile]);
+      earthSource.__spectraTile = nextEarthTile;
+    }
+
+    const weatherSource = map.getSource('spectra-weather-radar') as any;
+    const nextWeatherTile = weatherRadarTilesFor(contextTime);
+    const previousWeatherTile = weatherSource?.__spectraTile as string | undefined;
+    if (weatherSource?.setTiles && previousWeatherTile !== nextWeatherTile) {
+      weatherSource.setTiles([nextWeatherTile]);
+      weatherSource.__spectraTile = nextWeatherTile;
     }
 
     const accuracy = currentFrame?.position.accuracy;
     safeSetData(map, 'spectra-uncertainty', {
       type: 'FeatureCollection',
       features: currentFrame && Number.isFinite(accuracy) && (accuracy as number) > 0
-        ? [circleFeature(
-            currentFrame.position.longitude,
-            currentFrame.position.latitude,
-            clamp(accuracy as number, 2, 100_000),
-          )]
+        ? [{
+            ...circleFeature(
+              currentFrame.position.longitude,
+              currentFrame.position.latitude,
+              clamp(accuracy as number, 2, 250_000),
+            ),
+            properties: {
+              accuracyMeters: accuracy,
+              observationKind:
+                currentFrame.observationKind ||
+                (currentFrame.source === 'predicted' ? 'predicted' : 'observed'),
+            },
+          }]
         : [],
     });
-  }, [ready, trail, futurecast, currentFrame, candidateLocations]);
+  }, [ready, trail, futurecast, currentFrame, candidateLocations, displayTimeMs]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -848,6 +989,16 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     setVisibility(map, 'spectra-observation-points', layers.markers);
     setVisibility(map, 'spectra-futurecast-line', layers.futurecast);
     setVisibility(map, 'spectra-futurecast-points', layers.futurecast);
+    setVisibility(
+      map,
+      'spectra-futurecast-uncertainty-fill',
+      layers.futurecast && layers.uncertainty,
+    );
+    setVisibility(
+      map,
+      'spectra-futurecast-uncertainty-outline',
+      layers.futurecast && layers.uncertainty,
+    );
     setVisibility(map, 'spectra-current-ring', layers.reticle);
     setVisibility(map, 'spectra-candidate-points', candidateLocations.length > 0);
     setVisibility(map, 'spectra-candidate-area', candidateLocations.length > 0);
@@ -928,12 +1079,16 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
   }, [ready, lockOnTarget, currentFrame, isLive]);
 
   useEffect(() => {
+    const requestId = ++streetRequestRef.current;
+
     if (!layers.streetImagery || !currentFrame) {
       setStreetPhoto(null);
+      setStreetLoading(false);
       return;
     }
 
     const controller = new AbortController();
+    setStreetPhoto(null);
     setStreetLoading(true);
     const params = new URLSearchParams({
       lat: String(currentFrame.position.latitude),
@@ -946,12 +1101,20 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     })
       .then(response => response.ok ? response.json() : Promise.reject(new Error('Street imagery unavailable')))
       .then(payload => {
-        setStreetPhoto(payload?.data || null);
+        if (requestId === streetRequestRef.current) {
+          setStreetPhoto(payload?.data || null);
+        }
       })
       .catch(error => {
-        if (error?.name !== 'AbortError') setStreetPhoto(null);
+        if (error?.name !== 'AbortError' && requestId === streetRequestRef.current) {
+          setStreetPhoto(null);
+        }
       })
-      .finally(() => setStreetLoading(false));
+      .finally(() => {
+        if (requestId === streetRequestRef.current) {
+          setStreetLoading(false);
+        }
+      });
 
     return () => controller.abort();
   }, [

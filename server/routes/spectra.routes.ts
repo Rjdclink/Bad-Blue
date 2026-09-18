@@ -219,11 +219,16 @@ function collectCoordinateObservations(
 function dedupeObservations(points: any[]): any[] {
   const seen = new Set<string>();
   return points.filter(point => {
+    const evidenceGroup =
+      point.correlationGroup ||
+      point.provenance?.recordId ||
+      `${point.source || 'unknown'}:${point.provenance?.provider || 'unknown'}`;
     const key = [
       Number(point.latitude).toFixed(6),
       Number(point.longitude).toFixed(6),
       new Date(point.timestamp).toISOString(),
       point.source,
+      evidenceGroup,
     ].join('|');
     if (seen.has(key)) return false;
     seen.add(key);

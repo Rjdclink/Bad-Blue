@@ -123,6 +123,10 @@ test('SPECTRA only maps qualified explicitly timestamped coordinates',
 test('Location confidence is independent-evidence aware',
   routes.includes('locationEvidenceConfidence') &&
   routes.includes('correlationGroup'));
+test('Independent evidence is preserved while duplicate source counting is prevented',
+  routes.includes('const evidenceGroup =') &&
+  spectra.includes('const evidenceGroup =') &&
+  spectra.includes('setSourceCount(payload.acquisition?.sourceCount ?? 0)'));
 test('Regional geocoder uncertainty is preserved',
   read('server/services/geoconsole/city-state-geocoder.ts').includes('accuracyMeters') &&
   read('client/src/components/geoconsole/MapLibreIntelligenceMap.tsx').includes('spectra-candidate-area'));

@@ -68,6 +68,19 @@ test('Observed, historical, inferred and interpolated evidence are visually clas
   map.includes("'historical', '#60a5fa'") &&
   map.includes("'inferred', '#f59e0b'") &&
   map.includes("'interpolated', '#94a3b8'"));
+test('Weather and earth-observation layers follow the selected timeline',
+  map.includes('weatherRadarTilesFor') &&
+  map.includes('/cache/tile.py/1.0.0/{layer}') &&
+  dashboard.includes('displayTime={timelineContextTime}'));
+test('Satellite attribution is explicit and configurable',
+  map.includes('VITE_SATELLITE_ATTRIBUTION') &&
+  map.includes('Esri, Maxar, Earthstar Geographics, and the GIS User Community'));
+test('Street imagery ignores stale request completion',
+  map.includes('streetRequestRef') &&
+  map.includes('requestId === streetRequestRef.current'));
+test('Futurecast uncertainty is rendered as a separate model envelope',
+  map.includes('spectra-futurecast-uncertainty') &&
+  map.includes("currentFrame.source === 'predicted' ? 'predicted' : 'observed'"));
 
 test('Runtime uses canonical server processing',
   runtime.includes("fetch('/api/geoconsole/process'"));
@@ -99,6 +112,16 @@ test('Futurecast is bounded to one hour and deterministic',
   futurecast.includes('MAX_SIMULATION_STEPS') &&
   futurecast.includes('seededRandom') &&
   futurecast.includes("observationKind: 'predicted'"));
+test('Interpolation cache covers evidence and configuration',
+  futurecast.includes('point.confidence.toFixed(6)') &&
+  futurecast.includes('config.directionVariance') &&
+  futurecast.includes('this.cacheOrder = this.cacheOrder.filter'));
+test('Unknown initial velocity is not presented as zero motion',
+  futurecast.includes('const hasSupportedVelocity = i > 0 && !gapBreak') &&
+  futurecast.includes('velocity: hasSupportedVelocity ? { speed, heading } : undefined'));
+test('Stop duration is closed by movement rather than the next stop',
+  futurecast.includes('activeStopIndex') &&
+  !futurecast.includes('stops[i + 1].arrivalTime'));
 test('Unsupported, implausible and long evidence gaps are not interpolated',
   read('server/services/geoconsole/index.ts').includes('maxInterpolationGapMinutes') &&
   read('server/services/geoconsole/index.ts').includes('maxInterpolationSpeedMps') &&
@@ -109,6 +132,10 @@ test('Unsupported, implausible and long evidence gaps are not interpolated',
 test('GeoConsole and SPECTRA APIs require authentication',
   geoRoutes.includes('router.use(isAuthenticated)') &&
   spectraRoutes.includes('router.use(isAuthenticated)'));
+test('GeoConsole rejects invalid dates and bounds expensive requests',
+  geoRoutes.includes('validDateString') &&
+  geoRoutes.includes('z.array(gpsPointSchema).min(1).max(2000)') &&
+  geoRoutes.includes('Interpolation endPoint must be later than startPoint'));
 test('SPECTRA only promotes qualified timestamped coordinate evidence',
   spectraRoutes.includes('explicitTimestamp') &&
   spectraRoutes.includes('hasLocationContext'));
@@ -118,6 +145,14 @@ test('Media evidence is upload-derived, signed and carried into SPECTRA acquisit
   spectraRoutes.includes('directEvidence') &&
   spectraRoutes.includes('normalizeClientEvidence') &&
   !gpsRoutes.includes("router.post('/extract'"));
+test('Uploaded media has stable content identity and richer video metadata fallback',
+  gpsRoutes.includes("createHash('sha256')") &&
+  gpsRoutes.includes('media:sha256:') &&
+  read('server/services/locationIntelligence/MediaMetadataExtractor.ts').includes('prefer-exiftool-container-metadata'));
+test('Independent corroboration survives dedupe without double-counting sources',
+  spectraRoutes.includes('const evidenceGroup =') &&
+  spectra.includes('const evidenceGroup =') &&
+  spectra.includes('setSourceCount(payload.acquisition?.sourceCount ?? 0)'));
 
 test('No production geospatial core depends on a hardcoded NYC fallback',
   !spectra.includes('40.7128') &&

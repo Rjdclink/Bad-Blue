@@ -198,11 +198,16 @@ export default function SpectraPage() {
       const mergedByKey = new Map<string, GPSPoint>();
       for (const point of [...extraEvidence, ...discoveredPoints]) {
         const timestamp = new Date(point.timestamp).toISOString();
+        const evidenceGroup =
+          point.correlationGroup ||
+          point.provenance?.recordId ||
+          `${point.source}:${point.provenance?.provider || 'unknown'}`;
         const key = [
           Number(point.latitude).toFixed(6),
           Number(point.longitude).toFixed(6),
           timestamp,
           point.source,
+          evidenceGroup,
         ].join('|');
         mergedByKey.set(key, point);
       }
@@ -215,13 +220,6 @@ export default function SpectraPage() {
         points,
         serverLocationConfidence,
       );
-      const directEvidenceGroups = new Set(
-        extraEvidence.map(point =>
-          point.correlationGroup ||
-          `${point.source}:${point.provenance?.provider || 'uploaded_media'}`
-        )
-      );
-
       setObservations(points);
       setCandidateLocations(Array.isArray(payload.candidateLocations) ? payload.candidateLocations : []);
       setConfidence(
@@ -229,9 +227,7 @@ export default function SpectraPage() {
           ? mergedLocationConfidence
           : null
       );
-      setSourceCount(
-        (payload.acquisition?.sourceCount ?? 0) + directEvidenceGroups.size
-      );
+      setSourceCount(payload.acquisition?.sourceCount ?? 0);
       setPhase('active');
 
       const certainty = points.length > 0 || serverLocationConfidence > 0

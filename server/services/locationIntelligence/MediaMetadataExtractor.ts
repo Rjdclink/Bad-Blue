@@ -145,6 +145,19 @@ export async function extractMediaMetadata(
   try {
     const tags = await ExifReader.load(filePath, { expanded: false } as any) as any;
 
+    // Video/container metadata and metadata-poor images are where ExifTool is
+    // materially richer (QuickTime/ISO-6709/XMP/IPTC). Prefer it when available
+    // instead of accepting a partial ExifReader parse as "complete".
+    const containerMetadataPreferred =
+      /\.(?:mp4|mov|m4v|3gp|3g2|avi|mkv|webm)$/i.test(fileName) ||
+      !gps;
+    if (
+      containerMetadataPreferred &&
+      await exifToolExtractor.checkInstalled().catch(() => false)
+    ) {
+      throw new Error('prefer-exiftool-container-metadata');
+    }
+
     return {
       fileName,
       gps: gps || undefined,
