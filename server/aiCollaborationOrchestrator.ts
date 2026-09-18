@@ -107,6 +107,12 @@ function harmonyProviderAvailable(provider: AIProvider): boolean {
 
 function markHarmonyProviderFailure(provider: AIProvider, error: unknown): void {
   const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  if (
+    /cooling down after a recent route failure/.test(message)
+    && (harmonyProviderCooldownUntil.get(provider) || 0) > Date.now()
+  ) {
+    return;
+  }
   const cooldownMs = /no permitted capability-compatible|retired|deprecated|model .* unavailable/.test(message)
     ? 10 * 60_000
     : /returned no text content block|returned no text|empty response/.test(message)
@@ -951,6 +957,11 @@ export class AICollaborationOrchestrator {
     let success = true;
 
     try {
+      if (!harmonyProviderAvailable(task.provider)) {
+        throw new Error(`${task.provider} is cooling down after a recent route failure`);
+      }
+
+      const outputTokenLimit = outputTokenLimit;
       switch (task.provider) {
         case AIProvider.GEMINI:
         case AIProvider.GROQ:
@@ -961,7 +972,7 @@ export class AICollaborationOrchestrator {
               task.provider,
               prompt,
               { model: task.model, systemPrompt: task.systemPrompt },
-              task.timeout ? Math.min(task.timeout, 1800) : 1100,
+              outputTokenLimit,
               taskMetadata,
             ),
             task.requestTimeoutMs || 6_000,
@@ -977,7 +988,7 @@ export class AICollaborationOrchestrator {
               AIProvider.CLAUDE,
               prompt,
               { model: task.model, systemPrompt: task.systemPrompt },
-              task.timeout ? Math.min(task.timeout, 1800) : 1100,
+              outputTokenLimit,
               taskMetadata,
             ),
             task.requestTimeoutMs || 6_000,
@@ -1002,7 +1013,7 @@ export class AICollaborationOrchestrator {
           const result = await generateOpenRouterText(prompt, {
             model,
             systemPrompt: task.systemPrompt,
-            maxTokens: task.timeout ? Math.min(task.timeout, 1800) : 1100,
+            maxTokens: outputTokenLimit,
             timeoutMs: task.requestTimeoutMs || 6_000,
           });
           content = result.content;
@@ -1016,7 +1027,7 @@ export class AICollaborationOrchestrator {
                 AIProvider.GROQ,
                 prompt,
                 { model: CURRENT_AI_MODELS.groqDeep, systemPrompt: task.systemPrompt },
-                task.timeout ? Math.min(task.timeout, 1800) : 1100,
+                outputTokenLimit,
                 taskMetadata,
               ),
               task.requestTimeoutMs || 6_000,
@@ -1028,7 +1039,7 @@ export class AICollaborationOrchestrator {
             const result = await generateOpenRouterText(prompt, {
               model: 'openai/gpt-oss-120b',
               systemPrompt: task.systemPrompt,
-              maxTokens: 1100,
+              maxTokens: outputTokenLimit,
               timeoutMs: task.requestTimeoutMs || 6_000,
             });
             content = result.content;
@@ -1045,7 +1056,7 @@ export class AICollaborationOrchestrator {
               task.model,
               prompt,
               task.systemPrompt,
-              1100,
+              outputTokenLimit,
             ),
             task.requestTimeoutMs || 6_000,
             task.provider,
@@ -1057,14 +1068,14 @@ export class AICollaborationOrchestrator {
         case AIProvider.COHERE: {
           const result = await withHarmonyDeadline(
             process.env.COHERE_API_KEY?.trim()
-              ? callCohereHarmony(task.model, prompt, task.systemPrompt, 1100)
+              ? callCohereHarmony(task.model, prompt, task.systemPrompt, outputTokenLimit)
               : callOpenAICompatibleHarmonyProvider(
                   AIProvider.HUGGINGFACE,
                   CURRENT_AI_MODELS.cohereViaHuggingFace,
                   prompt,
                   task.systemPrompt,
-                  1100,
-                ),
+                  outputTokenLimit,
+                )
             task.requestTimeoutMs || 6_000,
             task.provider,
           );
@@ -1087,8 +1098,8 @@ export class AICollaborationOrchestrator {
                   CURRENT_AI_MODELS.togetherViaHuggingFace,
                   prompt,
                   task.systemPrompt,
-                  1100,
-                ),
+                  outputTokenLimit,
+                )
             task.requestTimeoutMs || 6_000,
             task.provider,
           );
@@ -1103,7 +1114,7 @@ export class AICollaborationOrchestrator {
           const result = await generateOpenRouterText(prompt, {
             model: CURRENT_AI_MODELS.openRouterAuto,
             systemPrompt: task.systemPrompt,
-            maxTokens: 1100,
+            maxTokens: outputTokenLimit,
             timeoutMs: task.requestTimeoutMs || 6_000,
           });
           content = result.content;
