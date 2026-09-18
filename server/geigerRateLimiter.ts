@@ -108,7 +108,7 @@ const FREE_PROVIDERS: ProviderConfig[] = [
   {
     name: 'claude',
     endpoint: 'https://api.anthropic.com/v1/messages',
-    models: [process.env.LEXARA_CLAUDE_MODEL?.trim() || process.env.CLAUDE_MODEL?.trim() || 'claude-sonnet-5', 'claude-haiku-4-5-20251001'],
+    models: [process.env.LEXARA_CLAUDE_MODEL?.trim() || process.env.CLAUDE_MODEL?.trim() || 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
     rpmLimit: 5,
     rpdLimit: 100,
     tpdLimit: 25000,
