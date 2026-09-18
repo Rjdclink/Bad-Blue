@@ -961,7 +961,7 @@ export class AICollaborationOrchestrator {
         throw new Error(`${task.provider} is cooling down after a recent route failure`);
       }
 
-      const outputTokenLimit = outputTokenLimit;
+      const outputTokenLimit = task.timeout ? Math.min(task.timeout, 1800) : 1100;
       switch (task.provider) {
         case AIProvider.GEMINI:
         case AIProvider.GROQ:
@@ -1075,7 +1075,7 @@ export class AICollaborationOrchestrator {
                   prompt,
                   task.systemPrompt,
                   outputTokenLimit,
-                )
+                ),
             task.requestTimeoutMs || 6_000,
             task.provider,
           );
@@ -1091,7 +1091,7 @@ export class AICollaborationOrchestrator {
                   task.model,
                   prompt,
                   task.systemPrompt,
-                  1100,
+                  outputTokenLimit,
                 )
               : callOpenAICompatibleHarmonyProvider(
                   AIProvider.HUGGINGFACE,
