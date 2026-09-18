@@ -18,6 +18,8 @@ export interface VoiceTranscriptMeta {
   avgLogprob?: number;
   noSpeechProbability?: number;
   bargeInProbe?: boolean;
+  utteranceId?: number;
+  startedDuringPlayback?: boolean;
 }
 
 export interface VoiceActivityMeta {
@@ -154,6 +156,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
   const serverProbeAbortRef = useRef<AbortController | null>(null);
   const serverBargeInProbeTimerRef = useRef<number | null>(null);
   const serverBargeInProbeInFlightRef = useRef(false);
+  const serverUtteranceSequenceRef = useRef(0);
   const serverTranscriptionQueueRef = useRef<Promise<void>>(Promise.resolve());
   const serverRecognitionEpochRef = useRef(0);
   const serverEchoCancellationRef = useRef<boolean | undefined>(undefined);
@@ -220,6 +223,8 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     blob: Blob,
     speechDurationMs: number,
     recognitionEpoch: number,
+    utteranceId: number,
+    startedDuringPlayback: boolean,
   ) => {
     if (!blob.size || !enabledRef.current || recognitionEpoch !== serverRecognitionEpochRef.current) return;
 
@@ -260,6 +265,8 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
         noSpeechProbability: Number.isFinite(Number(payload?.quality?.noSpeechProbability))
           ? Number(payload.quality.noSpeechProbability)
           : undefined,
+        utteranceId,
+        startedDuringPlayback,
       });
     } catch (err) {
       if ((err as Error)?.name === 'AbortError') return;
@@ -274,17 +281,29 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     }
   }, [emitTranscript, resetTransientRecovery]);
 
-  const queueServerTranscription = useCallback((blob: Blob, speechDurationMs: number) => {
+  const queueServerTranscription = useCallback((
+    blob: Blob,
+    speechDurationMs: number,
+    utteranceId: number,
+    startedDuringPlayback: boolean,
+  ) => {
     const recognitionEpoch = serverRecognitionEpochRef.current;
     serverTranscriptionQueueRef.current = serverTranscriptionQueueRef.current
       .catch(() => undefined)
-      .then(() => transcribeServerBlob(blob, speechDurationMs, recognitionEpoch));
+      .then(() => transcribeServerBlob(
+        blob,
+        speechDurationMs,
+        recognitionEpoch,
+        utteranceId,
+        startedDuringPlayback,
+      ));
   }, [transcribeServerBlob]);
 
   const probeServerBargeIn = useCallback(async (
     blob: Blob,
     speechDurationMs: number,
     recognitionEpoch: number,
+    utteranceId: number,
   ) => {
     if (
       !blob.size
@@ -326,6 +345,8 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
           ? Number(payload.quality.noSpeechProbability)
           : undefined,
         bargeInProbe: true,
+        utteranceId,
+        startedDuringPlayback: true,
       });
     } catch {
       // Probe failure is route-local. The complete recording continues and the
@@ -386,6 +407,10 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       recorder = new MediaRecorder(stream);
     }
 
+    const utteranceId = serverUtteranceSequenceRef.current + 1;
+    serverUtteranceSequenceRef.current = utteranceId;
+    const startedDuringPlayback = optionsRef.current.shouldProbeBargeIn?.() === true;
+
     serverRecorderChunksRef.current = [];
     discardServerRecordingRef.current = false;
     serverRecorderRef.current = recorder;
@@ -414,7 +439,12 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || 'audio/webm' });
       discardServerRecordingRef.current = false;
       if (blob.size > 600) {
-        queueServerTranscription(blob, serverLastSpeechDurationMsRef.current);
+        queueServerTranscription(
+          blob,
+          serverLastSpeechDurationMsRef.current,
+          utteranceId,
+          startedDuringPlayback,
+        );
       }
     };
 
@@ -439,7 +469,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
         }
       }, SERVER_VOICE_CONFIRM_MS + 10);
 
-      if (optionsRef.current.shouldProbeBargeIn?.()) {
+      if (startedDuringPlayback) {
         const recognitionEpoch = serverRecognitionEpochRef.current;
         serverBargeInProbeTimerRef.current = window.setTimeout(() => {
           serverBargeInProbeTimerRef.current = null;
@@ -470,7 +500,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
               ? SERVER_BARGE_IN_PROBE_MS
               : Math.max(0, performance.now() - serverSpeechStartedAtRef.current);
             const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || 'audio/webm' });
-            void probeServerBargeIn(blob, durationMs, recognitionEpoch);
+            void probeServerBargeIn(blob, durationMs, recognitionEpoch, utteranceId);
           }, 60);
         }, SERVER_BARGE_IN_PROBE_MS);
       }
