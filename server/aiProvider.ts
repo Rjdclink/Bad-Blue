@@ -544,8 +544,8 @@ function getProviderModel(provider: AIProvider, requestedModel?: string, complex
     },
     [AIProvider.GROQ]: {
       prefixes: ['openai/', 'qwen/'],
-      default: 'openai/gpt-oss-120b',
-      comprehensive: 'openai/gpt-oss-120b'
+      default: process.env.GROQ_CHAT_MODEL?.trim() || 'qwen/qwen3.6-27b',
+      comprehensive: process.env.GROQ_CHAT_MODEL?.trim() || 'qwen/qwen3.6-27b'
     },
     [AIProvider.MISTRAL]: {
       prefixes: ['mistral', 'codestral', 'pixtral', 'open-'],
@@ -554,9 +554,9 @@ function getProviderModel(provider: AIProvider, requestedModel?: string, complex
     [AIProvider.CLAUDE]: {
       prefixes: ['claude'],
       lite: 'claude-haiku-4-5-20251001',
-      default: 'claude-sonnet-4-6',
-      comprehensive: 'claude-sonnet-4-6',
-      pro: 'claude-opus-4-8'
+      default: process.env.CLAUDE_MODEL?.trim() || 'claude-sonnet-5',
+      comprehensive: process.env.LEXARA_CLAUDE_MODEL?.trim() || 'claude-sonnet-5',
+      pro: 'claude-opus-5'
     },
     // OpenRouter free models (December 2025)
     [AIProvider.DEEPSEEK]: {
@@ -566,7 +566,7 @@ function getProviderModel(provider: AIProvider, requestedModel?: string, complex
     // Platform providers (December 2025)
     [AIProvider.OPENROUTER]: {
       prefixes: ['openrouter', 'or-'],
-      default: 'meta-llama/llama-3.3-70b-instruct:free' // OpenRouter default
+      default: process.env.OPENROUTER_DEFAULT_MODEL?.trim() || 'openrouter/auto'
     },
     [AIProvider.HUGGINGFACE]: {
       prefixes: ['hf-', 'huggingface'],
