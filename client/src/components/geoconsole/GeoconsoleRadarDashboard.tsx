@@ -96,7 +96,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
   const [lockOnTarget, setLockOnTarget] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(true);
-  const [timelineCursor, setTimelineCursor] = useState(0);
+  const [timelineOffsetMinutes, setTimelineOffsetMinutes] = useState(0);
   const [timelinePlaying, setTimelinePlaying] = useState(false);
   const [timelinePlaybackSpeed, setTimelinePlaybackSpeed] = useState(1);
 
@@ -191,40 +191,56 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
     [renderData.trail, renderData.futurecast]
   );
 
-  const observedNowIndex = useMemo(() => {
-    if (timelineFrames.length === 0) return 0;
-    let index = 0;
-    for (let i = 0; i < timelineFrames.length; i++) {
-      if (timelineFrames[i].observationKind === 'predicted' || timelineFrames[i].source === 'predicted') break;
-      index = i;
+  const observedAnchor = renderData.trail.length > 0
+    ? renderData.trail[renderData.trail.length - 1]
+    : null;
+  const observedAnchorMs = observedAnchor?.timestamp.getTime() ?? Date.now();
+
+  const timelineFrame = useMemo(() => {
+    if (timelineFrames.length === 0) return renderData.currentFrame;
+
+    const targetMs = observedAnchorMs + timelineOffsetMinutes * 60_000;
+    const candidates = timelineOffsetMinutes > 0
+      ? timelineFrames.filter(frame =>
+          frame.observationKind === 'predicted' || frame.source === 'predicted'
+        )
+      : timelineFrames.filter(frame =>
+          frame.observationKind !== 'predicted' && frame.source !== 'predicted'
+        );
+    const pool = candidates.length > 0 ? candidates : timelineFrames;
+
+    let nearest = pool[0];
+    let nearestDistance = Math.abs(nearest.timestamp.getTime() - targetMs);
+    for (let i = 1; i < pool.length; i++) {
+      const distance = Math.abs(pool[i].timestamp.getTime() - targetMs);
+      if (distance < nearestDistance) {
+        nearest = pool[i];
+        nearestDistance = distance;
+      }
     }
-    return index;
-  }, [timelineFrames]);
+    return nearest;
+  }, [timelineFrames, renderData.currentFrame, observedAnchorMs, timelineOffsetMinutes]);
 
-  useEffect(() => {
-    setTimelineCursor(observedNowIndex);
-  }, [observedNowIndex]);
-
-  useEffect(() => {
-    if (!timelinePlaying || timelineFrames.length === 0) return;
-    const delay = Math.max(100, Math.round(1000 / Math.max(0.25, timelinePlaybackSpeed)));
-    const timer = window.setInterval(() => {
-      setTimelineCursor(current => {
-        if (current >= timelineFrames.length - 1) {
-          setTimelinePlaying(false);
-          return current;
-        }
-        return current + 1;
-      });
-    }, delay);
-    return () => window.clearInterval(timer);
-  }, [timelinePlaying, timelineFrames.length, timelinePlaybackSpeed]);
-
-  const timelineFrame = timelineFrames[timelineCursor] || renderData.currentFrame;
-  const timelineIsPrediction = !!timelineFrame && (
+  const timelineIsPrediction = timelineOffsetMinutes > 0 || !!timelineFrame && (
     timelineFrame.observationKind === 'predicted' ||
     timelineFrame.source === 'predicted'
   );
+
+  useEffect(() => {
+    if (!timelinePlaying) return;
+    const delay = Math.max(100, Math.round(1000 / Math.max(0.25, timelinePlaybackSpeed)));
+    const timer = window.setInterval(() => {
+      setTimelineOffsetMinutes(current => {
+        if (current >= 60) {
+          setTimelinePlaying(false);
+          return 60;
+        }
+        return Math.min(60, current + 1);
+      });
+    }, delay);
+    return () => window.clearInterval(timer);
+  }, [timelinePlaying, timelinePlaybackSpeed]);
+
 
 
   // === EXPORT ===
@@ -377,7 +393,11 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
             <Activity className="w-3 h-3 mr-1" />{isLive ? 'LIVE' : timelinePlaying ? 'Playing' : 'Ready'}
           </Badge>
           <Badge variant="outline" className="text-xs bg-purple-500/20 text-purple-400">
-            {timelineFrames.length ? timelineCursor + 1 : 0}/{timelineFrames.length}
+            {timelineOffsetMinutes === 0
+              ? 'NOW'
+              : timelineOffsetMinutes > 0
+                ? `+${timelineOffsetMinutes}m`
+                : `${timelineOffsetMinutes}m`}
           </Badge>
           <div className="hidden xl:flex bg-slate-800/50 rounded-lg p-1">
             {(['satellite', 'hybrid', 'street', 'dark'] as MapMode[]).map(m => (
@@ -554,23 +574,23 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
 
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center gap-1 bg-slate-800/50 rounded-lg p-1">
-            <Button variant="ghost" size="icon" onClick={() => setTimelineCursor(0)} className="h-10 w-10 text-slate-400 hover:text-white"><SkipBack className="w-3 h-3" /></Button>
-            <Button variant="ghost" size="icon" onClick={() => setTimelineCursor(i => Math.max(0, i - 1))} className="h-10 w-10 text-slate-400 hover:text-white"><ChevronLeft className="w-3 h-3" /></Button>
+            <Button variant="ghost" size="icon" onClick={() => setTimelineOffsetMinutes(-60)} className="h-10 w-10 text-slate-400 hover:text-white"><SkipBack className="w-3 h-3" /></Button>
+            <Button variant="ghost" size="icon" onClick={() => setTimelineOffsetMinutes(value => Math.max(-60, value - 5))} className="h-10 w-10 text-slate-400 hover:text-white"><ChevronLeft className="w-3 h-3" /></Button>
             <Button variant="ghost" size="icon" onClick={() => setTimelinePlaying(v => !v)} className={`h-10 w-10 ${timelinePlaying ? 'text-cyan-400 bg-cyan-500/20' : 'text-white'}`}>
               {timelinePlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
             </Button>
-            <Button variant="ghost" size="icon" onClick={() => setTimelineCursor(i => Math.min(Math.max(0, timelineFrames.length - 1), i + 1))} className="h-10 w-10 text-slate-400 hover:text-white"><ChevronRight className="w-3 h-3" /></Button>
-            <Button variant="ghost" size="icon" onClick={() => setTimelineCursor(Math.max(0, timelineFrames.length - 1))} className="h-10 w-10 text-slate-400 hover:text-white"><SkipForward className="w-3 h-3" /></Button>
+            <Button variant="ghost" size="icon" onClick={() => setTimelineOffsetMinutes(value => Math.min(60, value + 5))} className="h-10 w-10 text-slate-400 hover:text-white"><ChevronRight className="w-3 h-3" /></Button>
+            <Button variant="ghost" size="icon" onClick={() => setTimelineOffsetMinutes(60)} className="h-10 w-10 text-slate-400 hover:text-white"><SkipForward className="w-3 h-3" /></Button>
           </div>
 
           <div className="flex-1 min-w-[200px]">
             <Slider
-              value={[timelineCursor]}
-              min={0}
-              max={Math.max(0, timelineFrames.length - 1)}
+              value={[timelineOffsetMinutes]}
+              min={-60}
+              max={60}
               step={1}
               onValueChange={([value]) => {
-                setTimelineCursor(value);
+                setTimelineOffsetMinutes(value);
                 setTimelinePlaying(false);
               }}
               className="cursor-pointer"
@@ -601,7 +621,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setTimelineCursor(observedNowIndex)}
+            onClick={() => setTimelineOffsetMinutes(0)}
             disabled={timelineFrames.length === 0}
             className="bg-slate-800/50 border-slate-700 min-h-10 text-xs"
           >
