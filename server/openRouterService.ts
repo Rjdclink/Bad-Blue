@@ -195,17 +195,15 @@ export function getOpenRouterStatus(): Record<ExtendedSearchModel, { available: 
       requestsRemaining: getRemainingRequests('llama'),
       error: rateLimitState.llama.errorMessage,
     },
-    // Grok maps to Llama - report availability based on Llama status
     grok: {
-      available: isOpenRouterAvailable() && !isCircuitOpen('llama') && getRemainingRequests('llama') > 0,
-      requestsRemaining: getRemainingRequests('llama'),
-      error: rateLimitState.llama.errorMessage,
+      available: isOpenRouterAvailable() && !isCircuitOpen('grok') && getRemainingRequests('grok') > 0,
+      requestsRemaining: getRemainingRequests('grok'),
+      error: rateLimitState.grok.errorMessage,
     },
-    // Kimi maps to Qwen - report availability based on Qwen status
     kimi: {
-      available: isOpenRouterAvailable() && !isCircuitOpen('qwen') && getRemainingRequests('qwen') > 0,
-      requestsRemaining: getRemainingRequests('qwen'),
-      error: rateLimitState.qwen.errorMessage,
+      available: isOpenRouterAvailable() && !isCircuitOpen('kimi') && getRemainingRequests('kimi') > 0,
+      requestsRemaining: getRemainingRequests('kimi'),
+      error: rateLimitState.kimi.errorMessage,
     },
   };
 }
