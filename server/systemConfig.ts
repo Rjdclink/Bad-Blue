@@ -35,8 +35,8 @@ export const VOICE_PROVIDERS: Record<string, VoiceProviderConfig> = {
   elevenlabs: {
     provider: 'elevenlabs',
     apiKey: process.env.ELEVENLABS_API_KEY,
-    voiceId: process.env.ELEVENLABS_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL', // Rachel
-    model: 'eleven_turbo_v2',
+    voiceId: process.env.ELEVENLABS_VOICE_ID,
+    model: process.env.ELEVENLABS_TTS_MODEL?.trim() || 'eleven_flash_v2_5',
     settings: {
       pitch: 0,
       rate: 1.0,
@@ -44,19 +44,11 @@ export const VOICE_PROVIDERS: Record<string, VoiceProviderConfig> = {
       similarityBoost: 0.8,
     },
   },
-  // Fallback: Browser TTS
-  browser: {
-    provider: 'browser',
-    settings: {
-      pitch: 1.1,
-      rate: 1.0,
-      stability: 1.0,
-      similarityBoost: 1.0,
-    },
-  },
+  // Browser speech synthesis is intentionally not a LEXARA production voice.
+  // It remains omitted so an outage cannot change LEXARA's acoustic identity.
 };
 
-export const DEFAULT_VOICE_PROVIDER = process.env.VOICE_PROVIDER || 'browser';
+export const DEFAULT_VOICE_PROVIDER = 'elevenlabs';
 
 // ═══════════════════════════════════════════════════════
 // LEXARA PERSONA CONFIGURATION
