@@ -227,6 +227,7 @@ export interface AIFallbackOptions {
   preferredProvider?: 'gemini' | 'groq' | 'mistral' | 'openrouter' | 'anthropic' | 'local';
   useJSON?: boolean;
   taskName?: string;
+  sessionId?: string;
 }
 
 /**
@@ -330,6 +331,7 @@ export async function callAIWithFallback(
           temperature: options.temperature,
           maxTokens: options.maxTokens,
           timeoutMs: 18_000,
+          sessionId: options.sessionId,
         });
         return result.content;
       },
