@@ -85,9 +85,12 @@ const NASA_GIBS_TEMPLATE =
   (import.meta.env?.VITE_NASA_GIBS_TILES_URL as string | undefined) ||
   'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_CorrectedReflectance_TrueColor/default/{date}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg';
 
-const WEATHER_RADAR_TEMPLATE =
-  (import.meta.env?.VITE_WEATHER_RADAR_TILES_URL as string | undefined) ||
+const CUSTOM_WEATHER_RADAR_TEMPLATE =
+  import.meta.env?.VITE_WEATHER_RADAR_TILES_URL as string | undefined;
+const WEATHER_RADAR_LIVE_TEMPLATE =
   'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/{layer}/{z}/{x}/{y}.png';
+const WEATHER_RADAR_ARCHIVE_TEMPLATE =
+  'https://mesonet.agron.iastate.edu/c/tile.py/1.0.0/{layer}/{z}/{x}/{y}.png';
 
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 
@@ -101,31 +104,35 @@ const nasaGibsTilesFor = (date: Date) => {
 const pad2 = (value: number) => String(value).padStart(2, '0');
 
 const weatherRadarTilesFor = (date: Date) => {
-  // IEM serves the latest CONUS mosaic with the -0 suffix and archived mosaics
-  // at exact five-minute UTC intervals. Future timeline positions therefore
-  // clamp to the latest observed radar rather than inventing forecast radar.
-  if (!WEATHER_RADAR_TEMPLATE.includes('{layer}')) return WEATHER_RADAR_TEMPLATE;
-
+  // IEM uses a short-cache endpoint for changing "latest" layers and recommends
+  // the long-cache endpoint for timestamp-stable archived layers. Future
+  // positions clamp to latest observed radar; SPECTRA never invents radar.
   const now = Date.now();
   const boundedMs = Math.min(date.getTime(), now);
-  if (now - boundedMs < 7 * 60_000) {
-    return WEATHER_RADAR_TEMPLATE.replace('{layer}', 'ridge::USCOMP-N0Q-0');
+  const isLatest = now - boundedMs < 7 * 60_000;
+
+  let layer: string;
+  if (isLatest) {
+    layer = 'ridge::USCOMP-N0Q-0';
+  } else {
+    const rounded = new Date(boundedMs);
+    rounded.setUTCSeconds(0, 0);
+    rounded.setUTCMinutes(Math.floor(rounded.getUTCMinutes() / 5) * 5);
+    const stamp =
+      `${rounded.getUTCFullYear()}` +
+      `${pad2(rounded.getUTCMonth() + 1)}` +
+      `${pad2(rounded.getUTCDate())}` +
+      `${pad2(rounded.getUTCHours())}` +
+      `${pad2(rounded.getUTCMinutes())}`;
+    layer = `ridge::USCOMP-N0Q-${stamp}`;
   }
 
-  const rounded = new Date(boundedMs);
-  rounded.setUTCSeconds(0, 0);
-  rounded.setUTCMinutes(Math.floor(rounded.getUTCMinutes() / 5) * 5);
-  const stamp =
-    `${rounded.getUTCFullYear()}` +
-    `${pad2(rounded.getUTCMonth() + 1)}` +
-    `${pad2(rounded.getUTCDate())}` +
-    `${pad2(rounded.getUTCHours())}` +
-    `${pad2(rounded.getUTCMinutes())}`;
-
-  return WEATHER_RADAR_TEMPLATE.replace(
-    '{layer}',
-    `ridge::USCOMP-N0Q-${stamp}`,
-  );
+  const template =
+    CUSTOM_WEATHER_RADAR_TEMPLATE ||
+    (isLatest ? WEATHER_RADAR_LIVE_TEMPLATE : WEATHER_RADAR_ARCHIVE_TEMPLATE);
+  return template.includes('{layer}')
+    ? template.replace('{layer}', layer)
+    : template;
 };
 
 const pointFeature = (frame: GeoFrame) => ({
