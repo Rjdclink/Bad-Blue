@@ -53,7 +53,7 @@ const MAX_NETWORK_RESTART_DELAY_MS = 5_000;
 const SERVER_VAD_MIN_THRESHOLD = 0.014;
 const SERVER_VAD_MAX_THRESHOLD = 0.075;
 const SERVER_VAD_NOISE_MULTIPLIER = 2.8;
-const SERVER_VAD_SILENCE_MS = 550;
+const SERVER_VAD_SILENCE_MS = 850;
 const SERVER_MIN_SPEECH_MS = 220;
 const SERVER_VOICE_CONFIRM_MS = 140;
 const SERVER_VOICE_RECENCY_MS = 90;
@@ -100,6 +100,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
   const desiredListeningRef = useRef(false);
   const suspendedRef = useRef(false);
   const recognitionActiveRef = useRef(false);
+  const browserFinalResultIndexesRef = useRef<Set<number>>(new Set());
   const restartTimerRef = useRef<number | null>(null);
   const restartDelayRef = useRef(BASE_RESTART_DELAY_MS);
   const networkFailureCountRef = useRef(0);
@@ -539,6 +540,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     recognition.maxAlternatives = 1;
 
     recognition.onstart = () => {
+      browserFinalResultIndexesRef.current.clear();
       recognitionActiveRef.current = true;
       setIsListening(true);
       setError(null);
@@ -574,30 +576,42 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
 
     recognition.onresult = (event: any) => {
       let interimText = '';
-      let finalText = '';
+      const newlyFinalized: Array<{ index: number; text: string; confidence?: number }> = [];
 
+      // resultIndex is the lowest changed result. Final results remain in the
+      // session result list and must not be emitted again on later events.
       for (let i = event.resultIndex; i < event.results.length; i += 1) {
         const result = event.results[i];
-        const text = result[0]?.transcript || '';
-        if (result.isFinal) finalText += text;
-        else interimText += text;
+        const text = String(result?.[0]?.transcript || '').trim();
+        if (!text) continue;
+        if (result.isFinal) {
+          if (browserFinalResultIndexesRef.current.has(i)) continue;
+          browserFinalResultIndexesRef.current.add(i);
+          const confidence = Number(result?.[0]?.confidence);
+          newlyFinalized.push({
+            index: i,
+            text,
+            confidence: Number.isFinite(confidence) ? confidence : undefined,
+          });
+        } else {
+          interimText += `${text} `;
+        }
       }
 
-      if (finalText.trim() || interimText.trim()) resetTransientRecovery();
+      const finalValue = newlyFinalized.map(item => item.text).join(' ').trim();
+      const interimValue = interimText.trim();
+      if (finalValue || interimValue) resetTransientRecovery();
 
-      if (finalText.trim()) {
-        const finalValue = finalText.trim();
-        const finalResult = event.results[Math.max(event.resultIndex, event.results.length - 1)];
-        const confidence = Number(finalResult?.[0]?.confidence);
+      if (finalValue) {
+        const confidence = newlyFinalized.length === 1 ? newlyFinalized[0].confidence : undefined;
         setTranscript(prev => (prev ? `${prev} ${finalValue}` : finalValue));
-        setInterimTranscript(interimText.trim());
+        setInterimTranscript(interimValue);
         emitTranscript(finalValue, true, {
           engine: 'browser',
-          confidence: Number.isFinite(confidence) ? confidence : undefined,
+          confidence,
           provider: 'browser-speech-recognition',
         });
       } else {
-        const interimValue = interimText.trim();
         setInterimTranscript(interimValue);
         if (interimValue) {
           emitTranscript(interimValue, false, {
