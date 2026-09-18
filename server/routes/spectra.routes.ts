@@ -266,9 +266,23 @@ function extractLikelyName(value: string): string | null {
   if (!text) return null;
 
   const labeled = text.match(
-    /\b(?:name|person|target|individual)\s*(?::|=|\-|is)\s*([A-Za-z][A-Za-z'’.-]+(?:\s+[A-Za-z][A-Za-z'’.-]+){1,3})/i,
+    /\b(?:name|person|target|individual)\s*(?::|=|\-|is)\s*([^,;|\n]+)/i,
   );
-  if (labeled?.[1]) return labeled[1].trim();
+  if (labeled?.[1]) {
+    const candidate = labeled[1]
+      .replace(
+        /\b(?:and\s+)?(?:(?:his|her|their)\s+)?(?:phone|number|cell|mobile|located|last\s+known|lives?|from|near|around|in)\b.*$/i,
+        '',
+      )
+      .replace(/^[^A-Za-z]+|[^A-Za-z'’.-]+$/g, '')
+      .trim();
+
+    if (
+      /^[A-Za-z][A-Za-z'’.-]+(?:\s+[A-Za-z][A-Za-z'’.-]+){1,3}$/.test(candidate)
+    ) {
+      return candidate;
+    }
+  }
 
   const withoutPhone = (() => {
     const phone = extractPhoneNumber(text);
