@@ -1,30 +1,32 @@
 import type { AIProvider } from './aiTokenGovernor';
 
+const asProvider = (value: string): AIProvider => value as AIProvider;
+
 const PROVIDER = {
-  GEMINI: 'gemini',
-  GROQ: 'groq',
-  MISTRAL: 'mistral',
-  CLAUDE: 'claude',
-  DEEPSEEK: 'deepseek',
-  GROK: 'grok',
-  KIMI: 'kimi',
-  GPT_OSS: 'gpt_oss',
-  FALCON: 'falcon',
-  CODE_LLAMA: 'code_llama',
-  GPT_NEOX: 'gpt_neox',
-  QWEN: 'qwen',
-  GPT5_MINI: 'gpt5_mini',
-  CLAUDE_OPUS: 'claude_opus',
-  OPENROUTER: 'openrouter',
-  HUGGINGFACE: 'huggingface',
-  LMAI: 'lmai',
-  COHERE: 'cohere',
-  TOGETHER: 'together',
-  PERPLEXITY: 'perplexity',
-  FIREWORKS: 'fireworks',
-  CEREBRAS: 'cerebras',
-  SAMBANOVA: 'sambanova',
-} as const satisfies Record<string, AIProvider>;
+  GEMINI: asProvider('gemini'),
+  GROQ: asProvider('groq'),
+  MISTRAL: asProvider('mistral'),
+  CLAUDE: asProvider('claude'),
+  DEEPSEEK: asProvider('deepseek'),
+  GROK: asProvider('grok'),
+  KIMI: asProvider('kimi'),
+  GPT_OSS: asProvider('gpt_oss'),
+  FALCON: asProvider('falcon'),
+  CODE_LLAMA: asProvider('code_llama'),
+  GPT_NEOX: asProvider('gpt_neox'),
+  QWEN: asProvider('qwen'),
+  GPT5_MINI: asProvider('gpt5_mini'),
+  CLAUDE_OPUS: asProvider('claude_opus'),
+  OPENROUTER: asProvider('openrouter'),
+  HUGGINGFACE: asProvider('huggingface'),
+  LMAI: asProvider('lmai'),
+  COHERE: asProvider('cohere'),
+  TOGETHER: asProvider('together'),
+  PERPLEXITY: asProvider('perplexity'),
+  FIREWORKS: asProvider('fireworks'),
+  CEREBRAS: asProvider('cerebras'),
+  SAMBANOVA: asProvider('sambanova'),
+} as const;
 
 /**
  * Canonical current-model registry for the platform-wide Harmony mesh.
