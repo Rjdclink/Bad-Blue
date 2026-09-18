@@ -13,6 +13,7 @@ import {
   FusedLocation,
   BoundingBox,
 } from './types';
+import { createHash } from 'crypto';
 import { createLogger } from '../../logger';
 
 const log = createLogger('InputFusionEngine');
@@ -407,7 +408,8 @@ export class InputFusionEngine {
 
     let totalWeight = 0;
     let weightedLat = 0;
-    let weightedLng = 0;
+    let weightedLngSin = 0;
+    let weightedLngCos = 0;
     let weightedAlt = 0;
     let altitudeWeight = 0;
     let timestampWeight = 0;
@@ -421,7 +423,9 @@ export class InputFusionEngine {
       if (weight <= 0 || !Number.isFinite(weight)) continue;
 
       weightedLat += point.latitude * weight;
-      weightedLng += point.longitude * weight;
+      const longitudeRadians = point.longitude * DEG_TO_RAD;
+      weightedLngSin += Math.sin(longitudeRadians) * weight;
+      weightedLngCos += Math.cos(longitudeRadians) * weight;
       totalWeight += weight;
       weightedTimestamp += point.timestamp.getTime() * weight;
       timestampWeight += weight;
@@ -440,7 +444,9 @@ export class InputFusionEngine {
 
     return {
       latitude: weightedLat / totalWeight,
-      longitude: weightedLng / totalWeight,
+      longitude: this.normalizeLongitude(
+        Math.atan2(weightedLngSin, weightedLngCos) / DEG_TO_RAD
+      ),
       altitude: altitudeWeight > 0 ? weightedAlt / altitudeWeight : undefined,
       accuracy: this.calculateFusedAccuracy(points),
       timestamp: new Date(weightedTimestamp / Math.max(timestampWeight, Number.EPSILON)),
@@ -497,16 +503,20 @@ export class InputFusionEngine {
    */
   private consensusFusion(points: GPSPoint[]): GPSPoint {
     const lats = points.map(p => p.latitude).sort((a, b) => a - b);
-    const lngs = points.map(p => p.longitude).sort((a, b) => a - b);
+    const referenceLongitude = points[0].longitude;
+    const unwrappedLongitudes = points
+      .map(point => this.unwrapLongitude(point.longitude, referenceLongitude))
+      .sort((a, b) => a - b);
     const mid = Math.floor(points.length / 2);
 
     const medianLat = points.length % 2 === 0
       ? (lats[mid - 1] + lats[mid]) / 2
       : lats[mid];
-    
-    const medianLng = points.length % 2 === 0
-      ? (lngs[mid - 1] + lngs[mid]) / 2
-      : lngs[mid];
+
+    const medianLongitudeUnwrapped = points.length % 2 === 0
+      ? (unwrappedLongitudes[mid - 1] + unwrappedLongitudes[mid]) / 2
+      : unwrappedLongitudes[mid];
+    const medianLng = this.normalizeLongitude(medianLongitudeUnwrapped);
 
     const avgTimestamp = new Date(
       points.reduce((sum, p) => sum + p.timestamp.getTime(), 0) / points.length
@@ -681,6 +691,20 @@ export class InputFusionEngine {
     return maxDistance;
   }
 
+  private normalizeLongitude(longitude: number): number {
+    let normalized = longitude;
+    while (normalized > 180) normalized -= 360;
+    while (normalized <= -180) normalized += 360;
+    return normalized;
+  }
+
+  private unwrapLongitude(longitude: number, reference: number): number {
+    let unwrapped = longitude;
+    while (unwrapped - reference > 180) unwrapped -= 360;
+    while (unwrapped - reference < -180) unwrapped += 360;
+    return unwrapped;
+  }
+
   /**
    * Haversine distance between two points (meters)
    * Uses memoization for frequently calculated pairs
@@ -720,13 +744,32 @@ export class InputFusionEngine {
    * Generate cache key for fusion results
    */
   private generateCacheKey(inputs: GPSPoint[]): string {
-    // Use hash of sorted input coordinates and timestamps
-    const sortedInputs = [...inputs].sort((a, b) => 
-      a.latitude - b.latitude || a.longitude - b.longitude
-    );
-    return sortedInputs.slice(0, 10).map(p => 
-      `${p.latitude.toFixed(4)},${p.longitude.toFixed(4)},${p.timestamp.getTime()}`
-    ).join('|');
+    // Every evidence item participates in the key. Truncating the set can reuse
+    // a fusion result after new evidence arrives, which is unacceptable for a
+    // location authority.
+    const canonical = [...inputs]
+      .sort((a, b) =>
+        a.timestamp.getTime() - b.timestamp.getTime() ||
+        a.latitude - b.latitude ||
+        a.longitude - b.longitude ||
+        a.source.localeCompare(b.source)
+      )
+      .map(point => [
+        point.timestamp.getTime(),
+        point.latitude.toFixed(7),
+        point.longitude.toFixed(7),
+        point.altitude ?? '',
+        point.accuracy ?? '',
+        point.source,
+        point.confidence.toFixed(6),
+        point.observationKind ?? '',
+        point.correlationGroup ?? '',
+        point.provenance?.provider ?? '',
+        point.provenance?.recordId ?? '',
+      ].join(','))
+      .join('|');
+
+    return createHash('sha256').update(canonical).digest('hex');
   }
 
   /**
