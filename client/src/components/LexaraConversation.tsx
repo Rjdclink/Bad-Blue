@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { useVoiceMode, type VoiceTranscriptMeta } from '@/hooks/useVoiceMode';
 import { useVoiceSynthesis } from '@/hooks/useVoiceSynthesis';
 import {
-  LEXARAEtherealAvatar,
+  LEXARAAttorneyPortrait,
   LEXARAStatusIndicator,
   type LEXARAEmotionHint,
   type LEXARAGazeHint,
@@ -644,7 +644,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         </div>
 
         <div className="relative z-10 h-full w-full max-w-lg">
-          <LEXARAEtherealAvatar
+          <LEXARAAttorneyPortrait
             isSpeaking={isSpeaking}
             isListening={isListening}
             isThinking={isThinking}
