@@ -56,7 +56,7 @@ const FEMALE_VOICE_HINTS = [
 ];
 
 const LEXARA_VOICE_STORAGE_KEY = 'lexara-voice-profile';
-const SERVER_TTS_FETCH_TIMEOUT_MS = 8_000;
+const SERVER_TTS_FETCH_TIMEOUT_MS = 20_000;
 const MIN_PLAYBACK_WATCHDOG_MS = 10_000;
 const MAX_PLAYBACK_WATCHDOG_MS = 240_000;
 
@@ -391,48 +391,28 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     setError(null);
 
     try {
-      try {
-        await speakWithServer(cleanText, options, turnId);
-        return;
-      } catch (serverError) {
-        clearPlaybackWatchdog();
-        interruptionResolverRef.current = null;
-        if (turnId !== activeTurnRef.current) return;
-
-        const message = serverError instanceof Error ? serverError.message.toLowerCase() : String(serverError).toLowerCase();
-        const autoplayBlocked =
-          message.includes('notallowed') ||
-          message.includes('play()') ||
-          message.includes('user gesture') ||
-          message.includes('suspended');
-
-        setIsSpeaking(false);
-        if (autoplayBlocked) {
-          setProvider('audio-blocked');
-          setIsLoading(false);
-          return;
-        }
-
-        await speakWithBrowser(cleanText, options, turnId);
-      }
+      // One persona means one acoustic identity. LEXARA never silently changes
+      // to a browser/system voice if ElevenLabs is slow or temporarily down.
+      await speakWithServer(cleanText, options, turnId);
     } catch (err) {
       clearPlaybackWatchdog();
       interruptionResolverRef.current = null;
       if (turnId !== activeTurnRef.current) return;
 
-      const nextError = err instanceof Error ? err : new Error('Speech synthesis failed');
+      const nextError = err instanceof Error ? err : new Error('LEXARA voice synthesis failed');
       setError(nextError);
+      setProvider('elevenlabs-unavailable');
       setIsLoading(false);
       setIsSpeaking(false);
       options.onError?.(nextError);
 
       toast({
-        title: 'Voice Synthesis Error',
-        description: nextError.message || 'Unable to play audio.',
+        title: 'LEXARA Voice Temporarily Unavailable',
+        description: 'The consultation will continue in text without switching to a different voice.',
         variant: 'destructive',
       });
     }
-  }, [clearPlaybackWatchdog, speakWithBrowser, speakWithServer, stop, toast]);
+  }, [clearPlaybackWatchdog, speakWithServer, stop, toast]);
 
   useEffect(() => {
     return () => {
