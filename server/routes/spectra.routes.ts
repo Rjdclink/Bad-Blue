@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { isAuthenticated } from '../auth';
 import { conductFullOSINT } from '../peopleSearch';
 import { unifiedSearch } from '../webSearchService';
+import { extractCityStateHint, geocodeCityState } from '../services/geoconsole/city-state-geocoder';
 
 const router = Router();
 router.use(isAuthenticated);
@@ -215,6 +216,45 @@ router.post('/acquire', async (req: Request, res: Response) => {
     const locationObservations = dedupeObservations(observations)
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
+    const candidateLocations: Array<{
+      latitude: number;
+      longitude: number;
+      label: string;
+      confidence: number;
+      basis: 'regional_context';
+    }> = [];
+
+    // Regional hints are useful when precise timestamped coordinates are not
+    // available, but they never enter the motion timeline or masquerade as a
+    // current observation.
+    if (locationObservations.length === 0) {
+      const locationHints = [
+        details,
+        ...(Array.isArray(report.locationHistory) ? report.locationHistory : []),
+      ]
+        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+        .map(value => extractCityStateHint(value))
+        .filter((value): value is NonNullable<ReturnType<typeof extractCityStateHint>> => Boolean(value));
+
+      const firstHint = locationHints[0];
+      if (firstHint) {
+        try {
+          const region = await geocodeCityState(firstHint.query);
+          if (region) {
+            candidateLocations.push({
+              latitude: region.latitude,
+              longitude: region.longitude,
+              label: region.displayName,
+              confidence: 0.35,
+              basis: 'regional_context',
+            });
+          }
+        } catch {
+          // Geocoder failure is route-local. SPECTRA still returns all other evidence.
+        }
+      }
+    }
+
     const confidenceRaw = Number(report.confidenceScore);
     const confidence = Number.isFinite(confidenceRaw)
       ? (confidenceRaw > 1 ? confidenceRaw / 100 : confidenceRaw)
@@ -234,6 +274,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
         verificationStatus: report.identitySummary?.verificationStatus || 'Unknown',
       },
       locationObservations,
+      candidateLocations,
       evidence: {
         contactInformation: report.contactInformation || [],
         locationHistory: report.locationHistory || [],
