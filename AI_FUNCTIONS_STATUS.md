@@ -1,113 +1,29 @@
-# AI Functions Migration Status - Gemini AI Complete
+# AI Functions Status — Harmony Current
 
-## ✅ FULLY MIGRATED TO GEMINI AI
+## Current state
 
-All AI-powered functions have been successfully migrated from OpenAI to Google Gemini AI.
+AI-powered services are no longer “Gemini-only” or split into fixed user/autonomous provider silos. They enter the shared capability-driven Harmony layer. The canonical model registry is `server/aiHarmonyModelRegistry.ts`, which currently defines 17 logical participants.
 
-### Core AI Services (All Using Gemini)
+## Service behavior
 
-1. **✅ Officer Search** (`server/officerSearch.ts`)
-   - Uses: `gemini-2.5-flash`
-   - Searches public databases for officer information
-   - Returns: name, badge number, department, rank, career summary
+- **LEXARA legal conversation** — capability-matched legal/reasoning/verification subset with one concise final response, grounded authority retrieval when needed, and a live acknowledgement/control lane.
+- **Officer/OSINT analysis** — grounded search/evidence adapters feed Harmony analysis; no Groq-only or Gemini-only authority.
+- **Legal fact checking** — Harmony collaboration plus source-verification requirements; model agreement is not treated as legal proof.
+- **Legal document/analysis utilities** — use shared Harmony entry points; ML routing is advisory.
+- **CryptoCrawler AI analysis** — uses Harmony as advisory intelligence only; canonical deterministic economics/execution/settlement remain authoritative.
+- **Background/autonomous work** — uses the same configured capability pool; one provider quota cannot globally block autonomous work.
 
-2. **✅ Email Verification** (`server/emailVerification.ts`)
-   - Uses: `gemini-2.5-flash`
-   - Verifies official police department contact emails
-   - Web search + extraction capabilities
-   - Returns: verified email with confidence level
+## Canonical current defaults
 
-3. **✅ Filing Info Search** (`server/filingInfoSearch.ts`)
-   - Uses: `gemini-2.5-flash`
-   - Searches state court filing requirements
-   - Returns: filing fees, e-filing portals, instructions, clerk addresses
-   - JSON response mode enabled
+Gemini `gemini-3.8-flash`; Claude `claude-sonnet-5`; Claude Opus `claude-opus-5`; Groq `openai/gpt-oss-120b`; Mistral `mistral-small-2603`; DeepSeek `deepseek/deepseek-v4.1-flash`; Grok `x-ai/grok-4.6`; Kimi `moonshotai/kimi-k3`; Qwen `qwen/qwen3.8-max-0902`; OpenAI fast via OpenRouter `openai/gpt-5.6-luna`; plus the canonical GPT-OSS, OpenRouter-auto, Hugging Face, Cerebras, SambaNova, Cohere, and Together participants in the registry.
 
-4. **✅ Tort Notice Generator** (`server/tortNoticeGenerator.ts`)
-   - Uses: `gemini-2.5-flash`
-   - Generates state-specific tort claim notices
-   - Legally formatted documents
-   - Fallback generator included
+## Invariant
 
-5. **✅ Legal AI Analysis** (`server/legalAI.ts`)
-   - Uses: `gemini-2.5-flash`
-   - Analyzes legal issues and provides guidance
-   - Generates legal documents (complaints, lawsuits, petitions)
+All 17 participants are available to the platform according to configuration and health, but an individual task uses only the smallest appropriate capability-matched subset. This avoids needless latency, quota burn, and cascading provider failures while preserving the collective skills of the full pool.
 
-6. **✅ Precedent Search** (`server/precedentSearch.ts`)
-   - Uses: `gemini-2.5-flash`
-   - Searches for relevant case law and precedents
-   - Federal and state jurisdiction support
-   - Returns: case names, citations, holdings, relevance
-
-7. **✅ Form Assistant** (Client-side)
-   - Uses: Gemini AI via API
-   - Helps users fill out forms with AI assistance
-   - Real-time suggestions and validation
-
-8. **✅ Badge Identification** (Client-side)
-   - Uses: Gemini AI vision capabilities
-   - Analyzes uploaded badge images
-   - Extracts badge numbers and department info
-
-### Static Services (No AI Required)
-
-9. **Tort Notice Requirements** (`server/tortNoticeRequirements.ts`)
-   - Static data lookup table
-   - State-specific tort claim notice requirements
-   - No AI needed
-
-### Environment Configuration
+## Verification
 
 ```bash
-# Required environment variable
-GEMINI_API_KEY=your_gemini_api_key_here
+npm run verify:ai-harmony
+npm run verify:lexara-realization
 ```
-
-### API Key Setup
-
-All services use a single Gemini API client with centralized configuration:
-
-```typescript
-import { GoogleGenAI } from "@google/genai";
-
-let gemini: GoogleGenAI | null = null;
-
-function getGeminiClient(): GoogleGenAI {
-  if (!gemini) {
-    if (!process.env.GEMINI_API_KEY) {
-      throw new Error('GEMINI_API_KEY environment variable is not set');
-    }
-    gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  }
-  return gemini;
-}
-```
-
-### Model Selection
-
-Primary model: **gemini-2.5-flash**
-- Always uses the latest stable version of Gemini 1.5 Flash
-- Fast response times
-- Cost-effective
-- Suitable for all current use cases
-- JSON response mode available
-
-### Migration Complete ✓
-
-- ✅ All OpenAI dependencies removed
-- ✅ All services migrated to Gemini AI
-- ✅ Consistent error handling
-- ✅ Fallback mechanisms in place
-- ✅ Environment variables configured
-- ✅ Form assistance working
-- ✅ Badge identification working
-- ✅ All legal document generation working
-
-## Next Steps
-
-1. Monitor Gemini API usage and costs
-2. Optimize prompts for better results
-3. Consider upgrading to gemini-pro for complex tasks if needed
-4. Add rate limiting if necessary
-5. Enhance error messages and user feedback
