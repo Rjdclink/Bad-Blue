@@ -1,10 +1,11 @@
 /**
  * AI Collaboration Orchestrator.
  *
- * Coordinates the complete configured 17-participant Harmony mesh. Provider
- * identity never determines priority: task capabilities determine specialist
- * roles, failures stay route-local, and one final synthesis authority produces
- * the service response.
+ * Coordinates the configured 17-participant Harmony capability pool. The pool
+ * is available platform-wide, but each task uses only the smallest healthy
+ * capability-matched subset needed for that task. Provider identity never
+ * determines priority; failures stay route-local and one synthesis authority
+ * produces the service response.
  */
 
 import { AIProvider, UsageContext, TaskPriority as GovernorTaskPriority, TaskComplexity as GovernorTaskComplexity } from './aiTokenGovernor';
@@ -34,6 +35,7 @@ export interface CollaborationTask {
   fallbackProviders?: AIProvider[];
   attributes: TaskAttributes;
   timeout?: number;
+  requestTimeoutMs?: number;
 }
 
 /**
@@ -105,9 +107,13 @@ function harmonyProviderAvailable(provider: AIProvider): boolean {
 
 function markHarmonyProviderFailure(provider: AIProvider, error: unknown): void {
   const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
-  const cooldownMs = /429|rate limit|quota/.test(message)
-    ? 60_000
-    : /401|invalid api key|authentication/.test(message)
+  const cooldownMs = /no permitted capability-compatible|retired|deprecated|model .* unavailable/.test(message)
+    ? 10 * 60_000
+    : /returned no text content block|returned no text|empty response/.test(message)
+      ? 2 * 60_000
+      : /429|rate limit|quota/.test(message)
+        ? 5 * 60_000
+        : /401|invalid api key|authentication/.test(message)
       ? 10 * 60_000
       : /403|permission|blocked/.test(message)
         ? 5 * 60_000
@@ -194,6 +200,27 @@ async function callOpenAICompatibleHarmonyProvider(
   }
 }
 
+async function withHarmonyDeadline<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  provider: AIProvider,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${provider} timed out after ${timeoutMs}ms`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function callCohereHarmony(
   model: string,
   prompt: string,
@@ -250,26 +277,29 @@ export class AICollaborationOrchestrator {
     options: {
       providerPolicy?: CollaborationProviderPolicy;
       systemPrompt?: string;
+      maxParticipants?: number;
+      requestTimeoutMs?: number;
     } = {},
   ): Promise<OrchestratedResponse> {
     const startTime = Date.now();
     const context = attributes.context || UsageContext.USER;
     
-    // Filter providers by context
-    const contextProviders = getAvailableProvidersForContext(context, options.providerPolicy);
-    // The caller may describe a preferred/legacy subset, but service-level
-    // Harmony always evaluates the complete configured mesh. A local subset
-    // can never silently narrow platform capability.
-    const eligibleProviders = [...contextProviders];
+    const eligibleProviders = getAvailableProvidersForContext(context, options.providerPolicy);
     const healthyProviders = eligibleProviders.filter(harmonyProviderAvailable);
-    // Cooldowns are advisory availability evidence, not a permanent veto. If
-    // every route is cooling, allow the full eligible set rather than making
-    // LEXARA unavailable.
-    const providers = healthyProviders.length > 0 ? healthyProviders : eligibleProviders;
-    
-    if (providers.length === 0) {
+    const candidateProviders = healthyProviders.length > 0 ? healthyProviders : eligibleProviders;
+
+    if (candidateProviders.length === 0) {
       throw new Error(`No providers available for ${context} context`);
     }
+
+    // Harmony is a capability pool, not a fan-out mandate. Select the smallest
+    // healthy subset that covers this task's required capabilities. Every
+    // configured participant remains eligible for tasks where its strengths fit.
+    const providers = this.selectProvidersForTask(
+      attributes,
+      candidateProviders,
+      options.maxParticipants,
+    );
     
     // Determine orchestration strategy
     const strategy = this.selectStrategy(attributes, providers);
@@ -284,41 +314,24 @@ export class AICollaborationOrchestrator {
     ).map(task => ({
       ...task,
       systemPrompt: options.systemPrompt,
-      fallbackProviders: providers.filter(provider => provider !== task.provider),
+      requestTimeoutMs: task.requestTimeoutMs || options.requestTimeoutMs,
+      // Failover can use any healthy capability-compatible route from the pool,
+      // including routes not selected for the first attempt.
+      fallbackProviders: candidateProviders.filter(provider => provider !== task.provider),
     }));
 
-    // Harmony invariant: every configured, healthy participant contributes to
-    // every orchestrated service task. Task builders can assign specialist
-    // roles, but they are not allowed to silently exclude the rest of the mesh.
-    const representedProviders = new Set(tasks.map(task => task.provider));
-    for (const provider of providers) {
-      if (representedProviders.has(provider)) continue;
-      const capabilities = getHarmonyCapabilities(provider);
-      const role = capabilities.includes('verification')
-        ? 'verifier'
-        : capabilities.includes('research')
-          ? 'rapid-searcher'
-          : capabilities.includes('coding') && attributes.needsCodeGeneration
-            ? 'code-generator'
-            : 'pattern-analyst';
-      tasks.push({
-        id: `${taskName}-harmony-peer-${provider}`,
-        provider,
-        model: this.getDefaultModelForProvider(provider),
-        role,
-        prompt: `Contribute an independent ${role} perspective to this task. Focus on your strongest relevant capabilities, identify uncertainty, and do not fabricate facts or sources.\n\n${query}`,
-        systemPrompt: options.systemPrompt,
-        priority: 1,
-        fallbackProviders: providers.filter(candidate => candidate !== provider),
-        attributes,
-      });
-    }
-
-    // A final capability-selected synthesizer sees every successful contribution.
-    // This is the only global answer authority; individual provider output is
-    // evidence, not a competing final response.
+    // Strategy builders that already end in a synthesizer keep that single
+    // authority. Multi-perspective strategies get one synthesis pass; parallel
+    // races intentionally return the first useful specialist result.
+    const hasDependentSynthesizer = tasks.some(
+      task => task.role === 'synthesizer' && (task.dependencies?.length || 0) > 0,
+    );
     const allContributionIds = tasks.map(task => task.id);
-    if (allContributionIds.length > 1) {
+    if (
+      allContributionIds.length > 1
+      && !hasDependentSynthesizer
+      && strategy !== 'parallel-race'
+    ) {
       const finalProvider = this.selectProviderByCapabilities(
         providers,
         attributes.needsLegalAnalysis
@@ -334,12 +347,13 @@ export class AICollaborationOrchestrator {
         model: this.getDefaultModelForProvider(finalProvider),
         role: 'harmony-synthesizer',
         prompt: attributes.needsStructuredOutput
-          ? 'Synthesize every successful Harmony contribution below into one accurate result. Preserve the JSON structure requested by the original task. Return ONLY valid JSON with no markdown fences, commentary, provider names, or orchestration details. Resolve disagreements conservatively and preserve material uncertainty inside the JSON.\n\n[Results will be provided]'
-          : 'Synthesize every successful Harmony contribution below into one accurate, coherent answer. Reconcile disagreements conservatively, distinguish verified facts from inference, preserve material uncertainty, and never mention internal provider names or orchestration.\n\n[Results will be provided]',
+          ? 'Synthesize the successful specialist contributions into the requested JSON. Return ONLY valid JSON, with no markdown or provider details.\n\n[Results will be provided]'
+          : 'Synthesize the successful specialist contributions into one direct answer to the user. Answer the current question first, remove repetition, preserve material uncertainty, and do not mention providers or orchestration.\n\n[Results will be provided]',
         systemPrompt: options.systemPrompt,
         priority: maxPriority + 1,
         dependencies: allContributionIds,
-        fallbackProviders: providers.filter(candidate => candidate !== finalProvider),
+        fallbackProviders: candidateProviders.filter(candidate => candidate !== finalProvider),
+        requestTimeoutMs: options.requestTimeoutMs,
         attributes: { ...attributes, needsVerification: true },
       });
     }
@@ -469,8 +483,8 @@ export class AICollaborationOrchestrator {
   ): CollaborationTask[] {
     const tasks: CollaborationTask[] = [];
 
-    // Every healthy configured Harmony participant gets a parallel specialist
-    // role. The role is selected from declared capabilities, never provider order.
+    // The selected capability-matched subset contributes specialist work in
+    // parallel. The full 17-participant pool remains available for other tasks.
     for (const provider of providers) {
       const capabilities = getHarmonyCapabilities(provider);
       const role = capabilities.includes('legal-analysis')
@@ -510,7 +524,7 @@ export class AICollaborationOrchestrator {
         provider: synthProvider,
         model: this.getDefaultModelForProvider(synthProvider),
         role: 'synthesizer',
-        prompt: 'Synthesize the successful Harmony analyses below into one natural spoken LEXARA answer. Resolve disagreement conservatively, preserve uncertainty, distinguish facts from inference, never invent authority, and do not mention internal providers.\n\n[Results will be provided]',
+        prompt: 'Synthesize the successful specialist analyses into one direct, natural spoken answer to the user. Answer the current question or statement first. Default to 2-5 concise sentences unless additional detail is materially necessary or explicitly requested. Remove repetition, preserve uncertainty, never invent authority, and do not mention internal providers.\n\n[Results will be provided]',
         priority: 2,
         dependencies,
         attributes: { ...attrs, needsLegalAnalysis: true, needsVerification: true, needsReasoning: true },
@@ -940,24 +954,32 @@ export class AICollaborationOrchestrator {
         case AIProvider.GROQ:
         case AIProvider.MISTRAL:
         case AIProvider.CLAUDE: {
-          const response = await runProvider(
+          const response = await withHarmonyDeadline(
+            runProvider(
+              task.provider,
+              prompt,
+              { model: task.model, systemPrompt: task.systemPrompt },
+              task.timeout ? Math.min(task.timeout, 1800) : 1100,
+              taskMetadata,
+            ),
+            task.requestTimeoutMs || 6_000,
             task.provider,
-            prompt,
-            { model: task.model, systemPrompt: task.systemPrompt },
-            task.timeout ? Math.min(task.timeout, 1800) : 1100,
-            taskMetadata,
           );
           content = response.content;
           tokensUsed = response.tokensUsed;
           break;
         }
         case AIProvider.CLAUDE_OPUS: {
-          const response = await runProvider(
-            AIProvider.CLAUDE,
-            prompt,
-            { model: task.model, systemPrompt: task.systemPrompt },
-            task.timeout ? Math.min(task.timeout, 1800) : 1100,
-            taskMetadata,
+          const response = await withHarmonyDeadline(
+            runProvider(
+              AIProvider.CLAUDE,
+              prompt,
+              { model: task.model, systemPrompt: task.systemPrompt },
+              task.timeout ? Math.min(task.timeout, 1800) : 1100,
+              taskMetadata,
+            ),
+            task.requestTimeoutMs || 6_000,
+            task.provider,
           );
           content = response.content;
           tokensUsed = response.tokensUsed;
@@ -979,7 +1001,7 @@ export class AICollaborationOrchestrator {
             model,
             systemPrompt: task.systemPrompt,
             maxTokens: task.timeout ? Math.min(task.timeout, 1800) : 1100,
-            timeoutMs: 7_500,
+            timeoutMs: task.requestTimeoutMs || 6_000,
           });
           content = result.content;
           tokensUsed = Math.ceil(content.length / 4);
@@ -1001,7 +1023,7 @@ export class AICollaborationOrchestrator {
               model: 'openai/gpt-oss-120b',
               systemPrompt: task.systemPrompt,
               maxTokens: 1100,
-              timeoutMs: 7_500,
+              timeoutMs: task.requestTimeoutMs || 6_000,
             });
             content = result.content;
             tokensUsed = Math.ceil(content.length / 4);
@@ -1064,7 +1086,7 @@ export class AICollaborationOrchestrator {
             model: CURRENT_AI_MODELS.openRouterAuto,
             systemPrompt: task.systemPrompt,
             maxTokens: 1100,
-            timeoutMs: 7_500,
+            timeoutMs: task.requestTimeoutMs || 6_000,
           });
           content = result.content;
           tokensUsed = Math.ceil(content.length / 4);
@@ -1087,10 +1109,10 @@ export class AICollaborationOrchestrator {
           .filter(harmonyProviderAvailable),
       );
       if (alternatives.length > 0) {
-        // Bound concurrent recovery to the three best capability matches. This
-        // preserves route-local failover without turning one failed participant
-        // into an N² request storm across the 17-member mesh.
-        const recoveryBatch = alternatives.slice(0, 3);
+        // One capability-matched alternate is enough for route-local recovery.
+        // A failed provider must not create a retry fan-out or hold the user
+        // hostage while multiple unhealthy routes are retried.
+        const recoveryBatch = alternatives.slice(0, 1);
         try {
           const fallback = await Promise.any(
             recoveryBatch.map(async provider => {
@@ -1181,6 +1203,66 @@ export class AICollaborationOrchestrator {
     return `Collaborative Analysis (${strategy}):\n\n${combined}`;
   }
   
+  private static selectProvidersForTask(
+    attrs: TaskAttributes,
+    providers: AIProvider[],
+    explicitMax?: number,
+  ): AIProvider[] {
+    if (providers.length <= 1) return [...providers];
+
+    const desired: Array<ReturnType<typeof getHarmonyCapabilities>[number]> = [];
+    if (attrs.needsLegalAnalysis) desired.push('legal-analysis');
+    if (attrs.needsVerification) desired.push('verification');
+    if (attrs.needsReasoning) desired.push('deep-reasoning');
+    if (attrs.needsSearchGrounding) desired.push('research');
+    if (attrs.needsCodeGeneration) desired.push('coding');
+    if (attrs.needsLongContext || attrs.needsMassiveContext) desired.push('long-context');
+    if (attrs.needsMultimodal || attrs.needsImageAnalysis) desired.push('multimodal');
+    if (attrs.needsStructuredOutput || attrs.needsDataExtraction) desired.push('structured-output');
+    if (attrs.needsFastResponse) desired.push('fast-chat');
+
+    const defaultMax = attrs.needsFastResponse
+      ? 2
+      : attrs.complexity === TaskComplexity.COMPREHENSIVE
+        ? 3
+        : attrs.complexity === TaskComplexity.MODERATE
+          ? 2
+          : 1;
+    const maxParticipants = Math.max(
+      1,
+      Math.min(explicitMax || defaultMax, Math.min(5, providers.length)),
+    );
+
+    const ranked = AIModelSelector.scoreProvidersForTask(attrs, providers);
+    const selected: AIProvider[] = [];
+    const uncovered = new Set(desired);
+
+    // Greedily cover distinct requested capabilities before filling remaining
+    // slots by overall task fit. This prevents a pool of near-identical models
+    // from crowding out the verifier/researcher capability actually needed.
+    while (selected.length < maxParticipants && uncovered.size > 0) {
+      let best: { provider: AIProvider; cover: number; score: number } | null = null;
+      for (const candidate of ranked) {
+        if (selected.includes(candidate.provider)) continue;
+        const capabilities = getHarmonyCapabilities(candidate.provider);
+        const cover = Array.from(uncovered).filter(capability => capabilities.includes(capability)).length;
+        if (!best || cover > best.cover || (cover === best.cover && candidate.score > best.score)) {
+          best = { provider: candidate.provider, cover, score: candidate.score };
+        }
+      }
+      if (!best || best.cover === 0) break;
+      selected.push(best.provider);
+      for (const capability of getHarmonyCapabilities(best.provider)) uncovered.delete(capability);
+    }
+
+    for (const candidate of ranked) {
+      if (selected.length >= maxParticipants) break;
+      if (!selected.includes(candidate.provider)) selected.push(candidate.provider);
+    }
+
+    return selected.length > 0 ? selected : [providers[0]];
+  }
+
   private static rankFallbackProviders(
     task: CollaborationTask,
     providers: AIProvider[],
