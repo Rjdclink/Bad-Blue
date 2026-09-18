@@ -29,10 +29,13 @@ const locationRoutesSource = readFileSync(new URL('../server/routes/locationInte
 const lexaraRoutesSource = readFileSync(new URL('../server/routes/lexara.routes.ts', import.meta.url), 'utf8');
 const lexaraChatRoutesSource = readFileSync(new URL('../server/routes/lexara.chat.routes.ts', import.meta.url), 'utf8');
 const voiceRoutesSource = readFileSync(new URL('../server/routes/voice.routes.ts', import.meta.url), 'utf8');
+const consultationRoutesSource = readFileSync(new URL('../server/routes/consultation.routes.ts', import.meta.url), 'utf8');
 const verificationRoutesSource = readFileSync(new URL('../server/routes/verification.routes.ts', import.meta.url), 'utf8');
 const adminRoutesSource = readFileSync(new URL('../server/routes/admin-console.routes.ts', import.meta.url), 'utf8');
 const railwayEnvSource = readFileSync(new URL('../.env.railway.example', import.meta.url), 'utf8');
 const deployPrepSource = readFileSync(new URL('../scripts/prepare-deployment.sh', import.meta.url), 'utf8');
+const migrationReconcilerSource = readFileSync(new URL('../server/migrations/reconcileAppSchema.ts', import.meta.url), 'utf8');
+const retiredFreeAccessSource = readFileSync(new URL('../server/migrations/freeAccessForAll.ts', import.meta.url), 'utf8');
 const legacyLocalAuth = new URL('../server/localAuth.ts', import.meta.url);
 
 assert.equal(existsSync(legacyLocalAuth), false, 'obsolete Passport local auth module must remain removed');
@@ -92,6 +95,7 @@ assert.match(subscriptionFlowSource, /handleLegalWhatSubscriptionWebhook/, 'Squa
 assert.match(subscriptionSuccessSource, /\/api\/subscription\/confirm/, 'Square return page must verify the subscription server-side');
 assert.match(subscriptionSuccessSource, /legalwhat_pending_square_order_id/, 'Square return must recover a stored order ID if the redirect query omits it');
 assert.match(appSource, /isAuthenticated\s*&&\s*hasPaidAccess/, 'private LegalWhat routes must require verified paid access');
+assert.doesNotMatch(appSource, /<Route path="\/legal-consultation" component=\{LegalConsultationPage\} \/>[\s\S]{0,220}\{isAuthenticated && hasPaidAccess/, 'full LEXARA consultation must not remain on the public route surface');
 assert.match(appSource, /hasPaidForAccess === true[\s\S]{0,160}suspended/, 'client paid-access gate must honor explicit overrides while blocking suspended/revoked states');
 assert.match(loginPageSource, /\/api\/subscription\/checkout/, 'signup/login UI must hand pending users to hosted Square checkout');
 assert.match(loginPageSource, /sessionStorage\.setItem\("legalwhat_pending_square_order_id"/, 'checkout must preserve Square order identity before redirect');
@@ -100,6 +104,8 @@ assert.match(subscriptionFlowSource, /completed-payment path binds this Square c
 assert.match(routesSource, /app\.post\('\/api\/osint\/full-search'[\s\S]{0,900}resolvePaidAccess\(req, res\)/, 'OSINT must enforce fresh paid access while preserving controlled responses');
 assert.match(inmateRoutesSource, /router\.post\('\/', isAuthenticated, apiRateLimit/, 'inmate search must require verified paid access');
 assert.match(legalCounselRoutesSource, /router\.use\(isAuthenticated\)/, 'legal counsel sessions must require verified paid access');
+assert.match(consultationRoutesSource, /'\/api\/legal-consultation',[\s\S]{0,80}isAuthenticated/, 'canonical legal consultation must require verified paid access');
+assert.match(consultationRoutesSource, /'\/api\/enhanced-consultation',[\s\S]{0,80}isAuthenticated/, 'enhanced consultation must require verified paid access');
 assert.match(documentRoutesSource, /router\.post\('\/generate', isAuthenticated/, 'legal document generation must require verified paid access');
 assert.match(evidenceRoutesSource, /router\.post\('\/analyze', isAuthenticated/, 'evidence analysis must require verified paid access');
 assert.match(evidenceRoutesSource, /router\.post\('\/comprehensive-report', isAuthenticated/, 'evidence reports must require verified paid access');
@@ -121,6 +127,9 @@ assert.match(deployPrepSource, /"SQUARE_SUBSCRIPTION_PLAN_VARIATION_ID"/, 'deplo
 assert.match(configSource, /SQUARE_WEBHOOK_SIGNATURE_KEY is required in production/, 'production must require the Square webhook verification key');
 assert.match(sampleConsultationSource, /\$25\.99\/month/, 'public subscription disclosure must match the $25.99 Square checkout price');
 assert.doesNotMatch(sampleConsultationSource, /\$19\.98/, 'stale public subscription pricing must not remain');
+assert.doesNotMatch(migrationReconcilerSource, /runFreeAccessMigration|Free Access for All Users/, 'startup schema reconciliation must never re-grant universal paid access');
+assert.doesNotMatch(retiredFreeAccessSource, /\.update\(users\)|hasPaidForAccess:\s*true/, 'retired free-access migration must remain non-mutating');
+assert.match(retiredFreeAccessSource, /retired; no user access state was changed/, 'legacy free-access migration must be explicitly retired');
 
 const { setupAuth, isIdentityAuthenticated } = await import('../server/auth.js');
 
