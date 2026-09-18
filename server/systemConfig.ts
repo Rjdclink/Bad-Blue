@@ -13,6 +13,12 @@
  * - Cache Configuration
  */
 
+import {
+  HARMONY_17_PARTICIPANTS,
+  getConfiguredHarmonyParticipants,
+  type HarmonyCapability,
+} from './aiHarmonyModelRegistry';
+
 // ═══════════════════════════════════════════════════════
 // VOICE / TTS PROVIDER CONFIGURATION
 // ═══════════════════════════════════════════════════════
@@ -246,55 +252,38 @@ export const INMATE_SEARCH_PROVIDERS: InmateSearchProvider[] = [
 export interface AIModelConfig {
   provider: string;
   model: string;
-  contextLength: number;
-  costPer1kTokens: number;
+  contextLength?: number;
+  costPer1kTokens?: number;
   capabilities: string[];
   rateLimit?: number;
 }
 
-export const AI_MODELS: Record<string, AIModelConfig> = {
-  // Primary models for user interactions
-  'gemini-pro': {
-    provider: 'google',
-    model: 'gemini-3.8-flash',
-    contextLength: 1000000,
-    costPer1kTokens: 0.00125,
-    capabilities: ['chat', 'analysis', 'coding', 'vision'],
-  },
-  'groq-llama': {
-    provider: 'groq',
-    model: 'openai/gpt-oss-120b',
-    contextLength: 128000,
-    costPer1kTokens: 0.0,
-    capabilities: ['chat', 'analysis', 'fast'],
-    rateLimit: 100, // RPD
-  },
-  // Autonomous/background models
-  'mistral-large': {
-    provider: 'mistral',
-    model: 'mistral-medium-3-5',
-    contextLength: 128000,
-    costPer1kTokens: 0.002,
-    capabilities: ['chat', 'analysis', 'coding'],
-  },
-  // OpenRouter fallbacks
-  'deepseek-current': {
-    provider: 'openrouter',
-    model: 'deepseek/deepseek-v4.1-flash',
-    contextLength: 164000,
-    costPer1kTokens: 0,
-    capabilities: ['chat', 'reasoning'],
-    rateLimit: 50, // RPD
-  },
-};
+/**
+ * Compatibility view of the canonical 17-participant Harmony registry.
+ * Model IDs are never duplicated here: the registry remains the only model
+ * identity authority.
+ */
+export const AI_MODELS: Record<string, AIModelConfig> = Object.fromEntries(
+  HARMONY_17_PARTICIPANTS.map((participant, index) => [
+    `harmony-${String(index + 1).padStart(2, '0')}-${String(participant.provider)}`,
+    {
+      provider: String(participant.provider),
+      model: participant.model,
+      capabilities: [...participant.capabilities],
+    },
+  ]),
+);
 
-// Model selection priority
+/**
+ * Legacy export name retained for callers. Values are capability requirements,
+ * not provider/model priority lists.
+ */
 export const AI_MODEL_PRIORITY = {
-  user: ['gemini-pro', 'groq-llama', 'mistral-large'],
-  autonomous: ['groq-llama', 'mistral-large', 'deepseek-current'],
-  legal: ['gemini-pro', 'mistral-large'],
-  analysis: ['gemini-pro', 'groq-llama'],
-};
+  user: ['fast-chat', 'structured-output'],
+  autonomous: ['agentic', 'deep-reasoning'],
+  legal: ['legal-analysis', 'verification'],
+  analysis: ['deep-reasoning', 'verification'],
+} as const satisfies Record<string, readonly HarmonyCapability[]>;
 
 // ═══════════════════════════════════════════════════════
 // CACHE CONFIGURATION
@@ -383,15 +372,26 @@ export function getActiveVoiceProvider(): VoiceProviderConfig {
 }
 
 /**
- * Get AI model by use case
+ * Return a capability-matched Harmony participant for compatibility/status
+ * surfaces. Runtime AI execution still goes through the full Harmony mesh.
  */
 export function getAIModel(useCase: keyof typeof AI_MODEL_PRIORITY): AIModelConfig | null {
-  const priority = AI_MODEL_PRIORITY[useCase];
-  for (const modelKey of priority) {
-    const model = AI_MODELS[modelKey];
-    if (model) return model;
-  }
-  return null;
+  const required = AI_MODEL_PRIORITY[useCase] as readonly HarmonyCapability[];
+  const configured = getConfiguredHarmonyParticipants();
+  const pool = configured.length > 0 ? configured : [...HARMONY_17_PARTICIPANTS];
+  if (pool.length === 0) return null;
+
+  const best = pool.reduce((current, candidate) => {
+    const currentScore = required.filter(capability => current.capabilities.includes(capability)).length;
+    const candidateScore = required.filter(capability => candidate.capabilities.includes(capability)).length;
+    return candidateScore > currentScore ? candidate : current;
+  });
+
+  return {
+    provider: String(best.provider),
+    model: best.model,
+    capabilities: [...best.capabilities],
+  };
 }
 
 /**
