@@ -7,7 +7,7 @@
  * - Strict separation with no cross-domain control
  * - Shared optimized infrastructure, isolated execution
  * 
- * AI MODEL INTEGRATION (17+ Models):
+ * AI MODEL INTEGRATION: current Harmony generations
  * - Gemini 3 Pro Preview, Gemini 2.5 Flash, Gemini 1.5 Pro
  * - Claude 4.5 Opus (orchestrator), Claude 3.5 Sonnet, Claude 3.5 Haiku
  * - Groq LLaMA 3.3-70B Versatile, LLaMA 3.1-8B Instant
@@ -28,6 +28,7 @@ import { DomainFirewall, Domain } from './domain-firewall';
 import { AIProvider, TaskComplexity, TaskPriority, UsageContext, type AITaskMetadata } from '../../aiTokenGovernor';
 import { runProvider } from '../../aiProvider';
 import { deepSeekSearch, grokSearch, kimiSearch, qwenSearch } from '../../openRouterService';
+import { CURRENT_AI_MODELS } from '../../aiHarmonyModelRegistry';
 
 const log = createLogger('4JI-Orchestrator');
 
@@ -240,8 +241,8 @@ export class ForgeAI {
     const models: AIModelConfig[] = [
       // Gemini models
       {
-        id: 'gemini-2.5-pro',
-        name: 'Gemini 3 Pro Preview',
+        id: CURRENT_AI_MODELS.gemini,
+        name: 'Gemini 3.8 Flash',
         provider: AIProvider.GEMINI,
         capabilities: ['reasoning', 'visual-analysis', 'long-context', 'research', 'orchestration'],
         domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
@@ -251,8 +252,8 @@ export class ForgeAI {
         contextWindow: 1000000,
       },
       {
-        id: 'gemini-2.5-flash',
-        name: 'Gemini 2.5 Flash',
+        id: CURRENT_AI_MODELS.gemini,
+        name: 'Gemini 3.8 Flash',
         provider: AIProvider.GEMINI,
         capabilities: ['fast-inference', 'reasoning', 'data-extraction'],
         domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
@@ -264,8 +265,8 @@ export class ForgeAI {
       
       // Claude models
       {
-        id: 'claude-opus-4-1-20250805',
-        name: 'Claude Opus 4.1',
+        id: CURRENT_AI_MODELS.claudeDeep,
+        name: 'Claude Opus 5',
         provider: AIProvider.CLAUDE_OPUS,
         capabilities: ['reasoning', 'legal-analysis', 'creative-writing', 'orchestration', 'long-context'],
         domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
@@ -275,8 +276,8 @@ export class ForgeAI {
         contextWindow: 200000,
       },
       {
-        id: 'claude-sonnet-4-5-20250929',
-        name: 'Claude Sonnet 4.5',
+        id: CURRENT_AI_MODELS.claudeBalanced,
+        name: 'Claude Sonnet 5',
         provider: AIProvider.CLAUDE,
         capabilities: ['reasoning', 'legal-analysis', 'document-generation', 'verification'],
         domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
@@ -286,7 +287,7 @@ export class ForgeAI {
         contextWindow: 200000,
       },
       {
-        id: 'claude-haiku-4-5-20251001',
+        id: CURRENT_AI_MODELS.claudeFast,
         name: 'Claude Haiku 4.5',
         provider: AIProvider.CLAUDE,
         capabilities: ['fast-inference', 'verification', 'data-extraction'],
@@ -299,8 +300,8 @@ export class ForgeAI {
       
       // Groq models (autonomous priority)
       {
-        id: 'llama-3.3-70b-versatile',
-        name: 'LLaMA 3.3 70B Versatile',
+        id: CURRENT_AI_MODELS.groqDeep,
+        name: 'GPT-OSS 120B on Groq',
         provider: AIProvider.GROQ,
         capabilities: ['reasoning', 'coding', 'fast-inference', 'research'],
         domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
@@ -310,8 +311,8 @@ export class ForgeAI {
         contextWindow: 131072,
       },
       {
-        id: 'llama-3.1-8b-instant',
-        name: 'LLaMA 3.1 8B Instant',
+        id: CURRENT_AI_MODELS.groqFast,
+        name: 'GPT-OSS 20B on Groq',
         provider: AIProvider.GROQ,
         capabilities: ['fast-inference', 'data-extraction'],
         domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
@@ -323,8 +324,8 @@ export class ForgeAI {
       
       // Mistral models
       {
-        id: 'mistral-small-latest',
-        name: 'Mistral Small Latest',
+        id: CURRENT_AI_MODELS.mistralFast,
+        name: 'Mistral Small 4',
         provider: AIProvider.MISTRAL,
         capabilities: ['reasoning', 'coding', 'legal-analysis', 'fast-inference', 'data-extraction', 'verification'],
         domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
@@ -336,8 +337,8 @@ export class ForgeAI {
       
       // DeepSeek
       {
-        id: 'deepseek-r1t2',
-        name: 'DeepSeek R1T2 Chimera',
+        id: CURRENT_AI_MODELS.deepseek,
+        name: 'DeepSeek V4.1 Flash',
         provider: AIProvider.DEEPSEEK,
         capabilities: ['reasoning', 'coding', 'pattern-recognition'],
         domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
@@ -349,8 +350,8 @@ export class ForgeAI {
       
       // Grok (massive context)
       {
-        id: 'grok-4.1',
-        name: 'Grok 4.1 Fast',
+        id: CURRENT_AI_MODELS.grok,
+        name: 'Grok 4.6',
         provider: AIProvider.GROK,
         capabilities: ['long-context', 'visual-analysis', 'research'],
         domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
@@ -362,8 +363,8 @@ export class ForgeAI {
       
       // Kimi (structured output)
       {
-        id: 'kimi-k2',
-        name: 'Kimi K2',
+        id: CURRENT_AI_MODELS.kimi,
+        name: 'Kimi K3',
         provider: AIProvider.KIMI,
         capabilities: ['data-extraction', 'pattern-recognition', 'verification'],
         domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
@@ -375,8 +376,8 @@ export class ForgeAI {
       
       // GPT-5 Mini (fast inference)
       {
-        id: 'gpt5-mini',
-        name: 'GPT-5 Mini',
+        id: CURRENT_AI_MODELS.openaiFastViaOpenRouter,
+        name: 'GPT-5.6 Luna',
         provider: AIProvider.GPT5_MINI,
         capabilities: ['fast-inference', 'reasoning', 'pattern-recognition'],
         domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
@@ -388,8 +389,8 @@ export class ForgeAI {
       
       // Qwen (multilingual)
       {
-        id: 'qwen-72b',
-        name: 'Qwen 2.5 72B Instruct',
+        id: CURRENT_AI_MODELS.qwen,
+        name: 'Qwen3.8 Max',
         provider: AIProvider.QWEN,
         capabilities: ['reasoning', 'coding', 'long-context'],
         domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
@@ -401,8 +402,8 @@ export class ForgeAI {
       
       // Specialized: Crypto Crawler only
       {
-        id: 'llama-3.3-70b-versatile',
-        name: 'Trading AI Specialist',
+        id: CURRENT_AI_MODELS.groqDeep,
+        name: 'Trading AI Specialist (GPT-OSS 120B)',
         provider: AIProvider.GROQ,
         capabilities: ['trading-analysis', 'market-prediction', 'pattern-recognition'],
         domains: [Domain.CRYPTO_CRAWLER],
