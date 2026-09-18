@@ -221,7 +221,17 @@ export async function handleLegalWhatSubscriptionWebhook(event: any): Promise<bo
       return true;
     }
 
-    const state = canonicalState(subscription.status);
+    // Never authorize from the status embedded in the delivery itself. Square
+    // retries and out-of-order delivery can replay an older ACTIVE event after a
+    // pause/cancel. The just-fetched customer subscription set is the authority.
+    const currentSubscription = items.find((item) =>
+      String(item?.id || "") === subscriptionId &&
+      String(item?.planVariationId || "") === variationId
+    ) || null;
+    const state = currentSubscription
+      ? canonicalState(currentSubscription.status)
+      : { status: "pending_payment", hasPaidForAccess: false };
+
     await persistSubscriptionState({
       squareCustomerId: customerId,
       squareSubscriptionId: subscriptionId,
