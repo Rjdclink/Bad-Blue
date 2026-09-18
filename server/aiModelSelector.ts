@@ -217,7 +217,7 @@ const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
   },
   
   // Claude models
-  'claude-3-5-sonnet-latest': {
+  'claude-sonnet-5': {
     multimodal: 85,
     longContext: 90,
     massiveContext: 70,
@@ -235,7 +235,7 @@ const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
     costEfficiency: 50,
     dailyCapacity: 40,
   },
-  'claude-3-5-haiku-latest': {
+  'claude-haiku-4-5-20251001': {
     multimodal: 70,
     longContext: 80,
     massiveContext: 60,
@@ -891,36 +891,36 @@ export class AIModelSelector {
   static selectClaudeModel(attrs: TaskAttributes): string {
     // Use Sonnet for legal analysis
     if (attrs.needsLegalAnalysis) {
-      return 'claude-3-5-sonnet-latest';
+      return 'claude-sonnet-5';
     }
     
     // Use Sonnet for creative writing
     if (attrs.needsCreativeWriting) {
-      return 'claude-3-5-sonnet-latest';
+      return 'claude-sonnet-5';
     }
     
     // Use Sonnet for complex reasoning
     if (attrs.needsReasoning && attrs.complexity === TaskComplexity.COMPREHENSIVE) {
-      return 'claude-3-5-sonnet-latest';
+      return 'claude-sonnet-5';
     }
     
     // Use Sonnet for code generation
     if (attrs.needsCodeGeneration && attrs.complexity !== TaskComplexity.LIGHTWEIGHT) {
-      return 'claude-3-5-sonnet-latest';
+      return 'claude-sonnet-5';
     }
     
     // Use Haiku for fast responses
     if (attrs.needsFastResponse) {
-      return 'claude-3-5-haiku-latest';
+      return 'claude-haiku-4-5-20251001';
     }
     
     // Use Haiku for verification tasks
     if (attrs.needsVerification) {
-      return 'claude-3-5-haiku-latest';
+      return 'claude-haiku-4-5-20251001';
     }
     
     // Default to Haiku for cost efficiency
-    return 'claude-3-5-haiku-latest';
+    return 'claude-haiku-4-5-20251001';
   }
   
   /**
