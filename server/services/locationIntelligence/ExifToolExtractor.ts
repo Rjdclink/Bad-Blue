@@ -11,6 +11,59 @@ export interface ExifLocation {
   altitude?: number;
 }
 
+function parseIso6709(value: unknown): { latitude: number; longitude: number; altitude?: number } | null {
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  if (!text) return null;
+
+  // ISO 6709 commonly appears as +DD.DDDD-DDD.DDDD+AAA.AAA/.
+  const compact = text.match(
+    /^([+-]\d{2}(?:\.\d+)?)([+-]\d{3}(?:\.\d+)?)([+-]\d+(?:\.\d+)?)?\/?$/,
+  );
+  if (compact) {
+    const latitude = Number(compact[1]);
+    const longitude = Number(compact[2]);
+    const altitude = compact[3] === undefined ? undefined : Number(compact[3]);
+    if (
+      Number.isFinite(latitude) &&
+      Number.isFinite(longitude) &&
+      latitude >= -90 && latitude <= 90 &&
+      longitude >= -180 && longitude <= 180
+    ) {
+      return {
+        latitude,
+        longitude,
+        altitude: Number.isFinite(altitude) ? altitude : undefined,
+      };
+    }
+  }
+
+  // ExifTool may normalize QuickTime GPSCoordinates to whitespace/comma
+  // separated decimal numbers when -n is used.
+  const decimal = text.match(
+    /^\s*([+-]?\d{1,2}(?:\.\d+)?)\s*[, ]\s*([+-]?\d{1,3}(?:\.\d+)?)(?:\s*[, ]\s*([+-]?\d+(?:\.\d+)?))?\s*\/?\s*$/,
+  );
+  if (!decimal) return null;
+
+  const latitude = Number(decimal[1]);
+  const longitude = Number(decimal[2]);
+  const altitude = decimal[3] === undefined ? undefined : Number(decimal[3]);
+  if (
+    !Number.isFinite(latitude) ||
+    !Number.isFinite(longitude) ||
+    latitude < -90 || latitude > 90 ||
+    longitude < -180 || longitude > 180
+  ) {
+    return null;
+  }
+
+  return {
+    latitude,
+    longitude,
+    altitude: Number.isFinite(altitude) ? altitude : undefined,
+  };
+}
+
 export class ExifToolExtractor {
   async extractMetadata(filePath: string): Promise<Record<string, unknown> | null> {
     try {
@@ -33,22 +86,31 @@ export class ExifToolExtractor {
 
     const latitude = this.number(metadata.GPSLatitude);
     const longitude = this.number(metadata.GPSLongitude);
+    const iso6709 =
+      parseIso6709(metadata.GPSCoordinates) ||
+      parseIso6709(metadata.LocationISO6709);
+
+    const resolvedLatitude = latitude ?? iso6709?.latitude ?? null;
+    const resolvedLongitude = longitude ?? iso6709?.longitude ?? null;
     if (
-      latitude === null ||
-      longitude === null ||
-      latitude < -90 ||
-      latitude > 90 ||
-      longitude < -180 ||
-      longitude > 180
+      resolvedLatitude === null ||
+      resolvedLongitude === null ||
+      resolvedLatitude < -90 ||
+      resolvedLatitude > 90 ||
+      resolvedLongitude < -180 ||
+      resolvedLongitude > 180
     ) {
       return null;
     }
 
     const location: ExifLocation = {
-      latitude,
-      longitude,
+      latitude: resolvedLatitude,
+      longitude: resolvedLongitude,
       source: imagePath,
-      altitude: this.number(metadata.GPSAltitude) ?? undefined,
+      altitude:
+        this.number(metadata.GPSAltitude) ??
+        iso6709?.altitude ??
+        undefined,
     };
 
     const rawTimestamp =
