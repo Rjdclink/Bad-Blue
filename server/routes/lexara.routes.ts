@@ -392,6 +392,7 @@ async function transcribeWithElevenLabs(file: Express.Multer.File): Promise<{
   text: string;
   provider: string;
   model: string;
+  quality?: { avgLogprob?: number };
 }> {
   const apiKey = process.env.ELEVENLABS_API_KEY?.trim();
   if (!apiKey) throw new Error('ElevenLabs speech-to-text is not configured');
@@ -418,11 +419,24 @@ async function transcribeWithElevenLabs(file: Express.Multer.File): Promise<{
       throw new Error(`ElevenLabs STT ${response.status}: ${detail}`);
     }
 
-    const result = await response.json() as { text?: string };
+    const result = await response.json() as {
+      text?: string;
+      words?: Array<{ logprob?: number; type?: string }>;
+    };
+    const logprobs = Array.isArray(result.words)
+      ? result.words
+        .filter(word => word?.type === 'word' || !word?.type)
+        .map(word => Number(word?.logprob))
+        .filter(Number.isFinite)
+      : [];
+    const avgLogprob = logprobs.length
+      ? logprobs.reduce((sum, value) => sum + value, 0) / logprobs.length
+      : undefined;
     return {
       text: String(result?.text || '').trim(),
       provider: 'elevenlabs-scribe',
       model,
+      quality: { avgLogprob },
     };
   } finally {
     clearTimeout(timer);
@@ -453,17 +467,18 @@ router.post('/transcribe-file', lexaraVoiceUpload.single('audio'), async (req: R
       quality?: { avgLogprob?: number; noSpeechProbability?: number };
     }>;
   }> = [
-    // Paid ElevenLabs Scribe is the preferred server-side compatibility path.
-    // Groq Whisper remains an independent, already-proven route-local fallback.
-    {
-      name: 'elevenlabs-scribe',
-      configured: !!process.env.ELEVENLABS_API_KEY?.trim(),
-      transcribe: () => transcribeWithElevenLabs(file),
-    },
+    // Groq Whisper Turbo is the latency-first batch fallback and exposes
+    // no-speech/logprob evidence. ElevenLabs Scribe remains an independent
+    // high-accuracy route-local fallback with word log probabilities.
     {
       name: 'groq-whisper',
       configured: !!process.env.GROQ_API_KEY?.trim(),
       transcribe: () => transcribeWithGroq(file),
+    },
+    {
+      name: 'elevenlabs-scribe',
+      configured: !!process.env.ELEVENLABS_API_KEY?.trim(),
+      transcribe: () => transcribeWithElevenLabs(file),
     },
   ];
 
@@ -492,11 +507,8 @@ router.post('/transcribe-file', lexaraVoiceUpload.single('audio'), async (req: R
       // extremely low-confidence Whisper hallucination before it can ever
       // become a user turn.
       if (
-        result.provider === 'groq-whisper'
-        && (
-          (Number.isFinite(noSpeechProbability) && Number(noSpeechProbability) >= 0.72)
-          || (Number.isFinite(avgLogprob) && Number(avgLogprob) <= -1.15)
-        )
+        (Number.isFinite(noSpeechProbability) && Number(noSpeechProbability) >= 0.72)
+        || (Number.isFinite(avgLogprob) && Number(avgLogprob) <= -1.15)
       ) {
         logger.info('[LEXARA] Rejected low-evidence speech transcript', {
           provider: result.provider,
