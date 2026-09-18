@@ -254,22 +254,17 @@ Extract:
 
 Provide comprehensive coverage with source links.`;
 
-  const text = await generateOfficerSearchContent(
-    'news-search',
-    prompt,
-    'Use only supported public information. Identify uncertainty and do not invent source links.',
-  );
-  const sources: string[] = [];
+  const { text, sources } = await runGroundedOfficerSearch('news-search', prompt);
 
   return {
     category: 'News',
     data: {
       narrative: text,
-      articleCount: 0, // Groq doesn't provide source count
+      articleCount: sources.length,
       sources: sources
     },
     sources,
-    reliability: 70 // Base reliability for Groq without grounding
+    reliability: sources.length > 0 ? 85 : 30
   };
 }
 
@@ -319,12 +314,7 @@ Extract:
 
 Provide detailed case information with court record sources.`;
 
-  const text = await generateOfficerSearchContent(
-    'court-record-search',
-    prompt,
-    'Do not invent cases, docket numbers, outcomes, citations, or source links. Distinguish facts from uncertainty.',
-  );
-  const sources: string[] = [];
+  const { text, sources } = await runGroundedOfficerSearch('court-record-search', prompt);
 
   return {
     category: 'CourtRecords',
@@ -334,7 +324,7 @@ Provide detailed case information with court record sources.`;
       sources: sources
     },
     sources,
-    reliability: 65 // Base reliability for Groq without grounding
+    reliability: sources.length > 0 ? 88 : 25
   };
 }
 
@@ -446,12 +436,7 @@ Extract:
 
 Provide detailed incident information with verifiable sources.`;
 
-  const text = await generateOfficerSearchContent(
-    'disciplinary-search',
-    prompt,
-    'Do not invent complaints, disciplinary records, incidents, findings, or source links.',
-  );
-  const sources: string[] = [];
+  const { text, sources } = await runGroundedOfficerSearch('disciplinary-search', prompt);
 
   return {
     category: 'Disciplinary',
@@ -461,7 +446,7 @@ Provide detailed incident information with verifiable sources.`;
       sources: sources
     },
     sources,
-    reliability: 68 // Base reliability for Groq without grounding
+    reliability: sources.length > 0 ? 88 : 25
   };
 }
 
