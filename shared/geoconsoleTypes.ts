@@ -165,6 +165,8 @@ export interface GeoconsoleProcessResponse {
       endTime: Date | string;
       totalDistance: number;
       averageSpeed: number;
+      maxSpeed: number;
+      points: TrailPoint[];
       segments: TrailSegment[];
       stops: StopPoint[];
     };
