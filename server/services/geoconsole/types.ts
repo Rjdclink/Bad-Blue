@@ -198,7 +198,7 @@ export interface StopPoint {
 
 export interface TimelineConfig {
   historyDays: number; // default 3
-  futurecastHours: number; // default 6
+  futurecastHours: number; // operator default 1
   playbackSpeed: number; // 1 = realtime, 60 = 1 min = 1 sec
   animationFps: number;
   trailFadeSeconds: number;
