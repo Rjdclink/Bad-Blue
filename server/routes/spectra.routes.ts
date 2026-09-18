@@ -15,6 +15,7 @@ import {
 } from '../services/geoconsole/evidence-proof';
 import type { GPSPoint } from '../services/geoconsole/types';
 import { inputFusionEngine } from '../services/geoconsole/inputFusionEngine';
+import { assessLocationQuality } from '../services/geoconsole/location-quality';
 
 const router = Router();
 router.use(isAuthenticated);
@@ -607,11 +608,14 @@ router.post('/acquire', async (req: Request, res: Response) => {
           : undefined,
       }));
 
-    const fusedLocationEvidence = normalizedLocationObservations.length > 0
-      ? await inputFusionEngine.fuseInputs(normalizedLocationObservations)
+    const locationQuality = assessLocationQuality(normalizedLocationObservations);
+    const qualityLocationObservations = locationQuality.points;
+
+    const fusedLocationEvidence = qualityLocationObservations.length > 0
+      ? await inputFusionEngine.fuseInputs(qualityLocationObservations)
       : [];
 
-    const locationObservations = normalizedLocationObservations
+    const locationObservations = qualityLocationObservations
       .map(point => signServerEvidence(point));
 
     const candidateLocations: Array<{
@@ -722,6 +726,8 @@ router.post('/acquire', async (req: Request, res: Response) => {
           (Array.isArray(report.sources) ? report.sources.length : 0) +
           discoveryResults.length,
         observationCount: locationObservations.length,
+        rejectedObservationCount: locationQuality.rejectedCount,
+        qualityIssueCount: locationQuality.issues.length,
         discoveryPasses,
         discoveryQueriesAttempted,
         discoveryQueriesFailed,
