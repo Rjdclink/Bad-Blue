@@ -107,6 +107,42 @@ export type CollaborationProviderPolicy = 'default' | 'capability-first' | 'capa
 
 const harmonyProviderCooldownUntil = new Map<AIProvider, number>();
 
+interface HarmonyProviderRuntime {
+  ewmaLatencyMs: number;
+  successes: number;
+  failures: number;
+}
+
+const harmonyProviderRuntime = new Map<AIProvider, HarmonyProviderRuntime>();
+
+function recordHarmonyProviderRuntime(
+  provider: AIProvider,
+  success: boolean,
+  latencyMs: number,
+): void {
+  const current = harmonyProviderRuntime.get(provider) || {
+    ewmaLatencyMs: Math.max(1, latencyMs),
+    successes: 0,
+    failures: 0,
+  };
+  current.ewmaLatencyMs = current.ewmaLatencyMs <= 0
+    ? Math.max(1, latencyMs)
+    : (current.ewmaLatencyMs * 0.75) + (Math.max(1, latencyMs) * 0.25);
+  if (success) current.successes += 1;
+  else current.failures += 1;
+  harmonyProviderRuntime.set(provider, current);
+}
+
+function harmonyProviderRuntimeScore(provider: AIProvider): number {
+  const runtime = harmonyProviderRuntime.get(provider);
+  if (!runtime) return 0;
+  const samples = runtime.successes + runtime.failures;
+  const failureRate = samples > 0 ? runtime.failures / samples : 0;
+  const latencyBonus = Math.max(-90, Math.min(90, (1_500 - runtime.ewmaLatencyMs) / 15));
+  const reliabilityPenalty = failureRate * 140;
+  return Math.round(latencyBonus - reliabilityPenalty);
+}
+
 function harmonyProviderAvailable(provider: AIProvider): boolean {
   return (harmonyProviderCooldownUntil.get(provider) || 0) <= Date.now()
     && isHarmonyProviderWarmHealthy(provider);
@@ -329,7 +365,7 @@ export class AICollaborationOrchestrator {
     ).map(task => ({
       ...task,
       systemPrompt: options.systemPrompt,
-      requestTimeoutMs: task.requestTimeoutMs || options.requestTimeoutMs || task.timeout,
+      requestTimeoutMs: task.requestTimeoutMs || task.timeout || options.requestTimeoutMs,
       maxFallbacks: task.maxFallbacks ?? options.maxFallbacks,
       // Failover can use any healthy capability-compatible route from the pool,
       // including routes not selected for the first attempt.
@@ -526,7 +562,7 @@ export class AICollaborationOrchestrator {
         role,
         prompt: `${focus} Use only authority actually supplied in the prompt and never fabricate citations.\n\n${query}`,
         priority: 1,
-        timeout: attrs.needsFastResponse ? 600 : undefined,
+        timeout: attrs.needsFastResponse ? 1_500 : undefined,
         attributes: { ...attrs, needsLegalAnalysis: true, needsVerification: true, needsReasoning: true },
       });
     }
@@ -545,7 +581,7 @@ export class AICollaborationOrchestrator {
         prompt: 'Synthesize the successful specialist analyses into one direct, natural spoken answer to the user. Answer the current question or statement first. Default to 2-5 concise sentences unless additional detail is materially necessary or explicitly requested. Remove repetition, preserve uncertainty, never invent authority, and do not mention internal providers.\n\n[Results will be provided]',
         priority: 2,
         dependencies,
-        timeout: attrs.needsFastResponse ? 350 : undefined,
+        timeout: attrs.needsFastResponse ? 1_200 : undefined,
         attributes: { ...attrs, needsLegalAnalysis: true, needsVerification: true, needsReasoning: true },
       });
     }
@@ -858,6 +894,52 @@ export class AICollaborationOrchestrator {
   ): Promise<CollaborationResult[]> {
     const results: CollaborationResult[] = [];
     const completedTasks = new Map<string, CollaborationResult>();
+
+    // Low-latency legal turns use the two selected specialists as a hedge. The
+    // first usable specialist contribution unlocks the single synthesis
+    // authority immediately; the other specialist may finish in the background
+    // to update provider health, but it no longer owns tail latency.
+    const fastSynthesisTask = tasks.find(task =>
+      task.role === 'synthesizer'
+      && task.attributes.needsFastResponse
+      && (task.dependencies?.length || 0) > 0
+    );
+    if (fastSynthesisTask) {
+      const dependencyIds = new Set(fastSynthesisTask.dependencies || []);
+      const sourceTasks = tasks.filter(task => dependencyIds.has(task.id));
+      const sourcePromises = sourceTasks.map(task =>
+        this.executeTask(task, completedTasks).then(result => {
+          if (result.success && result.content.trim()) {
+            completedTasks.set(task.id, result);
+          }
+          return result;
+        })
+      );
+
+      try {
+        const firstSuccessful = await Promise.any(
+          sourcePromises.map(promise => promise.then(result => {
+            if (!result.success || !result.content.trim()) {
+              throw new Error(result.error || result.content || 'Harmony specialist failed');
+            }
+            return result;
+          })),
+        );
+        results.push(firstSuccessful);
+        completedTasks.set(firstSuccessful.taskId, firstSuccessful);
+
+        const synthesis = await this.executeTask(fastSynthesisTask, completedTasks);
+        results.push(synthesis);
+
+        // Observe the slower hedge without awaiting it on the user-facing path.
+        void Promise.allSettled(sourcePromises);
+        return results;
+      } catch {
+        const settled = await Promise.all(sourcePromises);
+        results.push(...settled);
+        return results;
+      }
+    }
     
     // Sort by priority
     const sortedTasks = [...tasks].sort((a, b) => a.priority - b.priority);
@@ -1144,11 +1226,14 @@ export class AICollaborationOrchestrator {
       if (!content) {
         success = false;
         content = `[${task.provider}] returned an empty response`;
+        recordHarmonyProviderRuntime(task.provider, false, Date.now() - startTime);
       } else {
         markHarmonyProviderSuccess(task.provider);
+        recordHarmonyProviderRuntime(task.provider, true, Date.now() - startTime);
       }
     } catch (error: any) {
       markHarmonyProviderFailure(task.provider, error);
+      recordHarmonyProviderRuntime(task.provider, false, Date.now() - startTime);
       const alternatives = this.rankFallbackProviders(
         task,
         (task.fallbackProviders || [])
@@ -1281,7 +1366,12 @@ export class AICollaborationOrchestrator {
       Math.min(explicitMax || defaultMax, Math.min(5, providers.length)),
     );
 
-    const ranked = AIModelSelector.scoreProvidersForTask(attrs, providers);
+    const ranked = AIModelSelector.scoreProvidersForTask(attrs, providers)
+      .map(candidate => ({
+        ...candidate,
+        score: candidate.score + harmonyProviderRuntimeScore(candidate.provider),
+      }))
+      .sort((a, b) => b.score - a.score);
     const selected: AIProvider[] = [];
     const uncovered = new Set(desired);
 
