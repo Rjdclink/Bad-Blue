@@ -14,6 +14,7 @@ import { assessLocationQuality } from '../services/geoconsole/location-quality';
 import { selectCrawlerPlan } from '../services/crawlers/CrawlerSelectionUtility';
 import { createLogger } from '../logger';
 import { isAuthenticated } from '../auth';
+import { normalizeClientEvidence } from '../services/geoconsole/evidence-proof';
 
 const router = Router();
 
@@ -166,11 +167,13 @@ router.post('/process', async (req: Request, res: Response) => {
     const effectiveSessionId = sessionId || randomUUID();
 
     // Convert validated data to GPSPoint array
-    const gpsPoints: GPSPoint[] = inputs.map(input => ({
-      ...input,
-      timestamp: input.timestamp,
-      source: input.source as DataSource,
-    }));
+    const gpsPoints: GPSPoint[] = inputs.map(input =>
+      normalizeClientEvidence({
+        ...input,
+        timestamp: input.timestamp,
+        source: input.source as DataSource,
+      })
+    );
 
     const quality = assessLocationQuality(gpsPoints);
     const crawlerSelection = selectCrawlerPlan({
@@ -395,8 +398,14 @@ router.post('/interpolate', async (req: Request, res: Response) => {
     const { monteCarloPathEngine } = await import('../services/geoconsole/monteCarloPathEngine');
     
     const path = await monteCarloPathEngine.interpolatePath(
-      { ...startPoint, source: startPoint.source as DataSource },
-      { ...endPoint, source: endPoint.source as DataSource },
+      normalizeClientEvidence({
+        ...startPoint,
+        source: startPoint.source as DataSource,
+      }),
+      normalizeClientEvidence({
+        ...endPoint,
+        source: endPoint.source as DataSource,
+      }),
       config
     );
 
@@ -456,10 +465,12 @@ router.post('/futurecast', async (req: Request, res: Response) => {
 
     const { monteCarloPathEngine } = await import('../services/geoconsole/monteCarloPathEngine');
     
-    const gpsPoints: GPSPoint[] = recentPoints.map(p => ({
-      ...p,
-      source: p.source as DataSource,
-    }));
+    const gpsPoints: GPSPoint[] = recentPoints.map(p =>
+      normalizeClientEvidence({
+        ...p,
+        source: p.source as DataSource,
+      })
+    );
 
     const futurecast = await monteCarloPathEngine.generateFuturecast(gpsPoints, hours);
 
