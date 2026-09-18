@@ -1,4 +1,4 @@
-import { useState, useEffect, type FormEvent } from "react";
+import { useState, useEffect, useCallback, useRef, type FormEvent } from "react";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { SEOHead } from "@/components/SEOHead";
+import { BackButton } from "@/components/BackButton";
 
 /**
  * Login/Signup Page - Entry point for the application.
@@ -18,9 +19,10 @@ import { SEOHead } from "@/components/SEOHead";
  */
 export default function Login() {
   const [, setLocation] = useLocation();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
+  const subscriptionResumeStarted = useRef(false);
 
   const urlParams = new URLSearchParams(window.location.search);
   const showSignup = urlParams.get('signup') === 'true';
@@ -35,11 +37,62 @@ export default function Login() {
   const [signupFirstName, setSignupFirstName] = useState("");
   const [signupLastName, setSignupLastName] = useState("");
 
-  useEffect(() => {
-    if (isAuthenticated) {
-      setLocation('/welcome');
+  const beginSubscriptionCheckout = useCallback(async () => {
+    const response = await apiRequest("/api/subscription/checkout", "POST");
+    const data = await response.json();
+
+    if (data.alreadyActive) {
+      setLocation(data.redirectUrl || "/welcome", { replace: true });
+      return;
     }
-  }, [isAuthenticated, setLocation]);
+
+    const rawUrl = String(data.checkoutUrl || "").trim();
+    if (!rawUrl) throw new Error("Square checkout did not return a payment page");
+
+    const checkoutUrl = new URL(rawUrl);
+    const host = checkoutUrl.hostname.toLowerCase();
+    const trustedSquareHost =
+      host === "square.link" ||
+      host === "squareup.com" ||
+      host.endsWith(".squareup.com") ||
+      host === "square.site" ||
+      host.endsWith(".square.site");
+
+    if (checkoutUrl.protocol !== "https:" || !trustedSquareHost) {
+      throw new Error("Square returned an invalid checkout destination");
+    }
+
+    window.location.assign(checkoutUrl.toString());
+  }, [setLocation]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !user) {
+      subscriptionResumeStarted.current = false;
+      return;
+    }
+
+    const authenticatedUser = user as any;
+    if (authenticatedUser.isMasterBypass) {
+      setLocation(authenticatedUser.redirectRoute || "/welcome", { replace: true });
+      return;
+    }
+
+    if (authenticatedUser.status === "active" && authenticatedUser.hasPaidForAccess === true) {
+      setLocation("/welcome", { replace: true });
+      return;
+    }
+
+    if (subscriptionResumeStarted.current) return;
+    subscriptionResumeStarted.current = true;
+    beginSubscriptionCheckout().catch((error: any) => {
+      subscriptionResumeStarted.current = false;
+      toast({
+        title: "Subscription checkout unavailable",
+        description: error?.message || "Please try again.",
+        variant: "destructive",
+      });
+    });
+  }, [isAuthenticated, user, beginSubscriptionCheckout, setLocation, toast]);
 
   const completeLogin = async (response: Response) => {
     if (!response.ok) {
@@ -50,12 +103,18 @@ export default function Login() {
     const data = await response.json();
     await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
 
-    const redirectPath = data.accessZone ? (data.redirectRoute || '/welcome') : '/welcome';
+    const redirectPath = data.accessZone ? (data.redirectRoute || "/welcome") : "/welcome";
     toast({
       title: "Login successful",
-      description: data.accessZone ? 'Master access enabled.' : 'Welcome back!',
+      description: data.accessZone ? "Master access enabled." : "Welcome back!",
     });
-    setLocation(redirectPath);
+
+    if (data.accessZone || data.hasActiveSubscription === true) {
+      setLocation(redirectPath);
+      return;
+    }
+
+    await beginSubscriptionCheckout();
   };
 
   const handleLogin = async (e: FormEvent) => {
@@ -113,14 +172,13 @@ export default function Login() {
 
       if (response.ok) {
         await response.json();
+        await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
         toast({
           title: "Account created",
-          description: "Account created. Sign in to continue.",
+          description: "Continue to Square to activate your LegalWhat subscription.",
         });
-        setActiveTab('login');
-        setLoginEmail(signupEmail);
-        setLoginPassword('');
-        setLocation('/login');
+        subscriptionResumeStarted.current = true;
+        await beginSubscriptionCheckout();
       } else {
         const data = await response.json();
         throw new Error(data.error || data.message || "Signup failed");
@@ -155,7 +213,14 @@ export default function Login() {
         <div className="absolute inset-0 bg-black/60" />
       </div>
 
-      <div className="relative z-10 flex items-center justify-center min-h-screen p-4">
+      <div className="absolute left-4 top-4 z-20 sm:left-6 sm:top-6">
+        <BackButton
+          fallbackRoute="/"
+          className="bg-white/95 shadow-md hover:bg-white"
+        />
+      </div>
+
+      <div className="relative z-10 flex items-center justify-center min-h-screen p-4 pt-20 sm:pt-24">
         <div className="w-full max-w-md">
           <div className="text-center mb-6">
             <div className="inline-flex items-center gap-2 mb-4">
