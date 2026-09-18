@@ -181,10 +181,18 @@ must(
     groq.includes('normalizeGroqModelId') &&
     groq.includes('while (attempted.size < 6)') &&
     aiProvider.includes("prefixes: ['llama-', 'meta-llama/', 'openai/', 'qwen/']") &&
-    harmony.includes("'claude-opus-5'") &&
+    harmony.includes("'claude-opus-4-8'") &&
     harmony.includes('harmonyProviderCooldownUntil') &&
     harmony.includes('markHarmonyProviderFailure'),
   'Harmony uses robust Claude content parsing, permission-aware Groq recursive recovery, and provider-local cooldowns',
+);
+must(
+  aiProvider.includes("'claude-sonnet-4-6'") &&
+    aiProvider.includes("'claude-opus-4-8'") &&
+    harmony.includes("'claude-opus-4-8'") &&
+    !aiProvider.includes("'claude-sonnet-5'") &&
+    !aiProvider.includes("'claude-opus-5'"),
+  'Harmony Anthropic routing uses documented current Sonnet/Opus IDs rather than retired or nonexistent aliases',
 );
 must(
   routes.includes("req.path.startsWith('/images/')") &&
