@@ -66,9 +66,16 @@ const OPENFREEMAP_DARK =
   (import.meta.env?.VITE_MAP_DARK_STYLE_URL as string | undefined) ||
   'https://tiles.openfreemap.org/styles/dark';
 
+const CUSTOM_SATELLITE_TILES =
+  import.meta.env?.VITE_SATELLITE_TILES_URL as string | undefined;
 const SATELLITE_TILES =
-  (import.meta.env?.VITE_SATELLITE_TILES_URL as string | undefined) ||
+  CUSTOM_SATELLITE_TILES ||
   'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+const SATELLITE_ATTRIBUTION =
+  (import.meta.env?.VITE_SATELLITE_ATTRIBUTION as string | undefined) ||
+  (CUSTOM_SATELLITE_TILES
+    ? 'Satellite imagery'
+    : 'Esri, Maxar, Earthstar Geographics, and the GIS User Community');
 
 const TERRAIN_TILES =
   (import.meta.env?.VITE_TERRAIN_TILES_URL as string | undefined) ||
@@ -419,6 +426,7 @@ function addRuntimeLayers(map: MapLibreMap) {
       id: 'spectra-candidate-points',
       type: 'circle',
       source: 'spectra-candidates',
+      filter: ['==', ['geometry-type'], 'Point'],
       paint: {
         'circle-radius': ['interpolate', ['linear'], ['zoom'], 3, 6, 16, 11],
         'circle-color': 'rgba(251,191,36,0.18)',
@@ -491,7 +499,7 @@ function addRuntimeLayers(map: MapLibreMap) {
       tiles: [SATELLITE_TILES],
       tileSize: 256,
       maxzoom: 19,
-      attribution: 'Satellite imagery © source contributors',
+      attribution: SATELLITE_ATTRIBUTION,
     });
   }
   if (!map.getLayer('spectra-satellite')) {
@@ -635,6 +643,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
   const [rendererRecovering, setRendererRecovering] = useState(false);
   const lastFollowRef = useRef<[number, number] | null>(null);
   const userInteractionUntilRef = useRef(0);
+  const streetRequestRef = useRef(0);
   const activeStyleRef = useRef(mapMode === 'dark' ? OPENFREEMAP_DARK : OPENFREEMAP_LIBERTY);
   const displayTimeMs = displayTime?.getTime() ?? null;
 
@@ -973,12 +982,16 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
   }, [ready, lockOnTarget, currentFrame, isLive]);
 
   useEffect(() => {
+    const requestId = ++streetRequestRef.current;
+
     if (!layers.streetImagery || !currentFrame) {
       setStreetPhoto(null);
+      setStreetLoading(false);
       return;
     }
 
     const controller = new AbortController();
+    setStreetPhoto(null);
     setStreetLoading(true);
     const params = new URLSearchParams({
       lat: String(currentFrame.position.latitude),
@@ -991,12 +1004,20 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     })
       .then(response => response.ok ? response.json() : Promise.reject(new Error('Street imagery unavailable')))
       .then(payload => {
-        setStreetPhoto(payload?.data || null);
+        if (requestId === streetRequestRef.current) {
+          setStreetPhoto(payload?.data || null);
+        }
       })
       .catch(error => {
-        if (error?.name !== 'AbortError') setStreetPhoto(null);
+        if (error?.name !== 'AbortError' && requestId === streetRequestRef.current) {
+          setStreetPhoto(null);
+        }
       })
-      .finally(() => setStreetLoading(false));
+      .finally(() => {
+        if (requestId === streetRequestRef.current) {
+          setStreetLoading(false);
+        }
+      });
 
     return () => controller.abort();
   }, [
