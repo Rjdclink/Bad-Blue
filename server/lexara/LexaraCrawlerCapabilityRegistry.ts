@@ -158,6 +158,9 @@ export const LEXARA_CRAWLER_CAPABILITY_POOL: readonly LexaraCrawlerDescriptor[] 
   c('gravity', 'GravityCrawler', 'crypto-observational', 'server/services/cryptocrawl/intelligence/gravity-reaper.ts', ['crypto-observation', 'market-observation'], 'observational', 'instant'),
   c('disco-ball', 'DiscoBallCrawler', 'crypto-observational', 'server/services/cryptocrawl/strategies/disco-ball-mirror.ts', ['crypto-observation', 'market-observation'], 'observational', 'fast'),
   c('starburst-dynamic', 'Starburst Dynamic Crawler Pool', 'crypto-observational', 'server/services/cryptocrawl/capital-free/starburst-scaling.ts', ['crypto-observation', 'market-observation'], 'observational', 'fast'),
+  c('starburst-micro', 'Starburst Micro-Crawlers', 'crypto-observational', 'server/services/cryptocrawl/capital-free/starburst-scaling.ts', ['crypto-observation', 'market-observation'], 'observational', 'instant'),
+  c('verification-crawlers', 'Verification Crawlers', 'crypto-observational', 'server/services/cryptocrawl/compensation/compensationGuarantee.ts', ['verification', 'crypto-observation'], 'observational', 'instant', always, 'Read-only deterministic payout-evidence verification; no execution or settlement authority.'),
+  c('snake-agent', 'SnakeAgent Legacy Crawler', 'crypto-observational', 'server/services/cryptocrawl/agents/starburst-snake.ts', ['crypto-observation', 'pattern-analysis'], 'observational', 'instant', always, 'Compatibility crawler is read-only and cannot submit trades.'),
 ] as const;
 
 export interface LexaraCrawlerSelectionInput {
