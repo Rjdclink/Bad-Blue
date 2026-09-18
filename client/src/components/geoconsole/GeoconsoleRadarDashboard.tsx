@@ -101,6 +101,9 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
   const [lockOnTarget, setLockOnTarget] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [timelineCursor, setTimelineCursor] = useState(0);
+  const [timelinePlaying, setTimelinePlaying] = useState(false);
+  const [timelinePlaybackSpeed, setTimelinePlaybackSpeed] = useState(1);
 
   const applyMapPreset = useCallback((preset: 'satellite' | 'terrain' | 'weather' | 'evidence' | 'street') => {
     if (preset === 'satellite') {
@@ -186,6 +189,48 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
       trailIndices: filteredTrail.map(x => x.idx),
     };
   }, [state.trail, state.futurecast, sourceEnabled]);
+
+  const timelineFrames = useMemo(
+    () => [...renderData.trail, ...renderData.futurecast]
+      .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime()),
+    [renderData.trail, renderData.futurecast]
+  );
+
+  const observedNowIndex = useMemo(() => {
+    if (timelineFrames.length === 0) return 0;
+    let index = 0;
+    for (let i = 0; i < timelineFrames.length; i++) {
+      if (timelineFrames[i].observationKind === 'predicted' || timelineFrames[i].source === 'predicted') break;
+      index = i;
+    }
+    return index;
+  }, [timelineFrames]);
+
+  useEffect(() => {
+    setTimelineCursor(observedNowIndex);
+  }, [observedNowIndex]);
+
+  useEffect(() => {
+    if (!timelinePlaying || timelineFrames.length === 0) return;
+    const delay = Math.max(100, Math.round(1000 / Math.max(0.25, timelinePlaybackSpeed)));
+    const timer = window.setInterval(() => {
+      setTimelineCursor(current => {
+        if (current >= timelineFrames.length - 1) {
+          setTimelinePlaying(false);
+          return current;
+        }
+        return current + 1;
+      });
+    }, delay);
+    return () => window.clearInterval(timer);
+  }, [timelinePlaying, timelineFrames.length, timelinePlaybackSpeed]);
+
+  const timelineFrame = timelineFrames[timelineCursor] || renderData.currentFrame;
+  const timelineIsPrediction = !!timelineFrame && (
+    timelineFrame.observationKind === 'predicted' ||
+    timelineFrame.source === 'predicted'
+  );
+
 
   const mountedRef = useRef(true);
   const processResetTimeoutRef = useRef<number | null>(null);
@@ -430,7 +475,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
         {/* Map Container - Stretches to Fill Available Space */}
         <div className="flex-1 relative min-h-0 min-w-0">
           <MapLibreIntelligenceMap
-            currentFrame={renderData.currentFrame}
+            currentFrame={timelineFrame}
             trail={renderData.trail}
             futurecast={renderData.futurecast}
             mapMode={mapMode}
@@ -506,13 +551,13 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
           </div>
 
           {/* Position */}
-          {currentFrame && (
+          {timelineFrame && (
             <div className="p-2 border-b border-slate-700/50">
               <h3 className="text-xs font-medium mb-1.5 flex items-center gap-1.5"><Crosshair className="w-3 h-3 text-cyan-400" />Position</h3>
               <div className="space-y-0.5 text-[11px] font-mono bg-slate-800/30 rounded-lg p-1.5 border border-slate-700/40">
-                <p><span className="text-slate-500">LAT:</span> <span className="text-cyan-400">{currentFrame.position.latitude.toFixed(6)}</span></p>
-                <p><span className="text-slate-500">LNG:</span> <span className="text-cyan-400">{currentFrame.position.longitude.toFixed(6)}</span></p>
-                <p><span className="text-slate-500">SPD:</span> <span className="text-green-400">{formatSpeed(currentFrame.velocity?.speed || 0)}</span></p>
+                <p><span className="text-slate-500">LAT:</span> <span className="text-cyan-400">{timelineFrame.position.latitude.toFixed(6)}</span></p>
+                <p><span className="text-slate-500">LNG:</span> <span className="text-cyan-400">{timelineFrame.position.longitude.toFixed(6)}</span></p>
+                <p><span className="text-slate-500">SPD:</span> <span className="text-green-400">{formatSpeed(timelineFrame.velocity?.speed || 0)}</span></p>
                 <p><span className="text-slate-500">HDG:</span> <span className="text-purple-400">{(currentFrame.velocity?.heading || 0).toFixed(1)}°</span></p>
               </div>
             </div>
@@ -575,34 +620,65 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
         </div>}
       </div>
 
-      {/* Timeline */}
+      {/* Rolling previous-hour / one-hour Futurecast timeline */}
       <div className="p-2 border-t border-slate-700/50 bg-slate-900/80 flex-shrink-0">
         {processing && <div className="mb-2"><span className="text-xs text-slate-400">{progressMsg}</span><Progress value={50} className="h-1 mt-1" /></div>}
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center gap-1 bg-slate-800/50 rounded-lg p-1">
-            <Button variant="ghost" size="icon" onClick={actions.stop} className="h-10 w-10 text-slate-400 hover:text-white"><SkipBack className="w-3 h-3" /></Button>
-            <Button variant="ghost" size="icon" onClick={stepBack} className="h-10 w-10 text-slate-400 hover:text-white"><ChevronLeft className="w-3 h-3" /></Button>
-            <Button variant="ghost" size="icon" onClick={isPlaying ? actions.pause : actions.play} className={`h-10 w-10 ${isPlaying ? 'text-cyan-400 bg-cyan-500/20' : 'text-white'}`}>
-              {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+            <Button variant="ghost" size="icon" onClick={() => setTimelineCursor(0)} className="h-10 w-10 text-slate-400 hover:text-white"><SkipBack className="w-3 h-3" /></Button>
+            <Button variant="ghost" size="icon" onClick={() => setTimelineCursor(i => Math.max(0, i - 1))} className="h-10 w-10 text-slate-400 hover:text-white"><ChevronLeft className="w-3 h-3" /></Button>
+            <Button variant="ghost" size="icon" onClick={() => setTimelinePlaying(v => !v)} className={`h-10 w-10 ${timelinePlaying ? 'text-cyan-400 bg-cyan-500/20' : 'text-white'}`}>
+              {timelinePlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
             </Button>
-            <Button variant="ghost" size="icon" onClick={stepForward} className="h-10 w-10 text-slate-400 hover:text-white"><ChevronRight className="w-3 h-3" /></Button>
-            <Button variant="ghost" size="icon" onClick={() => actions.seekTo(totalFrames - 1)} className="h-10 w-10 text-slate-400 hover:text-white"><SkipForward className="w-3 h-3" /></Button>
+            <Button variant="ghost" size="icon" onClick={() => setTimelineCursor(i => Math.min(Math.max(0, timelineFrames.length - 1), i + 1))} className="h-10 w-10 text-slate-400 hover:text-white"><ChevronRight className="w-3 h-3" /></Button>
+            <Button variant="ghost" size="icon" onClick={() => setTimelineCursor(Math.max(0, timelineFrames.length - 1))} className="h-10 w-10 text-slate-400 hover:text-white"><SkipForward className="w-3 h-3" /></Button>
           </div>
+
           <div className="flex-1 min-w-[200px]">
-            <Slider value={[currentIndex]} min={0} max={Math.max(0, totalFrames - 1)} step={1} onValueChange={([v]) => actions.seekTo(v)} className="cursor-pointer" />
+            <Slider
+              value={[timelineCursor]}
+              min={0}
+              max={Math.max(0, timelineFrames.length - 1)}
+              step={1}
+              onValueChange={([value]) => {
+                setTimelineCursor(value);
+                setTimelinePlaying(false);
+              }}
+              className="cursor-pointer"
+            />
             <div className="flex justify-between mt-0.5 text-[10px] text-slate-500">
-              <span>{formatTime(timeline.start)}</span>
-              <span className="text-cyan-400 font-medium">{formatTime(timeline.current)}</span>
-              <span>{formatTime(timeline.end)}</span>
+              <span>-1 hour</span>
+              <span className={timelineIsPrediction ? 'text-purple-300 font-medium' : 'text-cyan-400 font-medium'}>
+                {timelineFrame ? formatTime(timelineFrame.timestamp) : 'Now'}
+                {timelineIsPrediction ? ' · Futurecast' : ' · Observed'}
+              </span>
+              <span>+1 hour</span>
             </div>
           </div>
-          <select onChange={e => actions.setPlaybackSpeed(Number(e.target.value))} defaultValue={1} className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs">
-            <option value={0.5}>0.5x</option><option value={1}>1x</option><option value={2}>2x</option><option value={5}>5x</option><option value={10}>10x</option>
+
+          <select
+            onChange={e => setTimelinePlaybackSpeed(Number(e.target.value))}
+            value={timelinePlaybackSpeed}
+            className="bg-slate-800 border border-slate-700 rounded px-2 py-2 text-xs min-h-10"
+            aria-label="Timeline playback speed"
+          >
+            <option value={0.5}>0.5x</option>
+            <option value={1}>1x</option>
+            <option value={2}>2x</option>
+            <option value={5}>5x</option>
+            <option value={10}>10x</option>
           </select>
-          <Button variant="outline" size="sm" onClick={handleProcess} disabled={processing || totalFrames === 0} className="bg-slate-800/50 border-slate-700 h-7 text-xs">
-            <RefreshCw className={`w-3 h-3 mr-1 ${processing ? 'animate-spin' : ''}`} />Process
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setTimelineCursor(observedNowIndex)}
+            disabled={timelineFrames.length === 0}
+            className="bg-slate-800/50 border-slate-700 min-h-10 text-xs"
+          >
+            Now
           </Button>
-          <Button variant="outline" size="sm" onClick={handleExport} disabled={totalFrames === 0} className="bg-slate-800/50 border-slate-700 h-7 text-xs">
+          <Button variant="outline" size="sm" onClick={handleExport} disabled={timelineFrames.length === 0} className="bg-slate-800/50 border-slate-700 min-h-10 text-xs">
             <Download className="w-3 h-3 mr-1" />Export
           </Button>
         </div>
