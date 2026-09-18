@@ -19,6 +19,10 @@ const subscriptionFlowSource = readFileSync(new URL('../server/routes/subscripti
 const loginPageSource = readFileSync(new URL('../client/src/pages/login.tsx', import.meta.url), 'utf8');
 const subscriptionSuccessSource = readFileSync(new URL('../client/src/pages/subscription-success.tsx', import.meta.url), 'utf8');
 const appSource = readFileSync(new URL('../client/src/App.tsx', import.meta.url), 'utf8');
+const inmateRoutesSource = readFileSync(new URL('../server/routes/inmateSearch.routes.ts', import.meta.url), 'utf8');
+const adminRoutesSource = readFileSync(new URL('../server/routes/admin-console.routes.ts', import.meta.url), 'utf8');
+const railwayEnvSource = readFileSync(new URL('../.env.railway.example', import.meta.url), 'utf8');
+const deployPrepSource = readFileSync(new URL('../scripts/prepare-deployment.sh', import.meta.url), 'utf8');
 const legacyLocalAuth = new URL('../server/localAuth.ts', import.meta.url);
 
 assert.equal(existsSync(legacyLocalAuth), false, 'obsolete Passport local auth module must remain removed');
@@ -51,7 +55,9 @@ assert.match(statelessLocalAuthSource, /AUTH_EDGE_TIMEOUT_MS\s*=\s*15_000/, 'Edg
 assert.match(statelessLocalAuthSource, /x-legalwhat-auth-secret[\s\S]{0,120}edgeSecret/, 'Edge invocation must use the private shared secret');
 assert.doesNotMatch(statelessLocalAuthSource, /authorization:\s*\x60Bearer \$\{anonKey\}\x60/, 'legacy JWT invocation must not remain the Edge authority');
 assert.match(statelessLocalAuthSource, /v:\s*2[\s\S]{0,400}hasPaidForAccess/, 'signed local session must carry safe user identity fields');
-assert.doesNotMatch(authSource, /getLocalUserByIdHttp\(/, 'authenticated status must not reacquire the database after a signed local login');
+assert.match(authSource, /getLocalUserByIdHttp\(/, 'paid access must revalidate durable user state after signed identity authentication');
+assert.match(authSource, /resolvePaidAccess/, 'one fresh paid-access decision must govern protected services');
+assert.match(authSource, /typeof req\?\.isAuthenticated === "function"/, 'identity checks must guard the optional Passport request method');
 assert.match(statelessLocalAuthSource, /BEGIN[\s\S]{0,2200}COMMIT[\s\S]{0,800}ROLLBACK/, 'PostgreSQL signup must remain transactional');
 assert.match(statelessLocalAuthSource, /LEGALWHAT_AUTH_SUPABASE_URL\s*\|\|\s*getConfig\(\)\.SUPABASE_URL/, 'local auth Edge transport must have a dedicated canonical Supabase project URL');
 assert.match(statelessLocalAuthSource, /'pending_payment',false/, 'new PostgreSQL accounts must remain payment-pending');
@@ -66,14 +72,25 @@ assert.match(subscriptionFlowSource, /paymentNote:\s*noteForUser\(id\)/, 'Square
 assert.match(subscriptionFlowSource, /app\.post\("\/api\/subscription\/confirm"/, 'server-side Square confirmation route is missing');
 assert.match(subscriptionFlowSource, /handleLegalWhatSubscriptionWebhook/, 'Square subscription webhook reconciliation is missing');
 assert.match(subscriptionSuccessSource, /\/api\/subscription\/confirm/, 'Square return page must verify the subscription server-side');
+assert.match(subscriptionSuccessSource, /legalwhat_pending_square_order_id/, 'Square return must recover a stored order ID if the redirect query omits it');
 assert.match(appSource, /isAuthenticated\s*&&\s*hasPaidAccess/, 'private LegalWhat routes must require verified paid access');
+assert.match(appSource, /hasPaidForAccess === true[\s\S]{0,160}suspended/, 'client paid-access gate must honor explicit overrides while blocking suspended/revoked states');
 assert.match(loginPageSource, /\/api\/subscription\/checkout/, 'signup/login UI must hand pending users to hosted Square checkout');
+assert.match(loginPageSource, /sessionStorage\.setItem\("legalwhat_pending_square_order_id"/, 'checkout must preserve Square order identity before redirect');
+assert.match(subscriptionFlowSource, /isSuspended\(current\)/, 'suspended users must be rejected before Square checkout or confirmation');
+assert.match(subscriptionFlowSource, /identity-free subscription webhook/, 'identity-free ACTIVE webhooks must never grant access');
+assert.match(routesSource, /app\.post\('\/api\/osint\/full-search'[\s\S]{0,900}resolvePaidAccess\(req, res\)/, 'OSINT must enforce fresh paid access while preserving controlled responses');
+assert.match(inmateRoutesSource, /router\.post\('\/', isAuthenticated, apiRateLimit/, 'inmate search must require verified paid access');
+assert.match(adminRoutesSource, /hasPaidForAccess:\s*true,[\s\S]{0,80}status:\s*'active'/, 'admin subscription override must create an immediately usable access state');
+assert.match(railwayEnvSource, /SQUARE_SUBSCRIPTION_PLAN_VARIATION_ID=/, 'Railway example must document the required Square subscription plan variation');
+assert.match(deployPrepSource, /"SQUARE_SUBSCRIPTION_PLAN_VARIATION_ID"/, 'deployment preflight must validate the Square subscription plan variation');
 
-const { setupAuth } = await import('../server/auth.js');
+const { setupAuth, isIdentityAuthenticated } = await import('../server/auth.js');
 
 const app = express();
 app.use(express.json());
 await setupAuth(app);
+app.get('/__verify/identity', isIdentityAuthenticated, (_req, res) => res.json({ ok: true }));
 app.use((_req, res) => res.status(404).json({ message: 'not found' }));
 
 const server = createServer(app);
@@ -101,6 +118,9 @@ try {
   const anonymousState = await fetch(`${base}/api/auth/user`);
   assert.equal(anonymousState.status, 200);
   assert.equal(await anonymousState.json(), null);
+
+  const anonymousIdentity = await fetch(`${base}/__verify/identity`);
+  assert.equal(anonymousIdentity.status, 401, 'missing Passport/local identity must return 401 rather than throwing');
 
   const invalidRegistration = await fetch(`${base}/api/local-register`, {
     method: 'POST',
