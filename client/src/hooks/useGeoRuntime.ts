@@ -412,7 +412,8 @@ export function useGeoRuntime(
 
       // IMMUTABLE: Set new array reference
       setFrames([...newFrames]);
-      setCurrentIndex(0);
+      framesRef.current = [...newFrames];
+      setCurrentIndex(Math.max(0, newFrames.length - 1));
       setVersion(v => v + 1);
 
       // Server futurecast is authoritative; deterministic local fallback is used only on failure.
