@@ -569,15 +569,9 @@ export async function callAIWithGovernor(
   opts?: { systemPrompt?: string; temperature?: number; model?: string }
 ): Promise<{ success: boolean; content?: string; error?: string }> {
   try {
-    const canProceed = await canAutonomousProceed();
-    if (!canProceed) {
-      const rescheduleInfo = await getAutonomousRescheduleInfo();
-      return {
-        success: false,
-        error: `AUTONOMOUS_LIMIT_REACHED: ${rescheduleInfo.reason}. Resume in ${Math.round(rescheduleInfo.delayMs / 1000 / 60)} minutes.`,
-      };
-    }
-
+    // Full Harmony owns autonomous availability. A single-provider quota must
+    // never veto work while another configured participant or the local engine
+    // can serve it.
     const model = opts?.model || PREFERRED_MODEL;
 
     const response = await generateAutonomousText(
