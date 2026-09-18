@@ -8,12 +8,10 @@ import {
   getBudgetForTask,
   recordUsage,
   shouldDeferNonCritical,
-  AIProvider,
   TaskPriority,
   TaskComplexity,
   UsageContext,
   type AITaskMetadata,
-  type TokenBudget,
 } from './aiTokenGovernor';
 import { getCached, setCached } from './aiCache';
 import { getAdaptivePrompt } from './adaptivePrompts';
