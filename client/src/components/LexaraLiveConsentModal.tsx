@@ -1,7 +1,7 @@
 /**
  * LEXARA Live Consent Modal
  *
- * This component is the single authority for whether live voice/video is
+ * This component is the fallback authority for whether live voice/audio is
  * permitted. It acquires browser permissions and stores the user's choice.
  * The mounted consultation owns the actual SpeechRecognition instance.
  */
@@ -12,7 +12,8 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
-import { Scale, Mic, Video, Shield, Loader2, AlertTriangle, Check } from 'lucide-react';
+import { unlockAudio } from '@/lib/lexaraSpeechClient';
+import { Scale, Mic, Volume2, Shield, Loader2, AlertTriangle, Check } from 'lucide-react';
 
 export const LEXARA_LIVE_ENABLED_KEY = 'lexaraLiveEnabled';
 
@@ -62,51 +63,37 @@ const LexaraLiveConsentModal = memo(function LexaraLiveConsentModal({
   const [disclaimerAccepted, setDisclaimerAccepted] = useState(false);
   const [permissionsGranted, setPermissionsGranted] = useState({
     audio: false,
-    video: false,
+    speaker: false,
   });
 
   const requestLivePermissions = useCallback(async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-        video: true,
-      });
-
-      const audioGranted = stream.getAudioTracks().length > 0;
-      const videoGranted = stream.getVideoTracks().length > 0;
-      stream.getTracks().forEach(track => track.stop());
-
-      setPermissionsGranted({ audio: audioGranted, video: videoGranted });
-      return { audio: audioGranted, video: videoGranted };
-    } catch (combinedError: any) {
-      // Camera denial/unavailability must not prevent voice consultation.
-      try {
-        const audioStream = await navigator.mediaDevices.getUserMedia({
+      const [speakerReady, stream] = await Promise.all([
+        unlockAudio(),
+        navigator.mediaDevices.getUserMedia({
           audio: {
             echoCancellation: true,
             noiseSuppression: true,
             autoGainControl: true,
           },
-        });
-        const audioGranted = audioStream.getAudioTracks().length > 0;
-        audioStream.getTracks().forEach(track => track.stop());
-        setPermissionsGranted({ audio: audioGranted, video: false });
-        return { audio: audioGranted, video: false };
-      } catch {
-        setPermissionsGranted({ audio: false, video: false });
-        if (combinedError?.name === 'NotAllowedError' || combinedError?.name === 'PermissionDeniedError') {
-          setError('Microphone/camera permission was denied. You can continue in text-only mode.');
-        } else if (combinedError?.name === 'NotFoundError') {
-          setError('No compatible microphone or camera was found. You can continue in text-only mode.');
-        } else {
-          setError('Live devices are unavailable. You can continue in text-only mode.');
-        }
-        return { audio: false, video: false };
+          video: false,
+        }),
+      ]);
+
+      const audioGranted = stream.getAudioTracks().length > 0;
+      stream.getTracks().forEach(track => track.stop());
+      setPermissionsGranted({ audio: audioGranted, speaker: speakerReady });
+      return { audio: audioGranted, speaker: speakerReady };
+    } catch (permissionError: any) {
+      setPermissionsGranted({ audio: false, speaker: false });
+      if (permissionError?.name === 'NotAllowedError' || permissionError?.name === 'PermissionDeniedError') {
+        setError('Microphone permission was denied. You can continue in text-only mode.');
+      } else if (permissionError?.name === 'NotFoundError') {
+        setError('No compatible microphone was found. You can continue in text-only mode.');
+      } else {
+        setError('Live audio is unavailable. You can continue in text-only mode.');
       }
+      return { audio: false, speaker: false };
     }
   }, []);
 
@@ -115,7 +102,7 @@ const LexaraLiveConsentModal = memo(function LexaraLiveConsentModal({
     setError(null);
 
     if (!checked) {
-      setPermissionsGranted({ audio: false, video: false });
+      setPermissionsGranted({ audio: false, speaker: false });
       return;
     }
 
@@ -133,13 +120,12 @@ const LexaraLiveConsentModal = memo(function LexaraLiveConsentModal({
       return;
     }
 
-    // Voice is the essential live-conversation capability. Camera may be absent
-    // without forcing text mode, but camera-only permission is not treated as
-    // voice consent being operational.
-    const liveOperational = permissionsGranted.audio;
+    // Both microphone capture and unlocked audio playback are required for
+    // a complete live-conversation experience.
+    const liveOperational = permissionsGranted.audio && permissionsGranted.speaker;
     setLexaraLiveEnabled(liveOperational ? 'true' : 'false');
     onConsent(liveOperational);
-  }, [disclaimerAccepted, onConsent, permissionsGranted.audio]);
+  }, [disclaimerAccepted, onConsent, permissionsGranted.audio, permissionsGranted.speaker]);
 
   const handleDecline = useCallback(() => {
     setLexaraLiveEnabled('false');
@@ -170,7 +156,7 @@ const LexaraLiveConsentModal = memo(function LexaraLiveConsentModal({
             <DialogDescription className="mt-2 text-center text-slate-300">
               {targetLawArea
                 ? `Enable real-time voice legal analysis for ${targetLawArea}.`
-                : 'Enable real-time voice legal analysis and optional video with LEXARA.'}
+                : 'Enable real-time voice legal analysis with microphone input and audio playback.'}
             </DialogDescription>
           </DialogHeader>
         </div>
@@ -183,11 +169,11 @@ const LexaraLiveConsentModal = memo(function LexaraLiveConsentModal({
               {permissionsGranted.audio ? <Check className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
               Voice {permissionsGranted.audio ? '✓' : 'Input'}
             </Badge>
-            <Badge className={permissionsGranted.video
+            <Badge className={permissionsGranted.speaker
               ? 'flex items-center gap-1.5 border-green-500/30 bg-green-500/15 px-3 py-1 text-green-300'
               : 'flex items-center gap-1.5 border-indigo-500/30 bg-indigo-500/15 px-3 py-1 text-indigo-300'}>
-              {permissionsGranted.video ? <Check className="h-3.5 w-3.5" /> : <Video className="h-3.5 w-3.5" />}
-              Video {permissionsGranted.video ? '✓' : 'Optional'}
+              {permissionsGranted.speaker ? <Check className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
+              Audio {permissionsGranted.speaker ? '✓' : 'Output'}
             </Badge>
             <Badge className="flex items-center gap-1.5 border-emerald-500/30 bg-emerald-500/15 px-3 py-1 text-emerald-300">
               <Shield className="h-3.5 w-3.5" />
@@ -212,7 +198,7 @@ const LexaraLiveConsentModal = memo(function LexaraLiveConsentModal({
                     className="mt-0.5 border-amber-400/50 data-[state=checked]:border-amber-500 data-[state=checked]:bg-amber-500"
                   />
                   <Label htmlFor="disclaimer-accept" className="cursor-pointer text-sm leading-relaxed text-amber-100">
-                    I understand and agree to microphone access for live conversation and optional camera access.
+                    I understand and agree to microphone access for live conversation and to enabling audio playback for LEXARA's responses.
                   </Label>
                 </div>
               </div>
@@ -223,16 +209,16 @@ const LexaraLiveConsentModal = memo(function LexaraLiveConsentModal({
             <div className="mb-4 rounded-lg border border-cyan-500/30 bg-cyan-500/15 p-4 text-center">
               <div className="flex items-center justify-center gap-2 text-cyan-300">
                 <Loader2 className="h-5 w-5 animate-spin" />
-                <span className="font-medium">Requesting microphone and camera access…</span>
+                <span className="font-medium">Preparing microphone and audio playback…</span>
               </div>
             </div>
           )}
 
-          {disclaimerAccepted && !isRequesting && permissionsGranted.audio && (
+          {disclaimerAccepted && !isRequesting && permissionsGranted.audio && permissionsGranted.speaker && (
             <div className="mb-4 rounded-lg border border-green-500/30 bg-green-500/15 p-3 text-center">
               <p className="flex items-center justify-center gap-2 text-sm text-green-300">
                 <Check className="h-4 w-4" />
-                Microphone access granted{permissionsGranted.video ? ' · camera access granted' : ' · camera unavailable'}
+                Microphone and audio playback ready
               </p>
             </div>
           )}
@@ -247,7 +233,7 @@ const LexaraLiveConsentModal = memo(function LexaraLiveConsentModal({
         <div className="space-y-3 p-8 pt-2">
           <Button
             onClick={handleEnableLive}
-            disabled={isRequesting || !disclaimerAccepted || !permissionsGranted.audio}
+            disabled={isRequesting || !disclaimerAccepted || !permissionsGranted.audio || !permissionsGranted.speaker}
             className="w-full bg-gradient-to-r from-cyan-600 to-indigo-600 py-6 text-base font-medium text-white shadow-lg transition-all hover:from-cyan-500 hover:to-indigo-500 disabled:opacity-50"
           >
             {isRequesting ? (
@@ -255,7 +241,7 @@ const LexaraLiveConsentModal = memo(function LexaraLiveConsentModal({
                 <Loader2 className="mr-2 h-5 w-5 animate-spin" />
                 Waiting for permission…
               </>
-            ) : permissionsGranted.audio ? (
+            ) : permissionsGranted.audio && permissionsGranted.speaker ? (
               <>
                 <Check className="mr-2 h-5 w-5" />
                 Continue to LEXARA Live
@@ -263,7 +249,7 @@ const LexaraLiveConsentModal = memo(function LexaraLiveConsentModal({
             ) : (
               <>
                 <Mic className="mr-2 h-5 w-5" />
-                Grant microphone access to enable live voice
+                Prepare microphone and audio to enable live voice
               </>
             )}
           </Button>

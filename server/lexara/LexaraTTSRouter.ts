@@ -148,7 +148,7 @@ const DEFAULT_CONFIG: TTSEngineConfig = {
   maxCacheEntries: 500,
   cacheTTLMs: 30 * 60 * 1000, // 30 minutes
   timeoutMs: 60000,
-  modelId: 'eleven_multilingual_v2', // High quality model
+  modelId: process.env.ELEVENLABS_TTS_MODEL?.trim() || 'eleven_flash_v2_5', // Low-latency conversational model
 };
 
 // ============================================================================

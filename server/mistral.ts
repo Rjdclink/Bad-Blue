@@ -2,7 +2,7 @@
  * Mistral AI Service - Fast, high-quality inference
  * Primary provider for 50% of AI requests
  * 
- * MODEL: mistral-large-latest
+ * MODEL: mistral-small-2603
  * BEST FOR: Balanced general-purpose tasks, legal drafting, research synthesis
  * STRENGTHS: High quality, good reasoning, reliable JSON output
  */
@@ -63,7 +63,7 @@ export async function callMistral(
     messages.push({ role: 'user', content: prompt });
 
     const response = await client.chat.complete({
-      model: options.model || 'mistral-large-latest',
+      model: options.model || process.env.MISTRAL_MODEL?.trim() || 'mistral-small-2603',
       messages,
       temperature: options.temperature || 0.7,
       maxTokens: options.maxTokens || 2000,
@@ -128,7 +128,7 @@ export async function generateMistralLegalDocument(
     systemPrompt,
     maxTokens,
     temperature: 0.7,
-    model: 'mistral-small-latest', // FREE tier model
+    model: process.env.MISTRAL_MODEL?.trim() || 'mistral-small-2603', // FREE tier model
   });
   
   return content;
@@ -145,7 +145,7 @@ export async function generateMistralLegalConsultation(
     systemPrompt,
     maxTokens: 3000,
     temperature: 0.7,
-    model: 'mistral-small-latest', // FREE tier model
+    model: process.env.MISTRAL_MODEL?.trim() || 'mistral-small-2603', // FREE tier model
   });
   
   return content;

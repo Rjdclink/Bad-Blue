@@ -27,6 +27,7 @@ import { unifiedSearch, searchOfficerRecords, searchTechnicalGuidance, isWebSear
 import { searchOfficerInformation } from './officerSearch';
 import { callGemini as callGeminiService, isGeminiAvailable, isGeminiRateLimited, GeminiRateLimitError } from './gemini';
 import { callMistral, isMistralAvailable } from './mistral';
+import { callClaude, isClaudeAvailable } from './claude';
 import { isGroqAvailable, generateGroqStructuredResponse } from './groq';
 import selfImprovementEngine, { type AIProviderName, type OutcomeContext } from './selfImprovementEngine';
 
@@ -47,13 +48,12 @@ const DAILY_SCRAPE_HOUR_UTC = Number(process.env.DAILY_SCRAPE_HOUR_UTC || 2);
 const DAILY_SCRAPE_DURATION_MS = Number(process.env.DAILY_SCRAPE_DURATION_MS || 1000 * 60 * 60);
 const MIN_API_CALL_INTERVAL_MS = 1500;
 
-const DEFAULT_GEMINI_MODEL = 'gemini-2.5-pro';
+const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
 const GEMINI_MODEL_CANDIDATES = [
   () => process.env.GEMINI_MODEL?.trim(),
   () => DEFAULT_GEMINI_MODEL,
-  () => 'gemini-3.0-flash-preview',
-  () => 'gemini-2.5-flash',
-  () => 'gemini-2.0-flash',
+  () => 'gemini-3.7-flash',
+  () => 'gemini-3.6-flash',
 ].map(fn => fn()).filter(Boolean) as string[];
 
 let autonomousExecutionEnabled = true;
@@ -291,20 +291,22 @@ export async function callAIWithFallback(
   });
 
   const providers: Array<{
-    name: 'gemini' | 'groq' | 'mistral';
+    name: 'gemini' | 'groq' | 'mistral' | 'anthropic';
     isAvailable: () => boolean;
     call: () => Promise<string>;
   }> = [
     {
-      name: 'gemini',
-      isAvailable: () => isGeminiAvailable() && !isGeminiRateLimited(),
+      name: 'anthropic',
+      isAvailable: () => isClaudeAvailable(),
       call: async () => {
-        return await callGeminiService(prompt, {
+        const result = await callClaude(prompt, {
           systemPrompt: options.systemPrompt,
-          temperature: options.temperature ?? 0.7,
+          temperature: options.temperature,
           maxTokens: options.maxTokens,
+          model: process.env.LEXARA_CLAUDE_MODEL?.trim() || 'claude-sonnet-4-6',
           useJSON: options.useJSON,
-        }, options.maxTokens || 8192);
+        });
+        return result.content;
       }
     },
     {
@@ -316,9 +318,21 @@ export async function callAIWithFallback(
       name: 'mistral',
       isAvailable: () => isMistralAvailable(),
       call: async () => callMistralFallback(prompt, options)
-    }
+    },
+    {
+      name: 'gemini',
+      isAvailable: () => isGeminiAvailable() && !isGeminiRateLimited(),
+      call: async () => {
+        return await callGeminiService(prompt, {
+          systemPrompt: options.systemPrompt,
+          temperature: options.temperature,
+          maxTokens: options.maxTokens,
+          model: process.env.GEMINI_MODEL?.trim() || 'gemini-3.8-flash',
+          useJSON: options.useJSON,
+        });
+      }
+    },
   ];
-
   // Reorder based on preferred provider
   if (options.preferredProvider && options.preferredProvider !== 'gemini') {
     const preferredIdx = providers.findIndex(p => p.name === options.preferredProvider);
@@ -333,7 +347,7 @@ export async function callAIWithFallback(
   for (const provider of providers) {
     // Check if provider is available
     if (!provider.isAvailable()) {
-      const reason = provider.name === 'gemini' 
+      const reason = provider.name === 'gemini'
         ? (isGeminiRateLimited() ? 'rate-limited' : 'not configured')
         : 'not configured';
       console.log(`[AI Fallback] Skipping ${provider.name}: ${reason}`);
