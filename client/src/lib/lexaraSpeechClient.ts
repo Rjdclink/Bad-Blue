@@ -137,7 +137,12 @@ function clearCurrentAudioHandlers(): void {
 
 export const LexaraServerTTS = {
   async play(
-    audioOrResponse: Blob | VoiceResponse | { audio: Blob } | { audioBase64: string; mimeType: string },
+    audioOrResponse:
+      | Blob
+      | VoiceResponse
+      | { audio: Blob }
+      | { audioBase64: string; mimeType: string }
+      | { audioUrl: string },
   ): Promise<void> {
     // New playback always owns the channel. Resolve any previous play promise so
     // callers do not remain suspended after an intentional interruption.
