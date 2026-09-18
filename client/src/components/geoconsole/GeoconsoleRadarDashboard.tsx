@@ -463,6 +463,17 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
             lockOnTarget={lockOnTarget}
             onUserInteraction={() => setLockOnTarget(false)}
           />
+          {spectraShell && !lockOnTarget && (timelineFrame || candidateLocations.length > 0) && (
+            <button
+              type="button"
+              onClick={() => setLockOnTarget(true)}
+              className="absolute right-3 top-3 z-20 flex h-11 w-11 items-center justify-center rounded-full border border-slate-600/60 bg-slate-950/85 text-cyan-300 shadow-xl backdrop-blur hover:bg-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+              title="Recenter target"
+              aria-label="Recenter target"
+            >
+              <Target className="h-4 w-4" />
+            </button>
+          )}
           {!spectraShell && <div className="absolute bottom-3 left-3 right-3 z-10 flex items-end justify-between gap-2 pointer-events-none">
             <div className="pointer-events-auto flex max-w-[calc(100%-3rem)] gap-1 overflow-x-auto rounded-xl border border-slate-600/50 bg-slate-900/90 p-1 shadow-xl backdrop-blur">
               {(['satellite', 'terrain', 'weather', 'evidence', 'street'] as const).map(preset => (
