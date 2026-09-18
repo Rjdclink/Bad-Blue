@@ -410,6 +410,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
             layers={layerCfg}
             isLive={state.isLive}
             lockOnTarget={lockOnTarget}
+            onUserInteraction={() => setLockOnTarget(false)}
           />
           <div className="absolute bottom-3 left-3 right-3 z-10 flex items-end justify-between gap-2 pointer-events-none">
             <div className="pointer-events-auto flex max-w-[calc(100%-3rem)] gap-1 overflow-x-auto rounded-xl border border-slate-600/50 bg-slate-900/90 p-1 shadow-xl backdrop-blur">
