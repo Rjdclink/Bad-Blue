@@ -87,12 +87,13 @@ export class MonteCarloPathEngine {
    * Add to cache with LRU eviction
    */
   private addToCache(key: string, path: InterpolatedPath): void {
-    // Evict oldest if at capacity
-    if (this.pathCache.size >= MAX_PATH_CACHE_SIZE) {
+    if (this.pathCache.has(key)) {
+      this.cacheOrder = this.cacheOrder.filter(existing => existing !== key);
+    } else if (this.pathCache.size >= MAX_PATH_CACHE_SIZE) {
       const oldest = this.cacheOrder.shift();
       if (oldest) this.pathCache.delete(oldest);
     }
-    
+
     this.pathCache.set(key, path);
     this.cacheOrder.push(key);
   }
@@ -107,11 +108,15 @@ export class MonteCarloPathEngine {
     options?: Partial<MonteCarloConfig>
   ): Promise<InterpolatedPath> {
     const config = { ...this.config, ...options };
-    const cacheKey = this.getCacheKey(startPoint, endPoint);
+    const cacheKey = this.getCacheKey(startPoint, endPoint, config);
     
     // Check cache first
     const cached = this.pathCache.get(cacheKey);
     if (cached) {
+      // True LRU: a hit refreshes recency instead of leaving hot entries at
+      // the front of the eviction queue.
+      this.cacheOrder = this.cacheOrder.filter(key => key !== cacheKey);
+      this.cacheOrder.push(cacheKey);
       log.debug('Cache hit for path interpolation', { cacheKey });
       return cached;
     }
@@ -231,7 +236,7 @@ export class MonteCarloPathEngine {
       Math.min(MAX_SIMULATION_STEPS, Math.max(spatialSteps, temporalSteps))
     );
     const iterations = Math.max(50, Math.min(1000, Math.floor(config.iterations)));
-    const seedBase = this.getCacheKey(start, end);
+    const seedBase = this.getCacheKey(start, end, config);
 
     const simulations: GPSPoint[][] = [];
     for (let i = 0; i < iterations; i++) {
@@ -637,6 +642,7 @@ export class MonteCarloPathEngine {
     let supportedDuration = 0;
     let currentSegmentStart = 0;
     let currentSegmentType: TrailSegment['segmentType'] = 'unknown';
+    let activeStopIndex: number | null = null;
 
     for (let i = 0; i < sortedPoints.length; i++) {
       const point = sortedPoints[i];
@@ -645,6 +651,17 @@ export class MonteCarloPathEngine {
       const gapBreak = i > 0 && Number(point.metadata?.gapBeforeSeconds || 0) > 0;
 
       if (gapBreak) {
+        if (activeStopIndex !== null && i > 0) {
+          const stop = stops[activeStopIndex];
+          const departure = sortedPoints[i - 1].timestamp;
+          stop.departureTime = departure;
+          stop.duration = Math.max(
+            0,
+            (departure.getTime() - stop.arrivalTime.getTime()) / 1000,
+          );
+          activeStopIndex = null;
+        }
+
         if (i - 1 > currentSegmentStart) {
           segments.push(this.createSegment(
             sortedPoints,
@@ -691,30 +708,41 @@ export class MonteCarloPathEngine {
           currentSegmentType = newType;
         }
 
-        if (speed < SPEED_THRESHOLDS.stationary && i > 1) {
-          const previousTrailPoint = trailPoints[i - 1];
-          const previousSpeed = previousTrailPoint?.velocity?.speed ?? 0;
-          if (previousSpeed >= SPEED_THRESHOLDS.stationary) {
+        if (speed < SPEED_THRESHOLDS.stationary) {
+          if (activeStopIndex === null) {
             stops.push({
               position: point,
               arrivalTime: point.timestamp,
               duration: 0,
             });
+            activeStopIndex = stops.length - 1;
           }
+        } else if (activeStopIndex !== null) {
+          const stop = stops[activeStopIndex];
+          // The previous observation is the last evidence still consistent with
+          // being stopped. Do not count the subsequent travel interval as dwell.
+          const departure = prevPoint.timestamp;
+          stop.departureTime = departure;
+          stop.duration = Math.max(
+            0,
+            (departure.getTime() - stop.arrivalTime.getTime()) / 1000,
+          );
+          activeStopIndex = null;
         }
       }
 
       const age = Math.max(0, latestEventTime - point.timestamp.getTime());
       const opacity = Math.max(0.1, 1 - age / OPERATOR_TRAIL_WINDOW_MS);
 
+      const hasSupportedVelocity = i > 0 && !gapBreak;
       trailPoints.push({
         position: point,
-        velocity: gapBreak ? undefined : { speed, heading },
+        velocity: hasSupportedVelocity ? { speed, heading } : undefined,
         interpolated:
           point.observationKind === 'interpolated' ||
           point.source === 'interpolated',
         opacity,
-        color: gapBreak ? undefined : this.getSpeedColor(speed),
+        color: hasSupportedVelocity ? this.getSpeedColor(speed) : undefined,
       });
     }
 
@@ -727,10 +755,13 @@ export class MonteCarloPathEngine {
       ));
     }
 
-    for (let i = 0; i < stops.length - 1; i++) {
-      stops[i].departureTime = stops[i + 1].arrivalTime;
-      stops[i].duration =
-        (stops[i + 1].arrivalTime.getTime() - stops[i].arrivalTime.getTime()) / 1000;
+    if (activeStopIndex !== null) {
+      const stop = stops[activeStopIndex];
+      const lastEvidenceTime = sortedPoints[sortedPoints.length - 1].timestamp;
+      stop.duration = Math.max(
+        0,
+        (lastEvidenceTime.getTime() - stop.arrivalTime.getTime()) / 1000,
+      );
     }
 
     const duration =
@@ -1045,8 +1076,37 @@ export class MonteCarloPathEngine {
     return { north, south, east, west };
   }
 
-  private getCacheKey(start: GPSPoint, end: GPSPoint): string {
-    return `${start.latitude.toFixed(6)},${start.longitude.toFixed(6)}-${end.latitude.toFixed(6)},${end.longitude.toFixed(6)}-${start.timestamp.getTime()}-${end.timestamp.getTime()}`;
+  private getCacheKey(
+    start: GPSPoint,
+    end: GPSPoint,
+    config: MonteCarloConfig = this.config,
+  ): string {
+    const pointKey = (point: GPSPoint) => [
+      point.latitude.toFixed(7),
+      point.longitude.toFixed(7),
+      point.altitude ?? '',
+      point.accuracy ?? '',
+      point.timestamp.getTime(),
+      point.source,
+      point.confidence.toFixed(6),
+      point.observationKind ?? '',
+      point.correlationGroup ?? '',
+      point.provenance?.provider ?? '',
+      point.provenance?.recordId ?? '',
+    ].join(',');
+
+    const configKey = [
+      config.iterations,
+      config.stepSize,
+      config.maxSpeed,
+      config.accelerationVariance,
+      config.directionVariance,
+      config.terrainAwareness,
+      config.roadNetworkConstraint,
+      config.probabilityThreshold,
+    ].join(',');
+
+    return `${pointKey(start)}->${pointKey(end)}|${configKey}`;
   }
 }
 
