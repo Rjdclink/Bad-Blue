@@ -16,6 +16,9 @@ const STATE_ABBREVIATIONS: Record<string, string> = {
 const STATE_CODES = new Set(Object.values(STATE_ABBREVIATIONS));
 const STATE_NAMES = Object.keys(STATE_ABBREVIATIONS).sort((a, b) => b.length - a.length);
 let lastRequestAt = 0;
+const GEOCODER_BASE_URL =
+  process.env.SPECTRA_GEOCODER_BASE_URL ||
+  'https://nominatim.openstreetmap.org';
 
 export interface CityStateLocation {
   latitude: number;
@@ -108,16 +111,105 @@ export function extractCityStateHint(input: string): { city: string; state: stri
   return null;
 }
 
-export async function geocodeCityState(input: string): Promise<CityStateLocation | null> {
-  const hint = extractCityStateHint(input);
-  if (!hint) throw new Error('A city and state could not be identified.');
+export function extractFreeformLocationHint(input: string): string | null {
+  const text = normalizeSpaces(input);
+  if (!text || /https?:\/\//i.test(text) || /@/.test(text)) return null;
 
+  const labeledCity = text.match(
+    /\bcity\s*[:=]?\s*([A-Za-z][A-Za-z.'\- ]{1,80}?)(?=\s+(?:state|province|country)\b|[,;]|$)/i,
+  );
+  const labeledState = text.match(
+    /\b(?:state|province)\s*[:=]?\s*([A-Za-z][A-Za-z.'\- ]{1,60}?)(?=\s+country\b|[,;]|$)/i,
+  );
+  const labeledCountry = text.match(
+    /\bcountry\s*[:=]?\s*([A-Za-z][A-Za-z.'\- ]{1,60}?)(?=[,;]|$)/i,
+  );
+  if (labeledCity) {
+    return [
+      normalizeSpaces(labeledCity[1]),
+      labeledState ? normalizeSpaces(labeledState[1]) : '',
+      labeledCountry ? normalizeSpaces(labeledCountry[1]) : '',
+    ].filter(Boolean).join(', ');
+  }
+
+  const contextual = text.match(
+    /\b(?:located\s+in|last\s+known\s+(?:in|at)|in|near|around)\s+([^;|]+?)(?=\s+(?:phone|email|employer|works?|age|born)\b|[;|]|$)/i,
+  );
+  if (contextual) {
+    const phrase = normalizeSpaces(contextual[1])
+      .replace(/[,.!?]+$/g, '')
+      .trim();
+    if (
+      phrase.length >= 2 &&
+      phrase.length <= 120 &&
+      !/\d{7,}/.test(phrase)
+    ) {
+      return phrase;
+    }
+  }
+
+  return null;
+}
+
+async function waitForGeocoderSlot(): Promise<void> {
   const elapsed = Date.now() - lastRequestAt;
   if (lastRequestAt && elapsed < 1000) {
     await new Promise(resolve => setTimeout(resolve, 1000 - elapsed));
   }
+  lastRequestAt = Date.now();
+}
 
-  const url = new URL('https://nominatim.openstreetmap.org/search');
+async function queryGeocoder(url: URL): Promise<Array<{
+  lat?: string;
+  lon?: string;
+  display_name?: string;
+}>> {
+  await waitForGeocoderSlot();
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': 'LegalWhat-SPECTRA-Geocoder/1.0',
+    },
+    signal: AbortSignal.timeout(7000),
+  });
+  if (!response.ok) throw new Error('Location service is unavailable.');
+  return response.json() as Promise<Array<{
+    lat?: string;
+    lon?: string;
+    display_name?: string;
+  }>>;
+}
+
+export async function geocodeFreeformLocation(input: string): Promise<CityStateLocation | null> {
+  const query = extractFreeformLocationHint(input);
+  if (!query) return null;
+
+  const url = new URL('/search', GEOCODER_BASE_URL);
+  url.searchParams.set('format', 'jsonv2');
+  url.searchParams.set('limit', '1');
+  url.searchParams.set('addressdetails', '1');
+  url.searchParams.set('q', query);
+
+  const results = await queryGeocoder(url);
+  const result = results[0];
+  const latitude = Number(result?.lat);
+  const longitude = Number(result?.lon);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+
+  return {
+    latitude,
+    longitude,
+    displayName: result?.display_name || query,
+    city: query,
+    state: '',
+  };
+}
+
+export async function geocodeCityState(input: string): Promise<CityStateLocation | null> {
+  const hint = extractCityStateHint(input);
+  if (!hint) throw new Error('A city and state could not be identified.');
+
+  const url = new URL('/search', GEOCODER_BASE_URL);
   url.searchParams.set('format', 'jsonv2');
   url.searchParams.set('limit', '1');
   url.searchParams.set('addressdetails', '1');
@@ -125,16 +217,7 @@ export async function geocodeCityState(input: string): Promise<CityStateLocation
   url.searchParams.set('state', hint.state);
   url.searchParams.set('country', 'United States');
 
-  lastRequestAt = Date.now();
-  const response = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
-      'User-Agent': 'LegalWhat-SPECTRA-Geocoder/1.0',
-    },
-  });
-  if (!response.ok) throw new Error('Location service is unavailable.');
-
-  const results = await response.json() as Array<{ lat?: string; lon?: string; display_name?: string }>;
+  const results = await queryGeocoder(url);
   const result = results[0];
   const latitude = Number(result?.lat);
   const longitude = Number(result?.lon);
