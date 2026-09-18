@@ -185,6 +185,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const voiceTurnTimerRef = useRef<number | null>(null);
   const responseEmotionRef = useRef<LEXARAEmotionHint>('authoritative');
   const activeLexaraSpeechRef = useRef('');
+  const recentLexaraSpeechRef = useRef<{ text: string; expiresAt: number }>({ text: '', expiresAt: 0 });
   const autoInterruptRef = useRef<() => void>(() => undefined);
   const lastFinalVoiceSegmentRef = useRef<{ text: string; at: number }>({ text: '', at: 0 });
 
@@ -218,10 +219,12 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       // Keep the microphone live while LEXARA speaks. Browser echo cancellation
       // removes most speaker leakage; this lexical guard rejects residual TTS
       // echoes so genuine user speech can automatically barge in.
-      if (
-        phaseRef.current === 'speaking'
-        && looksLikeLexaraEcho(observed, activeLexaraSpeechRef.current)
-      ) {
+      const echoReference = activeLexaraSpeechRef.current
+        || (Date.now() <= recentLexaraSpeechRef.current.expiresAt
+          ? recentLexaraSpeechRef.current.text
+          : '');
+
+      if (echoReference && looksLikeLexaraEcho(observed, echoReference)) {
         return;
       }
 
@@ -257,10 +260,14 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       voiceTurnTimerRef.current = window.setTimeout(flushVoiceTurn, VOICE_TURN_SETTLE_MS);
     },
     onError: error => {
-      const message = String(error.message).toLowerCase();
-      if (message.includes('permission') || message.includes('audio-capture')) {
+      const message = String(error.message || '');
+      const normalized = message.toLowerCase();
+      if (normalized.includes('permission') || normalized.includes('audio-capture')) {
         setVoiceReady(false);
+        setErrorMessage('Microphone access is off. Turn it on to keep talking, or continue by typing.');
+        return;
       }
+      setErrorMessage('I’m having trouble hearing you right now. You can keep typing while voice recovers.');
     },
   });
 
@@ -304,11 +311,13 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     try {
       await enableRecognition();
       setVoiceReady(true);
+      setErrorMessage(null);
       startListening();
       setConversationPhase('listening');
       return true;
-    } catch {
+    } catch (error) {
       setVoiceReady(false);
+      setErrorMessage(friendlyError(error));
       setConversationPhase('text-only');
       return false;
     }
@@ -324,6 +333,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
     clearVoiceTurnBuffer();
     activeLexaraSpeechRef.current = text;
+    recentLexaraSpeechRef.current = { text, expiresAt: Number.POSITIVE_INFINITY };
     // Full-duplex: recognition stays live while LEXARA speaks so natural
     // barge-in can be detected without a button.
     resumeListening();
@@ -340,6 +350,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       });
     } finally {
       activeLexaraSpeechRef.current = '';
+      recentLexaraSpeechRef.current = { text, expiresAt: Date.now() + 8_000 };
       resumeListening();
       if (generation === undefined || generation === generationRef.current) {
         setConversationPhase('listening');
@@ -557,7 +568,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const isListening = phase === 'listening' && recognitionListening;
 
   return (
-    <div className="mx-auto grid h-[calc(100dvh-73px)] max-w-7xl grid-cols-1 grid-rows-[minmax(260px,42dvh)_minmax(0,1fr)] overflow-hidden lg:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.75fr)] lg:grid-rows-1">
+    <div className="mx-auto grid h-[calc(100dvh-73px)] max-w-7xl grid-cols-1 grid-rows-[minmax(220px,38dvh)_minmax(0,1fr)] overflow-hidden lg:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.75fr)] lg:grid-rows-1">
       <section className="relative flex min-h-0 items-center justify-center overflow-hidden bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 p-3 sm:p-6 lg:min-h-full">
         <div className="absolute inset-0 opacity-40">
           <div className="absolute left-1/4 top-1/4 h-80 w-80 rounded-full bg-cyan-500/10 blur-3xl" />
@@ -607,7 +618,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
           </div>
         </div>
 
-        <div ref={conversationScrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
+        <div ref={conversationScrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-4" aria-live="polite">
           {conversation.map(message => (
             <div
               key={message.id}
@@ -653,17 +664,17 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
           <div ref={messageEndRef} />
         </div>
 
-        <div className="border-t p-4">
+        <div className="border-t px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
           {liveEnabled && !voiceReady && (
             <Button
               type="button"
               variant="outline"
               size="sm"
               onClick={() => void enableVoice()}
-              className="mb-3 w-full gap-2"
+              className="mb-3 min-h-11 w-full gap-2 touch-manipulation text-base sm:text-sm"
             >
               <Mic className="h-4 w-4" />
-              Re-enable microphone
+              Start microphone
             </Button>
           )}
 
@@ -672,10 +683,14 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
               value={userInput}
               onChange={event => setUserInput(event.target.value)}
               placeholder="Type or speak naturally…"
-              className="min-w-0 flex-1 rounded-full border bg-background px-4 py-2.5 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+              className="min-w-0 flex-1 rounded-full border bg-background px-4 py-3 text-base outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring sm:text-sm"
               aria-label="Message LEXARA"
+              enterKeyHint="send"
+              autoComplete="off"
+              autoCapitalize="sentences"
+              spellCheck
             />
-            <Button type="submit" size="icon" className="h-10 w-10 rounded-full" disabled={!userInput.trim()}>
+            <Button type="submit" size="icon" className="h-11 w-11 shrink-0 touch-manipulation rounded-full" disabled={!userInput.trim()} aria-label="Send message">
               <Send className="h-4 w-4" />
             </Button>
           </form>
