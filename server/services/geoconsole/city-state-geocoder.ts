@@ -65,7 +65,6 @@ export function extractCityStateHint(input: string): { city: string; state: stri
     if (state && city.length >= 2) return { city, state, query: `${city}, ${state}` };
   }
 
-  const lower = text.toLowerCase();
   for (const stateName of STATE_NAMES) {
     const stateRegex = new RegExp(`\\b${stateName.replace(/ /g, '\\s+')}\\b`, 'i');
     const stateMatch = stateRegex.exec(text);
