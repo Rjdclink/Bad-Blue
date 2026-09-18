@@ -6,6 +6,7 @@
  */
 import { type Request, type Response, type NextFunction } from 'express';
 import {
+  hasPaidServiceAccess,
   isAuthenticated as canonicalPaidAccess,
   isIdentityAuthenticated as canonicalIdentity,
   refreshRequestUser,
@@ -29,9 +30,7 @@ export async function hasSubscription(
       return res.status(401).json({ error: 'Authentication required' });
     }
 
-    (req as any).hasSubscription =
-      user.hasPaidForAccess === true ||
-      String(user.status || '').toLowerCase() !== 'pending_payment';
+    (req as any).hasSubscription = hasPaidServiceAccess(user);
     return next();
   } catch (error) {
     console.error('Subscription lookup error:', error);
