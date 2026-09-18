@@ -444,6 +444,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
   const [ready, setReady] = useState(false);
   const [streetPhoto, setStreetPhoto] = useState<KartaViewPhoto | null>(null);
   const [streetLoading, setStreetLoading] = useState(false);
+  const [rendererRecovering, setRendererRecovering] = useState(false);
   const lastFollowRef = useRef<[number, number] | null>(null);
   const userInteractionUntilRef = useRef(0);
   const activeStyleRef = useRef(mapMode === 'dark' ? OPENFREEMAP_DARK : OPENFREEMAP_LIBERTY);
@@ -472,7 +473,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
       zoom: currentFrame || trail.length ? 14 : 2,
       pitch: layers.terrain || layers.buildings ? 52 : 0,
       bearing: 0,
-      antialias: true,
+      antialias: typeof navigator === 'undefined' || !navigator.hardwareConcurrency || navigator.hardwareConcurrency > 4,
       attributionControl: true,
       maxPitch: 85,
     });
@@ -483,6 +484,18 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
       visualizePitch: true,
     }), 'top-left');
     map.addControl(new maplibregl.ScaleControl({ unit: 'imperial', maxWidth: 140 }), 'bottom-left');
+
+    const canvas = map.getCanvas();
+    const handleContextLost = (event: Event) => {
+      event.preventDefault();
+      setRendererRecovering(true);
+    };
+    const handleContextRestored = () => {
+      setRendererRecovering(false);
+      map.resize();
+    };
+    canvas.addEventListener('webglcontextlost', handleContextLost, false);
+    canvas.addEventListener('webglcontextrestored', handleContextRestored, false);
 
     const suspendFollow = (event?: { originalEvent?: unknown }) => {
       // MapLibre also emits zoom/rotate/pitch events for programmatic camera
@@ -525,6 +538,8 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     mapRef.current = map;
 
     return () => {
+      canvas.removeEventListener('webglcontextlost', handleContextLost, false);
+      canvas.removeEventListener('webglcontextrestored', handleContextRestored, false);
       popup.remove();
       map.remove();
       mapRef.current = null;
@@ -696,6 +711,14 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
   return (
     <div className="absolute inset-0">
       <div ref={containerRef} className="absolute inset-0" />
+
+      {rendererRecovering && (
+        <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm">
+          <div className="rounded-xl border border-slate-700 bg-slate-900/90 px-4 py-3 text-sm text-slate-200 shadow-xl">
+            Restoring map…
+          </div>
+        </div>
+      )}
 
       {layers.streetImagery && (
         <div className="absolute bottom-12 right-3 z-20 w-[min(360px,calc(100%-1.5rem))] overflow-hidden rounded-xl border border-slate-600/60 bg-slate-950/95 shadow-2xl backdrop-blur">
