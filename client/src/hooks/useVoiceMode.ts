@@ -8,6 +8,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useToast } from './use-toast';
+import { getLexaraSharedAudioContext } from '@/lib/lexaraSpeechClient';
 
 export interface VoiceModeOptions {
   onTranscript?: (text: string, isFinal: boolean) => void;
@@ -85,6 +86,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
 
   const serverStreamRef = useRef<MediaStream | null>(null);
   const serverAudioContextRef = useRef<AudioContext | null>(null);
+  const serverAudioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const serverAnalyserRef = useRef<AnalyserNode | null>(null);
   const serverVadFrameRef = useRef<number | null>(null);
   const serverRecorderRef = useRef<MediaRecorder | null>(null);
@@ -363,28 +365,19 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
   const initializeServerRecognition = useCallback(async (stream: MediaStream) => {
     serverStreamRef.current = stream;
 
-    const AudioContextCtor = (window as any).AudioContext || (window as any).webkitAudioContext;
-    if (!AudioContextCtor) {
-      throw new Error('Live voice is not supported on this browser');
-    }
-
-    const audioContext: AudioContext = new AudioContextCtor();
+    // Reuse the AudioContext that the consent page unlocked from the user's
+    // gesture. This avoids an iOS/Safari second-tap requirement after SPA
+    // navigation into the consultation.
+    const audioContext = await getLexaraSharedAudioContext();
     serverAudioContextRef.current = audioContext;
 
     const source = audioContext.createMediaStreamSource(stream);
+    serverAudioSourceRef.current = source;
     const analyser = audioContext.createAnalyser();
     analyser.fftSize = 512;
     analyser.smoothingTimeConstant = 0.72;
     source.connect(analyser);
     serverAnalyserRef.current = analyser;
-
-    if (audioContext.state === 'suspended') {
-      try {
-        await audioContext.resume();
-      } catch {
-        // A later explicit microphone tap can resume the context.
-      }
-    }
 
     if (audioContext.state !== 'running') {
       throw new Error('Tap the microphone button once to start live voice on this browser.');
@@ -397,12 +390,14 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     transcriptionAbortRef.current?.abort();
     transcriptionAbortRef.current = null;
 
-    const context = serverAudioContextRef.current;
+    try {
+      serverAudioSourceRef.current?.disconnect();
+    } catch {
+      // The source may already be detached from the shared audio graph.
+    }
+    serverAudioSourceRef.current = null;
     serverAudioContextRef.current = null;
     serverAnalyserRef.current = null;
-    if (context) {
-      void context.close().catch(() => undefined);
-    }
 
     if (stopTracks) {
       serverStreamRef.current?.getTracks().forEach(track => track.stop());
