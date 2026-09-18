@@ -373,8 +373,11 @@ async function transcribeWithGroq(file: Express.Multer.File): Promise<{
     const avgLogprob = avgLogprobValues.length
       ? avgLogprobValues.reduce((sum, value) => sum + value, 0) / avgLogprobValues.length
       : undefined;
+    // One quiet segment inside a long explanation must not invalidate the
+    // entire utterance. Aggregate no-speech evidence across segments rather
+    // than treating the single worst pause as representative of the turn.
     const noSpeechProbability = noSpeechValues.length
-      ? Math.max(...noSpeechValues)
+      ? noSpeechValues.reduce((sum, value) => sum + value, 0) / noSpeechValues.length
       : undefined;
 
     return {
@@ -500,21 +503,38 @@ router.post('/transcribe-file', lexaraVoiceUpload.single('audio'), async (req: R
       }
 
       const speechDurationMs = Math.max(0, Number(req.body?.speechDurationMs || 0));
+      const bargeInProbe = req.body?.bargeInProbe === 'true';
       const noSpeechProbability = result.quality?.noSpeechProbability;
       const avgLogprob = result.quality?.avgLogprob;
 
-      // Reject evidence that strongly resembles silence/non-speech or an
-      // extremely low-confidence Whisper hallucination before it can ever
-      // become a user turn.
-      if (
-        (Number.isFinite(noSpeechProbability) && Number(noSpeechProbability) >= 0.72)
-        || (Number.isFinite(avgLogprob) && Number(avgLogprob) <= -1.15)
-      ) {
+      const hasNoSpeech = Number.isFinite(noSpeechProbability);
+      const hasLogprob = Number.isFinite(avgLogprob);
+      const noSpeech = hasNoSpeech ? Number(noSpeechProbability) : undefined;
+      const logprob = hasLogprob ? Number(avgLogprob) : undefined;
+
+      // Reject only when the acoustic evidence is jointly poor. A long spoken
+      // explanation with noSpeech≈0 must not be discarded solely because one
+      // Whisper segment has a low average log probability.
+      const rejectAsNonSpeech = (noSpeech !== undefined && noSpeech >= (bargeInProbe ? 0.68 : 0.85))
+        || (
+          speechDurationMs < (bargeInProbe ? 900 : 800)
+          && logprob !== undefined
+          && logprob <= (bargeInProbe ? -1.0 : -1.15)
+        )
+        || (
+          noSpeech !== undefined
+          && noSpeech >= 0.55
+          && logprob !== undefined
+          && logprob <= -1.0
+        );
+
+      if (rejectAsNonSpeech) {
         logger.info('[LEXARA] Rejected low-evidence speech transcript', {
           provider: result.provider,
           noSpeechProbability,
           avgLogprob,
           speechDurationMs,
+          bargeInProbe,
         });
         return res.json({
           success: true,
@@ -524,6 +544,7 @@ router.post('/transcribe-file', lexaraVoiceUpload.single('audio'), async (req: R
           rejectionReason: 'low_speech_evidence',
           provider: result.provider,
           model: result.model,
+          bargeInProbe,
         });
       }
 
