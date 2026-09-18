@@ -9,6 +9,16 @@ import { SEOHead } from '@/components/SEOHead';
 import { setLexaraLiveEnabled } from '@/components/LexaraLiveConsentModal';
 import { unlockAudio } from '@/lib/lexaraSpeechClient';
 
+function consentMicrophoneConstraints(): MediaTrackConstraints {
+  const supported = navigator.mediaDevices?.getSupportedConstraints?.() || {};
+  const constraints: MediaTrackConstraints = {};
+  if (supported.echoCancellation) constraints.echoCancellation = true;
+  if (supported.noiseSuppression) constraints.noiseSuppression = true;
+  if (supported.autoGainControl) constraints.autoGainControl = true;
+  if (supported.channelCount) constraints.channelCount = { ideal: 1 };
+  return constraints;
+}
+
 export default function LexaraConsentPage() {
   const [, setLocation] = useLocation();
   const [, params] = useRoute('/lexara-consent/:domainId');
@@ -57,11 +67,7 @@ export default function LexaraConsentPage() {
       const [audioUnlocked, stream, readiness] = await Promise.all([
         unlockAudio(),
         navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
+          audio: consentMicrophoneConstraints(),
           video: false,
         }),
         readinessPromise,
