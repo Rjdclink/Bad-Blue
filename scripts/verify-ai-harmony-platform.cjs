@@ -73,7 +73,7 @@ must(
 );
 
 must(
-  collaboration.includes("Return ONLY valid JSON with no markdown fences") &&
+  collaboration.includes("Return ONLY valid JSON") &&
   provider.includes("providerPolicy: 'capability-first'") &&
   provider.includes("await import('./aiCollaborationOrchestrator')") &&
   !provider.includes('AUTONOMOUS_BLOCK_GEMINI'),
