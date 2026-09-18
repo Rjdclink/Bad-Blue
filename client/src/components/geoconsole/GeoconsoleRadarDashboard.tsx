@@ -151,44 +151,79 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
     [state.trail, state.futurecast]
   );
 
-  // Derive the frames actually rendered (filters affect map + stats + sources panel)
+  // Derive the frames actually rendered. Filtering a source may remove an
+  // intermediate observation, so the remaining points are explicitly separated
+  // instead of being connected as if the hidden evidence never existed.
   const renderData = useMemo(() => {
-    const trailWithIndex = state.trail.map((f, idx) => ({ f, idx }));
-    const filteredTrail = trailWithIndex.filter(({ f }) => sourceEnabled(f.source));
+    const trailWithIndex = state.trail.map((frame, index) => ({ frame, index }));
+    const filtered = trailWithIndex.filter(({ frame }) => sourceEnabled(frame.source));
+    const renderedTrail = filtered.map((entry, filteredIndex) => {
+      if (filteredIndex === 0) return entry.frame;
+      const previous = filtered[filteredIndex - 1];
+      if (entry.index === previous.index + 1) return entry.frame;
+
+      const gapSeconds = Math.max(
+        1,
+        (entry.frame.timestamp.getTime() - previous.frame.timestamp.getTime()) / 1000,
+      );
+      return {
+        ...entry.frame,
+        metadata: {
+          ...(entry.frame.metadata || {}),
+          gapBeforeSeconds: Math.max(
+            gapSeconds,
+            Number(entry.frame.metadata?.gapBeforeSeconds || 0),
+          ),
+          continuity: 'filtered_discontinuity',
+        },
+      };
+    });
+
     const filteredFuturecast = state.futurecast.filter(frame => sourceEnabled(frame.source));
+    const current = renderedTrail.length > 0 ? renderedTrail[renderedTrail.length - 1] : null;
 
-    const current = filteredTrail.length > 0 ? filteredTrail[filteredTrail.length - 1].f : null;
-
-    // Stats computed over the rendered trail
     let totalDistance = 0;
+    let supportedDuration = 0;
     let maxSpeed = 0;
     const speeds: number[] = [];
-    for (let i = 1; i < filteredTrail.length; i++) {
-      const prev = filteredTrail[i - 1].f;
-      const curr = filteredTrail[i].f;
-      if (Number(curr.metadata?.gapBeforeSeconds || 0) <= 0) {
+
+    for (let i = 1; i < renderedTrail.length; i++) {
+      const prev = renderedTrail[i - 1];
+      const curr = renderedTrail[i];
+      const gapBreak = Number(curr.metadata?.gapBeforeSeconds || 0) > 0;
+      if (!gapBreak) {
         totalDistance += haversineDistance(
-          prev.position.latitude, prev.position.longitude,
-          curr.position.latitude, curr.position.longitude
+          prev.position.latitude,
+          prev.position.longitude,
+          curr.position.latitude,
+          curr.position.longitude,
         );
+        const elapsed = (curr.timestamp.getTime() - prev.timestamp.getTime()) / 1000;
+        if (elapsed > 0) supportedDuration += elapsed;
       }
-      if (curr.velocity?.speed) {
+      if (curr.velocity?.speed !== undefined && !gapBreak) {
         speeds.push(curr.velocity.speed);
         maxSpeed = Math.max(maxSpeed, curr.velocity.speed);
       }
     }
-    const duration = filteredTrail.length >= 2
-      ? (filteredTrail[filteredTrail.length - 1].f.timestamp.getTime() - filteredTrail[0].f.timestamp.getTime()) / 1000
-      : 0;
-    const averageSpeed = speeds.length > 0 ? speeds.reduce((a, b) => a + b, 0) / speeds.length : 0;
+
+    const averageSpeed = supportedDuration > 0
+      ? totalDistance / supportedDuration
+      : speeds.length > 0
+        ? speeds.reduce((a, b) => a + b, 0) / speeds.length
+        : 0;
 
     return {
-      trail: filteredTrail.map(x => x.f),
+      trail: renderedTrail,
       currentFrame: current,
       futurecast: filteredFuturecast,
-      stats: { totalDistance, averageSpeed, maxSpeed, duration },
-      // for timeline list interaction
-      trailIndices: filteredTrail.map(x => x.idx),
+      stats: {
+        totalDistance,
+        averageSpeed,
+        maxSpeed,
+        duration: supportedDuration,
+      },
+      trailIndices: filtered.map(entry => entry.index),
     };
   }, [state.trail, state.futurecast, sourceEnabled]);
 
@@ -349,7 +384,12 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
       ? Math.max(0, Math.round((Date.now() - current.timestamp.getTime()) / 1000))
       : null;
     const accuracy = current?.position.accuracy;
-    const sources = new Set(renderData.trail.map(frame => frame.source));
+    const independentGroups = new Set(
+      renderData.trail.map(frame =>
+        frame.correlationGroup ||
+        `${frame.source}:${frame.provenance?.provider || 'unknown'}`
+      )
+    );
     const forecastConfidence = renderData.futurecast.length
       ? renderData.futurecast.reduce((sum, frame) => sum + frame.confidence, 0) / renderData.futurecast.length
       : null;
@@ -369,7 +409,11 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
       obs: { active: renderData.trail.length > 0, value: String(renderData.trail.length), label: 'Timestamped observations' },
       age: { active: ageSeconds !== null, value: formatAge(ageSeconds), label: 'Age of latest observation' },
       acc: { active: accuracy !== undefined, value: formatAccuracy(accuracy), label: 'Reported horizontal accuracy' },
-      src: { active: sources.size > 0, value: String(sources.size), label: 'Independent source classes present' },
+      src: {
+        active: independentGroups.size > 0,
+        value: String(independentGroups.size),
+        label: 'Independent evidence groups represented',
+      },
       nav: {
         active: forecastConfidence !== null,
         value: forecastConfidence !== null ? `${Math.round(forecastConfidence * 100)}%` : '—',
@@ -423,7 +467,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
           </Badge>
           <Badge variant="outline" className="text-xs bg-purple-500/20 text-purple-400">
             {timelineOffsetMinutes === 0
-              ? 'NOW'
+              ? timelineCenterLabel.toUpperCase()
               : timelineOffsetMinutes > 0
                 ? `+${timelineOffsetMinutes}m`
                 : `${timelineOffsetMinutes}m`}
@@ -548,8 +592,22 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
               <div className="space-y-0.5 text-[11px] font-mono bg-slate-800/30 rounded-lg p-1.5 border border-slate-700/40">
                 <p><span className="text-slate-500">LAT:</span> <span className="text-cyan-400">{timelineFrame.position.latitude.toFixed(6)}</span></p>
                 <p><span className="text-slate-500">LNG:</span> <span className="text-cyan-400">{timelineFrame.position.longitude.toFixed(6)}</span></p>
-                <p><span className="text-slate-500">SPD:</span> <span className="text-green-400">{formatSpeed(timelineFrame.velocity?.speed || 0)}</span></p>
-                <p><span className="text-slate-500">HDG:</span> <span className="text-purple-400">{(timelineFrame?.velocity?.heading || 0).toFixed(1)}°</span></p>
+                <p>
+                  <span className="text-slate-500">SPD:</span>{' '}
+                  <span className="text-green-400">
+                    {timelineFrame.velocity?.speed !== undefined
+                      ? formatSpeed(timelineFrame.velocity.speed)
+                      : '—'}
+                  </span>
+                </p>
+                <p>
+                  <span className="text-slate-500">HDG:</span>{' '}
+                  <span className="text-purple-400">
+                    {timelineFrame.velocity?.heading !== undefined
+                      ? `${timelineFrame.velocity.heading.toFixed(1)}°`
+                      : '—'}
+                  </span>
+                </p>
               </div>
             </div>
           )}
