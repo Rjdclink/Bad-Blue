@@ -511,3 +511,7 @@ export function ensureCryptoRuntimeObservability(): void {
     settlementLearningTelemetry: true,
   });
 }
+export function stopCryptoRuntimeObservability(): void {
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
+  heartbeatTimer = null;
+}
