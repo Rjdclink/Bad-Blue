@@ -121,12 +121,23 @@ const lineFeature = (frames: GeoFrame[], splitOnGaps = false) => {
   }
   if (segment.length > 1) segments.push(segment);
 
-  if (splitOnGaps && segments.length > 1) {
+  if (splitOnGaps) {
+    if (segments.length !== 1) {
+      return {
+        type: 'Feature' as const,
+        geometry: {
+          type: 'MultiLineString' as const,
+          coordinates: segments,
+        },
+        properties: {},
+      };
+    }
+
     return {
       type: 'Feature' as const,
       geometry: {
-        type: 'MultiLineString' as const,
-        coordinates: segments,
+        type: 'LineString' as const,
+        coordinates: segments[0],
       },
       properties: {},
     };
@@ -850,7 +861,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
             </>
           ) : (
             <div className="p-5 text-center text-xs text-slate-400">
-              No public KartaView image found near this position.
+              No public street image found near this position.
             </div>
           )}
         </div>
