@@ -1,62 +1,43 @@
-// Active Warrant Database Scraper
 import type { Page } from 'playwright';
 import type { CriminalSearchQuery, ScraperResult } from '../types';
 import { LegacyScraperAdapter } from './LegacyScraperAdapter';
+import { discoverCriminalRecordSources } from '../CriminalSourceDiscovery';
 
+/**
+ * Warrant-source discovery adapter.
+ *
+ * There is no single nationwide public warrant database. This adapter discovers
+ * verified state/county court source portals and never converts an unverified
+ * web result into an active-warrant assertion.
+ */
 export class WarrantDatabaseScraper extends LegacyScraperAdapter {
-  protected sourceName = 'Warrant Database';
+  protected sourceName = 'Official Warrant Source Discovery';
   protected baseConfidence = 0.80;
 
-  async search(query: CriminalSearchQuery, page: Page): Promise<ScraperResult> {
+  async search(query: CriminalSearchQuery, _page: Page): Promise<ScraperResult> {
     try {
-      const records: any[] = [];
-      
-      // Check multiple warrant sources
-      const warrantSites = [
-        'https://www.crimewatchers.net/',
-        // County sheriff websites would be added here based on location
-      ];
-
-      for (const site of warrantSites) {
-        try {
-          await page.goto(site, { waitUntil: 'networkidle', timeout: 10000 });
-          await this.humanLikeDelay();
-
-          const warrantData = await page.evaluate(() => {
-            return Array.from(document.querySelectorAll('.warrant, .warrant-record')).map(el => ({
-              name: el.querySelector('.name')?.textContent?.trim(),
-              charge: el.querySelector('.charge')?.textContent?.trim(),
-              issueDate: el.querySelector('.issue-date')?.textContent?.trim(),
-              jurisdiction: el.querySelector('.jurisdiction')?.textContent?.trim(),
-              bondAmount: el.querySelector('.bond')?.textContent?.trim(),
-            }));
-          });
-
-          warrantData.forEach(w => {
-            if (w.name && w.charge && w.name.toLowerCase().includes(query.fullName.toLowerCase())) {
-              records.push({
-                fullName: query.fullName,
-                activeWarrants: [{
-                  issueDate: w.issueDate || 'Unknown',
-                  charge: w.charge,
-                  jurisdiction: w.jurisdiction || query.state || 'Unknown',
-                  bondAmount: w.bondAmount,
-                }],
-                source: this.sourceName,
-                confidence: this.baseConfidence,
-                scrapedAt: new Date(),
-              });
-            }
-          });
-        } catch (siteError) {
-          console.error(`[WarrantScraper] Error with ${site}:`, siteError);
-          // Continue with next site
-        }
-      }
-
-      return this.createResult(records);
-    } catch (error: any) {
-      return this.createResult([], false, error.message);
+      const discovery = await discoverCriminalRecordSources(query);
+      const matching = discovery.filter(source =>
+        source.kind === 'state_court' || source.kind === 'county_court_directory'
+      );
+      const reachable = matching.filter(source => source.status === 'reachable');
+      return this.createResult(
+        reachable.length
+          ? [{
+              fullName: query.fullName,
+              dateOfBirth: query.dateOfBirth,
+              source: this.sourceName,
+              confidence: this.baseConfidence,
+              scrapedAt: new Date(),
+              searchStatus: 'sources_discovered',
+              sourceDiscovery: matching,
+            }]
+          : [],
+        reachable.length > 0,
+        reachable.length > 0 ? undefined : 'No verified warrant-capable official source portal was reachable',
+      );
+    } catch (error) {
+      return this.createResult([], false, error instanceof Error ? error.message : String(error));
     }
   }
 }

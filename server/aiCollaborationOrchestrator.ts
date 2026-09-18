@@ -19,6 +19,11 @@ import {
   getHarmonyCapabilities,
   getOpenRouterModelForProvider,
 } from './aiHarmonyModelRegistry';
+import {
+  getHarmonyResolvedModel,
+  isHarmonyProviderWarmHealthy,
+  markHarmonyProviderWarmSuccess,
+} from './aiHarmonyWarmup';
 
 /**
  * Collaboration task definition
@@ -103,7 +108,8 @@ export type CollaborationProviderPolicy = 'default' | 'capability-first' | 'capa
 const harmonyProviderCooldownUntil = new Map<AIProvider, number>();
 
 function harmonyProviderAvailable(provider: AIProvider): boolean {
-  return (harmonyProviderCooldownUntil.get(provider) || 0) <= Date.now();
+  return (harmonyProviderCooldownUntil.get(provider) || 0) <= Date.now()
+    && isHarmonyProviderWarmHealthy(provider);
 }
 
 function markHarmonyProviderFailure(provider: AIProvider, error: unknown): void {
@@ -134,6 +140,7 @@ function markHarmonyProviderFailure(provider: AIProvider, error: unknown): void 
 
 function markHarmonyProviderSuccess(provider: AIProvider): void {
   harmonyProviderCooldownUntil.delete(provider);
+  markHarmonyProviderWarmSuccess(provider);
 }
 
 function getAvailableProvidersForContext(
@@ -294,7 +301,7 @@ export class AICollaborationOrchestrator {
     
     const eligibleProviders = getAvailableProvidersForContext(context, options.providerPolicy);
     const healthyProviders = eligibleProviders.filter(harmonyProviderAvailable);
-    const candidateProviders = healthyProviders.length > 0 ? healthyProviders : eligibleProviders;
+    const candidateProviders = healthyProviders;
 
     if (candidateProviders.length === 0) {
       throw new Error(`No providers available for ${context} context`);
@@ -1020,7 +1027,7 @@ export class AICollaborationOrchestrator {
         case AIProvider.GPT_NEOX:
         case AIProvider.PERPLEXITY:
         case AIProvider.FIREWORKS: {
-          const model = getOpenRouterModelForProvider(task.provider) || CURRENT_AI_MODELS.openRouterAuto;
+          const model = task.model || getOpenRouterModelForProvider(task.provider) || CURRENT_AI_MODELS.openRouterAuto;
           const result = await generateOpenRouterText(prompt, {
             model,
             systemPrompt: task.systemPrompt,
@@ -1032,12 +1039,12 @@ export class AICollaborationOrchestrator {
           break;
         }
         case AIProvider.GPT_OSS: {
-          if (process.env.GROQ_API_KEY?.trim()) {
+          if (process.env.GROQ_API_KEY?.trim() && isHarmonyProviderWarmHealthy(AIProvider.GROQ)) {
             const response = await withHarmonyDeadline(
               runProvider(
                 AIProvider.GROQ,
                 prompt,
-                { model: CURRENT_AI_MODELS.groqDeep, systemPrompt: task.systemPrompt },
+                { model: getHarmonyResolvedModel(AIProvider.GROQ), systemPrompt: task.systemPrompt },
                 outputTokenLimit,
                 taskMetadata,
               ),
@@ -1048,7 +1055,7 @@ export class AICollaborationOrchestrator {
             tokensUsed = response.tokensUsed;
           } else {
             const result = await generateOpenRouterText(prompt, {
-              model: 'openai/gpt-oss-120b',
+              model: task.model || 'openai/gpt-oss-120b',
               systemPrompt: task.systemPrompt,
               maxTokens: outputTokenLimit,
               timeoutMs: task.requestTimeoutMs || 6_000,
@@ -1348,7 +1355,7 @@ export class AICollaborationOrchestrator {
    * Get default model for a provider
    */
   private static getDefaultModelForProvider(provider: AIProvider): string {
-    return getCurrentModelForProvider(provider);
+    return getHarmonyResolvedModel(provider);
   }
   
   /**
