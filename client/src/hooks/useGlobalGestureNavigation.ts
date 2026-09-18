@@ -9,11 +9,13 @@ type GestureRoutes = {
   enabled: boolean;
 };
 
-function isTextInputTarget(target: EventTarget | null): boolean {
+function isGestureExcludedTarget(target: EventTarget | null): boolean {
   if (!target || !(target instanceof HTMLElement)) return false;
   const tag = target.tagName.toLowerCase();
   if (tag === "input" || tag === "textarea" || tag === "select") return true;
-  return Boolean(target.closest('[contenteditable="true"]'));
+  return Boolean(target.closest(
+    '[contenteditable="true"], [data-gesture-navigation="ignore"], [role="slider"], .maplibregl-map'
+  ));
 }
 
 /**
@@ -26,8 +28,8 @@ function isTextInputTarget(target: EventTarget | null): boolean {
  * Also binds PageDown -> routes.down (global).
  *
  * Notes:
- * - Avoids hijacking events while typing in inputs/textareas/contenteditable.
- * - Uses a simple directional threshold; no conditional disabling.
+ * - Never hijacks text entry, map gestures, sliders, or explicit opt-out regions.
+ * - Uses a directional threshold outside those interactive regions.
  */
 export function useGlobalGestureNavigation(routes: GestureRoutes) {
   const [, setLocation] = useLocation();
@@ -43,7 +45,7 @@ export function useGlobalGestureNavigation(routes: GestureRoutes) {
     }
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (isTextInputTarget(e.target)) return;
+      if (isGestureExcludedTarget(e.target)) return;
       if (e.defaultPrevented) return;
 
       // Global PageDown -> Control Room
@@ -54,7 +56,7 @@ export function useGlobalGestureNavigation(routes: GestureRoutes) {
     };
 
     const onTouchStart = (e: TouchEvent) => {
-      if (isTextInputTarget(e.target)) return;
+      if (isGestureExcludedTarget(e.target)) return;
       if (e.touches.length !== 1) return;
       const t = e.touches[0];
       touchStartRef.current = { x: t.clientX, y: t.clientY, t: Date.now() };
@@ -64,7 +66,7 @@ export function useGlobalGestureNavigation(routes: GestureRoutes) {
       const start = touchStartRef.current;
       touchStartRef.current = null;
       if (!start) return;
-      if (isTextInputTarget(e.target)) return;
+      if (isGestureExcludedTarget(e.target)) return;
 
       const t = e.changedTouches[0];
       if (!t) return;
