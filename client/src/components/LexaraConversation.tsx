@@ -388,6 +388,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const voiceEndPendingRef = useRef(false);
   const pendingUserTurnQueueRef = useRef<Array<{ text: string; messageId: string }>>([]);
   const currentPreRenderedTurnIdRef = useRef<string | null>(null);
+  const nonSemanticLexaraMessageIdsRef = useRef<Set<string>>(new Set());
   const currentTurnTextRef = useRef('');
   const analysisActiveRef = useRef(false);
   const lastAcknowledgementRef = useRef<{ text: string; at: number }>({ text: '', at: 0 });
@@ -703,7 +704,8 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
         if (acknowledgement && !duplicateAck && !acknowledgementTooSoon) {
           lastAcknowledgementRef.current = { text: normalizedAck, at: now };
-          appendMessage('lexara', acknowledgement);
+          const acknowledgementMessageId = appendMessage('lexara', acknowledgement);
+          nonSemanticLexaraMessageIdsRef.current.add(acknowledgementMessageId);
           const controlSpeech = speakLexara(acknowledgement, generationRef.current)
             .catch(() => undefined);
           controlAcknowledgementSpeechRef.current = controlSpeech;
@@ -744,7 +746,10 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       ...pendingUserTurnQueueRef.current.map(turn => turn.messageId),
     ]);
     const previousMessages = conversationRef.current
-      .filter(item => !(item.role === 'user' && excludedQueuedUserIds.has(item.id)))
+      .filter(item =>
+        !(item.role === 'user' && excludedQueuedUserIds.has(item.id))
+        && !nonSemanticLexaraMessageIdsRef.current.has(item.id)
+      )
       .map(item => ({
         role: item.role,
         content: item.content,
@@ -836,7 +841,8 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
           && generation === generationRef.current
         ) {
           lastAcknowledgementRef.current = { text: normalizedAck, at: now };
-          appendMessage('lexara', acknowledgement);
+          const acknowledgementMessageId = appendMessage('lexara', acknowledgement);
+          nonSemanticLexaraMessageIdsRef.current.add(acknowledgementMessageId);
           setGaze('camera');
           acknowledgementSpeech = speakLexara(acknowledgement, generation)
             .catch(() => undefined)
@@ -998,6 +1004,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     greetingRef.current = false;
     pendingUserTurnQueueRef.current = [];
     currentPreRenderedTurnIdRef.current = null;
+    nonSemanticLexaraMessageIdsRef.current.clear();
     currentTurnTextRef.current = '';
     analysisActiveRef.current = false;
     controlAcknowledgementSpeechRef.current = null;
