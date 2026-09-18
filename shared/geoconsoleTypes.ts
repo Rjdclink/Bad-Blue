@@ -27,6 +27,15 @@ export interface GPSPoint {
   metadata?: Record<string, unknown>;
 }
 
+export interface LocationCandidate {
+  latitude: number;
+  longitude: number;
+  label: string;
+  confidence: number;
+  basis: 'regional_context' | 'recorded_address' | 'inferred_location';
+  accuracyMeters?: number;
+}
+
 export type DataSource = 
   | 'device_gps'
   | 'gnss_fix'
