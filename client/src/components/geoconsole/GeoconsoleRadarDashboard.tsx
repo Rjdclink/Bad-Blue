@@ -580,7 +580,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
       </div>
 
       {/* Rolling previous-hour / one-hour Futurecast timeline */}
-      <div className="p-2 border-t border-slate-700/50 bg-slate-900/80 flex-shrink-0">
+      {(!spectraShell || timelineFrames.length > 0) && <div className="p-2 border-t border-slate-700/50 bg-slate-900/80 flex-shrink-0">
 
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center gap-1 bg-slate-800/50 rounded-lg p-1">
@@ -641,7 +641,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
             <Download className="w-3 h-3 mr-1" />Export
           </Button>}
         </div>
-      </div>
+      </div>}
 
       {!spectraShell && <div className="hidden lg:block px-3 py-2 border-t border-slate-700/50 bg-slate-800/50 flex-shrink-0">
         <div className="grid grid-cols-5 gap-2">
