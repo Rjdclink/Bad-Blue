@@ -69,7 +69,7 @@ export const US_STATE_NAMES: Record<USState, string> = {
 
 // ==================== AI PROVIDERS ====================
 // Supported AI providers for legal consultation and document generation
-// Updated December 2025 with valid providers and models
+// Current provider/model compatibility aliases; canonical routing lives in aiHarmonyModelRegistry.
 export const AI_PROVIDERS = {
   GEMINI: 'gemini',
   GROQ: 'groq',
@@ -88,18 +88,18 @@ export const AI_PROVIDERS = {
 
 export type AIProvider = typeof AI_PROVIDERS[keyof typeof AI_PROVIDERS];
 
-// OpenRouter models (Updated December 2025 - Best model from each provider via OpenRouter)
+// OpenRouter compatibility aliases. Keep legacy keys stable while pointing them at current model generations.
 export const OPENROUTER_MODELS = {
   // Best model from each provider via OpenRouter
-  GROQ_LLAMA: 'groq/llama-3.3-70b-versatile',           // Groq - Best: Llama 3.3 70B
-  GOOGLE_GEMINI: 'google/gemini-2.0-flash-exp:free',    // Google AI Studio - Best: Gemini 2.0 Flash
+  GROQ_LLAMA: 'openai/gpt-oss-120b',                     // Legacy key -> current high-capability open model
+  GOOGLE_GEMINI: 'google/gemini-3.8-flash',              // Current stable Gemini Flash
   NVIDIA_NEMOTRON: 'nvidia/llama-3.1-nemotron-70b-instruct:free', // NVIDIA - Best: Nemotron 70B
-  OPENAI_GPT4O: 'openai/gpt-4o-mini',                   // OpenAI - Best: GPT-4o Mini (cost-effective)
-  MISTRAL_LARGE: 'mistralai/mistral-large-2411',        // Mistral - Best: Mistral Large
-  DEEPSEEK_R1: 'tng/deepseek-r1t2-chimera:free',        // DeepSeek - Best free: R1T2 Chimera
-  ANTHROPIC_CLAUDE: 'anthropic/claude-sonnet-4.5',      // Anthropic - Best: Claude Sonnet 4.5
+  OPENAI_GPT4O: 'openai/gpt-5.6-luna',                   // Legacy key -> current fast OpenAI model
+  MISTRAL_LARGE: 'mistralai/mistral-medium-3.5',          // Current frontier-class Mistral
+  DEEPSEEK_R1: 'deepseek/deepseek-v4.1-flash',           // Current DeepSeek Flash
+  ANTHROPIC_CLAUDE: 'anthropic/claude-sonnet-5',         // Current Claude Sonnet
   PERPLEXITY_SONAR: 'perplexity/sonar-pro',             // Perplexity - Best: Sonar Pro (web-grounded)
-  QWEN_72B: 'qwen/qwen-2.5-72b-instruct:free',          // Qwen (via OpenRouter) - Best: Qwen 2.5 72B
+  QWEN_72B: 'qwen/qwen3.8-max-0902',                     // Legacy key -> current Qwen3.8 Max
   CLOUDFLARE_LLAMA: 'cloudflare/llama-3.1-70b-instruct', // Cloudflare - Best: Llama 3.1 70B
   SAMBANOVA_LLAMA: 'sambanova/llama-3.1-405b-instruct', // SambaNova - Best: Llama 3.1 405B
   GOOGLE_GEMMA: 'google/gemma-2-27b-it:free',           // Google Vertex - Best: Gemma 2 27B
