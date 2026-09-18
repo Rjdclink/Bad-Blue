@@ -77,6 +77,9 @@ export interface GeoRuntimeActions {
 // CONSTANTS
 // ============================================================================
 
+const ONE_HOUR_MS = 60 * 60 * 1000;
+const FUTURECAST_HOURS = 1;
+
 const DEFAULT_CONFIG: GeoRuntimeConfig = {
   tickInterval: 500,
   playbackSpeed: 1,
@@ -307,7 +310,7 @@ export function useGeoRuntime(
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          hours: 6,
+          hours: FUTURECAST_HOURS,
           recentPoints: recent.map(frame => ({
             latitude: frame.position.latitude,
             longitude: frame.position.longitude,
@@ -396,7 +399,13 @@ export function useGeoRuntime(
         return;
       }
 
-      // Limit buffer
+      // Keep only the rolling previous hour for the operator timeline.
+      const latestObservedMs = newFrames[newFrames.length - 1].timestamp.getTime();
+      newFrames = newFrames.filter(
+        frame => frame.timestamp.getTime() >= latestObservedMs - ONE_HOUR_MS
+      );
+
+      // Limit buffer after applying the time window.
       if (newFrames.length > cfg.maxFrameBuffer) {
         newFrames = newFrames.slice(-cfg.maxFrameBuffer);
       }
@@ -548,7 +557,9 @@ export function useGeoRuntime(
           },
         };
 
-        const updated = [...framesRef.current, newFrame];
+        const cutoff = newFrame.timestamp.getTime() - ONE_HOUR_MS;
+        const updated = [...framesRef.current, newFrame]
+          .filter(frame => frame.timestamp.getTime() >= cutoff);
         const trimmed = updated.length > cfg.maxFrameBuffer ? updated.slice(-cfg.maxFrameBuffer) : updated;
         framesRef.current = trimmed;
         setFrames([...trimmed]);
@@ -597,18 +608,15 @@ export function useGeoRuntime(
   // Trail - all frames up to current index (IMMUTABLE slice)
   const trail = frames.slice(0, currentIndex + 1);
 
-  // Timeline
-  const timeline = frames.length > 0
-    ? {
-        start: frames[0].timestamp,
-        end: frames[frames.length - 1].timestamp,
-        current: currentFrame?.timestamp || frames[0].timestamp,
-      }
-    : {
-        start: new Date(),
-        end: new Date(),
-        current: new Date(),
-      };
+  // Weather-map-style window: previous hour through one-hour Futurecast.
+  const anchorTime = frames.length > 0
+    ? frames[frames.length - 1].timestamp
+    : new Date();
+  const timeline = {
+    start: new Date(anchorTime.getTime() - ONE_HOUR_MS),
+    end: new Date(anchorTime.getTime() + ONE_HOUR_MS),
+    current: currentFrame?.timestamp || anchorTime,
+  };
 
   // Stats - computed from trail
   const stats = (() => {
