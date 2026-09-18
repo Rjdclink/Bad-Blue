@@ -30,7 +30,7 @@ const FILE_PROCESSING_TIMEOUT_MS = 60_000;
 const FILE_PROCESSING_POLL_MS = 1_500;
 const EXTRACTION_MODEL = process.env.LEXARA_MEDIA_EXTRACTION_MODEL?.trim()
   || process.env.GEMINI_MODEL?.trim()
-  || 'gemini-2.5-flash';
+  || 'gemini-3.8-flash';
 
 let client: GoogleGenAI | null = null;
 
