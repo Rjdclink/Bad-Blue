@@ -22,9 +22,7 @@ import {
 } from './aiHarmonyModelRegistry';
 import { createLogger } from './logger';
 import {
-  analyzeConfidence,
   routeTask,
-  type ModelOutput,
   type Task as MLTask
 } from './services/mlnlp';
 
@@ -445,7 +443,7 @@ function mergeObjectResults(
 // ============================================================================
 
 /**
- * Execute legal consultation with optimal model selection
+ * Execute legal consultation through full Harmony
  */
 export async function executeLegalConsultation(
   prompt: string,
@@ -482,7 +480,7 @@ export async function executeLegalConsultation(
   }
 
   const selection = selectModelsForTask(legalTaskType, TaskPriority.HIGH_USER, TaskComplexity.COMPREHENSIVE);
-  log.info('Executing legal consultation', { model: selection.primary, reasoning: selection.reasoning });
+  log.info('Executing legal consultation through Harmony', { advisoryMatch: selection.primary, reasoning: selection.reasoning });
 
   const response = await generateUserText(
     'legal-consultation',
@@ -490,8 +488,7 @@ export async function executeLegalConsultation(
     {
       systemPrompt,
       temperature: options.temperature || 0.3,
-      maxTokens: options.maxTokens || 3000,
-      model: selection.primary
+      maxTokens: options.maxTokens || 3000
     },
     TaskPriority.HIGH_USER
   );
@@ -500,7 +497,7 @@ export async function executeLegalConsultation(
 }
 
 /**
- * Execute document generation with optimal model selection
+ * Execute document generation through full Harmony
  */
 export async function executeDocumentGeneration(
   prompt: string,
@@ -513,7 +510,7 @@ export async function executeDocumentGeneration(
   const legalTaskType: LegalTaskType = 'document-generation';
 
   const selection = selectModelsForTask(legalTaskType, TaskPriority.HIGH_USER, TaskComplexity.MODERATE);
-  log.info('Executing document generation', { model: selection.primary, reasoning: selection.reasoning });
+  log.info('Executing document generation through Harmony', { advisoryMatch: selection.primary, reasoning: selection.reasoning });
 
   const response = await generateUserText(
     'document-generation',
@@ -521,8 +518,7 @@ export async function executeDocumentGeneration(
     {
       systemPrompt,
       temperature: options.temperature || 0.3,
-      maxTokens: options.maxTokens || 4000,
-      model: selection.primary
+      maxTokens: options.maxTokens || 4000
     },
     TaskPriority.HIGH_USER
   );
@@ -531,7 +527,7 @@ export async function executeDocumentGeneration(
 }
 
 /**
- * Execute evidence analysis with optimal model selection
+ * Execute evidence analysis through full Harmony
  */
 export async function executeEvidenceAnalysis(
   prompt: string,
@@ -545,7 +541,7 @@ export async function executeEvidenceAnalysis(
   const legalTaskType: LegalTaskType = 'evidence-analysis';
 
   const selection = selectModelsForTask(legalTaskType, TaskPriority.HIGH_USER, TaskComplexity.MODERATE);
-  log.info('Executing evidence analysis', { model: selection.primary, reasoning: selection.reasoning });
+  log.info('Executing evidence analysis through Harmony', { advisoryMatch: selection.primary, reasoning: selection.reasoning });
 
   const response = await generateUserText(
     'evidence-analysis',
@@ -554,8 +550,7 @@ export async function executeEvidenceAnalysis(
       systemPrompt,
       temperature: options.temperature || 0.1,
       maxTokens: options.maxTokens || 2500,
-      useJSON: options.useJSON,
-      model: selection.primary
+      useJSON: options.useJSON
     },
     TaskPriority.HIGH_USER
   );
@@ -622,7 +617,7 @@ export async function executeWithMLRouting<T>(
     maxTokens?: number;
     useJSON?: boolean;
     parseResult?: (content: string) => T;
-    useMultipleModels?: boolean; // Whether to use consensus approach
+    useMultipleModels?: boolean;
   } = {}
 ): Promise<{
   result: T;
@@ -637,130 +632,67 @@ export async function executeWithMLRouting<T>(
     rank: number;
   }[];
 }> {
-  log.info('Executing task with ML routing', { taskType: task.legalTaskType });
+  log.info('Executing task with ML capability advice and Harmony authority', {
+    taskType: task.legalTaskType,
+  });
 
-  // Convert to ML task format
   const mlTask = convertToMLTask(
     task.legalTaskType,
     task.priority,
     task.complexity,
-    prompt.substring(0, 200) // Use prompt snippet as context
+    prompt.substring(0, 200),
   );
-
-  // Get ML-based routing decision
   const routingResult = await routeTask(mlTask);
   const { decision } = routingResult;
 
-  log.info('ML routing decision', {
-    primaryModel: decision.primaryModel,
-    confidence: decision.confidence,
-    parallelize: decision.shouldParallelize
-  });
-
-  // If not using multiple models or not parallelizing, execute with primary model
-  if (!options.useMultipleModels && !decision.shouldParallelize) {
-    const response = await generateUserText(
-      `${task.legalTaskType}-ml-routing`,
+  if (options.useMultipleModels || decision.shouldParallelize) {
+    const consensus = await executeWithConsensus<T>(
+      task,
       prompt,
       {
-        ...options,
-        model: decision.primaryModel
+        systemPrompt: options.systemPrompt,
+        temperature: options.temperature,
+        maxTokens: options.maxTokens,
+        useJSON: options.useJSON,
+        parseResult: options.parseResult,
       },
-      task.priority
     );
 
-    const result = options.parseResult 
-      ? options.parseResult(response.content)
-      : response.content as T;
-
     return {
-      result,
+      result: consensus.result,
       routing: {
         primaryModel: decision.primaryModel,
-        reasoning: decision.reasoning,
-        confidence: decision.confidence
-      }
+        reasoning:
+          `${decision.reasoning}. Advisory capability match only; execution and synthesis used the full configured Harmony mesh.`,
+        confidence: consensus.confidence,
+      },
     };
   }
 
-  // Execute with multiple models for consensus
-  const modelsToUse = decision.parallelModels || [decision.primaryModel, ...decision.fallbackModels.slice(0, 2)];
-  
-  const modelPromises = modelsToUse.map(async (modelName) => {
-    try {
-      const response = await generateUserText(
-        `${task.legalTaskType}-ml-consensus`,
-        prompt,
-        {
-          ...options,
-          model: modelName
-        },
-        task.priority
-      );
+  const response = await generateUserText(
+    `${task.legalTaskType}-ml-routing`,
+    prompt,
+    {
+      systemPrompt: options.systemPrompt,
+      temperature: options.temperature,
+      maxTokens: options.maxTokens,
+      useJSON: options.useJSON,
+    },
+    task.priority,
+  );
 
-      return {
-        modelName,
-        response: response.content,
-        metadata: {
-          tokensUsed: response.tokensUsed,
-          latencyMs: response.latencyMs
-        },
-        timestamp: new Date(),
-        success: true
-      };
-    } catch (error) {
-      log.warn('Model execution failed', { model: modelName, error });
-      return {
-        modelName,
-        response: '',
-        metadata: {},
-        timestamp: new Date(),
-        success: false
-      };
-    }
-  });
-
-  const results = await Promise.all(modelPromises);
-  const successfulResults = results.filter(r => r.success);
-
-  if (successfulResults.length === 0) {
-    throw new Error('All models failed to execute task');
-  }
-
-  // Use ML confidence worker to analyze and rank outputs
-  const modelOutputs: ModelOutput[] = successfulResults.map(r => ({
-    modelName: r.modelName,
-    response: r.response,
-    metadata: r.metadata,
-    timestamp: r.timestamp
-  }));
-
-  const confidenceAnalysis = await analyzeConfidence(modelOutputs, prompt.substring(0, 200));
-
-  log.info('ML confidence analysis complete', {
-    consensusScore: confidenceAnalysis.consensusScore,
-    conflicts: confidenceAnalysis.conflicts.length,
-    primaryModel: confidenceAnalysis.recommendation.primaryModel
-  });
-
-  // Get the top-ranked output
-  const topRanked = confidenceAnalysis.rankedOutputs[0];
-  const result = options.parseResult 
-    ? options.parseResult(topRanked.response)
-    : topRanked.response as T;
+  const result = options.parseResult
+    ? options.parseResult(response.content)
+    : response.content as T;
 
   return {
     result,
     routing: {
-      primaryModel: topRanked.modelName,
-      reasoning: confidenceAnalysis.recommendation.reasoning,
-      confidence: topRanked.confidenceScore
+      primaryModel: decision.primaryModel,
+      reasoning:
+        `${decision.reasoning}. Advisory capability match only; execution used the full configured Harmony mesh.`,
+      confidence: decision.confidence,
     },
-    ranking: confidenceAnalysis.rankedOutputs.map(r => ({
-      modelName: r.modelName,
-      score: r.confidenceScore,
-      rank: r.rank
-    }))
   };
 }
 
