@@ -13,16 +13,20 @@
  */
 
 import { callAIWithFallback, type AIFallbackResult } from './aiSubAgent';
+import {
+  HARMONY_17_PARTICIPANTS,
+  getConfiguredHarmonyParticipants,
+  type HarmonyCapability,
+} from './aiHarmonyModelRegistry';
 
 export interface AIModel {
   id: string;
   name: string;
-  provider: 'gemini' | 'openrouter' | 'groq' | 'mistral' | 'anthropic' | 'local';
+  provider: string;
   roles: AIRole[];
   maxTokens: number;
   temperature: number;
   available: boolean;
-  priority: number;
   costPerToken?: number;
 }
 
@@ -62,133 +66,65 @@ export interface OrchestrationResult {
  * These are the free/open models integrated into the system
  * Compatibility layer aligned to current Harmony model generations
  */
-export const AI_MODELS: AIModel[] = [
-  // Google Gemini 3 - Primary for research and legal analysis (NEWEST)
-  {
-    id: 'gemini-3.8-flash',
-    name: 'Gemini 3 Pro',
-    provider: 'gemini',
-    roles: ['research', 'legal_analysis', 'summarization', 'reasoning'],
-    maxTokens: 8192,
-    temperature: 0.3,
-    available: !!process.env.GEMINI_API_KEY || !!process.env.GOOGLE_API_KEY,
-    priority: 1
-  },
-  {
-    id: 'gemini-3.8-flash',
-    name: 'Gemini 3 Flash',
-    provider: 'gemini',
-    roles: ['research', 'drafting', 'inference'],
-    maxTokens: 8192,
-    temperature: 0.4,
-    available: !!process.env.GEMINI_API_KEY || !!process.env.GOOGLE_API_KEY,
-    priority: 2
-  },
-  
-  // Anthropic Claude - Reasoning and empathy
-  {
-    id: 'claude-sonnet-5',
-    name: 'Claude Sonnet 5',
-    provider: 'anthropic',
-    roles: ['reasoning', 'empathy', 'legal_analysis'],
-    maxTokens: 4096,
-    temperature: 0.5,
-    available: !!process.env.ANTHROPIC_API_KEY,
-    priority: 2
-  },
-  {
-    id: 'claude-haiku-4-5-20251001',
-    name: 'Claude Haiku 4.5',
-    provider: 'anthropic',
-    roles: ['drafting', 'summarization'],
-    maxTokens: 4096,
-    temperature: 0.6,
-    available: !!process.env.ANTHROPIC_API_KEY,
-    priority: 3
-  },
-  
-  // OpenRouter Models - Various specialized tasks
-  {
-    id: 'deepseek/deepseek-v4.1-flash',
-    name: 'DeepSeek V4.1 Flash',
-    provider: 'openrouter',
-    roles: ['inference', 'reasoning', 'coding'],
-    maxTokens: 4096,
-    temperature: 0.4,
-    available: !!process.env.OPENROUTER_API_KEY,
-    priority: 2
-  },
-  {
-    id: 'qwen/qwen3.8-max-0902',
-    name: 'Qwen3.8 Max',
-    provider: 'openrouter',
-    roles: ['research', 'legal_analysis', 'reasoning'],
-    maxTokens: 8192,
-    temperature: 0.3,
-    available: !!process.env.OPENROUTER_API_KEY,
-    priority: 1
-  },
-  
-  // Groq - Fast inference
-  {
-    id: 'openai/gpt-oss-120b',
-    name: 'GPT-OSS 120B on Groq',
-    provider: 'groq',
-    roles: ['empathy', 'summarization', 'drafting'],
-    maxTokens: 4096,
-    temperature: 0.5,
-    available: !!process.env.GROQ_API_KEY,
-    priority: 3
-  },
-  {
-    id: 'openai/gpt-oss-20b',
-    name: 'GPT-OSS 20B on Groq',
-    provider: 'groq',
-    roles: ['coding', 'inference'],
-    maxTokens: 4096,
-    temperature: 0.3,
-    available: !!process.env.GROQ_API_KEY,
-    priority: 3
-  },
-  
-  // Mistral - Specialized coding and inference
-  {
-    id: 'mistral-small-2603',
-    name: 'Mistral Small 4',
-    provider: 'mistral',
-    roles: ['coding', 'inference', 'drafting'],
-    maxTokens: 4096,
-    temperature: 0.4,
-    available: !!process.env.MISTRAL_API_KEY,
-    priority: 4
-  },
-  {
-    id: 'mistral-medium-3-5',
-    name: 'Mistral Medium 3.5',
-    provider: 'mistral',
-    roles: ['legal_analysis', 'research'],
-    maxTokens: 4096,
-    temperature: 0.3,
-    available: !!process.env.MISTRAL_API_KEY,
-    priority: 3
-  }
-];
+const ROLE_CAPABILITIES: Record<AIRole, readonly HarmonyCapability[]> = {
+  research: ['research', 'verification'],
+  reasoning: ['deep-reasoning', 'verification'],
+  inference: ['deep-reasoning', 'structured-output'],
+  empathy: ['fast-chat', 'long-context'],
+  drafting: ['legal-analysis', 'structured-output'],
+  coding: ['coding', 'deep-reasoning'],
+  legal_analysis: ['legal-analysis', 'verification', 'deep-reasoning'],
+  summarization: ['fast-chat', 'long-context'],
+  translation: ['long-context', 'fast-chat'],
+};
+
+/**
+ * Compatibility metadata generated from the canonical 17-participant Harmony
+ * registry. There is no provider priority encoded here.
+ */
+export const AI_MODELS: AIModel[] = HARMONY_17_PARTICIPANTS.map(participant => ({
+  id: participant.model,
+  name: participant.model,
+  provider: String(participant.provider),
+  roles: (Object.keys(ROLE_CAPABILITIES) as AIRole[]).filter(role =>
+    ROLE_CAPABILITIES[role].some(capability => participant.capabilities.includes(capability)),
+  ),
+  maxTokens: 8192,
+  temperature: 0.3,
+  available: participant.configured(),
+}));
 
 /**
  * Get available models for a specific role
  */
 export function getModelsForRole(role: AIRole): AIModel[] {
-  return AI_MODELS
-    .filter(m => m.available && m.roles.includes(role))
-    .sort((a, b) => a.priority - b.priority);
+  return AI_MODELS.filter(m => m.available && m.roles.includes(role));
 }
 
 /**
- * Get the best available model for a role
+ * Compatibility helper returning a capability match for metadata only.
+ * Runtime execution is still performed by the complete configured Harmony mesh.
  */
 export function getBestModelForRole(role: AIRole): AIModel | null {
-  const models = getModelsForRole(role);
-  return models.length > 0 ? models[0] : null;
+  const configured = getConfiguredHarmonyParticipants();
+  const pool = configured.length > 0 ? configured : [...HARMONY_17_PARTICIPANTS];
+  const required = ROLE_CAPABILITIES[role];
+  const selected = pool
+    .map(participant => ({
+      participant,
+      score: required.filter(capability => participant.capabilities.includes(capability)).length,
+    }))
+    .sort((a, b) => b.score - a.score)[0]?.participant;
+  if (!selected) return null;
+  return {
+    id: selected.model,
+    name: selected.model,
+    provider: String(selected.provider),
+    roles: [role],
+    maxTokens: 8192,
+    temperature: 0.3,
+    available: selected.configured(),
+  };
 }
 
 /**
@@ -213,7 +149,8 @@ export async function executeWithModel(
       taskName: `${model.id}_${role}`,
       temperature: model.temperature,
       maxTokens: model.maxTokens,
-      preferredProvider: (model.provider === 'gemini' || model.provider === 'groq' || model.provider === 'mistral') ? model.provider : undefined
+      // model is advisory metadata only. callAIWithFallback enters the full
+      // Harmony mesh before any route-local recovery chain.
     });
     
     const latencyMs = Date.now() - startTime;
@@ -269,7 +206,7 @@ export async function executeParallelRoles(
 
 /**
  * Merge multiple AI outputs into a coherent response
- * Uses weighted averaging based on confidence and role priority
+ * Uses confidence metadata while final synthesis still enters Harmony
  */
 export async function mergeOutputs(outputs: ModelOutput[]): Promise<string> {
   if (outputs.length === 0) return '';
