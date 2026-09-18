@@ -8,6 +8,7 @@
 import express, { Request, Response } from 'express';
 import { storage } from '../storage';
 import { logger } from '../logger';
+import { isAuthenticated } from '../auth';
 
 const router = express.Router();
 
@@ -35,7 +36,7 @@ function parseLimit(limitParam: string | undefined, defaultLimit = 50, maxLimit 
  * GET /api/verify/people-search/:reportId
  * Get a specific people search report by ID
  */
-router.get('/people-search/:reportId', async (req: Request, res: Response) => {
+router.get('/people-search/:reportId', isAuthenticated, async (req: Request, res: Response) => {
   try {
     const { reportId } = req.params;
     
@@ -67,7 +68,7 @@ router.get('/people-search/:reportId', async (req: Request, res: Response) => {
  * GET /api/verify/people-search/user/:userId
  * Get all people search reports for a user
  */
-router.get('/people-search/user/:userId', async (req: Request, res: Response) => {
+router.get('/people-search/user/:userId', isAuthenticated, async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
     const limit = parseLimit(req.query.limit as string);
@@ -96,7 +97,7 @@ router.get('/people-search/user/:userId', async (req: Request, res: Response) =>
  * GET /api/verify/inmate-search/:reportId
  * Get a specific inmate search report by ID
  */
-router.get('/inmate-search/:reportId', async (req: Request, res: Response) => {
+router.get('/inmate-search/:reportId', isAuthenticated, async (req: Request, res: Response) => {
   try {
     const { reportId } = req.params;
     
@@ -128,7 +129,7 @@ router.get('/inmate-search/:reportId', async (req: Request, res: Response) => {
  * GET /api/verify/inmate-search/user/:userId
  * Get all inmate search reports for a user
  */
-router.get('/inmate-search/user/:userId', async (req: Request, res: Response) => {
+router.get('/inmate-search/user/:userId', isAuthenticated, async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
     const limit = parseLimit(req.query.limit as string);
@@ -157,7 +158,7 @@ router.get('/inmate-search/user/:userId', async (req: Request, res: Response) =>
  * GET /api/verify/lexara/:conversationId
  * Get a specific Lexara conversation by ID
  */
-router.get('/lexara/:conversationId', async (req: Request, res: Response) => {
+router.get('/lexara/:conversationId', isAuthenticated, async (req: Request, res: Response) => {
   try {
     const { conversationId } = req.params;
     
@@ -189,7 +190,7 @@ router.get('/lexara/:conversationId', async (req: Request, res: Response) => {
  * GET /api/verify/lexara/user/:userId
  * Get all Lexara conversations for a user
  */
-router.get('/lexara/user/:userId', async (req: Request, res: Response) => {
+router.get('/lexara/user/:userId', isAuthenticated, async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
     const limit = parseLimit(req.query.limit as string);
@@ -214,7 +215,7 @@ router.get('/lexara/user/:userId', async (req: Request, res: Response) => {
  * GET /api/verify/lexara/session/:sessionId
  * Get all Lexara conversations in a session
  */
-router.get('/lexara/session/:sessionId', async (req: Request, res: Response) => {
+router.get('/lexara/session/:sessionId', isAuthenticated, async (req: Request, res: Response) => {
   try {
     const { sessionId } = req.params;
     const limit = parseLimit(req.query.limit as string, 100); // Default 100 for sessions
