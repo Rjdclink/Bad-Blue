@@ -17,6 +17,7 @@ import {
 } from './aiTokenGovernor';
 import { getCached, setCached } from './aiCache';
 import { getAdaptivePrompt } from './adaptivePrompts';
+import { generateAutonomousText, generateUserText } from './aiProvider';
 
 /**
  * Worker AI operations with integrated efficiency
@@ -104,23 +105,18 @@ export const EfficientWorkerAI = {
     console.log(`[Efficient AI] Analysis with ${budget.provider} (${budget.maxTokens} tokens, ${budget.verbosityLevel})`);
 
     try {
-      // Call AI with provider routing
-      let result: any;
-      
-      if (budget.provider === AIProvider.GROQ) {
-        const { generateGroqStructuredResponse } = await import('./groq');
-        const response = await generateGroqStructuredResponse(
-          prompt,
-          'You are an expert system analyst providing architectural insights.'
-        );
-        result = { analysis: response, response };
-      } else {
-        const { executeAdvancedReasoning } = await import('./aiSubAgent');
-        result = await executeAdvancedReasoning(prompt, false);
-      }
-
-      const output = result.analysis || result.response || '';
-      const planQuality = result.plan || {};
+      const aiResponse = await generateAutonomousText(
+        taskMetadata.taskName,
+        prompt,
+        {
+          systemPrompt: 'You are an expert system analyst providing architectural insights.',
+          temperature: 0.3,
+          maxTokens: budget.maxTokens,
+        },
+        taskMetadata.priority,
+      );
+      const output = aiResponse.content || '';
+      const planQuality: Record<string, any> = {};
 
       // Calculate confidence
       let confidence = 0.75;
@@ -142,12 +138,14 @@ export const EfficientWorkerAI = {
       const latency = Date.now() - startTime;
       await recordUsage(
         taskMetadata.taskName,
-        budget.provider,
+        aiResponse.provider,
         estimateTokens(output),
         latency,
         true,
         budget.verbosityLevel,
-        taskMetadata.priority
+        taskMetadata.priority,
+        undefined,
+        UsageContext.AUTONOMOUS
       );
 
       // Cache result
@@ -168,7 +166,9 @@ export const EfficientWorkerAI = {
         Date.now() - startTime,
         false,
         budget.verbosityLevel,
-        taskMetadata.priority
+        taskMetadata.priority,
+        error?.message,
+        UsageContext.AUTONOMOUS
       );
 
       return {
@@ -222,18 +222,34 @@ export const EfficientWorkerAI = {
     const prompt = getAdaptivePrompt('worker', 'database_health', budget.verbosityLevel);
 
     try {
-      const { generateGroqStructuredResponse } = await import('./groq');
-      const response = await generateGroqStructuredResponse(
+      const aiResponse = await generateAutonomousText(
+        taskMetadata.taskName,
         prompt,
-        'You are a database health monitoring expert.'
+        {
+          systemPrompt: 'You are a database health monitoring expert.',
+          temperature: 0.2,
+          maxTokens: budget.maxTokens,
+        },
+        taskMetadata.priority,
       );
+      const response = aiResponse.content || '';
       const healthResult = {
         status: response.includes('healthy') || response.includes('operational') ? 'healthy' : 'degraded',
         issues: extractList(response, 'issue'),
         recommendations: extractList(response, 'recommend'),
       };
 
-      await recordUsage(taskMetadata.taskName, AIProvider.GROQ, estimateTokens(response), 0, true, budget.verbosityLevel, taskMetadata.priority);
+      await recordUsage(
+        taskMetadata.taskName,
+        aiResponse.provider,
+        estimateTokens(response),
+        0,
+        true,
+        budget.verbosityLevel,
+        taskMetadata.priority,
+        undefined,
+        UsageContext.AUTONOMOUS,
+      );
       await setCached('db_health_check', healthResult, { ttlMinutes: 30 });
 
       return healthResult;
@@ -272,19 +288,21 @@ export const EfficientUserAI = {
     const startTime = Date.now();
 
     try {
-      let response: string;
-      
-      if (budget.provider === AIProvider.GROQ) {
-        const { generateGroqLegalConsultation } = await import('./groq');
-        response = await generateGroqLegalConsultation(question);
-      } else {
-        const { analyzeLegalIssue } = await import('./legalAI');
-        response = await analyzeLegalIssue('User Question', 'General', question);
-      }
+      const aiResponse = await generateUserText(
+        taskMetadata.taskName,
+        prompt,
+        {
+          systemPrompt: 'Provide accurate, jurisdiction-sensitive legal analysis. Distinguish verified law from uncertainty.',
+          temperature: 0.3,
+          maxTokens: budget.maxTokens,
+        },
+        taskMetadata.priority,
+      );
+      const response = aiResponse.content || '';
       
       await recordUsage(
         taskMetadata.taskName,
-        budget.provider,
+        aiResponse.provider,
         estimateTokens(response),
         Date.now() - startTime,
         true,
