@@ -9,6 +9,7 @@ import { LEXARA_PERSONA } from '../../shared/lexaraVoicePersona';
 import { LEXARA_KERNEL, mergePersonaWithKernel } from '../lexara/personaKernel';
 import {
   generateLexaraConversationResponse,
+  getLexaraImmediateAcknowledgement,
   type LexaraConversationMessage,
 } from '../lexara/LexaraConversationOrchestrator';
 import { MASTER_USER_ID } from '../masterPassword';
@@ -45,6 +46,32 @@ function sanitizePreviousMessages(value: unknown): LexaraConversationMessage[] {
       } satisfies LexaraConversationMessage];
     });
 }
+
+/**
+ * POST /api/lexara/acknowledge
+ * Sub-LLM conversational lane. Returns immediately so LEXARA can speak a
+ * context-aware acknowledgement while deeper legal/Harmony analysis runs.
+ */
+router.post('/acknowledge', express.json(), (req: Request, res: Response) => {
+  const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
+  if (!prompt) {
+    return res.status(400).json({ success: false, error: 'Prompt is required' });
+  }
+  if (prompt.length > MAX_CHAT_PROMPT_CHARACTERS) {
+    return res.status(400).json({
+      success: false,
+      error: `Prompt must be ${MAX_CHAT_PROMPT_CHARACTERS} characters or fewer`,
+    });
+  }
+
+  const acknowledgement = getLexaraImmediateAcknowledgement(prompt);
+  return res.json({
+    success: true,
+    acknowledgement: acknowledgement.text,
+    terminal: acknowledgement.terminal,
+    kind: acknowledgement.kind,
+  });
+});
 
 /**
  * POST /api/lexara/chat
@@ -139,37 +166,39 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
     }
 
     const requestUserId = (req as any).user?.id || (req as any).user?.claims?.sub;
-    // Master access is stateless and intentionally is not a row in public.users.
-    // Persist its LEXARA turns as session-scoped/anonymous rather than violating
-    // the lexara_conversations.user_id foreign key.
-    const userId = requestUserId === MASTER_USER_ID ? undefined : requestUserId;
+    const isMaster = requestUserId === MASTER_USER_ID;
 
-    // Persistence is audit/recovery work, not conversational-path authority.
-    // Return the legal turn immediately and persist asynchronously so a slow or
-    // degraded database can never add seconds of dead air to LEXARA Live.
-    void (async () => {
-      try {
-        const { storage } = await import('../storage');
-        await storage.createLexaraConversation({
-          userId,
-          sessionId,
-          userPrompt: prompt,
-          lexaraResponse: responseText,
-          audioGenerated: !!audioData,
-          audioBase64: audioData?.audioBase64 || undefined,
-          audioDurationMs: audioData?.durationMs || undefined,
-          model,
-          context: {
-            lawType: lawType || null,
-            jurisdiction: conversationResult.jurisdiction || jurisdiction || null,
-            mappedLawType: conversationResult.mappedLawType || null,
-            behaviorMode,
-          },
-        });
-      } catch (dbError) {
-        log.error('[LEXARA] Failed to persist conversation asynchronously', { error: dbError });
-      }
-    })();
+    // Master consultations are intentionally ephemeral. They are never written
+    // to conversation storage, so login/relogin and law-area changes cannot
+    // resurrect an earlier master matter from server-side history.
+    if (!isMaster) {
+      // Persistence is audit/recovery work, not conversational-path authority.
+      // Return the legal turn immediately and persist asynchronously so a slow
+      // database can never add dead air to LEXARA Live.
+      void (async () => {
+        try {
+          const { storage } = await import('../storage');
+          await storage.createLexaraConversation({
+            userId: requestUserId,
+            sessionId,
+            userPrompt: prompt,
+            lexaraResponse: responseText,
+            audioGenerated: !!audioData,
+            audioBase64: audioData?.audioBase64 || undefined,
+            audioDurationMs: audioData?.durationMs || undefined,
+            model,
+            context: {
+              lawType: lawType || null,
+              jurisdiction: conversationResult.jurisdiction || jurisdiction || null,
+              mappedLawType: conversationResult.mappedLawType || null,
+              behaviorMode,
+            },
+          });
+        } catch (dbError) {
+          log.error('[LEXARA] Failed to persist conversation asynchronously', { error: dbError });
+        }
+      })();
+    }
 
     return res.json({
       success: true,
@@ -180,7 +209,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       mappedLawType: conversationResult.mappedLawType,
       conversationId: null,
       persistenceSuccess: null,
-      persistenceStatus: 'queued',
+      persistenceStatus: isMaster ? 'master-ephemeral' : 'queued',
       jobCompleted: true,
       jobStatus: 'completed',
     });
