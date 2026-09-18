@@ -271,7 +271,7 @@ export default function FAQPage() {
         },
         {
           question: "What makes Law Enforcement Accountability special?",
-          answer: "Law Enforcement Accountability is Legal What?'s featured specialty, operating under the BadBlue brand. This comprehensive subset includes specialized tools for police misconduct cases, including officer database search, automated complaint filing, Section 1983 lawsuit generation, FOIA requests for police records, and community petitions. BadBlue combines all of Legal What?'s AI systems with domain-specific expertise in civil rights and police accountability law."
+          answer: "Law Enforcement Accountability is a featured Legal What? specialty. It includes tools for officer and public-record research, police misconduct complaint workflows, Section 1983 document generation, FOIA requests, and community petitions, integrated with the platform's broader AI-assisted legal tools."
         }
       ]
     },
