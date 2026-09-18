@@ -87,6 +87,7 @@ export default function SpectraPage() {
   const [, setLocation] = useLocation();
   const [phase, setPhase] = useState<Phase>('awaiting_target');
   const [target, setTarget] = useState('');
+  const [resolvedTargetLabel, setResolvedTargetLabel] = useState('');
   const [details, setDetails] = useState('');
   const [messages, setMessages] = useState<Message[]>([
     makeMessage('spectra', FIRST_PROMPT),
@@ -101,6 +102,7 @@ export default function SpectraPage() {
   const [acquisitionStage, setAcquisitionStage] = useState('Waiting for target');
   const scrollRef = useRef<HTMLDivElement>(null);
   const requestRef = useRef(0);
+  const completedRequestRef = useRef(0);
   const mediaInputRef = useRef<HTMLInputElement>(null);
   const messageHandlerRef = useRef<(message: string) => void>(() => undefined);
   const lastSpokenTextRef = useRef<{ normalized: string; expiresAt: number } | null>(null);
@@ -189,6 +191,7 @@ export default function SpectraPage() {
     requestRef.current += 1;
     setPhase('awaiting_target');
     setTarget('');
+    setResolvedTargetLabel('');
     setDetails('');
     setObservations([]);
     setCandidateLocations([]);
@@ -208,6 +211,8 @@ export default function SpectraPage() {
     extraEvidence: GPSPoint[] = directEvidence,
   ) => {
     const requestId = ++requestRef.current;
+    completedRequestRef.current = 0;
+    let previewRegionCandidate: LocationCandidate | null = null;
     setPhase('acquiring');
     setLastError(null);
     setAcquisitionStage('Resolving supplied location context…');
@@ -249,6 +254,7 @@ export default function SpectraPage() {
           const previewPayload = await previewResponse.json().catch(() => ({}));
           if (
             requestId !== requestRef.current ||
+            completedRequestRef.current === requestId ||
             !previewResponse.ok ||
             previewPayload?.success !== true
           ) {
@@ -260,7 +266,7 @@ export default function SpectraPage() {
             Number.isFinite(Number(region?.latitude)) &&
             Number.isFinite(Number(region?.longitude))
           ) {
-            setCandidateLocations([{
+            previewRegionCandidate = {
               latitude: Number(region.latitude),
               longitude: Number(region.longitude),
               label: String(region.displayName || locationText),
@@ -269,7 +275,8 @@ export default function SpectraPage() {
               accuracyMeters: Number.isFinite(Number(region.accuracyMeters))
                 ? Number(region.accuracyMeters)
                 : 25_000,
-            }]);
+            };
+            setCandidateLocations([previewRegionCandidate]);
             setAcquisitionStage('Regional context mapped; broadening identity discovery…');
             return;
           }
@@ -340,13 +347,26 @@ export default function SpectraPage() {
         (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
       );
 
+      completedRequestRef.current = requestId;
       const serverLocationConfidence = payload.acquisition?.locationConfidence ?? 0;
       const mergedLocationConfidence = combinedLocationConfidence(
         points,
         serverLocationConfidence,
       );
+      const finalCandidates = Array.isArray(payload.candidateLocations)
+        ? payload.candidateLocations
+        : [];
+      const effectiveCandidates = points.length > 0
+        ? []
+        : finalCandidates.length > 0
+          ? finalCandidates
+          : previewRegionCandidate
+            ? [previewRegionCandidate]
+            : [];
+
       setObservations(points);
-      setCandidateLocations(Array.isArray(payload.candidateLocations) ? payload.candidateLocations : []);
+      setCandidateLocations(effectiveCandidates);
+      setResolvedTargetLabel(payload.resolvedTargetLabel?.trim() || targetValue);
       setConfidence(
         points.length > 0 || serverLocationConfidence > 0
           ? mergedLocationConfidence
@@ -360,9 +380,7 @@ export default function SpectraPage() {
         ? Math.round(mergedLocationConfidence * 100)
         : null;
 
-      const regionalCandidates = Array.isArray(payload.candidateLocations)
-        ? payload.candidateLocations
-        : [];
+      const regionalCandidates = effectiveCandidates;
       const resolvedTarget = payload.resolvedTargetLabel?.trim() || targetValue;
       const responseText = points.length > 0
         ? `I acquired ${points.length} timestamped location observation${points.length === 1 ? '' : 's'} for ${resolvedTarget}. The map is updated${certainty !== null ? ` with ${certainty}% location-evidence confidence` : ''}.`
@@ -374,6 +392,7 @@ export default function SpectraPage() {
       speakIfEnabled(responseText);
     } catch (error) {
       if (requestId !== requestRef.current) return;
+      completedRequestRef.current = requestId;
       const message = error instanceof Error ? error.message : 'Target acquisition failed.';
       setLastError(message);
       setAcquisitionStage('Acquisition needs additional information');
@@ -620,7 +639,7 @@ export default function SpectraPage() {
           <GeoconsoleRadarDashboard
             initialData={observations}
             candidateLocations={candidateLocations}
-            subject={target || 'SPECTRA target'}
+            subject={resolvedTargetLabel || target || 'SPECTRA target'}
             spectraShell
           />
 
@@ -629,7 +648,7 @@ export default function SpectraPage() {
           </div>
 
           {phase === 'acquiring' && (
-            <div className="pointer-events-none absolute bottom-3 left-3 z-30 max-w-[min(88%,26rem)] rounded-xl border border-slate-700/70 bg-slate-950/88 px-3 py-2 text-[11px] text-slate-300 shadow-xl backdrop-blur">
+            <div className="pointer-events-none absolute bottom-3 left-3 z-30 max-w-[min(88%,26rem)] rounded-xl border border-slate-700/70 bg-slate-950/90 px-3 py-2 text-[11px] text-slate-300 shadow-xl backdrop-blur">
               <div className="font-medium text-cyan-200">Acquired so far</div>
               <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
                 <span>Target description ✓</span>
