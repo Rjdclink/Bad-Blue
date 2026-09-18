@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { useGeoRuntime, type GeoFrame } from '@/hooks/useGeoRuntime';
 import type { GPSPoint } from '@shared/geoconsoleTypes';
+import MapLibreIntelligenceMap from './MapLibreIntelligenceMap';
 
 // ============================================================================
 // TYPES
@@ -46,6 +47,11 @@ interface LayerState {
   markers: boolean;
   futurecast: boolean;
   reticle: boolean;
+  weather: boolean;
+  terrain: boolean;
+  buildings: boolean;
+  uncertainty: boolean;
+  streetImagery: boolean;
 }
 
 type MapMode = 'satellite' | 'hybrid' | 'street' | 'dark';
@@ -224,7 +230,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
 
   // UI state (not affecting frame data)
   const [mapMode, setMapMode] = useState<MapMode>('satellite');
-  const [layerCfg, setLayerCfg] = useState<LayerState>({ satellite: true, trail: true, heatmap: true, markers: true, futurecast: true, reticle: true });
+  const [layerCfg, setLayerCfg] = useState<LayerState>({ satellite: true, trail: true, heatmap: true, markers: true, futurecast: true, reticle: true, weather: false, terrain: true, buildings: true, uncertainty: true, streetImagery: false });
   const [processing, setProcessing] = useState(false);
   const [progressMsg, setProgressMsg] = useState('');
   const [lockOnTarget, setLockOnTarget] = useState(true);
@@ -647,22 +653,15 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
       <div className="flex flex-1 min-h-0 overflow-hidden">
         {/* Map Container - Stretches to Fill Available Space */}
         <div className="flex-1 relative min-h-0 min-w-0">
-          <div ref={containerRef} className="absolute inset-0 z-0" style={{ background: '#1a1a2e' }} />
-          {/* Zoom Controls Overlay */}
-          <div className="absolute top-3 left-3 z-10 flex flex-col gap-1">
-            <button 
-              onClick={() => mapRef.current?.zoomIn()} 
-              className="w-8 h-8 bg-slate-800/90 border border-slate-600/50 rounded text-white hover:bg-slate-700 flex items-center justify-center"
-            >
-              +
-            </button>
-            <button 
-              onClick={() => mapRef.current?.zoomOut()} 
-              className="w-8 h-8 bg-slate-800/90 border border-slate-600/50 rounded text-white hover:bg-slate-700 flex items-center justify-center"
-            >
-              −
-            </button>
-          </div>
+          <MapLibreIntelligenceMap
+            currentFrame={renderData.currentFrame}
+            trail={renderData.trail}
+            futurecast={renderData.futurecast}
+            mapMode={mapMode}
+            layers={layerCfg}
+            isLive={state.isLive}
+            lockOnTarget={lockOnTarget}
+          />
           {/* Layer Quick Toggle */}
           <div className="absolute bottom-3 left-3 z-10 bg-slate-800/90 border border-slate-600/50 rounded-lg px-2 py-1">
             <span className="text-xs text-slate-400">Layers</span>
