@@ -141,6 +141,10 @@ function setLocalCookie(res: any, token: string): void {
   res.append("Set-Cookie", parts.join("; "));
 }
 
+export function issueLocalSessionCookie(res: any, user: Parameters<typeof createLocalSessionToken>[0]): void {
+  setLocalCookie(res, createLocalSessionToken(user));
+}
+
 function clearLocalCookie(res: any): void {
   const secure = getConfig().NODE_ENV === "production";
   const parts = [
@@ -267,7 +271,17 @@ export async function setupAuth(app: Express) {
         typeof req.body?.firstName === "string" ? req.body.firstName : "",
         typeof req.body?.lastName === "string" ? req.body.lastName : "",
       );
-      return res.status(201).json({ success: true, user, hasActiveSubscription: user.hasPaidForAccess && user.status === "active" });
+      // Signup establishes a pending authenticated session so the user can move
+      // directly into verified Square subscription checkout without re-entering
+      // credentials. Pending users remain fail-closed until Square is confirmed.
+      setLocalCookie(res, createLocalSessionToken(user));
+      clearMasterCookie(res);
+      return res.status(201).json({
+        success: true,
+        user,
+        hasActiveSubscription: false,
+        paymentRequired: true,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Registration failed";
       if (message === "Email already registered") return res.status(409).json({ message });
