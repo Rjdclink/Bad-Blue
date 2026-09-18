@@ -14,6 +14,7 @@ import SampleLexaraConsultation from "@/components/SampleLegalConsultation"; // 
 import { FULL_ACCESS_PRICING, LAWSUIT_DIY_PRICING, LAWSUIT_FULL_SERVICE_PRICING, COMPLAINT_PRICING, PETITION_PRICING, FOIA_REQUEST_PRICING } from "@shared/schema";
 import { usePageFaqSchema } from "@/hooks/useFaqSchema";
 import { AISystemShowcase } from "@/components/AISystemShowcase";
+import { LAW_TYPE_DATA } from "@shared/lawTypes";
 import { HiddenFAQ } from "@/components/HiddenFAQ";
 
 export default function Landing() {
@@ -335,6 +336,28 @@ export default function Landing() {
                 </p>
               </CardContent>
             </Card>
+          </div>
+        </div>
+      </section>
+
+      {/* Search-visible coverage of all supported legal practice areas */}
+      <section className="py-16 px-4 bg-card/40" aria-labelledby="legal-practice-areas">
+        <div className="max-w-7xl mx-auto">
+          <div className="text-center mb-10">
+            <h2 id="legal-practice-areas" className="text-3xl md:text-4xl font-bold mb-4">
+              30 Legal Practice Areas
+            </h2>
+            <p className="text-muted-foreground max-w-3xl mx-auto leading-relaxed">
+              Legal What? supports AI-assisted legal information, research, issue spotting, and document workflows across the following 30 practice areas.
+            </p>
+          </div>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {LAW_TYPE_DATA.map((area) => (
+              <article key={area.id} className="rounded-xl border bg-background p-5">
+                <h3 className="font-semibold text-lg mb-2">{area.name}</h3>
+                <p className="text-sm text-muted-foreground leading-relaxed">{area.description}</p>
+              </article>
+            ))}
           </div>
         </div>
       </section>
