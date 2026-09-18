@@ -129,8 +129,7 @@ Return JSON with keys: expectedDailyProfitPotential, riskScore, recommendedAdjus
     const harmony = await this.executeFullHarmony(prompt, 'strategy_analysis');
     const contributions = harmony.contributions;
     const synthesized = {
-      ...this.synthesizeStrategyAnalysis(contributions),
-      analysis: harmony.finalAnswer,
+      ...this.parseHarmonyPayload(harmony.finalAnswer, contributions),
       providersUsed: harmony.providersUsed,
     };
     const consensusScore = this.calculateConsensus(contributions);
@@ -175,8 +174,7 @@ Return JSON with keys: predictedRegime, volatilityForecast, liquidityForecast, c
     const harmony = await this.executeFullHarmony(prompt, 'market_prediction');
     const contributions = harmony.contributions;
     const synthesized = {
-      ...this.synthesizeMarketPrediction(contributions),
-      analysis: harmony.finalAnswer,
+      ...this.parseHarmonyPayload(harmony.finalAnswer, contributions),
       providersUsed: harmony.providersUsed,
     };
     const consensusScore = this.calculateConsensus(contributions);
@@ -219,8 +217,7 @@ Return JSON with keys: overallRiskScore, maximumDrawdownEstimate, correlationRis
     const harmony = await this.executeFullHarmony(prompt, 'risk_assessment');
     const contributions = harmony.contributions;
     const synthesized = {
-      ...this.synthesizeRiskAssessment(contributions),
-      analysis: harmony.finalAnswer,
+      ...this.parseHarmonyPayload(harmony.finalAnswer, contributions),
       providersUsed: harmony.providersUsed,
     };
     const consensusScore = this.calculateConsensus(contributions);
@@ -258,8 +255,7 @@ Return JSON with keys: reentrancyFindings, flashLoanAttackVectors, mevExtraction
     const harmony = await this.executeFullHarmony(prompt, 'smart_contract_analysis');
     const contributions = harmony.contributions;
     const synthesized = {
-      ...this.synthesizeContractAnalysis(contributions),
-      analysis: harmony.finalAnswer,
+      ...this.parseHarmonyPayload(harmony.finalAnswer, contributions),
       providersUsed: harmony.providersUsed,
     };
     const consensusScore = this.calculateConsensus(contributions);
@@ -303,8 +299,7 @@ Return JSON with keys: score, probabilityOfSuccess, riskAdjustedReturn, recommen
     const harmony = await this.executeFullHarmony(prompt, 'opportunity_scoring');
     const contributions = harmony.contributions;
     const synthesized = {
-      ...this.synthesizeOpportunityScore(contributions),
-      analysis: harmony.finalAnswer,
+      ...this.parseHarmonyPayload(harmony.finalAnswer, contributions),
       providersUsed: harmony.providersUsed,
     };
     const consensusScore = this.calculateConsensus(contributions);
@@ -456,64 +451,49 @@ Return JSON with keys: score, probabilityOfSuccess, riskAdjustedReturn, recommen
   }
   
   // ============================================
-  // SYNTHESIS METHODS
+  // SYNTHESIS
   // ============================================
-  
-  private synthesizeStrategyAnalysis(contributions: Map<AIProvider, any>): any {
-    const successful = Array.from(contributions.values()).filter(c => c.success);
+
+  private parseHarmonyPayload(
+    finalAnswer: string,
+    contributions: Map<AIProvider, any>,
+  ): Record<string, any> {
+    const successful = Array.from(contributions.values()).filter(contribution => contribution?.success);
+    const consensusConfidence = contributions.size > 0
+      ? successful.length / contributions.size
+      : 0;
+
+    const cleaned = String(finalAnswer || '')
+      .trim()
+      .replace(/^\`\`\`(?:json)?\s*/i, '')
+      .replace(/\s*\`\`\`$/i, '')
+      .trim();
+
+    let parsed: Record<string, any> = {};
+    try {
+      const value = JSON.parse(cleaned);
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        parsed = value as Record<string, any>;
+      } else {
+        parsed = { analysis: value };
+      }
+    } catch {
+      parsed = { analysis: finalAnswer };
+    }
+
+    const reportedConfidence = Number(parsed.confidence);
+    const confidence = Number.isFinite(reportedConfidence)
+      ? Math.max(0, Math.min(1, reportedConfidence > 1 ? reportedConfidence / 100 : reportedConfidence))
+      : consensusConfidence;
+
     return {
-      recommendation: 'proceed_with_caution',
-      riskLevel: 5,
-      expectedProfit: 0.05,
-      confidence: successful.length / contributions.size,
+      ...parsed,
+      confidence,
       modelCount: contributions.size,
-      successfulAnalyses: successful.length
+      successfulAnalyses: successful.length,
     };
   }
-  
-  private synthesizeMarketPrediction(contributions: Map<AIProvider, any>): any {
-    const successful = Array.from(contributions.values()).filter(c => c.success);
-    return {
-      predictedRegime: 'ranging',
-      volatilityForecast: 0.5,
-      confidence: successful.length / contributions.size,
-      modelCount: contributions.size
-    };
-  }
-  
-  private synthesizeRiskAssessment(contributions: Map<AIProvider, any>): any {
-    const successful = Array.from(contributions.values()).filter(c => c.success);
-    return {
-      overallRisk: 5,
-      maxDrawdown: 0.15,
-      recommendation: 'reduce_exposure',
-      confidence: successful.length / contributions.size,
-      modelCount: contributions.size
-    };
-  }
-  
-  private synthesizeContractAnalysis(contributions: Map<AIProvider, any>): any {
-    const successful = Array.from(contributions.values()).filter(c => c.success);
-    return {
-      safetyScore: 75,
-      vulnerabilities: [],
-      recommendation: 'proceed',
-      confidence: successful.length / contributions.size,
-      modelCount: contributions.size
-    };
-  }
-  
-  private synthesizeOpportunityScore(contributions: Map<AIProvider, any>): any {
-    const successful = Array.from(contributions.values()).filter(c => c.success);
-    return {
-      score: 70,
-      executeRecommendation: 'yes',
-      positionSize: 0.1,
-      confidence: successful.length / contributions.size,
-      modelCount: contributions.size
-    };
-  }
-  
+
   // ============================================
   // PUBLIC API
   // ============================================
