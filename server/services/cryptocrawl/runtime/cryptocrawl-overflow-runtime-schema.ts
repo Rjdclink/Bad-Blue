@@ -6,8 +6,8 @@ import {
   coordinationPool,
 } from './cryptocrawl-runtime-database.js';
 
-const SCHEMA_VERSION = 28;
-const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v28';
+const SCHEMA_VERSION = 29;
+const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v29';
 
 const MIGRATIONS = [
   'overflow/003_cryptocrawler_runtime_prerequisites.sql',
@@ -62,6 +62,7 @@ const MIGRATIONS = [
   '056_subagent_runtime_prerequisites.sql',
   '057_cryptocrawler_ghost_wallet_runtime.sql',
   '059_cryptocrawler_zero_capital_rescue_fairness.sql',
+  '060_lexara_overflow_conversation_history.sql',
   'overflow/004_cryptocrawler_terminal_support.sql',
 ] as const;
 
@@ -71,8 +72,16 @@ type MigrationPath = typeof MIGRATIONS[number];
 // fairness ledger. Advance either known state with only its missing deltas;
 // older/unknown states retain the complete idempotent repair path.
 const INCREMENTAL_MIGRATIONS: Readonly<Record<number, readonly MigrationPath[]>> = {
-  26: ['057_cryptocrawler_ghost_wallet_runtime.sql', '059_cryptocrawler_zero_capital_rescue_fairness.sql'],
-  27: ['059_cryptocrawler_zero_capital_rescue_fairness.sql'],
+  26: [
+    '057_cryptocrawler_ghost_wallet_runtime.sql',
+    '059_cryptocrawler_zero_capital_rescue_fairness.sql',
+    '060_lexara_overflow_conversation_history.sql',
+  ],
+  27: [
+    '059_cryptocrawler_zero_capital_rescue_fairness.sql',
+    '060_lexara_overflow_conversation_history.sql',
+  ],
+  28: ['060_lexara_overflow_conversation_history.sql'],
 };
 
 const REQUIRED_TABLES = [
@@ -155,6 +164,7 @@ const REQUIRED_TABLES = [
   'public.subagent_search_queue',
   'public.subagent_search_sessions',
   'public.ai_usage_metrics',
+  'public.lexara_conversations',
   'private.cryptocrawler_overflow_runtime_meta',
 ] as const;
 

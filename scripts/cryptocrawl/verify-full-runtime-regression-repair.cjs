@@ -25,13 +25,16 @@ const rediscovery = read('server/services/cryptocrawl/ghost-wallet/existing-arbi
 const index = read('server/index.ts');
 
 // Startup authority: explicit source behavior, bounded schema recovery, no hidden build mutation.
-assert.match(schema, /SCHEMA_VERSION = 28/);
+assert.match(schema, /SCHEMA_VERSION = 29/);
 assert.match(schema, /057_cryptocrawler_ghost_wallet_runtime\.sql/);
 assert.match(schema, /059_cryptocrawler_zero_capital_rescue_fairness\.sql/);
-assert.match(schema, /26:\s*\['057_cryptocrawler_ghost_wallet_runtime\.sql',\s*'059_cryptocrawler_zero_capital_rescue_fairness\.sql'\]/);
-assert.match(schema, /27:\s*\['059_cryptocrawler_zero_capital_rescue_fairness\.sql'\]/);
+assert.match(schema, /060_lexara_overflow_conversation_history\.sql/);
+assert.match(schema, /26:[\s\S]*057_cryptocrawler_ghost_wallet_runtime\.sql[\s\S]*059_cryptocrawler_zero_capital_rescue_fairness\.sql[\s\S]*060_lexara_overflow_conversation_history\.sql/);
+assert.match(schema, /27:[\s\S]*059_cryptocrawler_zero_capital_rescue_fairness\.sql[\s\S]*060_lexara_overflow_conversation_history\.sql/);
+assert.match(schema, /28:\s*\['060_lexara_overflow_conversation_history\.sql'\]/);
 assert.match(dockerfile, /COPY --from=builder \/app\/server\/migrations\/057_cryptocrawler_ghost_wallet_runtime\.sql \.\/dist\/migrations\/057_cryptocrawler_ghost_wallet_runtime\.sql/);
 assert.match(dockerfile, /COPY --from=builder \/app\/server\/migrations\/059_cryptocrawler_zero_capital_rescue_fairness\.sql \.\/dist\/migrations\/059_cryptocrawler_zero_capital_rescue_fairness\.sql/);
+assert.match(dockerfile, /COPY --from=builder \/app\/server\/migrations\/060_lexara_overflow_conversation_history\.sql \.\/dist\/migrations\/060_lexara_overflow_conversation_history\.sql/);
 assert.match(runtime, /ensureCryptocrawlOverflowRuntimeSchema/);
 assert.match(runtime, /getCryptocrawlOverflowRuntimeSchemaSnapshot/);
 assert.match(runtime, /startOverflowSchemaRepair/);

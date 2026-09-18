@@ -192,11 +192,13 @@ assert.doesNotMatch(core, /runZeroCapitalProfitabilityRescueV2/);
 // migration instead of allowing a stale schema marker to skip it.
 assert.match(fairness, /public\.cryptocrawler_zero_capital_rescue_fairness/);
 assert.match(fairness, /pg_advisory_xact_lock/);
-assert.match(overflowSchema, /const SCHEMA_VERSION = 28/);
-assert.match(overflowSchema, /cryptocrawl:overflow-runtime-schema:v28/);
+assert.match(overflowSchema, /const SCHEMA_VERSION = 29/);
+assert.match(overflowSchema, /cryptocrawl:overflow-runtime-schema:v29/);
 assert.match(overflowSchema, /'059_cryptocrawler_zero_capital_rescue_fairness\.sql'/);
-assert.match(overflowSchema, /26: \['057_cryptocrawler_ghost_wallet_runtime\.sql', '059_cryptocrawler_zero_capital_rescue_fairness\.sql'\]/);
-assert.match(overflowSchema, /27: \['059_cryptocrawler_zero_capital_rescue_fairness\.sql'\]/);
+assert.match(overflowSchema, /'060_lexara_overflow_conversation_history\.sql'/);
+assert.match(overflowSchema, /26:[\s\S]*057_cryptocrawler_ghost_wallet_runtime\.sql[\s\S]*059_cryptocrawler_zero_capital_rescue_fairness\.sql[\s\S]*060_lexara_overflow_conversation_history\.sql/);
+assert.match(overflowSchema, /27:[\s\S]*059_cryptocrawler_zero_capital_rescue_fairness\.sql[\s\S]*060_lexara_overflow_conversation_history\.sql/);
+assert.match(overflowSchema, /28: \['060_lexara_overflow_conversation_history\.sql'\]/);
 assert.match(overflowSchema, /'public\.cryptocrawler_zero_capital_rescue_fairness'/);
 assert.match(fairnessMigration, /CREATE TABLE IF NOT EXISTS public\.cryptocrawler_zero_capital_rescue_fairness/);
 assert.match(fairnessMigration, /PRIMARY KEY \(chain, route_id\)/);

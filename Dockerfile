@@ -117,6 +117,7 @@ COPY --from=builder /app/server/migrations/056_subagent_runtime_prerequisites.sq
 COPY --from=builder /app/server/migrations/057_cryptocrawler_ghost_wallet_runtime.sql ./dist/migrations/057_cryptocrawler_ghost_wallet_runtime.sql
 COPY --from=builder /app/server/migrations/058_cryptocrawler_ghost_wallet_gas_reserve.sql ./dist/migrations/058_cryptocrawler_ghost_wallet_gas_reserve.sql
 COPY --from=builder /app/server/migrations/059_cryptocrawler_zero_capital_rescue_fairness.sql ./dist/migrations/059_cryptocrawler_zero_capital_rescue_fairness.sql
+COPY --from=builder /app/server/migrations/060_lexara_overflow_conversation_history.sql ./dist/migrations/060_lexara_overflow_conversation_history.sql
 COPY --from=builder /app/server/migrations/overflow/001_cryptara_comp_cache.sql ./dist/migrations/overflow/001_cryptara_comp_cache.sql
 COPY --from=builder /app/server/migrations/overflow/002_cryptara_parallel_proxy.sql ./dist/migrations/overflow/002_cryptara_parallel_proxy.sql
 COPY --from=builder /app/server/migrations/overflow/003_cryptocrawler_runtime_prerequisites.sql ./dist/migrations/overflow/003_cryptocrawler_runtime_prerequisites.sql

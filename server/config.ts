@@ -22,9 +22,7 @@ const envSchema = z.object({
   // Production safety is enforced in loadConfig() with explicit checks.
   DATABASE_URL: z.string().optional().default(''),
   SUPABASE_DATABASE_URL: z.string().optional().default(''),
-  SUPABASE_DATABASE_URL_OVERFLOW: z.string().optional().default(''),
   SUPABASE_URL: z.string().url('SUPABASE_URL must be a valid URL').optional(),
-  SUPABASE_URL_OVERFLOW: z.string().url('SUPABASE_URL_OVERFLOW must be a valid URL').optional(),
   SUPABASE_DB_URL: z.string().optional().default(''),
   
   // Application
@@ -121,12 +119,11 @@ export function isSupabasePostgresConnectionString(url: string | undefined): boo
   );
 }
 
-export function resolveDatabaseUrl(cfg: Pick<Config, 'SUPABASE_DATABASE_URL_OVERFLOW' | 'SUPABASE_DATABASE_URL' | 'SUPABASE_DB_URL' | 'DATABASE_URL'>): {
+export function resolveDatabaseUrl(cfg: Pick<Config, 'SUPABASE_DATABASE_URL' | 'SUPABASE_DB_URL' | 'DATABASE_URL'>): {
   url: string;
-  source: 'SUPABASE_DATABASE_URL_OVERFLOW' | 'SUPABASE_DATABASE_URL' | 'SUPABASE_DB_URL' | 'DATABASE_URL' | 'none';
+  source: 'SUPABASE_DATABASE_URL' | 'SUPABASE_DB_URL' | 'DATABASE_URL' | 'none';
 } {
-  const candidates: Array<{ source: 'SUPABASE_DATABASE_URL_OVERFLOW' | 'SUPABASE_DATABASE_URL' | 'SUPABASE_DB_URL' | 'DATABASE_URL'; value: string }> = [
-    { source: 'SUPABASE_DATABASE_URL_OVERFLOW', value: cfg.SUPABASE_DATABASE_URL_OVERFLOW },
+  const candidates: Array<{ source: 'SUPABASE_DATABASE_URL' | 'SUPABASE_DB_URL' | 'DATABASE_URL'; value: string }> = [
     { source: 'SUPABASE_DATABASE_URL', value: cfg.SUPABASE_DATABASE_URL },
     { source: 'SUPABASE_DB_URL', value: cfg.SUPABASE_DB_URL },
     { source: 'DATABASE_URL', value: cfg.DATABASE_URL },
@@ -145,32 +142,6 @@ export function loadConfig(): Config {
   if (config) return config;
   
   try {
-    // Overflow is the canonical hot authority when configured. Normalize the
-    // generic Supabase aliases before parsing so authentication, ordinary app
-    // persistence, and CryptoCrawler all address the same project instead of
-    // silently splitting hot state across Primary and Overflow.
-    if (String(process.env.NODE_ENV || '').trim() === 'production') {
-      const overflowDb = String(process.env.SUPABASE_DATABASE_URL_OVERFLOW || '').trim();
-      const overflowUrl = String(process.env.SUPABASE_URL_OVERFLOW || '').trim();
-      const overflowSecret = String(
-        process.env.SUPABASE_SECRET_KEY_OVERFLOW
-        || process.env.SUPABASE_SERVICEROLE_OVERFLOW_KEY
-        || '',
-      ).trim();
-      const overflowPublishable = String(process.env.SUPABASE_PUBLISHABLE_KEY_OVERFLOW || '').trim();
-
-      if (overflowDb) process.env.SUPABASE_DATABASE_URL = overflowDb;
-      if (overflowUrl) process.env.SUPABASE_URL = overflowUrl;
-      if (overflowSecret) {
-        process.env.SUPABASE_SECRET_KEY = overflowSecret;
-        process.env.SUPABASE_SERVICE_ROLE_KEY = overflowSecret;
-      }
-      if (overflowPublishable) {
-        process.env.SUPABASE_PUBLISHABLE_KEY = overflowPublishable;
-        process.env.SUPABASE_ANON_KEY = overflowPublishable;
-      }
-    }
-
     config = envSchema.parse(process.env);
     // Fail-fast: never allow placeholder/demo secrets.
     // This prevents production (and dev) from silently booting with an insecure default.
