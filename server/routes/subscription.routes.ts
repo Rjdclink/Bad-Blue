@@ -163,15 +163,34 @@ export async function handleLegalWhatSubscriptionWebhook(event: any): Promise<bo
 
   if (eventType === "subscription.created" || eventType === "subscription.updated") {
     const subscription = object?.subscription;
-    if (!subscription || String(subscription.plan_variation_id || "") !== planVariationId()) return false;
+    const variationId = planVariationId();
+    if (!subscription || String(subscription.plan_variation_id || "") !== variationId) return false;
     const customerId = String(subscription.customer_id || "").trim();
     const subscriptionId = String(subscription.id || "").trim();
     if (!customerId || !subscriptionId) throw new Error("Square subscription webhook identity is incomplete");
+
+    // Reconcile the customer's complete current Square state before revoking.
+    // This prevents a stale/canceled older subscription event from disabling a
+    // newer active LegalWhat subscription for the same customer.
+    const square = getSquareClient() as any;
+    const items = await subscriptionsForCustomer(square, customerId, getSquareLocationId());
+    const activeSubscription = activeMatchingSubscription(items, variationId);
+    if (activeSubscription) {
+      await updateLocalUserSubscriptionHttp({
+        squareCustomerId: customerId,
+        squareSubscriptionId: String(activeSubscription.id || ""),
+        squarePlanVariationId: variationId,
+        status: "active",
+        hasPaidForAccess: true,
+      });
+      return true;
+    }
+
     const state = canonicalState(subscription.status);
     await updateLocalUserSubscriptionHttp({
       squareCustomerId: customerId,
       squareSubscriptionId: subscriptionId,
-      squarePlanVariationId: planVariationId(),
+      squarePlanVariationId: variationId,
       status: state.status,
       hasPaidForAccess: state.hasPaidForAccess,
     });
