@@ -1,4 +1,30 @@
-import { AIProvider } from './aiTokenGovernor';
+import type { AIProvider } from './aiTokenGovernor';
+
+const PROVIDER = {
+  GEMINI: 'gemini',
+  GROQ: 'groq',
+  MISTRAL: 'mistral',
+  CLAUDE: 'claude',
+  DEEPSEEK: 'deepseek',
+  GROK: 'grok',
+  KIMI: 'kimi',
+  GPT_OSS: 'gpt_oss',
+  FALCON: 'falcon',
+  CODE_LLAMA: 'code_llama',
+  GPT_NEOX: 'gpt_neox',
+  QWEN: 'qwen',
+  GPT5_MINI: 'gpt5_mini',
+  CLAUDE_OPUS: 'claude_opus',
+  OPENROUTER: 'openrouter',
+  HUGGINGFACE: 'huggingface',
+  LMAI: 'lmai',
+  COHERE: 'cohere',
+  TOGETHER: 'together',
+  PERPLEXITY: 'perplexity',
+  FIREWORKS: 'fireworks',
+  CEREBRAS: 'cerebras',
+  SAMBANOVA: 'sambanova',
+} as const satisfies Record<string, AIProvider>;
 
 /**
  * Canonical current-model registry for the platform-wide Harmony mesh.
@@ -57,97 +83,97 @@ export interface HarmonyParticipant {
  */
 export const HARMONY_17_PARTICIPANTS: readonly HarmonyParticipant[] = [
   {
-    provider: AIProvider.GEMINI,
+    provider: PROVIDER.GEMINI,
     model: CURRENT_AI_MODELS.gemini,
     capabilities: ['fast-chat', 'research', 'long-context', 'multimodal', 'agentic', 'structured-output'],
     configured: () => !!(process.env.GEMINI_API_KEY?.trim() || process.env.GOOGLE_API_KEY?.trim()),
   },
   {
-    provider: AIProvider.CLAUDE,
+    provider: PROVIDER.CLAUDE,
     model: CURRENT_AI_MODELS.claudeBalanced,
     capabilities: ['legal-analysis', 'deep-reasoning', 'verification', 'long-context', 'coding', 'agentic'],
     configured: () => !!(process.env.ANTHROPIC_API_KEY?.trim() || process.env.CLAUDE_API_KEY?.trim()),
   },
   {
-    provider: AIProvider.CLAUDE_OPUS,
+    provider: PROVIDER.CLAUDE_OPUS,
     model: CURRENT_AI_MODELS.claudeDeep,
     capabilities: ['legal-analysis', 'deep-reasoning', 'verification', 'long-context', 'coding', 'agentic'],
     configured: () => !!(process.env.ANTHROPIC_API_KEY?.trim() || process.env.CLAUDE_API_KEY?.trim()),
   },
   {
-    provider: AIProvider.GROQ,
+    provider: PROVIDER.GROQ,
     model: CURRENT_AI_MODELS.groqDeep,
     capabilities: ['fast-chat', 'deep-reasoning', 'coding', 'structured-output'],
     configured: () => !!process.env.GROQ_API_KEY?.trim(),
   },
   {
-    provider: AIProvider.MISTRAL,
+    provider: PROVIDER.MISTRAL,
     model: CURRENT_AI_MODELS.mistralFast,
     capabilities: ['fast-chat', 'coding', 'agentic', 'multimodal', 'structured-output'],
     configured: () => !!process.env.MISTRAL_API_KEY?.trim(),
   },
   {
-    provider: AIProvider.DEEPSEEK,
+    provider: PROVIDER.DEEPSEEK,
     model: CURRENT_AI_MODELS.deepseek,
     capabilities: ['deep-reasoning', 'coding', 'agentic', 'long-context', 'multimodal'],
     configured: () => !!process.env.OPENROUTER_API_KEY?.trim(),
   },
   {
-    provider: AIProvider.GROK,
+    provider: PROVIDER.GROK,
     model: CURRENT_AI_MODELS.grok,
     capabilities: ['deep-reasoning', 'coding', 'research', 'multimodal', 'agentic'],
     configured: () => !!process.env.OPENROUTER_API_KEY?.trim(),
   },
   {
-    provider: AIProvider.KIMI,
+    provider: PROVIDER.KIMI,
     model: CURRENT_AI_MODELS.kimi,
     capabilities: ['deep-reasoning', 'coding', 'long-context', 'multimodal', 'agentic'],
     configured: () => !!process.env.OPENROUTER_API_KEY?.trim(),
   },
   {
-    provider: AIProvider.QWEN,
+    provider: PROVIDER.QWEN,
     model: CURRENT_AI_MODELS.qwen,
     capabilities: ['deep-reasoning', 'coding', 'long-context', 'multimodal', 'agentic', 'structured-output'],
     configured: () => !!process.env.OPENROUTER_API_KEY?.trim(),
   },
   {
-    provider: AIProvider.GPT5_MINI,
+    provider: PROVIDER.GPT5_MINI,
     model: CURRENT_AI_MODELS.openaiFastViaOpenRouter,
     capabilities: ['fast-chat', 'legal-analysis', 'coding', 'structured-output', 'agentic'],
     configured: () => !!process.env.OPENROUTER_API_KEY?.trim(),
   },
   {
-    provider: AIProvider.GPT_OSS,
+    provider: PROVIDER.GPT_OSS,
     model: CURRENT_AI_MODELS.gptOss,
     capabilities: ['fast-chat', 'deep-reasoning', 'coding', 'structured-output'],
     configured: () => !!(process.env.GROQ_API_KEY?.trim() || process.env.CEREBRAS_API_KEY?.trim() || process.env.OPENROUTER_API_KEY?.trim()),
   },
   {
-    provider: AIProvider.OPENROUTER,
+    provider: PROVIDER.OPENROUTER,
     model: CURRENT_AI_MODELS.openRouterAuto,
     capabilities: ['fast-chat', 'deep-reasoning', 'legal-analysis', 'research', 'coding', 'long-context', 'multimodal', 'agentic'],
     configured: () => !!process.env.OPENROUTER_API_KEY?.trim(),
   },
   {
-    provider: AIProvider.HUGGINGFACE,
+    provider: PROVIDER.HUGGINGFACE,
     model: CURRENT_AI_MODELS.huggingFace,
     capabilities: ['deep-reasoning', 'coding', 'structured-output'],
     configured: () => !!(process.env.HUGGINGFACE_API_TOKEN?.trim() || process.env.HUGGINGFACE_API_KEY?.trim()),
   },
   {
-    provider: AIProvider.CEREBRAS,
+    provider: PROVIDER.CEREBRAS,
     model: CURRENT_AI_MODELS.cerebras,
     capabilities: ['fast-chat', 'deep-reasoning', 'coding', 'structured-output'],
     configured: () => !!process.env.CEREBRAS_API_KEY?.trim(),
   },
   {
-    provider: AIProvider.SAMBANOVA,
+    provider: PROVIDER.SAMBANOVA,
     model: CURRENT_AI_MODELS.sambaNova,
     capabilities: ['fast-chat', 'deep-reasoning', 'coding', 'multimodal'],
     configured: () => !!process.env.SAMBANOVA_API_KEY?.trim(),
   },
   {
-    provider: AIProvider.COHERE,
+    provider: PROVIDER.COHERE,
     model: CURRENT_AI_MODELS.cohere,
     capabilities: ['legal-analysis', 'verification', 'research', 'multimodal', 'agentic', 'structured-output'],
     configured: () => !!(
@@ -157,7 +183,7 @@ export const HARMONY_17_PARTICIPANTS: readonly HarmonyParticipant[] = [
     ),
   },
   {
-    provider: AIProvider.TOGETHER,
+    provider: PROVIDER.TOGETHER,
     model: CURRENT_AI_MODELS.together,
     capabilities: ['deep-reasoning', 'coding', 'agentic'],
     configured: () => !!(
@@ -174,11 +200,11 @@ if (HARMONY_17_PARTICIPANTS.length !== 17) {
 }
 
 const LEGACY_MODEL_ALIASES: Partial<Record<AIProvider, string>> = {
-  [AIProvider.FALCON]: CURRENT_AI_MODELS.gptOss,
-  [AIProvider.CODE_LLAMA]: CURRENT_AI_MODELS.qwen,
-  [AIProvider.GPT_NEOX]: CURRENT_AI_MODELS.gptOss,
-  [AIProvider.PERPLEXITY]: CURRENT_AI_MODELS.openRouterAuto,
-  [AIProvider.FIREWORKS]: CURRENT_AI_MODELS.openRouterAuto,
+  [PROVIDER.FALCON]: CURRENT_AI_MODELS.gptOss,
+  [PROVIDER.CODE_LLAMA]: CURRENT_AI_MODELS.qwen,
+  [PROVIDER.GPT_NEOX]: CURRENT_AI_MODELS.gptOss,
+  [PROVIDER.PERPLEXITY]: CURRENT_AI_MODELS.openRouterAuto,
+  [PROVIDER.FIREWORKS]: CURRENT_AI_MODELS.openRouterAuto,
 };
 
 export function getConfiguredHarmonyParticipants(): HarmonyParticipant[] {
@@ -201,17 +227,17 @@ export function getHarmonyCapabilities(provider: AIProvider): readonly HarmonyCa
 
 export function getOpenRouterModelForProvider(provider: AIProvider): string | null {
   switch (provider) {
-    case AIProvider.DEEPSEEK: return CURRENT_AI_MODELS.deepseek;
-    case AIProvider.GROK: return CURRENT_AI_MODELS.grok;
-    case AIProvider.KIMI: return CURRENT_AI_MODELS.kimi;
-    case AIProvider.QWEN: return CURRENT_AI_MODELS.qwen;
-    case AIProvider.GPT5_MINI: return CURRENT_AI_MODELS.openaiFastViaOpenRouter;
-    case AIProvider.OPENROUTER: return CURRENT_AI_MODELS.openRouterAuto;
-    case AIProvider.FALCON:
-    case AIProvider.CODE_LLAMA:
-    case AIProvider.GPT_NEOX:
-    case AIProvider.PERPLEXITY:
-    case AIProvider.FIREWORKS:
+    case PROVIDER.DEEPSEEK: return CURRENT_AI_MODELS.deepseek;
+    case PROVIDER.GROK: return CURRENT_AI_MODELS.grok;
+    case PROVIDER.KIMI: return CURRENT_AI_MODELS.kimi;
+    case PROVIDER.QWEN: return CURRENT_AI_MODELS.qwen;
+    case PROVIDER.GPT5_MINI: return CURRENT_AI_MODELS.openaiFastViaOpenRouter;
+    case PROVIDER.OPENROUTER: return CURRENT_AI_MODELS.openRouterAuto;
+    case PROVIDER.FALCON:
+    case PROVIDER.CODE_LLAMA:
+    case PROVIDER.GPT_NEOX:
+    case PROVIDER.PERPLEXITY:
+    case PROVIDER.FIREWORKS:
       return getCurrentModelForProvider(provider);
     default:
       return null;
