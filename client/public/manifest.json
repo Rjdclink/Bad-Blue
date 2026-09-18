@@ -1,47 +1,21 @@
 {
-  "name": "Bad Blue - Police Accountability Platform",
-  "short_name": "Bad Blue",
-  "description": "File police complaints, Section 1983 lawsuits, and FOIA requests from home. AI-powered officer search. Bad Blue does all the work.",
+  "name": "Legal What? - AI Legal Platform",
+  "short_name": "Legal What?",
+  "description": "AI-assisted legal tools across 30 legal practice areas, including two-way voice and text consultation, background reports, people-finding tools, inmate search, and legal document tools.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#020817",
   "theme_color": "#1e40af",
   "orientation": "portrait-primary",
   "icons": [
     {
-      "src": "/favicon-16x16.png",
-      "sizes": "16x16",
-      "type": "image/png"
-    },
-    {
-      "src": "/favicon-32x32.png",
-      "sizes": "32x32",
-      "type": "image/png"
-    },
-    {
-      "src": "/favicon-48x48.png",
-      "sizes": "48x48",
-      "type": "image/png"
-    },
-    {
-      "src": "/apple-touch-icon.png",
-      "sizes": "180x180",
-      "type": "image/png"
-    },
-    {
-      "src": "/icon-192x192.png",
-      "sizes": "192x192",
+      "src": "/images/Legal%20What%20Icon.png",
       "type": "image/png",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "/icon-512x512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     }
   ],
-  "categories": ["legal", "civic", "government"],
+  "categories": ["legal", "productivity", "utilities"],
   "lang": "en-US",
   "dir": "ltr"
 }
