@@ -186,9 +186,9 @@ export function loadConfig(): Config {
       const serverSupabaseKey = String(
         process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || ''
       ).trim();
-      const edgeInvocationKey = String(process.env.SUPABASE_ANON_KEY || '').trim();
-      if (!serverSupabaseKey && !edgeInvocationKey) {
-        throw new Error('LegalWhat authentication requires either a Supabase server key or SUPABASE_ANON_KEY for the project-local Edge authentication authority');
+      const edgeAuthSecret = String(process.env.LEGALWHAT_EDGE_AUTH_SECRET || '').trim();
+      if (!serverSupabaseKey && !edgeAuthSecret) {
+        throw new Error('LegalWhat authentication requires either a Supabase server key or LEGALWHAT_EDGE_AUTH_SECRET for the project-local Edge authentication authority');
       }
 
       if (!config.SQUARE_ACCESS_TOKEN || !config.SQUARE_ACCESS_TOKEN.trim()) {

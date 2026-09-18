@@ -27,7 +27,7 @@ assert.match(configSource, /SUPABASE_URL:\s*z\.string\(\)\.url\(/, 'Supabase pro
 assert.match(configSource, /SUPABASE_URL is required in production and must be the HTTP\(S\) Supabase project API URL/, 'production must reject database URLs in SUPABASE_URL');
 assert.match(configSource, /parsedSupabaseProjectUrl\.protocol\s*!==\s*'https:'/, 'production Supabase auth URL must require HTTPS');
 assert.match(configSource, /SUPABASE_SECRET_KEY\s*\|\|\s*process\.env\.SUPABASE_SERVICE_ROLE_KEY/, 'direct server auth credential support must remain available');
-assert.match(configSource, /SUPABASE_ANON_KEY/, 'project-local Edge auth invocation credential must be supported');
+assert.match(configSource, /LEGALWHAT_EDGE_AUTH_SECRET/, 'project-local Edge auth invocation must require the private shared secret');
 assert.match(indexSource, /authStoreReady/, 'strict readiness must track the authentication store');
 assert.match(indexSource, /probeLocalAuthStoreHttp/, 'startup must probe the real authentication store');
 assert.match(indexSource, /isFullyInitialized\s*&&\s*usableDataPlane\s*&&\s*authStoreReady/, 'Railway readiness must require working authentication');
@@ -40,7 +40,8 @@ assert.match(statelessLocalAuthSource, /resolveLocalAuthBackend/, 'local auth ba
 assert.match(statelessLocalAuthSource, /project-local Supabase Edge authentication authority/, 'invalid direct Supabase credentials must fail over to the project-local Edge authority');
 assert.match(statelessLocalAuthSource, /Supabase HTTP and Edge authentication unavailable; using bounded canonical PostgreSQL auth store/, 'Edge failure must retain bounded canonical PostgreSQL as the final fallback');
 assert.match(statelessLocalAuthSource, /AUTH_EDGE_FUNCTION\s*=\s*"legalwhat-local-auth"/, 'Edge auth function name must remain explicit and build-locked');
-assert.match(statelessLocalAuthSource, /authorization:\s*\x60Bearer \$\{anonKey\}\x60/, 'Edge invocation must use the project JWT credential');
+assert.match(statelessLocalAuthSource, /x-legalwhat-auth-secret[\s\S]{0,120}edgeSecret/, 'Edge invocation must use the private shared secret');
+assert.doesNotMatch(statelessLocalAuthSource, /authorization:\s*\x60Bearer \$\{anonKey\}\x60/, 'legacy JWT invocation must not remain the Edge authority');
 assert.match(statelessLocalAuthSource, /v:\s*2[\s\S]{0,400}hasPaidForAccess/, 'signed local session must carry safe user identity fields');
 assert.doesNotMatch(authSource, /getLocalUserByIdHttp\(/, 'authenticated status must not reacquire the database after a signed local login');
 assert.match(statelessLocalAuthSource, /BEGIN[\s\S]{0,2200}COMMIT[\s\S]{0,800}ROLLBACK/, 'PostgreSQL signup must remain transactional');
