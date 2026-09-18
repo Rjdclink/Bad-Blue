@@ -2,7 +2,7 @@ import logger from '../../../logger.js';
 import { measuredCandidateRegistry, type MeasuredOpportunityTopology } from '../discovery/measured-candidate-registry.js';
 import { getCexFourModeSnapshot } from './cex-four-mode-observability-wiring.js';
 import { getEconomicTransformationSnapshot } from './economic-transformation-wiring.js';
-import { ensureBpsPrivateRefundEvidenceWiring, getPrivateRefundEvidenceSnapshot } from './bps-private-refund-evidence.js';
+import { ensureBpsPrivateRefundEvidenceWiring, getPrivateRefundEvidenceSnapshot, stopBpsPrivateRefundEvidenceWiring } from './bps-private-refund-evidence.js';
 
 export interface TopologyBpsSnapshot {
   observed: number;
@@ -144,4 +144,9 @@ export function ensureBpsDecompositionObservability(): void {
     const intervalMs = Math.max(5_000, Math.min(120_000, Number(process.env.CRYPTOCRAWL_BPS_DECOMPOSITION_INTERVAL_MS || 15_000)));
     timer = setInterval(refresh, intervalMs); timer.unref?.();
   }
+}
+export function stopBpsDecompositionObservability(): void {
+  if (timer) clearInterval(timer);
+  timer = null;
+  stopBpsPrivateRefundEvidenceWiring();
 }

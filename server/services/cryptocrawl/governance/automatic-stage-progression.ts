@@ -20,7 +20,6 @@ import { measuredCandidateRegistry } from '../discovery/measured-candidate-regis
 import { instantLearningEngine } from '../learning/instant-learning-engine.js';
 import type { ExecutionOutcomeObservation } from '../learning/execution-outcome.js';
 import { terminalFeedbackIdentity } from '../learning/terminal-feedback-identity.js';
-import { ensureTelemetryBootstrap } from '../integration/telemetry-bootstrap.js';
 import { ensureCryptaraAssessmentWiring } from '../integration/cryptara-assessment-wiring.js';
 import { ensureCryptaraMlRankerHydrated, persistCryptaraMlRanker } from '../integration/cryptara-ml-persistence.js';
 import { ensureMasterOrchestratorMeasuredWiring } from '../integration/master-orchestrator-measured-wiring.js';
@@ -33,10 +32,6 @@ ensureMasterOrchestratorMeasuredWiring();
 // These hydrations are advisory/evolution state only and never grant execution authority.
 void ensureCryptaraMlRankerHydrated();
 void ensureMeasuredEvolutionFeedbackHydrated();
-
-// Start read-only blockchain telemetry as soon as the governed progression module is loaded.
-// It intentionally runs independently: governance must never block on external RPC startup.
-void ensureTelemetryBootstrap();
 
 const STAGE_ONE_OPPORTUNITY_ECONOMICS_BLOCK_REASONS = new Set([
   'Cross-venue fee asymmetry: spread does not clear fees',

@@ -370,3 +370,9 @@ export function ensureKalshiBpsOptimizationWiring(): void {
     executionAuthority: false,
   });
 }
+
+export function stopKalshiBpsOptimizationWiring(): void {
+  if (timer) clearInterval(timer);
+  timer = null;
+  installed = false;
+}

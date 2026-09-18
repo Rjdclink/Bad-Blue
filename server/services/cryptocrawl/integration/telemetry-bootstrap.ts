@@ -1,5 +1,5 @@
 import logger from '../../../logger.js';
-import { ensureProviderMeshPendingStream } from '../capital-free/provider-mesh-pending-stream.js';
+import { ensureProviderMeshPendingStream, providerMeshPendingStream } from '../capital-free/provider-mesh-pending-stream.js';
 import { multiProviderRpcManager, type SupportedChain } from '../api/blockchain-providers.js';
 import { marketDataProviders } from '../intelligence/market-data-providers.js';
 import { SUPPORTED_CHAINS } from '../bridge/chain-config.js';
@@ -8,10 +8,7 @@ import {
   resolveCoinStatsEnvironment,
 } from '../runtime/environment-contract.js';
 import { getCryptoCrawlerRuntimeAttestation } from '../runtime/runtime-attestation.js';
-import {
-  ensureCryptoCrawlerCoreRuntime,
-  getCryptoCrawlerCoreRuntimeStatus,
-} from '../runtime/core-runtime.js';
+import { getCryptoCrawlerCoreRuntimeStatus } from '../runtime/core-runtime.js';
 import { ensureDynamicRpcProviderWiring } from '../runtime/dynamic-rpc-provider-wiring.js';
 import { admitAnkrFallback } from '../runtime/rpc-fallback-admission-policy.js';
 
@@ -46,6 +43,7 @@ const ANKR_SLUGS: Partial<Record<SupportedChain, string>> = {
 };
 
 let bootstrapPromise: Promise<void> | null = null;
+let bootstrapGeneration = 0;
 
 function logExecutionPosture(): void {
   const coinbaseConfigured = !!(
@@ -253,9 +251,8 @@ async function probeMarketUniverseProviders(): Promise<void> {
 }
 
 export function ensureTelemetryBootstrap(): Promise<void> {
-  const coreStart = ensureCryptoCrawlerCoreRuntime();
-
   if (!bootstrapPromise) {
+    const generation = ++bootstrapGeneration;
     adoptLegacyProviderAliases();
     logExecutionPosture();
     logger.info('[TelemetryBootstrap] Runtime identity', {
@@ -263,15 +260,18 @@ export function ensureTelemetryBootstrap(): Promise<void> {
       ...getCryptoCrawlerRuntimeAttestation(),
     });
     bootstrapPromise = (async () => {
-      // Canonical CEX discovery and scheduler admission are established before
-      // optional blockchain-provider probes. Their failure is therefore
-      // topology-local rather than a global CryptoCrawler startup blocker.
-      await coreStart;
+      // Telemetry is subordinate to explicit master activation. It never starts
+      // the canonical discovery/execution core on its own.
       await multiProviderRpcManager.initialize(TELEMETRY_CHAINS);
+      if (generation !== bootstrapGeneration) return;
       await registerBestEffortAnkrFallbacks();
+      if (generation !== bootstrapGeneration) return;
       await startFreeProviderTelemetry();
+      if (generation !== bootstrapGeneration) return;
       await probeReadOnlyZeroX();
+      if (generation !== bootstrapGeneration) return;
       await probeMarketUniverseProviders();
+      if (generation !== bootstrapGeneration) return;
 
       const healthyProviders = TELEMETRY_CHAINS.flatMap(chain =>
         multiProviderRpcManager.getHealth(chain)
@@ -300,4 +300,10 @@ export function ensureTelemetryBootstrap(): Promise<void> {
   }
 
   return bootstrapPromise;
+}
+
+export async function stopTelemetryBootstrap(): Promise<void> {
+  bootstrapGeneration += 1;
+  bootstrapPromise = null;
+  await providerMeshPendingStream.stop();
 }

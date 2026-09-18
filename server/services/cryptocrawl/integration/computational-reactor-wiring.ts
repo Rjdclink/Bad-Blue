@@ -16,6 +16,7 @@ import { getCryptaraSovereignCortexSnapshot } from './cryptara-sovereign-cortex-
 
 const log = createLogger('ComputationalReactorWiring');
 let installed = false;
+let active = false;
 let startPromise: Promise<void> | null = null;
 let calibrationTimer: NodeJS.Timeout | null = null;
 
@@ -322,7 +323,7 @@ async function calibrateSearchAllocation(): Promise<void> {
 }
 
 function scheduleCalibration(): void {
-  if (process.env.NO_INTERVALS === 'true') return;
+  if (!active || process.env.NO_INTERVALS === 'true') return;
   calibrationTimer = setTimeout(async () => {
     calibrationTimer = null;
     await calibrateSearchAllocation();
@@ -334,6 +335,7 @@ function scheduleCalibration(): void {
 export function ensureComputationalReactorWiring(): void {
   if (installed) return;
   installed = true;
+  active = true;
   ensureBpsCompressionMesh();
 
   const maxConcurrentJobs = boundedInteger(process.env.REACTOR_MAX_CONCURRENT_JOBS, 3, 1, 16);
@@ -373,6 +375,7 @@ export function ensureComputationalReactorWiring(): void {
       executionAuthority: false,
     });
   }).catch(error => {
+    active = false;
     installed = false;
     reactorEvents.off('job-completed', applyCompletedCalibration);
     log.error('Measured computational reactor failed to initialize', {
@@ -395,4 +398,12 @@ export function getComputationalSearchPlan(): ComputationalSearchPlan {
 
 export function getComputationalReactorStartPromise(): Promise<void> | null {
   return startPromise;
+}
+
+export function stopComputationalReactorWiring(): void {
+  active = false;
+  if (calibrationTimer) clearTimeout(calibrationTimer);
+  calibrationTimer = null;
+  reactorEvents.off('job-completed', applyCompletedCalibration);
+  installed = false;
 }

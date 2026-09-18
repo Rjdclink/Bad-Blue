@@ -30,6 +30,7 @@ export interface CexInventoryReadinessSnapshot {
 }
 
 let timer: NodeJS.Timeout | null = null;
+let active = false;
 let running: Promise<void> | null = null;
 let latest: CexInventoryReadinessSnapshot = {
   observedAt: 0,
@@ -204,7 +205,8 @@ async function runRefresh(): Promise<void> {
 }
 
 export function ensureCexInventoryReadinessWiring(): void {
-  if (timer || running || process.env.CRYPTOCRAWL_CEX_INVENTORY_READINESS_ENABLED === 'false') return;
+  if (active || process.env.CRYPTOCRAWL_CEX_INVENTORY_READINESS_ENABLED === 'false') return;
+  active = true;
   void runRefresh().finally(scheduleNext);
   logger.info('[CexInventoryReadiness] Proactive authenticated inventory hydration installed', {
     component: 'CexInventoryReadinessWiring',
@@ -245,4 +247,10 @@ export function getCexInventoryReadinessSnapshot(): CexInventoryReadinessSnapsho
     reconciledVenues: [...latest.reconciledVenues],
     failedVenues: latest.failedVenues.map(item => ({ ...item })),
   };
+}
+
+export function stopCexInventoryReadinessWiring(): void {
+  active = false;
+  if (timer) clearTimeout(timer);
+  timer = null;
 }

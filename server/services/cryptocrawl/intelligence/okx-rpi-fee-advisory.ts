@@ -182,3 +182,7 @@ export function ensureOkxRpiFeeAdvisory(): void {
     timer.unref?.();
   }
 }
+export function stopOkxRpiFeeAdvisory(): void {
+  if (timer) clearInterval(timer);
+  timer = null;
+}

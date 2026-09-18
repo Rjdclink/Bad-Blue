@@ -504,3 +504,7 @@ export function ensureStageOneMeasurementRecovery(): void {
     syntheticEconomicsAllowed: false,
   });
 }
+export function stopStageOneMeasurementRecovery(): void {
+  if (timer) clearInterval(timer);
+  timer = null;
+}

@@ -664,6 +664,15 @@ export default function CryptoCrawlerDashboard() {
 
   const isSystemRunning = systemStatus?.running || false;
 
+  const handleMasterPowerChange = (enabled: boolean) => {
+    if (startingSystem || stoppingSystem || enabled === isSystemRunning) return;
+    if (enabled) {
+      void handleStartSystem();
+    } else {
+      void handleStopSystem();
+    }
+  };
+
   // Show loading state while auth is being checked - prevents blank screen
   if (authLoading) {
     return (
@@ -708,12 +717,25 @@ export default function CryptoCrawlerDashboard() {
               </div>
             </div>
             <div className="flex items-center gap-4">
-              {/* System Control */}
-              <div className="flex items-center gap-2">
+              {/* System Control - canonical CryptoCrawler lifecycle authority */}
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 rounded-md border border-white/10 bg-white/5 px-3 py-2">
+                  <div>
+                    <p className="text-xs font-medium text-white">Master Power</p>
+                    <p className="text-[11px] text-gray-400">{isSystemRunning ? 'ON' : 'OFF'}</p>
+                  </div>
+                  <Switch
+                    aria-label="CryptoCrawler master power"
+                    checked={isSystemRunning}
+                    onCheckedChange={handleMasterPowerChange}
+                    disabled={loadingStatus || startingSystem || stoppingSystem}
+                    className="data-[state=checked]:bg-green-500"
+                  />
+                </div>
                 {isSystemRunning ? (
                   <Button 
                     onClick={handleStopSystem}
-                    disabled={stoppingSystem}
+                    disabled={stoppingSystem || startingSystem}
                     variant="destructive"
                     size="sm"
                   >
@@ -727,7 +749,7 @@ export default function CryptoCrawlerDashboard() {
                 ) : (
                   <Button 
                     onClick={handleStartSystem}
-                    disabled={startingSystem}
+                    disabled={startingSystem || stoppingSystem}
                     className="bg-green-600 hover:bg-green-700"
                     size="sm"
                   >
@@ -942,7 +964,7 @@ export default function CryptoCrawlerDashboard() {
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-6">
-                    {/* Master ON/OFF Switch */}
+                    {/* Faucet ON/OFF Switch */}
                     <div className="p-4 rounded-lg bg-gradient-to-r from-green-900/30 to-emerald-900/30 border border-green-500/30">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">

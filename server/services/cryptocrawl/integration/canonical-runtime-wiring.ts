@@ -1,6 +1,6 @@
 import logger from '../../../logger.js';
-import { ensureProviderMeshPendingStream } from '../capital-free/provider-mesh-pending-stream.js';
-import { startCanonicalZeroCapitalDiscovery } from '../discovery/zero-capital-canonical-discovery.js';
+import { ensureProviderMeshPendingStream, providerMeshPendingStream } from '../capital-free/provider-mesh-pending-stream.js';
+import { startCanonicalZeroCapitalDiscovery, stopCanonicalZeroCapitalDiscovery } from '../discovery/zero-capital-canonical-discovery.js';
 import { multiTopologyDiscoveryController } from '../discovery/multi-topology-discovery-controller.js';
 import { ghostWalletUltraWorker } from '../ghost-wallet/ghost-wallet-ultra-worker.js';
 import { ensureStageOneBootstrapAuthority } from '../governance/stage-one-bootstrap-authority.js';
@@ -16,35 +16,42 @@ import {
 } from '../runtime/cryptocrawl-overflow-runtime-schema.js';
 import { ensureStablecoinMakerExecutionWiring } from '../runtime/stablecoin-maker-execution-wiring.js';
 import { ensureStageProofMetricsWiring } from '../runtime/stage-proof-metrics-wiring.js';
-import { ensureAcrossBridgeObservability } from './across-bridge-observability.js';
+import { ensureAcrossBridgeObservability, stopAcrossBridgeObservability } from './across-bridge-observability.js';
 import { ensureAuthenticatedFeeTierOptimizationWiring } from './authenticated-fee-tier-optimization-wiring.js';
-import { ensureCexFourModeObservabilityWiring } from './cex-four-mode-observability-wiring.js';
-import { ensureCexInventoryReadinessWiring } from './cex-inventory-readiness-wiring.js';
-import { ensureComputationalReactorWiring } from './computational-reactor-wiring.js';
+import { ensureCexFourModeObservabilityWiring, stopCexFourModeObservabilityWiring } from './cex-four-mode-observability-wiring.js';
+import { ensureCexInventoryReadinessWiring, stopCexInventoryReadinessWiring } from './cex-inventory-readiness-wiring.js';
+import { ensureComputationalReactorWiring, stopComputationalReactorWiring } from './computational-reactor-wiring.js';
 import { ensureCrossVenueTimingGuardWiring } from './cross-venue-timing-guard-wiring.js';
 import { ensureCryptaraCexEvidenceWiring } from './cryptara-cex-evidence-wiring.js';
 import { ensureCryptaraSovereignCortexWiring } from './cryptara-sovereign-cortex-wiring.js';
 import { ensureCryptaraPredictivePrefetchWiring } from './cryptara-predictive-prefetch-wiring.js';
 import { ensureDynamicProfitabilityAdmissionWiring } from './dynamic-profitability-admission-wiring.js';
 import { ensureExecutionReadinessProfitabilityWiring } from './execution-readiness-profitability-wiring.js';
-import { ensureFilteredMempoolObservability } from './filtered-mempool-observability.js';
+import { ensureFilteredMempoolObservability, stopFilteredMempoolObservability } from './filtered-mempool-observability.js';
 import { getCryptaraHyperBridgeBootstrapSnapshot } from './cryptara-supabase-hyper-bridge-bootstrap.js';
 import { ensureInventoryConstrainedCexExecutionWiring } from './inventory-constrained-cex-execution-wiring.js';
-import { ensureKalshiBpsOptimizationWiring } from './kalshi-bps-optimization-wiring.js';
+import { ensureKalshiBpsOptimizationWiring, stopKalshiBpsOptimizationWiring } from './kalshi-bps-optimization-wiring.js';
 import { ensureMeasuredCandidateExpiryGuardWiring } from './measured-candidate-expiry-guard-wiring.js';
 import { logZeroCapitalReadinessDiagnostics } from './zero-capital-readiness-diagnostics.js';
 import { ensureLearningLifecycleWiring } from './learning-lifecycle-wiring.js';
 import { ensureMonteCarloCalibrationWiring } from './monte-carlo-calibration-wiring.js';
-import { ensureOrderBookEvolutionWiring } from './order-book-evolution-wiring.js';
+import { ensureOrderBookEvolutionWiring, stopOrderBookEvolutionWiring } from './order-book-evolution-wiring.js';
 import { ensureOracleEvidenceWiring } from './oracle-evidence-wiring.js';
 import { logLegacyIntelligenceQuarantine } from './legacy-intelligence-quarantine.js';
-import { ensurePredictionMarketDiscoveryWiring } from './prediction-market-discovery-wiring.js';
-import { ensureCryptoRuntimeObservability } from './runtime-observability.js';
+import { ensurePredictionMarketDiscoveryWiring, stopPredictionMarketDiscoveryWiring } from './prediction-market-discovery-wiring.js';
+import { ensureCryptoRuntimeObservability, stopCryptoRuntimeObservability } from './runtime-observability.js';
 import { ensureZeroCapitalShadowPriorityWiring } from './zero-capital-shadow-priority-wiring.js';
 import { ensureZeroCapitalAtomicStackWiring } from './zero-capital-atomic-stack-wiring.js';
-import { ensureZeroXBudgetObservability } from './zerox-budget-observability.js';
+import { stopBpsCompressionMesh } from './bps-compression-mesh.js';
+import { stopBpsFrontierWave3Wiring } from './bps-frontier-wave3-wiring.js';
+import { stopBpsDecompositionObservability } from './bps-decomposition-observability.js';
+import { stopEconomicTransformationWiring } from './economic-transformation-wiring.js';
+import { stopProfitabilityRecoveryCoordinator } from './profitability-recovery-coordinator.js';
+import { ensureZeroXBudgetObservability, stopZeroXBudgetObservability } from './zerox-budget-observability.js';
+import { stopCryptaraTwoSpeedRevalidationWiring } from './cryptara-two-speed-revalidation-wiring.js';
 
 let installed = false;
+let runtimeActivationAllowed = false;
 let installRetryTimer: NodeJS.Timeout | null = null;
 let overflowSchemaRepairPromise: Promise<void> | null = null;
 let zeroCapitalStartPromise: Promise<void> | null = null;
@@ -96,10 +103,11 @@ function currentComponentState(name: string): RuntimeComponentState {
 }
 
 function scheduleRuntimeComponentRetry(name: string, installer: RuntimeComponentInstaller): void {
-  if (runtimeComponentRetryTimers.has(name)) return;
+  if (!runtimeActivationAllowed || runtimeComponentRetryTimers.has(name)) return;
   const retryMs = runtimeComponentRetryDelayMs();
   const timer = setTimeout(() => {
     runtimeComponentRetryTimers.delete(name);
+    if (!runtimeActivationAllowed) return;
     installRuntimeComponent(name, installer);
   }, retryMs);
   timer.unref?.();
@@ -107,6 +115,7 @@ function scheduleRuntimeComponentRetry(name: string, installer: RuntimeComponent
 }
 
 function installRuntimeComponent(name: string, installer: RuntimeComponentInstaller): void {
+  if (!runtimeActivationAllowed) return;
   const previous = currentComponentState(name);
   const attempt = previous.attempts + 1;
   runtimeComponentStates.set(name, {
@@ -182,7 +191,7 @@ export function getCanonicalRuntimeComponentIsolationSnapshot() {
 }
 
 function startCanonicalZeroCapitalRuntime(): void {
-  if (zeroCapitalStartPromise) return;
+  if (!runtimeActivationAllowed || zeroCapitalStartPromise) return;
   if (zeroCapitalRetryTimer) {
     clearTimeout(zeroCapitalRetryTimer);
     zeroCapitalRetryTimer = null;
@@ -191,6 +200,10 @@ function startCanonicalZeroCapitalRuntime(): void {
   zeroCapitalStartPromise = startCanonicalZeroCapitalDiscovery()
     .then(() => {
       zeroCapitalRetryTimer = null;
+      if (!runtimeActivationAllowed) {
+        stopCanonicalZeroCapitalDiscovery();
+        return;
+      }
       logger.info('[ZeroCapitalRuntime] Canonical zero-capital discovery lifecycle started', {
         component: 'CanonicalCryptoCrawlerRuntimeWiring',
         lifecycleOwner: 'CanonicalZeroCapitalDiscovery',
@@ -214,8 +227,10 @@ function startCanonicalZeroCapitalRuntime(): void {
         retryMs,
         executionAuthorityGranted: false,
       });
-      zeroCapitalRetryTimer = setTimeout(() => startCanonicalZeroCapitalRuntime(), retryMs);
-      zeroCapitalRetryTimer.unref?.();
+      if (runtimeActivationAllowed) {
+        zeroCapitalRetryTimer = setTimeout(() => startCanonicalZeroCapitalRuntime(), retryMs);
+        zeroCapitalRetryTimer.unref?.();
+      }
     })
     .finally(() => {
       zeroCapitalStartPromise = null;
@@ -223,7 +238,7 @@ function startCanonicalZeroCapitalRuntime(): void {
 }
 
 function installCanonicalRuntime(): void {
-  if (installed) return;
+  if (!runtimeActivationAllowed || installed) return;
   installed = true;
 
   const install = installRuntimeComponent;
@@ -369,7 +384,7 @@ function installCanonicalRuntime(): void {
 }
 
 function scheduleCanonicalRuntimeInstall(delayMs: number, reason: string): void {
-  if (installed || installRetryTimer) return;
+  if (!runtimeActivationAllowed || installed || installRetryTimer) return;
   installRetryTimer = setTimeout(() => {
     installRetryTimer = null;
     ensureCanonicalCryptoCrawlerRuntimeWiring();
@@ -413,7 +428,7 @@ function startOverflowSchemaRepair(): void {
 }
 
 export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
-  if (installed) return;
+  if (!runtimeActivationAllowed || installed) return;
 
   if (process.env.NODE_ENV === 'production') {
     const graceRemainingMs = Math.max(0, canonicalRuntimeStartupGraceMs() - Math.floor(process.uptime() * 1_000));
@@ -479,4 +494,69 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   }
 
   installCanonicalRuntime();
+}
+
+export function activateCanonicalCryptoCrawlerRuntimeWiring(): void {
+  runtimeActivationAllowed = true;
+  ensureCanonicalCryptoCrawlerRuntimeWiring();
+}
+
+export async function deactivateCanonicalCryptoCrawlerRuntimeWiring(): Promise<void> {
+  runtimeActivationAllowed = false;
+
+  if (installRetryTimer) clearTimeout(installRetryTimer);
+  installRetryTimer = null;
+
+  if (zeroCapitalRetryTimer) clearTimeout(zeroCapitalRetryTimer);
+  zeroCapitalRetryTimer = null;
+
+  for (const timer of runtimeComponentRetryTimers.values()) clearTimeout(timer);
+  runtimeComponentRetryTimers.clear();
+
+  stopCanonicalZeroCapitalDiscovery();
+  multiTopologyDiscoveryController.stop();
+  stopPredictionMarketDiscoveryWiring();
+  stopOrderBookEvolutionWiring();
+  stopCexFourModeObservabilityWiring();
+  stopCexInventoryReadinessWiring();
+  stopComputationalReactorWiring();
+  stopBpsCompressionMesh();
+  stopBpsFrontierWave3Wiring();
+  stopBpsDecompositionObservability();
+  stopEconomicTransformationWiring();
+  stopProfitabilityRecoveryCoordinator();
+  stopKalshiBpsOptimizationWiring();
+  stopFilteredMempoolObservability();
+  stopZeroXBudgetObservability();
+  stopAcrossBridgeObservability();
+  stopCryptoRuntimeObservability();
+  stopCryptaraTwoSpeedRevalidationWiring();
+
+  const { stopTelemetryBootstrap } = await import('./telemetry-bootstrap.js');
+  await Promise.allSettled([
+    ghostWalletUltraWorker.stop(),
+    providerMeshPendingStream.stop(),
+    stopTelemetryBootstrap(),
+  ]);
+
+  installed = false;
+  runtimeComponentStates.clear();
+
+  logger.info('[CryptoRuntimeLifecycle] Canonical runtime wiring deactivated by master lifecycle', {
+    component: 'CanonicalCryptoCrawlerRuntimeWiring',
+    operatorStartRequired: true,
+    automaticRestartAllowed: false,
+  });
+}
+
+export function getCanonicalCryptoCrawlerActivationState(): {
+  operatorStartRequired: true;
+  activationAllowed: boolean;
+  installed: boolean;
+} {
+  return {
+    operatorStartRequired: true,
+    activationAllowed: runtimeActivationAllowed,
+    installed,
+  };
 }

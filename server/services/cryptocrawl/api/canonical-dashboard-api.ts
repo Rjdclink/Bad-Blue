@@ -2,7 +2,7 @@ import express from 'express';
 import { WebSocket, WebSocketServer } from 'ws';
 import { canonicalOpportunityState, type CanonicalOpportunitySnapshot } from '../intelligence/canonical-opportunity-state.js';
 import { canonicalExecutionScheduler } from '../execution/canonical-execution-scheduler.js';
-import { ensureCanonicalCryptoCrawlerRuntimeWiring } from '../integration/canonical-runtime-wiring.js';
+import { getCryptoCrawlerCoreRuntimeStatus } from '../runtime/core-runtime.js';
 import { balanceMonitor } from '../bridge/balance-monitor.js';
 import { stageManager } from '../governance/stage-management.js';
 
@@ -181,7 +181,13 @@ router.post('/faucet/toggle', (req: any, res) => {
   }
 
   if (req.body.enabled) {
-    ensureCanonicalCryptoCrawlerRuntimeWiring();
+    if (!getCryptoCrawlerCoreRuntimeStatus().started) {
+      return res.status(409).json({
+        success: false,
+        error: 'CryptoCrawler Master Power is OFF. Start CryptoCrawler from the Master Dashboard before enabling execution dispatch.',
+        masterStartRequired: true,
+      });
+    }
     canonicalExecutionScheduler.start();
   } else {
     canonicalExecutionScheduler.stop();
@@ -192,7 +198,7 @@ router.post('/faucet/toggle', (req: any, res) => {
     enabled: canonicalExecutionScheduler.getStats().running,
     mode: canonicalExecutionScheduler.getStats().running ? 'canonical_scheduler' : 'closed',
     executionAuthority: 'canonical_execution_scheduler',
-    note: 'Measured discovery remains independent; this toggle controls canonical execution dispatch only.',
+    note: 'Subcomponent control only. This route cannot start CryptoCrawler; Master Power owns runtime activation.',
   });
 });
 

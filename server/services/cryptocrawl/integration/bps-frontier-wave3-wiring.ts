@@ -503,3 +503,7 @@ export function stopBpsFrontierWave3WiringForTests(): void {
   unsubscribe = null;
   installed = false;
 }
+
+export function stopBpsFrontierWave3Wiring(): void {
+  stopBpsFrontierWave3WiringForTests();
+}

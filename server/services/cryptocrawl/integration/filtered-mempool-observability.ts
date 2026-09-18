@@ -29,3 +29,7 @@ export function ensureFilteredMempoolObservability(): void {
   timer = setInterval(emitFilteredMempoolHeartbeat, intervalMs);
   timer.unref?.();
 }
+export function stopFilteredMempoolObservability(): void {
+  if (timer) clearInterval(timer);
+  timer = null;
+}

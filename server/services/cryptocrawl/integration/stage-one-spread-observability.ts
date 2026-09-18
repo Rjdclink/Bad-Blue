@@ -1,6 +1,6 @@
 import logger from '../../../logger.js';
-import { ensureStageOneDexMempoolRepair, getStageOneDexMempoolRepairSnapshot } from '../discovery/stage-one-dex-mempool-repair.js';
-import { ensureStageOneMeasurementRecovery, getStageOneMeasurementRecoverySnapshot } from '../discovery/stage-one-measurement-recovery.js';
+import { ensureStageOneDexMempoolRepair, getStageOneDexMempoolRepairSnapshot, stopStageOneDexMempoolRepair } from '../discovery/stage-one-dex-mempool-repair.js';
+import { ensureStageOneMeasurementRecovery, getStageOneMeasurementRecoverySnapshot, stopStageOneMeasurementRecovery } from '../discovery/stage-one-measurement-recovery.js';
 import { clearsStageOneOutputFloorBps, STAGE_ONE_ZERO_CAPITAL_OUTPUT_FLOOR_BPS } from '../discovery/stage-one-candidate-policy.js';
 import {
   measuredCandidateRegistry,
@@ -385,4 +385,11 @@ export function ensureStageOneSpreadObservability(): void {
     staleEvidenceExecutionAuthority: false,
     syntheticEconomicsAllowed: false,
   });
+}
+
+export function stopStageOneSpreadObservability(): void {
+  if (timer) clearInterval(timer);
+  timer = null;
+  stopStageOneMeasurementRecovery();
+  stopStageOneDexMempoolRepair();
 }

@@ -3,6 +3,12 @@ import {pipeline} from '../integration/master-pipeline';
 import { gasOracle, balanceMonitor, networkHealth } from '../bridge';
 import { zeroCapitalEngine } from '../core/zero-capital-engine';
 import { ensureCryptocrawlOverflowRuntimeSchema } from '../runtime/cryptocrawl-overflow-runtime-schema.js';
+import {
+  activateCanonicalCryptoCrawlerRuntimeWiring,
+  deactivateCanonicalCryptoCrawlerRuntimeWiring,
+  getCanonicalCryptoCrawlerActivationState,
+} from '../integration/canonical-runtime-wiring.js';
+import { ensureTelemetryBootstrap } from '../integration/telemetry-bootstrap.js';
 import { getCryptocrawlGovernance, initializeGovernance } from '../governance/index.js';
 import { stageManager } from '../governance/stage-management.js';
 import { GovernanceError } from '../governance/types.js';
@@ -32,6 +38,11 @@ router.get('/status', (req, res) => {
     running: systemState.running,
     lifecycle: systemState.lifecycle,
     lastError: systemState.lastError,
+    control: {
+      operatorStartRequired: true,
+      automaticStartEnabled: false,
+      ...getCanonicalCryptoCrawlerActivationState(),
+    },
     cryptoCrawl: cryptoCrawlState.getStatus(),
     startedAt: systemState.running ? new Date(systemState.startedAt).toISOString() : null,
     uptime: systemState.running ? Date.now() - systemState.startedAt : 0,
@@ -387,7 +398,7 @@ router.post('/mode', (req, res) => {
   });
 });
 
-async function stopCryptoCrawlerRuntime(): Promise<{ stopped: boolean; failures: string[] }> {
+export async function stopCryptoCrawlerRuntime(): Promise<{ stopped: boolean; failures: string[] }> {
   systemState.lifecycle = 'STOPPING';
   systemState.running = false;
 
@@ -396,6 +407,7 @@ async function stopCryptoCrawlerRuntime(): Promise<{ stopped: boolean; failures:
     Promise.resolve(zeroCapitalEngine.stop()),
     Promise.resolve(autonomousFaucet.stop()),
     cryptoCrawlState.disable(),
+    deactivateCanonicalCryptoCrawlerRuntimeWiring(),
   ]);
   const failures = results
     .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
@@ -404,7 +416,9 @@ async function stopCryptoCrawlerRuntime(): Promise<{ stopped: boolean; failures:
   const stopped =
     !zeroCapitalEngine.getState().isRunning &&
     !pipeline.isRunning() &&
-    !cryptoCrawlState.getStatus().enabled;
+    !autonomousFaucet.isActive() &&
+    !cryptoCrawlState.getStatus().enabled &&
+    !getCanonicalCryptoCrawlerActivationState().activationAllowed;
 
   if (stopped) {
     notifyCryptocrawlerComplete();
@@ -428,14 +442,28 @@ type CryptoCrawlerStartResult = {
 };
 
 export async function startCryptoCrawlerRuntime(): Promise<CryptoCrawlerStartResult> {
+  if (systemState.lifecycle === 'RUNNING') {
+    return {
+      success: true,
+      status: 200,
+      payload: {
+        success: true,
+        message: 'CryptoCrawler is already running',
+        lifecycle: systemState.lifecycle,
+        startedAt: systemState.startedAt ? new Date(systemState.startedAt).toISOString() : null,
+        cryptoCrawl: cryptoCrawlState.getStatus(),
+      },
+    };
+  }
+
   if (systemState.lifecycle !== 'STOPPED' && systemState.lifecycle !== 'FAILED') {
     return {
       success: false,
       status: 409,
       payload: {
-      success: false,
-      error: `CryptoCrawler is ${systemState.lifecycle.toLowerCase()}`,
-      lifecycle: systemState.lifecycle,
+        success: false,
+        error: `CryptoCrawler lifecycle transition already in progress: ${systemState.lifecycle.toLowerCase()}`,
+        lifecycle: systemState.lifecycle,
       },
     };
   }
@@ -510,6 +538,8 @@ export async function startCryptoCrawlerRuntime(): Promise<CryptoCrawlerStartRes
   systemState.lastError = null;
 
   try {
+    activateCanonicalCryptoCrawlerRuntimeWiring();
+    void ensureTelemetryBootstrap();
     console.log('[CryptoCrawl] Starting crawler dependencies');
     await cryptoCrawlState.enable();
 
@@ -606,40 +636,50 @@ export async function startCryptoCrawlerRuntime(): Promise<CryptoCrawlerStartRes
   }
 }
 
-async function startAutomaticCryptoCrawlerRuntime(reason: string): Promise<void> {
-  if (!governance.isAutomaticallyActivated() || stageManager.getCurrentStage() < 2) return;
-  const result = await startCryptoCrawlerRuntime();
-  if (!result.success && result.status !== 409) {
-    console.warn('[CryptoCrawl] Automatic runtime activation failed', { reason, error: result.payload.error });
+// Runtime activation is intentionally operator-only. Stage advancement, unpause,
+ // governance AUTOMATIC mode, process restart, and Railway replacement deploys may
+ // change eligibility, but none of them may start CryptoCrawler. The authenticated
+ // master start endpoint below is the sole lifecycle-entry authority.
+
+let lifecycleCommandTail: Promise<void> = Promise.resolve();
+
+async function serializeLifecycleCommand<T>(command: () => Promise<T>): Promise<T> {
+  const previous = lifecycleCommandTail;
+  let release!: () => void;
+  lifecycleCommandTail = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  await previous;
+  try {
+    return await command();
+  } finally {
+    release();
   }
 }
 
-stageManager.on('stage-advanced', event => {
-  if (event.automatic === true) {
-    void startAutomaticCryptoCrawlerRuntime(`stage_advanced:${event.previousStage}->${event.currentStage}`);
-  }
-});
-
-stageManager.on('unpaused', event => {
-  if (event.automatic === true) {
-    void startAutomaticCryptoCrawlerRuntime(`automatic_activation:${event.stage}`);
-  }
-});
-
 // POST /admin/crypto/start - Start governed on-chain monitoring.
 router.post('/start', async (_req, res) => {
-  const result = await startCryptoCrawlerRuntime();
+  const result = await serializeLifecycleCommand(() => startCryptoCrawlerRuntime());
   return res.status(result.status).json(result.payload);
 });
 
 // POST /admin/crypto/stop - Stop the exact components started by this controller.
 router.post('/stop', async (_req, res) => {
   if (systemState.lifecycle === 'STOPPED') {
-    return res.status(409).json({ success: false, error: 'CryptoCrawler is already stopped' });
+    return res.status(200).json({
+      success: true,
+      message: 'CryptoCrawler is already stopped',
+      lifecycle: systemState.lifecycle,
+      uptime: 0,
+      failures: [],
+      cryptoCrawl: cryptoCrawlState.getStatus(),
+      pantheon: getPantheonSystemStatus(),
+    });
   }
 
   const uptime = systemState.startedAt ? Date.now() - systemState.startedAt : 0;
-  const result = await stopCryptoCrawlerRuntime();
+  const result = await serializeLifecycleCommand(() => stopCryptoCrawlerRuntime());
 
   return res.status(result.stopped ? 200 : 503).json({
     success: result.stopped,
