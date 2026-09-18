@@ -220,7 +220,7 @@ function sanitizeLikelySpeechArtifacts(
 
 function isPresenceControlTurn(value: string): boolean {
   const clean = value.trim();
-  return /^(?:hey[, ]*)?(?:lexara[, ]*)?(?:are you (?:still )?there|you still there|you there|can you hear me|are you listening|hello|did you hear me|are you still working)[?.! ]*$/i.test(clean);
+  return /^(?:(?:hey|hello)[, ]*)?(?:lexara[, ]*)?(?:are you (?:still )?there|you still there|you there|can you hear me|are you listening|hello|did you hear me|are you still working(?: on (?:this|it))?)[?.! ]*$/i.test(clean);
 }
 
 function mergeSpeechSegments(existing: string, incoming: string): string {
