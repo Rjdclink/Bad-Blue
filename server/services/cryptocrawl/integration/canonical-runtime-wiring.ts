@@ -49,7 +49,6 @@ import { stopEconomicTransformationWiring } from './economic-transformation-wiri
 import { stopProfitabilityRecoveryCoordinator } from './profitability-recovery-coordinator.js';
 import { ensureZeroXBudgetObservability, stopZeroXBudgetObservability } from './zerox-budget-observability.js';
 import { stopCryptaraTwoSpeedRevalidationWiring } from './cryptara-two-speed-revalidation-wiring.js';
-import { stopTelemetryBootstrap } from './telemetry-bootstrap.js';
 
 let installed = false;
 let runtimeActivationAllowed = false;
@@ -533,6 +532,7 @@ export async function deactivateCanonicalCryptoCrawlerRuntimeWiring(): Promise<v
   stopCryptoRuntimeObservability();
   stopCryptaraTwoSpeedRevalidationWiring();
 
+  const { stopTelemetryBootstrap } = await import('./telemetry-bootstrap.js');
   await Promise.allSettled([
     ghostWalletUltraWorker.stop(),
     providerMeshPendingStream.stop(),
