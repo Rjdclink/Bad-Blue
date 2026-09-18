@@ -1,4 +1,5 @@
 // Database Storage - Platform-agnostic database operations
+import crypto from "crypto";
 import {
   users,
   badgeLookups,
@@ -1609,23 +1610,38 @@ export class DatabaseStorage implements IStorage {
     model?: string;
     context?: any;
   }): Promise<LexaraConversation> {
-    const [conversation] = await db
-      .insert(lexaraConversations)
-      .values({
-        userId: data.userId || null,
-        sessionId: data.sessionId || null,
-        userPrompt: data.userPrompt,
-        lexaraResponse: data.lexaraResponse,
-        audioGenerated: data.audioGenerated || false,
-        audioUrl: data.audioUrl || null,
-        audioBase64: data.audioBase64 || null,
-        audioDurationMs: data.audioDurationMs || null,
-        model: data.model || null,
-        context: data.context || null,
-        createdAt: new Date(),
-      })
-      .returning();
-    return conversation;
+    const values = {
+      userId: data.userId || null,
+      sessionId: data.sessionId || null,
+      userPrompt: data.userPrompt,
+      lexaraResponse: data.lexaraResponse,
+      audioGenerated: data.audioGenerated || false,
+      audioUrl: data.audioUrl || null,
+      audioBase64: data.audioBase64 || null,
+      audioDurationMs: data.audioDurationMs || null,
+      model: data.model || null,
+      context: data.context || null,
+      createdAt: new Date(),
+    };
+
+    try {
+      const [conversation] = await db
+        .insert(lexaraConversations)
+        .values(values)
+        .returning();
+      return conversation;
+    } catch (error: any) {
+      const code = error?.code || error?.cause?.code;
+      if (code !== 'XX000') throw error;
+
+      // Supabase/Supavisor can occasionally surface an internal_error on a
+      // compound INSERT ... RETURNING path. Retry once as a plain insert with
+      // an application-generated id; conversation persistence remains
+      // route-local and never blocks the live response.
+      const id = crypto.randomUUID();
+      await db.insert(lexaraConversations).values({ ...values, id });
+      return { id, ...values } as LexaraConversation;
+    }
   }
 
   /**
