@@ -242,10 +242,30 @@ function normalizeConfidence(value: unknown): number {
   return n > 1 ? Math.max(0, Math.min(1, n / 100)) : Math.max(0, Math.min(1, n));
 }
 
-function sourceForName(name: string): string {
-  const lower = name.toLowerCase();
+function sourceForObservation(
+  name: string,
+  object: Record<string, any>,
+  contextPath: string,
+): string {
+  const lower = [
+    name,
+    contextPath,
+    String(object.platform || ''),
+    String(object.source || ''),
+    String(object.type || ''),
+    String(object.kind || ''),
+  ].join(' ').toLowerCase();
+
   if (lower.includes('exif') || lower.includes('media')) return 'exif_photo';
-  if (lower.includes('social')) return 'social_media';
+
+  const explicitSocialLocation =
+    /\b(?:instagram|facebook|twitter|x|tiktok|strava|social)\b/i.test(lower) &&
+    /\b(?:gps|geo|geotag|location|place|check[- ]?in|coordinate)\b/i.test(lower);
+  if (explicitSocialLocation) return 'social_geotag';
+  if (/\b(?:instagram|facebook|twitter|x|tiktok|strava|social)\b/i.test(lower)) {
+    return 'social_media';
+  }
+
   if (lower.includes('camera')) return 'public_camera';
   if (lower.includes('satellite')) return 'satellite_imagery';
   return 'public_record';
@@ -354,7 +374,7 @@ function collectCoordinateObservations(
     );
     const altitude = Number(object.altitude ?? object.gpsAltitude ?? object.GPSAltitude);
 
-    const source = sourceForName(sourceName);
+    const source = sourceForObservation(sourceName, object, contextPath);
     const observationKind =
       source === 'public_record' || source === 'historical_location'
         ? 'historical'
