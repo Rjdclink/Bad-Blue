@@ -256,14 +256,22 @@ function sourceForObservation(
     String(object.kind || ''),
   ].join(' ').toLowerCase();
 
-  if (lower.includes('exif') || lower.includes('media')) return 'exif_photo';
-
+  const isSocial =
+    /\b(?:instagram|facebook|twitter|tiktok|strava|social)\b/i.test(lower);
   const explicitSocialLocation =
-    /\b(?:instagram|facebook|twitter|x|tiktok|strava|social)\b/i.test(lower) &&
+    isSocial &&
     /\b(?:gps|geo|geotag|location|place|check[- ]?in|coordinate)\b/i.test(lower);
   if (explicitSocialLocation) return 'social_geotag';
-  if (/\b(?:instagram|facebook|twitter|x|tiktok|strava|social)\b/i.test(lower)) {
-    return 'social_media';
+  if (isSocial) return 'social_media';
+
+  // "social media" must never be mistaken for uploaded media/EXIF. Restrict
+  // media classification to explicit artifact/metadata language.
+  if (
+    /\b(?:exif|xmp|iptc|photo|image|video|quicktime)\b/i.test(lower) ||
+    /\b(?:uploaded|attached)\s+media\b/i.test(lower) ||
+    /\bmedia\s+metadata\b/i.test(lower)
+  ) {
+    return /\bvideo|quicktime\b/i.test(lower) ? 'exif_video' : 'exif_photo';
   }
 
   if (lower.includes('camera')) return 'public_camera';
