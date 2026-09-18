@@ -1,31 +1,9 @@
 /**
- * 3D Geiger Counter Rate Limiter with Equal Provider Distribution
- * 
- * A reactive, exponential rate limiting system that:
- * 1. EQUALLY DISTRIBUTES requests across ALL available free AI providers
- * 2. Reacts like a Geiger counter - spikes on heavy usage, decays over time
- * 3. Operates in 3D: Time decay × Usage intensity × Provider health
- * 
- * FREE AI PROVIDERS (December 2025) - ALL EQUAL PRIORITY:
- * - Groq (llama-3.3-70b, llama-4-scout, gemma2-9b) - 30 RPM, 14.4K RPD
- * - Google Gemini (gemini-1.5-flash, gemini-2.0-flash) - 15 RPM, 1500 RPD  
- * - Mistral (mistral-small-latest via La Plateforme free tier)
- * - Anthropic Claude (limited free tier via API)
- * - Cohere (command-r-plus free tier) - 20 RPM
- * - Together.ai (free tier models)
- * - Hugging Face Inference API (free tier)
- * - Cloudflare Workers AI (100K free requests/day)
- * - Cerebras (free tier - ultra fast)
- * - SambaNova (free tier)
- * 
- * DISTRIBUTION STRATEGY:
- * - Equal priority (5) for ALL providers - no provider is preferred
- * - Usage-weighted scoring ensures balanced distribution
- * - Providers with lower daily usage get selected more often
- * - Round-robin across healthy providers with weighted random selection
- * - Skip providers with high "radiation" (usage intensity)
- * - Exponential backoff on failures
- * - Automatic recovery as radiation decays
+ * 3D Geiger Counter Rate Limiter.
+ *
+ * Provider availability and quotas are dynamic. Current model identifiers come
+ * from aiHarmonyModelRegistry so rate-control logic cannot become a second,
+ * stale model catalog.
  */
 
 import { CURRENT_AI_MODELS } from './aiHarmonyModelRegistry';
