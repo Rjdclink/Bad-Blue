@@ -113,18 +113,21 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
   const [timelinePlaying, setTimelinePlaying] = useState(false);
   const [timelinePlaybackSpeed, setTimelinePlaybackSpeed] = useState(1);
   const [reportOpen, setReportOpen] = useState(false);
+  const [quickLayersOpen, setQuickLayersOpen] = useState(false);
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
   const [intelligenceReport, setIntelligenceReport] = useState<any>(null);
 
   useEffect(() => {
     setReportOpen(false);
+    setQuickLayersOpen(false);
     setIntelligenceReport(null);
     setReportError(null);
   }, [state.sessionId]);
 
   const loadIntelligenceReport = useCallback(async () => {
     if (!state.sessionId) return;
+    setQuickLayersOpen(false);
     if (reportOpen && intelligenceReport) {
       setReportOpen(false);
       return;
@@ -578,6 +581,19 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
           {spectraShell && (
             <>
               <div className="absolute right-3 top-3 z-20 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setReportOpen(false);
+                    setQuickLayersOpen(value => !value);
+                  }}
+                  className="flex h-11 w-11 items-center justify-center rounded-full border border-slate-600/60 bg-slate-950/85 text-slate-200 shadow-xl backdrop-blur hover:bg-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                  title="Map layers"
+                  aria-label="Map layers"
+                  aria-expanded={quickLayersOpen}
+                >
+                  <Layers className="h-4 w-4" />
+                </button>
                 {state.sessionId && (
                   <button
                     type="button"
@@ -602,6 +618,40 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
                   </button>
                 )}
               </div>
+
+              {quickLayersOpen && (
+                <div className="absolute right-3 top-16 z-30 w-[min(280px,calc(100%-1.5rem))] rounded-xl border border-slate-700/70 bg-slate-950/95 p-3 shadow-2xl backdrop-blur">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-xs font-semibold text-slate-100">Map view</p>
+                      <p className="text-[10px] text-slate-500">Choose a clear preset</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setQuickLayersOpen(false)}
+                      className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white"
+                      aria-label="Close map layers"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(['satellite', 'terrain', 'weather', 'evidence', 'street'] as const).map(preset => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => {
+                          applyMapPreset(preset);
+                          setQuickLayersOpen(false);
+                        }}
+                        className="min-h-11 rounded-lg border border-slate-700 bg-slate-900 px-3 text-left text-xs font-medium capitalize text-slate-200 hover:border-cyan-500/40 hover:bg-cyan-500/10 hover:text-cyan-200"
+                      >
+                        {preset}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {reportOpen && state.sessionId && (
                 <div className="absolute right-3 top-16 z-30 w-[min(340px,calc(100%-1.5rem))] rounded-xl border border-slate-700/70 bg-slate-950/95 p-3 shadow-2xl backdrop-blur">
