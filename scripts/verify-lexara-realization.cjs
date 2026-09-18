@@ -164,7 +164,8 @@ must(
     authorityResearch.includes('orchestratedWebSearch') &&
     openRouterWebSearch.includes("tools: [{ type: 'openrouter:web_search' }]") &&
     openRouterWebSearch.includes('Current server-tool search completed') &&
-    !openRouterWebSearch.includes('${model}:online'),
+    openRouterWebSearch.indexOf("if (options?.useOnlinePlugin)") <
+      openRouterWebSearch.indexOf('const allModels = Object.values(WEB_SEARCH_MODELS)'),
   'legal authority discovery races Firecrawl with current OpenRouter server-side web search and has no Google dependency',
 );
 must(
@@ -181,7 +182,7 @@ must(
     groq.includes('while (attempted.size < 6)') &&
     groq.includes('No permitted capability-compatible Groq model is currently available') &&
     aiProvider.includes("prefixes: ['llama-', 'meta-llama/', 'openai/', 'qwen/']") &&
-    harmony.includes("'claude-opus-5'") &&
+    harmony.includes("'claude-opus-4-8'") &&
     harmony.includes('harmonyProviderCooldownUntil') &&
     harmony.includes('markHarmonyProviderFailure'),
   'Harmony parses all Claude text blocks, constrains Groq to permitted capability models, and keeps failures route-local',
