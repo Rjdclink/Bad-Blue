@@ -1103,8 +1103,17 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     const map = mapRef.current;
     if (!map || !ready) return;
 
+    const earthObservationAvailable = providerStatus.earthObservation !== 'unavailable';
+    const weatherAvailable = providerStatus.weather !== 'unavailable';
+    const terrainAvailable = providerStatus.terrain !== 'unavailable';
+    const satelliteAvailable = providerStatus.satellite !== 'unavailable';
+
     setVisibility(map, 'spectra-trail-line', layers.trail);
-    setVisibility(map, 'spectra-earth-observation', layers.earthObservation);
+    setVisibility(
+      map,
+      'spectra-earth-observation',
+      layers.earthObservation && earthObservationAvailable,
+    );
     setVisibility(map, 'spectra-observation-heat', layers.heatmap);
     setVisibility(map, 'spectra-observation-points', layers.markers);
     setVisibility(map, 'spectra-futurecast-line', layers.futurecast);
@@ -1125,25 +1134,48 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     setVisibility(map, 'spectra-candidate-area-outline', candidateLocations.length > 0);
     setVisibility(map, 'spectra-uncertainty-fill', layers.uncertainty);
     setVisibility(map, 'spectra-uncertainty-outline', layers.uncertainty);
-    setVisibility(map, 'spectra-weather-radar', layers.weather);
-    setVisibility(map, 'spectra-hillshade', layers.terrain);
+    setVisibility(map, 'spectra-weather-radar', layers.weather && weatherAvailable);
+    setVisibility(map, 'spectra-hillshade', layers.terrain && terrainAvailable);
     setVisibility(map, 'spectra-buildings-3d', layers.buildings);
 
-    const showSatellite = layers.satellite && (mapMode === 'satellite' || mapMode === 'hybrid');
+    const showSatellite =
+      satelliteAvailable &&
+      layers.satellite &&
+      (mapMode === 'satellite' || mapMode === 'hybrid');
     setVisibility(map, 'spectra-satellite', showSatellite);
     if (map.getLayer('spectra-satellite')) {
       map.setPaintProperty('spectra-satellite', 'raster-opacity', mapMode === 'hybrid' ? 0.76 : 1);
     }
 
-    map.setTerrain(layers.terrain
-      ? { source: 'spectra-terrain-dem', exaggeration: 1.25 }
-      : null);
+    try {
+      map.setTerrain(
+        layers.terrain && terrainAvailable
+          ? { source: 'spectra-terrain-dem', exaggeration: 1.25 }
+          : null
+      );
+    } catch {
+      // A terrain-provider failure is local. The rest of the map stays usable.
+      markProviderState('terrain', 'unavailable');
+      setVisibility(map, 'spectra-hillshade', false);
+    }
 
     map.easeTo({
-      pitch: layers.terrain || layers.buildings ? Math.max(map.getPitch(), 48) : 0,
+      pitch: (layers.terrain && terrainAvailable) || layers.buildings
+        ? Math.max(map.getPitch(), 48)
+        : 0,
       duration: 450,
     });
-  }, [ready, layers, mapMode, candidateLocations.length]);
+  }, [
+    ready,
+    layers,
+    mapMode,
+    candidateLocations.length,
+    providerStatus.earthObservation,
+    providerStatus.weather,
+    providerStatus.terrain,
+    providerStatus.satellite,
+    markProviderState,
+  ]);
 
   useEffect(() => {
     if (lockOnTarget) userInteractionUntilRef.current = 0;
