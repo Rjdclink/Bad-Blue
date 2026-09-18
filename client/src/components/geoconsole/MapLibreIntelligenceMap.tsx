@@ -125,7 +125,8 @@ const lineFeature = (frames: GeoFrame[], splitOnGaps = false) => {
   if (segment.length > 1) segments.push(segment);
 
   if (splitOnGaps) {
-    if (segments.length !== 1) {
+    if (segments.length === 0) return null;
+    if (segments.length > 1) {
       return {
         type: 'Feature' as const,
         geometry: {
@@ -743,7 +744,9 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
 
     safeSetData(map, 'spectra-trail', {
       type: 'FeatureCollection',
-      features: trail.length > 1 ? [lineFeature(trail, true)] : [],
+      features: trail.length > 1
+        ? [lineFeature(trail, true)].filter(Boolean)
+        : [],
     });
     safeSetData(map, 'spectra-observations', {
       type: 'FeatureCollection',
@@ -876,10 +879,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     lastFollowRef.current = next;
     map.easeTo({
       center: next,
-      zoom: Math.max(
-        Math.min(map.getZoom(), 13),
-        candidateZoomForAccuracy(candidate.accuracyMeters),
-      ),
+      zoom: candidateZoomForAccuracy(candidate.accuracyMeters),
       duration: 500,
       essential: true,
     });
