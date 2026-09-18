@@ -61,7 +61,7 @@ must(
 must(
   voiceMode.includes('serverEchoCancellationRef') &&
     voiceMode.includes('shouldProbeBargeIn?: () => boolean') &&
-    voiceMode.includes('SERVER_BARGE_IN_PROBE_MS = 700') &&
+    voiceMode.includes('SERVER_BARGE_IN_PROBE_MS = 450') &&
     voiceMode.includes('recorder.requestData()') &&
     voiceMode.includes('bargeInProbe: true') &&
     voiceMode.includes('startedDuringPlayback') &&
