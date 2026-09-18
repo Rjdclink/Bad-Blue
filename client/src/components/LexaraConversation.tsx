@@ -342,6 +342,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const recentLexaraSpeechRef = useRef<{ text: string; expiresAt: number }>({ text: '', expiresAt: 0 });
   const autoInterruptRef = useRef<() => void>(() => undefined);
   const lastFinalVoiceSegmentRef = useRef<{ text: string; at: number }>({ text: '', at: 0 });
+  const validatedBargeInUtterancesRef = useRef<Set<number>>(new Set());
 
   const clearVoiceTurnTimer = useCallback(() => {
     if (voiceTurnTimerRef.current !== null) {
@@ -411,9 +412,32 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
           && !isSuspiciousGenericServerTranscript(observed, meta)
           && isStrongBargeIn(observed, meta)
         ) {
+          if (typeof meta.utteranceId === 'number') {
+            validatedBargeInUtterancesRef.current.add(meta.utteranceId);
+          }
           autoInterruptRef.current();
         }
         return;
+      }
+
+      if (meta.startedDuringPlayback && typeof meta.utteranceId === 'number') {
+        const alreadyValidated = validatedBargeInUtterancesRef.current.has(meta.utteranceId);
+        if (!alreadyValidated) {
+          // A recording that began while LEXARA was speaking is presumptively
+          // speaker leakage until a transcript proves otherwise. A strong final
+          // transcript can still validate a short interruption that ended before
+          // the 700ms probe snapshot was available.
+          if (
+            phaseRef.current === 'speaking'
+            && !isSuspiciousGenericServerTranscript(observed, meta)
+            && isStrongBargeIn(observed, meta)
+          ) {
+            validatedBargeInUtterancesRef.current.add(meta.utteranceId);
+            autoInterruptRef.current();
+          } else {
+            return;
+          }
+        }
       }
 
       if (
@@ -458,6 +482,9 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       }
       lastFinalVoiceSegmentRef.current = { text: normalized, at: now };
 
+      if (typeof meta.utteranceId === 'number') {
+        validatedBargeInUtterancesRef.current.delete(meta.utteranceId);
+      }
       voiceTurnBufferRef.current = mergeSpeechSegments(voiceTurnBufferRef.current, observed);
 
       clearVoiceTurnTimer();
