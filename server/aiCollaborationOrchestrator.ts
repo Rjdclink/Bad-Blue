@@ -988,7 +988,7 @@ export class AICollaborationOrchestrator {
       case AIProvider.CLAUDE:
         return 'claude-haiku-4-5-20251001';
       case AIProvider.CLAUDE_OPUS:
-        return 'claude-opus-5';
+        return 'claude-opus-4-8';
       case AIProvider.GROQ:
         return 'llama-3.3-70b-versatile';
       case AIProvider.MISTRAL:
