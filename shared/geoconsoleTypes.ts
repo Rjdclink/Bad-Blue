@@ -152,7 +152,14 @@ export interface GeoconsoleProcessRequest {
 export interface GeoconsoleProcessResponse {
   success: boolean;
   data?: {
+    sessionId: string;
     fusedLocations: Array<{
+      point: GPSPoint;
+      contributingSources: DataSource[];
+      fusionMethod: string;
+      qualityScore: number;
+    }>;
+    primaryFusedLocations: Array<{
       point: GPSPoint;
       contributingSources: DataSource[];
       fusionMethod: string;
