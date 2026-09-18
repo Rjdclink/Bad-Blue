@@ -176,22 +176,29 @@ function buildDiscoveryQueries(args: {
 }): { firstPass: string[]; secondPass: string[] } {
   const { resolvedName, normalizedTarget, details, phone } = args;
   const quotedName = resolvedName ? `"${resolvedName}"` : '';
+  const quotedPhone = phone ? `"${phone}"` : '';
   const phoneDigits = phone?.replace(/\D/g, '') || '';
   const compactDetails = details.replace(/\s+/g, ' ').trim();
+  const strongIdentityAnchor = quotedName || quotedPhone;
+  const genericTarget = GENERIC_TARGET_RE.test(normalizedTarget);
 
   const firstPass = [
-    [quotedName, phone ? `"${phone}"` : ''].filter(Boolean).join(' '),
-    [quotedName, compactDetails].filter(Boolean).join(' '),
-    [normalizedTarget, compactDetails].filter(Boolean).join(' '),
+    [quotedName, quotedPhone].filter(Boolean).join(' '),
+    [strongIdentityAnchor, compactDetails].filter(Boolean).join(' '),
+    !genericTarget ? [normalizedTarget, compactDetails].filter(Boolean).join(' ') : compactDetails,
     phoneDigits.length >= 7 ? `"${phoneDigits}"` : '',
   ].filter(Boolean);
 
-  const secondPass = [
-    [quotedName, 'public records address location'].filter(Boolean).join(' '),
-    [quotedName, 'social profile biography location'].filter(Boolean).join(' '),
-    [quotedName, phone ? `"${phone}"` : '', 'contact directory'].filter(Boolean).join(' '),
-    [quotedName, 'property court business records'].filter(Boolean).join(' '),
-  ].filter(Boolean);
+  // Do not launch generic internet-wide "public records" searches when the
+  // operator supplied only a category such as "person" plus a location. Those
+  // queries create noise rather than target evidence. Broadening resumes once
+  // a name or phone anchor exists.
+  const secondPass = strongIdentityAnchor ? [
+    [strongIdentityAnchor, 'public records address location'].join(' '),
+    [strongIdentityAnchor, 'social profile biography location'].join(' '),
+    [strongIdentityAnchor, 'contact directory'].join(' '),
+    [strongIdentityAnchor, 'property court business records'].join(' '),
+  ] : [];
 
   return {
     firstPass: [...new Set(firstPass)],
@@ -432,7 +439,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
   const suppliedName = extractLikelyName(details);
   const subject = targetSubject(normalizedTarget);
   const resolvedName = genericTarget || targetIsPhone
-    ? suppliedName || targetSubject(details)
+    ? suppliedName || ''
     : subject;
   const searchQuery = resolvedName || details;
   const resolvedTargetLabel = resolvedName || phone || normalizedTarget;
@@ -666,6 +673,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
       );
     }
     for (const source of report.sources || []) {
+      if (normalizeConfidence(source?.confidence) <= 0) continue;
       sourceKeys.add(String(source?.name || 'osint-source').trim().toLowerCase());
     }
     for (const result of discoveryResults) {
