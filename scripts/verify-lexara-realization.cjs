@@ -40,6 +40,8 @@ const overflowSchema = read('server/services/cryptocrawl/runtime/cryptocrawl-ove
 const lexaraOverflowMigration = read('server/migrations/060_lexara_overflow_conversation_history.sql');
 const aiProvider = read('server/aiProvider.ts');
 const conversationalReliabilityReview = read('docs/LEXARA_CONVERSATIONAL_RELIABILITY_10_SOURCE_REVIEW_20260918.md');
+const duplexReview = read('docs/LEXARA_DUPLEX_ORCHESTRATION_30_SOURCE_REVIEW_20260918.md');
+const openRouterWebSearch = read('server/openRouterWebSearch.ts');
 
 must(
   voiceMode.includes('preferServerRecognition') &&
@@ -48,11 +50,13 @@ must(
   'mobile voice uses controllable server endpointing while desktop retains browser recognition',
 );
 must(
-  voiceMode.includes('serverEchoCancellationRef') &&
-    voiceMode.includes("optionsRef.current.onVoiceStart?.({") &&
-    conversation.includes('bargeInCandidateTimerRef') &&
-    conversation.includes("meta.echoCancellation === true"),
-  'sustained echo-cancelled server voice activity can yield the floor without raw-noise interruption',
+  voiceMode.includes('shouldProbeBargeIn?: () => boolean') &&
+    voiceMode.includes('SERVER_BARGE_IN_PROBE_MS') &&
+    voiceMode.includes('recorder.requestData()') &&
+    voiceMode.includes('bargeInProbe: true') &&
+    conversation.includes("shouldProbeBargeIn: () => phaseRef.current === 'speaking'") &&
+    !conversation.includes('bargeInCandidateTimerRef'),
+  'VAD only starts capture; non-destructive transcript probes own barge-in authority',
 );
 must(
   conversation.includes('CONVERSATION_STORAGE_SCHEMA_VERSION = 2'),
@@ -119,6 +123,13 @@ must(
   'STT hallucination rejection uses speech evidence before acceptance',
 );
 must(
+  lexaraRoutes.includes('noSpeechValues.reduce((sum, value) => sum + value, 0) / noSpeechValues.length') &&
+    lexaraRoutes.includes('rejectAsNonSpeech') &&
+    lexaraRoutes.includes('bargeInProbe') &&
+    lexaraRoutes.includes('speechDurationMs < (bargeInProbe ? 900 : 800)'),
+  'server STT aggregates no-speech evidence and preserves long clear speech',
+);
+must(
   lexaraRoutes.indexOf("name: 'groq-whisper'") <
     lexaraRoutes.indexOf("name: 'elevenlabs-scribe'"),
   'low-latency Groq Whisper is preferred with ElevenLabs Scribe fallback',
@@ -149,10 +160,12 @@ must(
   !authorityResearch.includes('GoogleGenAI') &&
     authorityResearch.includes('FIRECRAWL_API_KEY') &&
     authorityResearch.includes("https://api.firecrawl.dev/v1/search") &&
+    authorityResearch.includes('Promise.all') &&
     authorityResearch.includes('orchestratedWebSearch') &&
-    authorityResearch.includes('never sends a plain-text query') &&
-    webSearch.includes('useOnlinePlugin: true'),
-  'legal authority research separates discovery from URL-only crawling with no Google-specific dependency',
+    openRouterWebSearch.includes("tools: [{ type: 'openrouter:web_search' }]") &&
+    openRouterWebSearch.includes('Current server-tool search completed') &&
+    !openRouterWebSearch.includes('${model}:online'),
+  'legal authority discovery races Firecrawl with current OpenRouter server-side web search and has no Google dependency',
 );
 must(
   openRouter.includes('cancellationShaped') &&
@@ -161,13 +174,17 @@ must(
 );
 must(
   claude.includes('samplingControlsDeprecated') &&
+    claude.includes("block.type === 'text'") &&
+    claude.includes("join('\\n')") &&
     groq.includes("https://api.groq.com/openai/v1/models") &&
     groq.includes('groqBlockedModels') &&
+    groq.includes('while (attempted.size < 6)') &&
+    groq.includes('No permitted capability-compatible Groq model is currently available') &&
     aiProvider.includes("prefixes: ['llama-', 'meta-llama/', 'openai/', 'qwen/']") &&
     harmony.includes("'claude-opus-5'") &&
     harmony.includes('harmonyProviderCooldownUntil') &&
     harmony.includes('markHarmonyProviderFailure'),
-  'Harmony uses active Claude IDs, Groq project-aware model recovery, and provider-local cooldowns',
+  'Harmony parses all Claude text blocks, constrains Groq to permitted capability models, and keeps failures route-local',
 );
 must(
   routes.includes("req.path.startsWith('/images/')") &&
@@ -224,6 +241,12 @@ must(harmonySourceLines.length === 10, 'literal 10-source Harmony implementation
 const conversationalSourceSection = conversationalReliabilityReview.split('## Sources — exactly 10')[1]?.split('## Production evidence cross-check')[0] || '';
 const conversationalSourceLines = conversationalSourceSection.split('\n').filter(line => /^\d+\.\s/.test(line));
 must(conversationalSourceLines.length === 10, 'literal 10-source conversational reliability review is present');
+const duplexResolutionSection = duplexReview.split('## Resolution sources — exactly 20')[1]?.split('## Implementation sources — exactly 10')[0] || '';
+const duplexResolutionLines = duplexResolutionSection.split('\n').filter(line => /^\d+\.\s/.test(line));
+must(duplexResolutionLines.length === 20, 'literal 20-source duplex resolution review is present');
+const duplexImplementationSection = duplexReview.split('## Implementation sources — exactly 10')[1]?.split('## Chosen implementation sequence')[0] || '';
+const duplexImplementationLines = duplexImplementationSection.split('\n').filter(line => /^\d+\.\s/.test(line));
+must(duplexImplementationLines.length === 10, 'literal 10-source duplex implementation review is present');
 
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA realization verification passed.');
