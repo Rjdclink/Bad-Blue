@@ -1,12 +1,10 @@
 import { 
-  searchOfficerData,
   generateUserText,
   TaskPriority
 } from './aiProvider';
 import { GoogleGenAI } from "@google/genai";
 import { EventEmitter } from "events";
 import type { OfficerProfile, InsertOfficerProfile } from "@shared/schema";
-import { rateLimitTracker } from "./rateLimitTracker";
 import { getEnv } from './config';
 
 let geminiClient: GoogleGenAI | null = null;
@@ -26,7 +24,6 @@ export interface CollectionProgress {
 // In-memory cache for compiled officer profiles
 const profileCache = new Map<string, { profile: OfficerProfile; timestamp: number }>();
 const CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
-const MAX_CACHE_SIZE = 500;
 
 function getGeminiClient(): GoogleGenAI {
   if (!geminiClient) {
