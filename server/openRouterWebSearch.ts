@@ -474,7 +474,9 @@ export async function orchestratedWebSearch(
 
   const startTime = Date.now();
   const results: ModelResult[] = [];
-  const allModels = Object.values(WEB_SEARCH_MODELS);
+  const allModels = Object.values(WEB_SEARCH_MODELS).filter(model => !model.startsWith('google/'));
+  // LEXARA authority grounding must not depend on Google-family models; the
+  // remaining OpenRouter providers retain independent multi-model coverage.
 
   // Enhanced system prompt for web search
   const systemPrompt = `You are an expert web researcher providing comprehensive, factual information. 
