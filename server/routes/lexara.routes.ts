@@ -24,8 +24,10 @@ import { LEXARA_KERNEL, mergePersonaWithKernel } from '../lexara/personaKernel';
 import { lexaraSpeakTest } from '../lexara/LexaraTTSRouter';
 import { callAIWithFallback } from '../aiSubAgent';
 import { LEXARA_PERSONA } from '../../shared/lexaraVoicePersona';
+import { isAuthenticated } from '../auth';
 
 const router = express.Router();
+router.use(isAuthenticated);
 
 const lexaraVoiceUpload = multer({
   storage: multer.memoryStorage(),
