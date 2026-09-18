@@ -5,6 +5,17 @@ const PROOF_VERSION = 'spectra-evidence-v1';
 const PROOF_FIELD = 'serverEvidenceProof';
 const PROOF_VERSION_FIELD = 'serverEvidenceProofVersion';
 
+type EvidencePoint = Omit<GPSPoint, 'timestamp' | 'receivedAt' | 'provenance'> & {
+  timestamp: Date | string;
+  receivedAt?: Date | string;
+  provenance?: {
+    provider?: string;
+    recordId?: string;
+    capturedAt?: Date | string;
+    transformedBy?: string[];
+  };
+};
+
 function signingKey(): string {
   const key =
     process.env.SPECTRA_EVIDENCE_SIGNING_KEY ||
@@ -16,7 +27,7 @@ function signingKey(): string {
   return key;
 }
 
-function canonicalObservation(point: GPSPoint): string {
+function canonicalObservation(point: EvidencePoint): string {
   const timestamp =
     point.timestamp instanceof Date
       ? point.timestamp.toISOString()
@@ -46,13 +57,13 @@ function canonicalObservation(point: GPSPoint): string {
   ].join('|');
 }
 
-function signatureFor(point: GPSPoint): string {
+function signatureFor(point: EvidencePoint): string {
   return createHmac('sha256', signingKey())
     .update(canonicalObservation(point))
     .digest('hex');
 }
 
-export function signServerEvidence<T extends GPSPoint>(point: T): T {
+export function signServerEvidence<T extends EvidencePoint>(point: T): T {
   const proof = signatureFor(point);
   return {
     ...point,
