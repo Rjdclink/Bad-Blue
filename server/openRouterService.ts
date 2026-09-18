@@ -99,6 +99,7 @@ export async function generateOpenRouterText(
     temperature?: number;
     maxTokens?: number;
     timeoutMs?: number;
+    sessionId?: string;
   } = {},
 ): Promise<OpenRouterTextResult> {
   if (!OPENROUTER_API_KEY) {
@@ -130,6 +131,7 @@ export async function generateOpenRouterText(
       },
       body: JSON.stringify({
         model: process.env.OPENROUTER_LEXARA_MODEL?.trim() || 'openrouter/auto',
+        ...(options.sessionId?.trim() ? { session_id: options.sessionId.trim().slice(0, 128) } : {}),
         messages,
         temperature: options.temperature ?? 0.25,
         max_tokens: options.maxTokens ?? 1800,
