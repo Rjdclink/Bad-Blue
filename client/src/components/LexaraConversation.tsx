@@ -307,6 +307,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const conversationScrollRef = useRef<HTMLDivElement>(null);
   const voiceTurnBufferRef = useRef('');
   const voiceTurnTimerRef = useRef<number | null>(null);
+  const bargeInCandidateTimerRef = useRef<number | null>(null);
   const voiceEndPendingRef = useRef(false);
   const pendingUserTurnRef = useRef('');
   const pendingTurnAlreadyRenderedRef = useRef(false);
@@ -321,6 +322,13 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     if (voiceTurnTimerRef.current !== null) {
       window.clearTimeout(voiceTurnTimerRef.current);
       voiceTurnTimerRef.current = null;
+    }
+  }, []);
+
+  const clearBargeInCandidateTimer = useCallback(() => {
+    if (bargeInCandidateTimerRef.current !== null) {
+      window.clearTimeout(bargeInCandidateTimerRef.current);
+      bargeInCandidateTimerRef.current = null;
     }
   }, []);
 
@@ -341,14 +349,29 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const voiceMode = useVoiceMode({
     continuous: true,
     interimResults: true,
-    onVoiceStart: () => {
+    onVoiceStart: meta => {
       // A renewed speech burst means the user has not finished the turn yet.
       voiceEndPendingRef.current = false;
       clearVoiceTurnTimer();
-      // Acoustic energy alone is not proof of user speech. Interruption is
-      // transcript-confirmed below so LEXARA cannot cut herself off.
+      clearBargeInCandidateTimer();
+
+      // Mobile/server mode has controllable VAD plus the actual selected
+      // echo-cancellation setting. Sustained activity on an echo-cancelled mic
+      // is strong enough to yield the conversational floor quickly, while the
+      // final transcript below still decides what text is committed.
+      if (
+        phaseRef.current === 'speaking'
+        && meta.engine === 'server'
+        && meta.echoCancellation === true
+      ) {
+        bargeInCandidateTimerRef.current = window.setTimeout(() => {
+          bargeInCandidateTimerRef.current = null;
+          if (phaseRef.current === 'speaking') autoInterruptRef.current();
+        }, 350);
+      }
     },
     onVoiceEnd: () => {
+      clearBargeInCandidateTimer();
       voiceEndPendingRef.current = true;
       clearVoiceTurnTimer();
       const buffered = voiceTurnBufferRef.current.trim();
@@ -745,11 +768,12 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   useEffect(() => {
     return () => {
       currentRequestRef.current?.abort();
+      clearBargeInCandidateTimer();
       clearVoiceTurnBuffer();
       stopSpeaking();
       stopListening();
     };
-  }, [clearVoiceTurnBuffer, stopListening, stopSpeaking]);
+  }, [clearBargeInCandidateTimer, clearVoiceTurnBuffer, stopListening, stopSpeaking]);
 
   const statusLabel = useMemo(() => {
     if (phase === 'initializing') return 'Preparing live consultation';
