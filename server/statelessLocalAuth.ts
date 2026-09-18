@@ -521,6 +521,18 @@ async function persistPostgresSubscriptionState(
   }
   if (!userId) throw new Error("User not found for Square subscription");
 
+  if (!update.hasPaidForAccess) {
+    await dbClient.query(
+      `UPDATE users
+          SET status=$1,
+              has_paid_for_access=false,
+              square_customer_id=COALESCE($2,square_customer_id),
+              updated_at=NOW()
+        WHERE id=$3`,
+      [update.status, update.squareCustomerId, userId],
+    );
+  }
+
   if (update.squareSubscriptionId && update.squarePlanVariationId) {
     const planId = await ensurePostgresSubscriptionPlan(dbClient, update.squarePlanVariationId);
     const existingSubscription = await dbClient.query(
@@ -545,18 +557,27 @@ async function persistPostgresSubscriptionState(
     }
   }
 
-  const updated = await dbClient.query(
-    `UPDATE users
-        SET status=$1,
-            has_paid_for_access=$2,
-            square_customer_id=COALESCE($3,square_customer_id),
-            updated_at=NOW()
-      WHERE id=$4
-      RETURNING id,email,first_name,last_name,status,has_paid_for_access`,
-    [update.status, update.hasPaidForAccess, update.squareCustomerId, userId],
+  if (update.hasPaidForAccess) {
+    const updated = await dbClient.query(
+      `UPDATE users
+          SET status=$1,
+              has_paid_for_access=true,
+              square_customer_id=COALESCE($2,square_customer_id),
+              updated_at=NOW()
+        WHERE id=$3
+        RETURNING id,email,first_name,last_name,status,has_paid_for_access`,
+      [update.status, update.squareCustomerId, userId],
+    );
+    if (!updated.rows?.[0]) throw new Error("Subscription user update failed");
+    return mapUser(updated.rows[0]);
+  }
+
+  const refreshed = await dbClient.query(
+    "SELECT id,email,first_name,last_name,status,has_paid_for_access FROM users WHERE id = $1 LIMIT 1",
+    [userId],
   );
-  if (!updated.rows?.[0]) throw new Error("Subscription user update failed");
-  return mapUser(updated.rows[0]);
+  if (!refreshed.rows?.[0]) throw new Error("Subscription user refresh failed");
+  return mapUser(refreshed.rows[0]);
 }
 
 async function ensureSupabaseSubscriptionPlan(
@@ -609,6 +630,18 @@ async function persistSupabaseSubscriptionState(
   }
   if (!userId) throw new Error("User not found for Square subscription");
 
+  const userPatch: Record<string, unknown> = {
+    status: update.status,
+    has_paid_for_access: update.hasPaidForAccess,
+    updated_at: new Date().toISOString(),
+  };
+  if (update.squareCustomerId) userPatch.square_customer_id = update.squareCustomerId;
+
+  if (!update.hasPaidForAccess) {
+    const { error } = await supabase.from("users").update(userPatch).eq("id", userId);
+    if (error) throw new Error(`Subscription access update failed: ${error.message}`);
+  }
+
   if (update.squareSubscriptionId && update.squarePlanVariationId) {
     const planId = await ensureSupabaseSubscriptionPlan(supabase, update.squarePlanVariationId);
     const { data: existingSubscription, error: subLookupError } = await supabase
@@ -646,21 +679,26 @@ async function persistSupabaseSubscriptionState(
     }
   }
 
-  const userPatch: Record<string, unknown> = {
-    status: update.status,
-    has_paid_for_access: update.hasPaidForAccess,
-    updated_at: new Date().toISOString(),
-  };
-  if (update.squareCustomerId) userPatch.square_customer_id = update.squareCustomerId;
+  if (update.hasPaidForAccess) {
+    const { data: userRow, error: userError } = await supabase
+      .from("users")
+      .update(userPatch)
+      .eq("id", userId)
+      .select("id,email,first_name,last_name,status,has_paid_for_access")
+      .single();
+    if (userError || !userRow) {
+      throw new Error(`Subscription user update failed: ${userError?.message || "unknown error"}`);
+    }
+    return mapUser(userRow);
+  }
 
   const { data: userRow, error: userError } = await supabase
     .from("users")
-    .update(userPatch)
-    .eq("id", userId)
     .select("id,email,first_name,last_name,status,has_paid_for_access")
+    .eq("id", userId)
     .single();
   if (userError || !userRow) {
-    throw new Error(`Subscription user update failed: ${userError?.message || "unknown error"}`);
+    throw new Error(`Subscription user refresh failed: ${userError?.message || "unknown error"}`);
   }
   return mapUser(userRow);
 }
