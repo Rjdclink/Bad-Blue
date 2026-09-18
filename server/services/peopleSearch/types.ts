@@ -7,6 +7,7 @@ export interface SearchQuery {
   lastName: string;
   city?: string;
   state?: string;
+  phone?: string;
   age?: number;
 }
 
