@@ -79,7 +79,7 @@ function record(
     ...(error ? { error } : {}),
   };
   warmStatus.set(provider, value);
-  if (state === 'ready' && model) resolvedModels.set(provider, model);
+  if ((state === 'ready' || state === 'catalog') && model) resolvedModels.set(provider, model);
   return value;
 }
 
