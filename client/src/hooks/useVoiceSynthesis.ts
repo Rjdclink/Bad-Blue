@@ -52,9 +52,10 @@ const SERVER_TTS_FETCH_TIMEOUT_MS = 20_000;
 const MOBILE_SESSION_BUFFER_TIMEOUT_MS = 12_000;
 const MIN_PLAYBACK_WATCHDOG_MS = 10_000;
 
-function shouldBufferLexaraPlaybackOnThisDevice(): boolean {
+function shouldBufferLexaraPlaybackOnThisDevice(textLength: number): boolean {
   return typeof navigator !== 'undefined'
-    && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+    && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+    && textLength > 420;
 }
 const MAX_PLAYBACK_WATCHDOG_MS = 240_000;
 
@@ -219,7 +220,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
       const session = await createStreamingAudioSession(text);
       if (turnId !== activeTurnRef.current) return;
 
-      if (shouldBufferLexaraPlaybackOnThisDevice()) {
+      if (shouldBufferLexaraPlaybackOnThisDevice(text.length)) {
         // The observed production stream finishes in well under a second, so on
         // mobile it is better to absorb that tiny delay once and play from a
         // complete local Blob than risk repeated media-buffer starvation while
