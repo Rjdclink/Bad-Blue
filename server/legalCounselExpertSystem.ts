@@ -130,6 +130,12 @@ const LAW_TYPE_CONFIGS: Record<LawType, ExpertProfileConfig> = {
     focusAreas: ['Agency regulations', 'Administrative hearings', 'Appeals', 'Licensing'],
     baseMeticulousness: 7,
   },
+  'procedural-law': {
+    specialty: 'Civil & Court Procedure',
+    tone: 'analytical',
+    focusAreas: ['Civil procedure', 'Court rules', 'Pleading and motion practice', 'Jurisdiction and venue', 'Deadlines and service'],
+    baseMeticulousness: 9,
+  },
   'constitutional-law': {
     specialty: 'Constitutional Law',
     tone: 'authoritative',
