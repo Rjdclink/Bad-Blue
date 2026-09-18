@@ -51,11 +51,12 @@ must(
     conversation.includes('const VOICE_END_GRACE_MS = 650'),
   'voice endpointing waits for a complete natural utterance without restoring the old double-delay',
 );
+const liveTurnHandler = conversation.split('const handleUserMessage = useCallback')[1]?.split('handleMessageRef.current = handleUserMessage')[0] || '';
 must(
   voiceMode.includes('browserFinalResultIndexesRef') &&
     conversation.includes('mergeSpeechSegments') &&
     conversation.includes('pendingUserTurnRef') &&
-    !conversation.includes('currentRequestRef.current?.abort()'),
+    !liveTurnHandler.includes('currentRequestRef.current?.abort()'),
   'final STT segments are owned/de-overlapped and continuations cannot create chat abort storms',
 );
 must(
