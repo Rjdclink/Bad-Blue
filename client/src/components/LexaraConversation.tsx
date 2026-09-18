@@ -893,7 +893,6 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             window.setTimeout(() => resolve(null), 250);
           }),
         ]);
-        const acknowledgementKind = String(acknowledgementData?.kind || '');
         acknowledgement = String(acknowledgementData?.acknowledgement || '').trim();
         const normalizedAck = normalizeSpeechText(acknowledgement);
         const now = Date.now();
