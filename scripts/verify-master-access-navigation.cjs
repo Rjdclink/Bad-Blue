@@ -45,15 +45,20 @@ const requiredSurfaces = [
   "/control-room",
   "/pantheon",
   "/spectra",
+];
+for (const route of requiredSurfaces) {
+  assert(panelSet.has(route), `Required master surface omitted: ${route}`);
+}
+
+for (const foldedRoute of [
   "/geoconsole",
   "/geoconsole-command",
   "/geoconsole-process",
   "/geoconsole-report",
   "/location-intel",
   "/tshpe-locator",
-];
-for (const route of requiredSurfaces) {
-  assert(panelSet.has(route), `Required master surface omitted: ${route}`);
+]) {
+  assert(!panelSet.has(foldedRoute), `Folded geospatial surface must not remain a separate master panel: ${foldedRoute}`);
 }
 
 assert(app.includes("enabled: isAuthenticated && !isMasterSession"), "Master session must disable custom swipe navigation");
