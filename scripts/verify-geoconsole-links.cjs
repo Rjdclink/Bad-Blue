@@ -60,9 +60,9 @@ test('HybridGeoconsole invokes fusion, trail and Futurecast engines',
   engine.includes('fuseInputs(inputs)') &&
   engine.includes('generateMotionTrail') &&
   engine.includes('generateFuturecast'));
-test('Process response returns canonical session and primary timeline',
+test('Process response returns canonical session and signed primary timeline',
   routes.includes('sessionId: effectiveSessionId') &&
-  routes.includes('primaryFusedLocations: result.primaryFusedLocations'));
+  routes.includes('primaryFusedLocations: signedPrimaryFusedLocations'));
 test('Runtime renders processed trail frames',
   runtime.includes('payload?.data?.trail?.points'));
 
