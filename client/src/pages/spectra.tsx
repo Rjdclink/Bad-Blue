@@ -6,7 +6,7 @@ import { SEOHead } from '@/components/SEOHead';
 import { GeoconsoleRadarDashboard } from '@/components/geoconsole';
 import { useVoiceMode } from '@/hooks/useVoiceMode';
 import { useVoiceSynthesis } from '@/hooks/useVoiceSynthesis';
-import type { GPSPoint } from '@shared/geoconsoleTypes';
+import type { GPSPoint, LocationCandidate } from '@shared/geoconsoleTypes';
 
 type Phase = 'awaiting_target' | 'awaiting_details' | 'acquiring' | 'active' | 'error';
 
@@ -38,6 +38,7 @@ interface AcquisitionResponse {
     verificationStatus: string;
   };
   locationObservations?: GPSPoint[];
+  candidateLocations?: LocationCandidate[];
 }
 
 const FIRST_PROMPT = 'What is it that you want to locate?';
@@ -61,6 +62,7 @@ export default function SpectraPage() {
   ]);
   const [input, setInput] = useState('');
   const [observations, setObservations] = useState<GPSPoint[]>([]);
+  const [candidateLocations, setCandidateLocations] = useState<LocationCandidate[]>([]);
   const [directEvidence, setDirectEvidence] = useState<GPSPoint[]>([]);
   const [confidence, setConfidence] = useState<number | null>(null);
   const [sourceCount, setSourceCount] = useState(0);
@@ -111,6 +113,7 @@ export default function SpectraPage() {
     setTarget('');
     setDetails('');
     setObservations([]);
+    setCandidateLocations([]);
     setDirectEvidence([]);
     setConfidence(null);
     setSourceCount(0);
@@ -166,6 +169,7 @@ export default function SpectraPage() {
       );
 
       setObservations(points);
+      setCandidateLocations(Array.isArray(payload.candidateLocations) ? payload.candidateLocations : []);
       setConfidence(payload.acquisition?.confidence ?? null);
       setSourceCount(payload.acquisition?.sourceCount ?? 0);
       setPhase('active');
@@ -174,9 +178,14 @@ export default function SpectraPage() {
         ? Math.round(payload.acquisition.confidence * 100)
         : null;
 
+      const regionalCandidates = Array.isArray(payload.candidateLocations)
+        ? payload.candidateLocations
+        : [];
       const responseText = points.length > 0
         ? `I acquired ${points.length} timestamped location observation${points.length === 1 ? '' : 's'} for ${targetValue}. The map is updated${certainty !== null ? ` with ${certainty}% evidence confidence` : ''}.`
-        : `I completed the search for ${targetValue} across ${payload.acquisition?.sourceCount ?? 0} source${(payload.acquisition?.sourceCount ?? 0) === 1 ? '' : 's'}, but I do not yet have timestamped coordinate evidence strong enough to place the target on the map.`;
+        : regionalCandidates.length > 0
+          ? `I found a regional location candidate for ${targetValue} and placed it on the map. I do not yet have timestamped coordinate evidence for a movement track.`
+          : `I completed the search for ${targetValue} across ${payload.acquisition?.sourceCount ?? 0} source${(payload.acquisition?.sourceCount ?? 0) === 1 ? '' : 's'}, but I do not yet have timestamped coordinate evidence strong enough to place the target on the map.`;
 
       addMessage('spectra', responseText);
       speakIfEnabled(responseText);
@@ -350,9 +359,10 @@ export default function SpectraPage() {
         ? `${observations.length} location observation${observations.length === 1 ? '' : 's'}`
         : `${Math.round(confidence * 100)}% evidence confidence`;
     }
+    if (candidateLocations.length > 0) return 'Regional candidate mapped';
     if (target) return `Target: ${target}`;
     return 'Waiting for target';
-  }, [confidence, observations.length, phase, target]);
+  }, [candidateLocations.length, confidence, observations.length, phase, target]);
 
   const placeholder =
     phase === 'awaiting_target'
@@ -402,6 +412,7 @@ export default function SpectraPage() {
         <section className="relative min-h-0 border-b lg:border-b-0 lg:border-r border-slate-800">
           <GeoconsoleRadarDashboard
             initialData={observations}
+            candidateLocations={candidateLocations}
             spectraShell
           />
 
