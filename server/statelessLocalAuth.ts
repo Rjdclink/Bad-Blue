@@ -182,7 +182,31 @@ async function resolveLocalAuthBackend(): Promise<LocalAuthBackend> {
   if (authBackendSelection) return authBackendSelection;
 
   authBackendSelection = (async () => {
+    const dedicatedAuthConfigured = Boolean(
+      String(
+        process.env.LEGALWHAT_AUTH_SUPABASE_URL ||
+        getConfig().LEGALWHAT_AUTH_SUPABASE_URL ||
+        ""
+      ).trim()
+    );
+    const edgeSecretConfigured = Boolean(String(process.env.LEGALWHAT_EDGE_AUTH_SECRET || "").trim());
+
+    let edgeError: unknown = null;
     let httpError: unknown = null;
+
+    // An explicitly configured LegalWhat auth project is the canonical identity
+    // authority. Prefer its private Edge function so a server key belonging to the
+    // general application project cannot silently redirect signups elsewhere.
+    if (dedicatedAuthConfigured && edgeSecretConfigured) {
+      try {
+        await probeEdgeAuthStore();
+        authBackend = { kind: "edge" };
+        return authBackend;
+      } catch (error) {
+        edgeError = error;
+      }
+    }
+
     try {
       const supabase = await primarySupabaseClient();
       authBackend = { kind: "supabase", client: supabase };
@@ -191,14 +215,17 @@ async function resolveLocalAuthBackend(): Promise<LocalAuthBackend> {
       httpError = error;
     }
 
-    let edgeError: unknown = null;
-    try {
-      await probeEdgeAuthStore();
-      authBackend = { kind: "edge" };
-      console.warn("[AUTH] Direct Supabase server credential unavailable; using project-local Supabase Edge authentication authority");
-      return authBackend;
-    } catch (error) {
-      edgeError = error;
+    // When no dedicated Edge authority was attempted above, retain it as the
+    // bounded fallback for deployments using the application Supabase project.
+    if (!dedicatedAuthConfigured || !edgeSecretConfigured) {
+      try {
+        await probeEdgeAuthStore();
+        authBackend = { kind: "edge" };
+        console.warn("[AUTH] Direct Supabase server credential unavailable; using project-local Supabase Edge authentication authority");
+        return authBackend;
+      } catch (error) {
+        edgeError = error;
+      }
     }
 
     try {
