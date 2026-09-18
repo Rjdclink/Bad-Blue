@@ -19,22 +19,44 @@ const log = createLogger('InputFusionEngine');
 
 // Default source priorities and confidence weights
 const DEFAULT_SOURCE_CONFIGS: DataSourceConfig[] = [
-  { source: 'device_gps', enabled: true, priority: 10, confidenceWeight: 0.95 },
-  { source: 'exif_photo', enabled: true, priority: 9, confidenceWeight: 0.90 },
-  { source: 'exif_video', enabled: true, priority: 9, confidenceWeight: 0.88 },
-  { source: 'xmp_sidecar', enabled: true, priority: 8, confidenceWeight: 0.85 },
-  { source: 'json_sidecar', enabled: true, priority: 8, confidenceWeight: 0.85 },
-  { source: 'wifi_handoff', enabled: true, priority: 6, confidenceWeight: 0.70 },
-  { source: 'bluetooth_proximity', enabled: true, priority: 5, confidenceWeight: 0.60 },
-  { source: 'accelerometer', enabled: true, priority: 4, confidenceWeight: 0.50 },
-  { source: 'browser_timestamp', enabled: true, priority: 3, confidenceWeight: 0.40 },
-  { source: 'social_media', enabled: true, priority: 7, confidenceWeight: 0.75 },
-  { source: 'public_camera', enabled: true, priority: 6, confidenceWeight: 0.70 },
-  { source: 'traffic_cam', enabled: true, priority: 6, confidenceWeight: 0.70 },
-  { source: 'satellite_imagery', enabled: true, priority: 5, confidenceWeight: 0.60 },
-  { source: 'public_record', enabled: true, priority: 8, confidenceWeight: 0.80 },
-  { source: 'manual_input', enabled: true, priority: 7, confidenceWeight: 0.75 },
-  { source: 'interpolated', enabled: true, priority: 2, confidenceWeight: 0.30 },
+  { source: 'device_gps', enabled: true, priority: 10, confidenceWeight: 0.96 },
+  { source: 'gnss_fix', enabled: true, priority: 10, confidenceWeight: 0.98 },
+  { source: 'gnss_raw', enabled: true, priority: 9, confidenceWeight: 0.94 },
+  { source: 'exif_photo', enabled: true, priority: 8, confidenceWeight: 0.82 },
+  { source: 'exif_video', enabled: true, priority: 8, confidenceWeight: 0.82 },
+  { source: 'xmp_sidecar', enabled: true, priority: 7, confidenceWeight: 0.72 },
+  { source: 'json_sidecar', enabled: true, priority: 7, confidenceWeight: 0.72 },
+  { source: 'wifi_handoff', enabled: true, priority: 5, confidenceWeight: 0.55 },
+  { source: 'wifi_rssi', enabled: true, priority: 6, confidenceWeight: 0.62 },
+  { source: 'wifi_rtt', enabled: true, priority: 9, confidenceWeight: 0.92 },
+  { source: 'wifi_fingerprint', enabled: true, priority: 7, confidenceWeight: 0.78 },
+  { source: 'cellular', enabled: true, priority: 4, confidenceWeight: 0.45 },
+  { source: 'cell_serving', enabled: true, priority: 5, confidenceWeight: 0.52 },
+  { source: 'cell_neighbor', enabled: true, priority: 4, confidenceWeight: 0.44 },
+  { source: 'uwb_range', enabled: true, priority: 10, confidenceWeight: 0.98 },
+  { source: 'uwb_direction', enabled: true, priority: 10, confidenceWeight: 0.98 },
+  { source: 'bluetooth_proximity', enabled: true, priority: 4, confidenceWeight: 0.45 },
+  { source: 'ble_rssi', enabled: true, priority: 5, confidenceWeight: 0.52 },
+  { source: 'ble_aoa', enabled: true, priority: 8, confidenceWeight: 0.86 },
+  { source: 'accelerometer', enabled: true, priority: 3, confidenceWeight: 0.30 },
+  { source: 'imu_gyro', enabled: true, priority: 3, confidenceWeight: 0.30 },
+  { source: 'magnetometer', enabled: true, priority: 3, confidenceWeight: 0.30 },
+  { source: 'barometer', enabled: true, priority: 4, confidenceWeight: 0.40 },
+  { source: 'browser_geolocation', enabled: true, priority: 8, confidenceWeight: 0.84 },
+  { source: 'browser_timestamp', enabled: true, priority: 2, confidenceWeight: 0.15 },
+  { source: 'network_region', enabled: true, priority: 2, confidenceWeight: 0.18 },
+  { source: 'social_media', enabled: true, priority: 3, confidenceWeight: 0.28 },
+  { source: 'social_geotag', enabled: true, priority: 6, confidenceWeight: 0.64 },
+  { source: 'visual_detection', enabled: true, priority: 6, confidenceWeight: 0.64 },
+  { source: 'vehicle_telemetry', enabled: true, priority: 9, confidenceWeight: 0.90 },
+  { source: 'public_camera', enabled: true, priority: 5, confidenceWeight: 0.56 },
+  { source: 'traffic_cam', enabled: true, priority: 5, confidenceWeight: 0.56 },
+  { source: 'satellite_imagery', enabled: true, priority: 4, confidenceWeight: 0.42 },
+  { source: 'historical_location', enabled: true, priority: 2, confidenceWeight: 0.16 },
+  { source: 'public_record', enabled: true, priority: 2, confidenceWeight: 0.16 },
+  { source: 'manual_input', enabled: true, priority: 3, confidenceWeight: 0.30 },
+  { source: 'interpolated', enabled: true, priority: 1, confidenceWeight: 0.10 },
+  { source: 'predicted', enabled: true, priority: 1, confidenceWeight: 0.08 },
 ];
 
 // Earth radius in meters
@@ -78,6 +100,70 @@ export class InputFusionEngine {
       sources: this.config.sources.length,
       conflictResolution: this.config.conflictResolution,
     });
+  }
+
+  private defaultAccuracyMeters(source: DataSource): number {
+    switch (source) {
+      case 'uwb_range':
+      case 'uwb_direction': return 1.5;
+      case 'wifi_rtt': return 2.5;
+      case 'gnss_fix':
+      case 'device_gps': return 12;
+      case 'browser_geolocation': return 25;
+      case 'ble_aoa': return 8;
+      case 'wifi_fingerprint': return 35;
+      case 'wifi_rssi':
+      case 'wifi_handoff': return 80;
+      case 'vehicle_telemetry': return 20;
+      case 'cell_serving':
+      case 'cell_neighbor':
+      case 'cellular': return 1500;
+      case 'social_geotag': return 250;
+      case 'exif_photo':
+      case 'exif_video':
+      case 'xmp_sidecar':
+      case 'json_sidecar': return 40;
+      case 'network_region': return 25_000;
+      case 'historical_location':
+      case 'public_record':
+      case 'manual_input': return 5_000;
+      case 'interpolated':
+      case 'predicted': return 500;
+      default: return 250;
+    }
+  }
+
+  private effectiveAccuracyMeters(point: GPSPoint): number {
+    const reported = Number(point.accuracy);
+    if (Number.isFinite(reported) && reported > 0) return Math.max(0.5, reported);
+    return this.defaultAccuracyMeters(point.source);
+  }
+
+  private measurementWeight(point: GPSPoint, correlationCount = 1): number {
+    const config = this.sourceConfigs.get(point.source);
+    const prior = config?.confidenceWeight ?? 0.25;
+    const confidence = Math.max(0.001, Math.min(1, point.confidence));
+    const accuracy = this.effectiveAccuracyMeters(point);
+
+    // Information-like weighting: precise measurements contribute more without
+    // allowing tiny claimed accuracies to explode the estimate.
+    const precision = 1 / Math.pow(Math.max(1.5, accuracy), 2);
+
+    const ageSeconds = Math.max(0, (Date.now() - point.timestamp.getTime()) / 1000);
+    const halfLifeSeconds =
+      point.observationKind === 'historical' ? 30 * 24 * 3600 :
+      point.observationKind === 'predicted' ? 15 * 60 :
+      6 * 3600;
+    const freshness = Math.pow(0.5, ageSeconds / halfLifeSeconds);
+
+    const kindFactor =
+      point.observationKind === 'predicted' ? 0.25 :
+      point.observationKind === 'interpolated' ? 0.35 :
+      point.observationKind === 'historical' ? 0.30 :
+      point.observationKind === 'inferred' ? 0.55 :
+      1;
+
+    return prior * confidence * precision * freshness * kindFactor / Math.max(1, correlationCount);
   }
 
   /**
@@ -203,7 +289,18 @@ export class InputFusionEngine {
           points[j].latitude, points[j].longitude
         );
 
-        if (distance <= this.config.deduplicationRadius) {
+        const overlapRadius = Math.max(
+          this.config.deduplicationRadius,
+          Math.min(
+            2_000,
+            Math.sqrt(
+              this.effectiveAccuracyMeters(points[i]) *
+              this.effectiveAccuracyMeters(points[j])
+            )
+          )
+        );
+
+        if (distance <= overlapRadius) {
           group.push(points[j]);
           assigned.add(j);
         }
@@ -266,39 +363,58 @@ export class InputFusionEngine {
    * Weighted average fusion - combine positions based on source weights
    */
   private weightedAverageFusion(points: GPSPoint[]): GPSPoint {
+    const correlationCounts = new Map<string, number>();
+    for (const point of points) {
+      const key = point.correlationGroup || `${point.source}:${point.provenance?.provider || 'unknown'}`;
+      correlationCounts.set(key, (correlationCounts.get(key) || 0) + 1);
+    }
+
     let totalWeight = 0;
     let weightedLat = 0;
     let weightedLng = 0;
     let weightedAlt = 0;
-    let altCount = 0;
+    let altitudeWeight = 0;
+    let timestampWeight = 0;
+    let weightedTimestamp = 0;
+    let bestPoint = points[0];
+    let bestWeight = -Infinity;
 
     for (const point of points) {
-      const config = this.sourceConfigs.get(point.source);
-      const weight = (config?.confidenceWeight || 0.5) * point.confidence;
-      
+      const key = point.correlationGroup || `${point.source}:${point.provenance?.provider || 'unknown'}`;
+      const weight = this.measurementWeight(point, correlationCounts.get(key) || 1);
+      if (weight <= 0 || !Number.isFinite(weight)) continue;
+
       weightedLat += point.latitude * weight;
       weightedLng += point.longitude * weight;
       totalWeight += weight;
+      weightedTimestamp += point.timestamp.getTime() * weight;
+      timestampWeight += weight;
 
-      if (point.altitude !== undefined) {
+      if (point.altitude !== undefined && Number.isFinite(point.altitude)) {
         weightedAlt += point.altitude * weight;
-        altCount++;
+        altitudeWeight += weight;
+      }
+      if (weight > bestWeight) {
+        bestWeight = weight;
+        bestPoint = point;
       }
     }
 
-    // Calculate average timestamp
-    const avgTimestamp = new Date(
-      points.reduce((sum, p) => sum + p.timestamp.getTime(), 0) / points.length
-    );
+    if (totalWeight <= 0) return { ...bestPoint };
 
     return {
       latitude: weightedLat / totalWeight,
       longitude: weightedLng / totalWeight,
-      altitude: altCount > 0 ? weightedAlt / totalWeight : undefined,
+      altitude: altitudeWeight > 0 ? weightedAlt / altitudeWeight : undefined,
       accuracy: this.calculateFusedAccuracy(points),
-      timestamp: avgTimestamp,
-      source: 'device_gps', // Primary source attribution
-      confidence: totalWeight / points.length,
+      timestamp: new Date(weightedTimestamp / Math.max(timestampWeight, Number.EPSILON)),
+      source: bestPoint.source,
+      confidence: this.calculateConsensusConfidence(points),
+      observationKind: 'observed',
+      metadata: {
+        fusion: 'correlation_aware_inverse_variance',
+        contributingCount: points.length,
+      },
     };
   }
 
@@ -367,20 +483,22 @@ export class InputFusionEngine {
    * Calculate fused accuracy from multiple readings
    */
   private calculateFusedAccuracy(points: GPSPoint[]): number {
-    const accuracies = points
-      .filter(p => p.accuracy !== undefined)
-      .map(p => p.accuracy!);
-    
-    if (accuracies.length === 0) return 15; // Default 15m
+    // Combine independent correlation groups in information space. Multiple
+    // observations from the same provider/device group do not receive a false
+    // sqrt(N) accuracy bonus.
+    const bestAccuracyByGroup = new Map<string, number>();
+    for (const point of points) {
+      const key = point.correlationGroup || `${point.source}:${point.provenance?.provider || 'unknown'}`;
+      const accuracy = this.effectiveAccuracyMeters(point);
+      const existing = bestAccuracyByGroup.get(key);
+      if (existing === undefined || accuracy < existing) bestAccuracyByGroup.set(key, accuracy);
+    }
 
-    // Fused accuracy improves with more sources (RSS reduction)
-    const rss = Math.sqrt(
-      accuracies.reduce((sum, a) => sum + a * a, 0) / accuracies.length
-    );
-    
-    // Improvement factor based on number of sources
-    const improvementFactor = Math.sqrt(accuracies.length);
-    return rss / improvementFactor;
+    let information = 0;
+    for (const accuracy of bestAccuracyByGroup.values()) {
+      information += 1 / Math.pow(Math.max(1.5, accuracy), 2);
+    }
+    return information > 0 ? Math.sqrt(1 / information) : 5_000;
   }
 
   /**
