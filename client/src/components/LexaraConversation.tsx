@@ -212,6 +212,11 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const voiceMode = useVoiceMode({
     continuous: true,
     interimResults: true,
+    onVoiceStart: () => {
+      if (phaseRef.current === 'speaking') {
+        autoInterruptRef.current();
+      }
+    },
     onTranscript: (text, isFinal) => {
       const observed = text.trim();
       if (!observed) return;
