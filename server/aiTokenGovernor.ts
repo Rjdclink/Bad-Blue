@@ -1319,14 +1319,14 @@ export async function recordUsage(
   success: boolean,
   verbosity: 'concise' | 'standard' | 'detailed',
   priority: TaskPriority,
-  errorMessage?: string
+  errorMessage?: string,
+  context: UsageContext = UsageContext.USER
 ): Promise<void> {
-  // Default to user context for backwards compatibility
   await aiTokenGovernor.recordUsage(
     taskName,
     provider,
     tokensUsed,
-    UsageContext.USER,
+    context,
     latencyMs,
     success,
     verbosity,
