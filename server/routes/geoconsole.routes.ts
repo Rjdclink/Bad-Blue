@@ -229,11 +229,16 @@ router.get('/status', async (req: Request, res: Response) => {
         orchestration: state,
         capabilities: {
           multimodalFusion: true,
+          uncertaintyAwareFusion: true,
           monteCarloInterpolation: true,
           futurecastPrediction: true,
-          weatherRadarTimeline: true,
+          mapRenderer: 'maplibre',
+          terrain3d: true,
           satelliteImagery: true,
-          publicCameraIntegration: true,
+          earthObservationTimeline: true,
+          weatherRadarOverlay: true,
+          streetImagery: true,
+          publicCameraIntegration: false,
         },
       },
     });
