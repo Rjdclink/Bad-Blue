@@ -7,7 +7,6 @@ import { GoogleGenAI } from "@google/genai";
 import { EventEmitter } from "events";
 import type { OfficerProfile, InsertOfficerProfile } from "@shared/schema";
 import { rateLimitTracker } from "./rateLimitTracker";
-import { isGroqAvailable, generateGroqStructuredResponse } from "./groq";
 import { getEnv } from './config';
 
 let geminiClient: GoogleGenAI | null = null;
@@ -66,6 +65,42 @@ async function generateOfficerSearchContent(
     console.error(`[Officer Search] Error in ${searchType}:`, error);
     throw error;
   }
+}
+
+async function runGroundedOfficerSearch(
+  searchType: string,
+  prompt: string,
+): Promise<{ text: string; sources: string[] }> {
+  if (process.env.GEMINI_API_KEY?.trim()) {
+    try {
+      const client = getGeminiClient();
+      const response = await client.models.generateContent({
+        model: process.env.GEMINI_MODEL?.trim() || 'gemini-3.8-flash',
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        config: {
+          temperature: 0,
+          tools: [{ googleSearch: {} }],
+        },
+      });
+
+      const sources: string[] = [];
+      const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+      for (const chunk of chunks) {
+        const uri = (chunk as any).web?.uri;
+        if (uri) sources.push(uri);
+      }
+      return { text: response.text || '', sources: Array.from(new Set(sources)) };
+    } catch (error) {
+      console.warn(\`[Officer Search] Google-grounded \${searchType} failed; falling back to Harmony:\`, error);
+    }
+  }
+
+  const text = await generateOfficerSearchContent(
+    \`\${searchType}-harmony-fallback\`,
+    prompt,
+    'Analyze only supported public-record evidence. Do not invent records, identifiers, cases, URLs, or source provenance.',
+  );
+  return { text, sources: [] };
 }
 
 function getCacheKey(officerName: string, department?: string, location?: string): string {
