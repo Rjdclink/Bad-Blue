@@ -2,8 +2,12 @@ import crypto from "crypto";
 import type { Express, Request, Response } from "express";
 import { getSquareClient, getSquareLocationId } from "../squareClient";
 import { getBaseUrl, getConfig } from "../config";
-import { isIdentityAuthenticated, issueLocalSessionCookie } from "../auth";
-import { updateLocalUserSubscriptionHttp, type StatelessLocalUser } from "../statelessLocalAuth";
+import { hasPaidServiceAccess, isIdentityAuthenticated, issueLocalSessionCookie } from "../auth";
+import {
+  getLocalUserByIdHttp,
+  updateLocalUserSubscriptionHttp,
+  type StatelessLocalUser,
+} from "../statelessLocalAuth";
 
 const SUBSCRIPTION_NAME = "LegalWhat Subscription";
 const SUBSCRIPTION_PRICE_CENTS = 2599;
@@ -11,8 +15,14 @@ const PAYMENT_NOTE_PREFIX = "legalwhat-subscription:";
 
 function planVariationId(): string {
   const value = String(getConfig().SQUARE_SUBSCRIPTION_PLAN_VARIATION_ID || "").trim();
-  if (!value) throw new Error("Square subscription plan variation is not configured");
+  if (!value || /placeholder/i.test(value)) {
+    throw new Error("Square subscription plan variation is not configured");
+  }
   return value;
+}
+
+function isSuspended(user: Pick<StatelessLocalUser, "status"> | null | undefined): boolean {
+  return String(user?.status || "").trim().toLowerCase() === "suspended";
 }
 
 function userId(req: Request): string {
@@ -69,6 +79,12 @@ function activeMatchingSubscription(items: any[], variationId: string): any | nu
 }
 
 async function bindAndReconcile(id: string, customerId: string): Promise<{ active: boolean; user: StatelessLocalUser }> {
+  const currentUser = await getLocalUserByIdHttp(id);
+  if (!currentUser) throw new Error("LegalWhat user was not found");
+  if (isSuspended(currentUser)) {
+    return { active: false, user: currentUser };
+  }
+
   const pendingUser = await updateLocalUserSubscriptionHttp({
     userId: id,
     squareCustomerId: customerId,
@@ -176,13 +192,10 @@ export async function handleLegalWhatSubscriptionWebhook(event: any): Promise<bo
     const items = await subscriptionsForCustomer(square, customerId, getSquareLocationId());
     const activeSubscription = activeMatchingSubscription(items, variationId);
     if (activeSubscription) {
-      await updateLocalUserSubscriptionHttp({
-        squareCustomerId: customerId,
-        squareSubscriptionId: String(activeSubscription.id || ""),
-        squarePlanVariationId: variationId,
-        status: "active",
-        hasPaidForAccess: true,
-      });
+      // Never grant access from an identity-free subscription webhook. Initial
+      // activation is bound to the application user by the verified payment note
+      // or checkout confirmation. This also prevents a stale ACTIVE delivery from
+      // overriding an administrative suspension.
       return true;
     }
 
@@ -209,8 +222,15 @@ export function setupSubscriptionRoutes(app: Express): void {
       const email = userEmail(req);
       if (!id || !email) return res.status(400).json({ message: "A signed-in user email is required" });
 
-      const current = req.user as any;
-      if (current?.status === "active" && current?.hasPaidForAccess === true) {
+      const current = await getLocalUserByIdHttp(id);
+      if (!current) return res.status(401).json({ message: "User account was not found" });
+      if (isSuspended(current)) {
+        return res.status(403).json({
+          message: "This account is suspended and cannot start subscription checkout",
+          code: "ACCOUNT_SUSPENDED",
+        });
+      }
+      if (hasPaidServiceAccess(current)) {
         return res.json({ alreadyActive: true, redirectUrl: "/welcome" });
       }
 
@@ -249,6 +269,16 @@ export function setupSubscriptionRoutes(app: Express): void {
       if (!id) return res.status(401).json({ message: "Authentication required" });
       if (!orderId || !/^[A-Za-z0-9_-]{6,200}$/.test(orderId)) {
         return res.status(400).json({ message: "A valid Square order is required" });
+      }
+
+      const current = await getLocalUserByIdHttp(id);
+      if (!current) return res.status(401).json({ message: "User account was not found" });
+      if (isSuspended(current)) {
+        return res.status(403).json({
+          active: false,
+          message: "This account is suspended",
+          code: "ACCOUNT_SUSPENDED",
+        });
       }
 
       const result = await verifyCheckout(id, orderId);
