@@ -138,7 +138,7 @@ export default function LegalWhatHome() {
             <span className="text-blue-300">AI Subsystem Active - Legal Mode</span>
           </div>
           <h2 className="text-4xl font-bold text-white mb-4">
-            Welcome to LegalWhat Operations
+            Welcome to Legal What? Operations
           </h2>
           <p className="text-xl text-gray-300 max-w-2xl mx-auto">
             Your AI-powered command center for civil rights advocacy and law enforcement accountability.
@@ -249,7 +249,7 @@ export default function LegalWhatHome() {
       {/* Footer */}
       <footer className="border-t border-white/10 py-6 mt-12">
         <div className="container mx-auto px-4 text-center text-gray-400 text-sm">
-          <p>LegalWhat AI Legal Operations Center • Access Zone A • LEGALWHAT_ROOT</p>
+          <p>Legal What? AI Legal Operations Center • Access Zone A • LEGALWHAT_ROOT</p>
         </div>
       </footer>
     </div>
