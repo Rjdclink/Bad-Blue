@@ -133,17 +133,40 @@ const movePoint = (lat: number, lng: number, bearing: number, distanceMeters: nu
   return { latitude: lat2 * 180 / Math.PI, longitude: lng2 * 180 / Math.PI };
 };
 
-const generateLocalFuturecastFallback = (recentFrames: GeoFrame[], hoursAhead = FUTURECAST_HOURS): GeoFrame[] => {
-  if (recentFrames.length < 3) return [];
+const continuousTail = (frames: GeoFrame[], maxFrames = 20): GeoFrame[] => {
+  let start = 0;
+  for (let i = frames.length - 1; i >= 0; i--) {
+    if (Number(frames[i].metadata?.gapBeforeSeconds || 0) > 0) {
+      start = i;
+      break;
+    }
+  }
+  return frames.slice(start).slice(-maxFrames);
+};
 
-  const recent = [...recentFrames]
-    .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
-    .slice(-10);
+const generateLocalFuturecastFallback = (
+  sourceFrames: GeoFrame[],
+  hoursAhead = FUTURECAST_HOURS
+): GeoFrame[] => {
+  const recent = continuousTail(sourceFrames, 12)
+    .filter(frame => frame.observationKind !== 'predicted' && frame.source !== 'predicted');
+  if (recent.length < 3) return [];
 
   let totalWeight = 0;
   let weightedSpeed = 0;
   let headingX = 0;
   let headingY = 0;
+  const maxPlausibleSpeed = 90;
+
+  const kindWeight = (frame: GeoFrame): number => {
+    switch (frame.observationKind) {
+      case 'observed': return 1;
+      case 'inferred': return 0.65;
+      case 'interpolated': return 0.45;
+      case 'historical': return 0.35;
+      default: return frame.source === 'interpolated' ? 0.45 : 0.8;
+    }
+  };
 
   for (let i = 1; i < recent.length; i++) {
     const older = recent[i - 1];
@@ -158,28 +181,39 @@ const generateLocalFuturecastFallback = (recentFrames: GeoFrame[], hoursAhead = 
       newer.position.longitude
     );
     const speed = distance / elapsed;
+    if (!Number.isFinite(speed) || speed > maxPlausibleSpeed) continue;
+
     const heading = calculateBearing(
       older.position.latitude,
       older.position.longitude,
       newer.position.latitude,
       newer.position.longitude
     );
-    const weight = i;
+    const evidenceConfidence = Math.sqrt(
+      Math.max(0.01, Math.min(1, older.confidence ?? 0.5)) *
+      Math.max(0.01, Math.min(1, newer.confidence ?? 0.5))
+    );
+    const weight =
+      evidenceConfidence *
+      Math.min(kindWeight(older), kindWeight(newer)) *
+      (0.35 + 0.65 * (i / Math.max(1, recent.length - 1)));
+
     totalWeight += weight;
     weightedSpeed += speed * weight;
     headingX += Math.cos(heading * Math.PI / 180) * weight;
     headingY += Math.sin(heading * Math.PI / 180) * weight;
   }
 
-  if (totalWeight === 0) return [];
+  if (totalWeight <= 0) return [];
 
-  const avgSpeed = weightedSpeed / totalWeight;
+  const avgSpeed = Math.max(0, Math.min(maxPlausibleSpeed, weightedSpeed / totalWeight));
   const avgHeading = (Math.atan2(headingY, headingX) * 180 / Math.PI + 360) % 360;
   const lastFrame = recent[recent.length - 1];
   const baseTime = lastFrame.timestamp.getTime();
-  const intervalMinutes = 15;
-  const numPredictions = Math.max(1, Math.ceil((hoursAhead * 60) / intervalMinutes));
+  const intervalMinutes = 5;
+  const numPredictions = Math.max(1, Math.min(12, Math.ceil((Math.min(hoursAhead, 1) * 60) / intervalMinutes)));
   const predictions: GeoFrame[] = [];
+  const baseConfidence = Math.max(0.1, Math.min(0.95, lastFrame.confidence ?? 0.5));
   let lat = lastFrame.position.latitude;
   let lng = lastFrame.position.longitude;
 
@@ -192,14 +226,21 @@ const generateLocalFuturecastFallback = (recentFrames: GeoFrame[], hoursAhead = 
     predictions.push({
       id: generateId(),
       timestamp: new Date(baseTime + i * intervalMinutes * 60 * 1000),
+      receivedAt: new Date(),
       position: {
         latitude: lat,
         longitude: lng,
-        accuracy: Math.max(50, (lastFrame.position.accuracy ?? 35) + i * 25),
+        accuracy: Math.max(25, (lastFrame.position.accuracy ?? 35) + i * 25),
       },
       velocity: { speed: avgSpeed, heading: avgHeading },
       source: 'predicted',
-      confidence: Math.max(0.08, 0.88 * Math.exp(-2.2 * ratio)),
+      confidence: Math.max(0.05, baseConfidence * Math.exp(-2.2 * ratio)),
+      observationKind: 'predicted',
+      correlationGroup: 'prediction:client_deterministic_fallback',
+      provenance: {
+        provider: 'spectra_client_fallback',
+        transformedBy: ['deterministic_recency_weighted_motion'],
+      },
       metadata: {
         predicted: true,
         authority: 'client_fallback',
@@ -277,7 +318,19 @@ export function useGeoRuntime(
         metadata: point.metadata as Record<string, unknown>,
       };
 
-      if (i > 0) {
+      const suppliedVelocity = point.metadata?.velocity as
+        | { speed?: unknown; heading?: unknown }
+        | undefined;
+      if (
+        suppliedVelocity &&
+        Number.isFinite(Number(suppliedVelocity.speed)) &&
+        Number.isFinite(Number(suppliedVelocity.heading))
+      ) {
+        frame.velocity = {
+          speed: Number(suppliedVelocity.speed),
+          heading: Number(suppliedVelocity.heading),
+        };
+      } else if (i > 0 && Number(point.metadata?.gapBeforeSeconds || 0) <= 0) {
         const prev = sorted[i - 1];
         const dist = haversineDistance(prev.latitude, prev.longitude, point.latitude, point.longitude);
         const timeDiff = (new Date(point.timestamp).getTime() - new Date(prev.timestamp).getTime()) / 1000;
@@ -344,7 +397,7 @@ export function useGeoRuntime(
     }
 
     const requestId = ++futurecastRequestRef.current;
-    const recent = sourceFrames.slice(-20);
+    const recent = continuousTail(sourceFrames, 20);
 
     try {
       const response = await fetch('/api/geoconsole/futurecast', {
@@ -725,10 +778,12 @@ export function useGeoRuntime(
     for (let i = 1; i < trail.length; i++) {
       const prev = trail[i - 1];
       const curr = trail[i];
-      totalDistance += haversineDistance(
-        prev.position.latitude, prev.position.longitude,
-        curr.position.latitude, curr.position.longitude
-      );
+      if (Number(curr.metadata?.gapBeforeSeconds || 0) <= 0) {
+        totalDistance += haversineDistance(
+          prev.position.latitude, prev.position.longitude,
+          curr.position.latitude, curr.position.longitude
+        );
+      }
       if (curr.velocity?.speed) {
         speeds.push(curr.velocity.speed);
         maxSpeed = Math.max(maxSpeed, curr.velocity.speed);
