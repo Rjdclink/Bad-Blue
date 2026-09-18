@@ -50,6 +50,10 @@ test('SPECTRA supports natural text input',
   spectra.includes('Tell SPECTRA what you want to locate'));
 test('Voice is optional rather than mandatory',
   spectra.includes('toggleVoice') && !spectra.includes('getUserMedia({'));
+test('Voice turn-taking prevents SPECTRA from transcribing itself',
+  spectra.includes('voiceSynthesis.isLoading || voiceSynthesis.isSpeaking') &&
+  spectra.includes('!voiceMode.isSuspended') &&
+  spectra.includes('voiceMode.suspendListening()'));
 test('Media intelligence is folded into the conversation',
   spectra.includes('/api/gps/extract-upload') &&
   spectra.includes('handleMediaEvidence') &&
@@ -64,7 +68,8 @@ test('Conversation remains primary before acquisition',
 test('Regional candidates remain separate from timed observations',
   spectra.includes('candidateLocations={candidateLocations}') &&
   routes.includes('candidateLocations') &&
-  routes.includes("basis: 'regional_context'"));
+  routes.includes("basis: 'regional_context'") &&
+  routes.includes('accuracyMeters: region.accuracyMeters'));
 test('One-hour previous/future timeline remains available',
   dashboard.includes('min={-60}') && dashboard.includes('max={60}'));
 
@@ -108,11 +113,19 @@ test('SPECTRA broad discovery runs independently of deep OSINT',
   routes.includes("category: 'general'"));
 test('Generic target classes defer identity details to second response',
   routes.includes('GENERIC_TARGET_RE') &&
-  routes.includes('const searchQuery = GENERIC_TARGET_RE.test(target)'));
-test('SPECTRA only maps explicitly timestamped coordinates',
+  routes.includes('GENERIC_TARGET_RE.test(normalizedTarget) || targetIsPhone') &&
+  routes.includes('const searchQuery'));
+test('SPECTRA only maps qualified explicitly timestamped coordinates',
   routes.includes('explicitTimestamp') &&
+  routes.includes('hasLocationContext') &&
   routes.includes('Number.isFinite(latitude)') &&
   routes.includes('timestamp'));
+test('Location confidence is independent-evidence aware',
+  routes.includes('locationEvidenceConfidence') &&
+  routes.includes('correlationGroup'));
+test('Regional geocoder uncertainty is preserved',
+  read('server/services/geoconsole/city-state-geocoder.ts').includes('accuracyMeters') &&
+  read('client/src/components/geoconsole/MapLibreIntelligenceMap.tsx').includes('spectra-candidate-area'));
 test('SPECTRA API is mounted',
   serverRoutes.includes("app.use('/api/spectra', spectraRoutes.default)"));
 
