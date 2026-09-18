@@ -87,7 +87,7 @@ const NASA_GIBS_TEMPLATE =
 
 const WEATHER_RADAR_TEMPLATE =
   (import.meta.env?.VITE_WEATHER_RADAR_TILES_URL as string | undefined) ||
-  'https://mesonet.agron.iastate.edu/c/tile.py/1.0.0/{layer}/{z}/{x}/{y}.png';
+  'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/{layer}/{z}/{x}/{y}.png';
 
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 
