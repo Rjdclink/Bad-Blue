@@ -10,7 +10,7 @@
  * - Stable fallback → gemini-2.0-flash
  * 
  * CLAUDE SELECTION:
- * - Legal/creative → claude-3-5-sonnet-latest (advanced reasoning)
+ * - Legal/creative → claude-sonnet-4-6 (advanced reasoning)
  * - Fast/verification → claude-3-5-haiku-latest (speed optimized)
  * 
  * GROQ SELECTION:
@@ -217,7 +217,7 @@ const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
   },
   
   // Claude models
-  'claude-sonnet-5': {
+  'claude-sonnet-4-6': {
     multimodal: 85,
     longContext: 90,
     massiveContext: 70,
@@ -891,22 +891,22 @@ export class AIModelSelector {
   static selectClaudeModel(attrs: TaskAttributes): string {
     // Use Sonnet for legal analysis
     if (attrs.needsLegalAnalysis) {
-      return 'claude-sonnet-5';
+      return 'claude-sonnet-4-6';
     }
     
     // Use Sonnet for creative writing
     if (attrs.needsCreativeWriting) {
-      return 'claude-sonnet-5';
+      return 'claude-sonnet-4-6';
     }
     
     // Use Sonnet for complex reasoning
     if (attrs.needsReasoning && attrs.complexity === TaskComplexity.COMPREHENSIVE) {
-      return 'claude-sonnet-5';
+      return 'claude-sonnet-4-6';
     }
     
     // Use Sonnet for code generation
     if (attrs.needsCodeGeneration && attrs.complexity !== TaskComplexity.LIGHTWEIGHT) {
-      return 'claude-sonnet-5';
+      return 'claude-sonnet-4-6';
     }
     
     // Use Haiku for fast responses
