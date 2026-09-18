@@ -100,7 +100,7 @@ assert.match(subscriptionFlowSource, /handleLegalWhatSubscriptionWebhook/, 'Squa
 assert.match(subscriptionSuccessSource, /\/api\/subscription\/confirm/, 'Square return page must verify the subscription server-side');
 assert.match(subscriptionSuccessSource, /legalwhat_pending_square_order_id/, 'Square return must recover a stored order ID if the redirect query omits it');
 assert.match(appSource, /isAuthenticated\s*&&\s*hasPaidAccess/, 'private LegalWhat routes must require verified paid access');
-assert.doesNotMatch(appSource, /<Route path="\/legal-consultation" component=\{LegalConsultationPage\} \/>[\s\S]{0,220}\{isAuthenticated && hasPaidAccess/, 'full LEXARA consultation must not remain on the public route surface');
+assert.match(appSource, /<Route path="\/legal-consultation" component=\{LegalConsultationPage\} \/>/, 'public LegalWhat consultation discovery route must remain available for SEO and conversion');
 assert.match(appSource, /hasPaidForAccess === true[\s\S]{0,160}suspended/, 'client paid-access gate must honor explicit overrides while blocking suspended/revoked states');
 assert.match(loginPageSource, /\/api\/subscription\/checkout/, 'signup/login UI must hand pending users to hosted Square checkout');
 assert.match(loginPageSource, /sessionStorage\.setItem\("legalwhat_pending_square_order_id"/, 'checkout must preserve Square order identity before redirect');
