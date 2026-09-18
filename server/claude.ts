@@ -4,6 +4,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { CURRENT_AI_MODELS } from './aiHarmonyModelRegistry';
 
 let claudeClient: Anthropic | null = null;
 
@@ -48,7 +49,7 @@ export async function callClaude(
       ? '\n\nIMPORTANT: Respond ONLY with valid JSON. No markdown, no explanations, just raw JSON.'
       : '';
     
-    const model = options.model || process.env.CLAUDE_MODEL?.trim() || 'claude-haiku-4-5-20251001';
+    const model = options.model || CURRENT_AI_MODELS.claudeBalanced;
     const samplingControlsDeprecated = /claude-(?:opus|sonnet|haiku)-5|claude-opus-4-(?:7|8|9)/i.test(model);
     const response = await client.messages.create({
       model,
@@ -124,7 +125,7 @@ export async function generateClaudeLegalDocument(
     systemPrompt,
     maxTokens,
     temperature: 0.7,
-    model: process.env.LEXARA_CLAUDE_MODEL?.trim() || 'claude-sonnet-4-6', // Use Sonnet for complex legal work
+    model: process.env.LEXARA_CLAUDE_MODEL?.trim() || CURRENT_AI_MODELS.claudeBalanced, // Use Sonnet for complex legal work
   });
   
   return content;
@@ -141,7 +142,7 @@ export async function generateClaudeLegalConsultation(
     systemPrompt,
     maxTokens: 3000,
     temperature: 0.7,
-    model: process.env.LEXARA_CLAUDE_MODEL?.trim() || 'claude-sonnet-4-6',
+    model: process.env.LEXARA_CLAUDE_MODEL?.trim() || CURRENT_AI_MODELS.claudeBalanced,
   });
   
   return content;
