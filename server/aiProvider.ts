@@ -239,7 +239,7 @@ async function callGroq(
     }
 
     const response = await groq.chat.completions.create({
-      model: options.model || 'llama-3.3-70b-versatile',
+      model: options.model || CURRENT_AI_MODELS.groqDeep,
       messages,
       temperature: options.temperature ?? 0.7,
       max_tokens: maxTokens,
@@ -399,12 +399,12 @@ function getProviderModel(provider: AIProvider, requestedModel?: string, complex
       comprehensive: process.env.LEXARA_CLAUDE_MODEL?.trim() || CURRENT_AI_MODELS.claudeBalanced,
       pro: CURRENT_AI_MODELS.claudeDeep
     },
-    // OpenRouter free models (December 2025)
+    // OpenRouter model families
     [AIProvider.DEEPSEEK]: {
       prefixes: ['deepseek'],
       default: CURRENT_AI_MODELS.deepseek
     },
-    // Platform providers (December 2025)
+    // Platform providers
     [AIProvider.OPENROUTER]: {
       prefixes: ['openrouter', 'or-'],
       default: process.env.OPENROUTER_DEFAULT_MODEL?.trim() || CURRENT_AI_MODELS.openRouterAuto
@@ -417,7 +417,7 @@ function getProviderModel(provider: AIProvider, requestedModel?: string, complex
       prefixes: ['lmai', 'lm-', 'local'],
       default: 'local-model' // LMAI/LM Studio local model
     },
-    // Legacy OpenRouter models (kept for backward compatibility)
+    // Legacy provider labels kept for backward compatibility
     [AIProvider.GROK]: {
       prefixes: ['grok', 'x-ai', 'qwen'],
       default: CURRENT_AI_MODELS.grok
