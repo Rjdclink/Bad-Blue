@@ -483,6 +483,23 @@ async function scrapeWhitePages(query: SearchQuery, page: any): Promise<PersonRe
   }
 }
 
+function normalizePhone(value?: string): string {
+  if (!value) return '';
+  const digits = value.replace(/\D/g, '');
+  return digits.length >= 10 ? digits.slice(-10) : digits;
+}
+
+function selectIdentityMatchedRecords(records: PersonRecord[], query: SearchQuery): PersonRecord[] {
+  const wantedPhone = normalizePhone(query.phone);
+  if (!wantedPhone) return records;
+
+  const phoneMatches = records.filter(record =>
+    record.phones.some(phone => normalizePhone(phone.number) === wantedPhone)
+  );
+
+  return phoneMatches.length > 0 ? phoneMatches : records;
+}
+
 /**
  * Execute search across all sources
  * Initializes browser pool on first call (invocation-only)
@@ -543,8 +560,9 @@ async function executeSearch(query: SearchQuery): Promise<PersonRecord> {
       return createEmptyRecord(query, 'NoResults');
     }
     
-    // Fuse results from multiple sources
-    return DataFusion.fuseRecords(allRecords);
+    // Keep exact phone matches isolated when a phone anchor was supplied.
+    const identityMatchedRecords = selectIdentityMatchedRecords(allRecords, query);
+    return DataFusion.fuseRecords(identityMatchedRecords);
   } catch (error: any) {
     if (browser) {
       try {
@@ -601,7 +619,7 @@ app.post('/search', async (req: Request, res: Response) => {
   const startTime = Date.now();
   
   try {
-    const { firstName, lastName, city, state, age } = req.body;
+    const { firstName, lastName, city, state, phone, age } = req.body;
     
     // Validate required fields
     if (!firstName || !lastName) {
@@ -616,11 +634,12 @@ app.post('/search', async (req: Request, res: Response) => {
       lastName: String(lastName).trim(),
       city: city ? String(city).trim() : undefined,
       state: state ? String(state).trim() : undefined,
+      phone: phone ? normalizePhone(String(phone)) : undefined,
       age: age ? parseInt(String(age), 10) : undefined,
     };
     
     // Check cache first
-    const cacheKey = [query.firstName, query.lastName, query.city, query.state]
+    const cacheKey = [query.firstName, query.lastName, query.city, query.state, normalizePhone(query.phone)]
       .filter(Boolean)
       .join('-')
       .toLowerCase();
