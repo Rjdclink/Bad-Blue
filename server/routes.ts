@@ -3489,8 +3489,16 @@ Contact: ${foiaRequest.userEmail || userEmail}
   app.post('/api/osint/full-search', async (req, res) => {
     const startTime = Date.now();
     const correlationId = crypto.randomBytes(16).toString('hex');
-    const { name, department, badge, location, domain, profileUrl } = (req.body || {}) as any;
-    const requestedDepth = Number((req.body || {}).searchDepth);
+    const body = (req.body || {}) as any;
+    const firstName = String(body.firstName || '').trim();
+    const lastName = String(body.lastName || '').trim();
+    const name = String(body.name || [firstName, lastName].filter(Boolean).join(' ')).trim();
+    const city = String(body.city || '').trim();
+    const state = String(body.state || '').trim();
+    const location = String(body.location || [city, state].filter(Boolean).join(', ')).trim();
+    const phone = String(body.phone || '').trim();
+    const { department, badge, domain, profileUrl } = body;
+    const requestedDepth = Number(body.searchDepth);
     const searchDepth: 1 | 2 | 3 | 4 = requestedDepth >= 1 && requestedDepth <= 4
       ? requestedDepth as 1 | 2 | 3 | 4
       : 4;
@@ -3544,6 +3552,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
             department,
             badge,
             location,
+            phone,
             domain,
             searchDepth,
           });
