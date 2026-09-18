@@ -481,6 +481,7 @@ export default function SpectraPage() {
           <GeoconsoleRadarDashboard
             initialData={observations}
             candidateLocations={candidateLocations}
+            subject={target || 'SPECTRA target'}
             spectraShell
           />
 
