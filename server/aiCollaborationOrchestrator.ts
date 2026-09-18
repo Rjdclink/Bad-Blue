@@ -1099,7 +1099,7 @@ export class AICollaborationOrchestrator {
                   prompt,
                   task.systemPrompt,
                   outputTokenLimit,
-                )
+                ),
             task.requestTimeoutMs || 6_000,
             task.provider,
           );
