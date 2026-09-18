@@ -147,8 +147,9 @@ router.post('/users/:userId/subscription-override', async (req: Request, res: Re
       // Grant override: Update hasPaidForAccess and create override subscription record
       await db
         .update(schema.users)
-        .set({ 
+        .set({
           hasPaidForAccess: true,
+          status: 'active',
           updatedAt: new Date(),
         })
         .where(eq(schema.users.id, userId));
@@ -197,25 +198,38 @@ router.post('/users/:userId/subscription-override', async (req: Request, res: Re
           )
         );
 
-      // Check if user has any other active paid subscriptions
-      const paidSubs = await db
-        .select()
-        .from(schema.userSubscriptions)
-        .where(
-          and(
-            eq(schema.userSubscriptions.userId, userId),
-            eq(schema.userSubscriptions.isActive, true),
-            sql`${schema.userSubscriptions.paymentId} IS NOT NULL`
+      // Preserve access when either the legacy paid-subscription table or the
+      // canonical Square subscription table still has an active paid record.
+      const [legacyPaidSubs, squarePaidSubs] = await Promise.all([
+        db
+          .select({ id: schema.userSubscriptions.id })
+          .from(schema.userSubscriptions)
+          .where(
+            and(
+              eq(schema.userSubscriptions.userId, userId),
+              eq(schema.userSubscriptions.isActive, true),
+              sql`${schema.userSubscriptions.paymentId} IS NOT NULL`
+            )
           )
-        )
-        .limit(1);
+          .limit(1),
+        db
+          .select({ id: schema.subscriptions.id })
+          .from(schema.subscriptions)
+          .where(
+            and(
+              eq(schema.subscriptions.userId, userId),
+              eq(schema.subscriptions.status, 'active')
+            )
+          )
+          .limit(1),
+      ]);
 
-      // If no paid subscriptions, revoke access
-      if (paidSubs.length === 0) {
+      if (legacyPaidSubs.length === 0 && squarePaidSubs.length === 0) {
         await db
           .update(schema.users)
-          .set({ 
+          .set({
             hasPaidForAccess: false,
+            status: 'pending_payment',
             updatedAt: new Date(),
           })
           .where(eq(schema.users.id, userId));
