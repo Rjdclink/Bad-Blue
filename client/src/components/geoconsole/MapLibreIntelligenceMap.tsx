@@ -82,7 +82,11 @@ const WEATHER_RADAR_TILES =
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 
 const utcDateKey = (date: Date) => date.toISOString().slice(0, 10);
-const nasaGibsTilesFor = (date: Date) => NASA_GIBS_TEMPLATE.replace('{date}', utcDateKey(date));
+const nasaGibsTilesFor = (date: Date) => {
+  // Earth-observation imagery is historical/current, never a forecast image.
+  const bounded = date.getTime() > Date.now() ? new Date() : date;
+  return NASA_GIBS_TEMPLATE.replace('{date}', utcDateKey(bounded));
+};
 
 const pointFeature = (frame: GeoFrame) => ({
   type: 'Feature' as const,
