@@ -1,7 +1,7 @@
 /**
  * LEXARA Live Consent Modal
  *
- * This component is the single authority for whether live voice/video is
+ * This component is the fallback authority for whether live voice/audio is
  * permitted. It acquires browser permissions and stores the user's choice.
  * The mounted consultation owns the actual SpeechRecognition instance.
  */
@@ -120,9 +120,8 @@ const LexaraLiveConsentModal = memo(function LexaraLiveConsentModal({
       return;
     }
 
-    // Voice is the essential live-conversation capability. Camera may be absent
-    // without forcing text mode, but camera-only permission is not treated as
-    // voice consent being operational.
+    // Both microphone capture and unlocked audio playback are required for
+    // a complete live-conversation experience.
     const liveOperational = permissionsGranted.audio && permissionsGranted.speaker;
     setLexaraLiveEnabled(liveOperational ? 'true' : 'false');
     onConsent(liveOperational);
@@ -215,7 +214,7 @@ const LexaraLiveConsentModal = memo(function LexaraLiveConsentModal({
             </div>
           )}
 
-          {disclaimerAccepted && !isRequesting && permissionsGranted.audio && (
+          {disclaimerAccepted && !isRequesting && permissionsGranted.audio && permissionsGranted.speaker && (
             <div className="mb-4 rounded-lg border border-green-500/30 bg-green-500/15 p-3 text-center">
               <p className="flex items-center justify-center gap-2 text-sm text-green-300">
                 <Check className="h-4 w-4" />
