@@ -375,3 +375,7 @@ export function ensureStageOneDexMempoolRepair(): void {
     syntheticEconomicsAllowed: false,
   });
 }
+export function stopStageOneDexMempoolRepair(): void {
+  if (timer) clearInterval(timer);
+  timer = null;
+}
