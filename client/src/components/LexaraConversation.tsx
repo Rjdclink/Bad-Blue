@@ -47,12 +47,12 @@ type ConversationPhase =
   | 'error';
 
 const CONVERSATION_STORAGE_SCHEMA_VERSION = 2;
-const BROWSER_FINAL_FALLBACK_SETTLE_MS = 900;
+const BROWSER_FINAL_FALLBACK_SETTLE_MS = 2_200;
 const SERVER_VOICE_TURN_SETTLE_MS = 500;
-const VOICE_END_GRACE_MS = 650;
-const INCOMPLETE_TURN_GRACE_MS = 2_400;
+const VOICE_END_GRACE_MS = 1_400;
+const INCOMPLETE_TURN_GRACE_MS = 3_200;
 const CHAT_TURN_TIMEOUT_MS = 15_000;
-const ACKNOWLEDGEMENT_SOFT_TIMEOUT_MS = 450;
+const ACKNOWLEDGEMENT_SOFT_TIMEOUT_MS = 1_200;
 const ACKNOWLEDGEMENT_DEDUPE_MS = 8_000;
 const ACKNOWLEDGEMENT_COOLDOWN_MS = 2_500;
 const MAX_STORED_CONVERSATION_MESSAGES = 24;
@@ -290,6 +290,14 @@ function isLikelyIncompleteUtterance(value: string): boolean {
   if (trailingConnectors.has(last)) return true;
 
   if (words.length <= 2 && /^(?:i|we|he|she|they|it)\s+(?:was|were|is|are|had|have|did|do|can|could|would|should|will)$/.test(normalized)) {
+    return true;
+  }
+
+  if (
+    words.length >= 3
+    && /^(?:i|we|he|she|they)\s+/.test(normalized)
+    && /ing$/.test(last)
+  ) {
     return true;
   }
 
@@ -739,7 +747,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         const acknowledgementTooSoon = !presenceControl
           && now - lastAcknowledgementRef.current.at < ACKNOWLEDGEMENT_COOLDOWN_MS;
 
-        if (acknowledgement && !duplicateAck && !acknowledgementTooSoon) {
+        if (presenceControl && acknowledgement && !duplicateAck && !acknowledgementTooSoon) {
           lastAcknowledgementRef.current = { text: normalizedAck, at: now };
           const acknowledgementMessageId = appendMessage('lexara', acknowledgement);
           nonSemanticLexaraMessageIdsRef.current.add(acknowledgementMessageId);
@@ -863,7 +871,10 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             window.setTimeout(() => resolve(null), 250);
           }),
         ]);
-        acknowledgement = String(acknowledgementData?.acknowledgement || '').trim();
+        const acknowledgementKind = String(acknowledgementData?.kind || '');
+        acknowledgement = acknowledgementKind === 'presence'
+          ? String(acknowledgementData?.acknowledgement || '').trim()
+          : '';
         const normalizedAck = normalizeSpeechText(acknowledgement);
         const now = Date.now();
         const duplicateAck = normalizedAck
