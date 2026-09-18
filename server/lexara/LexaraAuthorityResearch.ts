@@ -1,4 +1,4 @@
-import { unifiedSearch, type EnhancedSearchResult } from '../webSearchService';
+import { orchestratedWebSearch } from '../openRouterWebSearch';
 
 export type LexaraAuthoritySourceKind = 'primary' | 'secondary' | 'web';
 
@@ -71,10 +71,9 @@ function cleanUrl(value: unknown): string | null {
   return /^https?:\/\//i.test(url) ? url : null;
 }
 
-function resultSources(results: EnhancedSearchResult[]): LexaraAuthoritySource[] {
+async function discoverAuthoritySources(query: string): Promise<LexaraAuthoritySource[]> {
   const seen = new Set<string>();
   const sources: LexaraAuthoritySource[] = [];
-
   const add = (urlValue: unknown, title: string, excerpt?: string) => {
     const url = cleanUrl(urlValue);
     if (!url || seen.has(url) || sources.length >= MAX_AUTHORITY_SOURCES) return;
@@ -87,13 +86,68 @@ function resultSources(results: EnhancedSearchResult[]): LexaraAuthoritySource[]
     });
   };
 
-  for (const result of results) {
-    add(result.url, result.title, result.snippet || result.aiSummary);
-    const metadataSources = Array.isArray(result.metadata?.sources) ? result.metadata?.sources : [];
-    for (const source of metadataSources) {
-      add(source, result.title, result.snippet || result.aiSummary);
+  const firecrawlKey = process.env.FIRECRAWL_API_KEY?.trim();
+  if (firecrawlKey) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), RESEARCH_TIMEOUT_MS);
+    try {
+      const response = await fetch('https://api.firecrawl.dev/v1/search', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${firecrawlKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          query,
+          limit: MAX_AUTHORITY_SOURCES,
+          scrapeOptions: {
+            formats: ['markdown'],
+            onlyMainContent: true,
+          },
+        }),
+        signal: controller.signal,
+      });
+      if (response.ok) {
+        const payload = await response.json() as {
+          data?: Array<{
+            url?: string;
+            title?: string;
+            description?: string;
+            markdown?: string;
+          }>;
+        };
+        for (const item of payload.data || []) {
+          add(item.url, item.title || 'Legal authority source', item.description || item.markdown);
+        }
+      } else {
+        console.warn('[LEXARA Authority] Firecrawl discovery unavailable', { status: response.status });
+      }
+    } catch (error) {
+      console.warn('[LEXARA Authority] Firecrawl discovery failed route-locally', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      clearTimeout(timer);
     }
-    if (sources.length >= MAX_AUTHORITY_SOURCES) break;
+  }
+
+  if (sources.length > 0) return sources;
+
+  // Route-local non-Google fallback. This performs actual web search and admits
+  // only URLs returned by the search layer; it never sends a plain-text query
+  // into a URL-only crawler.
+  try {
+    const search = await orchestratedWebSearch(query, {
+      useOnlinePlugin: true,
+      timeout: RESEARCH_TIMEOUT_MS,
+    });
+    for (const url of search.sources) {
+      add(url, 'Web-discovered legal authority');
+    }
+  } catch (error) {
+    console.warn('[LEXARA Authority] OpenRouter web discovery fallback unavailable', {
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 
   return sources;
@@ -130,16 +184,9 @@ export async function researchLegalAuthority(
   ].join(' ');
 
   try {
-    // Canonical platform retrieval: PANTHEON crawler first, then the existing
-    // OpenRouter online-search orchestration fallback. Google/Gemini grounding
-    // is intentionally not a dedicated LEXARA dependency.
-    const results = await unifiedSearch(query, {
-      limit: MAX_AUTHORITY_SOURCES,
-      category: 'legal',
-      freshness: 'all',
-      timeout: RESEARCH_TIMEOUT_MS,
-    });
-    const sources = resultSources(results);
+    // Discovery accepts natural-language legal queries; URL-only crawlers are
+    // used only after discovery. Google/Gemini is never a LEXARA dependency.
+    const sources = await discoverAuthoritySources(query);
     if (!sources.length) return null;
 
     const summary = sources
