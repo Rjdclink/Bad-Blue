@@ -596,36 +596,14 @@ export class MonteCarloPathEngine {
     }
 
     const trailId = randomUUID();
-
-    if (points.length === 1) {
-      const point = points[0];
-      return {
-        id: trailId,
-        points: [{
-          position: point,
-          velocity: { speed: 0, heading: 0 },
-          interpolated: point.source === 'interpolated',
-          opacity: 1,
-          color: this.getSpeedColor(0),
-        }],
-        startTime: point.timestamp,
-        endTime: point.timestamp,
-        totalDistance: 0,
-        averageSpeed: 0,
-        maxSpeed: 0,
-        stops: [],
-        segments: [],
-      };
-    }
     const sortedPoints = [...points].sort(
       (a, b) => a.timestamp.getTime() - b.timestamp.getTime()
     );
+    const latestEventTime = sortedPoints[sortedPoints.length - 1].timestamp.getTime();
 
     const trailPoints: TrailPoint[] = [];
     const segments: TrailSegment[] = [];
     const stops: StopPoint[] = [];
-    const latestEventTime = sortedPoints[sortedPoints.length - 1].timestamp.getTime();
-    
     let totalDistance = 0;
     let currentSegmentStart = 0;
     let currentSegmentType: TrailSegment['segmentType'] = 'unknown';
@@ -634,39 +612,58 @@ export class MonteCarloPathEngine {
       const point = sortedPoints[i];
       let speed = 0;
       let heading = 0;
+      const gapBreak = i > 0 && Number(point.metadata?.gapBeforeSeconds || 0) > 0;
 
-      if (i > 0) {
-        const prevPoint = sortedPoints[i - 1];
-        const distance = this.haversineDistance(
-          prevPoint.latitude, prevPoint.longitude,
-          point.latitude, point.longitude
-        );
-        const timeDelta = (point.timestamp.getTime() - prevPoint.timestamp.getTime()) / 1000;
-        
-        speed = timeDelta > 0 ? distance / timeDelta : 0;
-        heading = this.calculateBearing(
-          prevPoint.latitude, prevPoint.longitude,
-          point.latitude, point.longitude
-        );
-        totalDistance += distance;
-
-        // Detect activity type changes
-        const newType = this.classifyActivity(speed);
-        if (newType !== currentSegmentType && i > 0) {
+      if (gapBreak) {
+        if (i - 1 > currentSegmentStart) {
           segments.push(this.createSegment(
             sortedPoints,
             currentSegmentStart,
             i - 1,
             currentSegmentType
           ));
-          currentSegmentStart = i;
+        }
+        currentSegmentStart = i;
+        currentSegmentType = 'unknown';
+      } else if (i > 0) {
+        const prevPoint = sortedPoints[i - 1];
+        const distance = this.haversineDistance(
+          prevPoint.latitude,
+          prevPoint.longitude,
+          point.latitude,
+          point.longitude
+        );
+        const timeDelta = (point.timestamp.getTime() - prevPoint.timestamp.getTime()) / 1000;
+
+        speed = timeDelta > 0 ? distance / timeDelta : 0;
+        heading = this.calculateBearing(
+          prevPoint.latitude,
+          prevPoint.longitude,
+          point.latitude,
+          point.longitude
+        );
+        totalDistance += distance;
+
+        const newType = this.classifyActivity(speed);
+        if (currentSegmentType === 'unknown') {
+          currentSegmentType = newType;
+        } else if (newType !== currentSegmentType) {
+          if (i - 1 > currentSegmentStart) {
+            segments.push(this.createSegment(
+              sortedPoints,
+              currentSegmentStart,
+              i - 1,
+              currentSegmentType
+            ));
+          }
+          currentSegmentStart = Math.max(0, i - 1);
           currentSegmentType = newType;
         }
 
-        // Detect stops
         if (speed < SPEED_THRESHOLDS.stationary && i > 1) {
-          const prevSpeed = this.calculateSpeed(sortedPoints[i - 2], sortedPoints[i - 1]);
-          if (prevSpeed >= SPEED_THRESHOLDS.stationary) {
+          const previousTrailPoint = trailPoints[i - 1];
+          const previousSpeed = previousTrailPoint?.velocity?.speed ?? 0;
+          if (previousSpeed >= SPEED_THRESHOLDS.stationary) {
             stops.push({
               position: point,
               arrivalTime: point.timestamp,
@@ -676,21 +673,21 @@ export class MonteCarloPathEngine {
         }
       }
 
-      // Fade relative to the reconstructed event window, never wall-clock age.
       const age = Math.max(0, latestEventTime - point.timestamp.getTime());
       const opacity = Math.max(0.1, 1 - age / OPERATOR_TRAIL_WINDOW_MS);
 
       trailPoints.push({
         position: point,
-        velocity: { speed, heading },
-        interpolated: point.source === 'interpolated',
+        velocity: gapBreak ? undefined : { speed, heading },
+        interpolated:
+          point.observationKind === 'interpolated' ||
+          point.source === 'interpolated',
         opacity,
-        color: this.getSpeedColor(speed),
+        color: gapBreak ? undefined : this.getSpeedColor(speed),
       });
     }
 
-    // Add final segment
-    if (sortedPoints.length > 1) {
+    if (sortedPoints.length - 1 > currentSegmentStart) {
       segments.push(this.createSegment(
         sortedPoints,
         currentSegmentStart,
@@ -699,13 +696,15 @@ export class MonteCarloPathEngine {
       ));
     }
 
-    // Update stop durations
     for (let i = 0; i < stops.length - 1; i++) {
-      stops[i].duration = (stops[i + 1].arrivalTime.getTime() - stops[i].arrivalTime.getTime()) / 1000;
+      stops[i].departureTime = stops[i + 1].arrivalTime;
+      stops[i].duration =
+        (stops[i + 1].arrivalTime.getTime() - stops[i].arrivalTime.getTime()) / 1000;
     }
 
-    const duration = (sortedPoints[sortedPoints.length - 1].timestamp.getTime() -
-                     sortedPoints[0].timestamp.getTime()) / 1000;
+    const duration =
+      (sortedPoints[sortedPoints.length - 1].timestamp.getTime() -
+       sortedPoints[0].timestamp.getTime()) / 1000;
 
     return {
       id: trailId,
@@ -714,7 +713,7 @@ export class MonteCarloPathEngine {
       endTime: sortedPoints[sortedPoints.length - 1].timestamp,
       totalDistance,
       averageSpeed: duration > 0 ? totalDistance / duration : 0,
-      maxSpeed: Math.max(...trailPoints.map(p => p.velocity?.speed || 0)),
+      maxSpeed: Math.max(0, ...trailPoints.map(point => point.velocity?.speed || 0)),
       stops,
       segments,
     };
