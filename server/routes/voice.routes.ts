@@ -10,6 +10,8 @@
  */
 
 import { type Express, type Request, type Response } from 'express';
+import crypto from 'crypto';
+import { Readable } from 'stream';
 import { asyncHandler } from '../errorHandler';
 import { 
   getVoiceSynthesisService,
@@ -21,7 +23,128 @@ import type { SpeechContext } from '@shared/lexaraVoicePersona';
 
 const log = createLogger('VoiceRoutes');
 
+interface LexaraTTSStreamSession {
+  text: string;
+  createdAt: number;
+}
+
+const lexaraTTSStreamSessions = new Map<string, LexaraTTSStreamSession>();
+const LEXARA_TTS_STREAM_SESSION_TTL_MS = 60_000;
+
+function pruneLexaraTTSSessions(): void {
+  const cutoff = Date.now() - LEXARA_TTS_STREAM_SESSION_TTL_MS;
+  for (const [id, session] of lexaraTTSStreamSessions) {
+    if (session.createdAt < cutoff) lexaraTTSStreamSessions.delete(id);
+  }
+}
+
 export function setupVoiceRoutes(app: Express): void {
+  /**
+   * POST /api/lexara/tts/session
+   * Create a one-use playback URL. The subsequent GET is a normal media URL,
+   * allowing HTMLAudioElement to begin playback while ElevenLabs is still
+   * streaming audio instead of waiting for a complete Blob.
+   */
+  app.post(
+    '/api/lexara/tts/session',
+    asyncHandler(async (req: Request, res: Response) => {
+      const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+      if (!text) return res.status(400).json({ error: 'Text is required for TTS synthesis' });
+      if (text.length > 5000) return res.status(400).json({ error: 'Text too long. Maximum 5000 characters.' });
+      if (!process.env.ELEVENLABS_API_KEY?.trim() || !process.env.ELEVENLABS_VOICE_ID?.trim()) {
+        return res.status(503).json({ error: 'LEXARA voice is not configured' });
+      }
+
+      pruneLexaraTTSSessions();
+      const id = crypto.randomUUID();
+      lexaraTTSStreamSessions.set(id, { text, createdAt: Date.now() });
+      return res.json({
+        success: true,
+        audioUrl: `/api/lexara/tts/session/${id}`,
+        provider: 'elevenlabs',
+        voiceId: process.env.ELEVENLABS_VOICE_ID,
+        model: process.env.ELEVENLABS_TTS_MODEL?.trim() || 'eleven_flash_v2_5',
+      });
+    }),
+  );
+
+  /**
+   * GET /api/lexara/tts/session/:id
+   * Proxy ElevenLabs' real streaming TTS response directly to the browser.
+   */
+  app.get(
+    '/api/lexara/tts/session/:id',
+    asyncHandler(async (req: Request, res: Response) => {
+      pruneLexaraTTSSessions();
+      const id = String(req.params.id || '');
+      const session = lexaraTTSStreamSessions.get(id);
+      lexaraTTSStreamSessions.delete(id);
+      if (!session) return res.status(404).json({ error: 'TTS session expired or unavailable' });
+
+      const apiKey = process.env.ELEVENLABS_API_KEY?.trim();
+      const voiceId = process.env.ELEVENLABS_VOICE_ID?.trim();
+      const modelId = process.env.ELEVENLABS_TTS_MODEL?.trim() || 'eleven_flash_v2_5';
+      if (!apiKey || !voiceId) return res.status(503).json({ error: 'LEXARA voice is not configured' });
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 30_000);
+      req.once('close', () => controller.abort());
+
+      try {
+        const upstream = await fetch(
+          `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream?output_format=mp3_44100_128`,
+          {
+            method: 'POST',
+            headers: {
+              'xi-api-key': apiKey,
+              'Content-Type': 'application/json',
+              Accept: 'audio/mpeg',
+            },
+            body: JSON.stringify({
+              text: session.text,
+              model_id: modelId,
+              voice_settings: {
+                stability: Number(process.env.ELEVENLABS_VOICE_STABILITY || 0.5),
+                similarity_boost: Number(process.env.ELEVENLABS_VOICE_SIMILARITY || 0.8),
+                style: Number(process.env.ELEVENLABS_VOICE_STYLE || 0.15),
+                use_speaker_boost: true,
+              },
+            }),
+            signal: controller.signal,
+          },
+        );
+
+        if (!upstream.ok || !upstream.body) {
+          const detail = (await upstream.text()).slice(0, 500);
+          log.warn('[VoiceRoutes] ElevenLabs streaming TTS failed', {
+            status: upstream.status,
+            detail,
+          });
+          return res.status(502).json({ error: 'LEXARA voice streaming failed' });
+        }
+
+        res.status(200);
+        res.setHeader('Content-Type', upstream.headers.get('content-type') || 'audio/mpeg');
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('X-Provider', 'elevenlabs');
+        res.setHeader('X-Voice-Id', voiceId);
+        res.setHeader('X-TTS-Model', modelId);
+
+        const readable = Readable.fromWeb(upstream.body as any);
+        readable.on('error', error => {
+          log.warn('[VoiceRoutes] Streaming TTS pipe error', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          if (!res.headersSent) res.status(502).end();
+          else res.end();
+        });
+        readable.pipe(res);
+      } finally {
+        clearTimeout(timer);
+      }
+    }),
+  );
+
   
   /**
    * POST /api/lexara/speak
