@@ -14,7 +14,10 @@ import { assessLocationQuality } from '../services/geoconsole/location-quality';
 import { selectCrawlerPlan } from '../services/crawlers/CrawlerSelectionUtility';
 import { createLogger } from '../logger';
 import { isAuthenticated } from '../auth';
-import { normalizeClientEvidence } from '../services/geoconsole/evidence-proof';
+import {
+  normalizeClientEvidence,
+  signServerEvidence,
+} from '../services/geoconsole/evidence-proof';
 
 const router = Router();
 
@@ -188,26 +191,39 @@ router.post('/process', async (req: Request, res: Response) => {
     });
 
     const result = await hybridGeoconsole.processLocationData(quality.points, effectiveSessionId);
+    const signedFusedLocations = result.fusedLocations.map(location => ({
+      ...location,
+      point: signServerEvidence(location.point),
+    }));
+    const signedPrimaryFusedLocations = result.primaryFusedLocations.map(location => ({
+      ...location,
+      point: signServerEvidence(location.point),
+    }));
+    const signedTrailPoints = result.trail.points.map(trailPoint => ({
+      ...trailPoint,
+      position: signServerEvidence(trailPoint.position),
+    }));
+    const signedFuturecast = result.futurecast.map(signServerEvidence);
 
     res.json({
       success: true,
       data: {
         sessionId: effectiveSessionId,
-        fusedLocations: result.fusedLocations,
-        primaryFusedLocations: result.primaryFusedLocations,
+        fusedLocations: signedFusedLocations,
+        primaryFusedLocations: signedPrimaryFusedLocations,
         trail: {
           id: result.trail.id,
-          pointCount: result.trail.points.length,
+          pointCount: signedTrailPoints.length,
           startTime: result.trail.startTime,
           endTime: result.trail.endTime,
           totalDistance: result.trail.totalDistance,
           averageSpeed: result.trail.averageSpeed,
           maxSpeed: result.trail.maxSpeed,
-          points: result.trail.points,
+          points: signedTrailPoints,
           segments: result.trail.segments,
           stops: result.trail.stops,
         },
-        futurecast: result.futurecast,
+        futurecast: signedFuturecast,
         inputQuality: {
           acceptedCount: quality.acceptedCount,
           rejectedCount: quality.rejectedCount,
@@ -477,7 +493,7 @@ router.post('/futurecast', async (req: Request, res: Response) => {
     res.json({
       success: true,
       data: {
-        predictions: futurecast,
+        predictions: futurecast.map(signServerEvidence),
         hours,
         confidence: futurecast.length > 0 
           ? futurecast.reduce((sum, p) => sum + p.confidence, 0) / futurecast.length 
