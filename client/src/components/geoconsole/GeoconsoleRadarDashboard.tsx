@@ -206,20 +206,43 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
   const stepForward = useCallback(() => actions.seekTo(Math.min(state.totalFrames - 1, state.currentIndex + 1)), [actions, state.currentIndex, state.totalFrames]);
 
   // === PROCESS/EXPORT ===
+  const frameToPoint = useCallback((frame: GeoFrame): GPSPoint => ({
+    latitude: frame.position.latitude,
+    longitude: frame.position.longitude,
+    altitude: frame.position.altitude,
+    accuracy: frame.position.accuracy,
+    verticalAccuracy: frame.position.verticalAccuracy,
+    timestamp: frame.timestamp.toISOString(),
+    receivedAt: frame.receivedAt?.toISOString(),
+    source: frame.source,
+    confidence: frame.confidence,
+    observationKind: frame.observationKind,
+    correlationGroup: frame.correlationGroup,
+    provenance: frame.provenance,
+    metadata: frame.metadata,
+  }), []);
+
   const handleProcess = useCallback(async () => {
     if (state.trail.length === 0) return;
     setProcessing(true);
     setProgressMsg('Processing...');
     try {
+      const inputs = state.trail.map(frameToPoint);
       const res = await fetch('/api/geoconsole/process', {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ inputs: state.trail.map(f => ({ latitude: f.position.latitude, longitude: f.position.longitude, timestamp: f.timestamp.toISOString(), source: f.source, confidence: f.confidence })) }),
+        body: JSON.stringify({ inputs }),
       });
-      if (res.ok) { setProgressMsg('Done!'); if (onProcess) await onProcess(state.trail as any); }
-      else setProgressMsg('Error');
-    } catch (e) { setProgressMsg('Error'); }
-    finally {
+      if (res.ok) {
+        setProgressMsg('Done!');
+        if (onProcess) await onProcess(inputs);
+      } else {
+        setProgressMsg('Error');
+      }
+    } catch {
+      setProgressMsg('Error');
+    } finally {
       if (processResetTimeoutRef.current) {
         window.clearTimeout(processResetTimeoutRef.current);
         processResetTimeoutRef.current = null;
@@ -230,14 +253,75 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
         setProgressMsg('');
       }, 2000);
     }
-  }, [state.trail, onProcess]);
+  }, [state.trail, onProcess, frameToPoint]);
 
   const handleExport = useCallback(() => {
     const frames = actions.exportTrail();
-    const geo = { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'LineString', coordinates: frames.map(f => [f.position.longitude, f.position.latitude]) }, properties: { frames: frames.length } }] };
-    const blob = new Blob([JSON.stringify(geo, null, 2)], { type: 'application/json' });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `geo-${Date.now()}.geojson`; a.click();
-  }, [actions]);
+    const pointFeatures = frames.map(frame => ({
+      type: 'Feature',
+      geometry: {
+        type: 'Point',
+        coordinates: [
+          frame.position.longitude,
+          frame.position.latitude,
+          ...(frame.position.altitude !== undefined ? [frame.position.altitude] : []),
+        ],
+      },
+      properties: {
+        timestamp: frame.timestamp.toISOString(),
+        receivedAt: frame.receivedAt?.toISOString(),
+        source: frame.source,
+        confidence: frame.confidence,
+        accuracy: frame.position.accuracy,
+        verticalAccuracy: frame.position.verticalAccuracy,
+        observationKind: frame.observationKind,
+        correlationGroup: frame.correlationGroup,
+        provenance: frame.provenance,
+        metadata: frame.metadata,
+      },
+    }));
+
+    const trailFeature = frames.length > 1 ? [{
+      type: 'Feature',
+      geometry: {
+        type: 'LineString',
+        coordinates: frames.map(frame => [
+          frame.position.longitude,
+          frame.position.latitude,
+          ...(frame.position.altitude !== undefined ? [frame.position.altitude] : []),
+        ]),
+      },
+      properties: { kind: 'observed_trail', frames: frames.length },
+    }] : [];
+
+    const predictionFeatures = state.futurecast.map(frame => ({
+      type: 'Feature',
+      geometry: {
+        type: 'Point',
+        coordinates: [frame.position.longitude, frame.position.latitude],
+      },
+      properties: {
+        kind: 'prediction',
+        timestamp: frame.timestamp.toISOString(),
+        confidence: frame.confidence,
+        accuracy: frame.position.accuracy,
+        source: frame.source,
+        metadata: frame.metadata,
+      },
+    }));
+
+    const geo = {
+      type: 'FeatureCollection',
+      features: [...trailFeature, ...pointFeatures, ...predictionFeatures],
+    };
+    const blob = new Blob([JSON.stringify(geo, null, 2)], { type: 'application/geo+json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `spectra-${Date.now()}.geojson`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [actions, state.futurecast]);
 
   // Destructure
   const { isPlaying, isLive, timeline, totalFrames, currentIndex } = state;
