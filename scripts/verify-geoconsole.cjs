@@ -56,6 +56,13 @@ test('Street imagery is hidden behind internal adapter',
   map.includes('/api/geoconsole/street-imagery') && !map.includes('api.openstreetcam.org'));
 test('Earth observation layer is time-aware',
   map.includes('NASA_GIBS_TEMPLATE') && map.includes('nasaGibsTilesFor'));
+test('Weather radar layer is timeline-aware and uses current IEM tile path',
+  map.includes('weatherRadarTilesFor') &&
+  map.includes('/c/tile.py/1.0.0/{layer}') &&
+  dashboard.includes('timelineContextTime'));
+test('Candidate source separates point and uncertainty geometries',
+  map.includes("filter: ['==', ['geometry-type'], 'Point']") &&
+  map.includes("filter: ['==', ['geometry-type'], 'Polygon']"));
 
 test('Runtime uses rolling previous hour',
   runtime.includes('ONE_HOUR_MS = 60 * 60 * 1000'));
