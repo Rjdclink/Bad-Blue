@@ -65,14 +65,24 @@ export async function callClaude(
       ]
     });
 
-    const content = response.content[0];
-    if (content.type !== 'text') {
-      throw new Error('Unexpected response type from Claude');
+    // Claude responses are arrays of content blocks. Thinking/tool blocks may
+    // precede the final text, so content[0] is not a safe assumption.
+    const content = response.content
+      .flatMap(block =>
+        block.type === 'text' && typeof (block as any).text === 'string'
+          ? [(block as any).text]
+          : []
+      )
+      .join('\n')
+      .trim();
+
+    if (!content) {
+      throw new Error('Claude returned no text content block');
     }
 
     const tokensUsed = response.usage.input_tokens + response.usage.output_tokens;
 
-    return { content: content.text, tokensUsed };
+    return { content, tokensUsed };
   } catch (error: any) {
     console.error('[Claude] Error:', error);
     throw new Error(`Claude API error: ${error.message}`);
