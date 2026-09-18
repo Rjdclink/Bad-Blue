@@ -23,6 +23,8 @@ const routes = read('server/routes/spectra.routes.ts');
 const serverRoutes = read('server/routes.ts');
 const masterPanels = read('client/src/components/MasterPanelNavigator.tsx');
 const voiceMode = read('client/src/hooks/useVoiceMode.ts');
+const evidenceProof = read('server/services/geoconsole/evidence-proof.ts');
+const intelligenceMap = read('client/src/components/geoconsole/MapLibreIntelligenceMap.tsx');
 
 console.log('\nSPECTRA UNIFIED EXPERIENCE\n');
 
@@ -154,6 +156,18 @@ test('Canonical fusion is the sole location-confidence authority',
   routes.includes('canonicalLatest?.qualityScore') &&
   !routes.includes('function locationEvidenceConfidence') &&
   !spectra.includes('combinedLocationConfidence'));
+test('Unsigned client location claims cannot manufacture precision',
+  evidenceProof.includes('Math.max(5_000, reportedAccuracy)') &&
+  evidenceProof.includes("source: 'manual_input'") &&
+  evidenceProof.includes('claimedAccuracy: point.accuracy'));
+test('Generic targets do not launch untethered broad discovery',
+  routes.includes('const strongIdentityAnchor = quotedName || quotedPhone') &&
+  routes.includes('const secondPass = strongIdentityAnchor ?') &&
+  routes.includes("? suppliedName || ''"));
+test('Failed map providers stay locally disabled across UI updates',
+  intelligenceMap.includes("providerStatus.terrain !== 'unavailable'") &&
+  intelligenceMap.includes("providerStatus.weather !== 'unavailable'") &&
+  intelligenceMap.includes("providerStatus.satellite !== 'unavailable'"));
 test('Independent evidence is preserved while duplicate source counting is prevented',
   routes.includes('const evidenceGroup =') &&
   spectra.includes('const evidenceGroup =') &&
