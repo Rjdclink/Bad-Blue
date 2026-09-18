@@ -53,7 +53,7 @@ const MAX_NETWORK_RESTART_DELAY_MS = 5_000;
 const SERVER_VAD_MIN_THRESHOLD = 0.014;
 const SERVER_VAD_MAX_THRESHOLD = 0.075;
 const SERVER_VAD_NOISE_MULTIPLIER = 2.8;
-const SERVER_VAD_SILENCE_MS = 850;
+const SERVER_VAD_SILENCE_MS = 1_500;
 const SERVER_MIN_SPEECH_MS = 220;
 const SERVER_VOICE_CONFIRM_MS = 140;
 const SERVER_VOICE_RECENCY_MS = 90;
@@ -101,6 +101,8 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
   const suspendedRef = useRef(false);
   const recognitionActiveRef = useRef(false);
   const browserFinalResultIndexesRef = useRef<Set<number>>(new Set());
+  const browserSpeechStartedAtRef = useRef<number | null>(null);
+  const browserLastSpeechDurationMsRef = useRef(0);
   const restartTimerRef = useRef<number | null>(null);
   const restartDelayRef = useRef(BASE_RESTART_DELAY_MS);
   const networkFailureCountRef = useRef(0);
@@ -547,10 +549,18 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     };
 
     recognition.onspeechstart = () => {
+      browserSpeechStartedAtRef.current = performance.now();
       optionsRef.current.onVoiceStart?.();
     };
 
     recognition.onspeechend = () => {
+      if (browserSpeechStartedAtRef.current !== null) {
+        browserLastSpeechDurationMsRef.current = Math.max(
+          0,
+          performance.now() - browserSpeechStartedAtRef.current,
+        );
+      }
+      browserSpeechStartedAtRef.current = null;
       optionsRef.current.onVoiceEnd?.();
     };
 
@@ -609,6 +619,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
         emitTranscript(finalValue, true, {
           engine: 'browser',
           confidence,
+          speechDurationMs: browserLastSpeechDurationMsRef.current || undefined,
           provider: 'browser-speech-recognition',
         });
       } else {
@@ -706,10 +717,16 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       });
       setHasPermission(true);
 
-      // Preserve the proven native speech path wherever the browser exposes
-      // it. Standards-based MediaRecorder/server STT remains a route-local
-      // fallback for browsers whose speech service is absent or repeatedly fails.
-      if (isSpeechRecognitionSupported()) {
+      // Mobile browsers aggressively segment native SpeechRecognition around
+      // brief pauses. Prefer our controllable VAD + server STT path on mobile so
+      // LEXARA owns endpointing and can wait for a complete thought. Desktop can
+      // retain native recognition for lowest latency.
+      const preferServerRecognition = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+      if (preferServerRecognition && isServerRecognitionSupported()) {
+        await initializeServerRecognition(stream);
+        engineRef.current = 'server';
+        setEngine('server');
+      } else if (isSpeechRecognitionSupported()) {
         stream.getTracks().forEach(track => track.stop());
         initializeSpeechRecognition();
         engineRef.current = 'browser';
