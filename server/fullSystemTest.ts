@@ -113,7 +113,7 @@ class SystemDiagnostics {
         const groq = getGroqClient();
         const response = await groq.chat.completions.create({
           messages: [{ role: 'user', content: 'Respond with OK' }],
-          model: 'llama-3.1-8b-instant',
+          model: process.env.GROQ_FAST_MODEL?.trim() || process.env.GROQ_CHAT_MODEL?.trim() || 'openai/gpt-oss-20b',
           max_tokens: 10
         });
         if (response.choices[0]?.message?.content) {
@@ -135,7 +135,7 @@ class SystemDiagnostics {
         }
       }
     } catch (err) {
-      this.addResult('AI:Gemini', 'WARN', `Gemini API error (using Groq fallback): ${(err as Error).message}`);
+      this.addResult('AI:Gemini', 'WARN', `Gemini API error: ${(err as Error).message}`);
     }
   }
 
