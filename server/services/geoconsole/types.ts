@@ -125,7 +125,7 @@ export interface MonteCarloConfig {
   stepSize: number; // meters
   maxSpeed: number; // m/s - human walking ~1.4, car ~30
   accelerationVariance: number;
-  directionVariance: number; // radians
+  directionVariance: number; // degrees
   terrainAwareness: boolean;
   roadNetworkConstraint: boolean;
   probabilityThreshold: number; // 0-1
