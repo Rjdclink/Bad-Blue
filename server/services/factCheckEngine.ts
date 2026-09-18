@@ -5,22 +5,10 @@
  */
 
 import { FactCheckRequest, FactCheckResponse, Citation } from '../../shared/legalCounselTypes';
-import { callGemini } from '../gemini';
-import { generateGroqLegalConsultation } from '../groq';
-import { callClaude } from '../claude';
-import { generateMistralLegalConsultation } from '../mistral';
-
-/**
- * Helper to wrap a promise with a timeout
- */
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) => 
-      setTimeout(() => reject(new Error(`Operation timed out after ${timeoutMs}ms`)), timeoutMs)
-    )
-  ]);
-}
+import { AICollaborationOrchestrator } from '../aiCollaborationOrchestrator';
+import { getConfiguredHarmonyProviders } from '../aiHarmonyModelRegistry';
+import { UsageContext } from '../aiTokenGovernor';
+import { TaskComplexity, TaskPriority, type TaskAttributes } from '../aiModelSelector';
 
 /**
  * Fact-check a legal claim using multiple AI models
@@ -28,62 +16,87 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
  */
 export async function factCheckClaim(request: FactCheckRequest): Promise<FactCheckResponse> {
   const { claim, context } = request;
-  
   const prompt = generateFactCheckPrompt(claim, context);
-  
-  // Query all four models in parallel with timeout
-  const TIMEOUT_MS = 30000; // 30 second timeout per model
-  
-  const [geminiResult, groqResult, claudeResult, mistralResult] = await Promise.allSettled([
-    withTimeout(queryModelForFactCheck('gemini', prompt, context), TIMEOUT_MS),
-    withTimeout(queryModelForFactCheck('groq', prompt, context), TIMEOUT_MS),
-    withTimeout(queryModelForFactCheck('claude', prompt, context), TIMEOUT_MS),
-    withTimeout(queryModelForFactCheck('mistral', prompt, context), TIMEOUT_MS)
-  ]);
+  const providers = getConfiguredHarmonyProviders();
 
-  // Extract results, handling failures gracefully
-  const modelResults = [
-    { model: 'gemini', result: geminiResult },
-    { model: 'groq', result: groqResult },
-    { model: 'claude', result: claudeResult },
-    { model: 'mistral', result: mistralResult }
-  ].map(({ model, result }) => {
-    if (result.status === 'fulfilled') {
-      return result.value;
-    } else {
-      console.error(`[FactCheck] ${model} failed:`, result.reason);
+  if (providers.length === 0) {
+    return {
+      claim,
+      verified: false,
+      confidence: 0,
+      consensus: false,
+      modelResults: [],
+      citations: [],
+      discrepancies: ['No configured Harmony participants were available for verification.'],
+      recommendations: ['Verify the claim against current primary legal authorities before relying on it.'],
+    };
+  }
+
+  const attributes: TaskAttributes = {
+    complexity: TaskComplexity.COMPREHENSIVE,
+    priority: TaskPriority.CRITICAL,
+    context: UsageContext.USER,
+    needsLegalAnalysis: true,
+    needsReasoning: true,
+    needsVerification: true,
+    needsSearchGrounding: true,
+    needsStructuredOutput: true,
+  };
+
+  const orchestrated = await AICollaborationOrchestrator.orchestrateCollaboration(
+    'legal-fact-check',
+    prompt,
+    attributes,
+    providers,
+    {
+      providerPolicy: 'capability-first',
+      systemPrompt: 'Verify legal claims conservatively. Do not invent statutes, cases, quotations, holdings, or URLs. Return the requested JSON structure.',
+    },
+  );
+
+  const modelResults = orchestrated.contributions
+    .filter(result => result.role !== 'harmony-synthesizer')
+    .map(result => {
+      if (!result.success || !result.content?.trim()) {
+        return {
+          model: result.model,
+          verified: false,
+          reasoning: result.error || 'Participant did not return a usable verification.',
+          sources: [] as string[],
+        };
+      }
+      const parsed = parseFactCheckResponse(result.content);
       return {
-        model,
-        verified: false,
-        reasoning: `Model unavailable: ${result.reason?.message || 'Unknown error'}`,
-        sources: []
+        model: result.model,
+        verified: parsed.verified,
+        reasoning: parsed.reasoning,
+        sources: parsed.sources || [],
       };
-    }
-  });
+    });
 
-  // Calculate consensus and confidence (generalized for N models)
-  const verifiedCount = modelResults.filter(r => r.verified).length;
-  const totalModels = modelResults.length;
-  const consensus = verifiedCount === totalModels || verifiedCount === 0; // All agree
-  const verified = verifiedCount > totalModels / 2; // Strict majority
-  const confidence = verifiedCount / totalModels;
+  const successfulResults = modelResults.filter(
+    result => !/^Participant did not return|^Model unavailable/i.test(result.reasoning),
+  );
+  const denominator = Math.max(1, successfulResults.length);
+  const verifiedCount = successfulResults.filter(result => result.verified).length;
+  const unverifiedCount = denominator - verifiedCount;
+  const verified = verifiedCount > unverifiedCount;
+  const consensus = successfulResults.length > 0 && (verifiedCount === 0 || unverifiedCount === 0);
+  const confidence = successfulResults.length > 0
+    ? Math.max(verifiedCount, unverifiedCount) / denominator
+    : 0;
 
-  // Identify discrepancies
   const discrepancies: string[] = [];
-  if (!consensus) {
-    const verifiedModels = modelResults.filter(r => r.verified).map(r => r.model);
-    const unverifiedModels = modelResults.filter(r => !r.verified).map(r => r.model);
+  if (!consensus && successfulResults.length > 0) {
+    const verifiedModels = successfulResults.filter(result => result.verified).map(result => result.model);
+    const unverifiedModels = successfulResults.filter(result => !result.verified).map(result => result.model);
     discrepancies.push(
-      `Models disagree: ${verifiedModels.join(', ')} verified the claim, while ${unverifiedModels.join(', ')} did not.`
+      `Harmony analyses disagree: ${verifiedModels.join(', ') || 'none'} verified the claim; ${unverifiedModels.join(', ') || 'none'} did not.`,
     );
   }
 
-  // Collect all citations
-  const allCitations = modelResults.flatMap(r => r.sources);
-  const citations = deduplicateCitations(allCitations);
-
-  // Generate recommendations
-  const recommendations = generateRecommendations(verified, confidence, consensus, modelResults);
+  const citations = deduplicateCitations(successfulResults.flatMap(result => result.sources));
+  const recommendations = generateRecommendations(verified, confidence, consensus, successfulResults);
 
   return {
     claim,
@@ -93,7 +106,7 @@ export async function factCheckClaim(request: FactCheckRequest): Promise<FactChe
     modelResults,
     citations,
     discrepancies,
-    recommendations
+    recommendations,
   };
 }
 
@@ -123,61 +136,6 @@ Consider:
 4. Any recent changes to relevant laws
 
 Provide specific statute citations and case references where applicable.`;
-}
-
-/**
- * Query a specific AI model for fact-checking
- */
-async function queryModelForFactCheck(
-  modelName: string,
-  prompt: string,
-  context: FactCheckRequest['context']
-): Promise<{
-  model: string;
-  verified: boolean;
-  reasoning: string;
-  sources: string[];
-}> {
-  let responseText: string;
-
-  try {
-    switch (modelName) {
-      case 'gemini':
-        responseText = await callGemini(prompt, { useJSON: true }, 8192);
-        break;
-      case 'groq':
-        // Use Groq's legal consultation function with custom system prompt
-        responseText = await generateGroqLegalConsultation(
-          prompt,
-          `You are a legal fact-checker for ${context.lawType} cases in ${context.state}. Respond with JSON only.`
-        );
-        break;
-      case 'claude':
-        const claudeResult = await callClaude(prompt, { useJSON: true });
-        responseText = claudeResult.content;
-        break;
-      case 'mistral':
-        responseText = await generateMistralLegalConsultation(
-          prompt,
-          `You are a legal fact-checker for ${context.lawType} cases in ${context.state}. Respond with JSON only.`
-        );
-        break;
-      default:
-        throw new Error(`Unknown model: ${modelName}`);
-    }
-
-    // Parse JSON response
-    const parsed = parseFactCheckResponse(responseText);
-    return {
-      model: modelName,
-      verified: parsed.verified,
-      reasoning: parsed.reasoning,
-      sources: parsed.sources || []
-    };
-  } catch (error) {
-    console.error(`[FactCheck] Error querying ${modelName}:`, error);
-    throw error;
-  }
 }
 
 /**
@@ -242,12 +200,12 @@ function generateRecommendations(
   const recommendations: string[] = [];
 
   if (verified && consensus) {
-    recommendations.push('All models confirm this claim. This appears to be accurate legal information.');
+    recommendations.push('All successful Harmony analyses support this claim, subject to source verification.');
   } else if (verified && !consensus) {
-    recommendations.push('Majority of models support this claim, but there is some disagreement.');
-    recommendations.push('Verify with additional sources or consult a licensed attorney.');
+    recommendations.push('Most successful Harmony analyses support this claim, but there is disagreement.');
+    recommendations.push('Verify against current primary legal authorities before relying on it.');
   } else if (!verified && !consensus) {
-    recommendations.push('Models disagree on the accuracy of this claim.');
+    recommendations.push('Harmony analyses disagree on the accuracy of this claim.');
     recommendations.push('This area of law may be complex or jurisdiction-specific.');
     recommendations.push('Strongly recommend consulting a licensed attorney in your jurisdiction.');
   } else {
@@ -278,26 +236,21 @@ export async function quickFactCheck(request: FactCheckRequest): Promise<{
   confidence: number;
   note: string;
 }> {
-  const prompt = generateFactCheckPrompt(request.claim, request.context);
-  
   try {
-    // Use Groq for speed
-    const result = await withTimeout(
-      queryModelForFactCheck('groq', prompt, request.context),
-      10000 // 10 second timeout for quick check
-    );
-    
+    const result = await factCheckClaim(request);
     return {
       verified: result.verified,
-      confidence: 0.33, // Single model = low confidence
-      note: 'Quick check using single model. For higher confidence, use full fact-check.'
+      confidence: result.confidence,
+      note: result.consensus
+        ? 'Harmony verification reached consensus.'
+        : 'Harmony verification completed with participant disagreement; review the full fact-check before relying on the claim.',
     };
   } catch (error) {
     console.error('[QuickFactCheck] Error:', error);
     return {
       verified: false,
       confidence: 0,
-      note: 'Quick check failed. Unable to verify claim.'
+      note: 'Quick verification failed. Verify against current primary legal authorities.',
     };
   }
 }
