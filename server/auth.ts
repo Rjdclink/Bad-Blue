@@ -25,7 +25,6 @@ import {
   getLocalSessionMaxAgeSeconds,
   registerLocalUserHttp,
   verifyLocalSessionToken,
-  getLocalUserByIdHttp,
   purgeLocalTestUsersBeforeHttp,
   probeLocalAuthStoreHttp,
   type StatelessLocalSession,
@@ -89,7 +88,12 @@ function attachLocalIdentity(req: any): boolean {
   if (!session) return false;
   req.user = {
     id: session.id,
-    claims: { sub: session.id },
+    email: session.email,
+    firstName: session.firstName,
+    lastName: session.lastName,
+    status: session.status,
+    hasPaidForAccess: session.hasPaidForAccess,
+    claims: { sub: session.id, email: session.email },
     isAdmin: false,
     isAdminBypass: false,
     isMasterBypass: false,
@@ -277,7 +281,7 @@ export async function setupAuth(app: Express) {
     res.setHeader("Cache-Control", "no-store");
     try {
       await probeLocalAuthStoreHttp();
-      return res.json({ ready: true, backend: "supabase-http" });
+      return res.json({ ready: true, backend: "canonical-local-auth" });
     } catch (error) {
       console.error("[AUTH] HTTP auth-store readiness failed:", error instanceof Error ? error.message : String(error));
       return res.status(503).json({ ready: false });
@@ -315,30 +319,23 @@ export async function setupAuth(app: Express) {
       return next();
     }
 
-    try {
-      const localUser = await getLocalUserByIdHttp(localSession.id);
-      if (!localUser) {
-        clearLocalCookie(res);
-        return res.json(null);
-      }
-      return res.json({
-        id: localUser.id,
-        email: localUser.email,
-        firstName: localUser.firstName,
-        lastName: localUser.lastName,
-        profileImageUrl: null,
-        status: localUser.status,
-        hasPaidForAccess: localUser.hasPaidForAccess,
-        accessPaymentId: null,
-        accessPaidAt: null,
-        lastLoginAt: null,
-        createdAt: null,
-        updatedAt: null,
-      });
-    } catch (error) {
-      console.error("[AUTH] HTTP session lookup unavailable:", error instanceof Error ? error.message : String(error));
-      return res.status(503).json({ message: "Authentication service is temporarily unavailable" });
-    }
+    // New local sessions carry only safe user fields inside an HMAC-signed,
+    // HttpOnly cookie. Auth status therefore cannot fail merely because a
+    // database or API transport is temporarily unavailable after login.
+    return res.json({
+      id: localSession.id,
+      email: localSession.email,
+      firstName: localSession.firstName,
+      lastName: localSession.lastName,
+      profileImageUrl: null,
+      status: localSession.status,
+      hasPaidForAccess: localSession.hasPaidForAccess,
+      accessPaymentId: null,
+      accessPaidAt: null,
+      lastLoginAt: null,
+      createdAt: null,
+      updatedAt: null,
+    });
   });
 
   const canonicalLogout = (req: any, res: any) => {
