@@ -20,6 +20,7 @@ import {
   getOpenRouterModelForProvider,
 } from './aiHarmonyModelRegistry';
 import {
+  getHarmonyResolvedModel,
   isHarmonyProviderWarmHealthy,
   markHarmonyProviderWarmSuccess,
 } from './aiHarmonyWarmup';
@@ -1026,7 +1027,7 @@ export class AICollaborationOrchestrator {
         case AIProvider.GPT_NEOX:
         case AIProvider.PERPLEXITY:
         case AIProvider.FIREWORKS: {
-          const model = getOpenRouterModelForProvider(task.provider) || CURRENT_AI_MODELS.openRouterAuto;
+          const model = task.model || getOpenRouterModelForProvider(task.provider) || CURRENT_AI_MODELS.openRouterAuto;
           const result = await generateOpenRouterText(prompt, {
             model,
             systemPrompt: task.systemPrompt,
@@ -1043,7 +1044,7 @@ export class AICollaborationOrchestrator {
               runProvider(
                 AIProvider.GROQ,
                 prompt,
-                { model: CURRENT_AI_MODELS.groqDeep, systemPrompt: task.systemPrompt },
+                { model: getHarmonyResolvedModel(AIProvider.GROQ), systemPrompt: task.systemPrompt },
                 outputTokenLimit,
                 taskMetadata,
               ),
@@ -1054,7 +1055,7 @@ export class AICollaborationOrchestrator {
             tokensUsed = response.tokensUsed;
           } else {
             const result = await generateOpenRouterText(prompt, {
-              model: 'openai/gpt-oss-120b',
+              model: task.model || 'openai/gpt-oss-120b',
               systemPrompt: task.systemPrompt,
               maxTokens: outputTokenLimit,
               timeoutMs: task.requestTimeoutMs || 6_000,
@@ -1354,7 +1355,7 @@ export class AICollaborationOrchestrator {
    * Get default model for a provider
    */
   private static getDefaultModelForProvider(provider: AIProvider): string {
-    return getCurrentModelForProvider(provider);
+    return getHarmonyResolvedModel(provider);
   }
   
   /**
