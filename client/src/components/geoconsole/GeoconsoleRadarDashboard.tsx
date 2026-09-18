@@ -95,7 +95,9 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
   const [layerCfg, setLayerCfg] = useState<LayerState>({ satellite: true, earthObservation: false, trail: true, heatmap: true, markers: true, futurecast: true, reticle: true, weather: false, terrain: true, buildings: true, uncertainty: true, streetImagery: false });
   const [lockOnTarget, setLockOnTarget] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [inspectorOpen, setInspectorOpen] = useState(() =>
+    typeof window === 'undefined' ? true : window.innerWidth >= 768
+  );
   const [timelineOffsetMinutes, setTimelineOffsetMinutes] = useState(0);
   const [timelinePlaying, setTimelinePlaying] = useState(false);
   const [timelinePlaybackSpeed, setTimelinePlaybackSpeed] = useState(1);
@@ -492,7 +494,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
               </div>
               {Object.entries(layerCfg).map(([k, v]) => (
                 <div key={k} className="flex items-center justify-between py-0.5">
-                  <span className="text-[11px] text-slate-400 capitalize">{k}</span>
+                  <span className="text-[11px] text-slate-400 capitalize">{k.replace(/([A-Z])/g, ' $1').trim()}</span>
                   <Switch checked={v} onCheckedChange={c => setLayerCfg(p => ({ ...p, [k]: c }))} className="" />
                 </div>
               ))}
