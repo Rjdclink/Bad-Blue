@@ -31,6 +31,8 @@ const geoRoutes = read('server/routes/geoconsole.routes.ts');
 const spectraRoutes = read('server/routes/spectra.routes.ts');
 const gpsRoutes = read('server/routes/gps.routes.ts');
 const geocoder = read('server/services/geoconsole/city-state-geocoder.ts');
+const dockerfile = read('Dockerfile');
+const exifTool = read('server/services/locationIntelligence/ExifToolExtractor.ts');
 
 console.log('\nSPECTRA PRODUCTION INVARIANTS\n');
 
@@ -149,6 +151,12 @@ test('Uploaded media has stable content identity and richer video metadata fallb
   gpsRoutes.includes("createHash('sha256')") &&
   gpsRoutes.includes('media:sha256:') &&
   read('server/services/locationIntelligence/MediaMetadataExtractor.ts').includes('prefer-exiftool-container-metadata'));
+test('Production image installs the ExifTool dependency used by media fallback',
+  dockerfile.includes('libimage-exiftool-perl'));
+test('QuickTime ISO-6709 metadata can become canonical coordinates',
+  exifTool.includes('parseIso6709') &&
+  exifTool.includes('metadata.GPSCoordinates') &&
+  exifTool.includes('metadata.LocationISO6709'));
 test('Independent corroboration survives dedupe without double-counting sources',
   spectraRoutes.includes('const evidenceGroup =') &&
   spectra.includes('const evidenceGroup =') &&
