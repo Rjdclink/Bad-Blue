@@ -9,6 +9,7 @@ import {
   geocodeCityState,
   geocodeFreeformLocation,
 } from '../services/geoconsole/city-state-geocoder';
+import { signServerEvidence } from '../services/geoconsole/evidence-proof';
 
 const router = Router();
 router.use(isAuthenticated);
@@ -320,7 +321,8 @@ router.post('/acquire', async (req: Request, res: Response) => {
     }
 
     const locationObservations = dedupeObservations(observations)
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+      .map(point => signServerEvidence(point));
 
     const candidateLocations: Array<{
       latitude: number;
