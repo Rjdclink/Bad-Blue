@@ -204,7 +204,7 @@ router.get('/health', async (req, res) => {
  * Validate the People Search Worker's browser installation
  * This runs a test crawl to verify browser is working
  */
-router.post('/validate', async (req, res) => {
+router.post('/validate', isAuthenticated, async (req, res) => {
   try {
     console.log('[People Search API] Running browser validation...');
     
