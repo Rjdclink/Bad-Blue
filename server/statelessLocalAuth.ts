@@ -58,15 +58,14 @@ async function edgeAuthRequest(
   payload: Record<string, unknown> = {},
 ): Promise<EdgeAuthResponse> {
   const url = String(getConfig().SUPABASE_URL || "").trim();
-  const anonKey = String(process.env.SUPABASE_ANON_KEY || "").trim();
-  if (!url || !anonKey) throw new Error("Supabase Edge authentication is not configured");
+  const edgeSecret = String(process.env.LEGALWHAT_EDGE_AUTH_SECRET || "").trim();
+  if (!url || !edgeSecret) throw new Error("Supabase Edge authentication is not configured");
 
   const response = await fetch(`${url.replace(/\/$/, "")}/functions/v1/${AUTH_EDGE_FUNCTION}`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      apikey: anonKey,
-      authorization: `Bearer ${anonKey}`,
+      "x-legalwhat-auth-secret": edgeSecret,
       "x-client-info": "legalwhat-railway-auth",
     },
     body: JSON.stringify({ action, ...payload }),
