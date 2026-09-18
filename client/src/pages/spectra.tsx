@@ -30,12 +30,16 @@ interface AcquisitionResponse {
   error?: string;
   target?: string;
   details?: string;
+  resolvedTargetLabel?: string;
   acquisition?: {
     identityConfidence: number;
     locationConfidence: number;
     sourceCount: number;
     evidenceItemCount?: number;
     observationCount: number;
+    discoveryPasses?: number;
+    discoveryQueriesAttempted?: number;
+    discoveryQueriesFailed?: number;
     summary: string;
     verificationStatus: string;
   };
@@ -94,19 +98,60 @@ export default function SpectraPage() {
   const [confidence, setConfidence] = useState<number | null>(null);
   const [sourceCount, setSourceCount] = useState(0);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [acquisitionStage, setAcquisitionStage] = useState('Waiting for target');
   const scrollRef = useRef<HTMLDivElement>(null);
   const requestRef = useRef(0);
   const mediaInputRef = useRef<HTMLInputElement>(null);
   const messageHandlerRef = useRef<(message: string) => void>(() => undefined);
+  const lastSpokenTextRef = useRef<{ normalized: string; expiresAt: number } | null>(null);
+  const recentVoiceTurnRef = useRef<{ normalized: string; at: number } | null>(null);
 
   const voiceSynthesis = useVoiceSynthesis();
   const voiceMode = useVoiceMode({
     continuous: false,
     interimResults: true,
-    onTranscript: (text, isFinal) => {
-      if (isFinal && text.trim()) {
-        messageHandlerRef.current(text.trim());
+    onTranscript: (text, isFinal, meta) => {
+      if (!isFinal) return;
+
+      const cleaned = text.replace(/\s+/g, ' ').trim();
+      if (!cleaned) return;
+
+      const normalized = cleaned.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      const now = Date.now();
+      const spoken = lastSpokenTextRef.current;
+      const recent = recentVoiceTurnRef.current;
+
+      if (
+        meta.confidence !== undefined &&
+        meta.confidence > 0 &&
+        meta.confidence < 0.45
+      ) {
+        return;
       }
+
+      if (
+        spoken &&
+        now <= spoken.expiresAt &&
+        normalized &&
+        (
+          normalized === spoken.normalized ||
+          spoken.normalized.includes(normalized) ||
+          normalized.includes(spoken.normalized)
+        )
+      ) {
+        return;
+      }
+
+      if (
+        recent &&
+        recent.normalized === normalized &&
+        now - recent.at < 4_000
+      ) {
+        return;
+      }
+
+      recentVoiceTurnRef.current = { normalized, at: now };
+      messageHandlerRef.current(cleaned);
     },
   });
 
@@ -116,6 +161,12 @@ export default function SpectraPage() {
 
   const speakIfEnabled = useCallback((text: string) => {
     if (!voiceMode.isEnabled) return;
+
+    const normalized = text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    lastSpokenTextRef.current = {
+      normalized,
+      expiresAt: Date.now() + Math.max(8_000, text.length * 90),
+    };
 
     voiceMode.suspendListening();
     voiceSynthesis.speak(text, {
@@ -145,6 +196,7 @@ export default function SpectraPage() {
     setConfidence(null);
     setSourceCount(0);
     setLastError(null);
+    setAcquisitionStage('Waiting for target');
     setInput('');
     setMessages([makeMessage('spectra', FIRST_PROMPT)]);
     speakIfEnabled(FIRST_PROMPT);
@@ -158,8 +210,81 @@ export default function SpectraPage() {
     const requestId = ++requestRef.current;
     setPhase('acquiring');
     setLastError(null);
+    setAcquisitionStage('Resolving supplied location context…');
+
+    if (extraEvidence.length > 0) {
+      setObservations(previous => {
+        const merged = new Map<string, GPSPoint>();
+        for (const point of [...previous, ...extraEvidence]) {
+          const timestamp = new Date(point.timestamp).toISOString();
+          const evidenceGroup =
+            point.correlationGroup ||
+            point.provenance?.recordId ||
+            `${point.source}:${point.provenance?.provider || 'unknown'}`;
+          merged.set([
+            Number(point.latitude).toFixed(6),
+            Number(point.longitude).toFixed(6),
+            timestamp,
+            point.source,
+            evidenceGroup,
+          ].join('|'), point);
+        }
+        return [...merged.values()].sort(
+          (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+        );
+      });
+    }
+
+    const previewRegionPromise = (async () => {
+      for (const locationText of [detailsValue, targetValue]) {
+        if (!locationText.trim()) continue;
+
+        try {
+          const previewResponse = await fetch('/api/geoconsole/geocode-city-state', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ location: locationText }),
+          });
+          const previewPayload = await previewResponse.json().catch(() => ({}));
+          if (
+            requestId !== requestRef.current ||
+            !previewResponse.ok ||
+            previewPayload?.success !== true
+          ) {
+            continue;
+          }
+
+          const region = previewPayload.data;
+          if (
+            Number.isFinite(Number(region?.latitude)) &&
+            Number.isFinite(Number(region?.longitude))
+          ) {
+            setCandidateLocations([{
+              latitude: Number(region.latitude),
+              longitude: Number(region.longitude),
+              label: String(region.displayName || locationText),
+              confidence: 0.25,
+              basis: 'regional_context',
+              accuracyMeters: Number.isFinite(Number(region.accuracyMeters))
+                ? Number(region.accuracyMeters)
+                : 25_000,
+            }]);
+            setAcquisitionStage('Regional context mapped; broadening identity discovery…');
+            return;
+          }
+        } catch {
+          // Preview failure is route-local and never blocks the main search.
+        }
+      }
+
+      if (requestId === requestRef.current) {
+        setAcquisitionStage('Broadening identity and source discovery…');
+      }
+    })();
 
     try {
+      void previewRegionPromise;
       const response = await fetch('/api/spectra/acquire', {
         method: 'POST',
         credentials: 'include',
@@ -228,6 +353,7 @@ export default function SpectraPage() {
           : null
       );
       setSourceCount(payload.acquisition?.sourceCount ?? 0);
+      setAcquisitionStage('Acquisition complete');
       setPhase('active');
 
       const certainty = points.length > 0 || serverLocationConfidence > 0
@@ -237,11 +363,12 @@ export default function SpectraPage() {
       const regionalCandidates = Array.isArray(payload.candidateLocations)
         ? payload.candidateLocations
         : [];
+      const resolvedTarget = payload.resolvedTargetLabel?.trim() || targetValue;
       const responseText = points.length > 0
-        ? `I acquired ${points.length} timestamped location observation${points.length === 1 ? '' : 's'} for ${targetValue}. The map is updated${certainty !== null ? ` with ${certainty}% location-evidence confidence` : ''}.`
+        ? `I acquired ${points.length} timestamped location observation${points.length === 1 ? '' : 's'} for ${resolvedTarget}. The map is updated${certainty !== null ? ` with ${certainty}% location-evidence confidence` : ''}.`
         : regionalCandidates.length > 0
-          ? `I found a regional location candidate for ${targetValue} and placed it on the map. I do not yet have timestamped coordinate evidence for a movement track.`
-          : `I completed the search for ${targetValue} across ${payload.acquisition?.sourceCount ?? 0} source${(payload.acquisition?.sourceCount ?? 0) === 1 ? '' : 's'}, but I do not yet have timestamped coordinate evidence strong enough to place the target on the map.`;
+          ? `I found a regional location candidate for ${resolvedTarget} and placed it on the map. I do not yet have timestamped coordinate evidence for a movement track.`
+          : `I completed the current discovery pass for ${resolvedTarget} across ${payload.acquisition?.sourceCount ?? 0} distinct source group${(payload.acquisition?.sourceCount ?? 0) === 1 ? '' : 's'}, but I do not yet have timestamped coordinate evidence strong enough to place the target precisely on the map.`;
 
       addMessage('spectra', responseText);
       speakIfEnabled(responseText);
@@ -249,6 +376,7 @@ export default function SpectraPage() {
       if (requestId !== requestRef.current) return;
       const message = error instanceof Error ? error.message : 'Target acquisition failed.';
       setLastError(message);
+      setAcquisitionStage('Acquisition needs additional information');
       setPhase('error');
       const responseText = 'I could not complete that acquisition. Give me corrected or additional target information and I will try again.';
       addMessage('spectra', responseText);
@@ -422,7 +550,7 @@ export default function SpectraPage() {
   }, [voiceMode]);
 
   const mapStatus = useMemo(() => {
-    if (phase === 'acquiring') return 'Acquiring target…';
+    if (phase === 'acquiring') return acquisitionStage;
     if (observations.length > 0) {
       return confidence == null
         ? `${observations.length} location observation${observations.length === 1 ? '' : 's'}`
@@ -431,7 +559,7 @@ export default function SpectraPage() {
     if (candidateLocations.length > 0) return 'Regional candidate mapped';
     if (target) return `Target: ${target}`;
     return 'Waiting for target';
-  }, [candidateLocations.length, confidence, observations.length, phase, target]);
+  }, [acquisitionStage, candidateLocations.length, confidence, observations.length, phase, target]);
 
   const placeholder =
     phase === 'awaiting_target'
@@ -501,10 +629,23 @@ export default function SpectraPage() {
           </div>
 
           {phase === 'acquiring' && (
+            <div className="pointer-events-none absolute bottom-3 left-3 z-30 max-w-[min(88%,26rem)] rounded-xl border border-slate-700/70 bg-slate-950/88 px-3 py-2 text-[11px] text-slate-300 shadow-xl backdrop-blur">
+              <div className="font-medium text-cyan-200">Acquired so far</div>
+              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
+                <span>Target description ✓</span>
+                <span>Identity details ✓</span>
+                <span>{/\d[\d\s().+-]{6,}\d/.test(details) ? 'Phone anchor ✓' : 'Phone anchor —'}</span>
+                <span>{candidateLocations.length > 0 ? 'Regional context ✓' : 'Regional context searching'}</span>
+                <span>{observations.length > 0 ? `${observations.length} timed observation${observations.length === 1 ? '' : 's'} ✓` : 'Timed evidence searching'}</span>
+              </div>
+            </div>
+          )}
+
+          {phase === 'acquiring' && (
             <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-slate-950/20">
               <div className="flex items-center gap-2 rounded-full border border-cyan-500/30 bg-slate-950/90 px-4 py-2 text-sm text-cyan-200 shadow-xl backdrop-blur">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                SPECTRA is correlating available evidence
+                {acquisitionStage}
               </div>
             </div>
           )}
@@ -560,7 +701,7 @@ export default function SpectraPage() {
               <div className="flex justify-start">
                 <div className="flex items-center gap-2 rounded-2xl rounded-bl-md border border-cyan-500/20 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-200">
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Acquiring…
+                  {acquisitionStage}
                 </div>
               </div>
             )}
