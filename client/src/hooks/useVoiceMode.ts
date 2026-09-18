@@ -40,9 +40,13 @@ export interface VoiceModeResult {
 
 const BASE_RESTART_DELAY_MS = 120;
 const MAX_NETWORK_RESTART_DELAY_MS = 5_000;
-const SERVER_VAD_THRESHOLD = 0.026;
+const SERVER_VAD_MIN_THRESHOLD = 0.014;
+const SERVER_VAD_MAX_THRESHOLD = 0.075;
+const SERVER_VAD_NOISE_MULTIPLIER = 2.8;
 const SERVER_VAD_SILENCE_MS = 900;
 const SERVER_MIN_SPEECH_MS = 220;
+const SERVER_VOICE_CONFIRM_MS = 140;
+const SERVER_VOICE_RECENCY_MS = 90;
 const SERVER_MAX_UTTERANCE_MS = 45_000;
 const SERVER_TRANSCRIBE_TIMEOUT_MS = 18_000;
 
@@ -89,6 +93,8 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
   const serverSilenceStartedAtRef = useRef<number | null>(null);
   const serverSpeechActiveRef = useRef(false);
   const serverVoiceStartNotifiedRef = useRef(false);
+  const serverNoiseFloorRef = useRef(0.006);
+  const serverLastAboveThresholdAtRef = useRef(0);
   const discardServerRecordingRef = useRef(false);
   const transcriptionAbortRef = useRef<AbortController | null>(null);
   const serverTranscriptionQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -191,6 +197,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     serverSpeechActiveRef.current = false;
     serverSpeechStartedAtRef.current = null;
     serverSilenceStartedAtRef.current = null;
+    serverLastAboveThresholdAtRef.current = 0;
 
     if (hadSpeech && serverVoiceStartNotifiedRef.current) {
       optionsRef.current.onVoiceEnd?.();
@@ -256,16 +263,18 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       // A short confirmation window prevents incidental clicks/noise from
       // cutting LEXARA off, while still making barge-in feel immediate.
       window.setTimeout(() => {
+        const now = performance.now();
         if (
           serverSpeechActiveRef.current
           && !serverVoiceStartNotifiedRef.current
           && serverSpeechStartedAtRef.current !== null
-          && performance.now() - serverSpeechStartedAtRef.current >= 140
+          && now - serverSpeechStartedAtRef.current >= SERVER_VOICE_CONFIRM_MS
+          && now - serverLastAboveThresholdAtRef.current <= SERVER_VOICE_RECENCY_MS
         ) {
           serverVoiceStartNotifiedRef.current = true;
           optionsRef.current.onVoiceStart?.();
         }
-      }, 150);
+      }, SERVER_VOICE_CONFIRM_MS + 10);
     } catch (err) {
       serverRecorderRef.current = null;
       serverSpeechActiveRef.current = false;
@@ -302,7 +311,23 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       const rms = Math.sqrt(energy / samples.length);
       const now = performance.now();
 
-      if (rms >= SERVER_VAD_THRESHOLD) {
+      // Calibrate to the current microphone/environment while idle instead of
+      // assuming one fixed level works across phones, tablets, headsets and PCs.
+      if (!serverSpeechActiveRef.current) {
+        const boundedSample = Math.min(rms, 0.03);
+        serverNoiseFloorRef.current =
+          (serverNoiseFloorRef.current * 0.96) + (boundedSample * 0.04);
+      }
+      const adaptiveThreshold = Math.max(
+        SERVER_VAD_MIN_THRESHOLD,
+        Math.min(
+          SERVER_VAD_MAX_THRESHOLD,
+          serverNoiseFloorRef.current * SERVER_VAD_NOISE_MULTIPLIER,
+        ),
+      );
+
+      if (rms >= adaptiveThreshold) {
+        serverLastAboveThresholdAtRef.current = now;
         if (!serverSpeechActiveRef.current) {
           beginServerUtterance();
         }
@@ -597,15 +622,18 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       });
       setHasPermission(true);
 
-      if (isSpeechRecognitionSupported()) {
+      // Standards-based capture is the canonical path across modern Android,
+      // iOS/iPadOS, macOS and Windows browsers. Browser SpeechRecognition is
+      // deliberately only a fallback because its support/behavior is uneven.
+      if (isServerRecognitionSupported()) {
+        await initializeServerRecognition(stream);
+        engineRef.current = 'server';
+        setEngine('server');
+      } else if (isSpeechRecognitionSupported()) {
         stream.getTracks().forEach(track => track.stop());
         initializeSpeechRecognition();
         engineRef.current = 'browser';
         setEngine('browser');
-      } else if (isServerRecognitionSupported()) {
-        await initializeServerRecognition(stream);
-        engineRef.current = 'server';
-        setEngine('server');
       } else {
         stream.getTracks().forEach(track => track.stop());
         throw new Error('Live speech input is unavailable on this browser. Text mode remains available.');
@@ -756,6 +784,33 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       description: 'You can keep using LEXARA by typing.',
     });
   }, [cleanupServerRecognition, clearRestartTimer, resetTransientRecovery, toast]);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!enabledRef.current || engineRef.current !== 'server') return;
+
+      if (document.visibilityState === 'hidden') {
+        stopServerVad();
+        finishServerUtterance(false);
+        return;
+      }
+
+      void (async () => {
+        const context = serverAudioContextRef.current;
+        if (context?.state === 'suspended') {
+          try {
+            await context.resume();
+          } catch {
+            // A later explicit user gesture can resume audio on stricter UAs.
+          }
+        }
+        if (shouldBeListening()) startServerVad();
+      })();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [finishServerUtterance, shouldBeListening, startServerVad, stopServerVad]);
 
   useEffect(() => {
     return () => {
