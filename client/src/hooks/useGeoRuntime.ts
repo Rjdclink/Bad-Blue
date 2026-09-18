@@ -190,7 +190,7 @@ const generateLocalFuturecastFallback = (recentFrames: GeoFrame[], hoursAhead = 
         accuracy: Math.max(50, (lastFrame.position.accuracy ?? 35) + i * 25),
       },
       velocity: { speed: avgSpeed, heading: avgHeading },
-      source: 'interpolated',
+      source: 'predicted',
       confidence: Math.max(0.08, 0.88 * Math.exp(-2.2 * ratio)),
       metadata: {
         predicted: true,
