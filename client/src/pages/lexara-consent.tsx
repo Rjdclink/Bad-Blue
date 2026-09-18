@@ -22,6 +22,7 @@ export default function LexaraConsentPage() {
   const [preparing, setPreparing] = useState(false);
   const [micReady, setMicReady] = useState(false);
   const [speakerReady, setSpeakerReady] = useState(false);
+  const [voiceServiceReady, setVoiceServiceReady] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const prepareLiveConversation = useCallback(async () => {
@@ -29,7 +30,31 @@ export default function LexaraConsentPage() {
     setError(null);
 
     try {
-      const [audioUnlocked, stream] = await Promise.all([
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error('This browser cannot open a microphone.');
+      }
+
+      const standardsCaptureSupported =
+        'MediaRecorder' in window
+        && !!((window as any).AudioContext || (window as any).webkitAudioContext);
+      const browserSpeechSupported =
+        'SpeechRecognition' in window || 'webkitSpeechRecognition' in window;
+
+      if (!standardsCaptureSupported && !browserSpeechSupported) {
+        throw new Error('This browser is too old for live voice.');
+      }
+
+      const readinessPromise = fetch('/api/lexara/voice/live-readiness', {
+        method: 'GET',
+        cache: 'no-store',
+      })
+        .then(async response => {
+          if (!response.ok) return null;
+          return response.json();
+        })
+        .catch(() => null);
+
+      const [audioUnlocked, stream, readiness] = await Promise.all([
         unlockAudio(),
         navigator.mediaDevices.getUserMedia({
           audio: {
@@ -39,20 +64,26 @@ export default function LexaraConsentPage() {
           },
           video: false,
         }),
+        readinessPromise,
       ]);
 
       const microphoneGranted = stream.getAudioTracks().length > 0;
       stream.getTracks().forEach(track => track.stop());
 
+      const backendReady = readiness?.liveVoiceConfigured !== false;
       setMicReady(microphoneGranted);
       setSpeakerReady(audioUnlocked);
+      setVoiceServiceReady(readiness ? backendReady : null);
 
-      if (!microphoneGranted || !audioUnlocked) {
-        setError('LEXARA could not fully initialize microphone and audio playback. Check browser permissions and try again.');
+      if (!backendReady) {
+        setError('Voice is temporarily unavailable on the server. You can still continue by typing.');
+      } else if (!microphoneGranted || !audioUnlocked) {
+        setError('LEXARA could not fully prepare your microphone and sound. Check browser permissions and try again.');
       }
     } catch (permissionError: any) {
       setMicReady(false);
       setSpeakerReady(false);
+      setVoiceServiceReady(null);
       const name = String(permissionError?.name || '');
       setError(
         name === 'NotAllowedError' || name === 'PermissionDeniedError'
@@ -69,6 +100,7 @@ export default function LexaraConsentPage() {
     if (!checked) {
       setMicReady(false);
       setSpeakerReady(false);
+      setVoiceServiceReady(null);
       setError(null);
       return;
     }
@@ -76,10 +108,10 @@ export default function LexaraConsentPage() {
   }, [prepareLiveConversation]);
 
   const continueLive = useCallback(() => {
-    if (!domainId || !accepted || !micReady || !speakerReady) return;
+    if (!domainId || !accepted || !micReady || !speakerReady || voiceServiceReady === false) return;
     setLexaraLiveEnabled('true');
     setLocation(`/legal-consultation/${domainId}?live=true`);
-  }, [accepted, domainId, micReady, setLocation, speakerReady]);
+  }, [accepted, domainId, micReady, setLocation, speakerReady, voiceServiceReady]);
 
   const continueTextOnly = useCallback(() => {
     if (!domainId) return;
@@ -172,6 +204,12 @@ export default function LexaraConsentPage() {
               </div>
             </div>
 
+            {voiceServiceReady === true && !preparing && (
+              <p className="mt-4 text-center text-xs text-emerald-300">
+                LEXARA voice is ready.
+              </p>
+            )}
+
             {preparing && (
               <div className="mt-4 flex items-center gap-2 rounded-xl border border-cyan-500/20 bg-cyan-500/10 p-3 text-sm text-cyan-200">
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -187,7 +225,7 @@ export default function LexaraConsentPage() {
 
             <Button
               onClick={continueLive}
-              disabled={!accepted || !micReady || !speakerReady || preparing}
+              disabled={!accepted || !micReady || !speakerReady || voiceServiceReady === false || preparing}
               className="mt-6 min-h-12 w-full touch-manipulation py-6 text-base"
             >
               Start conversation
