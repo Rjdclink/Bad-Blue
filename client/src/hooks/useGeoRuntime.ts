@@ -68,7 +68,7 @@ export interface GeoRuntimeActions {
   seekTo: (index: number) => void;
   seekToTime: (time: Date) => void;
   setPlaybackSpeed: (speed: number) => void;
-  loadData: (points: GPSPoint[]) => void;
+  loadData: (points: GPSPoint[]) => Promise<void>;
   refresh: () => Promise<void>;
   exportTrail: () => GeoFrame[];
 }
