@@ -367,6 +367,47 @@ function addRuntimeLayers(map: MapLibreMap) {
       data: { type: 'FeatureCollection', features: [] },
     });
   }
+  if (!map.getSource('spectra-futurecast-uncertainty')) {
+    map.addSource('spectra-futurecast-uncertainty', {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] },
+    });
+  }
+  if (!map.getLayer('spectra-futurecast-uncertainty-fill')) {
+    map.addLayer({
+      id: 'spectra-futurecast-uncertainty-fill',
+      type: 'fill',
+      source: 'spectra-futurecast-uncertainty',
+      paint: {
+        'fill-color': '#c084fc',
+        'fill-opacity': [
+          'interpolate',
+          ['linear'],
+          ['coalesce', ['get', 'confidence'], 0.25],
+          0, 0.025,
+          1, 0.14,
+        ],
+      },
+    });
+  }
+  if (!map.getLayer('spectra-futurecast-uncertainty-outline')) {
+    map.addLayer({
+      id: 'spectra-futurecast-uncertainty-outline',
+      type: 'line',
+      source: 'spectra-futurecast-uncertainty',
+      paint: {
+        'line-color': '#c084fc',
+        'line-width': 1,
+        'line-opacity': [
+          'interpolate',
+          ['linear'],
+          ['coalesce', ['get', 'confidence'], 0.25],
+          0, 0.12,
+          1, 0.45,
+        ],
+      },
+    });
+  }
   if (!map.getLayer('spectra-futurecast-line')) {
     map.addLayer({
       id: 'spectra-futurecast-line',
@@ -482,7 +523,12 @@ function addRuntimeLayers(map: MapLibreMap) {
       type: 'fill',
       source: 'spectra-uncertainty',
       paint: {
-        'fill-color': '#22d3ee',
+        'fill-color': [
+          'case',
+          ['==', ['get', 'observationKind'], 'predicted'],
+          '#c084fc',
+          '#22d3ee',
+        ],
         'fill-opacity': 0.12,
       },
     });
@@ -493,7 +539,12 @@ function addRuntimeLayers(map: MapLibreMap) {
       type: 'line',
       source: 'spectra-uncertainty',
       paint: {
-        'line-color': '#67e8f9',
+        'line-color': [
+          'case',
+          ['==', ['get', 'observationKind'], 'predicted'],
+          '#d8b4fe',
+          '#67e8f9',
+        ],
         'line-width': 2,
         'line-opacity': 0.65,
       },
@@ -824,6 +875,27 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
         ? [lineFeature(futurecast), ...futurecast.map(pointFeature)]
         : [],
     });
+    safeSetData(map, 'spectra-futurecast-uncertainty', {
+      type: 'FeatureCollection',
+      features: futurecast.flatMap(frame => {
+        const accuracy = Number(frame.position.accuracy);
+        if (!Number.isFinite(accuracy) || accuracy <= 0) return [];
+        const area = circleFeature(
+          frame.position.longitude,
+          frame.position.latitude,
+          clamp(accuracy, 5, 250_000),
+        );
+        return [{
+          ...area,
+          properties: {
+            ...area.properties,
+            confidence: clamp(frame.confidence ?? 0, 0, 1),
+            timestamp: frame.timestamp.toISOString(),
+            horizonMinutes: frame.metadata?.horizonMinutes ?? null,
+          },
+        }];
+      }),
+    });
     safeSetData(map, 'spectra-current', {
       type: 'FeatureCollection',
       features: currentFrame ? [pointFeature(currentFrame)] : [],
@@ -890,11 +962,19 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     safeSetData(map, 'spectra-uncertainty', {
       type: 'FeatureCollection',
       features: currentFrame && Number.isFinite(accuracy) && (accuracy as number) > 0
-        ? [circleFeature(
-            currentFrame.position.longitude,
-            currentFrame.position.latitude,
-            clamp(accuracy as number, 2, 100_000),
-          )]
+        ? [{
+            ...circleFeature(
+              currentFrame.position.longitude,
+              currentFrame.position.latitude,
+              clamp(accuracy as number, 2, 250_000),
+            ),
+            properties: {
+              accuracyMeters: accuracy,
+              observationKind:
+                currentFrame.observationKind ||
+                (currentFrame.source === 'predicted' ? 'predicted' : 'observed'),
+            },
+          }]
         : [],
     });
   }, [ready, trail, futurecast, currentFrame, candidateLocations, displayTimeMs]);
@@ -909,6 +989,16 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     setVisibility(map, 'spectra-observation-points', layers.markers);
     setVisibility(map, 'spectra-futurecast-line', layers.futurecast);
     setVisibility(map, 'spectra-futurecast-points', layers.futurecast);
+    setVisibility(
+      map,
+      'spectra-futurecast-uncertainty-fill',
+      layers.futurecast && layers.uncertainty,
+    );
+    setVisibility(
+      map,
+      'spectra-futurecast-uncertainty-outline',
+      layers.futurecast && layers.uncertainty,
+    );
     setVisibility(map, 'spectra-current-ring', layers.reticle);
     setVisibility(map, 'spectra-candidate-points', candidateLocations.length > 0);
     setVisibility(map, 'spectra-candidate-area', candidateLocations.length > 0);
