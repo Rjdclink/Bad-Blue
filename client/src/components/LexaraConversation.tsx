@@ -386,7 +386,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const voiceTurnBufferRef = useRef('');
   const voiceTurnTimerRef = useRef<number | null>(null);
   const voiceEndPendingRef = useRef(false);
-  const pendingUserTurnRef = useRef('');
+  const pendingUserTurnQueueRef = useRef<string[]>([]);
   const pendingTurnAlreadyRenderedRef = useRef(false);
   const currentTurnTextRef = useRef('');
   const analysisActiveRef = useRef(false);
@@ -477,17 +477,18 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       if (meta.startedDuringPlayback && typeof meta.utteranceId === 'number') {
         const alreadyValidated = validatedBargeInUtterancesRef.current.has(meta.utteranceId);
         if (!alreadyValidated) {
-          // A recording that began while LEXARA was speaking is presumptively
-          // speaker leakage until a transcript proves otherwise. A strong final
-          // transcript can still validate a short interruption that ended before
-          // the 700ms probe snapshot was available.
+          // A recording that began during playback is admitted only when the
+          // final transcript itself is strong and does not match recent LEXARA
+          // speech. Do not require playback to still be active by the time the
+          // server transcript returns; that race was dropping genuine short
+          // interruptions on mobile.
           if (
-            phaseRef.current === 'speaking'
+            isFinal
             && !isSuspiciousGenericServerTranscript(observed, meta)
             && isStrongBargeIn(observed, meta)
           ) {
             validatedBargeInUtterancesRef.current.add(meta.utteranceId);
-            autoInterruptRef.current();
+            if (phaseRef.current === 'speaking') autoInterruptRef.current();
           } else {
             return;
           }
@@ -674,10 +675,9 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
       const presenceControl = isPresenceControlTurn(message);
       if (!presenceControl) {
-        pendingUserTurnRef.current = pendingUserTurnRef.current
-          ? mergeSpeechSegments(pendingUserTurnRef.current, message)
-          : message;
-        pendingTurnAlreadyRenderedRef.current = true;
+        // Preserve each interruption as its own turn. Distinct questions/facts
+        // must never be concatenated into one fabricated user statement.
+        pendingUserTurnQueueRef.current.push(message);
       }
 
       try {
@@ -884,8 +884,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         currentRequestRef.current = null;
         analysisActiveRef.current = false;
         currentTurnTextRef.current = '';
-        const pending = pendingUserTurnRef.current.trim();
-        pendingUserTurnRef.current = '';
+        const pending = pendingUserTurnQueueRef.current.shift()?.trim() || '';
         if (pending) {
           pendingTurnAlreadyRenderedRef.current = true;
           window.setTimeout(() => handleMessageRef.current(pending), 0);
@@ -962,7 +961,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     setConversation([]);
     setJurisdiction(undefined);
     greetingRef.current = false;
-    pendingUserTurnRef.current = '';
+    pendingUserTurnQueueRef.current = [];
     pendingTurnAlreadyRenderedRef.current = false;
     currentTurnTextRef.current = '';
     analysisActiveRef.current = false;
