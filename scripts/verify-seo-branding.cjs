@@ -38,6 +38,8 @@ must(seoHead.includes('const BASE_URL = "https://legalwhat.com"'), 'SEOHead base
 must(seoHead.includes('const SITE_NAME = "Legal What?"'), 'SEOHead site name must be Legal What?');
 must(seoHead.includes('script#page-schema'), 'page schema must have isolated script authority');
 must(seoHead.includes('removeMetaTag("keywords")'), 'SEOHead must suppress meta-keywords');
+must(seoHead.includes('const effectiveNoIndex = noIndex || isPrivateRoute(path)'), 'SEOHead must centrally noindex protected routes');
+must(seoHead.includes('"/people-finder"') && seoHead.includes('"/inmate-locator"'), 'people finder and inmate tools must remain protected from indexing');
 mustNot(seoHead, 'https://example.com', 'SEOHead must not use example.com');
 mustNot(seoHead, '@BadBlueApp', 'SEOHead must not restore legacy social handle');
 
@@ -62,6 +64,8 @@ mustNot(manifest, 'example.com', 'manifest must not use example.com');
 
 must(robots.includes('Sitemap: https://legalwhat.com/sitemap.xml'), 'robots must advertise canonical sitemap');
 must(robots.includes('Disallow: /api/'), 'robots must block API surface');
+mustNot(robots, 'Disallow: /login', 'robots must allow crawling so login noindex can be read');
+mustNot(robots, 'Disallow: /complaint-form', 'robots must allow protected-page noindex directives to be read');
 mustNot(robots, 'BadBlue', 'robots must not use legacy brand');
 mustNot(robots, 'Bad Blue', 'robots must not use legacy brand');
 mustNot(robots, 'example.com', 'robots must not use example.com');
@@ -87,6 +91,10 @@ for (const phrase of [
   must(landing.includes(phrase), `landing must describe capability: ${phrase}`);
 }
 must(landing.includes('/images/Legal%20What%20Icon.png'), 'landing must use Legal What icon');
+must(landing.includes('LAW_TYPE_DATA.map((area)'), 'landing must expose the 30 legal practice areas as crawlable content');
+mustNot(landing, 'facebook.com/badblue', 'landing must not link legacy social profiles');
+mustNot(landing, 'twitter.com/badblue', 'landing must not link legacy social profiles');
+mustNot(landing, 'linkedin.com/company/badblue', 'landing must not link legacy social profiles');
 mustNot(landing, 'BadBlue', 'landing must not use BadBlue');
 mustNot(landing, 'Bad Blue', 'landing must not use Bad Blue');
 mustNot(landing, 'https://example.com', 'landing must not use example.com');

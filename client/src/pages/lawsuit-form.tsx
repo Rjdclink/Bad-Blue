@@ -178,7 +178,7 @@ export default function LawsuitForm() {
   const [showPreview, setShowPreview] = useState(false);
   const [readyToSubmit, setReadyToSubmit] = useState(false);
   const [lawsuitTier, setLawsuitTier] = useState<'diy' | 'full-service'>('diy'); // Tier from URL
-  const [serviceDisclaimerAccepted, setServiceDisclaimerAccepted] = useState(false); // BadBlue service disclaimer
+  const [serviceDisclaimerAccepted, setServiceDisclaimerAccepted] = useState(false); // Legal What? service disclaimer
 
   // Require login to access this page
   if (!user) {
@@ -418,7 +418,7 @@ export default function LawsuitForm() {
           <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Shield className="w-6 h-6 text-primary" />
-              <span className="font-semibold text-lg">BadBlue</span>
+              <span className="font-semibold text-lg">Legal What?</span>
             </div>
           </div>
         </header>
@@ -627,7 +627,7 @@ export default function LawsuitForm() {
                     Return Mailing Address Required
                   </CardTitle>
                   <CardDescription>
-                    Because BadBlue will be physically filing your lawsuit with the court on your behalf, we need your physical mailing address. This address will be used as the return address for any court correspondence regarding your case.
+                    Because Legal What? will be physically filing your lawsuit with the court on your behalf, we need your physical mailing address. This address will be used as the return address for any court correspondence regarding your case.
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -675,7 +675,7 @@ export default function LawsuitForm() {
               </CardContent>
             </Card>
 
-            {/* BadBlue Service Disclaimer */}
+            {/* Legal What? Service Disclaimer */}
             <Card className="border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-950">
               <CardHeader>
                 <CardTitle className="text-blue-900 dark:text-blue-100">Service Disclaimer</CardTitle>
@@ -692,7 +692,7 @@ export default function LawsuitForm() {
                   <div className="flex-1">
                     <label htmlFor="service-disclaimer-checkbox" className="text-sm leading-relaxed cursor-pointer text-blue-800 dark:text-blue-200">
                       <span className="font-semibold">Required Acknowledgment:</span>{" "}
-                      I acknowledge that BadBlue is a document-coordination service for self-represented litigants and is not a law firm. BadBlue does not provide legal advice or representation. I understand that I am representing myself in this legal matter and should consult with a qualified attorney for legal advice specific to my situation.
+                      I acknowledge that Legal What? is a document-coordination service for self-represented litigants and is not a law firm. Legal What? does not provide legal advice or representation. I understand that I am representing myself in this legal matter and should consult with a qualified attorney for legal advice specific to my situation.
                     </label>
                   </div>
                 </div>
@@ -740,12 +740,12 @@ export default function LawsuitForm() {
   const structuredData = {
     "@context": "https://schema.org",
     "@type": "LegalService",
-    "name": "BadBlue Civil Rights Lawsuit Filing",
+    "name": "Legal What? Civil Rights Lawsuit Filing",
     "description": "File Section 1983 civil rights lawsuits online with state-specific legal templates",
     "serviceType": "Civil Rights Lawsuit Filing",
     "provider": {
       "@type": "Organization",
-      "name": "BadBlue"
+      "name": "Legal What?"
     }
   };
 
@@ -1063,7 +1063,7 @@ export default function LawsuitForm() {
                 onChange={(e) => localStorage.setItem('shareEvidence', e.target.checked.toString())}
               />
               <label htmlFor="shareEvidence" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                Share with BadBlue community (Corrupt Law Enforcement & Informant Hub)
+                Share with Legal What? community (Corrupt Law Enforcement & Informant Hub)
               </label>
             </div>
 

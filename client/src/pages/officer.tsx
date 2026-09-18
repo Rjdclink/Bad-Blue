@@ -78,7 +78,7 @@ export default function OfficerInfo() {
     "description": "Search and view detailed police officer information including badge numbers, departments, ranks, and service records for accountability purposes",
     "provider": {
       "@type": "Organization",
-      "name": "BadBlue"
+      "name": "Legal What?"
     },
     "serviceType": "Police Officer Information Search",
     "areaServed": {

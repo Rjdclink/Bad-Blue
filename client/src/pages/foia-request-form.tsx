@@ -265,7 +265,7 @@ export default function FOIARequestForm() {
     "description": "Generate and file state-specific FOIA requests for police records including body camera footage, disciplinary records, use-of-force reports, and internal investigation files. Automatic routing to records custodians via certified mail.",
     "provider": {
       "@type": "Organization",
-      "name": "BadBlue"
+      "name": "Legal What?"
     },
     "serviceType": "Freedom of Information Act Request Filing",
     "areaServed": {
@@ -456,7 +456,7 @@ export default function FOIARequestForm() {
                     Authorize Certified Mail Delivery
                   </Label>
                   <p className="text-sm text-muted-foreground">
-                    I authorize BadBlue to send my FOIA request via certified mail and email the tracking number to me when mailed.
+                    I authorize Legal What? to send my FOIA request via certified mail and email the tracking number to me when mailed.
                   </p>
                 </div>
               </div>
@@ -545,7 +545,7 @@ export default function FOIARequestForm() {
                   <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
                     <p className="text-sm text-blue-900 dark:text-blue-100">
                       <CheckCircle2 className="h-4 w-4 inline mr-2" />
-                      After payment, you'll receive the complete FOIA letter via email. BadBlue will send it via certified mail and email you the tracking number.
+                      After payment, you'll receive the complete FOIA letter via email. Legal What? will send it via certified mail and email you the tracking number.
                     </p>
                   </div>
 
