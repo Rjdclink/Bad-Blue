@@ -38,6 +38,7 @@
  */
 
 import { AIProvider, UsageContext } from './aiTokenGovernor';
+import { CURRENT_AI_MODELS, getCurrentModelForProvider, getHarmonyCapabilities } from './aiHarmonyModelRegistry';
 
 /**
  * Task complexity levels
@@ -855,72 +856,21 @@ export class AIModelSelector {
    * Select optimal Gemini model based on task attributes
    * Updated December 2025: Prioritizes Gemini 2.5 models
    */
-  static selectGeminiModel(attrs: TaskAttributes): string {
-    // Use gemini-2.5-pro for multimodal/image tasks
-    if (attrs.needsMultimodal || attrs.needsImageAnalysis) {
-      return 'gemini-2.5-pro';
-    }
-    
-    // Use gemini-2.5-pro for high-complexity tasks
-    if (attrs.complexity === TaskComplexity.COMPREHENSIVE) {
-      return 'gemini-2.5-pro';
-    }
-    
-    // Use gemini-2.5-flash for high-volume/lightweight tasks
-    if (attrs.complexity === TaskComplexity.LIGHTWEIGHT || attrs.needsFastResponse) {
-      return 'gemini-2.5-flash';
-    }
-    
-    // Use gemini-2.5-pro for long context needs
-    if (attrs.needsLongContext || attrs.needsMassiveContext) {
-      return 'gemini-2.5-pro';
-    }
-    
-    // Use gemini-2.5-pro for advanced reasoning
-    if (attrs.needsReasoning || attrs.needsPatternRecognition) {
-      return 'gemini-2.5-pro';
-    }
-    
-    // Default to gemini-2.5-flash for cost efficiency
-    return 'gemini-2.5-flash';
+  static selectGeminiModel(_attrs: TaskAttributes): string {
+    return CURRENT_AI_MODELS.gemini;
   }
   
   /**
    * Select optimal Claude model based on task attributes
    */
   static selectClaudeModel(attrs: TaskAttributes): string {
-    // Use Sonnet for legal analysis
-    if (attrs.needsLegalAnalysis) {
-      return 'claude-sonnet-4-6';
+    if (attrs.needsFastResponse && !attrs.needsLegalAnalysis && attrs.complexity === TaskComplexity.LIGHTWEIGHT) {
+      return CURRENT_AI_MODELS.claudeFast;
     }
-    
-    // Use Sonnet for creative writing
-    if (attrs.needsCreativeWriting) {
-      return 'claude-sonnet-4-6';
+    if (attrs.complexity === TaskComplexity.COMPREHENSIVE && attrs.needsReasoning) {
+      return CURRENT_AI_MODELS.claudeDeep;
     }
-    
-    // Use Sonnet for complex reasoning
-    if (attrs.needsReasoning && attrs.complexity === TaskComplexity.COMPREHENSIVE) {
-      return 'claude-sonnet-4-6';
-    }
-    
-    // Use Sonnet for code generation
-    if (attrs.needsCodeGeneration && attrs.complexity !== TaskComplexity.LIGHTWEIGHT) {
-      return 'claude-sonnet-4-6';
-    }
-    
-    // Use Haiku for fast responses
-    if (attrs.needsFastResponse) {
-      return 'claude-haiku-4-5-20251001';
-    }
-    
-    // Use Haiku for verification tasks
-    if (attrs.needsVerification) {
-      return 'claude-haiku-4-5-20251001';
-    }
-    
-    // Default to Haiku for cost efficiency
-    return 'claude-haiku-4-5-20251001';
+    return CURRENT_AI_MODELS.claudeBalanced;
   }
   
   /**
@@ -928,48 +878,10 @@ export class AIModelSelector {
    * Updated December 2025 - Best model from each provider
    */
   static selectOpenRouterModel(attrs: TaskAttributes): string {
-    // Use Claude 3.5 Sonnet for legal analysis (best accuracy)
-    if (attrs.needsLegalAnalysis) {
-      return 'anthropic/claude-3.5-sonnet';
-    }
-    
-    // Use Gemini 2.0 Flash for multimodal/image analysis
-    if (attrs.needsMultimodal || attrs.needsImageAnalysis) {
-      return 'google/gemini-2.0-flash-exp:free';
-    }
-    
-    // Use Perplexity Sonar Pro for web-grounded search
-    if (attrs.needsSearchGrounding) {
-      return 'perplexity/sonar-pro';
-    }
-    
-    // Use DeepSeek R1 for pattern recognition and complex reasoning
-    if (attrs.needsPatternRecognition || (attrs.needsReasoning && attrs.complexity === TaskComplexity.COMPREHENSIVE)) {
-      return 'deepseek/deepseek-r1-0528:free';
-    }
-    
-    // Use SambaNova Llama 405B for massive context
-    if (attrs.needsMassiveContext) {
-      return 'sambanova/llama-3.1-405b-instruct';
-    }
-    
-    // Use NVIDIA Nemotron for code generation
-    if (attrs.needsCodeGeneration) {
-      return 'nvidia/llama-3.1-nemotron-70b-instruct:free';
-    }
-    
-    // Use Qwen for structured output/data extraction
-    if (attrs.needsStructuredOutput || attrs.needsDataExtraction) {
-      return 'qwen/qwen-2.5-72b-instruct:free';
-    }
-    
-    // Use Groq for fast responses
-    if (attrs.needsFastResponse) {
-      return 'groq/llama-3.3-70b-versatile';
-    }
-    
-    // Default to Google Gemini 2.0 Flash for general tasks (best free all-rounder)
-    return 'google/gemini-2.0-flash-exp:free';
+    if (attrs.needsFastResponse) return CURRENT_AI_MODELS.openaiFastViaOpenRouter;
+    if (attrs.needsCodeGeneration || attrs.needsMassiveContext) return CURRENT_AI_MODELS.qwen;
+    if (attrs.needsReasoning || attrs.needsPatternRecognition) return CURRENT_AI_MODELS.deepseek;
+    return CURRENT_AI_MODELS.openRouterAuto;
   }
   
   /**
@@ -980,145 +892,40 @@ export class AIModelSelector {
     attrs: TaskAttributes,
     availableProviders: AIProvider[]
   ): Array<{ provider: AIProvider; model: string; score: number; reason: string }> {
-    const results: Array<{ provider: AIProvider; model: string; score: number; reason: string }> = [];
-    
-    for (const provider of availableProviders) {
-      let model: string;
-      let score = 0;
-      const reasons: string[] = [];
-      
-      // Select model for provider
-      switch (provider) {
-        case AIProvider.GEMINI:
-          model = this.selectGeminiModel(attrs);
-          break;
-        case AIProvider.CLAUDE:
-          model = this.selectClaudeModel(attrs);
-          break;
-        case AIProvider.GROQ:
-          model = 'llama-3.3-70b-versatile';
-          break;
-        case AIProvider.MISTRAL:
-          model = 'mistral-small-latest';
-          break;
-        case AIProvider.DEEPSEEK:
-          model = 'deepseek-chat';
-          break;
-        default:
-          continue;
-      }
-      
-      const caps = MODEL_CAPABILITIES[model];
-      if (!caps) continue;
-      
-      // Calculate score based on task attributes
-      if (attrs.needsMultimodal) {
-        score += caps.multimodal;
-        if (caps.multimodal >= 80) reasons.push('Strong multimodal');
-      }
-      
-      if (attrs.needsLongContext) {
-        score += caps.longContext;
-        if (caps.longContext >= 85) reasons.push('Large context');
-      }
-      
-      if (attrs.needsMassiveContext) {
-        score += caps.massiveContext * 1.5; // Weight heavily
-        if (caps.massiveContext >= 90) reasons.push('Massive context');
-      }
-      
-      if (attrs.needsStructuredOutput) {
-        score += caps.structuredOutput;
-        if (caps.structuredOutput >= 90) reasons.push('Excellent structured output');
-      }
-      
-      if (attrs.needsCodeGeneration) {
-        score += caps.codeGeneration;
-        if (caps.codeGeneration >= 90) reasons.push('Strong code generation');
-      }
-      
-      if (attrs.needsCreativeWriting) {
-        score += caps.creativeWriting;
-        if (caps.creativeWriting >= 90) reasons.push('Creative writing');
-      }
-      
-      if (attrs.needsReasoning) {
-        score += caps.reasoning * 1.2; // Weight reasoning
-        if (caps.reasoning >= 90) reasons.push('Advanced reasoning');
-      }
-      
-      if (attrs.needsFastResponse) {
-        score += caps.speed * 1.3; // Weight speed heavily
-        if (caps.speed >= 90) reasons.push('Fast response');
-      }
-      
-      if (attrs.needsVerification) {
-        score += caps.verification;
-        if (caps.verification >= 85) reasons.push('Good verification');
-      }
-      
-      if (attrs.needsLegalAnalysis) {
-        score += caps.legalAnalysis * 1.4; // Weight legal heavily
-        if (caps.legalAnalysis >= 90) reasons.push('Expert legal analysis');
-      }
-      
-      if (attrs.needsImageAnalysis) {
-        score += caps.imageAnalysis;
-        if (caps.imageAnalysis >= 85) reasons.push('Image analysis');
-      }
-      
-      if (attrs.needsPatternRecognition) {
-        score += caps.patternRecognition;
-        if (caps.patternRecognition >= 90) reasons.push('Pattern recognition');
-      }
-      
-      if (attrs.needsDataExtraction) {
-        score += caps.dataExtraction;
-        if (caps.dataExtraction >= 90) reasons.push('Data extraction');
-      }
-      
-      if (attrs.needsSearchGrounding) {
-        score += caps.searchGrounding;
-        if (caps.searchGrounding >= 90) reasons.push('Search grounding');
-      }
-      
-      // Add capacity bonus for high-volume needs
-      if (attrs.needsUnlimitedCapacity) {
-        score += caps.dailyCapacity * 0.5;
-      }
-      
-      // Complexity adjustments
-      switch (attrs.complexity) {
-        case TaskComplexity.COMPREHENSIVE:
-          score *= (caps.reasoning / 100 + 0.5); // Boost reasoning-heavy models
-          break;
-        case TaskComplexity.LIGHTWEIGHT:
-          score *= (caps.speed / 100 + 0.5); // Boost fast models
-          break;
-      }
-      
-      // Priority adjustments
-      switch (attrs.priority) {
-        case TaskPriority.CRITICAL:
-          score *= (caps.verification / 100 + 0.7); // Boost reliable models
-          break;
-        case TaskPriority.HIGH:
-          score *= (caps.speed / 100 + 0.6);
-          break;
-      }
-      
-      results.push({
-        provider,
-        model,
-        score: Math.round(score),
-        reason: reasons.length > 0 ? reasons.join(', ') : 'General purpose',
-      });
-    }
-    
-    // Sort by score descending
-    results.sort((a, b) => b.score - a.score);
-    
-    return results;
+    const desired: Array<{ capability: string; weight: number; label: string }> = [];
+    if (attrs.needsLegalAnalysis) desired.push({ capability: 'legal-analysis', weight: 3.0, label: 'legal analysis' });
+    if (attrs.needsReasoning) desired.push({ capability: 'deep-reasoning', weight: 2.2, label: 'reasoning' });
+    if (attrs.needsVerification) desired.push({ capability: 'verification', weight: 2.0, label: 'verification' });
+    if (attrs.needsFastResponse) desired.push({ capability: 'fast-chat', weight: 2.4, label: 'low latency' });
+    if (attrs.needsCodeGeneration) desired.push({ capability: 'coding', weight: 2.5, label: 'coding' });
+    if (attrs.needsSearchGrounding) desired.push({ capability: 'research', weight: 2.0, label: 'research' });
+    if (attrs.needsLongContext || attrs.needsMassiveContext) desired.push({ capability: 'long-context', weight: attrs.needsMassiveContext ? 2.7 : 1.8, label: 'long context' });
+    if (attrs.needsMultimodal || attrs.needsImageAnalysis) desired.push({ capability: 'multimodal', weight: 2.2, label: 'multimodal' });
+    if (attrs.needsStructuredOutput || attrs.needsDataExtraction) desired.push({ capability: 'structured-output', weight: 2.0, label: 'structured output' });
+
+    return availableProviders
+      .map(provider => {
+        const capabilities = getHarmonyCapabilities(provider);
+        let score = 1;
+        const reasons: string[] = [];
+        for (const item of desired) {
+          if (capabilities.includes(item.capability as any)) {
+            score += item.weight * 100;
+            reasons.push(item.label);
+          }
+        }
+        // Comprehensive work rewards deep reasoning; lightweight work rewards
+        // fast-chat. This is capability scoring, not provider priority.
+        if (attrs.complexity === TaskComplexity.COMPREHENSIVE && capabilities.includes('deep-reasoning')) score += 80;
+        if (attrs.complexity === TaskComplexity.LIGHTWEIGHT && capabilities.includes('fast-chat')) score += 80;
+        return {
+          provider,
+          model: getCurrentModelForProvider(provider),
+          score: Math.round(score),
+          reason: reasons.length ? `Capability fit: ${reasons.join(', ')}` : 'General Harmony contributor',
+        };
+      })
+      .sort((a, b) => b.score - a.score);
   }
   
   /**
