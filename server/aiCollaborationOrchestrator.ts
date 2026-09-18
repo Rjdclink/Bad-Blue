@@ -21,7 +21,7 @@
 import { AIProvider, UsageContext, TaskPriority as GovernorTaskPriority, TaskComplexity as GovernorTaskComplexity } from './aiTokenGovernor';
 import { AIModelSelector, TaskAttributes, TaskComplexity, TaskPriority } from './aiModelSelector';
 import { runProvider, type AITaskMetadata } from './aiProvider';
-import { deepSeekSearch, qwenSearch, grokSearch, kimiSearch } from './openRouterService';
+import { generateOpenRouterText, OPENROUTER_MODELS } from './openRouterService';
 
 /**
  * Collaboration task definition
@@ -32,8 +32,10 @@ export interface CollaborationTask {
   model: string;
   role: string;
   prompt: string;
+  systemPrompt?: string;
   priority: number;
   dependencies?: string[];
+  fallbackProviders?: AIProvider[];
   attributes: TaskAttributes;
   timeout?: number;
 }
@@ -97,7 +99,28 @@ export type CollaborationRole = keyof typeof COLLABORATION_ROLES;
 /**
  * Get available providers based on context
  */
-function getAvailableProvidersForContext(context: UsageContext): AIProvider[] {
+export type CollaborationProviderPolicy = 'default' | 'capability-first-no-google';
+
+function getAvailableProvidersForContext(
+  context: UsageContext,
+  providerPolicy: CollaborationProviderPolicy = 'default',
+): AIProvider[] {
+  if (providerPolicy === 'capability-first-no-google') {
+    // LEXARA/Harmony policy: use every real configured provider family that can
+    // contribute the required capability, but never make Google/Gemini a
+    // dependency. Provider/model choice is made by capability/role scoring.
+    return [
+      AIProvider.CLAUDE,
+      AIProvider.CLAUDE_OPUS,
+      AIProvider.GROQ,
+      AIProvider.MISTRAL,
+      AIProvider.DEEPSEEK,
+      AIProvider.GROK,
+      AIProvider.KIMI,
+      AIProvider.QWEN,
+    ];
+  }
+
   if (context === UsageContext.AUTONOMOUS) {
     // AUTONOMOUS: Groq, Mistral, and open-source models
     return [
@@ -135,13 +158,17 @@ export class AICollaborationOrchestrator {
     taskName: string,
     query: string,
     attributes: TaskAttributes,
-    availableProviders: AIProvider[]
+    availableProviders: AIProvider[],
+    options: {
+      providerPolicy?: CollaborationProviderPolicy;
+      systemPrompt?: string;
+    } = {},
   ): Promise<OrchestratedResponse> {
     const startTime = Date.now();
     const context = attributes.context || UsageContext.USER;
     
     // Filter providers by context
-    const contextProviders = getAvailableProvidersForContext(context);
+    const contextProviders = getAvailableProvidersForContext(context, options.providerPolicy);
     const providers = availableProviders.filter(p => contextProviders.includes(p));
     
     if (providers.length === 0) {
@@ -158,7 +185,13 @@ export class AICollaborationOrchestrator {
       attributes,
       providers,
       strategy
-    );
+    ).map(task => ({
+      ...task,
+      systemPrompt: options.systemPrompt,
+      fallbackProviders: options.providerPolicy === 'capability-first-no-google'
+        ? providers.filter(provider => provider !== task.provider)
+        : undefined,
+    }));
     
     // Execute tasks
     const results = await this.executeCollaborationTasks(tasks, attributes);
@@ -286,7 +319,9 @@ export class AICollaborationOrchestrator {
     const tasks: CollaborationTask[] = [];
     const context = attrs.context || UsageContext.USER;
     
-    // Legal analyst role (Claude Sonnet preferred)
+    // Capability-first legal analysis: independent analyst and verifier run in
+    // parallel, then a synthesis role combines only successful evidence. No
+    // provider/model is globally preferred; role capability scoring decides.
     const legalAssignment = AIModelSelector.assignRole('legal-analyst', context, providers);
     if (legalAssignment) {
       tasks.push({
@@ -294,41 +329,47 @@ export class AICollaborationOrchestrator {
         provider: legalAssignment.provider,
         model: legalAssignment.model,
         role: 'legal-analyst',
-        prompt: `Analyze the following query from a legal perspective, identifying relevant statutes, precedents, and legal implications:\n\n${query}`,
+        prompt: `Analyze the following legal conversation turn. Apply only grounded authority supplied in the prompt, identify issues, defenses, weaknesses, procedure, and the highest-value missing fact. Do not invent citations.\n\n${query}`,
         priority: 1,
-        attributes: { ...attrs, needsLegalAnalysis: true },
+        attributes: { ...attrs, needsLegalAnalysis: true, needsReasoning: true },
       });
     }
-    
-    // Pattern analyst for case patterns
-    const patternAssignment = AIModelSelector.assignRole('pattern-analyst', context, providers);
-    if (patternAssignment && patternAssignment.provider !== legalAssignment?.provider) {
-      tasks.push({
-        id: `${taskName}-pattern-analysis`,
-        provider: patternAssignment.provider,
-        model: patternAssignment.model,
-        role: 'pattern-analyst',
-        prompt: `Identify patterns and similarities with known legal cases or precedents:\n\n${query}`,
-        priority: 2,
-        attributes: { ...attrs, needsPatternRecognition: true },
-      });
-    }
-    
-    // Verifier for fact-checking
-    const verifierAssignment = AIModelSelector.assignRole('verifier', context, providers);
+
+    const verifierPool = legalAssignment
+      ? providers.filter(provider => provider !== legalAssignment.provider)
+      : providers;
+    const verifierAssignment = AIModelSelector.assignRole('verifier', context, verifierPool.length ? verifierPool : providers);
     if (verifierAssignment) {
       tasks.push({
         id: `${taskName}-verification`,
         provider: verifierAssignment.provider,
         model: verifierAssignment.model,
         role: 'verifier',
-        prompt: `Verify the factual claims and legal assertions in the following query:\n\n${query}`,
-        priority: 3,
-        dependencies: [`${taskName}-legal-analysis`],
-        attributes: { ...attrs, needsVerification: true },
+        prompt: `Independently stress-test the following legal conversation turn. Flag unsupported assumptions, jurisdiction problems, missing facts, and any proposition that requires primary-authority verification. Do not invent citations.\n\n${query}`,
+        priority: 1,
+        attributes: { ...attrs, needsVerification: true, needsReasoning: true },
       });
     }
-    
+
+    const dependencies = tasks.filter(task => task.priority === 1).map(task => task.id);
+    if (dependencies.length > 0) {
+      const used = new Set(tasks.map(task => task.provider));
+      const synthesisPool = providers.filter(provider => !used.has(provider));
+      const synthesisAssignment = AIModelSelector.assignRole('synthesizer', context, synthesisPool.length ? synthesisPool : providers);
+      if (synthesisAssignment) {
+        tasks.push({
+          id: `${taskName}-synthesis`,
+          provider: synthesisAssignment.provider,
+          model: synthesisAssignment.model,
+          role: 'synthesizer',
+          prompt: `Synthesize the successful analyses below into one natural spoken LEXARA answer. Resolve disagreements conservatively, preserve uncertainty, never invent authority, and do not mention the internal provider roles.\n\n[Results will be provided]`,
+          priority: 2,
+          dependencies,
+          attributes: { ...attrs, needsLegalAnalysis: true, needsVerification: true, needsReasoning: true },
+        });
+      }
+    }
+
     return tasks;
   }
   
@@ -752,7 +793,13 @@ export class AICollaborationOrchestrator {
         case AIProvider.GROQ:
         case AIProvider.MISTRAL:
         case AIProvider.CLAUDE: {
-          const response = await runProvider(task.provider, prompt, { model: task.model }, task.timeout ? Math.min(task.timeout, 4000) : 2000, taskMetadata);
+          const response = await runProvider(
+            task.provider,
+            prompt,
+            { model: task.model, systemPrompt: task.systemPrompt },
+            task.timeout ? Math.min(task.timeout, 1800) : 1100,
+            taskMetadata,
+          );
           content = response.content;
           tokensUsed = response.tokensUsed;
           break;
@@ -764,24 +811,24 @@ export class AICollaborationOrchestrator {
           tokensUsed = response.tokensUsed;
           break;
         }
-        case AIProvider.DEEPSEEK: {
-          const result = await deepSeekSearch(prompt);
-          content = result?.content || '';
-          break;
-        }
-        case AIProvider.QWEN: {
-          const result = await qwenSearch(prompt);
-          content = result?.content || '';
-          break;
-        }
-        case AIProvider.GROK: {
-          const result = await grokSearch(prompt);
-          content = result?.content || '';
-          break;
-        }
+        case AIProvider.DEEPSEEK:
+        case AIProvider.QWEN:
+        case AIProvider.GROK:
         case AIProvider.KIMI: {
-          const result = await kimiSearch(prompt);
-          content = result?.content || '';
+          const model = task.provider === AIProvider.DEEPSEEK
+            ? OPENROUTER_MODELS.DEEPSEEK
+            : task.provider === AIProvider.QWEN
+              ? OPENROUTER_MODELS.QWEN
+              : task.provider === AIProvider.GROK
+                ? OPENROUTER_MODELS.GROK
+                : OPENROUTER_MODELS.KIMI;
+          const result = await generateOpenRouterText(prompt, {
+            model,
+            systemPrompt: task.systemPrompt,
+            maxTokens: task.timeout ? Math.min(task.timeout, 1800) : 1100,
+            timeoutMs: 7_500,
+          });
+          content = result.content;
           break;
         }
         default: {
@@ -800,6 +847,37 @@ export class AICollaborationOrchestrator {
         content = `[${task.provider}] returned an empty response`;
       }
     } catch (error: any) {
+      const alternatives = (task.fallbackProviders || []).filter(provider => provider !== task.provider);
+      if (alternatives.length > 0) {
+        try {
+          const fallback = await Promise.any(
+            alternatives.map(async provider => {
+              const candidate = await this.executeTask(
+                {
+                  ...task,
+                  provider,
+                  model: this.getDefaultModelForProvider(provider),
+                  fallbackProviders: [],
+                },
+                completedTasks,
+              );
+              if (!candidate.success || !candidate.content.trim()) {
+                throw new Error(candidate.error || candidate.content || `${provider} returned no usable response`);
+              }
+              return candidate;
+            }),
+          );
+          return {
+            ...fallback,
+            taskId: task.id,
+            role: task.role,
+          };
+        } catch {
+          // Every compatible alternative failed. Preserve the original failure
+          // below; the collaboration layer may still have other successful roles.
+        }
+      }
+
       success = false;
       content = `[${task.provider}] error: ${error?.message || 'Unknown error'}`;
     }
@@ -837,6 +915,13 @@ export class AICollaborationOrchestrator {
       return successfulResults[0].content;
     }
     
+    if (strategy === 'legal-analysis') {
+      const synthesized = successfulResults.find(result => result.role === 'synthesizer');
+      if (synthesized?.content?.trim()) return synthesized.content.trim();
+      const legal = successfulResults.find(result => result.role === 'legal-analyst');
+      if (legal?.content?.trim()) return legal.content.trim();
+    }
+
     // For other strategies, combine results
     const combined = successfulResults
       .map(r => `[${r.role} - ${r.provider}]:\n${r.content}`)

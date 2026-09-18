@@ -100,6 +100,7 @@ export async function generateOpenRouterText(
     maxTokens?: number;
     timeoutMs?: number;
     sessionId?: string;
+    model?: string;
   } = {},
 ): Promise<OpenRouterTextResult> {
   if (!OPENROUTER_API_KEY) {
@@ -130,7 +131,7 @@ export async function generateOpenRouterText(
         'X-Title': 'LegalWhat LEXARA',
       },
       body: JSON.stringify({
-        model: process.env.OPENROUTER_LEXARA_MODEL?.trim() || 'openrouter/auto',
+        model: options.model?.trim() || process.env.OPENROUTER_LEXARA_MODEL?.trim() || 'openrouter/auto',
         ...(options.sessionId?.trim() ? { session_id: options.sessionId.trim().slice(0, 128) } : {}),
         messages,
         temperature: options.temperature ?? 0.25,
@@ -155,7 +156,7 @@ export async function generateOpenRouterText(
     autoRouterLastError = null;
     return {
       content,
-      model: String(data.model || process.env.OPENROUTER_LEXARA_MODEL?.trim() || 'openrouter/auto'),
+      model: String(data.model || options.model?.trim() || process.env.OPENROUTER_LEXARA_MODEL?.trim() || 'openrouter/auto'),
       latencyMs: Date.now() - startedAt,
     };
   } catch (error) {

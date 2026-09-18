@@ -337,17 +337,30 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         return;
       }
 
-      // Browser interim text is strong enough to confirm a real barge-in after
-      // echo rejection. Batch/server STT only interrupts once the final
-      // transcript is accepted.
-      if (phaseRef.current === 'speaking' && (meta.engine === 'browser' || isFinal)) {
-        autoInterruptRef.current();
+      // Never interrupt LEXARA on an interim browser hypothesis. Speaker echo
+      // often appears first as an unstable interim transcript and was cutting
+      // off otherwise healthy ElevenLabs playback. Genuine barge-in remains
+      // available once a final, echo-screened transcript is committed.
+      if (!isFinal) {
+        if (phaseRef.current !== 'speaking') {
+          voiceEndPendingRef.current = false;
+          clearVoiceTurnTimer();
+        }
+        return;
       }
 
-      if (!isFinal) {
-        voiceEndPendingRef.current = false;
-        clearVoiceTurnTimer();
-        return;
+      if (phaseRef.current === 'speaking') {
+        const words = normalizeSpeechText(observed).split(' ').filter(Boolean);
+        const weakBrowserEvidence = meta.engine === 'browser'
+          && typeof meta.confidence === 'number'
+          && meta.confidence < 0.45;
+        const weakServerEvidence = meta.engine === 'server'
+          && (
+            (typeof meta.speechDurationMs === 'number' && meta.speechDurationMs < 300)
+            || (typeof meta.noSpeechProbability === 'number' && meta.noSpeechProbability >= 0.45)
+          );
+        if (words.length === 0 || weakBrowserEvidence || weakServerEvidence) return;
+        autoInterruptRef.current();
       }
 
       userSpeechObservedRef.current = true;

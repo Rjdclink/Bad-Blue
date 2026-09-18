@@ -5353,10 +5353,13 @@ Contact: ${foiaRequest.userEmail || userEmail}
         return next();
       }
       
-      // Skip if this is a static asset request
-      if (req.path.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$/)) {
-        return next();
-      }
+      // Static assets are owned by the production static middleware registered
+      // after routes. Never let the SPA catch-all convert an asset request into
+      // index.html (the prior extension whitelist omitted .webp).
+      const looksLikeStaticAsset = req.path.startsWith('/images/')
+        || req.path.startsWith('/assets/')
+        || /\.[a-z0-9]{2,8}$/i.test(req.path);
+      if (looksLikeStaticAsset) return next();
       
       console.log('[SPA FALLBACK] Serving index.html for:', req.path);
       
