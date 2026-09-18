@@ -39,6 +39,7 @@ interface GeoconsoleProps {
 
 interface LayerState {
   satellite: boolean;
+  earthObservation: boolean;
   trail: boolean;
   heatmap: boolean;
   markers: boolean;
@@ -94,7 +95,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
 
   // UI state (not affecting frame data)
   const [mapMode, setMapMode] = useState<MapMode>('satellite');
-  const [layerCfg, setLayerCfg] = useState<LayerState>({ satellite: true, trail: true, heatmap: true, markers: true, futurecast: true, reticle: true, weather: false, terrain: true, buildings: true, uncertainty: true, streetImagery: false });
+  const [layerCfg, setLayerCfg] = useState<LayerState>({ satellite: true, earthObservation: false, trail: true, heatmap: true, markers: true, futurecast: true, reticle: true, weather: false, terrain: true, buildings: true, uncertainty: true, streetImagery: false });
   const [processing, setProcessing] = useState(false);
   const [progressMsg, setProgressMsg] = useState('');
   const [lockOnTarget, setLockOnTarget] = useState(true);
@@ -104,19 +105,19 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
   const applyMapPreset = useCallback((preset: 'satellite' | 'terrain' | 'weather' | 'evidence' | 'street') => {
     if (preset === 'satellite') {
       setMapMode('satellite');
-      setLayerCfg(prev => ({ ...prev, satellite: true, terrain: false, buildings: false, weather: false, streetImagery: false }));
+      setLayerCfg(prev => ({ ...prev, satellite: true, earthObservation: false, terrain: false, buildings: false, weather: false, streetImagery: false }));
     } else if (preset === 'terrain') {
       setMapMode('hybrid');
-      setLayerCfg(prev => ({ ...prev, satellite: true, terrain: true, buildings: true, weather: false, streetImagery: false }));
+      setLayerCfg(prev => ({ ...prev, satellite: true, earthObservation: false, terrain: true, buildings: true, weather: false, streetImagery: false }));
     } else if (preset === 'weather') {
       setMapMode('hybrid');
-      setLayerCfg(prev => ({ ...prev, satellite: true, terrain: true, weather: true, streetImagery: false }));
+      setLayerCfg(prev => ({ ...prev, satellite: true, earthObservation: false, terrain: true, weather: true, streetImagery: false }));
     } else if (preset === 'evidence') {
       setMapMode('dark');
-      setLayerCfg(prev => ({ ...prev, satellite: false, terrain: false, buildings: false, weather: false, heatmap: true, markers: true, uncertainty: true, futurecast: true, streetImagery: false }));
+      setLayerCfg(prev => ({ ...prev, satellite: false, earthObservation: false, terrain: false, buildings: false, weather: false, heatmap: true, markers: true, uncertainty: true, futurecast: true, streetImagery: false }));
     } else {
       setMapMode('street');
-      setLayerCfg(prev => ({ ...prev, satellite: false, terrain: false, weather: false, buildings: true, streetImagery: true }));
+      setLayerCfg(prev => ({ ...prev, satellite: false, earthObservation: false, terrain: false, weather: false, buildings: true, streetImagery: true }));
     }
   }, []);
 
