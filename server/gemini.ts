@@ -4,7 +4,7 @@
  * Gemini (Google) AI Service - MIGRATED to @google/genai SDK (Nov 30, 2025)
  * - Shared low-level client for entire application
  * - Supports text + JSON structured output
- * - Defaults to gemini-2.5-flash (fast and intelligent)
+ * - Defaults to Gemini 3.8 Flash for current low-latency production use
  * 
  * Available Gemini Models (December 2025):
  * - gemini-2.5-flash (fast and intelligent, current stable)
@@ -26,7 +26,7 @@ export interface GeminiOptions {
   useJSON?: boolean;
 }
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
+const GEMINI_API_KEY = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY || '';
 
 export function isGeminiAvailable(): boolean {
   return !!GEMINI_API_KEY;
@@ -110,7 +110,7 @@ export async function callGemini(
   // - gemini-2.5-pro (powerful model, advanced reasoning)
   // - gemini-2.0-flash (previous stable)
   // - gemini-3.0-flash-preview (preview features, experimental)
-  const modelName = options.model || "gemini-2.5-flash";
+  const modelName = options.model || process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash";
   console.log(`[Gemini] Using model: ${modelName}`);
   const client = getGeminiClient();
 
