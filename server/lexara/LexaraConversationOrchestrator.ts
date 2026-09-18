@@ -370,13 +370,15 @@ export async function generateLexaraConversationResponse(
           needsVerification: true,
           needsReasoning: true,
           needsFastResponse: true,
+          estimatedTokens: 450,
         },
         harmonyProviders,
         {
           providerPolicy: 'capability-first',
           systemPrompt,
           maxParticipants: 2,
-          requestTimeoutMs: 3_500,
+          requestTimeoutMs: 2_800,
+          maxFallbacks: 0,
         },
       );
       if (!/^No successful responses from collaboration\.?$/i.test(harmony.finalAnswer.trim())) {
