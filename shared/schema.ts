@@ -42,13 +42,13 @@ export const users = pgTable("users", {
   profileImageUrl: varchar("profile_image_url"),
 
   // User subscription status (active, inactive, suspended, pending_payment, past_due, canceled)
-  status: varchar("status", { length: 50 }).notNull().default('active'),
+  status: varchar("status", { length: 50 }).notNull().default('pending_payment'),
   
   // Square customer tracking
   squareCustomerId: varchar("square_customer_id"),
 
-  // Full access payment tracking (Free for signed-in users: LegalAI Consultation and Officer Search)
-  hasPaidForAccess: boolean("has_paid_for_access").default(true).notNull(), // Default true since access is free for signed-in users
+  // Full access is fail-closed until the LegalWhat Square subscription is verified.
+  hasPaidForAccess: boolean("has_paid_for_access").default(false).notNull(),
   accessPaymentId: varchar("access_payment_id"), // Stripe payment intent ID for access payment (kept for backwards compatibility)
   accessPaidAt: timestamp("access_paid_at"), // When user paid for access (kept for backwards compatibility)
 

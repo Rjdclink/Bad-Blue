@@ -7,6 +7,7 @@ import express from 'express';
 import { socialIntelligenceService } from '../services/socialIntelligence';
 import type { SherlockSearchOptions } from '../services/socialIntelligence/types';
 import { logger } from '../logger';
+import { isAuthenticated } from '../auth';
 
 const router = express.Router();
 const log = logger.child({ component: 'routes:socialIntelligence' });
@@ -15,7 +16,7 @@ const log = logger.child({ component: 'routes:socialIntelligence' });
  * POST /api/social-intelligence/search-username
  * Search for a username across all or specified platforms
  */
-router.post('/search-username', async (req, res) => {
+router.post('/search-username', isAuthenticated, async (req, res) => {
   try {
     const { username, options } = req.body as {
       username: string;
@@ -54,7 +55,7 @@ router.post('/search-username', async (req, res) => {
  * POST /api/social-intelligence/search-multiple
  * Search for multiple usernames
  */
-router.post('/search-multiple', async (req, res) => {
+router.post('/search-multiple', isAuthenticated, async (req, res) => {
   try {
     const { usernames, options } = req.body as {
       usernames: string[];
@@ -127,7 +128,7 @@ router.get('/platforms', async (req, res) => {
  * POST /api/social-intelligence/validate-username
  * Validate a username for a specific platform or generally
  */
-router.post('/validate-username', async (req, res) => {
+router.post('/validate-username', isAuthenticated, async (req, res) => {
   try {
     const { username, platform } = req.body as {
       username: string;
@@ -159,7 +160,7 @@ router.post('/validate-username', async (req, res) => {
  * POST /api/social-intelligence/enrich-profile
  * Enrich a person profile with social media data
  */
-router.post('/enrich-profile', async (req, res) => {
+router.post('/enrich-profile', isAuthenticated, async (req, res) => {
   try {
     const { name, possibleUsernames } = req.body as {
       name: string;

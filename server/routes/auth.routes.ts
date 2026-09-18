@@ -1,61 +1,44 @@
 /**
- * Subscription/status routes that depend on an already-established identity.
+ * Compatibility subscription/status route.
  *
- * Authentication issuance is intentionally NOT defined here. Canonical login,
- * registration, session, and logout authority lives in server/auth.ts.
+ * Canonical authentication issuance and durable access state live in server/auth.ts.
+ * This route deliberately delegates to that authority and performs no independent
+ * database/session/subscription decision.
  */
 import express from 'express';
-import db from '../lib/db';
-import { ensureAuthenticated } from '../middleware/auth';
-import { getPlatformUserId } from '../authIdentity';
+import { isIdentityAuthenticated, refreshRequestUser } from '../auth';
 
 const router = express.Router();
 
 /**
  * GET /api/auth/user/status
- * Get current user's status and subscription info.
+ * Legacy-compatible status shape backed by the canonical durable auth authority.
  */
-router.get('/user/status', ensureAuthenticated, async (req, res) => {
+router.get('/user/status', isIdentityAuthenticated, async (req, res) => {
   try {
-    const userId = getPlatformUserId(req.user);
-    if (!userId) {
+    const fresh = await refreshRequestUser(req, res);
+    if (!fresh) {
       return res.status(401).json({ error: 'Authentication required' });
     }
 
-    const result = await db.query(
-      `SELECT id, email, first_name, last_name, status, square_customer_id
-       FROM users
-       WHERE id = $1`,
-      [userId],
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    const user = result.rows[0];
-
-    const subResult = await db.query(
-      `SELECT s.id, s.status, s.square_subscription_id, s.start_date, s.renewal_date,
-              p.name as plan_name, p.price, p.currency, p.interval
-       FROM subscriptions s
-       JOIN plans p ON s.plan_id = p.id
-       WHERE s.user_id = $1
-       ORDER BY s.created_at DESC
-       LIMIT 1`,
-      [userId],
-    );
+    const status = String(fresh.status || 'pending_payment');
+    const hasPaidForAccess = fresh.hasPaidForAccess === true;
 
     return res.json({
       user: {
-        id: user.id,
-        email: user.email,
-        first_name: user.first_name,
-        last_name: user.last_name,
-        status: user.status,
-        square_customer_id: user.square_customer_id,
+        id: fresh.id,
+        email: fresh.email,
+        first_name: fresh.firstName ?? null,
+        last_name: fresh.lastName ?? null,
+        status,
+        square_customer_id: null,
+        has_paid_for_access: hasPaidForAccess,
       },
-      subscription: subResult.rows[0] || null,
+      subscription: {
+        status,
+        active: hasPaidForAccess,
+      },
+      authority: 'canonical-local-auth',
     });
   } catch (error) {
     console.error('User status error:', error);

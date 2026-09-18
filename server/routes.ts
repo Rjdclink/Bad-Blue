@@ -56,6 +56,7 @@ import { setupFMIRoutes } from "./routes/fmi.routes";
 import { setupConsultationRoutes } from "./routes/consultation.routes";
 import { setupAuthRoutes } from "./routes/auth.routes";
 import { setupPlansRoutes } from "./routes/plans.routes";
+import { setupSubscriptionRoutes, handleLegalWhatSubscriptionWebhook } from "./routes/subscription.routes";
 import { conductFullOSINT } from "./peopleSearch";
 import { setupVoiceRoutes } from "./routes/voice.routes";
 import cryptoWiringRoutes from "./routes/cryptoWiring.routes";
@@ -127,7 +128,7 @@ import {
   subAgentRateLimit,
   autosaveRateLimit,
 } from "./rateLimit";
-import { setupAuth, isAuthenticated, adminAuthMiddleware } from "./auth";
+import { setupAuth, isAuthenticated, adminAuthMiddleware, resolvePaidAccess } from "./auth";
 import { asyncHandler, notFoundHandler, errorHandler, ErrorTypes } from "./errorHandler";
 import { generateComplaintDocument, generateFOIALetter as generateFOIALetterDoc } from "./documentGenerators";
 import { getBaseUrl as getBaseURL } from "./config";
@@ -898,6 +899,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================
   setupAuthRoutes(app); // Signup and user status
   setupPlansRoutes(app); // Active subscription plans
+  setupSubscriptionRoutes(app); // Square-hosted LegalWhat subscription lifecycle
 
   // ============================================
   // LEGAL COUNSEL ROUTES (Phase 1A)
@@ -2712,7 +2714,7 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
         return res.status(500).send("Webhook configuration error");
       }
 
-      const notificationUrl = process.env.SQUARE_WEBHOOK_NOTIFICATION_URL || `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+      const notificationUrl = process.env.SQUARE_WEBHOOK_NOTIFICATION_URL || `${getBaseURL().replace(/\/$/, '')}/api/webhooks/square`;
       
       // Construct string to sign: notification_url + raw_body (no separator)
       const stringToSign = notificationUrl + rawBody.toString('utf8');
@@ -2744,6 +2746,12 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
       const eventType = event.type;
 
       console.log(`[Square Webhook] Received event: ${eventType}`);
+
+      // LegalWhat recurring subscriptions are reconciled before the legacy
+      // one-time purchase switch. Unrelated Square events fall through unchanged.
+      if (await handleLegalWhatSubscriptionWebhook(event)) {
+        return res.json({ received: true });
+      }
 
       // Handle payment.created and payment.updated events
       if (eventType === 'payment.created' || eventType === 'payment.updated') {
@@ -3509,20 +3517,31 @@ Contact: ${foiaRequest.userEmail || userEmail}
       ? requestedDepth as 1 | 2 | 3 | 4
       : 4;
 
-    // Auth gate: never 401 to UI.
-    if (!req.isAuthenticated?.() || !req.user) {
+    // Preserve the seed-first controlled-200 contract while enforcing the same
+    // fresh paid-access authority as the rest of the private LegalWhat services.
+    const access = await resolvePaidAccess(req, res);
+    if (!access.authenticated || !access.authorized) {
+      const unavailable = access.reason === 'auth_store_unavailable';
       return res.json({
         success: true,
         data: null,
         emptyState: {
-          code: 'invalid_request',
-          message: 'Authentication required.',
+          code: unavailable
+            ? 'auth_state_unavailable'
+            : access.authenticated
+              ? 'subscription_required'
+              : 'invalid_request',
+          message: unavailable
+            ? 'Authentication state is temporarily unavailable.'
+            : access.authenticated
+              ? 'An active LegalWhat subscription is required.'
+              : 'Authentication required.',
         },
         meta: { correlationId, durationMs: Date.now() - startTime },
       });
     }
 
-    // Get user ID if authenticated
+    // Get user ID from the freshly revalidated identity
     const userId = req.user?.id || req.user?.claims?.sub;
     let reportId: string | null = null;
 

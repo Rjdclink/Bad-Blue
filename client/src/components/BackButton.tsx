@@ -32,16 +32,17 @@ export function BackButton({ fallbackRoute, className, onBeforeNavigate }: BackB
       }
     }
 
-    // Note: Using window.history.length is imperfect but works for most cases
-    // It represents total session history, not just app history
-    // For single-page apps, checking if length > 1 is a reasonable heuristic
-    if (window.history.length > 1 && document.referrer) {
+    // Browser history is the authority for "the page I just came from".
+    // document.referrer does not update for SPA route changes, so gating on it
+    // incorrectly skips valid in-app history entries.
+    if (window.history.length > 1) {
       window.history.back();
-    } else {
-      // No reliable history - use smart fallback
-      const defaultFallback = isAuthenticated ? "/welcome" : "/login";
-      setLocation(fallbackRoute || defaultFallback);
+      return;
     }
+
+    // Direct-entry/new-tab fallback when there is no previous history entry.
+    const defaultFallback = isAuthenticated ? "/welcome" : "/login";
+    setLocation(fallbackRoute || defaultFallback, { replace: true });
   };
 
   return (

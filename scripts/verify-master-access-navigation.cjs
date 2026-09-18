@@ -12,6 +12,7 @@ const app = read("client/src/App.tsx");
 const navigator = read("client/src/components/MasterPanelNavigator.tsx");
 const avatar = read("client/src/components/LexaraEtherealAvatar.tsx");
 const login = read("client/src/pages/login.tsx");
+const backButton = read("client/src/components/BackButton.tsx");
 const auth = read("server/auth.ts");
 const master = read("server/masterPassword.ts");
 
@@ -81,6 +82,10 @@ assert(masterTabStart >= 0 && masterTabEnd > masterTabStart, "Master login tab i
 const masterTab = login.slice(masterTabStart, masterTabEnd);
 assert(!/type="email"/i.test(masterTab), "Master login UI must not contain an email input");
 assert(masterTab.includes('name="master-password"'), "Master login UI must expose the master password field");
+assert(login.includes("<BackButton"), "Login/signup/master entry surface must expose the upper-left Back button");
+assert(login.includes("absolute left-4 top-4"), "Entry Back button must remain correctly positioned in the upper-left");
+assert(backButton.includes("window.history.back()"), "Back button must return to the immediately previous browser history entry");
+assert(!/&&\s*document\.referrer/.test(backButton), "SPA Back navigation must not depend on stale document.referrer");
 assert(auth.includes('app.post("/api/master-login"'), "Canonical master login endpoint is missing");
 assert(auth.includes('app.post("/api/local-login"'), "Canonical local login endpoint is missing");
 assert(auth.includes('app.post("/api/local-register"'), "Canonical local registration endpoint is missing");

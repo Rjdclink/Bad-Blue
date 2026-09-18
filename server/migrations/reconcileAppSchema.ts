@@ -14,7 +14,6 @@ import { createPublicEvidenceTables } from './createPublicEvidenceTables';
 import { createSearchPrioritizationTables } from './createSearchPrioritizationTables';
 import { createSubAgentTables } from './createSubAgentTables';
 import { createTokenMetricsTables } from './createTokenMetrics';
-import { runFreeAccessMigration } from './freeAccessForAll';
 import { runSquareMigration } from './runSquareMigration';
 import ensureSchemaSync from '../ensureSchema';
 import { coordinationPool, pool } from '../db';
@@ -188,7 +187,6 @@ const migrationSteps: MigrationStep[] = [
   },
   { name: 'CryptoCrawler governance state', run: createCryptoGovernanceStateTable },
   { name: 'Remove legacy CryptoCrawler Flashbots auth secret table', run: removeCryptocrawlFlashbotsAuthIdentityTable },
-  { name: 'Free Access for All Users', run: runFreeAccessMigration },
 ];
 
 const STARTUP_MIGRATION_LOCK = 'badblue:startup-schema-migrations:v1';

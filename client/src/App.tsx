@@ -213,6 +213,11 @@ function GatedControlRoom() {
 function Router() {
   const { user, isAuthenticated, isLoading } = useAuth();
   const isMasterSession = Boolean((user as any)?.isMasterBypass);
+  const userStatus = String((user as any)?.status || "").toLowerCase();
+  const hasPaidAccess = isMasterSession || Boolean(
+    (user as any)?.hasPaidForAccess === true &&
+    !["suspended", "past_due", "canceled", "expired"].includes(userStatus),
+  );
 
   // Swipe routing remains available to ordinary authenticated sessions, but is
   // deliberately disabled for the master shell. On mobile, vertical scrolling
@@ -288,7 +293,7 @@ function Router() {
           <Route path="/faq" component={FAQPage} />
           <Route path="/petition/:slug" component={PetitionDetail} />
 
-          {isAuthenticated ? (
+          {isAuthenticated && hasPaidAccess ? (
             <>
               <Route path="/administrator" component={AdminConsole} />
               <Route path="/admin" component={AdminConsole} />

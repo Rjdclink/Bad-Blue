@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { generateLegalDocument, type DocumentType } from '../universalDocumentGenerator';
 import { LAW_TYPES, type LawType } from '../../shared/legalCounselTypes';
 import { createLogger } from '../logger';
+import { isAuthenticated } from '../auth';
 
 const router = Router();
 const log = createLogger('DocumentRoutes');
@@ -77,7 +78,7 @@ const generateDocumentSchema = z.object({
  * POST /api/documents/generate
  * Generate a legal document
  */
-router.post('/generate', async (req: Request, res: Response) => {
+router.post('/generate', isAuthenticated, async (req: Request, res: Response) => {
   try {
     const userId = req.user?.claims?.sub || req.user?.id;
     if (!userId) {

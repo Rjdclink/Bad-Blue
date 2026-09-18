@@ -53,6 +53,7 @@ export function setupConsultationRoutes(app: Express): void {
    */
   app.post(
     '/api/legal-consultation',
+    isAuthenticated,
     asyncHandler(async (req: Request, res: Response) => {
       const { state, situation, lawType, fmiContext } = req.body;
 
@@ -157,6 +158,7 @@ export function setupConsultationRoutes(app: Express): void {
    */
   app.post(
     '/api/enhanced-consultation',
+    isAuthenticated,
     asyncHandler(async (req: Request, res: Response) => {
       const { state, situation, lawType, parties, evidenceUploaded } = req.body;
 

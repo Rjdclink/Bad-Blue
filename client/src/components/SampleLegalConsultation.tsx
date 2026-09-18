@@ -224,7 +224,7 @@ export default function SampleLegalConsultation() {
             </AlertDescription>
           </Alert>
           <p className="text-sm text-muted-foreground">
-            Create an account above to unlock all features for just $19.98.
+            Create an account above to unlock all features for $25.99/month.
           </p>
         </CardContent>
       </Card>
