@@ -166,10 +166,12 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
     for (let i = 1; i < filteredTrail.length; i++) {
       const prev = filteredTrail[i - 1].f;
       const curr = filteredTrail[i].f;
-      totalDistance += haversineDistance(
-        prev.position.latitude, prev.position.longitude,
-        curr.position.latitude, curr.position.longitude
-      );
+      if (Number(curr.metadata?.gapBeforeSeconds || 0) <= 0) {
+        totalDistance += haversineDistance(
+          prev.position.latitude, prev.position.longitude,
+          curr.position.latitude, curr.position.longitude
+        );
+      }
       if (curr.velocity?.speed) {
         speeds.push(curr.velocity.speed);
         maxSpeed = Math.max(maxSpeed, curr.velocity.speed);
@@ -204,17 +206,18 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
   const timelineCenterLabel = anchorIsCurrent ? 'Now' : 'Latest';
 
   const timelineFrame = useMemo(() => {
-    if (timelineFrames.length === 0) return renderData.currentFrame;
+    if (timelineFrames.length === 0) return null;
 
     const targetMs = observedAnchorMs + timelineOffsetMinutes * 60_000;
-    const candidates = timelineOffsetMinutes > 0
+    const pool = timelineOffsetMinutes > 0
       ? timelineFrames.filter(frame =>
           frame.observationKind === 'predicted' || frame.source === 'predicted'
         )
       : timelineFrames.filter(frame =>
           frame.observationKind !== 'predicted' && frame.source !== 'predicted'
         );
-    const pool = candidates.length > 0 ? candidates : timelineFrames;
+
+    if (pool.length === 0) return null;
 
     let nearest = pool[0];
     let nearestDistance = Math.abs(nearest.timestamp.getTime() - targetMs);
@@ -225,10 +228,13 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
         nearestDistance = distance;
       }
     }
-    return nearest;
-  }, [timelineFrames, renderData.currentFrame, observedAnchorMs, timelineOffsetMinutes]);
 
-  const timelineIsPrediction = timelineOffsetMinutes > 0 || !!timelineFrame && (
+    // 5-minute Futurecast frames and reconstructed history should put evidence
+    // close to the selected minute. Never snap across a large empty interval.
+    return nearestDistance <= 5 * 60_000 ? nearest : null;
+  }, [timelineFrames, observedAnchorMs, timelineOffsetMinutes]);
+
+  const timelineIsPrediction = !!timelineFrame && (
     timelineFrame.observationKind === 'predicted' ||
     timelineFrame.source === 'predicted'
   );
@@ -277,18 +283,33 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
       },
     }));
 
-    const trailFeature = frames.length > 1 ? [{
+    const trailSegments: GeoFrame[][] = [];
+    let exportSegment: GeoFrame[] = [];
+    for (const frame of frames) {
+      if (Number(frame.metadata?.gapBeforeSeconds || 0) > 0 && exportSegment.length > 0) {
+        if (exportSegment.length > 1) trailSegments.push(exportSegment);
+        exportSegment = [];
+      }
+      exportSegment.push(frame);
+    }
+    if (exportSegment.length > 1) trailSegments.push(exportSegment);
+
+    const trailFeature = trailSegments.map(segment => ({
       type: 'Feature',
       geometry: {
         type: 'LineString',
-        coordinates: frames.map(frame => [
+        coordinates: segment.map(frame => [
           frame.position.longitude,
           frame.position.latitude,
           ...(frame.position.altitude !== undefined ? [frame.position.altitude] : []),
         ]),
       },
-      properties: { kind: 'observed_trail', frames: frames.length },
-    }] : [];
+      properties: {
+        kind: 'observed_trail',
+        frames: segment.length,
+        supportedContinuity: true,
+      },
+    }));
 
     const predictionFeatures = state.futurecast.map(frame => ({
       type: 'Feature',
@@ -538,7 +559,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
             </div>
             {state.futurecast.length > 0 ? (
               <div className="space-y-0.5">{state.futurecast.slice(0, 4).map((f, i) => (<div key={i} className="flex items-center text-[11px] bg-slate-800/30 rounded p-1"><Clock className="w-2.5 h-2.5 text-slate-500 mr-1" /><span className="text-slate-400 flex-1">{formatTime(f.timestamp)}</span><span className="text-purple-400">{(f.confidence * 100).toFixed(0)}%</span></div>))}</div>
-            ) : <p className="text-[11px] text-slate-500">Play to generate</p>}
+            ) : <p className="text-[11px] text-slate-500">Needs three continuous observations</p>}
           </div>
           <div className="p-2 flex-1 min-h-0 overflow-auto">
             <h3 className="text-xs font-medium mb-1.5 flex items-center gap-1.5">
@@ -608,8 +629,11 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
             <div className="flex justify-between mt-0.5 text-[10px] text-slate-500">
               <span>-1 hour</span>
               <span className={timelineIsPrediction ? 'text-purple-300 font-medium' : 'text-cyan-400 font-medium'}>
-                {timelineFrame ? formatTime(timelineFrame.timestamp) : timelineCenterLabel}
-                {timelineIsPrediction ? ' · Futurecast' : ' · Observed'}
+                {timelineFrame
+                  ? `${formatTime(timelineFrame.timestamp)} · ${timelineIsPrediction ? 'Futurecast' : 'Observed'}`
+                  : timelineOffsetMinutes > 0
+                    ? 'No Futurecast'
+                    : 'No observation'}
               </span>
               <span>+1 hour</span>
             </div>
