@@ -1,7 +1,7 @@
 /**
- * Multi-AI Fact-Checking Engine
- * Verifies legal claims using 4 AI models for consensus-based validation
- * Phase 1A: Backend infrastructure for intelligent legal consultation
+ * Multi-AI Fact-Checking Engine.
+ * Uses the complete configured Harmony mesh for consensus-oriented legal
+ * verification while keeping model agreement distinct from source validation.
  */
 
 import { FactCheckRequest, FactCheckResponse, Citation } from '../../shared/legalCounselTypes';
@@ -75,7 +75,7 @@ export async function factCheckClaim(request: FactCheckRequest): Promise<FactChe
     });
 
   const successfulResults = modelResults.filter(
-    result => !/^Participant did not return|^Model unavailable/i.test(result.reasoning),
+    result => !/^Participant did not return|^Model unavailable|^Unable to parse model response/i.test(result.reasoning),
   );
   const denominator = Math.max(1, successfulResults.length);
   const verifiedCount = successfulResults.filter(result => result.verified).length;
@@ -183,8 +183,8 @@ function deduplicateCitations(sources: string[]): Citation[] {
   const uniqueSources = [...new Set(sources)];
   return uniqueSources.map(statute => ({
     statute,
-    description: statute, // In a full implementation, we'd look up descriptions
-    verified: true
+    description: 'Harmony-reported legal citation; verify against the current primary authority before relying on it.',
+    verified: false
   }));
 }
 
@@ -195,7 +195,7 @@ function generateRecommendations(
   verified: boolean,
   confidence: number,
   consensus: boolean,
-  modelResults: any[]
+  _modelResults: any[]
 ): string[] {
   const recommendations: string[] = [];
 
@@ -229,7 +229,8 @@ export async function batchFactCheck(requests: FactCheckRequest[]): Promise<Fact
 }
 
 /**
- * Quick verification check (uses only fastest model for immediate feedback)
+ * Quick verification surface. It reuses the full Harmony fact-check so speed
+ * never silently reduces the verification set to one provider.
  */
 export async function quickFactCheck(request: FactCheckRequest): Promise<{
   verified: boolean;
