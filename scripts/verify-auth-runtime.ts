@@ -15,6 +15,10 @@ const subscriptionAuthSource = readFileSync(new URL('../server/routes/auth.route
 const configSource = readFileSync(new URL('../server/config.ts', import.meta.url), 'utf8');
 const indexSource = readFileSync(new URL('../server/index.ts', import.meta.url), 'utf8');
 const statelessLocalAuthSource = readFileSync(new URL('../server/statelessLocalAuth.ts', import.meta.url), 'utf8');
+const subscriptionFlowSource = readFileSync(new URL('../server/routes/subscription.routes.ts', import.meta.url), 'utf8');
+const loginPageSource = readFileSync(new URL('../client/src/pages/login.tsx', import.meta.url), 'utf8');
+const subscriptionSuccessSource = readFileSync(new URL('../client/src/pages/subscription-success.tsx', import.meta.url), 'utf8');
+const appSource = readFileSync(new URL('../client/src/App.tsx', import.meta.url), 'utf8');
 const legacyLocalAuth = new URL('../server/localAuth.ts', import.meta.url);
 
 assert.equal(existsSync(legacyLocalAuth), false, 'obsolete Passport local auth module must remain removed');
@@ -49,6 +53,19 @@ assert.doesNotMatch(statelessLocalAuthSource, /authorization:\s*\x60Bearer \$\{a
 assert.match(statelessLocalAuthSource, /v:\s*2[\s\S]{0,400}hasPaidForAccess/, 'signed local session must carry safe user identity fields');
 assert.doesNotMatch(authSource, /getLocalUserByIdHttp\(/, 'authenticated status must not reacquire the database after a signed local login');
 assert.match(statelessLocalAuthSource, /BEGIN[\s\S]{0,2200}COMMIT[\s\S]{0,800}ROLLBACK/, 'PostgreSQL signup must remain transactional');
+assert.match(statelessLocalAuthSource, /LEGALWHAT_AUTH_SUPABASE_URL\s*\|\|\s*getConfig\(\)\.SUPABASE_URL/, 'local auth Edge transport must have a dedicated canonical Supabase project URL');
+assert.match(statelessLocalAuthSource, /'pending_payment',false/, 'new PostgreSQL accounts must remain payment-pending');
+assert.match(statelessLocalAuthSource, /status:\s*"pending_payment"[\s\S]{0,120}has_paid_for_access:\s*false/, 'new Supabase accounts must remain payment-pending');
+assert.match(statelessLocalAuthSource, /edgeAuthRequest\("set_subscription"/, 'subscription state must persist through the selected auth authority');
+assert.match(statelessLocalAuthSource, /Paid access requires a verified active Square subscription/, 'paid access must fail closed without verified Square subscription identity');
+assert.match(authSource, /app\.post\("\/api\/local-register"[\s\S]{0,900}setLocalCookie\(res, createLocalSessionToken\(user\)\)/, 'signup must establish the pending authenticated checkout session');
+assert.match(subscriptionFlowSource, /subscriptionPlanId:\s*planVariationId\(\)/, 'Square hosted checkout must use the configured subscription plan variation');
+assert.match(subscriptionFlowSource, /paymentNote:\s*noteForUser\(id\)/, 'Square checkout must carry an application-user reconciliation key');
+assert.match(subscriptionFlowSource, /app\.post\("\/api\/subscription\/confirm"/, 'server-side Square confirmation route is missing');
+assert.match(subscriptionFlowSource, /handleLegalWhatSubscriptionWebhook/, 'Square subscription webhook reconciliation is missing');
+assert.match(subscriptionSuccessSource, /\/api\/subscription\/confirm/, 'Square return page must verify the subscription server-side');
+assert.match(appSource, /isAuthenticated\s*&&\s*hasPaidAccess/, 'private LegalWhat routes must require verified paid access');
+assert.match(loginPageSource, /\/api\/subscription\/checkout/, 'signup/login UI must hand pending users to hosted Square checkout');
 
 const { setupAuth } = await import('../server/auth.js');
 
