@@ -304,3 +304,9 @@ export function ensureBpsPrivateRefundEvidenceWiring(): void {
     executionAuthority: false,
   });
 }
+
+export function stopBpsPrivateRefundEvidenceWiring(): void {
+  if (timer) clearInterval(timer);
+  timer = null;
+  installed = false;
+}
