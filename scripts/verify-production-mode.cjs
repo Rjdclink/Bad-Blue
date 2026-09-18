@@ -31,7 +31,7 @@ console.log('='.repeat(60) + '\n');
 // GEOCONSOLE RADAR DASHBOARD
 console.log('📍 GEOCONSOLE RADAR DASHBOARD');
 const dashboard = readFile('client/src/components/geoconsole/GeoconsoleRadarDashboard.tsx');
-test('Dynamic map center', dashboard.includes('getInitialCenter'));
+test('Canonical MapLibre renderer', dashboard.includes('MapLibreIntelligenceMap'));
 test('No hardcoded NYC (40.7128)', !dashboard.includes('40.7128'));
 
 // GEO RUNTIME
@@ -64,6 +64,9 @@ console.log('\n📍 TSHPE LOCATOR');
 const locator = readFile('client/src/hooks/useTSHPELocator.ts');
 test('No NYC default', !locator.includes('40.7128'));
 test('Neutral initial position', locator.includes('lat: 0'));
+test('No synthetic Monte Carlo weighting', !locator.includes('Math.random()'));
+test('No direct client IP geolocation', !locator.includes('ipapi.co'));
+test('Uses canonical GeoConsole processing', locator.includes("/api/geoconsole/process"));
 
 // SPECTRA PAGE
 console.log('\n📍 SPECTRA PAGE');
