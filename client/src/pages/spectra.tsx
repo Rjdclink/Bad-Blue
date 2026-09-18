@@ -198,11 +198,16 @@ export default function SpectraPage() {
       const mergedByKey = new Map<string, GPSPoint>();
       for (const point of [...extraEvidence, ...discoveredPoints]) {
         const timestamp = new Date(point.timestamp).toISOString();
+        const evidenceGroup =
+          point.correlationGroup ||
+          point.provenance?.recordId ||
+          `${point.source}:${point.provenance?.provider || 'unknown'}`;
         const key = [
           Number(point.latitude).toFixed(6),
           Number(point.longitude).toFixed(6),
           timestamp,
           point.source,
+          evidenceGroup,
         ].join('|');
         mergedByKey.set(key, point);
       }
