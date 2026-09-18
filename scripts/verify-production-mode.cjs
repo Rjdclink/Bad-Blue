@@ -78,6 +78,9 @@ test('Satellite attribution is explicit and configurable',
 test('Street imagery ignores stale request completion',
   map.includes('streetRequestRef') &&
   map.includes('requestId === streetRequestRef.current'));
+test('Futurecast uncertainty is rendered as a separate model envelope',
+  map.includes('spectra-futurecast-uncertainty') &&
+  map.includes("currentFrame.source === 'predicted' ? 'predicted' : 'observed'"));
 
 test('Runtime uses canonical server processing',
   runtime.includes("fetch('/api/geoconsole/process'"));
