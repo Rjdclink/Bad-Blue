@@ -1,7 +1,7 @@
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 export interface ExifLocation {
   latitude: number;
@@ -12,67 +12,56 @@ export interface ExifLocation {
 }
 
 export class ExifToolExtractor {
-  async extractLocation(imagePath: string): Promise<ExifLocation | null> {
+  async extractMetadata(filePath: string): Promise<Record<string, unknown> | null> {
     try {
-      // Validate file path to prevent command injection and path traversal
-      // Only allow alphanumeric, dots, hyphens, underscores, and forward slashes (no spaces or special chars)
-      // Reject paths containing '..' to prevent path traversal
-      if (!/^[a-zA-Z0-9._\-\/]+$/.test(imagePath) || imagePath.includes('..')) {
-        console.error(`[ExifTool] Invalid file path format: ${imagePath}`);
-        return null;
-      }
-      
-      // Use single quotes to prevent all shell expansion and escape any single quotes in the path
-      const escapedPath = imagePath.replace(/'/g, "'\\''");
-      
-      const { stdout } = await execAsync(
-        `exiftool -j -GPSLatitude -GPSLongitude -GPSLatitudeRef -GPSLongitudeRef -GPSAltitude -CreateDate -DateTimeOriginal '${escapedPath}'`
+      const { stdout } = await execFileAsync(
+        'exiftool',
+        ['-j', '-n', '-a', '-u', filePath],
+        { maxBuffer: 4 * 1024 * 1024 },
       );
-
-      const data = JSON.parse(stdout);
-      
-      // Validate that ExifTool returned data
-      if (!Array.isArray(data) || data.length === 0) {
-        console.log(`[ExifTool] No EXIF data in ${imagePath}`);
-        return null;
-      }
-      
-      const exifData = data[0];
-
-      if (!exifData.GPSLatitude || !exifData.GPSLongitude) {
-        console.log(`[ExifTool] No GPS data in ${imagePath}`);
-        return null;
-      }
-
-      const latitude = this.parseGPS(exifData.GPSLatitude, exifData.GPSLatitudeRef);
-      const longitude = this.parseGPS(exifData.GPSLongitude, exifData.GPSLongitudeRef);
-
-      // Validate parsed coordinates and range
-      if (latitude === null || longitude === null || 
-          latitude < -90 || latitude > 90 || 
-          longitude < -180 || longitude > 180) {
-        console.error(`[ExifTool] Invalid GPS coordinates in ${imagePath}`);
-        return null;
-      }
-
-      const location: ExifLocation = {
-        latitude,
-        longitude,
-        source: imagePath,
-        altitude: exifData.GPSAltitude ? parseFloat(exifData.GPSAltitude) : undefined,
-      };
-
-      const timestamp = exifData.DateTimeOriginal || exifData.CreateDate;
-      if (timestamp) {
-        location.timestamp = new Date(timestamp.replace(/(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3'));
-      }
-
-      console.log(`[ExifTool] Extracted: ${location.latitude}, ${location.longitude}`);
-      return location;
-    } catch (error) {
-      console.error(`[ExifTool] Error extracting from ${imagePath}:`, error);
+      const parsed = JSON.parse(stdout);
+      if (!Array.isArray(parsed) || parsed.length === 0) return null;
+      return parsed[0] as Record<string, unknown>;
+    } catch {
       return null;
     }
+  }
+
+  async extractLocation(imagePath: string): Promise<ExifLocation | null> {
+    const metadata = await this.extractMetadata(imagePath);
+    if (!metadata) return null;
+
+    const latitude = this.number(metadata.GPSLatitude);
+    const longitude = this.number(metadata.GPSLongitude);
+    if (
+      latitude === null ||
+      longitude === null ||
+      latitude < -90 ||
+      latitude > 90 ||
+      longitude < -180 ||
+      longitude > 180
+    ) {
+      return null;
+    }
+
+    const location: ExifLocation = {
+      latitude,
+      longitude,
+      source: imagePath,
+      altitude: this.number(metadata.GPSAltitude) ?? undefined,
+    };
+
+    const rawTimestamp =
+      metadata.GPSDateTime ||
+      metadata.DateTimeOriginal ||
+      metadata.CreateDate ||
+      metadata.MediaCreateDate ||
+      metadata.TrackCreateDate;
+
+    const timestamp = this.parseTimestamp(rawTimestamp);
+    if (timestamp) location.timestamp = timestamp;
+
+    return location;
   }
 
   async extractBatch(imagePaths: string[]): Promise<ExifLocation[]> {
@@ -82,34 +71,32 @@ export class ExifToolExtractor {
     return results.filter((loc): loc is ExifLocation => loc !== null);
   }
 
-  private parseGPS(coord: string, ref: string): number | null {
-    if (typeof coord === 'number') {
-      return ref === 'S' || ref === 'W' ? -coord : coord;
-    }
+  private number(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value !== 'string') return null;
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
 
-    const match = coord.match(/(\d+)\s*deg\s*(\d+)'\s*([\d.]+)"/);
-    if (match) {
-      const deg = parseFloat(match[1]);
-      const min = parseFloat(match[2]);
-      const sec = parseFloat(match[3]);
-      let decimal = deg + min / 60 + sec / 3600;
-      return ref === 'S' || ref === 'W' ? -decimal : decimal;
-    }
+  private parseTimestamp(value: unknown): Date | undefined {
+    if (typeof value !== 'string' || !value.trim()) return undefined;
 
-    const parsed = parseFloat(coord);
-    if (isNaN(parsed)) {
-      console.warn(`[ExifTool] Invalid coordinate value: ${coord}`);
-      return null;
-    }
-    return parsed;
+    const text = value.trim();
+    const normalized = text
+      .replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3')
+      .replace(/([+-]\d{2})(\d{2})$/, '$1:$2');
+    const hasAbsoluteZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalized);
+    if (!hasAbsoluteZone) return undefined;
+
+    const parsed = new Date(normalized);
+    return Number.isFinite(parsed.getTime()) ? parsed : undefined;
   }
 
   async checkInstalled(): Promise<boolean> {
     try {
-      await execAsync('exiftool -ver');
+      await execFileAsync('exiftool', ['-ver']);
       return true;
     } catch {
-      console.warn('[ExifTool] Not installed. Install: apt-get install libimage-exiftool-perl');
       return false;
     }
   }
