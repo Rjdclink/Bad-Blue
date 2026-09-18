@@ -167,6 +167,21 @@ export default function SpectraPage() {
         body: JSON.stringify({
           target: targetValue,
           details: detailsValue,
+          directEvidence: extraEvidence.map(point => ({
+            ...point,
+            timestamp: new Date(point.timestamp).toISOString(),
+            receivedAt: point.receivedAt
+              ? new Date(point.receivedAt).toISOString()
+              : undefined,
+            provenance: point.provenance
+              ? {
+                  ...point.provenance,
+                  capturedAt: point.provenance.capturedAt
+                    ? new Date(point.provenance.capturedAt).toISOString()
+                    : undefined,
+                }
+              : undefined,
+          })),
         }),
       });
 
