@@ -199,6 +199,8 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
     ? renderData.trail[renderData.trail.length - 1]
     : null;
   const observedAnchorMs = observedAnchor?.timestamp.getTime() ?? Date.now();
+  const anchorIsCurrent = !!observedAnchor && Math.abs(Date.now() - observedAnchorMs) <= 5 * 60_000;
+  const timelineCenterLabel = anchorIsCurrent ? 'Now' : 'Latest';
 
   const timelineFrame = useMemo(() => {
     if (timelineFrames.length === 0) return renderData.currentFrame;
@@ -604,7 +606,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
             <div className="flex justify-between mt-0.5 text-[10px] text-slate-500">
               <span>-1 hour</span>
               <span className={timelineIsPrediction ? 'text-purple-300 font-medium' : 'text-cyan-400 font-medium'}>
-                {timelineFrame ? formatTime(timelineFrame.timestamp) : 'Now'}
+                {timelineFrame ? formatTime(timelineFrame.timestamp) : timelineCenterLabel}
                 {timelineIsPrediction ? ' · Futurecast' : ' · Observed'}
               </span>
               <span>+1 hour</span>
@@ -631,7 +633,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
             disabled={timelineFrames.length === 0}
             className="bg-slate-800/50 border-slate-700 min-h-10 text-xs"
           >
-            Now
+            {timelineCenterLabel}
           </Button>
           {!spectraShell && <Button variant="outline" size="sm" onClick={handleExport} disabled={timelineFrames.length === 0} className="bg-slate-800/50 border-slate-700 min-h-10 text-xs">
             <Download className="w-3 h-3 mr-1" />Export
