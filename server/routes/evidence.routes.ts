@@ -12,6 +12,7 @@ import {
 } from '../evidenceIntelligenceTool';
 import { LAW_TYPES, type LawType } from '../../shared/legalCounselTypes';
 import { createLogger } from '../logger';
+import { isAuthenticated } from '../auth';
 
 const router = Router();
 const log = createLogger('EvidenceRoutes');
@@ -61,7 +62,7 @@ const comprehensiveReportSchema = z.object({
  * POST /api/evidence/analyze
  * Analyze a single evidence file
  */
-router.post('/analyze', async (req: Request, res: Response) => {
+router.post('/analyze', isAuthenticated, async (req: Request, res: Response) => {
   try {
     const userId = req.user?.claims?.sub || req.user?.id;
     if (!userId) {
@@ -115,7 +116,7 @@ router.post('/analyze', async (req: Request, res: Response) => {
  * POST /api/evidence/comprehensive-report
  * Generate comprehensive report for multiple evidence files
  */
-router.post('/comprehensive-report', async (req: Request, res: Response) => {
+router.post('/comprehensive-report', isAuthenticated, async (req: Request, res: Response) => {
   try {
     const userId = req.user?.claims?.sub || req.user?.id;
     if (!userId) {
