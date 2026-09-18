@@ -23,6 +23,7 @@ const orchestrator = read('server/lexara/LexaraConversationOrchestrator.ts');
 const openRouter = read('server/openRouterService.ts');
 const authorityResearch = read('server/lexara/LexaraAuthorityResearch.ts');
 const webSearch = read('server/webSearchService.ts');
+const modernWebSearch = read('server/openRouterWebSearch.ts');
 const viteConfig = read('vite.config.ts');
 const serverVite = read('server/vite.ts');
 const systemConfig = read('server/systemConfig.ts');
@@ -40,6 +41,7 @@ const overflowSchema = read('server/services/cryptocrawl/runtime/cryptocrawl-ove
 const lexaraOverflowMigration = read('server/migrations/060_lexara_overflow_conversation_history.sql');
 const aiProvider = read('server/aiProvider.ts');
 const conversationalReliabilityReview = read('docs/LEXARA_CONVERSATIONAL_RELIABILITY_10_SOURCE_REVIEW_20260918.md');
+const duplexReview = read('docs/LEXARA_DUPLEX_ORCHESTRATION_30_SOURCE_REVIEW_20260918.md');
 
 must(
   voiceMode.includes('preferServerRecognition') &&
@@ -49,10 +51,16 @@ must(
 );
 must(
   voiceMode.includes('serverEchoCancellationRef') &&
-    voiceMode.includes("optionsRef.current.onVoiceStart?.({") &&
-    conversation.includes('bargeInCandidateTimerRef') &&
-    conversation.includes("meta.echoCancellation === true"),
-  'sustained echo-cancelled server voice activity can yield the floor without raw-noise interruption',
+    voiceMode.includes('shouldProbeBargeIn?: () => boolean') &&
+    voiceMode.includes('SERVER_BARGE_IN_PROBE_MS = 700') &&
+    voiceMode.includes('recorder.requestData()') &&
+    voiceMode.includes('bargeInProbe: true') &&
+    voiceMode.includes('startedDuringPlayback') &&
+    voiceMode.includes('utteranceId') &&
+    conversation.includes("shouldProbeBargeIn: () => phaseRef.current === 'speaking'") &&
+    conversation.includes('validatedBargeInUtterancesRef') &&
+    !conversation.includes('bargeInCandidateTimerRef'),
+  'server VAD records continuously while barge-in authority requires a transcript-correlated non-destructive STT probe',
 );
 must(
   conversation.includes('CONVERSATION_STORAGE_SCHEMA_VERSION = 2'),
@@ -89,10 +97,11 @@ must(
 );
 must(
   conversation.includes('isStrongBargeIn') &&
-    conversation.includes("if (phaseRef.current === 'speaking')") &&
+    conversation.includes('meta.bargeInProbe') &&
     conversation.includes('orderedEchoRatio') &&
+    conversation.includes('genericAcknowledgements') &&
     conversation.includes('autoInterruptRef.current()'),
-  'barge-in is preserved with final acoustic evidence and sequence-aware echo rejection',
+  'barge-in is preserved through transcript-validated probes with sequence-aware echo and generic-acknowledgement rejection',
 );
 must(
   avatar.includes('LEXARA_ATTORNEY_IMAGE_SOURCES') &&
@@ -115,8 +124,11 @@ must(
 must(
   lexaraRoutes.includes("form.append('response_format', 'verbose_json')") &&
     lexaraRoutes.includes('noSpeechProbability') &&
-    lexaraRoutes.includes('avgLogprob'),
-  'STT hallucination rejection uses speech evidence before acceptance',
+    lexaraRoutes.includes('avgLogprob') &&
+    lexaraRoutes.includes('bargeInProbe') &&
+    lexaraRoutes.includes('noSpeechValues.reduce') &&
+    lexaraRoutes.includes('rejectAsNonSpeech'),
+  'STT hallucination rejection aggregates no-speech evidence and preserves long spoken turns',
 );
 must(
   lexaraRoutes.indexOf("name: 'groq-whisper'") <
@@ -149,10 +161,12 @@ must(
   !authorityResearch.includes('GoogleGenAI') &&
     authorityResearch.includes('FIRECRAWL_API_KEY') &&
     authorityResearch.includes("https://api.firecrawl.dev/v1/search") &&
+    authorityResearch.includes('Promise.all') &&
     authorityResearch.includes('orchestratedWebSearch') &&
-    authorityResearch.includes('never sends a plain-text query') &&
+    modernWebSearch.includes("type: 'openrouter:web_search'") &&
+    modernWebSearch.includes('deprecated') &&
     webSearch.includes('useOnlinePlugin: true'),
-  'legal authority research separates discovery from URL-only crawling with no Google-specific dependency',
+  'legal authority research races independent discovery paths and uses the current non-Google OpenRouter web-search server tool',
 );
 must(
   openRouter.includes('cancellationShaped') &&
@@ -161,13 +175,16 @@ must(
 );
 must(
   claude.includes('samplingControlsDeprecated') &&
+    claude.includes("block.type === 'text'") &&
     groq.includes("https://api.groq.com/openai/v1/models") &&
     groq.includes('groqBlockedModels') &&
+    groq.includes('normalizeGroqModelId') &&
+    groq.includes('while (attempted.size < 6)') &&
     aiProvider.includes("prefixes: ['llama-', 'meta-llama/', 'openai/', 'qwen/']") &&
     harmony.includes("'claude-opus-5'") &&
     harmony.includes('harmonyProviderCooldownUntil') &&
     harmony.includes('markHarmonyProviderFailure'),
-  'Harmony uses active Claude IDs, Groq project-aware model recovery, and provider-local cooldowns',
+  'Harmony uses robust Claude content parsing, permission-aware Groq recursive recovery, and provider-local cooldowns',
 );
 must(
   routes.includes("req.path.startsWith('/images/')") &&
@@ -224,6 +241,12 @@ must(harmonySourceLines.length === 10, 'literal 10-source Harmony implementation
 const conversationalSourceSection = conversationalReliabilityReview.split('## Sources — exactly 10')[1]?.split('## Production evidence cross-check')[0] || '';
 const conversationalSourceLines = conversationalSourceSection.split('\n').filter(line => /^\d+\.\s/.test(line));
 must(conversationalSourceLines.length === 10, 'literal 10-source conversational reliability review is present');
+const duplexResolutionSection = duplexReview.split('## Resolution sources — exactly 20')[1]?.split('## Implementation sources — exactly 10')[0] || '';
+const duplexResolutionLines = duplexResolutionSection.split('\n').filter(line => /^\d+\.\s/.test(line));
+must(duplexResolutionLines.length === 20, 'literal 20-source duplex resolution review is present');
+const duplexImplementationSection = duplexReview.split('## Implementation sources — exactly 10')[1]?.split('## Chosen implementation sequence')[0] || '';
+const duplexImplementationLines = duplexImplementationSection.split('\n').filter(line => /^\d+\.\s/.test(line));
+must(duplexImplementationLines.length === 10, 'literal 10-source duplex implementation review is present');
 
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA realization verification passed.');

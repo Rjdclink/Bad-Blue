@@ -27,6 +27,12 @@ let groqModelCatalogCache: { models: Set<string>; expiresAt: number } | null = n
 const groqBlockedModels = new Set<string>();
 const GROQ_MODEL_CATALOG_TTL_MS = 10 * 60_000;
 
+function normalizeGroqModelId(model: string): string {
+  const trimmed = String(model || '').trim();
+  if (/^groq\/(?:compound|compound-mini)$/.test(trimmed)) return trimmed;
+  return trimmed.startsWith('groq/') ? trimmed.slice('groq/'.length) : trimmed;
+}
+
 async function resolveGroqModel(requestedModel: string, apiKey: string): Promise<string> {
   const now = Date.now();
   if (!groqModelCatalogCache || now >= groqModelCatalogCache.expiresAt) {
@@ -54,26 +60,28 @@ async function resolveGroqModel(requestedModel: string, apiKey: string): Promise
     }
   }
 
+  const requested = normalizeGroqModelId(requestedModel);
   const models = groqModelCatalogCache?.models;
-  if (
-    !groqBlockedModels.has(requestedModel)
-    && (!models || models.size === 0 || models.has(requestedModel))
-  ) {
-    return requestedModel;
-  }
-
-  // Capability-compatible alternatives only. Project-blocked models are
-  // excluded even when Groq's global model catalog advertises them.
-  const capabilityFallbacks = [
+  const capabilityCandidates = [
+    requested,
+    DEFAULT_GROQ_MODEL,
     'llama-3.3-70b-versatile',
     'llama-3.1-8b-instant',
-    'qwen/qwen3.8-27b',
-    'qwen/qwen3.6-27b',
-  ];
-  const catalog = models ? [...models] : [];
-  return capabilityFallbacks.find(model => !groqBlockedModels.has(model) && (!models || models.has(model)))
-    || catalog.find(model => !groqBlockedModels.has(model))
-    || requestedModel;
+    'openai/gpt-oss-20b',
+    'openai/gpt-oss-120b',
+  ]
+    .map(normalizeGroqModelId)
+    .filter((model, index, all) => !!model && all.indexOf(model) === index);
+
+  const candidate = capabilityCandidates.find(model =>
+    !groqBlockedModels.has(model)
+    && (!models || models.size === 0 || models.has(model))
+  );
+
+  if (!candidate) {
+    throw new Error('No permitted capability-compatible Groq model is currently available');
+  }
+  return candidate;
 }
 
 interface GroqChatCompletionResponse {
@@ -99,43 +107,45 @@ async function callGroqAPI(request: GroqChatCompletionRequest): Promise<string> 
     throw new Error('GROQ_API_KEY environment variable is not set');
   }
 
-  let model = await resolveGroqModel(request.model, apiKey);
-  let response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ ...request, model }),
-  });
+  let response: Response | null = null;
+  let model = '';
+  let errorText = '';
+  const attempted = new Set<string>();
 
-  if (!response.ok) {
-    let errorText = await response.text();
+  while (attempted.size < 6) {
+    model = await resolveGroqModel(request.model, apiKey);
+    if (attempted.has(model)) break;
+    attempted.add(model);
 
-    if (response.status === 403 && /model_permission_blocked_project|model.*blocked/i.test(errorText)) {
+    response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ ...request, model }),
+    });
+
+    if (response.ok) break;
+    errorText = await response.text();
+
+    if (
+      response.status === 403
+      && /model_permission_blocked_(?:project|org)|model.*blocked/i.test(errorText)
+    ) {
       groqBlockedModels.add(model);
-      const replacement = await resolveGroqModel(request.model, apiKey);
-      if (replacement && replacement !== model && !groqBlockedModels.has(replacement)) {
-        model = replacement;
-        response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ ...request, model }),
-        });
-        if (!response.ok) errorText = await response.text();
-      }
+      continue;
     }
 
-    if (!response.ok) {
-      // Track Groq rate limit/provider errors after local model recovery is exhausted.
-      const { rateLimitTracker } = await import('./rateLimitTracker');
-      const error = new Error(`Groq API error (${response.status}): ${errorText}`);
-      rateLimitTracker.recordGroqError(error);
-      throw error;
-    }
+    break;
+  }
+
+  if (!response?.ok) {
+    const { rateLimitTracker } = await import('./rateLimitTracker');
+    const status = response?.status ?? 503;
+    const error = new Error(`Groq API error (${status}): ${errorText || 'no compatible permitted model responded'}`);
+    rateLimitTracker.recordGroqError(error);
+    throw error;
   }
 
   const data: GroqChatCompletionResponse = await response.json();

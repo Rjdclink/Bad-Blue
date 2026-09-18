@@ -17,6 +17,9 @@ export interface VoiceTranscriptMeta {
   speechDurationMs?: number;
   avgLogprob?: number;
   noSpeechProbability?: number;
+  bargeInProbe?: boolean;
+  utteranceId?: number;
+  startedDuringPlayback?: boolean;
 }
 
 export interface VoiceActivityMeta {
@@ -29,6 +32,7 @@ export interface VoiceModeOptions {
   onError?: (error: Error) => void;
   onVoiceStart?: (meta: VoiceActivityMeta) => void;
   onVoiceEnd?: (meta: VoiceActivityMeta) => void;
+  shouldProbeBargeIn?: () => boolean;
   continuous?: boolean;
   interimResults?: boolean;
 }
@@ -64,6 +68,8 @@ const SERVER_VOICE_CONFIRM_MS = 140;
 const SERVER_VOICE_RECENCY_MS = 90;
 const SERVER_MAX_UTTERANCE_MS = 45_000;
 const SERVER_TRANSCRIBE_TIMEOUT_MS = 18_000;
+const SERVER_BARGE_IN_PROBE_MS = 700;
+const SERVER_BARGE_IN_PROBE_TIMEOUT_MS = 4_500;
 
 function preferredMicrophoneConstraints(): MediaTrackConstraints {
   const supported = navigator.mediaDevices?.getSupportedConstraints?.() || {};
@@ -86,6 +92,24 @@ function preferredRecordingMimeType(): string | undefined {
     'audio/ogg;codecs=opus',
   ];
   return candidates.find(type => MediaRecorder.isTypeSupported(type));
+}
+
+function makeServerTranscriptionForm(
+  blob: Blob,
+  speechDurationMs: number,
+  bargeInProbe = false,
+): FormData {
+  const form = new FormData();
+  const mimeType = blob.type || preferredRecordingMimeType() || 'audio/webm';
+  const extension = mimeType.includes('mp4') ? 'm4a'
+    : mimeType.includes('ogg') ? 'ogg'
+      : mimeType.includes('wav') ? 'wav'
+        : 'webm';
+
+  form.append('audio', blob, `lexara-turn.${extension}`);
+  form.append('speechDurationMs', String(Math.max(0, Math.round(speechDurationMs))));
+  if (bargeInProbe) form.append('bargeInProbe', 'true');
+  return form;
 }
 
 export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
@@ -129,6 +153,10 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
   const serverLastAboveThresholdAtRef = useRef(0);
   const discardServerRecordingRef = useRef(false);
   const transcriptionAbortRef = useRef<AbortController | null>(null);
+  const serverProbeAbortRef = useRef<AbortController | null>(null);
+  const serverBargeInProbeTimerRef = useRef<number | null>(null);
+  const serverBargeInProbeInFlightRef = useRef(false);
+  const serverUtteranceSequenceRef = useRef(0);
   const serverTranscriptionQueueRef = useRef<Promise<void>>(Promise.resolve());
   const serverRecognitionEpochRef = useRef(0);
   const serverEchoCancellationRef = useRef<boolean | undefined>(undefined);
@@ -195,6 +223,8 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     blob: Blob,
     speechDurationMs: number,
     recognitionEpoch: number,
+    utteranceId: number,
+    startedDuringPlayback: boolean,
   ) => {
     if (!blob.size || !enabledRef.current || recognitionEpoch !== serverRecognitionEpochRef.current) return;
 
@@ -203,15 +233,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     const timer = window.setTimeout(() => controller.abort(), SERVER_TRANSCRIBE_TIMEOUT_MS);
 
     try {
-      const form = new FormData();
-      const mimeType = blob.type || preferredRecordingMimeType() || 'audio/webm';
-      const extension = mimeType.includes('mp4') ? 'm4a'
-        : mimeType.includes('ogg') ? 'ogg'
-          : mimeType.includes('wav') ? 'wav'
-            : 'webm';
-
-      form.append('audio', blob, `lexara-turn.${extension}`);
-      form.append('speechDurationMs', String(Math.max(0, Math.round(speechDurationMs))));
+      const form = makeServerTranscriptionForm(blob, speechDurationMs);
       const response = await fetch('/api/lexara/transcribe-file', {
         method: 'POST',
         body: form,
@@ -243,6 +265,8 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
         noSpeechProbability: Number.isFinite(Number(payload?.quality?.noSpeechProbability))
           ? Number(payload.quality.noSpeechProbability)
           : undefined,
+        utteranceId,
+        startedDuringPlayback,
       });
     } catch (err) {
       if ((err as Error)?.name === 'AbortError') return;
@@ -257,14 +281,88 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     }
   }, [emitTranscript, resetTransientRecovery]);
 
-  const queueServerTranscription = useCallback((blob: Blob, speechDurationMs: number) => {
+  const queueServerTranscription = useCallback((
+    blob: Blob,
+    speechDurationMs: number,
+    utteranceId: number,
+    startedDuringPlayback: boolean,
+  ) => {
     const recognitionEpoch = serverRecognitionEpochRef.current;
     serverTranscriptionQueueRef.current = serverTranscriptionQueueRef.current
       .catch(() => undefined)
-      .then(() => transcribeServerBlob(blob, speechDurationMs, recognitionEpoch));
+      .then(() => transcribeServerBlob(
+        blob,
+        speechDurationMs,
+        recognitionEpoch,
+        utteranceId,
+        startedDuringPlayback,
+      ));
   }, [transcribeServerBlob]);
 
+  const probeServerBargeIn = useCallback(async (
+    blob: Blob,
+    speechDurationMs: number,
+    recognitionEpoch: number,
+    utteranceId: number,
+  ) => {
+    if (
+      !blob.size
+      || serverBargeInProbeInFlightRef.current
+      || !enabledRef.current
+      || recognitionEpoch !== serverRecognitionEpochRef.current
+      || !optionsRef.current.shouldProbeBargeIn?.()
+    ) return;
+
+    serverBargeInProbeInFlightRef.current = true;
+    const controller = new AbortController();
+    serverProbeAbortRef.current = controller;
+    const timer = window.setTimeout(() => controller.abort(), SERVER_BARGE_IN_PROBE_TIMEOUT_MS);
+
+    try {
+      const response = await fetch('/api/lexara/transcribe-file', {
+        method: 'POST',
+        body: makeServerTranscriptionForm(blob, speechDurationMs, true),
+        signal: controller.signal,
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload?.success !== true) return;
+
+      const value = String(payload?.transcript || '').trim();
+      if (
+        !value
+        || recognitionEpoch !== serverRecognitionEpochRef.current
+        || !optionsRef.current.shouldProbeBargeIn?.()
+      ) return;
+
+      emitTranscript(value, false, {
+        engine: 'server',
+        provider: typeof payload?.provider === 'string' ? payload.provider : undefined,
+        speechDurationMs,
+        avgLogprob: Number.isFinite(Number(payload?.quality?.avgLogprob))
+          ? Number(payload.quality.avgLogprob)
+          : undefined,
+        noSpeechProbability: Number.isFinite(Number(payload?.quality?.noSpeechProbability))
+          ? Number(payload.quality.noSpeechProbability)
+          : undefined,
+        bargeInProbe: true,
+        utteranceId,
+        startedDuringPlayback: true,
+      });
+    } catch {
+      // Probe failure is route-local. The complete recording continues and the
+      // normal final STT path remains authoritative for the user turn.
+    } finally {
+      window.clearTimeout(timer);
+      if (serverProbeAbortRef.current === controller) serverProbeAbortRef.current = null;
+      serverBargeInProbeInFlightRef.current = false;
+    }
+  }, [emitTranscript]);
+
   const finishServerUtterance = useCallback((discard = false) => {
+    if (serverBargeInProbeTimerRef.current !== null) {
+      window.clearTimeout(serverBargeInProbeTimerRef.current);
+      serverBargeInProbeTimerRef.current = null;
+    }
     const recorder = serverRecorderRef.current;
     const hadSpeech = serverSpeechActiveRef.current;
     const speechStartedAt = serverSpeechStartedAtRef.current;
@@ -309,6 +407,10 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       recorder = new MediaRecorder(stream);
     }
 
+    const utteranceId = serverUtteranceSequenceRef.current + 1;
+    serverUtteranceSequenceRef.current = utteranceId;
+    const startedDuringPlayback = optionsRef.current.shouldProbeBargeIn?.() === true;
+
     serverRecorderChunksRef.current = [];
     discardServerRecordingRef.current = false;
     serverRecorderRef.current = recorder;
@@ -337,14 +439,19 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || 'audio/webm' });
       discardServerRecordingRef.current = false;
       if (blob.size > 600) {
-        queueServerTranscription(blob, serverLastSpeechDurationMsRef.current);
+        queueServerTranscription(
+          blob,
+          serverLastSpeechDurationMsRef.current,
+          utteranceId,
+          startedDuringPlayback,
+        );
       }
     };
 
     try {
       recorder.start(250);
-      // A short confirmation window prevents incidental clicks/noise from
-      // cutting LEXARA off, while still making barge-in feel immediate.
+      // VAD owns recording onset, never interruption authority. Acoustic energy
+      // can be LEXARA's own speaker output even with echo cancellation enabled.
       window.setTimeout(() => {
         const now = performance.now();
         if (
@@ -355,17 +462,48 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
           && now - serverLastAboveThresholdAtRef.current <= SERVER_VOICE_RECENCY_MS
         ) {
           serverVoiceStartNotifiedRef.current = true;
-          // Surface sustained microphone activity so the conversation layer can
-          // cancel a pending turn commit immediately. On server/mobile mode the
-          // callback also carries the actual echo-cancellation setting, allowing
-          // deliberate barge-in to be handled without treating every noise spike
-          // as an interruption.
           optionsRef.current.onVoiceStart?.({
             engine: 'server',
             echoCancellation: serverEchoCancellationRef.current,
           });
         }
       }, SERVER_VOICE_CONFIRM_MS + 10);
+
+      if (startedDuringPlayback) {
+        const recognitionEpoch = serverRecognitionEpochRef.current;
+        serverBargeInProbeTimerRef.current = window.setTimeout(() => {
+          serverBargeInProbeTimerRef.current = null;
+          if (
+            recorder.state === 'inactive'
+            || !serverSpeechActiveRef.current
+            || !optionsRef.current.shouldProbeBargeIn?.()
+          ) return;
+
+          try {
+            // requestData snapshots captured media without stopping the recorder.
+            // The complete utterance keeps accumulating for the authoritative
+            // final transcript after the user finishes speaking.
+            recorder.requestData();
+          } catch {
+            return;
+          }
+
+          window.setTimeout(() => {
+            if (
+              !serverSpeechActiveRef.current
+              || recognitionEpoch !== serverRecognitionEpochRef.current
+              || !optionsRef.current.shouldProbeBargeIn?.()
+            ) return;
+            const chunks = [...serverRecorderChunksRef.current];
+            if (!chunks.length) return;
+            const durationMs = serverSpeechStartedAtRef.current === null
+              ? SERVER_BARGE_IN_PROBE_MS
+              : Math.max(0, performance.now() - serverSpeechStartedAtRef.current);
+            const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || 'audio/webm' });
+            void probeServerBargeIn(blob, durationMs, recognitionEpoch, utteranceId);
+          }, 60);
+        }, SERVER_BARGE_IN_PROBE_MS);
+      }
     } catch (err) {
       serverRecorderRef.current = null;
       serverSpeechActiveRef.current = false;
@@ -374,7 +512,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       setError(nextError);
       optionsRef.current.onError?.(nextError);
     }
-  }, [finishServerUtterance, queueServerTranscription, shouldBeListening]);
+  }, [finishServerUtterance, probeServerBargeIn, queueServerTranscription, shouldBeListening]);
 
   const startServerVad = useCallback(() => {
     const analyser = serverAnalyserRef.current;
@@ -485,6 +623,13 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     finishServerUtterance(true);
     transcriptionAbortRef.current?.abort();
     transcriptionAbortRef.current = null;
+    serverProbeAbortRef.current?.abort();
+    serverProbeAbortRef.current = null;
+    serverBargeInProbeInFlightRef.current = false;
+    if (serverBargeInProbeTimerRef.current !== null) {
+      window.clearTimeout(serverBargeInProbeTimerRef.current);
+      serverBargeInProbeTimerRef.current = null;
+    }
 
     try {
       serverAudioSourceRef.current?.disconnect();
