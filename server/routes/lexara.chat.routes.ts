@@ -13,9 +13,11 @@ import {
   type LexaraConversationMessage,
 } from '../lexara/LexaraConversationOrchestrator';
 import { MASTER_USER_ID } from '../masterPassword';
+import { isAuthenticated } from '../auth';
 import { getConfiguredHarmonyParticipants } from '../aiHarmonyModelRegistry';
 
 const router = express.Router();
+router.use(isAuthenticated);
 const log = createLogger('LEXARARoutes');
 
 const MAX_CHAT_PROMPT_CHARACTERS = 8_000;
