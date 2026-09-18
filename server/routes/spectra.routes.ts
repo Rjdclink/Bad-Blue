@@ -12,6 +12,7 @@ const acquireSchema = z.object({
 });
 
 const PHONE_RE = /(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}/;
+const GENERIC_TARGET_RE = /^(?:(?:a|an|the)\s+)?(?:person|individual|business|company|organization|vehicle|car|place|address|thing|property|phone|phone number|target)$/i;
 
 function normalizeConfidence(value: unknown): number {
   const n = Number(value);
@@ -147,9 +148,12 @@ router.post('/acquire', async (req: Request, res: Response) => {
 
   const { target, details } = parsed.data;
   const phone = details.match(PHONE_RE)?.[0];
+  const searchQuery = GENERIC_TARGET_RE.test(target)
+    ? details
+    : target;
 
   try {
-    const report = await conductFullOSINT(target, {
+    const report = await conductFullOSINT(searchQuery, {
       location: details,
       phone,
       searchDepth: 3,
