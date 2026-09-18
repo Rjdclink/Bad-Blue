@@ -345,6 +345,11 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
     timelineFrame.source === 'predicted'
   );
 
+  const timelineContextTime = useMemo(
+    () => new Date(observedAnchorMs + timelineOffsetMinutes * 60_000),
+    [observedAnchorMs, timelineOffsetMinutes],
+  );
+
   useEffect(() => {
     if (!timelinePlaying) return;
     const delay = Math.max(100, Math.round(1000 / Math.max(0.25, timelinePlaybackSpeed)));
@@ -572,6 +577,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
             trail={renderData.trail}
             futurecast={renderData.futurecast}
             candidateLocations={candidateLocations}
+            displayTime={timelineContextTime}
             mapMode={mapMode}
             layers={layerCfg}
             isLive={state.isLive}
