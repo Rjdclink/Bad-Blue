@@ -44,7 +44,10 @@ type LocalAuthBackend =
 let authBackend: LocalAuthBackend | null = null;
 let authBackendSelection: Promise<LocalAuthBackend> | null = null;
 const AUTH_DB_QUERY_TIMEOUT_MS = 4_000;
-const AUTH_EDGE_TIMEOUT_MS = 4_000;
+// Supabase Edge Functions may incur a multi-second cold start after a deployment.
+// Keep this bounded, but long enough for the first authenticated probe to warm the
+// project-local function. Once selected, the backend is cached for the process.
+const AUTH_EDGE_TIMEOUT_MS = 15_000;
 const AUTH_EDGE_FUNCTION = "legalwhat-local-auth";
 
 interface EdgeAuthResponse {
