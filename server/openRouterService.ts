@@ -500,47 +500,63 @@ export async function llamaSearch(
 }
 
 /**
- * Grok search - Maps to Llama for reasoning capabilities
- * Note: Grok is not available as a free OpenRouter model,
- * so we use Llama 3.3 70B which has strong reasoning abilities.
+ * Grok compatibility search using the canonical current Grok model.
  */
 export async function grokSearch(
   query: string,
   options?: { includeReasoning?: boolean }
 ): Promise<OpenRouterSearchResult | null> {
-  // Use Llama as the underlying model for Grok-like reasoning
-  const result = await llamaSearch(query, options);
-  if (result) {
+  if (!canMakeRequest('grok')) return null;
+  try {
+    const reasoningPrompt = options?.includeReasoning
+      ? `${query}\n\nExplain the basis for each material conclusion.`
+      : query;
+    const response = await callOpenRouter('grok', reasoningPrompt, {
+      systemPrompt: 'Provide factual, evidence-conscious analysis and distinguish uncertainty from verified information.',
+      temperature: 0.3,
+      maxTokens: 3000,
+    });
     return {
-      ...result,
-      model: 'grok', // Report as grok for consistency with consumer expectations
+      title: `Grok Analysis: ${query.substring(0, 50)}...`,
+      content: response,
+      sources: extractUrls(response),
+      model: 'grok',
+      confidence: 0.85,
     };
+  } catch (error) {
+    console.error('[OpenRouter Grok] Search failed:', error);
+    return null;
   }
-  return null;
 }
 
 /**
- * Kimi search - Maps to Qwen for structured output capabilities
- * Note: Kimi is not available as a free OpenRouter model,
- * so we use Qwen 2.5 72B which has strong multilingual and analytical capabilities.
+ * Kimi compatibility search using the canonical current Kimi model.
  */
 export async function kimiSearch(
   query: string,
   options?: { structuredOutput?: boolean }
 ): Promise<OpenRouterSearchResult | null> {
-  // Use Qwen as the underlying model for Kimi-like structured analysis
-  const structuredPrompt = options?.structuredOutput
-    ? `${query}\n\nProvide a structured, well-organized response with clear sections.`
-    : query;
-  
-  const result = await qwenSearch(structuredPrompt);
-  if (result) {
+  if (!canMakeRequest('kimi')) return null;
+  try {
+    const structuredPrompt = options?.structuredOutput
+      ? `${query}\n\nProvide a structured, well-organized response with clear sections.`
+      : query;
+    const response = await callOpenRouter('kimi', structuredPrompt, {
+      systemPrompt: 'Provide accurate, structured analysis. Do not invent sources.',
+      temperature: 0.3,
+      maxTokens: 3000,
+    });
     return {
-      ...result,
-      model: 'kimi', // Report as kimi for consistency with consumer expectations
+      title: `Kimi Analysis: ${query.substring(0, 50)}...`,
+      content: response,
+      sources: extractUrls(response),
+      model: 'kimi',
+      confidence: 0.85,
     };
+  } catch (error) {
+    console.error('[OpenRouter Kimi] Search failed:', error);
+    return null;
   }
-  return null;
 }
 
 /**
@@ -551,49 +567,25 @@ export async function searchOfficerWithOpenRouter(
   officerName: string,
   state?: string
 ): Promise<OpenRouterSearchResult | null> {
-  if (!isOpenRouterAvailable()) {
-    console.log('[OpenRouter] API not configured for officer search');
-    return null;
-  }
-  
-  const stateContext = state ? ` in ${state}` : '';
-  const query = `Search for law enforcement officer: "${officerName}"${stateContext}
-  
-Find and compile any available public information about this officer including:
-- Current department and rank
-- Disciplinary records or complaints
-- News articles or media mentions
-- Legal cases or lawsuits
-- Professional history
+  if (!isOpenRouterAvailable()) return null;
 
-Only include verifiable, factual information with sources.`;
-  
-  // Try DeepSeek first (best reasoning)
-  if (canMakeRequest('deepseek')) {
-    const result = await deepSeekSearch(query);
-    if (result && result.content && result.content.length > 100) {
-      return result;
-    }
-  }
-  
-  // Try Qwen second (strong multilingual)
-  if (canMakeRequest('qwen')) {
-    const result = await qwenSearch(query);
-    if (result && result.content && result.content.length > 100) {
-      return result;
-    }
-  }
-  
-  // Try Llama last (fast general-purpose)
-  if (canMakeRequest('llama')) {
-    const result = await llamaSearch(query, { includeReasoning: true });
-    if (result && result.content && result.content.length > 100) {
-      return result;
-    }
-  }
-  
-  console.log('[OpenRouter] All models exhausted or unavailable for officer search');
-  return null;
+  const stateContext = state ? ` in ${state}` : '';
+  const query = `Analyze public information about law-enforcement officer "${officerName}"${stateContext}. Distinguish verified information from uncertainty and do not invent sources.`;
+
+  const results = await unifiedOpenRouterSearch(query, { useAll: true });
+  if (results.length === 0) return null;
+
+  const mergedContent = results
+    .map(result => `[${result.model}] ${result.content}`)
+    .join('\n\n');
+  return {
+    title: `OpenRouter ensemble analysis: ${officerName}`,
+    content: mergedContent,
+    sources: Array.from(new Set(results.flatMap(result => result.sources))),
+    model: results[0].model,
+    confidence: results.reduce((sum, result) => sum + (result.confidence || 0), 0) / results.length,
+    reasoning: 'Parallel OpenRouter specialist compatibility path; platform services should normally use the full Harmony orchestrator.',
+  };
 }
 
 /**
@@ -609,8 +601,9 @@ export async function unifiedOpenRouterSearch(
     return results;
   }
   
-  // If useAll is true, query all available models in parallel
-  if (options?.useAll) {
+  // Query all available compatibility models in parallel by default. This
+  // helper is not allowed to create a provider-priority fallback order.
+  if (options?.useAll !== false) {
     const promises: Promise<OpenRouterSearchResult | null>[] = [];
     
     if (canMakeRequest('qwen')) {
@@ -633,39 +626,6 @@ export async function unifiedOpenRouterSearch(
     for (const result of settled) {
       if (result.status === 'fulfilled' && result.value) {
         results.push(result.value);
-      }
-    }
-  } else {
-    // Try models in priority order until one succeeds
-    for (const model of ['qwen', 'deepseek', 'llama', 'grok', 'kimi'] as OpenRouterModel[]) {
-      if (!canMakeRequest(model)) continue;
-      
-      try {
-        let result: OpenRouterSearchResult | null = null;
-        switch (model) {
-          case 'qwen':
-            result = await qwenSearch(query);
-            break;
-          case 'deepseek':
-            result = await deepSeekSearch(query);
-            break;
-          case 'llama':
-            result = await llamaSearch(query);
-            break;
-          case 'grok':
-            result = await grokSearch(query, { includeReasoning: true });
-            break;
-          case 'kimi':
-            result = await kimiSearch(query, { structuredOutput: true });
-            break;
-        }
-        
-        if (result) {
-          results.push(result);
-          break; // Stop after first success
-        }
-      } catch (error) {
-        continue;
       }
     }
   }
@@ -719,7 +679,7 @@ function extractReasoning(text: string): string | undefined {
 // Log availability on module load
 if (isOpenRouterAvailable()) {
   console.log('[OpenRouter Service] Initialized with API key');
-  console.log('[OpenRouter Service] Available models: Qwen 2.5 72B, DeepSeek R1, Llama 3.3 70B');
+  console.log('[OpenRouter Service] Current compatibility models loaded from the canonical Harmony registry');
 } else {
   console.log('[OpenRouter Service] Not configured - OPENROUTER_API_KEY not set');
   console.log('[OpenRouter Service] PANTHEON will use Zero-API local intelligence mode');
