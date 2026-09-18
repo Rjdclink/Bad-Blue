@@ -148,6 +148,9 @@ function clearCurrentAudioHandlers(): void {
   audio.onended = null;
   audio.onerror = null;
   audio.onplay = null;
+  audio.onplaying = null;
+  audio.onwaiting = null;
+  audio.onstalled = null;
 }
 
 export const LexaraServerTTS = {
@@ -231,10 +234,25 @@ export const LexaraServerTTS = {
 
       playbackState.currentResolve = () => finish('resolve');
 
+      const playbackStartedAt = performance.now();
       audio.onplay = () => {
         if (playbackState.currentAudio !== audio) return;
         playbackState.isPlaying = true;
         Lexara.notify(Lexara.events.SPEAKING_START);
+      };
+      audio.onplaying = () => {
+        if (playbackState.currentAudio !== audio) return;
+        console.debug('[LEXARA Audio] playing', {
+          startupMs: Math.round(performance.now() - playbackStartedAt),
+        });
+      };
+      audio.onwaiting = () => {
+        if (playbackState.currentAudio !== audio) return;
+        console.warn('[LEXARA Audio] waiting for buffered audio');
+      };
+      audio.onstalled = () => {
+        if (playbackState.currentAudio !== audio) return;
+        console.warn('[LEXARA Audio] media stream stalled');
       };
 
       audio.onended = () => finish('resolve');
