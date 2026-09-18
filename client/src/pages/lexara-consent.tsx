@@ -141,7 +141,7 @@ export default function LexaraConsentPage() {
       <div className="mx-auto grid min-h-[100dvh] max-w-6xl grid-cols-1 lg:grid-cols-[1.05fr_0.95fr]">
         <section className="relative min-h-[38vh] overflow-hidden lg:min-h-screen">
           <img
-            src="/images/oip.webp"
+            src="/images/oip.webp?v=20260918-lexara3"
             alt="LEXARA legal professional seated behind her desk"
             className="absolute inset-0 h-full w-full object-cover object-center"
           />
