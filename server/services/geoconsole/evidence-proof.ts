@@ -107,8 +107,14 @@ export function normalizeClientEvidence(point: GPSPoint): GPSPoint {
     point.source === 'device_gps';
 
   if (browserReported) {
+    const reportedAccuracy = Number(point.accuracy);
     return {
       ...point,
+      // Browser coordinates are useful direct observations, but unsigned client
+      // payloads must never be allowed to manufacture sub-meter certainty.
+      accuracy: Number.isFinite(reportedAccuracy) && reportedAccuracy > 0
+        ? Math.max(3, reportedAccuracy)
+        : 25,
       source: 'browser_geolocation',
       confidence: Math.min(0.75, Math.max(0.1, point.confidence)),
       observationKind: 'observed',
@@ -126,8 +132,18 @@ export function normalizeClientEvidence(point: GPSPoint): GPSPoint {
     };
   }
 
+  const reportedAccuracy = Number(point.accuracy);
   return {
     ...point,
+    // Any unsigned non-browser coordinate is an unverified location claim.
+    // Its precision is therefore downgraded along with its source/confidence so
+    // a forged "1 m" accuracy value cannot dominate canonical fusion.
+    accuracy: Number.isFinite(reportedAccuracy) && reportedAccuracy > 0
+      ? Math.max(5_000, reportedAccuracy)
+      : 5_000,
+    verticalAccuracy: point.verticalAccuracy == null
+      ? undefined
+      : Math.max(5_000, Number(point.verticalAccuracy) || 5_000),
     source: 'manual_input',
     confidence: Math.min(0.35, Math.max(0.05, point.confidence)),
     observationKind: 'inferred',
@@ -141,6 +157,7 @@ export function normalizeClientEvidence(point: GPSPoint): GPSPoint {
       ...(point.metadata || {}),
       clientEvidenceNormalized: true,
       claimedSource: point.source,
+      claimedAccuracy: point.accuracy,
     },
   };
 }
