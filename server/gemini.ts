@@ -108,10 +108,6 @@ export async function callGemini(
   }
 
   // Primary model: gemini-3.8-flash (current stable Flash)
-  // Fallback models in order of preference:
-  // - gemini-2.5-pro (powerful model, advanced reasoning)
-  // - gemini-2.0-flash (previous stable)
-  // - gemini-3.0-flash-preview (preview features, experimental)
   const modelName = options.model || process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash";
   console.log(`[Gemini] Using model: ${modelName}`);
   const client = getGeminiClient();
@@ -254,7 +250,7 @@ Respond with a JSON object containing:
       : `User: ${userMessage}`;
 
     const response = await client.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash",
       contents: [
         { role: "user", parts: [{ text: `${systemPrompt}\n\n${fullPrompt}` }] }
       ],
