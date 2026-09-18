@@ -47,7 +47,7 @@ export default function LegalConsultationPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-[100dvh] bg-background">
       <SEOHead
         title={domainInfo ? `LEXARA - ${domainInfo.name} Legal Consultation | LegalWhat` : 'LEXARA - AI-Powered Legal Consultation | LegalWhat'}
         description={domainInfo ? `Talk with LEXARA about ${domainInfo.name}. Get conversational AI legal analysis, issue spotting, targeted follow-up questions, and access to full case-analysis tools.` : 'Talk with LEXARA for conversational AI legal analysis, issue spotting, targeted follow-up questions, and full case-analysis tools.'}
@@ -57,7 +57,7 @@ export default function LegalConsultationPage() {
         canonicalUrl={`https://legalwhat.com${canonicalPath}`}
       />
 
-      <header className="sticky top-0 z-50 border-b bg-card">
+      <header className="sticky top-0 z-50 border-b bg-card pt-[env(safe-area-inset-top)]">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-4">
           <div className="flex min-w-0 items-center gap-2">
             <Button
@@ -81,7 +81,7 @@ export default function LegalConsultationPage() {
               <Button
                 variant="outline"
                 onClick={() => setShowLiveConsent(true)}
-                className="gap-2"
+                className="min-h-11 gap-2 touch-manipulation"
               >
                 <Mic className="h-4 w-4" />
                 Enable voice
