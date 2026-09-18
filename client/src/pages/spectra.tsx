@@ -31,7 +31,8 @@ interface AcquisitionResponse {
   target?: string;
   details?: string;
   acquisition?: {
-    confidence: number;
+    identityConfidence: number;
+    locationConfidence: number;
     sourceCount: number;
     observationCount: number;
     summary: string;
@@ -170,19 +171,19 @@ export default function SpectraPage() {
 
       setObservations(points);
       setCandidateLocations(Array.isArray(payload.candidateLocations) ? payload.candidateLocations : []);
-      setConfidence(payload.acquisition?.confidence ?? null);
+      setConfidence(payload.acquisition?.locationConfidence ?? null);
       setSourceCount(payload.acquisition?.sourceCount ?? 0);
       setPhase('active');
 
-      const certainty = payload.acquisition?.confidence != null
-        ? Math.round(payload.acquisition.confidence * 100)
+      const certainty = payload.acquisition?.locationConfidence != null
+        ? Math.round(payload.acquisition.locationConfidence * 100)
         : null;
 
       const regionalCandidates = Array.isArray(payload.candidateLocations)
         ? payload.candidateLocations
         : [];
       const responseText = points.length > 0
-        ? `I acquired ${points.length} timestamped location observation${points.length === 1 ? '' : 's'} for ${targetValue}. The map is updated${certainty !== null ? ` with ${certainty}% evidence confidence` : ''}.`
+        ? `I acquired ${points.length} timestamped location observation${points.length === 1 ? '' : 's'} for ${targetValue}. The map is updated${certainty !== null ? ` with ${certainty}% location-evidence confidence` : ''}.`
         : regionalCandidates.length > 0
           ? `I found a regional location candidate for ${targetValue} and placed it on the map. I do not yet have timestamped coordinate evidence for a movement track.`
           : `I completed the search for ${targetValue} across ${payload.acquisition?.sourceCount ?? 0} source${(payload.acquisition?.sourceCount ?? 0) === 1 ? '' : 's'}, but I do not yet have timestamped coordinate evidence strong enough to place the target on the map.`;
@@ -357,7 +358,7 @@ export default function SpectraPage() {
     if (observations.length > 0) {
       return confidence == null
         ? `${observations.length} location observation${observations.length === 1 ? '' : 's'}`
-        : `${Math.round(confidence * 100)}% evidence confidence`;
+        : `${Math.round(confidence * 100)}% location-evidence confidence`;
     }
     if (candidateLocations.length > 0) return 'Regional candidate mapped';
     if (target) return `Target: ${target}`;
