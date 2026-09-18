@@ -30,7 +30,10 @@ assert.match(configSource, /SUPABASE_SECRET_KEY\s*\|\|\s*process\.env\.SUPABASE_
 assert.match(configSource, /LEGALWHAT_EDGE_AUTH_SECRET/, 'project-local Edge auth invocation must require the private shared secret');
 assert.match(indexSource, /authStoreReady/, 'strict readiness must track the authentication store');
 assert.match(indexSource, /probeLocalAuthStoreHttp/, 'startup must probe the real authentication store');
-assert.match(indexSource, /isFullyInitialized\s*&&\s*usableDataPlane\s*&&\s*authStoreReady/, 'Railway readiness must require working authentication');
+assert.doesNotMatch(indexSource, /isFullyInitialized\s*&&\s*usableDataPlane\s*&&\s*authStoreReady/, 'route-local local-auth degradation must not globally veto Railway readiness');
+assert.match(indexSource, /isFullyInitialized\s*&&\s*usableDataPlane[\s\S]{0,120}!isShuttingDown[\s\S]{0,120}!startupError/, 'Railway readiness must still require a fully initialized usable application data plane');
+assert.match(indexSource, /void\s*\(async\s*\(\)\s*=>\s*\{[\s\S]{0,900}probeLocalAuthStoreHttp/, 'local auth readiness must be probed in the background');
+assert.match(indexSource, /stateless master recovery remains available and local login stays fail-closed/, 'degraded local auth must preserve stateless master recovery while keeping local login fail-closed');
 assert.match(statelessLocalAuthSource, /SUPABASE_SECRET_KEY[\s\S]{0,180}SUPABASE_SERVICE_ROLE_KEY/, 'modern Supabase secret key must be preferred before legacy service_role');
 assert.match(statelessLocalAuthSource, /candidate\.from\("users"\)[\s\S]{0,240}candidate\.from\("auth_accounts"\)/, 'server key selection must validate both authentication tables before authority is cached');
 assert.match(statelessLocalAuthSource, /No configured Supabase server key can access the LegalWhat authentication store/, 'invalid server keys must fail closed');
