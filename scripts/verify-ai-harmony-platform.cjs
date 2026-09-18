@@ -58,15 +58,18 @@ for (const model of [
 }
 
 must(
-  collaboration.includes('Harmony invariant: every configured, healthy participant contributes') &&
+  collaboration.includes('selectProvidersForTask') &&
+  collaboration.includes('AIModelSelector.scoreProvidersForTask') &&
   collaboration.includes("role: 'harmony-synthesizer'") &&
   collaboration.includes('getConfiguredHarmonyProviders') &&
   collaboration.includes('fallbackProviders') &&
   collaboration.includes('rankFallbackProviders') &&
-  collaboration.includes('alternatives.slice(0, 3)') &&
+  collaboration.includes('alternatives.slice(0, 1)') &&
+  collaboration.includes('requestTimeoutMs') &&
+  collaboration.includes('withHarmonyDeadline') &&
   collaboration.includes('Promise.any') &&
   collaboration.includes("model: 'harmony-current'"),
-  'shared orchestrator requires full configured participation, one final synthesis authority, bounded route-local failover, and full-mesh legacy quick calls',
+  'shared orchestrator exposes the full configured capability pool while each task uses a bounded capability-matched subset, one synthesis authority, deadlines, and one route-local alternate',
 );
 
 must(
@@ -93,7 +96,7 @@ must(
 must(
   lexara.includes('getConfiguredHarmonyProviders') &&
   lexara.includes("providerPolicy: 'capability-first'"),
-  'LEXARA uses the shared configured Harmony mesh',
+  'LEXARA uses the shared configured Harmony capability pool',
 );
 
 must(
