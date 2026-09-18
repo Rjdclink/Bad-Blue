@@ -121,10 +121,16 @@ export interface TimelineState {
 
 export interface LayerConfig {
   satellite: boolean;
+  earthObservation?: boolean;
   trail: boolean;
   heatmap: boolean;
   markers: boolean;
   futurecast: boolean;
+  weather?: boolean;
+  terrain?: boolean;
+  buildings?: boolean;
+  uncertainty?: boolean;
+  streetImagery?: boolean;
 }
 
 // ================= API TYPES =================
