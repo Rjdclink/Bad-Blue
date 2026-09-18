@@ -1,121 +1,46 @@
 /**
- * Authentication Middleware for Subscription System
- * Extends existing authentication to include subscription status checking
+ * Legacy compatibility exports.
+ *
+ * Canonical authentication and paid-access authority lives in server/auth.ts.
+ * Do not add independent database/session subscription checks here.
  */
-import { Request, Response, NextFunction } from 'express';
-import db from '../lib/db';
-import { getPlatformUserId } from '../authIdentity';
+import { type Request, type Response, type NextFunction } from 'express';
+import {
+  isAuthenticated as canonicalPaidAccess,
+  isIdentityAuthenticated as canonicalIdentity,
+  refreshRequestUser,
+} from '../auth';
 
-// Extend Express session types
-declare module 'express-session' {
-  interface SessionData {
-    userId: string;
-  }
-}
-
-function getAuthenticatedUserId(req: Request): string | undefined {
-  if (!req.isAuthenticated?.()) return undefined;
-  return getPlatformUserId(req.user);
-}
+export const ensureAuthenticated = canonicalIdentity;
+export const ensureActiveSubscription = canonicalPaidAccess;
 
 /**
- * Ensure user is authenticated
- * Checks if userId exists in session
- */
-export async function ensureAuthenticated(
-  req: Request,
-  res: Response,
-  next: NextFunction
-) {
-  if (!getAuthenticatedUserId(req)) {
-    return res.status(401).json({ error: 'Authentication required' });
-  }
-  next();
-}
-
-/**
- * Ensure user has active subscription
- * Checks both authentication and subscription status
- * Required for accessing welcome page and legal tools
- */
-export async function ensureActiveSubscription(
-  req: Request,
-  res: Response,
-  next: NextFunction
-) {
-  // First check authentication
-  const userId = getAuthenticatedUserId(req);
-  if (!userId) {
-    return res.status(401).json({ error: 'Authentication required' });
-  }
-
-  try {
-    // Check user subscription status
-    const result = await db.query(
-      'SELECT status FROM users WHERE id = $1',
-      [userId]
-    );
-
-    if (!result.rows[0]) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    const userStatus = result.rows[0].status;
-
-    // Allow access only if status is 'active'
-    if (userStatus !== 'active') {
-      return res.status(403).json({ 
-        error: 'Active subscription required',
-        status: userStatus,
-        message: userStatus === 'pending_payment' 
-          ? 'Please complete your subscription payment'
-          : userStatus === 'past_due'
-          ? 'Your subscription payment is past due'
-          : userStatus === 'canceled'
-          ? 'Your subscription has been canceled'
-          : 'Your subscription is not active'
-      });
-    }
-
-    // User has active subscription - continue
-    next();
-  } catch (error) {
-    console.error('Subscription check error:', error);
-    return res.status(500).json({ error: 'Failed to verify subscription status' });
-  }
-}
-
-/**
- * Optional: Check if user has any subscription record
- * Useful for determining if user needs to go through signup vs just needs payment
+ * Compatibility helper for older callers that only need to know whether the
+ * canonical identity currently has any durable subscription/access state.
  */
 export async function hasSubscription(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
-  const userId = getAuthenticatedUserId(req);
-  if (!userId) {
-    return res.status(401).json({ error: 'Authentication required' });
-  }
-
   try {
-    const result = await db.query(
-      'SELECT id FROM subscriptions WHERE user_id = $1 LIMIT 1',
-      [userId]
-    );
+    const user = await refreshRequestUser(req, res);
+    if (!user) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
 
-    // Attach hasSubscription flag to request object for use in routes
-    (req as any).hasSubscription = result.rows.length > 0;
-    next();
+    (req as any).hasSubscription =
+      user.hasPaidForAccess === true ||
+      String(user.status || '').toLowerCase() !== 'pending_payment';
+    return next();
   } catch (error) {
     console.error('Subscription lookup error:', error);
-    return res.status(500).json({ error: 'Failed to check subscription' });
+    return res.status(503).json({ error: 'Failed to check subscription' });
   }
 }
 
 export default {
   ensureAuthenticated,
   ensureActiveSubscription,
-  hasSubscription
+  hasSubscription,
 };
