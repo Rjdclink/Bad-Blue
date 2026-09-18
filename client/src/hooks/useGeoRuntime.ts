@@ -115,144 +115,9 @@ const calculateBearing = (lat1: number, lon1: number, lat2: number, lon2: number
   return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
 };
 
-// Local deterministic fallback only. The server endpoint is the authoritative
-// futurecast source; this exists so the UI degrades gracefully if that request fails.
-const movePoint = (lat: number, lng: number, bearing: number, distanceMeters: number) => {
-  const earthRadius = 6_371_000;
-  const angularDistance = distanceMeters / earthRadius;
-  const bearingRad = bearing * Math.PI / 180;
-  const lat1 = lat * Math.PI / 180;
-  const lng1 = lng * Math.PI / 180;
-  const lat2 = Math.asin(
-    Math.sin(lat1) * Math.cos(angularDistance) +
-    Math.cos(lat1) * Math.sin(angularDistance) * Math.cos(bearingRad)
-  );
-  const lng2 = lng1 + Math.atan2(
-    Math.sin(bearingRad) * Math.sin(angularDistance) * Math.cos(lat1),
-    Math.cos(angularDistance) - Math.sin(lat1) * Math.sin(lat2)
-  );
-  return { latitude: lat2 * 180 / Math.PI, longitude: lng2 * 180 / Math.PI };
-};
-
-const continuousTail = (frames: GeoFrame[], maxFrames = 20): GeoFrame[] => {
-  let start = 0;
-  for (let i = frames.length - 1; i >= 0; i--) {
-    if (Number(frames[i].metadata?.gapBeforeSeconds || 0) > 0) {
-      start = i;
-      break;
-    }
-  }
-  return frames.slice(start).slice(-maxFrames);
-};
-
-const generateLocalFuturecastFallback = (
-  sourceFrames: GeoFrame[],
-  hoursAhead = FUTURECAST_HOURS
-): GeoFrame[] => {
-  const recent = continuousTail(sourceFrames, 12)
-    .filter(frame => frame.observationKind !== 'predicted' && frame.source !== 'predicted');
-  if (recent.length < 3) return [];
-
-  let totalWeight = 0;
-  let weightedSpeed = 0;
-  let headingX = 0;
-  let headingY = 0;
-  const maxPlausibleSpeed = 90;
-
-  const kindWeight = (frame: GeoFrame): number => {
-    switch (frame.observationKind) {
-      case 'observed': return 1;
-      case 'inferred': return 0.65;
-      case 'interpolated': return 0.45;
-      case 'historical': return 0.35;
-      default: return frame.source === 'interpolated' ? 0.45 : 0.8;
-    }
-  };
-
-  for (let i = 1; i < recent.length; i++) {
-    const older = recent[i - 1];
-    const newer = recent[i];
-    const elapsed = (newer.timestamp.getTime() - older.timestamp.getTime()) / 1000;
-    if (elapsed <= 0) continue;
-
-    const distance = haversineDistance(
-      older.position.latitude,
-      older.position.longitude,
-      newer.position.latitude,
-      newer.position.longitude
-    );
-    const speed = distance / elapsed;
-    if (!Number.isFinite(speed) || speed > maxPlausibleSpeed) continue;
-
-    const heading = calculateBearing(
-      older.position.latitude,
-      older.position.longitude,
-      newer.position.latitude,
-      newer.position.longitude
-    );
-    const evidenceConfidence = Math.sqrt(
-      Math.max(0.01, Math.min(1, older.confidence ?? 0.5)) *
-      Math.max(0.01, Math.min(1, newer.confidence ?? 0.5))
-    );
-    const weight =
-      evidenceConfidence *
-      Math.min(kindWeight(older), kindWeight(newer)) *
-      (0.35 + 0.65 * (i / Math.max(1, recent.length - 1)));
-
-    totalWeight += weight;
-    weightedSpeed += speed * weight;
-    headingX += Math.cos(heading * Math.PI / 180) * weight;
-    headingY += Math.sin(heading * Math.PI / 180) * weight;
-  }
-
-  if (totalWeight <= 0) return [];
-
-  const avgSpeed = Math.max(0, Math.min(maxPlausibleSpeed, weightedSpeed / totalWeight));
-  const avgHeading = (Math.atan2(headingY, headingX) * 180 / Math.PI + 360) % 360;
-  const lastFrame = recent[recent.length - 1];
-  const baseTime = lastFrame.timestamp.getTime();
-  const intervalMinutes = 5;
-  const numPredictions = Math.max(1, Math.min(12, Math.ceil((Math.min(hoursAhead, 1) * 60) / intervalMinutes)));
-  const predictions: GeoFrame[] = [];
-  const baseConfidence = Math.max(0.1, Math.min(0.95, lastFrame.confidence ?? 0.5));
-  let lat = lastFrame.position.latitude;
-  let lng = lastFrame.position.longitude;
-
-  for (let i = 1; i <= numPredictions; i++) {
-    const moved = movePoint(lat, lng, avgHeading, avgSpeed * intervalMinutes * 60);
-    lat = moved.latitude;
-    lng = moved.longitude;
-    const ratio = i / numPredictions;
-
-    predictions.push({
-      id: generateId(),
-      timestamp: new Date(baseTime + i * intervalMinutes * 60 * 1000),
-      receivedAt: new Date(),
-      position: {
-        latitude: lat,
-        longitude: lng,
-        accuracy: Math.max(25, (lastFrame.position.accuracy ?? 35) + i * 25),
-      },
-      velocity: { speed: avgSpeed, heading: avgHeading },
-      source: 'predicted',
-      confidence: Math.max(0.05, baseConfidence * Math.exp(-2.2 * ratio)),
-      observationKind: 'predicted',
-      correlationGroup: 'prediction:client_deterministic_fallback',
-      provenance: {
-        provider: 'spectra_client_fallback',
-        transformedBy: ['deterministic_recency_weighted_motion'],
-      },
-      metadata: {
-        predicted: true,
-        authority: 'client_fallback',
-        model: 'deterministic_recency_weighted_motion',
-        horizonMinutes: i * intervalMinutes,
-      },
-    });
-  }
-
-  return predictions;
-};
+// The server endpoint is the sole Futurecast authority. If it is unavailable,
+// SPECTRA preserves the observations and shows no prediction rather than
+// manufacturing a second prediction path in the browser.
 
 // ============================================================================
 // HOOK
@@ -437,7 +302,7 @@ export function useGeoRuntime(
       setFuturecastFrames(predictionPayloadToFrames(predictions));
     } catch {
       if (requestId !== futurecastRequestRef.current) return;
-      setFuturecastFrames(generateLocalFuturecastFallback(sourceFrames));
+      setFuturecastFrames([]);
     }
   }, [cfg.predictiveEnabled, predictionPayloadToFrames]);
 
