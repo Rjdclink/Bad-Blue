@@ -255,14 +255,35 @@ function looksLikeLexaraEcho(candidate: string, spokenText: string): boolean {
   if (!normalizedCandidate || !normalizedSpoken) return false;
 
   const candidateWords = normalizedCandidate.split(' ').filter(Boolean);
+  const spokenWords = normalizedSpoken.split(' ').filter(Boolean);
+
   if (candidateWords.length === 1) {
     const word = candidateWords[0];
-    return word.length >= 5 && normalizedSpoken.split(' ').includes(word);
+    return word.length >= 5 && spokenWords.includes(word);
   }
 
-  const spokenWords = new Set(normalizedSpoken.split(' ').filter(Boolean));
-  const overlap = candidateWords.filter(word => spokenWords.has(word)).length / candidateWords.length;
-  return overlap >= 0.75 || normalizedSpoken.includes(normalizedCandidate);
+  // Exact phrase leakage is strong echo evidence. For longer candidates compare
+  // ordered contiguous runs rather than bag-of-words overlap, so a real user who
+  // repeats legal terms from LEXARA is not discarded merely for sharing words.
+  if (normalizedSpoken.includes(normalizedCandidate)) return true;
+
+  let longestRun = 0;
+  for (let candidateIndex = 0; candidateIndex < candidateWords.length; candidateIndex += 1) {
+    for (let spokenIndex = 0; spokenIndex < spokenWords.length; spokenIndex += 1) {
+      let run = 0;
+      while (
+        candidateIndex + run < candidateWords.length
+        && spokenIndex + run < spokenWords.length
+        && candidateWords[candidateIndex + run] === spokenWords[spokenIndex + run]
+      ) {
+        run += 1;
+      }
+      longestRun = Math.max(longestRun, run);
+    }
+  }
+
+  const orderedEchoRatio = longestRun / candidateWords.length;
+  return candidateWords.length >= 3 && longestRun >= 3 && orderedEchoRatio >= 0.8;
 }
 
 function emotionFromUserText(text: string): LEXARAEmotionHint {
