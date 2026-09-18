@@ -17,7 +17,7 @@ import {
   ChevronLeft, ChevronRight, Maximize2, Minimize2,
 } from 'lucide-react';
 import { useGeoRuntime, type GeoFrame } from '@/hooks/useGeoRuntime';
-import type { GPSPoint } from '@shared/geoconsoleTypes';
+import type { GPSPoint, LocationCandidate } from '@shared/geoconsoleTypes';
 import MapLibreIntelligenceMap from './MapLibreIntelligenceMap';
 
 // ============================================================================
@@ -26,6 +26,7 @@ import MapLibreIntelligenceMap from './MapLibreIntelligenceMap';
 
 interface GeoconsoleProps {
   initialData?: GPSPoint[];
+  candidateLocations?: LocationCandidate[];
   onProcess?: (data: GPSPoint[]) => Promise<void>;
   /**
    * Optional nav mode provided by the parent "People Finder" GeoConsole tabs.
@@ -84,7 +85,7 @@ const haversineDistance = (lat1: number, lon1: number, lat2: number, lon2: numbe
 // COMPONENT
 // ============================================================================
 
-export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialData = EMPTY_GPS_POINTS, onProcess: _onProcess, navMode, spectraShell = false }) => {
+export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialData = EMPTY_GPS_POINTS, candidateLocations = [], onProcess: _onProcess, navMode, spectraShell = false }) => {
   // Runtime hook - source of truth for frames
   const [state, actions] = useGeoRuntime(initialData, { tickInterval: 500, playbackSpeed: 1, interpolationEnabled: true, predictiveEnabled: true });
 
@@ -434,6 +435,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
             currentFrame={timelineFrame}
             trail={renderData.trail}
             futurecast={renderData.futurecast}
+            candidateLocations={candidateLocations}
             mapMode={mapMode}
             layers={layerCfg}
             isLive={state.isLive}
