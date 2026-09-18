@@ -205,6 +205,9 @@ export function loadConfig(): Config {
       if (!config.SQUARE_SUBSCRIPTION_PLAN_VARIATION_ID || !config.SQUARE_SUBSCRIPTION_PLAN_VARIATION_ID.trim()) {
         throw new Error('SQUARE_SUBSCRIPTION_PLAN_VARIATION_ID is required in production');
       }
+      if (!config.SQUARE_WEBHOOK_SIGNATURE_KEY || !config.SQUARE_WEBHOOK_SIGNATURE_KEY.trim()) {
+        throw new Error('SQUARE_WEBHOOK_SIGNATURE_KEY is required in production');
+      }
     }
     // Note: Using console.log here intentionally as logger is not yet initialized during bootstrap
     console.log('[Config] ✓ Environment variables validated successfully');
