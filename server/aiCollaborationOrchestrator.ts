@@ -509,6 +509,7 @@ export class AICollaborationOrchestrator {
         role,
         prompt: `${focus} Use only authority actually supplied in the prompt and never fabricate citations.\n\n${query}`,
         priority: 1,
+        timeout: attrs.needsFastResponse ? 600 : undefined,
         attributes: { ...attrs, needsLegalAnalysis: true, needsVerification: true, needsReasoning: true },
       });
     }
@@ -527,6 +528,7 @@ export class AICollaborationOrchestrator {
         prompt: 'Synthesize the successful specialist analyses into one direct, natural spoken answer to the user. Answer the current question or statement first. Default to 2-5 concise sentences unless additional detail is materially necessary or explicitly requested. Remove repetition, preserve uncertainty, never invent authority, and do not mention internal providers.\n\n[Results will be provided]',
         priority: 2,
         dependencies,
+        timeout: attrs.needsFastResponse ? 350 : undefined,
         attributes: { ...attrs, needsLegalAnalysis: true, needsVerification: true, needsReasoning: true },
       });
     }
