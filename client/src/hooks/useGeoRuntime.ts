@@ -241,6 +241,7 @@ export function useGeoRuntime(
   // Refs for interval (not state to avoid re-render loops)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const framesRef = useRef<GeoFrame[]>(frames);
+  const liveFuturecastLastRequestRef = useRef(0);
   
   // Keep ref in sync with state
   useEffect(() => {
@@ -547,13 +548,20 @@ export function useGeoRuntime(
           },
         };
 
-        setFrames((prev) => {
-          const updated = [...prev, newFrame];
-          const trimmed = updated.length > cfg.maxFrameBuffer ? updated.slice(-cfg.maxFrameBuffer) : updated;
-          // Live mode should always track the latest available fix.
-          setCurrentIndex(trimmed.length - 1);
-          return trimmed;
-        });
+        const updated = [...framesRef.current, newFrame];
+        const trimmed = updated.length > cfg.maxFrameBuffer ? updated.slice(-cfg.maxFrameBuffer) : updated;
+        framesRef.current = trimmed;
+        setFrames([...trimmed]);
+        setCurrentIndex(trimmed.length - 1);
+
+        const nowMs = Date.now();
+        if (
+          trimmed.length >= 3 &&
+          nowMs - liveFuturecastLastRequestRef.current >= 30_000
+        ) {
+          liveFuturecastLastRequestRef.current = nowMs;
+          void requestAuthoritativeFuturecast(trimmed);
+        }
 
         setStatus('playing');
         setError(null);
@@ -577,7 +585,7 @@ export function useGeoRuntime(
         // ignore
       }
     };
-  }, [isLive, cfg.autoFetch, cfg.maxFrameBuffer]);
+  }, [isLive, cfg.autoFetch, cfg.maxFrameBuffer, requestAuthoritativeFuturecast]);
 
   // === DERIVED STATE (computed from index + frames) ===
   
@@ -655,15 +663,19 @@ export function useGeoRuntime(
 
   const toggleLive = useCallback(() => {
     setIsLive(prev => {
-      if (!prev) {
-        // Can't go live without frames
-        if (framesRef.current.length === 0) return prev;
-        // Going live - jump to end
-        setCurrentIndex(framesRef.current.length - 1);
+      const next = !prev;
+      if (next) {
+        // LIVE can start from an empty buffer; navigator.geolocation supplies
+        // the first real observation instead of requiring synthetic seed data.
+        setCurrentIndex(Math.max(0, framesRef.current.length - 1));
         setIsPlaying(true);
+        setStatus(framesRef.current.length > 0 ? 'playing' : 'loading');
+      } else {
+        setIsPlaying(false);
+        setStatus(framesRef.current.length > 0 ? 'paused' : 'idle');
       }
       setVersion(v => v + 1);
-      return !prev;
+      return next;
     });
   }, []);
 
