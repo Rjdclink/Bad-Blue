@@ -484,9 +484,10 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     }), 'top-left');
     map.addControl(new maplibregl.ScaleControl({ unit: 'imperial', maxWidth: 140 }), 'bottom-left');
 
-    const suspendFollow = () => {
-      // Manual map gestures release follow mode. Re-centering only resumes if
-      // the operator explicitly turns FIX back on.
+    const suspendFollow = (event?: { originalEvent?: unknown }) => {
+      // MapLibre also emits zoom/rotate/pitch events for programmatic camera
+      // animation. Only a real pointer/touch/wheel event should release FIX.
+      if (!event?.originalEvent) return;
       userInteractionUntilRef.current = Number.POSITIVE_INFINITY;
       onUserInteraction?.();
     };
