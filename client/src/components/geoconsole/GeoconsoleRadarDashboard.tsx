@@ -32,6 +32,7 @@ interface GeoconsoleProps {
    * When set, the dashboard will respond by switching to the appropriate view defaults.
    */
   navMode?: 'timeline' | 'map' | 'satellite';
+  spectraShell?: boolean;
 }
 
 interface LayerState {
@@ -83,7 +84,7 @@ const haversineDistance = (lat1: number, lon1: number, lat2: number, lon2: numbe
 // COMPONENT
 // ============================================================================
 
-export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialData = EMPTY_GPS_POINTS, onProcess: _onProcess, navMode }) => {
+export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialData = EMPTY_GPS_POINTS, onProcess: _onProcess, navMode, spectraShell = false }) => {
   // Runtime hook - source of truth for frames
   const [state, actions] = useGeoRuntime(initialData, { tickInterval: 500, playbackSpeed: 1, interpolationEnabled: true, predictiveEnabled: true });
 
@@ -97,7 +98,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
   const [lockOnTarget, setLockOnTarget] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(() =>
-    typeof window === 'undefined' ? true : window.innerWidth >= 768
+    spectraShell ? false : (typeof window === 'undefined' ? true : window.innerWidth >= 768)
   );
   const [timelineOffsetMinutes, setTimelineOffsetMinutes] = useState(0);
   const [timelinePlaying, setTimelinePlaying] = useState(false);
@@ -358,6 +359,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
     <div
       className={`${isFullscreen ? 'fixed inset-0 z-[5000]' : ''} flex flex-col h-full min-h-0 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white overflow-hidden`}
     >
+      {!spectraShell && <>
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-slate-700/50 bg-slate-900/80 flex-shrink-0">
         <div className="flex items-center gap-3">
@@ -420,6 +422,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
           </Button>
         </div>
       </div>
+      </>}
 
       {/* Main - Full Viewport Stretch */}
       <div className="relative flex flex-1 min-h-0 overflow-hidden">
@@ -435,7 +438,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
             lockOnTarget={lockOnTarget}
             onUserInteraction={() => setLockOnTarget(false)}
           />
-          <div className="absolute bottom-3 left-3 right-3 z-10 flex items-end justify-between gap-2 pointer-events-none">
+          {!spectraShell && <div className="absolute bottom-3 left-3 right-3 z-10 flex items-end justify-between gap-2 pointer-events-none">
             <div className="pointer-events-auto flex max-w-[calc(100%-3rem)] gap-1 overflow-x-auto rounded-xl border border-slate-600/50 bg-slate-900/90 p-1 shadow-xl backdrop-blur">
               {(['satellite', 'terrain', 'weather', 'evidence', 'street'] as const).map(preset => (
                 <button
@@ -456,11 +459,11 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
             >
               {inspectorOpen ? 'Hide' : 'Info'}
             </button>
-          </div>
+          </div>}
         </div>
 
         {/* Context inspector: docked on desktop, overlay on mobile. */}
-        {inspectorOpen && <div className="absolute md:relative inset-y-0 right-0 z-20 w-[min(88vw,20rem)] md:w-64 xl:w-72 border-l border-slate-700/50 flex flex-col bg-slate-950/95 md:bg-slate-900/70 min-h-0 overflow-y-auto flex-shrink-0 shadow-2xl md:shadow-none backdrop-blur">
+        {!spectraShell && inspectorOpen && <div className="absolute md:relative inset-y-0 right-0 z-20 w-[min(88vw,20rem)] md:w-64 xl:w-72 border-l border-slate-700/50 flex flex-col bg-slate-950/95 md:bg-slate-900/70 min-h-0 overflow-y-auto flex-shrink-0 shadow-2xl md:shadow-none backdrop-blur">
           {/* Controls */}
           <div className="p-2 border-b border-slate-700/50">
             <div className="flex items-center justify-between mb-2">
@@ -608,7 +611,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
             </div>
           </div>
 
-          <select
+          {!spectraShell && <select
             onChange={e => setTimelinePlaybackSpeed(Number(e.target.value))}
             value={timelinePlaybackSpeed}
             className="bg-slate-800 border border-slate-700 rounded px-2 py-2 text-xs min-h-10"
@@ -619,7 +622,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
             <option value={2}>2x</option>
             <option value={5}>5x</option>
             <option value={10}>10x</option>
-          </select>
+          </select>}
 
           <Button
             variant="outline"
@@ -630,13 +633,13 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
           >
             Now
           </Button>
-          <Button variant="outline" size="sm" onClick={handleExport} disabled={timelineFrames.length === 0} className="bg-slate-800/50 border-slate-700 min-h-10 text-xs">
+          {!spectraShell && <Button variant="outline" size="sm" onClick={handleExport} disabled={timelineFrames.length === 0} className="bg-slate-800/50 border-slate-700 min-h-10 text-xs">
             <Download className="w-3 h-3 mr-1" />Export
-          </Button>
+          </Button>}
         </div>
       </div>
 
-      <div className="hidden lg:block px-3 py-2 border-t border-slate-700/50 bg-slate-800/50 flex-shrink-0">
+      {!spectraShell && <div className="hidden lg:block px-3 py-2 border-t border-slate-700/50 bg-slate-800/50 flex-shrink-0">
         <div className="grid grid-cols-5 gap-2">
           {[
             { label: 'GPU Map', active: true, detail: 'MapLibre WebGL renderer' },
@@ -656,7 +659,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({ initialDat
             </div>
           ))}
         </div>
-      </div>
+      </div>}
     </div>
   );
 };
