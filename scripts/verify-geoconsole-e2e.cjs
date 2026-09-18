@@ -66,10 +66,10 @@ test('A single real observation remains renderable without synthetic motion',
   futurecast.includes("if (points.length === 0)") &&
   futurecast.includes('const sortedPoints = [...points]') &&
   futurecast.includes('points: trailPoints'));
-test('Futurecast is server-authoritative with a deterministic local degradation path',
+test('Futurecast is server-only; browser failure produces no alternate prediction authority',
   runtime.includes("authority: 'server'") &&
-  runtime.includes("authority: 'client_fallback'") &&
-  runtime.includes('deterministic_recency_weighted_motion'));
+  !runtime.includes("authority: 'client_fallback'") &&
+  !runtime.includes('generateLocalFuturecastFallback'));
 test('Historical evidence is not promoted to observation truth',
   fusion.includes("return 'historical'") &&
   futurecast.includes("point.observationKind !== 'predicted'"));
@@ -77,9 +77,10 @@ test('Predictions preserve provenance and remain classified separately',
   futurecast.includes("provider: 'canonical_geoconsole_futurecast'") &&
   futurecast.includes("observationKind: 'predicted'"));
 
-test('Uploaded media -> authenticated extraction route',
+test('Uploaded media -> authenticated extraction route and canonical acquisition',
   gpsRoutes.includes("router.post('/extract-upload'") &&
-  gpsRoutes.includes('extractMediaMetadata'));
+  gpsRoutes.includes('extractMediaMetadata') &&
+  read('server/routes/spectra.routes.ts').includes('directEvidence'));
 test('Street imagery -> authenticated internal adapter',
   routes.includes("router.get('/street-imagery'") &&
   map.includes('/api/geoconsole/street-imagery'));
