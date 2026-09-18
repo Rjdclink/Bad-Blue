@@ -62,14 +62,20 @@ test('Runtime consumes processed trail',
 test('Runtime consumes process Futurecast',
   runtime.includes("payload?.data?.futurecast"));
 
-test('First real observation is supported',
-  futurecast.includes("if (points.length === 1)"));
-test('Futurecast is server-authoritative',
-  runtime.includes("authority: 'server'"));
+test('A single real observation remains renderable without synthetic motion',
+  futurecast.includes("if (points.length === 0)") &&
+  futurecast.includes('const sortedPoints = [...points]') &&
+  futurecast.includes('points: trailPoints'));
+test('Futurecast is server-authoritative with a deterministic local degradation path',
+  runtime.includes("authority: 'server'") &&
+  runtime.includes("authority: 'client_fallback'") &&
+  runtime.includes('deterministic_recency_weighted_motion'));
 test('Historical evidence is not promoted to observation truth',
-  fusion.includes("return 'historical'"));
-test('Predictions preserve provenance',
-  futurecast.includes("provider: 'canonical_geoconsole_futurecast'"));
+  fusion.includes("return 'historical'") &&
+  futurecast.includes("point.observationKind !== 'predicted'"));
+test('Predictions preserve provenance and remain classified separately',
+  futurecast.includes("provider: 'canonical_geoconsole_futurecast'") &&
+  futurecast.includes("observationKind: 'predicted'"));
 
 test('Uploaded media -> authenticated extraction route',
   gpsRoutes.includes("router.post('/extract-upload'") &&
