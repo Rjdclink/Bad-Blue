@@ -1,62 +1,42 @@
-// Sex Offender Registry Scraper
 import type { Page } from 'playwright';
 import type { CriminalSearchQuery, ScraperResult } from '../types';
 import { LegacyScraperAdapter } from './LegacyScraperAdapter';
+import { discoverCriminalRecordSources } from '../CriminalSourceDiscovery';
 
+/**
+ * Official-source discovery adapter.
+ *
+ * This route deliberately does not fabricate person-level records from generic
+ * DOM selectors. It verifies and returns the relevant public source portals;
+ * a source-specific query adapter must supply a person-level match.
+ */
 export class SexOffenderRegistryScraper extends LegacyScraperAdapter {
   protected sourceName = 'Sex Offender Registry';
-  protected baseConfidence = 1.0; // Zero false positives
+  protected baseConfidence = 1.0;
 
-  async search(query: CriminalSearchQuery, page: Page): Promise<ScraperResult> {
+  async search(query: CriminalSearchQuery, _page: Page): Promise<ScraperResult> {
     try {
-      const records: any[] = [];
-      
-      // National Sex Offender Public Website
-      await page.goto('https://www.nsopw.gov/', { waitUntil: 'networkidle' });
-      await this.humanLikeDelay();
+      const discovery = await discoverCriminalRecordSources(query);
+      const matching = discovery.filter(source => source.kind === 'sex_offender_registry');
+      const reachable = matching.filter(source => source.status === 'reachable');
 
-      // Perform search (placeholder - actual implementation would interact with search form)
-      // This is HIGH PRIORITY - if found, flag immediately
-      
-      const offenderData = await page.evaluate(() => {
-        return Array.from(document.querySelectorAll('.offender-record')).map(el => ({
-          name: el.querySelector('.offender-name')?.textContent?.trim(),
-          tier: el.querySelector('.tier-level')?.textContent?.trim(),
-          offenses: el.querySelector('.offenses')?.textContent?.trim(),
-          registrationDate: el.querySelector('.reg-date')?.textContent?.trim(),
-        }));
-      });
-
-      offenderData.forEach(o => {
-        if (o.name && o.name.toLowerCase().includes(query.fullName.toLowerCase())) {
-          records.push({
-            fullName: query.fullName,
-            sexOffenderStatus: {
-              registered: true,
-              tier: this.parseTier(o.tier),
-              offenses: o.offenses ? [o.offenses] : [],
-              registrationDate: o.registrationDate,
-            },
-            source: this.sourceName,
-            confidence: this.baseConfidence,
-            scrapedAt: new Date(),
-          });
-        }
-      });
-
-      return this.createResult(records);
-    } catch (error: any) {
-      return this.createResult([], false, error.message);
+      return this.createResult(
+        reachable.length
+          ? [{
+              fullName: query.fullName,
+              dateOfBirth: query.dateOfBirth,
+              source: this.sourceName,
+              confidence: this.baseConfidence,
+              scrapedAt: new Date(),
+              searchStatus: 'sources_discovered',
+              sourceDiscovery: matching,
+            }]
+          : [],
+        reachable.length > 0,
+        reachable.length > 0 ? undefined : 'No verified official source portal was reachable',
+      );
+    } catch (error) {
+      return this.createResult([], false, error instanceof Error ? error.message : String(error));
     }
-  }
-
-  private parseTier(tierText?: string): 1 | 2 | 3 | undefined {
-    if (!tierText) return undefined;
-    const match = tierText.match(/\d/);
-    if (match) {
-      const tier = parseInt(match[0]);
-      if (tier >= 1 && tier <= 3) return tier as 1 | 2 | 3;
-    }
-    return undefined;
   }
 }
