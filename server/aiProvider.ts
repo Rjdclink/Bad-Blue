@@ -49,6 +49,7 @@ import {
   TaskComplexity,
   type AITaskMetadata 
 } from './aiTokenGovernor';
+import { getConfiguredHarmonyProviders, getCurrentModelForProvider, CURRENT_AI_MODELS } from './aiHarmonyModelRegistry';
 import { 
   generateZeroApiResponse, 
   shouldUseZeroApiMode, 
@@ -91,243 +92,83 @@ export async function generateText(
   options: GenerateOptions = {}
 ): Promise<AIResponse> {
   const startTime = Date.now();
+  const providers = getConfiguredHarmonyProviders();
 
-  // ZERO-API MODE: Use local intelligence when no external APIs are available
-  if (shouldUseZeroApiMode()) {
-    console.log('[AI Provider] ZERO-API MODE: Using local intelligence engine');
+  if (providers.length > 0) {
+    const budget = await aiTokenGovernor.getBudgetForTask(task);
+    const actualPrompt = buildPromptWithVerbosity(prompt, budget.verbosityLevel);
+    const normalizedName = task.taskName.toLowerCase();
+    const legalTask = /legal|lexara|law|case|petition|complaint|court|officer|criminal/.test(normalizedName);
+    const codeTask = /code|repair|build|deploy|implementation|developer/.test(normalizedName);
+    const researchTask = /search|research|finder|spectra|background|report|verify|fact/.test(normalizedName);
+
     try {
-      const zeroApiResult = await generateZeroApiResponse(prompt, {
-        type: task.taskName.includes('officer') ? 'officer-search' : 
-              task.taskName.includes('document') ? 'document-generation' : 
-              'legal-consultation',
-      });
-      
-      const latencyMs = Date.now() - startTime;
-      return {
-        content: zeroApiResult.content,
-        provider: AIProvider.GEMINI, // Report as Gemini for compatibility
-        tokensUsed: Math.floor(zeroApiResult.content.length / 4),
-        latencyMs,
-      };
-    } catch (error: any) {
-      console.error('[AI Provider] Zero-API mode failed:', error.message);
-      throw new Error(`Zero-API mode failed: ${error.message}`);
-    }
-  }
-
-  // Get routing and budget from governor (now includes orchestrated allocations)
-  const budget = await aiTokenGovernor.getBudgetForTask(task);
-  const defaultMaxTokens = options.maxTokens || budget.maxTokens;
-  const actualPrompt = buildPromptWithVerbosity(prompt, budget.verbosityLevel);
-
-  // Respect deferral for first decision point
-  if (!budget.shouldProceed) {
-    // Try Zero-API fallback before deferring
-    console.log('[AI Provider] Budget not available, trying Zero-API fallback');
-    try {
-      const zeroApiResult = await generateZeroApiResponse(prompt);
-      const latencyMs = Date.now() - startTime;
-      return {
-        content: zeroApiResult.content,
-        provider: AIProvider.GEMINI,
-        tokensUsed: Math.floor(zeroApiResult.content.length / 4),
-        latencyMs,
-      };
-    } catch (zeroApiError) {
-      // If Zero-API also fails, throw the original deferral error
-      if (task.context === UsageContext.AUTONOMOUS) {
-        const rescheduleInfo = await aiTokenGovernor.shouldRescheduleAutonomous();
-        throw new Error(`AUTONOMOUS_LIMIT_REACHED: ${rescheduleInfo.reason}`);
-      }
-      throw new Error(`Task deferred: ${budget.deferralReason}`);
-    }
-  }
-
-  // Determine provider set: use providersAllocation if available, else fallback to context-based logic
-  let providersToRun: AIProvider[];
-  let providerBudgets: Map<AIProvider, number> = new Map();
-
-  if (budget.providersAllocation && budget.providersAllocation.length > 0) {
-    // Use orchestrated allocations from governor - this enables proportional load distribution
-    providersToRun = budget.providersAllocation
-      .filter(a => a.maxTokens > 0) // Only run providers with allocated budget
-      .map(a => a.provider);
-    
-    // Build per-provider budget map for fine-grained control
-    budget.providersAllocation.forEach(a => {
-      if (a.maxTokens > 0) {
-        providerBudgets.set(a.provider, a.maxTokens);
-      }
-    });
-
-    // Apply context-specific provider blocks
-    if (task.context === UsageContext.AUTONOMOUS) {
-      // Autonomous: exclude Gemini
-      providersToRun = providersToRun.filter(p => p !== AIProvider.GEMINI);
-      providerBudgets.delete(AIProvider.GEMINI);
-    } else {
-      // USER: exclude Groq from parallel (reserved for autonomous, only use as last resort fallback)
-      providersToRun = providersToRun.filter(p => p !== AIProvider.GROQ);
-      providerBudgets.delete(AIProvider.GROQ);
-    }
-  } else {
-    // Fallback: use context-based provider selection
-    // GROQ POLICY: Groq is exclusively for autonomous, only last resort for USER
-    providersToRun = task.context === UsageContext.AUTONOMOUS
-      ? [AIProvider.GROQ, AIProvider.MISTRAL, AIProvider.CLAUDE] // Autonomous: Groq preferred, no Gemini
-      : [AIProvider.GEMINI, AIProvider.MISTRAL, AIProvider.CLAUDE]; // USER: No Groq in parallel
-  }
-
-  // Ensure at least one provider to run
-  if (providersToRun.length === 0) {
-    throw new Error('No AI providers available after orchestration');
-  }
-
-  // Launch providers in parallel with per-provider token limits
-  const executions = providersToRun.map((provider) => {
-    const providerMaxTokens = providerBudgets.get(provider) || defaultMaxTokens;
-    return runProvider(provider, actualPrompt, options, providerMaxTokens, task);
-  });
-
-  const results = await Promise.allSettled(executions);
-
-  // Collect successes and failures
-  const successes: AIResponse[] = [];
-  const failures: { provider: AIProvider; error: any; latencyMs: number }[] = [];
-
-  results.forEach((r, idx) => {
-    const provider = providersToRun[idx];
-    if (r.status === 'fulfilled') {
-      successes.push(r.value);
-    } else {
-      failures.push({ provider, error: r.reason, latencyMs: Date.now() - startTime });
-      // CIRCUIT BREAKER: Immediately disable provider on failure
-      const errorMessage = r.reason?.message || String(r.reason);
-      // Only disable for serious errors (not rate limits which are temporary)
-      if (!errorMessage.includes('rate limit') && !errorMessage.includes('quota')) {
-        aiTokenGovernor.disableProvider(provider, `Provider error: ${errorMessage}`);
-      }
-    }
-  });
-
-  // If no successes from parallel execution, try sequential fallback for USER context
-  if (successes.length === 0) {
-    // Record parallel failures
-    for (const f of failures) {
-      await aiTokenGovernor.recordUsage(
+      // Dynamic import avoids a module-initialization cycle: the collaboration
+      // orchestrator uses runProvider(), but generateText() is the platform
+      // entry point that delegates complete service work into Harmony.
+      const { AICollaborationOrchestrator } = await import('./aiCollaborationOrchestrator');
+      const orchestrated = await AICollaborationOrchestrator.orchestrateCollaboration(
         task.taskName,
-        f.provider,
-        0,
-        task.context,
-        f.latencyMs,
-        false,
-        budget.verbosityLevel,
-        task.priority,
-        String(f.error?.message || f.error)
-      );
-    }
-    
-    // CRITICAL: For USER context, try sequential fallback before giving up
-    if (task.context === UsageContext.USER) {
-      console.log('[AI Provider] All parallel providers failed for USER task, trying sequential fallback...');
-      const failedProviders = new Set(failures.map(f => f.provider));
-      // GROQ POLICY: Groq is last resort for USER - exclusive to autonomous functions
-      const fallbackOrder = [AIProvider.GEMINI, AIProvider.MISTRAL, AIProvider.CLAUDE, AIProvider.GROQ];
-      
-      for (const provider of fallbackOrder) {
-        if (failedProviders.has(provider)) continue; // Skip already failed
-        if (aiTokenGovernor.isProviderDisabled(provider)) continue; // Skip disabled providers
-        
-        try {
-          console.log(`[AI Provider] Sequential fallback: trying ${provider}...`);
-          const result = await runProvider(provider, actualPrompt, options, defaultMaxTokens, task);
-          
-          // Record success
-          await aiTokenGovernor.recordUsage(
-            task.taskName,
-            provider,
-            result.tokensUsed,
-            task.context,
-            result.latencyMs,
-            true,
-            budget.verbosityLevel,
-            task.priority
-          );
-          
-          console.log(`[AI Provider] Sequential fallback SUCCESS with ${provider}`);
-          return result;
-        } catch (err: any) {
-          console.log(`[AI Provider] Sequential fallback: ${provider} failed - ${err.message}`);
-          // CIRCUIT BREAKER: Disable on sequential fallback failure too
-          if (!err.message?.includes('rate limit') && !err.message?.includes('quota')) {
-            aiTokenGovernor.disableProvider(provider, `Sequential fallback error: ${err.message}`);
-          }
-          continue;
-        }
-      }
-      
-      // EXTENDED FALLBACK: Try additional free providers (Cohere, Together, HuggingFace,
-      // Cerebras, SambaNova) via the Geiger-rotated unified caller before going Zero-API.
-      try {
-        console.log('[AI Provider] Primary providers exhausted, trying extended free-provider rotation...');
-        const unifiedResult = await callUnifiedAI({
-          prompt: actualPrompt,
+        actualPrompt,
+        {
+          complexity: task.complexity as any,
+          priority:
+            task.priority >= TaskPriority.CRITICAL_USER ? 'critical'
+              : task.priority >= TaskPriority.HIGH_USER ? 'high'
+                : task.priority >= TaskPriority.MEDIUM_BACKGROUND ? 'medium'
+                  : 'low',
+          context: task.context,
+          estimatedTokens: options.maxTokens || budget.maxTokens,
+          needsLegalAnalysis: legalTask,
+          needsVerification: legalTask || researchTask,
+          needsSearchGrounding: researchTask,
+          needsCodeGeneration: codeTask,
+          needsReasoning: task.complexity !== TaskComplexity.LIGHTWEIGHT,
+          needsStructuredOutput: options.useJSON === true,
+          // User-facing latency is handled by parallel Harmony execution and,
+          // for voice surfaces such as LEXARA, a separate immediate-ack lane.
+          // Do not collapse comprehensive work to one "fastest wins" provider.
+          needsFastResponse: false,
+        } as any,
+        providers,
+        {
+          providerPolicy: 'capability-first',
           systemPrompt: options.systemPrompt,
-          temperature: options.temperature,
-          maxTokens: defaultMaxTokens,
-          context: 'user',
-          skipOptimization: true,
-        });
-        console.log(`[AI Provider] Extended rotation SUCCESS with ${unifiedResult.provider}`);
-        return {
-          content: unifiedResult.content,
-          provider: AIProvider.GROQ, // Report as Groq for compatibility (extended providers aren't in the core enum)
-          tokensUsed: unifiedResult.tokensUsed ?? Math.floor(unifiedResult.content.length / 4),
-          latencyMs: unifiedResult.latencyMs,
-        };
-      } catch (unifiedError: any) {
-        console.log(`[AI Provider] Extended rotation also failed: ${unifiedError.message}`);
+        },
+      );
+
+      if (!orchestrated.finalAnswer?.trim()) {
+        throw new Error('Harmony returned no usable synthesized answer');
       }
 
-      // ZERO-API ULTIMATE FALLBACK: If all external providers fail, use local intelligence
-      console.log('[AI Provider] All external providers failed, using Zero-API fallback');
-      try {
-        const zeroApiResult = await generateZeroApiResponse(prompt);
-        const latencyMs = Date.now() - startTime;
-        console.log('[AI Provider] Zero-API fallback SUCCESS');
-        return {
-          content: zeroApiResult.content,
-          provider: AIProvider.GEMINI, // Report for compatibility
-          tokensUsed: Math.floor(zeroApiResult.content.length / 4),
-          latencyMs,
-        };
-      } catch (zeroApiError: any) {
-        console.log(`[AI Provider] Zero-API fallback also failed: ${zeroApiError.message}`);
-      }
+      return {
+        content: orchestrated.finalAnswer,
+        provider: orchestrated.providersUsed[0] || AIProvider.OPENROUTER,
+        tokensUsed: orchestrated.totalTokens,
+        latencyMs: Date.now() - startTime,
+      };
+    } catch (error) {
+      console.warn('[AI Provider] Harmony orchestration failed; preserving local fallback', {
+        task: task.taskName,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
-    
-    const last = failures[failures.length - 1];
-    throw last?.error || new Error('All AI providers failed');
   }
 
-  // Aggregate responses to select the best final output
-  const final = aggregateResponses(successes, task, budget.verbosityLevel);
-
-  // Record successes individually for accounting/quota tracking
-  for (const s of successes) {
-    await aiTokenGovernor.recordUsage(
-      task.taskName,
-      s.provider,
-      s.tokensUsed,
-      task.context,
-      s.latencyMs,
-      true,
-      budget.verbosityLevel,
-      task.priority
-    );
-  }
-
-  return final;
+  // Local intelligence is fail-local only. It does not replace configured
+  // Harmony participants, but it keeps the product usable when every external
+  // transport is absent or unavailable.
+  const zeroApiResult = await generateZeroApiResponse(prompt, {
+    type: task.taskName.includes('officer') ? 'officer-search'
+      : task.taskName.includes('document') ? 'document-generation'
+        : 'legal-consultation',
+  });
+  return {
+    content: zeroApiResult.content,
+    provider: AIProvider.OPENROUTER,
+    tokensUsed: Math.floor(zeroApiResult.content.length / 4),
+    latencyMs: Date.now() - startTime,
+  };
 }
 
 /**
@@ -544,33 +385,33 @@ function getProviderModel(provider: AIProvider, requestedModel?: string, complex
     },
     [AIProvider.GROQ]: {
       prefixes: ['llama-', 'meta-llama/', 'openai/', 'qwen/'],
-      default: process.env.GROQ_CHAT_MODEL?.trim() || 'llama-3.3-70b-versatile',
-      comprehensive: process.env.GROQ_CHAT_MODEL?.trim() || 'llama-3.3-70b-versatile'
+      default: CURRENT_AI_MODELS.groqFast,
+      comprehensive: CURRENT_AI_MODELS.groqDeep
     },
     [AIProvider.MISTRAL]: {
       prefixes: ['mistral', 'codestral', 'pixtral', 'open-'],
-      default: 'mistral-small-2603'
+      default: CURRENT_AI_MODELS.mistralFast
     },
     [AIProvider.CLAUDE]: {
       prefixes: ['claude'],
       lite: 'claude-haiku-4-5-20251001',
-      default: process.env.CLAUDE_MODEL?.trim() || 'claude-sonnet-4-6',
-      comprehensive: process.env.LEXARA_CLAUDE_MODEL?.trim() || 'claude-sonnet-4-6',
-      pro: 'claude-opus-4-8'
+      default: CURRENT_AI_MODELS.claudeBalanced,
+      comprehensive: process.env.LEXARA_CLAUDE_MODEL?.trim() || CURRENT_AI_MODELS.claudeBalanced,
+      pro: CURRENT_AI_MODELS.claudeDeep
     },
     // OpenRouter free models (December 2025)
     [AIProvider.DEEPSEEK]: {
       prefixes: ['deepseek'],
-      default: 'deepseek/deepseek-r1-0528:free' // Advanced reasoning
+      default: CURRENT_AI_MODELS.deepseek
     },
     // Platform providers (December 2025)
     [AIProvider.OPENROUTER]: {
       prefixes: ['openrouter', 'or-'],
-      default: process.env.OPENROUTER_DEFAULT_MODEL?.trim() || 'openrouter/auto'
+      default: process.env.OPENROUTER_DEFAULT_MODEL?.trim() || CURRENT_AI_MODELS.openRouterAuto
     },
     [AIProvider.HUGGINGFACE]: {
       prefixes: ['hf-', 'huggingface'],
-      default: 'meta-llama/Llama-3.3-70B-Instruct' // HuggingFace default
+      default: CURRENT_AI_MODELS.huggingFace
     },
     [AIProvider.LMAI]: {
       prefixes: ['lmai', 'lm-', 'local'],
@@ -579,16 +420,16 @@ function getProviderModel(provider: AIProvider, requestedModel?: string, complex
     // Legacy OpenRouter models (kept for backward compatibility)
     [AIProvider.GROK]: {
       prefixes: ['grok', 'x-ai', 'qwen'],
-      default: 'qwen/qwen-2.5-72b-instruct:free' // Remapped to valid model
+      default: CURRENT_AI_MODELS.grok
     },
     [AIProvider.KIMI]: {
       prefixes: ['kimi', 'moonshot', 'meta-llama'],
-      default: 'meta-llama/llama-3.3-70b-instruct:free' // Remapped to valid model
+      default: CURRENT_AI_MODELS.kimi
     }
   };
 
   const providerConfig = validModels[provider];
-  if (!providerConfig) return requestedModel || '';
+  if (!providerConfig) return requestedModel || getCurrentModelForProvider(provider);
 
   /**
    * Helper to select model based on task complexity for a given provider config.
@@ -653,11 +494,6 @@ export async function runProvider(
   task: AITaskMetadata
 ): Promise<AIResponse> {
   const start = Date.now();
-
-  // Hard block Gemini in autonomous context
-  if (task.context === UsageContext.AUTONOMOUS && provider === AIProvider.GEMINI) {
-    throw new Error('AUTONOMOUS_BLOCK_GEMINI');
-  }
 
   let content = '';
   let tokensUsed = 0;
