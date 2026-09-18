@@ -295,6 +295,37 @@ export function useGeoRuntime(
 
   const futurecastRequestRef = useRef(0);
 
+  const predictionPayloadToFrames = useCallback((predictions: any[]): GeoFrame[] => (
+    predictions
+      .map((point: any) => ({
+        id: generateId(),
+        timestamp: new Date(point.timestamp),
+        position: {
+          latitude: Number(point.latitude),
+          longitude: Number(point.longitude),
+          altitude: point.altitude !== undefined ? Number(point.altitude) : undefined,
+          accuracy: point.accuracy !== undefined ? Number(point.accuracy) : undefined,
+          verticalAccuracy: point.verticalAccuracy !== undefined ? Number(point.verticalAccuracy) : undefined,
+        },
+        receivedAt: point.receivedAt ? new Date(point.receivedAt) : undefined,
+        observationKind: point.observationKind || 'predicted',
+        correlationGroup: point.correlationGroup,
+        provenance: point.provenance,
+        source: point.source || 'predicted',
+        confidence: Number(point.confidence ?? 0),
+        metadata: {
+          ...(point.metadata || {}),
+          predicted: true,
+          authority: 'server',
+        },
+      }))
+      .filter((frame: GeoFrame) =>
+        Number.isFinite(frame.position.latitude) &&
+        Number.isFinite(frame.position.longitude) &&
+        Number.isFinite(frame.timestamp.getTime())
+      )
+  ), []);
+
   const requestAuthoritativeFuturecast = useCallback(async (sourceFrames: GeoFrame[]) => {
     if (!cfg.predictiveEnabled || sourceFrames.length < 3) {
       setFuturecastFrames([]);
@@ -337,44 +368,21 @@ export function useGeoRuntime(
         ? payload.data.predictions
         : [];
 
-      const framesFromServer: GeoFrame[] = predictions.map((point: any) => ({
-        id: generateId(),
-        timestamp: new Date(point.timestamp),
-        position: {
-          latitude: Number(point.latitude),
-          longitude: Number(point.longitude),
-          altitude: point.altitude !== undefined ? Number(point.altitude) : undefined,
-          accuracy: point.accuracy !== undefined ? Number(point.accuracy) : undefined,
-          verticalAccuracy: point.verticalAccuracy !== undefined ? Number(point.verticalAccuracy) : undefined,
-        },
-        receivedAt: point.receivedAt ? new Date(point.receivedAt) : undefined,
-        observationKind: point.observationKind || 'predicted',
-        correlationGroup: point.correlationGroup,
-        provenance: point.provenance,
-        source: point.source || 'predicted',
-        confidence: Number(point.confidence ?? 0),
-        metadata: {
-          ...(point.metadata || {}),
-          predicted: true,
-          authority: 'server',
-        },
-      }));
-
-      setFuturecastFrames(framesFromServer);
+      setFuturecastFrames(predictionPayloadToFrames(predictions));
     } catch {
       if (requestId !== futurecastRequestRef.current) return;
       setFuturecastFrames(generateLocalFuturecastFallback(sourceFrames));
     }
-  }, [cfg.predictiveEnabled]);
+  }, [cfg.predictiveEnabled, predictionPayloadToFrames]);
 
-  // Load data - REAL DATA ONLY
-  const loadData = useCallback((points: GPSPoint[]) => {
+  // Load data through the canonical server fusion pipeline automatically.
+  const loadData = useCallback(async (points: GPSPoint[]) => {
     setStatus('loading');
     setError(null);
 
     try {
-      // No data = empty state
       if (points.length === 0) {
+        framesRef.current = [];
         setFrames([]);
         setFuturecastFrames([]);
         setCurrentIndex(0);
@@ -384,11 +392,64 @@ export function useGeoRuntime(
         setStatus('idle');
         return;
       }
-      
-      // Convert real GPS points to frames
-      let newFrames = convertToFrames(points);
 
+      let canonicalPoints = points;
+      let canonicalFuturecast: GeoFrame[] | null = null;
+
+      try {
+        const response = await fetch('/api/geoconsole/process', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            inputs: points.map(point => ({
+              ...point,
+              timestamp: new Date(point.timestamp).toISOString(),
+              receivedAt: point.receivedAt ? new Date(point.receivedAt).toISOString() : undefined,
+              provenance: point.provenance
+                ? {
+                    ...point.provenance,
+                    capturedAt: point.provenance.capturedAt
+                      ? new Date(point.provenance.capturedAt).toISOString()
+                      : undefined,
+                  }
+                : undefined,
+            })),
+          }),
+        });
+
+        if (response.ok) {
+          const payload = await response.json();
+          const fusedLocations = Array.isArray(payload?.data?.fusedLocations)
+            ? payload.data.fusedLocations
+            : [];
+          const fusedPoints = fusedLocations
+            .map((entry: any) => entry?.point || entry)
+            .filter((point: any) =>
+              Number.isFinite(Number(point?.latitude)) &&
+              Number.isFinite(Number(point?.longitude)) &&
+              point?.timestamp
+            );
+
+          if (fusedPoints.length > 0) {
+            canonicalPoints = fusedPoints as GPSPoint[];
+          }
+
+          const predictions = Array.isArray(payload?.data?.futurecast)
+            ? payload.data.futurecast
+            : [];
+          if (predictions.length > 0) {
+            canonicalFuturecast = predictionPayloadToFrames(predictions);
+          }
+        }
+      } catch {
+        // Raw observations remain valid fallback input when the fusion endpoint
+        // is temporarily unavailable. No synthetic positions are introduced.
+      }
+
+      let newFrames = convertToFrames(canonicalPoints);
       if (newFrames.length === 0) {
+        framesRef.current = [];
         setFrames([]);
         setFuturecastFrames([]);
         setCurrentIndex(0);
@@ -399,33 +460,37 @@ export function useGeoRuntime(
         return;
       }
 
-      // Keep only the rolling previous hour for the operator timeline.
       const latestObservedMs = newFrames[newFrames.length - 1].timestamp.getTime();
       newFrames = newFrames.filter(
         frame => frame.timestamp.getTime() >= latestObservedMs - ONE_HOUR_MS
       );
 
-      // Limit buffer after applying the time window.
       if (newFrames.length > cfg.maxFrameBuffer) {
         newFrames = newFrames.slice(-cfg.maxFrameBuffer);
       }
 
-      // IMMUTABLE: Set new array reference
-      setFrames([...newFrames]);
       framesRef.current = [...newFrames];
+      setFrames([...newFrames]);
       setCurrentIndex(Math.max(0, newFrames.length - 1));
       setVersion(v => v + 1);
 
-      // Server futurecast is authoritative; deterministic local fallback is used only on failure.
-      void requestAuthoritativeFuturecast(newFrames);
+      if (canonicalFuturecast && canonicalFuturecast.length > 0) {
+        setFuturecastFrames(canonicalFuturecast);
+      } else {
+        void requestAuthoritativeFuturecast(newFrames);
+      }
 
       setStatus('idle');
-      console.log(`[GeoRuntime] Loaded ${newFrames.length} frames`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Load failed');
       setStatus('error');
     }
-  }, [convertToFrames, cfg.maxFrameBuffer, requestAuthoritativeFuturecast]);
+  }, [
+    convertToFrames,
+    cfg.maxFrameBuffer,
+    predictionPayloadToFrames,
+    requestAuthoritativeFuturecast,
+  ]);
 
   // Ref to hold initialData for mount-only effect
   const initialDataRef = useRef(initialData);
