@@ -521,6 +521,16 @@ export default function SpectraPage() {
               <textarea
                 value={input}
                 onChange={event => setInput(event.target.value)}
+                onPaste={event => {
+                  if (phase === 'awaiting_target' || phase === 'acquiring') return;
+                  const file = Array.from(event.clipboardData.files || []).find(item =>
+                    item.type.startsWith('image/') || item.type.startsWith('video/')
+                  );
+                  if (file) {
+                    event.preventDefault();
+                    void handleMediaEvidence(file);
+                  }
+                }}
                 onKeyDown={event => {
                   if (event.key === 'Enter' && !event.shiftKey) {
                     event.preventDefault();
