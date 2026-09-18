@@ -4,6 +4,7 @@ import { exec as execCb } from 'child_process';
 import { promisify } from 'util';
 import { searchTechnicalGuidance, isWebSearchAvailable } from './webSearchService';
 import { callAIWithGovernor, processSubAgentCommand, searchTechnicalFix } from './aiSubAgent';
+import { CURRENT_AI_MODELS } from './aiHarmonyModelRegistry';
 const exec = promisify(execCb);
 // Severity levels
 export enum Severity {
@@ -164,9 +165,9 @@ class BadBlueWorker {
     return BadBlueWorker.instance;
   }
 
-  // Gemini model selection (updated to Gemini 3)
+  // Compatibility/status helper; the worker's actual AI work enters Harmony.
   private getPreferredGeminiModel(): string {
-    return process.env.GEMINI_MODEL || 'gemini-2.5-pro';
+    return CURRENT_AI_MODELS.gemini;
   }
 
   // Platform helpers
