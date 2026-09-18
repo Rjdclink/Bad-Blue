@@ -69,6 +69,12 @@ assert.match(authSource, /isIdentityAuthenticated[\s\S]{0,1000}SUBSCRIPTION_REQU
 assert.match(subscriptionFlowSource, /isIdentityAuthenticated/, 'pending users must retain access to subscription activation routes');
 assert.match(subscriptionFlowSource, /subscriptionPlanId:\s*planVariationId\(\)/, 'Square hosted checkout must use the configured subscription plan variation');
 assert.match(subscriptionFlowSource, /paymentNote:\s*noteForUser\(id\)/, 'Square checkout must carry an application-user reconciliation key');
+assert.doesNotMatch(subscriptionFlowSource, /square\.fetch\(/, 'Square v43 integration must not call a nonexistent generic client fetch method');
+assert.match(subscriptionFlowSource, /square\.subscriptions\.search\(/, 'subscription reconciliation must use the Square subscriptions resource client');
+assert.match(subscriptionFlowSource, /square\.orders\.get\(\{\s*orderId\s*\}/, 'checkout verification must use the Square orders resource client');
+assert.match(subscriptionFlowSource, /square\.payments\.get\(\{\s*paymentId\s*\}/, 'checkout verification must use the Square payments resource client');
+assert.match(subscriptionFlowSource, /planVariationId/, 'Square SDK responses must be read through camelCase model properties');
+assert.match(subscriptionFlowSource, /amountMoney/, 'Square payment verification must use the v43 camelCase payment model');
 assert.match(subscriptionFlowSource, /app\.post\("\/api\/subscription\/confirm"/, 'server-side Square confirmation route is missing');
 assert.match(subscriptionFlowSource, /handleLegalWhatSubscriptionWebhook/, 'Square subscription webhook reconciliation is missing');
 assert.match(subscriptionSuccessSource, /\/api\/subscription\/confirm/, 'Square return page must verify the subscription server-side');
