@@ -256,7 +256,7 @@ export class MonteCarloPathEngine {
         latitude: currentLat,
         longitude: currentLng,
         timestamp,
-        source: 'interpolated',
+        source: 'predicted',
         confidence: 0.5 * (1 - step / steps), // Confidence decreases over time
       });
     }
@@ -423,7 +423,7 @@ export class MonteCarloPathEngine {
         latitude: start.latitude + (end.latitude - start.latitude) * t,
         longitude: start.longitude + (end.longitude - start.longitude) * t,
         timestamp: new Date(start.timestamp.getTime() + timeDelta * t),
-        source: 'interpolated',
+        source: 'predicted',
         confidence: 0.8,
       });
     }
@@ -639,7 +639,7 @@ export class MonteCarloPathEngine {
         longitude: newPos.lng,
         accuracy: baseAccuracy + Math.max(25, distance * 0.08) * i,
         timestamp: new Date(baseTime + i * stepMinutes * 60 * 1000),
-        source: 'interpolated',
+        source: 'predicted',
         confidence: Math.max(0.08, 0.88 * Math.exp(-2.2 * horizonRatio)),
         metadata: {
           predicted: true,
