@@ -20,3 +20,7 @@ export function ensureZeroXBudgetObservability(): void {
   timer = setInterval(emitZeroXBudgetTelemetry, intervalMs);
   timer.unref();
 }
+export function stopZeroXBudgetObservability(): void {
+  if (timer) clearInterval(timer);
+  timer = null;
+}
