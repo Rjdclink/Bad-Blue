@@ -15,6 +15,8 @@ export interface VoiceTranscriptMeta {
   provider?: string;
   confidence?: number;
   speechDurationMs?: number;
+  avgLogprob?: number;
+  noSpeechProbability?: number;
 }
 
 export interface VoiceModeOptions {
@@ -51,7 +53,7 @@ const MAX_NETWORK_RESTART_DELAY_MS = 5_000;
 const SERVER_VAD_MIN_THRESHOLD = 0.014;
 const SERVER_VAD_MAX_THRESHOLD = 0.075;
 const SERVER_VAD_NOISE_MULTIPLIER = 2.8;
-const SERVER_VAD_SILENCE_MS = 900;
+const SERVER_VAD_SILENCE_MS = 550;
 const SERVER_MIN_SPEECH_MS = 220;
 const SERVER_VOICE_CONFIRM_MS = 140;
 const SERVER_VOICE_RECENCY_MS = 90;
@@ -120,6 +122,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
   const discardServerRecordingRef = useRef(false);
   const transcriptionAbortRef = useRef<AbortController | null>(null);
   const serverTranscriptionQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const serverRecognitionEpochRef = useRef(0);
   const recentFinalTranscriptRef = useRef<{ normalized: string; at: number } | null>(null);
 
   useEffect(() => {
@@ -179,8 +182,12 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     setIsListening(false);
   }, []);
 
-  const transcribeServerBlob = useCallback(async (blob: Blob, speechDurationMs: number) => {
-    if (!blob.size || !enabledRef.current) return;
+  const transcribeServerBlob = useCallback(async (
+    blob: Blob,
+    speechDurationMs: number,
+    recognitionEpoch: number,
+  ) => {
+    if (!blob.size || !enabledRef.current || recognitionEpoch !== serverRecognitionEpochRef.current) return;
 
     const controller = new AbortController();
     transcriptionAbortRef.current = controller;
@@ -208,7 +215,11 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       }
 
       const value = String(payload?.transcript || '').trim();
-      if (!value || !enabledRef.current) return;
+      if (
+        !value
+        || !enabledRef.current
+        || recognitionEpoch !== serverRecognitionEpochRef.current
+      ) return;
 
       resetTransientRecovery();
       setTranscript(prev => (prev ? `${prev} ${value}` : value));
@@ -217,6 +228,12 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
         engine: 'server',
         provider: typeof payload?.provider === 'string' ? payload.provider : undefined,
         speechDurationMs,
+        avgLogprob: Number.isFinite(Number(payload?.quality?.avgLogprob))
+          ? Number(payload.quality.avgLogprob)
+          : undefined,
+        noSpeechProbability: Number.isFinite(Number(payload?.quality?.noSpeechProbability))
+          ? Number(payload.quality.noSpeechProbability)
+          : undefined,
       });
     } catch (err) {
       if ((err as Error)?.name === 'AbortError') return;
@@ -232,9 +249,10 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
   }, [emitTranscript, resetTransientRecovery]);
 
   const queueServerTranscription = useCallback((blob: Blob, speechDurationMs: number) => {
+    const recognitionEpoch = serverRecognitionEpochRef.current;
     serverTranscriptionQueueRef.current = serverTranscriptionQueueRef.current
       .catch(() => undefined)
-      .then(() => transcribeServerBlob(blob, speechDurationMs));
+      .then(() => transcribeServerBlob(blob, speechDurationMs, recognitionEpoch));
   }, [transcribeServerBlob]);
 
   const finishServerUtterance = useCallback((discard = false) => {
@@ -415,6 +433,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
   }, [beginServerUtterance, finishServerUtterance, shouldBeListening]);
 
   const initializeServerRecognition = useCallback(async (stream: MediaStream) => {
+    serverRecognitionEpochRef.current += 1;
     serverStreamRef.current = stream;
 
     // Reuse the AudioContext that the consent page unlocked from the user's
@@ -437,6 +456,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
   }, []);
 
   const cleanupServerRecognition = useCallback((stopTracks = true) => {
+    serverRecognitionEpochRef.current += 1;
     stopServerVad();
     finishServerUtterance(true);
     transcriptionAbortRef.current?.abort();
