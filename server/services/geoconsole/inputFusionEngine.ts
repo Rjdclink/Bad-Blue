@@ -140,7 +140,25 @@ export class InputFusionEngine {
   }
 
   private correlationKey(point: GPSPoint): string {
-    return this.correlationKey(point);
+    return point.correlationGroup || `${point.source}:${point.provenance?.provider || 'unknown'}`;
+  }
+
+  private fusedObservationKind(points: GPSPoint[]): GPSPoint['observationKind'] {
+    const kinds = new Set(points.map(point =>
+      point.observationKind || (
+        point.source === 'predicted' ? 'predicted' :
+        point.source === 'interpolated' ? 'interpolated' :
+        point.source === 'historical_location' || point.source === 'public_record'
+          ? 'historical'
+          : 'observed'
+      )
+    ));
+
+    if (kinds.has('observed')) return 'observed';
+    if (kinds.size === 1 && kinds.has('historical')) return 'historical';
+    if (kinds.size === 1 && kinds.has('predicted')) return 'predicted';
+    if (kinds.size === 1 && kinds.has('interpolated')) return 'interpolated';
+    return 'inferred';
   }
 
   private measurementWeight(point: GPSPoint, correlationCount = 1, referenceTimeMs = point.timestamp.getTime()): number {
@@ -360,7 +378,7 @@ export class InputFusionEngine {
         fusedPoint = this.consensusFusion(normalizedPoints);
         break;
       default:
-        fusedPoint = this.weightedAverageFusion(points);
+        fusedPoint = this.weightedAverageFusion(normalizedPoints);
     }
 
     const contributingSources = [...new Set(normalizedPoints.map(p => p.source))];
@@ -428,10 +446,16 @@ export class InputFusionEngine {
       timestamp: new Date(weightedTimestamp / Math.max(timestampWeight, Number.EPSILON)),
       source: bestPoint.source,
       confidence: this.calculateConsensusConfidence(points),
-      observationKind: 'observed',
+      observationKind: this.fusedObservationKind(points),
+      correlationGroup: `fusion:${[...new Set(points.map(point => this.correlationKey(point)))].sort().join('|')}`,
+      provenance: {
+        provider: 'canonical_geoconsole_fusion',
+        transformedBy: ['correlation_aware_inverse_variance'],
+      },
       metadata: {
         fusion: 'correlation_aware_inverse_variance',
         contributingCount: points.length,
+        contributingSources: [...new Set(points.map(point => point.source))],
       },
     };
   }
@@ -488,12 +512,26 @@ export class InputFusionEngine {
       points.reduce((sum, p) => sum + p.timestamp.getTime(), 0) / points.length
     );
 
+    const representative = this.independentRepresentatives(points)
+      .sort((a, b) => this.measurementWeight(b) - this.measurementWeight(a))[0] || points[0];
+
     return {
       latitude: medianLat,
       longitude: medianLng,
+      accuracy: this.calculateFusedAccuracy(points),
       timestamp: avgTimestamp,
-      source: 'device_gps',
+      source: representative.source,
       confidence: this.calculateConsensusConfidence(points),
+      observationKind: this.fusedObservationKind(points),
+      correlationGroup: `fusion:consensus:${[...new Set(points.map(point => this.correlationKey(point)))].sort().join('|')}`,
+      provenance: {
+        provider: 'canonical_geoconsole_fusion',
+        transformedBy: ['consensus_median'],
+      },
+      metadata: {
+        fusion: 'consensus_median',
+        contributingSources: [...new Set(points.map(point => point.source))],
+      },
     };
   }
 
