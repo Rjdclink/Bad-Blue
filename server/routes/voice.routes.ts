@@ -95,6 +95,7 @@ export function setupVoiceRoutes(app: Express): void {
       const apiKey = process.env.ELEVENLABS_API_KEY?.trim();
       const voiceId = process.env.ELEVENLABS_VOICE_ID?.trim();
       const modelId = process.env.ELEVENLABS_TTS_MODEL?.trim() || 'eleven_flash_v2_5';
+      const outputFormat = process.env.ELEVENLABS_TTS_OUTPUT_FORMAT?.trim() || 'mp3_22050_32';
       if (!apiKey || !voiceId) return res.status(503).json({ error: 'LEXARA voice is not configured' });
 
       const controller = new AbortController();
@@ -110,7 +111,7 @@ export function setupVoiceRoutes(app: Express): void {
       const startedAt = Date.now();
       try {
         const upstream = await fetch(
-          `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream?output_format=mp3_44100_128`,
+          `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream?output_format=${encodeURIComponent(outputFormat)}`,
           {
             method: 'POST',
             headers: {
@@ -147,6 +148,7 @@ export function setupVoiceRoutes(app: Express): void {
           modelId,
           upstreamLatencyMs: Date.now() - startedAt,
           textLength: session.text.length,
+          outputFormat,
         });
 
         const retireSession = () => lexaraTTSStreamSessions.delete(id);
