@@ -94,20 +94,20 @@ export default function OfficerInfo() {
   return (
     <div className="min-h-screen bg-background">
       <SEOHead
-        title="Officer Information | BadBlue - Professional Police Accountability Platform"
+        title="Officer Information | Legal What?"
         description="View officer information and records. Professional legal rights protection service for reporting police misconduct and civil rights violations."
         keywords="police officer information, officer badge lookup, police accountability, bad cops, officer assault, law enforcement abuse, police misconduct records"
-        canonicalUrl="https://example.com/officer"
         structuredData={officerSearchSchema}
         breadcrumbs={breadcrumbs}
         pageType="service"
+        noIndex
       />
       {/* Header */}
       <header className="border-b bg-card sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Shield className="w-6 h-6 text-primary" />
-            <span className="font-semibold text-lg">BadBlue</span>
+            <img src="/images/Legal%20What%20Icon.png" alt="Legal What?" className="w-8 h-8 object-contain" />
+            <span className="font-semibold text-lg">Legal What?</span>
           </div>
         </div>
       </header>
