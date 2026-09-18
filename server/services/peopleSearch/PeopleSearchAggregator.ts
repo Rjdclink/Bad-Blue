@@ -273,6 +273,29 @@ export class PeopleSearchAggregator {
     return [];
   }
 
+  private normalizePhone(value?: string): string {
+    if (!value) return '';
+    const digits = value.replace(/\D/g, '');
+    return digits.length >= 10 ? digits.slice(-10) : digits;
+  }
+
+  private selectIdentityMatchedRecords(records: PersonRecord[], query: SearchQuery): PersonRecord[] {
+    if (!query.phone) return records;
+
+    const wanted = this.normalizePhone(query.phone);
+    if (!wanted) return records;
+
+    const exactPhoneMatches = records.filter(record =>
+      record.phones.some(phone => this.normalizePhone(phone.number) === wanted)
+    );
+
+    // An exact phone match is a strong identity discriminator. If at least one
+    // source returns it, only fuse records carrying that same phone so similarly
+    // named people are not blended together. If no source returns phone data,
+    // preserve the broader result set rather than inventing a negative match.
+    return exactPhoneMatches.length > 0 ? exactPhoneMatches : records;
+  }
+
   /**
    * Execute search with fail-fast + retry pattern
    * DUAL MODE:
@@ -334,7 +357,8 @@ export class PeopleSearchAggregator {
         throw new Error('No records found from any source');
       }
 
-      const fusedRecord = DataFusion.fuseRecords(allRecords);
+      const identityMatchedRecords = this.selectIdentityMatchedRecords(allRecords, query);
+      const fusedRecord = DataFusion.fuseRecords(identityMatchedRecords);
       this.updateMetrics(Date.now() - startTime, true);
       return fusedRecord;
     } catch (error) {
@@ -492,6 +516,7 @@ export class PeopleSearchAggregator {
       query.lastName.toLowerCase(),
       query.city?.toLowerCase() || '',
       query.state?.toLowerCase() || '',
+      this.normalizePhone(query.phone),
     ];
     return parts.filter(p => p).join('-');
   }
