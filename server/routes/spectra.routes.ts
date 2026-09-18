@@ -156,7 +156,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
     const report = await conductFullOSINT(searchQuery, {
       location: details,
       phone,
-      searchDepth: 3,
+      searchDepth: 4,
     });
 
     const observations: any[] = [];
