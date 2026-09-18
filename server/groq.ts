@@ -23,6 +23,49 @@ interface GroqChatCompletionRequest {
   max_tokens?: number;
 }
 
+let groqModelCatalogCache: { models: Set<string>; expiresAt: number } | null = null;
+const GROQ_MODEL_CATALOG_TTL_MS = 10 * 60_000;
+
+async function resolveGroqModel(requestedModel: string, apiKey: string): Promise<string> {
+  const now = Date.now();
+  if (!groqModelCatalogCache || now >= groqModelCatalogCache.expiresAt) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2_500);
+    try {
+      const response = await fetch('https://api.groq.com/openai/v1/models', {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        signal: controller.signal,
+      });
+      if (response.ok) {
+        const data = await response.json() as { data?: Array<{ id?: string }> };
+        groqModelCatalogCache = {
+          models: new Set((data.data || []).map(item => String(item.id || '').trim()).filter(Boolean)),
+          expiresAt: now + GROQ_MODEL_CATALOG_TTL_MS,
+        };
+      }
+    } catch {
+      // Model discovery is an optimization. A catalog outage must not block chat.
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  const models = groqModelCatalogCache?.models;
+  if (!models || models.size === 0 || models.has(requestedModel)) return requestedModel;
+
+  // Capability-compatible fallbacks only; this is not a global model preference.
+  const capabilityFallbacks = [
+    'qwen/qwen3.8-27b',
+    'qwen/qwen3.6-27b',
+    'llama-3.3-70b-versatile',
+    'llama-3.1-8b-instant',
+  ];
+  return capabilityFallbacks.find(model => models.has(model)) || [...models][0] || requestedModel;
+}
+
 interface GroqChatCompletionResponse {
   choices: Array<{
     message: {
@@ -46,13 +89,14 @@ async function callGroqAPI(request: GroqChatCompletionRequest): Promise<string> 
     throw new Error('GROQ_API_KEY environment variable is not set');
   }
 
+  const model = await resolveGroqModel(request.model, apiKey);
   const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(request),
+    body: JSON.stringify({ ...request, model }),
   });
 
   if (!response.ok) {
