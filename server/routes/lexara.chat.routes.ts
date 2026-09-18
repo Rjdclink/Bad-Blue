@@ -11,6 +11,7 @@ import {
   generateLexaraConversationResponse,
   type LexaraConversationMessage,
 } from '../lexara/LexaraConversationOrchestrator';
+import { MASTER_USER_ID } from '../masterPassword';
 
 const router = express.Router();
 const log = createLogger('LEXARARoutes');
@@ -137,7 +138,11 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       }
     }
 
-    const userId = (req as any).user?.id || (req as any).user?.claims?.sub;
+    const requestUserId = (req as any).user?.id || (req as any).user?.claims?.sub;
+    // Master access is stateless and intentionally is not a row in public.users.
+    // Persist its LEXARA turns as session-scoped/anonymous rather than violating
+    // the lexara_conversations.user_id foreign key.
+    const userId = requestUserId === MASTER_USER_ID ? undefined : requestUserId;
 
     // Persistence is audit/recovery work, not conversational-path authority.
     // Return the legal turn immediately and persist asynchronously so a slow or
