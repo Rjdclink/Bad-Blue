@@ -536,8 +536,8 @@ async function persistPostgresSubscriptionState(
   if (update.squareSubscriptionId && update.squarePlanVariationId) {
     const planId = await ensurePostgresSubscriptionPlan(dbClient, update.squarePlanVariationId);
     const existingSubscription = await dbClient.query(
-      "SELECT id FROM subscriptions WHERE user_id = $1 ORDER BY created_at DESC NULLS LAST, id DESC LIMIT 1",
-      [userId],
+      "SELECT id FROM subscriptions WHERE square_subscription_id = $1 LIMIT 1",
+      [update.squareSubscriptionId],
     );
     if (existingSubscription.rows?.[0]?.id) {
       await dbClient.query(
@@ -647,8 +647,7 @@ async function persistSupabaseSubscriptionState(
     const { data: existingSubscription, error: subLookupError } = await supabase
       .from("subscriptions")
       .select("id")
-      .eq("user_id", userId)
-      .order("created_at", { ascending: false })
+      .eq("square_subscription_id", update.squareSubscriptionId)
       .limit(1)
       .maybeSingle();
     if (subLookupError) throw new Error(`Subscription lookup failed: ${subLookupError.message}`);
