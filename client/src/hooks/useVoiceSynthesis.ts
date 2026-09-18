@@ -1,9 +1,8 @@
 /**
  * useVoiceSynthesis Hook
  *
- * Server TTS is preferred, with a zero-cost browser voice fallback. The promise
- * returned by speak() represents the audible turn and is bounded so a missing
- * browser/audio completion event can never strand the microphone in suspension.
+ * ElevenLabs is LEXARA's single acoustic identity. Streaming media playback is
+ * preferred; the buffered endpoint remains a route-local recovery path.
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
@@ -46,6 +45,11 @@ interface ServerAudio {
   blob: Blob;
   voiceId: string | null;
   durationMs: number | null;
+}
+
+interface StreamingAudioSession {
+  audioUrl: string;
+  voiceId: string | null;
 }
 
 const FEMALE_VOICE_HINTS = [
@@ -226,6 +230,30 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     });
   }, [clearPlaybackWatchdog]);
 
+  const createStreamingAudioSession = useCallback(async (text: string): Promise<StreamingAudioSession> => {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 8_000);
+
+    try {
+      const response = await fetch('/api/lexara/tts/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+        signal: controller.signal,
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || typeof payload?.audioUrl !== 'string') {
+        throw new Error(payload?.error || 'LEXARA streaming voice session could not start');
+      }
+      return {
+        audioUrl: payload.audioUrl,
+        voiceId: typeof payload?.voiceId === 'string' ? payload.voiceId : null,
+      };
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }, []);
+
   const fetchServerAudio = useCallback(async (text: string): Promise<ServerAudio> => {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), SERVER_TTS_FETCH_TIMEOUT_MS);
@@ -272,16 +300,26 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     options: VoiceSynthesisOptions,
     turnId: number,
   ): Promise<void> => {
-    const audio = await fetchServerAudio(text);
-    if (turnId !== activeTurnRef.current) return;
+    let playback: Promise<PlaybackOutcome>;
+    let expectedDuration = Math.max(5_000, text.length * 70);
+
+    try {
+      const session = await createStreamingAudioSession(text);
+      if (turnId !== activeTurnRef.current) return;
+      playback = LexaraServerTTS.play({ audioUrl: session.audioUrl }).then<PlaybackOutcome>(() => 'ended');
+    } catch {
+      // Route-local recovery: retain the proven buffered endpoint if streaming
+      // session creation is unavailable, without switching acoustic identity.
+      const audio = await fetchServerAudio(text);
+      if (turnId !== activeTurnRef.current) return;
+      expectedDuration = audio.durationMs || expectedDuration;
+      playback = LexaraServerTTS.play(audio.blob).then<PlaybackOutcome>(() => 'ended');
+    }
 
     setProvider('elevenlabs');
     setIsLoading(false);
     setIsSpeaking(true);
     options.onStart?.();
-
-    const expectedDuration = audio.durationMs || Math.max(5_000, text.length * 70);
-    const playback = LexaraServerTTS.play(audio.blob).then<PlaybackOutcome>(() => 'ended');
     const outcome = await Promise.race([
       playback,
       makeInterruptionPromise(),
@@ -300,7 +338,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
 
     setIsSpeaking(false);
     options.onEnd?.();
-  }, [clearPlaybackWatchdog, fetchServerAudio, makeInterruptionPromise, makePlaybackWatchdog]);
+  }, [clearPlaybackWatchdog, createStreamingAudioSession, fetchServerAudio, makeInterruptionPromise, makePlaybackWatchdog]);
 
   const speakWithBrowser = useCallback(async (
     text: string,
