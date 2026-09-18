@@ -1,7 +1,9 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import multer from 'multer';
+import { createReadStream } from 'node:fs';
 import { unlink } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { 
   extractGPSFromFile, 
   clusterLocations, 
@@ -16,6 +18,16 @@ import { signServerEvidence } from '../services/geoconsole/evidence-proof';
 
 const router = Router();
 const log = createLogger('GPSRoutes');
+
+async function sha256File(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = createHash('sha256');
+    const stream = createReadStream(filePath);
+    stream.on('error', reject);
+    stream.on('data', chunk => hash.update(chunk));
+    stream.on('end', () => resolve(hash.digest('hex')));
+  });
+}
 
 // All geolocation/media-intelligence operations are authenticated surfaces.
 router.use(isAuthenticated);
@@ -37,12 +49,15 @@ const coordinatesSchema = z.object({
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),
   altitude: z.number().optional(),
-  timestamp: z.string().optional().transform(val => val ? new Date(val) : undefined),
-  accuracy: z.number().optional(),
+  timestamp: z.string()
+    .refine(value => Number.isFinite(Date.parse(value)), { message: 'Invalid timestamp' })
+    .transform(value => new Date(value))
+    .optional(),
+  accuracy: z.number().positive().max(5_000_000).optional(),
   device: z.string().optional()
 });
 
-const gpsArraySchema = z.array(coordinatesSchema);
+const gpsArraySchema = z.array(coordinatesSchema).max(10_000);
 
 /**
  * POST /api/gps/extract-upload
@@ -54,7 +69,10 @@ router.post('/extract-upload', mediaUpload.single('file'), async (req: Request, 
   if (!uploaded) return res.status(400).json({ error: 'Media file required' });
 
   try {
-    const metadata = await extractMediaMetadata(uploaded.path, uploaded.originalname);
+    const [metadata, fileHash] = await Promise.all([
+      extractMediaMetadata(uploaded.path, uploaded.originalname),
+      sha256File(uploaded.path),
+    ]);
     const gps = metadata.gps;
 
     const source = uploaded.mimetype.startsWith('video/') ? 'exif_video' : 'exif_photo';
@@ -75,14 +93,16 @@ router.post('/extract-upload', mediaUpload.single('file'), async (req: Request, 
             ? Math.max(0.45, Math.min(0.95, 1 - metadata.positioning.horizontalErrorMeters / 250))
             : 0.78,
           observationKind: 'observed',
-          correlationGroup: `media:${uploaded.originalname}:${captureTimestamp.toISOString()}`,
+          correlationGroup: `media:sha256:${fileHash}`,
           provenance: {
             provider: 'uploaded_media',
+            recordId: `sha256:${fileHash}`,
             capturedAt: captureTimestamp.toISOString(),
             transformedBy: [metadata.extractor],
           },
           metadata: {
             fileName: uploaded.originalname,
+            contentSha256: fileHash,
             device: metadata.device,
             movement: metadata.movement,
             positioning: metadata.positioning,
@@ -98,7 +118,10 @@ router.post('/extract-upload', mediaUpload.single('file'), async (req: Request, 
       hasGPS: !!gps,
       hasCaptureTimestamp: !!captureTimestamp,
       point,
-      metadata,
+      metadata: {
+        ...metadata,
+        contentSha256: fileHash,
+      },
     });
   } catch (error) {
     log.error('Media metadata extraction failed', error);
