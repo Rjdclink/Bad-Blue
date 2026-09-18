@@ -40,6 +40,7 @@ interface Props {
   trail: GeoFrame[];
   futurecast: GeoFrame[];
   candidateLocations?: LocationCandidate[];
+  displayTime?: Date;
   mapMode: IntelligenceMapMode;
   layers: IntelligenceLayerState;
   isLive: boolean;
@@ -77,9 +78,9 @@ const NASA_GIBS_TEMPLATE =
   (import.meta.env?.VITE_NASA_GIBS_TILES_URL as string | undefined) ||
   'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_CorrectedReflectance_TrueColor/default/{date}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg';
 
-const WEATHER_RADAR_TILES =
+const WEATHER_RADAR_TEMPLATE =
   (import.meta.env?.VITE_WEATHER_RADAR_TILES_URL as string | undefined) ||
-  'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::USCOMP-N0Q-0/{z}/{x}/{y}.png';
+  'https://mesonet.agron.iastate.edu/c/tile.py/1.0.0/{layer}/{z}/{x}/{y}.png';
 
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 
@@ -88,6 +89,36 @@ const nasaGibsTilesFor = (date: Date) => {
   // Earth-observation imagery is historical/current, never a forecast image.
   const bounded = date.getTime() > Date.now() ? new Date() : date;
   return NASA_GIBS_TEMPLATE.replace('{date}', utcDateKey(bounded));
+};
+
+const pad2 = (value: number) => String(value).padStart(2, '0');
+
+const weatherRadarTilesFor = (date: Date) => {
+  // IEM serves the latest CONUS mosaic with the -0 suffix and archived mosaics
+  // at exact five-minute UTC intervals. Future timeline positions therefore
+  // clamp to the latest observed radar rather than inventing forecast radar.
+  if (!WEATHER_RADAR_TEMPLATE.includes('{layer}')) return WEATHER_RADAR_TEMPLATE;
+
+  const now = Date.now();
+  const boundedMs = Math.min(date.getTime(), now);
+  if (now - boundedMs < 7 * 60_000) {
+    return WEATHER_RADAR_TEMPLATE.replace('{layer}', 'ridge::USCOMP-N0Q-0');
+  }
+
+  const rounded = new Date(boundedMs);
+  rounded.setUTCSeconds(0, 0);
+  rounded.setUTCMinutes(Math.floor(rounded.getUTCMinutes() / 5) * 5);
+  const stamp =
+    `${rounded.getUTCFullYear()}` +
+    `${pad2(rounded.getUTCMonth() + 1)}` +
+    `${pad2(rounded.getUTCDate())}` +
+    `${pad2(rounded.getUTCHours())}` +
+    `${pad2(rounded.getUTCMinutes())}`;
+
+  return WEATHER_RADAR_TEMPLATE.replace(
+    '{layer}',
+    `ridge::USCOMP-N0Q-${stamp}`,
+  );
 };
 
 const pointFeature = (frame: GeoFrame) => ({
@@ -174,7 +205,9 @@ function circleFeature(lng: number, lat: number, radiusMeters: number, steps = 6
       Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(latRad),
       Math.cos(angularDistance) - Math.sin(latRad) * Math.sin(pointLat)
     );
-    coordinates.push([pointLng * 180 / Math.PI, pointLat * 180 / Math.PI]);
+    const pointLngDegrees = pointLng * 180 / Math.PI;
+    const normalizedLng = ((pointLngDegrees + 540) % 360) - 180;
+    coordinates.push([normalizedLng, pointLat * 180 / Math.PI]);
   }
 
   return {
@@ -517,7 +550,7 @@ function addRuntimeLayers(map: MapLibreMap) {
   if (!map.getSource('spectra-weather-radar')) {
     map.addSource('spectra-weather-radar', {
       type: 'raster',
-      tiles: [WEATHER_RADAR_TILES],
+      tiles: [weatherRadarTilesFor(new Date())],
       tileSize: 256,
       minzoom: 1,
       maxzoom: 12,
@@ -587,6 +620,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
   trail,
   futurecast,
   candidateLocations = [],
+  displayTime,
   mapMode,
   layers,
   isLive,
@@ -602,6 +636,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
   const lastFollowRef = useRef<[number, number] | null>(null);
   const userInteractionUntilRef = useRef(0);
   const activeStyleRef = useRef(mapMode === 'dark' ? OPENFREEMAP_DARK : OPENFREEMAP_LIBERTY);
+  const displayTimeMs = displayTime?.getTime() ?? null;
 
   const initialCenter = useMemo<[number, number]>(() => {
     if (currentFrame) return [currentFrame.position.longitude, currentFrame.position.latitude];
@@ -815,14 +850,24 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
       }),
     });
 
-    if (currentFrame) {
-      const earthSource = map.getSource('spectra-earth-observation') as any;
-      const nextTile = nasaGibsTilesFor(currentFrame.timestamp);
-      const previousTile = earthSource?.__spectraTile as string | undefined;
-      if (earthSource?.setTiles && previousTile !== nextTile) {
-        earthSource.setTiles([nextTile]);
-        earthSource.__spectraTile = nextTile;
-      }
+    const contextTime = displayTimeMs !== null
+      ? new Date(displayTimeMs)
+      : currentFrame?.timestamp || new Date();
+
+    const earthSource = map.getSource('spectra-earth-observation') as any;
+    const nextEarthTile = nasaGibsTilesFor(contextTime);
+    const previousEarthTile = earthSource?.__spectraTile as string | undefined;
+    if (earthSource?.setTiles && previousEarthTile !== nextEarthTile) {
+      earthSource.setTiles([nextEarthTile]);
+      earthSource.__spectraTile = nextEarthTile;
+    }
+
+    const weatherSource = map.getSource('spectra-weather-radar') as any;
+    const nextWeatherTile = weatherRadarTilesFor(contextTime);
+    const previousWeatherTile = weatherSource?.__spectraTile as string | undefined;
+    if (weatherSource?.setTiles && previousWeatherTile !== nextWeatherTile) {
+      weatherSource.setTiles([nextWeatherTile]);
+      weatherSource.__spectraTile = nextWeatherTile;
     }
 
     const accuracy = currentFrame?.position.accuracy;
@@ -836,7 +881,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
           )]
         : [],
     });
-  }, [ready, trail, futurecast, currentFrame, candidateLocations]);
+  }, [ready, trail, futurecast, currentFrame, candidateLocations, displayTimeMs]);
 
   useEffect(() => {
     const map = mapRef.current;
