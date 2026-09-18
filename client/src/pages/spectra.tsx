@@ -215,13 +215,6 @@ export default function SpectraPage() {
         points,
         serverLocationConfidence,
       );
-      const directEvidenceGroups = new Set(
-        extraEvidence.map(point =>
-          point.correlationGroup ||
-          `${point.source}:${point.provenance?.provider || 'uploaded_media'}`
-        )
-      );
-
       setObservations(points);
       setCandidateLocations(Array.isArray(payload.candidateLocations) ? payload.candidateLocations : []);
       setConfidence(
@@ -229,9 +222,7 @@ export default function SpectraPage() {
           ? mergedLocationConfidence
           : null
       );
-      setSourceCount(
-        (payload.acquisition?.sourceCount ?? 0) + directEvidenceGroups.size
-      );
+      setSourceCount(payload.acquisition?.sourceCount ?? 0);
       setPhase('active');
 
       const certainty = points.length > 0 || serverLocationConfidence > 0
