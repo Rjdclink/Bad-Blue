@@ -1,21 +1,10 @@
 /**
- * AI Collaboration Orchestrator - Coordinates multiple AI providers in harmony
- * 
- * Implements 17-model AI harmony orchestration where each provider contributes
- * specialized expertise to complete complex tasks including cryptocrawler operations.
- * 
- * AUTONOMOUS Tasks (Open-Source Harmony):
- * - Groq (llama-3.3-70b) + Mistral + GPT-OSS-120B + Falcon-180B
- * - Code Llama (70B/34B) + GPT-NeoX-20B + Qwen-72B
- * 
- * USER Tasks (Premium AI Harmony):
- * - Gemini 3 Pro + Claude 4.5 Opus + Claude 3.5 Sonnet/Haiku
- * - DeepSeek R1T2 + Grok 4.1 + Kimi K2 + GPT-5 Mini + Qwen-72B
- * 
- * CRYPTOCRAWLER Integration:
- * - Uses full harmony for market analysis and strategy optimization
- * - Leverages Claude 4.5 Opus for complex reasoning
- * - GPT-5 Mini for fast inference and pattern recognition
+ * AI Collaboration Orchestrator.
+ *
+ * Coordinates the complete configured 17-participant Harmony mesh. Provider
+ * identity never determines priority: task capabilities determine specialist
+ * roles, failures stay route-local, and one final synthesis authority produces
+ * the service response.
  */
 
 import { AIProvider, UsageContext, TaskPriority as GovernorTaskPriority, TaskComplexity as GovernorTaskComplexity } from './aiTokenGovernor';
@@ -257,7 +246,7 @@ export class AICollaborationOrchestrator {
     taskName: string,
     query: string,
     attributes: TaskAttributes,
-    availableProviders: AIProvider[],
+    _availableProviders: AIProvider[],
     options: {
       providerPolicy?: CollaborationProviderPolicy;
       systemPrompt?: string;
@@ -344,7 +333,9 @@ export class AICollaborationOrchestrator {
         provider: finalProvider,
         model: this.getDefaultModelForProvider(finalProvider),
         role: 'harmony-synthesizer',
-        prompt: 'Synthesize every successful Harmony contribution below into one accurate, coherent answer. Reconcile disagreements conservatively, distinguish verified facts from inference, preserve material uncertainty, and never mention internal provider names or orchestration.\n\n[Results will be provided]',
+        prompt: attributes.needsStructuredOutput
+          ? 'Synthesize every successful Harmony contribution below into one accurate result. Preserve the JSON structure requested by the original task. Return ONLY valid JSON with no markdown fences, commentary, provider names, or orchestration details. Resolve disagreements conservatively and preserve material uncertainty inside the JSON.\n\n[Results will be provided]'
+          : 'Synthesize every successful Harmony contribution below into one accurate, coherent answer. Reconcile disagreements conservatively, distinguish verified facts from inference, preserve material uncertainty, and never mention internal provider names or orchestration.\n\n[Results will be provided]',
         systemPrompt: options.systemPrompt,
         priority: maxPriority + 1,
         dependencies: allContributionIds,
@@ -1089,13 +1080,20 @@ export class AICollaborationOrchestrator {
       }
     } catch (error: any) {
       markHarmonyProviderFailure(task.provider, error);
-      const alternatives = (task.fallbackProviders || [])
-        .filter(provider => provider !== task.provider)
-        .filter(harmonyProviderAvailable);
+      const alternatives = this.rankFallbackProviders(
+        task,
+        (task.fallbackProviders || [])
+          .filter(provider => provider !== task.provider)
+          .filter(harmonyProviderAvailable),
+      );
       if (alternatives.length > 0) {
+        // Bound concurrent recovery to the three best capability matches. This
+        // preserves route-local failover without turning one failed participant
+        // into an N² request storm across the 17-member mesh.
+        const recoveryBatch = alternatives.slice(0, 3);
         try {
           const fallback = await Promise.any(
-            alternatives.map(async provider => {
+            recoveryBatch.map(async provider => {
               const candidate = await this.executeTask(
                 {
                   ...task,
@@ -1117,8 +1115,8 @@ export class AICollaborationOrchestrator {
             role: task.role,
           };
         } catch {
-          // Every compatible alternative failed. Preserve the original failure
-          // below; the collaboration layer may still have other successful roles.
+          // The failed role remains local. Other independent Harmony roles and
+          // the final synthesizer continue with every successful contribution.
         }
       }
 
@@ -1183,6 +1181,31 @@ export class AICollaborationOrchestrator {
     return `Collaborative Analysis (${strategy}):\n\n${combined}`;
   }
   
+  private static rankFallbackProviders(
+    task: CollaborationTask,
+    providers: AIProvider[],
+  ): AIProvider[] {
+    const desired = new Set<string>();
+    if (task.attributes.needsLegalAnalysis) desired.add('legal-analysis');
+    if (task.attributes.needsVerification) desired.add('verification');
+    if (task.attributes.needsReasoning) desired.add('deep-reasoning');
+    if (task.attributes.needsCodeGeneration) desired.add('coding');
+    if (task.attributes.needsSearchGrounding) desired.add('research');
+    if (task.attributes.needsLongContext || task.attributes.needsMassiveContext) desired.add('long-context');
+    if (task.attributes.needsMultimodal || task.attributes.needsImageAnalysis) desired.add('multimodal');
+    if (task.attributes.needsStructuredOutput || task.attributes.needsDataExtraction) desired.add('structured-output');
+    if (task.attributes.needsFastResponse) desired.add('fast-chat');
+
+    return [...providers].sort((a, b) => {
+      const score = (provider: AIProvider) =>
+        getHarmonyCapabilities(provider).reduce(
+          (sum, capability) => sum + (desired.has(capability) ? 1 : 0),
+          0,
+        );
+      return score(b) - score(a);
+    });
+  }
+
   private static selectProviderByCapabilities(
     providers: AIProvider[],
     desired: Array<ReturnType<typeof getHarmonyCapabilities>[number]>,
