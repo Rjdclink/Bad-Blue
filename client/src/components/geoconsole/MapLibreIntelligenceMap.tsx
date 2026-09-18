@@ -16,6 +16,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import maplibregl, { GeoJSONSource, Map as MapLibreMap, MapLayerMouseEvent } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import type { GeoFrame } from '@/hooks/useGeoRuntime';
+import type { LocationCandidate } from '@shared/geoconsoleTypes';
 
 export type IntelligenceMapMode = 'satellite' | 'hybrid' | 'street' | 'dark';
 
@@ -38,6 +39,7 @@ interface Props {
   currentFrame: GeoFrame | null;
   trail: GeoFrame[];
   futurecast: GeoFrame[];
+  candidateLocations?: LocationCandidate[];
   mapMode: IntelligenceMapMode;
   layers: IntelligenceLayerState;
   isLive: boolean;
@@ -243,6 +245,27 @@ function addRuntimeLayers(map: MapLibreMap) {
     });
   }
 
+  if (!map.getSource('spectra-candidates')) {
+    map.addSource('spectra-candidates', {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] },
+    });
+  }
+  if (!map.getLayer('spectra-candidate-points')) {
+    map.addLayer({
+      id: 'spectra-candidate-points',
+      type: 'circle',
+      source: 'spectra-candidates',
+      paint: {
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 3, 6, 16, 11],
+        'circle-color': 'rgba(251,191,36,0.18)',
+        'circle-stroke-color': '#fbbf24',
+        'circle-stroke-width': 2,
+        'circle-opacity': 0.9,
+      },
+    });
+  }
+
   if (!map.getSource('spectra-current')) {
     map.addSource('spectra-current', {
       type: 'geojson',
@@ -433,6 +456,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
   currentFrame,
   trail,
   futurecast,
+  candidateLocations = [],
   mapMode,
   layers,
   isLive,
@@ -455,6 +479,9 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
       const p = trail[trail.length - 1];
       return [p.position.longitude, p.position.latitude];
     }
+    if (candidateLocations.length) {
+      return [candidateLocations[0].longitude, candidateLocations[0].latitude];
+    }
     return [0, 20];
   }, []);
 
@@ -470,7 +497,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
       container: containerRef.current,
       style: mapMode === 'dark' ? OPENFREEMAP_DARK : OPENFREEMAP_LIBERTY,
       center: initialCenter,
-      zoom: currentFrame || trail.length ? 14 : 2,
+      zoom: currentFrame || trail.length ? 14 : candidateLocations.length ? 10 : 2,
       pitch: layers.terrain || layers.buildings ? 52 : 0,
       bearing: 0,
       antialias: typeof navigator === 'undefined' || !navigator.hardwareConcurrency || navigator.hardwareConcurrency > 4,
@@ -516,6 +543,23 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     });
 
     const popup = new maplibregl.Popup({ closeButton: true, closeOnClick: true });
+    map.on('click', 'spectra-candidate-points', (event: MapLayerMouseEvent) => {
+      const feature = event.features?.[0];
+      if (!feature?.geometry || feature.geometry.type !== 'Point') return;
+      const coordinates = feature.geometry.coordinates.slice() as [number, number];
+      const label = String(feature.properties?.label || 'Regional candidate');
+      const confidence = Math.round(Number(feature.properties?.confidence || 0) * 100);
+      popup
+        .setLngLat(coordinates)
+        .setHTML(
+          '<div style="font:12px system-ui;min-width:160px">' +
+          '<b>' + label + '</b><br/>' +
+          'Regional confidence: ' + confidence + '%' +
+          '</div>'
+        )
+        .addTo(map);
+    });
+
     map.on('click', 'spectra-observation-points', (event: MapLayerMouseEvent) => {
       const feature = event.features?.[0];
       if (!feature?.geometry || feature.geometry.type !== 'Point') return;
@@ -583,6 +627,21 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
       type: 'FeatureCollection',
       features: currentFrame ? [pointFeature(currentFrame)] : [],
     });
+    safeSetData(map, 'spectra-candidates', {
+      type: 'FeatureCollection',
+      features: candidateLocations.map(candidate => ({
+        type: 'Feature' as const,
+        geometry: {
+          type: 'Point' as const,
+          coordinates: [candidate.longitude, candidate.latitude],
+        },
+        properties: {
+          label: candidate.label,
+          confidence: clamp(candidate.confidence, 0, 1),
+          basis: candidate.basis,
+        },
+      })),
+    });
 
     if (currentFrame) {
       const earthSource = map.getSource('spectra-earth-observation') as any;
@@ -605,7 +664,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
           )]
         : [],
     });
-  }, [ready, trail, futurecast, currentFrame]);
+  }, [ready, trail, futurecast, currentFrame, candidateLocations]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -618,6 +677,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     setVisibility(map, 'spectra-futurecast-line', layers.futurecast);
     setVisibility(map, 'spectra-futurecast-points', layers.futurecast);
     setVisibility(map, 'spectra-current-ring', layers.reticle);
+    setVisibility(map, 'spectra-candidate-points', candidateLocations.length > 0);
     setVisibility(map, 'spectra-uncertainty-fill', layers.uncertainty);
     setVisibility(map, 'spectra-uncertainty-outline', layers.uncertainty);
     setVisibility(map, 'spectra-weather-radar', layers.weather);
@@ -638,11 +698,33 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
       pitch: layers.terrain || layers.buildings ? Math.max(map.getPitch(), 48) : 0,
       duration: 450,
     });
-  }, [ready, layers, mapMode]);
+  }, [ready, layers, mapMode, candidateLocations.length]);
 
   useEffect(() => {
     if (lockOnTarget) userInteractionUntilRef.current = 0;
   }, [lockOnTarget]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || !lockOnTarget || currentFrame || candidateLocations.length === 0) return;
+    if (Date.now() < userInteractionUntilRef.current) return;
+
+    const candidate = candidateLocations[0];
+    const next: [number, number] = [candidate.longitude, candidate.latitude];
+    const last = lastFollowRef.current;
+    const changed = !last ||
+      Math.abs(last[0] - next[0]) > 0.00001 ||
+      Math.abs(last[1] - next[1]) > 0.00001;
+    if (!changed) return;
+
+    lastFollowRef.current = next;
+    map.easeTo({
+      center: next,
+      zoom: Math.max(map.getZoom(), 10),
+      duration: 500,
+      essential: true,
+    });
+  }, [ready, lockOnTarget, currentFrame, candidateLocations]);
 
   useEffect(() => {
     const map = mapRef.current;
