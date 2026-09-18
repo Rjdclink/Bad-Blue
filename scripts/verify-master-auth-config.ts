@@ -85,3 +85,7 @@ try {
 }
 
 console.log('Master/local stateless authentication verification passed');
+// server/statelessLocalAuth imports the PostgreSQL fallback, whose pool monitor is
+// intentionally long-lived in production. This verifier has completed all assertions,
+// so terminate explicitly rather than letting that production monitor hold the build open.
+process.exit(0);
