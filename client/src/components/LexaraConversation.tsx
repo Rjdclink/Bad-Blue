@@ -1,7 +1,7 @@
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Loader2, Mic, MicOff, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useVoiceMode } from '@/hooks/useVoiceMode';
+import { useVoiceMode, type VoiceTranscriptMeta } from '@/hooks/useVoiceMode';
 import { useVoiceSynthesis } from '@/hooks/useVoiceSynthesis';
 import {
   LEXARAEtherealAvatar,
@@ -46,7 +46,8 @@ type ConversationPhase =
   | 'error';
 
 const CONVERSATION_STORAGE_SCHEMA_VERSION = 2;
-const VOICE_TURN_SETTLE_MS = 850;
+const BROWSER_VOICE_TURN_SETTLE_MS = 350;
+const SERVER_VOICE_TURN_SETTLE_MS = 120;
 const CHAT_TURN_TIMEOUT_MS = 45_000;
 const MAX_STORED_CONVERSATION_MESSAGES = 24;
 
@@ -134,7 +135,7 @@ function normalizeSpeechText(value: string): string {
 
 function isSuspiciousGenericServerTranscript(
   text: string,
-  speechDurationMs?: number,
+  meta: VoiceTranscriptMeta,
 ): boolean {
   const normalized = normalizeSpeechText(text);
   if (!normalized) return true;
@@ -148,13 +149,31 @@ function isSuspiciousGenericServerTranscript(
     'goodbye',
     'you',
   ]);
+  if (!generic.has(normalized)) return false;
 
-  // Do not blacklist natural language. Only treat these common hallucination
-  // shapes as suspicious when the captured speech evidence was extremely short.
-  return generic.has(normalized)
-    && typeof speechDurationMs === 'number'
+  const speechDurationMs = meta.speechDurationMs;
+  const veryShort = typeof speechDurationMs === 'number'
     && speechDurationMs > 0
-    && speechDurationMs < 900;
+    && speechDurationMs < 450;
+  const short = typeof speechDurationMs === 'number'
+    && speechDurationMs > 0
+    && speechDurationMs < 1_200;
+  const highNoSpeech = typeof meta.noSpeechProbability === 'number'
+    && meta.noSpeechProbability >= 0.35;
+  const weakLogprob = typeof meta.avgLogprob === 'number'
+    && meta.avgLogprob <= -0.65;
+  const weakConfidence = typeof meta.confidence === 'number'
+    && meta.confidence < 0.55;
+  const hasAcousticQuality = typeof meta.noSpeechProbability === 'number'
+    || typeof meta.avgLogprob === 'number'
+    || typeof meta.confidence === 'number';
+
+  // Generic acknowledgements are valid speech, so reject them only when the
+  // acoustic evidence is weak. This blocks common STT hallucinations such as
+  // phantom "thank you" without blacklisting a real user acknowledgement.
+  return highNoSpeech
+    || (short && (weakLogprob || weakConfidence))
+    || (veryShort && !hasAcousticQuality);
 }
 
 function looksLikeLexaraEcho(candidate: string, spokenText: string): boolean {
@@ -207,7 +226,8 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const currentRequestRef = useRef<AbortController | null>(null);
   const generationRef = useRef(0);
   const initializedRef = useRef(false);
-  const greetingRef = useRef(initialStateRef.current.messages.length > 0);
+  // Greeting is scoped to this page entry, not persisted conversation history.
+  const greetingRef = useRef(false);
   const userSpeechObservedRef = useRef(false);
   const handleMessageRef = useRef<(text: string) => void>(() => undefined);
   const messageEndRef = useRef<HTMLDivElement>(null);
@@ -266,7 +286,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       if (
         isFinal
         && meta.engine === 'server'
-        && isSuspiciousGenericServerTranscript(observed, meta.speechDurationMs)
+        && isSuspiciousGenericServerTranscript(observed, meta)
       ) {
         return;
       }
@@ -301,7 +321,10 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         : observed;
 
       clearVoiceTurnTimer();
-      voiceTurnTimerRef.current = window.setTimeout(flushVoiceTurn, VOICE_TURN_SETTLE_MS);
+      const settleMs = meta.engine === 'server'
+        ? SERVER_VOICE_TURN_SETTLE_MS
+        : BROWSER_VOICE_TURN_SETTLE_MS;
+      voiceTurnTimerRef.current = window.setTimeout(flushVoiceTurn, settleMs);
     },
     onError: error => {
       const message = String(error.message || '');
@@ -508,7 +531,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   };
 
   const sendGreeting = useCallback(async () => {
-    if (greetingRef.current || userSpeechObservedRef.current || conversationRef.current.length > 0) return;
+    if (greetingRef.current || userSpeechObservedRef.current) return;
     greetingRef.current = true;
     const greetingGeneration = generationRef.current;
     responseEmotionRef.current = 'calm';
