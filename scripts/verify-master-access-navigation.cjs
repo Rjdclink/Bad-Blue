@@ -65,7 +65,13 @@ assert(app.includes("enabled: isAuthenticated && !isMasterSession"), "Master ses
 assert(app.includes('body.style.touchAction = "pan-y pinch-zoom"'), "Master mobile shell must preserve vertical scrolling and pinch zoom");
 assert(app.includes('body.style.overscrollBehaviorX = "none"'), "Master shell must suppress horizontal browser overscroll navigation");
 
-assert(avatar.includes('src="/images/oip.webp"'), "LEXARA attorney image is not reinstated");
+assert(
+  avatar.includes('LEXARA_ATTORNEY_IMAGE_SOURCES')
+    && avatar.includes("'/images/oip.webp?v=20260918-lexara3'")
+    && avatar.includes('object-contain')
+    && avatar.includes('onError'),
+  "LEXARA attorney image is not reinstated",
+);
 assert(!avatar.includes("<svg"), "Retired ethereal SVG is still rendered");
 
 assert(login.includes('"/api/master-login"'), "Master login UI is not using the canonical password-only endpoint");
