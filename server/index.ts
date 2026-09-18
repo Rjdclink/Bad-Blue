@@ -29,6 +29,7 @@ import {
   getConfiguredHarmonyParticipants,
 } from './aiHarmonyModelRegistry';
 import { getHarmonyWarmStatus, prewarmHarmonyProviders } from './aiHarmonyWarmup';
+import { getLexaraCrawlerReadiness } from './lexara/LexaraCrawlerCapabilityRegistry';
 
 // CRITICAL: Validate configuration before anything else
 // Note: Using console.log here intentionally as logger is not yet initialized during bootstrap
@@ -599,6 +600,11 @@ app.get("/api/health", (req, res) => {
       groq: { model: CURRENT_AI_MODELS.groqDeep, available: !!process.env.GROQ_API_KEY },
       mistral: { model: CURRENT_AI_MODELS.mistralFast, available: !!process.env.MISTRAL_API_KEY },
       claude: { model: CURRENT_AI_MODELS.claudeBalanced, available: !!(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY) },
+    },
+    lexaraCrawlerPool: {
+      total: getLexaraCrawlerReadiness().length,
+      configured: getLexaraCrawlerReadiness().filter(crawler => crawler.configured).length,
+      crawlers: getLexaraCrawlerReadiness(),
     },
     harmony: {
       participantCount: HARMONY_17_PARTICIPANTS.length,
