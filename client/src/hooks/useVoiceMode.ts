@@ -90,6 +90,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
   const serverSpeechActiveRef = useRef(false);
   const discardServerRecordingRef = useRef(false);
   const transcriptionAbortRef = useRef<AbortController | null>(null);
+  const serverTranscriptionQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
     optionsRef.current = options;
@@ -132,7 +133,6 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
   const transcribeServerBlob = useCallback(async (blob: Blob) => {
     if (!blob.size || !enabledRef.current) return;
 
-    transcriptionAbortRef.current?.abort();
     const controller = new AbortController();
     transcriptionAbortRef.current = controller;
     const timer = window.setTimeout(() => controller.abort(), SERVER_TRANSCRIBE_TIMEOUT_MS);
@@ -176,6 +176,12 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       }
     }
   }, [resetTransientRecovery]);
+
+  const queueServerTranscription = useCallback((blob: Blob) => {
+    serverTranscriptionQueueRef.current = serverTranscriptionQueueRef.current
+      .catch(() => undefined)
+      .then(() => transcribeServerBlob(blob));
+  }, [transcribeServerBlob]);
 
   const finishServerUtterance = useCallback((discard = false) => {
     const recorder = serverRecorderRef.current;
@@ -235,7 +241,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
 
       const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || 'audio/webm' });
       discardServerRecordingRef.current = false;
-      if (blob.size > 600) void transcribeServerBlob(blob);
+      if (blob.size > 600) queueServerTranscription(blob);
     };
 
     try {
@@ -248,7 +254,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       setError(nextError);
       optionsRef.current.onError?.(nextError);
     }
-  }, [finishServerUtterance, shouldBeListening, transcribeServerBlob]);
+  }, [finishServerUtterance, queueServerTranscription, shouldBeListening]);
 
   const startServerVad = useCallback(() => {
     const analyser = serverAnalyserRef.current;
