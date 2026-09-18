@@ -406,6 +406,7 @@ export async function verifyDatabaseSchema(): Promise<{
     'foia_routing_history',        // FOIA routing tracking
     'trial_consultations',         // IP-based consultations
     'ai_subagent_logs',            // AI sub-agent activity logs
+    'lexara_conversations',        // LEXARA durable consultation history
   ];
 
   try {
