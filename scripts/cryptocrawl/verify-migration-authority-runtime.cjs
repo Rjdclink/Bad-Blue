@@ -127,10 +127,13 @@ assert.match(canonicalRuntime, /primaryFallback:\s*false/);
 assert.match(canonicalRuntime, /installCanonicalRuntime\(\)/);
 assert.doesNotMatch(canonicalRuntime, /from\s+['"]\.\.\/\.\.\/\.\.\/db\.js['"]|requireCryptocrawlerAuthoritySchema|pool\.query\('SELECT 1'\)|overflow_unavailable_primary_fallback_probe_failed/);
 
-// The known v26 -> v27 production transition is exactly the Ghost Wallet durable
-// schema delta. Older/unknown states retain the full idempotent recovery path.
+// Known pre-v29 production states must advance through every missing additive
+// Overflow delta: Ghost Wallet durability, Atomic fairness, then LEXARA history.
+// Older/unknown states retain the full idempotent recovery path.
 assert.match(overflowRuntimeSchema, /const\s+INCREMENTAL_MIGRATIONS/);
-assert.match(overflowRuntimeSchema, /26:\s*\['057_cryptocrawler_ghost_wallet_runtime\.sql',\s*'059_cryptocrawler_zero_capital_rescue_fairness\.sql'\]/);
+assert.match(overflowRuntimeSchema, /26:[\s\S]*057_cryptocrawler_ghost_wallet_runtime\.sql[\s\S]*059_cryptocrawler_zero_capital_rescue_fairness\.sql[\s\S]*060_lexara_overflow_conversation_history\.sql/);
+assert.match(overflowRuntimeSchema, /27:[\s\S]*059_cryptocrawler_zero_capital_rescue_fairness\.sql[\s\S]*060_lexara_overflow_conversation_history\.sql/);
+assert.match(overflowRuntimeSchema, /28:\s*\['060_lexara_overflow_conversation_history\.sql'\]/);
 assert.match(overflowRuntimeSchema, /function migrationPlan/);
 assert.match(overflowRuntimeSchema, /return MIGRATIONS/);
 assert.match(overflowRuntimeSchema, /verifyRequiredObjects\(client\)/);
@@ -189,4 +192,4 @@ assert.match(hotPathMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawle
 assert.match(hotPathMigration, /CREATE TABLE IF NOT EXISTS public\.cryptocrawler_mc_calibration_v1/);
 assert.match(fundingMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawler_funding_lifecycles/);
 
-console.log('[migration-authority-runtime] PASS: Primary reconciliation remains bounded for archive/wider-application paths, Primary cold archive work is LOW-ranked through the shared Cryptara COMP admission queue, canonical and explicit admin runtime admission are Overflow-only with no Primary probe/schema fallback, production schema recovery retries the real provisioner with a bounded v26-to-v27 delta, build-time gate mutation is forbidden, and legacy admin withdrawal cannot claim or bypass governed payout authority');
+console.log('[migration-authority-runtime] PASS: Primary reconciliation remains bounded for archive/wider-application paths, Primary cold archive work is LOW-ranked through the shared Cryptara COMP admission queue, canonical and explicit admin runtime admission are Overflow-only with no Primary probe/schema fallback, production schema recovery retries the real provisioner with bounded v26/v27/v28-to-v29 additive deltas, build-time gate mutation is forbidden, and legacy admin withdrawal cannot claim or bypass governed payout authority');
