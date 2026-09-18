@@ -49,6 +49,7 @@ ENV ONNXRUNTIME_NODE_INSTALL=skip
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     chromium \
+    libimage-exiftool-perl \
     wget \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
