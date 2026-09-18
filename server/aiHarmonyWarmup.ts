@@ -17,6 +17,7 @@ export interface HarmonyWarmStatus {
 }
 
 const warmStatus = new Map<AIProvider, HarmonyWarmStatus>();
+const resolvedModels = new Map<AIProvider, string>();
 let warmupInFlight: Promise<HarmonyWarmStatus[]> | null = null;
 const CATALOG_TIMEOUT_MS = 3_500;
 
@@ -43,6 +44,25 @@ async function fetchCatalog(
   }
 }
 
+function chooseCatalogModel(
+  catalog: Set<string>,
+  preferred: string,
+  predicates: Array<(model: string) => boolean>,
+): string | null {
+  const normalizedPreferred = normalizeModelId(preferred);
+  if (catalog.has(normalizedPreferred)) return normalizedPreferred;
+  const models = [...catalog];
+  for (const predicate of predicates) {
+    const candidate = models.find(model => predicate(model));
+    if (candidate) return candidate;
+  }
+  return null;
+}
+
+export function getHarmonyResolvedModel(provider: AIProvider): string {
+  return resolvedModels.get(provider) || getCurrentModelForProvider(provider);
+}
+
 function record(
   provider: AIProvider,
   model: string,
@@ -59,6 +79,7 @@ function record(
     ...(error ? { error } : {}),
   };
   warmStatus.set(provider, value);
+  if (state === 'ready' && model) resolvedModels.set(provider, model);
   return value;
 }
 
@@ -99,7 +120,7 @@ export function isHarmonyProviderWarmHealthy(provider: AIProvider): boolean {
 }
 
 export function markHarmonyProviderWarmSuccess(provider: AIProvider): void {
-  const model = getCurrentModelForProvider(provider);
+  const model = getHarmonyResolvedModel(provider);
   warmStatus.set(provider, {
     provider,
     model,
@@ -121,7 +142,7 @@ export async function prewarmHarmonyProviders(): Promise<HarmonyWarmStatus[]> {
       if (!openRouterKey) return Promise.resolve(new Set<string>());
       if (!openRouterCatalogPromise) {
         openRouterCatalogPromise = fetchCatalog(
-          'https://openrouter.ai/api/v1/models?output_modalities=text&sort=latency-low-to-high',
+          'https://openrouter.ai/api/v1/models',
           { Authorization: `Bearer ${openRouterKey}` },
           payload => (payload?.data || []).map((item: any) => item?.id),
         );
@@ -149,14 +170,29 @@ export async function prewarmHarmonyProviders(): Promise<HarmonyWarmStatus[]> {
         if (providerUsesOpenRouter(provider)) {
           const catalog = await getOpenRouterCatalog();
           if (catalog.size === 0) return record(provider, model, startedAt, 'degraded', 'OpenRouter catalog unavailable');
-          const canonical = normalizeModelId(model);
-          const present = canonical === 'openrouter/auto' || catalog.has(canonical);
+          if (provider === AIProvider.OPENROUTER) {
+            return record(provider, 'openrouter/auto', startedAt, 'ready');
+          }
+
+          const predicates: Array<(candidate: string) => boolean> = provider === AIProvider.DEEPSEEK
+            ? [candidate => candidate.startsWith('deepseek/')]
+            : provider === AIProvider.GROK
+              ? [candidate => candidate.startsWith('x-ai/')]
+              : provider === AIProvider.KIMI
+                ? [candidate => candidate.startsWith('moonshotai/')]
+                : provider === AIProvider.QWEN
+                  ? [candidate => candidate.startsWith('qwen/')]
+                  : provider === AIProvider.GPT5_MINI
+                    ? [candidate => /^openai\/gpt-5/i.test(candidate), candidate => candidate.startsWith('openai/')]
+                    : [candidate => catalog.has(candidate)];
+
+          const resolved = chooseCatalogModel(catalog, model, predicates);
           return record(
             provider,
-            model,
+            resolved || model,
             startedAt,
-            present ? 'ready' : 'degraded',
-            present ? undefined : `configured model not present in live OpenRouter catalog: ${model}`,
+            resolved ? 'ready' : 'degraded',
+            resolved ? undefined : `no live capability-compatible OpenRouter model for ${provider}`,
           );
         }
 
@@ -168,7 +204,10 @@ export async function prewarmHarmonyProviders(): Promise<HarmonyWarmStatus[]> {
             {},
             payload => (payload?.models || []).map((item: any) => item?.name),
           );
-          return record(provider, model, startedAt, catalog.has(normalizeModelId(model)) ? 'ready' : 'degraded', catalog.has(normalizeModelId(model)) ? undefined : 'configured model not present in live Gemini catalog');
+          const resolved = chooseCatalogModel(catalog, model, [
+            candidate => /gemini/i.test(candidate) && !/embedding|imagen|veo|tts|audio/i.test(candidate),
+          ]);
+          return record(provider, resolved || model, startedAt, resolved ? 'ready' : 'degraded', resolved ? undefined : 'no live compatible Gemini model');
         }
 
         if (provider === AIProvider.CLAUDE || provider === AIProvider.CLAUDE_OPUS) {
@@ -179,7 +218,12 @@ export async function prewarmHarmonyProviders(): Promise<HarmonyWarmStatus[]> {
             { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
             payload => (payload?.data || []).map((item: any) => item?.id),
           );
-          return record(provider, model, startedAt, catalog.has(normalizeModelId(model)) ? 'ready' : 'degraded', catalog.has(normalizeModelId(model)) ? undefined : 'configured model not present in live Anthropic catalog');
+          const wantsOpus = provider === AIProvider.CLAUDE_OPUS;
+          const resolved = chooseCatalogModel(catalog, model, [
+            candidate => wantsOpus ? /opus/i.test(candidate) : /sonnet/i.test(candidate),
+            candidate => /claude/i.test(candidate),
+          ]);
+          return record(provider, resolved || model, startedAt, resolved ? 'ready' : 'degraded', resolved ? undefined : 'no live compatible Anthropic model');
         }
 
         if (provider === AIProvider.MISTRAL) {
@@ -190,7 +234,11 @@ export async function prewarmHarmonyProviders(): Promise<HarmonyWarmStatus[]> {
             { Authorization: `Bearer ${key}` },
             payload => (payload?.data || []).map((item: any) => item?.id),
           );
-          return record(provider, model, startedAt, catalog.has(normalizeModelId(model)) ? 'ready' : 'degraded', catalog.has(normalizeModelId(model)) ? undefined : 'configured model not present in live Mistral catalog');
+          const resolved = chooseCatalogModel(catalog, model, [
+            candidate => /mistral.*small/i.test(candidate),
+            candidate => /mistral/i.test(candidate) && !/embed|moderation/i.test(candidate),
+          ]);
+          return record(provider, resolved || model, startedAt, resolved ? 'ready' : 'degraded', resolved ? undefined : 'no live compatible Mistral model');
         }
 
         const openAICompatible: Partial<Record<AIProvider, { url: string; key?: string }>> = {
@@ -206,10 +254,16 @@ export async function prewarmHarmonyProviders(): Promise<HarmonyWarmStatus[]> {
           const catalog = await fetchCatalog(
             config.url,
             { Authorization: `Bearer ${config.key}` },
-            payload => (payload?.data || payload?.models || []).map((item: any) => item?.id || item?.name),
+            payload => (Array.isArray(payload) ? payload : (payload?.data || payload?.models || []))
+              .map((item: any) => item?.id || item?.name),
           );
-          const present = catalog.size > 0 && (catalog.has(normalizeModelId(model)) || provider === AIProvider.HUGGINGFACE);
-          return record(provider, model, startedAt, present ? 'ready' : 'degraded', present ? undefined : 'configured model not present in live provider catalog');
+          const resolved = provider === AIProvider.HUGGINGFACE
+            ? (catalog.size > 0 ? model : null)
+            : chooseCatalogModel(catalog, model, [
+                candidate => /gpt-oss|command|mistral|minimax|llama|qwen/i.test(candidate),
+                () => true,
+              ]);
+          return record(provider, resolved || model, startedAt, resolved ? 'ready' : 'degraded', resolved ? undefined : 'no live compatible model in provider catalog');
         }
 
         // Cohere/Together can intentionally ride the configured Hugging Face
