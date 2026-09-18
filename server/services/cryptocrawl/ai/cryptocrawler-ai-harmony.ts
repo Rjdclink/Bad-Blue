@@ -99,7 +99,7 @@ export class CryptocrawlerAIHarmony {
   }
   
   // ============================================
-  // STRATEGY ANALYSIS (Claude 4.5 Opus Lead)
+  // STRATEGY ANALYSIS (full capability Harmony)
   // ============================================
   
   async analyzeStrategy(
@@ -108,12 +108,28 @@ export class CryptocrawlerAIHarmony {
   ): Promise<HarmonyResult> {
     const taskId = `strategy-${Date.now()}`;
     const startTime = Date.now();
-    
+
+    const prompt = `Analyze this trading strategy for profitability and risk.
+
+Strategy: ${strategy.name}
+Success Rate: ${(strategy.baseSuccessRate * 100).toFixed(1)}%
+Average Profit per Trade: ${(strategy.avgProfitPerTrade * 100).toFixed(2)}%
+Average Loss per Trade: ${(strategy.avgLossPerTrade * 100).toFixed(2)}%
+Trades per Day: ${strategy.tradesPerDay}
+Execution Latency: ${strategy.executionLatency}ms
+
+Market Conditions:
+Volatility: ${marketCondition.volatility}
+Liquidity Score: ${marketCondition.liquidityScore}
+Competition: ${marketCondition.competitorDensity}
+Network Congestion: ${marketCondition.networkCongestion}
+
+Return JSON with keys: expectedDailyProfitPotential, riskScore, recommendedAdjustments, optimalMarketRegime, confidence. AI analysis is advisory and must not override deterministic canonical economics or execution authority.`;
+
     const harmony = await this.executeFullHarmony(prompt, 'strategy_analysis');
     const contributions = harmony.contributions;
     const synthesized = {
-      ...this.synthesizeStrategyAnalysis(contributions),
-      analysis: harmony.finalAnswer,
+      ...this.parseHarmonyPayload(harmony.finalAnswer, contributions),
       providersUsed: harmony.providersUsed,
     };
     const consensusScore = this.calculateConsensus(contributions);
@@ -134,7 +150,7 @@ export class CryptocrawlerAIHarmony {
   }
   
   // ============================================
-  // MARKET PREDICTION (DeepSeek + GPT-5 Mini Lead)
+  // MARKET PREDICTION (full capability Harmony)
   // ============================================
   
   async predictMarket(
@@ -143,12 +159,22 @@ export class CryptocrawlerAIHarmony {
   ): Promise<HarmonyResult> {
     const taskId = `predict-${Date.now()}`;
     const startTime = Date.now();
-    
+
+    const prompt = `Analyze likely market conditions for the next 24 hours.
+
+Current Conditions:
+Volatility: ${currentCondition.volatility}
+Liquidity: ${currentCondition.liquidityScore}
+Competition: ${currentCondition.competitorDensity}
+Network Load: ${currentCondition.networkCongestion}
+Historical Data Points: ${historicalData.length}
+
+Return JSON with keys: predictedRegime, volatilityForecast, liquidityForecast, confidence, keyRisks. Treat this as advisory analysis, not execution authority.`;
+
     const harmony = await this.executeFullHarmony(prompt, 'market_prediction');
     const contributions = harmony.contributions;
     const synthesized = {
-      ...this.synthesizeMarketPrediction(contributions),
-      analysis: harmony.finalAnswer,
+      ...this.parseHarmonyPayload(harmony.finalAnswer, contributions),
       providersUsed: harmony.providersUsed,
     };
     const consensusScore = this.calculateConsensus(contributions);
@@ -166,7 +192,7 @@ export class CryptocrawlerAIHarmony {
   }
   
   // ============================================
-  // RISK ASSESSMENT (Gemini + Claude Lead)
+  // RISK ASSESSMENT (full capability Harmony)
   // ============================================
   
   async assessRisk(
@@ -175,12 +201,23 @@ export class CryptocrawlerAIHarmony {
   ): Promise<HarmonyResult> {
     const taskId = `risk-${Date.now()}`;
     const startTime = Date.now();
-    
+
+    const strategyList = portfolio
+      .map(strategy => `- ${strategy.name}: ${(strategy.baseSuccessRate * 100).toFixed(1)}% win rate`)
+      .join('\n');
+    const prompt = `Assess risk for this portfolio.
+
+Strategies:
+${strategyList}
+
+Total Exposure: ${exposure.toLocaleString()}
+
+Return JSON with keys: overallRiskScore, maximumDrawdownEstimate, correlationRisks, blackSwanVulnerability, recommendedPositionLimits, confidence. Treat the result as advisory only.`;
+
     const harmony = await this.executeFullHarmony(prompt, 'risk_assessment');
     const contributions = harmony.contributions;
     const synthesized = {
-      ...this.synthesizeRiskAssessment(contributions),
-      analysis: harmony.finalAnswer,
+      ...this.parseHarmonyPayload(harmony.finalAnswer, contributions),
       providersUsed: harmony.providersUsed,
     };
     const consensusScore = this.calculateConsensus(contributions);
@@ -198,7 +235,7 @@ export class CryptocrawlerAIHarmony {
   }
   
   // ============================================
-  // SMART CONTRACT ANALYSIS (Code Llama Lead)
+  // SMART CONTRACT ANALYSIS (full capability Harmony)
   // ============================================
   
   async analyzeSmartContract(
@@ -207,12 +244,18 @@ export class CryptocrawlerAIHarmony {
   ): Promise<HarmonyResult> {
     const taskId = `contract-${Date.now()}`;
     const startTime = Date.now();
-    
+
+    const prompt = `Analyze this smart contract for trading safety.
+
+Contract: ${contractAddress}
+${contractCode ? `Code:\n${contractCode.substring(0, 2000)}...` : 'Source code was not supplied.'}
+
+Return JSON with keys: reentrancyFindings, flashLoanAttackVectors, mevExtractionRisks, liquidityManipulationRisks, adminKeyRisks, safetyScore, confidence. Do not claim code was reviewed when it was not supplied.`;
+
     const harmony = await this.executeFullHarmony(prompt, 'smart_contract_analysis');
     const contributions = harmony.contributions;
     const synthesized = {
-      ...this.synthesizeContractAnalysis(contributions),
-      analysis: harmony.finalAnswer,
+      ...this.parseHarmonyPayload(harmony.finalAnswer, contributions),
       providersUsed: harmony.providersUsed,
     };
     const consensusScore = this.calculateConsensus(contributions);
@@ -242,12 +285,21 @@ export class CryptocrawlerAIHarmony {
   }): Promise<HarmonyResult> {
     const taskId = `opportunity-${Date.now()}`;
     const startTime = Date.now();
-    
+
+    const prompt = `Analyze this trading opportunity as an advisory signal.
+
+Type: ${opportunity.type}
+Expected Profit: ${(opportunity.expectedProfit * 100).toFixed(2)}%
+Risk Level: ${opportunity.risk}/10
+Time Window: ${opportunity.timeWindow}ms
+Requirements: ${opportunity.requirements.join(', ')}
+
+Return JSON with keys: score, probabilityOfSuccess, riskAdjustedReturn, recommendation, positionSizeRecommendation, confidence. This output must never override deterministic canonical economics, governance, execution, or settlement truth.`;
+
     const harmony = await this.executeFullHarmony(prompt, 'opportunity_scoring');
     const contributions = harmony.contributions;
     const synthesized = {
-      ...this.synthesizeOpportunityScore(contributions),
-      analysis: harmony.finalAnswer,
+      ...this.parseHarmonyPayload(harmony.finalAnswer, contributions),
       providersUsed: harmony.providersUsed,
     };
     const consensusScore = this.calculateConsensus(contributions);
@@ -399,64 +451,49 @@ export class CryptocrawlerAIHarmony {
   }
   
   // ============================================
-  // SYNTHESIS METHODS
+  // SYNTHESIS
   // ============================================
-  
-  private synthesizeStrategyAnalysis(contributions: Map<AIProvider, any>): any {
-    const successful = Array.from(contributions.values()).filter(c => c.success);
+
+  private parseHarmonyPayload(
+    finalAnswer: string,
+    contributions: Map<AIProvider, any>,
+  ): Record<string, any> {
+    const successful = Array.from(contributions.values()).filter(contribution => contribution?.success);
+    const consensusConfidence = contributions.size > 0
+      ? successful.length / contributions.size
+      : 0;
+
+    const cleaned = String(finalAnswer || '')
+      .trim()
+      .replace(/^\`\`\`(?:json)?\s*/i, '')
+      .replace(/\s*\`\`\`$/i, '')
+      .trim();
+
+    let parsed: Record<string, any> = {};
+    try {
+      const value = JSON.parse(cleaned);
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        parsed = value as Record<string, any>;
+      } else {
+        parsed = { analysis: value };
+      }
+    } catch {
+      parsed = { analysis: finalAnswer };
+    }
+
+    const reportedConfidence = Number(parsed.confidence);
+    const confidence = Number.isFinite(reportedConfidence)
+      ? Math.max(0, Math.min(1, reportedConfidence > 1 ? reportedConfidence / 100 : reportedConfidence))
+      : consensusConfidence;
+
     return {
-      recommendation: 'proceed_with_caution',
-      riskLevel: 5,
-      expectedProfit: 0.05,
-      confidence: successful.length / contributions.size,
+      ...parsed,
+      confidence,
       modelCount: contributions.size,
-      successfulAnalyses: successful.length
+      successfulAnalyses: successful.length,
     };
   }
-  
-  private synthesizeMarketPrediction(contributions: Map<AIProvider, any>): any {
-    const successful = Array.from(contributions.values()).filter(c => c.success);
-    return {
-      predictedRegime: 'ranging',
-      volatilityForecast: 0.5,
-      confidence: successful.length / contributions.size,
-      modelCount: contributions.size
-    };
-  }
-  
-  private synthesizeRiskAssessment(contributions: Map<AIProvider, any>): any {
-    const successful = Array.from(contributions.values()).filter(c => c.success);
-    return {
-      overallRisk: 5,
-      maxDrawdown: 0.15,
-      recommendation: 'reduce_exposure',
-      confidence: successful.length / contributions.size,
-      modelCount: contributions.size
-    };
-  }
-  
-  private synthesizeContractAnalysis(contributions: Map<AIProvider, any>): any {
-    const successful = Array.from(contributions.values()).filter(c => c.success);
-    return {
-      safetyScore: 75,
-      vulnerabilities: [],
-      recommendation: 'proceed',
-      confidence: successful.length / contributions.size,
-      modelCount: contributions.size
-    };
-  }
-  
-  private synthesizeOpportunityScore(contributions: Map<AIProvider, any>): any {
-    const successful = Array.from(contributions.values()).filter(c => c.success);
-    return {
-      score: 70,
-      executeRecommendation: 'yes',
-      positionSize: 0.1,
-      confidence: successful.length / contributions.size,
-      modelCount: contributions.size
-    };
-  }
-  
+
   // ============================================
   // PUBLIC API
   // ============================================
