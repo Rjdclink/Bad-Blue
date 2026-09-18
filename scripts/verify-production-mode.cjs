@@ -86,6 +86,14 @@ test('Fusion models accuracy and correlated evidence',
   fusion.includes('effectiveAccuracyMeters') &&
   fusion.includes('independentRepresentatives') &&
   fusion.includes('correlationKey'));
+test('Fusion cache keys include the complete evidence set',
+  fusion.includes("createHash('sha256')") &&
+  !fusion.includes('slice(0, 10)'));
+test('Fusion and interpolation are antimeridian-safe',
+  fusion.includes('unwrapLongitude') &&
+  fusion.includes('weightedLngSin') &&
+  futurecast.includes('endLongitudeUnwrapped') &&
+  futurecast.includes('pointLongitude = this.unwrapLongitude'));
 test('Futurecast is bounded to one hour and deterministic',
   futurecast.includes('hours: number = 1') &&
   futurecast.includes('MAX_SIMULATION_STEPS') &&
