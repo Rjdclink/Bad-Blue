@@ -296,3 +296,7 @@ export function stopZeroCapitalRecoveryObservabilityForTests(): void {
   updateListeners.clear();
   installed = false;
 }
+
+export function stopZeroCapitalRecoveryObservability(): void {
+  stopZeroCapitalRecoveryObservabilityForTests();
+}
