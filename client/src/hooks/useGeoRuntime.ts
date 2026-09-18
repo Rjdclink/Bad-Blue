@@ -45,6 +45,7 @@ export interface GeoRuntimeConfig {
 }
 
 export interface GeoRuntimeState {
+  sessionId: string | null;
   isPlaying: boolean;
   isLive: boolean;
   currentFrame: GeoFrame | null;
@@ -268,6 +269,7 @@ export function useGeoRuntime(
   // Core state - frames array (IMMUTABLE updates only)
   const [frames, setFrames] = useState<GeoFrame[]>([]);
   const [futurecastFrames, setFuturecastFrames] = useState<GeoFrame[]>([]);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   
   // Index state - this is what drives frame selection
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -449,6 +451,7 @@ export function useGeoRuntime(
         framesRef.current = [];
         setFrames([]);
         setFuturecastFrames([]);
+        setSessionId(null);
         setCurrentIndex(0);
         setIsPlaying(false);
         setIsLive(false);
@@ -459,6 +462,7 @@ export function useGeoRuntime(
 
       let canonicalPoints = points;
       let canonicalFuturecast: GeoFrame[] | null = null;
+      setSessionId(null);
 
       try {
         const response = await fetch('/api/geoconsole/process', {
@@ -484,6 +488,12 @@ export function useGeoRuntime(
 
         if (response.ok) {
           const payload = await response.json();
+          const canonicalSessionId =
+            typeof payload?.data?.sessionId === 'string' && payload.data.sessionId.trim()
+              ? payload.data.sessionId
+              : null;
+          setSessionId(canonicalSessionId);
+
           const processedTrail = Array.isArray(payload?.data?.trail?.points)
             ? payload.data.trail.points
             : [];
@@ -883,6 +893,7 @@ export function useGeoRuntime(
   // === RETURN STATE & ACTIONS ===
 
   const state: GeoRuntimeState = {
+    sessionId,
     isPlaying,
     isLive,
     currentFrame,
