@@ -28,6 +28,8 @@
  * - Automatic recovery as radiation decays
  */
 
+import { CURRENT_AI_MODELS } from './aiHarmonyModelRegistry';
+
 export interface ProviderConfig {
   name: string;
   endpoint: string;
@@ -72,11 +74,11 @@ const FREE_PROVIDERS: ProviderConfig[] = [
     name: 'groq',
     endpoint: 'https://api.groq.com/openai/v1/chat/completions',
     models: [
-      process.env.GROQ_CHAT_MODEL?.trim() || process.env.GROQ_MODEL?.trim() || 'qwen/qwen3.6-27b',
+      CURRENT_AI_MODELS.groqDeep,
+      CURRENT_AI_MODELS.groqFast,
       'qwen/qwen3.8-27b',
-      'openai/gpt-oss-20b',
       'whisper-large-v3',
-      'whisper-large-v3-turbo'
+      'whisper-large-v3-turbo',
     ],
     rpmLimit: 30,
     rpdLimit: 14400,
@@ -88,7 +90,7 @@ const FREE_PROVIDERS: ProviderConfig[] = [
   {
     name: 'gemini',
     endpoint: 'https://generativelanguage.googleapis.com/v1beta/models',
-    models: [process.env.GEMINI_MODEL?.trim() || 'gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash'],
+    models: [CURRENT_AI_MODELS.gemini, 'gemini-3.8-live', 'gemini-3.7-flash'],
     rpmLimit: 15,
     rpdLimit: 1500,
     apiKeyEnv: 'GEMINI_API_KEY',
@@ -98,7 +100,7 @@ const FREE_PROVIDERS: ProviderConfig[] = [
   {
     name: 'mistral',
     endpoint: 'https://api.mistral.ai/v1/chat/completions',
-    models: [process.env.MISTRAL_MODEL?.trim() || 'mistral-small-2603', 'mistral-medium-3-5'],
+    models: [CURRENT_AI_MODELS.mistralFast, CURRENT_AI_MODELS.mistralDeep],
     rpmLimit: 5,
     rpdLimit: 500,
     apiKeyEnv: 'MISTRAL_API_KEY',
@@ -108,7 +110,7 @@ const FREE_PROVIDERS: ProviderConfig[] = [
   {
     name: 'claude',
     endpoint: 'https://api.anthropic.com/v1/messages',
-    models: [process.env.LEXARA_CLAUDE_MODEL?.trim() || process.env.CLAUDE_MODEL?.trim() || 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
+    models: [CURRENT_AI_MODELS.claudeBalanced, CURRENT_AI_MODELS.claudeFast, CURRENT_AI_MODELS.claudeDeep],
     rpmLimit: 5,
     rpdLimit: 100,
     tpdLimit: 25000,
@@ -119,7 +121,7 @@ const FREE_PROVIDERS: ProviderConfig[] = [
   {
     name: 'cohere',
     endpoint: 'https://api.cohere.ai/v1/chat',
-    models: ['command-r-plus', 'command-r', 'command'],
+    models: [CURRENT_AI_MODELS.cohere],
     rpmLimit: 20,
     rpdLimit: 1000,
     apiKeyEnv: 'COHERE_API_KEY',
@@ -129,7 +131,7 @@ const FREE_PROVIDERS: ProviderConfig[] = [
   {
     name: 'together',
     endpoint: 'https://api.together.xyz/v1/chat/completions',
-    models: ['meta-llama/Llama-3-70b-chat-hf', 'mistralai/Mixtral-8x7B-Instruct-v0.1'],
+    models: [CURRENT_AI_MODELS.gptOss],
     rpmLimit: 10,
     rpdLimit: 1000,
     apiKeyEnv: 'TOGETHER_API_KEY',
@@ -139,12 +141,7 @@ const FREE_PROVIDERS: ProviderConfig[] = [
   {
     name: 'huggingface',
     endpoint: 'https://api-inference.huggingface.co/models',
-    models: [
-      'meta-llama/Meta-Llama-3.1-70B-Instruct',
-      'Qwen/Qwen2.5-72B-Instruct',
-      'mistralai/Mixtral-8x22B-Instruct-v0.1',
-      'microsoft/Phi-3-medium-4k-instruct'
-    ],
+    models: [CURRENT_AI_MODELS.huggingFace],
     rpmLimit: 30,
     rpdLimit: 1000,
     apiKeyEnv: 'HUGGINGFACE_API_KEY',
@@ -154,7 +151,7 @@ const FREE_PROVIDERS: ProviderConfig[] = [
   {
     name: 'cerebras',
     endpoint: 'https://api.cerebras.ai/v1/chat/completions',
-    models: ['gpt-oss-120b'],
+    models: [CURRENT_AI_MODELS.cerebras],
     rpmLimit: 30,
     rpdLimit: 1000,
     apiKeyEnv: 'CEREBRAS_API_KEY',
@@ -166,12 +163,12 @@ const FREE_PROVIDERS: ProviderConfig[] = [
     endpoint: 'https://api.sambanova.ai/v1/chat/completions',
     // SambaNova's hosted catalog changes independently. Require an explicit
     // runtime model instead of silently selecting a retired hard-coded ID.
-    models: process.env.SAMBANOVA_MODEL?.trim() ? [process.env.SAMBANOVA_MODEL.trim()] : [],
+    models: [CURRENT_AI_MODELS.sambaNova],
     rpmLimit: 20,
     rpdLimit: 500,
     apiKeyEnv: 'SAMBANOVA_API_KEY',
     priority: 5,  // Equal priority for balanced utilization
-    isAvailable: () => !!process.env.SAMBANOVA_API_KEY && !!process.env.SAMBANOVA_MODEL?.trim(),
+    isAvailable: () => !!process.env.SAMBANOVA_API_KEY,
   },
 ];
 
