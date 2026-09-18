@@ -1,4 +1,6 @@
 import { orchestratedWebSearch } from '../openRouterWebSearch';
+import { pantheonRetrievalAdapter } from '../services/crawlers/PantheonRetrievalAdapter';
+import { selectLexaraCrawlerPlan } from './LexaraCrawlerCapabilityRegistry';
 
 export type LexaraAuthoritySourceKind = 'primary' | 'secondary' | 'web';
 
@@ -14,6 +16,7 @@ export interface LexaraAuthorityResearch {
   sources: LexaraAuthoritySource[];
   hasPrimaryAuthority: boolean;
   searchedAt: string;
+  selectedCrawlers: string[];
 }
 
 export interface LexaraAuthorityResearchContext {
@@ -24,7 +27,8 @@ export interface LexaraAuthorityResearchContext {
 const MAX_RESEARCH_PROMPT_CHARACTERS = 6_000;
 const MAX_RESEARCH_SUMMARY_CHARACTERS = 7_000;
 const MAX_AUTHORITY_SOURCES = 8;
-const RESEARCH_TIMEOUT_MS = 1_800;
+const RESEARCH_TIMEOUT_MS = 2_200;
+const CRAWLER_ENRICHMENT_TIMEOUT_MS = 1_600;
 
 const AUTHORITY_SENSITIVE_PATTERN = /\b(?:cite|citation|source|authority|case\s*law|precedent|holding|statute|statutory|code\s+section|regulation|c\.f\.r\.|u\.s\.c\.|court\s+rule|rule\s+\d|legal\s+standard|elements?\s+of|controlling\s+law|current\s+law|recent\s+law|supreme\s+court|circuit\s+court|appellate\s+court|statute\s+of\s+limitations|limitations\s+period|filing\s+deadline|appeal\s+deadline|notice\s+deadline|deadline|jurisdiction|venue|preemption)\b/i;
 
@@ -176,6 +180,45 @@ async function discoverAuthoritySources(query: string): Promise<LexaraAuthorityS
   return sources;
 }
 
+async function enrichAuthoritySourcesWithCrawlerPool(
+  sources: LexaraAuthoritySource[],
+  selectedCrawlerIds: string[],
+): Promise<LexaraAuthoritySource[]> {
+  if (!sources.length) return sources;
+  const usePantheon = selectedCrawlerIds.some(id =>
+    ['startrek', 'birdofprey', 'sixdegrees', 'blizzard', 'cerberus', 'lich'].includes(id)
+  );
+  if (!usePantheon) return sources;
+
+  const targets = sources.slice(0, 2).map(source => source.url);
+  try {
+    const enrichment = await Promise.race([
+      pantheonRetrievalAdapter.retrieve({
+        purpose: 'lexara_legal_research',
+        targets,
+        depth: 2,
+      }),
+      new Promise<null>(resolve => setTimeout(() => resolve(null), CRAWLER_ENRICHMENT_TIMEOUT_MS)),
+    ]);
+    if (!enrichment?.evidence?.length) return sources;
+
+    const byTarget = new Map(
+      enrichment.evidence
+        .filter(item => item.content?.trim())
+        .map(item => [item.target, item.content.trim().slice(0, 900)]),
+    );
+    return sources.map(source => ({
+      ...source,
+      excerpt: source.excerpt || byTarget.get(source.url) || undefined,
+    }));
+  } catch (error) {
+    console.warn('[LEXARA Authority] Crawler enrichment failed route-locally', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return sources;
+  }
+}
+
 export function shouldResearchLegalAuthority(
   prompt: string,
   context: LexaraAuthorityResearchContext = {},
@@ -206,11 +249,19 @@ export async function researchLegalAuthority(
     'Prefer official court opinions, legislature/government statutes, regulations, court rules, and official agency material.',
   ].join(' ');
 
+  const selectedCrawlers = selectLexaraCrawlerPlan({
+    prompt: legalQuestion,
+    jurisdiction: context.jurisdiction,
+    domainName: context.domainName,
+    maxCrawlers: 8,
+  }).map(crawler => crawler.id);
+
   try {
     // Discovery accepts natural-language legal queries; URL-only crawlers are
     // used only after discovery. Google/Gemini is never a LEXARA dependency.
-    const sources = await discoverAuthoritySources(query);
-    if (!sources.length) return null;
+    const discoveredSources = await discoverAuthoritySources(query);
+    if (!discoveredSources.length) return null;
+    const sources = await enrichAuthoritySourcesWithCrawlerPool(discoveredSources, selectedCrawlers);
 
     const summary = sources
       .map((source, index) => {
@@ -225,6 +276,7 @@ export async function researchLegalAuthority(
       sources,
       hasPrimaryAuthority: sources.some(source => source.kind === 'primary'),
       searchedAt: new Date().toISOString(),
+      selectedCrawlers,
     };
   } catch (error) {
     console.warn('[LEXARA Authority] Provider-orchestrated authority retrieval unavailable; continuing without it', {
