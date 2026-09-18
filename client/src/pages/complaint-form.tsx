@@ -355,7 +355,7 @@ export default function ComplaintForm() {
           <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Shield className="w-6 h-6 text-primary" />
-              <span className="font-semibold text-lg">BadBlue</span>
+              <span className="font-semibold text-lg">Legal What?</span>
             </div>
           </div>
         </header>
@@ -540,7 +540,7 @@ export default function ComplaintForm() {
     "description": "File formal police misconduct complaints online with automated routing to Internal Affairs, oversight boards, and command staff. Professional document generation for excessive force, false arrest, and civil rights violations.",
     "provider": {
       "@type": "Organization",
-      "name": "BadBlue"
+      "name": "Legal What?"
     },
     "serviceType": "Police Misconduct Complaint Filing",
     "areaServed": {
