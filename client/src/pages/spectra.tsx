@@ -638,7 +638,7 @@ export default function SpectraPage() {
               <div>
                 <h1 className="text-sm font-semibold text-slate-100">SPECTRA Console</h1>
                 <p className="text-[11px] text-slate-500">
-                  {sourceCount > 0 ? `${sourceCount} sources correlated` : 'Tell SPECTRA what you need located'}
+                  {sourceCount > 0 ? `${sourceCount} evidence sources reviewed` : 'Tell SPECTRA what you need located'}
                 </p>
               </div>
               <Button
