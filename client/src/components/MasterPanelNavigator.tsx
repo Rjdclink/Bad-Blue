@@ -1,5 +1,5 @@
 import { ArrowLeft, ArrowRight, LogOut } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'wouter';
 import { Button } from '@/components/ui/button';
 import { queryClient } from '@/lib/queryClient';
@@ -51,6 +51,30 @@ function findPanelIndex(location: string): number {
 export default function MasterPanelNavigator() {
   const [location, setLocation] = useLocation();
   const [loggingOut, setLoggingOut] = useState(false);
+  const navRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+
+    const root = document.documentElement;
+    const updateHeight = () => {
+      const height = navRef.current?.getBoundingClientRect().height || 0;
+      root.style.setProperty('--master-panel-nav-height', `${Math.ceil(height)}px`);
+    };
+
+    updateHeight();
+    const observer = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(updateHeight)
+      : null;
+    if (navRef.current) observer?.observe(navRef.current);
+    window.addEventListener('resize', updateHeight);
+
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', updateHeight);
+      root.style.removeProperty('--master-panel-nav-height');
+    };
+  }, []);
 
   const currentIndex = useMemo(() => {
     const found = findPanelIndex(location);
@@ -80,7 +104,10 @@ export default function MasterPanelNavigator() {
   };
 
   return (
-    <div className="sticky top-0 z-[100] overscroll-x-contain touch-pan-y border-b bg-background/95 px-2 py-2 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/80">
+    <div
+      ref={navRef}
+      className="sticky top-0 z-[100] overscroll-x-contain touch-pan-y border-b bg-background/95 px-2 py-2 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/80"
+    >
       <div className="mx-auto flex w-full max-w-7xl items-center gap-2">
         <Button
           type="button"
@@ -101,7 +128,7 @@ export default function MasterPanelNavigator() {
           </div>
         </div>
 
-        <div className="flex shrink-0 flex-col gap-1.5">
+        <div className="flex shrink-0 items-center gap-1.5">
           <Button
             type="button"
             variant="outline"
