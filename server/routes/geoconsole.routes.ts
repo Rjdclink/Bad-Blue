@@ -25,12 +25,29 @@ const gpsPointSchema = z.object({
   accuracy: z.number().optional(),
   timestamp: z.string().transform(s => new Date(s)),
   source: z.enum([
-    'device_gps', 'exif_photo', 'exif_video', 'xmp_sidecar', 'json_sidecar',
-    'wifi_handoff', 'bluetooth_proximity', 'accelerometer', 'browser_timestamp',
-    'social_media', 'public_camera', 'traffic_cam', 'satellite_imagery',
-    'public_record', 'manual_input', 'interpolated'
+    'device_gps', 'gnss_fix', 'gnss_raw',
+    'exif_photo', 'exif_video', 'xmp_sidecar', 'json_sidecar',
+    'wifi_handoff', 'wifi_rssi', 'wifi_rtt', 'wifi_fingerprint',
+    'cellular', 'cell_serving', 'cell_neighbor',
+    'uwb_range', 'uwb_direction',
+    'bluetooth_proximity', 'ble_rssi', 'ble_aoa',
+    'accelerometer', 'imu_gyro', 'magnetometer', 'barometer',
+    'browser_geolocation', 'browser_timestamp', 'network_region',
+    'social_media', 'social_geotag', 'visual_detection', 'vehicle_telemetry',
+    'public_camera', 'traffic_cam', 'satellite_imagery', 'historical_location',
+    'public_record', 'manual_input', 'interpolated', 'predicted'
   ]),
   confidence: z.number().min(0).max(1),
+  verticalAccuracy: z.number().nonnegative().optional(),
+  receivedAt: z.string().transform(s => new Date(s)).optional(),
+  observationKind: z.enum(['observed', 'inferred', 'interpolated', 'predicted', 'historical']).optional(),
+  correlationGroup: z.string().max(200).optional(),
+  provenance: z.object({
+    provider: z.string().optional(),
+    recordId: z.string().optional(),
+    capturedAt: z.string().transform(s => new Date(s)).optional(),
+    transformedBy: z.array(z.string()).optional(),
+  }).optional(),
   metadata: z.record(z.unknown()).optional(),
 });
 
