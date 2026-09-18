@@ -26,6 +26,9 @@ has(admin, /running:\s*false/, 'canonical lifecycle must initialize not running'
 has(admin, /operatorStartRequired:\s*true/, 'status must expose operator-only start truth');
 has(admin, /automaticStartEnabled:\s*false/, 'status must expose that automatic start is disabled');
 lacks(admin, /startAutomaticCryptoCrawlerRuntime/, 'governance events must not own runtime activation');
+has(admin, /serializeLifecycleCommand/, 'master lifecycle commands must be serialized');
+has(admin, /router\.post\('\/start'[\s\S]{0,220}serializeLifecycleCommand/, 'start endpoint must serialize lifecycle transitions');
+has(admin, /router\.post\('\/stop'[\s\S]{0,700}serializeLifecycleCommand/, 'stop endpoint must serialize lifecycle transitions');
 has(admin, /router\.post\('\/start'/, 'canonical authenticated start endpoint must remain');
 has(admin, /router\.post\('\/stop'/, 'canonical authenticated stop endpoint must remain');
 has(admin, /pipeline\.stop\(\)/, 'stop authority must stop the canonical pipeline');
@@ -38,5 +41,8 @@ has(dashboard, /checked=\{isSystemRunning\}/, 'master switch must display backen
 has(dashboard, /onCheckedChange=\{handleMasterPowerChange\}/, 'master switch must call the lifecycle handler');
 has(dashboard, /apiRequest\('\/admin\/crypto\/start',\s*'POST'\)/, 'dashboard start must use canonical start endpoint');
 has(dashboard, /apiRequest\('\/admin\/crypto\/stop',\s*'POST'\)/, 'dashboard stop must use canonical stop endpoint');
+
+has(boot, /stopCryptoCrawlerRuntime/, 'central graceful shutdown must stop CryptoCrawler before process exit');
+has(boot, /\[SHUTDOWN\] CryptoCrawler stopped/, 'graceful shutdown must expose CryptoCrawler shutdown completion');
 
 console.log('CRYPTOCRAWLER MANUAL MASTER LIFECYCLE VERIFIED');
