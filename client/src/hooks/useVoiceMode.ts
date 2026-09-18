@@ -342,7 +342,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     }
 
     if (audioContext.state !== 'running') {
-      throw new Error('Tap “Re-enable microphone” once to start live voice on this browser.');
+      throw new Error('Tap the microphone button once to start live voice on this browser.');
     }
   }, []);
 
