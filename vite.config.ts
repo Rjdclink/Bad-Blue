@@ -52,6 +52,10 @@ export default defineConfig({
     },
   },
   root: path.resolve(__dirname, "client"),
+  // Canonical public assets live at repository-root /public. Because Vite's
+  // root is /client, the implicit public directory would otherwise be
+  // /client/public and production would silently omit LEXARA's attorney image.
+  publicDir: path.resolve(__dirname, "public"),
   build: {
     outDir: path.resolve(__dirname, "dist/public"),
     emptyOutDir: true,
