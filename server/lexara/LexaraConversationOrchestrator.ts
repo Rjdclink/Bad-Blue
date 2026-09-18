@@ -18,6 +18,7 @@ export interface LexaraConversationContext {
   lawTypeName?: string;
   jurisdiction?: string;
   behaviorMode?: 'personable' | 'professional';
+  sessionId?: string;
 }
 
 export interface LexaraConversationResult {
@@ -243,6 +244,7 @@ export async function generateLexaraConversationResponse(
     maxTokens: 1800,
     useJSON: false,
     preferredProvider: 'openrouter',
+    sessionId: context.sessionId,
   });
 
   let text = primary.success ? primary.content?.trim() : '';
