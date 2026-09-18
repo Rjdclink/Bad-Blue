@@ -556,6 +556,7 @@ export class EnhancedWebSearchService {
       department?: string;
       badge?: string;
       location?: string;
+      phone?: string;
       maxDorks?: number;
     }
   ): Promise<Array<{
@@ -568,6 +569,7 @@ export class EnhancedWebSearchService {
       department: options.department || '',
       badge: options.badge || '',
       location: options.location || '',
+      phone: options.phone || '',
     }) : '';
     const cacheKey = `dork-search:${name}:${optionsKey}`;
     const cached = await cacheService.get<any>(cacheKey);
