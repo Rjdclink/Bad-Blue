@@ -26,6 +26,9 @@ export const CURRENT_AI_MODELS = {
   cerebras: process.env.CEREBRAS_MODEL?.trim() || 'gpt-oss-120b',
   sambaNova: process.env.SAMBANOVA_MODEL?.trim() || 'MiniMax-M3',
   cohere: process.env.COHERE_MODEL?.trim() || 'command-a-plus-05-2026',
+  cohereViaHuggingFace: process.env.COHERE_HF_MODEL?.trim() || 'CohereLabs/command-a-plus-05-2026-w4a4:cohere',
+  together: process.env.TOGETHER_MODEL?.trim() || 'openai/gpt-oss-120b',
+  togetherViaHuggingFace: process.env.TOGETHER_HF_MODEL?.trim() || 'openai/gpt-oss-120b:together',
 } as const;
 
 export type HarmonyCapability =
@@ -147,15 +150,28 @@ export const HARMONY_17_PARTICIPANTS: readonly HarmonyParticipant[] = [
     provider: AIProvider.COHERE,
     model: CURRENT_AI_MODELS.cohere,
     capabilities: ['legal-analysis', 'verification', 'research', 'multimodal', 'agentic', 'structured-output'],
-    configured: () => !!process.env.COHERE_API_KEY?.trim(),
+    configured: () => !!(
+      process.env.COHERE_API_KEY?.trim()
+      || process.env.HUGGINGFACE_API_TOKEN?.trim()
+      || process.env.HUGGINGFACE_API_KEY?.trim()
+    ),
   },
   {
     provider: AIProvider.TOGETHER,
-    model: process.env.TOGETHER_MODEL?.trim() || CURRENT_AI_MODELS.gptOss,
+    model: CURRENT_AI_MODELS.together,
     capabilities: ['deep-reasoning', 'coding', 'agentic'],
-    configured: () => !!process.env.TOGETHER_API_KEY?.trim(),
+    configured: () => !!(
+      process.env.TOGETHER_API_KEY?.trim()
+      || process.env.HUGGINGFACE_API_TOKEN?.trim()
+      || process.env.HUGGINGFACE_API_KEY?.trim()
+    ),
   },
 ] as const;
+
+
+if (HARMONY_17_PARTICIPANTS.length !== 17) {
+  throw new Error(`Harmony registry invariant violated: expected 17 participants, found ${HARMONY_17_PARTICIPANTS.length}`);
+}
 
 const LEGACY_MODEL_ALIASES: Partial<Record<AIProvider, string>> = {
   [AIProvider.FALCON]: CURRENT_AI_MODELS.gptOss,
