@@ -373,6 +373,12 @@ export default function SpectraPage() {
           ? 'SPECTRA is acquiring the target…'
           : 'Add information, or say “new target”…';
 
+  const showMap =
+    phase === 'acquiring' ||
+    phase === 'active' ||
+    observations.length > 0 ||
+    candidateLocations.length > 0;
+
   return (
     <div className="min-h-screen bg-slate-950 text-white">
       <SEOHead
@@ -408,8 +414,12 @@ export default function SpectraPage() {
         </Button>
       </header>
 
-      <main className="h-[calc(100vh-3.5rem)] min-h-[620px] grid grid-rows-[minmax(340px,58vh)_minmax(280px,1fr)] lg:grid-rows-1 lg:grid-cols-[minmax(0,1fr)_380px]">
-        <section className="relative min-h-0 border-b lg:border-b-0 lg:border-r border-slate-800">
+      <main className={
+        showMap
+          ? 'h-[calc(100vh-3.5rem)] min-h-[620px] grid grid-rows-[minmax(340px,58vh)_minmax(280px,1fr)] lg:grid-rows-1 lg:grid-cols-[minmax(0,1fr)_380px]'
+          : 'h-[calc(100vh-3.5rem)] min-h-[560px] flex items-stretch justify-center'
+      }>
+        {showMap && <section className="relative min-h-0 border-b lg:border-b-0 lg:border-r border-slate-800">
           <GeoconsoleRadarDashboard
             initialData={observations}
             candidateLocations={candidateLocations}
@@ -428,9 +438,12 @@ export default function SpectraPage() {
               </div>
             </div>
           )}
-        </section>
+        </section>}
 
-        <section className="min-h-0 flex flex-col bg-slate-950">
+        <section className={showMap
+          ? 'min-h-0 flex flex-col bg-slate-950'
+          : 'min-h-0 flex w-full max-w-2xl flex-col bg-slate-950 sm:border-x sm:border-slate-800'
+        }>
           <div className="px-4 py-3 border-b border-slate-800">
             <div className="flex items-center justify-between gap-2">
               <div>
