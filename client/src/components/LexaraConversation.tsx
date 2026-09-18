@@ -46,8 +46,9 @@ type ConversationPhase =
   | 'error';
 
 const CONVERSATION_STORAGE_SCHEMA_VERSION = 2;
-const BROWSER_VOICE_TURN_SETTLE_MS = 350;
-const SERVER_VOICE_TURN_SETTLE_MS = 120;
+const BROWSER_FINAL_FALLBACK_SETTLE_MS = 1_200;
+const SERVER_VOICE_TURN_SETTLE_MS = 180;
+const VOICE_END_GRACE_MS = 650;
 const CHAT_TURN_TIMEOUT_MS = 45_000;
 const MAX_STORED_CONVERSATION_MESSAGES = 24;
 
@@ -176,6 +177,36 @@ function isSuspiciousGenericServerTranscript(
     || (veryShort && !hasAcousticQuality);
 }
 
+function mergeSpeechSegments(existing: string, incoming: string): string {
+  const left = existing.replace(/\s+/g, ' ').trim();
+  const right = incoming.replace(/\s+/g, ' ').trim();
+  if (!left) return right;
+  if (!right) return left;
+
+  const leftWords = left.split(' ');
+  const rightWords = right.split(' ');
+  const normalizeWord = (word: string) => word.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const leftNormalized = leftWords.map(normalizeWord);
+  const rightNormalized = rightWords.map(normalizeWord);
+  const leftPhrase = leftNormalized.join(' ');
+  const rightPhrase = rightNormalized.join(' ');
+
+  if (leftPhrase === rightPhrase) return right.length >= left.length ? right : left;
+  if (rightPhrase.startsWith(leftPhrase + ' ')) return right;
+  if (leftPhrase.endsWith(' ' + rightPhrase)) return left;
+
+  const maxOverlap = Math.min(leftWords.length, rightWords.length);
+  for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
+    const leftTail = leftNormalized.slice(-overlap).join(' ');
+    const rightHead = rightNormalized.slice(0, overlap).join(' ');
+    if (leftTail && leftTail === rightHead) {
+      return [...leftWords, ...rightWords.slice(overlap)].join(' ');
+    }
+  }
+
+  return `${left} ${right}`;
+}
+
 function looksLikeLexaraEcho(candidate: string, spokenText: string): boolean {
   const normalizedCandidate = normalizeSpeechText(candidate);
   const normalizedSpoken = normalizeSpeechText(spokenText);
@@ -234,6 +265,10 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const conversationScrollRef = useRef<HTMLDivElement>(null);
   const voiceTurnBufferRef = useRef('');
   const voiceTurnTimerRef = useRef<number | null>(null);
+  const voiceEndPendingRef = useRef(false);
+  const pendingUserTurnRef = useRef('');
+  const pendingTurnAlreadyRenderedRef = useRef(false);
+  const currentTurnTextRef = useRef('');
   const responseEmotionRef = useRef<LEXARAEmotionHint>('authoritative');
   const activeLexaraSpeechRef = useRef('');
   const recentLexaraSpeechRef = useRef<{ text: string; expiresAt: number }>({ text: '', expiresAt: 0 });
@@ -254,6 +289,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
   const flushVoiceTurn = useCallback(() => {
     clearVoiceTurnTimer();
+    voiceEndPendingRef.current = false;
     const text = voiceTurnBufferRef.current.trim();
     voiceTurnBufferRef.current = '';
     if (!text) return;
@@ -264,8 +300,18 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     continuous: true,
     interimResults: true,
     onVoiceStart: () => {
+      // A renewed speech burst means the user has not finished the turn yet.
+      voiceEndPendingRef.current = false;
+      clearVoiceTurnTimer();
       // Acoustic energy alone is not proof of user speech. Interruption is
       // transcript-confirmed below so LEXARA cannot cut herself off.
+    },
+    onVoiceEnd: () => {
+      voiceEndPendingRef.current = true;
+      clearVoiceTurnTimer();
+      if (voiceTurnBufferRef.current.trim()) {
+        voiceTurnTimerRef.current = window.setTimeout(flushVoiceTurn, VOICE_END_GRACE_MS);
+      }
     },
     onTranscript: (text, isFinal, meta) => {
       const observed = text.trim();
@@ -299,6 +345,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       }
 
       if (!isFinal) {
+        voiceEndPendingRef.current = false;
         clearVoiceTurnTimer();
         return;
       }
@@ -316,14 +363,14 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       }
       lastFinalVoiceSegmentRef.current = { text: normalized, at: now };
 
-      voiceTurnBufferRef.current = voiceTurnBufferRef.current
-        ? `${voiceTurnBufferRef.current} ${observed}`
-        : observed;
+      voiceTurnBufferRef.current = mergeSpeechSegments(voiceTurnBufferRef.current, observed);
 
       clearVoiceTurnTimer();
       const settleMs = meta.engine === 'server'
         ? SERVER_VOICE_TURN_SETTLE_MS
-        : BROWSER_VOICE_TURN_SETTLE_MS;
+        : voiceEndPendingRef.current
+          ? VOICE_END_GRACE_MS
+          : BROWSER_FINAL_FALLBACK_SETTLE_MS;
       voiceTurnTimerRef.current = window.setTimeout(flushVoiceTurn, settleMs);
     },
     onError: error => {
@@ -430,13 +477,32 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     const message = rawMessage.trim();
     if (!message) return;
 
+    // If recognition produces a late continuation after a turn was committed,
+    // fold it into the same user turn instead of aborting active reasoning.
+    if (currentRequestRef.current) {
+      const base = pendingUserTurnRef.current || currentTurnTextRef.current;
+      const combined = mergeSpeechSegments(base, message);
+      pendingUserTurnRef.current = combined;
+      setConversation(previous => {
+        const next = [...previous];
+        for (let index = next.length - 1; index >= 0; index -= 1) {
+          if (next[index].role === 'user') {
+            next[index] = { ...next[index], content: combined };
+            break;
+          }
+        }
+        conversationRef.current = next;
+        return next;
+      });
+      return;
+    }
+
     userSpeechObservedRef.current = true;
     clearVoiceTurnBuffer();
 
     const generation = generationRef.current + 1;
     generationRef.current = generation;
 
-    currentRequestRef.current?.abort();
     stopSpeaking();
 
     const controller = new AbortController();
@@ -447,6 +513,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       controller.abort();
     }, CHAT_TURN_TIMEOUT_MS);
 
+    currentTurnTextRef.current = message;
     const previousMessages = conversationRef.current.map(item => ({
       role: item.role,
       content: item.content,
@@ -455,7 +522,9 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     const userEmotion = emotionFromUserText(message);
     responseEmotionRef.current = userEmotion === 'calm' ? 'authoritative' : userEmotion;
 
-    appendMessage('user', message);
+    const alreadyRendered = pendingTurnAlreadyRenderedRef.current;
+    pendingTurnAlreadyRenderedRef.current = false;
+    if (!alreadyRendered) appendMessage('user', message);
     setUserInput('');
     setErrorMessage(null);
     setConversationPhase('thinking');
@@ -488,6 +557,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
       const data = await response.json();
       if (generation !== generationRef.current) return;
+      if (pendingUserTurnRef.current) return;
 
       const answer = String(data?.response || '').trim();
       if (!answer) throw new Error('LEXARA returned an empty response');
@@ -516,6 +586,13 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       window.clearTimeout(requestTimeout);
       if (generation === generationRef.current) {
         currentRequestRef.current = null;
+        currentTurnTextRef.current = '';
+        const pending = pendingUserTurnRef.current.trim();
+        pendingUserTurnRef.current = '';
+        if (pending) {
+          pendingTurnAlreadyRenderedRef.current = true;
+          window.setTimeout(() => handleMessageRef.current(pending), 0);
+        }
       }
     }
   }, [appendMessage, clearVoiceTurnBuffer, jurisdiction, lawTypeId, lawTypeName, liveEnabled, setConversationPhase, speakLexara, stopSpeaking, voiceReady]);
