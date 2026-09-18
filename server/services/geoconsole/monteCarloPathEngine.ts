@@ -582,67 +582,80 @@ export class MonteCarloPathEngine {
   ): Promise<GPSPoint[]> {
     if (recentPoints.length < 3) return [];
 
-    const sorted = [...recentPoints].sort(
-      (a, b) => b.timestamp.getTime() - a.timestamp.getTime()
-    );
-    
-    const recent = sorted.slice(0, Math.min(10, sorted.length));
-    
-    // Calculate average velocity
-    let totalSpeed = 0;
-    let avgHeading = 0;
-    
-    for (let i = 0; i < recent.length - 1; i++) {
-      totalSpeed += this.calculateSpeed(recent[i + 1], recent[i]);
-      avgHeading += this.calculateBearing(
-        recent[i + 1].latitude, recent[i + 1].longitude,
-        recent[i].latitude, recent[i].longitude
-      );
-    }
-    
-    const avgSpeed = totalSpeed / (recent.length - 1);
-    avgHeading = avgHeading / (recent.length - 1);
+    const sorted = [...recentPoints]
+      .filter(point => Number.isFinite(point.timestamp.getTime()))
+      .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+    const recent = sorted.slice(-10);
+    if (recent.length < 3) return [];
 
-    // Generate future points
-    const futurePoints: GPSPoint[] = [];
-    let currentPos = recent[0];
+    // Recency-weighted deterministic motion estimate. Heading is averaged on the
+    // unit circle so 359° and 1° correctly produce ~0° instead of 180°.
+    let totalWeight = 0;
+    let weightedSpeed = 0;
+    let headingX = 0;
+    let headingY = 0;
+
+    for (let i = 1; i < recent.length; i++) {
+      const older = recent[i - 1];
+      const newer = recent[i];
+      const elapsedSeconds = (newer.timestamp.getTime() - older.timestamp.getTime()) / 1000;
+      if (elapsedSeconds <= 0) continue;
+
+      const speed = this.calculateSpeed(older, newer);
+      const heading = this.calculateBearing(
+        older.latitude,
+        older.longitude,
+        newer.latitude,
+        newer.longitude
+      );
+      const weight = i; // newer transitions carry more weight
+      totalWeight += weight;
+      weightedSpeed += speed * weight;
+      headingX += Math.cos(heading * Math.PI / 180) * weight;
+      headingY += Math.sin(heading * Math.PI / 180) * weight;
+    }
+
+    if (totalWeight === 0) return [];
+
+    const avgSpeed = weightedSpeed / totalWeight;
+    const avgHeading = (Math.atan2(headingY, headingX) * 180 / Math.PI + 360) % 360;
+    const latest = recent[recent.length - 1];
+    const baseTime = latest.timestamp.getTime();
     const stepMinutes = 15;
-    const steps = (hours * 60) / stepMinutes;
+    const steps = Math.max(1, Math.floor((hours * 60) / stepMinutes));
+    const baseAccuracy = Math.max(5, latest.accuracy ?? 35);
+
+    const futurePoints: GPSPoint[] = [];
+    let currentLat = latest.latitude;
+    let currentLng = latest.longitude;
 
     for (let i = 1; i <= steps; i++) {
       const distance = avgSpeed * stepMinutes * 60;
-      const newPos = this.movePoint(
-        currentPos.latitude,
-        currentPos.longitude,
-        avgHeading,
-        distance
-      );
+      const newPos = this.movePoint(currentLat, currentLng, avgHeading, distance);
+      const horizonRatio = i / steps;
 
       const futurePoint: GPSPoint = {
         latitude: newPos.lat,
         longitude: newPos.lng,
-        timestamp: new Date(currentPos.timestamp.getTime() + stepMinutes * 60 * 1000 * i),
+        accuracy: baseAccuracy + Math.max(25, distance * 0.08) * i,
+        timestamp: new Date(baseTime + i * stepMinutes * 60 * 1000),
         source: 'interpolated',
-        confidence: Math.max(0.1, 0.8 - i * 0.1),
+        confidence: Math.max(0.08, 0.88 * Math.exp(-2.2 * horizonRatio)),
+        metadata: {
+          predicted: true,
+          model: 'deterministic_recency_weighted_motion',
+          horizonMinutes: i * stepMinutes,
+          averageSpeedMps: avgSpeed,
+          averageHeadingDegrees: avgHeading,
+        },
       };
 
       futurePoints.push(futurePoint);
-      currentPos = futurePoint;
+      currentLat = newPos.lat;
+      currentLng = newPos.lng;
     }
 
     return futurePoints;
-  }
-
-  // ============ HELPER METHODS ============
-
-  private haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-    const φ1 = (lat1 * Math.PI) / 180;
-    const φ2 = (lat2 * Math.PI) / 180;
-    const Δφ = ((lat2 - lat1) * Math.PI) / 180;
-    const Δλ = ((lon2 - lon1) * Math.PI) / 180;
-
-    const a = Math.sin(Δφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
-    return EARTH_RADIUS * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   }
 
   private calculateBearing(lat1: number, lon1: number, lat2: number, lon2: number): number {
