@@ -21,14 +21,53 @@ export default function SubscriptionSuccess() {
     window.sessionStorage.getItem("legalwhat_pending_square_order_id") ||
     "";
 
+  const openLibraryIfDurablyActive = async (): Promise<boolean> => {
+    const response = await fetch("/api/auth/user", {
+      credentials: "include",
+      cache: "no-store",
+    });
+    if (!response.ok) return false;
+
+    const user = await response.json().catch(() => null);
+    if (!user) {
+      setLocation("/login", { replace: true });
+      return true;
+    }
+
+    const status = String(user.status || "").toLowerCase();
+    const blocked = ["suspended", "past_due", "canceled", "expired"].includes(status);
+    if (user.isMasterBypass === true || (user.hasPaidForAccess === true && !blocked)) {
+      setState("active");
+      setMessage("Subscription verified. Opening your LegalWhat law library...");
+      window.sessionStorage.removeItem("legalwhat_pending_square_order_id");
+      await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+      await queryClient.refetchQueries({ queryKey: ["/api/auth/user"] });
+      setLocation(user.redirectRoute || "/welcome", { replace: true });
+      return true;
+    }
+
+    return false;
+  };
+
   const verifySubscription = async () => {
+    setState("verifying");
+
     if (!orderId) {
+      setMessage("Payment returned successfully. Waiting for Square to confirm your subscription...");
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        try {
+          if (await openLibraryIfDurablyActive()) return;
+        } catch {
+          // Webhook confirmation is durable; transient status reads are retried.
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 1500));
+      }
+
       setState("error");
-      setMessage("Square did not return the order information needed to verify this subscription.");
+      setMessage("Square is still finalizing the subscription. You can retry verification safely.");
       return;
     }
 
-    setState("verifying");
     setMessage("Verifying your LegalWhat subscription with Square...");
 
     for (let attempt = 0; attempt < 20; attempt += 1) {
