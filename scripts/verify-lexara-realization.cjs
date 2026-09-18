@@ -55,9 +55,12 @@ must(
     voiceMode.includes('SERVER_BARGE_IN_PROBE_MS = 700') &&
     voiceMode.includes('recorder.requestData()') &&
     voiceMode.includes('bargeInProbe: true') &&
+    voiceMode.includes('startedDuringPlayback') &&
+    voiceMode.includes('utteranceId') &&
     conversation.includes("shouldProbeBargeIn: () => phaseRef.current === 'speaking'") &&
+    conversation.includes('validatedBargeInUtterancesRef') &&
     !conversation.includes('bargeInCandidateTimerRef'),
-  'server VAD records continuously while barge-in authority requires a non-destructive STT probe',
+  'server VAD records continuously while barge-in authority requires a transcript-correlated non-destructive STT probe',
 );
 must(
   conversation.includes('CONVERSATION_STORAGE_SCHEMA_VERSION = 2'),
