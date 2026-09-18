@@ -275,7 +275,6 @@ function Router() {
         <Switch>
           <Route path="/" component={Landing} />
           <Route path="/landing" component={Landing} />
-          {import.meta.env.DEV && !isMasterSession && <Route path="/geoconsole" component={GeoConsolePage} />}
 
           <Route path="/subscription-success" component={SubscriptionSuccess} />
           <Route path="/control-room" component={GatedControlRoom} />
