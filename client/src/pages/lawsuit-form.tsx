@@ -752,13 +752,13 @@ export default function LawsuitForm() {
   return (
     <div className="min-h-screen bg-background">
       <SEOHead
-        title="Bad Blue — 42 USC §1983 Civil Rights Lawsuit Generator"
+        title="Section 1983 Lawsuit Document Tool | Legal What?"
         description="Create U.S. District Court-compliant civil rights lawsuits for police violations. Remote filing, cheaper than attorney consultation. Generate complaint, summons, and civil cover sheet online."
         keywords="file civil rights lawsuit, file police lawsuit, file officer lawsuit, 42 USC 1983 lawsuit police, Section 1983 claim officer, civil rights lawsuit police, civil rights lawsuit officer, police brutality lawsuit, officer brutality lawsuit, excessive force lawsuit police, excessive force lawsuit officer, false arrest lawsuit police, wrongful arrest lawsuit officer, constitutional rights violation lawsuit police, constitutional violation lawsuit officer, police misconduct lawsuit, officer misconduct lawsuit, civil rights lawsuit online police, civil rights lawsuit online officer, police assault lawsuit, officer assault lawsuit, police violence lawsuit, officer violence lawsuit, department lawsuit, department civil rights lawsuit, how to file 1983 claim police, how to file 1983 claim officer, Bivens claim police, Bivens claim officer, qualified immunity lawsuit police, qualified immunity lawsuit officer, file lawsuit against police, file lawsuit against officer, sue police officer, sue police department, lawsuit police brutality, lawsuit officer assault, lawsuit police excessive force, lawsuit officer misconduct, legal documents police lawsuit, legal documents officer lawsuit, police lawsuit filing, officer lawsuit filing online, department lawsuit filing, civil rights attorney police, civil rights attorney officer, police brutality lawyer alternative, officer assault lawyer alternative, lawsuit police harassment, lawsuit officer discrimination, lawsuit false arrest police, lawsuit wrongful detention officer, constitutional violation lawsuit police, rights violation lawsuit officer, police civil rights lawsuit online, officer civil rights lawsuit online, file lawsuit police misconduct, file lawsuit officer brutality, sue police for assault, sue officer for excessive force, police lawsuit legal help, officer lawsuit legal advice, lawsuit against police department, lawsuit against officer department, police brutality lawsuit online, officer assault lawsuit online, civil lawsuit police, civil lawsuit officer, federal lawsuit police, federal lawsuit officer, police misconduct legal action, officer misconduct legal action, lawsuit police violence, lawsuit officer abuse, police rights violation lawsuit, officer constitutional violation lawsuit, how to sue police officer, how to sue police department, how to file police lawsuit, how to file officer lawsuit, police lawsuit help online, officer lawsuit help online, assistance filing police lawsuit, assistance filing officer lawsuit, guidance police lawsuit process, guidance officer lawsuit filing, police lawsuit documents online, officer lawsuit documents online, lawsuit police corruption, lawsuit officer negligence, police retaliation lawsuit, officer retaliation lawsuit, file Section 1983 lawsuit police, file Section 1983 lawsuit officer, police excessive force legal action, officer assault legal action, lawsuit police department misconduct, lawsuit officer department brutality"
-        ogTitle="File Civil Rights Lawsuit Online - Section 1983 Claims | BadBlue"
+        ogTitle="Section 1983 Lawsuit Document Tool | Legal What?"
         ogDescription="File Section 1983 civil rights lawsuits with professional legal templates. Expert guidance for police misconduct, excessive force, and constitutional violations."
-        canonicalUrl="https://example.com/lawsuit-form"
         structuredData={structuredData}
+        noIndex
       />
       {/* Header */}
       <header className="border-b bg-card sticky top-0 z-50">
@@ -772,8 +772,8 @@ export default function LawsuitForm() {
             >
               <ArrowLeft className="w-5 h-5" />
             </Button>
-            <Shield className="w-6 h-6 text-primary" />
-            <span className="font-semibold text-lg">BadBlue</span>
+            <img src="/images/Legal%20What%20Icon.png" alt="Legal What?" className="w-8 h-8 object-contain" />
+            <span className="font-semibold text-lg">Legal What?</span>
           </div>
           
           <div className="flex items-center gap-2">
