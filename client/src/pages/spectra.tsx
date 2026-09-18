@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'wouter';
-import { ArrowLeft, Loader2, Mic, MicOff, RotateCcw, Send, Target } from 'lucide-react';
+import { ArrowLeft, Loader2, Mic, MicOff, Paperclip, RotateCcw, Send, Target } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SEOHead } from '@/components/SEOHead';
 import { GeoconsoleRadarDashboard } from '@/components/geoconsole';
@@ -14,6 +14,15 @@ interface Message {
   id: string;
   role: 'spectra' | 'user';
   content: string;
+}
+
+interface MediaExtractionResponse {
+  success?: boolean;
+  point?: GPSPoint | null;
+  hasGPS?: boolean;
+  hasCaptureTimestamp?: boolean;
+  metadata?: Record<string, any>;
+  error?: string;
 }
 
 interface AcquisitionResponse {
@@ -52,11 +61,13 @@ export default function SpectraPage() {
   ]);
   const [input, setInput] = useState('');
   const [observations, setObservations] = useState<GPSPoint[]>([]);
+  const [directEvidence, setDirectEvidence] = useState<GPSPoint[]>([]);
   const [confidence, setConfidence] = useState<number | null>(null);
   const [sourceCount, setSourceCount] = useState(0);
   const [lastError, setLastError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const requestRef = useRef(0);
+  const mediaInputRef = useRef<HTMLInputElement>(null);
   const messageHandlerRef = useRef<(message: string) => void>(() => undefined);
 
   const voiceSynthesis = useVoiceSynthesis();
@@ -88,6 +99,7 @@ export default function SpectraPage() {
     setTarget('');
     setDetails('');
     setObservations([]);
+    setDirectEvidence([]);
     setConfidence(null);
     setSourceCount(0);
     setLastError(null);
@@ -96,7 +108,11 @@ export default function SpectraPage() {
     speakIfEnabled(FIRST_PROMPT);
   }, [speakIfEnabled]);
 
-  const acquireTarget = useCallback(async (targetValue: string, detailsValue: string) => {
+  const acquireTarget = useCallback(async (
+    targetValue: string,
+    detailsValue: string,
+    extraEvidence: GPSPoint[] = directEvidence,
+  ) => {
     const requestId = ++requestRef.current;
     setPhase('acquiring');
     setLastError(null);
@@ -119,9 +135,23 @@ export default function SpectraPage() {
         throw new Error(payload.error || 'Target acquisition failed.');
       }
 
-      const points = Array.isArray(payload.locationObservations)
+      const discoveredPoints = Array.isArray(payload.locationObservations)
         ? payload.locationObservations
         : [];
+      const mergedByKey = new Map<string, GPSPoint>();
+      for (const point of [...extraEvidence, ...discoveredPoints]) {
+        const timestamp = new Date(point.timestamp).toISOString();
+        const key = [
+          Number(point.latitude).toFixed(6),
+          Number(point.longitude).toFixed(6),
+          timestamp,
+          point.source,
+        ].join('|');
+        mergedByKey.set(key, point);
+      }
+      const points = [...mergedByKey.values()].sort(
+        (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+      );
 
       setObservations(points);
       setConfidence(payload.acquisition?.confidence ?? null);
@@ -147,7 +177,80 @@ export default function SpectraPage() {
       addMessage('spectra', responseText);
       speakIfEnabled(responseText);
     }
-  }, [addMessage, speakIfEnabled]);
+  }, [addMessage, directEvidence, speakIfEnabled]);
+
+  const handleMediaEvidence = useCallback(async (file: File) => {
+    if (phase === 'awaiting_target') {
+      const response = 'Tell me what you want to locate first. Then I can use that media as target information.';
+      addMessage('spectra', response);
+      speakIfEnabled(response);
+      return;
+    }
+    if (phase === 'acquiring') return;
+
+    addMessage('user', `Shared target media: ${file.name}`);
+    setLastError(null);
+
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const response = await fetch('/api/gps/extract-upload', {
+        method: 'POST',
+        credentials: 'include',
+        body: form,
+      });
+      const payload = await response.json() as MediaExtractionResponse;
+
+      if (!response.ok) {
+        throw new Error(payload.error || 'Media analysis failed.');
+      }
+
+      const extractedPoint = payload.point || null;
+      const nextDirectEvidence = extractedPoint
+        ? [...directEvidence, extractedPoint]
+        : directEvidence;
+
+      if (extractedPoint) {
+        setDirectEvidence(nextDirectEvidence);
+      }
+
+      const device = payload.metadata?.device;
+      const capture = payload.metadata?.capture;
+      const evidenceDescription = [
+        `Uploaded target media: ${file.name}`,
+        device?.make || device?.model
+          ? `Device: ${[device?.make, device?.model].filter(Boolean).join(' ')}`
+          : '',
+        capture?.dateTimeOriginal ? `Capture time metadata: ${capture.dateTimeOriginal}` : '',
+        extractedPoint ? 'Timestamped GPS metadata present.' : 'No timestamped GPS metadata present.',
+      ].filter(Boolean).join('. ');
+
+      const expandedDetails = [details, evidenceDescription].filter(Boolean).join('\n');
+      setDetails(expandedDetails);
+
+      const responseText = extractedPoint
+        ? 'I extracted timestamped location metadata from that media and added it to the target evidence.'
+        : 'I analyzed that media and added the available metadata to the target evidence. It did not contain timestamped GPS coordinates.';
+      addMessage('spectra', responseText);
+      speakIfEnabled(responseText);
+
+      await acquireTarget(target, expandedDetails, nextDirectEvidence);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Media analysis failed.';
+      setLastError(message);
+      addMessage('spectra', 'I could not analyze that media. You can continue by telling me what you know about the target.');
+    } finally {
+      if (mediaInputRef.current) mediaInputRef.current.value = '';
+    }
+  }, [
+    acquireTarget,
+    addMessage,
+    details,
+    directEvidence,
+    phase,
+    speakIfEnabled,
+    target,
+  ]);
 
   const handleUserMessage = useCallback(async (rawMessage: string) => {
     const message = rawMessage.trim();
@@ -367,7 +470,42 @@ export default function SpectraPage() {
             }}
             className="border-t border-slate-800 p-3"
           >
-            <div className="flex items-end gap-2">
+            <input
+              ref={mediaInputRef}
+              type="file"
+              accept="image/*,video/*"
+              className="hidden"
+              onChange={event => {
+                const file = event.target.files?.[0];
+                if (file) void handleMediaEvidence(file);
+              }}
+            />
+            <div
+              className="flex items-end gap-2"
+              onDragOver={event => {
+                if (phase !== 'awaiting_target' && phase !== 'acquiring') {
+                  event.preventDefault();
+                }
+              }}
+              onDrop={event => {
+                if (phase === 'awaiting_target' || phase === 'acquiring') return;
+                event.preventDefault();
+                const file = event.dataTransfer.files?.[0];
+                if (file) void handleMediaEvidence(file);
+              }}
+            >
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                disabled={phase === 'awaiting_target' || phase === 'acquiring'}
+                onClick={() => mediaInputRef.current?.click()}
+                className="h-11 w-11 shrink-0 rounded-full text-slate-400 hover:text-cyan-300"
+                title="Add target photo or video"
+                aria-label="Add target photo or video"
+              >
+                <Paperclip className="h-4 w-4" />
+              </Button>
               <textarea
                 value={input}
                 onChange={event => setInput(event.target.value)}
