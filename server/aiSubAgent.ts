@@ -19,6 +19,7 @@ const exec = promisify(execCallback);
 
 import {
   generateAutonomousText,
+  generateUserText,
   canAutonomousProceed,
   getAutonomousRescheduleInfo,
   TaskPriority,
@@ -327,8 +328,41 @@ export async function callAIWithFallback(
     type: 'aiFallbackStart', 
     taskName,
     promptLength: prompt.length,
-    preferredProvider: options.preferredProvider || 'openrouter'
+    preferredProvider: options.preferredProvider || 'capability-harmony'
   });
+
+  // Platform invariant: every service enters the shared capability-driven
+  // Harmony mesh first. This compatibility function remains only as a local
+  // recovery chain when the shared orchestrator itself cannot produce output.
+  try {
+    const harmonySystemPrompt = options.useJSON
+      ? `${options.systemPrompt || ''}\n\nReturn ONLY valid JSON. Do not wrap it in markdown.`
+      : options.systemPrompt;
+    const harmony = await generateUserText(
+      taskName,
+      prompt,
+      {
+        systemPrompt: harmonySystemPrompt,
+        temperature: options.temperature,
+        maxTokens: options.maxTokens,
+        useJSON: options.useJSON,
+      },
+      TaskPriority.HIGH_USER,
+    );
+    if (harmony.content?.trim()) {
+      fallbackChain.push('harmony:success');
+      return {
+        success: true,
+        content: harmony.content,
+        provider: 'openrouter',
+        model: 'harmony',
+        tokensUsed: harmony.tokensUsed,
+        fallbackChain,
+      };
+    }
+  } catch (error) {
+    fallbackChain.push(`harmony:failed(${(error instanceof Error ? error.message : String(error)).slice(0, 50)})`);
+  }
 
   const providers: Array<{
     name: LiveFallbackProvider;
