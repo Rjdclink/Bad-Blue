@@ -268,7 +268,10 @@ export class AICollaborationOrchestrator {
     
     // Filter providers by context
     const contextProviders = getAvailableProvidersForContext(context, options.providerPolicy);
-    const eligibleProviders = Array.from(new Set([...availableProviders, ...contextProviders]));
+    // The caller may describe a preferred/legacy subset, but service-level
+    // Harmony always evaluates the complete configured mesh. A local subset
+    // can never silently narrow platform capability.
+    const eligibleProviders = [...contextProviders];
     const healthyProviders = eligibleProviders.filter(harmonyProviderAvailable);
     // Cooldowns are advisory availability evidence, not a permanent veto. If
     // every route is cooling, allow the full eligible set rather than making
@@ -1208,25 +1211,37 @@ export class AICollaborationOrchestrator {
   static async executeQuick(
     taskName: string,
     query: string,
-    provider: AIProvider,
+    _provider: AIProvider,
     attributes?: Partial<TaskAttributes>
   ): Promise<CollaborationResult> {
-    const model = this.getDefaultModelForProvider(provider);
-    const task: CollaborationTask = {
-      id: `${taskName}-quick`,
-      provider,
-      model,
-      role: 'synthesizer',
-      prompt: query,
-      priority: 1,
-      attributes: {
-        complexity: TaskComplexity.MODERATE,
-        priority: TaskPriority.MEDIUM,
-        ...attributes,
-      },
+    const mergedAttributes: TaskAttributes = {
+      complexity: TaskComplexity.MODERATE,
+      priority: TaskPriority.MEDIUM,
+      ...attributes,
     };
-    
-    return this.executeTask(task, new Map());
+    const providers = getConfiguredHarmonyProviders();
+    const response = await this.orchestrateCollaboration(
+      taskName,
+      query,
+      mergedAttributes,
+      providers,
+      { providerPolicy: 'capability-first' },
+    );
+
+    if (!response.finalAnswer?.trim()) {
+      throw new Error('Harmony quick execution returned no usable response');
+    }
+
+    return {
+      taskId: `${taskName}-quick-harmony`,
+      provider: response.providersUsed[0] || AIProvider.OPENROUTER,
+      model: 'harmony-current',
+      role: 'harmony-synthesizer',
+      content: response.finalAnswer,
+      tokensUsed: response.totalTokens,
+      latencyMs: response.totalLatency,
+      success: true,
+    };
   }
 }
 
