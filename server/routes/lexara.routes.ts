@@ -310,7 +310,8 @@ router.post('/transcribe-file', lexaraVoiceUpload.single('audio'), async (req: R
     const mimeType = String(file.mimetype || 'audio/webm');
     const extension = extensionForAudioMime(mimeType);
     const form = new FormData();
-    form.append('file', new Blob([file.buffer], { type: mimeType }), `lexara-turn.${extension}`);
+    const audioBytes = new Uint8Array(file.buffer);
+    form.append('file', new Blob([audioBytes], { type: mimeType }), `lexara-turn.${extension}`);
     form.append('model', process.env.GROQ_STT_MODEL?.trim() || 'whisper-large-v3-turbo');
     form.append('language', 'en');
     form.append('response_format', 'json');
