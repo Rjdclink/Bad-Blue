@@ -32,7 +32,9 @@ const gpsRoutes = read('server/routes/gps.routes.ts');
 const fusion = read('server/services/geoconsole/inputFusionEngine.ts');
 const futurecast = read('server/services/geoconsole/monteCarloPathEngine.ts');
 const media = read('server/services/locationIntelligence/MediaMetadataExtractor.ts');
-const peoplePage = read('client/src/pages/people-finder.tsx');
+const app = read('client/src/App.tsx');
+const spectra = read('client/src/pages/spectra.tsx');
+const spectraRoutes = read('server/routes/spectra.routes.ts');
 const peopleRoute = read('server/routes/peopleSearch.routes.ts');
 const peopleTypes = read('server/services/peopleSearch/types.ts');
 
@@ -110,10 +112,15 @@ test('Media pipeline extracts device metadata',
 test('Upload route does not accept client filesystem paths',
   !gpsRoutes.includes("router.post('/extract'"));
 
-test('People Finder does not promote city/history into fake current coordinates',
-  !peoplePage.includes('geocode-city-state') && peoplePage.includes('locationObservations'));
-test('Phone is part of canonical People Search query',
-  peopleTypes.includes('phone?: string'));
+test('People Finder compatibility route converges on SPECTRA',
+  app.includes('<Route path="/people-finder" component={SpectraPage} />'));
+test('SPECTRA does not promote regional hints into timed observations',
+  spectra.includes('candidateLocations={candidateLocations}') &&
+  spectraRoutes.includes('if (locationObservations.length === 0)') &&
+  spectraRoutes.includes("basis: 'regional_context'"));
+test('Phone is part of canonical People Search query and SPECTRA extraction',
+  peopleTypes.includes('phone?: string') &&
+  spectraRoutes.includes('extractPhoneNumber'));
 
 console.log(`\nPassed: ${passed}  Failed: ${failed}\n`);
 process.exit(failed === 0 ? 0 : 1);
