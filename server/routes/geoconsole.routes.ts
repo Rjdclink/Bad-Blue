@@ -142,6 +142,8 @@ router.post('/process', async (req: Request, res: Response) => {
           endTime: result.trail.endTime,
           totalDistance: result.trail.totalDistance,
           averageSpeed: result.trail.averageSpeed,
+          maxSpeed: result.trail.maxSpeed,
+          points: result.trail.points,
           segments: result.trail.segments,
           stops: result.trail.stops,
         },
@@ -393,7 +395,7 @@ router.post('/futurecast', async (req: Request, res: Response) => {
       });
     }
 
-    const { recentPoints, hours = 6 } = validation.data;
+    const { recentPoints, hours = 1 } = validation.data;
 
     const { monteCarloPathEngine } = await import('../services/geoconsole/monteCarloPathEngine');
     
