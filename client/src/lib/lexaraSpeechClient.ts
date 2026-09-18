@@ -218,6 +218,22 @@ export const LexaraServerTTS = {
     });
   },
 
+  pause(): void {
+    const audio = playbackState.currentAudio;
+    if (!audio || audio.paused) return;
+    try {
+      audio.pause();
+    } catch {
+      // Media element may be transitioning during interruption.
+    }
+  },
+
+  async resume(): Promise<void> {
+    const audio = playbackState.currentAudio;
+    if (!audio || !audio.paused) return;
+    await audio.play();
+  },
+
   stop(): void {
     const audio = playbackState.currentAudio;
     const resolveCurrent = playbackState.currentResolve;
