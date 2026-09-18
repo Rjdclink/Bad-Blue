@@ -128,7 +128,7 @@ import {
   subAgentRateLimit,
   autosaveRateLimit,
 } from "./rateLimit";
-import { setupAuth, isAuthenticated, adminAuthMiddleware } from "./auth";
+import { setupAuth, isAuthenticated, adminAuthMiddleware, resolvePaidAccess } from "./auth";
 import { asyncHandler, notFoundHandler, errorHandler, ErrorTypes } from "./errorHandler";
 import { generateComplaintDocument, generateFOIALetter as generateFOIALetterDoc } from "./documentGenerators";
 import { getBaseUrl as getBaseURL } from "./config";
@@ -3517,20 +3517,31 @@ Contact: ${foiaRequest.userEmail || userEmail}
       ? requestedDepth as 1 | 2 | 3 | 4
       : 4;
 
-    // Auth gate: never 401 to UI.
-    if (!req.isAuthenticated?.() || !req.user) {
+    // Preserve the seed-first controlled-200 contract while enforcing the same
+    // fresh paid-access authority as the rest of the private LegalWhat services.
+    const access = await resolvePaidAccess(req, res);
+    if (!access.authenticated || !access.authorized) {
+      const unavailable = access.reason === 'auth_store_unavailable';
       return res.json({
         success: true,
         data: null,
         emptyState: {
-          code: 'invalid_request',
-          message: 'Authentication required.',
+          code: unavailable
+            ? 'auth_state_unavailable'
+            : access.authenticated
+              ? 'subscription_required'
+              : 'invalid_request',
+          message: unavailable
+            ? 'Authentication state is temporarily unavailable.'
+            : access.authenticated
+              ? 'An active LegalWhat subscription is required.'
+              : 'Authentication required.',
         },
         meta: { correlationId, durationMs: Date.now() - startTime },
       });
     }
 
-    // Get user ID if authenticated
+    // Get user ID from the freshly revalidated identity
     const userId = req.user?.id || req.user?.claims?.sub;
     let reportId: string | null = null;
 
