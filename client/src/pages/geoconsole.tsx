@@ -43,17 +43,42 @@ export default function GeoconsolePage() {
     fetchStatus();
   }, []);
 
-  // Handle file upload for EXIF extraction
+  // Handle uploaded media through the server-side metadata pipeline.
+  // Only canonical observations with an actual capture timestamp are added to the timeline.
   const handleFileUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files;
-    if (!files || files.length === 0) return;
+    const files = Array.from(event.target.files || []);
+    if (files.length === 0) return;
 
-    // Fail closed: do not fabricate coordinates from uploads.
-    // EXIF extraction is not implemented on this page; use Geoconsole Process screen to input real points.
-    console.warn('[Geoconsole] File upload received but EXIF extraction is not implemented yet', {
-      fileCount: files.length,
-      names: Array.from(files).map(f => f.name),
-    });
+    const extractedPoints: GPSPoint[] = [];
+
+    for (const file of files) {
+      try {
+        const form = new FormData();
+        form.append('file', file);
+        const response = await fetch('/api/gps/extract-upload', {
+          method: 'POST',
+          credentials: 'include',
+          body: form,
+        });
+        if (!response.ok) continue;
+        const payload = await response.json();
+        if (payload?.point) {
+          extractedPoints.push({
+            ...payload.point,
+            timestamp: payload.point.timestamp,
+            source: payload.point.source as DataSource,
+          });
+        }
+      } catch (error) {
+        console.warn('[Geoconsole] Media metadata extraction failed', { file: file.name, error });
+      }
+    }
+
+    if (extractedPoints.length > 0) {
+      setLocationData(prev => [...prev, ...extractedPoints]);
+    }
+
+    event.target.value = '';
   }, []);
 
   // Handle manual location input
@@ -115,7 +140,7 @@ export default function GeoconsolePage() {
                 {/* File Upload */}
                 <div>
                   <Label className="text-slate-300 text-sm">Upload Media Files</Label>
-                  <p className="text-xs text-slate-500 mb-2">Extract GPS from EXIF data</p>
+                  <p className="text-xs text-slate-500 mb-2">Extract GPS, capture time, device and media metadata</p>
                   <div className="relative">
                     <Input
                       type="file"
