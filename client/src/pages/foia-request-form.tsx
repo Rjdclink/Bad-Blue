@@ -281,13 +281,13 @@ export default function FOIARequestForm() {
   return (
     <div className="min-h-screen bg-background">
       <SEOHead 
-        title="Bad Blue — File FOIA Requests for Police Records Online"
+        title="FOIA & Public Records Request Tool | Legal What?"
         description="Generate state-specific FOIA requests for body camera footage, disciplinary records, use-of-force reports, and police investigation files. Automatic routing to records custodians. Affordable, fully online."
         keywords={seoKeywords}
-        canonicalUrl="https://example.com/foia-request"
         structuredData={foiaServiceSchema}
         breadcrumbs={breadcrumbs}
         pageType="service"
+        noIndex
       />
       <header className="border-b">
         <div className="container mx-auto px-4 py-4 flex justify-between items-center">
