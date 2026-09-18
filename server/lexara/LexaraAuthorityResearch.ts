@@ -147,8 +147,9 @@ async function discoverAuthoritySources(query: string): Promise<LexaraAuthorityS
     }
   };
 
-  // Run independent discovery paths in parallel. A slow crawler can no longer
-  // consume its full timeout before the web-search fallback even begins.
+  // Run independent discovery paths in parallel under a conversational latency
+  // budget. Authority discovery is valuable evidence, but a slow crawler must
+  // never hold the live spoken answer hostage.
   const [firecrawlResult, openRouterResult] = await Promise.all([
     firecrawlDiscovery(),
     openRouterDiscovery(),
