@@ -91,52 +91,11 @@ export function getLexaraImmediateAcknowledgement(
     };
   }
 
-  const addedFactSignal = /\b(?:also|another thing|one more thing|and then|actually|but|however|i forgot|i should add|additional(?:ly)?|the other thing|what happened was)\b/i.test(clean);
-  const substantiveQuestion = /\?|\b(?:what|why|how|when|where|who|which|can|could|would|should|do|does|did|is|are|am|will|may)\b/i.test(clean);
-  const substantiveLength = clean.split(/\s+/).filter(Boolean).length;
-
-  if (addedFactSignal || (substantiveLength >= 20 && !substantiveQuestion)) {
-    return {
-      text: context.analysisActive
-        ? deterministicVariant(normalized, [
-            "I've got that. I'm adding it to what I'm working on.",
-            "I heard that. I'm factoring it into the analysis already in progress.",
-            "Got it. I'm adding that fact to what I'm reviewing.",
-          ])
-        : deterministicVariant(normalized, [
-            "Thank you for that information. I'm adding it to the facts and checking how it changes the analysis.",
-            "I've got that. I'm incorporating it into the facts I'm reviewing.",
-            "Thank you for those facts. I'm factoring them into what I'm checking now.",
-          ]),
-      terminal: false,
-      kind: 'added-facts',
-    };
-  }
-
-  if (substantiveQuestion) {
-    return {
-      text: context.analysisActive
-        ? deterministicVariant(normalized, [
-            "I heard you. I'll address that with the analysis I'm already working on.",
-            "I've got that question too. I'm working it into the analysis.",
-            "I heard that. I'm including it in what I'm working through now.",
-          ])
-        : deterministicVariant(normalized, [
-            "Thank you. Let me look into that with the facts you've already given me.",
-            "I'm checking that now.",
-            "Let me analyze that with the facts you've already given me.",
-          ]),
-      terminal: false,
-      kind: 'new-question',
-    };
-  }
-
+  // Presence/control checks may be answered immediately. Substantive turns stay
+  // silent until the legal answer is ready so canned filler never interrupts the
+  // user, creates a second TTS event, or feeds LEXARA's speaker back into STT.
   return {
-    text: deterministicVariant(normalized, [
-      "I'm reviewing the facts you've provided.",
-      "I'm reviewing what you've told me and analyzing it.",
-      "I've got it. I'm working through the facts now.",
-    ]),
+    text: '',
     terminal: false,
     kind: 'analysis',
   };

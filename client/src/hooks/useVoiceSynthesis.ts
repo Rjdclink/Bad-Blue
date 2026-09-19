@@ -1,8 +1,8 @@
 /**
  * useVoiceSynthesis Hook
  *
- * ElevenLabs is LEXARA's single acoustic identity. Streaming media playback is
- * preferred; the buffered endpoint remains a route-local recovery path.
+ * LEXARA uses one acoustic persona across an adaptive server-side TTS mesh.
+ * Streaming media playback is preferred; buffered playback is the recovery path.
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
@@ -41,11 +41,13 @@ interface ServerAudio {
   blob: Blob;
   voiceId: string | null;
   durationMs: number | null;
+  provider: string | null;
 }
 
 interface StreamingAudioSession {
   audioUrl: string;
   voiceId: string | null;
+  provider: string | null;
 }
 
 const SERVER_TTS_FETCH_TIMEOUT_MS = 20_000;
@@ -147,6 +149,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
       return {
         audioUrl: payload.audioUrl,
         voiceId: typeof payload?.voiceId === 'string' ? payload.voiceId : null,
+        provider: typeof payload?.provider === 'string' ? payload.provider : 'adaptive-tts-mesh',
       };
     } finally {
       window.clearTimeout(timeout);
@@ -197,6 +200,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
         blob,
         voiceId: response.headers.get('X-Voice-Id'),
         durationMs: Number.isFinite(parsedDuration) && parsedDuration > 0 ? parsedDuration : null,
+        provider: response.headers.get('X-Provider'),
       };
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
@@ -214,11 +218,13 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     turnId: number,
   ): Promise<void> => {
     let playback: Promise<PlaybackOutcome>;
+    let selectedProvider: string | null = null;
     let expectedDuration = Math.max(5_000, text.length * 70);
 
     try {
       const session = await createStreamingAudioSession(text);
       if (turnId !== activeTurnRef.current) return;
+      selectedProvider = session.provider;
 
       if (shouldBufferLexaraPlaybackOnThisDevice(text.length)) {
         // The observed production stream finishes in well under a second, so on
@@ -236,11 +242,12 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
       // session creation/buffering is unavailable, without switching acoustic identity.
       const audio = await fetchServerAudio(text);
       if (turnId !== activeTurnRef.current) return;
+      selectedProvider = audio.provider;
       expectedDuration = audio.durationMs || expectedDuration;
       playback = LexaraServerTTS.play(audio.blob).then<PlaybackOutcome>(() => 'ended');
     }
 
-    setProvider('elevenlabs');
+    setProvider(selectedProvider || 'adaptive-tts-mesh');
     setIsLoading(false);
     setIsSpeaking(true);
     options.onStart?.();
@@ -277,8 +284,8 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     setError(null);
 
     try {
-      // One persona means one acoustic identity. LEXARA never silently changes
-      // to a browser/system voice if ElevenLabs is slow or temporarily down.
+      // One persona, multiple provider routes. The server mesh keeps failures
+      // route-local and only surfaces an error after compatible TTS routes fail.
       await speakWithServer(cleanText, options, turnId);
     } catch (err) {
       clearPlaybackWatchdog();
@@ -287,14 +294,14 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
 
       const nextError = err instanceof Error ? err : new Error('LEXARA voice synthesis failed');
       setError(nextError);
-      setProvider('elevenlabs-unavailable');
+      setProvider('tts-mesh-unavailable');
       setIsLoading(false);
       setIsSpeaking(false);
       options.onError?.(nextError);
 
       toast({
         title: `${options.assistantName || 'LEXARA'} Voice Temporarily Unavailable`,
-        description: 'The consultation will continue in text without switching to a different voice.',
+        description: 'All compatible voice routes are temporarily unavailable. The consultation will continue in text.',
         variant: 'destructive',
       });
     }

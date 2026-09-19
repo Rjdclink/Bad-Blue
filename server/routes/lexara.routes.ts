@@ -21,7 +21,7 @@ import express, { Request, Response } from 'express';
 import multer from 'multer';
 import { logger } from '../logger';
 import { LEXARA_KERNEL, mergePersonaWithKernel } from '../lexara/personaKernel';
-import { lexaraSpeakTest } from '../lexara/LexaraTTSRouter';
+import { getLexaraTTSReadiness, synthesizeLexaraSpeechWithFailover } from '../lexara/LexaraTTSMesh';
 import { callAIWithFallback } from '../aiSubAgent';
 import { LEXARA_PERSONA } from '../../shared/lexaraVoicePersona';
 import { isAuthenticated } from '../auth';
@@ -81,21 +81,21 @@ import crypto from 'crypto';
  */
 router.get('/speak-test', async (_req: Request, res: Response) => {
   try {
-    logger.info('[LEXARA] speak-test: Testing voice system');
-    const audio = await lexaraSpeakTest();
-    
-    res.setHeader('Content-Type', 'audio/mpeg');
-    res.setHeader('Content-Length', audio.length.toString());
-    res.setHeader('X-Lexara-Test', 'voice-system-confirmed');
-    res.send(audio);
+    logger.info('[LEXARA] speak-test: Testing adaptive voice mesh');
+    const result = await synthesizeLexaraSpeechWithFailover('How can I help you?');
+    res.setHeader('Content-Type', result.mimeType);
+    res.setHeader('Content-Length', result.audioData.length.toString());
+    res.setHeader('X-Lexara-Test', 'voice-mesh-confirmed');
+    res.setHeader('X-Provider', result.provider);
+    res.setHeader('X-TTS-Model', result.model);
+    res.send(result.audioData);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    logger.error('[LEXARA] speak-test: Voice test failed', { error: errorMessage });
-    
-    res.status(500).json({
+    logger.error('[LEXARA] speak-test: Voice mesh test failed', { error: errorMessage });
+    res.status(503).json({
       success: false,
       error: errorMessage,
-      hint: 'Check ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID environment variables',
+      hint: 'No healthy configured LEXARA TTS provider responded.',
     });
   }
 });
@@ -293,8 +293,9 @@ router.post('/audio-chunk', express.raw({ type: 'application/octet-stream', limi
  */
 router.get('/voice/live-readiness', (_req: Request, res: Response) => {
   const groqConfigured = !!process.env.GROQ_API_KEY?.trim();
-  const elevenLabsConfigured = !!process.env.ELEVENLABS_API_KEY?.trim();
-  const elevenLabsVoiceConfigured = !!process.env.ELEVENLABS_VOICE_ID?.trim();
+  const elevenLabsScribeConfigured = !!process.env.ELEVENLABS_API_KEY?.trim();
+  const speechInputConfigured = groqConfigured || elevenLabsScribeConfigured;
+  const ttsReadiness = getLexaraTTSReadiness();
   const harmonyParticipants = getConfiguredHarmonyParticipants();
   const harmonyWarm = getHarmonyWarmStatus();
   const inferenceReady = harmonyWarm.filter(status => status.state === 'ready').length;
@@ -303,17 +304,16 @@ router.get('/voice/live-readiness', (_req: Request, res: Response) => {
 
   return res.json({
     success: true,
-    speechInputConfigured: groqConfigured || elevenLabsConfigured,
-    speechOutputConfigured: elevenLabsConfigured && elevenLabsVoiceConfigured,
-    liveVoiceConfigured:
-      (groqConfigured || elevenLabsConfigured)
-      && elevenLabsConfigured
-      && elevenLabsVoiceConfigured,
+    speechInputConfigured,
+    speechOutputConfigured: ttsReadiness.available,
+    liveVoiceConfigured: speechInputConfigured && ttsReadiness.available,
     inputProviders: [
       ...(groqConfigured ? ['groq-whisper'] : []),
-      ...(elevenLabsConfigured ? ['elevenlabs-scribe'] : []),
+      ...(elevenLabsScribeConfigured ? ['elevenlabs-scribe'] : []),
     ],
-    outputProvider: elevenLabsConfigured && elevenLabsVoiceConfigured ? 'elevenlabs' : null,
+    outputProvider: ttsReadiness.healthyProviders[0] || null,
+    outputProviders: ttsReadiness.healthyProviders,
+    outputProviderStates: ttsReadiness.providers,
     legalReasoningConfigured: harmonyParticipants.length > 0,
     legalReasoningParticipants: harmonyParticipants.length,
     legalReasoningInferenceReady: inferenceReady,
@@ -405,6 +405,52 @@ async function transcribeWithGroq(file: Express.Multer.File): Promise<{
   }
 }
 
+async function transcribeWithDeepgram(file: Express.Multer.File): Promise<{
+  text: string;
+  provider: string;
+  model: string;
+  quality?: { confidence?: number };
+}> {
+  const apiKey = process.env.DEEPGRAM_API_KEY?.trim();
+  if (!apiKey) throw new Error('Deepgram speech-to-text is not configured');
+
+  const model = process.env.DEEPGRAM_STT_MODEL?.trim() || 'nova-3';
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12_000);
+  try {
+    const response = await fetch(
+      `https://api.deepgram.com/v1/listen?model=${encodeURIComponent(model)}&language=en&smart_format=true`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Token ${apiKey}`,
+          'Content-Type': file.mimetype || 'application/octet-stream',
+        },
+        body: new Uint8Array(file.buffer),
+        signal: controller.signal,
+      },
+    );
+    if (!response.ok) {
+      const detail = (await response.text()).slice(0, 500);
+      throw new Error(`Deepgram STT ${response.status}: ${detail}`);
+    }
+    const result = await response.json() as any;
+    const alternative = result?.results?.channels?.[0]?.alternatives?.[0];
+    return {
+      text: String(alternative?.transcript || '').trim(),
+      provider: 'deepgram-nova',
+      model,
+      quality: {
+        confidence: Number.isFinite(Number(alternative?.confidence))
+          ? Number(alternative.confidence)
+          : undefined,
+      },
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function transcribeWithElevenLabs(file: Express.Multer.File): Promise<{
   text: string;
   provider: string;
@@ -481,7 +527,7 @@ router.post('/transcribe-file', lexaraVoiceUpload.single('audio'), async (req: R
       text: string;
       provider: string;
       model: string;
-      quality?: { avgLogprob?: number; noSpeechProbability?: number };
+      quality?: { avgLogprob?: number; noSpeechProbability?: number; confidence?: number };
     }>;
   }> = [
     // Groq Whisper Turbo is the latency-first batch fallback and exposes
@@ -491,6 +537,11 @@ router.post('/transcribe-file', lexaraVoiceUpload.single('audio'), async (req: R
       name: 'groq-whisper',
       configured: !!process.env.GROQ_API_KEY?.trim(),
       transcribe: () => transcribeWithGroq(file),
+    },
+    {
+      name: 'deepgram-nova',
+      configured: !!process.env.DEEPGRAM_API_KEY?.trim(),
+      transcribe: () => transcribeWithDeepgram(file),
     },
     {
       name: 'elevenlabs-scribe',
@@ -537,20 +588,33 @@ router.post('/transcribe-file', lexaraVoiceUpload.single('audio'), async (req: R
         'thank you', 'thanks', 'bye', 'goodbye', 'you',
       ]).has(normalizedTranscript);
 
-      if (
+      const requiresIndependentVerification =
         provider.name === 'groq-whisper'
-        && suspiciousGeneric
-        && (startedDuringPlayback || speechDurationMs < 1_200)
-      ) {
-        const verifier = providers.find(candidate => candidate.name === 'elevenlabs-scribe' && candidate.configured);
+        && (
+          startedDuringPlayback
+          || (
+            suspiciousGeneric
+            && speechDurationMs < 1_200
+          )
+        );
+
+      if (requiresIndependentVerification) {
+        const explicitControl = /^(?:wait|stop|no|hold on|hang on|actually|but wait|let me finish)\b/.test(normalizedTranscript);
+        const verifier = providers.find(candidate =>
+          candidate.name !== provider.name
+          && candidate.configured
+          && (candidate.name === 'deepgram-nova' || candidate.name === 'elevenlabs-scribe')
+        );
+
         if (verifier) {
           try {
             const verification = await verifier.transcribe();
             const verified = normalizeTranscript(verification.text);
             if (!verified || verified !== normalizedTranscript) {
-              logger.info('[LEXARA] Rejected suspicious generic transcript after ASR disagreement', {
+              logger.info('[LEXARA] Rejected playback-overlap transcript after independent ASR disagreement', {
                 primary: normalizedTranscript,
                 secondary: verified,
+                verifier: verifier.name,
                 speechDurationMs,
                 startedDuringPlayback,
               });
@@ -559,28 +623,45 @@ router.post('/transcribe-file', lexaraVoiceUpload.single('audio'), async (req: R
                 transcript: '',
                 isFinal: false,
                 rejected: true,
-                rejectionReason: 'generic_transcript_disagreement',
+                rejectionReason: 'independent_asr_disagreement',
                 provider: result.provider,
                 model: result.model,
                 bargeInProbe,
               });
             }
           } catch (verificationError) {
-            logger.info('[LEXARA] Suppressed suspicious generic transcript when verifier was unavailable', {
-              primary: normalizedTranscript,
-              error: verificationError instanceof Error ? verificationError.message : String(verificationError),
-            });
-            return res.json({
-              success: true,
-              transcript: '',
-              isFinal: false,
-              rejected: true,
-              rejectionReason: 'generic_transcript_unverified',
-              provider: result.provider,
-              model: result.model,
-              bargeInProbe,
-            });
+            if (startedDuringPlayback && !explicitControl) {
+              logger.info('[LEXARA] Suppressed playback-overlap transcript when independent verifier was unavailable', {
+                primary: normalizedTranscript,
+                verifier: verifier.name,
+                error: verificationError instanceof Error ? verificationError.message : String(verificationError),
+              });
+              return res.json({
+                success: true,
+                transcript: '',
+                isFinal: false,
+                rejected: true,
+                rejectionReason: 'playback_overlap_unverified',
+                provider: result.provider,
+                model: result.model,
+                bargeInProbe,
+              });
+            }
           }
+        } else if (startedDuringPlayback && !explicitControl && bargeInProbe) {
+          // Without an independent verifier, a playback-overlap probe never
+          // earns authority for an ordinary sentence. The client still permits
+          // explicit stop/wait/no controls and post-playback clean turns.
+          return res.json({
+            success: true,
+            transcript: '',
+            isFinal: false,
+            rejected: true,
+            rejectionReason: 'playback_overlap_no_independent_verifier',
+            provider: result.provider,
+            model: result.model,
+            bargeInProbe,
+          });
         }
       }
 

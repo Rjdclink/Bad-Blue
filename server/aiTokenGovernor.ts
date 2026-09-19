@@ -61,7 +61,7 @@ export enum AIProvider {
   CLAUDE_OPUS = 'claude_opus',
   // Platform providers (December 2025)
   OPENROUTER = 'openrouter',
-  HUGGINGFACE = 'huggingface',
+  XAI = 'xai',
   LMAI = 'lmai',
   // Additional providers (December 2025)
   COHERE = 'cohere',
@@ -69,7 +69,6 @@ export enum AIProvider {
   PERPLEXITY = 'perplexity',
   FIREWORKS = 'fireworks',
   CEREBRAS = 'cerebras',
-  SAMBANOVA = 'sambanova',
 }
 
 export enum UsageContext {

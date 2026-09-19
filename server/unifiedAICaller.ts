@@ -289,9 +289,9 @@ async function callTogether(
 }
 
 /**
- * Call Hugging Face Inference API
+ * Call xAI API
  */
-async function callHuggingFace(
+async function callXAI(
   apiKey: string,
   model: string,
   prompt: string,
@@ -302,23 +302,14 @@ async function callHuggingFace(
   const messages: Array<{ role: string; content: string }> = [];
   if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
   messages.push({ role: 'user', content: prompt });
-
-  const response = await fetch('https://router.huggingface.co/v1/chat/completions', {
+  const response = await fetch('https://api.x.ai/v1/chat/completions', {
     method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens }),
   });
-  if (!response.ok) {
-    throw new Error(`HuggingFace Router error (${response.status}): ${(await response.text()).slice(0, 500)}`);
-  }
+  if (!response.ok) throw new Error(`xAI API error (${response.status}): ${(await response.text()).slice(0, 500)}`);
   const data = await response.json();
-  return {
-    content: data.choices?.[0]?.message?.content || '',
-    tokensUsed: data.usage?.total_tokens,
-  };
+  return { content: data.choices?.[0]?.message?.content || '', tokensUsed: data.usage?.total_tokens };
 }
 
 /**
@@ -365,9 +356,9 @@ async function callCerebras(
 }
 
 /**
- * Call SambaNova API
+ * Call Fireworks API
  */
-async function callSambaNova(
+async function callFireworks(
   apiKey: string,
   model: string,
   prompt: string,
@@ -376,35 +367,16 @@ async function callSambaNova(
   maxTokens: number = 2000
 ): Promise<{ content: string; tokensUsed?: number }> {
   const messages: Array<{ role: string; content: string }> = [];
-  if (systemPrompt) {
-    messages.push({ role: 'system', content: systemPrompt });
-  }
+  if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
   messages.push({ role: 'user', content: prompt });
-
-  const response = await fetch('https://api.sambanova.ai/v1/chat/completions', {
+  const response = await fetch('https://api.fireworks.ai/inference/v1/chat/completions', {
     method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      temperature,
-      max_tokens: maxTokens,
-    }),
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens }),
   });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`SambaNova API error (${response.status}): ${errorText}`);
-  }
-
+  if (!response.ok) throw new Error(`Fireworks API error (${response.status}): ${(await response.text()).slice(0, 500)}`);
   const data = await response.json();
-  return {
-    content: data.choices?.[0]?.message?.content || '',
-    tokensUsed: data.usage?.total_tokens,
-  };
+  return { content: data.choices?.[0]?.message?.content || '', tokensUsed: data.usage?.total_tokens };
 }
 
 /**
@@ -492,14 +464,14 @@ export async function callAI(request: UnifiedAIRequest): Promise<UnifiedAIRespon
       case 'together':
         result = await callTogether(apiKey, model, request.prompt, request.systemPrompt, request.temperature, request.maxTokens);
         break;
-      case 'huggingface':
-        result = await callHuggingFace(apiKey, model, request.prompt, request.systemPrompt, request.temperature, request.maxTokens);
+      case 'xai':
+        result = await callXAI(apiKey, model, request.prompt, request.systemPrompt, request.temperature, request.maxTokens);
         break;
       case 'cerebras':
         result = await callCerebras(apiKey, model, request.prompt, request.systemPrompt, request.temperature, request.maxTokens);
         break;
-      case 'sambanova':
-        result = await callSambaNova(apiKey, model, request.prompt, request.systemPrompt, request.temperature, request.maxTokens);
+      case 'fireworks':
+        result = await callFireworks(apiKey, model, request.prompt, request.systemPrompt, request.temperature, request.maxTokens);
         break;
       default:
         throw new Error(`Unknown provider: ${provider}`);

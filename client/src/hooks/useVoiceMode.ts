@@ -267,6 +267,9 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
         noSpeechProbability: Number.isFinite(Number(payload?.quality?.noSpeechProbability))
           ? Number(payload.quality.noSpeechProbability)
           : undefined,
+        confidence: Number.isFinite(Number(payload?.quality?.confidence))
+          ? Number(payload.quality.confidence)
+          : undefined,
         utteranceId,
         startedDuringPlayback,
       });
@@ -345,6 +348,9 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
           : undefined,
         noSpeechProbability: Number.isFinite(Number(payload?.quality?.noSpeechProbability))
           ? Number(payload.quality.noSpeechProbability)
+          : undefined,
+        confidence: Number.isFinite(Number(payload?.quality?.confidence))
+          ? Number(payload.quality.confidence)
           : undefined,
         bargeInProbe: true,
         utteranceId,

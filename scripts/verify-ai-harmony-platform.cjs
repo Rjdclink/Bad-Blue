@@ -40,6 +40,20 @@ const registrySection = registry.split('HARMONY_17_PARTICIPANTS')[1]?.split('if 
 const participantCount = (registrySection.match(/provider:\s*PROVIDER\./g) || []).length;
 must(participantCount === 17, `Harmony registry contains exactly 17 logical participants (found ${participantCount})`);
 
+must(
+  !registry.includes('HUGGINGFACE') &&
+    !registry.includes('SAMBANOVA') &&
+    registry.includes('PROVIDER.XAI') &&
+    registry.includes('PROVIDER.FIREWORKS') &&
+    collaboration.includes("return 'xai'") &&
+    collaboration.includes("return 'fireworks'") &&
+    !collaboration.includes('HUGGINGFACE') &&
+    !collaboration.includes('SAMBANOVA') &&
+    !harmonyWarmup.includes('HUGGINGFACE') &&
+    !harmonyWarmup.includes('SAMBANOVA'),
+  'blocked credit/payment providers are absent from active Harmony and replaced by independent xAI/Fireworks quota domains',
+);
+
 for (const model of [
   'gemini-3.8-flash',
   'claude-sonnet-5',
@@ -53,7 +67,8 @@ for (const model of [
   'qwen/qwen3.8-max-0902',
   'openai/gpt-5.6-luna',
   'command-a-plus-05-2026',
-  'MiniMax-M3',
+  'grok-4.6',
+  'accounts/fireworks/models/gpt-oss-120b',
 ]) {
   must(registry.includes(model), `current Harmony registry includes ${model}`);
 }
