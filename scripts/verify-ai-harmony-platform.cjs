@@ -163,12 +163,14 @@ must(
 );
 
 must(
-  groq.includes("'llama-3.1-8b-instant'") &&
-  groq.includes("'llama-3.3-70b-versatile'") &&
+  !groq.includes("'llama-3.1-8b-instant',") &&
+  !groq.includes("'llama-3.3-70b-versatile',") &&
   groq.includes("'openai/gpt-oss-20b'") &&
   groq.includes("'openai/gpt-oss-120b'") &&
+  groq.includes("'qwen/qwen3.6-27b'") &&
+  groq.includes("'qwen/qwen3.8-27b'") &&
   groq.includes('orpheus|canopylabs'),
-  'Groq recovery uses current production text models while excluding preview speech models from chat routing',
+  'Groq recovery avoids shutdown developer-tier Llama IDs and uses current permitted text-model candidates while excluding speech models',
 );
 
 const activeRuntimeFiles = [
