@@ -95,8 +95,10 @@ const forbidPattern = (source, pattern, message) => {
 
 requirePattern(runtimeDb, /SUPABASE_DATABASE_URL_OVERFLOW/, 'runtime DB must use SUPABASE_DATABASE_URL_OVERFLOW');
 requirePattern(runtimeDb, /primaryFallbackUsed:\s*false/, 'runtime DB must declare no Primary fallback');
-requirePattern(runtimeDb, /export\s+const\s+pool\s*=\s*new\s+Pool/, 'ordinary Overflow runtime pool must be owned by runtime DB');
-requirePattern(runtimeDb, /export\s+const\s+coordinationPool\s*=\s*new\s+Pool/, 'session-capable Overflow coordination pool must be owned by runtime DB');
+requirePattern(runtimeDb, /export\s+let\s+pool[\s\S]{0,120}createOrdinaryPool\(\)/, 'ordinary Overflow runtime pool must be lifecycle-owned and reopenable by runtime DB');
+requirePattern(runtimeDb, /export\s+let\s+coordinationPool[\s\S]{0,120}createCoordinationPool\(\)/, 'session-capable Overflow coordination pool must be lifecycle-owned and reopenable by runtime DB');
+requirePattern(runtimeDb, /export async function closeCryptocrawlRuntimeDatabasePools\(\)/, 'master stop must explicitly close all CryptoCrawler Overflow sockets');
+requirePattern(runtimeDb, /export function reopenCryptocrawlRuntimeDatabasePools\(\)/, 'manual restart must explicitly recreate CryptoCrawler Overflow pools');
 forbidPattern(runtimeDb, /process\.env\.SUPABASE_DATABASE_URL(?!_OVERFLOW)/, 'runtime DB must not read Primary SUPABASE_DATABASE_URL');
 
 requirePattern(coordination, /from\s+['"]\.\/cryptocrawl-runtime-database\.js['"]/, 'coordination must consume the Overflow runtime DB pool');
