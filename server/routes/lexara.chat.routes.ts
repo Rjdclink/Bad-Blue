@@ -159,6 +159,9 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       audioBase64?: string;
       mimeType?: string;
       durationMs?: number;
+      provider?: string;
+      model?: string;
+      voiceId?: string | null;
     } | null = null;
 
     // Backward-compatible path for callers that still request bundled audio.
@@ -166,19 +169,18 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
     // arrives, which avoids serializing legal reasoning behind audio generation.
     if (includeAudio) {
       try {
-        const { synthesizeLexaraSpeech } = await import('../lexara/LexaraTTSRouter');
-        const ttsResult = await synthesizeLexaraSpeech({
-          text: responseText,
-          context: 'general',
-        });
+        const { synthesizeLexaraSpeechWithFailover } = await import('../lexara/LexaraTTSMesh');
+        const ttsResult = await synthesizeLexaraSpeechWithFailover(responseText);
 
         audioData = {
           audioBase64: ttsResult.audioData.toString('base64'),
           mimeType: ttsResult.mimeType,
-          durationMs: ttsResult.durationMs,
+          provider: ttsResult.provider,
+          model: ttsResult.model,
+          voiceId: ttsResult.voiceId,
         };
       } catch (ttsError) {
-        log.warn('[LEXARA] Bundled TTS unavailable; returning text', {
+        log.warn('[LEXARA] Bundled adaptive TTS unavailable; returning text', {
           error: ttsError instanceof Error ? ttsError.message : 'Unknown error',
         });
       }
