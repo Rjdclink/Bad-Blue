@@ -39,6 +39,9 @@ const MAX_HISTORY_MESSAGES = 16;
 const MAX_HISTORY_CHARACTERS = 14000;
 const MAX_PROMPT_CHARACTERS = 7000;
 const LIVE_RESEARCH_BUDGET_MS = 700;
+const LIVE_REASONING_DEADLINE_MS = 6_000;
+const LIVE_REASONING_INITIAL_ATTEMPT_MS = 3_500;
+const LIVE_REASONING_MAX_FALLBACKS = 3;
 
 export type LexaraAcknowledgementKind =
   | 'presence'
@@ -346,6 +349,11 @@ export async function generateLexaraConversationResponse(
   let text = '';
   const harmonyStartedAt = Date.now();
   if (harmonyProviders.length > 0) {
+    const harmonyController = new AbortController();
+    const relayHarmonyAbort = () => harmonyController.abort();
+    if (context.signal?.aborted) harmonyController.abort();
+    else context.signal?.addEventListener('abort', relayHarmonyAbort, { once: true });
+    const harmonyDeadline = setTimeout(() => harmonyController.abort(), LIVE_REASONING_DEADLINE_MS);
     try {
       const harmony = await AICollaborationOrchestrator.orchestrateCollaboration(
         'lexara-live-conversation',
@@ -365,9 +373,9 @@ export async function generateLexaraConversationResponse(
           providerPolicy: 'capability-first',
           systemPrompt,
           maxParticipants: 3,
-          requestTimeoutMs: 1_800,
-          maxFallbacks: 2,
-          signal: context.signal,
+          requestTimeoutMs: LIVE_REASONING_INITIAL_ATTEMPT_MS,
+          maxFallbacks: LIVE_REASONING_MAX_FALLBACKS,
+          signal: harmonyController.signal,
         },
       );
       if (!/^No successful responses from collaboration\.?$/i.test(harmony.finalAnswer.trim())) {
@@ -377,6 +385,9 @@ export async function generateLexaraConversationResponse(
       console.warn('[LEXARA Harmony] Live provider collaboration unavailable', {
         error: error instanceof Error ? error.message : String(error),
       });
+    } finally {
+      clearTimeout(harmonyDeadline);
+      context.signal?.removeEventListener('abort', relayHarmonyAbort);
     }
   }
 
