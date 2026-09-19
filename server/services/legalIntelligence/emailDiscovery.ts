@@ -1,7 +1,7 @@
 /**
  * Email Discovery Service
  * TheHarvester-style email intelligence for legal contacts
- * Combines search engines, PGP, certificate transparency, and pattern generation
+ * Combines search engines, official-domain contacts, certificate transparency, and pattern generation
  */
 
 import type {
@@ -81,33 +81,73 @@ export class EmailDiscoveryService {
   }
 
   /**
-   * Query PGP key servers for email addresses
-   * TheHarvester pattern: keys.openpgp.org queries
-   * Note: PGP key server search is limited - this implementation queries by domain
+   * Retrieve public role-based contacts from an official domain.
+   * This intentionally ignores person-specific mailbox names and only returns
+   * organizational addresses such as FOIA/records/contact/legal/press.
    */
-  private async searchPGPKeys(domain: string): Promise<EmailResult[]> {
-    const results: EmailResult[] = [];
-    const cacheKey = `pgp:${domain}`;
+  private async searchOfficialRoleContacts(domain: string): Promise<EmailResult[]> {
+    const normalizedDomain = domain.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '');
+    if (!normalizedDomain || !/^[a-z0-9.-]+$/.test(normalizedDomain)) return [];
+
+    const cacheKey = `official-role-contacts:${normalizedDomain}`;
     const cached = await cacheService.get<EmailResult[]>(cacheKey);
     if (cached) return cached;
 
-    try {
-      // Note: keys.openpgp.org doesn't support wildcard email searches directly
-      // This is a placeholder for future implementation with proper PGP key server API
-      // Actual implementation would require iterating through known contacts or
-      // using a different PGP key server that supports domain-wide searches
-      
-      console.log(`[EmailDiscovery] PGP search for ${domain} - limited support, placeholder implementation`);
-      
-      // Cache empty result for 48 hours to avoid repeated failed attempts
-      await cacheService.set(cacheKey, results, 'warm');
+    const allowedPrefixes = new Set([
+      'foia', 'records', 'publicrecords', 'openrecords', 'clerk', 'info',
+      'contact', 'legal', 'press', 'media', 'communications', 'admin',
+      'privacy', 'compliance', 'support',
+    ]);
+    const paths = ['/', '/contact', '/contact-us', '/foia', '/records'];
+    const found = new Map<string, EmailResult>();
 
-      console.log(`[EmailDiscovery] Found ${results.length} emails from PGP`);
-      return results;
-    } catch (error) {
-      console.error('[EmailDiscovery] PGP search error:', error);
-      return [];
+    for (const path of paths) {
+      try {
+        const response = await fetch(`https://${normalizedDomain}${path}`, {
+          headers: {
+            'User-Agent': 'LegalWhat-PANTHEON/1.0 (public legal contact research)',
+            'Accept': 'text/html,application/xhtml+xml',
+          },
+          redirect: 'follow',
+          signal: AbortSignal.timeout(6_000),
+        });
+        if (!response.ok) continue;
+
+        const finalUrl = new URL(response.url);
+        if (
+          finalUrl.hostname !== normalizedDomain &&
+          !finalUrl.hostname.endsWith(`.${normalizedDomain}`)
+        ) {
+          continue;
+        }
+
+        const html = await response.text();
+        const matches = html.match(this.emailRegex) || [];
+        for (const rawEmail of matches) {
+          const email = rawEmail.toLowerCase().replace(/[),.;:]+$/, '');
+          const [local, emailDomain] = email.split('@');
+          if (!local || emailDomain !== normalizedDomain || !allowedPrefixes.has(local)) continue;
+          if (!found.has(email)) {
+            found.set(email, {
+              email,
+              source: 'official-site',
+              confidence: 90,
+              metadata: {
+                domain: normalizedDomain,
+                department: local,
+              },
+              discoveredAt: new Date(),
+            });
+          }
+        }
+      } catch {
+        // Individual public page failure is local.
+      }
     }
+
+    const results = Array.from(found.values());
+    await cacheService.set(cacheKey, results, 'warm');
+    return results;
   }
 
   /**
@@ -209,6 +249,16 @@ export class EmailDiscoveryService {
       // Aggregate all email results
       for (const results of searchResults) {
         for (const result of results) {
+          if (!emailMap.has(result.email)) {
+            emailMap.set(result.email, result);
+          }
+        }
+      }
+
+      // Read role-based contacts directly from the agency's official domain.
+      if (agencyDomain) {
+        const officialContacts = await this.searchOfficialRoleContacts(agencyDomain);
+        for (const result of officialContacts) {
           if (!emailMap.has(result.email)) {
             emailMap.set(result.email, result);
           }

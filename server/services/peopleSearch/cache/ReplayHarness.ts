@@ -27,6 +27,7 @@ import {
 } from '../router/ExtractionLedger';
 import type { StoredArtifact, ArtifactCollection, ArtifactHandle, ArtifactVault } from './ArtifactVault';
 import type { ExtractionPattern, PatternLearner } from './PatternLearner';
+import * as cheerio from 'cheerio';
 
 // ============================================
 // REPLAY TYPES
@@ -142,29 +143,15 @@ export const DEFAULT_REPLAY_CONFIG: ReplayHarnessConfig = {
  * Extract value from HTML using CSS selector
  */
 function extractWithSelector(html: string, selector: string): string | null {
-  // Simple regex-based extraction for common patterns
-  // In production, would use proper DOM parser
-  
-  // Handle class selectors
-  if (selector.startsWith('.')) {
-    const className = selector.substring(1);
-    const regex = new RegExp(`class=["'][^"']*${className}[^"']*["'][^>]*>([^<]+)<`, 'i');
-    const match = html.match(regex);
-    return match ? match[1].trim() : null;
+  try {
+    const $ = cheerio.load(html);
+    const element = $(selector).first();
+    if (element.length === 0) return null;
+    const value = element.text().replace(/\s+/g, ' ').trim();
+    return value || null;
+  } catch {
+    return null;
   }
-  
-  // Handle ID selectors
-  if (selector.startsWith('#')) {
-    const id = selector.substring(1);
-    const regex = new RegExp(`id=["']${id}["'][^>]*>([^<]+)<`, 'i');
-    const match = html.match(regex);
-    return match ? match[1].trim() : null;
-  }
-  
-  // Handle tag selectors
-  const regex = new RegExp(`<${selector}[^>]*>([^<]+)</${selector}>`, 'i');
-  const match = html.match(regex);
-  return match ? match[1].trim() : null;
 }
 
 /**

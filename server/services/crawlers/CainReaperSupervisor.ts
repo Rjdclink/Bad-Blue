@@ -40,6 +40,9 @@ export class CainReaperSupervisor {
       })),
       timeWindow: 60_000,
     });
+    if (reaper.action !== 'none') {
+      this.cain.recordReaperIntervention();
+    }
     return { cain, reaper };
   }
 }

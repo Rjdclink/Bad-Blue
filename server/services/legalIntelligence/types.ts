@@ -5,7 +5,7 @@
 
 export interface EmailResult {
   email: string;
-  source: 'google' | 'bing' | 'pgp' | 'cert' | 'dns' | 'hunter' | 'pattern';
+  source: 'google' | 'bing' | 'official-site' | 'cert' | 'dns' | 'hunter' | 'pattern';
   confidence: number;
   metadata: {
     firstName?: string;

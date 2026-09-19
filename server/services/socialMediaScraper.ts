@@ -11,6 +11,7 @@
  */
 
 import { logger } from '../logger';
+import * as cheerio from 'cheerio';
 
 const log = logger.child({ component: 'socialMediaScraper' });
 
@@ -154,8 +155,7 @@ export class SocialMediaScraperService {
 
       const html = await response.text();
       
-      // Parse profile from HTML
-      // Note: This is a simplified parser - production would use cheerio or similar
+      // Parse profile from the returned public HTML.
       const profile = this.parseNitterHTML(html, username, instance.url);
       
       return profile;
@@ -182,40 +182,44 @@ export class SocialMediaScraperService {
     };
 
     try {
-      // Extract display name
-      const displayNameMatch = html.match(/<title>([^(]+)\s*\(/);
-      if (displayNameMatch) {
-        profile.displayName = displayNameMatch[1].trim();
+      const $ = cheerio.load(html);
+      const text = (selector: string): string | undefined => {
+        const value = $(selector).first().text().replace(/\s+/g, ' ').trim();
+        return value || undefined;
+      };
+
+      profile.displayName =
+        text('.profile-card-fullname') ||
+        text('.profile-card .fullname') ||
+        $('title').text().split('(')[0]?.trim() ||
+        undefined;
+      profile.bio = text('.profile-bio');
+      profile.location = text('.profile-location');
+      profile.website =
+        $('.profile-website a').first().attr('href') ||
+        text('.profile-website');
+      const joinedText = text('.profile-joindate');
+      if (joinedText) {
+        const parsed = new Date(joinedText.replace(/^Joined\s+/i, ''));
+        if (!Number.isNaN(parsed.getTime())) profile.joined = parsed;
       }
 
-      // Extract bio
-      const bioMatch = html.match(/<div class="profile-bio[^"]*">([^<]*)<\/div>/);
-      if (bioMatch) {
-        profile.bio = bioMatch[1].trim();
-      }
+      $('.profile-stat').each((_index, element) => {
+        const header = $(element).find('.profile-stat-header').text().trim().toLowerCase();
+        const rawValue = $(element).find('.profile-stat-num').text().trim();
+        if (!rawValue) return;
+        const value = this.parseStatNumber(rawValue);
+        if (!Number.isFinite(value)) return;
+        if (header.includes('followers')) profile.followers = value;
+        else if (header.includes('following')) profile.following = value;
+        else if (header.includes('tweets') || header.includes('posts')) profile.tweets = value;
+      });
 
-      // Extract location
-      const locationMatch = html.match(/<div class="profile-location[^"]*">([^<]*)<\/div>/);
-      if (locationMatch) {
-        profile.location = locationMatch[1].trim();
-      }
-
-      // Extract follower/following counts
-      const followersMatch = html.match(/<span class="profile-stat-num">([0-9,KM]+)<\/span>\s*<span class="profile-stat-header">Followers/i);
-      if (followersMatch) {
-        profile.followers = this.parseStatNumber(followersMatch[1]);
-      }
-
-      const followingMatch = html.match(/<span class="profile-stat-num">([0-9,KM]+)<\/span>\s*<span class="profile-stat-header">Following/i);
-      if (followingMatch) {
-        profile.following = this.parseStatNumber(followingMatch[1]);
-      }
-
-      const tweetsMatch = html.match(/<span class="profile-stat-num">([0-9,KM]+)<\/span>\s*<span class="profile-stat-header">Tweets/i);
-      if (tweetsMatch) {
-        profile.tweets = this.parseStatNumber(tweetsMatch[1]);
-      }
-
+      profile.verified = $('.verified-icon, .icon-ok, [title*="Verified"]').length > 0;
+      profile.profileImageUrl =
+        $('.profile-card-avatar img, .profile-pic img').first().attr('src') || undefined;
+      profile.bannerImageUrl =
+        $('.profile-banner img').first().attr('src') || undefined;
     } catch (error) {
       log.warn(`Error parsing Nitter HTML: ${error}`);
     }

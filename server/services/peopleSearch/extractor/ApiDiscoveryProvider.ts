@@ -79,7 +79,7 @@ export class ApiDiscoveryProvider implements ExtractorProvider {
     }
     
     // Try to extract data from discovered endpoints
-    const extracted = await this.extractFromApis(apiEndpoints, rules);
+    const extracted = await this.extractFromApis(apiEndpoints, rules, html);
     
     if (extracted.success) {
       return {
@@ -150,14 +150,20 @@ export class ApiDiscoveryProvider implements ExtractorProvider {
    */
   private async extractFromApis(
     endpoints: string[],
-    rules: ExtractionRules
+    rules: ExtractionRules,
+    html: string
   ): Promise<{ success: boolean; data?: Partial<ExtractedData> }> {
-    // For inline data (Next.js, Redux state)
+    // Prefer embedded application state because it is already part of the fetched
+    // document and does not require another network request.
     const inlineEndpoint = endpoints.find(e => e.startsWith('inline:'));
     if (inlineEndpoint) {
-      // TODO: Parse inline JSON data
-      // This would extract data from __NEXT_DATA__ or __INITIAL_STATE__
-      return { success: false };
+      const inlineData = this.extractInlineState(html, inlineEndpoint);
+      if (inlineData !== undefined) {
+        const extracted = this.normalizeStructuredData(inlineData, rules);
+        if (extracted) {
+          return { success: true, data: extracted };
+        }
+      }
     }
     
     // For external API endpoints
@@ -174,25 +180,13 @@ export class ApiDiscoveryProvider implements ExtractorProvider {
         if (response.ok) {
           const data = await response.json();
           
-          // Extract basic fields from JSON
-          const extracted: Partial<ExtractedData> = {
-            metadata: {},
-          };
-          
-          // Try to find title/content in JSON
-          if (typeof data === 'object' && data !== null) {
-            if ('title' in data) extracted.title = String(data.title);
-            if ('content' in data) extracted.mainText = String(data.content);
-            if ('body' in data) extracted.mainText = String(data.body);
-            if ('description' in data) {
-              extracted.metadata!['description'] = String(data.description);
-            }
+          const extracted = this.normalizeStructuredData(data, rules);
+          if (extracted) {
+            return {
+              success: true,
+              data: extracted,
+            };
           }
-          
-          return {
-            success: Object.keys(extracted).length > 1,
-            data: extracted,
-          };
         }
       } catch (error) {
         // API call failed, continue
@@ -200,6 +194,78 @@ export class ApiDiscoveryProvider implements ExtractorProvider {
     }
     
     return { success: false };
+  }
+
+  private extractInlineState(html: string, endpoint: string): unknown {
+    if (endpoint === 'inline:__NEXT_DATA__') {
+      const match = html.match(/<script[^>]*id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i);
+      if (!match?.[1]) return undefined;
+      try {
+        return JSON.parse(match[1]);
+      } catch {
+        return undefined;
+      }
+    }
+
+    if (endpoint === 'inline:__INITIAL_STATE__') {
+      const match = html.match(/(?:window\.)?__INITIAL_STATE__\s*=\s*([\s\S]*?);\s*(?:<\/script>|$)/i);
+      if (!match?.[1]) return undefined;
+      try {
+        return JSON.parse(match[1]);
+      } catch {
+        return undefined;
+      }
+    }
+
+    return undefined;
+  }
+
+  private normalizeStructuredData(data: unknown, rules: ExtractionRules): Partial<ExtractedData> | null {
+    if (data === null || data === undefined) return null;
+
+    const root = typeof data === 'object' ? data as Record<string, unknown> : { value: data };
+    const metadata: Record<string, string> = {};
+    const stringValues: string[] = [];
+    const seen = new Set<unknown>();
+
+    const walk = (value: unknown, depth: number, key?: string): void => {
+      if (depth > 6 || value === null || value === undefined || seen.has(value)) return;
+      if (typeof value === 'string') {
+        const clean = value.replace(/\s+/g, ' ').trim();
+        if (clean) {
+          stringValues.push(clean);
+          if (key && /^(description|summary|subtitle|headline)$/i.test(key) && !metadata[key]) {
+            metadata[key] = clean.slice(0, 1000);
+          }
+        }
+        return;
+      }
+      if (typeof value !== 'object') return;
+      seen.add(value);
+      if (Array.isArray(value)) {
+        value.slice(0, 100).forEach(item => walk(item, depth + 1, key));
+        return;
+      }
+      Object.entries(value as Record<string, unknown>).slice(0, 200).forEach(([childKey, childValue]) => {
+        walk(childValue, depth + 1, childKey);
+      });
+    };
+
+    walk(root, 0);
+
+    const titleCandidate = ['title', 'name', 'headline']
+      .map(key => root[key])
+      .find(value => typeof value === 'string') as string | undefined;
+
+    const uniqueText = Array.from(new Set(stringValues));
+    const mainText = uniqueText.join(' ').slice(0, 10000);
+    if (!titleCandidate && !mainText) return null;
+
+    const extracted: Partial<ExtractedData> = {};
+    if (rules.extractTitle !== false && titleCandidate) extracted.title = titleCandidate.trim();
+    if (rules.extractMainText !== false && mainText) extracted.mainText = mainText;
+    if (rules.extractMetadata) extracted.metadata = metadata;
+    return extracted;
   }
   
   /**
