@@ -35,6 +35,7 @@ export interface MistralOptions {
   maxTokens?: number;
   model?: string;
   useJSON?: boolean;
+  signal?: AbortSignal;
 }
 
 /**
@@ -68,7 +69,7 @@ export async function callMistral(
       temperature: options.temperature || 0.7,
       maxTokens: options.maxTokens || 2000,
       responseFormat: options.useJSON ? { type: 'json_object' } : undefined,
-    });
+    }, options.signal ? { fetchOptions: { signal: options.signal } } : undefined);
 
     const rawContent = response.choices?.[0]?.message?.content;
     if (!rawContent) {
