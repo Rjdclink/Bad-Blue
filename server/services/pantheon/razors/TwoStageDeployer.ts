@@ -54,13 +54,17 @@ export class TwoStageDeployer {
    * contact/location/relationship data are withheld before leaving PANTHEON.
    * All six secondary public-data crawlers execute route-locally in parallel.
    */
-  async deployBackgroundReport(target: string, html?: string): Promise<BackgroundReportDeployment> {
+  async deployBackgroundReport(target: string, html?: string, reportBudgetMs?: number): Promise<BackgroundReportDeployment> {
     const startedAt = Date.now();
-    const content = html || await this.fetchContent(target);
+    const boundedBudget = Math.max(30_000, reportBudgetMs || 60_000);
+    const fetchTimeoutMs = Math.min(30_000, Math.max(5_000, Math.floor(boundedBudget / 30)));
+    const razorTimeoutMs = Math.min(60_000, Math.max(STAGE_1_TIMEOUT, Math.floor(boundedBudget / 20)));
+    const secondaryTimeoutMs = Math.min(120_000, Math.max(10_000, Math.floor(boundedBudget / 12)));
+    const content = html || await this.fetchContent(target, fetchTimeoutMs);
     const razorResults = content
-      ? (await this.deployStage1(content, target)).map(result => this.sanitizeBackgroundRazorResult(result))
+      ? (await this.deployStage1(content, target, razorTimeoutMs)).map(result => this.sanitizeBackgroundRazorResult(result))
       : [];
-    const secondaryResults = await this.deployAllSecondary(target);
+    const secondaryResults = await this.deployAllSecondary(target, secondaryTimeoutMs);
 
     return {
       razorResults,
@@ -100,7 +104,7 @@ export class TwoStageDeployer {
     return result;
   }
 
-  private async deployAllSecondary(target: string): Promise<BackgroundSecondaryResult[]> {
+  private async deployAllSecondary(target: string, perCrawlerTimeoutMs: number = 10_000): Promise<BackgroundSecondaryResult[]> {
     const specs: Array<{
       crawler: BackgroundSecondaryResult['crawler'];
       type: CrawlerType;
@@ -128,7 +132,7 @@ export class TwoStageDeployer {
         const signatures = await Promise.race([
           crawler.execute(),
           new Promise<EntropySignature[]>((_, reject) =>
-            setTimeout(() => reject(new Error(`${spec.crawler}_timeout`)), 10_000)
+            setTimeout(() => reject(new Error(`${spec.crawler}_timeout`)), perCrawlerTimeoutMs)
           ),
         ]);
         return { crawler: spec.crawler, signatures } satisfies BackgroundSecondaryResult;
@@ -207,8 +211,8 @@ export class TwoStageDeployer {
   /**
    * Stage 1: Deploy all 10 RAZORS in parallel
    */
-  private async deployStage1(html: string, url: string): Promise<RazorResult[]> {
-    const perRazorTimeout = STAGE_1_TIMEOUT / this.razors.length;
+  private async deployStage1(html: string, url: string, overallTimeoutMs: number = STAGE_1_TIMEOUT): Promise<RazorResult[]> {
+    const perRazorTimeout = overallTimeoutMs / this.razors.length;
     
     const promises = this.razors.map(razor => 
       razor.run(html, url, perRazorTimeout)
@@ -219,7 +223,7 @@ export class TwoStageDeployer {
       const results = await Promise.race([
         Promise.all(promises),
         new Promise<RazorResult[]>((_, reject) => 
-          setTimeout(() => reject(new Error('stage1_timeout')), STAGE_1_TIMEOUT)
+          setTimeout(() => reject(new Error('stage1_timeout')), overallTimeoutMs)
         )
       ]);
       return results;
@@ -281,10 +285,10 @@ export class TwoStageDeployer {
   /**
    * Fetch content from target URL
    */
-  private async fetchContent(url: string): Promise<string | null> {
+  private async fetchContent(url: string, timeoutMs: number = 5000): Promise<string | null> {
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 5000);
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
       
       const response = await fetch(url, {
         headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PantheonBot/1.0)' },
