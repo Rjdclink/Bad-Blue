@@ -68,7 +68,7 @@ const SERVER_VOICE_CONFIRM_MS = 120;
 const SERVER_VOICE_RECENCY_MS = 90;
 const SERVER_MAX_UTTERANCE_MS = 45_000;
 const SERVER_TRANSCRIBE_TIMEOUT_MS = 10_000;
-const SERVER_BARGE_IN_PROBE_MS = 450;
+const SERVER_BARGE_IN_PROBE_MS = 320;
 const SERVER_BARGE_IN_PROBE_TIMEOUT_MS = 2_500;
 
 function preferredMicrophoneConstraints(): MediaTrackConstraints {
@@ -79,6 +79,7 @@ function preferredMicrophoneConstraints(): MediaTrackConstraints {
   if (supported.noiseSuppression) constraints.noiseSuppression = true;
   if (supported.autoGainControl) constraints.autoGainControl = true;
   if (supported.channelCount) constraints.channelCount = { ideal: 1 };
+  if (supported.latency) constraints.latency = { ideal: 0.02 };
 
   return constraints;
 }
