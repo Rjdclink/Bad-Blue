@@ -24,6 +24,7 @@ import { LAW_TYPE_DATA, type LawTypeInfo } from "@shared/lawTypes";
 import { SEOHead } from "@/components/SEOHead";
 import { AppHeader } from "@/components/AppHeader";
 import "./welcome-library.css";
+import "./welcome-statues.css";
 
 const LEATHER_PALETTE = [
   "#3b1717",
@@ -67,6 +68,26 @@ const SERVICE_DESTINATIONS = [
     icon: Search,
   },
 ] as const;
+
+const SHELF_STATUES = [
+  [{ key: "crouch", className: "shelf-statue-crouch shelf-statue-mobile-only" }],
+  [{ key: "standing", className: "shelf-statue-standing shelf-statue-mobile-only" }],
+  [{ key: "reclining", className: "shelf-statue-reclining shelf-statue-mobile-only" }],
+  [
+    { key: "kneeling", className: "shelf-statue-kneeling shelf-statue-mobile-only" },
+    { key: "westie", className: "shelf-statue-westie shelf-statue-persistent" },
+  ],
+] as const;
+
+/**
+ * Decorative shelf filler only. It deliberately has no click, focus, route,
+ * label, or other product behavior.
+ */
+const ShelfStatue = ({ className }: { className: string }) => (
+  <span className={`shelf-statue ${className}`} aria-hidden="true">
+    <span className="shelf-statue-art" />
+  </span>
+);
 
 const BookSpine = ({
   lawType,
@@ -193,6 +214,12 @@ export default function WelcomePage() {
                       />
                     );
                   })}
+                  {SHELF_STATUES[shelfIndex]?.map((statue) => (
+                    <ShelfStatue
+                      key={`shelf-statue-${shelfIndex}-${statue.key}`}
+                      className={statue.className}
+                    />
+                  ))}
                 </div>
                 <div className="wood-shelf-edge" aria-hidden="true" />
               </div>
