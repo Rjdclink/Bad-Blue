@@ -32,6 +32,7 @@ export interface ClaudeOptions {
   maxTokens?: number;
   model?: string;
   useJSON?: boolean;
+  signal?: AbortSignal;
 }
 
 /**
@@ -64,7 +65,7 @@ export async function callClaude(
           content: prompt
         }
       ]
-    });
+    }, options.signal ? { signal: options.signal } : undefined);
 
     const extractText = (message: Awaited<ReturnType<typeof createMessage>>) =>
       message.content

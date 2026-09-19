@@ -15,6 +15,7 @@ export interface GeminiOptions {
   maxTokens?: number;
   model?: string;
   useJSON?: boolean;
+  signal?: AbortSignal;
 }
 
 // GEMINI_API_KEY is the canonical credential for this service. GOOGLE_API_KEY
@@ -109,6 +110,7 @@ export async function callGemini(
   const config: any = {
     temperature: options.temperature ?? 0.7,
     maxOutputTokens: maxTokens,
+    ...(options.signal ? { abortSignal: options.signal } : {}),
   };
 
   if (options.useJSON) {
