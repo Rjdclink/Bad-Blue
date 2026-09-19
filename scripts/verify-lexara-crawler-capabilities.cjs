@@ -83,6 +83,8 @@ const pantheonSelector = fs.readFileSync('client/src/components/DoomsdayClockSel
 const pantheonProgress = fs.readFileSync('client/src/components/PantheonProgressTracker.tsx', 'utf8');
 const pantheonReportConfig = fs.readFileSync('shared/pantheonReportConfig.ts', 'utf8');
 const pantheonReportJobs = fs.readFileSync('server/services/pantheon/PantheonBackgroundReportJob.ts', 'utf8');
+const pantheonReportStore = fs.readFileSync('server/services/pantheon/PantheonReportStore.ts', 'utf8');
+const pantheonCss = fs.readFileSync('client/src/pages/pantheon.css', 'utf8');
 const pantheonRoutes = fs.readFileSync('server/routes.ts', 'utf8');
 const crawlerSelection = fs.readFileSync('server/services/crawlers/CrawlerSelectionUtility.ts', 'utf8');
 const seedFirstConfig = fs.readFileSync('server/lib/seedFirstConfig.ts', 'utf8');
@@ -118,6 +120,27 @@ if (
   !pantheonPage.includes('isPeopleSearchReport')
 ) {
   fail('Pantheon page is not using the durable refresh-safe report workspace');
+}
+if (
+  !pantheonReportStore.includes("EAUTHQUERY") ||
+  !pantheonReportStore.includes("local report journal") ||
+  !pantheonReportStore.includes("writeJournal(record)") ||
+  !pantheonRoutes.includes("createPantheonReportRecord") ||
+  !pantheonRoutes.includes("getPantheonReportRecord") ||
+  !pantheonReportJobs.includes("updatePantheonReportRecord")
+) {
+  fail('Pantheon report jobs can still be aborted by a transient persistence outage');
+}
+if (
+  pantheonPage.includes('Report Workspace') ||
+  pantheonPage.includes('will populate here') ||
+  !pantheonPage.includes('report-document') ||
+  !pantheonPage.includes('Online Mentions') ||
+  !pantheonPage.includes('Risk & Reputation') ||
+  !pantheonCss.includes('max-width: none') ||
+  !pantheonCss.includes('min-height: 65vh')
+) {
+  fail('Pantheon page does not expose the full permanent report document area');
 }
 if (
   !pantheonRoutes.includes("app.post('/api/osint/report-jobs'") ||
