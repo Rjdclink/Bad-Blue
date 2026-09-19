@@ -82,8 +82,7 @@ export const AI_PROVIDERS = {
   PERPLEXITY: 'perplexity',
   FIREWORKS: 'fireworks',
   CEREBRAS: 'cerebras',
-  SAMBANOVA: 'sambanova',
-  HUGGINGFACE: 'huggingface'
+  XAI: 'xai'
 } as const;
 
 export type AIProvider = typeof AI_PROVIDERS[keyof typeof AI_PROVIDERS];
@@ -101,7 +100,6 @@ export const OPENROUTER_MODELS = {
   PERPLEXITY_SONAR: 'perplexity/sonar-pro',             // Perplexity - Best: Sonar Pro (web-grounded)
   QWEN_72B: 'qwen/qwen3.8-max-0902',                     // Legacy key -> current Qwen3.8 Max
   CLOUDFLARE_LLAMA: 'openrouter/auto',                  // Legacy alias -> current gateway-selected model
-  SAMBANOVA_LLAMA: 'MiniMax-M3',                        // Legacy alias -> current SambaNova participant
   GOOGLE_GEMMA: 'google/gemini-3.8-flash',              // Legacy alias -> current Gemini participant
 } as const;
 
