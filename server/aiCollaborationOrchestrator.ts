@@ -458,7 +458,7 @@ export class AICollaborationOrchestrator {
       return {
         ...task,
         systemPrompt: options.systemPrompt,
-        requestTimeoutMs: task.requestTimeoutMs || options.requestTimeoutMs || task.timeout,
+        requestTimeoutMs: task.requestTimeoutMs || task.timeout || options.requestTimeoutMs,
         maxFallbacks: task.maxFallbacks ?? options.maxFallbacks,
         signal: options.signal,
         allowCoolingRecovery: healthyProviders.length === 0,
