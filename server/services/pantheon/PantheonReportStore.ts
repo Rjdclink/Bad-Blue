@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { storage } from '../../storage';
 
@@ -17,11 +17,19 @@ export interface PantheonReportRecord {
   completedAt: Date | null;
 }
 
-const fallbackDirectory = process.env.PANTHEON_REPORT_FALLBACK_DIR || '/tmp/legalwhat-pantheon-reports';
+const fallbackDirectory = process.env.PANTHEON_REPORT_FALLBACK_DIR
+  || (process.env.RAILWAY_VOLUME_MOUNT_PATH
+    ? path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'pantheon-reports')
+    : '/tmp/legalwhat-pantheon-reports');
 const memoryRecords = new Map<string, PantheonReportRecord>();
+const mirrorAttempts = new Map<string, number>();
+const mirrorTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const cleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
 let databaseUnavailableUntil = 0;
 const DATABASE_COOLDOWN_MS = 60_000;
-const mirrorTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const MAX_MIRROR_ATTEMPTS = 30;
+const MAX_MEMORY_RECORDS = 24;
+const TERMINAL_JOURNAL_RETENTION_MS = 6 * 60 * 60_000;
 
 function safeReportId(reportId: string): string {
   const normalized = String(reportId || '').trim();
@@ -39,6 +47,7 @@ function errorText(error: unknown): string {
     seen.add(current);
     if (current instanceof Error) parts.push(current.message);
     else if (typeof current === 'string') parts.push(current);
+    if (current && typeof current === 'object' && current.code) parts.push(String(current.code));
     current = current?.cause;
   }
   return parts.join(' | ');
@@ -89,8 +98,34 @@ async function journalPath(reportId: string): Promise<string> {
   return path.join(fallbackDirectory, `${safeReportId(reportId)}.json`);
 }
 
-async function writeJournal(record: PantheonReportRecord): Promise<void> {
+function rememberRecord(record: PantheonReportRecord): void {
+  memoryRecords.delete(record.id);
   memoryRecords.set(record.id, record);
+  while (memoryRecords.size > MAX_MEMORY_RECORDS) {
+    const terminalKey = [...memoryRecords.entries()].find(([, candidate]) => candidate.status !== 'processing')?.[0];
+    const key = terminalKey || memoryRecords.keys().next().value;
+    if (!key) break;
+    memoryRecords.delete(key);
+  }
+}
+
+function scheduleTerminalCleanup(record: PantheonReportRecord): void {
+  if (record.status === 'processing' || cleanupTimers.has(record.id)) return;
+  const timer = setTimeout(async () => {
+    cleanupTimers.delete(record.id);
+    memoryRecords.delete(record.id);
+    try {
+      await unlink(await journalPath(record.id));
+    } catch {
+      // Already removed or never materialized.
+    }
+  }, TERMINAL_JOURNAL_RETENTION_MS);
+  timer.unref?.();
+  cleanupTimers.set(record.id, timer);
+}
+
+async function writeJournal(record: PantheonReportRecord): Promise<void> {
+  rememberRecord(record);
   try {
     const target = await journalPath(record.id);
     const temporary = `${target}.tmp-${process.pid}`;
@@ -112,7 +147,8 @@ async function readJournal(reportId: string): Promise<PantheonReportRecord | nul
     const target = await journalPath(reportId);
     const parsed = JSON.parse(await readFile(target, 'utf8'));
     const record = normalizeRecord(parsed);
-    memoryRecords.set(reportId, record);
+    rememberRecord(record);
+    if (record.status !== 'processing') scheduleTerminalCleanup(record);
     return record;
   } catch {
     return null;
@@ -120,7 +156,10 @@ async function readJournal(reportId: string): Promise<PantheonReportRecord | nul
 }
 
 async function mirrorRecord(record: PantheonReportRecord): Promise<void> {
-  if (!canTryDatabase()) return;
+  if (!canTryDatabase()) {
+    scheduleMirror(record.id);
+    return;
+  }
 
   try {
     const existing = await storage.getPeopleSearchReport(record.id);
@@ -133,7 +172,11 @@ async function mirrorRecord(record: PantheonReportRecord): Promise<void> {
         reportData: record.reportData,
         status: record.status,
         errorMessage: record.errorMessage || undefined,
+        createdAt: record.createdAt,
+        completedAt: record.completedAt,
       });
+      mirrorAttempts.delete(record.id);
+      if (record.status !== 'processing') scheduleTerminalCleanup(record);
       return;
     }
 
@@ -142,7 +185,10 @@ async function mirrorRecord(record: PantheonReportRecord): Promise<void> {
       record.status,
       record.reportData,
       record.errorMessage || undefined,
+      record.completedAt,
     );
+    mirrorAttempts.delete(record.id);
+    if (record.status !== 'processing') scheduleTerminalCleanup(record);
   } catch (error) {
     if (isTransientDatabaseFailure(error)) {
       openDatabaseCircuit(error);
@@ -158,7 +204,20 @@ async function mirrorRecord(record: PantheonReportRecord): Promise<void> {
 
 function scheduleMirror(reportId: string): void {
   if (mirrorTimers.has(reportId)) return;
-  const delay = Math.max(1_000, databaseUnavailableUntil - Date.now() + 1_000);
+  const attempts = mirrorAttempts.get(reportId) || 0;
+  if (attempts >= MAX_MIRROR_ATTEMPTS) {
+    console.warn('[PANTHEON REPORT STORE] Persistence retry budget exhausted; journal retained for recovery', {
+      reportId,
+      attempts,
+    });
+    return;
+  }
+
+  const cooldownDelay = Math.max(1_000, databaseUnavailableUntil - Date.now() + 1_000);
+  const backoffDelay = Math.min(60_000, 1_000 * (2 ** Math.min(attempts, 6)));
+  const delay = Math.max(cooldownDelay, backoffDelay);
+  mirrorAttempts.set(reportId, attempts + 1);
+
   const timer = setTimeout(async () => {
     mirrorTimers.delete(reportId);
     const record = await readJournal(reportId);
@@ -200,7 +259,10 @@ export async function createPantheonReportRecord(input: {
         subjectName: record.subjectName || undefined,
         reportData: record.reportData,
         status: 'processing',
+        createdAt: record.createdAt,
+        completedAt: null,
       });
+      mirrorAttempts.delete(record.id);
       return normalizeRecord(persisted);
     } catch (error) {
       if (isTransientDatabaseFailure(error)) {
@@ -242,7 +304,15 @@ export async function updatePantheonReportRecord(
     try {
       const existing = await storage.getPeopleSearchReport(reportId);
       if (existing) {
-        const persisted = await storage.updatePeopleSearchReportStatus(reportId, status, next.reportData, errorMessage);
+        const persisted = await storage.updatePeopleSearchReportStatus(
+          reportId,
+          status,
+          next.reportData,
+          errorMessage,
+          next.completedAt,
+        );
+        mirrorAttempts.delete(reportId);
+        if (status !== 'processing') scheduleTerminalCleanup(next);
         return normalizeRecord(persisted);
       }
       await mirrorRecord(next);
@@ -277,6 +347,7 @@ export async function getPantheonReportRecord(reportId: string): Promise<Pantheo
       if (persisted) {
         const normalized = normalizeRecord(persisted);
         await writeJournal(normalized);
+        if (normalized.status !== 'processing') scheduleTerminalCleanup(normalized);
         return normalized;
       }
     } catch (error) {
