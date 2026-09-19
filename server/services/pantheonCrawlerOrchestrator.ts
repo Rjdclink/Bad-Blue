@@ -472,6 +472,27 @@ export class PantheonCrawlerOrchestrator {
   }
   
   /**
+   * Background-report fan-out: run each selected primary crawler as an
+   * independent route so one failure or slow path cannot cancel the others.
+   */
+  async searchAllIsolated(targets: string[], options: PantheonSearchOptions): Promise<CrawlerResult[]> {
+    const requestedBudgetMs = Math.max(600000, options.timeout || 0);
+    await this.initialize(requestedBudgetMs);
+
+    const crawlersToUse = options.crawlers || this.getCrawlersForDepth(options.depth);
+    const runs = await Promise.allSettled(
+      crawlersToUse.map(crawler =>
+        this.search(targets, {
+          ...options,
+          crawlers: [crawler],
+        })
+      )
+    );
+
+    return runs.flatMap(run => run.status === 'fulfilled' ? run.value : []);
+  }
+
+  /**
    * Get appropriate crawlers based on search depth
    */
   private getCrawlersForDepth(depth: 1 | 2 | 3 | 4): string[] {
