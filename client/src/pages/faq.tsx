@@ -2,7 +2,7 @@
  * Legal What? FAQ Page
  * 
  * Comprehensive FAQ page for Legal What? platform
- * Includes P.A.N.T.H.E.O.N. 13-AI system, core AI systems, and all 30 law types
+ * Includes P.A.N.T.H.E.O.N. 13-AI system, core AI systems, and all 31 law types
  */
 
 import { useState } from "react";
@@ -51,7 +51,7 @@ const CORE_SYSTEMS = [
   {
     name: "LEXARA",
     acronym: "Legal Expert AI Resource Advisor",
-    description: "Primary legal consultation AI providing comprehensive legal guidance across all 30 law types",
+    description: "Primary legal consultation AI providing comprehensive legal guidance across all 31 law types",
     icon: Brain,
     iconColor: "text-blue-600"
   },
@@ -173,7 +173,7 @@ export default function FAQPage() {
               </p>
               <p>
                 LEXARA is Legal What?'s primary legal consultation AI. Powered by the P.A.N.T.H.E.O.N. framework, 
-                LEXARA provides comprehensive legal guidance across all 30 law types. It analyzes your situation, 
+                LEXARA provides comprehensive legal guidance across all 31 law types. It analyzes your situation, 
                 explains relevant laws, identifies your rights, suggests legal strategies, and provides 
                 jurisdiction-specific advice tailored to your location.
               </p>
@@ -231,7 +231,7 @@ export default function FAQPage() {
       ]
     },
     {
-      title: "30 Law Types",
+      title: "31 Law Types",
       icon: Scale,
       items: [
         {
@@ -239,7 +239,7 @@ export default function FAQPage() {
           answer: (
             <div>
               <p className="mb-4">
-                Legal What? provides AI-powered legal assistance across 30 comprehensive areas of law:
+                Legal What? provides AI-powered legal assistance across 31 comprehensive areas of law:
               </p>
               <div className="grid sm:grid-cols-2 gap-3">
                 {LAW_TYPE_DATA.map((lawType, index) => (
@@ -285,7 +285,7 @@ export default function FAQPage() {
             <div>
               <ol className="list-decimal list-inside space-y-2">
                 <li>Create a free account by clicking "Get Started" or "Sign Up"</li>
-                <li>Choose your area of law from our 30 law types</li>
+                <li>Choose your area of law from our 31 law types</li>
                 <li>Describe your legal situation to LEXARA for instant consultation</li>
                 <li>Use C.A.D.E. to draft legal documents, F.M.I. to analyze evidence, or I-DRIVE to search for people</li>
                 <li>Access all tools and AI systems from your dashboard</li>
@@ -358,7 +358,7 @@ export default function FAQPage() {
       items: [
         {
           question: "What can Legal What? help me with?",
-          answer: "Legal What? can help with legal consultations, document drafting, evidence analysis, people searches, understanding your rights, filing complaints, drafting lawsuits, requesting public records, researching case law, understanding statutes, preparing for court, negotiating settlements, and much more across all 30 law types."
+          answer: "Legal What? can help with legal consultations, document drafting, evidence analysis, people searches, understanding your rights, filing complaints, drafting lawsuits, requesting public records, researching case law, understanding statutes, preparing for court, negotiating settlements, and much more across all 31 law types."
         },
         {
           question: "How accurate is the AI legal advice?",

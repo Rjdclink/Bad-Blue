@@ -1,7 +1,7 @@
 {
   "name": "Legal What? - AI Legal Platform",
   "short_name": "Legal What?",
-  "description": "AI-assisted legal tools across 30 legal practice areas, including two-way voice and text consultation, background reports, people-finding tools, inmate search, and legal document tools.",
+  "description": "AI-assisted legal tools across 31 legal practice areas, including two-way voice and text consultation, background reports, people-finding tools, inmate search, and legal document tools.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

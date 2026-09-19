@@ -22,6 +22,8 @@ export interface LexaraAuthorityResearch {
 export interface LexaraAuthorityResearchContext {
   jurisdiction?: string;
   domainName?: string;
+  researchHints?: readonly string[];
+  preferredOfficialDomains?: readonly string[];
   signal?: AbortSignal;
 }
 
@@ -33,7 +35,7 @@ const CRAWLER_ENRICHMENT_TIMEOUT_MS = 1_600;
 
 const AUTHORITY_SENSITIVE_PATTERN = /\b(?:cite|citation|source|authority|case\s*law|precedent|holding|statute|statutory|code\s+section|regulation|c\.f\.r\.|u\.s\.c\.|court\s+rule|rule\s+\d|legal\s+standard|elements?\s+of|controlling\s+law|current\s+law|recent\s+law|supreme\s+court|circuit\s+court|appellate\s+court|statute\s+of\s+limitations|limitations\s+period|filing\s+deadline|appeal\s+deadline|notice\s+deadline|deadline|jurisdiction|venue|preemption)\b/i;
 
-const HIGH_CONSEQUENCE_PATTERN = /\b(?:criminal\s+charge|charged\s+with|arrested|indicted|sentencing|deportation|removal\s+proceedings|asylum|child\s+custody|termination\s+of\s+parental\s+rights|restraining\s+order|protective\s+order|eviction|foreclosure|injunction|appeal|hearing\s+(?:today|tomorrow)|court\s+(?:today|tomorrow))\b/i;
+const HIGH_CONSEQUENCE_PATTERN = /\b(?:criminal\s+charge|charged\s+with|arrested|indicted|sentencing|post[- ]conviction|habeas|2254|2255|ineffective\s+assistance|actual\s+innocence|deportation|removal\s+proceedings|asylum|child\s+custody|termination\s+of\s+parental\s+rights|restraining\s+order|protective\s+order|eviction|foreclosure|injunction|appeal|hearing\s+(?:today|tomorrow)|court\s+(?:today|tomorrow))\b/i;
 
 function clampTail(value: string, maxLength: number): string {
   const trimmed = value.trim();
@@ -260,14 +262,18 @@ export async function researchLegalAuthority(
   const jurisdiction = context.jurisdiction || 'jurisdiction not yet established';
   const domain = context.domainName || 'relevant legal domain';
   const currentDate = new Date().toISOString().slice(0, 10);
+  const researchHints = (context.researchHints || []).slice(0, 8).join('; ');
+  const preferredOfficialDomains = (context.preferredOfficialDomains || []).slice(0, 8).join(', ');
   const query = [
     `Current law as of ${currentDate}.`,
     `Jurisdiction: ${jurisdiction}.`,
     `Legal domain: ${domain}.`,
+    researchHints ? `Practice-area research priorities: ${researchHints}.` : '',
+    preferredOfficialDomains ? `Prefer relevant primary material from these official domains when available: ${preferredOfficialDomains}.` : '',
     `Question/facts: ${legalQuestion}.`,
     'Find the most relevant controlling or persuasive legal authority.',
     'Prefer official court opinions, legislature/government statutes, regulations, court rules, and official agency material.',
-  ].join(' ');
+  ].filter(Boolean).join(' ');
 
   const selectedCrawlers = selectLexaraCrawlerPlan({
     prompt: legalQuestion,

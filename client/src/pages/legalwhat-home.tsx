@@ -91,7 +91,7 @@ export default function LegalWhatHome() {
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
       <SEOHead
         title="Legal What? | Legal Tools Dashboard"
-        description="Access Legal What? AI-assisted legal research, document, consultation, and public-record tools across 30 legal practice areas."
+        description="Access Legal What? AI-assisted legal research, document, consultation, and public-record tools across 31 legal practice areas."
         noIndex
       />
 

@@ -54,7 +54,7 @@ export const GLOBAL_KEYWORDS: KeywordTaxonomy = {
     "public records search",
     "legal research",
     "geolocation people finder",
-    "30 legal practice areas"
+    "31 legal practice areas"
   ],
   lsi: [
     "voice legal consultation",
@@ -68,11 +68,11 @@ export const GLOBAL_KEYWORDS: KeywordTaxonomy = {
 export const SEO_CONFIG: Record<string, PageSEO> = {
   "/": {
     title: "Legal What? | AI Legal Tools, People Finder & Inmate Locator",
-    description: "Explore 30 legal practice areas with two-way voice and text AI consultation, legal document tools, background reports, people-finding tools, and nationwide inmate search.",
+    description: "Explore 31 legal practice areas with two-way voice and text AI consultation, legal document tools, background reports, people-finding tools, and nationwide inmate search.",
     keywords: "AI legal tools, AI legal consultation, legal document generator, background reports, people finder, inmate locator, public records search",
     keywordTaxonomy: GLOBAL_KEYWORDS,
     ogTitle: "Legal What? | AI Legal Tools, People Finder & Inmate Locator",
-    ogDescription: "Voice and text AI legal consultation across 30 practice areas, public-record research, people-finding tools, inmate search, and legal document tools.",
+    ogDescription: "Voice and text AI legal consultation across 31 practice areas, public-record research, people-finding tools, inmate search, and legal document tools.",
     ogType: "website",
     canonicalPath: "/",
     priority: 1.0,
@@ -81,9 +81,9 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
     includeInSitemap: true,
   },
   "/landing": {
-    title: "Legal What? | AI Legal Tools for 30 Practice Areas",
+    title: "Legal What? | AI Legal Tools for 31 Practice Areas",
     description: "Learn about Legal What? voice and text AI consultation, legal document tools, background reports, people-finding tools, inmate search, and public-record workflows.",
-    keywords: "Legal What, AI legal platform, 30 legal practice areas, voice legal consultation, people finder, inmate locator, background reports",
+    keywords: "Legal What, AI legal platform, 31 legal practice areas, voice legal consultation, people finder, inmate locator, background reports",
     keywordTaxonomy: GLOBAL_KEYWORDS,
     ogType: "website",
     canonicalPath: "/",
