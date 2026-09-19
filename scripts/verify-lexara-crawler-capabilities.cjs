@@ -132,8 +132,8 @@ if (
   fail('Pantheon report jobs can still be aborted by a transient persistence outage');
 }
 if (
-  pantheonPage.includes('Report Workspace') ||
-  pantheonPage.includes('will populate here') ||
+  pantheonPage.includes('<CardTitle>Report Workspace</CardTitle>') ||
+  pantheonPage.includes('Your completed PANTHEON background report will populate here.') ||
   !pantheonPage.includes('report-document') ||
   !pantheonPage.includes('Online Mentions') ||
   !pantheonPage.includes('Risk & Reputation') ||
