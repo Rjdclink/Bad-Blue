@@ -130,6 +130,8 @@ if (
 if (
   !crawlerSelection.includes("request.purpose === 'background_report'") ||
   !crawlerSelection.includes('depth controls effort, not participation') ||
+  !backgroundOrchestrator.includes('searchAllIsolated') ||
+  !backgroundAdapter.includes('searchAllIsolated(request.targets') ||
   !seedFirstConfig.includes('DEFAULT_DISABLED_CRAWLERS: readonly PermittedCrawlerName[] = [] as const')
 ) {
   fail('Pantheon background reports do not preserve the complete crawler roster');
