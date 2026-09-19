@@ -465,3 +465,14 @@ must(
     legalAuthorityResearch.includes('Prefer relevant primary material from these official domains when available:'),
   'authority retrieval receives practice-area-specific research hints without making any source mandatory',
 );
+
+const domainExpertiseReview = read('docs/LEXARA_31_DOMAIN_EXPERTISE_40_SOURCE_REVIEW_20260919.md');
+const domainImplementationReview = read('docs/LEXARA_31_DOMAIN_IMPLEMENTATION_10_SOURCE_REVIEW_20260919.md');
+const domainExpertiseSources = domainExpertiseReview.split('## Sources — exactly 40')[1]?.split('## Cross-source findings adopted')[0] || '';
+const domainExpertiseSourceLines = domainExpertiseSources.split('\n').filter(line => /^\d+\.\s/.test(line));
+const domainImplementationSources = domainImplementationReview.split('## Sources — exactly 10')[1]?.split('## Implementation decisions')[0] || '';
+const domainImplementationSourceLines = domainImplementationSources.split('\n').filter(line => /^\d+\.\s/.test(line));
+must(domainExpertiseSourceLines.length === 40, 'literal 40-source LEXARA practice-area legal review is present');
+must(domainImplementationSourceLines.length === 10, 'literal 10-source LEXARA specialization implementation review is present');
+if (process.exitCode) process.exit(process.exitCode);
+console.log('LEXARA 31-domain specialization verification passed.');
