@@ -88,6 +88,10 @@ export function initializeGovernance(): Promise<void> {
   return governanceInitialization;
 }
 
+export function resetGovernanceInitializationForManualStop(): void {
+  governanceInitialization = null;
+}
+
 async function initializeGovernanceState(): Promise<void> {
   console.log('[GOVERNANCE] Initializing 6-Stage Deployment System...');
 
@@ -99,8 +103,6 @@ async function initializeGovernanceState(): Promise<void> {
     installCryptaraSuperWorkerAdmission,
   } = await import('../integration/cryptara-super-worker.js');
   await installCryptaraSuperWorkerAdmission();
-  const { releaseRollingDeploymentPoolHeadroom } = await import('../../../migrations/reconcileAppSchema.js');
-  releaseRollingDeploymentPoolHeadroom('cryptara_super_worker_admission_installed');
   const restored = await stageManager.restorePersistence(new PostgresStageManagerStateStore());
 
   const persistedProfitLadder = stageManager.getProfitLadderState();
