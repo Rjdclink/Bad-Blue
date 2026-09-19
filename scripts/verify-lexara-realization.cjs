@@ -363,8 +363,11 @@ must(
     harmonyRegistry.includes('HARMONY_17_PARTICIPANTS') &&
     orchestrator.includes('maxParticipants: 3') &&
     orchestrator.includes('estimatedTokens: 450') &&
-    orchestrator.includes('requestTimeoutMs: 1_800') &&
-    orchestrator.includes('maxFallbacks: 2') &&
+    orchestrator.includes('LIVE_REASONING_DEADLINE_MS = 6_000') &&
+    orchestrator.includes('LIVE_REASONING_INITIAL_ATTEMPT_MS = 3_500') &&
+    orchestrator.includes('LIVE_REASONING_MAX_FALLBACKS = 3') &&
+    orchestrator.includes('requestTimeoutMs: LIVE_REASONING_INITIAL_ATTEMPT_MS') &&
+    orchestrator.includes('maxFallbacks: LIVE_REASONING_MAX_FALLBACKS') &&
     harmony.includes('fastSynthesisTask') &&
     harmony.includes("firstSuccessful.role === 'legal-analyst'") &&
     harmony.includes('harmonyProviderRuntimeScore') &&
