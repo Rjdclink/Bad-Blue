@@ -238,8 +238,10 @@ must(
     groq.includes("https://api.groq.com/openai/v1/models") &&
     groq.includes('groqBlockedModels') &&
     groq.includes('GROQ_MODEL_BLOCK_TTL_MS') &&
-    groq.includes('llama-3.1-8b-instant') &&
-    groq.includes('llama-3.3-70b-versatile') &&
+    groq.includes('qwen/qwen3.6-27b') &&
+    groq.includes('qwen/qwen3.8-27b') &&
+    groq.includes('llama-3\\.1-8b-instant') &&
+    groq.includes('llama-3\\.3-70b-versatile') &&
     groq.includes('normalizeGroqModelId') &&
     groq.includes('orpheus|canopylabs') &&
     groq.includes('model_terms_required') &&
