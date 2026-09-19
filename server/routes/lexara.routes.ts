@@ -527,7 +527,7 @@ router.post('/transcribe-file', lexaraVoiceUpload.single('audio'), async (req: R
       text: string;
       provider: string;
       model: string;
-      quality?: { avgLogprob?: number; noSpeechProbability?: number };
+      quality?: { avgLogprob?: number; noSpeechProbability?: number; confidence?: number };
     }>;
   }> = [
     // Groq Whisper Turbo is the latency-first batch fallback and exposes
