@@ -257,6 +257,10 @@ must(
     harmony.includes('CURRENT_AI_MODELS.openRouterAuto') &&
     harmony.includes("firstSuccessful.role === 'legal-analyst'") &&
     harmony.includes('entry.controller.abort') &&
+    harmony.includes('createLinkedDeadlineSignal') &&
+    harmony.includes('attempt.signal') &&
+    harmony.includes('recoveryEntries') &&
+    harmony.includes("entry.controller.abort('recovery-loser')") &&
     lexaraRoutes.includes('legalReasoningConfigured') &&
     lexaraRoutes.includes('legalReasoningInferenceReady') &&
     consentPage.includes('legalReasoningConfigured') &&
@@ -265,7 +269,7 @@ must(
     claude.includes('signal?: AbortSignal') &&
     mistral.includes('signal?: AbortSignal') &&
     gemini.includes('abortSignal: options.signal'),
-  'hot-reserve recovery preserves a successful direct legal answer, exposes real reasoning readiness, and propagates cancellation through live provider transports',
+  'hot-reserve recovery preserves a successful direct legal answer, aborts timed-out and losing provider work, exposes real reasoning readiness, and propagates cancellation through live provider transports',
 );
 
 must(
