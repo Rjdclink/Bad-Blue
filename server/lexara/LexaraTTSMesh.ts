@@ -79,7 +79,7 @@ const LEXARA_TTS_READY_TTL_MS = 5 * 60_000;
 const LEXARA_TTS_RECOVERY_PROBE_MS = 5 * 60_000;
 const LEXARA_TTS_TRANSIENT_COOLDOWN_MS = 15_000;
 const LEXARA_TTS_PROBE_TIMEOUT_MS = 4_000;
-const LEXARA_TTS_REQUEST_TIMEOUT_MS = 15_000;
+const LEXARA_TTS_REQUEST_TIMEOUT_MS = 8_000;
 const MISTRAL_VOICE_CACHE_TTL_MS = 30 * 60_000;
 const OPENROUTER_CATALOG_TTL_MS = 10 * 60_000;
 let mistralVoiceCache: { id: string; expiresAt: number } | null = null;
@@ -162,10 +162,14 @@ function providerScore(provider: LexaraTTSProviderId): number {
   const base = 1_000 - BASE_ORDER.indexOf(provider) * 10;
   const samples = state.successes + state.failures;
   const failureRate = samples ? state.failures / samples : 0;
-  const latencyPenalty = state.ewmaLatencyMs > 0 ? Math.min(300, state.ewmaLatencyMs / 20) : 0;
+  // Conversational speech must heavily penalize routes whose measured first
+  // audio is slow. The previous 300-point cap let a 13-second gateway remain
+  // competitive with a ~1-second direct route.
+  const latencyPenalty = state.ewmaLatencyMs > 0 ? Math.min(700, state.ewmaLatencyMs / 10) : 0;
+  const slowRoutePenalty = state.ewmaLatencyMs > 4_500 ? 250 : 0;
   const readinessBonus = ready(provider) ? 300 : 0;
   const quotaPenalty = typeof state.quotaRemaining === 'number' && state.quotaRemaining < 100 ? 100 : 0;
-  return base + readinessBonus - failureRate * 250 - latencyPenalty - quotaPenalty;
+  return base + readinessBonus - failureRate * 250 - latencyPenalty - slowRoutePenalty - quotaPenalty;
 }
 
 function orderedCandidates(text: string): LexaraTTSProviderId[] {
