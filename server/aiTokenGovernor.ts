@@ -62,7 +62,6 @@ export enum AIProvider {
   // Platform providers (December 2025)
   OPENROUTER = 'openrouter',
   XAI = 'xai',
-  HUGGINGFACE = 'huggingface',
   LMAI = 'lmai',
   // Additional providers (December 2025)
   COHERE = 'cohere',
@@ -70,7 +69,6 @@ export enum AIProvider {
   PERPLEXITY = 'perplexity',
   FIREWORKS = 'fireworks',
   CEREBRAS = 'cerebras',
-  SAMBANOVA = 'sambanova',
 }
 
 export enum UsageContext {
