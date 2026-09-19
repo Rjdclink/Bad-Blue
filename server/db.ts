@@ -99,6 +99,7 @@ const transactionDatabaseUrl = explicitTransactionDatabaseUrl || derivedTransact
 const coordinationDatabaseUrl = explicitCoordinationDatabaseUrl || derivedCoordinationDatabaseUrl || databaseUrl;
 const ordinaryDatabaseUrl = transactionDatabaseUrl || databaseUrl;
 const ordinaryUsesTransactionPool = postgresPort(ordinaryDatabaseUrl) === '6543' && isSupabaseSharedPoolerUrl(ordinaryDatabaseUrl);
+let ordinarySessionFallbackActive = false;
 // Transaction-mode clients are multiplexed by Supavisor. If no transaction lane
 // is available, use a deliberately smaller session fallback so multiple Railway
 // replicas cannot consume the entire 15-session pool before coordination/admin.
@@ -176,12 +177,17 @@ const sslConfig = () => process.env.PGSSLMODE !== 'disable' ? {
 // Ordinary application queries. Prefer Supavisor transaction mode so short-lived
 // application/lease queries do not pin database sessions across replicas.
 const getPoolConfig = () => {
-  const connectionString = isDatabaseConfigured ? ordinaryDatabaseUrl : 'postgresql://127.0.0.1:1/devlite';
+  const activeUsesTransactionPool = ordinaryUsesTransactionPool && !ordinarySessionFallbackActive;
+  const activeDatabaseUrl = ordinarySessionFallbackActive ? coordinationDatabaseUrl : ordinaryDatabaseUrl;
+  const activePoolMax = ordinarySessionFallbackActive
+    ? Math.min(mainPoolMax, sessionFallbackPoolMax)
+    : mainPoolMax;
+  const connectionString = isDatabaseConfigured ? activeDatabaseUrl : 'postgresql://127.0.0.1:1/devlite';
   return {
     connectionString,
-    idleTimeoutMillis: ordinaryUsesTransactionPool ? 10000 : 30000,
-    connectionTimeoutMillis: (isRailway || isProduction) ? 30000 : 10000,
-    max: mainPoolMax,
+    idleTimeoutMillis: activeUsesTransactionPool ? 10000 : 15000,
+    connectionTimeoutMillis: (isRailway || isProduction) ? (activeUsesTransactionPool ? 30000 : 15000) : 10000,
+    max: activePoolMax,
     // Never pin an idle backend; session/direct fallback acquires on demand.
     min: 0,
     keepAlive: true,
@@ -190,7 +196,7 @@ const getPoolConfig = () => {
     // Supavisor transaction mode cannot retain session-level statement_timeout.
     // Keep the node-postgres client-side timeout everywhere; only session/direct
     // fallback connections receive the server-side session timeout parameter.
-    ...(ordinaryUsesTransactionPool ? {} : { statement_timeout: 30000 }),
+    ...(activeUsesTransactionPool ? {} : { statement_timeout: 30000 }),
     query_timeout: 30000,
     application_name: isRailway ? 'badblue-railway' : 'badblue',
   } as any;
@@ -244,6 +250,68 @@ attachPoolErrorHandlers();
 function effectivePoolMax(targetPool: any, fallback: number): number {
   const configured = Number(targetPool?.options?.max);
   return Number.isFinite(configured) ? Math.max(1, Math.trunc(configured)) : fallback;
+}
+
+export function getApplicationDatabaseSteadyPoolCeiling(): number {
+  return ordinarySessionFallbackActive
+    ? Math.min(mainPoolMax, sessionFallbackPoolMax)
+    : mainPoolMax;
+}
+
+export function getApplicationDatabaseRuntimeMode(): 'transaction_pool' | 'session_pool_fallback' | 'session_or_direct' {
+  if (ordinarySessionFallbackActive) return 'session_pool_fallback';
+  return ordinaryUsesTransactionPool ? 'transaction_pool' : 'session_or_direct';
+}
+
+/**
+ * Emergency route-local recovery for a Supavisor transaction-pool control-plane
+ * failure. This does not introduce new credentials or a new pool: it retargets
+ * the existing, currently-empty ordinary Pool to the already-derived shared
+ * session lane and keeps the smaller session ceiling. The rolling-deploy max=1
+ * guard remains attached to the same Pool options object.
+ */
+export async function activateApplicationSessionFallback(reason: string): Promise<boolean> {
+  if (!isDatabaseConfigured || !ordinaryUsesTransactionPool) return false;
+  if (ordinarySessionFallbackActive) return true;
+  if (!isSupabaseSharedPoolerUrl(coordinationDatabaseUrl) || postgresPort(coordinationDatabaseUrl) !== '5432') {
+    return false;
+  }
+  if (pool.totalCount > 0 || pool.waitingCount > 0) {
+    console.warn('[DATABASE] Session fallback skipped because ordinary pool is already active');
+    return false;
+  }
+
+  const options = (pool as any).options || {};
+  const previous = {
+    connectionString: options.connectionString,
+    max: options.max,
+    idleTimeoutMillis: options.idleTimeoutMillis,
+    connectionTimeoutMillis: options.connectionTimeoutMillis,
+    statement_timeout: options.statement_timeout,
+  };
+
+  ordinarySessionFallbackActive = true;
+  options.connectionString = coordinationDatabaseUrl;
+  options.max = Math.min(effectivePoolMax(pool, mainPoolMax), sessionFallbackPoolMax);
+  options.idleTimeoutMillis = 15000;
+  options.connectionTimeoutMillis = 15000;
+  options.statement_timeout = 30000;
+
+  try {
+    await pool.query({ text: 'SELECT 1', query_timeout: 5_000 });
+    console.warn(`[DATABASE] Supavisor transaction lane unavailable; session-pool fallback admitted (reason=${reason}, max=${options.max})`);
+    return true;
+  } catch (error) {
+    ordinarySessionFallbackActive = false;
+    options.connectionString = previous.connectionString;
+    options.max = previous.max;
+    options.idleTimeoutMillis = previous.idleTimeoutMillis;
+    options.connectionTimeoutMillis = previous.connectionTimeoutMillis;
+    if (previous.statement_timeout === undefined) delete options.statement_timeout;
+    else options.statement_timeout = previous.statement_timeout;
+    console.warn('[DATABASE] Session-pool fallback was also unavailable; transaction route restored');
+    throw error;
+  }
 }
 
 /**
