@@ -70,12 +70,38 @@ const SERVICE_DESTINATIONS = [
 ] as const;
 
 const SHELF_STATUES = [
-  [{ key: "crouch", className: "shelf-statue-crouch shelf-statue-mobile-only" }],
-  [{ key: "standing", className: "shelf-statue-standing shelf-statue-mobile-only" }],
-  [{ key: "reclining", className: "shelf-statue-reclining shelf-statue-mobile-only" }],
   [
-    { key: "kneeling", className: "shelf-statue-kneeling shelf-statue-mobile-only" },
-    { key: "westie", className: "shelf-statue-westie shelf-statue-persistent" },
+    {
+      key: "crouch",
+      src: "/images/library-statues/statue-crouch.svg",
+      className: "shelf-statue-crouch shelf-statue-mobile-only",
+    },
+  ],
+  [
+    {
+      key: "standing",
+      src: "/images/library-statues/statue-standing.svg",
+      className: "shelf-statue-standing shelf-statue-mobile-only",
+    },
+  ],
+  [
+    {
+      key: "reclining",
+      src: "/images/library-statues/statue-reclining.svg",
+      className: "shelf-statue-reclining shelf-statue-mobile-only",
+    },
+  ],
+  [
+    {
+      key: "kneeling",
+      src: "/images/library-statues/statue-kneeling.svg",
+      className: "shelf-statue-kneeling shelf-statue-mobile-only",
+    },
+    {
+      key: "westie",
+      src: "/images/library-statues/statue-westie.svg",
+      className: "shelf-statue-westie shelf-statue-persistent",
+    },
   ],
 ] as const;
 
@@ -83,9 +109,21 @@ const SHELF_STATUES = [
  * Decorative shelf filler only. It deliberately has no click, focus, route,
  * label, or other product behavior.
  */
-const ShelfStatue = ({ className }: { className: string }) => (
+const ShelfStatue = ({
+  className,
+  src,
+}: {
+  className: string;
+  src: string;
+}) => (
   <span className={`shelf-statue ${className}`} aria-hidden="true">
-    <span className="shelf-statue-art" />
+    <img
+      className="shelf-statue-art"
+      src={src}
+      alt=""
+      draggable={false}
+      decoding="async"
+    />
   </span>
 );
 
@@ -218,6 +256,7 @@ export default function WelcomePage() {
                     <ShelfStatue
                       key={`shelf-statue-${shelfIndex}-${statue.key}`}
                       className={statue.className}
+                      src={statue.src}
                     />
                   ))}
                 </div>
