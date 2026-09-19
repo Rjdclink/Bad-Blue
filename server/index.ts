@@ -173,13 +173,14 @@ async function gracefulShutdown(signal: string): Promise<void> {
     }
 
     try {
-      const { pool } = await import('./db');
-      if (pool?.end) {
-        await pool.end();
-        console.log('[SHUTDOWN] Database pool closed');
-      }
+      const { pool, coordinationPool } = await import('./db');
+      await Promise.allSettled([
+        pool?.end ? pool.end() : Promise.resolve(),
+        coordinationPool?.end ? coordinationPool.end() : Promise.resolve(),
+      ]);
+      console.log('[SHUTDOWN] Application database pools closed');
     } catch (e) {
-      console.warn('[SHUTDOWN] Error closing database pool:', e);
+      console.warn('[SHUTDOWN] Error closing application database pools:', e);
     }
 
     clearTimeout(shutdownTimeout);
