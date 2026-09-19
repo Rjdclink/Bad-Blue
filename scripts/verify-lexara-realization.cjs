@@ -169,6 +169,7 @@ must(
     ttsMesh.includes('openDeepgramSpeechStream') &&
     ttsMesh.includes('openElevenLabsSpeechStream') &&
     ttsMesh.includes("'flux-haley-en'") &&
+    ttsMesh.includes("const BASE_ORDER: LexaraTTSProviderId[] = [\n  'deepgram',\n  'gemini',\n  'openrouter'") &&
     ttsMesh.includes("endpoint = flux ? '/v2/speak' : '/v1/speak'") &&
     ttsMesh.includes('LEXARA_FEMALE_VOICE') &&
     ttsMesh.includes('providerIndependenceDomain') &&
