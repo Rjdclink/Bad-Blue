@@ -1,5 +1,6 @@
 import { storage } from '../../storage';
 import { conductFullOSINT } from '../../peopleSearch';
+import { canActivatePantheon } from '../pantheonCrawlerOrchestrator';
 import {
   getPantheonReportDurationMs,
   normalizePantheonSearchDepth,
@@ -45,6 +46,14 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
   });
 
   try {
+    const availabilityDeadline = Date.now() + budgetMs;
+    while (!canActivatePantheon().available) {
+      if (Date.now() >= availabilityDeadline) {
+        throw new Error('PANTHEON remained unavailable for the entire investigation budget');
+      }
+      await new Promise(resolve => setTimeout(resolve, 5_000));
+    }
+
     const reportPromise = conductFullOSINT(input.name, {
       location: input.location,
       searchDepth: input.searchDepth,
@@ -60,8 +69,12 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       );
     });
 
-    const report = await Promise.race([reportPromise, budgetGuard]);
-    if (timer) clearTimeout(timer);
+    let report: Awaited<typeof reportPromise>;
+    try {
+      report = await Promise.race([reportPromise, budgetGuard]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
 
     await storage.updatePeopleSearchReportStatus(input.reportId, 'completed', {
       job: jobEnvelope(input, 'completed', {
