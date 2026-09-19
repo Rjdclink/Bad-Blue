@@ -117,14 +117,14 @@ const FREE_PROVIDERS: ProviderConfig[] = [
     isAvailable: () => !!process.env.TOGETHER_API_KEY,
   },
   {
-    name: 'huggingface',
-    endpoint: 'https://api-inference.huggingface.co/models',
-    models: [CURRENT_AI_MODELS.huggingFace],
-    rpmLimit: 30,
+    name: 'xai',
+    endpoint: 'https://api.x.ai/v1/chat/completions',
+    models: [CURRENT_AI_MODELS.xai],
+    rpmLimit: 20,
     rpdLimit: 1000,
-    apiKeyEnv: 'HUGGINGFACE_API_KEY',
-    priority: 5,  // Equal priority for balanced utilization
-    isAvailable: () => !!process.env.HUGGINGFACE_API_KEY,
+    apiKeyEnv: 'XAI_API_KEY',
+    priority: 5,
+    isAvailable: () => !!process.env.XAI_API_KEY,
   },
   {
     name: 'cerebras',
@@ -137,16 +137,14 @@ const FREE_PROVIDERS: ProviderConfig[] = [
     isAvailable: () => !!process.env.CEREBRAS_API_KEY,
   },
   {
-    name: 'sambanova',
-    endpoint: 'https://api.sambanova.ai/v1/chat/completions',
-    // SambaNova's hosted catalog changes independently. Require an explicit
-    // runtime model instead of silently selecting a retired hard-coded ID.
-    models: [CURRENT_AI_MODELS.sambaNova],
+    name: 'fireworks',
+    endpoint: 'https://api.fireworks.ai/inference/v1/chat/completions',
+    models: [CURRENT_AI_MODELS.fireworks],
     rpmLimit: 20,
-    rpdLimit: 500,
-    apiKeyEnv: 'SAMBANOVA_API_KEY',
-    priority: 5,  // Equal priority for balanced utilization
-    isAvailable: () => !!process.env.SAMBANOVA_API_KEY,
+    rpdLimit: 1000,
+    apiKeyEnv: 'FIREWORKS_API_KEY',
+    priority: 5,
+    isAvailable: () => !!process.env.FIREWORKS_API_KEY,
   },
 ];
 
