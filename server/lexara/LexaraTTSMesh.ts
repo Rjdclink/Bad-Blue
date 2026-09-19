@@ -424,7 +424,7 @@ async function resolveMistralVoiceId(force = false): Promise<string> {
   }
 
   const response = await fetchWithTimeout(
-    'https://api.mistral.ai/v1/audio/voices?type=preset&limit=100',
+    'https://api.mistral.ai/v1/audio/voices?type=all&limit=100',
     {
       headers: {
         Authorization: `Bearer ${process.env.MISTRAL_API_KEY!.trim()}`,
@@ -495,7 +495,7 @@ async function resolveMistralVoiceId(force = false): Promise<string> {
   }));
 
   if (!selected?.id) {
-    const message = 'mistral preset catalog contains no verifiable female English voice';
+    const message = 'mistral voice catalog contains no LEXARA-compatible female English voice';
     markFailure('mistral', 'configuration_blocked', message);
     throw new Error(message);
   }
