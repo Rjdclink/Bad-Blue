@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 
 const worker = fs.readFileSync('server/services/cryptocrawl/integration/cryptara-supabase-overflow-worker.ts', 'utf8');
 const superWorker = fs.readFileSync('server/services/cryptocrawl/integration/cryptara-super-worker.ts', 'utf8');
+const runtimeDb = fs.readFileSync('server/services/cryptocrawl/runtime/cryptocrawl-runtime-database.ts', 'utf8');
 const migration = fs.readFileSync('server/migrations/overflow/001_cryptara_comp_cache.sql', 'utf8');
 const dockerfile = fs.readFileSync('Dockerfile', 'utf8');
 
@@ -23,8 +24,11 @@ assert.match(worker, /function activeOverflowPool\(\)/);
 assert.doesNotMatch(worker, /\bnew\s+(?:pg\.)?Pool\s*\(/);
 assert.doesNotMatch(worker, /function primaryDatabaseUrl\(\)|process\.env\.SUPABASE_DATABASE_URL(?!_OVERFLOW)/);
 assert.match(worker, /CRYPTOCRAWL_OVERFLOW_POOL_MAX, 2, 1, 2/);
-assert.match(worker, /max:\s*overflowPoolMax/);
-assert.match(worker, /min:\s*0/);
+assert.match(worker, /runtimeOverflowPool\.options\?\.max\s*\?\?\s*overflowPoolMax/, 'adapter must report the canonical runtime pool ceiling rather than own a second pool');
+assert.match(runtimeDb, /const ordinaryPoolMax = boundedInt\(process\.env\.CRYPTOCRAWL_OVERFLOW_POOL_MAX, 2, 1, 4\)/, 'canonical runtime DB must own the bounded Overflow pool ceiling');
+assert.match(runtimeDb, /function createOrdinaryPool\(\)[\s\S]{0,500}max:\s*ordinaryPoolMax[\s\S]{0,250}min:\s*0/, 'canonical runtime Overflow pool must remain bounded and zero-idle');
+assert.match(runtimeDb, /closeCryptocrawlRuntimeDatabasePools[\s\S]{0,700}ordinary\.end\(\)/, 'manual stop must close the canonical Overflow socket owner');
+assert.match(runtimeDb, /reopenCryptocrawlRuntimeDatabasePools[\s\S]{0,500}createOrdinaryPool\(\)/, 'manual start must recreate the canonical Overflow socket owner');
 assert.doesNotMatch(worker, /setInterval\s*\(/);
 
 // Proxy authority is explicitly noncritical. Future systems must opt in through
