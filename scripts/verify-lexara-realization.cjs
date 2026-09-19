@@ -363,8 +363,9 @@ must(
     harmonyRegistry.includes('HARMONY_17_PARTICIPANTS') &&
     orchestrator.includes('maxParticipants: 3') &&
     orchestrator.includes('estimatedTokens: 450') &&
-    orchestrator.includes('LIVE_REASONING_DEADLINE_MS = 6_000') &&
-    orchestrator.includes('LIVE_REASONING_INITIAL_ATTEMPT_MS = 3_500') &&
+    !orchestrator.includes('LIVE_REASONING_DEADLINE_MS') &&
+    !orchestrator.includes('harmonyDeadline') &&
+    orchestrator.includes('LIVE_REASONING_PROVIDER_ATTEMPT_MS = 4_500') &&
     orchestrator.includes('LIVE_REASONING_MAX_FALLBACKS = 3') &&
     orchestrator.includes('requestTimeoutMs: LIVE_REASONING_INITIAL_ATTEMPT_MS') &&
     orchestrator.includes('maxFallbacks: LIVE_REASONING_MAX_FALLBACKS') &&
