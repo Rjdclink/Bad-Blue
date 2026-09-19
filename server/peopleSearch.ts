@@ -81,6 +81,15 @@ interface SearchConfig {
  * Main people search function
  * Aggregates data from multiple public sources
  */
+function buildPantheonSearchTargets(name: string): string[] {
+  const trimmed = name.trim();
+  if (!trimmed) return [];
+  return [
+    `https://www.google.com/search?q=${encodeURIComponent(`"${trimmed}" public records`)}`,
+    `https://www.google.com/search?q=${encodeURIComponent(`"${trimmed}" news court business professional`)}`,
+  ];
+}
+
 export async function conductPeopleSearch(
   searchQuery: string,
   config: Partial<SearchConfig> = {}
@@ -338,7 +347,7 @@ async function searchPublicRecords(name: string): Promise<OSINTSource> {
     if (canActivatePantheon().available) {
       try {
         await pantheonOrchestrator.initialize();
-        const crawlerResults = await pantheonOrchestrator.search([name], {
+        const crawlerResults = await pantheonOrchestrator.search(buildPantheonSearchTargets(name), {
           depth: 2,
           crawlers: ['startrek', 'birdofprey'],
           maxResultsPerCrawler: 10,
@@ -432,7 +441,7 @@ async function searchSocialMedia(name: string): Promise<OSINTSource> {
     if (canActivatePantheon().available) {
       try {
         await pantheonOrchestrator.initialize();
-        const crawlerResults = await pantheonOrchestrator.search([name], {
+        const crawlerResults = await pantheonOrchestrator.search(buildPantheonSearchTargets(name), {
           depth: 2,
           crawlers: ['sixdegrees'],
           maxResultsPerCrawler: 20,
@@ -498,7 +507,7 @@ async function searchProfessionalNetworks(name: string): Promise<OSINTSource> {
     if (canActivatePantheon().available) {
       try {
         await pantheonOrchestrator.initialize();
-        const crawlerResults = await pantheonOrchestrator.search([name], {
+        const crawlerResults = await pantheonOrchestrator.search(buildPantheonSearchTargets(name), {
           depth: 1,
           crawlers: ['startrek'],
           maxResultsPerCrawler: 10,
@@ -561,7 +570,7 @@ async function searchNewsAndArticles(name: string): Promise<OSINTSource> {
     if (canActivatePantheon() && mentions.length < 5) {
       try {
         await pantheonOrchestrator.initialize();
-        const crawlerResults = await pantheonOrchestrator.search([name], {
+        const crawlerResults = await pantheonOrchestrator.search(buildPantheonSearchTargets(name), {
           depth: 2,
           crawlers: ['blizzard'],
           maxResultsPerCrawler: 20,
@@ -619,7 +628,7 @@ async function searchCourtRecords(name: string): Promise<OSINTSource> {
     if (canActivatePantheon().available) {
       try {
         await pantheonOrchestrator.initialize();
-        const crawlerResults = await pantheonOrchestrator.search([name], {
+        const crawlerResults = await pantheonOrchestrator.search(buildPantheonSearchTargets(name), {
           depth: 3,
           crawlers: ['cerberus', 'lich'],
           maxResultsPerCrawler: 15,
