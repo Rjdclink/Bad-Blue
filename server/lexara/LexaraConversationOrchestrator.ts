@@ -1,4 +1,6 @@
 import { AICollaborationOrchestrator } from '../aiCollaborationOrchestrator';
+import { generateOpenRouterText } from '../openRouterService';
+import { CURRENT_AI_MODELS } from '../aiHarmonyModelRegistry';
 import { UsageContext } from '../aiTokenGovernor';
 import { TaskComplexity, TaskPriority } from '../aiModelSelector';
 import { getConfiguredHarmonyProviders } from '../aiHarmonyModelRegistry';
@@ -385,8 +387,37 @@ export async function generateLexaraConversationResponse(
     }
   }
 
-  // Never substitute legacy template knowledge for current legal reasoning. If
-  // every live Harmony path is unavailable, fail safe rather than inventing law.
+  // Independent recovery lane: Harmony and its provider/model routing are one
+  // failure domain. If that entire domain produces no usable answer, make one
+  // bounded direct gateway attempt before exposing degraded mode. This path is
+  // deliberately outside AICollaborationOrchestrator so an orchestration bug,
+  // provider-health bookkeeping error, or exhausted Harmony route cannot become
+  // a global LEXARA outage.
+  if (!text && process.env.OPENROUTER_API_KEY?.trim() && !context.signal?.aborted) {
+    try {
+      const recovery = await generateOpenRouterText(userPrompt, {
+        model: CURRENT_AI_MODELS.openRouterAuto,
+        systemPrompt,
+        maxTokens: 700,
+        timeoutMs: LIVE_REASONING_PROVIDER_ATTEMPT_MS,
+        signal: context.signal,
+      });
+      text = recovery.content.trim();
+      if (text) {
+        console.info('[LEXARA Recovery] independent gateway recovered live legal turn', {
+          model: recovery.model,
+          latencyMs: recovery.latencyMs,
+        });
+      }
+    } catch (error) {
+      console.warn('[LEXARA Recovery] independent gateway unavailable', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  // Safety remains narrow: only after both the normal capability pool and the
+  // independent recovery lane are exhausted do we decline to invent current law.
   if (!text) text = degradedLegalResponse(jurisdiction);
 
   console.info('[LEXARA Performance] live turn', {
