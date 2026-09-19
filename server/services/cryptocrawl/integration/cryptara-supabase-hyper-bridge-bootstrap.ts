@@ -6,7 +6,9 @@ import {
 import {
   getCryptaraOverflowSuperWorkerSnapshot,
   startCryptaraOverflowSuperWorker,
+  stopCryptaraOverflowSuperWorker,
 } from './cryptara-overflow-super-worker.js';
+import { isCryptoCrawlerDatabaseAccessAllowed } from '../runtime/manual-power-state.js';
 
 export type CryptaraHyperBridgeBootstrapState =
   | 'idle'
@@ -40,6 +42,14 @@ let probeInFlight: Promise<void> | null = null;
  * probe while the caller continues immediately toward normal bootstrap.
  */
 export function startCryptaraHyperBridgeBootstrap(): Promise<void> {
+  if (!isCryptoCrawlerDatabaseAccessAllowed()) {
+    state = 'idle';
+    startedAt = 0;
+    completedAt = Date.now();
+    latencyMs = 0;
+    reason = 'master_power_off';
+    return Promise.resolve();
+  }
   if (probeInFlight) return probeInFlight;
 
   startCryptaraOverflowSuperWorker();
@@ -87,6 +97,16 @@ export function startCryptaraHyperBridgeBootstrap(): Promise<void> {
   });
 
   return probeInFlight;
+}
+
+export function stopCryptaraHyperBridgeBootstrap(): void {
+  stopCryptaraOverflowSuperWorker();
+  probeInFlight = null;
+  state = 'idle';
+  startedAt = 0;
+  completedAt = Date.now();
+  latencyMs = 0;
+  reason = 'master_power_off';
 }
 
 export function getCryptaraHyperBridgeBootstrapSnapshot(): BootstrapSnapshot {
