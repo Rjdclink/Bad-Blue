@@ -114,6 +114,8 @@ const harmonyTransportCooldownUntil = new Map<string, number>();
 function harmonyTransportDomain(provider: AIProvider): string {
   if (provider === AIProvider.CLAUDE || provider === AIProvider.CLAUDE_OPUS) return 'anthropic';
   if (provider === AIProvider.GROQ) return 'groq';
+  if (provider === AIProvider.XAI) return 'xai';
+  if (provider === AIProvider.FIREWORKS) return 'fireworks';
   if (provider === AIProvider.GPT_OSS) {
     return process.env.GROQ_API_KEY?.trim() ? 'groq' : 'openrouter';
   }
@@ -128,10 +130,7 @@ function harmonyTransportDomain(provider: AIProvider): string {
     AIProvider.CODE_LLAMA,
     AIProvider.GPT_NEOX,
     AIProvider.PERPLEXITY,
-    AIProvider.FIREWORKS,
   ].includes(provider)) return 'openrouter';
-  if (provider === AIProvider.COHERE && !process.env.COHERE_API_KEY?.trim()) return 'huggingface';
-  if (provider === AIProvider.TOGETHER && !process.env.TOGETHER_API_KEY?.trim()) return 'huggingface';
   return String(provider);
 }
 
@@ -200,29 +199,33 @@ function markHarmonyProviderFailure(provider: AIProvider, error: unknown): void 
   ) {
     return;
   }
-  const cooldownMs = /no permitted capability-compatible|retired|deprecated|model .* unavailable/.test(message)
-    ? 10 * 60_000
-    : /returned no text content block|returned no text|empty response/.test(message)
-      ? 2 * 60_000
-      : /429|rate limit|quota/.test(message)
-        ? 5 * 60_000
-        : /401|invalid api key|authentication/.test(message)
+  const cooldownMs = /402|payment required|billing|credits? (?:required|depleted|remaining)/.test(message)
+    ? 30 * 60_000
+    : /no permitted capability-compatible|retired|deprecated|model .* unavailable/.test(message)
       ? 10 * 60_000
-      : /403|permission|blocked/.test(message)
-        ? 5 * 60_000
-        : /404|not found|retired|deprecated/.test(message)
-          ? 10 * 60_000
-          : /timeout|timed out|econnreset|fetch failed|socket/.test(message)
-            ? 5_000
-            : 15_000;
+      : /returned no text content block|returned no text|empty response/.test(message)
+        ? 2 * 60_000
+        : /429|rate limit|quota/.test(message)
+          ? 5 * 60_000
+          : /401|invalid api key|authentication/.test(message)
+            ? 10 * 60_000
+            : /403|permission|blocked/.test(message)
+              ? 5 * 60_000
+              : /404|not found|retired|deprecated/.test(message)
+                ? 10 * 60_000
+                : /timeout|timed out|econnreset|fetch failed|socket/.test(message)
+                  ? 5_000
+                  : 15_000;
   harmonyProviderCooldownUntil.set(provider, Date.now() + cooldownMs);
 
-  if (/429|rate limit|quota|401|invalid api key|authentication|fetch failed|socket|econnreset|network/i.test(message)) {
-    const transportCooldownMs = /401|invalid api key|authentication/.test(message)
-      ? 60_000
-      : /429|rate limit|quota/.test(message)
-        ? 10_000
-        : 3_000;
+  if (/402|payment required|billing|credits?|429|rate limit|quota|401|invalid api key|authentication|fetch failed|socket|econnreset|network/i.test(message)) {
+    const transportCooldownMs = /402|payment required|billing|credits?/.test(message)
+      ? 30 * 60_000
+      : /401|invalid api key|authentication/.test(message)
+        ? 10 * 60_000
+        : /429|rate limit|quota/.test(message)
+          ? 60_000
+          : 3_000;
     harmonyTransportCooldownUntil.set(
       harmonyTransportDomain(provider),
       Date.now() + transportCooldownMs,
@@ -259,17 +262,17 @@ async function callOpenAICompatibleHarmonyProvider(
       baseUrl: 'https://api.cerebras.ai/v1',
       key: process.env.CEREBRAS_API_KEY?.trim(),
     },
-    [AIProvider.SAMBANOVA]: {
-      baseUrl: (process.env.SAMBANOVA_BASE_URL?.trim() || 'https://api.sambanova.ai/v1').replace(/\/$/, ''),
-      key: process.env.SAMBANOVA_API_KEY?.trim(),
-    },
     [AIProvider.TOGETHER]: {
       baseUrl: 'https://api.together.xyz/v1',
       key: process.env.TOGETHER_API_KEY?.trim(),
     },
-    [AIProvider.HUGGINGFACE]: {
-      baseUrl: 'https://router.huggingface.co/v1',
-      key: process.env.HUGGINGFACE_API_TOKEN?.trim() || process.env.HUGGINGFACE_API_KEY?.trim(),
+    [AIProvider.XAI]: {
+      baseUrl: 'https://api.x.ai/v1',
+      key: process.env.XAI_API_KEY?.trim(),
+    },
+    [AIProvider.FIREWORKS]: {
+      baseUrl: 'https://api.fireworks.ai/inference/v1',
+      key: process.env.FIREWORKS_API_KEY?.trim(),
     },
   };
   const config = configs[provider];
@@ -1315,8 +1318,7 @@ export class AICollaborationOrchestrator {
         case AIProvider.FALCON:
         case AIProvider.CODE_LLAMA:
         case AIProvider.GPT_NEOX:
-        case AIProvider.PERPLEXITY:
-        case AIProvider.FIREWORKS: {
+        case AIProvider.PERPLEXITY: {
           const model = task.model || getOpenRouterModelForProvider(task.provider) || CURRENT_AI_MODELS.openRouterAuto;
           const result = await generateOpenRouterText(prompt, {
             model,
@@ -1359,8 +1361,8 @@ export class AICollaborationOrchestrator {
           break;
         }
         case AIProvider.CEREBRAS:
-        case AIProvider.SAMBANOVA:
-        case AIProvider.HUGGINGFACE: {
+        case AIProvider.XAI:
+        case AIProvider.FIREWORKS: {
           const result = await withHarmonyDeadline(
             callOpenAICompatibleHarmonyProvider(
               task.provider,
@@ -1381,24 +1383,14 @@ export class AICollaborationOrchestrator {
         }
         case AIProvider.COHERE: {
           const result = await withHarmonyDeadline(
-            process.env.COHERE_API_KEY?.trim()
-              ? callCohereHarmony(
-                  task.model,
-                  prompt,
-                  task.systemPrompt,
-                  outputTokenLimit,
-                  taskTimeoutMs,
-                  attempt.signal,
-                )
-              : callOpenAICompatibleHarmonyProvider(
-                  AIProvider.HUGGINGFACE,
-                  CURRENT_AI_MODELS.cohereViaHuggingFace,
-                  prompt,
-                  task.systemPrompt,
-                  outputTokenLimit,
-                  taskTimeoutMs,
-                  attempt.signal,
-                ),
+            callCohereHarmony(
+              task.model,
+              prompt,
+              task.systemPrompt,
+              outputTokenLimit,
+              taskTimeoutMs,
+              attempt.signal,
+            ),
             taskTimeoutMs,
             task.provider,
             attempt.signal,
@@ -1409,25 +1401,15 @@ export class AICollaborationOrchestrator {
         }
         case AIProvider.TOGETHER: {
           const result = await withHarmonyDeadline(
-            process.env.TOGETHER_API_KEY?.trim()
-              ? callOpenAICompatibleHarmonyProvider(
-                  AIProvider.TOGETHER,
-                  task.model,
-                  prompt,
-                  task.systemPrompt,
-                  outputTokenLimit,
-                  taskTimeoutMs,
-                  attempt.signal,
-                )
-              : callOpenAICompatibleHarmonyProvider(
-                  AIProvider.HUGGINGFACE,
-                  CURRENT_AI_MODELS.togetherViaHuggingFace,
-                  prompt,
-                  task.systemPrompt,
-                  outputTokenLimit,
-                  taskTimeoutMs,
-                  attempt.signal,
-                ),
+            callOpenAICompatibleHarmonyProvider(
+              AIProvider.TOGETHER,
+              task.model,
+              prompt,
+              task.systemPrompt,
+              outputTokenLimit,
+              taskTimeoutMs,
+              attempt.signal,
+            ),
             taskTimeoutMs,
             task.provider,
             attempt.signal,
