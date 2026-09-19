@@ -294,7 +294,7 @@ router.post('/audio-chunk', express.raw({ type: 'application/octet-stream', limi
  */
 router.get('/voice/live-readiness', async (_req: Request, res: Response) => {
   const groqConfigured = !!process.env.GROQ_API_KEY?.trim();
-  const deepgramConfigured = !!process.env.DEEPGRAM_API_KEY?.trim();
+  const deepgramConfigured = !!(process.env.DEEPGRAM_API_KEY?.trim() || process.env.DEEPGRAM?.trim());
   const elevenLabsScribeConfigured = !!process.env.ELEVENLABS_API_KEY?.trim();
   const speechInputConfigured = groqConfigured || deepgramConfigured || elevenLabsScribeConfigured;
 
@@ -430,7 +430,7 @@ async function transcribeWithDeepgram(file: Express.Multer.File): Promise<{
   model: string;
   quality?: { confidence?: number };
 }> {
-  const apiKey = process.env.DEEPGRAM_API_KEY?.trim();
+  const apiKey = process.env.DEEPGRAM_API_KEY?.trim() || process.env.DEEPGRAM?.trim();
   if (!apiKey) throw new Error('Deepgram speech-to-text is not configured');
 
   const model = process.env.DEEPGRAM_STT_MODEL?.trim() || 'nova-3';

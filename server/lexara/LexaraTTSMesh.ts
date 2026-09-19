@@ -97,6 +97,12 @@ let mistralVoiceCache: { id: string; expiresAt: number } | null = null;
 let openRouterCatalogCache: { ids: Set<string>; expiresAt: number } | null = null;
 let warmStandbyTimerStarted = false;
 
+function deepgramApiKey(): string {
+  return process.env.DEEPGRAM_API_KEY?.trim()
+    || process.env.DEEPGRAM?.trim()
+    || '';
+}
+
 const LEXARA_FEMALE_VOICE = {
   deepgram: process.env.DEEPGRAM_TTS_MODEL?.trim() || 'flux-haley-en',
   gemini: process.env.GEMINI_TTS_VOICE?.trim() || 'Kore',
@@ -158,7 +164,7 @@ function configured(provider: LexaraTTSProviderId): boolean {
       // in September 2026; this route requires the dedicated current Gemini key.
       return !!process.env.GEMINI_API_KEY?.trim();
     case 'deepgram':
-      return !!process.env.DEEPGRAM_API_KEY?.trim();
+      return !!deepgramApiKey();
     case 'xai':
       return !!process.env.XAI_API_KEY?.trim();
     case 'groq':
@@ -216,8 +222,13 @@ function providerScore(provider: LexaraTTSProviderId): number {
   const latencyPenalty = state.ewmaLatencyMs > 0 ? Math.min(700, state.ewmaLatencyMs / 10) : 0;
   const slowRoutePenalty = state.ewmaLatencyMs > 4_500 ? 250 : 0;
   const readinessBonus = ready(provider) ? 300 : 0;
+  const conversationalPrimaryBonus = provider === 'deepgram'
+    ? 140
+    : provider === 'gemini'
+      ? 40
+      : 0;
   const quotaPenalty = typeof state.quotaRemaining === 'number' && state.quotaRemaining < 100 ? 100 : 0;
-  return base + readinessBonus - failureRate * 250 - latencyPenalty - slowRoutePenalty - quotaPenalty;
+  return base + readinessBonus + conversationalPrimaryBonus - failureRate * 250 - latencyPenalty - slowRoutePenalty - quotaPenalty;
 }
 
 function orderedCandidates(text: string): LexaraTTSProviderId[] {
@@ -627,7 +638,7 @@ async function synthesizeDeepgram(text: string, probe = false): Promise<LexaraTT
     {
       method: 'POST',
       headers: {
-        Authorization: `Token ${process.env.DEEPGRAM_API_KEY!.trim()}`,
+        Authorization: `Token ${deepgramApiKey()}`,
         'Content-Type': 'application/json',
         Accept: 'audio/mpeg',
       },
@@ -840,7 +851,7 @@ async function openDeepgramSpeechStream(text: string, signal?: AbortSignal): Pro
       {
         method: 'POST',
         headers: {
-          Authorization: `Token ${process.env.DEEPGRAM_API_KEY!.trim()}`,
+          Authorization: `Token ${deepgramApiKey()}`,
           'Content-Type': 'application/json',
           Accept: 'audio/mpeg',
         },
@@ -928,7 +939,7 @@ async function openElevenLabsSpeechStream(text: string, signal?: AbortSignal): P
   }
 }
 
-const LEXARA_TTS_HEDGE_DELAY_MS = 800;
+const LEXARA_TTS_HEDGE_DELAY_MS = 650;
 
 async function openProgressiveProvider(
   provider: LexaraTTSProviderId,
@@ -1244,11 +1255,20 @@ export async function refreshLexaraTTSReadiness(force = false): Promise<ReturnTy
 
 export function warmLexaraTTSMesh(): void {
   const refresh = () => {
-    void refreshLexaraTTSReadiness(false).catch(error => {
-      log.warn('[LEXARA TTS] background warmup failed', {
-        error: error instanceof Error ? error.message : String(error),
+    void refreshLexaraTTSReadiness(false)
+      .then(readiness => {
+        log.info('[LEXARA TTS] warm readiness snapshot', {
+          healthyProviders: readiness.healthyProviders,
+          streamingProviders: readiness.streamingProviders,
+          independentDomains: readiness.independentDomains,
+          voiceStatus: readiness.voiceStatus,
+        });
+      })
+      .catch(error => {
+        log.warn('[LEXARA TTS] background warmup failed', {
+          error: error instanceof Error ? error.message : String(error),
+        });
       });
-    });
   };
 
   refresh();
