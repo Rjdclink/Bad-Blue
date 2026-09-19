@@ -8,6 +8,7 @@ import { createLogger } from '../../../logger';
 import type { LegalIntelligenceModule, IntelligenceEvent, EntityNode } from '../types';
 import { correlationDatabase } from '../correlationDB';
 import { generateEventId } from '../utils';
+import { unifiedSearch } from '../../../webSearchService';
 
 const logger = createLogger('PublicRecordsModule');
 
@@ -94,14 +95,45 @@ class PublicRecordsModuleImpl implements LegalIntelligenceModule {
     const lawsuits: Array<{ id: string; type: string; properties: any }> = [];
     const complaints: Array<{ id: string; type: string; properties: any }> = [];
 
-    // In a real implementation, this would query actual public records databases
-    // For now, we return mock data to demonstrate the pattern
+    const name = typeof entity.properties.name === 'string' ? entity.properties.name.trim() : '';
+    if (!name) return { lawsuits, complaints };
 
-    const name = entity.properties.name;
-    if (name) {
-      // Mock: Check for existing related lawsuits/complaints in our database
-      // In production, this would query external APIs or databases
-      logger.debug(`Checking public records for ${name}`);
+    logger.debug(`Checking public records for ${name}`);
+
+    try {
+      const results = await unifiedSearch(
+        `"${name}" (lawsuit OR complaint OR court OR docket) public record`,
+        { limit: 12 }
+      );
+
+      for (const result of results) {
+        if (!result?.url) continue;
+        const combined = `${result.title || ''} ${result.snippet || ''}`.toLowerCase();
+        const properties = {
+          subjectName: name,
+          title: result.title || result.url,
+          url: result.url,
+          snippet: result.snippet || '',
+          source: 'public-web-retrieval',
+          retrievedAt: new Date().toISOString(),
+        };
+
+        if (/\bcomplaint\b/.test(combined)) {
+          complaints.push({
+            id: generateEventId(),
+            type: 'complaint',
+            properties,
+          });
+        } else if (/\b(lawsuit|court|docket|case|plaintiff|defendant)\b/.test(combined)) {
+          lawsuits.push({
+            id: generateEventId(),
+            type: 'lawsuit',
+            properties,
+          });
+        }
+      }
+    } catch (error) {
+      logger.warn(`Public-record retrieval failed for ${name}`, error);
     }
 
     return { lawsuits, complaints };
