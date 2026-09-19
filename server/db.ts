@@ -314,6 +314,7 @@ export async function activateLegalWhatNeonFallback(reason: string): Promise<boo
       'users', 'auth_accounts', 'sessions', 'plans', 'subscriptions',
       'trial_consultations', 'complaints', 'lawsuit_filings',
       'foia_requests', 'officer_profiles', 'ai_subagent_logs', 'lexara_conversations',
+      'subagent_learning_patterns', 'subagent_search_sessions', 'officer_category_priority',
     ];
     const proof = await candidate.query({
       text: `SELECT table_name FROM information_schema.tables
