@@ -64,7 +64,6 @@ import { setupPulseRoutes } from "./routes/pulse.routes";
 import stageGovernorRoutes from "./routes/stageGovernor.routes";
 import arbitrageAgentsRoutes from "./routes/arbitrageAgents.routes";
 import { createBeamRouter } from "./services/cryptocrawl/beam/beamRoutes.js";
-import { startBeamOnBoot } from "./services/cryptocrawl/beam/beam.js";
 import { dashboardApi, adminApi, wss } from "./services/cryptocrawl/api/index";
 import bridgeApi from "./services/cryptocrawl/api/bridge-api";
 import { verifyCanonicalCryptoSetup } from "./services/cryptocrawl/verification/canonicalCryptoVerifier.js";
@@ -858,10 +857,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Packetized “laser pulse” channel (signature-only, no sessions).
   setupPulseRoutes(app);
 
-  // Beam test: default ON when BEAM_ENABLED=true (no UI dependency).
-  // Missing BEAM_ENABLED is treated as false (no beam = no cost).
+  // Beam routes remain registered for the authenticated operator, but actual
+  // emission is fail-closed behind CryptoCrawler Master Power. Process boot never
+  // emits a CryptoCrawler network pulse.
   app.use('/beam', createBeamRouter());
-  startBeamOnBoot();
 
   // Usage tracking middleware - learns usage patterns for auto-repair timing
   app.use((req, res, next) => {
