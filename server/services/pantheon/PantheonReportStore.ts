@@ -188,9 +188,15 @@ export async function createPantheonReportRecord(input: {
       });
       return normalizeRecord(persisted);
     } catch (error) {
-      if (!isTransientDatabaseFailure(error)) throw error;
-      openDatabaseCircuit(error);
-      scheduleMirror(record.id);
+      if (isTransientDatabaseFailure(error)) {
+        openDatabaseCircuit(error);
+        scheduleMirror(record.id);
+      } else {
+        console.error('[PANTHEON REPORT STORE] Database mirror rejected report creation; local journal remains authoritative for this job', {
+          reportId: record.id,
+          error: errorText(error).slice(0, 500),
+        });
+      }
     }
   } else {
     scheduleMirror(record.id);
@@ -226,9 +232,15 @@ export async function updatePantheonReportRecord(
       }
       await mirrorRecord(next);
     } catch (error) {
-      if (!isTransientDatabaseFailure(error)) throw error;
-      openDatabaseCircuit(error);
-      scheduleMirror(reportId);
+      if (isTransientDatabaseFailure(error)) {
+        openDatabaseCircuit(error);
+        scheduleMirror(reportId);
+      } else {
+        console.error('[PANTHEON REPORT STORE] Database mirror rejected report update; local journal remains authoritative for this job', {
+          reportId,
+          error: errorText(error).slice(0, 500),
+        });
+      }
     }
   } else {
     scheduleMirror(reportId);
@@ -247,8 +259,14 @@ export async function getPantheonReportRecord(reportId: string): Promise<Pantheo
         return normalized;
       }
     } catch (error) {
-      if (!isTransientDatabaseFailure(error)) throw error;
-      openDatabaseCircuit(error);
+      if (isTransientDatabaseFailure(error)) {
+        openDatabaseCircuit(error);
+      } else {
+        console.error('[PANTHEON REPORT STORE] Database read failed; checking the local report journal', {
+          reportId,
+          error: errorText(error).slice(0, 500),
+        });
+      }
     }
   }
 
