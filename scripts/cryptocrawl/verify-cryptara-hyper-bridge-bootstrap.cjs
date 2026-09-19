@@ -21,19 +21,17 @@ const overflowSuperWorker = read('server/services/cryptocrawl/integration/crypta
 const gateway = read('server/services/cryptocrawl/integration/cryptara-overflow-primary-gateway.ts');
 const overflow = read('server/services/cryptocrawl/integration/cryptara-supabase-overflow-worker.ts');
 
-// Exact startup order: admission governor -> Overflow verification -> complete
-// CryptoCrawler runtime-schema proof -> server entry. Shared node-postgres Pool
-// behavior is never monkey-patched; hot CryptoCrawler DB imports are redirected
-// explicitly by the production Overflow-authority build router.
+// Process bootstrap must be CryptoCrawler-I/O-free. The bridge remains fully
+// functional, but only the authenticated manual start lifecycle may invoke it.
 requirePattern(
   bootstrap,
-  /reconcileAppSchema[\s\S]*installCryptaraSuperWorkerAdmission[\s\S]*startCryptaraHyperBridgeBootstrap[\s\S]*await\s+startCryptaraHyperBridgeBootstrap\(\)[\s\S]*overflowBootstrap[\s\S]*ensureCryptocrawlOverflowRuntimeSchema[\s\S]*import\('\.\/index\.js'\)/,
-  'verified Overflow and complete runtime-schema proof must precede index.ts',
+  /CRYPTOCRAWLER_MANUAL_POWER_PHASE\s*=\s*'OFF'[\s\S]*zero CryptoCrawler database\/network startup I\/O[\s\S]*import\('\.\/index\.js'\)/,
+  'production bootstrap must preserve manual power OFF and load the application',
 );
-requirePattern(
+forbidPattern(
   bootstrap,
-  /overflowBootstrap\.state\s*===\s*'ready'[\s\S]*ensureCryptocrawlOverflowRuntimeSchema[\s\S]*CRYPTOCRAWL_OVERFLOW_RUNTIME_SCHEMA_READY\s*=\s*'true'/,
-  'verified Overflow must prove complete CryptoCrawler runtime schema before readiness',
+  /startCryptaraHyperBridgeBootstrap\s*\(|ensureCryptocrawlOverflowRuntimeSchema\s*\(/,
+  'production bootstrap must not open CryptoCrawler Overflow/schema resources',
 );
 forbidPattern(
   bootstrap,
@@ -45,14 +43,16 @@ requirePattern(
   /if\s*\(!isUnder\(importer,\s*cryptoRoot\)\)\s*return\s+null;[\s\S]*resolved\s*!==\s*rootDbBase[\s\S]*importer\s*===\s*primaryArchiveWorker[\s\S]*redirected\.push[\s\S]*return\s*\{\s*path:\s*overflowDb\s*\}/,
   'production bundling must redirect hot CryptoCrawler server/db imports to Overflow while preserving the explicit cold-archive Primary worker',
 );
-requirePattern(index, /overflow_proxy_mode_activated[\s\S]{0,500}directPrimaryProbes:\s*0/, 'index startup must perform zero direct primary readiness probes in overflow proxy mode');
-forbidPattern(index, /probePrimaryDatabaseOnce|overflow_degraded|until primary recovery/, 'overflow must not be modeled as temporary recovery failover');
+requirePattern(index, /cryptocrawler_master_power_off_at_boot[\s\S]{0,500}overflowProbeIssued:\s*false/, 'index startup must prove CryptoCrawler Overflow was not probed');
+forbidPattern(index, /await\s+startCryptaraHyperBridgeBootstrap\(\)|await\s+ensureCryptocrawlOverflowRuntimeSchema\(\)/, 'index startup must not activate CryptoCrawler resources');
 
+requirePattern(bridgeBootstrap, /if\s*\(!isCryptoCrawlerDatabaseAccessAllowed\(\)\)[\s\S]{0,500}reason\s*=\s*'master_power_off'/, 'bridge bootstrap must fail closed while Master Power is OFF');
 requirePattern(
   bridgeBootstrap,
   /startCryptaraOverflowSuperWorker\(\)[\s\S]{0,900}withCryptaraParallelProxy\('observability'/,
-  'dedicated overflow Super Worker must be online before the remote overflow probe',
+  'after manual start opens the gate, dedicated overflow Super Worker must be online before the remote overflow probe',
 );
+requirePattern(bridgeBootstrap, /export function stopCryptaraHyperBridgeBootstrap\(\)/, 'bridge bootstrap must expose a hard stop path');
 requirePattern(bridgeBootstrap, /withCryptaraParallelProxy\('observability'/, 'bootstrap must reuse the existing overflow worker');
 requirePattern(bridgeBootstrap, /if\s*\(probeInFlight\)\s*return\s+probeInFlight/, 'overflow bootstrap probe must be single-flight');
 requirePattern(bridgeBootstrap, /SELECT 1 AS hyper_bridge_ready/, 'bootstrap may probe only the overflow Supabase lane');
@@ -89,4 +89,4 @@ forbidPattern(gateway, /\bnew\s+Pool\s*\(|\bpool\.query\s*\(/, 'gateway is trans
 forbidPattern(bootstrap, /\bpool\.query\s*\(|\bdb\.execute\s*\(|\bnew\s+Pool\s*\(/, 'bootstrap wrapper must remain query-free and pool-free');
 forbidPattern(bootstrap, /setInterval\s*\(|setTimeout\s*\(/, 'bootstrap wrapper must not add recovery polling');
 
-console.log('[hyper-bridge-bootstrap] PASS: verified Overflow starts first, hot CryptoCrawler DB imports route explicitly to Overflow, worker reads use local->overflow->primary-on-miss through the scoped gateway, direct primary readiness probes are zero, and no global Pool interception exists');
+console.log('[hyper-bridge-bootstrap] PASS: process boot leaves CryptoCrawler OFF; manual start alone may open Overflow, manual stop closes it, hot DB imports remain explicitly routed, and no global Pool interception exists');
