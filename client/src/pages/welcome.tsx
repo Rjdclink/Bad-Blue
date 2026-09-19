@@ -1,551 +1,274 @@
 /**
- * LegalWhat Welcome Page - Law Library Bookshelf Design
- * 
- * Displays 31 law types as realistic law book spines on a bookshelf
- * Features Law Enforcement Accountability as highlighted option
- * Each book is directly clickable to navigate to the legal consultation page
- * Integrates with existing BadBlue functionality
- * 
- * Routes legal consultations through the required LEXARA live-consent interstitial.
+ * LegalWhat Welcome Page - responsive antique law library.
+ *
+ * Scope invariant:
+ * - Presentation only: preserve all existing destinations and law-domain routing.
+ * - Every law book still enters /lexara-consent/:domainId.
+ * - PANTHEON, SPECTRA, and Inmate Locator keep their existing routes.
  */
 
-import { useCallback } from "react";
+import { useCallback, type CSSProperties } from "react";
 import { useLocation } from "wouter";
-import { Badge } from "@/components/ui/badge";
-import { ArrowRight, Shield } from "lucide-react";
+import {
+  ArrowRight,
+  BookOpen,
+  Eye,
+  Globe2,
+  Landmark,
+  MapPin,
+  Scale,
+  Search,
+  Shield,
+} from "lucide-react";
 import { LAW_TYPE_DATA, type LawTypeInfo } from "@shared/lawTypes";
 import { SEOHead } from "@/components/SEOHead";
-import { useAuth } from "@/hooks/useAuth";
 import { AppHeader } from "@/components/AppHeader";
+import "./welcome-library.css";
 
-// Color palette - distinct colors assigned to keep neighboring books visually differentiated
-const BOOK_COLORS = [
-  { name: 'Administrative Law', color: '#E83D66' },           // Lipstick
-  { name: 'Appellate Law', color: '#6699CC' },                // Mercedes Blue
-  { name: 'Banking and Financing Law', color: '#32CD32' },    // Lime Green
-  { name: 'Civil Law', color: '#6B3FA0' },                    // Grape
-  { name: 'Civil Rights Law', color: '#71EEB8' },             // Seafoam
-  { name: 'Constitutional Law', color: '#CD7F32' },           // Bronze
-  { name: 'Contract Law', color: '#FFBF00' },                 // Amber
-  { name: 'Criminal Law', color: '#301934' },                 // Dark Purple
-  { name: 'Cyber Technology Law', color: '#007FFF' },         // Azure Blue
-  { name: 'Employment and Labor Law', color: '#4CBB17' },     // Kelly Green
-  { name: 'Environmental Law', color: '#E25822' },            // Flame
-  { name: 'Family Law', color: '#E0FFFF' },                   // Light Cyan
-  { name: 'FOIA/Open Records Law', color: '#0096FF' },        // Bright Blue
-  { name: 'Immigration Law', color: '#996515' },              // Golden Brown
-  { name: 'Insurance Law', color: '#FF0000' },                // Fire Red
-  { name: 'Intellectual Property Law', color: '#E30B5C' },    // Raspberry
-  { name: 'International Law', color: '#191970' },            // Midnight
-  { name: 'Juvenile Law', color: '#008080' },                 // Teal
-  { name: 'Law Enforcement Accountability', color: '#36454F' }, // Charcoal (Featured)
-  { name: 'Military/Veterans Law', color: '#E6E6FA' },        // Lavender
-  { name: 'Municipal/Government Law', color: '#E0B0FF' },     // Mauve
-  { name: 'Probate and Estate Law', color: '#8DA399' },       // Morning Blue
-  { name: 'Procedural Law', color: '#FFCBA4' },               // Peach
-  { name: 'Post Conviction', color: '#7B68EE' },                 // Medium Slate Blue
-  { name: 'Property Law', color: '#B5651D' },                 // Light Brown
-  { name: 'Public Housing Law', color: '#DA70D6' },           // Orchid
-  { name: 'Real Estate Law', color: '#87CEEB' },              // Sky Blue
-  { name: 'Securities Law', color: '#005F69' },               // Peacock
-  { name: 'Tax Law', color: '#98FF98' },                      // Mint Green
-  { name: 'Tort Law', color: '#DE3163' },                     // Cherry Red
-  { name: 'Trusts Law', color: '#FFD700' },                   // Gold
-];
+const LEATHER_PALETTE = [
+  "#3b1717",
+  "#4d211b",
+  "#17283b",
+  "#2f1715",
+  "#4a2520",
+  "#18362c",
+  "#542b1e",
+  "#321818",
+  "#13283c",
+  "#55231e",
+  "#23402f",
+  "#4b291d",
+  "#24352f",
+  "#4d201f",
+  "#1f3737",
+  "#42211f",
+] as const;
 
-// Default color for books without a matched color
-const DEFAULT_BOOK_COLOR = '#666666';
+const SERVICE_DESTINATIONS = [
+  {
+    name: "PANTHEON",
+    subtitle: "Intelligence Platform",
+    description: "Advanced identity and evidence intelligence.",
+    route: "/pantheon",
+    icon: Eye,
+  },
+  {
+    name: "SPECTRA",
+    subtitle: "Location Intelligence",
+    description: "Conversational target acquisition and location intelligence.",
+    route: "/spectra",
+    icon: MapPin,
+  },
+  {
+    name: "United States Inmate Locator",
+    subtitle: "Nationwide Corrections Search",
+    description: "Search federal, state, local, and participating corrections sources.",
+    route: "/inmate-locator",
+    icon: Search,
+  },
+] as const;
 
-/**
- * Darkens or lightens a hex color by a given percentage
- * @param hex - Hex color string (e.g., '#FF0000')
- * @param percent - Percentage to darken (positive) or lighten (negative)
- * @returns Adjusted hex color string
- */
-const adjustColorBrightness = (hex: string, percent: number): string => {
-  // Parse hex color to RGB components
-  const num = parseInt(hex.replace('#', ''), 16);
-  const amt = Math.round(2.55 * percent);
-  
-  // Extract R, G, B components using bit shifting
-  const R = (num >> 16) - amt;
-  const G = (num >> 8 & 0x00FF) - amt;
-  const B = (num & 0x0000FF) - amt;
-  
-  // Clamp each component to 0-255 range and reconstruct hex
-  return '#' + (
-    0x1000000 +
-    (R < 255 ? (R < 1 ? 0 : R) : 255) * 0x10000 +
-    (G < 255 ? (G < 1 ? 0 : G) : 255) * 0x100 +
-    (B < 255 ? (B < 1 ? 0 : B) : 255)
-  ).toString(16).slice(1);
-};
-
-/**
- * Converts hex color to RGB object for rgba usage
- * @param hex - Hex color string (e.g., '#FF0000')
- * @returns RGB object with r, g, b components
- */
-const hexToRgb = (hex: string): { r: number; g: number; b: number } => {
-  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-  return result ? {
-    r: parseInt(result[1], 16),
-    g: parseInt(result[2], 16),
-    b: parseInt(result[3], 16)
-  } : { r: 100, g: 100, b: 100 };
-}
-
-// Book spine component with "Quiet 3D" premium design - depth, light, and material
-const BookSpine = ({ 
-  lawType, 
-  color, 
+const BookSpine = ({
+  lawType,
+  number,
+  leather,
   onClick,
-  ariaLabel
-}: { 
-  lawType: LawTypeInfo; 
-  color: string; 
+}: {
+  lawType: LawTypeInfo;
+  number: number;
+  leather: string;
   onClick: () => void;
-  ariaLabel: string;
-}) => {
-  const rgb = hexToRgb(color);
-  const accentRgba = `${rgb.r}, ${rgb.g}, ${rgb.b}`;
-
-  return (
-    <button
-      onClick={onClick}
-      aria-label={ariaLabel}
-      className="book-spine-quiet3d relative cursor-pointer flex-shrink-0 focus:outline-none focus:ring-2 focus:ring-amber-400/50 focus:ring-offset-2 focus:ring-offset-black group"
-      style={{
-        width: '55px',
-        height: '280px',
-        // Neutral dark base with subtle gradient for material feel
-        background: `linear-gradient(180deg, rgba(255,255,255,0.08), rgba(0,0,0,0.15))`,
-        backgroundColor: '#1a1a1f',
-        borderRadius: '14px',
-        // 3D depth: top light, bottom occlusion, object lift
-        boxShadow: `
-          inset 0 1px 0 rgba(255,255,255,0.15),
-          inset 0 -1px 0 rgba(0,0,0,0.25),
-          0 8px 20px rgba(0,0,0,0.35)
-        `,
-        border: 'none',
-        transition: 'transform 0.2s ease, box-shadow 0.2s ease',
-      }}
-    >
-      {/* Color as light source - left accent rim */}
-      <div
-        className="absolute top-0 bottom-0 left-0 w-[3px] rounded-l-[14px]"
-        style={{
-          background: `linear-gradient(to bottom, rgba(${accentRgba}, 0.6) 0%, rgba(${accentRgba}, 0.3) 50%, rgba(${accentRgba}, 0.1) 100%)`,
-        }}
-      />
-      
-      {/* Hover glow effect - color as light, not paint */}
-      <div
-        className="absolute inset-0 rounded-[14px] opacity-0 group-hover:opacity-100 transition-opacity duration-200 ease-out pointer-events-none"
-        style={{
-          boxShadow: `0 0 24px rgba(${accentRgba}, 0.35)`,
-        }}
-      />
-      
-      {/* Text on spine - horizontal, sentence case, medium weight */}
-      <div className="absolute inset-0 flex items-center justify-center px-2">
-        <span
-          className="book-spine-label text-center break-words"
-          style={{
-            fontFamily: "'Inter', 'SF Pro', system-ui, sans-serif",
-            fontSize: lawType.name.length > 25 ? '9px' : '10px',
-            fontWeight: 500,
-            letterSpacing: '0.015em',
-            lineHeight: '1.3',
-            color: 'rgba(255,255,255,0.9)',
-            // Subtle text depth for edge definition
-            textShadow: `
-              0 1px 1px rgba(0,0,0,0.4),
-              0 -1px 0 rgba(255,255,255,0.05)
-            `,
-            writingMode: 'vertical-rl',
-            textOrientation: 'mixed',
-            transform: 'rotate(180deg)',
-          }}
-        >
-          {lawType.name}
-        </span>
-      </div>
-
-      {/* Featured badge for Law Enforcement Accountability */}
-      {lawType.featured && (
-        <div 
-          className="absolute -top-2 left-1/2 transform -translate-x-1/2 z-20"
-          style={{ writingMode: 'horizontal-tb' }}
-        >
-          <Badge variant="secondary" className="text-[8px] px-1.5 py-0.5 bg-white/10 text-white/90 border border-white/20 backdrop-blur-sm shadow-lg">
-            Featured
-          </Badge>
-        </div>
-      )}
-    </button>
-  );
-};
+}) => (
+  <button
+    type="button"
+    onClick={onClick}
+    aria-label={"Open " + lawType.name + " consultation"}
+    className={"antique-book-spine" + (lawType.featured ? " antique-book-featured" : "")}
+    style={{ "--book-leather": leather } as CSSProperties}
+  >
+    <span className="antique-book-gilt antique-book-gilt-top" aria-hidden="true" />
+    <span className="antique-book-ornament" aria-hidden="true">❦</span>
+    <span className="antique-book-title">{lawType.name}</span>
+    {lawType.featured && (
+      <span className="antique-feature-ribbon" aria-hidden="true">
+        <Shield className="h-4 w-4" />
+      </span>
+    )}
+    <span className="antique-book-number" aria-hidden="true">{number}</span>
+    <span className="antique-book-gilt antique-book-gilt-bottom" aria-hidden="true" />
+  </button>
+);
 
 export default function WelcomePage() {
-  const { user } = useAuth();
   const [, setLocation] = useLocation();
 
-
-  // Sort law types alphabetically by name
-  const sortedLawTypes = [...LAW_TYPE_DATA].sort((a, b) => 
+  const sortedLawTypes = [...LAW_TYPE_DATA].sort((a, b) =>
     a.name.localeCompare(b.name)
   );
 
-  // Create color map for each law type
-  const colorMap = new Map(
-    BOOK_COLORS.map(item => {
-      const lawType = sortedLawTypes.find(lt => lt.name === item.name);
-      // Only add to map if law type is found
-      if (lawType) {
-        return [lawType.id, item.color];
-      }
-      return null;
-    }).filter(Boolean) as [string, string][]
-  );
+  const shelfGroups = [
+    sortedLawTypes.slice(0, 8),
+    sortedLawTypes.slice(8, 16),
+    sortedLawTypes.slice(16, 24),
+    sortedLawTypes.slice(24),
+  ];
 
-  // Every legal book enters the explicit microphone/audio setup page before
-  // the consultation. Stored consent never bypasses this transition.
   const handleBookClick = useCallback((lawTypeId: string) => {
-    const selectedType = LAW_TYPE_DATA.find(type => type.id === lawTypeId);
+    const selectedType = LAW_TYPE_DATA.find((type) => type.id === lawTypeId);
     if (!selectedType) return;
-
-    // Every law-book selection enters LEXARA with that book's dedicated
-    // practice-area specialization. Legacy BadBlue remains available through
-    // its own route, but the law library is now a single consistent LEXARA flow.
-    setLocation(`/lexara-consent/${selectedType.id}`);
+    setLocation("/lexara-consent/" + selectedType.id);
   }, [setLocation]);
 
   return (
-    <div className="min-h-screen relative">
-      {/* Background Image with Overlay */}
-      <div 
-        className="fixed inset-0 bg-cover bg-center bg-no-repeat -z-10"
+    <div className="legal-library-page min-h-screen">
+      <div
+        className="fixed inset-0 bg-cover bg-center bg-no-repeat -z-20"
         style={{ backgroundImage: "url(/images/premium_photo-.jpg)" }}
-      >
-        <div className="absolute inset-0 bg-gradient-to-b from-black/70 via-black/60 to-black/70" />
-      </div>
+        aria-hidden="true"
+      />
+      <div className="fixed inset-0 legal-library-backdrop -z-10" aria-hidden="true" />
 
       <SEOHead
-        title="Welcome to LegalWhat - AI Legal Platform"
-        description="Select your legal area to get started with AI-powered legal assistance"
+        title="LegalWhat Law Library"
+        description="Choose your legal area or open a LegalWhat intelligence service."
       />
 
-      {/* Header with Back and Logout buttons */}
-      <AppHeader 
-        title="LegalWhat" 
-        subtitle="AI Legal Platform" 
+      <AppHeader
+        title="LegalWhat"
+        subtitle="AI Legal Platform"
         fallbackRoute="/login"
-        className="bg-black/50 backdrop-blur-md border-b border-white/20"
+        className="legal-library-app-header"
       />
 
-      {/* Main Content */}
-      <main className="container mx-auto px-4 py-8 sm:py-12">
-        {/* Welcome Section */}
-        <div className="text-center mb-8 sm:mb-12">
-          <h2 className="text-3xl sm:text-4xl font-bold mb-3 text-white flex items-center justify-center flex-wrap gap-2">
-            Law Library - Choose Your Legal Area
-            <img 
-              src="/images/Legal What Icon.png" 
-              alt="?" 
-              className="inline-block h-[1em] w-auto object-contain"
-              style={{ marginBottom: '-0.08em' }}
-            />
-          </h2>
-          <p className="text-lg text-white/90 max-w-2xl mx-auto">
-            Select a law book to get started with AI-powered legal assistance
-          </p>
-        </div>
+      <main className="legal-library-main">
+        <section className="library-cabinet" aria-labelledby="law-library-title">
+          <div className="library-crown">
+            <BookOpen className="library-crown-icon" aria-hidden="true" />
+            <h1 id="law-library-title">LegalWhat</h1>
+            <p>Law Library — Choose Your Legal Area</p>
+            <span className="library-crown-flourish" aria-hidden="true">◆</span>
+          </div>
 
-        {/* Bookshelf Section */}
-        <div className="mb-8">
-          {/* Bookshelf container with wood-like background */}
-          <div 
-            className="rounded-lg p-6 relative"
-            style={{
-              background: 'linear-gradient(to bottom, rgba(139, 69, 19, 0.3) 0%, rgba(101, 67, 33, 0.3) 100%)',
-              backdropFilter: 'blur(10px)',
-              border: '2px solid rgba(139, 69, 19, 0.5)',
-            }}
-          >
-            {/* Books displayed in rows - each book is directly clickable */}
-            <div className="flex flex-wrap justify-center gap-2 mb-4">
-              {sortedLawTypes.map((lawType) => {
-                const color = colorMap.get(lawType.id) || DEFAULT_BOOK_COLOR;
-                
+          <div className="library-mantel" aria-hidden="true">
+            <div className="library-decor-bay">
+              <div className="library-plant">
+                <span />
+                <span />
+                <span />
+                <span />
+              </div>
+              <div className="library-decor-piece">
+                <Globe2 />
+                <span>Knowledge</span>
+              </div>
+            </div>
+            <div className="library-decor-bay library-decor-bay-right">
+              <div className="library-picture-frame">
+                <Landmark />
+              </div>
+              <div className="library-decor-piece">
+                <Scale />
+                <span>Justice</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="law-shelf-grid" aria-label="Legal practice areas">
+            {shelfGroups.map((group, shelfIndex) => (
+              <div className="law-shelf-bay" key={"shelf-" + shelfIndex}>
+                <div className="law-book-row">
+                  {group.map((lawType, groupIndex) => {
+                    const absoluteIndex = shelfIndex * 8 + groupIndex;
+                    const leather = lawType.featured
+                      ? "#10263d"
+                      : LEATHER_PALETTE[absoluteIndex % LEATHER_PALETTE.length];
+
+                    return (
+                      <BookSpine
+                        key={lawType.id}
+                        lawType={lawType}
+                        number={absoluteIndex + 1}
+                        leather={leather}
+                        onClick={() => handleBookClick(lawType.id)}
+                      />
+                    );
+                  })}
+                </div>
+                <div className="wood-shelf-edge" aria-hidden="true" />
+              </div>
+            ))}
+          </div>
+
+          <section className="service-shelf" aria-labelledby="services-title">
+            <div className="service-shelf-heading">
+              <span className="service-statue" aria-hidden="true">
+                <Scale />
+              </span>
+              <div>
+                <h2 id="services-title">Intelligence Services</h2>
+                <p>Three additional LegalWhat tools, built directly into the library.</p>
+              </div>
+              <span className="service-lamp" aria-hidden="true">
+                <i />
+                <b />
+              </span>
+            </div>
+
+            <div className="service-panel-grid">
+              {SERVICE_DESTINATIONS.map((service) => {
+                const Icon = service.icon;
                 return (
-                  <BookSpine
-                    key={lawType.id}
-                    lawType={lawType}
-                    color={color}
-                    onClick={() => handleBookClick(lawType.id)}
-                    ariaLabel={`Open ${lawType.name} consultation`}
-                  />
+                  <button
+                    key={service.route}
+                    type="button"
+                    className="library-service-panel"
+                    onClick={() => setLocation(service.route)}
+                  >
+                    <span className="service-icon-wrap" aria-hidden="true">
+                      <Icon />
+                    </span>
+                    <span className="service-copy">
+                      <strong>{service.name}</strong>
+                      <span>{service.subtitle}</span>
+                      <small>{service.description}</small>
+                    </span>
+                    <ArrowRight className="service-arrow" aria-hidden="true" />
+                  </button>
                 );
               })}
             </div>
 
-            {/* Shelf surface visual effect */}
-            <div 
-              className="h-2 rounded-sm mt-2"
-              style={{
-                background: 'linear-gradient(to bottom, rgba(101, 67, 33, 0.4) 0%, rgba(139, 69, 19, 0.2) 100%)',
-              }}
-            />
-          </div>
-        </div>
-
-        {/* PANTHEON - Advanced Intelligence Platform */}
-        <div className="mb-8 sm:mb-12">
-          <div className="flex items-center gap-2 mb-4 justify-center">
-            <Badge variant="secondary" className="text-sm bg-white/10 text-white/90 border border-white/20 backdrop-blur-sm px-4 py-1">
-              Advanced Intelligence Platform
-            </Badge>
-          </div>
-          <button
-            className="feature-card-quiet3d w-full text-left relative cursor-pointer rounded-2xl overflow-hidden group focus:outline-none focus:ring-2 focus:ring-white/30 focus:ring-offset-2 focus:ring-offset-black"
-            onClick={() => setLocation('/pantheon')}
-            style={{
-              // Neutral dark base with material gradient
-              background: 'linear-gradient(180deg, rgba(255,255,255,0.08), rgba(0,0,0,0.15))',
-              backgroundColor: '#1a1a1f',
-              backdropFilter: 'blur(10px)',
-              // 3D depth simulation
-              boxShadow: `
-                inset 0 1px 0 rgba(255,255,255,0.15),
-                inset 0 -1px 0 rgba(0,0,0,0.25),
-                0 8px 20px rgba(0,0,0,0.35)
-              `,
-              border: '1px solid rgba(255,255,255,0.1)',
-              transition: 'transform 0.2s ease, box-shadow 0.2s ease',
-            }}
-          >
-            {/* Color as rim light - left accent */}
-            <div
-              className="absolute top-0 bottom-0 left-0 w-[4px] rounded-l-2xl"
-              style={{
-                background: 'linear-gradient(to bottom, rgba(233, 69, 96, 0.7) 0%, rgba(233, 69, 96, 0.4) 50%, rgba(233, 69, 96, 0.2) 100%)',
-              }}
-            />
-            
-            {/* Hover glow effect */}
-            <div
-              className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 ease-out pointer-events-none"
-              style={{
-                boxShadow: '0 0 24px rgba(233, 69, 96, 0.35)',
-              }}
-            />
-            
-            <div className="p-6 flex items-start gap-4 relative z-10">
-              <div className="flex-1">
-                <div className="flex items-center gap-3 mb-3">
-                  <Shield className="h-8 w-8 text-white/70" />
-                  <h3 className="quiet3d-heading text-2xl text-white/90">
-                    Pantheon - Intelligence Platform
-                  </h3>
-                </div>
-                <p className="quiet3d-label text-base text-white/70 mb-2">
-                  Parallel Autonomous Network for Tactical Heuristic Evidence-Obtaining Entity
-                </p>
-                <p className="text-base text-white/60 mb-4">
-                  Advanced intelligence platform for comprehensive identity profiling. Synthesizes data from 60+ sources 
-                  to construct complete profiles including contacts, addresses, relationships, employment, and digital footprints.
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  <Badge variant="secondary" className="text-xs bg-white/5 text-white/70 border border-white/10">
-                    Eye of God Mode
-                  </Badge>
-                  <Badge variant="secondary" className="text-xs bg-white/5 text-white/70 border border-white/10">
-                    60+ Data Sources
-                  </Badge>
-                  <Badge variant="secondary" className="text-xs bg-white/5 text-white/70 border border-white/10">
-                    Deep Intelligence
-                  </Badge>
-                  <Badge variant="secondary" className="text-xs bg-white/5 text-white/70 border border-white/10">
-                    Real-Time Resolution
-                  </Badge>
-                </div>
+            <div className="service-plant-row" aria-hidden="true">
+              <div className="service-mini-plant">
+                <span />
+                <span />
+                <span />
               </div>
-              <ArrowRight className="h-8 w-8 text-white/50 flex-shrink-0 mt-2 group-hover:text-white/70 transition-colors duration-200" />
-            </div>
-          </button>
-        </div>
-
-        {/* SPECTRA - unified location intelligence */}
-        <div className="mb-8 sm:mb-12">
-          <div className="flex items-center gap-2 mb-4 justify-center">
-            <Badge variant="secondary" className="text-sm bg-white/10 text-white/90 border border-white/20 backdrop-blur-sm px-4 py-1">
-              Unified Location Intelligence
-            </Badge>
-          </div>
-          <button
-            className="feature-card-quiet3d w-full text-left relative cursor-pointer rounded-2xl overflow-hidden group focus:outline-none focus:ring-2 focus:ring-white/30 focus:ring-offset-2 focus:ring-offset-black"
-            onClick={() => setLocation('/spectra')}
-            style={{
-              // Neutral dark base with material gradient
-              background: 'linear-gradient(180deg, rgba(255,255,255,0.08), rgba(0,0,0,0.15))',
-              backgroundColor: '#1a1a1f',
-              backdropFilter: 'blur(10px)',
-              // 3D depth simulation
-              boxShadow: `
-                inset 0 1px 0 rgba(255,255,255,0.15),
-                inset 0 -1px 0 rgba(0,0,0,0.25),
-                0 8px 20px rgba(0,0,0,0.35)
-              `,
-              border: '1px solid rgba(255,255,255,0.1)',
-              transition: 'transform 0.2s ease, box-shadow 0.2s ease',
-            }}
-          >
-            {/* Color as rim light - left accent (blue) */}
-            <div
-              className="absolute top-0 bottom-0 left-0 w-[4px] rounded-l-2xl"
-              style={{
-                background: 'linear-gradient(to bottom, rgba(59, 130, 246, 0.7) 0%, rgba(59, 130, 246, 0.4) 50%, rgba(59, 130, 246, 0.2) 100%)',
-              }}
-            />
-            
-            {/* Hover glow effect */}
-            <div
-              className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 ease-out pointer-events-none"
-              style={{
-                boxShadow: '0 0 24px rgba(59, 130, 246, 0.35)',
-              }}
-            />
-            
-            <div className="p-6 flex items-start gap-4 relative z-10">
-              <div className="flex-1">
-                <div className="flex items-center gap-3 mb-3">
-                  <Shield className="h-8 w-8 text-white/70" />
-                  <h3 className="quiet3d-heading text-2xl text-white/90">
-                    SPECTRA
-                  </h3>
-                </div>
-                <p className="text-base text-white/60 mb-4">
-                  Unified conversational target acquisition and location intelligence. Tell SPECTRA what you want to locate, provide whatever information you know, and SPECTRA automatically correlates available evidence and presents the best-supported result on an interactive map.
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  <Badge variant="secondary" className="text-xs bg-white/5 text-white/70 border border-white/10">
-                    Conversational Acquisition
-                  </Badge>
-                  <Badge variant="secondary" className="text-xs bg-white/5 text-white/70 border border-white/10">
-                    Multi-Source Fusion
-                  </Badge>
-                  <Badge variant="secondary" className="text-xs bg-white/5 text-white/70 border border-white/10">
-                    1-Hour Playback
-                  </Badge>
-                  <Badge variant="secondary" className="text-xs bg-white/5 text-white/70 border border-white/10">
-                    3D Geospatial View
-                  </Badge>
-                </div>
+              <p>The right information empowers real people.</p>
+              <div className="service-mini-plant service-mini-plant-right">
+                <span />
+                <span />
+                <span />
               </div>
-              <ArrowRight className="h-8 w-8 text-white/50 flex-shrink-0 mt-2 group-hover:text-white/70 transition-colors duration-200" />
             </div>
-          </button>
-        </div>
+          </section>
 
-        {/* United States Inmate Locator - Quiet 3D with green accent */}
-        <div className="mb-8 sm:mb-12">
-          <div className="flex items-center gap-2 mb-4 justify-center">
-            <Badge variant="secondary" className="text-sm bg-white/10 text-white/90 border border-white/20 backdrop-blur-sm px-4 py-1">
-              Nationwide Corrections Search
-            </Badge>
+          <div className="library-base" aria-hidden="true">
+            <div />
+            <div />
+            <div />
+            <div />
           </div>
-          <button
-            className="feature-card-quiet3d w-full text-left relative cursor-pointer rounded-2xl overflow-hidden group focus:outline-none focus:ring-2 focus:ring-white/30 focus:ring-offset-2 focus:ring-offset-black"
-            onClick={() => setLocation('/inmate-locator')}
-            style={{
-              // Neutral dark base with material gradient
-              background: 'linear-gradient(180deg, rgba(255,255,255,0.08), rgba(0,0,0,0.15))',
-              backgroundColor: '#1a1a1f',
-              backdropFilter: 'blur(10px)',
-              // 3D depth simulation
-              boxShadow: `
-                inset 0 1px 0 rgba(255,255,255,0.15),
-                inset 0 -1px 0 rgba(0,0,0,0.25),
-                0 8px 20px rgba(0,0,0,0.35)
-              `,
-              border: '1px solid rgba(255,255,255,0.1)',
-              transition: 'transform 0.2s ease, box-shadow 0.2s ease',
-            }}
-          >
-            {/* Color as rim light - left accent (green) */}
-            <div
-              className="absolute top-0 bottom-0 left-0 w-[4px] rounded-l-2xl"
-              style={{
-                background: 'linear-gradient(to bottom, rgba(34, 197, 94, 0.7) 0%, rgba(34, 197, 94, 0.4) 50%, rgba(34, 197, 94, 0.2) 100%)',
-              }}
-            />
-            
-            {/* Hover glow effect */}
-            <div
-              className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 ease-out pointer-events-none"
-              style={{
-                boxShadow: '0 0 24px rgba(34, 197, 94, 0.35)',
-              }}
-            />
-            
-            <div className="p-6 flex items-start gap-4 relative z-10">
-              <div className="flex-1">
-                <div className="flex items-center gap-3 mb-3">
-                  <Shield className="h-8 w-8 text-white/70" />
-                  <h3 className="quiet3d-heading text-2xl text-white/90">
-                    United States Inmate Locator
-                  </h3>
-                </div>
-                <p className="text-base text-white/60 mb-4">
-                  Nationwide inmate search across federal, state, private, and local facilities with detailed 
-                  records and offense indicators. Search BOP federal prisons, state DOC systems, county jails, 
-                  and private correctional facilities with comprehensive custody status and charge information.
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  <Badge variant="secondary" className="text-xs bg-white/5 text-white/70 border border-white/10">
-                    Federal BOP
-                  </Badge>
-                  <Badge variant="secondary" className="text-xs bg-white/5 text-white/70 border border-white/10">
-                    50-State Coverage
-                  </Badge>
-                  <Badge variant="secondary" className="text-xs bg-white/5 text-white/70 border border-white/10">
-                    Offense Details
-                  </Badge>
-                  <Badge variant="secondary" className="text-xs bg-white/5 text-white/70 border border-white/10">
-                    Custody Status
-                  </Badge>
-                </div>
-              </div>
-              <ArrowRight className="h-8 w-8 text-white/50 flex-shrink-0 mt-2 group-hover:text-white/70 transition-colors duration-200" />
-            </div>
-          </button>
-        </div>
+        </section>
 
-        {/* Helper Text - Always visible */}
-        <div className="text-center mt-8 text-white/80">
-          <p className="text-sm">Click any law book above to start your consultation</p>
-        </div>
+        <p className="library-helper-text">
+          Select any law book to begin your consultation, or choose an intelligence service below the shelves.
+        </p>
       </main>
 
-      {/* Footer */}
-      <footer className="border-t mt-12 py-6 bg-muted/30">
-        <div className="container mx-auto px-4 text-center text-sm text-muted-foreground">
-          <p className="flex items-center justify-center gap-1 flex-wrap">
-            © 2024 LegalWhat
-            <img 
-              src="/images/Legal What Icon.png" 
-              alt="?" 
-              className="inline-block h-[0.9em] w-auto object-contain"
-              style={{ marginBottom: '-0.05em' }}
-            />
-            AI-powered legal platform.
-          </p>
-          <p className="mt-1">Featuring Law Enforcement Accountability and 29 other legal areas.</p>
-        </div>
+      <footer className="legal-library-footer">
+        <p>© 2026 LegalWhat · AI-powered legal platform · 31 legal areas</p>
       </footer>
-      
     </div>
   );
 }
