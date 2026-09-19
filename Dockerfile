@@ -63,6 +63,8 @@ RUN rm -rf node_modules || true && \
     npm install --no-save --legacy-peer-deps --ignore-optional drizzle-kit@0.31.8
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/public ./public
+COPY --from=builder /app/drizzle.neon.config.ts ./drizzle.neon.config.ts
+COPY --from=builder /app/shared/schema.ts ./shared/schema.ts
 
 # CryptoCrawler Overflow runtime authority migrations. 016 is intentionally
 # omitted because it owns an external scheduler and must not be duplicated.
