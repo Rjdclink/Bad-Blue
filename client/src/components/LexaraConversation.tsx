@@ -310,10 +310,23 @@ function isStrongBargeIn(text: string, meta: VoiceTranscriptMeta): boolean {
   const explicit = /^(?:wait|stop|no|hold on|hang on|actually|but wait|let me finish)\b/.test(normalized);
   if (explicit) return true;
 
-  const genericAcknowledgements = new Set([
-    'thank you', 'thanks', 'okay', 'ok', 'yes', 'yeah', 'yep', 'bye', 'goodbye', 'you',
+  const nonInterruptingClosers = new Set([
+    'thank you', 'thanks', 'bye', 'goodbye', 'you',
   ]);
-  if (genericAcknowledgements.has(normalized)) return false;
+  if (nonInterruptingClosers.has(normalized)) return false;
+
+  // Short acknowledgements can be either backchannels or deliberate barge-ins.
+  // Admit them only when they begin during playback and carry enough acoustic
+  // evidence; this avoids turning "okay" into a permanent interruption veto.
+  const shortInterruption = new Set(['okay', 'ok', 'yes', 'yeah', 'yep']);
+  if (shortInterruption.has(normalized)) {
+    const duration = meta.speechDurationMs || 0;
+    const strongAcoustics =
+      (typeof meta.noSpeechProbability !== 'number' || meta.noSpeechProbability < 0.35)
+      && (typeof meta.avgLogprob !== 'number' || meta.avgLogprob > -0.85)
+      && (typeof meta.confidence !== 'number' || meta.confidence >= 0.5);
+    return meta.startedDuringPlayback === true && duration >= 450 && strongAcoustics;
+  }
 
   const words = normalized.split(' ').filter(Boolean);
   if (words.length < 2) return false;
@@ -500,7 +513,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       // same suspicious class with the secondary ASR route.
       const normalizedObserved = normalizeSpeechText(observed);
       const genericPlaybackTail = new Set([
-        'thank you', 'thanks', 'okay', 'ok', 'bye', 'goodbye', 'you',
+        'thank you', 'thanks', 'bye', 'goodbye', 'you',
       ]);
       if (
         meta.engine === 'server'
