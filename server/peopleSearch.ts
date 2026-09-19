@@ -27,8 +27,8 @@ import {
 
 // Constants for crawler messages
 const CRAWLER_MESSAGES = {
-  LEVEL_3_SUMMARY: '\n\n🔬 Advanced Analysis: Level 3 crawlers (HYDRA, LICH, CERBERUS, BLIZZARD DRAGON) provided enhanced triple-verification and pattern matching.',
-  LEVEL_4_SUMMARY: '\n\n👁️ EYE OF GOD: GENESIS orchestrator activated. Complete identity reconstruction from all 60+ data sources with maximum entropy harvesting.',
+  LEVEL_3_SUMMARY: '\n\n🔬 Advanced Analysis: extended PANTHEON retrieval completed with provenance-bearing evidence from the crawler capabilities that returned verified results.',
+  LEVEL_4_SUMMARY: '\n\n👁️ EYE OF GOD: bounded PANTHEON avalanche traversal completed; report contents reflect only evidence actually returned by responsive public sources.',
 };
 
 /**
@@ -1109,6 +1109,11 @@ export async function conductFullOSINT(
             depth: searchDepth as 1 | 2 | 3 | 4,
           });
           const crawlerResults = crawlerRetrieval.evidence;
+          for (const crawlerName of new Set(crawlerResults.map(result => result.crawler))) {
+            if (!crawlersActivated.includes(crawlerName)) {
+              crawlersActivated.push(crawlerName);
+            }
+          }
           
           // Process crawler results
           if (crawlerResults.length > 0) {
@@ -1150,7 +1155,7 @@ export async function conductFullOSINT(
 
     // Level 4: GENESIS orchestrator (EYE OF GOD)
     if (searchDepth >= 4) {
-      console.log('[PANTHEON OSINT] 👁️ EYE OF GOD: Activating GENESIS orchestrator for total omniscience');
+      console.log('[PANTHEON OSINT] 👁️ EYE OF GOD: activating bounded avalanche traversal');
       
       // Check PANTHEON availability again
       const pantheonStatus = canActivatePantheon();
