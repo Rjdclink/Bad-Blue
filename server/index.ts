@@ -49,10 +49,7 @@ import cookieParser from "cookie-parser";
 import { serveStatic, log } from "./vite";
 import { createServer, type Server } from "http";
 
-import {
-  runAllSchemaMigrations,
-  releaseRollingDeploymentPoolHeadroom,
-} from "./migrations/reconcileAppSchema";
+import { releaseRollingDeploymentPoolHeadroom } from "./migrations/reconcileAppSchema";
 
 const app = express();
 
@@ -433,27 +430,9 @@ async function waitForOverflowBootstrapReadiness(): Promise<boolean> {
   return false;
 }
 
-async function runMigrations(): Promise<void> {
-  startupTrace('migrations_started');
-  console.log('[STARTUP] Stage 2: Running migrations...');
-
-  const results = await runAllSchemaMigrations({ continueOnError: true });
-
-  for (const result of results) {
-    if (result.success) {
-      console.log(`[STARTUP] ✓ ${result.name} migration complete`);
-      continue;
-    }
-
-    console.warn(`[STARTUP] ⚠ ${result.name} migration skipped:`, result.error);
-  }
-
-  startupTrace('migrations_completed', {
-    succeeded: results.filter((result) => result.success).length,
-    failed: results.filter((result) => !result.success).length,
-  });
-}
-
+// Schema mutation is deliberately excluded from application startup.
+// Production migrations are an administrative deployment concern; runtime only
+// verifies the already-prepared schema before Railway readiness can become 2xx.
 async function initializeServices(): Promise<void> {
   startupTrace('background_services_started');
   console.log('[STARTUP] Stage 3: Initializing services...');
@@ -782,7 +761,8 @@ httpServer = createServer(app);
     const { getApplicationDatabaseRuntimeMode } = await import('./db');
     databaseRuntimeMode = getApplicationDatabaseRuntimeMode() === 'neon_failover' ? 'neon_failover' : 'primary';
 
-    await runMigrations();
+    startupTrace('schema_mutation_skipped', { policy: 'runtime_verification_only' });
+    console.log('[STARTUP] Stage 2: Runtime schema mutation disabled; verifying prepared schema only');
     releaseRollingDeploymentPoolHeadroom('application_database_ready');
 
     const { runStartupSchemaVerification } = await import('./db');
