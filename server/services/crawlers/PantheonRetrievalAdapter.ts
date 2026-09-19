@@ -35,6 +35,7 @@ export class PantheonRetrievalAdapter {
     purpose: Exclude<CrawlerSelectionPurpose, 'map_evidence_render'>;
     targets: string[];
     depth?: 1 | 2 | 3 | 4;
+    budgetMs?: number;
   }): Promise<PantheonRetrievalResponse> {
     const firstTarget = request.targets[0];
     const host = firstTarget ? new URL(firstTarget).host : undefined;
@@ -53,6 +54,7 @@ export class PantheonRetrievalAdapter {
       depth: plan.depth,
       crawlers: plan.crawlers,
       stormIntensity: plan.depth === 4 ? 'storm' : 'snow',
+      timeout: request.budgetMs,
     });
     recordCrawlerOutcomes(results);
 
@@ -60,7 +62,7 @@ export class PantheonRetrievalAdapter {
 
     if (request.purpose === 'background_report') {
       const extendedRuns = await Promise.allSettled(
-        request.targets.map(target => twoStageDeployer.deployBackgroundReport(target))
+        request.targets.map(target => twoStageDeployer.deployBackgroundReport(target, undefined, request.budgetMs))
       );
 
       for (let index = 0; index < extendedRuns.length; index++) {
