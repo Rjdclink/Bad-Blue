@@ -1,13 +1,12 @@
 import { createHash } from 'node:crypto';
 import { isCryptoCrawlerDatabaseAccessAllowed } from '../runtime/manual-power-state.js';
-import pg from 'pg';
+import { pool as runtimeOverflowPool } from '../runtime/cryptocrawl-runtime-database.js';
 import {
   isPostgresConnectionString,
   isSupabasePostgresConnectionString,
   isSupabaseProjectUrl,
 } from '../../../config.js';
 
-const { Pool } = pg;
 const DEFAULT_COOLDOWN_MS = 5_000;
 const MAX_COOLDOWN_MS = 60_000;
 const SCHEMA_READY_TTL_MS = 5 * 60_000;
@@ -21,14 +20,6 @@ function boundedInt(raw: unknown, fallback: number, minimum: number, maximum: nu
 
 function optionalUrl(raw: unknown): string {
   return typeof raw === 'string' ? raw.trim() : '';
-}
-
-function primaryDatabaseUrl(): string {
-  return optionalUrl(
-    process.env.SUPABASE_DATABASE_URL
-      || process.env.SUPABASE_DB_URL
-      || process.env.DATABASE_URL,
-  );
 }
 
 function parsedPostgresUrl(url: string): URL | null {
@@ -132,9 +123,7 @@ const configuredUrl = configuredRawUrl ? transactionPoolerUrl(configuredRawUrl) 
 const configuredSource = process.env.SUPABASE_DATABASE_URL_OVERFLOW?.trim()
   ? 'SUPABASE_DATABASE_URL_OVERFLOW'
   : null;
-const primaryUrl = primaryDatabaseUrl();
 const overflowProject = projectIdentity(configuredUrl);
-const primaryProject = projectIdentity(primaryUrl);
 const production = process.env.NODE_ENV === 'production';
 let configurationError: string | null = null;
 
@@ -147,8 +136,6 @@ if (configuredUrl) {
     configurationError = 'parallel proxy database must use the Supabase shared transaction pooler in production';
   } else if (sharedPooler(configuredUrl) && parsedPostgresUrl(configuredUrl)?.port !== '6543') {
     configurationError = 'parallel proxy shared-pooler connection must use transaction mode port 6543';
-  } else if (overflowProject && primaryProject && overflowProject === primaryProject) {
-    configurationError = 'parallel proxy database must be a different Supabase project from the primary';
   }
 }
 
@@ -165,31 +152,12 @@ const allowedWorkloads = new Set<CryptaraParallelProxyWorkload>([
   'background_learning',
 ]);
 
-// Separate from the authoritative pool, tiny, min=0, lazy, and never part of
-// primary readiness. Constructing a pg Pool does not open a backend connection.
-function createOverflowPool(): any | null {
-  if (!isCryptaraOverflowConfigured) return null;
-  const nextPool = new Pool({
-    connectionString: configuredUrl,
-    max: overflowPoolMax,
-    min: 0,
-    idleTimeoutMillis: 10_000,
-    connectionTimeoutMillis: 8_000,
-    query_timeout: 10_000,
-    keepAlive: true,
-    keepAliveInitialDelayMillis: 10_000,
-    ssl: process.env.PGSSLMODE === 'disable' ? false : { rejectUnauthorized: false },
-    application_name: 'badblue-cryptara-parallel-proxy',
-  } as any);
-  nextPool.on('error', (error: Error) => {
-    recordFailure(error);
-    console.warn('[CRYPTARA][PARALLEL-PROXY] Idle secondary connection error:', error.message);
-  });
-  return nextPool;
+// Artifact/cache compatibility operations share the one canonical CryptoCrawler
+// Overflow runtime pool. The imported binding is live, so manual Stop can close it
+// and the next manual Start can recreate it without this adapter owning sockets.
+function activeOverflowPool(): any | null {
+  return isCryptaraOverflowConfigured ? runtimeOverflowPool : null;
 }
-
-let overflowPool: any | null = createOverflowPool();
-let overflowPoolClosed = false;
 
 let cacheSchemaProbe: Promise<boolean> | null = null;
 let cacheSchemaReadyUntil = 0;
@@ -216,34 +184,8 @@ let eventRowsWritten = 0;
 
 if (configurationError) {
   console.warn(`[CRYPTARA][PARALLEL-PROXY] Disabled: ${configurationError}`);
-} else if (overflowPool) {
-  console.log(`[CRYPTARA][PARALLEL-PROXY] Optional secondary Supabase configured (pool max=${overflowPoolMax}, authority=auxiliary_noncritical_only)`);
-}
-
-export function reopenCryptaraParallelProxyPool(): void {
-  if (!overflowPoolClosed) return;
-  overflowPool = createOverflowPool();
-  overflowPoolClosed = false;
-  cacheSchemaProbe = null;
-  cacheSchemaReadyUntil = 0;
-  cacheSchemaRetryAfter = 0;
-  parallelSchemaProbe = null;
-  parallelSchemaReadyUntil = 0;
-  parallelSchemaRetryAfter = 0;
-}
-
-export async function closeCryptaraParallelProxyPool(): Promise<void> {
-  if (overflowPoolClosed) return;
-  overflowPoolClosed = true;
-  const closingPool = overflowPool;
-  overflowPool = null;
-  cacheSchemaProbe = null;
-  cacheSchemaReadyUntil = 0;
-  cacheSchemaRetryAfter = 0;
-  parallelSchemaProbe = null;
-  parallelSchemaReadyUntil = 0;
-  parallelSchemaRetryAfter = 0;
-  if (closingPool) await closingPool.end();
+} else if (isCryptaraOverflowConfigured) {
+  console.log(`[CRYPTARA][OVERFLOW-ADAPTER] artifact adapter configured on canonical Overflow hot plane (project=${overflowProject || 'unknown'}, sharedRuntimePool=true, adapterIndependentAuthority=false)`);
 }
 
 function recordFailure(_error: unknown): void {
@@ -301,6 +243,7 @@ export async function withCryptaraParallelProxy<T>(
     proxySkips += 1;
     return { used: false, reason: 'configuration_error' };
   }
+  const overflowPool = activeOverflowPool();
   if (!overflowPool) {
     proxySkips += 1;
     return { used: false, reason: 'not_configured' };
@@ -627,7 +570,10 @@ export function getCryptaraParallelProxySnapshot() {
     configurationError,
     role: 'parallel_auxiliary_proxy' as const,
     routing: 'explicit_opt_in_plus_comp_overflow' as const,
-    authority: 'auxiliary_noncritical_only' as const,
+    authority: 'canonical_overflow_runtime_control_plane' as const,
+    scope: 'artifact_adapter_only' as const,
+    overflowControlPlaneAuthority: true as const,
+    adapterIndependentAuthority: false as const,
     executionAuthority: false as const,
     writeAuthority: false as const,
     criticalDataAllowed: false as const,
@@ -635,11 +581,11 @@ export function getCryptaraParallelProxySnapshot() {
     governanceAuthorityAllowed: false as const,
     runtimeDdlAllowed: false as const,
     eligibleWorkloads: [...allowedWorkloads],
-    pool: overflowPool ? {
-      total: overflowPool.totalCount,
-      idle: overflowPool.idleCount,
-      waiting: overflowPool.waitingCount,
-      max: overflowPoolMax,
+    pool: activeOverflowPool() ? {
+      total: runtimeOverflowPool.totalCount,
+      idle: runtimeOverflowPool.idleCount,
+      waiting: runtimeOverflowPool.waitingCount,
+      max: runtimeOverflowPool.options?.max ?? overflowPoolMax,
     } : null,
     cooldownMs: Math.max(0, cooldownUntil - Date.now()),
     consecutiveFailures,
