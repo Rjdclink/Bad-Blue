@@ -14,7 +14,7 @@ import crypto from 'crypto';
 import { asyncHandler } from '../errorHandler';
 import { createLogger } from '../logger';
 import { isAuthenticated } from '../auth';
-import { getLexaraTTSReadiness, synthesizeLexaraSpeechWithFailover } from '../lexara/LexaraTTSMesh';
+import { getLexaraTTSReadiness, refreshLexaraTTSReadiness, synthesizeLexaraSpeechWithFailover, warmLexaraTTSMesh } from '../lexara/LexaraTTSMesh';
 
 const log = createLogger('VoiceRoutes');
 
@@ -77,11 +77,15 @@ export function setupVoiceRoutes(app: Express): void {
       if (!text) return res.status(400).json({ error: 'Text is required for TTS synthesis' });
       if (text.length > 5000) return res.status(400).json({ error: 'Text too long. Maximum 5000 characters.' });
 
-      const readiness = getLexaraTTSReadiness();
+      let readiness = getLexaraTTSReadiness();
+      if (!readiness.available) {
+        readiness = await refreshLexaraTTSReadiness(false);
+      }
       if (!readiness.available) {
         return res.status(503).json({
-          error: 'LEXARA voice has no healthy synthesis route',
+          error: 'LEXARA voice has no verified healthy synthesis route',
           configuredProviders: readiness.configuredProviders,
+          providerStates: readiness.providers,
         });
       }
 
@@ -350,5 +354,6 @@ export function setupVoiceRoutes(app: Express): void {
     }),
   );
 
-  log.info('[VoiceRoutes] Voice synthesis routes configured with adaptive multi-provider TTS mesh');
+  warmLexaraTTSMesh();
+  log.info('[VoiceRoutes] Voice synthesis routes configured with verified adaptive multi-provider TTS mesh');
 }
