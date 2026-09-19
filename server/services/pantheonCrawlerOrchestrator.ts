@@ -206,6 +206,16 @@ export interface CrawlerResult {
   metadata?: Record<string, any>;
 }
 
+export interface CrawlerExecutionAudit {
+  crawler: string;
+  capabilityClass: 'primary';
+  status: 'completed_with_evidence' | 'completed_no_evidence' | 'failed';
+  evidenceCount: number;
+  attempts: number;
+  targets: number;
+  error?: string;
+}
+
 /**
  * PANTHEON search options
  */
@@ -475,21 +485,64 @@ export class PantheonCrawlerOrchestrator {
    * Background-report fan-out: run each selected primary crawler as an
    * independent route so one failure or slow path cannot cancel the others.
    */
-  async searchAllIsolated(targets: string[], options: PantheonSearchOptions): Promise<CrawlerResult[]> {
+  async searchAllIsolatedWithAudit(
+    targets: string[],
+    options: PantheonSearchOptions,
+  ): Promise<{ results: CrawlerResult[]; audit: CrawlerExecutionAudit[] }> {
     const requestedBudgetMs = Math.max(600000, options.timeout || 0);
     await this.initialize(requestedBudgetMs);
 
     const crawlersToUse = options.crawlers || this.getCrawlersForDepth(options.depth);
-    const runs = await Promise.allSettled(
-      crawlersToUse.map(crawler =>
-        this.search(targets, {
-          ...options,
-          crawlers: [crawler],
-        })
-      )
+    const executions = await Promise.all(
+      crawlersToUse.map(async crawler => {
+        let attempts = 0;
+        let results: CrawlerResult[] = [];
+        let lastError = '';
+
+        for (let attempt = 0; attempt < 2; attempt++) {
+          attempts += 1;
+          try {
+            results = await this.search(targets, {
+              ...options,
+              crawlers: [crawler],
+            });
+            if (results.some(result => Boolean(result.content) && result.confidence > 0)) break;
+          } catch (error) {
+            lastError = error instanceof Error ? error.message : String(error);
+          }
+
+          if (attempt === 0) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+        }
+
+        const evidenceCount = results.filter(result => Boolean(result.content) && result.confidence > 0).length;
+        const audit: CrawlerExecutionAudit = {
+          crawler,
+          capabilityClass: 'primary',
+          status: evidenceCount > 0
+            ? 'completed_with_evidence'
+            : lastError
+              ? 'failed'
+              : 'completed_no_evidence',
+          evidenceCount,
+          attempts,
+          targets: targets.length,
+          ...(lastError ? { error: lastError.slice(0, 300) } : {}),
+        };
+
+        return { results, audit };
+      })
     );
 
-    return runs.flatMap(run => run.status === 'fulfilled' ? run.value : []);
+    return {
+      results: executions.flatMap(execution => execution.results),
+      audit: executions.map(execution => execution.audit),
+    };
+  }
+
+  async searchAllIsolated(targets: string[], options: PantheonSearchOptions): Promise<CrawlerResult[]> {
+    return (await this.searchAllIsolatedWithAudit(targets, options)).results;
   }
 
   /**
