@@ -391,9 +391,13 @@ function getProviderModel(provider: AIProvider, requestedModel?: string, complex
       prefixes: ['openrouter', 'or-'],
       default: process.env.OPENROUTER_DEFAULT_MODEL?.trim() || CURRENT_AI_MODELS.openRouterAuto
     },
-    [AIProvider.HUGGINGFACE]: {
-      prefixes: ['hf-', 'huggingface'],
-      default: CURRENT_AI_MODELS.huggingFace
+    [AIProvider.XAI]: {
+      prefixes: ['grok', 'x-ai'],
+      default: CURRENT_AI_MODELS.xai
+    },
+    [AIProvider.FIREWORKS]: {
+      prefixes: ['accounts/fireworks/', 'fireworks/'],
+      default: CURRENT_AI_MODELS.fireworks
     },
     [AIProvider.LMAI]: {
       prefixes: ['lmai', 'lm-', 'local'],
