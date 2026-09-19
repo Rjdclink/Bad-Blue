@@ -176,11 +176,12 @@ must(
     harmonyRegistry.includes('HARMONY_17_PARTICIPANTS') &&
     orchestrator.includes('maxParticipants: 3') &&
     orchestrator.includes('estimatedTokens: 450') &&
-    orchestrator.includes('requestTimeoutMs: 1_800') &&
-    orchestrator.includes('maxFallbacks: 2') &&
+    orchestrator.includes('requestTimeoutMs: 2_500') &&
+    orchestrator.includes('maxFallbacks: 3') &&
     harmony.includes('fastSynthesisTask') &&
+    harmony.includes("firstSuccessful.role === 'legal-analyst'") &&
     harmony.includes('harmonyProviderRuntimeScore') &&
-    harmony.includes('task.requestTimeoutMs || task.timeout || options.requestTimeoutMs') &&
+    harmony.includes('task.requestTimeoutMs || options.requestTimeoutMs || task.timeout') &&
     harmonyWarmup.includes('prewarmHarmonyProviders') &&
     harmonyWarmup.includes('isHarmonyProviderWarmHealthy') &&
     harmonyWarmup.includes('getHarmonyWarmState') &&
