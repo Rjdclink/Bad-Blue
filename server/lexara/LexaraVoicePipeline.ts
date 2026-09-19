@@ -1,21 +1,8 @@
 /**
  * LEXARA VOICE PIPELINE
- * 
- * Complete voice synthesis path using ElevenLabs:
- * LLM → Text Response → ElevenLabs TTS → Persist Audio → Return Playable Reference
- * 
- * LEXARA Voice Profile:
- * - 18-20 year old female voice
- * - Gravitas of a Supreme Court Justice
- * - Clear, authoritative, yet warm and approachable
- * - Professional legal delivery with measured cadence
- * 
- * PROVIDER:
- * - ElevenLabs: High-quality neural voice synthesis (ONLY provider)
- * 
- * REQUIREMENTS:
- * - ELEVENLABS_API_KEY environment variable (required)
- * - ELEVENLABS_VOICE_ID environment variable (required)
+ *
+ * Compatibility pipeline for historical callers. Runtime provider authority
+ * lives exclusively in LexaraTTSMesh.
  */
 
 import { EventEmitter } from 'events';
@@ -23,35 +10,34 @@ import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createLogger } from '../logger';
-import { getEnv } from '../config';
-import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js';
-import { getLexaraTTSReadiness, refreshLexaraTTSReadiness, synthesizeLexaraSpeechWithFailover, type LexaraTTSProviderId } from './LexaraTTSMesh';
+import {
+  getLexaraTTSReadiness,
+  refreshLexaraTTSReadiness,
+  synthesizeLexaraSpeechWithFailover,
+  type LexaraTTSProviderId,
+} from './LexaraTTSMesh';
 
 const log = createLogger('LexaraVoicePipeline');
-
-// ============================================================================
-// LEXARA VOICE PROFILE - 18-20 FEMALE WITH SUPREME COURT JUSTICE GRAVITAS
-// ============================================================================
 
 export interface LexaraVoiceProfile {
   name: string;
   age: '18-20';
   gender: 'female';
   characteristics: {
-    pitch: number;           // Hz base pitch (200-240 for young female with authority)
-    pitchVariation: number;  // Range of pitch variation
-    rate: number;            // Words per minute (145-155 for authoritative delivery)
-    stability: number;       // Voice consistency (0.65-0.8 for gravitas)
-    clarity: number;         // Articulation clarity (0.85+ for legal precision)
-    warmth: number;          // Emotional warmth (0.6-0.75 for approachability)
-    authority: number;       // Commanding presence (0.8+ for judicial gravitas)
+    pitch: number;
+    pitchVariation: number;
+    rate: number;
+    stability: number;
+    clarity: number;
+    warmth: number;
+    authority: number;
   };
   prosody: {
-    pauseAfterPeriod: number;      // ms
-    pauseAfterComma: number;       // ms
-    pauseBeforeLegalTerm: number;  // ms - slight pause before important legal terms
+    pauseAfterPeriod: number;
+    pauseAfterComma: number;
+    pauseBeforeLegalTerm: number;
     emphasisOnLegalTerms: boolean;
-    measuredCadence: boolean;     // Slower, more deliberate speech for serious topics
+    measuredCadence: boolean;
   };
   emotionalRange: {
     neutral: { pitch: number; rate: number };
@@ -67,13 +53,13 @@ export const LEXARA_VOICE_PROFILE: LexaraVoiceProfile = {
   age: '18-20',
   gender: 'female',
   characteristics: {
-    pitch: 220,           // Young female baseline with gravitas
-    pitchVariation: 35,   // Controlled variation for authority
-    rate: 150,            // Measured, deliberate pace
-    stability: 0.72,      // High stability for consistency
-    clarity: 0.90,        // Crystal clear articulation
-    warmth: 0.68,         // Warm but professional
-    authority: 0.85,      // Supreme Court Justice level gravitas
+    pitch: 220,
+    pitchVariation: 35,
+    rate: 150,
+    stability: 0.72,
+    clarity: 0.90,
+    warmth: 0.68,
+    authority: 0.85,
   },
   prosody: {
     pauseAfterPeriod: 550,
@@ -91,25 +77,15 @@ export const LEXARA_VOICE_PROFILE: LexaraVoiceProfile = {
   },
 };
 
-// ============================================================================
-// TYPES
-// ============================================================================
-
-export type VoiceProvider = 'adaptive' | LexaraTTSProviderId;
+export type VoiceProvider = LexaraTTSProviderId;
 export type EmotionalContext = 'neutral' | 'empathetic' | 'authoritative' | 'reassuring' | 'serious';
 
 export interface VoiceSynthesisRequest {
-  /** Text to synthesize */
   text: string;
-  /** Trace ID for request tracking */
   traceId?: string;
-  /** Emotional context for voice adaptation */
   context?: EmotionalContext;
-  /** Custom voice settings override */
   settings?: Partial<VoiceSynthesisSettings>;
-  /** Whether to persist the audio */
   persist?: boolean;
-  /** Speech context type */
   speechContext?: 'greeting' | 'explanation' | 'guidance' | 'reassurance' | 'serious' | 'casual' | 'legal';
 }
 
@@ -122,31 +98,18 @@ export interface VoiceSynthesisSettings {
 }
 
 export interface VoiceSynthesisResult {
-  /** Unique audio ID */
   audioId: string;
-  /** Trace ID */
   traceId: string;
-  /** Playable audio reference (URL or path) */
   audioRef: string;
-  /** Audio data buffer (if not persisted) */
   audioData?: Buffer;
-  /** MIME type */
   mimeType: string;
-  /** Duration in milliseconds */
   durationMs: number;
-  /** Provider used */
   provider: VoiceProvider;
-  /** Whether audio was persisted */
   persisted: boolean;
-  /** Generation timestamp */
   generatedAt: number;
-  /** Processing latency */
   latencyMs: number;
-  /** Quality score (0-1) */
   qualityScore: number;
-  /** Original text */
   text: string;
-  /** SSML generated (if applicable) */
   ssml?: string;
 }
 
@@ -158,498 +121,196 @@ export interface ProviderStatus {
   lastCheck: number;
 }
 
-// ============================================================================
-// ELEVENLABS TTS PROVIDER
-// ============================================================================
-
-class ElevenLabsTTSProvider {
-  private client: ElevenLabsClient | null = null;
-  private voiceId: string = '';
-  private available: boolean = false;
-  private lastCheck: number = 0;
-  private lastError?: string;
-  private modelId: string = process.env.ELEVENLABS_TTS_MODEL?.trim() || 'eleven_flash_v2_5';
-
-  constructor() {
-    this.initializeClient();
-  }
-
-  private initializeClient(): void {
-    const apiKey = getEnv('ELEVENLABS_API_KEY');
-    const voiceId = getEnv('ELEVENLABS_VOICE_ID');
-    
-    if (apiKey && voiceId) {
-      this.client = new ElevenLabsClient({ apiKey });
-      this.voiceId = voiceId;
-      this.available = true;
-      this.lastCheck = Date.now();
-      
-      log.info('[ElevenLabsTTSProvider] Initialized', {
-        voiceId: this.voiceId,
-        modelId: this.modelId,
-      });
-    } else {
-      this.available = false;
-      this.lastError = 'ELEVENLABS_API_KEY or ELEVENLABS_VOICE_ID not set';
-      log.warn('[ElevenLabsTTSProvider] Not configured', { error: this.lastError });
-    }
-  }
-
-  async checkAvailability(): Promise<boolean> {
-    if (!this.client) {
-      this.initializeClient();
-    }
-    this.lastCheck = Date.now();
-    return this.available;
-  }
-
-  isAvailable(): boolean {
-    return this.available && this.client !== null;
-  }
-
-  getStatus(): ProviderStatus {
-    return {
-      name: 'elevenlabs',
-      available: this.available,
-      lastError: this.lastError,
-      lastCheck: this.lastCheck,
-    };
-  }
-
-  getVoiceId(): string {
-    return this.voiceId;
-  }
-
-  async synthesize(
-    text: string,
-    settings: VoiceSynthesisSettings,
-    context: EmotionalContext
-  ): Promise<{ audioData: Buffer; latencyMs: number; quality: number }> {
-    if (!this.client) {
-      throw new Error(
-        'ElevenLabs client not initialized. ' +
-        'Please set ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID environment variables.'
-      );
-    }
-    
-    const startTime = Date.now();
-
-    // Apply LEXARA voice profile based on emotional context
-    const emotionalSettings = LEXARA_VOICE_PROFILE.emotionalRange[context];
-    
-    // ElevenLabs voice settings
-    const voiceSettings = {
-      stability: settings.stability ?? 0.5,
-      similarityBoost: settings.similarity ?? 0.75,
-      style: settings.style ?? 0.0,
-      useSpeakerBoost: true,
-    };
-
-    log.info('[ElevenLabsTTSProvider] Starting synthesis', {
-      voiceId: this.voiceId,
-      modelId: this.modelId,
-      textLength: text.length,
-      context,
-      stability: voiceSettings.stability,
-      similarityBoost: voiceSettings.similarityBoost,
-    });
-
-    try {
-      const audioResponse = await this.client.textToSpeech.convert(this.voiceId, {
-        text: text,
-        modelId: this.modelId,
-        voiceSettings: voiceSettings,
-      });
-
-      // Convert ReadableStream to buffer
-      const reader = audioResponse.getReader();
-      const chunks: Uint8Array[] = [];
-      
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value) chunks.push(value);
-      }
-      
-      const audioData = Buffer.concat(chunks);
-      const latencyMs = Date.now() - startTime;
-
-      if (audioData.length === 0) {
-        throw new Error('ElevenLabs returned empty audio data');
-      }
-
-      // Quality score based on settings and response
-      const quality = 0.95; // ElevenLabs typically produces high quality
-
-      log.info('[ElevenLabsTTSProvider] Synthesis complete', {
-        voiceId: this.voiceId,
-        status: 'success',
-        audioByteLength: audioData.length,
-        latencyMs,
-      });
-
-      return { audioData, latencyMs, quality };
-
-    } catch (error) {
-      this.lastError = (error as Error).message;
-      log.error('[ElevenLabsTTSProvider] Synthesis failed', {
-        voiceId: this.voiceId,
-        error: this.lastError,
-      });
-      throw error;
-    }
-  }
-}
-
-// ============================================================================
-// AUDIO PERSISTENCE
-// ============================================================================
-
 class AudioPersistence {
   private storageDir: string;
 
   constructor(storageDir?: string) {
-    this.storageDir = storageDir || getEnv('LEXARA_AUDIO_DIR', '/tmp/lexara-audio');
-    this.ensureDirectory();
-  }
-
-  private ensureDirectory(): void {
+    this.storageDir = storageDir || process.env.LEXARA_AUDIO_DIR || '/tmp/lexara-audio';
     try {
-      if (!fs.existsSync(this.storageDir)) {
-        fs.mkdirSync(this.storageDir, { recursive: true });
-      }
+      if (!fs.existsSync(this.storageDir)) fs.mkdirSync(this.storageDir, { recursive: true });
     } catch (error) {
-      log.warn('Could not create audio storage directory', { error });
+      log.warn('[LexaraVoicePipeline] Could not create audio storage directory', { error });
     }
   }
 
   async persist(audioId: string, audioData: Buffer, mimeType: string): Promise<string> {
-    const extension = mimeType.includes('mp3') ? 'mp3' : mimeType.includes('wav') ? 'wav' : 'audio';
-    const filename = `${audioId}.${extension}`;
-    const filepath = path.join(this.storageDir, filename);
-
+    const extension = mimeType.includes('wav')
+      ? 'wav'
+      : mimeType.includes('mpeg') || mimeType.includes('mp3')
+        ? 'mp3'
+        : 'audio';
+    const filepath = path.join(this.storageDir, `${audioId}.${extension}`);
     await fs.promises.writeFile(filepath, audioData);
-    
-    log.debug('Audio persisted', { audioId, filepath, size: audioData.length });
-    
     return filepath;
   }
 
-  async retrieve(audioId: string): Promise<Buffer | null> {
-    const files = await fs.promises.readdir(this.storageDir);
-    const audioFile = files.find(f => f.startsWith(audioId));
-    
-    if (!audioFile) return null;
-    
-    const filepath = path.join(this.storageDir, audioFile);
-    return fs.promises.readFile(filepath);
-  }
-
-  getPlayableRef(audioId: string, extension: string = 'mp3'): string {
+  getPlayableRef(audioId: string, mimeType: string): string {
+    const extension = mimeType.includes('wav')
+      ? 'wav'
+      : mimeType.includes('mpeg') || mimeType.includes('mp3')
+        ? 'mp3'
+        : 'audio';
     return `/api/lexara/audio/${audioId}.${extension}`;
   }
 }
 
-// ============================================================================
-// LEXARA VOICE PIPELINE
-// ============================================================================
+function inferContext(text: string, speechContext?: string): EmotionalContext {
+  if (speechContext === 'reassurance') return 'reassuring';
+  if (speechContext === 'serious' || speechContext === 'legal') return 'authoritative';
+  if (speechContext === 'explanation' || speechContext === 'guidance') return 'empathetic';
+  if (speechContext === 'greeting' || speechContext === 'casual') return 'neutral';
+
+  const lower = text.toLowerCase();
+  if (/(court|judge|statute|liability|damages|jurisdiction|verdict|evidence)/.test(lower)) return 'authoritative';
+  if (/(worried|scared|afraid|anxious|nervous|urgent)/.test(lower)) return 'reassuring';
+  if (/(deadline|critical|immediately|required)/.test(lower)) return 'serious';
+  return 'neutral';
+}
+
+function estimateDurationMs(text: string, context: EmotionalContext): number {
+  const rate = LEXARA_VOICE_PROFILE.emotionalRange[context].rate;
+  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  return Math.max(500, Math.round((words / rate) * 60_000));
+}
+
+function generateSSML(text: string, context: EmotionalContext): string {
+  const emotional = LEXARA_VOICE_PROFILE.emotionalRange[context];
+  const rate = `${Math.round((emotional.rate / 150) * 100)}%`;
+  const pitch = `${emotional.pitch > 220 ? '+' : ''}${Math.round((emotional.pitch - 220) / 2)}%`;
+  const escaped = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+  return `<speak version="1.1"><prosody rate="${rate}" pitch="${pitch}">${escaped}</prosody></speak>`;
+}
 
 export class LexaraVoicePipeline extends EventEmitter {
   private persistence: AudioPersistence;
-  private isInitialized: boolean = false;
+  private initialized = false;
+  private synthesisCount = 0;
+  private totalLatencyMs = 0;
+  private errorCount = 0;
 
-  // Metrics
-  private synthesisCount: number = 0;
-  private totalLatencyMs: number = 0;
-  private errorCount: number = 0;
-
-  constructor(config?: {
-    storageDir?: string;
-  }) {
+  constructor(config?: { storageDir?: string }) {
     super();
-    
     this.persistence = new AudioPersistence(config?.storageDir);
   }
 
-  /**
-   * Initialize the voice pipeline
-   */
   async initialize(): Promise<void> {
-    log.info('[LexaraVoicePipeline] Initializing canonical adaptive voice mesh...');
     const readiness = await refreshLexaraTTSReadiness(false);
-    this.isInitialized = true;
+    this.initialized = true;
     this.emit('initialized', readiness);
-    log.info('[LexaraVoicePipeline] Adaptive voice mesh initialized', {
-      healthyProviders: readiness.healthyProviders,
+    log.info('[LexaraVoicePipeline] Canonical adaptive voice mesh initialized', {
       configuredProviders: readiness.configuredProviders,
+      healthyProviders: readiness.healthyProviders,
     });
   }
 
-  /**
-   * MAIN SYNTHESIS METHOD
-   * 
-   * Complete path: Text → canonical adaptive TTS mesh → Persist → Return Reference
-   */
   async synthesize(request: VoiceSynthesisRequest): Promise<VoiceSynthesisResult> {
-    const startTime = Date.now();
+    if (!this.initialized) await this.initialize();
+
+    const text = String(request.text || '').trim();
+    if (!text) throw new Error('Text is required for LEXARA voice synthesis');
+
+    const startedAt = Date.now();
     const audioId = randomUUID();
     const traceId = request.traceId || randomUUID();
-
-    log.info('[LexaraVoicePipeline] Synthesis request', {
-      traceId,
-      textLength: request.text.length,
-      context: request.context,
-    });
-
-    // Ensure initialized
-    if (!this.isInitialized) {
-      await this.initialize();
-    }
-
-    const context = request.context || this.inferContext(request.text, request.speechContext);
-    const ssml = this.generateSSML(request.text, context);
-
-    let audioData: Buffer;
-    let latencyMs: number;
-    let qualityScore: number;
-    let mimeType: string;
-    let provider: LexaraTTSProviderId;
+    const context = request.context || inferContext(text, request.speechContext);
 
     try {
-      const result = await synthesizeLexaraSpeechWithFailover(request.text);
-      audioData = result.audioData;
-      latencyMs = result.latencyMs;
-      qualityScore = 0.95;
-      mimeType = result.mimeType;
-      provider = result.provider;
+      const result = await synthesizeLexaraSpeechWithFailover(text);
+      const durationMs = estimateDurationMs(text, context);
+      let audioRef = `data:${result.mimeType};base64,${result.audioData.toString('base64')}`;
+      let persisted = false;
 
-      this.synthesisCount++;
+      if (request.persist !== false) {
+        try {
+          await this.persistence.persist(audioId, result.audioData, result.mimeType);
+          audioRef = this.persistence.getPlayableRef(audioId, result.mimeType);
+          persisted = true;
+        } catch (error) {
+          log.warn('[LexaraVoicePipeline] Audio persistence failed; using inline audio', { error });
+        }
+      }
+
+      const latencyMs = Date.now() - startedAt;
+      this.synthesisCount += 1;
       this.totalLatencyMs += latencyMs;
+
+      const response: VoiceSynthesisResult = {
+        audioId,
+        traceId,
+        audioRef,
+        audioData: request.persist === false ? result.audioData : undefined,
+        mimeType: result.mimeType,
+        durationMs,
+        provider: result.provider,
+        persisted,
+        generatedAt: Date.now(),
+        latencyMs,
+        qualityScore: 0.95,
+        text,
+        ssml: generateSSML(text, context),
+      };
+
+      this.emit('synthesis-complete', response);
+      return response;
     } catch (error) {
-      this.errorCount++;
-      log.error('[LexaraVoicePipeline] Synthesis failed', { traceId, error });
+      this.errorCount += 1;
+      log.error('[LexaraVoicePipeline] Canonical mesh synthesis failed', {
+        traceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       throw error;
     }
-
-    // Persist audio if requested (default: true)
-    let audioRef: string;
-    let persisted = false;
-
-    if (request.persist !== false) {
-      try {
-        const filepath = await this.persistence.persist(audioId, audioData, mimeType);
-        const extension = mimeType.includes('wav') ? 'wav' : mimeType.includes('mpeg') || mimeType.includes('mp3') ? 'mp3' : 'audio';
-        audioRef = this.persistence.getPlayableRef(audioId, extension);
-        persisted = true;
-        log.debug('[LexaraVoicePipeline] Audio persisted', { audioId, filepath });
-      } catch (error) {
-        log.warn('[LexaraVoicePipeline] Persistence failed, returning inline data', { error });
-        audioRef = `data:${mimeType};base64,${audioData.toString('base64')}`;
-      }
-    } else {
-      audioRef = `data:${mimeType};base64,${audioData.toString('base64')}`;
-    }
-
-    // Estimate duration based on text length and speaking rate
-    const wordsPerMinute = LEXARA_VOICE_PROFILE.emotionalRange[context].rate;
-    const wordCount = request.text.split(/\s+/).length;
-    const durationMs = Math.round((wordCount / wordsPerMinute) * 60 * 1000);
-
-    const result: VoiceSynthesisResult = {
-      audioId,
-      traceId,
-      audioRef,
-      audioData: request.persist === false ? audioData : undefined,
-      mimeType,
-      durationMs,
-      provider,
-      persisted,
-      generatedAt: Date.now(),
-      latencyMs: Date.now() - startTime,
-      qualityScore,
-      text: request.text,
-      ssml,
-    };
-
-    this.emit('synthesis-complete', result);
-    
-    log.info('[LexaraVoicePipeline] Synthesis complete', {
-      traceId,
-      audioId,
-      provider,
-      durationMs,
-      latencyMs: result.latencyMs,
-      quality: qualityScore,
-      audioByteLength: audioData.length,
-    });
-
-    return result;
   }
 
-  /**
-   * Infer emotional context from text and speech context
-   */
-  private inferContext(text: string, speechContext?: string): EmotionalContext {
-    const lowercaseText = text.toLowerCase();
-
-    // Speech context mapping
-    if (speechContext) {
-      switch (speechContext) {
-        case 'greeting':
-        case 'casual':
-          return 'neutral';
-        case 'reassurance':
-          return 'reassuring';
-        case 'serious':
-        case 'legal':
-          return 'authoritative';
-        case 'explanation':
-        case 'guidance':
-          return 'empathetic';
-      }
-    }
-
-    // Legal terminology detection → authoritative
-    const legalTerms = ['court', 'judge', 'statute', 'liability', 'damages', 'plaintiff', 'defendant', 
-                        'jurisdiction', 'verdict', 'testimony', 'evidence', 'lawsuit', 'claim'];
-    if (legalTerms.some(term => lowercaseText.includes(term))) {
-      return 'authoritative';
-    }
-
-    // Stress/concern detection → reassuring
-    const concernTerms = ['worried', 'scared', 'afraid', 'anxious', 'nervous', 'help', 'urgent'];
-    if (concernTerms.some(term => lowercaseText.includes(term))) {
-      return 'reassuring';
-    }
-
-    // Serious topics → serious
-    const seriousTerms = ['important', 'critical', 'deadline', 'immediately', 'must', 'required'];
-    if (seriousTerms.some(term => lowercaseText.includes(term))) {
-      return 'serious';
-    }
-
-    // Empathetic for explanations
-    if (lowercaseText.includes('understand') || lowercaseText.includes('explain') || 
-        lowercaseText.includes('let me') || lowercaseText.includes('here\'s')) {
-      return 'empathetic';
-    }
-
-    return 'neutral';
-  }
-
-  /**
-   * Build synthesis settings from profile and overrides
-   */
-  private buildSettings(overrides?: Partial<VoiceSynthesisSettings>, context?: EmotionalContext): VoiceSynthesisSettings {
-    const profile = LEXARA_VOICE_PROFILE;
-    const emotional = context ? profile.emotionalRange[context] : profile.emotionalRange.neutral;
-
-    return {
-      stability: overrides?.stability ?? profile.characteristics.stability,
-      similarity: overrides?.similarity ?? 0.75,
-      style: overrides?.style ?? 0.0,
-      speakingRate: overrides?.speakingRate ?? emotional.rate / 150,
-      pitch: overrides?.pitch ?? emotional.pitch / 220,
-    };
-  }
-
-  /**
-   * Generate SSML for enhanced prosody
-   */
-  private generateSSML(text: string, context: EmotionalContext): string {
-    const profile = LEXARA_VOICE_PROFILE;
-    const emotional = profile.emotionalRange[context];
-
-    // Apply prosody settings
-    const rate = `${Math.round((emotional.rate / 150) * 100)}%`;
-    const pitch = `${emotional.pitch > 220 ? '+' : ''}${Math.round((emotional.pitch - 220) / 2)}%`;
-
-    let ssml = `<speak version="1.1" xmlns="http://www.w3.org/2001/10/synthesis">`;
-    ssml += `<prosody rate="${rate}" pitch="${pitch}">`;
-
-    // Add pauses and emphasis
-    let processedText = text;
-    
-    // Add pauses after periods
-    processedText = processedText.replace(/\.\s+/g, `.<break time="${profile.prosody.pauseAfterPeriod}ms"/> `);
-    
-    // Add pauses after commas
-    processedText = processedText.replace(/,\s+/g, `,<break time="${profile.prosody.pauseAfterComma}ms"/> `);
-
-    // Emphasize legal terms if enabled
-    if (profile.prosody.emphasisOnLegalTerms) {
-      const legalTerms = ['court', 'judge', 'statute', 'liability', 'damages', 'jurisdiction', 'verdict'];
-      for (const term of legalTerms) {
-        const regex = new RegExp(`\\b(${term})\\b`, 'gi');
-        processedText = processedText.replace(regex, `<emphasis level="moderate">$1</emphasis>`);
-      }
-    }
-
-    ssml += processedText;
-    ssml += `</prosody></speak>`;
-
-    return ssml;
-  }
-
-  /**
-   * Get provider statuses
-   */
   getProviderStatuses(): Record<string, ProviderStatus> {
     const readiness = getLexaraTTSReadiness();
     return Object.fromEntries(
-      readiness.providers.map(status => [
-        status.provider,
+      readiness.providers.map(provider => [
+        provider.provider,
         {
-          name: status.provider,
-          available: status.healthy,
-          latencyMs: status.ewmaLatencyMs || undefined,
-          lastError: status.lastFailure || undefined,
-          lastCheck: status.verifiedAt || Date.now(),
-        } satisfies ProviderStatus,
+          name: provider.provider,
+          available: provider.healthy,
+          latencyMs: provider.ewmaLatencyMs || undefined,
+          lastError: provider.lastFailure || undefined,
+          lastCheck: provider.verifiedAt || 0,
+        },
       ]),
     );
   }
 
-  /**
-   * Get pipeline statistics
-   */
   getStats(): {
     synthesisCount: number;
     avgLatencyMs: number;
     errorCount: number;
     errorRate: number;
-    preferredProvider: VoiceProvider;
+    preferredProvider: VoiceProvider | null;
   } {
+    const readiness = getLexaraTTSReadiness();
     return {
       synthesisCount: this.synthesisCount,
       avgLatencyMs: this.synthesisCount > 0 ? this.totalLatencyMs / this.synthesisCount : 0,
       errorCount: this.errorCount,
-      errorRate: this.synthesisCount > 0 ? this.errorCount / (this.synthesisCount + this.errorCount) : 0,
-      preferredProvider: 'adaptive',
+      errorRate: this.synthesisCount + this.errorCount > 0
+        ? this.errorCount / (this.synthesisCount + this.errorCount)
+        : 0,
+      preferredProvider: readiness.healthyProviders[0] || null,
     };
   }
 
-  /**
-   * Refresh provider availability
-   */
   async refreshProviders(): Promise<void> {
-    await refreshLexaraTTSReadiness(false);
-    this.emit('providers-refreshed', this.getProviderStatuses());
+    const readiness = await refreshLexaraTTSReadiness(true);
+    this.emit('providers-refreshed', readiness);
   }
 }
 
-// ============================================================================
-// SINGLETON INSTANCE
-// ============================================================================
-
 let pipelineInstance: LexaraVoicePipeline | null = null;
 
-export function getLexaraVoicePipeline(config?: {
-  storageDir?: string;
-}): LexaraVoicePipeline {
-  if (!pipelineInstance) {
-    pipelineInstance = new LexaraVoicePipeline(config);
-  }
+export function getLexaraVoicePipeline(config?: { storageDir?: string }): LexaraVoicePipeline {
+  if (!pipelineInstance) pipelineInstance = new LexaraVoicePipeline(config);
   return pipelineInstance;
 }
 
