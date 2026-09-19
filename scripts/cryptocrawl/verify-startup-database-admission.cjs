@@ -28,9 +28,12 @@ requirePattern(railway, /healthcheckPath\s*=\s*"\/api\/ready"/, 'Railway must pr
 requirePattern(index, /function\s+databaseRetryDelayMs[\s\S]*Math\.random/, 'database retry must use bounded jitter');
 requirePattern(index, /function\s+databaseErrorText[\s\S]*\.cause/, 'database admission classification must inspect wrapped driver causes');
 requirePattern(index, /function\s+isDatabaseAdmissionPressureError[\s\S]{0,1400}08006[\s\S]{0,180}timeoutContext/, '08006 must be pressure only when accompanied by timeout/termination context');
-requirePattern(index, /function\s+startupDatabaseAdmissionBudgetMs[\s\S]{0,1200}RAILWAY_HEALTHCHECK_TIMEOUT_SEC[\s\S]{0,1000}reserveMs/, 'primary fallback admission must consume only a bounded portion of the Railway readiness window');
-requirePattern(index, /function\s+retryDatabaseProbeWithinBudget[\s\S]{0,1200}while\s*\(Date\.now\(\)\s*-\s*startedAt\s*<\s*budgetMs\)/, 'startup must retain bounded primary fallback admission only when overflow is unavailable');
-requirePattern(index, /retryDatabaseProbeWithinBudget[\s\S]{0,2200}await\s+db\.execute\('SELECT 1'\)[\s\S]{0,2200}databaseRetryDelayMs\(attempt\)/, 'overflow-unavailable fallback may use one serialized primary probe with jitter');
+requirePattern(index, /const\s+STARTUP_DATABASE_MAX_PROBES\s*=\s*5/, 'startup must hard-cap LegalWhat database admission probes');
+requirePattern(index, /const\s+STARTUP_DATABASE_ADMISSION_CAP_MS\s*=\s*120_000/, 'startup must cap database admission time below the Railway health window');
+requirePattern(index, /function\s+startupDatabaseAdmissionBudgetMs[\s\S]{0,1400}RAILWAY_HEALTHCHECK_TIMEOUT_SEC[\s\S]{0,1400}STARTUP_DATABASE_ADMISSION_CAP_MS/, 'primary fallback admission must consume only a bounded portion of the Railway readiness window');
+requirePattern(index, /function\s+retryDatabaseProbeWithinBudget[\s\S]{0,1400}attempt\s*<\s*STARTUP_DATABASE_MAX_PROBES/, 'startup must bound primary fallback by both time and probe count');
+requirePattern(index, /retryDatabaseProbeWithinBudget[\s\S]{0,2400}await\s+pool\.query\(\{\s*text:\s*'SELECT 1',\s*query_timeout:\s*5_000\s*\}\)[\s\S]{0,2400}databaseRetryDelayMs\(attempt\)/, 'overflow-unavailable fallback must use one serialized canonical-pool probe with jitter');
+requirePattern(index, /databaseErrorText\(error\)\.slice\(0,\s*700\)/, 'startup probe telemetry must retain the real bounded PostgreSQL\/Supavisor cause');
 forbidPattern(index, /retryDatabaseProbeWithinBudget[\s\S]{0,2600}Promise\.all\s*\(/, 'primary fallback recovery must not fan out parallel probes');
 requirePattern(index, /function\s+isPermanentDatabaseStartupError[\s\S]{0,900}28p01[\s\S]{0,900}password authentication failed/, 'permanent authentication/configuration failures must be classified separately from pressure');
 requirePattern(index, /isPermanentDatabaseStartupError\(error\)\s*\|\|\s*isLocalPoolFailure\(error\)[\s\S]{0,100}throw\s+error/, 'permanent/local pool failures must fail out of the fallback retry loop');
