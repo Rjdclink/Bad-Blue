@@ -78,6 +78,14 @@ for (const name of ['FarmCrawler', 'PhantomCrawler', 'NovaCrawler']) {
 }
 if (!process.exitCode) ok('previously declaration-only PANTHEON species have concrete bounded implementations');
 
+const pantheonPage = fs.readFileSync('client/src/pages/pantheon.tsx', 'utf8');
+const pantheonSelector = fs.readFileSync('client/src/components/DoomsdayClockSelector.tsx', 'utf8');
+const pantheonProgress = fs.readFileSync('client/src/components/PantheonProgressTracker.tsx', 'utf8');
+const pantheonReportConfig = fs.readFileSync('shared/pantheonReportConfig.ts', 'utf8');
+const pantheonReportJobs = fs.readFileSync('server/services/pantheon/PantheonBackgroundReportJob.ts', 'utf8');
+const pantheonRoutes = fs.readFileSync('server/routes.ts', 'utf8');
+const crawlerSelection = fs.readFileSync('server/services/crawlers/CrawlerSelectionUtility.ts', 'utf8');
+const seedFirstConfig = fs.readFileSync('server/lib/seedFirstConfig.ts', 'utf8');
 const backgroundPeopleSearch = fs.readFileSync('server/peopleSearch.ts', 'utf8');
 const backgroundAdapter = fs.readFileSync('server/services/crawlers/PantheonRetrievalAdapter.ts', 'utf8');
 const backgroundOrchestrator = fs.readFileSync('server/services/pantheonCrawlerOrchestrator.ts', 'utf8');
@@ -91,6 +99,43 @@ const pantheonIce = fs.readFileSync('server/services/pantheon/crawlers/ice.ts', 
 const spiderfoot = fs.readFileSync('server/services/spiderfootClient.ts', 'utf8');
 const stealth = fs.readFileSync('server/services/stealth/StealthInfrastructure.ts', 'utf8');
 
+if (
+  !pantheonReportConfig.includes("1: 5 * 60_000") ||
+  !pantheonReportConfig.includes("2: 10 * 60_000") ||
+  !pantheonReportConfig.includes("3: 20 * 60_000") ||
+  !pantheonReportConfig.includes("4: 30 * 60_000") ||
+  !pantheonSelector.includes('PANTHEON_REPORT_DURATION_LABELS') ||
+  !pantheonProgress.includes('PANTHEON_REPORT_DURATIONS_MS')
+) {
+  fail('Pantheon report durations are not canonically wired to 5/10/20/30 minutes');
+}
+if (
+  !pantheonPage.includes('Generated Background Report') ||
+  !pantheonPage.includes("/api/osint/report-jobs") ||
+  pantheonPage.includes("/api/osint/full-search") ||
+  pantheonPage.includes('new AbortController()') ||
+  !pantheonPage.includes('pantheon.activeReportJobId') ||
+  !pantheonPage.includes('isPeopleSearchReport')
+) {
+  fail('Pantheon page is not using the durable refresh-safe report workspace');
+}
+if (
+  !pantheonRoutes.includes("app.post('/api/osint/report-jobs'") ||
+  !pantheonRoutes.includes("app.get('/api/osint/report-jobs/:reportId'") ||
+  !pantheonReportJobs.includes('forceAllCrawlers: true') ||
+  !pantheonReportJobs.includes('resumePantheonReportJobFromRecord')
+) {
+  fail('Pantheon server-side report jobs are not durable/recoverable');
+}
+if (
+  !crawlerSelection.includes("request.purpose === 'background_report'") ||
+  !crawlerSelection.includes('depth controls effort, not participation') ||
+  !backgroundOrchestrator.includes('searchAllIsolated') ||
+  !backgroundAdapter.includes('searchAllIsolated(request.targets') ||
+  !seedFirstConfig.includes('DEFAULT_DISABLED_CRAWLERS: readonly PermittedCrawlerName[] = [] as const')
+) {
+  fail('Pantheon background reports do not preserve the complete crawler roster');
+}
 if (
   !backgroundAdapter.includes('deployBackgroundReport') ||
   !backgroundAdapter.includes("request.purpose === 'background_report'") ||

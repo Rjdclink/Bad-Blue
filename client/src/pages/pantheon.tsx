@@ -6,7 +6,7 @@
  * Advanced intelligence platform for comprehensive identity profiling
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { DoomsdayClockSelector } from '@/components/DoomsdayClockSelector';
 import { PantheonProgressTracker } from '@/components/PantheonProgressTracker';
 import { LocationHeatmap } from '@/components/LocationHeatmap';
@@ -16,7 +16,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Shield, AlertCircle, MapPin } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { getPantheonReportDurationLabel, normalizePantheonSearchDepth } from "@shared/pantheonReportConfig";
 import './pantheon.css';
 
 // Constants
@@ -55,7 +55,9 @@ export default function PantheonPage() {
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<PeopleSearchReport | null>(null);
   const [searchConfig, setSearchConfig] = useState<SearchConfig | null>(null);
-  const [searchAbortController, setSearchAbortController] = useState<AbortController | null>(null);
+  const [reportJobId, setReportJobId] = useState<string | null>(null);
+  const [reportState, setReportState] = useState<'idle' | 'processing' | 'completed' | 'failed'>('idle');
+  const [reportError, setReportError] = useState<string | null>(null);
   const { toast } = useToast();
 
   const locationMap = useMemo(() => {
@@ -65,31 +67,94 @@ export default function PantheonPage() {
     return buildCoordinateMapData(results.locationHistory);
   }, [results?.locationHistory]);
   
-  // Timeout durations in milliseconds based on search depth
-  const DEPTH_TIMEOUTS: Record<number, number> = {
-    1: 50000,   // 50 seconds (5 second buffer for 45s search)
-    2: 95000,   // 95 seconds (5 second buffer for 90s search)
-    3: 185000,  // 185 seconds (5 second buffer for 180s search)
-    4: 310000,  // 310 seconds (10 second buffer for 300s search)
-  };
-  
+  useEffect(() => {
+    const persistedJobId = window.localStorage.getItem('pantheon.activeReportJobId');
+    if (persistedJobId) {
+      setReportJobId(persistedJobId);
+      setSearching(true);
+      setReportState('processing');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!reportJobId) return;
+
+    let cancelled = false;
+    let pollTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const poll = async () => {
+      try {
+        const response = await fetch(`/api/osint/report-jobs/${encodeURIComponent(reportJobId)}`, {
+          credentials: 'include',
+          cache: 'no-store',
+        });
+        const payload = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          throw new Error(payload?.message || `Report status failed: ${response.status}`);
+        }
+        if (cancelled) return;
+
+        const job = payload?.job && typeof payload.job === 'object' ? payload.job : null;
+        if (job?.name) {
+          setSearchConfig({
+            name: String(job.name),
+            location: job.location ? String(job.location) : undefined,
+            searchDepth: normalizePantheonSearchDepth(job.searchDepth),
+          });
+        }
+
+        if (payload.status === 'processing') {
+          setSearching(true);
+          setReportState('processing');
+          setReportError(null);
+          pollTimer = setTimeout(poll, 2000);
+          return;
+        }
+
+        setSearching(false);
+        window.localStorage.removeItem('pantheon.activeReportJobId');
+
+        if (payload.status === 'completed') {
+          if (!isPeopleSearchReport(payload.data)) {
+            throw new Error('The report completed without a valid report payload.');
+          }
+          setResults(payload.data);
+          setReportState('completed');
+          setReportError(null);
+          toast({
+            title: 'PANTHEON Search Complete',
+            description: `Intelligence report generated for ${payload.data.identitySummary.name}`,
+          });
+          return;
+        }
+
+        setReportState('failed');
+        setReportError(payload.error || 'The background report failed.');
+      } catch (error) {
+        if (cancelled) return;
+        setSearching(false);
+        setReportState('failed');
+        setReportError(error instanceof Error ? error.message : 'Unable to retrieve the background report.');
+      }
+    };
+
+    void poll();
+    return () => {
+      cancelled = true;
+      if (pollTimer) clearTimeout(pollTimer);
+    };
+  }, [reportJobId, toast]);
+
   const handleSearchStart = async (config: SearchConfig) => {
     setSearching(true);
     setResults(null);
     setSearchConfig(config);
-    
-    // Create abort controller for timeout
-    const abortController = new AbortController();
-    setSearchAbortController(abortController);
-    
-    // Set timeout based on search depth
-    const timeout = DEPTH_TIMEOUTS[config.searchDepth] || 35000;
-    const timeoutId = setTimeout(() => {
-      abortController.abort();
-    }, timeout);
-    
+    setReportState('processing');
+    setReportError(null);
+
     try {
-      const response = await fetch('/api/osint/full-search', {
+      const response = await fetch('/api/osint/report-jobs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -98,78 +163,25 @@ export default function PantheonPage() {
           location: config.location,
           searchDepth: config.searchDepth,
         }),
-        signal: abortController.signal,
       });
-      
-      clearTimeout(timeoutId);
-      
-      if (!response.ok) {
-        throw new Error(`Search failed: ${response.statusText}`);
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok || !payload?.jobId) {
+        throw new Error(payload?.message || `Unable to start report: ${response.status}`);
       }
-      
-      const data = await response.json();
-      // Backend returns a structured wrapper ({ success, data, meta }) for OSINT.
-      // Normalize so UI always receives the report shape.
-      const report = data?.data || data;
-      setResults(report);
-      
-      toast({
-        title: "PANTHEON Search Complete",
-        description: `Intelligence report generated for ${report.identitySummary?.name || config.name}`,
-      });
-    } catch (error: any) {
-      clearTimeout(timeoutId);
-      
-      if (error.name === 'AbortError') {
-        // Timer ran out - generate partial report
-        const partialReport: PeopleSearchReport = {
-          identitySummary: {
-            name: config.name,
-            verificationStatus: 'Timeout - No Data Collected',
-          },
-          contactInformation: [],
-          socialMediaPresence: [],
-          employmentAndEducation: [],
-          locationHistory: config.location ? [config.location] : [],
-          publicRecords: [],
-          onlineMentions: [],
-          riskAndReputation: [],
-          summary: `Search timed out after ${Math.floor(timeout / 1000)} seconds before any data could be collected. No data was retrieved due to the timeout. Consider running a deeper search level with more time for comprehensive results.`,
-          confidenceScore: 0,
-          sources: [{
-            name: 'Timeout - No Data',
-            data: { timeout: timeout, searchDepth: config.searchDepth, dataCollected: false },
-            confidence: 0,
-            timestamp: new Date(),
-          }],
-        };
-        
-        setResults(partialReport);
-        
-        toast({
-          title: "Search Timed Out",
-          description: "No data was collected before the timeout. Try a longer search duration.",
-          variant: "default",
-        });
-      } else {
-        console.error('Search failed:', error);
-        toast({
-          title: "Search Failed",
-          description: error instanceof Error ? error.message : 'An error occurred',
-          variant: "destructive",
-        });
-      }
-    } finally {
+
+      const jobId = String(payload.jobId);
+      window.localStorage.setItem('pantheon.activeReportJobId', jobId);
+      setReportJobId(jobId);
+    } catch (error) {
       setSearching(false);
-      setSearchAbortController(null);
-    }
-  };
-  
-  // Handler for when the Doomsday Clock timer completes
-  const handleTimerComplete = () => {
-    if (searchAbortController && searching) {
-      // Abort the ongoing search
-      searchAbortController.abort();
+      setReportState('failed');
+      setReportError(error instanceof Error ? error.message : 'Unable to start the background report.');
+      toast({
+        title: 'Search Failed',
+        description: error instanceof Error ? error.message : 'Unable to start the background report.',
+        variant: 'destructive',
+      });
     }
   };
   
@@ -199,7 +211,7 @@ export default function PantheonPage() {
             </div>
             
             <p className="tagline">
-              Omniscient intelligence. Delivered in seconds.
+              Comprehensive public-source intelligence through coordinated crawler analysis.
             </p>
           </section>
           
@@ -266,7 +278,7 @@ export default function PantheonPage() {
                   fontStyle: 'italic',
                 }}
               >
-                Real-time data fusion from 60+ autonomous sources
+                Coordinated evidence collection across the full PANTHEON crawler roster
               </p>
             </div>
           </section>
@@ -374,16 +386,84 @@ export default function PantheonPage() {
               <PantheonProgressTracker 
                 searchDepth={searchConfig.searchDepth}
                 isSearching={searching}
-                onComplete={handleTimerComplete}
               />
             </section>
           )}
           
+          {/* Permanent Background Report Workspace */}
+          <section className="results" aria-live="polite">
+            <h2>Generated Background Report</h2>
+            {reportState === 'idle' && !results && (
+              <Card className="results-display">
+                <CardHeader>
+                  <CardTitle>Report Workspace</CardTitle>
+                  <CardDescription>
+                    Your completed PANTHEON background report will populate here.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="text-sm text-muted-foreground">
+                  Start an investigation above. Every configured PANTHEON crawler participates; the selected level sets the investigation budget.
+                </CardContent>
+              </Card>
+            )}
+            {reportState === 'processing' && (
+              <Card className="results-display">
+                <CardHeader>
+                  <CardTitle>Report in Progress</CardTitle>
+                  <CardDescription>
+                    {searchConfig
+                      ? `${searchConfig.name} — ${getPantheonReportDurationLabel(searchConfig.searchDepth)} investigation budget`
+                      : 'Recovering active PANTHEON report job…'}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="text-sm text-muted-foreground">
+                  The report is running on the server and will continue if this page is refreshed. Findings will populate here when synthesis completes.
+                </CardContent>
+              </Card>
+            )}
+            {reportState === 'failed' && (
+              <Card className="results-display border-destructive/50">
+                <CardHeader>
+                  <CardTitle>Report Could Not Be Completed</CardTitle>
+                </CardHeader>
+                <CardContent className="text-sm text-destructive">
+                  {reportError || 'The background report failed.'}
+                </CardContent>
+              </Card>
+            )}
+            {results && <ResultsDisplay data={results} />}
+          </section>
+
+          {results && locationMap.heatmap.length > 0 && (
+            <section className="gps-map-section" style={{ marginTop: '2rem' }}>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <MapPin className="w-5 h-5" />
+                    Location Intelligence Map
+                  </CardTitle>
+                  <CardDescription>
+                    Geographic visualization of known coordinates
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <LocationHeatmap
+                    data={locationMap.heatmap}
+                    markers={locationMap.markers}
+                    center={locationMap.center}
+                    zoom={10}
+                    config={{ radius: 30, blur: 20, maxZoom: 18 }}
+                  />
+                </CardContent>
+              </Card>
+            </section>
+          )}
+
           {/* Data Sources */}
           <section className="sources">
             <h2>Data Sources</h2>
             <p>
-              PANTHEON synthesizes information from <strong>60+ public data sources</strong> including:
+              PANTHEON synthesizes evidence returned by its configured public-source crawlers, including:
             </p>
             <ul className="sources-list">
               <li>Court records and legal filings</li>
@@ -427,41 +507,6 @@ export default function PantheonPage() {
             </Card>
           </section>
           
-          {/* Results Display */}
-          {results && (
-            <>
-              <section className="results">
-                <h2>Search Results</h2>
-                <ResultsDisplay data={results} />
-              </section>
-              
-              {/* GPS Map Section - Display if location data exists */}
-              {locationMap.heatmap.length > 0 && (
-                <section className="gps-map-section" style={{ marginTop: '2rem' }}>
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="flex items-center gap-2">
-                        <MapPin className="w-5 h-5" />
-                        Location Intelligence Map
-                      </CardTitle>
-                      <CardDescription>
-                        Geographic visualization of known coordinates
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <LocationHeatmap
-                        data={locationMap.heatmap}
-                        markers={locationMap.markers}
-                        center={locationMap.center}
-                        zoom={10}
-                        config={{ radius: 30, blur: 20, maxZoom: 18 }}
-                      />
-                    </CardContent>
-                  </Card>
-                </section>
-              )}
-            </>
-          )}
         </div>
       </div>
     </>
@@ -482,6 +527,25 @@ function CapabilityCard({ icon, title, description }: {
         <p className="text-sm text-muted-foreground leading-relaxed">{description}</p>
       </CardContent>
     </Card>
+  );
+}
+
+function isPeopleSearchReport(value: unknown): value is PeopleSearchReport {
+  if (!value || typeof value !== 'object') return false;
+  const report = value as Partial<PeopleSearchReport>;
+  return Boolean(
+    report.identitySummary &&
+    typeof report.identitySummary.name === 'string' &&
+    Array.isArray(report.contactInformation) &&
+    Array.isArray(report.socialMediaPresence) &&
+    Array.isArray(report.employmentAndEducation) &&
+    Array.isArray(report.locationHistory) &&
+    Array.isArray(report.publicRecords) &&
+    Array.isArray(report.onlineMentions) &&
+    Array.isArray(report.riskAndReputation) &&
+    Array.isArray(report.sources) &&
+    typeof report.summary === 'string' &&
+    typeof report.confidenceScore === 'number'
   );
 }
 

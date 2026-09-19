@@ -25,10 +25,9 @@ export const PERMITTED_CRAWLER_NAMES = [
 
 export type PermittedCrawlerName = typeof PERMITTED_CRAWLER_NAMES[number];
 
-// SixDegrees is present but DISABLED by default.
-export const DEFAULT_DISABLED_CRAWLERS: readonly PermittedCrawlerName[] = [
-  'SeedFetchSixDegrees',
-] as const;
+// Background reports must exercise every permitted crawler. Keep this list
+// explicit for compatibility, but do not disable any crawler by default.
+export const DEFAULT_DISABLED_CRAWLERS: readonly PermittedCrawlerName[] = [] as const;
 
 // Locked execution order per seed.
 export const CRAWLER_EXECUTION_ORDER: readonly PermittedCrawlerName[] = [
