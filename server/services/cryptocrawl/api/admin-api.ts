@@ -34,6 +34,7 @@ import {
   getCryptaraSuperWorkerSnapshot,
   uninstallCryptaraSuperWorkerAdmission,
 } from '../integration/cryptara-super-worker.js';
+import { getCryptaraParallelProxySnapshot } from '../integration/cryptara-supabase-overflow-worker.js';
 import { stageManager } from '../governance/stage-management.js';
 import { GovernanceError } from '../governance/types.js';
 import { autonomousFaucet } from '../faucet/autonomous-faucet.js';
@@ -471,7 +472,7 @@ async function rollbackCryptoCrawlerManualStart(): Promise<string[]> {
     uninstallCryptaraSuperWorkerAdmission(),
   ]);
   resetGovernanceInitializationForManualStop();
-  stopCryptaraHyperBridgeBootstrap();
+  await stopCryptaraHyperBridgeBootstrap();
   await closeCryptocrawlRuntimeDatabasePools();
   setCryptoCrawlerManualPowerPhase('OFF');
   systemState.running = false;
@@ -527,6 +528,7 @@ export async function stopCryptoCrawlerRuntime(): Promise<{ stopped: boolean; fa
     getCryptaraHyperBridgeBootstrapSnapshot().state === 'idle' &&
     !getCryptaraHyperBridgeBootstrapSnapshot().overflowWorker.started &&
     !getCryptaraSuperWorkerSnapshot().admissionInstalled &&
+    (getCryptaraParallelProxySnapshot().pool?.total ?? 0) === 0 &&
     getCryptocrawlRuntimeDatabaseSnapshot().ordinary.total === 0 &&
     getCryptocrawlRuntimeDatabaseSnapshot().coordination.total === 0;
 
