@@ -1,7 +1,7 @@
 /**
  * Law Types Constants - LegalWhat Platform
  * 
- * STAGE 1A: Created with 30 law types
+ * STAGE 1A: Created with 31 law types
  * STAGE 1B: Will be imported by WelcomePage component
  * STAGE 2: Will be used for media upload tagging
  * STAGE 3-4: Will be mapped to AI expertise
@@ -10,7 +10,7 @@
  * DO NOT MODIFY without updating dependent stages
  */
 
-// Array of all law type IDs (30 total)
+// Array of all law type IDs (31 total)
 export const LAW_TYPES = [
   'law-enforcement-accountability',
   'criminal-law',
@@ -37,6 +37,7 @@ export const LAW_TYPES = [
   'intellectual-property-law',
   'public-housing-law',
   'procedural-law',
+  'post-conviction-law',
   'securities-law',
   'international-law',
   'tax-law',
@@ -65,7 +66,7 @@ export const LAW_TYPE_DATA: LawTypeInfo[] = [
     name: 'Law Enforcement Accountability',
     description: 'Police misconduct, excessive force, wrongful arrest, civil rights violations',
     icon: 'Shield',
-    route: '/badblue',
+    route: '/lexara-consent/law-enforcement-accountability',
     featured: true,
     color: 'red',
   },
@@ -259,6 +260,14 @@ export const LAW_TYPE_DATA: LawTypeInfo[] = [
     description: 'Court procedures, filings, motions, legal process',
     icon: 'FileStack',
     route: '/legal-tools?type=procedural-law',
+    color: 'blue',
+  },
+  {
+    id: 'post-conviction-law',
+    name: 'Post Conviction',
+    description: 'State post-conviction relief, federal habeas, ineffective assistance, newly discovered evidence',
+    icon: 'BookCheck',
+    route: '/legal-tools?type=post-conviction-law',
     color: 'blue',
   },
   {
