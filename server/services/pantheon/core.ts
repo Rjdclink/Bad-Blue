@@ -1,5 +1,6 @@
 import { createLogger } from '../../logger';
 import { EventEmitter } from 'events';
+import { createHash } from 'crypto';
 import { validatePantheonConfig } from './config';
 
 const log = createLogger('PantheonCore');
@@ -283,17 +284,75 @@ export class PantheonCore extends EventEmitter {
   }
 
   /**
-   * Execute task with warp speed - NEW OPTIMIZATION
+   * Execute a real crawler task while preserving the priority queue as
+   * observability/back-pressure state.
    */
-  async executeTaskWarp(task: CrawlerTask): Promise<void> {
-    const warpFactor = task.warpFactor || 1;
-    const adjustedQuantum = task.quantum / warpFactor;
-    
-    // Add task with adjusted quantum
+  async executeTaskWarp(task: CrawlerTask): Promise<EntropySignature[]> {
+    const warpFactor = Math.max(1, task.warpFactor || 1);
+    const adjustedQuantum = Math.max(250, task.quantum / warpFactor);
     const warpTask = { ...task, quantum: adjustedQuantum };
     this.enqueueTask(warpTask);
-    
-    this.emit('warpExecute', { taskId: task.id, warpFactor });
+
+    try {
+      const signatures = await this.executeCrawlerTask(warpTask);
+      this.batchStoreEntropy(signatures);
+      this.emit('warpExecute', {
+        taskId: task.id,
+        warpFactor,
+        signatureCount: signatures.length,
+      });
+      return signatures;
+    } catch (error) {
+      this.emit('taskFailed', {
+        taskId: task.id,
+        crawlerType: task.type,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    } finally {
+      const queuedIndex = this.taskQueue.findIndex(queued => queued.id === warpTask.id);
+      if (queuedIndex >= 0) this.taskQueue.splice(queuedIndex, 1);
+    }
+  }
+
+  private async executeCrawlerTask(task: CrawlerTask): Promise<EntropySignature[]> {
+    const { IceCrawler, HydraCrawler, WraithCrawler, FarmCrawler, PhantomCrawler, NovaCrawler } =
+      await import('./crawlers');
+
+    switch (task.type) {
+      case CrawlerType.ICE:
+        return new IceCrawler(task).execute();
+      case CrawlerType.HYDRA:
+        return new HydraCrawler(task).execute();
+      case CrawlerType.WRAITH:
+        return new WraithCrawler(task).execute();
+      case CrawlerType.FARM:
+        return new FarmCrawler(task).execute();
+      case CrawlerType.PHANTOM:
+        return new PhantomCrawler(task).execute();
+      case CrawlerType.NOVA:
+        return new NovaCrawler(task).execute();
+      case CrawlerType.LICH: {
+        const [{ LichCrawler }, { PhylacterySystem }, { StealthInfrastructure }] = await Promise.all([
+          import('../crawlers/TrinityCrawlers'),
+          import('../storage/PhylacterySystem'),
+          import('../stealth/StealthInfrastructure'),
+        ]);
+        const lich = new LichCrawler(new PhylacterySystem(), new StealthInfrastructure());
+        const result = await lich.castSpell(task.target, 'simple');
+        const serialized = JSON.stringify(result);
+        return [{
+          hash: createHash('sha256').update(serialized).digest('hex').slice(0, 32),
+          probability: Number.isFinite(result.confidence) ? Math.max(0, Math.min(1, result.confidence)) : 0,
+          constraints: [result.content?.length || 0],
+          temporalDrift: Date.now(),
+          structuralDensity: Math.min(1, serialized.length / 10_000),
+          timestamp: new Date(),
+        }];
+      }
+      default:
+        throw new Error(`Unsupported PANTHEON crawler type: ${task.type}`);
+    }
   }
 
   /**
