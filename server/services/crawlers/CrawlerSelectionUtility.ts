@@ -81,7 +81,11 @@ export function selectCrawlerPlan(request: CrawlerSelectionRequest): CrawlerSele
   }
 
   const baseline = PURPOSE_BASELINES[request.purpose];
-  const permitted = baseline.filter(crawler => DEPTH_CRAWLERS[depth].includes(crawler));
+  // Background reports always execute the complete primary PANTHEON roster.
+  // Search depth controls effort/time budget, never crawler availability.
+  const permitted = request.purpose === 'background_report'
+    ? baseline
+    : baseline.filter(crawler => DEPTH_CRAWLERS[depth].includes(crawler));
   const crawlers = [...permitted].sort((left, right) => outcomeScore(right) - outcomeScore(left));
   const hostHint = request.host ? ` Target host: ${request.host}.` : '';
 
@@ -92,7 +96,9 @@ export function selectCrawlerPlan(request: CrawlerSelectionRequest): CrawlerSele
     supervisors: ['cain', 'reaper'],
     executionRequired: true,
     rationale: [
-      `Selected ${crawlers.length} crawler(s) for ${request.purpose.replace(/_/g, ' ')}.`,
+      request.purpose === 'background_report'
+        ? `Selected all ${crawlers.length} primary PANTHEON crawlers; depth controls effort, not participation.`
+        : `Selected ${crawlers.length} crawler(s) for ${request.purpose.replace(/_/g, ' ')}.`,
       'Ordering uses observed success rate and average result confidence from completed runs.',
       `Target count: ${request.targetCount}.${hostHint}`,
     ],
