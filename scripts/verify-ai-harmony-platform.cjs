@@ -74,13 +74,15 @@ must(
   collaboration.includes('getConfiguredHarmonyProviders') &&
   collaboration.includes('fallbackProviders') &&
   collaboration.includes('rankFallbackProviders') &&
-  collaboration.includes('alternatives.slice(0, 1)') &&
+  collaboration.includes('fallbackLimit') &&
+  collaboration.includes('recoveryBatch') &&
+  collaboration.includes('harmonyTransportCooldownUntil') &&
   collaboration.includes('requestTimeoutMs') &&
   collaboration.includes('maxFallbacks') &&
   collaboration.includes('withHarmonyDeadline') &&
   collaboration.includes('Promise.any') &&
   collaboration.includes("model: 'harmony-current'"),
-  'shared orchestrator exposes the full configured capability pool while each task uses a bounded capability-matched subset, one synthesis authority, deadlines, and one route-local alternate',
+  'shared orchestrator exposes the full configured capability pool as a hot reserve while each task uses a bounded capability-matched hedge, one synthesis authority, deadlines, and route-local recovery',
 );
 
 must(
