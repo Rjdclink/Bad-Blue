@@ -693,3 +693,14 @@ must(domainExpertiseSourceLines.length === 40, 'literal 40-source LEXARA practic
 must(domainImplementationSourceLines.length === 10, 'literal 10-source LEXARA specialization implementation review is present');
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA 31-domain specialization verification passed.');
+
+// Independent live-reasoning recovery invariant.
+must(
+  orchestrator.includes("import { generateOpenRouterText } from '../openRouterService';") &&
+    orchestrator.includes('independent gateway recovered live legal turn') &&
+    orchestrator.includes('model: CURRENT_AI_MODELS.openRouterAuto') &&
+    orchestrator.indexOf('independent gateway recovered live legal turn') < orchestrator.lastIndexOf('degradedLegalResponse(jurisdiction)'),
+  'LEXARA exhausts an orchestration-independent live reasoning lane before degraded legal mode',
+);
+if (process.exitCode) process.exit(process.exitCode);
+console.log('LEXARA independent recovery verification passed.');
