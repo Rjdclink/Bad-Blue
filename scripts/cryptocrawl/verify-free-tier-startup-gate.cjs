@@ -20,14 +20,10 @@ const migrations = read('server/migrations/reconcileAppSchema.ts');
 
 requirePattern(
   entry,
-  /reconcileAppSchema[\s\S]*installCryptaraSuperWorkerAdmission[\s\S]*startCryptaraHyperBridgeBootstrap[\s\S]*overflowBootstrap[\s\S]*ensureCryptocrawlOverflowRuntimeSchema[\s\S]*import\('\.\/index\.js'\)/,
-  'rollout contraction, Cryptara admission, Overflow verification and complete runtime-schema proof must precede normal server evaluation',
+  /CRYPTOCRAWLER_MANUAL_POWER_PHASE\s*=\s*'OFF'[\s\S]*zero CryptoCrawler database\/network startup I\/O[\s\S]*import\('\.\/index\.js'\)/,
+  'production entry must keep CryptoCrawler OFF and load the application without CryptoCrawler I/O',
 );
-requirePattern(
-  entry,
-  /overflowBootstrap\.state\s*===\s*'ready'[\s\S]*ensureCryptocrawlOverflowRuntimeSchema[\s\S]*CRYPTOCRAWL_OVERFLOW_RUNTIME_SCHEMA_READY\s*=\s*'true'/,
-  'verified Overflow must prove the complete CryptoCrawler runtime schema before readiness',
-);
+forbidPattern(entry, /startCryptaraHyperBridgeBootstrap\s*\(|ensureCryptocrawlOverflowRuntimeSchema\s*\(/, 'process bootstrap must not open the CryptoCrawler Overflow/schema plane');
 forbidPattern(
   entry,
   /cryptaraOverflowPrimaryGatewayConnect|Object\.getPrototypeOf\(pool\)|(?:Pool\.)?prototype\.connect|legacy_application_primary_acquisition/,
@@ -38,9 +34,9 @@ requirePattern(
   /if\s*\(!isUnder\(importer,\s*cryptoRoot\)\)\s*return\s+null;[\s\S]*resolved\s*!==\s*rootDbBase[\s\S]*importer\s*===\s*primaryArchiveWorker[\s\S]*redirected\.push[\s\S]*return\s*\{\s*path:\s*overflowDb\s*\}/,
   'production bundling must redirect hot CryptoCrawler server/db imports to Overflow while preserving the explicit cold-archive Primary worker',
 );
-requirePattern(index, /databaseRuntimeMode\s*=\s*'overflow_proxy'/, 'verified overflow must be a normal proxy runtime mode');
-requirePattern(index, /overflow_proxy_mode_activated[\s\S]{0,500}directPrimaryProbes:\s*0/, 'overflow startup must declare zero direct primary readiness probes');
-forbidPattern(index, /probePrimaryDatabaseOnce|overflow_degraded|until primary recovery/, 'overflow must not be temporary failover or directly probe primary');
+requirePattern(index, /cryptocrawler_master_power_off_at_boot[\s\S]{0,500}overflowProbeIssued:\s*false[\s\S]{0,300}cryptoDatabaseIo:\s*false/, 'server boot must prove zero CryptoCrawler Overflow/schema I/O');
+requirePattern(index, /CryptoCrawler remains fully OFF pending manual dashboard start/, 'application readiness must preserve CryptoCrawler OFF');
+forbidPattern(index, /await\s+startCryptaraHyperBridgeBootstrap\(\)|await\s+ensureCryptocrawlOverflowRuntimeSchema\(\)/, 'server boot must not invoke CryptoCrawler data-plane startup');
 requirePattern(migrations, /const\s+rolloutMax\s*=\s*1\s*;/, 'Railway primary fallback remains one ordinary DB client when overflow is absent');
 requirePattern(superWorker, /installCryptaraSuperWorkerAdmission[\s\S]{0,420}installCryptaraSupabaseAdmissionWorker\(\)/, 'Super Worker delegates to the existing admission governor');
 requirePattern(gateway, /createsDatabasePool:\s*false\s+as\s+const/, 'overflow primary gateway must reuse existing primary pools rather than create another pool');
@@ -55,4 +51,4 @@ requirePattern(
   'Docker build emits the Cryptara-first production entry through the Overflow-authority router and verifies the result',
 );
 
-console.log('[free-tier-startup] PASS: verified Overflow is proven before server evaluation, hot CryptoCrawler DB imports are routed explicitly to Overflow, direct startup Primary probes are zero, and no global Pool interceptor/third pool/poller is introduced');
+console.log('[free-tier-startup] PASS: CryptoCrawler stays hard-OFF during process boot, hot runtime DB imports remain explicitly routed to Overflow for manual start, and no bootstrap CryptoCrawler query/poller is introduced');
