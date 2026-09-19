@@ -144,8 +144,15 @@ async function mirrorRecord(record: PantheonReportRecord): Promise<void> {
       record.errorMessage || undefined,
     );
   } catch (error) {
-    openDatabaseCircuit(error);
-    scheduleMirror(record.id);
+    if (isTransientDatabaseFailure(error)) {
+      openDatabaseCircuit(error);
+      scheduleMirror(record.id);
+    } else {
+      console.error('[PANTHEON REPORT STORE] Database mirror rejected report; automatic retry suppressed until the record changes', {
+        reportId: record.id,
+        error: errorText(error).slice(0, 500),
+      });
+    }
   }
 }
 
