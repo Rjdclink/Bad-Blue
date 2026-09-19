@@ -28,13 +28,30 @@ async function executeRequest(url: string, options: RequestOptions, stealth?: St
     if (stealth) {
       await stealth.connect(url, 'medium');
     }
-    return await fetch(url, { ...options, signal: controller.signal });
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    if (!response.ok) {
+      throw new Error(`Crawler request failed: HTTP ${response.status}`);
+    }
+    return response;
   } finally {
     clearTimeout(timeoutId);
   }
 }
 function parseResults(html: string): Data { return { content: html.replace(/<[^>]*>/g, ' ').substring(0, 1000), confidence: 0.8, timestamp: Date.now(), target: '' }; }
 function calculateConfidence(data: Data): number { return data.content.length > 100 ? 0.9 : 0.5; }
+
+async function firstSuccessful(promises: Promise<Data>[], label: string): Promise<Data> {
+  const settled = await Promise.allSettled(promises);
+  const successful = settled.find(
+    (result): result is PromiseFulfilledResult<Data> =>
+      result.status === 'fulfilled' && result.value.confidence > 0 && result.value.content.trim().length > 0
+  );
+  if (successful) return successful.value;
+  const errors = settled
+    .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+    .map(result => result.reason instanceof Error ? result.reason.message : String(result.reason));
+  throw new Error(`${label} failed: ${errors[0] || 'no successful retrieval'}`);
+}
 
 
 // BLIZZARD CRAWLER (90 lines)
@@ -173,7 +190,7 @@ class HydraHead implements CerberusHead {
     const attempts: Promise<Data>[] = [];
     for (let i = 0; i < this.subHeads; i++) attempts.push(this.attemptScrape(target, i));
     try {
-      const result = await Promise.race(attempts);
+      const result = await firstSuccessful(attempts, 'Hydra head');
       this.successCount++; this.updateMetrics(Date.now() - start);
       result.headUsed = 'hydra'; return result;
     } catch (error) {
@@ -232,7 +249,10 @@ export class CerberusCrawler {
     this.rightHead = new ZombieHead(phylactery);
   }
   async attack(target: string): Promise<Data> {
-    return Promise.race([this.leftHead.attack(target), this.centerHead.attack(target), this.rightHead.attack(target)]);
+    return firstSuccessful(
+      [this.leftHead.attack(target), this.centerHead.attack(target), this.rightHead.attack(target)],
+      'Cerberus'
+    );
   }
   async loyalAttack(target: string, maxRetries: number): Promise<Data> {
     for (let i = 0; i < maxRetries; i++) {
@@ -303,7 +323,7 @@ class GhostSwarmSpawner {
       );
       this.totalGhosts++;
     }
-    return await Promise.race(ghosts);
+    return firstSuccessful(ghosts, 'Ghost swarm');
   }
   private async spawnGhost(target: string, ghostId: number): Promise<Data> {
     const response = await executeRequest(target, { method: 'GET', headers: { 'User-Agent': `Ghost-${ghostId}`, 'X-Ghost-Phase': 'ethereal' }, timeout: 5000 }, this.stealth);
