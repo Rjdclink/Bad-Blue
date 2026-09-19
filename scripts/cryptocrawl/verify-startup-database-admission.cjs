@@ -29,6 +29,8 @@ requirePattern(railway, /healthcheckPath\s*=\s*"\/api\/ready"/, 'Railway must pr
 requirePattern(index, /function\s+databaseRetryDelayMs[\s\S]*Math\.random/, 'database retry must use bounded jitter');
 requirePattern(index, /function\s+databaseErrorText[\s\S]*\.cause/, 'database admission classification must inspect wrapped driver causes');
 requirePattern(index, /function\s+isDatabaseAdmissionPressureError[\s\S]{0,1400}08006[\s\S]{0,180}timeoutContext/, '08006 must be pressure only when accompanied by timeout/termination context');
+requirePattern(index, /function\s+isSupavisorTransactionRouteUnavailable[\s\S]{0,700}eauthquery[\s\S]{0,500}xx000[\s\S]{0,500}authentication query failed[\s\S]{0,500}connection to database not available/, 'Supavisor transaction control-plane outage must be classified explicitly');
+requirePattern(index, /sessionFallbackAttempted\s*=\s*false[\s\S]{0,2600}!sessionFallbackAttempted\s*&&\s*isSupavisorTransactionRouteUnavailable\(error\)[\s\S]{0,1000}activateApplicationSessionFallback\('transaction_pool_auth_backend_unavailable'\)/, 'startup may try the session fallback once only for the observed Supavisor route failure');
 requirePattern(index, /const\s+STARTUP_DATABASE_MAX_PROBES\s*=\s*5/, 'startup must hard-cap LegalWhat database admission probes');
 requirePattern(index, /const\s+STARTUP_DATABASE_ADMISSION_CAP_MS\s*=\s*120_000/, 'startup must cap database admission time below the Railway health window');
 requirePattern(index, /function\s+startupDatabaseAdmissionBudgetMs[\s\S]{0,1400}RAILWAY_HEALTHCHECK_TIMEOUT_SEC[\s\S]{0,1400}STARTUP_DATABASE_ADMISSION_CAP_MS/, 'primary fallback admission must consume only a bounded portion of the Railway readiness window');
@@ -74,11 +76,14 @@ forbidPattern(index, /if\s*\(!schemaReady\)\s*\{\s*throw\s+new\s+Error/, 'Crypto
 requirePattern(db, /await\s+db\.execute\('SELECT 1'\)[\s\S]*await\s+coordinationPool\.query\('SELECT 1'\)/, 'pool reset verification must restore lanes sequentially rather than opening both concurrently');
 forbidPattern(db, /Promise\.all\(\[\s*db\.execute\('SELECT 1'\),\s*coordinationPool\.query\('SELECT 1'\)/, 'pool reset must not probe ordinary and coordination lanes concurrently');
 requirePattern(db, /previousEffectiveMainMax[\s\S]*nextMainConfig\.max\s*=\s*Math\.min\(mainPoolMax,\s*previousEffectiveMainMax\)/, 'pool reset must preserve the exact active ordinary ceiling');
+requirePattern(db, /export\s+async\s+function\s+activateApplicationSessionFallback[\s\S]{0,1800}pool\.totalCount\s*>\s*0\s*\|\|\s*pool\.waitingCount\s*>\s*0[\s\S]{0,1800}options\.connectionString\s*=\s*coordinationDatabaseUrl[\s\S]{0,900}options\.max\s*=\s*Math\.min\(effectivePoolMax\(pool,\s*mainPoolMax\),\s*sessionFallbackPoolMax\)/, 'session fallback must reuse the existing empty pool and retain the bounded session ceiling');
+forbidPattern(db, /activateApplicationSessionFallback[\s\S]{0,2200}new\s+Pool\s*\(/, 'session fallback must not create a third application pool');
+requirePattern(db, /getApplicationDatabaseSteadyPoolCeiling[\s\S]{0,500}ordinarySessionFallbackActive[\s\S]{0,500}sessionFallbackPoolMax/, 'fallback steady-state capacity must remain session-bounded');
 forbidPattern(db, /scheduleResetPoolCapacityRestore|resetCapacityRestoreTimer|BADBLUE_DATABASE_ROLLOUT_HEADROOM_MS|Reset pool rollout headroom released/, 'pool reset must never restore capacity on a wall-clock timer');
 
 requirePattern(migrations, /const\s+rolloutMax\s*=\s*1\s*;/, 'rolling deployment must hard-cap the incoming ordinary pool at one client');
 forbidPattern(migrations, /BADBLUE_DATABASE_ROLLOUT_POOL_MAX/, 'an environment override must not defeat the one-client rollout admission guard');
-requirePattern(migrations, /export\s+function\s+releaseRollingDeploymentPoolHeadroom[\s\S]{0,900}state\.options\.max\s*=\s*state\.steadyMax/, 'rollout ceiling must have an explicit governed release path');
+requirePattern(migrations, /export\s+function\s+releaseRollingDeploymentPoolHeadroom[\s\S]{0,900}getApplicationDatabaseSteadyPoolCeiling\(\)[\s\S]{0,500}state\.options\.max\s*=\s*Math\.min\(state\.steadyMax,\s*activeSteadyCeiling\)/, 'rollout release must preserve the active transaction-or-session route ceiling');
 forbidPattern(migrations, /const\s+restore\s*=\s*setTimeout\([\s\S]{0,500}options\.max\s*=\s*steadyMax/, 'an unready deployment must never re-expand its database pool on a wall-clock timer');
 requirePattern(superWorker, /installCryptaraSuperWorkerAdmission[\s\S]{0,420}installCryptaraSupabaseAdmissionWorker\(\)/, 'Super Worker admission arm must delegate to the existing Cryptara DB governor');
 requirePattern(index, /await\s+runMigrations\(\)[\s\S]{0,220}releaseRollingDeploymentPoolHeadroom\('application_database_ready'\)/, 'LegalWhat must restore its ordinary DB capacity independently of CryptoCrawler');
