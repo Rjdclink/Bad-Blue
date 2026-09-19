@@ -59,7 +59,8 @@ ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
 WORKDIR /app
 COPY package*.json ./
 RUN rm -rf node_modules || true && \
-    npm ci --omit=dev --legacy-peer-deps --ignore-optional
+    npm ci --omit=dev --legacy-peer-deps --ignore-optional && \
+    npm install --no-save --legacy-peer-deps --ignore-optional drizzle-kit@0.31.8
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/public ./public
 
