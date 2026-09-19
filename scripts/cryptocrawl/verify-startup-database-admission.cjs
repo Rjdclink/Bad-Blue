@@ -73,7 +73,8 @@ requirePattern(migrations, /export\s+function\s+releaseRollingDeploymentPoolHead
 forbidPattern(migrations, /const\s+restore\s*=\s*setTimeout\([\s\S]{0,500}options\.max\s*=\s*steadyMax/, 'an unready deployment must never re-expand its database pool on a wall-clock timer');
 requirePattern(superWorker, /installCryptaraSuperWorkerAdmission[\s\S]{0,420}installCryptaraSupabaseAdmissionWorker\(\)/, 'Super Worker admission arm must delegate to the existing Cryptara DB governor');
 requirePattern(index, /await\s+runMigrations\(\)[\s\S]{0,220}releaseRollingDeploymentPoolHeadroom\('application_database_ready'\)/, 'LegalWhat must restore its ordinary DB capacity independently of CryptoCrawler');
-requirePattern(governance, /installCryptaraSuperWorkerAdmission\(\)[\s\S]{0,1200}stageManager\.restorePersistence/, 'manual CryptoCrawler start must install its DB admission governor before governed persistence');
+requirePattern(governance, /installCryptaraSuperWorkerAdmission\(\)[\s\S]{0,900}stageManager\.restorePersistence/, 'manual CryptoCrawler start must install its DB admission governor before governed persistence');
+forbidPattern(governance, /releaseRollingDeploymentPoolHeadroom/, 'CryptoCrawler start must not mutate LegalWhat application-pool headroom');
 
 requirePattern(migrations, /function\s+startupSchemaMutationAllowed\(\)[\s\S]{0,900}RAILWAY_ENVIRONMENT_NAME[\s\S]{0,350}environmentName\s*===\s*'production'/, 'only the Railway production environment may mutate schema at startup');
 requirePattern(migrations, /if\s*\(!startupSchemaMutationAllowed\(\)\)[\s\S]{0,1600}isCryptoCrawlerDatabaseAccessAllowed\(\)[\s\S]{0,1200}return\s+verificationOnly/, 'Railway non-production environments must skip CryptoCrawler verification while master power is OFF and return before migration coordination');
