@@ -52,7 +52,9 @@ has(productionBootstrap, /await import\('\.\/index\.js'\)/, 'production wrapper 
 has(manualPower, /let\s+phase:\s*CryptoCrawlerManualPowerPhase\s*=\s*'OFF'/, 'manual power authority must default OFF');
 has(manualPower, /phase\s*===\s*'STARTING'\s*\|\|\s*phase\s*===\s*'ON'\s*\|\|\s*phase\s*===\s*'STOPPING'/, 'database access must be limited to lifecycle transition/on phases');
 has(runtimeDatabase, /installManualPowerDatabaseGuard\(pool,\s*'ordinary'\)/, 'ordinary CryptoCrawler DB pool must be fail-closed behind manual power');
-has(runtimeDatabase, /installManualPowerDatabaseGuard\(coordinationPool,\s*'coordination'\)/, 'coordination CryptoCrawler DB pool must be fail-closed behind manual power');
+has(runtimeDatabase, /installManualPowerDatabaseGuard\(nextPool,\s*'coordination'\)/, 'coordination CryptoCrawler DB pool must be fail-closed behind manual power on each recreation');
+has(runtimeDatabase, /export async function closeCryptocrawlRuntimeDatabasePools\(\)/, 'master stop must close CryptoCrawler database sockets');
+has(runtimeDatabase, /export function reopenCryptocrawlRuntimeDatabasePools\(\)/, 'manual start must recreate CryptoCrawler database pools after a true stop');
 has(overflowBootstrap, /if\s*\(!isCryptoCrawlerDatabaseAccessAllowed\(\)\)/, 'Overflow bootstrap must fail closed while master power is OFF');
 has(migrations, /Skipped while master power is OFF; zero CryptoCrawler schema I\/O executed/, 'application startup migrations must skip CryptoCrawler schema I/O while OFF');
 
@@ -90,6 +92,8 @@ has(admin, /activateCanonicalCryptoCrawlerRuntimeWiring\(\)/, 'master start must
 has(admin, /deactivateCanonicalCryptoCrawlerRuntimeWiring\(\)/, 'master stop must explicitly deactivate canonical runtime wiring');
 has(admin, /void\s+ensureTelemetryBootstrap\(\)/, 'master start must explicitly activate telemetry');
 has(admin, /setCryptoCrawlerManualPowerPhase\('STARTING'\)/, 'manual start must open the bounded startup phase');
+has(admin, /reopenCryptocrawlRuntimeDatabasePools\(\)/, 'manual start must reopen dedicated CryptoCrawler database pools before Overflow bootstrap');
+has(admin, /closeCryptocrawlRuntimeDatabasePools\(\)/, 'manual stop and failed-start rollback must close dedicated CryptoCrawler database pools');
 has(admin, /startCryptaraHyperBridgeBootstrap\(\)/, 'manual start must own Overflow bootstrap');
 has(admin, /ensureCryptocrawlOverflowRuntimeSchema\(\)/, 'manual start must own CryptoCrawler schema verification');
 has(admin, /setCryptoCrawlerManualPowerPhase\('ON'\)/, 'successful manual start must transition power ON');
