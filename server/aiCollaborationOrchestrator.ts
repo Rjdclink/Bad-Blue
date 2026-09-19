@@ -21,6 +21,7 @@ import {
 } from './aiHarmonyModelRegistry';
 import {
   getHarmonyResolvedModel,
+  getHarmonyWarmState,
   isHarmonyProviderWarmHealthy,
   markHarmonyProviderWarmSuccess,
 } from './aiHarmonyWarmup';
@@ -42,6 +43,7 @@ export interface CollaborationTask {
   timeout?: number;
   requestTimeoutMs?: number;
   maxFallbacks?: number;
+  signal?: AbortSignal;
 }
 
 /**
@@ -106,6 +108,39 @@ export type CollaborationRole = keyof typeof COLLABORATION_ROLES;
 export type CollaborationProviderPolicy = 'default' | 'capability-first' | 'capability-first-no-google';
 
 const harmonyProviderCooldownUntil = new Map<AIProvider, number>();
+const harmonyTransportCooldownUntil = new Map<string, number>();
+
+function harmonyTransportDomain(provider: AIProvider): string {
+  if (provider === AIProvider.CLAUDE || provider === AIProvider.CLAUDE_OPUS) return 'anthropic';
+  if (provider === AIProvider.GROQ) return 'groq';
+  if (provider === AIProvider.GPT_OSS) {
+    return process.env.GROQ_API_KEY?.trim() ? 'groq' : 'openrouter';
+  }
+  if ([
+    AIProvider.DEEPSEEK,
+    AIProvider.GROK,
+    AIProvider.KIMI,
+    AIProvider.QWEN,
+    AIProvider.GPT5_MINI,
+    AIProvider.OPENROUTER,
+    AIProvider.FALCON,
+    AIProvider.CODE_LLAMA,
+    AIProvider.GPT_NEOX,
+    AIProvider.PERPLEXITY,
+    AIProvider.FIREWORKS,
+  ].includes(provider)) return 'openrouter';
+  if (provider === AIProvider.COHERE && !process.env.COHERE_API_KEY?.trim()) return 'huggingface';
+  if (provider === AIProvider.TOGETHER && !process.env.TOGETHER_API_KEY?.trim()) return 'huggingface';
+  return String(provider);
+}
+
+function isHarmonyRequestCancellation(error: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return true;
+  const message = error instanceof Error ? error.message : String(error);
+  const name = error instanceof Error ? error.name : '';
+  return /aborterror/i.test(name)
+    || /operation was aborted|request was aborted|cancelled|canceled|superseded generation/i.test(message);
+}
 
 interface HarmonyProviderRuntime {
   ewmaLatencyMs: number;
@@ -135,16 +170,26 @@ function recordHarmonyProviderRuntime(
 
 function harmonyProviderRuntimeScore(provider: AIProvider): number {
   const runtime = harmonyProviderRuntime.get(provider);
-  if (!runtime) return 0;
+  const readiness = getHarmonyWarmState(provider);
+  const readinessScore = readiness === 'ready'
+    ? 70
+    : readiness === 'catalog'
+      ? 10
+      : readiness === 'unknown'
+        ? 0
+        : -180;
+  if (!runtime) return readinessScore;
   const samples = runtime.successes + runtime.failures;
   const failureRate = samples > 0 ? runtime.failures / samples : 0;
   const latencyBonus = Math.max(-90, Math.min(90, (1_500 - runtime.ewmaLatencyMs) / 15));
   const reliabilityPenalty = failureRate * 140;
-  return Math.round(latencyBonus - reliabilityPenalty);
+  return Math.round(readinessScore + latencyBonus - reliabilityPenalty);
 }
 
 function harmonyProviderAvailable(provider: AIProvider): boolean {
+  const transport = harmonyTransportDomain(provider);
   return (harmonyProviderCooldownUntil.get(provider) || 0) <= Date.now()
+    && (harmonyTransportCooldownUntil.get(transport) || 0) <= Date.now()
     && isHarmonyProviderWarmHealthy(provider);
 }
 
@@ -172,10 +217,23 @@ function markHarmonyProviderFailure(provider: AIProvider, error: unknown): void 
             ? 5_000
             : 15_000;
   harmonyProviderCooldownUntil.set(provider, Date.now() + cooldownMs);
+
+  if (/429|rate limit|quota|401|invalid api key|authentication|fetch failed|socket|econnreset|network/i.test(message)) {
+    const transportCooldownMs = /401|invalid api key|authentication/.test(message)
+      ? 60_000
+      : /429|rate limit|quota/.test(message)
+        ? 10_000
+        : 3_000;
+    harmonyTransportCooldownUntil.set(
+      harmonyTransportDomain(provider),
+      Date.now() + transportCooldownMs,
+    );
+  }
 }
 
 function markHarmonyProviderSuccess(provider: AIProvider): void {
   harmonyProviderCooldownUntil.delete(provider);
+  harmonyTransportCooldownUntil.delete(harmonyTransportDomain(provider));
   markHarmonyProviderWarmSuccess(provider);
 }
 
