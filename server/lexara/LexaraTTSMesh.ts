@@ -314,11 +314,17 @@ async function fetchWithTimeout(
   timeoutMs = LEXARA_TTS_REQUEST_TIMEOUT_MS,
 ): Promise<Response> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const parentSignal = init.signal;
+  const relayAbort = () => controller.abort(parentSignal?.reason);
+  if (parentSignal?.aborted) controller.abort(parentSignal.reason);
+  else parentSignal?.addEventListener('abort', relayAbort, { once: true });
+
+  const timer = setTimeout(() => controller.abort(new Error(`TTS request timed out after ${timeoutMs}ms`)), timeoutMs);
   try {
     return await fetch(url, { ...init, signal: controller.signal });
   } finally {
     clearTimeout(timer);
+    parentSignal?.removeEventListener('abort', relayAbort);
   }
 }
 
@@ -705,7 +711,7 @@ async function openRouterTtsCandidates(): Promise<string[]> {
 }
 
 
-async function openOpenRouterSpeechStream(text: string): Promise<LexaraTTSStream | null> {
+async function openOpenRouterSpeechStream(text: string, signal?: AbortSignal): Promise<LexaraTTSStream | null> {
   const provider: LexaraTTSProviderId = 'openrouter';
   if (!ready(provider)) return null;
 
@@ -717,7 +723,10 @@ async function openOpenRouterSpeechStream(text: string): Promise<LexaraTTSStream
     const voiceId = openRouterVoiceForModel(model);
     const startedAt = Date.now();
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), LEXARA_TTS_REQUEST_TIMEOUT_MS);
+    const relayAbort = () => controller.abort(signal?.reason);
+    if (signal?.aborted) controller.abort(signal.reason);
+    else signal?.addEventListener('abort', relayAbort, { once: true });
+    const timer = setTimeout(() => controller.abort(new Error('OpenRouter TTS timeout')), LEXARA_TTS_REQUEST_TIMEOUT_MS);
 
     try {
       const response = await fetch('https://openrouter.ai/api/v1/audio/speech', {
@@ -737,6 +746,7 @@ async function openOpenRouterSpeechStream(text: string): Promise<LexaraTTSStream
         signal: controller.signal,
       });
       clearTimeout(timer);
+      signal?.removeEventListener('abort', relayAbort);
 
       if (response.ok && response.body) {
         const firstByteLatencyMs = Date.now() - startedAt;
@@ -772,6 +782,7 @@ async function openOpenRouterSpeechStream(text: string): Promise<LexaraTTSStream
       }
     } catch (error) {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', relayAbort);
       const message = error instanceof Error ? error.message : String(error);
       errors.push(`${model}: ${message}`);
     }
@@ -785,7 +796,7 @@ async function openOpenRouterSpeechStream(text: string): Promise<LexaraTTSStream
   return null;
 }
 
-async function openDeepgramSpeechStream(text: string): Promise<LexaraTTSStream | null> {
+async function openDeepgramSpeechStream(text: string, signal?: AbortSignal): Promise<LexaraTTSStream | null> {
   const provider: LexaraTTSProviderId = 'deepgram';
   if (!ready(provider)) return null;
 
@@ -807,6 +818,7 @@ async function openDeepgramSpeechStream(text: string): Promise<LexaraTTSStream |
           Accept: 'audio/mpeg',
         },
         body: JSON.stringify({ text }),
+        signal,
       },
       LEXARA_TTS_REQUEST_TIMEOUT_MS,
     );
@@ -839,7 +851,7 @@ async function openDeepgramSpeechStream(text: string): Promise<LexaraTTSStream |
   }
 }
 
-async function openElevenLabsSpeechStream(text: string): Promise<LexaraTTSStream | null> {
+async function openElevenLabsSpeechStream(text: string, signal?: AbortSignal): Promise<LexaraTTSStream | null> {
   const provider: LexaraTTSProviderId = 'elevenlabs';
   if (!ready(provider)) return null;
 
@@ -859,6 +871,7 @@ async function openElevenLabsSpeechStream(text: string): Promise<LexaraTTSStream
           Accept: 'audio/mpeg',
         },
         body: JSON.stringify({ text, model_id: model }),
+        signal,
       },
       LEXARA_TTS_REQUEST_TIMEOUT_MS,
     );
@@ -888,26 +901,82 @@ async function openElevenLabsSpeechStream(text: string): Promise<LexaraTTSStream
   }
 }
 
+const LEXARA_TTS_HEDGE_DELAY_MS = 800;
+
+async function openProgressiveProvider(
+  provider: LexaraTTSProviderId,
+  text: string,
+  signal?: AbortSignal,
+): Promise<LexaraTTSStream | null> {
+  if (provider === 'deepgram') return openDeepgramSpeechStream(text, signal);
+  if (provider === 'openrouter') return openOpenRouterSpeechStream(text, signal);
+  if (provider === 'elevenlabs') return openElevenLabsSpeechStream(text, signal);
+  return null;
+}
+
 export async function openLexaraSpeechStream(text: string): Promise<LexaraTTSStream | null> {
   const clean = String(text || '').trim();
   if (!clean) return null;
 
   const readiness = getLexaraTTSReadiness();
   const streamable = readiness.healthyProviders.filter(provider =>
-    provider === 'openrouter' || provider === 'deepgram' || provider === 'elevenlabs'
+    provider === 'deepgram' || provider === 'openrouter' || provider === 'elevenlabs'
   );
+  if (!streamable.length) return null;
 
-  for (const provider of streamable) {
-    const stream =
-      provider === 'openrouter'
-        ? await openOpenRouterSpeechStream(clean)
-        : provider === 'deepgram'
-          ? await openDeepgramSpeechStream(clean)
-          : await openElevenLabsSpeechStream(clean);
-    if (stream) return stream;
+  const primary = streamable[0];
+  const primaryController = new AbortController();
+  const primaryPromise = openProgressiveProvider(primary, clean, primaryController.signal);
+
+  if (streamable.length === 1) return primaryPromise;
+
+  const early = await Promise.race([
+    primaryPromise.then(stream => ({ kind: 'primary' as const, stream })),
+    new Promise<{ kind: 'hedge' }>(resolve =>
+      setTimeout(() => resolve({ kind: 'hedge' }), LEXARA_TTS_HEDGE_DELAY_MS),
+    ),
+  ]);
+
+  if (early.kind === 'primary') {
+    if (early.stream) return early.stream;
+    primaryController.abort('primary-route-unavailable');
+    return openProgressiveProvider(streamable[1], clean);
   }
 
-  return null;
+  const backup = streamable.find(provider =>
+    provider !== primary
+    && providerIndependenceDomain(provider) !== providerIndependenceDomain(primary)
+  ) || streamable[1];
+  const backupController = new AbortController();
+  const backupPromise = openProgressiveProvider(backup, clean, backupController.signal);
+
+  try {
+    const winner = await Promise.any([
+      primaryPromise.then(stream => {
+        if (!stream) throw new Error(`${primary} progressive route unavailable`);
+        return { provider: primary, stream };
+      }),
+      backupPromise.then(stream => {
+        if (!stream) throw new Error(`${backup} progressive route unavailable`);
+        return { provider: backup, stream };
+      }),
+    ]);
+
+    if (winner.provider === primary) backupController.abort('tts-hedge-loser');
+    else primaryController.abort('tts-hedge-loser');
+
+    log.info('[LEXARA TTS] progressive hedge resolved', {
+      primary,
+      backup,
+      winner: winner.provider,
+      hedgeDelayMs: LEXARA_TTS_HEDGE_DELAY_MS,
+    });
+    return winner.stream;
+  } catch {
+    primaryController.abort('tts-hedge-exhausted');
+    backupController.abort('tts-hedge-exhausted');
+    return null;
+  }
 }
 
 async function synthesizeOpenRouter(text: string, probe = false): Promise<LexaraTTSAudio> {
