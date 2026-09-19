@@ -5,7 +5,7 @@ const fs = require('node:fs');
 
 const wiring = fs.readFileSync('server/services/cryptocrawl/integration/measured-rebalance-route-evidence-wiring.ts', 'utf8');
 const rebalancer = fs.readFileSync('server/services/cryptocrawl/execution/inventory-rebalancer.ts', 'utf8');
-const bootstrap = fs.readFileSync('server/cryptara-bootstrap-entry.ts', 'utf8');
+const runtimeWiring = fs.readFileSync('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts', 'utf8');
 const docker = fs.readFileSync('Dockerfile', 'utf8');
 
 assert.match(wiring, /\/api\/v5\/asset\/currencies/);
@@ -27,7 +27,10 @@ assert.match(rebalancer, /transfer_latency:unknown_not_economic_authority/);
 assert.match(rebalancer, /liveTransferExecutionEnabled:\s*false/);
 assert.match(rebalancer, /syntheticTransferLatencyEconomics:\s*false/);
 
-assert.match(bootstrap, /ensureMeasuredRebalanceRouteEvidenceWiring/);
+assert.match(runtimeWiring, /ensureMeasuredRebalanceRouteEvidenceWiring/);
+assert.match(runtimeWiring, /stopMeasuredRebalanceRouteEvidenceWiring/);
+assert.match(wiring, /CRYPTOCRAWLER_MASTER_POWER_OFF/);
+assert.match(wiring, /stopMeasuredRebalanceRouteEvidenceWiring/);
 assert.match(docker, /verify-nix-gen-\*\.cjs/);
 
 console.log(JSON.stringify({
