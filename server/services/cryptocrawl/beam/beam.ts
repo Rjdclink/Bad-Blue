@@ -1,5 +1,6 @@
 import { signPacket, randomB64url } from '../../pulse/crypto.js';
 import type { PulsePacket, SignedPulsePacket } from '../../pulse/types.js';
+import { isCryptoCrawlerMasterPowerOn } from '../runtime/manual-power-state.js';
 
 export interface BeamState {
   enabled: boolean;
@@ -68,6 +69,10 @@ export function getBeamState(): BeamState {
 }
 
 export async function emitBeamPulse(kind: 'boot' | 'manual' | 'cron'): Promise<{ ok: boolean; id?: string; error?: string }> {
+  if (!isCryptoCrawlerMasterPowerOn()) {
+    state.enabled = false;
+    return { ok: false, error: 'CRYPTOCRAWLER_MASTER_POWER_OFF' };
+  }
   const enabled = isEnabled();
   state.enabled = enabled;
   if (!enabled) return { ok: false, error: 'BEAM_DISABLED' };
@@ -123,6 +128,10 @@ export async function emitBeamPulse(kind: 'boot' | 'manual' | 'cron'): Promise<{
 }
 
 export function startBeamOnBoot(): void {
+  if (!isCryptoCrawlerMasterPowerOn()) {
+    state.enabled = false;
+    return;
+  }
   const enabled = String(process.env.BEAM_ENABLED || '').toLowerCase() === 'true';
   const killed = String(process.env.BEAM_KILL || '').toLowerCase() === 'true';
   console.log('[BEAM]', { enabled, killed, nodeEnv: process.env.NODE_ENV || 'unknown' });
