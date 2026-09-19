@@ -100,6 +100,13 @@ const coordinationDatabaseUrl = explicitCoordinationDatabaseUrl || derivedCoordi
 const ordinaryDatabaseUrl = transactionDatabaseUrl || databaseUrl;
 const ordinaryUsesTransactionPool = postgresPort(ordinaryDatabaseUrl) === '6543' && isSupabaseSharedPoolerUrl(ordinaryDatabaseUrl);
 let ordinarySessionFallbackActive = false;
+// LegalWhat failover is deliberately separate from the canonical Supabase and
+// CryptoCrawler Overflow authorities. It is activated only after primary
+// admission has failed and only if the Neon schema proves compatible.
+const neonDatabaseUrl = normalizedOptionalDatabaseUrl(process.env.NEON_DATABASE_URL);
+const neonDirectDatabaseUrl = normalizedOptionalDatabaseUrl(process.env.NEON_DIRECT_DATABASE_URL);
+export const isLegalWhatNeonFailoverConfigured = Boolean(neonDatabaseUrl && neonDirectDatabaseUrl);
+let legalWhatNeonFallbackActive = false;
 // Transaction-mode clients are multiplexed by Supavisor. If no transaction lane
 // is available, use a deliberately smaller session fallback so multiple Railway
 // replicas cannot consume the entire 15-session pool before coordination/admin.
@@ -177,7 +184,21 @@ const sslConfig = () => process.env.PGSSLMODE !== 'disable' ? {
 // Ordinary application queries. Prefer Supavisor transaction mode so short-lived
 // application/lease queries do not pin database sessions across replicas.
 const getPoolConfig = () => {
-  const activeUsesTransactionPool = ordinaryUsesTransactionPool && !ordinarySessionFallbackActive;
+  const activeUsesTransactionPool = ordinaryUsesTransactionPool && !ordinarySessionFallbackActive && !legalWhatNeonFallbackActive;
+  const activeDatabaseUrl = legalWhatNeonFallbackActive
+    ? neonDatabaseUrl
+    : ordinarySessionFallbackActive ? coordinationDatabaseUrl : ordinaryDatabaseUrl;
+  const activePoolMax = legalWhatNeonFallbackActive
+    ? Math.min(mainPoolMax, 5)
+    : ordinarySessionFallbackActive
+      ? Math.min(mainPoolMax, sessionFallbackPoolMax)
+      : mainPoolMax;
+  const connectionString = isDatabaseConfigured ? activeDatabaseUrl : 'postgresql://127.0.0.1:1/devlite';
+  return {
+    connectionString,
+    idleTimeoutMillis: activeUsesTransactionPool ? 10000 : 15000,
+    connectionTimeoutMillis: (isRailway || isProduction) ? (activeUsesTransactionPool ? 30000 : 15000) : 10000,
+    max: activePoolMax, = ordinaryUsesTransactionPool && !ordinarySessionFallbackActive;
   const activeDatabaseUrl = ordinarySessionFallbackActive ? coordinationDatabaseUrl : ordinaryDatabaseUrl;
   const activePoolMax = ordinarySessionFallbackActive
     ? Math.min(mainPoolMax, sessionFallbackPoolMax)
@@ -258,7 +279,8 @@ export function getApplicationDatabaseSteadyPoolCeiling(): number {
     : mainPoolMax;
 }
 
-export function getApplicationDatabaseRuntimeMode(): 'transaction_pool' | 'session_pool_fallback' | 'session_or_direct' {
+export function getApplicationDatabaseRuntimeMode(): 'transaction_pool' | 'session_pool_fallback' | 'session_or_direct' | 'neon_failover' {
+  if (legalWhatNeonFallbackActive) return 'neon_failover';
   if (ordinarySessionFallbackActive) return 'session_pool_fallback';
   return ordinaryUsesTransactionPool ? 'transaction_pool' : 'session_or_direct';
 }
@@ -270,6 +292,64 @@ export function getApplicationDatabaseRuntimeMode(): 'transaction_pool' | 'sessi
  * session lane and keeps the smaller session ceiling. The rolling-deploy max=1
  * guard remains attached to the same Pool options object.
  */
+export async function activateLegalWhatNeonFallback(reason: string): Promise<boolean> {
+  if (!isLegalWhatNeonFailoverConfigured || legalWhatNeonFallbackActive) {
+    return legalWhatNeonFallbackActive;
+  }
+  if (!isPostgresConnectionString(neonDatabaseUrl) || !isPostgresConnectionString(neonDirectDatabaseUrl)) {
+    throw new Error('[DATABASE] Neon failover URLs must be PostgreSQL connection strings');
+  }
+  if (pool.totalCount > 0 || pool.waitingCount > 0) {
+    console.warn('[DATABASE] Neon failover skipped because ordinary pool is already active');
+    return false;
+  }
+
+  const candidate = new Pool({
+    connectionString: neonDatabaseUrl,
+    idleTimeoutMillis: 15000,
+    connectionTimeoutMillis: 15000,
+    max: Math.min(mainPoolMax, 5),
+    min: 0,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10000,
+    ssl: sslConfig(),
+    statement_timeout: 30000,
+    query_timeout: 30000,
+    application_name: isRailway ? 'legalwhat-neon-failover' : 'legalwhat-neon-failover-local',
+  } as any);
+
+  try {
+    const required = [
+      'users', 'auth_accounts', 'sessions', 'plans', 'subscriptions',
+      'trial_consultations', 'complaints', 'lawsuit_filings',
+      'foia_requests', 'officer_profiles', 'ai_subagent_logs', 'lexara_conversations',
+    ];
+    const proof = await candidate.query({
+      text: `SELECT table_name FROM information_schema.tables
+             WHERE table_schema='public' AND table_name = ANY($1::text[])`,
+      values: [required],
+      query_timeout: 5000,
+    } as any);
+    const present = new Set((proof.rows || []).map((row: any) => String(row.table_name)));
+    const missing = required.filter(name => !present.has(name));
+    if (missing.length) {
+      throw new Error(`Neon failover schema is not ready; missing: ${missing.join(', ')}`);
+    }
+
+    await pool.end();
+    pool = candidate;
+    db = drizzle(pool, { schema });
+    legalWhatNeonFallbackActive = true;
+    ordinarySessionFallbackActive = false;
+    attachPoolErrorHandlers();
+    console.warn(`[DATABASE] LegalWhat Neon failover activated (reason=${reason}); Supabase authority preserved for later reconciliation`);
+    return true;
+  } catch (error) {
+    await candidate.end().catch(() => undefined);
+    throw error;
+  }
+}
+
 export async function activateApplicationSessionFallback(reason: string): Promise<boolean> {
   if (!isDatabaseConfigured || !ordinaryUsesTransactionPool) return false;
   if (ordinarySessionFallbackActive) return true;
