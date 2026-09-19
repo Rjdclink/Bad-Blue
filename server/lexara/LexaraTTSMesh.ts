@@ -378,11 +378,20 @@ async function resolveMistralVoiceId(force = false): Promise<string> {
     !voice.languages?.length || voice.languages.some(language => /^en(?:-|$)/i.test(language));
   const isFemale = (voice: MistralVoice) => String(voice.gender || '').toLowerCase() === 'female';
 
+  const isKnownFemalePreset = (voice: MistralVoice) => {
+    const identity = [voice.name, voice.slug].filter(Boolean).join(' ').toLowerCase();
+    return /(?:^|[_ -])jane(?:[_ -]|$)|(?:^|[_ -])marie(?:[_ -]|$)|female/.test(identity);
+  };
   const selected =
-    voices.find(matchesName)
+    voices.find(voice => matchesName(voice) && (isFemale(voice) || isKnownFemalePreset(voice)))
     || voices.find(voice => speaksEnglish(voice) && isFemale(voice))
-    || voices.find(speaksEnglish)
-    || voices[0];
+    || voices.find(voice => speaksEnglish(voice) && isKnownFemalePreset(voice));
+
+  if (!selected?.id) {
+    const message = 'mistral voice catalog returned no verified female English voice';
+    markFailure('mistral', 'configuration_blocked', message);
+    throw new Error(message);
+  }
 
   const id = String(selected.id);
   mistralVoiceCache = { id, expiresAt: Date.now() + MISTRAL_VOICE_CACHE_TTL_MS };
@@ -558,7 +567,7 @@ async function loadOpenRouterSpeechCatalog(force = false): Promise<Set<string>> 
 
 function openRouterVoiceForModel(model: string): string {
   if (model === 'mistralai/voxtral-mini-tts-2603') {
-    return process.env.OPENROUTER_MISTRAL_TTS_VOICE?.trim() || 'en_paul_neutral';
+    return process.env.OPENROUTER_MISTRAL_TTS_VOICE?.trim() || 'gb_jane_neutral';
   }
   if (model.startsWith('microsoft/mai-voice-2')) {
     return process.env.OPENROUTER_MICROSOFT_TTS_VOICE?.trim() || 'en-US-Harper:MAI-Voice-2';
@@ -573,10 +582,8 @@ async function openRouterTtsCandidates(): Promise<string[]> {
   const explicit = process.env.OPENROUTER_TTS_MODEL?.trim();
   const preferred = [
     explicit,
-    'google/gemini-3.1-flash-tts-preview',
     'mistralai/voxtral-mini-tts-2603',
-    'microsoft/mai-voice-2-flash',
-    'microsoft/mai-voice-2',
+    'google/gemini-3.1-flash-tts-preview',
   ].filter((value): value is string => !!value);
 
   const catalog = await loadOpenRouterSpeechCatalog();
@@ -604,7 +611,7 @@ async function synthesizeOpenRouter(text: string, probe = false): Promise<Lexara
         model,
         input: text,
         voice: voiceId,
-        response_format: model.startsWith('google/') ? 'wav' : 'mp3',
+        response_format: model.startsWith('google/') ? 'pcm' : 'mp3',
       }),
     }, probe ? LEXARA_TTS_PROBE_TIMEOUT_MS : LEXARA_TTS_REQUEST_TIMEOUT_MS);
 
@@ -614,8 +621,17 @@ async function synthesizeOpenRouter(text: string, probe = false): Promise<Lexara
 
     const detail = (await response.text()).slice(0, 700);
     errors.push(`${model}: ${response.status} ${detail}`);
-    if (response.status === 401) {
-      const failure = classifyFailure(response.status, detail);
+    const failure = classifyFailure(response.status, detail);
+
+    // Authentication, billing, and account-level throttling are transport-domain
+    // failures. Model format/provider-policy incompatibility is route-local and
+    // must not quarantine every otherwise-valid OpenRouter speech route.
+    if (
+      failure === 'auth_blocked'
+      || failure === 'billing_blocked'
+      || failure === 'capacity_exhausted'
+      || failure === 'rate_limited'
+    ) {
       const message = `openrouter TTS ${failure} (${response.status}): ${detail}`;
       markFailure(provider, failure, message, retryAfterMs(response));
       throw new Error(message);
@@ -623,12 +639,8 @@ async function synthesizeOpenRouter(text: string, probe = false): Promise<Lexara
   }
 
   const detail = errors.join(' | ').slice(0, 1_200);
-  const failure = classifyFailure(
-    errors.some(error => /429/.test(error)) ? 429 : 404,
-    detail,
-  );
-  const message = `openrouter TTS ${failure}: ${detail || 'no speech-capable model was available'}`;
-  markFailure(provider, failure, message);
+  const message = `openrouter TTS route-local failure: ${detail || 'no compatible speech model was available'}`;
+  markFailure(provider, 'invalid_response', message, 5_000);
   throw new Error(message);
 }
 
