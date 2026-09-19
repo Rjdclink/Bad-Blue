@@ -1570,7 +1570,7 @@ export const aiCacheEntries = pgTable("ai_cache_entries", {
   index("idx_cache_key").on(table.cacheKey),
   index("idx_cache_task").on(table.taskName),
   // Partial index for cleanup queries
-  index("idx_cache_expired").on(table.expiresAt).where(sql`${table.expiresAt} < now()`),
+  index("idx_cache_expired").on(table.expiresAt),
 ]);
 
 export const insertAiCacheEntrySchema = createInsertSchema(aiCacheEntries).omit({
