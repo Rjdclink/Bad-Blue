@@ -57,6 +57,7 @@ const consentPage = read('client/src/pages/lexara-consent.tsx');
 const mistral = read('server/mistral.ts');
 const gemini = read('server/gemini.ts');
 const ttsMesh = read('server/lexara/LexaraTTSMesh.ts');
+const ttsRouter = read('server/lexara/LexaraTTSRouter.ts');
 
 must(
   voiceMode.includes('preferServerRecognition') &&
@@ -197,6 +198,30 @@ must(
   voiceRoutes.includes('/api/lexara/voice/profile'),
   'configured ElevenLabs production voice can be validated',
 );
+must(
+  ttsRouter.includes('LexaraTTSMesh') &&
+    ttsRouter.includes('synthesizeLexaraSpeechWithFailover') &&
+    !ttsRouter.includes('ElevenLabsClient') &&
+    voicePipeline.includes('synthesizeLexaraSpeechWithFailover') &&
+    !voicePipeline.includes('ElevenLabsClient') &&
+    !voicePipeline.includes('elevenLabsProvider') &&
+    voiceService.includes('LexaraTTSMesh') &&
+    !voiceService.includes('getLexaraVoicePipeline') &&
+    lexaraChatRoutes.includes("import('../lexara/LexaraTTSMesh')") &&
+    !lexaraChatRoutes.includes("import('../lexara/LexaraTTSRouter')") &&
+    systemConfig.includes("DEFAULT_VOICE_PROVIDER = 'adaptive'") &&
+    systemConfig.includes("voice: 'v3.0.0-adaptive-verified-mesh'"),
+  'all legacy LEXARA synthesis entrypoints delegate to the single verified adaptive TTS authority',
+);
+must(
+  conversation.includes('checkVoiceBackendReadiness') &&
+    conversation.includes('speechOutputVerified') &&
+    conversation.includes('voiceFailed') &&
+    conversation.includes('window.setInterval') &&
+    conversation.includes("'Voice reconnecting'"),
+  'client voice state stays truthful through synthesis failure and background recovery',
+);
+
 must(
   orchestrator.includes('AICollaborationOrchestrator.orchestrateCollaboration') &&
     orchestrator.includes("providerPolicy: 'capability-first'") &&
