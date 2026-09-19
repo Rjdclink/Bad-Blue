@@ -63,12 +63,12 @@ export default function Landing() {
     "@type": "WebApplication",
     "name": "Legal What?",
     "alternateName": ["LegalWhat", "Legal What"],
-    "description": "AI-assisted legal platform spanning 30 legal practice areas with two-way voice and text consultation, legal document tools, public-record background reports, people-finding and geolocation tools, and nationwide inmate search.",
+    "description": "AI-assisted legal platform spanning 31 legal practice areas with two-way voice and text consultation, legal document tools, public-record background reports, people-finding and geolocation tools, and nationwide inmate search.",
     "url": baseUrl,
     "applicationCategory": "LegalApplication",
     "operatingSystem": "Web Browser",
     "featureList": [
-      "30 legal practice areas",
+      "31 legal practice areas",
       "Two-way voice and text AI legal consultation",
       "Legal document generation and drafting",
       "Public-record background report generation",
@@ -82,9 +82,9 @@ export default function Landing() {
     <div className="min-h-screen">
       <SEOHead
         title="Legal What? | AI Legal Tools, People Finder & Inmate Locator"
-        description="Explore 30 legal practice areas with two-way voice and text AI consultation, legal document tools, background reports, people-finding tools, and nationwide inmate search."
+        description="Explore 31 legal practice areas with two-way voice and text AI consultation, legal document tools, background reports, people-finding tools, and nationwide inmate search."
         ogTitle="Legal What? | AI Legal Tools, People Finder & Inmate Locator"
-        ogDescription="Voice and text AI legal consultation across 30 practice areas, public-record background reports, people-finding tools, inmate search, and legal document tools."
+        ogDescription="Voice and text AI legal consultation across 31 practice areas, public-record background reports, people-finding tools, inmate search, and legal document tools."
         canonicalUrl="https://legalwhat.com/"
         ogImage="https://legalwhat.com/images/Legal%20What%20Icon.png"
         ogImageAlt="Legal What? legal technology platform logo"
@@ -148,10 +148,10 @@ export default function Landing() {
           </div>
           
           <h1 className="text-white text-4xl md:text-5xl lg:text-6xl font-bold leading-tight mb-8 animate-in fade-in slide-in-from-bottom-4 duration-700 delay-300 drop-shadow-2xl">
-            Legal What? — AI Legal Tools for 30 Practice Areas
+            Legal What? — AI Legal Tools for 31 Practice Areas
           </h1>
           <p className="text-white/95 text-base md:text-lg mb-8 leading-relaxed max-w-3xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-700 delay-500 drop-shadow-lg">
-            Explore legal information and AI-assisted tools across 30 practice areas, from Law Enforcement Accountability to Family Law, Immigration, Civil Rights, and beyond. Use two-way voice or text consultation, legal document tools, public-record research, and specialized search services.
+            Explore legal information and AI-assisted tools across 31 practice areas, from Law Enforcement Accountability to Family Law, Immigration, Civil Rights, and beyond. Use two-way voice or text consultation, legal document tools, public-record research, and specialized search services.
           </p>
           <p className="text-white/90 text-sm md:text-base mb-8 leading-relaxed max-w-3xl mx-auto drop-shadow-lg">
             Legal What? also includes public-record background report generation, an AI-assisted People Finder with geolocation intelligence, and a nationwide criminal inmate locator alongside its legal research and document workflows.
@@ -272,7 +272,7 @@ export default function Landing() {
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-muted-foreground leading-relaxed">
-                  Have a voice or text conversation with LEXARA across 30 legal practice areas. The system can ask follow-up questions, analyze the facts you provide, surface legal issues, and connect you with deeper case-analysis and research tools.
+                  Have a voice or text conversation with LEXARA across 31 legal practice areas. The system can ask follow-up questions, analyze the facts you provide, surface legal issues, and connect you with deeper case-analysis and research tools.
                 </p>
               </CardContent>
             </Card>
@@ -348,7 +348,7 @@ export default function Landing() {
               30 Legal Practice Areas
             </h2>
             <p className="text-muted-foreground max-w-3xl mx-auto leading-relaxed">
-              Legal What? supports AI-assisted legal information, research, issue spotting, and document workflows across the following 30 practice areas.
+              Legal What? supports AI-assisted legal information, research, issue spotting, and document workflows across the following 31 practice areas.
             </p>
           </div>
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
