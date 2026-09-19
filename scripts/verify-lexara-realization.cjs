@@ -174,7 +174,10 @@ must(
     ttsMesh.includes('LEXARA_FEMALE_VOICE') &&
     ttsMesh.includes('providerIndependenceDomain') &&
     ttsMesh.includes('independentDomains') &&
-    ttsMesh.includes('LEXARA_TTS_HEDGE_DELAY_MS = 800') &&
+    ttsMesh.includes('LEXARA_TTS_HEDGE_DELAY_MS = 650') &&
+    ttsMesh.includes('conversationalPrimaryBonus') &&
+    ttsMesh.includes('process.env.DEEPGRAM?.trim()') &&
+    ttsMesh.includes('warm readiness snapshot') &&
     ttsMesh.includes("abort('tts-hedge-loser')") &&
     ttsMesh.includes('readiness probe verified') &&
     ttsMesh.includes('progressive stream opened') &&
