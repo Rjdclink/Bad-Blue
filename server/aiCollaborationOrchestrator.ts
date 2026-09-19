@@ -1537,8 +1537,12 @@ export class AICollaborationOrchestrator {
         if (selected.includes(candidate.provider)) continue;
         const capabilities = getHarmonyCapabilities(candidate.provider);
         const cover = Array.from(uncovered).filter(capability => capabilities.includes(capability)).length;
-        if (!best || cover > best.cover || (cover === best.cover && candidate.score > best.score)) {
-          best = { provider: candidate.provider, cover, score: candidate.score };
+        const transportAlreadySelected = selected.some(
+          provider => harmonyTransportDomain(provider) === harmonyTransportDomain(candidate.provider),
+        );
+        const effectiveScore = candidate.score - (transportAlreadySelected ? 120 : 0);
+        if (!best || cover > best.cover || (cover === best.cover && effectiveScore > best.score)) {
+          best = { provider: candidate.provider, cover, score: effectiveScore };
         }
       }
       if (!best || best.cover === 0) break;
@@ -1546,6 +1550,15 @@ export class AICollaborationOrchestrator {
       for (const capability of getHarmonyCapabilities(best.provider)) uncovered.delete(capability);
     }
 
+    for (const candidate of ranked) {
+      if (selected.length >= maxParticipants) break;
+      const transportAlreadySelected = selected.some(
+        provider => harmonyTransportDomain(provider) === harmonyTransportDomain(candidate.provider),
+      );
+      if (!selected.includes(candidate.provider) && !transportAlreadySelected) {
+        selected.push(candidate.provider);
+      }
+    }
     for (const candidate of ranked) {
       if (selected.length >= maxParticipants) break;
       if (!selected.includes(candidate.provider)) selected.push(candidate.provider);
@@ -1570,11 +1583,13 @@ export class AICollaborationOrchestrator {
     if (task.attributes.needsFastResponse) desired.add('fast-chat');
 
     return [...providers].sort((a, b) => {
-      const score = (provider: AIProvider) =>
-        getHarmonyCapabilities(provider).reduce(
+      const score = (provider: AIProvider) => {
+        const transportDiversity = harmonyTransportDomain(provider) === harmonyTransportDomain(task.provider) ? -80 : 40;
+        return getHarmonyCapabilities(provider).reduce(
           (sum, capability) => sum + (desired.has(capability) ? 25 : 0),
-          harmonyProviderRuntimeScore(provider),
+          harmonyProviderRuntimeScore(provider) + transportDiversity,
         );
+      };
       return score(b) - score(a);
     });
   }
