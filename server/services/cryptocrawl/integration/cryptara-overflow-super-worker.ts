@@ -8,6 +8,7 @@ import {
   type CryptaraParallelProxyWorkload,
 } from './cryptara-supabase-overflow-worker.js';
 import { runThroughCryptaraOverflowPrimaryGateway } from './cryptara-overflow-primary-gateway.js';
+import { isCryptoCrawlerDatabaseAccessAllowed } from '../runtime/manual-power-state.js';
 
 /**
  * Dedicated control worker for the overflow Supabase lane.
@@ -113,6 +114,7 @@ function share<T>(input: ShareInput<T>): void {
 }
 
 export function startCryptaraOverflowSuperWorker(): void {
+  if (!isCryptoCrawlerDatabaseAccessAllowed()) return;
   if (started) return;
   started = true;
   console.log('[CRYPTARA][OVERFLOW-SUPER-WORKER] dedicated overflow worker online; coherence=shared-local-broker, primary-upstream=on-demand-through-overflow-gateway, direct-application-primary=0');
@@ -120,12 +122,14 @@ export function startCryptaraOverflowSuperWorker(): void {
 
 /** Primary worker -> overflow worker: local memory only, no database request. */
 export function shareCryptaraPrimaryInformationWithOverflowWorker<T>(input: ShareInput<T>): void {
+  if (!isCryptoCrawlerDatabaseAccessAllowed()) return;
   share(input);
   primaryToOverflowShares += 1;
 }
 
 /** Overflow worker -> primary worker: local memory only, no database request. */
 export function shareCryptaraOverflowInformationWithPrimaryWorker<T>(input: ShareInput<T>): void {
+  if (!isCryptoCrawlerDatabaseAccessAllowed()) return;
   share(input);
   overflowToPrimaryShares += 1;
 }
@@ -138,6 +142,7 @@ export function shareCryptaraOverflowInformationWithPrimaryWorker<T>(input: Shar
 export async function requestCryptaraOverflowSuperWorker<T>(
   request: CryptaraOverflowSuperWorkerRequest<T>,
 ): Promise<T | null> {
+  if (!isCryptoCrawlerDatabaseAccessAllowed()) return null;
   if (!started) startCryptaraOverflowSuperWorker();
   if (!request.key.trim()) throw new Error('CRYPTARA_OVERFLOW_SUPER_WORKER_KEY_REQUIRED');
   if (!request.topic.trim()) throw new Error('CRYPTARA_OVERFLOW_SUPER_WORKER_TOPIC_REQUIRED');
@@ -202,6 +207,11 @@ export async function requestCryptaraOverflowSuperWorker<T>(
     coalescedOverflowLoads += 1;
   }
   return pending;
+}
+
+export function stopCryptaraOverflowSuperWorker(): void {
+  started = false;
+  inFlight.clear();
 }
 
 export function getCryptaraOverflowSuperWorkerSnapshot() {
