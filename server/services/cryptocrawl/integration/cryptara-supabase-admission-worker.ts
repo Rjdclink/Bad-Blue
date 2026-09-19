@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import pg from 'pg';
 import { getPoolStats, pool } from '../runtime/cryptocrawl-runtime-database.js';
 import { createLogger } from '../../../logger.js';
+import { isCryptoCrawlerDatabaseAccessAllowed } from '../runtime/manual-power-state.js';
 
 /**
  * Autonomous Cryptara pool custodian for CryptoCrawler database work.
@@ -34,6 +34,7 @@ type Waiter = {
   priority: CryptaraSupabasePriority;
   queuedAt: number;
   resolve: (permit: AdmissionPermit) => void;
+  reject: (error: Error) => void;
 };
 
 type AdmissionPermit = {
@@ -459,8 +460,8 @@ class CryptaraSupabaseResourceGovernor {
   }
 
   acquire(priority: CryptaraSupabasePriority): Promise<AdmissionPermit> {
-    return new Promise(resolve => {
-      this.queue.push({ id: this.nextWaiterId++, priority, queuedAt: Date.now(), resolve });
+    return new Promise((resolve, reject) => {
+      this.queue.push({ id: this.nextWaiterId++, priority, queuedAt: Date.now(), resolve, reject });
       this.peakQueued = Math.max(this.peakQueued, this.queue.length);
       this.drain();
     });
@@ -475,6 +476,21 @@ class CryptaraSupabaseResourceGovernor {
       return;
     }
     if (!error) this.considerRecovery(duration);
+  }
+
+  shutdown(): void {
+    if (this.pressureResumeTimer) {
+      clearTimeout(this.pressureResumeTimer);
+      this.pressureResumeTimer = null;
+    }
+    const error = new Error('CRYPTOCRAWLER_MASTER_POWER_OFF');
+    for (const waiter of this.queue.splice(0)) waiter.reject(error);
+    this.inFlight = 0;
+    this.pressureUntil = 0;
+    this.recoveryProbeAfter = 0;
+    this.healthySuccesses = 0;
+    this.lastMode = 'recovering';
+    this.lastPressureReason = null;
   }
 
   snapshot(installed: boolean): CryptaraSupabaseAdmissionSnapshot {
@@ -533,19 +549,26 @@ function wrapClientRelease(
   return wrappedRelease;
 }
 
-/** Install once after schema/migration admission and before heavyweight routes. */
+/** Install only for the dedicated CryptoCrawler Overflow ordinary pool. */
 export function installCryptaraSupabaseAdmissionWorker(): void {
   if (installed) return;
-  const prototype: any = (pg as any).Pool.prototype;
-  if (!prototype[ORIGINAL_CONNECT]) prototype[ORIGINAL_CONNECT] = prototype.connect;
-  const originalConnect = prototype[ORIGINAL_CONNECT] as (...args: any[]) => any;
+  if (!isCryptoCrawlerDatabaseAccessAllowed()) {
+    throw new Error('CRYPTOCRAWLER_MASTER_POWER_OFF');
+  }
 
-  if (!prototype.connect?.[PATCHED_CONNECT]) {
-    const patchedConnect = function(this: any, callback?: (...args: any[]) => void): any {
-      // The live ESM binding tracks resetPool() replacements. Coordination and any
-      // unrelated pg pools bypass this custodian completely.
-      if (this !== pool) {
-        return typeof callback === 'function' ? originalConnect.call(this, callback) : originalConnect.call(this);
+  const target: any = pool as any;
+  if (!target[ORIGINAL_CONNECT]) target[ORIGINAL_CONNECT] = target.connect.bind(target);
+  const originalConnect = target[ORIGINAL_CONNECT] as (...args: any[]) => any;
+
+  if (!target[PATCHED_CONNECT]) {
+    const patchedConnect = function(callback?: (...args: any[]) => void): any {
+      if (!isCryptoCrawlerDatabaseAccessAllowed()) {
+        const error = new Error('CRYPTOCRAWLER_MASTER_POWER_OFF');
+        if (typeof callback === 'function') {
+          queueMicrotask(() => callback(error));
+          return undefined;
+        }
+        return Promise.reject(error);
       }
 
       const priority: CryptaraSupabasePriority = priorityContext.getStore() || 'normal';
@@ -554,7 +577,7 @@ export function installCryptaraSupabaseAdmissionWorker(): void {
         void governor.acquire(priority).then(permit => {
           const acquisitionStartedAt = Date.now();
           try {
-            originalConnect.call(this, (error: unknown, client: any, release: (error?: unknown) => void) => {
+            originalConnect((error: unknown, client: any, release: (error?: unknown) => void) => {
               const acquireMs = Date.now() - acquisitionStartedAt;
               governor.reportConnectionOutcome(acquireMs, error);
               if (error || !client) {
@@ -576,7 +599,7 @@ export function installCryptaraSupabaseAdmissionWorker(): void {
       return governor.acquire(priority).then(async permit => {
         const acquisitionStartedAt = Date.now();
         try {
-          const client = await originalConnect.call(this);
+          const client = await originalConnect();
           governor.reportConnectionOutcome(Date.now() - acquisitionStartedAt);
           const release = client.release.bind(client);
           wrapClientRelease(client, release, permit, Date.now());
@@ -588,8 +611,8 @@ export function installCryptaraSupabaseAdmissionWorker(): void {
         }
       });
     };
-    (patchedConnect as any)[PATCHED_CONNECT] = true;
-    prototype.connect = patchedConnect;
+    target[PATCHED_CONNECT] = patchedConnect;
+    target.connect = patchedConnect;
   }
 
   governor.primeToCurrentPoolCapacity();
@@ -607,6 +630,22 @@ export function installCryptaraSupabaseAdmissionWorker(): void {
   });
 }
 
+export function uninstallCryptaraSupabaseAdmissionWorker(): void {
+  governor.shutdown();
+  const target: any = pool as any;
+  const originalConnect = target[ORIGINAL_CONNECT] as ((...args: any[]) => any) | undefined;
+  if (originalConnect) target.connect = originalConnect;
+  try {
+    delete target[PATCHED_CONNECT];
+    delete target[ORIGINAL_CONNECT];
+  } catch {
+    target[PATCHED_CONNECT] = undefined;
+    target[ORIGINAL_CONNECT] = undefined;
+  }
+  installed = false;
+  recoveryAdvisor = null;
+}
+
 /**
  * Explicit priority is optional. Existing hot-pool users are governed automatically;
  * critical callers can use this helper without receiving any new DB authority.
@@ -615,6 +654,7 @@ export function withCryptaraSupabasePriority<T>(
   priority: CryptaraSupabasePriority,
   task: () => T,
 ): T {
+  if (!isCryptoCrawlerDatabaseAccessAllowed()) throw new Error('CRYPTOCRAWLER_MASTER_POWER_OFF');
   return priorityContext.run(priority, task);
 }
 
@@ -627,6 +667,7 @@ export async function withCryptaraSupabaseAdmission<T>(
   priority: CryptaraSupabasePriority,
   task: () => Promise<T> | T,
 ): Promise<T> {
+  if (!isCryptoCrawlerDatabaseAccessAllowed()) throw new Error('CRYPTOCRAWLER_MASTER_POWER_OFF');
   const permit = await governor.acquire(priority);
   const startedAt = Date.now();
   let failure: unknown;

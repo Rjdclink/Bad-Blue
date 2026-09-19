@@ -33,6 +33,7 @@ export class CryptaraGovernance extends EventEmitter {
   private cryptara: any;
   private isInitialized = false;
   private tradingActive = false;
+  private stageListenersInstalled = false;
   
   private constructor() {
     super();
@@ -84,6 +85,9 @@ export class CryptaraGovernance extends EventEmitter {
    * Setup event listeners for governance coordination
    */
   private setupEventListeners(): void {
+    if (this.stageListenersInstalled) return;
+    this.stageListenersInstalled = true;
+
     // Listen for stage changes
     stageManager.on('stage-advanced', (data) => {
       log.info('Stage advanced - updating Cryptara configuration', {
@@ -349,6 +353,19 @@ export class CryptaraGovernance extends EventEmitter {
     };
   }
   
+  /**
+   * Fully stop CryptoCrawler-owned Cryptara activity while preserving the
+   * one-time governance listener installation for a later manual restart.
+   */
+  async shutdown(): Promise<void> {
+    this.tradingActive = false;
+    if (this.cryptara?.shutdown) {
+      await this.cryptara.shutdown();
+    }
+    this.isInitialized = false;
+    log.info('Cryptara governance stopped with CryptoCrawler master power');
+  }
+
   /**
    * Run Monte Carlo simulation via Cryptara
    */

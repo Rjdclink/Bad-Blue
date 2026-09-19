@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isCryptoCrawlerDatabaseAccessAllowed } from '../runtime/manual-power-state.js';
 import pg from 'pg';
 import {
   isPostgresConnectionString,
@@ -166,20 +167,29 @@ const allowedWorkloads = new Set<CryptaraParallelProxyWorkload>([
 
 // Separate from the authoritative pool, tiny, min=0, lazy, and never part of
 // primary readiness. Constructing a pg Pool does not open a backend connection.
-const overflowPool = isCryptaraOverflowConfigured
-  ? new Pool({
-      connectionString: configuredUrl,
-      max: overflowPoolMax,
-      min: 0,
-      idleTimeoutMillis: 10_000,
-      connectionTimeoutMillis: 8_000,
-      query_timeout: 10_000,
-      keepAlive: true,
-      keepAliveInitialDelayMillis: 10_000,
-      ssl: process.env.PGSSLMODE === 'disable' ? false : { rejectUnauthorized: false },
-      application_name: 'badblue-cryptara-parallel-proxy',
-    } as any)
-  : null;
+function createOverflowPool(): any | null {
+  if (!isCryptaraOverflowConfigured) return null;
+  const nextPool = new Pool({
+    connectionString: configuredUrl,
+    max: overflowPoolMax,
+    min: 0,
+    idleTimeoutMillis: 10_000,
+    connectionTimeoutMillis: 8_000,
+    query_timeout: 10_000,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10_000,
+    ssl: process.env.PGSSLMODE === 'disable' ? false : { rejectUnauthorized: false },
+    application_name: 'badblue-cryptara-parallel-proxy',
+  } as any);
+  nextPool.on('error', (error: Error) => {
+    recordFailure(error);
+    console.warn('[CRYPTARA][PARALLEL-PROXY] Idle secondary connection error:', error.message);
+  });
+  return nextPool;
+}
+
+let overflowPool: any | null = createOverflowPool();
+let overflowPoolClosed = false;
 
 let cacheSchemaProbe: Promise<boolean> | null = null;
 let cacheSchemaReadyUntil = 0;
@@ -208,10 +218,32 @@ if (configurationError) {
   console.warn(`[CRYPTARA][PARALLEL-PROXY] Disabled: ${configurationError}`);
 } else if (overflowPool) {
   console.log(`[CRYPTARA][PARALLEL-PROXY] Optional secondary Supabase configured (pool max=${overflowPoolMax}, authority=auxiliary_noncritical_only)`);
-  overflowPool.on('error', error => {
-    recordFailure(error);
-    console.warn('[CRYPTARA][PARALLEL-PROXY] Idle secondary connection error:', error.message);
-  });
+}
+
+export function reopenCryptaraParallelProxyPool(): void {
+  if (!overflowPoolClosed) return;
+  overflowPool = createOverflowPool();
+  overflowPoolClosed = false;
+  cacheSchemaProbe = null;
+  cacheSchemaReadyUntil = 0;
+  cacheSchemaRetryAfter = 0;
+  parallelSchemaProbe = null;
+  parallelSchemaReadyUntil = 0;
+  parallelSchemaRetryAfter = 0;
+}
+
+export async function closeCryptaraParallelProxyPool(): Promise<void> {
+  if (overflowPoolClosed) return;
+  overflowPoolClosed = true;
+  const closingPool = overflowPool;
+  overflowPool = null;
+  cacheSchemaProbe = null;
+  cacheSchemaReadyUntil = 0;
+  cacheSchemaRetryAfter = 0;
+  parallelSchemaProbe = null;
+  parallelSchemaReadyUntil = 0;
+  parallelSchemaRetryAfter = 0;
+  if (closingPool) await closingPool.end();
 }
 
 function recordFailure(_error: unknown): void {
@@ -257,6 +289,10 @@ export async function withCryptaraParallelProxy<T>(
   workload: CryptaraParallelProxyWorkload,
   operation: (query: (text: string, values?: unknown[]) => Promise<any>) => Promise<T>,
 ): Promise<CryptaraParallelProxyResult<T>> {
+  if (!isCryptoCrawlerDatabaseAccessAllowed()) {
+    proxySkips += 1;
+    return { used: false, reason: 'master_power_off' };
+  }
   if (!allowedWorkloads.has(workload)) {
     proxySkips += 1;
     return { used: false, reason: 'workload_not_allowed' };

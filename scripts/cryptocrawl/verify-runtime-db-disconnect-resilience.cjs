@@ -30,13 +30,15 @@ requirePattern(/function\s+attachCheckedOutClientErrorGuard\s*\(/, 'checked-out 
 requirePattern(/targetPool\.on\('acquire',[\s\S]{0,900}client\.on\('error',\s*guard\)/, 'guard attaches while a client is checked out');
 requirePattern(/targetPool\.on\('release',[\s\S]{0,500}client\.removeListener\('error',\s*guard\)[\s\S]{0,180}activeGuards\.delete\(client\)/, 'guard is removed when node-postgres restores idle handling');
 requirePattern(/targetPool\.on\('remove',[\s\S]{0,500}activeGuards\.delete\(client\)/, 'removed clients cannot retain guard bookkeeping');
-requirePattern(/attachCheckedOutClientErrorGuard\(pool,\s*'ordinary'\)/, 'ordinary Overflow runtime lane is guarded');
-requirePattern(/attachCheckedOutClientErrorGuard\(coordinationPool,\s*'coordination'\)/, 'coordination Overflow runtime lane is guarded');
-requirePattern(/pool\.on\('error'/, 'ordinary pool idle-client handler remains installed');
-requirePattern(/coordinationPool\.on\('error'/, 'coordination pool idle-client handler remains installed');
+requirePattern(/attachCheckedOutClientErrorGuard\(nextPool,\s*'ordinary'\)/, 'ordinary Overflow runtime lane is guarded on every lifecycle recreation');
+requirePattern(/attachCheckedOutClientErrorGuard\(nextPool,\s*'coordination'\)/, 'coordination Overflow runtime lane is guarded on every lifecycle recreation');
+requirePattern(/createOrdinaryPool[\s\S]{0,900}nextPool\.on\('error'/, 'ordinary pool idle-client handler remains installed on recreation');
+requirePattern(/createCoordinationPool[\s\S]{0,900}nextPool\.on\('error'/, 'coordination pool idle-client handler remains installed on recreation');
+requirePattern(/closeCryptocrawlRuntimeDatabasePools[\s\S]{0,500}ordinary\.end\(\)[\s\S]{0,180}coordination\.end\(\)/, 'master stop explicitly closes both CryptoCrawler database pools');
+requirePattern(/reopenCryptocrawlRuntimeDatabasePools[\s\S]{0,500}createOrdinaryPool\(\)[\s\S]{0,220}createCoordinationPool\(\)/, 'manual restart recreates both pools');
 requirePattern(/processShutdownAuthority:\s*false/, 'checked-out disconnects have no process-shutdown authority');
 
-const guardFunction = source.match(/function\s+attachCheckedOutClientErrorGuard[\s\S]*?\n}\n\nattachCheckedOutClientErrorGuard/)?.[0] || '';
+const guardFunction = source.match(/function\s+attachCheckedOutClientErrorGuard[\s\S]*?\n}\n\nfunction\s+installManualPowerDatabaseGuard/)?.[0] || '';
 if (!guardFunction) {
   throw new Error('[runtime-db-disconnect-resilience] could not isolate disconnect guard');
 }
@@ -50,4 +52,4 @@ if (/setInterval\s*\(|setTimeout\s*\(/.test(guardFunction)) {
 forbidPattern(/SUPABASE_DATABASE_URL(?!_OVERFLOW)/, 'Primary database fallback appearing in canonical CryptoCrawler runtime DB');
 forbidPattern(/process\.exit\s*\(/, 'database disconnect handler terminating the process');
 
-console.log('[runtime-db-disconnect-resilience] checked-out and idle client disconnect handling preserved without new pools, retries, Primary fallback, or execution authority');
+console.log('[runtime-db-disconnect-resilience] checked-out/idle disconnect handling plus explicit close/reopen lifecycle preserved without extra pool authority, retries, Primary fallback, or execution authority');

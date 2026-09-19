@@ -5,6 +5,10 @@ import { randomUUID } from 'crypto';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { EDEN_CONFIG, CONTROL_SIGNALS, ETHICAL_GUARDS } from './config';
 import type { LessonPacket, StrategyTemplate, CainState, MicroCrawlerState, EdenSnapshot, CataclysmEvent, OpportunityEvent, ChainId } from './types';
+import {
+  isCryptoCrawlerDatabaseAccessAllowed,
+  onCryptoCrawlerManualPowerPhaseChange,
+} from '../runtime/manual-power-state.js';
 
 class EdenService {
   private supabase: SupabaseClient | null = null;
@@ -18,11 +22,19 @@ class EdenService {
   private microCrawlers: Map<string, MicroCrawlerState> = new Map();
   
   constructor() {
-    // NO CONSTRUCTOR INITIALIZATION - deferred to ensureInitialized()
+    // NO NETWORK INITIALIZATION - deferred to ensureInitialized().
+    onCryptoCrawlerManualPowerPhaseChange((phase) => {
+      if (phase !== 'OFF') return;
+      this.supabase = null;
+      this.isInitialized = false;
+    });
   }
 
   // Lazy initialization of Supabase client - ONLY WHEN CALLED
   private async ensureInitialized(): Promise<void> {
+    if (!isCryptoCrawlerDatabaseAccessAllowed()) {
+      throw new Error('CRYPTOCRAWLER_MASTER_POWER_OFF');
+    }
     if (this.supabase) return;
 
     const url = EDEN_CONFIG.SUPABASE_URL;

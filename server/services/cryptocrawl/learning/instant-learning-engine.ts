@@ -14,6 +14,7 @@ import { randomUUID } from 'crypto';
 import { deepLearningStore, type LearnedParameter } from './deep-learning-store';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { EDEN_CONFIG } from '../eden/config';
+import { isCryptoCrawlerDatabaseAccessAllowed } from '../runtime/manual-power-state.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import type { MarketConditionLevel } from '../core/market-condition-detector.js';
 import type { SimulationResult, StrategyProfile, MarketCondition } from '../validation/monte-carlo-engine';
@@ -86,7 +87,6 @@ class InstantLearningEngine {
 
   constructor() {
     this.state = this.createInitialState();
-    this.initializeSupabase();
   }
 
   private createInitialState(): InstantLearningState {
@@ -135,6 +135,18 @@ class InstantLearningEngine {
         });
       }
     }
+  }
+
+  activateSupabaseMirror(): void {
+    if (!isCryptoCrawlerDatabaseAccessAllowed()) {
+      throw new Error('CRYPTOCRAWLER_MASTER_POWER_OFF');
+    }
+    if (!this.supabase) this.initializeSupabase();
+  }
+
+  deactivateSupabaseMirror(): void {
+    this.supabase = null;
+    this.state.isInitialized = false;
   }
 
   /**

@@ -6,7 +6,13 @@ import {
 import {
   getCryptaraOverflowSuperWorkerSnapshot,
   startCryptaraOverflowSuperWorker,
+  stopCryptaraOverflowSuperWorker,
 } from './cryptara-overflow-super-worker.js';
+import { isCryptoCrawlerDatabaseAccessAllowed } from '../runtime/manual-power-state.js';
+import {
+  closeCryptaraParallelProxyPool,
+  reopenCryptaraParallelProxyPool,
+} from './cryptara-supabase-overflow-worker.js';
 
 export type CryptaraHyperBridgeBootstrapState =
   | 'idle'
@@ -32,6 +38,7 @@ let completedAt = 0;
 let latencyMs = 0;
 let reason: string | null = null;
 let probeInFlight: Promise<void> | null = null;
+let probeGeneration = 0;
 
 /**
  * Start the dedicated overflow control worker before either remote database lane.
@@ -40,8 +47,17 @@ let probeInFlight: Promise<void> | null = null;
  * probe while the caller continues immediately toward normal bootstrap.
  */
 export function startCryptaraHyperBridgeBootstrap(): Promise<void> {
+  if (!isCryptoCrawlerDatabaseAccessAllowed()) {
+    state = 'idle';
+    startedAt = 0;
+    completedAt = Date.now();
+    latencyMs = 0;
+    reason = 'master_power_off';
+    return Promise.resolve();
+  }
   if (probeInFlight) return probeInFlight;
 
+  reopenCryptaraParallelProxyPool();
   startCryptaraOverflowSuperWorker();
   startedAt = Date.now();
   completedAt = 0;
@@ -58,6 +74,7 @@ export function startCryptaraHyperBridgeBootstrap(): Promise<void> {
   }
 
   state = 'probing';
+  const generation = ++probeGeneration;
   console.log('[CRYPTARA][HYPER-BRIDGE][BOOTSTRAP] overflow Super Worker online before primary; auxiliary lane head-started');
 
   probeInFlight = (async () => {
@@ -65,6 +82,7 @@ export function startCryptaraHyperBridgeBootstrap(): Promise<void> {
     const result = await withCryptaraParallelProxy('observability', query =>
       query('SELECT 1 AS hyper_bridge_ready'),
     );
+    if (generation !== probeGeneration || !isCryptoCrawlerDatabaseAccessAllowed()) return;
     latencyMs = Date.now() - probeStartedAt;
     completedAt = Date.now();
 
@@ -79,6 +97,7 @@ export function startCryptaraHyperBridgeBootstrap(): Promise<void> {
     reason = result.reason;
     console.warn(`[CRYPTARA][HYPER-BRIDGE][BOOTSTRAP] auxiliary lane probe degraded (${result.reason}); no primary probe was issued by overflow worker`);
   })().catch(error => {
+    if (generation !== probeGeneration || !isCryptoCrawlerDatabaseAccessAllowed()) return;
     completedAt = Date.now();
     latencyMs = Math.max(0, completedAt - startedAt);
     state = 'degraded';
@@ -87,6 +106,18 @@ export function startCryptaraHyperBridgeBootstrap(): Promise<void> {
   });
 
   return probeInFlight;
+}
+
+export async function stopCryptaraHyperBridgeBootstrap(): Promise<void> {
+  probeGeneration += 1;
+  stopCryptaraOverflowSuperWorker();
+  probeInFlight = null;
+  await closeCryptaraParallelProxyPool();
+  state = 'idle';
+  startedAt = 0;
+  completedAt = Date.now();
+  latencyMs = 0;
+  reason = 'master_power_off';
 }
 
 export function getCryptaraHyperBridgeBootstrapSnapshot(): BootstrapSnapshot {

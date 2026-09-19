@@ -40,14 +40,15 @@ rejectText(worker, "process.on('uncaughtException'", 'BadBlue exception authorit
 rejectText(worker, "process.on('unhandledRejection'", 'BadBlue rejection authority');
 requireText(worker, 'async shutdown(): Promise<void>', 'BadBlue cleanup API');
 
-// 3) Database routing is explicit per authority. CryptoCrawler proves Overflow
-// readiness without mutating the shared node-postgres Pool prototype.
+// 3) Database routing is explicit per authority. Process boot leaves CryptoCrawler
+// OFF; Overflow/schema readiness belongs exclusively to the manual start lifecycle.
 requireText(bootstrap, "process.env.CRYPTOCRAWL_OVERFLOW_RUNTIME_SCHEMA_READY = 'false'", 'Overflow fail-closed default');
-requireText(bootstrap, 'ensureCryptocrawlOverflowRuntimeSchema', 'Overflow schema readiness proof');
-requireText(bootstrap, "process.env.CRYPTOCRAWL_OVERFLOW_RUNTIME_SCHEMA_READY = 'true'", 'Overflow ready state');
+requireText(bootstrap, "process.env.CRYPTOCRAWLER_MANUAL_POWER_PHASE = 'OFF'", 'manual power fail-closed default');
+rejectText(bootstrap, 'startCryptaraHyperBridgeBootstrap(', 'automatic Overflow bootstrap');
+rejectText(bootstrap, 'ensureCryptocrawlOverflowRuntimeSchema(', 'automatic Overflow schema I/O');
 rejectText(bootstrap, 'Object.getPrototypeOf(pool)', 'global Pool prototype acquisition');
 rejectText(bootstrap, 'prototype.connect', 'global Pool connect mutation');
 rejectText(bootstrap, 'Pool.prototype.connect', 'direct Pool prototype mutation');
 rejectText(bootstrap, 'cryptaraOverflowPrimaryGatewayConnect', 'global Primary interception wrapper');
 
-console.log('[hyperscope-first3] PASS: adaptive scans reschedule after settlement/failure, server/index owns the sole process lifecycle, and CryptoCrawler database authority is explicit without global pg.Pool interception');
+console.log('[hyperscope-first3] PASS: adaptive scans reschedule after settlement/failure, server/index owns the sole process lifecycle, and CryptoCrawler stays manual-start-only without global pg.Pool interception');

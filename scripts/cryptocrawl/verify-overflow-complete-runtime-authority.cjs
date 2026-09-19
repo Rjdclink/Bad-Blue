@@ -95,8 +95,10 @@ const forbidPattern = (source, pattern, message) => {
 
 requirePattern(runtimeDb, /SUPABASE_DATABASE_URL_OVERFLOW/, 'runtime DB must use SUPABASE_DATABASE_URL_OVERFLOW');
 requirePattern(runtimeDb, /primaryFallbackUsed:\s*false/, 'runtime DB must declare no Primary fallback');
-requirePattern(runtimeDb, /export\s+const\s+pool\s*=\s*new\s+Pool/, 'ordinary Overflow runtime pool must be owned by runtime DB');
-requirePattern(runtimeDb, /export\s+const\s+coordinationPool\s*=\s*new\s+Pool/, 'session-capable Overflow coordination pool must be owned by runtime DB');
+requirePattern(runtimeDb, /export\s+let\s+pool[\s\S]{0,120}createOrdinaryPool\(\)/, 'ordinary Overflow runtime pool must be lifecycle-owned and reopenable by runtime DB');
+requirePattern(runtimeDb, /export\s+let\s+coordinationPool[\s\S]{0,120}createCoordinationPool\(\)/, 'session-capable Overflow coordination pool must be lifecycle-owned and reopenable by runtime DB');
+requirePattern(runtimeDb, /export async function closeCryptocrawlRuntimeDatabasePools\(\)/, 'master stop must explicitly close all CryptoCrawler Overflow sockets');
+requirePattern(runtimeDb, /export function reopenCryptocrawlRuntimeDatabasePools\(\)/, 'manual restart must explicitly recreate CryptoCrawler Overflow pools');
 forbidPattern(runtimeDb, /process\.env\.SUPABASE_DATABASE_URL(?!_OVERFLOW)/, 'runtime DB must not read Primary SUPABASE_DATABASE_URL');
 
 requirePattern(coordination, /from\s+['"]\.\/cryptocrawl-runtime-database\.js['"]/, 'coordination must consume the Overflow runtime DB pool');
@@ -118,8 +120,9 @@ requirePattern(schema, /cryptocrawl_governance_state/, 'Overflow schema verifica
 requirePattern(schema, /cryptocrawler_kraken_nonce_state/, 'Overflow schema verification must cover Kraken nonce state');
 requirePattern(schema, /cryptocrawler_claim_resource_slot/, 'Overflow schema verification must cover lease claim authority');
 
-requirePattern(bootstrap, /ensureCryptocrawlOverflowRuntimeSchema/, 'bootstrap must provision and verify complete Overflow authority schema');
-requirePattern(bootstrap, /complete CryptoCrawler runtime schema verified on Overflow/, 'bootstrap must log complete Overflow authority readiness');
+requirePattern(bootstrap, /CRYPTOCRAWLER_MANUAL_POWER_PHASE\s*=\s*'OFF'/, 'production bootstrap must default CryptoCrawler Master Power OFF');
+requirePattern(bootstrap, /zero CryptoCrawler database\/network startup I\/O/, 'production bootstrap must explicitly remain CryptoCrawler-I/O-free');
+forbidPattern(bootstrap, /startCryptaraHyperBridgeBootstrap\s*\(|ensureCryptocrawlOverflowRuntimeSchema\s*\(/, 'production bootstrap must not touch Overflow/schema before manual start');
 
 // Source-level legacy imports are inventoried rather than accepted as runtime
 // authority. The production esbuild router must rewrite every reachable one and
@@ -181,4 +184,4 @@ if (violations.length > 0) {
   process.exit(1);
 }
 
-console.log(`[overflow-complete-runtime-authority] verified ${files.length} CryptoCrawler source files; inventoried ${directDbImports.length} legacy server/db import(s) for mandatory production redirection; node-postgres owners=${postgresPoolOwners.map(item => `${item.file}:${item.count}`).join(', ')}; complete Overflow schema gate and no duplicate terminal scheduler verified`);
+console.log(`[overflow-complete-runtime-authority] verified ${files.length} CryptoCrawler source files; inventoried ${directDbImports.length} legacy server/db import(s) for mandatory production redirection; node-postgres owners=${postgresPoolOwners.map(item => `${item.file}:${item.count}`).join(', ')}; manual-start-only Overflow authority and no duplicate terminal scheduler verified`);

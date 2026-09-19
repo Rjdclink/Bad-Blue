@@ -1,7 +1,19 @@
 import express, { Request, Response, NextFunction } from 'express';
 import { balanceMonitor, gasOracle, networkHealth, ChainId } from '../bridge';
+import { isCryptoCrawlerMasterPowerOn } from '../runtime/manual-power-state.js';
 
 const router = express.Router();
+
+router.use((_req, res, next) => {
+  if (!isCryptoCrawlerMasterPowerOn()) {
+    return res.status(503).json({
+      success: false,
+      error: 'CRYPTOCRAWLER_MASTER_POWER_OFF',
+      message: 'CryptoCrawler Master Power is OFF; bridge/RPC activity is disabled.',
+    });
+  }
+  next();
+});
 
 // Valid chains list
 const VALID_CHAINS: ChainId[] = ['polygon', 'arbitrum', 'avalanche', 'bsc'];

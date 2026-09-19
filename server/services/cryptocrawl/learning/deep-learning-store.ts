@@ -11,6 +11,7 @@ import type { MarketConditionLevel } from '../core/market-condition-detector.js'
 import type { SimulationResult, StrategyProfile, MarketCondition } from '../validation/monte-carlo-engine';
 import type { ExecutionOutcomeObservation } from './execution-outcome.js';
 import { getExecutionOutcomeKey } from './execution-outcome.js';
+import { isCryptoCrawlerDatabaseAccessAllowed } from '../runtime/manual-power-state.js';
 
 // ============================================
 // DEEP LEARNING DATA TYPES
@@ -103,7 +104,6 @@ class DeepLearningStore {
 
   constructor() {
     this.state = this.createInitialState();
-    this.initializeSupabase();
   }
 
   private createInitialState(): LearningState {
@@ -139,6 +139,22 @@ class DeepLearningStore {
         component: 'DeepLearningStore',
       });
     }
+  }
+
+  activateSupabaseMirror(): void {
+    if (!isCryptoCrawlerDatabaseAccessAllowed()) {
+      throw new Error('CRYPTOCRAWLER_MASTER_POWER_OFF');
+    }
+    if (!this.supabase) this.initializeSupabase();
+  }
+
+  deactivateSupabaseMirror(): void {
+    if (this.persistInterval) {
+      clearInterval(this.persistInterval);
+      this.persistInterval = null;
+    }
+    this.supabase = null;
+    this.isInitialized = false;
   }
 
   /**

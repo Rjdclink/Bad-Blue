@@ -42,21 +42,17 @@ requirePattern(index, /else\s+if\s*\(isPermanentDatabaseStartupError\(lastError\
 requirePattern(index, /Unknown transient database\/network failure; pool reset suppressed to avoid reconnect amplification/i, 'unknown transient network faults must suppress pool recreation');
 requirePattern(index, /localPoolFailure:\s*isLocalPoolFailure\(lastError\)/, 'startup telemetry must distinguish proven local pool failure from upstream/transient failure');
 
-// Verified Overflow is the normal CryptoCrawler data plane. The bootstrap proves
-// the complete Overflow runtime schema before loading index.ts and never mutates
-// node-postgres globally. Production routing redirects hot CryptoCrawler server/db
-// imports to Overflow while retaining one explicit cold-archive Primary worker.
-requirePattern(index, /overflowDatabaseReady\s*=\s*await\s+waitForOverflowBootstrapReadiness\(\)[\s\S]{0,900}if\s*\(overflowDatabaseReady\)\s*\{[\s\S]{0,700}databaseInitialized\s*=\s*true[\s\S]{0,500}databaseRuntimeMode\s*=\s*'overflow_proxy'/, 'verified overflow must become the normal initialized proxy data plane');
-requirePattern(index, /overflow_proxy_mode_activated[\s\S]{0,400}directPrimaryProbes:\s*0/, 'overflow startup telemetry must prove zero direct primary readiness probes');
-forbidPattern(index, /probePrimaryDatabaseOnce/, 'overflow mode must not contain a one-off direct primary startup probe');
-requirePattern(index, /if\s*\(overflowDatabaseReady\)[\s\S]{0,1200}else\s*\{[\s\S]{0,500}const\s+primaryReady\s*=\s*await\s+initializeDatabase\(\)/, 'long primary admission is reachable only when overflow is unavailable');
-requirePattern(index, /overflow_proxy_mode_activated[\s\S]*startupTrace\('routes_import_started'\)/, 'overflow data-plane selection must complete before heavyweight route import');
-requirePattern(index, /const\s+usableDataPlane\s*=\s*databaseInitialized\s*\|\|\s*overflowDatabaseReady[\s\S]{0,400}isFullyInitialized\s*&&\s*usableDataPlane[\s\S]{0,200}res\.status\(200\)/, 'strict readiness must require an initialized primary or verified overflow data plane');
-requirePattern(index, /if\s*\(databaseInitialized\)\s*\{[\s\S]{0,300}await\s+initializeServices\(\)/, 'overflow proxy mode must initialize the actual application/worker services');
-forbidPattern(index, /background_services_skipped_overflow_degraded|until primary recovery|overflow_degraded/, 'overflow must not be treated as temporary degraded recovery mode');
+// CryptoCrawler must not participate in process-start database admission. LegalWhat
+// proves its own application database; CryptoCrawler Overflow/schema readiness is
+// opened later only by the authenticated Master Power start lifecycle.
+requirePattern(index, /const\s+applicationDatabaseReady\s*=\s*await\s+initializeDatabase\(\)/, 'server startup must prove only the ordinary application database');
+requirePattern(index, /cryptocrawler_master_power_off_at_boot[\s\S]{0,500}overflowProbeIssued:\s*false[\s\S]{0,300}cryptoDatabaseIo:\s*false/, 'startup telemetry must prove zero CryptoCrawler database I/O');
+requirePattern(index, /CryptoCrawler Master Power OFF: no CryptoCrawler Overflow probe, worker, schema I\/O, or market activity started/, 'startup log must declare the hard-OFF boundary');
+forbidPattern(index, /overflowDatabaseReady\s*=\s*await\s+waitForOverflowBootstrapReadiness\(\)/, 'server startup must not call the CryptoCrawler Overflow readiness path');
+forbidPattern(index, /await\s+startCryptaraHyperBridgeBootstrap\(\)|await\s+ensureCryptocrawlOverflowRuntimeSchema\(\)/, 'server startup must never invoke CryptoCrawler Overflow/schema activation');
 
-requirePattern(bootstrap, /reconcileAppSchema[\s\S]*installCryptaraSuperWorkerAdmission[\s\S]*startCryptaraHyperBridgeBootstrap[\s\S]*overflowBootstrap[\s\S]*ensureCryptocrawlOverflowRuntimeSchema[\s\S]*import\('\.\/index\.js'\)/, 'bootstrap must reconcile app schema, install admission, verify Overflow runtime schema, then load index.ts');
-requirePattern(bootstrap, /overflowBootstrap\.state\s*===\s*'ready'[\s\S]*ensureCryptocrawlOverflowRuntimeSchema[\s\S]*CRYPTOCRAWL_OVERFLOW_RUNTIME_SCHEMA_READY\s*=\s*'true'/, 'verified Overflow must prove the complete CryptoCrawler runtime schema before readiness');
+requirePattern(bootstrap, /CRYPTOCRAWLER_MANUAL_POWER_PHASE\s*=\s*'OFF'[\s\S]*zero CryptoCrawler database\/network startup I\/O[\s\S]*import\('\.\/index\.js'\)/, 'production wrapper must load LegalWhat with CryptoCrawler hard-OFF');
+forbidPattern(bootstrap, /startCryptaraHyperBridgeBootstrap\s*\(|ensureCryptocrawlOverflowRuntimeSchema\s*\(/, 'production wrapper must not perform CryptoCrawler startup work');
 forbidPattern(bootstrap, /cryptaraOverflowPrimaryGatewayConnect|Object\.getPrototypeOf\(pool\)|(?:Pool\.)?prototype\.connect/, 'bootstrap must not mutate shared node-postgres Pool connection behavior');
 forbidPattern(bootstrap, /legacy_application_primary_acquisition/, 'bootstrap must not install legacy global Primary acquisition routing');
 requirePattern(overflowAuthorityBuild, /if\s*\(!isUnder\(importer,\s*cryptoRoot\)\)\s*return\s+null;[\s\S]*resolved\s*!==\s*rootDbBase[\s\S]*importer\s*===\s*primaryArchiveWorker[\s\S]*redirected\.push[\s\S]*return\s*\{\s*path:\s*overflowDb\s*\}/, 'production bundle must route hot CryptoCrawler server/db imports to Overflow while preserving one explicit Primary archive worker');
@@ -64,7 +60,7 @@ requirePattern(gateway, /routing:\s*'application_to_overflow_bridge_to_primary'/
 requirePattern(gateway, /directApplicationPrimaryCalls:\s*0\s+as\s+const/, 'gateway must expose zero direct application primary calls inside its scoped route');
 requirePattern(gateway, /createsDatabasePool:\s*false\s+as\s+const/, 'gateway must not create a third pool');
 
-requirePattern(index, /const\s+schemaReady\s*=\s*await\s+runStartupSchemaVerification\(\)/, 'startup must retain production schema telemetry in the overflow-unavailable primary fallback path');
+requirePattern(index, /const\s+schemaReady\s*=\s*await\s+runStartupSchemaVerification\(\)/, 'startup must retain production application-schema telemetry');
 forbidPattern(index, /if\s*\(!schemaReady\)\s*\{\s*throw\s+new\s+Error/, 'CryptoCrawler-specific/degraded schema telemetry must not globally take down LegalWhat');
 requirePattern(db, /await\s+db\.execute\('SELECT 1'\)[\s\S]*await\s+coordinationPool\.query\('SELECT 1'\)/, 'pool reset verification must restore lanes sequentially rather than opening both concurrently');
 forbidPattern(db, /Promise\.all\(\[\s*db\.execute\('SELECT 1'\),\s*coordinationPool\.query\('SELECT 1'\)/, 'pool reset must not probe ordinary and coordination lanes concurrently');
@@ -76,11 +72,14 @@ forbidPattern(migrations, /BADBLUE_DATABASE_ROLLOUT_POOL_MAX/, 'an environment o
 requirePattern(migrations, /export\s+function\s+releaseRollingDeploymentPoolHeadroom[\s\S]{0,900}state\.options\.max\s*=\s*state\.steadyMax/, 'rollout ceiling must have an explicit governed release path');
 forbidPattern(migrations, /const\s+restore\s*=\s*setTimeout\([\s\S]{0,500}options\.max\s*=\s*steadyMax/, 'an unready deployment must never re-expand its database pool on a wall-clock timer');
 requirePattern(superWorker, /installCryptaraSuperWorkerAdmission[\s\S]{0,420}installCryptaraSupabaseAdmissionWorker\(\)/, 'Super Worker admission arm must delegate to the existing Cryptara DB governor');
-requirePattern(governance, /installCryptaraSuperWorkerAdmission\(\)[\s\S]{0,700}releaseRollingDeploymentPoolHeadroom\('cryptara_super_worker_admission_installed'\)[\s\S]{0,700}stageManager\.restorePersistence/, 'rollout headroom must release only after Super Worker admission is installed and before governed persistence');
+requirePattern(index, /await\s+runMigrations\(\)[\s\S]{0,220}releaseRollingDeploymentPoolHeadroom\('application_database_ready'\)/, 'LegalWhat must restore its ordinary DB capacity independently of CryptoCrawler');
+requirePattern(governance, /installCryptaraSuperWorkerAdmission\(\)[\s\S]{0,900}stageManager\.restorePersistence/, 'manual CryptoCrawler start must install its DB admission governor before governed persistence');
+forbidPattern(governance, /releaseRollingDeploymentPoolHeadroom/, 'CryptoCrawler start must not mutate LegalWhat application-pool headroom');
 
 requirePattern(migrations, /function\s+startupSchemaMutationAllowed\(\)[\s\S]{0,900}RAILWAY_ENVIRONMENT_NAME[\s\S]{0,350}environmentName\s*===\s*'production'/, 'only the Railway production environment may mutate schema at startup');
-requirePattern(migrations, /if\s*\(!startupSchemaMutationAllowed\(\)\)[\s\S]{0,1600}requireCryptocrawlerAuthoritySchema\(1\)[\s\S]{0,900}return\s+verificationOnly/, 'Railway non-production environments must return from a verification-only path before migration coordination');
+requirePattern(migrations, /if\s*\(!startupSchemaMutationAllowed\(\)\)[\s\S]{0,1600}isCryptoCrawlerDatabaseAccessAllowed\(\)[\s\S]{0,1200}return\s+verificationOnly/, 'Railway non-production environments must skip CryptoCrawler verification while master power is OFF and return before migration coordination');
 requirePattern(migrations, /verification-only; no schema DDL executed/, 'preview mutation suppression must be explicit in startup telemetry');
+requirePattern(migrations, /Skipped while master power is OFF; zero CryptoCrawler schema I\/O executed/, 'production application migrations must skip CryptoCrawler schema work while OFF');
 forbidPattern(migrations, /ALLOW_[A-Z_]*(?:PREVIEW|PR)[A-Z_]*MIGRATION|FORCE_[A-Z_]*MIGRATION/, 'preview schema-mutation safety must not be bypassable by a new environment override');
 
 requirePattern(migrations, /to_regprocedure\(\$5\)::text\s+AS\s+resource_slot_claimant/i, 'startup schema proof includes the resource-slot claimant');

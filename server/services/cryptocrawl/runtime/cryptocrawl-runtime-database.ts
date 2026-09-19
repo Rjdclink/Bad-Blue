@@ -2,6 +2,10 @@ import pg from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import * as schema from '@shared/schema';
 import logger from '../../../logger.js';
+import {
+  assertCryptoCrawlerDatabaseAccessAllowed,
+  isCryptoCrawlerDatabaseAccessAllowed,
+} from './manual-power-state.js';
 
 const { Pool } = pg;
 
@@ -80,51 +84,68 @@ const ssl = process.env.PGSSLMODE !== 'disable'
     }
   : false;
 
-export const pool = new Pool({
-  connectionString: ordinaryUrl,
-  max: ordinaryPoolMax,
-  min: 0,
-  idleTimeoutMillis: 15_000,
-  connectionTimeoutMillis: 15_000,
-  query_timeout: 30_000,
-  keepAlive: true,
-  keepAliveInitialDelayMillis: 10_000,
-  ssl,
-  application_name: 'cryptocrawl-overflow-runtime',
-});
+function createOrdinaryPool(): any {
+  const nextPool = new Pool({
+    connectionString: ordinaryUrl,
+    max: ordinaryPoolMax,
+    min: 0,
+    idleTimeoutMillis: 15_000,
+    connectionTimeoutMillis: 15_000,
+    query_timeout: 30_000,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10_000,
+    ssl,
+    application_name: 'cryptocrawl-overflow-runtime',
+  });
+  installManualPowerDatabaseGuard(nextPool, 'ordinary');
+  attachCheckedOutClientErrorGuard(nextPool, 'ordinary');
+  nextPool.on('error', (error: Error) => {
+    logger.warn('[CryptoCrawlerRuntimeDB] Overflow ordinary pool idle client failed', {
+      component: 'CryptoCrawlerRuntimeDatabase',
+      error: error instanceof Error ? error.message : String(error),
+      primaryFallbackUsed: false,
+    });
+  });
+  return nextPool;
+}
 
-export const coordinationPool = new Pool({
-  connectionString: coordinationUrl,
-  max: coordinationPoolMax,
-  min: 0,
-  idleTimeoutMillis: 15_000,
-  connectionTimeoutMillis: 15_000,
-  statement_timeout: 15_000,
-  query_timeout: 15_000,
-  keepAlive: true,
-  keepAliveInitialDelayMillis: 10_000,
-  ssl,
-  application_name: 'cryptocrawl-overflow-coordination',
-});
+function createCoordinationPool(): any {
+  const nextPool = new Pool({
+    connectionString: coordinationUrl,
+    max: coordinationPoolMax,
+    min: 0,
+    idleTimeoutMillis: 15_000,
+    connectionTimeoutMillis: 15_000,
+    statement_timeout: 15_000,
+    query_timeout: 15_000,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10_000,
+    ssl,
+    application_name: 'cryptocrawl-overflow-coordination',
+  });
+  installManualPowerDatabaseGuard(nextPool, 'coordination');
+  attachCheckedOutClientErrorGuard(nextPool, 'coordination');
+  nextPool.on('error', (error: Error) => {
+    logger.warn('[CryptoCrawlerRuntimeDB] Overflow coordination pool idle client failed', {
+      component: 'CryptoCrawlerRuntimeDatabase',
+      error: error instanceof Error ? error.message : String(error),
+      primaryFallbackUsed: false,
+    });
+  });
+  return nextPool;
+}
 
 /**
  * node-postgres installs its pool-level idle-client error listener only while a
  * client is idle. pool.connect() removes that listener while the client is checked
  * out, so a network/Supavisor disconnect during a checked-out transaction can
- * otherwise surface as an unhandled client `error` event and terminate Node.
- *
- * Add a temporary client listener for exactly the checked-out lifetime. The pool's
- * own idle listener is already restored before the `release` event fires, so this
- * guard is removed on release to avoid duplicate idle-client handling. A failed
- * client is left to node-postgres' normal release/remove path; we never double-
- * release or create a second pool/retry authority here.
+ * otherwise surface as an unhandled client error event and terminate Node.
  */
 function attachCheckedOutClientErrorGuard(targetPool: any, lane: 'ordinary' | 'coordination'): void {
   const activeGuards = new WeakMap<object, (error: Error) => void>();
 
   targetPool.on('acquire', (client: any) => {
     if (activeGuards.has(client)) return;
-
     const guard = (error: Error) => {
       logger.warn('[CryptoCrawlerRuntimeDB] Checked-out Overflow client disconnected; caller remains fail-closed and pool may replace the dead client', {
         component: 'CryptoCrawlerRuntimeDatabase',
@@ -134,7 +155,6 @@ function attachCheckedOutClientErrorGuard(targetPool: any, lane: 'ordinary' | 'c
         processShutdownAuthority: false,
       });
     };
-
     activeGuards.set(client, guard);
     client.on('error', guard);
   });
@@ -154,28 +174,59 @@ function attachCheckedOutClientErrorGuard(targetPool: any, lane: 'ordinary' | 'c
   });
 }
 
-attachCheckedOutClientErrorGuard(pool, 'ordinary');
-attachCheckedOutClientErrorGuard(coordinationPool, 'coordination');
+function installManualPowerDatabaseGuard(targetPool: any, lane: 'ordinary' | 'coordination'): void {
+  const rawQuery = targetPool.query.bind(targetPool);
+  const rawConnect = targetPool.connect.bind(targetPool);
 
-pool.on('error', error => {
-  logger.warn('[CryptoCrawlerRuntimeDB] Overflow ordinary pool idle client failed', {
-    component: 'CryptoCrawlerRuntimeDatabase',
-    error: error instanceof Error ? error.message : String(error),
-    primaryFallbackUsed: false,
-  });
-});
+  targetPool.query = (...args: any[]) => {
+    if (isCryptoCrawlerDatabaseAccessAllowed()) return rawQuery(...args);
+    const error = new Error(`CRYPTOCRAWLER_MASTER_POWER_OFF: ${lane} Supabase query blocked`);
+    const callback = typeof args[args.length - 1] === 'function' ? args[args.length - 1] : null;
+    if (callback) {
+      queueMicrotask(() => callback(error));
+      return undefined;
+    }
+    return Promise.reject(error);
+  };
 
-coordinationPool.on('error', error => {
-  logger.warn('[CryptoCrawlerRuntimeDB] Overflow coordination pool idle client failed', {
-    component: 'CryptoCrawlerRuntimeDatabase',
-    error: error instanceof Error ? error.message : String(error),
-    primaryFallbackUsed: false,
-  });
-});
+  targetPool.connect = (...args: any[]) => {
+    if (isCryptoCrawlerDatabaseAccessAllowed()) return rawConnect(...args);
+    const error = new Error(`CRYPTOCRAWLER_MASTER_POWER_OFF: ${lane} Supabase connection blocked`);
+    const callback = typeof args[args.length - 1] === 'function' ? args[args.length - 1] : null;
+    if (callback) {
+      queueMicrotask(() => callback(error));
+      return undefined;
+    }
+    return Promise.reject(error);
+  };
+}
 
-export const db = drizzle(pool, { schema });
+export let pool: any = createOrdinaryPool();
+export let coordinationPool: any = createCoordinationPool();
+export let db: any = drizzle(pool, { schema });
+let runtimePoolsClosed = false;
+
+export function reopenCryptocrawlRuntimeDatabasePools(): void {
+  if (!runtimePoolsClosed) return;
+  pool = createOrdinaryPool();
+  coordinationPool = createCoordinationPool();
+  db = drizzle(pool, { schema });
+  runtimePoolsClosed = false;
+}
+
+export async function closeCryptocrawlRuntimeDatabasePools(): Promise<void> {
+  if (runtimePoolsClosed) return;
+  runtimePoolsClosed = true;
+  const ordinary = pool;
+  const coordination = coordinationPool;
+  await Promise.allSettled([
+    ordinary.end(),
+    coordination.end(),
+  ]);
+}
 
 export function assertCryptocrawlRuntimeDatabaseAvailable(): void {
+  assertCryptoCrawlerDatabaseAccessAllowed();
   if (!isDatabaseConfigured) {
     throw new Error('CryptoCrawler Overflow runtime database is not configured; SUPABASE_DATABASE_URL_OVERFLOW is required');
   }

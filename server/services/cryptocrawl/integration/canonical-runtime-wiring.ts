@@ -33,7 +33,7 @@ import { ensureInventoryConstrainedCexExecutionWiring } from './inventory-constr
 import { ensureKalshiBpsOptimizationWiring, stopKalshiBpsOptimizationWiring } from './kalshi-bps-optimization-wiring.js';
 import { ensureMeasuredCandidateExpiryGuardWiring } from './measured-candidate-expiry-guard-wiring.js';
 import { logZeroCapitalReadinessDiagnostics } from './zero-capital-readiness-diagnostics.js';
-import { ensureLearningLifecycleWiring } from './learning-lifecycle-wiring.js';
+import { ensureLearningLifecycleWiring, stopLearningLifecycleWiring } from './learning-lifecycle-wiring.js';
 import { ensureMonteCarloCalibrationWiring } from './monte-carlo-calibration-wiring.js';
 import { ensureOrderBookEvolutionWiring, stopOrderBookEvolutionWiring } from './order-book-evolution-wiring.js';
 import { ensureOracleEvidenceWiring } from './oracle-evidence-wiring.js';
@@ -537,6 +537,7 @@ export async function deactivateCanonicalCryptoCrawlerRuntimeWiring(): Promise<v
     ghostWalletUltraWorker.stop(),
     providerMeshPendingStream.stop(),
     stopTelemetryBootstrap(),
+    stopLearningLifecycleWiring(),
   ]);
 
   installed = false;
