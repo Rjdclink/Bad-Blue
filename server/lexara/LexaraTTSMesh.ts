@@ -707,7 +707,18 @@ async function openRouterTtsCandidates(): Promise<string[]> {
 
   const catalog = await loadOpenRouterSpeechCatalog();
   const unique = [...new Set(preferred)];
-  return catalog.size ? unique.filter(model => catalog.has(model)) : unique;
+  if (!catalog.size) return unique;
+
+  const mappedDiscovered = [...catalog].filter(model =>
+    model.startsWith('mistralai/')
+    || model.startsWith('google/')
+    || model.startsWith('x-ai/')
+    || model.startsWith('microsoft/')
+  );
+  return [...new Set([
+    ...unique.filter(model => catalog.has(model)),
+    ...mappedDiscovered,
+  ])];
 }
 
 
@@ -885,7 +896,7 @@ async function openElevenLabsSpeechStream(text: string, signal?: AbortSignal): P
     }
 
     const firstByteLatencyMs = Date.now() - startedAt;
-    markSuccess(provider, firstByteLatencyMs);
+    markSuccess(provider, firstByteLatencyMs, model, voiceId);
     return {
       provider,
       body: response.body as ReadableStream<Uint8Array>,
@@ -962,8 +973,13 @@ export async function openLexaraSpeechStream(text: string): Promise<LexaraTTSStr
       }),
     ]);
 
-    if (winner.provider === primary) backupController.abort('tts-hedge-loser');
-    else primaryController.abort('tts-hedge-loser');
+    if (winner.provider === primary) {
+      backupController.abort('tts-hedge-loser');
+      void backupPromise.then(stream => stream?.body.cancel('tts-hedge-loser')).catch(() => undefined);
+    } else {
+      primaryController.abort('tts-hedge-loser');
+      void primaryPromise.then(stream => stream?.body.cancel('tts-hedge-loser')).catch(() => undefined);
+    }
 
     log.info('[LEXARA TTS] progressive hedge resolved', {
       primary,
