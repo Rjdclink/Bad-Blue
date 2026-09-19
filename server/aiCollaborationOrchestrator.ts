@@ -1392,7 +1392,8 @@ export class AICollaborationOrchestrator {
           .filter(provider => provider !== task.provider),
       );
       const healthyAlternatives = allAlternatives.filter(harmonyProviderAvailable);
-      const alternatives = healthyAlternatives.length > 0 ? healthyAlternatives : allAlternatives;
+      const coolingAlternatives = allAlternatives.filter(provider => !harmonyProviderAvailable(provider));
+      const alternatives = [...healthyAlternatives, ...coolingAlternatives];
       const fallbackLimit = Math.max(0, Math.min(task.maxFallbacks ?? 1, 3));
       if (fallbackLimit > 0 && alternatives.length > 0) {
         const recoveryBatch = alternatives.slice(0, fallbackLimit);
@@ -1406,7 +1407,7 @@ export class AICollaborationOrchestrator {
                   model: this.getDefaultModelForProvider(provider),
                   fallbackProviders: [],
                   maxFallbacks: 0,
-                  allowCoolingRecovery: healthyAlternatives.length === 0,
+                  allowCoolingRecovery: !harmonyProviderAvailable(provider),
                 },
                 completedTasks,
               );
