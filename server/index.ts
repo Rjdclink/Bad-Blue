@@ -71,7 +71,7 @@ function startupTrace(event: string, details: Record<string, unknown> = {}): voi
   );
 }
 
-type DatabaseRuntimeMode = 'initializing' | 'primary' | 'overflow_proxy';
+type DatabaseRuntimeMode = 'initializing' | 'primary' | 'overflow_proxy' | 'neon_failover';
 
 let isReady = false;
 let isFullyInitialized = false; // Tracks full HTTP/application surface initialization
@@ -377,6 +377,7 @@ async function initializeDatabase(): Promise<boolean> {
       const activated = await activateLegalWhatNeonFallback('primary_supabase_admission_unavailable');
       if (activated) {
         await retryDatabaseProbeWithinBudget();
+        databaseRuntimeMode = 'neon_failover';
         console.warn('[STARTUP] ✓ LegalWhat admitted through schema-gated Neon failover');
         startupTrace('database_initialization_completed', { connected: true, recovered: true, lane: 'neon_failover' });
         return true;
