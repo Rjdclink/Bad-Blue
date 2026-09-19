@@ -146,7 +146,7 @@ must(
     ttsMesh.includes('configuration_blocked') &&
     ttsMesh.includes('refreshLexaraTTSReadiness') &&
     ttsMesh.includes('verifyProvider') &&
-    ttsMesh.includes('/v1/audio/voices?type=preset') &&
+    ttsMesh.includes('/v1/audio/voices?type=all') &&
     ttsMesh.includes("google/gemini-3.1-flash-tts-preview") &&
     ttsMesh.includes("mistralai/voxtral-mini-tts-2603") &&
     ttsMesh.includes('/v1/user/subscription') &&
@@ -156,7 +156,7 @@ must(
     ttsMesh.includes('fetchMistralVoiceDetails') &&
     ttsMesh.includes('workerCount = Math.min(8') &&
     ttsMesh.includes('configured Mistral TTS voice is not a verified female English voice') &&
-    ttsMesh.includes('mistral preset catalog contains no verifiable female English voice') &&
+    ttsMesh.includes('mistral voice catalog contains no LEXARA-compatible female English voice') &&
     ttsMesh.includes("model.startsWith('google/') ? 'pcm' : 'mp3'") &&
     ttsMesh.includes("mimeType: 'audio/wav'") &&
     ttsMesh.includes('pcm16MonoToWav(pcm, 24_000)') &&
@@ -168,9 +168,17 @@ must(
     ttsMesh.includes('openOpenRouterSpeechStream') &&
     ttsMesh.includes('openDeepgramSpeechStream') &&
     ttsMesh.includes('openElevenLabsSpeechStream') &&
+    ttsMesh.includes("'flux-haley-en'") &&
+    ttsMesh.includes("endpoint = flux ? '/v2/speak' : '/v1/speak'") &&
+    ttsMesh.includes('LEXARA_FEMALE_VOICE') &&
+    ttsMesh.includes('providerIndependenceDomain') &&
+    ttsMesh.includes('independentDomains') &&
+    ttsMesh.includes('LEXARA_TTS_HEDGE_DELAY_MS = 800') &&
+    ttsMesh.includes("abort('tts-hedge-loser')") &&
+    ttsMesh.includes('readiness probe verified') &&
     ttsMesh.includes('progressive stream opened') &&
     ttsMesh.includes('redundancyVerified') &&
-    ttsMesh.includes("voiceStatus: healthyProviders.length >= 2") &&
+    ttsMesh.includes("voiceStatus: redundancyVerified") &&
     ttsMesh.includes('setInterval(refresh, 90_000)'),
   'LEXARA admits only verified female TTS routes, progressively streams the active route, and keeps a verified independent hot-backup pool warm',
 );
@@ -213,7 +221,9 @@ must(
     voiceRoutes.includes("'X-Accel-Buffering', 'no'") &&
     voiceRoutes.includes('No verified progressive route was available') &&
     voiceRoutes.includes('redundancyVerified') &&
+    voiceRoutes.includes('independentDomains') &&
     voiceRoutes.includes('voiceStatus') &&
+    lexaraRoutes.includes('voiceIndependentDomains') &&
     lexaraRoutes.includes('speechOutputVerified') &&
     lexaraRoutes.includes('refreshLexaraTTSReadiness(false)') &&
     conversation.includes('checkVoiceBackendReadiness') &&
