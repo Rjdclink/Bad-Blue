@@ -245,8 +245,12 @@ must(
   'LEXARA voice readiness stays truthful while short first-chunk playback and one-ahead synthesis remove full-answer mobile buffering latency',
 );
 must(
-  voiceRoutes.includes('/api/lexara/voice/profile'),
-  'configured ElevenLabs production voice can be validated',
+  voiceRoutes.includes('/api/lexara/voice/profile') &&
+    voiceRoutes.includes('getLexaraVoiceProfileBindings') &&
+    voiceRoutes.includes('ElevenLabs is one reserve route, never the profile authority') &&
+    ttsMesh.includes('getLexaraVoiceProfileBindings') &&
+    ttsMesh.includes("gender: 'female' as const"),
+  'canonical female LEXARA profile governs every TTS route while ElevenLabs remains an optional reserve',
 );
 must(
   ttsRouter.includes('LexaraTTSMesh') &&
