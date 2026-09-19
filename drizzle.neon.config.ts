@@ -12,7 +12,7 @@ if (!databaseUrl.startsWith("postgres://") && !databaseUrl.startsWith("postgresq
 
 // This config is intentionally isolated from runtime database resolution.
 // It exists only to prepare/verify the Neon failover schema and must never
-// replace SUPABASE_DATABASE_URL or become the application's implicit authority.
+// replace the canonical primary database setting or become the application's implicit authority.
 export default defineConfig({
   out: "./migrations",
   schema: "./shared/schema.ts",
