@@ -155,6 +155,10 @@ must(
     !ttsMesh.includes("'en_paul_neutral'") &&
     ttsMesh.includes('no verified female English voice') &&
     ttsMesh.includes("model.startsWith('google/') ? 'pcm' : 'mp3'") &&
+    ttsMesh.includes("mimeType: 'audio/wav'") &&
+    ttsMesh.includes('pcm16MonoToWav(pcm, 24_000)') &&
+    ttsMesh.includes('LEXARA_TTS_REQUEST_TIMEOUT_MS = 8_000') &&
+    ttsMesh.includes('slowRoutePenalty') &&
     !ttsMesh.includes("'microsoft/mai-voice-2-flash'") &&
     ttsMesh.includes('synthesizeLexaraSpeechWithFailover'),
   'LEXARA admits only verified TTS routes, enforces the female voice profile, and keeps model-specific provider failures local',
