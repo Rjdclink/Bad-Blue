@@ -5,9 +5,20 @@ import { canonicalExecutionScheduler } from '../execution/canonical-execution-sc
 import { getCryptoCrawlerCoreRuntimeStatus } from '../runtime/core-runtime.js';
 import { balanceMonitor } from '../bridge/balance-monitor.js';
 import { stageManager } from '../governance/stage-management.js';
+import {
+  isCryptoCrawlerMasterPowerOn,
+  onCryptoCrawlerManualPowerPhaseChange,
+} from '../runtime/manual-power-state.js';
 
 const router = express.Router();
 const wss = new WebSocketServer({ noServer: true });
+const dashboardIntervals = new Set<ReturnType<typeof setInterval>>();
+
+onCryptoCrawlerManualPowerPhaseChange((phase) => {
+  if (phase !== 'OFF') return;
+  for (const interval of dashboardIntervals) clearInterval(interval);
+  dashboardIntervals.clear();
+});
 
 function terminalSnapshots() {
   return canonicalOpportunityState.getRecent(512)
@@ -126,6 +137,15 @@ router.get('/history', (req, res) => {
 });
 
 router.get('/balances', async (_req, res) => {
+  if (!isCryptoCrawlerMasterPowerOn()) {
+    return res.json({
+      chains: [],
+      totalValue: 0,
+      status: 'offline',
+      reason: 'CryptoCrawler Master Power is OFF',
+      source: 'master_power_off',
+    });
+  }
   const portfolio = await balanceMonitor.getVerifiedPortfolioValue();
   res.status(portfolio.status === 'verified' ? 200 : 503).json({
     chains: portfolio.balances.map(balance => ({
@@ -146,6 +166,30 @@ router.get('/balances', async (_req, res) => {
 });
 
 router.get('/faucet/status', (_req, res) => {
+  if (!isCryptoCrawlerMasterPowerOn()) {
+    return res.json({
+      enabled: false,
+      mode: 'closed',
+      executionAuthority: 'canonical_execution_scheduler',
+      masterPower: 'OFF',
+      profitThisSession: canonicalStats().profit.allTime,
+      profitThisHour: 0,
+      profitThisDay: canonicalStats().profit.today,
+      dailyTarget: 0,
+      dailyTargetProgress: 0,
+      tradesThisHour: 0,
+      tradesThisDay: canonicalStats().trades.total,
+      stealthLevel: 0,
+      healthScore: 0,
+      consecutiveFailures: 0,
+      currentWindow: 0,
+      totalWindows: 0,
+      autoOptimize: false,
+      profitableTimesOnly: true,
+      antiDetectionEnabled: false,
+      syntheticTargetsEnabled: false,
+    });
+  }
   const scheduler = canonicalExecutionScheduler.getStats();
   const governance = stageManager.getState();
   const stats = canonicalStats();
@@ -236,10 +280,32 @@ wss.on('connection', ws => {
     }));
   }
 
-  const interval = setInterval(sendStats, 2_000);
+  if (!isCryptoCrawlerMasterPowerOn()) {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'status',
+        data: { masterPower: 'OFF', running: false, source: 'master_power_off' },
+      }));
+    }
+    return;
+  }
+
+  const interval = setInterval(() => {
+    if (!isCryptoCrawlerMasterPowerOn()) {
+      clearInterval(interval);
+      dashboardIntervals.delete(interval);
+      return;
+    }
+    sendStats();
+  }, 2_000);
+  dashboardIntervals.add(interval);
   interval.unref?.();
-  ws.on('close', () => clearInterval(interval));
-  ws.on('error', () => clearInterval(interval));
+  const clearDashboardInterval = () => {
+    clearInterval(interval);
+    dashboardIntervals.delete(interval);
+  };
+  ws.on('close', clearDashboardInterval);
+  ws.on('error', clearDashboardInterval);
 });
 
 export { router as dashboardApi, wss };
