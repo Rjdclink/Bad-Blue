@@ -544,15 +544,18 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       if (meta.startedDuringPlayback && typeof meta.utteranceId === 'number') {
         const alreadyValidated = validatedBargeInUtterancesRef.current.has(meta.utteranceId);
         if (!alreadyValidated) {
-          // A recording that began during playback is admitted only when the
-          // final transcript itself is strong and does not match recent LEXARA
-          // speech. Do not require playback to still be active by the time the
-          // server transcript returns; that race was dropping genuine short
-          // interruptions on mobile.
+          // A normal sentence that merely starts while LEXARA is speaking is not
+          // allowed to promote itself into user-turn authority. It must have won
+          // the non-destructive barge-in probe above. The only short-final
+          // exception is an explicit floor-control phrase, which preserves
+          // immediate "stop/wait/no" interruption without admitting plausible
+          // speaker-leakage hallucinations as blue user messages.
+          const explicitPlaybackControl =
+            /^(?:wait|stop|no|hold on|hang on|actually|but wait|let me finish)\b/i.test(observed.trim());
           if (
             isFinal
+            && explicitPlaybackControl
             && !isSuspiciousGenericServerTranscript(observed, meta)
-            && isStrongBargeIn(observed, meta)
           ) {
             validatedBargeInUtterancesRef.current.add(meta.utteranceId);
             if (phaseRef.current === 'speaking') autoInterruptRef.current();
