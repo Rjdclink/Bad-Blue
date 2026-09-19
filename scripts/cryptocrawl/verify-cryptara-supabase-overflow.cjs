@@ -4,13 +4,14 @@ const fs = require('node:fs');
 const assert = require('node:assert/strict');
 
 const worker = fs.readFileSync('server/services/cryptocrawl/integration/cryptara-supabase-overflow-worker.ts', 'utf8');
+const runtimeDb = fs.readFileSync('server/services/cryptocrawl/runtime/cryptocrawl-runtime-database.ts', 'utf8');
 const superWorker = fs.readFileSync('server/services/cryptocrawl/integration/cryptara-super-worker.ts', 'utf8');
 const migration = fs.readFileSync('server/migrations/overflow/001_cryptara_comp_cache.sql', 'utf8');
 const dockerfile = fs.readFileSync('Dockerfile', 'utf8');
 
-// The secondary project uses the single existing Railway overflow database
-// variable. It must remain a distinct, transaction-pooled Supabase project with
-// a tiny zero-idle pool; duplicate database-variable aliases are forbidden.
+// The adapter uses the single existing Railway Overflow configuration but owns
+// no pool. Connection capacity belongs exclusively to the canonical reopenable
+// CryptoCrawler runtime pool; duplicate database-variable aliases are forbidden.
 assert.match(worker, /SUPABASE_DATABASE_URL_OVERFLOW/);
 assert.doesNotMatch(worker, /CRYPTOCRAWL_PARALLEL_PROXY_DATABASE_URL/);
 assert.doesNotMatch(worker, /CRYPTOCRAWL_OVERFLOW_DATABASE_URL/);
@@ -22,9 +23,9 @@ assert.match(worker, /import \{ pool as runtimeOverflowPool \} from '\.\.\/runti
 assert.match(worker, /function activeOverflowPool\(\)/);
 assert.doesNotMatch(worker, /\bnew\s+(?:pg\.)?Pool\s*\(/);
 assert.doesNotMatch(worker, /function primaryDatabaseUrl\(\)|process\.env\.SUPABASE_DATABASE_URL(?!_OVERFLOW)/);
-assert.match(worker, /CRYPTOCRAWL_OVERFLOW_POOL_MAX, 2, 1, 2/);
-assert.match(worker, /max:\s*overflowPoolMax/);
-assert.match(worker, /min:\s*0/);
+assert.doesNotMatch(worker, /const\s+overflowPoolMax\s*=/);
+assert.match(runtimeDb, /const ordinaryPoolMax = boundedInt\(process\.env\.CRYPTOCRAWL_OVERFLOW_POOL_MAX, 2, 1, 4\)/);
+assert.match(runtimeDb, /function createOrdinaryPool\(\)[\s\S]{0,500}max:\s*ordinaryPoolMax[\s\S]{0,200}min:\s*0/);
 assert.doesNotMatch(worker, /setInterval\s*\(/);
 
 // Proxy authority is explicitly noncritical. Future systems must opt in through
