@@ -70,7 +70,8 @@ export class TwoStageDeployer {
   }
 
   private sanitizeBackgroundRazorResult(result: RazorResult): RazorResult {
-    if ([RazorType.CONTACT, RazorType.ADDRESS, RazorType.RELATION].includes(result.razorType)) {
+    const withheldTypes = new Set<RazorType>([RazorType.CONTACT, RazorType.ADDRESS, RazorType.RELATION]);
+    if (withheldTypes.has(result.razorType)) {
       return {
         ...result,
         data: {
