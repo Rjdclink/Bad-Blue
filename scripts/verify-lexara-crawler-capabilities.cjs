@@ -78,6 +78,95 @@ for (const name of ['FarmCrawler', 'PhantomCrawler', 'NovaCrawler']) {
 }
 if (!process.exitCode) ok('previously declaration-only PANTHEON species have concrete bounded implementations');
 
+const backgroundPeopleSearch = fs.readFileSync('server/peopleSearch.ts', 'utf8');
+const backgroundAdapter = fs.readFileSync('server/services/crawlers/PantheonRetrievalAdapter.ts', 'utf8');
+const backgroundOrchestrator = fs.readFileSync('server/services/pantheonCrawlerOrchestrator.ts', 'utf8');
+const starTrek = fs.readFileSync('server/services/crawlers/StarTrekCrawler.ts', 'utf8');
+const birdOfPrey = fs.readFileSync('server/services/crawlers/BirdOfPreyCrawler.ts', 'utf8');
+const sixDegrees = fs.readFileSync('server/services/crawlers/SixDegreesCrawler.ts', 'utf8');
+const trinity = fs.readFileSync('server/services/crawlers/TrinityCrawlers.ts', 'utf8');
+const cain = fs.readFileSync('server/services/crawlers/CainAndReaper.ts', 'utf8');
+const twoStage = fs.readFileSync('server/services/pantheon/razors/TwoStageDeployer.ts', 'utf8');
+const pantheonIce = fs.readFileSync('server/services/pantheon/crawlers/ice.ts', 'utf8');
+const spiderfoot = fs.readFileSync('server/services/spiderfootClient.ts', 'utf8');
+const stealth = fs.readFileSync('server/services/stealth/StealthInfrastructure.ts', 'utf8');
+
+if (
+  !backgroundAdapter.includes('deployBackgroundReport') ||
+  !backgroundAdapter.includes("request.purpose === 'background_report'") ||
+  !twoStage.includes('FarmCrawler') ||
+  !twoStage.includes('PhantomCrawler') ||
+  !twoStage.includes('NovaCrawler')
+) {
+  fail('background-report adapter must execute the real extended PANTHEON capability set');
+}
+if (
+  starTrek.includes('.example.com') ||
+  starTrek.includes('Simulate 70% success rate') ||
+  !starTrek.includes('setNavigationSeeds') ||
+  !starTrek.includes('no responsive predicted deep URL')
+) {
+  fail('StarTrek background-report retrieval contains fabricated navigation or success');
+}
+if (
+  birdOfPrey.includes('generateRandomIP') ||
+  birdOfPrey.includes('generateQuantumFingerprint') ||
+  !birdOfPrey.includes('Crawler request failed: HTTP')
+) {
+  fail('BirdOfPrey background-report retrieval still fabricates identity metadata or accepts failed HTTP as evidence');
+}
+if (!sixDegrees.includes('Crawler request failed: HTTP')) {
+  fail('SixDegrees background-report retrieval accepts non-success HTTP as evidence');
+}
+if (
+  !trinity.includes('firstSuccessful') ||
+  trinity.includes('return Promise.race([this.leftHead.attack') ||
+  trinity.includes('X-Fingerprint-Canvas') ||
+  trinity.includes('X-Fingerprint-WebGL')
+) {
+  fail('Trinity background-report retrieval can fail on the first rejected head or still fabricates browser fingerprints');
+}
+if (backgroundOrchestrator.includes('confidence: result.confidence ||')) {
+  fail('PANTHEON background-report orchestrator converts real zero-confidence failures into positive evidence');
+}
+if (
+  pantheonIce.includes('extractGPSFromFile') ||
+  !pantheonIce.includes("createHash('sha256')")
+) {
+  fail('ICE background-report resource extraction must use bounded public metadata, not precise GPS harvesting');
+}
+if (
+  !spiderfoot.includes('waitForScanCompletion') ||
+  !backgroundPeopleSearch.includes('waitForScanCompletion(scanId')
+) {
+  fail('background reports read SpiderFoot results before the scan reaches a terminal state');
+}
+if (
+  backgroundPeopleSearch.includes('pantheonOrchestrator.search([name]') ||
+  !backgroundPeopleSearch.includes('buildPantheonSearchTargets')
+) {
+  fail('background-report PANTHEON fallbacks pass a person name as though it were a URL');
+}
+if (
+  backgroundPeopleSearch.includes('total omniscience') ||
+  backgroundPeopleSearch.includes('all 60+ data sources')
+) {
+  fail('background-report status text overclaims capabilities beyond returned evidence');
+}
+if (
+  stealth.includes("route: ['VPN', `Tor:${torPort}`]") ||
+  stealth.includes("route: ['VPN', `Tor:${torPort}`, 'ProxyChain']")
+) {
+  fail('background-report crawler transport reports Tor/proxy routes that fetch does not actually use');
+}
+if (
+  cain.includes('Would be retrieved from persistent storage in production') ||
+  !cain.includes('recalculateEvolutionaryDebt')
+) {
+  fail('background-report Cain/Reaper supervision still reports hard-coded evolutionary debt');
+}
+if (!process.exitCode) ok('background-report crawler path is real, fail-closed, scope-bounded, and evidence-truthful');
+
 const payoutVerification = fs.readFileSync('server/services/cryptocrawl/compensation/compensationGuarantee.ts', 'utf8');
 if (payoutVerification.includes('Math.random() > 0.05')) fail('verification crawlers still use simulated random truth');
 if (!payoutVerification.includes('Read-only deterministic evidence verification')) fail('verification crawlers are not deterministic/read-only');
