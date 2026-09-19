@@ -9,13 +9,13 @@ const observePath = path.join(root, 'server/services/cryptocrawl/runtime/expande
 const externalPath = path.join(root, 'server/services/cryptocrawl/optimization/external-capital-capability-registry.ts');
 const selectionPath = path.join(root, 'server/services/cryptocrawl/execution/adapters/flash-loan-provider-selection-registry.ts');
 const capitalObserverPath = path.join(root, 'server/services/cryptocrawl/integration/external-capital-selection-observer.ts');
-const bootstrapPath = path.join(root, 'server/cryptara-bootstrap-entry.ts');
+const runtimeWiringPath = path.join(root, 'server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
 const network = fs.readFileSync(networkPath, 'utf8');
 const observe = fs.readFileSync(observePath, 'utf8');
 const external = fs.readFileSync(externalPath, 'utf8');
 const selection = fs.readFileSync(selectionPath, 'utf8');
 const capitalObserver = fs.readFileSync(capitalObserverPath, 'utf8');
-const bootstrap = fs.readFileSync(bootstrapPath, 'utf8');
+const runtimeWiring = fs.readFileSync(runtimeWiringPath, 'utf8');
 
 function must(source, pattern, message) {
   if (!pattern.test(source)) throw new Error(`[verify-nix-gen-historical-capability-preservation] ${message}`);
@@ -28,7 +28,8 @@ must(network, /chainId:\s*1329/, 'verified Sei mainnet identity was not preserve
 must(network, /cluster:\s*'mainnet-beta'/, 'Solana is not modeled as a native cluster');
 must(observe, /getLatestBlockhash/, 'Solana native blockhash observation is missing');
 must(observe, /executionReady:\s*false/, 'expanded network observer may promote execution readiness');
-must(bootstrap, /ensureExpandedNetworkObservability/, 'expanded network observer is not installed');
+must(runtimeWiring, /ensureExpandedNetworkObservability/, 'expanded network observer is not installed in the manual-ON runtime');
+must(runtimeWiring, /stopExpandedNetworkObservability/, 'expanded network observer is not stopped by master power');
 must(external, /flashLoanProviderSelectionRegistry/, 'existing flash-provider authority is not explicitly preserved');
 must(external, /availableLiquidityBaseUnits/, 'external-capital registry relabels liquidity instead of preserving canonical base units');
 must(external, /bootstrapEligible:\s*false[\s\S]*requiresSystemOwnedCapital:\s*true[\s\S]*collateralRequired:\s*true/, 'collateralized external capital is not excluded from cold-start bootstrap');
@@ -39,6 +40,7 @@ must(capitalObserver, /flashLoanProviderSelectionRegistry\.onSelection/, 'extern
 must(capitalObserver, /recordMeasuredExternalCapitalCapability/, 'measured external-capital capability is not updated');
 must(capitalObserver, /executionAuthority:\s*false/, 'external-capital observer gained execution authority');
 must(capitalObserver, /providerSelectionMutationAuthority:\s*false/, 'external-capital observer may mutate provider selection');
-must(bootstrap, /ensureExternalCapitalSelectionObserver/, 'external-capital selection observer is not installed');
+must(runtimeWiring, /ensureExternalCapitalSelectionObserver/, 'external-capital selection observer is not installed in the manual-ON runtime');
+must(runtimeWiring, /stopExternalCapitalSelectionObserver/, 'external-capital selection observer is not stopped by master power');
 
 console.log('[verify-nix-gen-historical-capability-preservation] PASS');

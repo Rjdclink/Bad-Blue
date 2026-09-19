@@ -8,6 +8,7 @@ import { ensureCanonicalIntelligenceOutbox } from '../intelligence/canonical-int
 import { canonicalIntelligenceRepository } from '../intelligence/canonical-intelligence-repository.js';
 import { ensureDynamicScalePressureWiring } from '../scaling/dynamic-scale-pressure-wiring.js';
 import { ensureAdaptiveProfitOperationsWiring } from '../runtime/adaptive-profit-operations-wiring.js';
+import { ensureExpandedNetworkObservability, stopExpandedNetworkObservability } from '../runtime/expanded-network-observability.js';
 import { ensureDynamicRpcProviderWiring } from '../runtime/dynamic-rpc-provider-wiring.js';
 import { ensureHybridCexExecutionWiring } from '../runtime/hybrid-cex-execution-wiring.js';
 import {
@@ -27,6 +28,7 @@ import { ensureCryptaraSovereignCortexWiring } from './cryptara-sovereign-cortex
 import { ensureCryptaraPredictivePrefetchWiring } from './cryptara-predictive-prefetch-wiring.js';
 import { ensureDynamicProfitabilityAdmissionWiring } from './dynamic-profitability-admission-wiring.js';
 import { ensureExecutionReadinessProfitabilityWiring } from './execution-readiness-profitability-wiring.js';
+import { ensureExternalCapitalSelectionObserver, stopExternalCapitalSelectionObserver } from './external-capital-selection-observer.js';
 import { ensureFilteredMempoolObservability, stopFilteredMempoolObservability } from './filtered-mempool-observability.js';
 import { getCryptaraHyperBridgeBootstrapSnapshot } from './cryptara-supabase-hyper-bridge-bootstrap.js';
 import { ensureInventoryConstrainedCexExecutionWiring } from './inventory-constrained-cex-execution-wiring.js';
@@ -289,6 +291,8 @@ function installCanonicalRuntime(): void {
   install('multi_topology_discovery_controller', () => multiTopologyDiscoveryController.start());
   install('legacy_intelligence_quarantine_log', () => logLegacyIntelligenceQuarantine());
   install('crypto_runtime_observability', () => ensureCryptoRuntimeObservability());
+  install('expanded_network_observability', () => ensureExpandedNetworkObservability());
+  install('external_capital_selection_observer', () => ensureExternalCapitalSelectionObserver());
 
   logger.info('Canonical CryptoCrawler runtime wiring installed', {
     component: 'CanonicalCryptoCrawlerRuntimeWiring',
@@ -530,6 +534,8 @@ export async function deactivateCanonicalCryptoCrawlerRuntimeWiring(): Promise<v
   stopZeroXBudgetObservability();
   stopAcrossBridgeObservability();
   stopCryptoRuntimeObservability();
+  stopExpandedNetworkObservability();
+  stopExternalCapitalSelectionObserver();
   stopCryptaraTwoSpeedRevalidationWiring();
 
   const { stopTelemetryBootstrap } = await import('./telemetry-bootstrap.js');
