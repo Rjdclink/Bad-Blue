@@ -3531,11 +3531,11 @@ Contact: ${foiaRequest.userEmail || userEmail}
     }
 
     try {
-      const initial = await storage.createPeopleSearchReport({
+      const { createPantheonReportRecord } = await import('./services/pantheon/PantheonReportStore');
+      const initial = await createPantheonReportRecord({
         userId,
         searchQuery: name,
         subjectName: name,
-        status: 'processing',
         reportData: {
           job: {
             state: 'queued',
@@ -3593,7 +3593,8 @@ Contact: ${foiaRequest.userEmail || userEmail}
       });
     }
 
-    const report = await storage.getPeopleSearchReport(String(req.params.reportId || ''));
+    const { getPantheonReportRecord } = await import('./services/pantheon/PantheonReportStore');
+    const report = await getPantheonReportRecord(String(req.params.reportId || ''));
     if (!report) {
       return res.status(404).json({ success: false, code: 'not_found', message: 'Report job not found.' });
     }
