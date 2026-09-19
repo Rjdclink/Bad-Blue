@@ -95,7 +95,6 @@ function providerUsesOpenRouter(provider: AIProvider): boolean {
     AIProvider.CODE_LLAMA,
     AIProvider.GPT_NEOX,
     AIProvider.PERPLEXITY,
-    AIProvider.FIREWORKS,
   ].includes(provider);
 }
 
@@ -261,10 +260,10 @@ export async function prewarmHarmonyProviders(): Promise<HarmonyWarmStatus[]> {
 
         const openAICompatible: Partial<Record<AIProvider, { url: string; key?: string }>> = {
           [AIProvider.CEREBRAS]: { url: 'https://api.cerebras.ai/v1/models', key: process.env.CEREBRAS_API_KEY?.trim() },
-          [AIProvider.SAMBANOVA]: { url: `${(process.env.SAMBANOVA_BASE_URL?.trim() || 'https://api.sambanova.ai/v1').replace(/\/$/, '')}/models`, key: process.env.SAMBANOVA_API_KEY?.trim() },
-          [AIProvider.HUGGINGFACE]: { url: 'https://router.huggingface.co/v1/models', key: process.env.HUGGINGFACE_API_TOKEN?.trim() || process.env.HUGGINGFACE_API_KEY?.trim() },
           [AIProvider.TOGETHER]: { url: 'https://api.together.xyz/v1/models', key: process.env.TOGETHER_API_KEY?.trim() },
           [AIProvider.COHERE]: { url: 'https://api.cohere.com/v1/models?endpoint=chat&page_size=100', key: process.env.COHERE_API_KEY?.trim() },
+          [AIProvider.XAI]: { url: 'https://api.x.ai/v1/models', key: process.env.XAI_API_KEY?.trim() },
+          [AIProvider.FIREWORKS]: { url: 'https://api.fireworks.ai/inference/v1/models', key: process.env.FIREWORKS_API_KEY?.trim() },
         };
 
         const config = openAICompatible[provider];
@@ -275,23 +274,13 @@ export async function prewarmHarmonyProviders(): Promise<HarmonyWarmStatus[]> {
             payload => (Array.isArray(payload) ? payload : (payload?.data || payload?.models || []))
               .map((item: any) => item?.id || item?.name),
           );
-          const resolved = provider === AIProvider.HUGGINGFACE
-            ? (catalog.size > 0 ? model : null)
-            : chooseCatalogModel(catalog, model, [
-                candidate => /gpt-oss|command|mistral|minimax|llama|qwen/i.test(candidate),
-                () => true,
-              ]);
+          const resolved = chooseCatalogModel(catalog, model, [
+            candidate => provider === AIProvider.XAI ? /grok/i.test(candidate) : false,
+            candidate => provider === AIProvider.FIREWORKS ? /gpt-oss|llama|qwen|mistral/i.test(candidate) : false,
+            candidate => /gpt-oss|command|mistral|llama|qwen|grok/i.test(candidate),
+            () => true,
+          ]);
           return record(provider, resolved || model, startedAt, resolved ? 'catalog' : 'degraded', resolved ? undefined : 'no live compatible model in provider catalog');
-        }
-
-        // Cohere/Together can intentionally ride the configured Hugging Face
-        // transport. Their health is proven by that transport rather than by a
-        // nonexistent direct key.
-        if (
-          (provider === AIProvider.COHERE || provider === AIProvider.TOGETHER)
-          && (process.env.HUGGINGFACE_API_TOKEN?.trim() || process.env.HUGGINGFACE_API_KEY?.trim())
-        ) {
-          return record(provider, model, startedAt, 'catalog');
         }
 
         return record(provider, model, startedAt, 'unknown');
