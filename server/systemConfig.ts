@@ -365,7 +365,7 @@ export function getCurrentTimestamp(): string {
  * Get active voice provider configuration
  */
 export function getActiveVoiceProvider(): VoiceProviderConfig {
-  return VOICE_PROVIDERS[DEFAULT_VOICE_PROVIDER] || VOICE_PROVIDERS.browser;
+  return VOICE_PROVIDERS[DEFAULT_VOICE_PROVIDER] || VOICE_PROVIDERS.adaptive;
 }
 
 /**
