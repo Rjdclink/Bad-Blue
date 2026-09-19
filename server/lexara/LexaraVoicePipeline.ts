@@ -388,7 +388,7 @@ export class LexaraVoicePipeline extends EventEmitter {
   /**
    * MAIN SYNTHESIS METHOD
    * 
-   * Complete path: Text → ElevenLabs → Persist → Return Reference
+   * Complete path: Text → canonical adaptive TTS mesh → Persist → Return Reference
    */
   async synthesize(request: VoiceSynthesisRequest): Promise<VoiceSynthesisResult> {
     const startTime = Date.now();
@@ -438,7 +438,8 @@ export class LexaraVoicePipeline extends EventEmitter {
     if (request.persist !== false) {
       try {
         const filepath = await this.persistence.persist(audioId, audioData, mimeType);
-        audioRef = this.persistence.getPlayableRef(audioId, 'mp3');
+        const extension = mimeType.includes('wav') ? 'wav' : mimeType.includes('mpeg') || mimeType.includes('mp3') ? 'mp3' : 'audio';
+        audioRef = this.persistence.getPlayableRef(audioId, extension);
         persisted = true;
         log.debug('[LexaraVoicePipeline] Audio persisted', { audioId, filepath });
       } catch (error) {
