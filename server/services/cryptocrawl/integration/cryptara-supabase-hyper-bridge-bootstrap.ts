@@ -9,6 +9,10 @@ import {
   stopCryptaraOverflowSuperWorker,
 } from './cryptara-overflow-super-worker.js';
 import { isCryptoCrawlerDatabaseAccessAllowed } from '../runtime/manual-power-state.js';
+import {
+  closeCryptaraParallelProxyPool,
+  reopenCryptaraParallelProxyPool,
+} from './cryptara-supabase-overflow-worker.js';
 
 export type CryptaraHyperBridgeBootstrapState =
   | 'idle'
@@ -52,6 +56,7 @@ export function startCryptaraHyperBridgeBootstrap(): Promise<void> {
   }
   if (probeInFlight) return probeInFlight;
 
+  reopenCryptaraParallelProxyPool();
   startCryptaraOverflowSuperWorker();
   startedAt = Date.now();
   completedAt = 0;
@@ -99,9 +104,10 @@ export function startCryptaraHyperBridgeBootstrap(): Promise<void> {
   return probeInFlight;
 }
 
-export function stopCryptaraHyperBridgeBootstrap(): void {
+export async function stopCryptaraHyperBridgeBootstrap(): Promise<void> {
   stopCryptaraOverflowSuperWorker();
   probeInFlight = null;
+  await closeCryptaraParallelProxyPool();
   state = 'idle';
   startedAt = 0;
   completedAt = Date.now();
