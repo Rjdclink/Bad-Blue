@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isCryptoCrawlerDatabaseAccessAllowed } from '../runtime/manual-power-state.js';
 import pg from 'pg';
 import {
   isPostgresConnectionString,
@@ -257,6 +258,10 @@ export async function withCryptaraParallelProxy<T>(
   workload: CryptaraParallelProxyWorkload,
   operation: (query: (text: string, values?: unknown[]) => Promise<any>) => Promise<T>,
 ): Promise<CryptaraParallelProxyResult<T>> {
+  if (!isCryptoCrawlerDatabaseAccessAllowed()) {
+    proxySkips += 1;
+    return { used: false, reason: 'master_power_off' };
+  }
   if (!allowedWorkloads.has(workload)) {
     proxySkips += 1;
     return { used: false, reason: 'workload_not_allowed' };
