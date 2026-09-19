@@ -37,14 +37,13 @@ export enum AIProvider {
   CLAUDE = 'claude',
   // Additional providers (December 2025)
   OPENROUTER = 'openrouter',
+  XAI = 'xai',
   DEEPSEEK = 'deepseek',
   COHERE = 'cohere',
   TOGETHER = 'together',
   PERPLEXITY = 'perplexity',
   FIREWORKS = 'fireworks',
   CEREBRAS = 'cerebras',
-  SAMBANOVA = 'sambanova',
-  HUGGINGFACE = 'huggingface',
 }
 
 export enum UsageContext {
