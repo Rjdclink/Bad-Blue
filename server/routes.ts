@@ -3497,6 +3497,56 @@ Contact: ${foiaRequest.userEmail || userEmail}
     }
   });
 
+  async function resolvePantheonReportRouteAccess(req: any, res: any, reportId: string): Promise<{
+    authorized: boolean;
+    userId: string;
+    privileged: boolean;
+    status?: number;
+    code?: string;
+    message?: string;
+  }> {
+    const { verifyPantheonReportAccess } = await import('./services/pantheon/PantheonReportAccess');
+    const capability = verifyPantheonReportAccess(req, reportId);
+    if (capability) {
+      return {
+        authorized: true,
+        userId: capability.userId,
+        privileged: false,
+      };
+    }
+
+    const access = await resolvePaidAccess(req, res);
+    if (!access.authenticated) {
+      return {
+        authorized: false,
+        userId: '',
+        privileged: false,
+        status: 401,
+        code: 'unauthenticated',
+        message: 'Authentication required.',
+      };
+    }
+    if (!access.authorized) {
+      const unavailable = access.reason === 'auth_store_unavailable';
+      return {
+        authorized: false,
+        userId: '',
+        privileged: false,
+        status: unavailable ? 503 : 402,
+        code: unavailable ? 'auth_state_unavailable' : 'subscription_required',
+        message: unavailable
+          ? 'Authentication state is temporarily unavailable.'
+          : 'An active LegalWhat subscription is required.',
+      };
+    }
+
+    return {
+      authorized: true,
+      userId: String(access.user?.id || access.user?.claims?.sub || req.user?.id || req.user?.claims?.sub || '').trim(),
+      privileged: Boolean(access.user?.isMasterBypass || access.user?.isAdminBypass || access.user?.isAdmin),
+    };
+  }
+
   // PANTHEON BACKGROUND REPORT JOBS
   // Long investigations run independently of the browser request and persist in
   // people_search_reports so refresh/reconnect does not destroy the report.
@@ -3549,6 +3599,9 @@ Contact: ${foiaRequest.userEmail || userEmail}
         },
       });
 
+      const { issuePantheonReportAccess } = await import('./services/pantheon/PantheonReportAccess');
+      issuePantheonReportAccess(res, initial.id, userId);
+
       const { startPantheonReportJob } = await import('./services/pantheon/PantheonBackgroundReportJob');
       void startPantheonReportJob({
         reportId: initial.id,
@@ -3566,6 +3619,8 @@ Contact: ${foiaRequest.userEmail || userEmail}
         status: 'processing',
         searchDepth,
         budgetMs,
+        monitorUrl: `/api/osint/report-jobs/${initial.id}`,
+        downloadUrl: `/api/osint/report-jobs/${initial.id}/download`,
       });
     } catch (error) {
       console.error('[PANTHEON REPORT JOB] Unable to create report job:', error);
@@ -3578,30 +3633,23 @@ Contact: ${foiaRequest.userEmail || userEmail}
   });
 
   app.get('/api/osint/report-jobs/:reportId', async (req, res) => {
-    const access = await resolvePaidAccess(req, res);
-    if (!access.authenticated) {
-      return res.status(401).json({ success: false, code: 'unauthenticated', message: 'Authentication required.' });
-    }
-    if (!access.authorized) {
-      const unavailable = access.reason === 'auth_store_unavailable';
-      return res.status(unavailable ? 503 : 402).json({
+    const reportId = String(req.params.reportId || '');
+    const routeAccess = await resolvePantheonReportRouteAccess(req, res, reportId);
+    if (!routeAccess.authorized) {
+      if (routeAccess.status === 503) res.setHeader('Retry-After', '5');
+      return res.status(routeAccess.status || 403).json({
         success: false,
-        code: unavailable ? 'auth_state_unavailable' : 'subscription_required',
-        message: unavailable
-          ? 'Authentication state is temporarily unavailable.'
-          : 'An active LegalWhat subscription is required.',
+        code: routeAccess.code || 'forbidden',
+        message: routeAccess.message || 'Report access denied.',
       });
     }
 
     const { getPantheonReportRecord } = await import('./services/pantheon/PantheonReportStore');
-    const report = await getPantheonReportRecord(String(req.params.reportId || ''));
+    const report = await getPantheonReportRecord(reportId);
     if (!report) {
       return res.status(404).json({ success: false, code: 'not_found', message: 'Report job not found.' });
     }
-
-    const userId = String(access.user?.id || access.user?.claims?.sub || req.user?.id || req.user?.claims?.sub || '').trim();
-    const isPrivileged = Boolean(access.user?.isMasterBypass || access.user?.isAdminBypass || access.user?.isAdmin);
-    if (!isPrivileged && report.userId !== userId) {
+    if (!routeAccess.privileged && report.userId !== routeAccess.userId) {
       return res.status(403).json({ success: false, code: 'forbidden', message: 'Report job does not belong to this account.' });
     }
 
@@ -3609,22 +3657,92 @@ Contact: ${foiaRequest.userEmail || userEmail}
       const { resumePantheonReportJobFromRecord } = await import('./services/pantheon/PantheonBackgroundReportJob');
       const resumed = resumePantheonReportJobFromRecord(report);
       if (resumed) void resumed.catch(error => console.error('[PANTHEON REPORT JOB] Resume failed:', error));
+      res.setHeader('Retry-After', '2');
     }
 
     const envelope = report.reportData && typeof report.reportData === 'object'
       ? report.reportData as { job?: unknown; report?: unknown }
       : {};
 
+    res.setHeader('Cache-Control', 'private, no-store');
     return res.json({
       success: true,
       jobId: report.id,
       status: report.status,
       job: envelope.job || null,
-      data: report.status === 'completed' ? envelope.report || null : null,
+      subjectName: report.subjectName || report.searchQuery,
+      downloadReady: report.status === 'completed' && Boolean(envelope.report),
+      downloadUrl: report.status === 'completed' && envelope.report
+        ? `/api/osint/report-jobs/${report.id}/download`
+        : null,
       error: report.status === 'failed' ? report.errorMessage || 'Background report failed.' : null,
       createdAt: report.createdAt,
       completedAt: report.completedAt,
     });
+  });
+
+  app.get('/api/osint/report-jobs/:reportId/download', async (req, res) => {
+    const reportId = String(req.params.reportId || '');
+    const routeAccess = await resolvePantheonReportRouteAccess(req, res, reportId);
+    if (!routeAccess.authorized) {
+      if (routeAccess.status === 503) res.setHeader('Retry-After', '5');
+      return res.status(routeAccess.status || 403).json({
+        success: false,
+        code: routeAccess.code || 'forbidden',
+        message: routeAccess.message || 'Report access denied.',
+      });
+    }
+
+    const { getPantheonReportRecord } = await import('./services/pantheon/PantheonReportStore');
+    const report = await getPantheonReportRecord(reportId);
+    if (!report) {
+      return res.status(404).json({ success: false, code: 'not_found', message: 'Report job not found.' });
+    }
+    if (!routeAccess.privileged && report.userId !== routeAccess.userId) {
+      return res.status(403).json({ success: false, code: 'forbidden', message: 'Report job does not belong to this account.' });
+    }
+
+    const envelope = report.reportData && typeof report.reportData === 'object'
+      ? report.reportData as { job?: Record<string, unknown>; report?: unknown }
+      : {};
+    if (report.status !== 'completed' || !envelope.report) {
+      return res.status(409).json({
+        success: false,
+        code: 'report_not_ready',
+        message: report.status === 'failed'
+          ? report.errorMessage || 'Background report failed.'
+          : 'Background report is still being generated.',
+      });
+    }
+
+    try {
+      const {
+        generatePantheonBackgroundReportPdf,
+        pantheonReportFilename,
+      } = await import('./services/pantheon/PantheonBackgroundReportPdf');
+      const pdf = await generatePantheonBackgroundReportPdf({
+        reportId: report.id,
+        report: envelope.report as any,
+        job: envelope.job || null,
+        createdAt: report.createdAt,
+        completedAt: report.completedAt,
+      });
+      const filename = pantheonReportFilename(envelope.report as any, report.id);
+
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Length', String(pdf.length));
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      return res.send(pdf);
+    } catch (error) {
+      console.error('[PANTHEON REPORT DOWNLOAD] PDF generation failed:', error);
+      return res.status(500).json({
+        success: false,
+        code: 'report_render_failed',
+        message: 'The completed report could not be rendered for download.',
+      });
+    }
   });
 
   // SEED-FIRST MODE: always return a controlled 200 response for the UI.
