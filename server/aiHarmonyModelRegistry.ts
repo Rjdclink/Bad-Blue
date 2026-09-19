@@ -18,14 +18,13 @@ const PROVIDER = {
   GPT5_MINI: asProvider('gpt5_mini'),
   CLAUDE_OPUS: asProvider('claude_opus'),
   OPENROUTER: asProvider('openrouter'),
-  HUGGINGFACE: asProvider('huggingface'),
+  XAI: asProvider('xai'),
   LMAI: asProvider('lmai'),
   COHERE: asProvider('cohere'),
   TOGETHER: asProvider('together'),
   PERPLEXITY: asProvider('perplexity'),
   FIREWORKS: asProvider('fireworks'),
   CEREBRAS: asProvider('cerebras'),
-  SAMBANOVA: asProvider('sambanova'),
 } as const;
 
 /**
@@ -50,13 +49,11 @@ export const CURRENT_AI_MODELS = {
   openaiFastViaOpenRouter: process.env.OPENAI_FAST_MODEL?.trim() || 'openai/gpt-5.6-luna',
   gptOss: process.env.GPT_OSS_MODEL?.trim() || 'openai/gpt-oss-120b',
   openRouterAuto: process.env.OPENROUTER_MODEL?.trim() || 'openrouter/auto',
-  huggingFace: process.env.HUGGINGFACE_MODEL?.trim() || 'openai/gpt-oss-120b:fastest',
+  xai: process.env.XAI_MODEL?.trim() || 'grok-4.6',
   cerebras: process.env.CEREBRAS_MODEL?.trim() || 'gpt-oss-120b',
-  sambaNova: process.env.SAMBANOVA_MODEL?.trim() || 'MiniMax-M3',
+  fireworks: process.env.FIREWORKS_MODEL?.trim() || 'accounts/fireworks/models/gpt-oss-120b',
   cohere: process.env.COHERE_MODEL?.trim() || 'command-a-plus-05-2026',
-  cohereViaHuggingFace: process.env.COHERE_HF_MODEL?.trim() || 'CohereLabs/command-a-plus-05-2026-w4a4:cohere',
   together: process.env.TOGETHER_MODEL?.trim() || 'openai/gpt-oss-120b',
-  togetherViaHuggingFace: process.env.TOGETHER_HF_MODEL?.trim() || 'openai/gpt-oss-120b:together',
 } as const;
 
 export type HarmonyCapability =
@@ -157,10 +154,10 @@ export const HARMONY_17_PARTICIPANTS: readonly HarmonyParticipant[] = [
     configured: () => !!process.env.OPENROUTER_API_KEY?.trim(),
   },
   {
-    provider: PROVIDER.HUGGINGFACE,
-    model: CURRENT_AI_MODELS.huggingFace,
-    capabilities: ['deep-reasoning', 'coding', 'structured-output'],
-    configured: () => !!(process.env.HUGGINGFACE_API_TOKEN?.trim() || process.env.HUGGINGFACE_API_KEY?.trim()),
+    provider: PROVIDER.XAI,
+    model: CURRENT_AI_MODELS.xai,
+    capabilities: ['fast-chat', 'deep-reasoning', 'coding', 'research', 'multimodal', 'agentic', 'structured-output'],
+    configured: () => !!process.env.XAI_API_KEY?.trim(),
   },
   {
     provider: PROVIDER.CEREBRAS,
@@ -169,30 +166,22 @@ export const HARMONY_17_PARTICIPANTS: readonly HarmonyParticipant[] = [
     configured: () => !!process.env.CEREBRAS_API_KEY?.trim(),
   },
   {
-    provider: PROVIDER.SAMBANOVA,
-    model: CURRENT_AI_MODELS.sambaNova,
-    capabilities: ['fast-chat', 'deep-reasoning', 'coding', 'multimodal'],
-    configured: () => !!process.env.SAMBANOVA_API_KEY?.trim(),
+    provider: PROVIDER.FIREWORKS,
+    model: CURRENT_AI_MODELS.fireworks,
+    capabilities: ['fast-chat', 'deep-reasoning', 'coding', 'structured-output', 'agentic'],
+    configured: () => !!process.env.FIREWORKS_API_KEY?.trim(),
   },
   {
     provider: PROVIDER.COHERE,
     model: CURRENT_AI_MODELS.cohere,
     capabilities: ['legal-analysis', 'verification', 'research', 'multimodal', 'agentic', 'structured-output'],
-    configured: () => !!(
-      process.env.COHERE_API_KEY?.trim()
-      || process.env.HUGGINGFACE_API_TOKEN?.trim()
-      || process.env.HUGGINGFACE_API_KEY?.trim()
-    ),
+    configured: () => !!process.env.COHERE_API_KEY?.trim(),
   },
   {
     provider: PROVIDER.TOGETHER,
     model: CURRENT_AI_MODELS.together,
     capabilities: ['deep-reasoning', 'coding', 'agentic'],
-    configured: () => !!(
-      process.env.TOGETHER_API_KEY?.trim()
-      || process.env.HUGGINGFACE_API_TOKEN?.trim()
-      || process.env.HUGGINGFACE_API_KEY?.trim()
-    ),
+    configured: () => !!process.env.TOGETHER_API_KEY?.trim(),
   },
 ] as const;
 
@@ -206,7 +195,6 @@ const LEGACY_MODEL_ALIASES: Partial<Record<AIProvider, string>> = {
   [PROVIDER.CODE_LLAMA]: CURRENT_AI_MODELS.qwen,
   [PROVIDER.GPT_NEOX]: CURRENT_AI_MODELS.gptOss,
   [PROVIDER.PERPLEXITY]: CURRENT_AI_MODELS.openRouterAuto,
-  [PROVIDER.FIREWORKS]: CURRENT_AI_MODELS.openRouterAuto,
 };
 
 export function getConfiguredHarmonyParticipants(): HarmonyParticipant[] {
