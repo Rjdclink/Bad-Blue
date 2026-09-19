@@ -23,14 +23,18 @@ const governance = read('server/services/cryptocrawl/governance/index.ts');
 const superWorker = read('server/services/cryptocrawl/integration/cryptara-super-worker.ts');
 const leaseAuthority = read('server/services/cryptocrawl/execution/resource-lease-authority.ts');
 const stageState = read('server/services/cryptocrawl/governance/stage-state-store.ts');
+const badblueWorker = read('server/badblueWorker.ts');
 
 requirePattern(railway, /healthcheckPath\s*=\s*"\/api\/ready"/, 'Railway must promote only a fully initialized deployment');
 requirePattern(index, /function\s+databaseRetryDelayMs[\s\S]*Math\.random/, 'database retry must use bounded jitter');
 requirePattern(index, /function\s+databaseErrorText[\s\S]*\.cause/, 'database admission classification must inspect wrapped driver causes');
 requirePattern(index, /function\s+isDatabaseAdmissionPressureError[\s\S]{0,1400}08006[\s\S]{0,180}timeoutContext/, '08006 must be pressure only when accompanied by timeout/termination context');
-requirePattern(index, /function\s+startupDatabaseAdmissionBudgetMs[\s\S]{0,1200}RAILWAY_HEALTHCHECK_TIMEOUT_SEC[\s\S]{0,1000}reserveMs/, 'primary fallback admission must consume only a bounded portion of the Railway readiness window');
-requirePattern(index, /function\s+retryDatabaseProbeWithinBudget[\s\S]{0,1200}while\s*\(Date\.now\(\)\s*-\s*startedAt\s*<\s*budgetMs\)/, 'startup must retain bounded primary fallback admission only when overflow is unavailable');
-requirePattern(index, /retryDatabaseProbeWithinBudget[\s\S]{0,2200}await\s+db\.execute\('SELECT 1'\)[\s\S]{0,2200}databaseRetryDelayMs\(attempt\)/, 'overflow-unavailable fallback may use one serialized primary probe with jitter');
+requirePattern(index, /const\s+STARTUP_DATABASE_MAX_PROBES\s*=\s*5/, 'startup must hard-cap LegalWhat database admission probes');
+requirePattern(index, /const\s+STARTUP_DATABASE_ADMISSION_CAP_MS\s*=\s*120_000/, 'startup must cap database admission time below the Railway health window');
+requirePattern(index, /function\s+startupDatabaseAdmissionBudgetMs[\s\S]{0,1400}RAILWAY_HEALTHCHECK_TIMEOUT_SEC[\s\S]{0,1400}STARTUP_DATABASE_ADMISSION_CAP_MS/, 'primary fallback admission must consume only a bounded portion of the Railway readiness window');
+requirePattern(index, /function\s+retryDatabaseProbeWithinBudget[\s\S]{0,1400}attempt\s*<\s*STARTUP_DATABASE_MAX_PROBES/, 'startup must bound primary fallback by both time and probe count');
+requirePattern(index, /retryDatabaseProbeWithinBudget[\s\S]{0,2400}await\s+pool\.query\(\{\s*text:\s*'SELECT 1',\s*query_timeout:\s*5_000\s*\}\)[\s\S]{0,2400}databaseRetryDelayMs\(attempt\)/, 'overflow-unavailable fallback must use one serialized canonical-pool probe with jitter');
+requirePattern(index, /databaseErrorText\(error\)\.slice\(0,\s*700\)/, 'startup probe telemetry must retain the real bounded PostgreSQL\/Supavisor cause');
 forbidPattern(index, /retryDatabaseProbeWithinBudget[\s\S]{0,2600}Promise\.all\s*\(/, 'primary fallback recovery must not fan out parallel probes');
 requirePattern(index, /function\s+isPermanentDatabaseStartupError[\s\S]{0,900}28p01[\s\S]{0,900}password authentication failed/, 'permanent authentication/configuration failures must be classified separately from pressure');
 requirePattern(index, /isPermanentDatabaseStartupError\(error\)\s*\|\|\s*isLocalPoolFailure\(error\)[\s\S]{0,100}throw\s+error/, 'permanent/local pool failures must fail out of the fallback retry loop');
@@ -41,6 +45,11 @@ requirePattern(index, /else\s+if\s*\(isDatabaseAdmissionPressureError\(lastError
 requirePattern(index, /else\s+if\s*\(isPermanentDatabaseStartupError\(lastError\)\)[\s\S]{0,260}pool reset suppressed/i, 'permanent auth/config faults must not recreate pools');
 requirePattern(index, /Unknown transient database\/network failure; pool reset suppressed to avoid reconnect amplification/i, 'unknown transient network faults must suppress pool recreation');
 requirePattern(index, /localPoolFailure:\s*isLocalPoolFailure\(lastError\)/, 'startup telemetry must distinguish proven local pool failure from upstream/transient failure');
+requirePattern(index, /const\s+\{\s*pool,\s*coordinationPool\s*\}\s*=\s*await\s+import\('\.\/db'\)[\s\S]{0,500}Promise\.allSettled/, 'graceful shutdown must close both LegalWhat database lanes');
+requirePattern(badblueWorker, /probeDatabaseAuthority[\s\S]{0,700}const\s+\{\s*pool\s*\}\s*=\s*await\s+import\('\.\/db'\)[\s\S]{0,300}pool\.query\(\{\s*text:\s*'SELECT 1',\s*query_timeout:\s*5_000\s*\}\)/, 'LegalWhat heartbeat must use only the canonical application pool');
+forbidPattern(badblueWorker, /CRYPTOCRAWL_OVERFLOW_RUNTIME_SCHEMA_READY|cryptocrawl-runtime-database/, 'LegalWhat heartbeat must never wake or borrow CryptoCrawler Overflow');
+forbidPattern(badblueWorker, /repairDatabaseConnection[\s\S]{0,1800}resetPool\s*\(/, 'LegalWhat maintenance must not recreate pools after upstream Supabase failures');
+requirePattern(badblueWorker, /automatic pool recreation suppressed[\s\S]{0,900}upstream_admission_pressure_no_pool_reset/, 'worker must record pressure without reconnect amplification');
 
 // CryptoCrawler must not participate in process-start database admission. LegalWhat
 // proves its own application database; CryptoCrawler Overflow/schema readiness is
