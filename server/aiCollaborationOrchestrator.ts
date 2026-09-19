@@ -312,11 +312,20 @@ async function withHarmonyDeadline<T>(
   promise: Promise<T>,
   timeoutMs: number,
   provider: AIProvider,
+  signal?: AbortSignal,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let abortHandler: (() => void) | undefined;
   try {
+    const abortPromise = new Promise<T>((_resolve, reject) => {
+      if (!signal) return;
+      abortHandler = () => reject(new DOMException('Superseded generation', 'AbortError'));
+      if (signal.aborted) abortHandler();
+      else signal.addEventListener('abort', abortHandler, { once: true });
+    });
     return await Promise.race([
       promise,
+      abortPromise,
       new Promise<T>((_resolve, reject) => {
         timer = setTimeout(
           () => reject(new Error(`${provider} timed out after ${timeoutMs}ms`)),
@@ -326,6 +335,7 @@ async function withHarmonyDeadline<T>(
     ]);
   } finally {
     if (timer) clearTimeout(timer);
+    if (signal && abortHandler) signal.removeEventListener('abort', abortHandler);
   }
 }
 
@@ -388,17 +398,25 @@ export class AICollaborationOrchestrator {
       maxParticipants?: number;
       requestTimeoutMs?: number;
       maxFallbacks?: number;
+      signal?: AbortSignal;
     } = {},
   ): Promise<OrchestratedResponse> {
     const startTime = Date.now();
     const context = attributes.context || UsageContext.USER;
     
-    const eligibleProviders = getAvailableProvidersForContext(context, options.providerPolicy);
+    const configuredProviders = getAvailableProvidersForContext(context, options.providerPolicy);
+    const callerPool = new Set(_availableProviders.length ? _availableProviders : configuredProviders);
+    const eligibleProviders = configuredProviders.filter(provider => callerPool.has(provider));
     const healthyProviders = eligibleProviders.filter(harmonyProviderAvailable);
-    const candidateProviders = healthyProviders;
+    const candidateProviders = healthyProviders.length > 0 ? healthyProviders : eligibleProviders;
 
     if (candidateProviders.length === 0) {
       throw new Error(`No providers available for ${context} context`);
+    }
+    if (healthyProviders.length === 0 && eligibleProviders.length > 0) {
+      console.warn('[HARMONY] All configured routes were cooling; entering bounded recovery mode', {
+        configured: eligibleProviders.length,
+      });
     }
 
     // Harmony is a capability pool, not a fan-out mandate. Select the smallest
@@ -414,21 +432,30 @@ export class AICollaborationOrchestrator {
     const strategy = this.selectStrategy(attributes, providers);
     
     // Build collaboration tasks
+    const reserveProviders = candidateProviders.filter(provider => !providers.includes(provider));
     const tasks = this.buildCollaborationTasks(
       taskName,
       query,
       attributes,
       providers,
       strategy
-    ).map(task => ({
-      ...task,
-      systemPrompt: options.systemPrompt,
-      requestTimeoutMs: task.requestTimeoutMs || task.timeout || options.requestTimeoutMs,
-      maxFallbacks: task.maxFallbacks ?? options.maxFallbacks,
-      // Failover can use any healthy capability-compatible route from the pool,
-      // including routes not selected for the first attempt.
-      fallbackProviders: candidateProviders.filter(provider => provider !== task.provider),
-    }));
+    ).map((task, index) => {
+      const offset = reserveProviders.length ? index % reserveProviders.length : 0;
+      const rotatedReserve = reserveProviders.length
+        ? [...reserveProviders.slice(offset), ...reserveProviders.slice(0, offset)]
+        : [];
+      return {
+        ...task,
+        systemPrompt: options.systemPrompt,
+        requestTimeoutMs: task.requestTimeoutMs || task.timeout || options.requestTimeoutMs,
+        maxFallbacks: task.maxFallbacks ?? options.maxFallbacks,
+        signal: options.signal,
+        fallbackProviders: [
+          ...rotatedReserve,
+          ...providers.filter(provider => provider !== task.provider),
+        ],
+      };
+    });
 
     // Strategy builders that already end in a synthesizer keep that single
     // authority. Multi-perspective strategies get one synthesis pass; parallel
@@ -496,7 +523,10 @@ export class AICollaborationOrchestrator {
     attrs: TaskAttributes,
     providers: AIProvider[]
   ): string {
-    // Legal analysis requires careful orchestration
+    if (attrs.needsLegalAnalysis && attrs.needsFastResponse) {
+      return 'legal-fast';
+    }
+
     if (attrs.needsLegalAnalysis) {
       return 'legal-analysis';
     }
@@ -548,6 +578,7 @@ export class AICollaborationOrchestrator {
     const tasks: CollaborationTask[] = [];
     
     switch (strategy) {
+      case 'legal-fast':
       case 'legal-analysis':
         tasks.push(...this.buildLegalAnalysisTasks(taskName, query, attrs, providers));
         break;
@@ -1423,7 +1454,7 @@ export class AICollaborationOrchestrator {
     if (attrs.needsFastResponse) desired.push('fast-chat');
 
     const defaultMax = attrs.needsFastResponse
-      ? 2
+      ? 3
       : attrs.complexity === TaskComplexity.COMPREHENSIVE
         ? 3
         : attrs.complexity === TaskComplexity.MODERATE
@@ -1487,8 +1518,8 @@ export class AICollaborationOrchestrator {
     return [...providers].sort((a, b) => {
       const score = (provider: AIProvider) =>
         getHarmonyCapabilities(provider).reduce(
-          (sum, capability) => sum + (desired.has(capability) ? 1 : 0),
-          0,
+          (sum, capability) => sum + (desired.has(capability) ? 25 : 0),
+          harmonyProviderRuntimeScore(provider),
         );
       return score(b) - score(a);
     });
