@@ -138,9 +138,7 @@ function harmonyTransportDomain(provider: AIProvider): string {
 function isHarmonyRequestCancellation(error: unknown, signal?: AbortSignal): boolean {
   if (signal?.aborted) return true;
   const message = error instanceof Error ? error.message : String(error);
-  const name = error instanceof Error ? error.name : '';
-  return /aborterror/i.test(name)
-    || /operation was aborted|request was aborted|cancelled|canceled|superseded generation/i.test(message);
+  return /superseded generation/i.test(message);
 }
 
 interface HarmonyProviderRuntime {
