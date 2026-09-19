@@ -60,6 +60,34 @@ export class StarTrekCrawler {
   private primeDirective: boolean = true;
   private lastRequestTime: number = 0;
   private requestCount: number = 0;
+  private navigationSeeds: string[] = [
+    'https://www.usa.gov',
+    'https://data.gov',
+    'https://www.archives.gov',
+    'https://www.wikidata.org',
+    'https://www.courtlistener.com',
+  ];
+
+  /**
+   * Replace the default public navigation set with caller-supplied, authorized seeds.
+   */
+  setNavigationSeeds(seeds: string[]): void {
+    const normalized = Array.from(new Set(
+      seeds
+        .map(seed => {
+          try {
+            return new URL(seed).toString().replace(/\/$/, '');
+          } catch {
+            return '';
+          }
+        })
+        .filter(Boolean)
+    ));
+    if (normalized.length === 0) {
+      throw new Error('At least one valid http(s) navigation seed is required');
+    }
+    this.navigationSeeds = normalized;
+  }
 
   /**
    * Set the Prime Directive mode
@@ -103,63 +131,18 @@ export class StarTrekCrawler {
    */
   async warpJump(distance: WarpDistance): Promise<string> {
     await this.waitForRateLimit();
-    
-    switch (distance) {
-      case 'near':
-        return this.nearJump();
-      case 'far':
-        return this.farJump();
-      case 'galactic':
-        return this.galacticJump();
-      default:
-        throw new Error('Invalid warp distance');
-    }
-  }
 
-  private nearJump(): string {
-    // Jump to a single related domain (simulate 10-100 possible, pick one)
-    const count = Math.floor(Math.random() * 91) + 10; // 10-100
-    const prefixes = ['www', 'api', 'blog', 'shop', 'mail', 'news', 'forum', 'wiki'];
-    const prefix = prefixes[Math.floor(Math.random() * prefixes.length)];
-    const index = Math.floor(Math.random() * count);
-    return `https://${prefix}-${index}.example.com`;
-  }
+    const offsets: Record<WarpDistance, number> = {
+      near: 0,
+      far: 2,
+      galactic: 4,
+    };
+    const offset = offsets[distance];
+    if (offset === undefined) throw new Error('Invalid warp distance');
+    if (this.navigationSeeds.length === 0) throw new Error('No navigation seeds configured');
 
-  private farJump(): string {
-    // Jump 1000-10000 random domains
-    const count = Math.floor(Math.random() * 9001) + 1000; // 1000-10000
-    const seed = Math.floor(Math.random() * count);
-    return `https://site-${seed}.example.com`;
-  }
-
-  private galacticJump(): string {
-    // Random TLD exploration
-    const tlds = ['.com', '.org', '.net', '.io', '.ai', '.tech', '.dev', '.app', '.co', '.xyz'];
-    const tld = tlds[Math.floor(Math.random() * tlds.length)];
-    const name = this.generateRandomName();
-    return `https://${name}${tld}`;
-  }
-
-  private generateRelatedDomains(count: number): string[] {
-    const prefixes = ['www', 'api', 'blog', 'shop', 'mail', 'news', 'forum', 'wiki'];
-    const domains: string[] = [];
-    for (let i = 0; i < count; i++) {
-      const prefix = prefixes[Math.floor(Math.random() * prefixes.length)];
-      domains.push(`https://${prefix}-${i}.example.com`);
-    }
-    return domains;
-  }
-
-  private generateRandomName(): string {
-    const consonants = 'bcdfghjklmnpqrstvwxyz';
-    const vowels = 'aeiou';
-    let name = '';
-    for (let i = 0; i < 6; i++) {
-      name += i % 2 === 0 
-        ? consonants[Math.floor(Math.random() * consonants.length)]
-        : vowels[Math.floor(Math.random() * vowels.length)];
-    }
-    return name;
+    const index = (offset + this.requestCount) % this.navigationSeeds.length;
+    return this.navigationSeeds[index];
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -174,15 +157,21 @@ export class StarTrekCrawler {
     await this.waitForRateLimit();
     
     const deepUrls = this.predictDeepUrls(target);
-    const successRate = 0.7;
-    
-    // Simulate 70% success rate
-    if (Math.random() < successRate) {
-      const selectedUrl = deepUrls[Math.floor(Math.random() * deepUrls.length)];
-      console.log(`✅ Beamed to: ${selectedUrl}`);
-    } else {
-      throw new Error('Transport failed - unable to achieve pattern lock');
+    for (const candidate of deepUrls) {
+      try {
+        const response = await executeRequest(candidate, {
+          method: 'HEAD',
+          timeout: 5000,
+        });
+        if (response.ok) {
+          console.log(`✅ Beamed to: ${candidate}`);
+          return;
+        }
+      } catch {
+        // Candidate failure is local; try the next predicted public path.
+      }
     }
+    throw new Error('Transport failed - no responsive predicted deep URL');
   }
 
   /**
@@ -227,16 +216,8 @@ export class StarTrekCrawler {
    */
   async longRangeScan(): Promise<string[]> {
     await this.waitForRateLimit();
-    
-    const discovered: string[] = [];
-    const scanRange = this.warpSpeed * 10; // Higher warp = wider scan
-    
-    for (let i = 0; i < scanRange; i++) {
-      const target = this.galacticJump();
-      discovered.push(target);
-    }
-    
-    return discovered;
+    const scanRange = Math.max(1, Math.min(this.navigationSeeds.length, this.warpSpeed));
+    return this.navigationSeeds.slice(0, scanRange);
   }
 
   /**
