@@ -22,6 +22,7 @@ import {
 import { cryptaraGovernance } from '../governance/cryptara-integration.js';
 import {
   getCryptoCrawlerManualPowerPhase,
+  isCryptoCrawlerMasterPowerOn,
   setCryptoCrawlerManualPowerPhase,
 } from '../runtime/manual-power-state.js';
 import {
@@ -82,22 +83,39 @@ router.get('/status', (req, res) => {
 });
 
 // GET /admin/crypto/health - System health check (public for dashboard)
-router.get('/health', async (req, res) => {
+router.get('/health', async (_req, res) => {
+  if (!isCryptoCrawlerMasterPowerOn()) {
+    return res.json({
+      status: 'stopped',
+      uptime: 0,
+      cryptoCrawl: cryptoCrawlState.getStatus(),
+      lifecycle: systemState.lifecycle,
+      lastError: systemState.lastError,
+      masterPower: getCryptoCrawlerManualPowerPhase(),
+      checks: {
+        database: { status: 'offline', queried: false },
+        rpcEndpoints: { status: 'offline', queried: false },
+        memoryUsage: process.memoryUsage().heapUsed / 1024 / 1024,
+        eventLoop: process.uptime(),
+      },
+    });
+  }
+
   const health = {
     status: systemState.lifecycle.toLowerCase(),
     uptime: systemState.running ? Date.now() - systemState.startedAt : 0,
     cryptoCrawl: cryptoCrawlState.getStatus(),
     lifecycle: systemState.lifecycle,
     lastError: systemState.lastError,
+    masterPower: getCryptoCrawlerManualPowerPhase(),
     checks: {
       database: await checkDatabase(),
       rpcEndpoints: await checkRPCEndpoints(),
       memoryUsage: process.memoryUsage().heapUsed / 1024 / 1024,
-      eventLoop: process.uptime()
-    }
+      eventLoop: process.uptime(),
+    },
   };
-  
-  res.json(health);
+  return res.json(health);
 });
 
 // ============================================
@@ -121,6 +139,29 @@ const requireCryptoControlAuthority = (req: any, res: any, next: any) => {
   return next();
 };
 router.use(requireCryptoControlAuthority);
+
+const offSafeControlPaths = new Set([
+  '/start',
+  '/stop',
+  '/status',
+  '/health',
+  '/verify-canonical',
+  '/verify-chains',
+  '/mode',
+  '/config',
+  '/logs',
+]);
+
+router.use((req, res, next) => {
+  if (isCryptoCrawlerMasterPowerOn() || offSafeControlPaths.has(req.path)) return next();
+  return res.status(409).json({
+    success: false,
+    error: 'CRYPTOCRAWLER_MASTER_POWER_OFF',
+    message: 'CryptoCrawler Master Power is OFF. Start CryptoCrawler from the Master Dashboard before using runtime controls.',
+    lifecycle: systemState.lifecycle,
+    masterPower: getCryptoCrawlerManualPowerPhase(),
+  });
+});
 
 // ============================================
 // GOVERNANCE ROUTES (Stage 1–6 control plane)
