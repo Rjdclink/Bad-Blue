@@ -57,6 +57,8 @@ has(runtimeDatabase, /installManualPowerDatabaseGuard\(nextPool,\s*'coordination
 has(runtimeDatabase, /export async function closeCryptocrawlRuntimeDatabasePools\(\)/, 'master stop must close CryptoCrawler database sockets');
 has(runtimeDatabase, /export function reopenCryptocrawlRuntimeDatabasePools\(\)/, 'manual start must recreate CryptoCrawler database pools after a true stop');
 has(overflowBootstrap, /if\s*\(!isCryptoCrawlerDatabaseAccessAllowed\(\)\)/, 'Overflow bootstrap must fail closed while master power is OFF');
+has(overflowBootstrap, /await closeCryptaraParallelProxyPool\(\)/, 'Overflow bootstrap stop must close auxiliary Supabase sockets');
+has(overflowBootstrap, /reopenCryptaraParallelProxyPool\(\)/, 'manual start must recreate the auxiliary Overflow pool before use');
 has(migrations, /Skipped while master power is OFF; zero CryptoCrawler schema I\/O executed/, 'application startup migrations must skip CryptoCrawler schema I/O while OFF');
 
 lacks(routes, /startBeamOnBoot\(\)/, 'application route registration must not emit a CryptoCrawler Beam pulse at boot');
