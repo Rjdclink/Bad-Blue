@@ -29,6 +29,7 @@ const viteConfig = read('vite.config.ts');
 const serverVite = read('server/vite.ts');
 const systemConfig = read('server/systemConfig.ts');
 const voicePipeline = read('server/lexara/LexaraVoicePipeline.ts');
+const voiceService = read('server/voiceSynthesisService.ts');
 const review = read('docs/LEXARA_INTENT_REALIZATION_30_SOURCE_REVIEW_20260918.md');
 const voiceReliabilityReview = read('docs/LEXARA_VOICE_RELIABILITY_10_SOURCE_REVIEW_20260918.md');
 const turnGroundingReview = read('docs/LEXARA_TURN_GROUNDING_30_SOURCE_REVIEW_20260918.md');
@@ -138,9 +139,16 @@ must(
     ttsMesh.includes("'openrouter'") &&
     ttsMesh.includes("'azure'") &&
     ttsMesh.includes("'elevenlabs'") &&
-    ttsMesh.includes('billing_blocked') &&
+    ttsMesh.includes('configuration_blocked') &&
+    ttsMesh.includes('refreshLexaraTTSReadiness') &&
+    ttsMesh.includes('verifyProvider') &&
+    ttsMesh.includes('/v1/audio/voices?type=preset') &&
+    ttsMesh.includes("google/gemini-3.1-flash-tts-preview") &&
+    ttsMesh.includes("mistralai/voxtral-mini-tts-2603") &&
+    ttsMesh.includes('/v1/user/subscription') &&
+    !ttsMesh.includes("process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY") &&
     ttsMesh.includes('synthesizeLexaraSpeechWithFailover'),
-  'LEXARA keeps one acoustic persona across a quota-aware multi-provider TTS mesh with route-local failover',
+  'LEXARA admits only canary-verified TTS routes, resolves provider voice/model prerequisites, and keeps failures route-local',
 );
 must(
   speechClient.includes('async resume(): Promise<void>') &&
@@ -172,11 +180,18 @@ must(
 must(
   voiceRoutes.includes('/api/lexara/tts/session') &&
     voiceRoutes.includes('getLexaraTTSReadiness') &&
+    voiceRoutes.includes('refreshLexaraTTSReadiness') &&
+    voiceRoutes.includes('warmLexaraTTSMesh') &&
     voiceRoutes.includes('synthesizeLexaraSpeechWithFailover') &&
     voiceRoutes.includes("provider: 'adaptive-tts-mesh'") &&
+    lexaraRoutes.includes('speechOutputVerified') &&
+    lexaraRoutes.includes('refreshLexaraTTSReadiness(false)') &&
+    conversation.includes('checkVoiceBackendReadiness') &&
+    conversation.includes("data?.speechOutputVerified === true") &&
+    conversation.includes("'Voice reconnecting'") &&
     synthesis.includes('shouldBufferLexaraPlaybackOnThisDevice') &&
     synthesis.includes('bufferStreamingSessionForMobile'),
-  'LEXARA voice sessions use adaptive provider failover while retaining mobile buffered playback recovery',
+  'LEXARA voice sessions require verified provider readiness and the client badge reflects operational synthesis truth',
 );
 must(
   voiceRoutes.includes('/api/lexara/voice/profile'),
@@ -387,10 +402,26 @@ must(
   'Lexara persistence uses the existing canonical Overflow runtime DB without collapsing the explicit Primary archive boundary',
 );
 must(
-  systemConfig.includes("DEFAULT_VOICE_PROVIDER = 'elevenlabs'") &&
-    systemConfig.includes("'eleven_flash_v2_5'") &&
-    voicePipeline.includes("'eleven_flash_v2_5'"),
-  'all active/legacy Lexara voice configuration resolves to ElevenLabs Flash',
+  systemConfig.includes("DEFAULT_VOICE_PROVIDER = 'adaptive'") &&
+    systemConfig.includes("provider: 'adaptive-mesh'") &&
+    !lexaraChatRoutes.includes("import('../lexara/LexaraTTSRouter')") &&
+    lexaraChatRoutes.includes("import('../lexara/LexaraTTSMesh')") &&
+    lexaraChatRoutes.includes('synthesizeLexaraSpeechWithFailover'),
+  'all active LEXARA audio paths resolve through the canonical adaptive TTS mesh',
+);
+must(
+  voicePipeline.includes("from './LexaraTTSMesh'") &&
+    voicePipeline.includes('synthesizeLexaraSpeechWithFailover(request.text)') &&
+    !voicePipeline.includes('this.elevenLabsProvider.synthesize(request.text') &&
+    voiceService.includes("from './lexara/LexaraTTSMesh'") &&
+    voiceService.includes('synthesizeLexaraSpeechWithFailover(text)'),
+  'legacy voice facades delegate into the canonical TTS mesh instead of retaining parallel provider authority',
+);
+must(
+  consentPage.includes('readiness?.liveVoiceConfigured === true') &&
+    consentPage.includes('readiness?.speechOutputVerified === true') &&
+    consentPage.includes('voiceServiceReady !== true'),
+  'live-consultation entry fails closed unless operational speech output is verified',
 );
 const sourceSection = review.split('## Sources — exactly 30')[1] || '';
 const sourceLines = sourceSection.split('\n').filter(line => /^\d+\.\s/.test(line));
