@@ -1,6 +1,6 @@
 import { BaseCrawler } from '../baseCrawler';
 import { EntropySignature, CrawlerType } from '../core';
-import { extractGPSFromFile } from '../../gpsIntelligence';
+import { createHash } from 'crypto';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 
@@ -14,7 +14,7 @@ import * as cheerio from 'cheerio';
  * - Metadata (title, description, keywords, OG tags)
  * - Tables (structured data with headers/rows)
  * - Forms (action, method, field names/types)
- * - Resources (PDFs, docs, images with GPS/EXIF)
+ * - Resources (PDFs, docs, images with bounded public metadata)
  * - Structured content (lists, definitions)
  */
 export class IceCrawler extends BaseCrawler {
@@ -192,41 +192,50 @@ export class IceCrawler extends BaseCrawler {
   }
 
   /**
-   * Extract data from resources (GPS from images)
+   * Extract bounded public metadata from linked resources.
+   * Precise EXIF/GPS location is intentionally not harvested here.
    */
   private async extractResourceData(url: string): Promise<EntropySignature | null> {
     try {
-      // For images, extract GPS (reuse GPS service!)
-      if (url.match(/\.(jpg|jpeg|png)$/i)) {
-        // Download image temporarily
-        const response = await axios.get(url, { 
+      const resolvedUrl = new URL(url, this.task.target).toString();
+
+      if (resolvedUrl.match(/\.(jpg|jpeg|png)(?:[?#].*)?$/i)) {
+        const response = await axios.get(resolvedUrl, {
           responseType: 'arraybuffer',
           timeout: 3000,
-          maxContentLength: 5 * 1024 * 1024 // 5MB max
+          maxContentLength: 5 * 1024 * 1024,
+          maxBodyLength: 5 * 1024 * 1024,
+          headers: { 'User-Agent': 'Mozilla/5.0' },
         });
-        
-        // Note: extractGPSFromFile expects a file path, not buffer
-        // For now, we record the resource metadata
-        // Future enhancement: write buffer to temp file or extend GPS service to accept buffers
-        return this.generateEntropySignature({ 
-          type: 'image_resource', 
-          url,
-          size: response.data.length
+        const bytes = Buffer.from(response.data);
+        return this.generateEntropySignature({
+          type: 'image_resource',
+          url: resolvedUrl,
+          size: bytes.length,
+          contentType: response.headers['content-type'] || null,
+          sha256: createHash('sha256').update(bytes).digest('hex'),
         });
       }
       
-      // For documents, just record metadata
-      if (url.match(/\.(pdf|doc|docx|xls|xlsx)$/i)) {
-        return this.generateEntropySignature({ 
-          type: 'document_resource', 
-          url,
-          extension: url.split('.').pop()
+      if (resolvedUrl.match(/\.(pdf|doc|docx|xls|xlsx)(?:[?#].*)?$/i)) {
+        const response = await axios.head(resolvedUrl, {
+          timeout: 3000,
+          maxRedirects: 3,
+          headers: { 'User-Agent': 'Mozilla/5.0' },
+        });
+        return this.generateEntropySignature({
+          type: 'document_resource',
+          url: resolvedUrl,
+          extension: new URL(resolvedUrl).pathname.split('.').pop()?.toLowerCase(),
+          contentType: response.headers['content-type'] || null,
+          contentLength: Number(response.headers['content-length'] || 0) || null,
+          lastModified: response.headers['last-modified'] || null,
         });
       }
       
       return null;
     } catch {
-      // Resource download failed - skip this resource
+      // Resource retrieval failed - skip this resource locally.
       return null;
     }
   }

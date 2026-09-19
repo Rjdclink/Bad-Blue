@@ -122,6 +122,12 @@ export class Cain extends EventEmitter {
   private starburstDemand: StarburstDemand | null = null;
   private inEden: boolean = true;
   private generationCount: number = 0;
+  private evolutionaryDebt: EvolutionaryDebt = {
+    priorEarlyTerminations: 0,
+    forcedConvergenceCount: 0,
+    reaperInterventions: 0,
+    totalDebt: 0,
+  };
   private systemCapacity: number = 1000000; // Default cap
   
   constructor(systemCapacity?: number) {
@@ -303,6 +309,11 @@ export class Cain extends EventEmitter {
       }
     }
     
+    if (targetsToErase.length > 1) {
+      this.evolutionaryDebt.forcedConvergenceCount++;
+      this.recalculateEvolutionaryDebt();
+    }
+
     // Execute erasure (no workarounds possible)
     for (const discipleId of targetsToErase) {
       const failsafe = this.failsafes.get(discipleId);
@@ -346,6 +357,11 @@ export class Cain extends EventEmitter {
     
     console.log(`[Cain] Returning to Eden - Reason: ${reason}`);
     
+    if (reason !== 'evolution_complete' && reason !== 'completed') {
+      this.evolutionaryDebt.priorEarlyTerminations++;
+      this.recalculateEvolutionaryDebt();
+    }
+
     // Clear all disciples and failsafes
     this.disciples.clear();
     this.failsafes.clear();
@@ -426,15 +442,19 @@ export class Cain extends EventEmitter {
   }
 
   private retrieveEvolutionaryDebt(): EvolutionaryDebt {
-    // "What was missed or discarded in prior cycles?"
-    // Would be retrieved from persistent storage in production
-    
-    return {
-      priorEarlyTerminations: 0,
-      forcedConvergenceCount: 0,
-      reaperInterventions: 0,
-      totalDebt: 0,
-    };
+    return { ...this.evolutionaryDebt };
+  }
+
+  private recalculateEvolutionaryDebt(): void {
+    this.evolutionaryDebt.totalDebt =
+      (this.evolutionaryDebt.priorEarlyTerminations * 100) +
+      (this.evolutionaryDebt.forcedConvergenceCount * 250) +
+      (this.evolutionaryDebt.reaperInterventions * 500);
+  }
+
+  recordReaperIntervention(): void {
+    this.evolutionaryDebt.reaperInterventions++;
+    this.recalculateEvolutionaryDebt();
   }
 
   private calculateRequiredPopulation(
