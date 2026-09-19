@@ -61,6 +61,7 @@ export enum AIProvider {
   CLAUDE_OPUS = 'claude_opus',
   // Platform providers (December 2025)
   OPENROUTER = 'openrouter',
+  XAI = 'xai',
   HUGGINGFACE = 'huggingface',
   LMAI = 'lmai',
   // Additional providers (December 2025)
