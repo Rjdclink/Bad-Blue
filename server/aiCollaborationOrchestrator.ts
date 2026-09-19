@@ -1499,26 +1499,39 @@ export class AICollaborationOrchestrator {
       const fallbackLimit = Math.max(0, Math.min(task.maxFallbacks ?? 1, 3));
       if (fallbackLimit > 0 && alternatives.length > 0) {
         const recoveryBatch = alternatives.slice(0, fallbackLimit);
+        const recoveryEntries = recoveryBatch.map(provider => {
+          const controller = new AbortController();
+          const relayAbort = () => controller.abort(task.signal?.reason);
+          if (task.signal?.aborted) controller.abort(task.signal.reason);
+          else task.signal?.addEventListener('abort', relayAbort, { once: true });
+
+          const promise = this.executeTask(
+            {
+              ...task,
+              provider,
+              model: this.getDefaultModelForProvider(provider),
+              fallbackProviders: [],
+              maxFallbacks: 0,
+              allowCoolingRecovery: !harmonyProviderAvailable(provider),
+              signal: controller.signal,
+            },
+            completedTasks,
+          ).finally(() => task.signal?.removeEventListener('abort', relayAbort));
+
+          return { provider, controller, promise };
+        });
         try {
           const fallback = await Promise.any(
-            recoveryBatch.map(async provider => {
-              const candidate = await this.executeTask(
-                {
-                  ...task,
-                  provider,
-                  model: this.getDefaultModelForProvider(provider),
-                  fallbackProviders: [],
-                  maxFallbacks: 0,
-                  allowCoolingRecovery: !harmonyProviderAvailable(provider),
-                },
-                completedTasks,
-              );
+            recoveryEntries.map(entry => entry.promise.then(candidate => {
               if (!candidate.success || !candidate.content.trim()) {
-                throw new Error(candidate.error || candidate.content || `${provider} returned no usable response`);
+                throw new Error(candidate.error || candidate.content || `${entry.provider} returned no usable response`);
               }
               return candidate;
-            }),
+            })),
           );
+          for (const entry of recoveryEntries) {
+            if (entry.provider !== fallback.provider) entry.controller.abort('recovery-loser');
+          }
           return {
             ...fallback,
             taskId: task.id,
