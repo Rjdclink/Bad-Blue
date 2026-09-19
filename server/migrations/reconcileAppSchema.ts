@@ -246,7 +246,9 @@ function applyRollingDeploymentPoolHeadroom(): void {
   const canonicalSteadyMax = Math.max(1, Math.trunc(Number(options.max) || 1));
   const sessionPoolLimit = finiteIntegerEnv('BADBLUE_DATABASE_SESSION_POOL_LIMIT', 15, 8, 200);
   const reservedSessions = finiteIntegerEnv('BADBLUE_DATABASE_SESSION_RESERVE', 2, 1, Math.max(1, sessionPoolLimit - 4));
-  const coordinationPerReplica = finiteIntegerEnv('CRYPTOCRAWL_COORDINATION_POOL_MAX', 2, 1, 4);
+  const coordinationPerReplica = Number.isFinite(Number(process.env.DATABASE_COORDINATION_POOL_MAX))
+    ? finiteIntegerEnv('DATABASE_COORDINATION_POOL_MAX', 1, 1, 4)
+    : finiteIntegerEnv('CRYPTOCRAWL_COORDINATION_POOL_MAX', 1, 1, 4);
 
   const safeSteadyDefault = Math.max(1, Math.min(
     canonicalSteadyMax,
@@ -353,8 +355,9 @@ export async function runAllSchemaMigrations(options?: {
   let ownsMigrationLock = false;
 
   try {
-    // Session-level advisory locks belong exclusively on the dedicated session
-    // coordination lane. Ordinary pool may be Supavisor transaction mode (6543).
+    // Session-level application migration locks use the application coordination
+    // lane. CryptoCrawler's dedicated Overflow coordination pool is not involved.
+    // Ordinary pool may be Supavisor transaction mode (6543).
     coordinator = await coordinationPool.connect();
     const lockResult = await coordinator.query(
       'SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS acquired',
@@ -362,9 +365,22 @@ export async function runAllSchemaMigrations(options?: {
     );
     ownsMigrationLock = lockResult.rows?.[0]?.acquired === true;
     if (!ownsMigrationLock) {
+      if (!isCryptoCrawlerDatabaseAccessAllowed()) {
+        return [
+          {
+            name: 'Startup migration coordinator',
+            success: true,
+            message: 'Another live replica owns application schema reconciliation.',
+          },
+          {
+            name: 'CryptoCrawler migrations',
+            success: true,
+            message: 'Skipped while master power is OFF; zero CryptoCrawler schema I/O executed.',
+          },
+        ];
+      }
       // Another replica may be applying the authority migrations. Verify briefly
-      // for startup telemetry, but do not make unrelated application availability
-      // depend on CryptoCrawler schema. CryptoCrawler start has the hard gate.
+      // only while CryptoCrawler is intentionally starting/running.
       try {
         await requireCryptocrawlerAuthoritySchema(3);
         return [{
@@ -447,6 +463,14 @@ export async function runAllSchemaMigrations(options?: {
       success: false,
       error: error?.message ?? String(error),
     }];
+    if (!isCryptoCrawlerDatabaseAccessAllowed()) {
+      fallback.push({
+        name: 'CryptoCrawler migrations',
+        success: true,
+        message: 'Skipped while master power is OFF; zero CryptoCrawler schema I/O executed.',
+      });
+      return fallback;
+    }
     try {
       await requireCryptocrawlerAuthoritySchema(1);
       fallback.push({
