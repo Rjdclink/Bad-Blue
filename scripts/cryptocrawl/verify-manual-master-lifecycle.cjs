@@ -70,6 +70,9 @@ has(admin, /setCryptoCrawlerManualPowerPhase\('STOPPING'\)/, 'manual stop must e
 has(admin, /setCryptoCrawlerManualPowerPhase\('OFF'\)/, 'manual stop must close all CryptoCrawler database access');
 has(admin, /stopCryptaraHyperBridgeBootstrap\(\)/, 'manual stop must stop the Overflow bridge');
 has(admin, /cryptaraGovernance\.shutdown\(\)/, 'manual stop must stop Cryptara governance/runtime');
+has(admin, /uninstallCryptaraSuperWorkerAdmission\(\)/, 'manual stop and failed start must remove CryptoCrawler DB admission');
+has(admin, /resetGovernanceInitializationForManualStop\(\)/, 'manual stop must reset governance initialization so the next manual start reinstalls resources');
+has(admin, /rollbackCryptoCrawlerManualStart\(\)/, 'all failed-start paths must converge on the hard-OFF rollback');
 
 has(canonicalRuntime, /let\s+runtimeActivationAllowed\s*=\s*false/, 'canonical runtime must default to activation denied');
 has(canonicalRuntime, /if\s*\(!runtimeActivationAllowed\s*\|\|\s*installed\)\s*return/, 'canonical runtime ensure entrypoint must fail closed while master power is off');
@@ -94,6 +97,8 @@ has(telemetry, /export async function stopTelemetryBootstrap/, 'telemetry must b
 
 lacks(canonicalDashboard, /ensureCanonicalCryptoCrawlerRuntimeWiring/, 'legacy faucet control must not activate canonical runtime wiring');
 has(canonicalDashboard, /Master Power is OFF/, 'legacy faucet control must fail closed while master power is off');
+has(canonicalDashboard, /if\s*\(!isCryptoCrawlerMasterPowerOn\(\)\)[\s\S]{0,500}source:\s*'master_power_off'/, 'dashboard network-facing reads must return an offline snapshot while master power is off');
+has(canonicalDashboard, /onCryptoCrawlerManualPowerPhaseChange[\s\S]{0,400}dashboardIntervals\.clear\(\)/, 'dashboard recurring timers must be cleared when master power transitions OFF');
 
 has(dashboard, /aria-label="CryptoCrawler master power"/, 'master dashboard must render the lifecycle power switch');
 has(dashboard, /checked=\{isSystemRunning\}/, 'master switch must display backend runtime truth');
