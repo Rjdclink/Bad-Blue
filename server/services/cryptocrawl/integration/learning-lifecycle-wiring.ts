@@ -1,5 +1,6 @@
 import logger from '../../../logger.js';
-import '../learning/supabase-compatibility.js';
+import { normalizeLegacySupabaseLearningEnvironment } from '../learning/supabase-compatibility.js';
+import { isCryptoCrawlerDatabaseAccessAllowed } from '../runtime/manual-power-state.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import { deepLearningStore } from '../learning/deep-learning-store.js';
 import { instantLearningEngine } from '../learning/instant-learning-engine.js';
@@ -16,20 +17,32 @@ const installed = new WeakSet<object>();
 type DeepLearningRuntime = {
   isInitialized: boolean;
   initialize: () => Promise<void>;
+  activateSupabaseMirror: () => void;
+  deactivateSupabaseMirror: () => void;
+  stop: () => Promise<void>;
 };
 
 type InstantLearningRuntime = {
   state: { isInitialized: boolean };
   initialize: () => Promise<void>;
+  activateSupabaseMirror: () => void;
+  deactivateSupabaseMirror: () => void;
   recordExecutionOutcome: (outcome: ExecutionOutcomeObservation) => Promise<unknown>;
 };
 
 export function ensureLearningLifecycleWiring(): void {
-  if (installed.has(deepLearningStore)) return;
-  installed.add(deepLearningStore);
+  if (!isCryptoCrawlerDatabaseAccessAllowed()) {
+    throw new Error('CRYPTOCRAWLER_MASTER_POWER_OFF');
+  }
 
+  normalizeLegacySupabaseLearningEnvironment();
   const deep = deepLearningStore as unknown as DeepLearningRuntime;
   const instant = instantLearningEngine as unknown as InstantLearningRuntime;
+  deep.activateSupabaseMirror();
+  instant.activateSupabaseMirror();
+
+  if (installed.has(deepLearningStore)) return;
+  installed.add(deepLearningStore);
   const deepInitialize = deep.initialize.bind(deep);
   const instantInitialize = instant.initialize.bind(instant);
   const instantRecordExecutionOutcome = instant.recordExecutionOutcome.bind(instant);
@@ -86,4 +99,16 @@ export function ensureLearningLifecycleWiring(): void {
     settlementCalibrationExecutionAuthority: false,
     adaptiveTopologyExecutionAuthority: false,
   });
+}
+
+
+export async function stopLearningLifecycleWiring(): Promise<void> {
+  const deep = deepLearningStore as unknown as DeepLearningRuntime;
+  const instant = instantLearningEngine as unknown as InstantLearningRuntime;
+  try {
+    await deep.stop();
+  } finally {
+    deep.deactivateSupabaseMirror();
+    instant.deactivateSupabaseMirror();
+  }
 }
