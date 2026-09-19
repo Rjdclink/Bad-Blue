@@ -973,7 +973,18 @@ export async function conductFullOSINT(
 
   // Level 3+: Add HYDRA, LICH, CERBERUS, BLIZZARD DRAGON
   if (forceAllCrawlers || searchDepth >= 3) {
-    crawlersActivated.push('HYDRA', 'LICH', 'CERBERUS', 'BLIZZARD_DRAGON', 'FARM', 'PHANTOM', 'NOVA');
+    crawlersActivated.push(
+      'BIRD_OF_PREY',
+      'SIX_DEGREES',
+      'HYDRA',
+      'LICH',
+      'CERBERUS',
+      'BLIZZARD_DRAGON',
+      'FARM',
+      'PHANTOM',
+      'NOVA',
+      'PANTHEON_RAZORS_10',
+    );
   }
 
   // Background reports always include GENESIS orchestration.
