@@ -44,6 +44,7 @@ export interface CollaborationTask {
   requestTimeoutMs?: number;
   maxFallbacks?: number;
   signal?: AbortSignal;
+  allowCoolingRecovery?: boolean;
 }
 
 /**
@@ -418,9 +419,9 @@ export class AICollaborationOrchestrator {
     const callerPool = new Set(_availableProviders.length ? _availableProviders : configuredProviders);
     const eligibleProviders = configuredProviders.filter(provider => callerPool.has(provider));
     const healthyProviders = eligibleProviders.filter(harmonyProviderAvailable);
-    const candidateProviders = healthyProviders.length > 0 ? healthyProviders : eligibleProviders;
+    const initialCandidateProviders = healthyProviders.length > 0 ? healthyProviders : eligibleProviders;
 
-    if (candidateProviders.length === 0) {
+    if (initialCandidateProviders.length === 0) {
       throw new Error(`No providers available for ${context} context`);
     }
     if (healthyProviders.length === 0 && eligibleProviders.length > 0) {
@@ -434,7 +435,7 @@ export class AICollaborationOrchestrator {
     // configured participant remains eligible for tasks where its strengths fit.
     const providers = this.selectProvidersForTask(
       attributes,
-      candidateProviders,
+      initialCandidateProviders,
       options.maxParticipants,
     );
     
@@ -442,7 +443,7 @@ export class AICollaborationOrchestrator {
     const strategy = this.selectStrategy(attributes, providers);
     
     // Build collaboration tasks
-    const reserveProviders = candidateProviders.filter(provider => !providers.includes(provider));
+    const reserveProviders = eligibleProviders.filter(provider => !providers.includes(provider));
     const tasks = this.buildCollaborationTasks(
       taskName,
       query,
@@ -460,6 +461,7 @@ export class AICollaborationOrchestrator {
         requestTimeoutMs: task.requestTimeoutMs || task.timeout || options.requestTimeoutMs,
         maxFallbacks: task.maxFallbacks ?? options.maxFallbacks,
         signal: options.signal,
+        allowCoolingRecovery: healthyProviders.length === 0,
         fallbackProviders: [
           ...rotatedReserve,
           ...providers.filter(provider => provider !== task.provider),
@@ -1171,7 +1173,7 @@ export class AICollaborationOrchestrator {
       if (task.signal?.aborted) {
         throw new DOMException('Superseded generation', 'AbortError');
       }
-      if (!harmonyProviderAvailable(task.provider)) {
+      if (!harmonyProviderAvailable(task.provider) && !task.allowCoolingRecovery) {
         throw new Error(`${task.provider} is cooling down after a recent route failure`);
       }
 
@@ -1404,6 +1406,7 @@ export class AICollaborationOrchestrator {
                   model: this.getDefaultModelForProvider(provider),
                   fallbackProviders: [],
                   maxFallbacks: 0,
+                  allowCoolingRecovery: healthyAlternatives.length === 0,
                 },
                 completedTasks,
               );
