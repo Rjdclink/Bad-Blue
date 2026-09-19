@@ -18,6 +18,7 @@ const superWorker = read('server/services/cryptocrawl/integration/cryptara-super
 const readiness = read('server/services/cryptocrawl/integration/cryptara-shared-readiness.ts');
 const masterPipeline = read('server/services/cryptocrawl/integration/master-pipeline.ts');
 const governance = read('server/services/cryptocrawl/governance/index.ts');
+const serverIndex = read('server/index.ts');
 const leaseAuthority = read('server/services/cryptocrawl/execution/resource-lease-authority.ts');
 const migrations = read('server/migrations/reconcileAppSchema.ts');
 const dataFabric = read('server/services/quantiComp/dataFabric.ts');
@@ -74,12 +75,14 @@ requirePattern(leaseAuthority, /primeCryptaraSharedInformation/, 'runtime lease 
 requirePattern(leaseAuthority, /if \(now < authorityReadyUntil\) return true;/, 'primed schema truth short-circuits before any broker eviction can trigger another DB probe');
 requirePattern(leaseAuthority, /requestCryptaraSharedInformation/, 'expired runtime lease authority consumes shared broker truth');
 
-requirePattern(governance, /installCryptaraSuperWorkerAdmission\(\)[\s\S]{0,500}releaseRollingDeploymentPoolHeadroom/, 'Super Worker admission owns DB flow before rollout headroom is released');
+requirePattern(governance, /installCryptaraSuperWorkerAdmission\(\)[\s\S]{0,900}stageManager\.restorePersistence/, 'manual CryptoCrawler start installs its DB admission governor before governed persistence');
+forbidPattern(governance, /releaseRollingDeploymentPoolHeadroom/, 'CryptoCrawler governance must not control LegalWhat application-pool headroom');
+requirePattern(serverIndex, /await\s+runMigrations\(\)[\s\S]{0,240}releaseRollingDeploymentPoolHeadroom\('application_database_ready'\)/, 'LegalWhat restores its application-pool headroom independently after application migrations');
 requirePattern(governance, /stageManager\.restorePersistence[\s\S]{0,2400}activateCryptaraSuperWorkerIntelligence\(\)/, 'resource intelligence activates only after critical governance persistence enters the governed lane');
 requirePattern(governance, /getCryptaraSuperWorkerSnapshot/, 'governance observes Super Worker efficiency telemetry');
 forbidPattern(governance, /superWorker[^\n]{0,180}(execute|SUBMIT_TX|executionAuthority\s*:\s*true)/i, 'governance uses the Super Worker as execution authority');
 
-for (const [name, source] of Object.entries({ superWorker, readiness, masterPipeline, governance, leaseAuthority, migrations })) {
+for (const [name, source] of Object.entries({ superWorker, readiness, masterPipeline, governance, leaseAuthority, migrations, serverIndex })) {
   forbidPattern(source, /\bhyperscope\b/i, `${name} embeds Hyperscope into runtime code`);
   forbidPattern(source, /\benhancements\s+list\b/i, `${name} embeds enhancements-list vocabulary into runtime code`);
 }
