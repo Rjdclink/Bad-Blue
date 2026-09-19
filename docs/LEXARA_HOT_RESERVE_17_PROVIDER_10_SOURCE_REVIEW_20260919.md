@@ -21,7 +21,7 @@ This change cross-references the identified LEXARA root causes against current `
 
 1. Keep the canonical 17-provider registry intact and use every configured participant as eligible reserve capacity.
 2. Launch only a three-route capability/latency/reliability-ranked hedge on a normal LEXARA legal turn.
-3. On route-local failure, launch up to three rotated reserve routes instead of returning unavailable or waiting for all 17.
+3. On route-local failure, launch up to two rotated reserve routes instead of returning unavailable or waiting for all 17.
 4. If every route is cooling, enter bounded recovery mode instead of treating cooldown state as a global outage.
 5. Separate logical-provider health from shared transport-domain health so Anthropic, Groq, OpenRouter and other failure domains are tracked correctly.
 6. Give inference-proven routes a ranking advantage over catalog-only routes without making cold-start catalog routes mandatory failures.
