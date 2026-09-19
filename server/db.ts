@@ -198,28 +198,16 @@ const getPoolConfig = () => {
     connectionString,
     idleTimeoutMillis: activeUsesTransactionPool ? 10000 : 15000,
     connectionTimeoutMillis: (isRailway || isProduction) ? (activeUsesTransactionPool ? 30000 : 15000) : 10000,
-    max: activePoolMax, = ordinaryUsesTransactionPool && !ordinarySessionFallbackActive;
-  const activeDatabaseUrl = ordinarySessionFallbackActive ? coordinationDatabaseUrl : ordinaryDatabaseUrl;
-  const activePoolMax = ordinarySessionFallbackActive
-    ? Math.min(mainPoolMax, sessionFallbackPoolMax)
-    : mainPoolMax;
-  const connectionString = isDatabaseConfigured ? activeDatabaseUrl : 'postgresql://127.0.0.1:1/devlite';
-  return {
-    connectionString,
-    idleTimeoutMillis: activeUsesTransactionPool ? 10000 : 15000,
-    connectionTimeoutMillis: (isRailway || isProduction) ? (activeUsesTransactionPool ? 30000 : 15000) : 10000,
     max: activePoolMax,
-    // Never pin an idle backend; session/direct fallback acquires on demand.
     min: 0,
     keepAlive: true,
     keepAliveInitialDelayMillis: 10000,
     ssl: sslConfig(),
-    // Supavisor transaction mode cannot retain session-level statement_timeout.
-    // Keep the node-postgres client-side timeout everywhere; only session/direct
-    // fallback connections receive the server-side session timeout parameter.
     ...(activeUsesTransactionPool ? {} : { statement_timeout: 30000 }),
     query_timeout: 30000,
-    application_name: isRailway ? 'badblue-railway' : 'badblue',
+    application_name: legalWhatNeonFallbackActive
+      ? (isRailway ? 'legalwhat-neon-failover' : 'legalwhat-neon-failover-local')
+      : (isRailway ? 'badblue-railway' : 'badblue'),
   } as any;
 };
 
