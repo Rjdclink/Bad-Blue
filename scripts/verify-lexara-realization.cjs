@@ -29,6 +29,7 @@ const viteConfig = read('vite.config.ts');
 const serverVite = read('server/vite.ts');
 const systemConfig = read('server/systemConfig.ts');
 const voicePipeline = read('server/lexara/LexaraVoicePipeline.ts');
+const voiceService = read('server/voiceSynthesisService.ts');
 const review = read('docs/LEXARA_INTENT_REALIZATION_30_SOURCE_REVIEW_20260918.md');
 const voiceReliabilityReview = read('docs/LEXARA_VOICE_RELIABILITY_10_SOURCE_REVIEW_20260918.md');
 const turnGroundingReview = read('docs/LEXARA_TURN_GROUNDING_30_SOURCE_REVIEW_20260918.md');
@@ -407,6 +408,20 @@ must(
     lexaraChatRoutes.includes("import('../lexara/LexaraTTSMesh')") &&
     lexaraChatRoutes.includes('synthesizeLexaraSpeechWithFailover'),
   'all active LEXARA audio paths resolve through the canonical adaptive TTS mesh',
+);
+must(
+  voicePipeline.includes("from './LexaraTTSMesh'") &&
+    voicePipeline.includes('synthesizeLexaraSpeechWithFailover(request.text)') &&
+    !voicePipeline.includes('this.elevenLabsProvider.synthesize(request.text') &&
+    voiceService.includes("from './lexara/LexaraTTSMesh'") &&
+    voiceService.includes('synthesizeLexaraSpeechWithFailover(text)'),
+  'legacy voice facades delegate into the canonical TTS mesh instead of retaining parallel provider authority',
+);
+must(
+  consentPage.includes('readiness?.liveVoiceConfigured === true') &&
+    consentPage.includes('readiness?.speechOutputVerified === true') &&
+    consentPage.includes('voiceServiceReady !== true'),
+  'live-consultation entry fails closed unless operational speech output is verified',
 );
 const sourceSection = review.split('## Sources — exactly 30')[1] || '';
 const sourceLines = sourceSection.split('\n').filter(line => /^\d+\.\s/.test(line));
