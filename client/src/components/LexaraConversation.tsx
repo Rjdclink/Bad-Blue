@@ -1050,7 +1050,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     if (liveEnabled && voiceReady) {
       await speakLexara(greeting, greetingGeneration).catch(() => undefined);
     }
-  }, [appendMessage, lawTypeName, liveEnabled, speakLexara, voiceReady]);
+  }, [appendMessage, liveEnabled, speakLexara, voiceReady]);
 
   useEffect(() => {
     if (initializedRef.current) return;
