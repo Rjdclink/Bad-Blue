@@ -410,3 +410,58 @@ const hotReserveSourceLines = hotReserveSourceSection.split('\n').filter(line =>
 must(hotReserveSourceLines.length === 10, 'literal 10-source hot-reserve reliability implementation review is present');
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA realization verification passed.');
+// Practice-area specialization gate (31-book LegalWhat library).
+const lawTypesSource = read('shared/lawTypes.ts');
+const legalDomainProfiles = read('server/lexara/LexaraLegalDomainProfiles.ts');
+const welcomePage = read('client/src/pages/welcome.tsx');
+const legalAuthorityResearch = read('server/lexara/LexaraAuthorityResearch.ts');
+
+const lawTypesBlock = lawTypesSource.split('export const LAW_TYPES = [')[1]?.split('] as const;')[0] || '';
+const productLawTypes = [...lawTypesBlock.matchAll(/'([^']+)'/g)].map(match => match[1]);
+
+must(productLawTypes.length === 31, 'LegalWhat exposes exactly 31 bookshelf practice areas');
+must(productLawTypes.includes('post-conviction-law'), 'Post Conviction is a first-class product law type');
+must(
+  lawTypesSource.includes("name: 'Post Conviction'") &&
+    lawTypesSource.includes("route: '/legal-tools?type=post-conviction-law'"),
+  'Post Conviction has normal bookshelf metadata and legal-tools routing',
+);
+must(
+  conversation.includes("const greeting = 'How can I help you?';") &&
+    !conversation.includes('Hello. Tell me what happened'),
+  'LEXARA visible and spoken opening greeting is exactly How can I help you?',
+);
+must(
+  !welcomePage.includes("setLocation('/badblue')") &&
+    welcomePage.includes('setLocation(`/lexara-consent/${selectedType.id}`)'),
+  'every bookshelf law area enters the same LEXARA consent/specialization flow',
+);
+for (const lawType of productLawTypes) {
+  must(
+    legalDomainProfiles.includes(`  '${lawType}': domain(`),
+    `LEXARA has an explicit specialist profile for ${lawType}`,
+  );
+}
+must(
+  legalDomainProfiles.includes('satisfies Record<LawType, LexaraLegalDomainProfile>'),
+  'practice-area expertise is compile-time exhaustive when new law types are added',
+);
+must(
+  legalDomainProfiles.includes('28 U.S.C. §§ 2244, 2253, 2254, and 2255') &&
+    legalDomainProfiles.includes('AEDPA one-year limitation') &&
+    legalDomainProfiles.includes('procedural default/cause/prejudice') &&
+    legalDomainProfiles.includes('actual innocence gateway'),
+  'Post Conviction profile covers federal habeas, AEDPA timing, default, and innocence gateways',
+);
+must(
+  orchestrator.includes('getLexaraLegalDomainProfile(context.lawType)') &&
+    orchestrator.includes('formatLexaraDomainSpecialization(domainProfile)') &&
+    orchestrator.includes('researchHints: domainProfile?.researchHints') &&
+    orchestrator.includes('preferredOfficialDomains: domainProfile?.preferredOfficialDomains'),
+  'selected bookshelf domain controls both LEXARA reasoning and authority research priorities',
+);
+must(
+  legalAuthorityResearch.includes('Practice-area research priorities:') &&
+    legalAuthorityResearch.includes('Prefer relevant primary material from these official domains when available:'),
+  'authority retrieval receives practice-area-specific research hints without making any source mandatory',
+);
