@@ -222,7 +222,7 @@ export default function WelcomePage() {
                     key={service.route}
                     type="button"
                     className="library-service-panel"
-                    onClick={() => setLocation(service.route)}
+                    onClick={() => service.route === "/spectra" ? setLocation('/spectra') : setLocation(service.route)}
                   >
                     <span className="service-icon-wrap" aria-hidden="true">
                       <Icon />
