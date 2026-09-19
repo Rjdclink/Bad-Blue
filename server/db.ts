@@ -90,7 +90,9 @@ function deriveSupabasePoolerModeUrl(url: string, port: '5432' | '6543'): string
 // additional secrets. Direct db.<project>.supabase.co connections are never
 // rewritten because their port semantics are different.
 const explicitTransactionDatabaseUrl = normalizedOptionalDatabaseUrl(process.env.SUPABASE_TRANSACTION_DATABASE_URL);
-const explicitCoordinationDatabaseUrl = normalizedOptionalDatabaseUrl(process.env.CRYPTOCRAWL_COORDINATION_DATABASE_URL);
+const explicitCoordinationDatabaseUrl = normalizedOptionalDatabaseUrl(
+  process.env.DATABASE_COORDINATION_URL || process.env.CRYPTOCRAWL_COORDINATION_DATABASE_URL,
+);
 const derivedTransactionDatabaseUrl = explicitTransactionDatabaseUrl ? '' : deriveSupabasePoolerModeUrl(databaseUrl, '6543');
 const derivedCoordinationDatabaseUrl = explicitCoordinationDatabaseUrl ? '' : deriveSupabasePoolerModeUrl(databaseUrl, '5432');
 const transactionDatabaseUrl = explicitTransactionDatabaseUrl || derivedTransactionDatabaseUrl;
@@ -106,7 +108,12 @@ const sessionFallbackPoolMax = boundedPoolInt(process.env.CRYPTOCRAWL_SESSION_FA
 const mainPoolMax = ordinaryUsesTransactionPool
   ? requestedMainPoolMax
   : Math.min(requestedMainPoolMax, sessionFallbackPoolMax);
-const coordinationPoolMax = boundedPoolInt(process.env.CRYPTOCRAWL_COORDINATION_POOL_MAX, 1, 1, 2);
+const coordinationPoolMax = boundedPoolInt(
+  process.env.DATABASE_COORDINATION_POOL_MAX ?? process.env.CRYPTOCRAWL_COORDINATION_POOL_MAX,
+  1,
+  1,
+  2,
+);
 
 if (transactionDatabaseUrl) {
   if (isSupabaseProjectUrl(transactionDatabaseUrl) || !isPostgresConnectionString(transactionDatabaseUrl)) {
@@ -122,13 +129,13 @@ if (transactionDatabaseUrl) {
 
 if (isDatabaseConfigured) {
   if (isSupabaseProjectUrl(coordinationDatabaseUrl) || !isPostgresConnectionString(coordinationDatabaseUrl)) {
-    throw new Error('[DATABASE] CryptoCrawler coordination URL must be a Postgres connection string');
+    throw new Error('[DATABASE] Application coordination URL must be a Postgres connection string');
   }
   if (isProduction && !isSupabasePostgresConnectionString(coordinationDatabaseUrl)) {
-    throw new Error('[DATABASE] CRYPTOCRAWL coordination URL must be a Supabase Postgres connection string in production');
+    throw new Error('[DATABASE] Application coordination URL must be a Supabase Postgres connection string in production');
   }
   if (postgresPort(coordinationDatabaseUrl) === '6543') {
-    throw new Error('[DATABASE] CryptoCrawler coordination requires a session-capable/direct Postgres URL, not transaction-pool port 6543');
+    throw new Error('[DATABASE] Application coordination requires a session-capable/direct Postgres URL, not transaction-pool port 6543');
   }
 }
 
@@ -189,8 +196,9 @@ const getPoolConfig = () => {
   } as any;
 };
 
-// Session-capable coordination lane for CryptoCrawler nonce/advisory-lock work.
-// Keep this pool tiny because every session-level advisory lock pins a backend
+// Session-capable coordination lane for application schema/admin work.
+// CryptoCrawler hot runtime uses its dedicated Overflow runtime pools and does not
+// own this application pool. Keep it tiny because every session-level advisory lock pins a backend
 // connection until explicitly unlocked or the session ends.
 const getCoordinationPoolConfig = () => {
   const connectionString = isDatabaseConfigured ? coordinationDatabaseUrl : 'postgresql://127.0.0.1:1/devlite';
@@ -205,7 +213,7 @@ const getCoordinationPoolConfig = () => {
     ssl: sslConfig(),
     statement_timeout: 15000,
     query_timeout: 15000,
-    application_name: isRailway ? 'badblue-cryptocrawl-coordination' : 'badblue-cryptocrawl-coordination-local',
+    application_name: isRailway ? 'legalwhat-app-coordination' : 'legalwhat-app-coordination-local',
   } as any;
 };
 
