@@ -656,6 +656,27 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     setPhase(next);
   }, []);
 
+  const checkVoiceBackendReadiness = useCallback(async (): Promise<boolean> => {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 2_500);
+    try {
+      const response = await fetch('/api/lexara/voice/live-readiness', {
+        credentials: 'include',
+        signal: controller.signal,
+      });
+      if (!response.ok) return false;
+      const data = await response.json().catch(() => ({}));
+      return data?.liveVoiceConfigured === true
+        && data?.speechOutputVerified === true
+        && Array.isArray(data?.outputProviders)
+        && data.outputProviders.length > 0;
+    } catch {
+      return false;
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }, []);
+
   const appendMessage = useCallback((role: ConversationMessage['role'], content: string): string => {
     const nextMessage: ConversationMessage = {
       id: makeMessageId(role),
@@ -675,18 +696,20 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const enableVoice = useCallback(async () => {
     try {
       await enableRecognition();
-      setVoiceReady(true);
-      setErrorMessage(null);
       startListening();
-      setConversationPhase('listening');
-      return true;
+
+      const backendReady = await checkVoiceBackendReadiness();
+      setVoiceReady(backendReady);
+      setErrorMessage(null);
+      setConversationPhase(backendReady ? 'listening' : 'text-only');
+      return backendReady;
     } catch (error) {
       setVoiceReady(false);
       setErrorMessage(friendlyError(error));
       setConversationPhase('text-only');
       return false;
     }
-  }, [enableRecognition, setConversationPhase, startListening]);
+  }, [checkVoiceBackendReadiness, enableRecognition, setConversationPhase, startListening]);
 
   const speakLexara = useCallback(async (text: string, generation?: number) => {
     if (!liveEnabled || !voiceReady) {
@@ -712,6 +735,10 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       await speak(text, {
         context: 'guidance',
         autoPlay: true,
+        onError: () => {
+          setVoiceReady(false);
+          setConversationPhase('text-only');
+        },
       });
     } finally {
       activeLexaraSpeechRef.current = '';
@@ -1078,6 +1105,32 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   }, [enableVoice, setConversationPhase]);
 
   useEffect(() => {
+    if (!liveEnabled || voiceReady) return;
+
+    let cancelled = false;
+    const recover = async () => {
+      const ready = await checkVoiceBackendReadiness();
+      if (cancelled || !ready) return;
+      setVoiceReady(true);
+      setErrorMessage(null);
+      startListening();
+      if (phaseRef.current === 'text-only' || phaseRef.current === 'initializing') {
+        setConversationPhase('listening');
+      }
+    };
+
+    void recover();
+    const interval = window.setInterval(() => {
+      void recover();
+    }, 5_000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [checkVoiceBackendReadiness, liveEnabled, setConversationPhase, startListening, voiceReady]);
+
+  useEffect(() => {
     if (!isMasterSession || typeof window === 'undefined') return;
 
     // Master-only privacy/state invariant: every law area and every fresh master
@@ -1224,7 +1277,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
                 : 'bg-muted text-muted-foreground',
             )}>
               {liveEnabled && voiceReady ? <Mic className="h-3.5 w-3.5" /> : <MicOff className="h-3.5 w-3.5" />}
-              {liveEnabled && voiceReady ? 'Voice live' : 'Text mode'}
+              {liveEnabled && voiceReady ? 'Voice live' : liveEnabled ? 'Voice reconnecting' : 'Text mode'}
             </div>
           </div>
         </div>
