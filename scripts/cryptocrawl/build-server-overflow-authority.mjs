@@ -93,7 +93,7 @@ const overflowAuthorityPlugin = {
         && !source.includes("import pg from 'pg'")
         && !/\bnew\s+(?:pg\.)?Pool\s*\(/.test(source);
       const noPrimaryDependency = !source.includes('function primaryDatabaseUrl()')
-        && !source.includes('process.env.SUPABASE_DATABASE_URL(?!_OVERFLOW)');
+        && !/process\.env\.SUPABASE_DATABASE_URL(?!_OVERFLOW)/.test(source);
       const truthfulAuthority = source.includes("authority: 'canonical_overflow_runtime_control_plane' as const")
         && source.includes("scope: 'artifact_adapter_only' as const")
         && source.includes('overflowControlPlaneAuthority: true as const')
