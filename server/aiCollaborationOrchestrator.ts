@@ -511,8 +511,45 @@ export class AICollaborationOrchestrator {
     // Execute tasks
     const results = await this.executeCollaborationTasks(tasks, attributes);
     
-    // Synthesize final answer
-    const finalAnswer = this.synthesizeResults(query, results, strategy);
+    // Synthesize final answer. If every model-specific route failed, preserve
+    // the previously functional auto-router path as a bounded recovery route
+    // inside Harmony rather than declaring the legal service unavailable while
+    // gateway-level recovery is still possible.
+    let finalAnswer = this.synthesizeResults(query, results, strategy);
+    if (
+      /^No successful responses from collaboration\.?$/i.test(finalAnswer.trim())
+      && process.env.OPENROUTER_API_KEY?.trim()
+      && !options.signal?.aborted
+    ) {
+      try {
+        const recovery = await generateOpenRouterText(query, {
+          model: CURRENT_AI_MODELS.openRouterAuto,
+          systemPrompt: options.systemPrompt,
+          maxTokens: Math.max(256, Math.min(900, Number(attributes.estimatedTokens || 450))),
+          timeoutMs: Math.max(2_500, options.requestTimeoutMs || 2_500),
+          signal: options.signal,
+        });
+        const recovered: CollaborationResult = {
+          taskId: `${taskName}-auto-router-recovery`,
+          provider: AIProvider.OPENROUTER,
+          model: recovery.model,
+          role: 'legal-analyst',
+          content: recovery.content,
+          tokensUsed: Math.ceil(recovery.content.length / 4),
+          latencyMs: recovery.latencyMs,
+          success: true,
+        };
+        results.push(recovered);
+        markHarmonyProviderSuccess(AIProvider.OPENROUTER);
+        recordHarmonyProviderRuntime(AIProvider.OPENROUTER, true, recovery.latencyMs);
+        finalAnswer = recovery.content;
+      } catch (recoveryError) {
+        console.warn('[HARMONY] Canonical auto-router recovery failed', {
+          task: taskName,
+          error: recoveryError instanceof Error ? recoveryError.message : String(recoveryError),
+        });
+      }
+    }
     
     // Calculate totals
     const totalTokens = results.reduce((sum, r) => sum + (r.tokensUsed || 0), 0);
@@ -649,7 +686,9 @@ export class AICollaborationOrchestrator {
             ? 'rapid-searcher'
             : 'pattern-analyst';
       const focus = role === 'legal-analyst'
-        ? 'Analyze legal issues, defenses, procedure, uncertainty, and the highest-value missing fact.'
+        ? (attrs.needsFastResponse
+            ? 'Produce a direct, user-ready legal answer to the current turn. Lead with the answer, preserve material uncertainty, and keep it concise unless detail is necessary.'
+            : 'Analyze legal issues, defenses, procedure, uncertainty, and the highest-value missing fact.')
         : role === 'verifier'
           ? 'Stress-test assumptions, jurisdiction, legal support, factual gaps, and citation reliability.'
           : role === 'rapid-searcher'
