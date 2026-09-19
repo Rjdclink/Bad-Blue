@@ -1,7 +1,7 @@
 /**
  * LegalWhat Welcome Page - Law Library Bookshelf Design
  * 
- * Displays 30 law types as realistic law book spines on a bookshelf
+ * Displays 31 law types as realistic law book spines on a bookshelf
  * Features Law Enforcement Accountability as highlighted option
  * Each book is directly clickable to navigate to the legal consultation page
  * Integrates with existing BadBlue functionality
@@ -18,7 +18,7 @@ import { SEOHead } from "@/components/SEOHead";
 import { useAuth } from "@/hooks/useAuth";
 import { AppHeader } from "@/components/AppHeader";
 
-// Color palette - 30 distinct colors assigned to ensure no adjacent similar colors
+// Color palette - distinct colors assigned to keep neighboring books visually differentiated
 const BOOK_COLORS = [
   { name: 'Administrative Law', color: '#E83D66' },           // Lipstick
   { name: 'Appellate Law', color: '#6699CC' },                // Mercedes Blue
@@ -43,6 +43,7 @@ const BOOK_COLORS = [
   { name: 'Municipal/Government Law', color: '#E0B0FF' },     // Mauve
   { name: 'Probate and Estate Law', color: '#8DA399' },       // Morning Blue
   { name: 'Procedural Law', color: '#FFCBA4' },               // Peach
+  { name: 'Post Conviction', color: '#7B68EE' },                 // Medium Slate Blue
   { name: 'Property Law', color: '#B5651D' },                 // Light Brown
   { name: 'Public Housing Law', color: '#DA70D6' },           // Orchid
   { name: 'Real Estate Law', color: '#87CEEB' },              // Sky Blue
@@ -215,12 +216,9 @@ export default function WelcomePage() {
     const selectedType = LAW_TYPE_DATA.find(type => type.id === lawTypeId);
     if (!selectedType) return;
 
-    // Law Enforcement remains the dedicated BadBlue workflow.
-    if (selectedType.id === 'law-enforcement-accountability') {
-      setLocation('/badblue');
-      return;
-    }
-
+    // Every law-book selection enters LEXARA with that book's dedicated
+    // practice-area specialization. Legacy BadBlue remains available through
+    // its own route, but the law library is now a single consistent LEXARA flow.
     setLocation(`/lexara-consent/${selectedType.id}`);
   }, [setLocation]);
 
