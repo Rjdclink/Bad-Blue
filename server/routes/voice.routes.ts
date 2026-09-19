@@ -99,6 +99,7 @@ export function setupVoiceRoutes(app: Express): void {
         provider: readiness.streamingProviders[0] || readiness.healthyProviders[0] || 'adaptive-tts-mesh',
         providers: readiness.healthyProviders,
         streamingProviders: readiness.streamingProviders,
+        independentDomains: readiness.independentDomains,
         redundancyVerified: readiness.redundancyVerified,
         voiceStatus: readiness.voiceStatus,
         voiceId: null,
@@ -367,6 +368,7 @@ export function setupVoiceRoutes(app: Express): void {
         configuredProviders: readiness.configuredProviders,
         healthyProviders: readiness.healthyProviders,
         streamingProviders: readiness.streamingProviders,
+        independentDomains: readiness.independentDomains,
         redundancyVerified: readiness.redundancyVerified,
         voiceStatus: readiness.voiceStatus,
         default: readiness.streamingProviders[0] || readiness.healthyProviders[0] || null,
@@ -392,6 +394,7 @@ export function setupVoiceRoutes(app: Express): void {
         configuredProviders: readiness.configuredProviders,
         healthyProviders: readiness.healthyProviders,
         streamingProviders: readiness.streamingProviders,
+        independentDomains: readiness.independentDomains,
         providers: readiness.providers,
         features: {
           adaptiveRouting: true,
