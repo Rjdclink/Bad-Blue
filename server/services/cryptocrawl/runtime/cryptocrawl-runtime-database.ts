@@ -2,6 +2,10 @@ import pg from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import * as schema from '@shared/schema';
 import logger from '../../../logger.js';
+import {
+  assertCryptoCrawlerDatabaseAccessAllowed,
+  isCryptoCrawlerDatabaseAccessAllowed,
+} from './manual-power-state.js';
 
 const { Pool } = pg;
 
@@ -107,6 +111,36 @@ export const coordinationPool = new Pool({
   application_name: 'cryptocrawl-overflow-coordination',
 });
 
+function installManualPowerDatabaseGuard(targetPool: any, lane: 'ordinary' | 'coordination'): void {
+  const rawQuery = targetPool.query.bind(targetPool);
+  const rawConnect = targetPool.connect.bind(targetPool);
+
+  targetPool.query = (...args: any[]) => {
+    if (isCryptoCrawlerDatabaseAccessAllowed()) return rawQuery(...args);
+    const error = new Error(`CRYPTOCRAWLER_MASTER_POWER_OFF: ${lane} Supabase query blocked`);
+    const callback = typeof args[args.length - 1] === 'function' ? args[args.length - 1] : null;
+    if (callback) {
+      queueMicrotask(() => callback(error));
+      return undefined;
+    }
+    return Promise.reject(error);
+  };
+
+  targetPool.connect = (...args: any[]) => {
+    if (isCryptoCrawlerDatabaseAccessAllowed()) return rawConnect(...args);
+    const error = new Error(`CRYPTOCRAWLER_MASTER_POWER_OFF: ${lane} Supabase connection blocked`);
+    const callback = typeof args[args.length - 1] === 'function' ? args[args.length - 1] : null;
+    if (callback) {
+      queueMicrotask(() => callback(error));
+      return undefined;
+    }
+    return Promise.reject(error);
+  };
+}
+
+installManualPowerDatabaseGuard(pool, 'ordinary');
+installManualPowerDatabaseGuard(coordinationPool, 'coordination');
+
 /**
  * node-postgres installs its pool-level idle-client error listener only while a
  * client is idle. pool.connect() removes that listener while the client is checked
@@ -176,6 +210,7 @@ coordinationPool.on('error', error => {
 export const db = drizzle(pool, { schema });
 
 export function assertCryptocrawlRuntimeDatabaseAvailable(): void {
+  assertCryptoCrawlerDatabaseAccessAllowed();
   if (!isDatabaseConfigured) {
     throw new Error('CryptoCrawler Overflow runtime database is not configured; SUPABASE_DATABASE_URL_OVERFLOW is required');
   }
