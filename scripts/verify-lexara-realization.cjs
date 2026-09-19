@@ -411,7 +411,7 @@ must(
 );
 must(
   voicePipeline.includes("from './LexaraTTSMesh'") &&
-    voicePipeline.includes('synthesizeLexaraSpeechWithFailover(request.text)') &&
+    voicePipeline.includes('synthesizeLexaraSpeechWithFailover(text)') &&
     !voicePipeline.includes('this.elevenLabsProvider.synthesize(request.text') &&
     voiceService.includes("from './lexara/LexaraTTSMesh'") &&
     voiceService.includes('synthesizeLexaraSpeechWithFailover(text)'),
