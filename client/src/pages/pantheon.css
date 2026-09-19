@@ -6,7 +6,7 @@
   padding: 2rem 1rem;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   line-height: 1.6;
-  color: rgba(255, 255, 255, 0.95);
+  color: hsl(var(--foreground) / 0.95);
 }
 
 /* Hero Section */
@@ -50,7 +50,7 @@
 
 .pantheon-container .hero .subtitle {
   font-size: 1.3rem;
-  color: rgba(255, 255, 255, 0.9);
+  color: hsl(var(--foreground) / 0.9);
   font-weight: 400;
   margin-bottom: 2rem;
   letter-spacing: 0.05em;
@@ -95,7 +95,7 @@
   margin-left: auto;
   margin-right: auto;
   font-weight: 400;
-  color: rgba(255, 255, 255, 0.95);
+  color: hsl(var(--foreground) / 0.95);
 }
 
 .pantheon-container .description .secondary-description {
@@ -107,7 +107,7 @@
   margin-right: auto;
   opacity: 0.92;
   font-weight: 400;
-  color: rgba(255, 255, 255, 0.9);
+  color: hsl(var(--foreground) / 0.9);
 }
 
 .pantheon-container .description strong {
@@ -170,7 +170,7 @@
 .pantheon-container .capability-card p {
   font-size: 0.95rem;
   line-height: 1.7;
-  color: rgba(255, 255, 255, 0.9);
+  color: hsl(var(--foreground) / 0.9);
   font-weight: 400;
 }
 
@@ -215,7 +215,7 @@
   font-size: 1.15rem;
   line-height: 1.8;
   margin-bottom: 1.5rem;
-  color: rgba(255, 255, 255, 0.92);
+  color: hsl(var(--foreground) / 0.92);
   font-weight: 400;
 }
 
@@ -241,7 +241,7 @@
   border-left: 3px solid #e94560;
   font-size: 0.98rem;
   line-height: 1.5;
-  color: rgba(255, 255, 255, 0.9);
+  color: hsl(var(--foreground) / 0.9);
   font-weight: 400;
 }
 
@@ -253,8 +253,12 @@
 
 /* Results Section */
 .pantheon-container .results {
-  margin-bottom: 4rem;
+  width: 100%;
+  max-width: 1280px;
+  min-height: 28rem;
+  margin: 0 auto 4rem;
   padding: 0 1rem;
+  overflow: visible;
 }
 
 .pantheon-container .results h2 {
@@ -268,9 +272,22 @@
   background-clip: text;
 }
 
+.pantheon-container .report-document,
 .pantheon-container .results-display {
-  max-width: 1000px;
+  width: 100%;
+  max-width: none;
   margin: 0 auto;
+  overflow: visible;
+  overflow-wrap: anywhere;
+}
+
+.pantheon-container .report-document .results-display {
+  min-height: 65vh;
+}
+
+.pantheon-container .results-display [class*="CardContent"],
+.pantheon-container .report-document {
+  color: hsl(var(--foreground));
 }
 
 /* Responsive Design */
@@ -315,6 +332,15 @@
 
   .pantheon-container .sources-list {
     grid-template-columns: 1fr;
+  }
+
+  .pantheon-container .results {
+    min-height: 70vh;
+    padding: 0;
+  }
+
+  .pantheon-container .report-document .results-display {
+    min-height: 70vh;
   }
 }
 
