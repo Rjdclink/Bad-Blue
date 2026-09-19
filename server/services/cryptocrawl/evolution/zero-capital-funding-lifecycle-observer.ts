@@ -1,7 +1,9 @@
 import { getCryptaraZeroInitialCapitalFundingLearning, type ZeroCapitalFundingObservationOutcome, type ZeroCapitalFundingObservationStage } from '../../cryptara/zero-capital-funding-learning.js';
 import { measuredCandidateRegistry, type MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
+import { isCryptoCrawlerDatabaseAccessAllowed } from '../runtime/manual-power-state.js';
 
 let installed = false;
+let unsubscribe: (() => void) | null = null;
 const lastFingerprint = new Map<string, string>();
 const MAX_FINGERPRINTS = 4096;
 
@@ -59,6 +61,7 @@ function pruneFingerprints(): void {
 }
 
 function observe(candidate: MeasuredCandidate): void {
+  if (!installed || !isCryptoCrawlerDatabaseAccessAllowed()) return;
   if (candidate.topology !== 'ZERO_CAPITAL_ATOMIC') return;
   const chain = candidate.chains[0]?.trim().toLowerCase();
   if (!chain) return;
@@ -107,9 +110,17 @@ function observe(candidate: MeasuredCandidate): void {
  */
 export function ensureZeroCapitalFundingLifecycleObserver(): void {
   if (installed) return;
+  if (!isCryptoCrawlerDatabaseAccessAllowed()) throw new Error('CRYPTOCRAWLER_MASTER_POWER_OFF');
   installed = true;
-  measuredCandidateRegistry.onUpdate(observe);
+  unsubscribe = measuredCandidateRegistry.onUpdate(observe);
   for (const candidate of measuredCandidateRegistry.getRecent(512)) observe(candidate);
+}
+
+export function stopZeroCapitalFundingLifecycleObserver(): void {
+  unsubscribe?.();
+  unsubscribe = null;
+  installed = false;
+  lastFingerprint.clear();
 }
 
 export const zeroCapitalFundingLifecycleObserverAuthority = Object.freeze({
