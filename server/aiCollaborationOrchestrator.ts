@@ -1007,14 +1007,26 @@ export class AICollaborationOrchestrator {
     if (fastSynthesisTask) {
       const dependencyIds = new Set(fastSynthesisTask.dependencies || []);
       const sourceTasks = tasks.filter(task => dependencyIds.has(task.id));
-      const sourcePromises = sourceTasks.map(task =>
-        this.executeTask(task, completedTasks).then(result => {
+      const hedgeEntries = sourceTasks.map(task => {
+        const controller = new AbortController();
+        const relayAbort = () => controller.abort(task.signal?.reason);
+        if (task.signal?.aborted) controller.abort(task.signal.reason);
+        else task.signal?.addEventListener('abort', relayAbort, { once: true });
+
+        const promise = this.executeTask(
+          { ...task, signal: controller.signal },
+          completedTasks,
+        ).then(result => {
+          task.signal?.removeEventListener('abort', relayAbort);
           if (result.success && result.content.trim()) {
             completedTasks.set(task.id, result);
           }
           return result;
-        })
-      );
+        });
+
+        return { task, controller, promise };
+      });
+      const sourcePromises = hedgeEntries.map(entry => entry.promise);
 
       try {
         const firstSuccessful = await Promise.any(
@@ -1028,12 +1040,18 @@ export class AICollaborationOrchestrator {
         results.push(firstSuccessful);
         completedTasks.set(firstSuccessful.taskId, firstSuccessful);
 
+        // First-valid-response wins. Cancel every losing hedge immediately so
+        // extra configured providers reduce tail latency without multiplying
+        // background work or poisoning health after the answer is already won.
+        for (const entry of hedgeEntries) {
+          if (entry.task.id !== firstSuccessful.taskId) {
+            entry.controller.abort('hedge-loser');
+          }
+        }
+
         // A complete legal-analyst answer already passed the full LEXARA system
         // prompt and should not be held behind a second mandatory model call.
-        // Verification remains useful, but it must not turn a valid first answer
-        // into dead air or a false global outage.
         if (firstSuccessful.role === 'legal-analyst') {
-          void Promise.allSettled(sourcePromises);
           return results;
         }
 
@@ -1049,8 +1067,6 @@ export class AICollaborationOrchestrator {
           completedTasks,
         );
         results.push(synthesis);
-
-        void Promise.allSettled(sourcePromises);
         return results;
       } catch {
         const settled = await Promise.all(sourcePromises);
