@@ -76,13 +76,15 @@ export default function LexaraConsentPage() {
       const microphoneGranted = stream.getAudioTracks().length > 0;
       stream.getTracks().forEach(track => track.stop());
 
-      const backendReady = readiness?.liveVoiceConfigured !== false;
+      const backendReady =
+        readiness?.liveVoiceConfigured !== false
+        && readiness?.legalReasoningConfigured !== false;
       setMicReady(microphoneGranted);
       setSpeakerReady(audioUnlocked);
       setVoiceServiceReady(readiness ? backendReady : null);
 
       if (!backendReady) {
-        setError('Voice is temporarily unavailable on the server. You can still continue by typing.');
+        setError('LEXARA live conversation is temporarily unavailable on the server. You can still continue by typing.');
       } else if (!microphoneGranted || !audioUnlocked) {
         setError('LEXARA could not fully prepare your microphone and sound. Check browser permissions and try again.');
       }
@@ -212,7 +214,7 @@ export default function LexaraConsentPage() {
 
             {voiceServiceReady === true && !preparing && (
               <p className="mt-4 text-center text-xs text-emerald-300">
-                LEXARA voice is ready.
+                LEXARA voice and legal reasoning are configured.
               </p>
             )}
 
