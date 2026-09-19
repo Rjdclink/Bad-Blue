@@ -592,9 +592,11 @@ router.post('/transcribe-file', lexaraVoiceUpload.single('audio'), async (req: R
       const noSpeech = hasNoSpeech ? Number(noSpeechProbability) : undefined;
       const logprob = hasLogprob ? Number(avgLogprob) : undefined;
 
-      // Generic closers are a high-frequency hallucination/echo shape in voice
-      // agents. Verify only this suspicious class with the independent ASR route
-      // instead of doubling latency for every normal utterance.
+      // Keep user-turn authority conservative without blocking conversational
+      // barge-in. A barge-in probe is non-authoritative and may stop local
+      // playback after primary ASR + client echo screening; only short final
+      // playback-overlap turns and suspicious generic closers require a second
+      // ASR before they can become user text.
       const normalizeTranscript = (value: string) =>
         value.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
       const normalizedTranscript = normalizeTranscript(result.text);
@@ -604,8 +606,13 @@ router.post('/transcribe-file', lexaraVoiceUpload.single('audio'), async (req: R
 
       const requiresIndependentVerification =
         provider.name === 'groq-whisper'
+        && !bargeInProbe
         && (
-          startedDuringPlayback
+          (
+            startedDuringPlayback
+            && speechDurationMs > 0
+            && speechDurationMs < 900
+          )
           || (
             suspiciousGeneric
             && speechDurationMs < 1_200
@@ -662,20 +669,6 @@ router.post('/transcribe-file', lexaraVoiceUpload.single('audio'), async (req: R
               });
             }
           }
-        } else if (startedDuringPlayback && !explicitControl && bargeInProbe) {
-          // Without an independent verifier, a playback-overlap probe never
-          // earns authority for an ordinary sentence. The client still permits
-          // explicit stop/wait/no controls and post-playback clean turns.
-          return res.json({
-            success: true,
-            transcript: '',
-            isFinal: false,
-            rejected: true,
-            rejectionReason: 'playback_overlap_no_independent_verifier',
-            provider: result.provider,
-            model: result.model,
-            bargeInProbe,
-          });
         }
       }
 
