@@ -11,16 +11,10 @@
 
 import { type Express, type Request, type Response } from 'express';
 import crypto from 'crypto';
-import { Readable } from 'stream';
 import { asyncHandler } from '../errorHandler';
-import { 
-  getVoiceSynthesisService,
-  type VoiceSynthesisRequest 
-} from '../voiceSynthesisService';
 import { createLogger } from '../logger';
-import { synthesizeLexaraSpeech } from '../lexara/LexaraTTSRouter';
-import type { SpeechContext } from '@shared/lexaraVoicePersona';
 import { isAuthenticated } from '../auth';
+import { getLexaraTTSReadiness, synthesizeLexaraSpeechWithFailover } from '../lexara/LexaraTTSMesh';
 
 const log = createLogger('VoiceRoutes');
 
@@ -82,8 +76,13 @@ export function setupVoiceRoutes(app: Express): void {
       const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
       if (!text) return res.status(400).json({ error: 'Text is required for TTS synthesis' });
       if (text.length > 5000) return res.status(400).json({ error: 'Text too long. Maximum 5000 characters.' });
-      if (!process.env.ELEVENLABS_API_KEY?.trim() || !process.env.ELEVENLABS_VOICE_ID?.trim()) {
-        return res.status(503).json({ error: 'LEXARA voice is not configured' });
+
+      const readiness = getLexaraTTSReadiness();
+      if (!readiness.available) {
+        return res.status(503).json({
+          error: 'LEXARA voice has no healthy synthesis route',
+          configuredProviders: readiness.configuredProviders,
+        });
       }
 
       pruneLexaraTTSSessions();
@@ -92,9 +91,10 @@ export function setupVoiceRoutes(app: Express): void {
       return res.json({
         success: true,
         audioUrl: `/api/lexara/tts/session/${id}`,
-        provider: 'elevenlabs',
-        voiceId: process.env.ELEVENLABS_VOICE_ID,
-        model: process.env.ELEVENLABS_TTS_MODEL?.trim() || 'eleven_flash_v2_5',
+        provider: 'adaptive-tts-mesh',
+        providers: readiness.healthyProviders,
+        voiceId: null,
+        model: 'adaptive',
       });
     }),
   );
@@ -116,100 +116,27 @@ export function setupVoiceRoutes(app: Express): void {
       }
       session.attempts += 1;
 
-      const apiKey = process.env.ELEVENLABS_API_KEY?.trim();
-      const voiceId = process.env.ELEVENLABS_VOICE_ID?.trim();
-      const modelId = process.env.ELEVENLABS_TTS_MODEL?.trim() || 'eleven_flash_v2_5';
-      const outputFormat = process.env.ELEVENLABS_TTS_OUTPUT_FORMAT?.trim() || 'mp3_44100_128';
-      if (!apiKey || !voiceId) return res.status(503).json({ error: 'LEXARA voice is not configured' });
-
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 45_000);
-      const clearTimer = () => clearTimeout(timer);
-      req.once('aborted', () => controller.abort());
-      res.once('finish', clearTimer);
-      res.once('close', () => {
-        clearTimer();
-        if (!res.writableEnded) controller.abort();
-      });
-
-      const startedAt = Date.now();
       try {
-        const upstream = await fetch(
-          `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream?output_format=${encodeURIComponent(outputFormat)}`,
-          {
-            method: 'POST',
-            headers: {
-              'xi-api-key': apiKey,
-              'Content-Type': 'application/json',
-              Accept: 'audio/mpeg',
-            },
-            body: JSON.stringify({
-              text: session.text,
-              model_id: modelId,
-              voice_settings: {
-                stability: boundedVoiceSetting('ELEVENLABS_VOICE_STABILITY', 0.5),
-                similarity_boost: boundedVoiceSetting('ELEVENLABS_VOICE_SIMILARITY', 0.8),
-                style: boundedVoiceSetting('ELEVENLABS_VOICE_STYLE', 0.15),
-                use_speaker_boost: true,
-              },
-            }),
-            signal: controller.signal,
-          },
-        );
-
-        if (!upstream.ok || !upstream.body) {
-          const detail = (await upstream.text()).slice(0, 500);
-          log.warn('[VoiceRoutes] ElevenLabs streaming TTS failed', {
-            status: upstream.status,
-            detail,
-          });
-          return res.status(502).json({ error: 'LEXARA voice streaming failed' });
-        }
-
-        log.info('[VoiceRoutes] ElevenLabs stream opened', {
-          provider: 'elevenlabs',
-          voiceId,
-          modelId,
-          upstreamLatencyMs: Date.now() - startedAt,
-          textLength: session.text.length,
-          outputFormat,
-        });
-
-        const retireSession = () => lexaraTTSStreamSessions.delete(id);
-        res.once('finish', retireSession);
-        res.once('close', retireSession);
-
+        const result = await synthesizeLexaraSpeechWithFailover(session.text);
+        lexaraTTSStreamSessions.delete(id);
         res.status(200);
-        res.setHeader('Content-Type', upstream.headers.get('content-type') || 'audio/mpeg');
+        res.setHeader('Content-Type', result.mimeType);
+        res.setHeader('Content-Length', result.audioData.length);
         res.setHeader('Cache-Control', 'no-store');
-        res.setHeader('X-Provider', 'elevenlabs');
-        res.setHeader('X-Voice-Id', voiceId);
-        res.setHeader('X-TTS-Model', modelId);
-
-        const readable = Readable.fromWeb(upstream.body as any);
-        readable.on('error', error => {
-          log.warn('[VoiceRoutes] Streaming TTS pipe error', {
-            error: error instanceof Error ? error.message : String(error),
-          });
-          if (!res.headersSent) res.status(502).end();
-          else res.end();
-        });
-        readable.pipe(res);
+        res.setHeader('X-Provider', result.provider);
+        res.setHeader('X-Voice-Id', result.voiceId || 'adaptive');
+        res.setHeader('X-TTS-Model', result.model);
+        res.setHeader('X-TTS-Latency-Ms', String(result.latencyMs));
+        return res.send(result.audioData);
       } catch (error) {
-        clearTimer();
-        if (res.headersSent) {
-          log.warn('[VoiceRoutes] Streaming TTS terminated after headers', {
-            error: error instanceof Error ? error.message : String(error),
-          });
-          res.end();
-          return;
-        }
-        throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        log.error('[VoiceRoutes] All LEXARA TTS session routes failed', { error: message });
+        return res.status(502).json({ error: 'LEXARA voice synthesis failed across all compatible routes' });
       }
     }),
   );
 
-  
+
   /**
    * POST /api/lexara/speak
    * Synthesize speech from text with LEXARA's voice using ElevenLabs
@@ -228,90 +155,27 @@ export function setupVoiceRoutes(app: Express): void {
     '/api/lexara/speak',
     isAuthenticated,
     asyncHandler(async (req: Request, res: Response) => {
-      const {
-        text,
-        context,
-        persona,
-        tonalDirective,
-        emotionalState,
-        optimizeForAuditory = true,
-      } = req.body;
-
-      // Validation
-      if (!text || typeof text !== 'string' || text.trim().length === 0) {
-        return res.status(400).json({ 
-          error: 'Text is required for speech synthesis' 
-        });
-      }
-
-      if (text.length > 5000) {
-        return res.status(400).json({
-          error: 'Text too long. Maximum 5000 characters.',
-        });
-      }
+      const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+      if (!text) return res.status(400).json({ error: 'Text is required for speech synthesis' });
+      if (text.length > 5000) return res.status(400).json({ error: 'Text too long. Maximum 5000 characters.' });
 
       try {
-        log.info('[VoiceRoutes] Speech synthesis request', {
-          provider: 'elevenlabs',
-          context,
-          textLength: text.length,
-          emotionalState,
-        });
-
-        const synthesisRequest: VoiceSynthesisRequest = {
-          text,
-          context: context as SpeechContext,
-          persona,
-          tonalDirective,
-          emotionalState,
-          optimizeForAuditory,
-        };
-
-        const voiceService = getVoiceSynthesisService();
-        const result = await voiceService.synthesize(synthesisRequest);
-
-        // Log success
-        log.info('[VoiceRoutes] Speech synthesis complete', {
-          provider: result.provider,
-          mimeType: result.mimeType,
-          duration: result.duration,
-          audioSize: result.audioData?.length || 0,
-        });
-
-        // If audio data is present, stream it directly
-        if (result.audioData) {
-          res.setHeader('Content-Type', result.mimeType);
-          res.setHeader('Content-Length', result.audioData.length);
-          res.setHeader('X-Audio-Duration', result.duration.toString());
-          res.setHeader('X-Provider', result.provider);
-          res.setHeader('X-Voice-Id', process.env.ELEVENLABS_VOICE_ID || 'unknown');
-          return res.send(result.audioData);
-        }
-
-        // If audio URL is present, return it as JSON
-        if (result.audioUrl) {
-          return res.json({
-            audioUrl: result.audioUrl,
-            mimeType: result.mimeType,
-            duration: result.duration,
-            provider: result.provider,
-          });
-        }
-
-        // Should not reach here with ElevenLabs - always returns audio
-        throw new Error('No audio data returned from synthesis');
-
+        const result = await synthesizeLexaraSpeechWithFailover(text);
+        res.setHeader('Content-Type', result.mimeType);
+        res.setHeader('Content-Length', result.audioData.length);
+        res.setHeader('X-Provider', result.provider);
+        res.setHeader('X-Voice-Id', result.voiceId || 'adaptive');
+        res.setHeader('X-TTS-Model', result.model);
+        return res.send(result.audioData);
       } catch (error) {
-        log.error('[VoiceRoutes] Speech synthesis failed', { 
-          error: error instanceof Error ? error.message : 'Unknown error',
-          provider: 'elevenlabs',
-        });
-        return res.status(500).json({
-          error: 'Speech synthesis failed',
-          message: error instanceof Error ? error.message : 'Unknown error',
+        const message = error instanceof Error ? error.message : String(error);
+        log.error('[VoiceRoutes] Speech synthesis mesh exhausted', { error: message });
+        return res.status(503).json({
+          error: 'Speech synthesis unavailable',
+          message: 'All compatible LEXARA voice routes are temporarily unavailable.',
         });
       }
-    })
+    }),
   );
 
   /**
@@ -324,61 +188,28 @@ export function setupVoiceRoutes(app: Express): void {
     '/api/lexara/tts/stream',
     isAuthenticated,
     asyncHandler(async (req: Request, res: Response) => {
-      const { text, stability, similarityBoost, style } = req.body;
-
-      if (!text || typeof text !== 'string' || text.trim().length === 0) {
-        return res.status(400).json({ 
-          error: 'Text is required for TTS synthesis' 
-        });
-      }
-
-      if (text.length > 5000) {
-        return res.status(400).json({
-          error: 'Text too long. Maximum 5000 characters.',
-        });
-      }
+      const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+      if (!text) return res.status(400).json({ error: 'Text is required for TTS synthesis' });
+      if (text.length > 5000) return res.status(400).json({ error: 'Text too long. Maximum 5000 characters.' });
 
       try {
-        log.info('[VoiceRoutes] TTS stream request', {
-          provider: 'elevenlabs',
-          textLength: text.length,
-          stability,
-          similarityBoost,
-        });
-
-        const result = await synthesizeLexaraSpeech({
-          text: text.trim(),
-          stability,
-          similarityBoost,
-          style,
-        });
-
-        log.info('[VoiceRoutes] TTS stream complete', {
-          provider: 'elevenlabs',
-          voiceId: result.voiceId,
-          audioByteLength: result.audioByteLength,
-          durationMs: result.durationMs,
-        });
-
-        // Stream audio directly
+        const result = await synthesizeLexaraSpeechWithFailover(text);
         res.setHeader('Content-Type', result.mimeType);
-        res.setHeader('Content-Length', result.audioByteLength);
-        res.setHeader('X-Audio-Duration', result.durationMs.toString());
-        res.setHeader('X-Provider', 'elevenlabs');
-        res.setHeader('X-Voice-Id', result.voiceId);
-        
+        res.setHeader('Content-Length', result.audioData.length);
+        res.setHeader('X-Provider', result.provider);
+        res.setHeader('X-Voice-Id', result.voiceId || 'adaptive');
+        res.setHeader('X-TTS-Model', result.model);
+        res.setHeader('X-Audio-Duration', '0');
         return res.send(result.audioData);
-
       } catch (error) {
-        log.error('[VoiceRoutes] TTS stream failed', { 
-          error: error instanceof Error ? error.message : 'Unknown error',
-        });
-        return res.status(500).json({
+        const message = error instanceof Error ? error.message : String(error);
+        log.error('[VoiceRoutes] TTS mesh exhausted', { error: message });
+        return res.status(503).json({
           error: 'TTS synthesis failed',
-          message: error instanceof Error ? error.message : 'Unknown error',
+          message: 'All compatible LEXARA voice routes are temporarily unavailable.',
         });
       }
-    })
+    }),
   );
 
   /**
@@ -483,25 +314,16 @@ export function setupVoiceRoutes(app: Express): void {
    */
   app.get(
     '/api/lexara/voice/providers',
-    asyncHandler(async (req: Request, res: Response) => {
-      try {
-        const voiceService = getVoiceSynthesisService();
-        const providers = await voiceService.getAvailableProviders();
-        
-        return res.json({
-          providers,
-          default: providers.includes('elevenlabs') ? 'elevenlabs' : null,
-          configured: {
-            elevenlabs: !!process.env.ELEVENLABS_API_KEY && !!process.env.ELEVENLABS_VOICE_ID,
-          },
-        });
-      } catch (error) {
-        log.error('[VoiceRoutes] Failed to get voice providers', error);
-        return res.status(500).json({
-          error: 'Failed to retrieve voice providers',
-        });
-      }
-    })
+    asyncHandler(async (_req: Request, res: Response) => {
+      const readiness = getLexaraTTSReadiness();
+      return res.json({
+        providers: readiness.providers,
+        configuredProviders: readiness.configuredProviders,
+        healthyProviders: readiness.healthyProviders,
+        default: readiness.healthyProviders[0] || null,
+        available: readiness.available,
+      });
+    }),
   );
 
   /**
@@ -510,42 +332,23 @@ export function setupVoiceRoutes(app: Express): void {
    */
   app.get(
     '/api/lexara/voice/status',
-    asyncHandler(async (req: Request, res: Response) => {
-      try {
-        const voiceService = getVoiceSynthesisService();
-        const providers = await voiceService.getAvailableProviders();
-        const stats = voiceService.getStats();
-        
-        return res.json({
-          available: providers.includes('elevenlabs'),
-          provider: 'elevenlabs',
-          voiceId: process.env.ELEVENLABS_VOICE_ID || 'not configured',
-          stats: {
-            synthesisCount: stats.synthesisCount,
-            avgLatencyMs: Math.round(stats.avgLatencyMs),
-            errorCount: stats.errorCount,
-            errorRate: (stats.errorRate * 100).toFixed(2) + '%',
-          },
-          configuration: {
-            apiKeySet: !!process.env.ELEVENLABS_API_KEY,
-            voiceIdSet: !!process.env.ELEVENLABS_VOICE_ID,
-          },
-          features: {
-            streaming: true,
-            caching: true,
-            emotionalContext: true,
-          },
-        });
-      } catch (error) {
-        log.error('[VoiceRoutes] Failed to get voice status', error);
-        return res.status(500).json({
-          available: false,
-          error: 'Voice synthesis system unavailable',
-          message: error instanceof Error ? error.message : 'Unknown error',
-        });
-      }
-    })
+    asyncHandler(async (_req: Request, res: Response) => {
+      const readiness = getLexaraTTSReadiness();
+      return res.json({
+        available: readiness.available,
+        provider: readiness.healthyProviders[0] || null,
+        configuredProviders: readiness.configuredProviders,
+        healthyProviders: readiness.healthyProviders,
+        providers: readiness.providers,
+        features: {
+          adaptiveRouting: true,
+          routeLocalFailover: true,
+          quotaAwareCooldown: true,
+          multipleAcousticRoutes: true,
+        },
+      });
+    }),
   );
 
-  log.info('[VoiceRoutes] Voice synthesis routes configured with ElevenLabs provider');
+  log.info('[VoiceRoutes] Voice synthesis routes configured with adaptive multi-provider TTS mesh');
 }
