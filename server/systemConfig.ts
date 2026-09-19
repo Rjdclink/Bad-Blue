@@ -24,7 +24,7 @@ import {
 // ═══════════════════════════════════════════════════════
 
 export interface VoiceProviderConfig {
-  provider: 'elevenlabs' | 'azure' | 'google' | 'amazon' | 'browser';
+  provider: 'adaptive-mesh' | 'elevenlabs' | 'mistral' | 'gemini' | 'deepgram' | 'xai' | 'groq' | 'openrouter' | 'azure';
   apiKey?: string;
   voiceId?: string;
   model?: string;
@@ -37,24 +37,21 @@ export interface VoiceProviderConfig {
 }
 
 export const VOICE_PROVIDERS: Record<string, VoiceProviderConfig> = {
-  // Primary: ElevenLabs for premium quality
-  elevenlabs: {
-    provider: 'elevenlabs',
-    apiKey: process.env.ELEVENLABS_API_KEY,
-    voiceId: process.env.ELEVENLABS_VOICE_ID,
-    model: process.env.ELEVENLABS_TTS_MODEL?.trim() || 'eleven_flash_v2_5',
+  // Compatibility metadata only. Runtime voice authority lives in
+  // LexaraTTSMesh and dynamically selects a verified compatible route.
+  adaptive: {
+    provider: 'adaptive-mesh',
+    model: 'capability-routed',
     settings: {
       pitch: 0,
       rate: 1.0,
-      stability: 0.5,
+      stability: 0.72,
       similarityBoost: 0.8,
     },
   },
-  // Browser speech synthesis is intentionally not a LEXARA production voice.
-  // It remains omitted so an outage cannot change LEXARA's acoustic identity.
 };
 
-export const DEFAULT_VOICE_PROVIDER = 'elevenlabs';
+export const DEFAULT_VOICE_PROVIDER = 'adaptive';
 
 // ═══════════════════════════════════════════════════════
 // LEXARA PERSONA CONFIGURATION
@@ -343,7 +340,7 @@ export const RATE_LIMIT_CONFIG = {
 export const SYSTEM_VERSION = {
   app: '1.0.0',
   engines: {
-    voice: 'v2.0.0-elevenlabs',
+    voice: 'v3.0.0-adaptive-verified-mesh',
     geo: 'v1.5.0-hybrid',
     crawler: 'v3.0.0-trinity',
     lexara: 'v2.1.0-persona',
@@ -368,7 +365,7 @@ export function getCurrentTimestamp(): string {
  * Get active voice provider configuration
  */
 export function getActiveVoiceProvider(): VoiceProviderConfig {
-  return VOICE_PROVIDERS[DEFAULT_VOICE_PROVIDER] || VOICE_PROVIDERS.browser;
+  return VOICE_PROVIDERS[DEFAULT_VOICE_PROVIDER] || VOICE_PROVIDERS.adaptive;
 }
 
 /**
