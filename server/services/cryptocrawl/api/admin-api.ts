@@ -4,6 +4,10 @@ import { gasOracle, balanceMonitor, networkHealth } from '../bridge';
 import { zeroCapitalEngine } from '../core/zero-capital-engine';
 import { ensureCryptocrawlOverflowRuntimeSchema } from '../runtime/cryptocrawl-overflow-runtime-schema.js';
 import {
+  closeCryptocrawlRuntimeDatabasePools,
+  reopenCryptocrawlRuntimeDatabasePools,
+} from '../runtime/cryptocrawl-runtime-database.js';
+import {
   activateCanonicalCryptoCrawlerRuntimeWiring,
   deactivateCanonicalCryptoCrawlerRuntimeWiring,
   getCanonicalCryptoCrawlerActivationState,
@@ -425,6 +429,7 @@ async function rollbackCryptoCrawlerManualStart(): Promise<string[]> {
   ]);
   resetGovernanceInitializationForManualStop();
   stopCryptaraHyperBridgeBootstrap();
+  await closeCryptocrawlRuntimeDatabasePools();
   setCryptoCrawlerManualPowerPhase('OFF');
   systemState.running = false;
   if (systemState.lifecycle !== 'RUNNING') {
@@ -456,6 +461,10 @@ export async function stopCryptoCrawlerRuntime(): Promise<{ stopped: boolean; fa
   ]);
   results.push(...admissionCleanup);
   resetGovernanceInitializationForManualStop();
+  const databaseCleanup = await Promise.allSettled([
+    closeCryptocrawlRuntimeDatabasePools(),
+  ]);
+  results.push(...databaseCleanup);
 
   // OFF is fail-closed even when one cleanup component reports an error. Once
   // cleanup has been attempted, no CryptoCrawler-owned database/network path may
@@ -525,6 +534,7 @@ export async function startCryptoCrawlerRuntime(): Promise<CryptoCrawlerStartRes
   }
 
   setCryptoCrawlerManualPowerPhase('STARTING');
+  reopenCryptocrawlRuntimeDatabasePools();
 
   if (process.env.NODE_ENV === 'production') {
     try {
