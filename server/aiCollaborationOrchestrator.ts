@@ -313,6 +313,28 @@ async function callOpenAICompatibleHarmonyProvider(
   }
 }
 
+function createLinkedDeadlineSignal(
+  parent: AbortSignal | undefined,
+  timeoutMs: number,
+  provider: AIProvider,
+): { signal: AbortSignal; cleanup: () => void } {
+  const controller = new AbortController();
+  const relayAbort = () => controller.abort(parent?.reason);
+  if (parent?.aborted) controller.abort(parent.reason);
+  else parent?.addEventListener('abort', relayAbort, { once: true });
+  const timer = setTimeout(() => {
+    controller.abort(new Error(`${provider} timed out after ${timeoutMs}ms`));
+  }, timeoutMs);
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timer);
+      parent?.removeEventListener('abort', relayAbort);
+    },
+  };
+}
+
 async function withHarmonyDeadline<T>(
   promise: Promise<T>,
   timeoutMs: number,
@@ -324,7 +346,11 @@ async function withHarmonyDeadline<T>(
   try {
     const abortPromise = new Promise<T>((_resolve, reject) => {
       if (!signal) return;
-      abortHandler = () => reject(new DOMException('Superseded generation', 'AbortError'));
+      abortHandler = () => {
+        const reason = signal.reason;
+        if (reason instanceof Error || reason instanceof DOMException) reject(reason);
+        else reject(new DOMException('Superseded generation', 'AbortError'));
+      };
       if (signal.aborted) abortHandler();
       else signal.addEventListener('abort', abortHandler, { once: true });
     });
@@ -1229,8 +1255,12 @@ export class AICollaborationOrchestrator {
       ),
     );
 
+    const taskTimeoutMs = task.requestTimeoutMs || 6_000;
+    const attempt = createLinkedDeadlineSignal(task.signal, taskTimeoutMs, task.provider);
+
     try {
       if (task.signal?.aborted) {
+        attempt.cleanup();
         throw new DOMException('Superseded generation', 'AbortError');
       }
       if (!harmonyProviderAvailable(task.provider) && !task.allowCoolingRecovery) {
@@ -1247,13 +1277,13 @@ export class AICollaborationOrchestrator {
             runProvider(
               task.provider,
               prompt,
-              { model: task.model, systemPrompt: task.systemPrompt, signal: task.signal },
+              { model: task.model, systemPrompt: task.systemPrompt, signal: attempt.signal },
               outputTokenLimit,
               taskMetadata,
             ),
-            task.requestTimeoutMs || 6_000,
+            taskTimeoutMs,
             task.provider,
-            task.signal,
+            attempt.signal,
           );
           content = response.content;
           tokensUsed = response.tokensUsed;
@@ -1264,13 +1294,13 @@ export class AICollaborationOrchestrator {
             runProvider(
               AIProvider.CLAUDE,
               prompt,
-              { model: task.model, systemPrompt: task.systemPrompt, signal: task.signal },
+              { model: task.model, systemPrompt: task.systemPrompt, signal: attempt.signal },
               outputTokenLimit,
               taskMetadata,
             ),
-            task.requestTimeoutMs || 6_000,
+            taskTimeoutMs,
             task.provider,
-            task.signal,
+            attempt.signal,
           );
           content = response.content;
           tokensUsed = response.tokensUsed;
@@ -1293,7 +1323,7 @@ export class AICollaborationOrchestrator {
             systemPrompt: task.systemPrompt,
             maxTokens: outputTokenLimit,
             timeoutMs: task.requestTimeoutMs || 6_000,
-            signal: task.signal,
+            signal: attempt.signal,
           });
           content = result.content;
           tokensUsed = Math.ceil(content.length / 4);
@@ -1305,7 +1335,7 @@ export class AICollaborationOrchestrator {
               runProvider(
                 AIProvider.GROQ,
                 prompt,
-                { model: getHarmonyResolvedModel(AIProvider.GROQ), systemPrompt: task.systemPrompt, signal: task.signal },
+                { model: getHarmonyResolvedModel(AIProvider.GROQ), systemPrompt: task.systemPrompt, signal: attempt.signal },
                 outputTokenLimit,
                 taskMetadata,
               ),
@@ -1321,7 +1351,7 @@ export class AICollaborationOrchestrator {
               systemPrompt: task.systemPrompt,
               maxTokens: outputTokenLimit,
               timeoutMs: task.requestTimeoutMs || 6_000,
-              signal: task.signal,
+              signal: attempt.signal,
             });
             content = result.content;
             tokensUsed = Math.ceil(content.length / 4);
@@ -1341,9 +1371,9 @@ export class AICollaborationOrchestrator {
               task.requestTimeoutMs || 6_000,
               task.signal,
             ),
-            task.requestTimeoutMs || 6_000,
+            taskTimeoutMs,
             task.provider,
-            task.signal,
+            attempt.signal,
           );
           content = result.content;
           tokensUsed = result.tokensUsed;
@@ -1369,9 +1399,9 @@ export class AICollaborationOrchestrator {
                   task.requestTimeoutMs || 6_000,
                   task.signal,
                 ),
-            task.requestTimeoutMs || 6_000,
+            taskTimeoutMs,
             task.provider,
-            task.signal,
+            attempt.signal,
           );
           content = result.content;
           tokensUsed = result.tokensUsed;
@@ -1398,9 +1428,9 @@ export class AICollaborationOrchestrator {
                   task.requestTimeoutMs || 6_000,
                   task.signal,
                 ),
-            task.requestTimeoutMs || 6_000,
+            taskTimeoutMs,
             task.provider,
-            task.signal,
+            attempt.signal,
           );
           content = result.content;
           tokensUsed = result.tokensUsed;
@@ -1415,7 +1445,7 @@ export class AICollaborationOrchestrator {
             systemPrompt: task.systemPrompt,
             maxTokens: outputTokenLimit,
             timeoutMs: task.requestTimeoutMs || 6_000,
-            signal: task.signal,
+            signal: attempt.signal,
           });
           content = result.content;
           tokensUsed = Math.ceil(content.length / 4);
@@ -1432,6 +1462,7 @@ export class AICollaborationOrchestrator {
         recordHarmonyProviderRuntime(task.provider, true, Date.now() - startTime);
       }
     } catch (error: any) {
+      attempt.cleanup();
       if (isHarmonyRequestCancellation(error, task.signal)) {
         return {
           taskId: task.id,
@@ -1502,6 +1533,8 @@ export class AICollaborationOrchestrator {
       success = false;
       content = `[${task.provider}] error: ${error?.message || 'Unknown error'}`;
     }
+
+    attempt.cleanup();
 
     const result: CollaborationResult = {
       taskId: task.id,
