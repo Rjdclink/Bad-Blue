@@ -23,6 +23,14 @@ let databaseUnavailableUntil = 0;
 const DATABASE_COOLDOWN_MS = 60_000;
 const mirrorTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
+function safeReportId(reportId: string): string {
+  const normalized = String(reportId || '').trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalized)) {
+    throw new Error('Invalid Pantheon report ID');
+  }
+  return normalized;
+}
+
 function errorText(error: unknown): string {
   const seen = new Set<unknown>();
   const parts: string[] = [];
@@ -78,7 +86,7 @@ function serializable(record: PantheonReportRecord) {
 
 async function journalPath(reportId: string): Promise<string> {
   await mkdir(fallbackDirectory, { recursive: true });
-  return path.join(fallbackDirectory, `${reportId}.json`);
+  return path.join(fallbackDirectory, `${safeReportId(reportId)}.json`);
 }
 
 async function writeJournal(record: PantheonReportRecord): Promise<void> {
@@ -250,6 +258,12 @@ export async function updatePantheonReportRecord(
 }
 
 export async function getPantheonReportRecord(reportId: string): Promise<PantheonReportRecord | null> {
+  try {
+    reportId = safeReportId(reportId);
+  } catch {
+    return null;
+  }
+
   if (canTryDatabase()) {
     try {
       const persisted = await storage.getPeopleSearchReport(reportId);
