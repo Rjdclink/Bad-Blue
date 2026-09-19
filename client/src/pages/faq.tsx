@@ -2,7 +2,7 @@
  * Legal What? FAQ Page
  * 
  * Comprehensive FAQ page for Legal What? platform
- * Includes P.A.N.T.H.E.O.N. 13-AI system, core AI systems, and all 30 law types
+ * Includes P.A.N.T.H.E.O.N. 13-AI system, core AI systems, and all 31 law types
  */
 
 import { useState } from "react";
@@ -51,7 +51,7 @@ const CORE_SYSTEMS = [
   {
     name: "LEXARA",
     acronym: "Legal Expert AI Resource Advisor",
-    description: "Primary legal consultation AI providing comprehensive legal guidance across all 30 law types",
+    description: "Primary legal consultation AI providing comprehensive legal guidance across all 31 law types",
     icon: Brain,
     iconColor: "text-blue-600"
   },
@@ -173,7 +173,7 @@ export default function FAQPage() {
               </p>
               <p>
                 LEXARA is Legal What?'s primary legal consultation AI. Powered by the P.A.N.T.H.E.O.N. framework, 
-                LEXARA provides comprehensive legal guidance across all 30 law types. It analyzes your situation, 
+                LEXARA provides comprehensive legal guidance across all 31 law types. It analyzes your situation, 
                 explains relevant laws, identifies your rights, suggests legal strategies, and provides 
                 jurisdiction-specific advice tailored to your location.
               </p>
@@ -358,7 +358,7 @@ export default function FAQPage() {
       items: [
         {
           question: "What can Legal What? help me with?",
-          answer: "Legal What? can help with legal consultations, document drafting, evidence analysis, people searches, understanding your rights, filing complaints, drafting lawsuits, requesting public records, researching case law, understanding statutes, preparing for court, negotiating settlements, and much more across all 30 law types."
+          answer: "Legal What? can help with legal consultations, document drafting, evidence analysis, people searches, understanding your rights, filing complaints, drafting lawsuits, requesting public records, researching case law, understanding statutes, preparing for court, negotiating settlements, and much more across all 31 law types."
         },
         {
           question: "How accurate is the AI legal advice?",
