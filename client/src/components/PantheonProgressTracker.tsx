@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
+import { PANTHEON_REPORT_DURATIONS_MS } from '@shared/pantheonReportConfig';
 import { 
   Clock, 
   Database, 
@@ -30,12 +31,7 @@ interface SearchStage {
   color: string;
 }
 
-const DEPTH_DURATIONS = {
-  1: 30000,  // 30 seconds
-  2: 60000,  // 60 seconds
-  3: 120000, // 120 seconds
-  4: 180000, // 180 seconds
-};
+const DEPTH_DURATIONS = PANTHEON_REPORT_DURATIONS_MS;
 
 const SEARCH_STAGES: SearchStage[] = [
   { id: 'init', icon: Zap, label: 'Initializing', duration: 5, color: 'text-yellow-500' },
@@ -85,7 +81,7 @@ export function PantheonProgressTracker({
     const startTime = Date.now();
     const interval = setInterval(() => {
       const elapsed = Date.now() - startTime;
-      const progressPercent = Math.min((elapsed / totalDuration) * 100, 100);
+      const progressPercent = Math.min((elapsed / totalDuration) * 100, 99);
       
       setProgress(progressPercent);
       setElapsedTime(elapsed);
@@ -112,12 +108,8 @@ export function PantheonProgressTracker({
       const progressInStage = ((progressPercent - stageStartPercent) / stageRange) * 100;
       setStageProgress(Math.min(progressInStage, 100));
 
-      if (progressPercent >= 100) {
-        clearInterval(interval);
-        if (onComplete) {
-          setTimeout(onComplete, 500);
-        }
-      }
+      // The server-side job is authoritative. The visual clock never aborts or
+      // completes the investigation; it waits for persisted job status.
     }, 50); // Update every 50ms for smooth animation
 
     return () => clearInterval(interval);
@@ -127,7 +119,7 @@ export function PantheonProgressTracker({
     return null;
   }
 
-  const remainingMs = totalDuration - elapsedTime;
+  const remainingMs = Math.max(0, totalDuration - elapsedTime);
   const minutes = Math.floor(remainingMs / 60000);
   const seconds = Math.floor((remainingMs % 60000) / 1000);
   const milliseconds = Math.floor((remainingMs % 1000) / 10);
