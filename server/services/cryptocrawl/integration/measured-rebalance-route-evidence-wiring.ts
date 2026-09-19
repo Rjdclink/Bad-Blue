@@ -3,6 +3,7 @@ import { coinGeckoPriceClient } from '../bridge/coingecko-client.js';
 import { cexInventoryLedger } from '../execution/cex-inventory-ledger.js';
 import { inventoryRebalancer } from '../execution/inventory-rebalancer.js';
 import { krakenPrivateRequest, okxPrivateRequest } from '../intelligence/cex-private-authority.js';
+import { isCryptoCrawlerDatabaseAccessAllowed } from '../runtime/manual-power-state.js';
 
 const REFRESH_MS = boundedInt(process.env.CRYPTOCRAWL_REBALANCE_ROUTE_EVIDENCE_REFRESH_MS, 60_000, 15_000, 15 * 60_000);
 const EVIDENCE_TTL_MS = boundedInt(process.env.CRYPTOCRAWL_REBALANCE_ROUTE_EVIDENCE_TTL_MS, 120_000, 30_000, 30 * 60_000);
@@ -18,6 +19,11 @@ let refreshInFlight: Promise<void> | null = null;
 let lastRefreshAt: number | null = null;
 let lastSuccessAt: number | null = null;
 let lastError: string | null = null;
+let generation = 0;
+
+function activeGeneration(runGeneration: number): boolean {
+  return installed && generation === runGeneration && isCryptoCrawlerDatabaseAccessAllowed();
+}
 
 function boundedInt(raw: unknown, fallback: number, min: number, max: number): number {
   const parsed = Number(raw);
@@ -98,11 +104,13 @@ function desiredAmount(asset: string, sourceVenue: 'kraken' | 'okx', destination
   return Number.isFinite(amount) && amount > 0 ? amount : null;
 }
 
-async function recordOkxToKraken(asset: string, amount: number): Promise<number> {
+async function recordOkxToKraken(asset: string, amount: number, runGeneration: number): Promise<number> {
+  if (!activeGeneration(runGeneration)) return 0;
   const [okxCurrencies, krakenDepositMethods] = await Promise.all([
     okxPrivateRequest('/api/v5/asset/currencies', 'GET', { ccy: asset }, { lane: 'account_read' }),
     krakenPrivateRequest('/0/private/DepositMethods', { asset }),
   ]);
+  if (!activeGeneration(runGeneration)) return 0;
   const deposits = (Array.isArray(krakenDepositMethods) ? krakenDepositMethods : [])
     .map((row: any) => ({
       method: String(row?.method || '').trim(),
@@ -112,6 +120,7 @@ async function recordOkxToKraken(asset: string, amount: number): Promise<number>
     .filter(row => row.method && memoFreeNetwork(row.network));
   let recorded = 0;
   for (const row of Array.isArray(okxCurrencies?.data) ? okxCurrencies.data : []) {
+    if (!activeGeneration(runGeneration)) return recorded;
     if (!bool(row?.canWd) || bool(row?.needTag)) continue;
     const network = networkKey(row?.chain);
     if (!memoFreeNetwork(network)) continue;
@@ -128,6 +137,7 @@ async function recordOkxToKraken(asset: string, amount: number): Promise<number>
     const minimumAmount = Math.max(minWd, destination.minimum);
     if (fee === null || !feeCurrency || amount + 1e-12 < minimumAmount || (maxWd !== null && amount > maxWd + 1e-12)) continue;
     const feeUsd = await usdValue(fee, feeCurrency);
+    if (!activeGeneration(runGeneration)) return recorded;
     if (feeUsd === null) continue;
     const observedAt = Date.now();
     inventoryRebalancer.recordMeasuredRouteEvidence({
@@ -162,13 +172,15 @@ async function recordOkxToKraken(asset: string, amount: number): Promise<number>
   return recorded;
 }
 
-async function recordKrakenToOkx(asset: string, amount: number): Promise<number> {
+async function recordKrakenToOkx(asset: string, amount: number, runGeneration: number): Promise<number> {
+  if (!activeGeneration(runGeneration)) return 0;
   const [withdrawMethodsRaw, withdrawAddressesRaw, okxCurrencies, okxDepositAddresses] = await Promise.all([
     krakenPrivateRequest('/0/private/WithdrawMethods', { asset }),
     krakenPrivateRequest('/0/private/WithdrawAddresses', { asset, verified: true }),
     okxPrivateRequest('/api/v5/asset/currencies', 'GET', { ccy: asset }, { lane: 'account_read' }),
     okxPrivateRequest('/api/v5/asset/deposit-address', 'GET', { ccy: asset }, { lane: 'account_read' }),
   ]);
+  if (!activeGeneration(runGeneration)) return 0;
   const methods = (Array.isArray(withdrawMethodsRaw) ? withdrawMethodsRaw : [])
     .map((row: any) => ({
       method: String(row?.method || '').trim(),
@@ -191,6 +203,7 @@ async function recordKrakenToOkx(asset: string, amount: number): Promise<number>
   let recorded = 0;
 
   for (const method of methods) {
+    if (!activeGeneration(runGeneration)) return recorded;
     const capability = okxCapabilities.find(row => row.network === method.network);
     if (!capability) continue;
     const minimumAmount = Math.max(method.minimum, capability.minDep);
@@ -205,9 +218,11 @@ async function recordKrakenToOkx(asset: string, amount: number): Promise<number>
     if (matching.length !== 1) continue;
     const key = String(matching[0]?.key || '').trim();
     const info = await krakenPrivateRequest('/0/private/WithdrawInfo', { asset, key, amount: String(amount) }).catch(() => null);
+    if (!activeGeneration(runGeneration)) return recorded;
     const fee = finiteNonNegative(info?.fee);
     if (fee === null) continue;
     const feeUsd = await usdValue(fee, asset);
+    if (!activeGeneration(runGeneration)) return recorded;
     if (feeUsd === null) continue;
     const observedAt = Date.now();
     inventoryRebalancer.recordMeasuredRouteEvidence({
@@ -245,8 +260,11 @@ async function recordKrakenToOkx(asset: string, amount: number): Promise<number>
 }
 
 async function refreshOnce(): Promise<void> {
+  if (!installed || !isCryptoCrawlerDatabaseAccessAllowed()) return;
   if (refreshInFlight) return refreshInFlight;
+  const runGeneration = generation;
   refreshInFlight = (async () => {
+    if (!activeGeneration(runGeneration)) return;
     lastRefreshAt = Date.now();
     const recommendations = cexInventoryLedger.getRebalanceRecommendations();
     const assets = [...new Set(recommendations
@@ -263,14 +281,15 @@ async function refreshOnce(): Promise<void> {
     let recorded = 0;
     let failedLanes = 0;
     for (const asset of assets) {
+      if (!activeGeneration(runGeneration)) return;
       const okxToKrakenAmount = desiredAmount(asset, 'okx', 'kraken');
       if (okxToKrakenAmount !== null) {
-        try { recorded += await recordOkxToKraken(asset, okxToKrakenAmount); }
+        try { recorded += await recordOkxToKraken(asset, okxToKrakenAmount, runGeneration); }
         catch { failedLanes += 1; }
       }
       const krakenToOkxAmount = desiredAmount(asset, 'kraken', 'okx');
       if (krakenToOkxAmount !== null) {
-        try { recorded += await recordKrakenToOkx(asset, krakenToOkxAmount); }
+        try { recorded += await recordKrakenToOkx(asset, krakenToOkxAmount, runGeneration); }
         catch { failedLanes += 1; }
       }
     }
@@ -297,9 +316,10 @@ async function refreshOnce(): Promise<void> {
 }
 
 function scheduleNext(): void {
-  if (process.env.NO_INTERVALS === 'true' || timer) return;
+  if (!installed || !isCryptoCrawlerDatabaseAccessAllowed() || process.env.NO_INTERVALS === 'true' || timer) return;
   timer = setTimeout(async () => {
     timer = null;
+    if (!installed || !isCryptoCrawlerDatabaseAccessAllowed()) return;
     await refreshOnce().catch(error => {
       logger.debug('[BPS Rebalance] Route-evidence refresh deferred without changing execution authority', {
         component: 'MeasuredRebalanceRouteEvidenceWiring',
@@ -307,15 +327,26 @@ function scheduleNext(): void {
         executionAuthority: false,
       });
     });
-    scheduleNext();
+    if (installed && isCryptoCrawlerDatabaseAccessAllowed()) scheduleNext();
   }, REFRESH_MS);
   timer.unref?.();
 }
 
 export function ensureMeasuredRebalanceRouteEvidenceWiring(): void {
   if (installed) return;
+  if (!isCryptoCrawlerDatabaseAccessAllowed()) throw new Error('CRYPTOCRAWLER_MASTER_POWER_OFF');
   installed = true;
-  void refreshOnce().catch(() => undefined).finally(scheduleNext);
+  generation += 1;
+  void refreshOnce().catch(() => undefined).finally(() => {
+    if (installed && isCryptoCrawlerDatabaseAccessAllowed()) scheduleNext();
+  });
+}
+
+export function stopMeasuredRebalanceRouteEvidenceWiring(): void {
+  installed = false;
+  generation += 1;
+  if (timer) clearTimeout(timer);
+  timer = null;
 }
 
 export function getMeasuredRebalanceRouteEvidenceWiringStatus() {
