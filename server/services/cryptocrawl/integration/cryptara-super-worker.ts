@@ -419,6 +419,12 @@ export async function installCryptaraSuperWorkerAdmission(): Promise<void> {
   admissionInstalled = true;
 }
 
+export async function uninstallCryptaraSuperWorkerAdmission(): Promise<void> {
+  const { uninstallCryptaraSupabaseAdmissionWorker } = await import('./cryptara-supabase-admission-worker.js');
+  uninstallCryptaraSupabaseAdmissionWorker();
+  admissionInstalled = false;
+}
+
 /**
  * Advisory arms: Antenna + QuantiComp + DB telemetry can accelerate only already-
  * healthy additive recovery. Cryptara remains the policy owner; proxy workers move data.
