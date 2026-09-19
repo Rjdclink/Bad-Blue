@@ -731,11 +731,13 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       setGaze('camera');
     }
 
+    let voiceFailed = false;
     try {
       await speak(text, {
         context: 'guidance',
         autoPlay: true,
         onError: () => {
+          voiceFailed = true;
           setVoiceReady(false);
           setConversationPhase('text-only');
         },
@@ -745,7 +747,9 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       recentLexaraSpeechRef.current = { text, expiresAt: Date.now() + 8_000 };
       resumeListening();
       if (generation === undefined || generation === generationRef.current) {
-        if (analysisActiveRef.current) {
+        if (voiceFailed) {
+          setConversationPhase('text-only');
+        } else if (analysisActiveRef.current) {
           setConversationPhase('thinking');
           setGaze('thinking');
         } else {
