@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, Clock, Zap, Eye } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { PANTHEON_REPORT_DURATION_LABELS } from "@shared/pantheonReportConfig";
 
 interface DoomsdayClockSelectorProps {
   onSearchStart: (config: SearchConfig) => void;
@@ -28,8 +29,8 @@ export function DoomsdayClockSelector({ onSearchStart, isSearching = false }: Do
       level: 1,
       icon: "⚡",
       title: "Basic Search",
-      duration: "45s",
-      description: "Quick surface-level scan across primary databases",
+      duration: PANTHEON_REPORT_DURATION_LABELS[1],
+      description: "All crawlers, focused first-pass investigation",
       color: "from-blue-500 to-blue-600",
       borderColor: "border-blue-500/50",
       hoverColor: "hover:border-blue-400",
@@ -40,8 +41,8 @@ export function DoomsdayClockSelector({ onSearchStart, isSearching = false }: Do
       level: 2,
       icon: "🔎",
       title: "Enhanced",
-      duration: "90s",
-      description: "Deeper investigation with relationship mapping",
+      duration: PANTHEON_REPORT_DURATION_LABELS[2],
+      description: "All crawlers with a broader investigation budget",
       color: "from-purple-500 to-purple-600",
       borderColor: "border-purple-500/50",
       hoverColor: "hover:border-purple-400",
@@ -52,8 +53,8 @@ export function DoomsdayClockSelector({ onSearchStart, isSearching = false }: Do
       level: 3,
       icon: "📊",
       title: "Full Report",
-      duration: "180s",
-      description: "Comprehensive analysis with historical data",
+      duration: PANTHEON_REPORT_DURATION_LABELS[3],
+      description: "All crawlers with deeper evidence collection and retries",
       color: "from-orange-500 to-orange-600",
       borderColor: "border-orange-500/50",
       hoverColor: "hover:border-orange-400",
@@ -64,8 +65,8 @@ export function DoomsdayClockSelector({ onSearchStart, isSearching = false }: Do
       level: 4,
       icon: "👁️",
       title: "EYE OF GOD",
-      duration: "300s",
-      description: "Total omniscience—maximum depth, all sources, complete intelligence",
+      duration: PANTHEON_REPORT_DURATION_LABELS[4],
+      description: "All crawlers with the maximum investigation budget and deepest traversal",
       color: "from-red-500 to-red-600",
       borderColor: "border-red-500/50",
       hoverColor: "hover:border-red-400",
