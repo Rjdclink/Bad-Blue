@@ -52,7 +52,7 @@ requirePattern(
   /startCryptaraOverflowSuperWorker\(\)[\s\S]{0,900}withCryptaraParallelProxy\('observability'/,
   'after manual start opens the gate, dedicated overflow Super Worker must be online before the remote overflow probe',
 );
-requirePattern(bridgeBootstrap, /export function stopCryptaraHyperBridgeBootstrap\(\)/, 'bridge bootstrap must expose a hard stop path');
+requirePattern(bridgeBootstrap, /export (?:async )?function stopCryptaraHyperBridgeBootstrap\(\)/, 'bridge bootstrap must expose a hard stop path');
 requirePattern(bridgeBootstrap, /withCryptaraParallelProxy\('observability'/, 'bootstrap must reuse the existing overflow worker');
 requirePattern(bridgeBootstrap, /if\s*\(probeInFlight\)\s*return\s+probeInFlight/, 'overflow bootstrap probe must be single-flight');
 requirePattern(bridgeBootstrap, /SELECT 1 AS hyper_bridge_ready/, 'bootstrap may probe only the overflow Supabase lane');
