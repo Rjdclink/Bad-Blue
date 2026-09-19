@@ -276,7 +276,7 @@ function applyRollingDeploymentPoolHeadroom(): void {
     activatedAt: Date.now(),
   };
 
-  console.log(`[DATABASE] Rolling-deploy admission guard active (rollout max=${rolloutMax}, steady max=${steadyMax}, canonical max=${canonicalSteadyMax}, sessionLimit=${sessionPoolLimit}, reserved=${reservedSessions}, coordinationPerReplica=${coordinationPerReplica}, release=cryptara_worker_installed)`);
+  console.log(`[DATABASE] Rolling-deploy admission guard active (rollout max=${rolloutMax}, steady max=${steadyMax}, canonical max=${canonicalSteadyMax}, sessionLimit=${sessionPoolLimit}, reserved=${reservedSessions}, coordinationPerReplica=${coordinationPerReplica}, release=application_database_ready)`);
 }
 
 /**
@@ -285,7 +285,7 @@ function applyRollingDeploymentPoolHeadroom(): void {
  * additively from measured successful admissions, so this restores the ceiling
  * without creating a connection burst.
  */
-export function releaseRollingDeploymentPoolHeadroom(reason = 'cryptara_worker_installed'): void {
+export function releaseRollingDeploymentPoolHeadroom(reason = 'application_database_ready'): void {
   const state = rollingDeploymentHeadroom;
   if (!state) return;
   rollingDeploymentHeadroom = null;
