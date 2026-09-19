@@ -50,12 +50,15 @@ export class PantheonRetrievalAdapter {
       return { available: false, reason: availability.reason, plan, evidence: [] };
     }
 
-    const results = await pantheonOrchestrator.search(request.targets, {
+    const searchOptions = {
       depth: plan.depth,
       crawlers: plan.crawlers,
-      stormIntensity: plan.depth === 4 ? 'storm' : 'snow',
+      stormIntensity: plan.depth === 4 ? 'storm' as const : 'snow' as const,
       timeout: request.budgetMs,
-    });
+    };
+    const results = request.purpose === 'background_report'
+      ? await pantheonOrchestrator.searchAllIsolated(request.targets, searchOptions)
+      : await pantheonOrchestrator.search(request.targets, searchOptions);
     recordCrawlerOutcomes(results);
 
     const evidence = results.map(normalizeResult);
