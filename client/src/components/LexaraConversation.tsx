@@ -421,6 +421,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const [jurisdiction, setJurisdiction] = useState<string | undefined>(initialStateRef.current.jurisdiction);
   const [liveEnabled, setLiveEnabled] = useState(false);
   const [voiceReady, setVoiceReady] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState<'live' | 'degraded' | 'reconnecting'>('reconnecting');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [audioLevel, setAudioLevel] = useState(0);
   const [emotion, setEmotion] = useState<LEXARAEmotionHint>('calm');
@@ -680,13 +681,25 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         credentials: 'include',
         signal: controller.signal,
       });
-      if (!response.ok) return false;
+      if (!response.ok) {
+        setVoiceStatus('reconnecting');
+        return false;
+      }
       const data = await response.json().catch(() => ({}));
-      return data?.liveVoiceConfigured === true
+      const ready = data?.liveVoiceConfigured === true
         && data?.speechOutputVerified === true
         && Array.isArray(data?.outputProviders)
         && data.outputProviders.length > 0;
+      setVoiceStatus(
+        data?.voiceStatus === 'live'
+          ? 'live'
+          : ready
+            ? 'degraded'
+            : 'reconnecting',
+      );
+      return ready;
     } catch {
+      setVoiceStatus('reconnecting');
       return false;
     } finally {
       window.clearTimeout(timeout);
@@ -755,6 +768,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         onError: () => {
           voiceFailed = true;
           setVoiceReady(false);
+          setVoiceStatus('reconnecting');
           setConversationPhase('text-only');
         },
       });
@@ -1292,12 +1306,22 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             </div>
             <div className={cn(
               'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs',
-              liveEnabled && voiceReady
+              liveEnabled && voiceReady && voiceStatus === 'live'
                 ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                : 'bg-muted text-muted-foreground',
+                : liveEnabled && voiceReady
+                  ? 'bg-amber-500/10 text-amber-700 dark:text-amber-300'
+                  : 'bg-muted text-muted-foreground',
             )}>
               {liveEnabled && voiceReady ? <Mic className="h-3.5 w-3.5" /> : <MicOff className="h-3.5 w-3.5" />}
-              {liveEnabled && voiceReady ? 'Voice live' : liveEnabled ? 'Voice reconnecting' : 'Text mode'}
+              {
+                liveEnabled && voiceReady && voiceStatus === 'live'
+                  ? 'Voice live'
+                  : liveEnabled && voiceReady
+                    ? 'Voice degraded'
+                    : liveEnabled
+                      ? 'Voice reconnecting'
+                      : 'Text mode'
+              }
             </div>
           </div>
         </div>
