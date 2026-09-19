@@ -984,10 +984,9 @@ export class AICollaborationOrchestrator {
     const results: CollaborationResult[] = [];
     const completedTasks = new Map<string, CollaborationResult>();
 
-    // Low-latency legal turns use the two selected specialists as a hedge. The
-    // first usable specialist contribution unlocks the single synthesis
-    // authority immediately; the other specialist may finish in the background
-    // to update provider health, but it no longer owns tail latency.
+    // Low-latency legal turns launch only the small capability-matched hedge.
+    // The rest of the configured 17-provider pool stays hot as route-local
+    // reserve capacity. The first usable contribution owns the latency path.
     const fastSynthesisTask = tasks.find(task =>
       task.role === 'synthesizer'
       && task.attributes.needsFastResponse
@@ -1025,6 +1024,9 @@ export class AICollaborationOrchestrator {
             // single synthesis pass instead of switching to an unproven route.
             provider: firstSuccessful.provider,
             model: this.getDefaultModelForProvider(firstSuccessful.provider),
+            fallbackProviders: fastSynthesisTask.fallbackProviders?.filter(
+              provider => provider !== firstSuccessful.provider,
+            ),
           },
           completedTasks,
         );
@@ -1156,6 +1158,9 @@ export class AICollaborationOrchestrator {
     );
 
     try {
+      if (task.signal?.aborted) {
+        throw new DOMException('Superseded generation', 'AbortError');
+      }
       if (!harmonyProviderAvailable(task.provider)) {
         throw new Error(`${task.provider} is cooling down after a recent route failure`);
       }
@@ -1176,6 +1181,7 @@ export class AICollaborationOrchestrator {
             ),
             task.requestTimeoutMs || 6_000,
             task.provider,
+            task.signal,
           );
           content = response.content;
           tokensUsed = response.tokensUsed;
@@ -1192,6 +1198,7 @@ export class AICollaborationOrchestrator {
             ),
             task.requestTimeoutMs || 6_000,
             task.provider,
+            task.signal,
           );
           content = response.content;
           tokensUsed = response.tokensUsed;
@@ -1214,6 +1221,7 @@ export class AICollaborationOrchestrator {
             systemPrompt: task.systemPrompt,
             maxTokens: outputTokenLimit,
             timeoutMs: task.requestTimeoutMs || 6_000,
+            signal: task.signal,
           });
           content = result.content;
           tokensUsed = Math.ceil(content.length / 4);
@@ -1259,6 +1267,7 @@ export class AICollaborationOrchestrator {
             ),
             task.requestTimeoutMs || 6_000,
             task.provider,
+            task.signal,
           );
           content = result.content;
           tokensUsed = result.tokensUsed;
@@ -1277,6 +1286,7 @@ export class AICollaborationOrchestrator {
                 ),
             task.requestTimeoutMs || 6_000,
             task.provider,
+            task.signal,
           );
           content = result.content;
           tokensUsed = result.tokensUsed;
@@ -1301,6 +1311,7 @@ export class AICollaborationOrchestrator {
                 ),
             task.requestTimeoutMs || 6_000,
             task.provider,
+            task.signal,
           );
           content = result.content;
           tokensUsed = result.tokensUsed;
@@ -1315,6 +1326,7 @@ export class AICollaborationOrchestrator {
             systemPrompt: task.systemPrompt,
             maxTokens: outputTokenLimit,
             timeoutMs: task.requestTimeoutMs || 6_000,
+            signal: task.signal,
           });
           content = result.content;
           tokensUsed = Math.ceil(content.length / 4);
@@ -1331,19 +1343,41 @@ export class AICollaborationOrchestrator {
         recordHarmonyProviderRuntime(task.provider, true, Date.now() - startTime);
       }
     } catch (error: any) {
+      if (isHarmonyRequestCancellation(error, task.signal)) {
+        return {
+          taskId: task.id,
+          provider: task.provider,
+          model: task.model,
+          role: task.role,
+          content: '',
+          tokensUsed: 0,
+          latencyMs: Date.now() - startTime,
+          success: false,
+          error: 'Superseded generation',
+        };
+      }
+
       markHarmonyProviderFailure(task.provider, error);
       recordHarmonyProviderRuntime(task.provider, false, Date.now() - startTime);
-      const alternatives = this.rankFallbackProviders(
+      console.warn('[HARMONY] Provider route failed', {
+        task: task.id,
+        provider: task.provider,
+        model: task.model,
+        transport: harmonyTransportDomain(task.provider),
+        latencyMs: Date.now() - startTime,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      const allAlternatives = this.rankFallbackProviders(
         task,
         (task.fallbackProviders || [])
-          .filter(provider => provider !== task.provider)
-          .filter(harmonyProviderAvailable),
+          .filter(provider => provider !== task.provider),
       );
-      if ((task.maxFallbacks ?? 1) > 0 && alternatives.length > 0) {
-        // One capability-matched alternate is enough for route-local recovery.
-        // A failed provider must not create a retry fan-out or hold the user
-        // hostage while multiple unhealthy routes are retried.
-        const recoveryBatch = alternatives.slice(0, 1);
+      const healthyAlternatives = allAlternatives.filter(harmonyProviderAvailable);
+      const alternatives = healthyAlternatives.length > 0 ? healthyAlternatives : allAlternatives;
+      const fallbackLimit = Math.max(0, Math.min(task.maxFallbacks ?? 1, 3));
+      if (fallbackLimit > 0 && alternatives.length > 0) {
+        const recoveryBatch = alternatives.slice(0, fallbackLimit);
         try {
           const fallback = await Promise.any(
             recoveryBatch.map(async provider => {
@@ -1414,11 +1448,12 @@ export class AICollaborationOrchestrator {
       return successfulResults[0].content;
     }
     
-    if (strategy === 'legal-analysis') {
+    if (strategy === 'legal-analysis' || strategy === 'legal-fast') {
       const synthesized = successfulResults.find(result => result.role === 'synthesizer');
       if (synthesized?.content?.trim()) return synthesized.content.trim();
       const legal = successfulResults.find(result => result.role === 'legal-analyst');
       if (legal?.content?.trim()) return legal.content.trim();
+      return successfulResults[0].content.trim();
     }
 
     // For other strategies, combine results
