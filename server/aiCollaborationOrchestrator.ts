@@ -1296,6 +1296,7 @@ export class AICollaborationOrchestrator {
                   prompt,
                   task.systemPrompt,
                   outputTokenLimit,
+                  task.signal,
                 ),
             task.requestTimeoutMs || 6_000,
             task.provider,
@@ -1314,6 +1315,7 @@ export class AICollaborationOrchestrator {
                   prompt,
                   task.systemPrompt,
                   outputTokenLimit,
+                  task.signal,
                 )
               : callOpenAICompatibleHarmonyProvider(
                   AIProvider.HUGGINGFACE,
@@ -1321,6 +1323,7 @@ export class AICollaborationOrchestrator {
                   prompt,
                   task.systemPrompt,
                   outputTokenLimit,
+                  task.signal,
                 ),
             task.requestTimeoutMs || 6_000,
             task.provider,
