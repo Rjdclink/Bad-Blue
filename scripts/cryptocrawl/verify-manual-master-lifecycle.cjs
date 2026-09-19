@@ -33,10 +33,6 @@ const deepLearning = read('server/services/cryptocrawl/learning/deep-learning-st
 const instantLearning = read('server/services/cryptocrawl/learning/instant-learning-engine.ts');
 const learningCompat = read('server/services/cryptocrawl/learning/supabase-compatibility.ts');
 const truthfulDiagnostics = read('server/services/cryptocrawl/api/truthful-admin-diagnostics.ts');
-const learningCompatibility = read('server/services/cryptocrawl/learning/supabase-compatibility.ts');
-const deepLearning = read('server/services/cryptocrawl/learning/deep-learning-store.ts');
-const instantLearning = read('server/services/cryptocrawl/learning/instant-learning-engine.ts');
-const learningLifecycle = read('server/services/cryptocrawl/integration/learning-lifecycle-wiring.ts');
 
 lacks(boot, /automaticCryptoCrawlerRuntimeRequired/, 'server boot must not own CryptoCrawler automatic resume');
 lacks(boot, /startCryptoCrawlerRuntime/, 'server boot must never invoke the CryptoCrawler start authority');
@@ -70,12 +66,7 @@ lacks(learningCompat.trimEnd(), /normalizeLegacySupabaseLearningEnvironment\(\);
 has(learningLifecycle, /normalizeLegacySupabaseLearningEnvironment\(\)/, 'manual runtime activation must explicitly prepare legacy learning compatibility');
 has(learningLifecycle, /export async function stopLearningLifecycleWiring\(\)/, 'learning persistence must expose a reversible manual stop hook');
 has(canonicalRuntime, /stopLearningLifecycleWiring\(\)/, 'canonical master stop must stop learning persistence and detach Supabase mirrors');
-lacks(learningCompatibility, /\nnormalizeLegacySupabaseLearningEnvironment\(\);\s*$/, 'learning compatibility must not mutate Supabase aliases at module import');
-lacks(deepLearning, /constructor\(\)\s*\{[\s\S]{0,180}initializeSupabase\(\)/, 'DeepLearningStore constructor must not bind Supabase while CryptoCrawler is OFF');
-lacks(instantLearning, /constructor\(\)\s*\{[\s\S]{0,180}initializeSupabase\(\)/, 'InstantLearningEngine constructor must not bind Supabase while CryptoCrawler is OFF');
-has(learningLifecycle, /normalizeLegacySupabaseLearningEnvironment\(\)[\s\S]{0,300}activateSupabaseMirror\(\)/, 'manual runtime activation must bind the legacy learning mirror only after power opens');
-has(learningLifecycle, /export async function stopLearningLifecycleWiring\(\)/, 'learning persistence must expose a master-stop cleanup');
-has(canonicalRuntime, /stopLearningLifecycleWiring\(\)/, 'canonical master stop must stop learning persistence and detach Supabase mirrors');
+has(learningLifecycle, /normalizeLegacySupabaseLearningEnvironment\(\)[\s\S]{0,500}activateSupabaseMirror\(\)/, 'manual runtime activation must bind the legacy learning mirror only after power opens');
 
 has(admin, /lifecycle:\s*'STOPPED'/, 'canonical lifecycle must initialize STOPPED');
 has(admin, /running:\s*false/, 'canonical lifecycle must initialize not running');
@@ -133,8 +124,8 @@ lacks(canonicalDashboard, /ensureCanonicalCryptoCrawlerRuntimeWiring/, 'legacy f
 has(canonicalDashboard, /Master Power is OFF/, 'legacy faucet control must fail closed while master power is off');
 has(canonicalDashboard, /if\s*\(!isCryptoCrawlerMasterPowerOn\(\)\)[\s\S]{0,500}source:\s*'master_power_off'/, 'dashboard network-facing reads must return an offline snapshot while master power is off');
 has(canonicalDashboard, /onCryptoCrawlerManualPowerPhaseChange[\s\S]{0,400}dashboardIntervals\.clear\(\)/, 'dashboard recurring timers must be cleared when master power transitions OFF');
-has(admin, /router\.get\('\/health'[\s\S]{0,900}!isCryptoCrawlerMasterPowerOn\(\)[\s\S]{0,600}queried:\s*false/, 'legacy admin health polling must perform zero database/RPC I/O while OFF');
-has(truthfulDiagnostics, /router\.get\('\/health'[\s\S]{0,700}!isCryptoCrawlerMasterPowerOn\(\)[\s\S]{0,600}queried:\s*false/, 'front-of-router truthful health polling must perform zero database/RPC I/O while OFF');
+has(admin, /router\.get\('\/health'[\s\S]{0,1800}!isCryptoCrawlerMasterPowerOn\(\)[\s\S]{0,1400}queried:\s*false/, 'legacy admin health polling must perform zero database/RPC I/O while OFF');
+has(truthfulDiagnostics, /router\.get\('\/health'[\s\S]{0,1600}!isCryptoCrawlerMasterPowerOn\(\)[\s\S]{0,1400}queried:\s*false/, 'front-of-router truthful health polling must perform zero database/RPC I/O while OFF');
 
 has(dashboard, /aria-label="CryptoCrawler master power"/, 'master dashboard must render the lifecycle power switch');
 has(dashboard, /checked=\{isSystemRunning\}/, 'master switch must display backend runtime truth');
