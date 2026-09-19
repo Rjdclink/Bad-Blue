@@ -16,7 +16,7 @@ import { createSubAgentTables } from './createSubAgentTables';
 import { createTokenMetricsTables } from './createTokenMetrics';
 import { runSquareMigration } from './runSquareMigration';
 import ensureSchemaSync from '../ensureSchema';
-import { coordinationPool, getApplicationDatabaseSteadyPoolCeiling, pool } from '../db';
+import { coordinationPool, getApplicationDatabaseSteadyPoolCeiling, isLegalWhatNeonFailoverActive, pool } from '../db';
 import { isCryptoCrawlerDatabaseAccessAllowed } from '../services/cryptocrawl/runtime/manual-power-state.js';
 
 export interface SchemaMigrationResult {
@@ -319,6 +319,21 @@ export async function runAllSchemaMigrations(options?: {
 }): Promise<SchemaMigrationResult[]> {
   const continueOnError = options?.continueOnError ?? true;
   const results: SchemaMigrationResult[] = [];
+
+  // Neon is an application data-plane standby, never a schema-authority lane.
+  // It must be provisioned deliberately from the repository schema before use;
+  // startup must not run partial DDL through the still-Supabase coordination pool.
+  if (isLegalWhatNeonFailoverActive()) {
+    return [{
+      name: 'Neon failover schema policy',
+      success: true,
+      message: 'Schema-gated Neon standby active; startup DDL skipped. Supabase remains canonical schema authority.',
+    }, {
+      name: 'CryptoCrawler migrations',
+      success: true,
+      message: 'Skipped on LegalWhat Neon failover; CryptoCrawler authority remains isolated.',
+    }];
+  }
 
   // Preview/staging Railway environments can inherit the production Supabase URL.
   // Verification must remain useful, but schema mutation belongs to production
