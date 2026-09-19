@@ -106,6 +106,7 @@ let ordinarySessionFallbackActive = false;
 const neonDatabaseUrl = normalizedOptionalDatabaseUrl(process.env.NEON_DATABASE_URL);
 const neonDirectDatabaseUrl = normalizedOptionalDatabaseUrl(process.env.NEON_DIRECT_DATABASE_URL);
 export const isLegalWhatNeonFailoverConfigured = Boolean(neonDatabaseUrl);
+export function isLegalWhatNeonFailoverActive(): boolean { return legalWhatNeonFallbackActive; }
 let legalWhatNeonFallbackActive = false;
 // Transaction-mode clients are multiplexed by Supavisor. If no transaction lane
 // is available, use a deliberately smaller session fallback so multiple Railway
@@ -287,8 +288,10 @@ export async function activateLegalWhatNeonFallback(reason: string): Promise<boo
   if (!isPostgresConnectionString(neonDatabaseUrl)) {
     throw new Error('[DATABASE] NEON_DATABASE_URL must be a PostgreSQL connection string');
   }
-  if (pool.totalCount > 0 || pool.waitingCount > 0) {
-    console.warn('[DATABASE] Neon failover skipped because ordinary pool is already active');
+  // Primary admission may leave idle/broken clients behind. Close that ordinary
+  // application pool before switching; this is not CryptoCrawler's Overflow pool.
+  if (pool.waitingCount > 0) {
+    console.warn('[DATABASE] Neon failover skipped because ordinary queries are still waiting');
     return false;
   }
 
@@ -324,7 +327,8 @@ export async function activateLegalWhatNeonFallback(reason: string): Promise<boo
       throw new Error(`Neon failover schema is not ready; missing: ${missing.join(', ')}`);
     }
 
-    await pool.end();
+    const previousPool = pool;
+    await previousPool.end().catch(() => undefined);
     pool = candidate;
     db = drizzle(pool, { schema });
     legalWhatNeonFallbackActive = true;
