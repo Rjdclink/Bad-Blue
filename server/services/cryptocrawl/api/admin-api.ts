@@ -20,6 +20,10 @@ import {
   startCryptaraHyperBridgeBootstrap,
   stopCryptaraHyperBridgeBootstrap,
 } from '../integration/cryptara-supabase-hyper-bridge-bootstrap.js';
+import {
+  getCryptaraSuperWorkerSnapshot,
+  uninstallCryptaraSuperWorkerAdmission,
+} from '../integration/cryptara-super-worker.js';
 import { stageManager } from '../governance/stage-management.js';
 import { GovernanceError } from '../governance/types.js';
 import { autonomousFaucet } from '../faucet/autonomous-faucet.js';
@@ -440,7 +444,8 @@ export async function stopCryptoCrawlerRuntime(): Promise<{ stopped: boolean; fa
     !getCanonicalCryptoCrawlerActivationState().activationAllowed &&
     getCryptoCrawlerManualPowerPhase() === 'OFF' &&
     getCryptaraHyperBridgeBootstrapSnapshot().state === 'idle' &&
-    !getCryptaraHyperBridgeBootstrapSnapshot().overflowWorker.started;
+    !getCryptaraHyperBridgeBootstrapSnapshot().overflowWorker.started &&
+    !getCryptaraSuperWorkerSnapshot().admissionInstalled;
 
   if (stopped) {
     notifyCryptocrawlerComplete();
