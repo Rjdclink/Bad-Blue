@@ -27,7 +27,7 @@ export function getCryptoCrawlerManualPowerPhase(): CryptoCrawlerManualPowerPhas
 }
 
 export function isCryptoCrawlerDatabaseAccessAllowed(): boolean {
-  return phase === 'STARTING' || phase === 'ON' || phase === 'STOPPING';
+  return phase === 'STARTING' || phase === 'ON';
 }
 
 export function isCryptoCrawlerMasterPowerOn(): boolean {
