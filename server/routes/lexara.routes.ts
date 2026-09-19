@@ -21,7 +21,7 @@ import express, { Request, Response } from 'express';
 import multer from 'multer';
 import { logger } from '../logger';
 import { LEXARA_KERNEL, mergePersonaWithKernel } from '../lexara/personaKernel';
-import { lexaraSpeakTest } from '../lexara/LexaraTTSRouter';
+import { getLexaraTTSReadiness, synthesizeLexaraSpeechWithFailover } from '../lexara/LexaraTTSMesh';
 import { callAIWithFallback } from '../aiSubAgent';
 import { LEXARA_PERSONA } from '../../shared/lexaraVoicePersona';
 import { isAuthenticated } from '../auth';
@@ -81,21 +81,21 @@ import crypto from 'crypto';
  */
 router.get('/speak-test', async (_req: Request, res: Response) => {
   try {
-    logger.info('[LEXARA] speak-test: Testing voice system');
-    const audio = await lexaraSpeakTest();
-    
-    res.setHeader('Content-Type', 'audio/mpeg');
-    res.setHeader('Content-Length', audio.length.toString());
-    res.setHeader('X-Lexara-Test', 'voice-system-confirmed');
-    res.send(audio);
+    logger.info('[LEXARA] speak-test: Testing adaptive voice mesh');
+    const result = await synthesizeLexaraSpeechWithFailover('How can I help you?');
+    res.setHeader('Content-Type', result.mimeType);
+    res.setHeader('Content-Length', result.audioData.length.toString());
+    res.setHeader('X-Lexara-Test', 'voice-mesh-confirmed');
+    res.setHeader('X-Provider', result.provider);
+    res.setHeader('X-TTS-Model', result.model);
+    res.send(result.audioData);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    logger.error('[LEXARA] speak-test: Voice test failed', { error: errorMessage });
-    
-    res.status(500).json({
+    logger.error('[LEXARA] speak-test: Voice mesh test failed', { error: errorMessage });
+    res.status(503).json({
       success: false,
       error: errorMessage,
-      hint: 'Check ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID environment variables',
+      hint: 'No healthy configured LEXARA TTS provider responded.',
     });
   }
 });
@@ -293,8 +293,9 @@ router.post('/audio-chunk', express.raw({ type: 'application/octet-stream', limi
  */
 router.get('/voice/live-readiness', (_req: Request, res: Response) => {
   const groqConfigured = !!process.env.GROQ_API_KEY?.trim();
-  const elevenLabsConfigured = !!process.env.ELEVENLABS_API_KEY?.trim();
-  const elevenLabsVoiceConfigured = !!process.env.ELEVENLABS_VOICE_ID?.trim();
+  const elevenLabsScribeConfigured = !!process.env.ELEVENLABS_API_KEY?.trim();
+  const speechInputConfigured = groqConfigured || elevenLabsScribeConfigured;
+  const ttsReadiness = getLexaraTTSReadiness();
   const harmonyParticipants = getConfiguredHarmonyParticipants();
   const harmonyWarm = getHarmonyWarmStatus();
   const inferenceReady = harmonyWarm.filter(status => status.state === 'ready').length;
@@ -303,17 +304,16 @@ router.get('/voice/live-readiness', (_req: Request, res: Response) => {
 
   return res.json({
     success: true,
-    speechInputConfigured: groqConfigured || elevenLabsConfigured,
-    speechOutputConfigured: elevenLabsConfigured && elevenLabsVoiceConfigured,
-    liveVoiceConfigured:
-      (groqConfigured || elevenLabsConfigured)
-      && elevenLabsConfigured
-      && elevenLabsVoiceConfigured,
+    speechInputConfigured,
+    speechOutputConfigured: ttsReadiness.available,
+    liveVoiceConfigured: speechInputConfigured && ttsReadiness.available,
     inputProviders: [
       ...(groqConfigured ? ['groq-whisper'] : []),
-      ...(elevenLabsConfigured ? ['elevenlabs-scribe'] : []),
+      ...(elevenLabsScribeConfigured ? ['elevenlabs-scribe'] : []),
     ],
-    outputProvider: elevenLabsConfigured && elevenLabsVoiceConfigured ? 'elevenlabs' : null,
+    outputProvider: ttsReadiness.healthyProviders[0] || null,
+    outputProviders: ttsReadiness.healthyProviders,
+    outputProviderStates: ttsReadiness.providers,
     legalReasoningConfigured: harmonyParticipants.length > 0,
     legalReasoningParticipants: harmonyParticipants.length,
     legalReasoningInferenceReady: inferenceReady,
