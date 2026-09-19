@@ -9,7 +9,11 @@ import {
   getCanonicalCryptoCrawlerActivationState,
 } from '../integration/canonical-runtime-wiring.js';
 import { ensureTelemetryBootstrap } from '../integration/telemetry-bootstrap.js';
-import { getCryptocrawlGovernance, initializeGovernance } from '../governance/index.js';
+import {
+  getCryptocrawlGovernance,
+  initializeGovernance,
+  resetGovernanceInitializationForManualStop,
+} from '../governance/index.js';
 import { cryptaraGovernance } from '../governance/cryptara-integration.js';
 import {
   getCryptoCrawlerManualPowerPhase,
@@ -413,6 +417,25 @@ router.post('/mode', (req, res) => {
   });
 });
 
+async function rollbackCryptoCrawlerManualStart(): Promise<string[]> {
+  const results = await Promise.allSettled([
+    cryptaraGovernance.shutdown(),
+    deactivateCanonicalCryptoCrawlerRuntimeWiring(),
+    uninstallCryptaraSuperWorkerAdmission(),
+  ]);
+  resetGovernanceInitializationForManualStop();
+  stopCryptaraHyperBridgeBootstrap();
+  setCryptoCrawlerManualPowerPhase('OFF');
+  systemState.running = false;
+  if (systemState.lifecycle !== 'RUNNING') {
+    systemState.lifecycle = 'STOPPED';
+    systemState.startedAt = 0;
+  }
+  return results
+    .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+    .map((result) => result.reason instanceof Error ? result.reason.message : String(result.reason));
+}
+
 export async function stopCryptoCrawlerRuntime(): Promise<{ stopped: boolean; failures: string[] }> {
   systemState.lifecycle = 'STOPPING';
   systemState.running = false;
@@ -427,6 +450,12 @@ export async function stopCryptoCrawlerRuntime(): Promise<{ stopped: boolean; fa
     cryptaraGovernance.shutdown(),
     Promise.resolve(stopCryptaraHyperBridgeBootstrap()),
   ]);
+
+  const admissionCleanup = await Promise.allSettled([
+    uninstallCryptaraSuperWorkerAdmission(),
+  ]);
+  results.push(...admissionCleanup);
+  resetGovernanceInitializationForManualStop();
 
   // OFF is fail-closed even when one cleanup component reports an error. Once
   // cleanup has been attempted, no CryptoCrawler-owned database/network path may
@@ -508,8 +537,7 @@ export async function startCryptoCrawlerRuntime(): Promise<CryptoCrawlerStartRes
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       systemState.lastError = message;
-      stopCryptaraHyperBridgeBootstrap();
-      setCryptoCrawlerManualPowerPhase('OFF');
+      await rollbackCryptoCrawlerManualStart();
       return {
         success: false,
         status: 503,
@@ -532,9 +560,7 @@ export async function startCryptoCrawlerRuntime(): Promise<CryptoCrawlerStartRes
     const message = error instanceof Error ? error.message : String(error);
     systemState.lastError = message;
     console.error('[CryptoCrawl] Governance initialization failed before startup', error);
-    await Promise.allSettled([cryptaraGovernance.shutdown()]);
-    stopCryptaraHyperBridgeBootstrap();
-    setCryptoCrawlerManualPowerPhase('OFF');
+    await rollbackCryptoCrawlerManualStart();
     return {
       success: false,
       status: 503,
@@ -550,9 +576,7 @@ export async function startCryptoCrawlerRuntime(): Promise<CryptoCrawlerStartRes
   try {
     governance.requireAllowed('ADVISE');
   } catch (error) {
-    await Promise.allSettled([cryptaraGovernance.shutdown()]);
-    stopCryptaraHyperBridgeBootstrap();
-    setCryptoCrawlerManualPowerPhase('OFF');
+    await rollbackCryptoCrawlerManualStart();
     return {
       success: false,
       status: error instanceof GovernanceError ? 400 : 500,
@@ -565,9 +589,7 @@ export async function startCryptoCrawlerRuntime(): Promise<CryptoCrawlerStartRes
   }
 
   if (!notifyCryptocrawlerStarting()) {
-    await Promise.allSettled([cryptaraGovernance.shutdown()]);
-    stopCryptaraHyperBridgeBootstrap();
-    setCryptoCrawlerManualPowerPhase('OFF');
+    await rollbackCryptoCrawlerManualStart();
     return {
       success: false,
       status: 409,
