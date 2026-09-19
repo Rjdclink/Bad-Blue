@@ -779,10 +779,16 @@ httpServer = createServer(app);
     });
     console.log('[STARTUP] ✓ CryptoCrawler Master Power OFF: no CryptoCrawler Overflow probe, worker, schema I/O, or market activity started');
   } catch (error) {
-    startupError = error instanceof Error ? error.message : String(error);
-    startupTrace('core_initialization_failed', { error: startupError });
-    console.error('[STARTUP] ❌ Core initialization failed:', error);
-    return;
+    // The ordinary Supabase data plane is an external dependency. A temporary
+    // outage must not prevent the HTTP/static/stateless surface from starting.
+    // Database-backed routes remain fail-closed at their own dependency boundary,
+    // while readiness/health telemetry continues to report the degraded state.
+    backgroundInitializationError = error instanceof Error ? error.message : String(error);
+    databaseInitialized = false;
+    overflowDatabaseReady = false;
+    databaseRuntimeMode = 'initializing';
+    startupTrace('core_database_degraded_route_local', { error: backgroundInitializationError });
+    console.warn('[STARTUP] ⚠ Application database unavailable; continuing in bounded degraded mode:', error);
   }
 
 startupTrace('routes_import_started');
