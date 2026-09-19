@@ -1184,14 +1184,14 @@ export async function conductFullOSINT(
       enhancedReport.summary += CRAWLER_MESSAGES.LEVEL_4_SUMMARY;
     }
 
-    // SpiderFoot scan (if available)
-    // Note: In production, you may want to implement polling or webhooks
-    // to wait for scan completion before retrieving results
+    // SpiderFoot scan (when a compatible self-hosted instance is configured).
     let spiderfootData;
     if (await spiderfootClient.healthCheck()) {
       const scanId = await spiderfootClient.startScan(searchQuery);
-      // For real-time results, consider implementing a polling mechanism
-      // or using SpiderFoot's webhook functionality
+      await spiderfootClient.waitForScanCompletion(scanId, {
+        timeoutMs: 120_000,
+        pollIntervalMs: 1_500,
+      });
       spiderfootData = await spiderfootClient.getScanResults(scanId);
     }
 
