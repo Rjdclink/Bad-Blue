@@ -25,6 +25,13 @@ const manualPower = read('server/services/cryptocrawl/runtime/manual-power-state
 const runtimeDatabase = read('server/services/cryptocrawl/runtime/cryptocrawl-runtime-database.ts');
 const overflowBootstrap = read('server/services/cryptocrawl/integration/cryptara-supabase-hyper-bridge-bootstrap.ts');
 const migrations = read('server/migrations/reconcileAppSchema.ts');
+const routes = read('server/routes.ts');
+const beam = read('server/services/cryptocrawl/beam/beam.ts');
+const bridgeApi = read('server/services/cryptocrawl/api/bridge-api.ts');
+const learningLifecycle = read('server/services/cryptocrawl/integration/learning-lifecycle-wiring.ts');
+const deepLearning = read('server/services/cryptocrawl/learning/deep-learning-store.ts');
+const instantLearning = read('server/services/cryptocrawl/learning/instant-learning-engine.ts');
+const learningCompat = read('server/services/cryptocrawl/learning/supabase-compatibility.ts');
 const learningCompatibility = read('server/services/cryptocrawl/learning/supabase-compatibility.ts');
 const deepLearning = read('server/services/cryptocrawl/learning/deep-learning-store.ts');
 const instantLearning = read('server/services/cryptocrawl/learning/instant-learning-engine.ts');
@@ -48,6 +55,16 @@ has(runtimeDatabase, /installManualPowerDatabaseGuard\(pool,\s*'ordinary'\)/, 'o
 has(runtimeDatabase, /installManualPowerDatabaseGuard\(coordinationPool,\s*'coordination'\)/, 'coordination CryptoCrawler DB pool must be fail-closed behind manual power');
 has(overflowBootstrap, /if\s*\(!isCryptoCrawlerDatabaseAccessAllowed\(\)\)/, 'Overflow bootstrap must fail closed while master power is OFF');
 has(migrations, /Skipped while master power is OFF; zero CryptoCrawler schema I\/O executed/, 'application startup migrations must skip CryptoCrawler schema I/O while OFF');
+
+lacks(routes, /startBeamOnBoot\(\)/, 'application route registration must not emit a CryptoCrawler Beam pulse at boot');
+has(beam, /if\s*\(!isCryptoCrawlerMasterPowerOn\(\)\)[\s\S]{0,180}CRYPTOCRAWLER_MASTER_POWER_OFF/, 'Beam emission must fail closed while Master Power is OFF');
+has(bridgeApi, /router\.use\([\s\S]{0,300}!isCryptoCrawlerMasterPowerOn\(\)[\s\S]{0,300}CRYPTOCRAWLER_MASTER_POWER_OFF/, 'bridge/RPC endpoints must fail closed while Master Power is OFF');
+lacks(deepLearning, /constructor\(\)[\s\S]{0,160}initializeSupabase\(\)/, 'DeepLearningStore must not bind Supabase at module construction');
+lacks(instantLearning, /constructor\(\)[\s\S]{0,160}initializeSupabase\(\)/, 'InstantLearningEngine must not bind Supabase at module construction');
+lacks(learningCompat.trimEnd(), /normalizeLegacySupabaseLearningEnvironment\(\);\s*$/, 'legacy learning compatibility must not rewrite Supabase aliases at module import');
+has(learningLifecycle, /normalizeLegacySupabaseLearningEnvironment\(\)/, 'manual runtime activation must explicitly prepare legacy learning compatibility');
+has(learningLifecycle, /export async function stopLearningLifecycleWiring\(\)/, 'learning persistence must expose a reversible manual stop hook');
+has(canonicalRuntime, /stopLearningLifecycleWiring\(\)/, 'canonical master stop must stop learning persistence and detach Supabase mirrors');
 lacks(learningCompatibility, /\nnormalizeLegacySupabaseLearningEnvironment\(\);\s*$/, 'learning compatibility must not mutate Supabase aliases at module import');
 lacks(deepLearning, /constructor\(\)\s*\{[\s\S]{0,180}initializeSupabase\(\)/, 'DeepLearningStore constructor must not bind Supabase while CryptoCrawler is OFF');
 lacks(instantLearning, /constructor\(\)\s*\{[\s\S]{0,180}initializeSupabase\(\)/, 'InstantLearningEngine constructor must not bind Supabase while CryptoCrawler is OFF');
