@@ -2,16 +2,11 @@ import { PhylacterySystem } from '../storage/PhylacterySystem';
 import { StealthInfrastructure } from '../stealth/StealthInfrastructure';
 
 // Types
-interface BrowserFingerprint {
-  canvas: string;
-  webGL: string;
-  fonts: string[];
-  plugins: string[];
-  screen: { width: number; height: number };
-  timezone: string;
+interface RequestProfile {
+  userAgent: string;
+  acceptLanguage: string;
 }
-type ArmPattern = { angle: number; length: number; branches: number };
-interface Snowflake { id: string; target: string; structure: { arms: 6; pattern: ArmPattern[]; molecules: BrowserFingerprint; density: number; temperature: number; }; createdAt: number; }
+interface Snowflake { id: string; target: string; requestProfile: RequestProfile; createdAt: number; }
 type StormIntensity = 'flurry' | 'snow' | 'storm' | 'blizzard' | 'whiteout';
 interface StormConfig { level: StormIntensity; snowflakesPerTarget: number; concurrency: number; delayBetweenWaves: number; }
 interface CerberusHead { name: 'ice' | 'hydra' | 'zombie'; usageCount: number; successRate: number; averageLatency: number; }
@@ -28,13 +23,30 @@ async function executeRequest(url: string, options: RequestOptions, stealth?: St
     if (stealth) {
       await stealth.connect(url, 'medium');
     }
-    return await fetch(url, { ...options, signal: controller.signal });
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    if (!response.ok) {
+      throw new Error(`Crawler request failed: HTTP ${response.status}`);
+    }
+    return response;
   } finally {
     clearTimeout(timeoutId);
   }
 }
 function parseResults(html: string): Data { return { content: html.replace(/<[^>]*>/g, ' ').substring(0, 1000), confidence: 0.8, timestamp: Date.now(), target: '' }; }
 function calculateConfidence(data: Data): number { return data.content.length > 100 ? 0.9 : 0.5; }
+
+async function firstSuccessful(promises: Promise<Data>[], label: string): Promise<Data> {
+  const settled = await Promise.allSettled(promises);
+  const successful = settled.find(
+    (result): result is PromiseFulfilledResult<Data> =>
+      result.status === 'fulfilled' && result.value.confidence > 0 && result.value.content.trim().length > 0
+  );
+  if (successful) return successful.value;
+  const errors = settled
+    .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+    .map(result => result.reason instanceof Error ? result.reason.message : String(result.reason));
+  throw new Error(`${label} failed: ${errors[0] || 'no successful retrieval'}`);
+}
 
 
 // BLIZZARD CRAWLER (90 lines)
@@ -46,18 +58,28 @@ export class BlizzardCrawler {
 
   // Snowflake Generator (30 lines)
   generateSnowflake(target = ''): Snowflake {
-    const id = `snowflake-${++this.snowflakeCount}-${Date.now()}`;
-    const pattern: ArmPattern[] = [];
-    for (let i = 0; i < 6; i++) pattern.push({ angle: i * 60 + Math.random() * 10, length: 50 + Math.random() * 50, branches: Math.floor(Math.random() * 5) });
-    const molecules: BrowserFingerprint = {
-      canvas: `canvas-${Math.random().toString(36).substring(2, 11)}`,
-      webGL: `webgl-${Math.random().toString(36).substring(2, 11)}`,
-      fonts: ['Arial', 'Times', 'Courier'].sort(() => Math.random() - 0.5),
-      plugins: ['Chrome', 'PDF'].sort(() => Math.random() - 0.5),
-      screen: { width: 1920 + Math.floor(Math.random() * 100), height: 1080 + Math.floor(Math.random() * 100) },
-      timezone: ['America/New_York', 'Europe/London', 'Asia/Tokyo'][Math.floor(Math.random() * 3)]
+    const sequence = ++this.snowflakeCount;
+    const id = `snowflake-${sequence}-${Date.now()}`;
+    const profiles: RequestProfile[] = [
+      {
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        acceptLanguage: 'en-US,en;q=0.9',
+      },
+      {
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        acceptLanguage: 'en-US,en;q=0.8',
+      },
+      {
+        userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        acceptLanguage: 'en-US,en;q=0.7',
+      },
+    ];
+    return {
+      id,
+      target,
+      requestProfile: profiles[(sequence - 1) % profiles.length],
+      createdAt: Date.now(),
     };
-    return { id, target, structure: { arms: 6, pattern, molecules, density: Math.random(), temperature: -10 - Math.random() * 20 }, createdAt: Date.now() };
   }
 
   // Parallel Deployer (30 lines)
@@ -86,14 +108,11 @@ export class BlizzardCrawler {
 
   private async deploySnowflake(snowflake: Snowflake): Promise<Data> {
     try {
-      const fingerprint = snowflake.structure.molecules;
-      const response = await executeRequest(snowflake.target || 'https://httpbin.org/get', {
+      const response = await executeRequest(snowflake.target, {
         method: 'GET',
         headers: {
-          'User-Agent': `Snowflake-${snowflake.id}`,
-          'Accept-Language': fingerprint.timezone === 'Asia/Tokyo' ? 'ja-JP' : fingerprint.timezone === 'Europe/London' ? 'en-GB' : 'en-US',
-          'X-Fingerprint-Canvas': fingerprint.canvas,
-          'X-Fingerprint-WebGL': fingerprint.webGL
+          'User-Agent': snowflake.requestProfile.userAgent,
+          'Accept-Language': snowflake.requestProfile.acceptLanguage,
         },
         timeout: 10000
       }, this.stealth);
@@ -173,7 +192,7 @@ class HydraHead implements CerberusHead {
     const attempts: Promise<Data>[] = [];
     for (let i = 0; i < this.subHeads; i++) attempts.push(this.attemptScrape(target, i));
     try {
-      const result = await Promise.race(attempts);
+      const result = await firstSuccessful(attempts, 'Hydra head');
       this.successCount++; this.updateMetrics(Date.now() - start);
       result.headUsed = 'hydra'; return result;
     } catch (error) {
@@ -232,7 +251,10 @@ export class CerberusCrawler {
     this.rightHead = new ZombieHead(phylactery);
   }
   async attack(target: string): Promise<Data> {
-    return Promise.race([this.leftHead.attack(target), this.centerHead.attack(target), this.rightHead.attack(target)]);
+    return firstSuccessful(
+      [this.leftHead.attack(target), this.centerHead.attack(target), this.rightHead.attack(target)],
+      'Cerberus'
+    );
   }
   async loyalAttack(target: string, maxRetries: number): Promise<Data> {
     for (let i = 0; i < maxRetries; i++) {
@@ -303,7 +325,7 @@ class GhostSwarmSpawner {
       );
       this.totalGhosts++;
     }
-    return await Promise.race(ghosts);
+    return firstSuccessful(ghosts, 'Ghost swarm');
   }
   private async spawnGhost(target: string, ghostId: number): Promise<Data> {
     const response = await executeRequest(target, { method: 'GET', headers: { 'User-Agent': `Ghost-${ghostId}`, 'X-Ghost-Phase': 'ethereal' }, timeout: 5000 }, this.stealth);

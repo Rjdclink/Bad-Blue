@@ -13,14 +13,18 @@ import { StealthInfrastructure } from '../stealth/StealthInfrastructure';
 
 interface Data { content: string; confidence: number; timestamp: number; target: string; metadata?: any; }
 interface RequestOptions { method?: string; headers?: Record<string, string>; body?: any; timeout?: number; }
-interface CloakingSignature { ip: string; fingerprint: string; timing: number[]; userAgent: string; }
+interface CloakingSignature { userAgent: string; createdAt: number; }
 
 async function executeRequest(url: string, options: RequestOptions, stealth?: StealthInfrastructure): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), options.timeout || 30000);
   try {
     if (stealth) await stealth.connect(url, 'high');
-    return await fetch(url, { ...options, signal: controller.signal });
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    if (!response.ok) {
+      throw new Error(`Crawler request failed: HTTP ${response.status}`);
+    }
+    return response;
   } finally { clearTimeout(timeoutId); }
 }
 
@@ -45,8 +49,8 @@ export class BirdOfPreyCrawler {
   async engageCloak(): Promise<void> {
     this.cloaked = true; this.cloakStrength = 1.0;
     this.signatures.set('current', {
-      ip: this.generateRandomIP(), fingerprint: this.generateFingerprint(),
-      timing: this.generateRandomTimings(), userAgent: this.generateStealthUserAgent()
+      userAgent: this.generateStealthUserAgent(),
+      createdAt: Date.now(),
     });
     // Stealth infrastructure will be engaged per-request, not globally
   }
@@ -54,8 +58,8 @@ export class BirdOfPreyCrawler {
   async perfectCloak(): Promise<void> {
     await this.engageCloak(); this.cloakStrength = 2.0;
     this.signatures.set('quantum', {
-      ip: this.generateQuantumIP(), fingerprint: this.generateQuantumFingerprint(),
-      timing: this.generateQuantumTimings(), userAgent: this.generateStealthUserAgent()
+      userAgent: this.generateStealthUserAgent(),
+      createdAt: Date.now(),
     });
   }
 
@@ -68,12 +72,6 @@ export class BirdOfPreyCrawler {
     return modulationSuccess;
   }
 
-  private generateRandomIP(): string { return `${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}`; }
-  private generateQuantumIP(): string { return `10.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}`; }
-  private generateFingerprint(): string { return `klingon-${Math.random().toString(36).substring(2, 15)}`; }
-  private generateQuantumFingerprint(): string { return `quantum-${Math.random().toString(36).substring(2, 15)}-${Date.now()}`; }
-  private generateRandomTimings(): number[] { return Array(5).fill(0).map(() => 100 + Math.random() * 500); }
-  private generateQuantumTimings(): number[] { return Array(10).fill(0).map(() => 50 + Math.random() * 1000); }
   private generateStealthUserAgent(): string {
     const agents = ['Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'];
     return agents[Math.floor(Math.random() * agents.length)];

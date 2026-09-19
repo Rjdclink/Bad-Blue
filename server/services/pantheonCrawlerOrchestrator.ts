@@ -333,7 +333,7 @@ export class PantheonCrawlerOrchestrator {
               crawler: 'startrek',
               target,
               content: result.content || '',
-              confidence: result.confidence || 0.7,
+              confidence: Number.isFinite(result.confidence) ? result.confidence : 0.7,
               timestamp: Date.now(),
               metadata: { warpFactor: result.metadata?.warpFactor || 5 },
             });
@@ -355,7 +355,7 @@ export class PantheonCrawlerOrchestrator {
               crawler: 'birdofprey',
               target,
               content: result.content || '',
-              confidence: result.confidence || 0.8,
+              confidence: Number.isFinite(result.confidence) ? result.confidence : 0.8,
               timestamp: Date.now(),
               metadata: { cloakStatus: 'engaged' },
             });
@@ -402,7 +402,7 @@ export class PantheonCrawlerOrchestrator {
               crawler: 'cerberus',
               target,
               content: result.content || '',
-              confidence: result.confidence || 0.85,
+              confidence: Number.isFinite(result.confidence) ? result.confidence : 0.85,
               timestamp: result.timestamp,
               metadata: { headUsed: result.headUsed },
             });
@@ -424,7 +424,7 @@ export class PantheonCrawlerOrchestrator {
             crawler: 'blizzard',
             target: result.target,
             content: result.content || '',
-            confidence: result.confidence || 0.8,
+            confidence: Number.isFinite(result.confidence) ? result.confidence : 0.8,
             timestamp: result.timestamp,
             metadata: { intensity },
           });
@@ -446,7 +446,7 @@ export class PantheonCrawlerOrchestrator {
               crawler: 'lich',
               target,
               content: result.content || '',
-              confidence: result.confidence || 0.9,
+              confidence: Number.isFinite(result.confidence) ? result.confidence : 0.9,
               timestamp: result.timestamp,
               metadata: { 
                 spellType,
