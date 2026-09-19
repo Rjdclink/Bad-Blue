@@ -5,6 +5,7 @@ import { zeroCapitalEngine } from '../core/zero-capital-engine';
 import { ensureCryptocrawlOverflowRuntimeSchema } from '../runtime/cryptocrawl-overflow-runtime-schema.js';
 import {
   closeCryptocrawlRuntimeDatabasePools,
+  getCryptocrawlRuntimeDatabaseSnapshot,
   reopenCryptocrawlRuntimeDatabasePools,
 } from '../runtime/cryptocrawl-runtime-database.js';
 import {
@@ -67,6 +68,7 @@ router.get('/status', (req, res) => {
       ...getCanonicalCryptoCrawlerActivationState(),
     },
     cryptoCrawl: cryptoCrawlState.getStatus(),
+    database: getCryptocrawlRuntimeDatabaseSnapshot(),
     startedAt: systemState.running ? new Date(systemState.startedAt).toISOString() : null,
     uptime: systemState.running ? Date.now() - systemState.startedAt : 0,
     pipeline: pipeline.getMetrics(),
@@ -483,7 +485,9 @@ export async function stopCryptoCrawlerRuntime(): Promise<{ stopped: boolean; fa
     getCryptoCrawlerManualPowerPhase() === 'OFF' &&
     getCryptaraHyperBridgeBootstrapSnapshot().state === 'idle' &&
     !getCryptaraHyperBridgeBootstrapSnapshot().overflowWorker.started &&
-    !getCryptaraSuperWorkerSnapshot().admissionInstalled;
+    !getCryptaraSuperWorkerSnapshot().admissionInstalled &&
+    getCryptocrawlRuntimeDatabaseSnapshot().ordinary.total === 0 &&
+    getCryptocrawlRuntimeDatabaseSnapshot().coordination.total === 0;
 
   if (stopped) {
     notifyCryptocrawlerComplete();
