@@ -534,7 +534,7 @@ router.post('/transcribe-file', lexaraVoiceUpload.single('audio'), async (req: R
         value.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
       const normalizedTranscript = normalizeTranscript(result.text);
       const suspiciousGeneric = new Set([
-        'thank you', 'thanks', 'okay', 'ok', 'bye', 'goodbye', 'you',
+        'thank you', 'thanks', 'bye', 'goodbye', 'you',
       ]).has(normalizedTranscript);
 
       if (
