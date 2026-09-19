@@ -21,6 +21,7 @@ interface GroqChatCompletionRequest {
   messages: GroqChatMessage[];
   temperature?: number;
   max_tokens?: number;
+  signal?: AbortSignal;
 }
 
 let groqModelCatalogCache: { models: Set<string>; expiresAt: number } | null = null;
@@ -134,13 +135,15 @@ async function callGroqAPI(request: GroqChatCompletionRequest): Promise<string> 
     if (attempted.has(model)) break;
     attempted.add(model);
 
+    const { signal, ...wireRequest } = request;
     response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ ...request, model }),
+      body: JSON.stringify({ ...wireRequest, model }),
+      signal,
     });
 
     if (response.ok) break;
