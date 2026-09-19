@@ -501,7 +501,7 @@ export class AICollaborationOrchestrator {
         systemPrompt: options.systemPrompt,
         priority: maxPriority + 1,
         dependencies: allContributionIds,
-        fallbackProviders: candidateProviders.filter(candidate => candidate !== finalProvider),
+        fallbackProviders: eligibleProviders.filter(candidate => candidate !== finalProvider),
         requestTimeoutMs: options.requestTimeoutMs,
         maxFallbacks: options.maxFallbacks,
         attributes: { ...attributes, needsVerification: true },
