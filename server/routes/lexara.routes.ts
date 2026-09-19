@@ -320,6 +320,7 @@ router.get('/voice/live-readiness', async (_req: Request, res: Response) => {
     speechOutputVerified: ttsReadiness.available,
     speechOutputStreamingVerified: ttsReadiness.streamingProviders.length > 0,
     voiceRedundancyVerified: ttsReadiness.redundancyVerified,
+    voiceIndependentDomains: ttsReadiness.independentDomains,
     voiceStatus: ttsReadiness.voiceStatus,
     liveVoiceConfigured: speechInputConfigured && ttsReadiness.available,
     inputProviders: [

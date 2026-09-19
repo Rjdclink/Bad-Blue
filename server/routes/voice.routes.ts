@@ -15,7 +15,7 @@ import { Readable } from 'stream';
 import { asyncHandler } from '../errorHandler';
 import { createLogger } from '../logger';
 import { isAuthenticated } from '../auth';
-import { getLexaraTTSReadiness, openLexaraSpeechStream, refreshLexaraTTSReadiness, synthesizeLexaraSpeechWithFailover, warmLexaraTTSMesh } from '../lexara/LexaraTTSMesh';
+import { getLexaraTTSReadiness, getLexaraVoiceProfileBindings, openLexaraSpeechStream, refreshLexaraTTSReadiness, synthesizeLexaraSpeechWithFailover, warmLexaraTTSMesh } from '../lexara/LexaraTTSMesh';
 
 const log = createLogger('VoiceRoutes');
 
@@ -99,6 +99,7 @@ export function setupVoiceRoutes(app: Express): void {
         provider: readiness.streamingProviders[0] || readiness.healthyProviders[0] || 'adaptive-tts-mesh',
         providers: readiness.healthyProviders,
         streamingProviders: readiness.streamingProviders,
+        independentDomains: readiness.independentDomains,
         redundancyVerified: readiness.redundancyVerified,
         voiceStatus: readiness.voiceStatus,
         voiceId: null,
@@ -260,103 +261,95 @@ export function setupVoiceRoutes(app: Express): void {
 
   /**
    * GET /api/lexara/voice/profile
-   * Validate the configured ElevenLabs voice and expose non-secret lifecycle
-   * metadata so the production voice can be verified before use/training work.
+   * Canonical non-secret LEXARA voice profile plus optional ElevenLabs metadata.
+   * ElevenLabs is one reserve route, never the profile authority.
    */
   app.get(
     '/api/lexara/voice/profile',
     asyncHandler(async (_req: Request, res: Response) => {
+      const readiness = getLexaraTTSReadiness();
+      const canonicalProfile = getLexaraVoiceProfileBindings();
       const apiKey = process.env.ELEVENLABS_API_KEY?.trim();
       const voiceId = process.env.ELEVENLABS_VOICE_ID?.trim();
-      if (!apiKey || !voiceId) {
-        return res.status(503).json({
-          available: false,
-          provider: 'elevenlabs',
-          reason: 'not_configured',
-        });
-      }
 
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 8_000);
-      try {
-        const response = await fetch(
-          `https://api.elevenlabs.io/v1/voices/${encodeURIComponent(voiceId)}`,
-          {
-            method: 'GET',
-            headers: { 'xi-api-key': apiKey },
-            signal: controller.signal,
-          },
-        );
+      let elevenLabs: Record<string, unknown> = {
+        configured: Boolean(apiKey && voiceId),
+        available: readiness.healthyProviders.includes('elevenlabs'),
+        voiceId: voiceId || null,
+      };
 
-        if (!response.ok) {
-          const detail = (await response.text()).slice(0, 400);
-          log.warn('[VoiceRoutes] Configured ElevenLabs voice validation failed', {
-            voiceId,
-            status: response.status,
-            detail,
-          });
-          return res.status(response.status === 404 ? 404 : 502).json({
-            available: false,
-            provider: 'elevenlabs',
-            voiceId,
-            reason: 'voice_validation_failed',
-            status: response.status,
-          });
+      if (apiKey && voiceId) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 4_000);
+        try {
+          const response = await fetch(
+            `https://api.elevenlabs.io/v1/voices/${encodeURIComponent(voiceId)}`,
+            {
+              method: 'GET',
+              headers: { 'xi-api-key': apiKey },
+              signal: controller.signal,
+            },
+          );
+
+          if (response.ok) {
+            const voice = await response.json() as {
+              name?: string;
+              category?: string;
+              is_owner?: boolean;
+              fine_tuning?: {
+                state?: Record<string, string> | string;
+                verification_failures?: string[];
+              };
+              labels?: Record<string, string>;
+              settings?: {
+                stability?: number;
+                similarity_boost?: number;
+                style?: number;
+                use_speaker_boost?: boolean;
+              };
+            };
+            elevenLabs = {
+              ...elevenLabs,
+              reachable: true,
+              name: voice.name || null,
+              category: voice.category || null,
+              isOwner: voice.is_owner ?? null,
+              fineTuning: voice.fine_tuning?.state ?? null,
+              verificationFailures: voice.fine_tuning?.verification_failures?.length || 0,
+              labels: voice.labels || {},
+              settings: voice.settings || null,
+              productionModel: process.env.ELEVENLABS_TTS_MODEL?.trim() || 'eleven_flash_v2_5',
+            };
+          } else {
+            elevenLabs = {
+              ...elevenLabs,
+              reachable: false,
+              validationStatus: response.status,
+            };
+          }
+        } catch {
+          elevenLabs = { ...elevenLabs, reachable: false };
+        } finally {
+          clearTimeout(timer);
         }
-
-        const voice = await response.json() as {
-          name?: string;
-          category?: string;
-          is_owner?: boolean;
-          fine_tuning?: {
-            state?: Record<string, string> | string;
-            verification_failures?: string[];
-          };
-          labels?: Record<string, string>;
-          settings?: {
-            stability?: number;
-            similarity_boost?: number;
-            style?: number;
-            use_speaker_boost?: boolean;
-          };
-        };
-
-        return res.json({
-          available: true,
-          provider: 'elevenlabs',
-          voiceId,
-          name: voice.name || null,
-          category: voice.category || null,
-          isOwner: voice.is_owner ?? null,
-          fineTuning: voice.fine_tuning?.state ?? null,
-          verificationFailures: voice.fine_tuning?.verification_failures?.length || 0,
-          labels: voice.labels || {},
-          settings: voice.settings || null,
-          productionModel: process.env.ELEVENLABS_TTS_MODEL?.trim() || 'eleven_flash_v2_5',
-          professionalClone:
-            String(voice.category || '').toLowerCase().includes('professional')
-            || String(voice.category || '').toLowerCase().includes('cloned'),
-        });
-      } catch (error) {
-        log.warn('[VoiceRoutes] ElevenLabs voice validation request failed', {
-          voiceId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        return res.status(502).json({
-          available: false,
-          provider: 'elevenlabs',
-          voiceId,
-          reason: 'voice_validation_unreachable',
-        });
-      } finally {
-        clearTimeout(timer);
       }
+
+      return res.json({
+        available: readiness.available,
+        voiceStatus: readiness.voiceStatus,
+        redundancyVerified: readiness.redundancyVerified,
+        independentDomains: readiness.independentDomains,
+        profile: canonicalProfile,
+        healthyProviders: readiness.healthyProviders,
+        providers: readiness.providers,
+        elevenLabs,
+      });
     }),
   );
 
   /**
    * GET /api/lexara/voice/providers
-   * Get available voice synthesis providers (ElevenLabs only)
+   * Get available voice synthesis providers from the canonical adaptive mesh
    */
   app.get(
     '/api/lexara/voice/providers',
@@ -367,6 +360,7 @@ export function setupVoiceRoutes(app: Express): void {
         configuredProviders: readiness.configuredProviders,
         healthyProviders: readiness.healthyProviders,
         streamingProviders: readiness.streamingProviders,
+        independentDomains: readiness.independentDomains,
         redundancyVerified: readiness.redundancyVerified,
         voiceStatus: readiness.voiceStatus,
         default: readiness.streamingProviders[0] || readiness.healthyProviders[0] || null,
@@ -392,6 +386,7 @@ export function setupVoiceRoutes(app: Express): void {
         configuredProviders: readiness.configuredProviders,
         healthyProviders: readiness.healthyProviders,
         streamingProviders: readiness.streamingProviders,
+        independentDomains: readiness.independentDomains,
         providers: readiness.providers,
         features: {
           adaptiveRouting: true,
