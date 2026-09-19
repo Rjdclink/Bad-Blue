@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 210" role="presentation">
+<defs>
+ <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+  <stop offset="0" stop-color="#fff0a6"/><stop offset="0.18" stop-color="#d9a62a"/><stop offset="0.42" stop-color="#fff2a8"/><stop offset="0.67" stop-color="#b57910"/><stop offset="1" stop-color="#f4ca55"/>
+ </linearGradient>
+ <filter id="s" x="-20%" y="-20%" width="140%" height="160%"><feDropShadow dx="0" dy="5" stdDeviation="3" flood-color="#000" flood-opacity=".55"/></filter>
+</defs>
+<path d="M 64,8 L 53,16 L 44,27 L 40,37 L 41,52 L 37,58 L 31,61 L 30,66 L 33,61 L 39,61 L 31,68 L 30,73 L 32,77 L 32,72 L 36,79 L 36,83 L 32,85 L 39,84 L 45,91 L 45,96 L 49,101 L 53,101 L 50,99 L 50,95 L 57,101 L 54,107 L 60,102 L 61,108 L 58,110 L 69,116 L 65,112 L 71,104 L 71,94 L 79,105 L 79,113 L 71,124 L 54,137 L 49,150 L 54,162 L 33,173 L 33,179 L 29,182 L 22,197 L 35,201 L 64,203 L 118,202 L 141,198 L 141,192 L 136,188 L 135,181 L 133,180 L 136,174 L 136,165 L 123,154 L 92,140 L 105,109 L 105,96 L 109,88 L 107,83 L 95,75 L 88,66 L 102,44 L 109,19 L 98,13 Z M 69,93 L 70,92 L 71,93 L 71,94 L 70,95 L 69,94 Z M 68,92 L 69,91 L 70,92 L 69,93 Z M 66,89 L 67,88 L 69,90 L 69,91 L 68,92 L 66,90 Z M 65,87 L 66,86 L 67,87 L 67,88 L 66,89 L 65,88 Z M 38,60 L 39,59 L 40,60 L 39,61 Z M 67,15 L 71,15 L 72,16 L 74,16 L 75,17 L 77,17 L 78,18 L 79,18 L 80,19 L 82,19 L 83,20 L 84,20 L 85,21 L 86,21 L 87,22 L 88,22 L 89,23 L 90,23 L 91,24 L 93,24 L 95,26 L 94,27 L 94,28 L 92,30 L 92,31 L 91,32 L 91,33 L 90,34 L 90,35 L 88,37 L 88,38 L 86,40 L 86,41 L 84,43 L 84,44 L 81,47 L 81,48 L 78,51 L 77,50 L 77,44 L 81,40 L 82,40 L 84,38 L 85,38 L 85,37 L 86,36 L 86,35 L 84,33 L 84,32 L 83,31 L 83,30 L 82,29 L 82,26 L 78,26 L 77,25 L 76,25 L 70,19 L 69,19 L 68,18 L 67,18 L 66,17 L 66,16 Z" fill="url(#g)" fill-rule="evenodd" filter="url(#s)" stroke="#8c5b0e" stroke-width="1.2" vector-effect="non-scaling-stroke"/>
+</svg>
