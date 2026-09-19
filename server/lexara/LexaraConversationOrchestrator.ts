@@ -394,8 +394,8 @@ export async function generateLexaraConversationResponse(
           providerPolicy: 'capability-first',
           systemPrompt,
           maxParticipants: 3,
-          requestTimeoutMs: 2_500,
-          maxFallbacks: 3,
+          requestTimeoutMs: 1_800,
+          maxFallbacks: 2,
           signal: context.signal,
         },
       );
