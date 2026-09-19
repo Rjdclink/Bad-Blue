@@ -141,7 +141,6 @@ if (configuredUrl) {
 
 export const isCryptaraOverflowConfigured = Boolean(configuredUrl && !configurationError);
 export const isCryptaraParallelProxyConfigured = isCryptaraOverflowConfigured;
-const overflowPoolMax = boundedInt(process.env.CRYPTOCRAWL_OVERFLOW_POOL_MAX, 2, 1, 2);
 const maxPayloadBytes = boundedInt(process.env.CRYPTOCRAWL_OVERFLOW_MAX_PAYLOAD_BYTES, 256 * 1024, 4 * 1024, 1024 * 1024);
 const maxEventBatch = boundedInt(process.env.CRYPTOCRAWL_PARALLEL_PROXY_EVENT_BATCH, 32, 1, 64);
 const allowedWorkloads = new Set<CryptaraParallelProxyWorkload>([
@@ -585,7 +584,7 @@ export function getCryptaraParallelProxySnapshot() {
       total: runtimeOverflowPool.totalCount,
       idle: runtimeOverflowPool.idleCount,
       waiting: runtimeOverflowPool.waitingCount,
-      max: runtimeOverflowPool.options?.max ?? overflowPoolMax,
+      max: runtimeOverflowPool.options?.max ?? null,
     } : null,
     cooldownMs: Math.max(0, cooldownUntil - Date.now()),
     consecutiveFailures,
