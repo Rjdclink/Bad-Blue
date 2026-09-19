@@ -154,14 +154,15 @@ assert.doesNotMatch(coreRuntime, /requireCryptocrawlerAuthoritySchema/);
 assert.match(coreRuntime, /authoritySchemaGate:\s*'overflow_migration_owned_runtime_start_required'/);
 assert.match(coreRuntime, /primaryRuntimePrerequisite:\s*false/);
 assert.match(adminApi, /import\s*\{\s*ensureCryptocrawlOverflowRuntimeSchema\s*\}\s*from\s*'\.\.\/runtime\/cryptocrawl-overflow-runtime-schema\.js'/);
-assert.match(adminApi, /if \(process\.env\.NODE_ENV === 'production'\) \{[\s\S]{0,180}await ensureCryptocrawlOverflowRuntimeSchema\(\)/);
+assert.match(adminApi, /if \(process\.env\.NODE_ENV === 'production'\) \{[\s\S]{0,900}startCryptaraHyperBridgeBootstrap\(\)[\s\S]{0,900}await ensureCryptocrawlOverflowRuntimeSchema\(\)/);
 assert.doesNotMatch(adminApi, /requireCryptocrawlerAuthoritySchema|reconcileAppSchema/);
 assert.match(adminApi, /schemaAuthority:\s*'overflow_migration_owned_runtime_start_required'/);
 const adminSchemaGate = adminApi.indexOf('await ensureCryptocrawlOverflowRuntimeSchema()');
 const adminPantheonClaim = adminApi.indexOf('notifyCryptocrawlerStarting()');
 const adminZeroCapitalStart = adminApi.indexOf('await zeroCapitalEngine.start({');
-assert.ok(adminSchemaGate >= 0 && adminSchemaGate < adminPantheonClaim && adminPantheonClaim < adminZeroCapitalStart,
-  'explicit runtime start must verify Overflow authority schema before claiming lifecycle ownership or starting zero-capital execution');
+const adminOverflowBootstrap = adminApi.indexOf('await startCryptaraHyperBridgeBootstrap()');
+assert.ok(adminOverflowBootstrap >= 0 && adminOverflowBootstrap < adminSchemaGate && adminSchemaGate < adminPantheonClaim && adminPantheonClaim < adminZeroCapitalStart,
+  'explicit runtime start must open and verify Overflow before claiming lifecycle ownership or starting zero-capital execution');
 assert.match(adminApi, /executionAuthorityGranted:\s*false/);
 
 // A legacy emergency endpoint must never claim that funds moved when it owns no
