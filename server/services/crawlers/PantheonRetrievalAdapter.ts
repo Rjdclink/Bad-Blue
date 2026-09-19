@@ -2,6 +2,7 @@ import {
   canActivatePantheon,
   pantheonOrchestrator,
   type CrawlerResult,
+  type CrawlerExecutionAudit,
 } from '../pantheonCrawlerOrchestrator';
 import {
   recordCrawlerOutcomes,
@@ -26,6 +27,15 @@ export interface PantheonRetrievalResponse {
   reason?: string;
   plan: CrawlerSelectionPlan;
   evidence: RetrievalEvidence[];
+  crawlerAudit: Array<CrawlerExecutionAudit | {
+    crawler: string;
+    capabilityClass: 'razor' | 'pantheon-secondary';
+    status: string;
+    evidenceCount: number;
+    attempts: number;
+    targets: number;
+    error?: string;
+  }>;
   supervision?: CrawlerSupervisionResult;
 }
 
@@ -47,7 +57,21 @@ export class PantheonRetrievalAdapter {
     });
     const availability = canActivatePantheon();
     if (!availability.available) {
-      return { available: false, reason: availability.reason, plan, evidence: [] };
+      return {
+        available: false,
+        reason: availability.reason,
+        plan,
+        evidence: [],
+        crawlerAudit: plan.crawlers.map(crawler => ({
+          crawler,
+          capabilityClass: 'primary' as const,
+          status: 'failed' as const,
+          evidenceCount: 0,
+          attempts: 0,
+          targets: request.targets.length,
+          error: availability.reason || 'PANTHEON unavailable',
+        })),
+      };
     }
 
     const searchOptions = {
@@ -56,9 +80,15 @@ export class PantheonRetrievalAdapter {
       stormIntensity: plan.depth === 4 ? 'storm' as const : 'snow' as const,
       timeout: request.budgetMs,
     };
-    const results = request.purpose === 'background_report'
-      ? await pantheonOrchestrator.searchAllIsolated(request.targets, searchOptions)
-      : await pantheonOrchestrator.search(request.targets, searchOptions);
+    let results: CrawlerResult[];
+    let crawlerAudit: PantheonRetrievalResponse['crawlerAudit'] = [];
+    if (request.purpose === 'background_report') {
+      const isolated = await pantheonOrchestrator.searchAllIsolatedWithAudit(request.targets, searchOptions);
+      results = isolated.results;
+      crawlerAudit = isolated.audit;
+    } else {
+      results = await pantheonOrchestrator.search(request.targets, searchOptions);
+    }
     recordCrawlerOutcomes(results);
 
     const evidence = results.map(normalizeResult);
@@ -89,6 +119,8 @@ export class PantheonRetrievalAdapter {
           });
         }
 
+        crawlerAudit.push(...run.value.audit);
+
         for (const secondary of run.value.secondaryResults) {
           for (const signature of secondary.signatures) {
             evidence.push({
@@ -116,6 +148,7 @@ export class PantheonRetrievalAdapter {
       available: true,
       plan,
       evidence,
+      crawlerAudit,
       supervision: await cainReaperSupervisor.supervise(plan, evidence),
     };
   }
