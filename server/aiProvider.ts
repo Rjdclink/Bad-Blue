@@ -44,6 +44,7 @@ interface GenerateOptions {
   maxTokens?: number;
   model?: string;
   useJSON?: boolean;
+  signal?: AbortSignal;
 }
 
 /**
@@ -223,6 +224,7 @@ async function callGroq(
       messages,
       temperature: options.temperature ?? 0.7,
       max_tokens: maxTokens,
+      signal: options.signal,
     });
 
     const content = response.choices[0]?.message?.content;
