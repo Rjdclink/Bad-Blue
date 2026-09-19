@@ -5,8 +5,8 @@
  * Lexara operates on the Computational Reactor throne for all heavy processing.
  * 
  * Includes:
- * - LEXARA VOICE PIPELINE - Complete voice synthesis path using Coqui TTS and OpenAI TTS
- *   LLM → Text Response → Voice Selection → Generate Audio → Persist → Return Playable Reference
+ * - LEXARA VOICE PIPELINE - Compatibility facade over the canonical verified TTS mesh
+ *   LLM → Text Response → Verified Provider Selection → Generate Audio → Persist/Play
  * 
  * - LEXARA VOICE FORGE - Monte Carlo-driven voice optimization engine
  *   for discovering the perfect Lexara voice: young female (18-20) with centuries
@@ -41,7 +41,7 @@ export {
   type VoiceModulation,
 } from './personaKernel';
 
-// Voice Pipeline - Complete synthesis path with Coqui TTS and OpenAI TTS ONLY
+// Voice Pipeline - compatibility facade over the canonical verified adaptive TTS mesh
 export {
   LexaraVoicePipeline,
   getLexaraVoicePipeline,
