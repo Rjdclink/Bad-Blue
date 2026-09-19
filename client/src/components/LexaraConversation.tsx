@@ -329,9 +329,25 @@ function isStrongBargeIn(text: string, meta: VoiceTranscriptMeta): boolean {
   }
 
   const words = normalized.split(' ').filter(Boolean);
+  if (words.length === 1) {
+    const duration = meta.speechDurationMs || 0;
+    const strongAcoustics =
+      (typeof meta.noSpeechProbability !== 'number' || meta.noSpeechProbability < 0.35)
+      && (typeof meta.avgLogprob !== 'number' || meta.avgLogprob > -0.85)
+      && (typeof meta.confidence !== 'number' || meta.confidence >= 0.5);
+    const substantiveSingleWord =
+      words[0].length >= 3
+      && !nonInterruptingClosers.has(words[0])
+      && !shortInterruption.has(words[0]);
+    return meta.startedDuringPlayback === true
+      && duration >= 300
+      && strongAcoustics
+      && substantiveSingleWord;
+  }
+
   if (words.length < 2) return false;
 
-  if (typeof meta.speechDurationMs === 'number' && meta.speechDurationMs < 350) return false;
+  if (typeof meta.speechDurationMs === 'number' && meta.speechDurationMs < 300) return false;
   if (typeof meta.confidence === 'number' && meta.confidence < 0.5) return false;
   if (typeof meta.noSpeechProbability === 'number' && meta.noSpeechProbability >= 0.35) return false;
   if (typeof meta.avgLogprob === 'number' && meta.avgLogprob <= -0.85) return false;
