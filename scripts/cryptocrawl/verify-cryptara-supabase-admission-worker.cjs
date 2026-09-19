@@ -43,8 +43,11 @@ requirePattern(worker, /pressureResumeTimer\.unref\?\.\(\)/, 'pressure cooldown 
 requirePattern(worker, /pressureActive\s*&&\s*stats\.idle\s*===\s*0/, 'pressure cooldown waits when no reusable idle client exists');
 requirePattern(worker, /admissionBudget\s*=\s*pressureActive[\s\S]{0,120}Math\.min\(targetSlots,\s*Math\.max\(0,\s*stats\.idle\)\)/, 'pressure-mode admission cannot exceed already-idle reusable clients');
 requirePattern(worker, /while\s*\(admitted\s*<\s*admissionBudget/, 'each pressure drain pass obeys its measured reuse budget');
-requirePattern(worker, /if\s*\(this\s*!==\s*pool\)/, 'only the live ordinary pool is admitted through Cryptara');
-requirePattern(worker, /Pool\.prototype/, 'shared ordinary callers converge on one acquisition gate');
+requirePattern(worker, /const\s+target:\s*any\s*=\s*pool\s+as\s+any/, 'only the canonical CryptoCrawler ordinary pool is wrapped');
+forbidPattern(worker, /Pool\.prototype/, 'CryptoCrawler admission must not mutate global node-postgres behavior');
+requirePattern(worker, /if\s*\(!isCryptoCrawlerDatabaseAccessAllowed\(\)\)/, 'admission must fail closed while Master Power is OFF');
+requirePattern(worker, /export function uninstallCryptaraSupabaseAdmissionWorker\(\)/, 'manual stop must be able to remove the CryptoCrawler admission wrapper');
+requirePattern(worker, /governor\.shutdown\(\)/, 'manual stop must clear queued admission and pressure timers');
 requirePattern(worker, /operatorPromptsRequired:\s*false/, 'custodian requires no operator question/answer loop');
 requirePattern(worker, /interventionPolicy:\s*'measured_pressure_only'/, 'custodian remains dormant unless measured pressure appears');
 forbidPattern(worker, /console\.warn\s*\(/, 'expected adaptive pool behavior bypassing structured log severity');
@@ -79,7 +82,7 @@ requirePattern(worker, /AGE_PROMOTION_MS/, 'priority aging prevents low-priority
 requirePattern(worker, /priorityContext\.getStore\(\)\s*\|\|\s*'normal'/, 'unclassified callers keep neutral priority rather than gaining accidental authority');
 requirePattern(worker, /finally\s*\{[\s\S]{0,160}permit\.release/, 'client release always returns the worker permit');
 requirePattern(worker, /permit\.release\(undefined,\s*0\)/, 'failed acquisitions return their worker permit without double-counting pressure');
-requirePattern(worker, /try\s*\{[\s\S]{0,200}originalConnect\.call\(this,[\s\S]{0,1800}catch\s*\(error\)\s*\{[\s\S]{0,120}permit\.release\(undefined,\s*0\)/, 'callback-style synchronous connection failures cannot leak worker permits');
+requirePattern(worker, /try\s*\{[\s\S]{0,240}originalConnect\([\s\S]{0,1800}catch\s*\(error\)\s*\{[\s\S]{0,120}permit\.release\(undefined,\s*0\)/, 'callback-style synchronous connection failures cannot leak worker permits');
 requirePattern(worker, /if\s*\(released\)[\s\S]{0,320}originalRelease\(error\)/, 'node-postgres double-release semantics are preserved');
 forbidPattern(worker, /queue\.length[^\n]{0,100}(throw|reject|shift\(\)\s*;\s*return)/, 'queue-overflow task dropping');
 
@@ -92,6 +95,7 @@ requirePattern(worker, /executionAuthority:\s*false/, 'worker has no execution a
 // Governance talks only to the Super Worker surface; its admission arm delegates
 // to the existing ordinary-lane worker before governance persistence begins.
 requirePattern(superWorker, /installCryptaraSuperWorkerAdmission[\s\S]{0,420}installCryptaraSupabaseAdmissionWorker\(\)/, 'Super Worker admission arm delegates to the existing Cryptara DB governor');
+requirePattern(superWorker, /uninstallCryptaraSuperWorkerAdmission[\s\S]{0,420}uninstallCryptaraSupabaseAdmissionWorker\(\)/, 'Super Worker exposes reversible database admission cleanup');
 requirePattern(governance, /installCryptaraSuperWorkerAdmission\(\)[\s\S]{0,500}stageManager\.restorePersistence/, 'Super Worker admission is installed before governance persistence begins');
 requirePattern(stageState, /withCryptaraSupabasePriority\('critical',[\s\S]{0,160}pool\.query/, 'governance reads use critical resource priority');
 requirePattern(stageState, /withCryptaraSupabasePriority\('critical',[\s\S]{0,160}pool\.connect/, 'governance transactions use critical resource priority');
@@ -194,4 +198,4 @@ requirePattern(calibration, /withCryptaraSupabasePriority\('low',[\s\S]{0,260}IN
 requirePattern(calibration, /INSERT INTO \$\{TABLE\}/, 'terminal calibration persistence remains active');
 requirePattern(calibration, /SELECT payload FROM \$\{TABLE\}/, 'calibration hydration remains active');
 
-console.log('[cryptara-supabase-worker] autonomous event-driven ordinary-lane custodian, measured-pressure-only contraction, full-utilization-safe queueing, jittered recovery, zero-extra-pool, critical/high/normal/low priority, shared lease authority, terminal-profit durability, starvation protection, and migration-owned persistence invariants passed');
+console.log('[cryptara-supabase-worker] instance-scoped reversible ordinary-lane custodian, manual-power fail-closed admission, measured-pressure-only contraction, zero-extra-pool, priority, lease, durability, starvation, and migration invariants passed');
