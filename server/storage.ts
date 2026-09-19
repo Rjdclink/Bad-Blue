@@ -1432,6 +1432,7 @@ export class DatabaseStorage implements IStorage {
    * Create a new people search report
    */
   async createPeopleSearchReport(data: {
+    id?: string;
     userId: string;
     searchQuery: string;
     subjectName?: string;
@@ -1439,18 +1440,21 @@ export class DatabaseStorage implements IStorage {
     status?: 'processing' | 'completed' | 'failed';
     errorMessage?: string;
   }): Promise<PeopleSearchReport> {
+    const values: any = {
+      userId: data.userId,
+      searchQuery: data.searchQuery,
+      subjectName: data.subjectName || null,
+      reportData: data.reportData,
+      status: data.status || 'processing',
+      errorMessage: data.errorMessage || null,
+      createdAt: new Date(),
+      completedAt: data.status === 'completed' ? new Date() : null,
+    };
+    if (data.id) values.id = data.id;
+
     const [report] = await db
       .insert(peopleSearchReports)
-      .values({
-        userId: data.userId,
-        searchQuery: data.searchQuery,
-        subjectName: data.subjectName || null,
-        reportData: data.reportData,
-        status: data.status || 'processing',
-        errorMessage: data.errorMessage || null,
-        createdAt: new Date(),
-        completedAt: data.status === 'completed' ? new Date() : null,
-      })
+      .values(values)
       .returning();
     return report;
   }
