@@ -405,6 +405,52 @@ async function transcribeWithGroq(file: Express.Multer.File): Promise<{
   }
 }
 
+async function transcribeWithDeepgram(file: Express.Multer.File): Promise<{
+  text: string;
+  provider: string;
+  model: string;
+  quality?: { confidence?: number };
+}> {
+  const apiKey = process.env.DEEPGRAM_API_KEY?.trim();
+  if (!apiKey) throw new Error('Deepgram speech-to-text is not configured');
+
+  const model = process.env.DEEPGRAM_STT_MODEL?.trim() || 'nova-3';
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12_000);
+  try {
+    const response = await fetch(
+      `https://api.deepgram.com/v1/listen?model=${encodeURIComponent(model)}&language=en&smart_format=true`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Token ${apiKey}`,
+          'Content-Type': file.mimetype || 'application/octet-stream',
+        },
+        body: new Uint8Array(file.buffer),
+        signal: controller.signal,
+      },
+    );
+    if (!response.ok) {
+      const detail = (await response.text()).slice(0, 500);
+      throw new Error(`Deepgram STT ${response.status}: ${detail}`);
+    }
+    const result = await response.json() as any;
+    const alternative = result?.results?.channels?.[0]?.alternatives?.[0];
+    return {
+      text: String(alternative?.transcript || '').trim(),
+      provider: 'deepgram-nova',
+      model,
+      quality: {
+        confidence: Number.isFinite(Number(alternative?.confidence))
+          ? Number(alternative.confidence)
+          : undefined,
+      },
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function transcribeWithElevenLabs(file: Express.Multer.File): Promise<{
   text: string;
   provider: string;
@@ -493,6 +539,11 @@ router.post('/transcribe-file', lexaraVoiceUpload.single('audio'), async (req: R
       transcribe: () => transcribeWithGroq(file),
     },
     {
+      name: 'deepgram-nova',
+      configured: !!process.env.DEEPGRAM_API_KEY?.trim(),
+      transcribe: () => transcribeWithDeepgram(file),
+    },
+    {
       name: 'elevenlabs-scribe',
       configured: !!process.env.ELEVENLABS_API_KEY?.trim(),
       transcribe: () => transcribeWithElevenLabs(file),
@@ -537,20 +588,33 @@ router.post('/transcribe-file', lexaraVoiceUpload.single('audio'), async (req: R
         'thank you', 'thanks', 'bye', 'goodbye', 'you',
       ]).has(normalizedTranscript);
 
-      if (
+      const requiresIndependentVerification =
         provider.name === 'groq-whisper'
-        && suspiciousGeneric
-        && (startedDuringPlayback || speechDurationMs < 1_200)
-      ) {
-        const verifier = providers.find(candidate => candidate.name === 'elevenlabs-scribe' && candidate.configured);
+        && (
+          startedDuringPlayback
+          || (
+            suspiciousGeneric
+            && speechDurationMs < 1_200
+          )
+        );
+
+      if (requiresIndependentVerification) {
+        const explicitControl = /^(?:wait|stop|no|hold on|hang on|actually|but wait|let me finish)\b/.test(normalizedTranscript);
+        const verifier = providers.find(candidate =>
+          candidate.name !== provider.name
+          && candidate.configured
+          && (candidate.name === 'deepgram-nova' || candidate.name === 'elevenlabs-scribe')
+        );
+
         if (verifier) {
           try {
             const verification = await verifier.transcribe();
             const verified = normalizeTranscript(verification.text);
             if (!verified || verified !== normalizedTranscript) {
-              logger.info('[LEXARA] Rejected suspicious generic transcript after ASR disagreement', {
+              logger.info('[LEXARA] Rejected playback-overlap transcript after independent ASR disagreement', {
                 primary: normalizedTranscript,
                 secondary: verified,
+                verifier: verifier.name,
                 speechDurationMs,
                 startedDuringPlayback,
               });
@@ -559,28 +623,45 @@ router.post('/transcribe-file', lexaraVoiceUpload.single('audio'), async (req: R
                 transcript: '',
                 isFinal: false,
                 rejected: true,
-                rejectionReason: 'generic_transcript_disagreement',
+                rejectionReason: 'independent_asr_disagreement',
                 provider: result.provider,
                 model: result.model,
                 bargeInProbe,
               });
             }
           } catch (verificationError) {
-            logger.info('[LEXARA] Suppressed suspicious generic transcript when verifier was unavailable', {
-              primary: normalizedTranscript,
-              error: verificationError instanceof Error ? verificationError.message : String(verificationError),
-            });
-            return res.json({
-              success: true,
-              transcript: '',
-              isFinal: false,
-              rejected: true,
-              rejectionReason: 'generic_transcript_unverified',
-              provider: result.provider,
-              model: result.model,
-              bargeInProbe,
-            });
+            if (startedDuringPlayback && !explicitControl) {
+              logger.info('[LEXARA] Suppressed playback-overlap transcript when independent verifier was unavailable', {
+                primary: normalizedTranscript,
+                verifier: verifier.name,
+                error: verificationError instanceof Error ? verificationError.message : String(verificationError),
+              });
+              return res.json({
+                success: true,
+                transcript: '',
+                isFinal: false,
+                rejected: true,
+                rejectionReason: 'playback_overlap_unverified',
+                provider: result.provider,
+                model: result.model,
+                bargeInProbe,
+              });
+            }
           }
+        } else if (startedDuringPlayback && !explicitControl && bargeInProbe) {
+          // Without an independent verifier, a playback-overlap probe never
+          // earns authority for an ordinary sentence. The client still permits
+          // explicit stop/wait/no controls and post-playback clean turns.
+          return res.json({
+            success: true,
+            transcript: '',
+            isFinal: false,
+            rejected: true,
+            rejectionReason: 'playback_overlap_no_independent_verifier',
+            provider: result.provider,
+            model: result.model,
+            bargeInProbe,
+          });
         }
       }
 
