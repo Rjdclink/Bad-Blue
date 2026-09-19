@@ -35,7 +35,7 @@ export interface VoiceSynthesisResult {
   provider: string | null;
 }
 
-type PlaybackOutcome = 'ended' | 'interrupted' | 'timeout';
+type PlaybackOutcome = 'ended' | 'interrupted' | 'timeout' | 'failed';
 
 interface ServerAudio {
   blob: Blob;
@@ -53,8 +53,8 @@ interface StreamingAudioSession {
 const SERVER_TTS_FETCH_TIMEOUT_MS = 20_000;
 const NEXT_CHUNK_PREFETCH_TIMEOUT_MS = 20_000;
 const MIN_PLAYBACK_WATCHDOG_MS = 10_000;
-const FIRST_SPEECH_CHUNK_MAX_CHARS = 210;
-const SPEECH_CHUNK_MAX_CHARS = 340;
+const FIRST_SPEECH_CHUNK_MAX_CHARS = 140;
+const SPEECH_CHUNK_MAX_CHARS = 300;
 const MAX_PLAYBACK_WATCHDOG_MS = 240_000;
 
 function splitOversizedSpeechUnit(value: string, maxChars: number): string[] {
@@ -151,7 +151,7 @@ function splitLexaraSpeechChunks(text: string): string[] {
 }
 
 export function useVoiceSynthesis(): VoiceSynthesisResult {
-  const { toast } = useToast();
+  const { toast, dismiss } = useToast();
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -161,6 +161,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
 
   const interruptionResolverRef = useRef<(() => void) | null>(null);
   const playbackWatchdogRef = useRef<number | null>(null);
+  const voiceFailureToastIdRef = useRef<string | null>(null);
   const activeTurnRef = useRef(0);
 
   const clearPlaybackWatchdog = useCallback(() => {
@@ -351,7 +352,8 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
           if (turnId !== activeTurnRef.current) return;
           selectedProvider = session.provider;
           playback = LexaraServerTTS.play({ audioUrl: session.audioUrl })
-            .then<PlaybackOutcome>(() => 'ended');
+            .then<PlaybackOutcome>(() => 'ended')
+            .catch<PlaybackOutcome>(() => 'failed');
         } else {
           const prepared = preparedCurrent ? await preparedCurrent : await prepareChunk(chunk);
           preparedCurrent = null;
@@ -360,13 +362,13 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
           if (prepared?.blob?.size) {
             selectedProvider = prepared.provider || selectedProvider;
             expectedDuration = prepared.durationMs || expectedDuration;
-            playback = LexaraServerTTS.play(prepared.blob).then<PlaybackOutcome>(() => 'ended');
+            playback = LexaraServerTTS.play(prepared.blob).then<PlaybackOutcome>(() => 'ended').catch<PlaybackOutcome>(() => 'failed');
           } else {
             const audio = await fetchServerAudio(chunk);
             if (turnId !== activeTurnRef.current) return;
             selectedProvider = audio.provider || selectedProvider;
             expectedDuration = audio.durationMs || expectedDuration;
-            playback = LexaraServerTTS.play(audio.blob).then<PlaybackOutcome>(() => 'ended');
+            playback = LexaraServerTTS.play(audio.blob).then<PlaybackOutcome>(() => 'ended').catch<PlaybackOutcome>(() => 'failed');
           }
         }
       } catch {
@@ -375,11 +377,15 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
         if (turnId !== activeTurnRef.current) return;
         selectedProvider = audio.provider || selectedProvider;
         expectedDuration = audio.durationMs || expectedDuration;
-        playback = LexaraServerTTS.play(audio.blob).then<PlaybackOutcome>(() => 'ended');
+        playback = LexaraServerTTS.play(audio.blob).then<PlaybackOutcome>(() => 'ended').catch<PlaybackOutcome>(() => 'failed');
       }
 
       if (!startedPlayback) {
         startedPlayback = true;
+        if (voiceFailureToastIdRef.current) {
+          dismiss(voiceFailureToastIdRef.current);
+          voiceFailureToastIdRef.current = null;
+        }
         setProvider(selectedProvider || 'adaptive-tts-mesh');
         setIsLoading(false);
         setIsSpeaking(true);
@@ -405,10 +411,38 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
         LexaraServerTTS.stop();
         return;
       }
+
+      if (outcome === 'failed') {
+        // A progressive media stream can still fail after HTTP headers have
+        // already reached the browser. Recover the chunk through the canonical
+        // buffered mesh before declaring voice unavailable.
+        LexaraServerTTS.stop();
+        const recovery = await fetchServerAudio(chunk);
+        if (turnId !== activeTurnRef.current) return;
+        selectedProvider = recovery.provider || selectedProvider;
+        expectedDuration = recovery.durationMs || expectedDuration;
+        const recoveryOutcome = await Promise.race([
+          LexaraServerTTS.play(recovery.blob)
+            .then<PlaybackOutcome>(() => 'ended')
+            .catch<PlaybackOutcome>(() => 'failed'),
+          interruption,
+          makePlaybackWatchdog(expectedDuration + 8_000),
+        ]);
+        clearPlaybackWatchdog();
+
+        if (turnId !== activeTurnRef.current || recoveryOutcome === 'interrupted') {
+          LexaraServerTTS.stop();
+          return;
+        }
+        if (recoveryOutcome === 'failed' || recoveryOutcome === 'timeout') {
+          LexaraServerTTS.stop();
+          throw new Error('LEXARA voice playback failed after route-local recovery');
+        }
+      }
+
       if (outcome === 'timeout') {
         LexaraServerTTS.stop();
-        setIsSpeaking(false);
-        return;
+        throw new Error('LEXARA voice playback timed out');
       }
     }
 
@@ -418,6 +452,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
   }, [
     clearPlaybackWatchdog,
     createStreamingAudioSession,
+    dismiss,
     fetchPreparedSessionAudio,
     fetchServerAudio,
     makeInterruptionPromise,
@@ -452,13 +487,20 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
       setIsSpeaking(false);
       options.onError?.(nextError);
 
-      toast({
+      const failureToast = toast({
         title: `${options.assistantName || 'LEXARA'} Voice Temporarily Unavailable`,
-        description: 'All compatible voice routes are temporarily unavailable. The consultation will continue in text.',
+        description: 'All verified voice routes failed. LEXARA will keep retrying while the consultation continues in text.',
         variant: 'destructive',
       });
+      voiceFailureToastIdRef.current = failureToast.id;
+      window.setTimeout(() => {
+        if (voiceFailureToastIdRef.current === failureToast.id) {
+          dismiss(failureToast.id);
+          voiceFailureToastIdRef.current = null;
+        }
+      }, 6_000);
     }
-  }, [clearPlaybackWatchdog, speakWithServer, stop, toast]);
+  }, [clearPlaybackWatchdog, dismiss, speakWithServer, stop, toast]);
 
   useEffect(() => {
     return () => {

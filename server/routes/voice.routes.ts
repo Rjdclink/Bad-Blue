@@ -11,10 +11,11 @@
 
 import { type Express, type Request, type Response } from 'express';
 import crypto from 'crypto';
+import { Readable } from 'stream';
 import { asyncHandler } from '../errorHandler';
 import { createLogger } from '../logger';
 import { isAuthenticated } from '../auth';
-import { getLexaraTTSReadiness, refreshLexaraTTSReadiness, synthesizeLexaraSpeechWithFailover, warmLexaraTTSMesh } from '../lexara/LexaraTTSMesh';
+import { getLexaraTTSReadiness, openLexaraSpeechStream, refreshLexaraTTSReadiness, synthesizeLexaraSpeechWithFailover, warmLexaraTTSMesh } from '../lexara/LexaraTTSMesh';
 
 const log = createLogger('VoiceRoutes');
 
@@ -95,8 +96,11 @@ export function setupVoiceRoutes(app: Express): void {
       return res.json({
         success: true,
         audioUrl: `/api/lexara/tts/session/${id}`,
-        provider: 'adaptive-tts-mesh',
+        provider: readiness.streamingProviders[0] || readiness.healthyProviders[0] || 'adaptive-tts-mesh',
         providers: readiness.healthyProviders,
+        streamingProviders: readiness.streamingProviders,
+        redundancyVerified: readiness.redundancyVerified,
+        voiceStatus: readiness.voiceStatus,
         voiceId: null,
         model: 'adaptive',
       });
@@ -105,7 +109,7 @@ export function setupVoiceRoutes(app: Express): void {
 
   /**
    * GET /api/lexara/tts/session/:id
-   * Proxy ElevenLabs' real streaming TTS response directly to the browser.
+   * Proxy a verified provider's progressive audio response directly to the browser.
    */
   app.get(
     '/api/lexara/tts/session/:id',
@@ -121,6 +125,44 @@ export function setupVoiceRoutes(app: Express): void {
       session.attempts += 1;
 
       try {
+        const progressive = await openLexaraSpeechStream(session.text);
+        if (progressive) {
+          lexaraTTSStreamSessions.delete(id);
+          res.status(200);
+          res.setHeader('Content-Type', progressive.mimeType);
+          res.setHeader('Cache-Control', 'no-store, no-transform');
+          res.setHeader('X-Accel-Buffering', 'no');
+          res.setHeader('X-Provider', progressive.provider);
+          res.setHeader('X-Voice-Id', progressive.voiceId || 'adaptive');
+          res.setHeader('X-TTS-Model', progressive.model);
+          res.setHeader('X-TTS-First-Byte-Ms', String(progressive.firstByteLatencyMs));
+
+          const nodeStream = Readable.fromWeb(progressive.body as any);
+          const close = () => {
+            if (!nodeStream.destroyed) nodeStream.destroy();
+          };
+          req.once('close', close);
+          nodeStream.once('error', error => {
+            log.warn('[VoiceRoutes] Progressive TTS stream ended with transport error', {
+              provider: progressive.provider,
+              model: progressive.model,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            if (!res.headersSent) {
+              res.status(502).end();
+            } else if (!res.writableEnded) {
+              res.end();
+            }
+          });
+          nodeStream.once('end', () => {
+            req.off('close', close);
+          });
+          nodeStream.pipe(res);
+          return;
+        }
+
+        // No verified progressive route was available. Fall back locally to the
+        // canonical buffered mesh rather than surfacing an outage to the user.
         const result = await synthesizeLexaraSpeechWithFailover(session.text);
         lexaraTTSStreamSessions.delete(id);
         res.status(200);
@@ -324,7 +366,10 @@ export function setupVoiceRoutes(app: Express): void {
         providers: readiness.providers,
         configuredProviders: readiness.configuredProviders,
         healthyProviders: readiness.healthyProviders,
-        default: readiness.healthyProviders[0] || null,
+        streamingProviders: readiness.streamingProviders,
+        redundancyVerified: readiness.redundancyVerified,
+        voiceStatus: readiness.voiceStatus,
+        default: readiness.streamingProviders[0] || readiness.healthyProviders[0] || null,
         available: readiness.available,
       });
     }),
@@ -340,15 +385,21 @@ export function setupVoiceRoutes(app: Express): void {
       const readiness = getLexaraTTSReadiness();
       return res.json({
         available: readiness.available,
-        provider: readiness.healthyProviders[0] || null,
+        degraded: readiness.degraded,
+        redundancyVerified: readiness.redundancyVerified,
+        voiceStatus: readiness.voiceStatus,
+        provider: readiness.streamingProviders[0] || readiness.healthyProviders[0] || null,
         configuredProviders: readiness.configuredProviders,
         healthyProviders: readiness.healthyProviders,
+        streamingProviders: readiness.streamingProviders,
         providers: readiness.providers,
         features: {
           adaptiveRouting: true,
           routeLocalFailover: true,
           quotaAwareCooldown: true,
           multipleAcousticRoutes: true,
+          progressiveStreaming: true,
+          verifiedHotBackup: readiness.redundancyVerified,
         },
       });
     }),

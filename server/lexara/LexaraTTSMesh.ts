@@ -47,6 +47,15 @@ export interface LexaraTTSAudio {
   latencyMs: number;
 }
 
+export interface LexaraTTSStream {
+  provider: LexaraTTSProviderId;
+  body: ReadableStream<Uint8Array>;
+  mimeType: string;
+  voiceId: string | null;
+  model: string;
+  firstByteLatencyMs: number;
+}
+
 interface ProviderRuntimeState {
   cooldownUntil: number;
   blockedUntil: number;
@@ -84,6 +93,7 @@ const MISTRAL_VOICE_CACHE_TTL_MS = 30 * 60_000;
 const OPENROUTER_CATALOG_TTL_MS = 10 * 60_000;
 let mistralVoiceCache: { id: string; expiresAt: number } | null = null;
 let openRouterCatalogCache: { ids: Set<string>; expiresAt: number } | null = null;
+let warmStandbyTimerStarted = false;
 
 function stateFor(provider: LexaraTTSProviderId): ProviderRuntimeState {
   const existing = runtime.get(provider);
@@ -659,6 +669,201 @@ async function openRouterTtsCandidates(): Promise<string[]> {
   return catalog.size ? unique.filter(model => catalog.has(model)) : unique;
 }
 
+
+async function openOpenRouterSpeechStream(text: string): Promise<LexaraTTSStream | null> {
+  const provider: LexaraTTSProviderId = 'openrouter';
+  if (!ready(provider)) return null;
+
+  const candidates = (await openRouterTtsCandidates())
+    .filter(model => !model.startsWith('google/'));
+  const errors: string[] = [];
+
+  for (const model of candidates) {
+    const voiceId = openRouterVoiceForModel(model);
+    const startedAt = Date.now();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), LEXARA_TTS_REQUEST_TIMEOUT_MS);
+
+    try {
+      const response = await fetch('https://openrouter.ai/api/v1/audio/speech', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY!.trim()}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': process.env.PUBLIC_BASE_URL?.trim() || 'https://legalwhat.com',
+          'X-Title': 'Legal What LEXARA',
+        },
+        body: JSON.stringify({
+          model,
+          input: text,
+          voice: voiceId,
+          response_format: 'mp3',
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+
+      if (response.ok && response.body) {
+        const firstByteLatencyMs = Date.now() - startedAt;
+        markSuccess(provider, firstByteLatencyMs);
+        log.info('[LEXARA TTS] progressive stream opened', {
+          provider,
+          model,
+          firstByteLatencyMs,
+        });
+        return {
+          provider,
+          body: response.body as ReadableStream<Uint8Array>,
+          mimeType: response.headers.get('content-type') || 'audio/mpeg',
+          voiceId,
+          model,
+          firstByteLatencyMs,
+        };
+      }
+
+      const detail = (await response.text()).slice(0, 700);
+      errors.push(`${model}: ${response.status} ${detail}`);
+      const failure = classifyFailure(response.status, detail);
+
+      if (
+        failure === 'auth_blocked'
+        || failure === 'billing_blocked'
+        || failure === 'capacity_exhausted'
+        || failure === 'rate_limited'
+      ) {
+        const message = `openrouter streaming TTS ${failure} (${response.status}): ${detail}`;
+        markFailure(provider, failure, message, retryAfterMs(response));
+        return null;
+      }
+    } catch (error) {
+      clearTimeout(timer);
+      const message = error instanceof Error ? error.message : String(error);
+      errors.push(`${model}: ${message}`);
+    }
+  }
+
+  if (errors.length) {
+    log.warn('[LEXARA TTS] progressive OpenRouter route unavailable; buffered mesh remains eligible', {
+      errors: errors.join(' | ').slice(0, 1_000),
+    });
+  }
+  return null;
+}
+
+async function openDeepgramSpeechStream(text: string): Promise<LexaraTTSStream | null> {
+  const provider: LexaraTTSProviderId = 'deepgram';
+  if (!ready(provider)) return null;
+
+  const model = process.env.DEEPGRAM_TTS_MODEL?.trim() || 'aura-2-thalia-en';
+  const startedAt = Date.now();
+  try {
+    const response = await fetchWithTimeout(
+      `https://api.deepgram.com/v1/speak?model=${encodeURIComponent(model)}&encoding=mp3`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Token ${process.env.DEEPGRAM_API_KEY!.trim()}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ text }),
+      },
+      LEXARA_TTS_REQUEST_TIMEOUT_MS,
+    );
+    if (!response.ok || !response.body) {
+      const detail = (await response.text()).slice(0, 700);
+      const failure = classifyFailure(response.status, detail);
+      const message = `deepgram streaming TTS ${failure} (${response.status}): ${detail}`;
+      markFailure(provider, failure, message, retryAfterMs(response));
+      return null;
+    }
+    const firstByteLatencyMs = Date.now() - startedAt;
+    markSuccess(provider, firstByteLatencyMs);
+    return {
+      provider,
+      body: response.body as ReadableStream<Uint8Array>,
+      mimeType: response.headers.get('content-type') || 'audio/mpeg',
+      voiceId: model,
+      model,
+      firstByteLatencyMs,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    markFailure(provider, 'transport_failed', message);
+    return null;
+  }
+}
+
+async function openElevenLabsSpeechStream(text: string): Promise<LexaraTTSStream | null> {
+  const provider: LexaraTTSProviderId = 'elevenlabs';
+  if (!ready(provider)) return null;
+
+  const voiceId = process.env.ELEVENLABS_VOICE_ID!.trim();
+  const model = process.env.ELEVENLABS_TTS_MODEL?.trim() || 'eleven_flash_v2_5';
+  const outputFormat = process.env.ELEVENLABS_TTS_OUTPUT_FORMAT?.trim() || 'mp3_44100_128';
+  const startedAt = Date.now();
+
+  try {
+    const response = await fetchWithTimeout(
+      `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream?output_format=${encodeURIComponent(outputFormat)}`,
+      {
+        method: 'POST',
+        headers: {
+          'xi-api-key': process.env.ELEVENLABS_API_KEY!.trim(),
+          'Content-Type': 'application/json',
+          Accept: 'audio/mpeg',
+        },
+        body: JSON.stringify({ text, model_id: model }),
+      },
+      LEXARA_TTS_REQUEST_TIMEOUT_MS,
+    );
+
+    if (!response.ok || !response.body) {
+      const detail = (await response.text()).slice(0, 700);
+      const failure = classifyFailure(response.status, detail);
+      const message = `elevenlabs streaming TTS ${failure} (${response.status}): ${detail}`;
+      markFailure(provider, failure, message, retryAfterMs(response));
+      return null;
+    }
+
+    const firstByteLatencyMs = Date.now() - startedAt;
+    markSuccess(provider, firstByteLatencyMs);
+    return {
+      provider,
+      body: response.body as ReadableStream<Uint8Array>,
+      mimeType: response.headers.get('content-type') || 'audio/mpeg',
+      voiceId,
+      model,
+      firstByteLatencyMs,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    markFailure(provider, 'transport_failed', message);
+    return null;
+  }
+}
+
+export async function openLexaraSpeechStream(text: string): Promise<LexaraTTSStream | null> {
+  const clean = String(text || '').trim();
+  if (!clean) return null;
+
+  const readiness = getLexaraTTSReadiness();
+  const streamable = readiness.healthyProviders.filter(provider =>
+    provider === 'openrouter' || provider === 'deepgram' || provider === 'elevenlabs'
+  );
+
+  for (const provider of streamable) {
+    const stream =
+      provider === 'openrouter'
+        ? await openOpenRouterSpeechStream(clean)
+        : provider === 'deepgram'
+          ? await openDeepgramSpeechStream(clean)
+          : await openElevenLabsSpeechStream(clean);
+    if (stream) return stream;
+  }
+
+  return null;
+}
+
 async function synthesizeOpenRouter(text: string, probe = false): Promise<LexaraTTSAudio> {
   const provider: LexaraTTSProviderId = 'openrouter';
   const candidates = await openRouterTtsCandidates();
@@ -885,11 +1090,20 @@ export async function refreshLexaraTTSReadiness(force = false): Promise<ReturnTy
 }
 
 export function warmLexaraTTSMesh(): void {
-  void refreshLexaraTTSReadiness(false).catch(error => {
-    log.warn('[LEXARA TTS] background warmup failed', {
-      error: error instanceof Error ? error.message : String(error),
+  const refresh = () => {
+    void refreshLexaraTTSReadiness(false).catch(error => {
+      log.warn('[LEXARA TTS] background warmup failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
     });
-  });
+  };
+
+  refresh();
+  if (warmStandbyTimerStarted) return;
+  warmStandbyTimerStarted = true;
+
+  const timer = setInterval(refresh, 90_000);
+  if (typeof timer.unref === 'function') timer.unref();
 }
 
 export async function synthesizeLexaraSpeechWithFailover(text: string): Promise<LexaraTTSAudio> {
@@ -932,10 +1146,23 @@ export function getLexaraTTSReadiness() {
     .filter(ready)
     .sort((a, b) => providerScore(b) - providerScore(a));
 
+  const streamingProviders = healthyProviders.filter(provider =>
+    provider === 'openrouter' || provider === 'deepgram' || provider === 'elevenlabs'
+  );
+  const redundancyVerified = healthyProviders.length >= 2;
+
   return {
     available: healthyProviders.length > 0,
+    degraded: healthyProviders.length === 1,
+    redundancyVerified,
     configuredProviders,
     healthyProviders,
+    streamingProviders,
+    voiceStatus: healthyProviders.length >= 2
+      ? 'live'
+      : healthyProviders.length === 1
+        ? 'degraded'
+        : 'reconnecting',
     verifiedAt: healthyProviders.reduce(
       (latest, provider) => Math.max(latest, stateFor(provider).verifiedAt),
       0,

@@ -163,8 +163,16 @@ must(
     ttsMesh.includes('LEXARA_TTS_REQUEST_TIMEOUT_MS = 8_000') &&
     ttsMesh.includes('slowRoutePenalty') &&
     !ttsMesh.includes("'microsoft/mai-voice-2-flash'") &&
-    ttsMesh.includes('synthesizeLexaraSpeechWithFailover'),
-  'LEXARA admits only verified TTS routes, enforces the female voice profile, and keeps model-specific provider failures local',
+    ttsMesh.includes('synthesizeLexaraSpeechWithFailover') &&
+    ttsMesh.includes('openLexaraSpeechStream') &&
+    ttsMesh.includes('openOpenRouterSpeechStream') &&
+    ttsMesh.includes('openDeepgramSpeechStream') &&
+    ttsMesh.includes('openElevenLabsSpeechStream') &&
+    ttsMesh.includes('progressive stream opened') &&
+    ttsMesh.includes('redundancyVerified') &&
+    ttsMesh.includes("voiceStatus: healthyProviders.length >= 2") &&
+    ttsMesh.includes('setInterval(refresh, 90_000)'),
+  'LEXARA admits only verified female TTS routes, progressively streams the active route, and keeps a verified independent hot-backup pool warm',
 );
 must(
   speechClient.includes('async resume(): Promise<void>') &&
@@ -200,16 +208,28 @@ must(
     voiceRoutes.includes('refreshLexaraTTSReadiness') &&
     voiceRoutes.includes('warmLexaraTTSMesh') &&
     voiceRoutes.includes('synthesizeLexaraSpeechWithFailover') &&
-    voiceRoutes.includes("provider: 'adaptive-tts-mesh'") &&
+    voiceRoutes.includes('openLexaraSpeechStream') &&
+    voiceRoutes.includes('Readable.fromWeb') &&
+    voiceRoutes.includes("'X-Accel-Buffering', 'no'") &&
+    voiceRoutes.includes('No verified progressive route was available') &&
+    voiceRoutes.includes('redundancyVerified') &&
+    voiceRoutes.includes('voiceStatus') &&
     lexaraRoutes.includes('speechOutputVerified') &&
     lexaraRoutes.includes('refreshLexaraTTSReadiness(false)') &&
     conversation.includes('checkVoiceBackendReadiness') &&
     conversation.includes("data?.speechOutputVerified === true") &&
     conversation.includes("'Voice reconnecting'") &&
+    conversation.includes("'Voice degraded'") &&
+    conversation.includes("voiceStatus === 'live'") &&
     synthesis.includes('splitLexaraSpeechChunks') &&
     synthesis.includes('FIRST_SPEECH_CHUNK_MAX_CHARS') &&
     synthesis.includes('Prepare exactly one chunk ahead') &&
     synthesis.includes('fetchPreparedSessionAudio') &&
+    synthesis.includes("FIRST_SPEECH_CHUNK_MAX_CHARS = 140") &&
+    synthesis.includes("PlaybackOutcome = 'ended' | 'interrupted' | 'timeout' | 'failed'") &&
+    synthesis.includes('voice playback failed after route-local recovery') &&
+    synthesis.includes('voice playback timed out') &&
+    synthesis.includes('voiceFailureToastIdRef') &&
     !synthesis.includes('shouldBufferLexaraPlaybackOnThisDevice') &&
     !synthesis.includes('bufferStreamingSessionForMobile'),
   'LEXARA voice readiness stays truthful while short first-chunk playback and one-ahead synthesis remove full-answer mobile buffering latency',
