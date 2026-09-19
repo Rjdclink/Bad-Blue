@@ -458,7 +458,7 @@ export class AICollaborationOrchestrator {
       return {
         ...task,
         systemPrompt: options.systemPrompt,
-        requestTimeoutMs: task.requestTimeoutMs || task.timeout || options.requestTimeoutMs,
+        requestTimeoutMs: task.requestTimeoutMs || options.requestTimeoutMs || task.timeout,
         maxFallbacks: task.maxFallbacks ?? options.maxFallbacks,
         signal: options.signal,
         allowCoolingRecovery: healthyProviders.length === 0,
@@ -663,7 +663,7 @@ export class AICollaborationOrchestrator {
         role,
         prompt: `${focus} Use only authority actually supplied in the prompt and never fabricate citations.\n\n${query}`,
         priority: 1,
-        timeout: attrs.needsFastResponse ? 1_500 : undefined,
+        timeout: attrs.needsFastResponse ? 2_500 : undefined,
         attributes: { ...attrs, needsLegalAnalysis: true, needsVerification: true, needsReasoning: true },
       });
     }
@@ -682,7 +682,7 @@ export class AICollaborationOrchestrator {
         prompt: 'Synthesize the successful specialist analyses into one direct, natural spoken answer to the user. Answer the current question or statement first. Default to 2-5 concise sentences unless additional detail is materially necessary or explicitly requested. Remove repetition, preserve uncertainty, never invent authority, and do not mention internal providers.\n\n[Results will be provided]',
         priority: 2,
         dependencies,
-        timeout: attrs.needsFastResponse ? 1_200 : undefined,
+        timeout: attrs.needsFastResponse ? 2_000 : undefined,
         attributes: { ...attrs, needsLegalAnalysis: true, needsVerification: true, needsReasoning: true },
       });
     }
@@ -1028,12 +1028,18 @@ export class AICollaborationOrchestrator {
         results.push(firstSuccessful);
         completedTasks.set(firstSuccessful.taskId, firstSuccessful);
 
+        // A complete legal-analyst answer already passed the full LEXARA system
+        // prompt and should not be held behind a second mandatory model call.
+        // Verification remains useful, but it must not turn a valid first answer
+        // into dead air or a false global outage.
+        if (firstSuccessful.role === 'legal-analyst') {
+          void Promise.allSettled(sourcePromises);
+          return results;
+        }
+
         const synthesis = await this.executeTask(
           {
             ...fastSynthesisTask,
-            // The first successful hedge has just proven both availability and
-            // low latency for this exact turn. Reuse that healthy route for the
-            // single synthesis pass instead of switching to an unproven route.
             provider: firstSuccessful.provider,
             model: this.getDefaultModelForProvider(firstSuccessful.provider),
             fallbackProviders: fastSynthesisTask.fallbackProviders?.filter(
@@ -1044,7 +1050,6 @@ export class AICollaborationOrchestrator {
         );
         results.push(synthesis);
 
-        // Observe the slower hedge without awaiting it on the user-facing path.
         void Promise.allSettled(sourcePromises);
         return results;
       } catch {
