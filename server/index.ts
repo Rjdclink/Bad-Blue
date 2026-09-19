@@ -195,10 +195,13 @@ async function gracefulShutdown(signal: string): Promise<void> {
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
-function databaseRetryDelayMs(attempt: number, baseMs: number = 2_000, maxMs: number = 12_000): number {
-  const exponent = Math.min(8, Math.max(0, attempt - 1));
+const STARTUP_DATABASE_MAX_PROBES = 5;
+const STARTUP_DATABASE_ADMISSION_CAP_MS = 120_000;
+
+function databaseRetryDelayMs(attempt: number, baseMs: number = 4_000, maxMs: number = 25_000): number {
+  const exponent = Math.min(6, Math.max(0, attempt - 1));
   const capMs = Math.min(maxMs, baseMs * Math.pow(2, exponent));
-  const floorMs = Math.min(500, Math.max(100, Math.floor(capMs / 4)));
+  const floorMs = Math.min(2_000, Math.max(500, Math.floor(capMs / 3)));
   return floorMs + Math.floor(Math.random() * Math.max(1, capMs - floorMs + 1));
 }
 
@@ -267,7 +270,11 @@ function startupDatabaseAdmissionBudgetMs(): number {
   const defaultBudgetMs = Math.max(30_000, healthcheckMs - reserveMs);
   const configuredBudgetMs = Number(process.env.BADBLUE_DATABASE_ADMISSION_BUDGET_MS || defaultBudgetMs);
   const safeUpperBoundMs = Math.max(30_000, healthcheckMs - 15_000);
-  return Math.max(30_000, Math.min(safeUpperBoundMs, Number.isFinite(configuredBudgetMs) ? configuredBudgetMs : defaultBudgetMs));
+  const requestedBudgetMs = Number.isFinite(configuredBudgetMs) ? configuredBudgetMs : defaultBudgetMs;
+  // Startup admission must be patient enough for a transient Supavisor queue,
+  // but it must never spend the full Railway health window repeatedly opening
+  // new client connections against an already pressured database.
+  return Math.max(30_000, Math.min(safeUpperBoundMs, STARTUP_DATABASE_ADMISSION_CAP_MS, requestedBudgetMs));
 }
 
 async function retryDatabaseProbeWithinBudget(): Promise<void> {
@@ -276,11 +283,14 @@ async function retryDatabaseProbeWithinBudget(): Promise<void> {
   let attempt = 0;
   let lastError: unknown = null;
 
-  while (Date.now() - startedAt < budgetMs) {
+  while (Date.now() - startedAt < budgetMs && attempt < STARTUP_DATABASE_MAX_PROBES) {
     attempt += 1;
     try {
-      const { db } = await import('./db');
-      await db.execute('SELECT 1');
+      // Use the canonical node-postgres pool directly for the readiness probe.
+      // This preserves the real PostgreSQL/Supavisor error code and cause instead
+      // of hiding it behind a Drizzle "Failed query" wrapper.
+      const { pool } = await import('./db');
+      await pool.query({ text: 'SELECT 1', query_timeout: 5_000 });
       if (attempt > 1) {
         console.log(`[RETRY] Database admission recovered on attempt ${attempt} after ${Date.now() - startedAt}ms`);
       }
@@ -289,19 +299,20 @@ async function retryDatabaseProbeWithinBudget(): Promise<void> {
       lastError = error;
       const elapsedMs = Date.now() - startedAt;
       const admissionPressure = isDatabaseAdmissionPressureError(error);
-      console.warn(`[RETRY] Database probe ${attempt} failed after ${elapsedMs}ms:`, error?.message ?? error);
+      const errorText = databaseErrorText(error).slice(0, 700);
+      console.warn(`[RETRY] Database probe ${attempt}/${STARTUP_DATABASE_MAX_PROBES} failed after ${elapsedMs}ms: ${errorText}`);
 
       if (isPermanentDatabaseStartupError(error) || isLocalPoolFailure(error)) {
         throw error;
       }
 
       const remainingMs = Math.max(0, budgetMs - elapsedMs);
-      if (remainingMs <= 0) break;
+      if (remainingMs <= 0 || attempt >= STARTUP_DATABASE_MAX_PROBES) break;
 
-      // This path exists only when overflow is unavailable. With verified overflow,
-      // startup never enters this primary admission loop.
+      // One serialized probe at a time. Exponential jitter gives Supavisor/Postgres
+      // room to recover instead of creating a reconnect storm during a rollout.
       const waitTime = Math.min(databaseRetryDelayMs(attempt), remainingMs);
-      console.log(`[RETRY] Database admission ${admissionPressure ? 'pressure' : 'transient failure'}; jittering ${waitTime}ms (${remainingMs}ms budget remaining)`);
+      console.log(`[RETRY] Database admission ${admissionPressure ? 'pressure' : 'transient failure'}; backing off ${waitTime}ms (${remainingMs}ms budget remaining)`);
       await new Promise(resolve => setTimeout(resolve, waitTime));
     }
   }
