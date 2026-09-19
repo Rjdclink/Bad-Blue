@@ -6,10 +6,10 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..', '..');
 const observerPath = path.join(root, 'server/services/cryptocrawl/evolution/zero-capital-funding-lifecycle-observer.ts');
 const terminalPath = path.join(root, 'server/services/cryptocrawl/evolution/terminal-network-funding-learning.ts');
-const bootstrapPath = path.join(root, 'server/cryptara-bootstrap-entry.ts');
+const runtimeWiringPath = path.join(root, 'server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
 const observer = fs.readFileSync(observerPath, 'utf8');
 const terminal = fs.readFileSync(terminalPath, 'utf8');
-const bootstrap = fs.readFileSync(bootstrapPath, 'utf8');
+const runtimeWiring = fs.readFileSync(runtimeWiringPath, 'utf8');
 
 function must(source, pattern, message) {
   if (!pattern.test(source)) throw new Error(`[verify-nix-gen-zero-capital-funding-learning] ${message}`);
@@ -24,6 +24,9 @@ must(observer, /candidateMutationAuthority:\s*false/, 'observer must not mutate 
 must(terminal, /recordTerminalNetworkAndFundingLearning/, 'terminal learning fan-out is missing');
 must(terminal, /stage:\s*'settlement'/, 'terminal zero-capital provider learning is missing settlement observations');
 must(terminal, /executionAuthority:\s*false/, 'terminal learning must not have execution authority');
-must(bootstrap, /ensureZeroCapitalFundingLifecycleObserver/, 'funding lifecycle observer is not installed at production bootstrap');
+must(runtimeWiring, /ensureZeroCapitalFundingLifecycleObserver/, 'funding lifecycle observer is not installed in the manual-ON runtime');
+must(runtimeWiring, /stopZeroCapitalFundingLifecycleObserver/, 'funding lifecycle observer is not stopped by master power');
+must(observer, /unsubscribe\?\.\(\)/, 'funding lifecycle observer does not unsubscribe on stop');
+must(observer, /CRYPTOCRAWLER_MASTER_POWER_OFF/, 'funding lifecycle observer is not fail-closed while master power is off');
 
 console.log('[verify-nix-gen-zero-capital-funding-learning] PASS');
