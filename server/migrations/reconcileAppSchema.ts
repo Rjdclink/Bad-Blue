@@ -16,7 +16,7 @@ import { createSubAgentTables } from './createSubAgentTables';
 import { createTokenMetricsTables } from './createTokenMetrics';
 import { runSquareMigration } from './runSquareMigration';
 import ensureSchemaSync from '../ensureSchema';
-import { coordinationPool, pool } from '../db';
+import { coordinationPool, getApplicationDatabaseSteadyPoolCeiling, pool } from '../db';
 import { isCryptoCrawlerDatabaseAccessAllowed } from '../services/cryptocrawl/runtime/manual-power-state.js';
 
 export interface SchemaMigrationResult {
@@ -291,9 +291,10 @@ export function releaseRollingDeploymentPoolHeadroom(reason = 'application_datab
   const state = rollingDeploymentHeadroom;
   if (!state) return;
   rollingDeploymentHeadroom = null;
-  state.options.max = state.steadyMax;
+  const activeSteadyCeiling = getApplicationDatabaseSteadyPoolCeiling();
+  state.options.max = Math.min(state.steadyMax, activeSteadyCeiling);
   state.options.min = state.originalMin;
-  console.log(`[DATABASE] Rolling-deploy admission guard released (reason=${reason}, rollout max=${state.rolloutMax}, steady max=${state.steadyMax}, heldMs=${Date.now() - state.activatedAt})`);
+  console.log(`[DATABASE] Rolling-deploy admission guard released (reason=${reason}, rollout max=${state.rolloutMax}, steady max=${state.options.max}, heldMs=${Date.now() - state.activatedAt})`);
 }
 
 export function getRollingDeploymentPoolHeadroomSnapshot(): {
