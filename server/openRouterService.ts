@@ -93,6 +93,7 @@ export async function generateOpenRouterText(
     timeoutMs?: number;
     sessionId?: string;
     model?: string;
+    signal?: AbortSignal;
   } = {},
 ): Promise<OpenRouterTextResult> {
   if (!OPENROUTER_API_KEY) {
@@ -103,8 +104,11 @@ export async function generateOpenRouterText(
   }
 
   const controller = new AbortController();
-  const timeoutMs = Math.max(4_000, Math.min(options.timeoutMs ?? 18_000, 30_000));
+  const timeoutMs = Math.max(1_000, Math.min(options.timeoutMs ?? 18_000, 30_000));
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const relayAbort = () => controller.abort();
+  if (options.signal?.aborted) controller.abort();
+  else options.signal?.addEventListener('abort', relayAbort, { once: true });
   const startedAt = Date.now();
 
   try {
@@ -165,6 +169,7 @@ export async function generateOpenRouterText(
     throw error instanceof Error ? error : new Error(message);
   } finally {
     clearTimeout(timer);
+    options.signal?.removeEventListener('abort', relayAbort);
   }
 }
 
