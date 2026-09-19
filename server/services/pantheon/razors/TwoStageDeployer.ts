@@ -18,6 +18,7 @@ import { RazorResult, RazorTask, StageResult, RazorType } from './types';
 import { HydraCrawler } from '../crawlers/hydra';
 import { WraithCrawler } from '../crawlers/wraith';
 import { IceCrawler } from '../crawlers/ice';
+import { FarmCrawler, PhantomCrawler, NovaCrawler } from '../crawlers/utility';
 import { CrawlerType, CrawlerTask, EntropySignature } from '../core';
 
 // Configuration
@@ -26,6 +27,17 @@ const STAGE_2_TIMEOUT = 30000;          // 30 seconds for secondary
 const MIN_CONFIDENCE_THRESHOLD = 0.6;   // 60% confidence to skip stage 2
 const MIN_SUCCESS_COUNT = 5;            // At least 5 razors must succeed
 
+export interface BackgroundSecondaryResult {
+  crawler: 'hydra' | 'wraith' | 'ice' | 'farm' | 'phantom' | 'nova';
+  signatures: EntropySignature[];
+}
+
+export interface BackgroundReportDeployment {
+  razorResults: RazorResult[];
+  secondaryResults: BackgroundSecondaryResult[];
+  totalTimeMs: number;
+}
+
 export class TwoStageDeployer {
   private razors: BaseRazor[];
   private stage1Results: RazorResult[] = [];
@@ -33,6 +45,98 @@ export class TwoStageDeployer {
 
   constructor() {
     this.razors = createAllRazors();
+  }
+
+  /**
+   * Exhaustive public-evidence deployment for background reports.
+   *
+   * All ten Razors execute, but categories that would expose precise personal
+   * contact/location/relationship data are withheld before leaving PANTHEON.
+   * All six secondary public-data crawlers execute route-locally in parallel.
+   */
+  async deployBackgroundReport(target: string, html?: string): Promise<BackgroundReportDeployment> {
+    const startedAt = Date.now();
+    const content = html || await this.fetchContent(target);
+    const razorResults = content
+      ? (await this.deployStage1(content, target)).map(result => this.sanitizeBackgroundRazorResult(result))
+      : [];
+    const secondaryResults = await this.deployAllSecondary(target);
+
+    return {
+      razorResults,
+      secondaryResults,
+      totalTimeMs: Date.now() - startedAt,
+    };
+  }
+
+  private sanitizeBackgroundRazorResult(result: RazorResult): RazorResult {
+    if ([RazorType.CONTACT, RazorType.ADDRESS, RazorType.RELATION].includes(result.razorType)) {
+      return {
+        ...result,
+        data: {
+          withheld: true,
+          category: result.razorType,
+          reason: 'sensitive_personal_data',
+        },
+      };
+    }
+
+    if (result.razorType === RazorType.IDENTITY) {
+      const { dateOfBirth: _dateOfBirth, ...safeData } = result.data as Record<string, unknown>;
+      return { ...result, data: safeData };
+    }
+
+    if (result.razorType === RazorType.BUSINESS) {
+      const { einNumbers: _einNumbers, ...safeData } = result.data as Record<string, unknown>;
+      return { ...result, data: safeData };
+    }
+
+    if (result.razorType === RazorType.ASSET) {
+      const { propertyIds: _propertyIds, ...safeData } = result.data as Record<string, unknown>;
+      return { ...result, data: safeData };
+    }
+
+    return result;
+  }
+
+  private async deployAllSecondary(target: string): Promise<BackgroundSecondaryResult[]> {
+    const specs: Array<{
+      crawler: BackgroundSecondaryResult['crawler'];
+      type: CrawlerType;
+      create: (task: CrawlerTask) => { execute(): Promise<EntropySignature[]> };
+    }> = [
+      { crawler: 'hydra', type: CrawlerType.HYDRA, create: task => new HydraCrawler(task) },
+      { crawler: 'wraith', type: CrawlerType.WRAITH, create: task => new WraithCrawler(task) },
+      { crawler: 'ice', type: CrawlerType.ICE, create: task => new IceCrawler(task) },
+      { crawler: 'farm', type: CrawlerType.FARM, create: task => new FarmCrawler(task) },
+      { crawler: 'phantom', type: CrawlerType.PHANTOM, create: task => new PhantomCrawler(task) },
+      { crawler: 'nova', type: CrawlerType.NOVA, create: task => new NovaCrawler(task) },
+    ];
+
+    const runs = specs.map(async spec => {
+      const task: CrawlerTask = {
+        id: `background-${spec.crawler}-${Date.now()}`,
+        type: spec.type,
+        target,
+        priority: 10,
+        quantum: 10_000,
+        entropyBudget: 50,
+      };
+      const crawler = spec.create(task);
+      try {
+        const signatures = await Promise.race([
+          crawler.execute(),
+          new Promise<EntropySignature[]>((_, reject) =>
+            setTimeout(() => reject(new Error(`${spec.crawler}_timeout`)), 10_000)
+          ),
+        ]);
+        return { crawler: spec.crawler, signatures } satisfies BackgroundSecondaryResult;
+      } catch {
+        return { crawler: spec.crawler, signatures: [] } satisfies BackgroundSecondaryResult;
+      }
+    });
+
+    return Promise.all(runs);
   }
 
   /**
