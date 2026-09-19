@@ -35,7 +35,8 @@ export type LexaraTTSOperationalState =
   | 'permission_blocked'
   | 'configuration_blocked'
   | 'model_unavailable'
-  | 'transport_failed';
+  | 'transport_failed'
+  | 'invalid_response';
 
 export interface LexaraTTSAudio {
   provider: LexaraTTSProviderId;
