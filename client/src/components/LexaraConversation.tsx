@@ -1044,8 +1044,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     const greetingGeneration = generationRef.current;
     responseEmotionRef.current = 'calm';
 
-    const domain = lawTypeName ? ` about ${lawTypeName}` : '';
-    const greeting = `Hello. Tell me what happened${domain}, in your own words. I'll identify the legal issues, test the strengths and weaknesses, and ask only the questions that materially affect the analysis.`;
+    const greeting = 'How can I help you?';
     appendMessage('lexara', greeting);
 
     if (liveEnabled && voiceReady) {
