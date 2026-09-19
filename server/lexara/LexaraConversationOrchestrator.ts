@@ -347,7 +347,11 @@ export async function generateLexaraConversationResponse(
   let text = '';
   const harmonyStartedAt = Date.now();
   if (harmonyProviders.length > 0) {
-    // Do not wrap Harmony in a second aggregate deadline. Provider-local deadlines,\n    // health scoring and fallback limits bound failed routes. The caller signal is\n    // reserved for a genuinely superseded/disconnected user turn, so a slow\n    // primary can never abort its own recovery routes.\n    try {
+    // Do not wrap Harmony in a second aggregate deadline. Provider-local deadlines,
+    // health scoring and fallback limits bound failed routes. The caller signal is
+    // reserved for a genuinely superseded/disconnected user turn, so a slow
+    // primary can never abort its own recovery routes.
+    try {
       const harmony = await AICollaborationOrchestrator.orchestrateCollaboration(
         'lexara-live-conversation',
         userPrompt,
