@@ -287,6 +287,7 @@ class ConnectionRouter {
 
   private async lowRiskRoute(target: string, start: number): Promise<Connection> {
     if (!this.vpn.getMetrics().connected) await this.vpn.connect();
+    const route = this.vpn.getMetrics().connected ? ['VPN'] : ['direct'];
     
     try {
       const response = await fetch(target, { signal: AbortSignal.timeout(10000) });
@@ -298,20 +299,17 @@ class ConnectionRouter {
         ip = data.origin || data.ip || 'unknown';
       }
       
-      return { type: 'low', route: ['VPN'], latency: Date.now() - start, ip };
-    } catch (error) {
-      return { type: 'low', route: ['VPN'], latency: Date.now() - start };
+      return { type: 'low', route, latency: Date.now() - start, ip };
+    } catch {
+      return { type: 'low', route, latency: Date.now() - start };
     }
   }
 
   private async mediumRiskRoute(target: string, start: number): Promise<Connection> {
     if (!this.vpn.getMetrics().connected) await this.vpn.connect();
-    const torPort = this.tor.getNextPort();
-    if (torPort === 0) throw new Error('Tor not available');
+    const route = this.vpn.getMetrics().connected ? ['VPN'] : ['direct'];
     
     try {
-      // Note: Proper SOCKS proxy integration requires additional libraries
-      // For now, we document the route without full proxy support
       const response = await fetch(target, { signal: AbortSignal.timeout(15000) });
       const contentType = response.headers.get('content-type');
       
@@ -321,20 +319,17 @@ class ConnectionRouter {
         ip = data.origin || data.ip || 'unknown';
       }
       
-      return { type: 'medium', route: ['VPN', `Tor:${torPort}`], latency: Date.now() - start, ip };
-    } catch (error) {
-      return { type: 'medium', route: ['VPN', `Tor:${torPort}`], latency: Date.now() - start };
+      return { type: 'medium', route, latency: Date.now() - start, ip };
+    } catch {
+      return { type: 'medium', route, latency: Date.now() - start };
     }
   }
 
   private async highRiskRoute(target: string, start: number): Promise<Connection> {
     if (!this.vpn.getMetrics().connected) await this.vpn.connect();
-    const torPort = this.tor.getNextPort();
-    await this.proxyChains.generateConfig('ULTRA', this.health.getHealthyProxies());
+    const route = this.vpn.getMetrics().connected ? ['VPN'] : ['direct'];
     
     try {
-      // Note: Full proxy chain integration requires process spawning with proxychain
-      // For now, we document the route configuration
       const response = await fetch(target, { signal: AbortSignal.timeout(20000) });
       const contentType = response.headers.get('content-type');
       
@@ -344,9 +339,9 @@ class ConnectionRouter {
         ip = data.origin || data.ip || 'unknown';
       }
       
-      return { type: 'high', route: ['VPN', `Tor:${torPort}`, 'ProxyChain'], latency: Date.now() - start, ip };
-    } catch (error) {
-      return { type: 'high', route: ['VPN', `Tor:${torPort}`, 'ProxyChain'], latency: Date.now() - start };
+      return { type: 'high', route, latency: Date.now() - start, ip };
+    } catch {
+      return { type: 'high', route, latency: Date.now() - start };
     }
   }
 }
