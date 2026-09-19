@@ -12,6 +12,8 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import { EventEmitter } from 'events';
+import { createHash } from 'crypto';
+import { unifiedSearch } from './webSearchService';
 
 // Import orchestrator for synchronization
 import { synchronizeCrawlerUpdate, type CrawlerUpdate } from './fourJIOrchestrator';
@@ -88,7 +90,7 @@ const defaultConfig: CrawlerConfig = {
       id: 'uscode',
       name: 'US Code (Congress.gov)',
       type: 'statutes',
-      url: 'https://api.congress.gov/',
+      url: 'https://uscode.house.gov/',
       enabled: true,
       domains: ['*'],
       crawlFrequency: 'weekly'
@@ -97,7 +99,7 @@ const defaultConfig: CrawlerConfig = {
       id: 'ecfr',
       name: 'Electronic Code of Federal Regulations',
       type: 'regulations',
-      url: 'https://www.ecfr.gov/api/',
+      url: 'https://www.ecfr.gov/',
       enabled: true,
       domains: ['administrative-law', 'environmental-law', 'tax-law', 'employment-labor-law'],
       crawlFrequency: 'daily'
@@ -106,7 +108,7 @@ const defaultConfig: CrawlerConfig = {
       id: 'openstates',
       name: 'Open States Legislation',
       type: 'statutes',
-      url: 'https://v3.openstates.org/graphql',
+      url: 'https://openstates.org/',
       enabled: true,
       domains: ['*'],
       crawlFrequency: 'daily'
@@ -286,7 +288,6 @@ function shouldCrawlSource(source: CrawlerSource): boolean {
 async function crawlSource(source: CrawlerSource): Promise<CrawledItem[]> {
   const items: CrawledItem[] = [];
   
-  // Simulated crawling - in production, this would make actual API calls
   switch (source.type) {
     case 'case_law':
       items.push(...await crawlCaseLaw(source));
@@ -309,152 +310,128 @@ async function crawlSource(source: CrawlerSource): Promise<CrawledItem[]> {
 }
 
 /**
+ * Query the configured public source and return only records actually surfaced
+ * by retrieval. No citations, courts, statutes, or dates are synthesized.
+ */
+async function crawlPublicSource(
+  source: CrawlerSource,
+  itemType: CrawledItem['type'],
+  topicLabel: string,
+  maxDomains: number
+): Promise<CrawledItem[]> {
+  const domains = source.domains.includes('*')
+    ? await getAvailableDomains()
+    : source.domains;
+  const selectedDomains = domains.slice(0, maxDomains);
+  const sourceHost = (() => {
+    try {
+      return new URL(source.url).hostname.replace(/^www\./, '');
+    } catch {
+      return '';
+    }
+  })();
+
+  const items: CrawledItem[] = [];
+  const seenUrls = new Set<string>();
+
+  for (const domain of selectedDomains) {
+    const domainLabel = domain.replace(/-/g, ' ');
+    const siteFilter = sourceHost ? `site:${sourceHost}` : '';
+    const query = `${siteFilter} "${domainLabel}" ${topicLabel}`.trim();
+
+    let results: Array<{ title?: string; url: string; snippet?: string }> = [];
+    try {
+      results = await unifiedSearch(query, {
+        limit: Math.max(3, Math.min(10, crawlerConfig.batchSize)),
+      });
+    } catch (error) {
+      console.warn(`[Legal Crawler] Public retrieval failed for ${source.name} / ${domain}:`, error);
+      continue;
+    }
+
+    for (const result of results) {
+      if (!result?.url || seenUrls.has(result.url)) continue;
+
+      let resultHost = '';
+      try {
+        resultHost = new URL(result.url).hostname.replace(/^www\./, '');
+      } catch {
+        continue;
+      }
+      if (
+        sourceHost &&
+        resultHost !== sourceHost &&
+        !resultHost.endsWith(`.${sourceHost}`) &&
+        !sourceHost.endsWith(`.${resultHost}`)
+      ) {
+        continue;
+      }
+
+      seenUrls.add(result.url);
+      const title = (result.title || result.url).trim();
+      const content = (result.snippet || '').trim();
+      const citation =
+        [title, content].join(' ').match(
+          /\b(?:\d+\s+U\.S\.C\.\s*§+\s*[\w.-]+|\d+\s+C\.F\.R\.\s*§+\s*[\w.-]+|\d+\s+F\.?\s*(?:2d|3d|4th)?\s+\d+)\b/i
+        )?.[0];
+
+      items.push({
+        id: createHash('sha256').update(`${source.id}|${domain}|${result.url}`).digest('hex').slice(0, 24),
+        sourceId: source.id,
+        type: itemType,
+        domain,
+        title,
+        content,
+        citation,
+        date: new Date().toISOString(),
+        relevance: content ? 0.8 : 0.6,
+        metadata: {
+          source: source.name,
+          sourceUrl: result.url,
+          retrievedAt: new Date().toISOString(),
+        },
+      });
+
+      if (items.length >= crawlerConfig.batchSize) return items;
+    }
+  }
+
+  return items;
+}
+
+/**
  * Crawl case law from source
  */
 async function crawlCaseLaw(source: CrawlerSource): Promise<CrawledItem[]> {
-  // In production, this would make actual API requests
-  // For now, return structured placeholder data
-  const domains = source.domains.includes('*') 
-    ? await getAvailableDomains()
-    : source.domains;
-  
-  const items: CrawledItem[] = [];
-  
-  for (const domain of domains.slice(0, 5)) {
-    items.push({
-      id: `${source.id}-case-${Date.now()}-${domain}`,
-      sourceId: source.id,
-      type: 'case',
-      domain,
-      title: `Recent ${domain.replace(/-/g, ' ')} case from ${source.name}`,
-      content: `Case law update for ${domain} domain`,
-      citation: `${new Date().getFullYear()} WL ${Math.floor(Math.random() * 1000000)}`,
-      date: new Date().toISOString(),
-      relevance: 0.8,
-      metadata: {
-        court: 'Sample Court',
-        jurisdiction: 'Federal',
-        source: source.name
-      }
-    });
-  }
-  
-  return items;
+  return crawlPublicSource(source, 'case', 'case opinion decision', 5);
 }
 
 /**
  * Crawl statutes from source
  */
 async function crawlStatutes(source: CrawlerSource): Promise<CrawledItem[]> {
-  const domains = source.domains.includes('*')
-    ? await getAvailableDomains()
-    : source.domains;
-  
-  const items: CrawledItem[] = [];
-  
-  for (const domain of domains.slice(0, 3)) {
-    items.push({
-      id: `${source.id}-statute-${Date.now()}-${domain}`,
-      sourceId: source.id,
-      type: 'statute',
-      domain,
-      title: `Statutory update for ${domain.replace(/-/g, ' ')}`,
-      content: `Recent statutory changes affecting ${domain}`,
-      citation: `Title ${Math.floor(Math.random() * 50)} U.S.C. § ${Math.floor(Math.random() * 10000)}`,
-      date: new Date().toISOString(),
-      relevance: 0.9,
-      metadata: {
-        effectiveDate: new Date().toISOString(),
-        source: source.name
-      }
-    });
-  }
-  
-  return items;
+  return crawlPublicSource(source, 'statute', 'statute code law', 3);
 }
 
 /**
  * Crawl regulations from source
  */
 async function crawlRegulations(source: CrawlerSource): Promise<CrawledItem[]> {
-  const items: CrawledItem[] = [];
-  
-  for (const domain of source.domains) {
-    items.push({
-      id: `${source.id}-reg-${Date.now()}-${domain}`,
-      sourceId: source.id,
-      type: 'regulation',
-      domain,
-      title: `Regulatory update for ${domain.replace(/-/g, ' ')}`,
-      content: `New or amended regulation affecting ${domain}`,
-      citation: `${Math.floor(Math.random() * 50)} C.F.R. § ${Math.floor(Math.random() * 1000)}`,
-      date: new Date().toISOString(),
-      relevance: 0.85,
-      metadata: {
-        agency: 'Federal Agency',
-        ruleType: 'Final Rule',
-        source: source.name
-      }
-    });
-  }
-  
-  return items;
+  return crawlPublicSource(source, 'regulation', 'regulation rule CFR', 4);
 }
 
 /**
  * Crawl legal templates from source
  */
 async function crawlTemplates(source: CrawlerSource): Promise<CrawledItem[]> {
-  const items: CrawledItem[] = [];
-  
-  for (const domain of source.domains) {
-    items.push({
-      id: `${source.id}-template-${Date.now()}-${domain}`,
-      sourceId: source.id,
-      type: 'template',
-      domain,
-      title: `Template for ${domain.replace(/-/g, ' ')}`,
-      content: `Document template`,
-      date: new Date().toISOString(),
-      relevance: 0.7,
-      metadata: {
-        templateType: 'Standard Form',
-        source: source.name
-      }
-    });
-  }
-  
-  return items;
+  return crawlPublicSource(source, 'template', 'official form template', 3);
 }
 
 /**
  * Crawl legal news from source
  */
 async function crawlLegalNews(source: CrawlerSource): Promise<CrawledItem[]> {
-  const domains = source.domains.includes('*')
-    ? await getAvailableDomains()
-    : source.domains;
-  
-  const items: CrawledItem[] = [];
-  
-  for (const domain of domains.slice(0, 2)) {
-    items.push({
-      id: `${source.id}-news-${Date.now()}-${domain}`,
-      sourceId: source.id,
-      type: 'news',
-      domain,
-      title: `Legal news affecting ${domain.replace(/-/g, ' ')}`,
-      content: `Recent legal developments in ${domain}`,
-      date: new Date().toISOString(),
-      relevance: 0.6,
-      metadata: {
-        newsType: 'Industry Update',
-        source: source.name
-      }
-    });
-  }
-  
-  return items;
+  return crawlPublicSource(source, 'news', 'legal update news', 2);
 }
 
 /**
