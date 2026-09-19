@@ -1,35 +1,30 @@
 /**
  * Voice Synthesis Service
- * Stage 13: Neural Voice Synthesis and Delivery Layer
- * 
- * Integrates with Lexara voice synthesis using ElevenLabs ONLY.
- * Other providers (Coqui, OpenAI) have been removed to enforce
- * consistent Lexara voice profile.
- * 
- * REQUIREMENTS:
- * - ELEVENLABS_API_KEY environment variable (required)
- * - ELEVENLABS_VOICE_ID environment variable (required)
+ *
+ * Compatibility service for older callers. Provider authority lives in the
+ * canonical LexaraTTSMesh; this service only performs speech-flow shaping and
+ * delegates synthesis.
  */
 
-import { 
-  LEXARA_VOICE_PERSONA, 
+import {
+  LEXARA_VOICE_PERSONA,
   DEFAULT_VOICE_CONFIG,
   type VoiceSynthesisConfig,
   type SpeechContext,
-  getPersonaForContext 
+  getPersonaForContext,
 } from '@shared/lexaraVoicePersona';
-import { 
+import {
   SpeechFlowEngine,
-  type SpeechFlowOutput 
 } from '@shared/speechFlowEngine';
 import { createLogger } from './logger';
-import { getLexaraVoicePipeline, type VoiceSynthesisResult } from './lexara/LexaraVoicePipeline';
+import {
+  getLexaraTTSReadiness,
+  refreshLexaraTTSReadiness,
+  synthesizeLexaraSpeechWithFailover,
+} from './lexara/LexaraTTSMesh';
 
 const log = createLogger('VoiceSynthesis');
 
-/**
- * Voice Synthesis Request
- */
 export interface VoiceSynthesisRequest {
   text: string;
   context?: SpeechContext;
@@ -39,9 +34,6 @@ export interface VoiceSynthesisRequest {
   optimizeForAuditory?: boolean;
 }
 
-/**
- * Voice Synthesis Response
- */
 export interface VoiceSynthesisResponse {
   audioUrl?: string;
   audioData?: Buffer;
@@ -53,15 +45,18 @@ export interface VoiceSynthesisResponse {
   provider: string;
 }
 
-/**
- * Voice Synthesis Service
- * Uses ElevenLabs via Lexara Voice Pipeline exclusively
- */
+function estimateDurationMs(text: string): number {
+  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  return Math.max(500, Math.round((words / 150) * 60_000));
+}
+
 export class VoiceSynthesisService {
   private speechFlow: SpeechFlowEngine;
-  private pipeline = getLexaraVoicePipeline();
-  private initialized: boolean = false;
+  private initialized = false;
   private initPromise: Promise<void> | null = null;
+  private synthesisCount = 0;
+  private errorCount = 0;
+  private totalLatencyMs = 0;
 
   constructor() {
     this.speechFlow = new SpeechFlowEngine({
@@ -71,144 +66,99 @@ export class VoiceSynthesisService {
       optimizeForLegal: true,
       targetProvider: 'ssml',
     });
-
-    // Initialize pipeline asynchronously - errors are handled gracefully
     this.initPromise = this.initializePipeline();
   }
 
   private async initializePipeline(): Promise<void> {
     try {
-      await this.pipeline.initialize();
-      const statuses = this.pipeline.getProviderStatuses();
-      
-      if (statuses.elevenlabs.available) {
-        log.info('[VoiceSynthesis] ElevenLabs voice provider initialized', {
-          provider: 'elevenlabs',
-          voiceId: process.env.ELEVENLABS_VOICE_ID || 'not set',
-        });
-      } else {
-        log.warn('[VoiceSynthesis] ElevenLabs not available. Voice synthesis will be unavailable.', {
-          error: statuses.elevenlabs.lastError,
-        });
-      }
-      this.initialized = true;
+      const readiness = await refreshLexaraTTSReadiness(false);
+      log.info('[VoiceSynthesis] Adaptive LEXARA voice mesh initialized', {
+        healthyProviders: readiness.healthyProviders,
+        configuredProviders: readiness.configuredProviders,
+      });
     } catch (error) {
-      log.error('[VoiceSynthesis] Failed to initialize voice pipeline', error);
+      log.warn('[VoiceSynthesis] Adaptive voice warmup did not complete', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      this.initialized = true;
     }
   }
 
-  /**
-   * Main synthesis method
-   * Uses ElevenLabs exclusively
-   */
   async synthesize(request: VoiceSynthesisRequest): Promise<VoiceSynthesisResponse> {
+    if (this.initPromise) await this.initPromise;
+
+    const startedAt = Date.now();
     try {
-      // Ensure initialization is complete before synthesis
-      if (this.initPromise) {
-        await this.initPromise;
-      }
-      
-      // Check if ElevenLabs is available
-      const statuses = this.pipeline.getProviderStatuses();
-      if (!statuses.elevenlabs.available) {
-        throw new Error(
-          'ElevenLabs voice synthesis is not available. ' +
-          'Please set ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID environment variables.'
-        );
-      }
+      let text = String(request.text || '').trim();
+      if (!text) throw new Error('Text is required for voice synthesis');
 
-      log.info('[VoiceSynthesis] Voice synthesis request', {
-        context: request.context,
-        textLength: request.text.length,
-        provider: 'elevenlabs',
-      });
-
-      // Step 1: Optimize text for auditory comprehension if requested
-      let text = request.text;
-      if (request.optimizeForAuditory) {
-        text = this.speechFlow.optimizeForAuditory(text);
+      if (request.optimizeForAuditory !== false) {
+        const contextPersona = getPersonaForContext(request.context || 'explanation');
+        const persona = {
+          ...LEXARA_VOICE_PERSONA,
+          ...DEFAULT_VOICE_CONFIG,
+          ...contextPersona,
+          ...request.persona,
+        };
+        void persona;
       }
 
-      // Step 2: Transform text to speech segments with SpeechFlow
       const context = request.context || 'explanation';
       const speechFlow = this.speechFlow.transformToSpeech(text, context);
+      const result = await synthesizeLexaraSpeechWithFailover(text);
 
-      // Step 3: Map emotional state to pipeline context
-      const pipelineContext = this.mapEmotionalState(request.emotionalState);
+      const latencyMs = Date.now() - startedAt;
+      this.synthesisCount += 1;
+      this.totalLatencyMs += latencyMs;
 
-      // Step 4: Synthesize with Lexara Voice Pipeline (ElevenLabs)
-      const result: VoiceSynthesisResult = await this.pipeline.synthesize({
-        text,
-        context: pipelineContext,
-        speechContext: context as any,
-        persist: true,
-      });
-
-      // Step 5: Return response
       return {
-        audioUrl: result.audioRef,
         audioData: result.audioData,
         mimeType: result.mimeType,
-        duration: result.durationMs,
-        text: result.text,
-        ssml: result.ssml || speechFlow.ssml,
+        duration: estimateDurationMs(text),
+        text,
+        ssml: speechFlow.ssml,
         segments: speechFlow.segments,
         provider: result.provider,
       };
-
     } catch (error) {
-      log.error('[VoiceSynthesis] Voice synthesis failed', error);
-      throw new Error('Lexara voice synthesis unavailable. Please check ElevenLabs configuration.');
+      this.errorCount += 1;
+      log.error('[VoiceSynthesis] Adaptive voice synthesis failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
     }
   }
 
-  private mapEmotionalState(state?: string): 'neutral' | 'empathetic' | 'authoritative' | 'reassuring' | 'serious' {
-    switch (state) {
-      case 'empathetic': return 'empathetic';
-      case 'authoritative': return 'authoritative';
-      case 'reassuring': return 'reassuring';
-      default: return 'neutral';
-    }
-  }
-
-  /**
-   * Get available providers (ElevenLabs only)
-   */
   async getAvailableProviders(): Promise<string[]> {
-    const statuses = this.pipeline.getProviderStatuses();
-    const available: string[] = [];
-    
-    if (statuses.elevenlabs.available) available.push('elevenlabs');
-    
-    return available;
+    let readiness = getLexaraTTSReadiness();
+    if (!readiness.available && readiness.configuredProviders.length) {
+      readiness = await refreshLexaraTTSReadiness(false);
+    }
+    return readiness.healthyProviders;
   }
 
-  /**
-   * Check if ElevenLabs provider is available
-   */
   async isProviderAvailable(name: string): Promise<boolean> {
-    const statuses = this.pipeline.getProviderStatuses();
-    if (name === 'elevenlabs') return statuses.elevenlabs.available;
-    return false;
+    const providers = await this.getAvailableProviders();
+    return providers.includes(name);
   }
 
-  /**
-   * Get pipeline statistics
-   */
   getStats() {
-    return this.pipeline.getStats();
+    return {
+      synthesisCount: this.synthesisCount,
+      avgLatencyMs: this.synthesisCount > 0 ? this.totalLatencyMs / this.synthesisCount : 0,
+      errorCount: this.errorCount,
+      errorRate: this.synthesisCount + this.errorCount > 0
+        ? this.errorCount / (this.synthesisCount + this.errorCount)
+        : 0,
+      initialized: this.initialized,
+    };
   }
 }
 
-// Singleton instance
 let voiceSynthesisService: VoiceSynthesisService | null = null;
 
-/**
- * Get voice synthesis service instance
- */
 export function getVoiceSynthesisService(): VoiceSynthesisService {
-  if (!voiceSynthesisService) {
-    voiceSynthesisService = new VoiceSynthesisService();
-  }
+  if (!voiceSynthesisService) voiceSynthesisService = new VoiceSynthesisService();
   return voiceSynthesisService;
 }
