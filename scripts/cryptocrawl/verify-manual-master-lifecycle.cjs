@@ -20,10 +20,30 @@ const canonicalRuntime = read('server/services/cryptocrawl/integration/canonical
 const telemetry = read('server/services/cryptocrawl/integration/telemetry-bootstrap.ts');
 const stageProgression = read('server/services/cryptocrawl/governance/automatic-stage-progression.ts');
 const canonicalDashboard = read('server/services/cryptocrawl/api/canonical-dashboard-api.ts');
+const productionBootstrap = read('server/cryptara-bootstrap-entry.ts');
+const manualPower = read('server/services/cryptocrawl/runtime/manual-power-state.ts');
+const runtimeDatabase = read('server/services/cryptocrawl/runtime/cryptocrawl-runtime-database.ts');
+const overflowBootstrap = read('server/services/cryptocrawl/integration/cryptara-supabase-hyper-bridge-bootstrap.ts');
+const migrations = read('server/migrations/reconcileAppSchema.ts');
 
 lacks(boot, /automaticCryptoCrawlerRuntimeRequired/, 'server boot must not own CryptoCrawler automatic resume');
 lacks(boot, /startCryptoCrawlerRuntime/, 'server boot must never invoke the CryptoCrawler start authority');
-has(boot, /runtime remains STOPPED pending explicit master start/, 'server boot must explicitly preserve stopped-by-default intent');
+has(boot, /CryptoCrawler remains fully OFF pending manual dashboard start/, 'server boot must explicitly preserve stopped-by-default intent');
+has(boot, /cryptocrawler_master_power_off_at_boot/, 'server boot must emit explicit OFF-state telemetry');
+lacks(boot, /await\s+startCryptaraHyperBridgeBootstrap\(\)/, 'server boot must never probe CryptoCrawler Overflow');
+lacks(boot, /await\s+ensureCryptocrawlOverflowRuntimeSchema\(\)/, 'server boot must never verify CryptoCrawler schema');
+
+has(productionBootstrap, /CRYPTOCRAWLER_MANUAL_POWER_PHASE\s*=\s*'OFF'/, 'production wrapper must default CryptoCrawler power OFF');
+lacks(productionBootstrap, /startCryptaraHyperBridgeBootstrap\s*\(/, 'production wrapper must not start the Overflow bridge');
+lacks(productionBootstrap, /ensureCryptocrawlOverflowRuntimeSchema\s*\(/, 'production wrapper must not touch CryptoCrawler schema');
+has(productionBootstrap, /await import\('\.\/index\.js'\)/, 'production wrapper must load the application without CryptoCrawler prebootstrap');
+
+has(manualPower, /let\s+phase:\s*CryptoCrawlerManualPowerPhase\s*=\s*'OFF'/, 'manual power authority must default OFF');
+has(manualPower, /phase\s*===\s*'STARTING'\s*\|\|\s*phase\s*===\s*'ON'\s*\|\|\s*phase\s*===\s*'STOPPING'/, 'database access must be limited to lifecycle transition/on phases');
+has(runtimeDatabase, /installManualPowerDatabaseGuard\(pool,\s*'ordinary'\)/, 'ordinary CryptoCrawler DB pool must be fail-closed behind manual power');
+has(runtimeDatabase, /installManualPowerDatabaseGuard\(coordinationPool,\s*'coordination'\)/, 'coordination CryptoCrawler DB pool must be fail-closed behind manual power');
+has(overflowBootstrap, /if\s*\(!isCryptoCrawlerDatabaseAccessAllowed\(\)\)/, 'Overflow bootstrap must fail closed while master power is OFF');
+has(migrations, /Skipped while master power is OFF; zero CryptoCrawler schema I\/O executed/, 'application startup migrations must skip CryptoCrawler schema I/O while OFF');
 
 has(admin, /lifecycle:\s*'STOPPED'/, 'canonical lifecycle must initialize STOPPED');
 has(admin, /running:\s*false/, 'canonical lifecycle must initialize not running');
@@ -42,6 +62,14 @@ has(admin, /cryptoCrawlState\.disable\(\)/, 'stop authority must stop crawler de
 has(admin, /activateCanonicalCryptoCrawlerRuntimeWiring\(\)/, 'master start must explicitly activate canonical runtime wiring');
 has(admin, /deactivateCanonicalCryptoCrawlerRuntimeWiring\(\)/, 'master stop must explicitly deactivate canonical runtime wiring');
 has(admin, /void\s+ensureTelemetryBootstrap\(\)/, 'master start must explicitly activate telemetry');
+has(admin, /setCryptoCrawlerManualPowerPhase\('STARTING'\)/, 'manual start must open the bounded startup phase');
+has(admin, /startCryptaraHyperBridgeBootstrap\(\)/, 'manual start must own Overflow bootstrap');
+has(admin, /ensureCryptocrawlOverflowRuntimeSchema\(\)/, 'manual start must own CryptoCrawler schema verification');
+has(admin, /setCryptoCrawlerManualPowerPhase\('ON'\)/, 'successful manual start must transition power ON');
+has(admin, /setCryptoCrawlerManualPowerPhase\('STOPPING'\)/, 'manual stop must enter bounded cleanup phase');
+has(admin, /setCryptoCrawlerManualPowerPhase\('OFF'\)/, 'manual stop must close all CryptoCrawler database access');
+has(admin, /stopCryptaraHyperBridgeBootstrap\(\)/, 'manual stop must stop the Overflow bridge');
+has(admin, /cryptaraGovernance\.shutdown\(\)/, 'manual stop must stop Cryptara governance/runtime');
 
 has(canonicalRuntime, /let\s+runtimeActivationAllowed\s*=\s*false/, 'canonical runtime must default to activation denied');
 has(canonicalRuntime, /if\s*\(!runtimeActivationAllowed\s*\|\|\s*installed\)\s*return/, 'canonical runtime ensure entrypoint must fail closed while master power is off');
