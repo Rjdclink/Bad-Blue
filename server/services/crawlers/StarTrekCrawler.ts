@@ -91,8 +91,8 @@ export class StarTrekCrawler {
 
   /**
    * Set the Prime Directive mode
-   * When enabled: Max phaser setting 5 (stun only), respects robots.txt
-   * When disabled: All settings available
+   * When enabled: Max phaser setting 5 (bounded public-web retrieval)
+   * When disabled: Higher extraction-rate settings are available
    */
   setPrimeDirective(enabled: boolean): void {
     this.primeDirective = enabled;
@@ -124,10 +124,8 @@ export class StarTrekCrawler {
   }
 
   /**
-   * Warp jump to discover new targets
-   * - near: 10-100 related domains
-   * - far: 1000-10000 random domains
-   * - galactic: Random TLD exploration
+   * Warp jump across the configured, authorized public navigation set.
+   * Distances select deterministic offsets within that real seed list.
    */
   async warpJump(distance: WarpDistance): Promise<string> {
     await this.waitForRateLimit();
@@ -150,8 +148,8 @@ export class StarTrekCrawler {
   // ═══════════════════════════════════════════════════════════════════════════
 
   /**
-   * Beam directly to a deep URL without crawling
-   * Predicts common URL patterns with 70% success rate
+   * Probe common public deep-URL patterns and succeed only when a real
+   * responsive endpoint is found.
    */
   async beamTo(target: string): Promise<void> {
     await this.waitForRateLimit();
@@ -278,6 +276,19 @@ export class StarTrekCrawler {
         timeout: this.getTimeoutForSetting()
       });
       
+      if (!response.ok) {
+        return {
+          content: '',
+          confidence: 0,
+          timestamp: Date.now(),
+          target,
+          metadata: {
+            error: `HTTP ${response.status}`,
+            status: response.status,
+          },
+        };
+      }
+
       const html = await response.text();
       const data = parseResults(html);
       data.target = target;
