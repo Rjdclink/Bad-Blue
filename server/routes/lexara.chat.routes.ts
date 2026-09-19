@@ -129,7 +129,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
     req.once('aborted', abortRequest);
     res.once('close', abortIfDisconnected);
 
-    let conversationResult;
+    let conversationResult: Awaited<ReturnType<typeof generateLexaraConversationResponse>>;
     try {
       conversationResult = await generateLexaraConversationResponse(prompt, {
         previousMessages,
