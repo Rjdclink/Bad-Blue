@@ -189,6 +189,7 @@ async function discoverAuthoritySources(query: string, signal?: AbortSignal): Pr
 async function enrichAuthoritySourcesWithCrawlerPool(
   sources: LexaraAuthoritySource[],
   selectedCrawlerIds: string[],
+  signal?: AbortSignal,
 ): Promise<LexaraAuthoritySource[]> {
   if (!sources.length) return sources;
   const usePantheon = selectedCrawlerIds.some(id =>
@@ -202,14 +203,23 @@ async function enrichAuthoritySourcesWithCrawlerPool(
   if (!targets.length) return sources;
 
   try {
+    if (signal?.aborted) return sources;
+    let abortHandler: (() => void) | undefined;
+    const aborted = new Promise<null>(resolve => {
+      if (!signal) return;
+      abortHandler = () => resolve(null);
+      signal.addEventListener('abort', abortHandler, { once: true });
+    });
     const enrichment = await Promise.race([
       pantheonRetrievalAdapter.retrieve({
         purpose: 'lexara_legal_research',
         targets,
         depth: 2,
       }),
+      aborted,
       new Promise<null>(resolve => setTimeout(() => resolve(null), CRAWLER_ENRICHMENT_TIMEOUT_MS)),
     ]);
+    if (abortHandler) signal?.removeEventListener('abort', abortHandler);
     if (!enrichment?.evidence?.length) return sources;
 
     const byTarget = new Map(
@@ -273,7 +283,7 @@ export async function researchLegalAuthority(
     const discoveredSources = await discoverAuthoritySources(query, context.signal);
     if (!discoveredSources.length) return null;
     if (context.signal?.aborted) return null;
-    const sources = await enrichAuthoritySourcesWithCrawlerPool(discoveredSources, selectedCrawlers);
+    const sources = await enrichAuthoritySourcesWithCrawlerPool(discoveredSources, selectedCrawlers, context.signal);
 
     const summary = sources
       .map((source, index) => {
