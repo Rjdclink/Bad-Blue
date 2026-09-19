@@ -17,6 +17,7 @@ import { createTokenMetricsTables } from './createTokenMetrics';
 import { runSquareMigration } from './runSquareMigration';
 import ensureSchemaSync from '../ensureSchema';
 import { coordinationPool, pool } from '../db';
+import { isCryptoCrawlerDatabaseAccessAllowed } from '../services/cryptocrawl/runtime/manual-power-state.js';
 
 export interface SchemaMigrationResult {
   name: string;
@@ -122,6 +123,9 @@ function schemaRetryDelayMs(attempt: number): number {
 }
 
 export async function requireCryptocrawlerAuthoritySchema(maxAttempts = 6): Promise<void> {
+  if (process.env.NODE_ENV === 'production' && !isCryptoCrawlerDatabaseAccessAllowed()) {
+    throw new CryptocrawlerAuthoritySchemaError('CryptoCrawler master power is OFF; authority schema I/O is disabled');
+  }
   let lastError: unknown = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
@@ -324,6 +328,14 @@ export async function runAllSchemaMigrations(options?: {
       message: 'Railway non-production environment is verification-only; no schema DDL executed.',
     }];
     try {
+      if (!isCryptoCrawlerDatabaseAccessAllowed()) {
+        verificationOnly.push({
+          name: 'CryptoCrawler authority schema readiness',
+          success: true,
+          message: 'Skipped while CryptoCrawler master power is OFF; no CryptoCrawler database I/O executed.',
+        });
+        return verificationOnly;
+      }
       await requireCryptocrawlerAuthoritySchema(1);
       verificationOnly.push({
         name: 'CryptoCrawler authority schema readiness',
@@ -373,7 +385,11 @@ export async function runAllSchemaMigrations(options?: {
       }
     }
 
-    for (const step of migrationSteps) {
+    const activeMigrationSteps = isCryptoCrawlerDatabaseAccessAllowed()
+      ? migrationSteps
+      : migrationSteps.filter(step => !step.name.startsWith('CryptoCrawler') && !step.name.startsWith('Remove legacy CryptoCrawler'));
+
+    for (const step of activeMigrationSteps) {
       try {
         const outcome = await step.run(coordinator);
         const message =
@@ -400,16 +416,24 @@ export async function runAllSchemaMigrations(options?: {
       }
     }
 
-    try {
-      await requireCryptocrawlerAuthoritySchema(1);
+    if (isCryptoCrawlerDatabaseAccessAllowed()) {
+      try {
+        await requireCryptocrawlerAuthoritySchema(1);
+        results.push({
+          name: 'CryptoCrawler authority schema readiness',
+          success: true,
+          message: 'All execution-critical migration-owned tables/functions are present and shared lease/funding readiness is primed.',
+        });
+      } catch (error) {
+        results.push(schemaFailureResult(error));
+        if (!continueOnError) throw error;
+      }
+    } else {
       results.push({
-        name: 'CryptoCrawler authority schema readiness',
+        name: 'CryptoCrawler migrations',
         success: true,
-        message: 'All execution-critical migration-owned tables/functions are present and shared lease/funding readiness is primed.',
+        message: 'Skipped while master power is OFF; zero CryptoCrawler schema I/O executed.',
       });
-    } catch (error) {
-      results.push(schemaFailureResult(error));
-      if (!continueOnError) throw error;
     }
     return results;
   } catch (error: any) {
