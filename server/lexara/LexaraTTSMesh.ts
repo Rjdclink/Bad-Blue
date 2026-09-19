@@ -93,6 +93,7 @@ const MISTRAL_VOICE_CACHE_TTL_MS = 30 * 60_000;
 const OPENROUTER_CATALOG_TTL_MS = 10 * 60_000;
 let mistralVoiceCache: { id: string; expiresAt: number } | null = null;
 let openRouterCatalogCache: { ids: Set<string>; expiresAt: number } | null = null;
+let warmStandbyTimerStarted = false;
 
 function stateFor(provider: LexaraTTSProviderId): ProviderRuntimeState {
   const existing = runtime.get(provider);
@@ -1089,11 +1090,20 @@ export async function refreshLexaraTTSReadiness(force = false): Promise<ReturnTy
 }
 
 export function warmLexaraTTSMesh(): void {
-  void refreshLexaraTTSReadiness(false).catch(error => {
-    log.warn('[LEXARA TTS] background warmup failed', {
-      error: error instanceof Error ? error.message : String(error),
+  const refresh = () => {
+    void refreshLexaraTTSReadiness(false).catch(error => {
+      log.warn('[LEXARA TTS] background warmup failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
     });
-  });
+  };
+
+  refresh();
+  if (warmStandbyTimerStarted) return;
+  warmStandbyTimerStarted = true;
+
+  const timer = setInterval(refresh, 90_000);
+  if (typeof timer.unref === 'function') timer.unref();
 }
 
 export async function synthesizeLexaraSpeechWithFailover(text: string): Promise<LexaraTTSAudio> {
