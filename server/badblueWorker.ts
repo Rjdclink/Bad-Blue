@@ -294,17 +294,11 @@ class BadBlueWorker {
   }
 
   private async probeDatabaseAuthority(): Promise<void> {
-    if (process.env.CRYPTOCRAWL_OVERFLOW_RUNTIME_SCHEMA_READY === 'true') {
-      const { pool: overflowPool } = await import(
-        './services/cryptocrawl/runtime/cryptocrawl-runtime-database.js'
-      );
-      await overflowPool.query('SELECT 1');
-      return;
-    }
-
-    const { db } = await import('./db');
-    if ((db as any).execute) await (db as any).execute('SELECT 1');
-    else if ((db as any).query) await (db as any).query('SELECT 1');
+    // LegalWhat health monitoring must remain on LegalWhat's canonical application
+    // pool. It must never wake or borrow CryptoCrawler Overflow while Master Power
+    // is OFF, and it must preserve the real node-postgres/Supavisor error.
+    const { pool } = await import('./db');
+    await pool.query({ text: 'SELECT 1', query_timeout: 5_000 });
   }
 
   private scheduleDatabaseHeartbeat() {
@@ -340,37 +334,30 @@ class BadBlueWorker {
   }
 
   private async repairDatabaseConnection(): Promise<boolean> {
-    if (this.dbRepairAttempts >= 3) {
-      await this.addToRepairQueue({
-        timestamp: new Date().toISOString(),
-        functionAffected: 'Database Connection',
-        cause: `Heartbeat failure after ${this.dbRepairAttempts} attempts`,
-        systemState: 'not_working',
-        severity: Severity.CRITICAL,
-        priority: Priority.HIGH,
-        category: IssueCategory.INFRASTRUCTURE,
-      });
-      this.dbRepairAttempts = 0;
-      return false;
-    }
-    this.dbRepairAttempts++;
-    try {
-      const dbModule = await import('./db');
-      if (typeof (dbModule as any).resetPool === 'function') {
-        await (dbModule as any).resetPool();
-      }
-      const { db } = await import('./db');
-      if ((db as any).execute) await (db as any).execute('SELECT 1');
-      else if ((db as any).query) await (db as any).query('SELECT 1');
-      this.consecutiveDbFailures = 0;
-      this.dbRepairAttempts = 0;
-      await this.logHealthMetric({ timestamp: new Date().toISOString(), check: 'database_repair', status: 'success' });
-      await this.ensureSupabaseTables();
-      return true;
-    } catch (e: any) {
-      await this.logHealthMetric({ timestamp: new Date().toISOString(), check: 'database_repair', status: 'failed', error: e.message });
-      return false;
-    }
+    // node-postgres already opens a fresh client on the next real query when an
+    // upstream connection has died. Recreating both application pools while
+    // Supabase is under admission pressure amplifies the outage, so the worker
+    // records the condition once and lets the next scheduled heartbeat prove
+    // recovery naturally.
+    if (this.dbRepairAttempts > 0) return false;
+    this.dbRepairAttempts = 1;
+    await this.addToRepairQueue({
+      timestamp: new Date().toISOString(),
+      functionAffected: 'Database Connection',
+      cause: `Supabase admission remained unavailable for ${this.consecutiveDbFailures} serialized heartbeats; automatic pool recreation suppressed`,
+      systemState: 'not_working',
+      severity: Severity.CRITICAL,
+      priority: Priority.HIGH,
+      category: IssueCategory.EXTERNAL_DEPENDENCY,
+    });
+    await this.logHealthMetric({
+      timestamp: new Date().toISOString(),
+      check: 'database_repair',
+      status: 'deferred',
+      reason: 'upstream_admission_pressure_no_pool_reset',
+      consecutiveFailures: this.consecutiveDbFailures,
+    });
+    return false;
   }
 
   private async logHealthMetric(metric: any) {
