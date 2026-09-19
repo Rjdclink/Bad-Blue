@@ -52,6 +52,9 @@ const harmonyImplementationReview = read('docs/LEXARA_HARMONY_IMPLEMENTATION_10_
 const realtimeCapabilityReview = read('docs/LEXARA_REALTIME_CAPABILITY_HARMONY_20_SOURCE_REVIEW_20260918.md');
 const integratedRealtimeReview = read('docs/LEXARA_INTEGRATED_REALTIME_IMPLEMENTATION_10_SOURCE_REVIEW_20260918.md');
 const hotReserveReview = read('docs/LEXARA_HOT_RESERVE_17_PROVIDER_10_SOURCE_REVIEW_20260919.md');
+const consentPage = read('client/src/pages/lexara-consent.tsx');
+const mistral = read('server/mistral.ts');
+const gemini = read('server/gemini.ts');
 
 must(
   voiceMode.includes('preferServerRecognition') &&
@@ -230,6 +233,22 @@ must(
     conversation.includes('pendingUserTurnQueueRef'),
   'request cancellation propagates across browser, server orchestration, OpenRouter, and authority retrieval without poisoning provider health',
 );
+must(
+  harmony.includes('auto-router-recovery') &&
+    harmony.includes('CURRENT_AI_MODELS.openRouterAuto') &&
+    harmony.includes("firstSuccessful.role === 'legal-analyst'") &&
+    harmony.includes('entry.controller.abort') &&
+    lexaraRoutes.includes('legalReasoningConfigured') &&
+    lexaraRoutes.includes('legalReasoningInferenceReady') &&
+    consentPage.includes('legalReasoningConfigured') &&
+    aiProvider.includes('signal?: AbortSignal') &&
+    groq.includes('signal?: AbortSignal') &&
+    claude.includes('signal?: AbortSignal') &&
+    mistral.includes('signal?: AbortSignal') &&
+    gemini.includes('abortSignal: options.signal'),
+  'hot-reserve recovery preserves a successful direct legal answer, exposes real reasoning readiness, and propagates cancellation through live provider transports',
+);
+
 must(
   claude.includes('samplingControlsDeprecated') &&
     claude.includes("block.type === 'text'") &&
