@@ -358,30 +358,15 @@ async function initializeDatabase(): Promise<boolean> {
 }
 
 async function waitForOverflowBootstrapReadiness(): Promise<boolean> {
-  try {
-    const {
-      getCryptaraHyperBridgeBootstrapSnapshot,
-      startCryptaraHyperBridgeBootstrap,
-    } = await import('./services/cryptocrawl/integration/cryptara-supabase-hyper-bridge-bootstrap.js');
-
-    await startCryptaraHyperBridgeBootstrap();
-    const snapshot = getCryptaraHyperBridgeBootstrapSnapshot();
-    const ready = snapshot.state === 'ready';
-    startupTrace('overflow_bootstrap_evaluated', {
-      ready,
-      state: snapshot.state,
-      configured: snapshot.configured,
-      latencyMs: snapshot.latencyMs,
-      reason: snapshot.reason,
-    });
-    return ready;
-  } catch (error) {
-    startupTrace('overflow_bootstrap_evaluation_failed', {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    console.warn('[STARTUP] Overflow readiness evaluation failed:', error instanceof Error ? error.message : String(error));
-    return false;
-  }
+  // CryptoCrawler is operator-controlled. Server readiness must never wake its
+  // Overflow bridge, workers, schema verifier, or database pools while Master
+  // Power is OFF.
+  startupTrace('cryptocrawler_overflow_bootstrap_deferred', {
+    reason: 'manual_master_power_off',
+    databaseIo: false,
+    workerStartup: false,
+  });
+  return false;
 }
 
 async function runMigrations(): Promise<void> {
@@ -440,13 +425,7 @@ async function initializeServices(): Promise<void> {
     console.warn('[STARTUP] ⚠ Persistence manager failed:', error?.message ?? error);
   }
 
-  try {
-    const { cryptaraGovernance } = await import('./services/cryptocrawl/governance/cryptara-integration.js');
-    await cryptaraGovernance.initialize();
-    console.log('[STARTUP] ✓ CryptoCrawler Cryptara governance bridge initialized');
-  } catch (error: any) {
-    console.warn('[STARTUP] ⚠ CryptoCrawler Cryptara governance bridge unavailable:', error?.message ?? error);
-  }
+  console.log('[STARTUP] ✓ CryptoCrawler services deferred; Master Power remains OFF until explicit dashboard start');
 
   // CryptoCrawler is an operator-controlled runtime. Process/bootstrap readiness
   // initializes shared dependencies only; discovery/execution must remain stopped
@@ -712,47 +691,35 @@ httpServer = createServer(app);
     });
   });
 
-  // Verified overflow is the normal application data plane. There is no direct
-  // primary readiness/recovery probe here. Legacy primary acquisitions are already
-  // intercepted by cryptara-bootstrap-entry.ts and routed through overflow gateway.
+  // LegalWhat proves only its ordinary application database here. CryptoCrawler's
+  // Overflow data plane is deliberately absent from process bootstrap and can be
+  // opened only by the authenticated /admin/crypto/start lifecycle.
   try {
-    overflowDatabaseReady = await waitForOverflowBootstrapReadiness();
-
-    if (overflowDatabaseReady) {
-      databaseInitialized = true;
-      databaseRuntimeMode = 'overflow_proxy';
-      startupTrace('overflow_proxy_mode_activated', {
-        overflowConnected: true,
-        directPrimaryProbes: 0,
-        primaryAccess: 'overflow_gateway_only',
-      });
-      console.log('[STARTUP] ✓ Overflow proxy data plane active; direct primary probes=0; necessary primary access routes only through overflow/bridge/workers');
-    } else {
-      const primaryReady = await initializeDatabase();
-      if (!primaryReady) {
-        throw new Error('Neither verified overflow proxy nor primary fallback established a usable startup data plane');
-      }
-
-      databaseInitialized = true;
-      databaseRuntimeMode = 'primary';
-
-      await runMigrations();
-
-      const { initializeGovernance } = await import('./services/cryptocrawl/governance/index.js');
-      await initializeGovernance();
-
-      // Schema verification is global application telemetry. A degraded/missing
-      // CryptoCrawler authority object must not take down unrelated LegalWhat
-      // availability; CryptoCrawler lifecycle entry independently verifies and
-      // fails closed on its migration-owned authority schema before execution.
-      const { runStartupSchemaVerification } = await import('./db');
-      const schemaReady = await runStartupSchemaVerification();
-      if (!schemaReady) {
-        backgroundInitializationError = 'Startup schema verification reported degraded database schema';
-        startupTrace('database_schema_degraded');
-        console.warn('[STARTUP] ⚠ Production schema verification reported degraded state; scoped runtime authorities remain fail-closed');
-      }
+    const applicationDatabaseReady = await initializeDatabase();
+    if (!applicationDatabaseReady) {
+      throw new Error('LegalWhat application database did not establish a usable startup data plane');
     }
+
+    databaseInitialized = true;
+    overflowDatabaseReady = false;
+    databaseRuntimeMode = 'primary';
+
+    await runMigrations();
+
+    const { runStartupSchemaVerification } = await import('./db');
+    const schemaReady = await runStartupSchemaVerification();
+    if (!schemaReady) {
+      backgroundInitializationError = 'Startup schema verification reported degraded database schema';
+      startupTrace('database_schema_degraded');
+      console.warn('[STARTUP] ⚠ Production schema verification reported degraded state; scoped runtime authorities remain fail-closed');
+    }
+
+    startupTrace('cryptocrawler_master_power_off_at_boot', {
+      lifecycle: 'STOPPED',
+      overflowProbeIssued: false,
+      cryptoDatabaseIo: false,
+    });
+    console.log('[STARTUP] ✓ CryptoCrawler Master Power OFF: no CryptoCrawler Overflow probe, worker, schema I/O, or market activity started');
   } catch (error) {
     startupError = error instanceof Error ? error.message : String(error);
     startupTrace('core_initialization_failed', { error: startupError });
@@ -884,17 +851,11 @@ startupTrace('routes_registration_completed');
     }
     
     isFullyInitialized = true;
-    if (databaseRuntimeMode === 'overflow_proxy') {
-      startupTrace('application_ready_overflow_proxy', {
-        overflowConnected: true,
-        directPrimaryProbes: 0,
-        primaryAccess: 'overflow_gateway_only',
-      });
-      console.log('[STARTUP] ✓ Server ready on overflow proxy data plane; bridge/workers active; direct primary probes=0');
-    } else {
-      startupTrace('application_ready');
-      console.log('[STARTUP] ✓ Server fully initialized and ready');
-    }
+    startupTrace('application_ready', {
+      cryptocrawlerMasterPower: 'OFF',
+      cryptocrawlerDatabaseIo: false,
+    });
+    console.log('[STARTUP] ✓ Server fully initialized; CryptoCrawler remains fully OFF pending manual dashboard start');
 
     // This optional workload starts only after strict readiness is true. Failures
     // remain isolated and cannot keep a healthy replacement deployment in 503.
