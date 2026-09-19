@@ -227,7 +227,6 @@ export function getOpenRouterModelForProvider(provider: AIProvider): string | nu
     case PROVIDER.CODE_LLAMA:
     case PROVIDER.GPT_NEOX:
     case PROVIDER.PERPLEXITY:
-    case PROVIDER.FIREWORKS:
       return getCurrentModelForProvider(provider);
     default:
       return null;
