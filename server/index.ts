@@ -779,7 +779,8 @@ httpServer = createServer(app);
 
     databaseInitialized = true;
     overflowDatabaseReady = false;
-    databaseRuntimeMode = 'primary';
+    const { getApplicationDatabaseRuntimeMode } = await import('./db');
+    databaseRuntimeMode = getApplicationDatabaseRuntimeMode() === 'neon_failover' ? 'neon_failover' : 'primary';
 
     await runMigrations();
     releaseRollingDeploymentPoolHeadroom('application_database_ready');
