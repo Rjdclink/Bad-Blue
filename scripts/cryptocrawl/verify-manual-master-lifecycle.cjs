@@ -32,6 +32,7 @@ const learningLifecycle = read('server/services/cryptocrawl/integration/learning
 const deepLearning = read('server/services/cryptocrawl/learning/deep-learning-store.ts');
 const instantLearning = read('server/services/cryptocrawl/learning/instant-learning-engine.ts');
 const learningCompat = read('server/services/cryptocrawl/learning/supabase-compatibility.ts');
+const truthfulDiagnostics = read('server/services/cryptocrawl/api/truthful-admin-diagnostics.ts');
 const learningCompatibility = read('server/services/cryptocrawl/learning/supabase-compatibility.ts');
 const deepLearning = read('server/services/cryptocrawl/learning/deep-learning-store.ts');
 const instantLearning = read('server/services/cryptocrawl/learning/instant-learning-engine.ts');
@@ -130,6 +131,8 @@ lacks(canonicalDashboard, /ensureCanonicalCryptoCrawlerRuntimeWiring/, 'legacy f
 has(canonicalDashboard, /Master Power is OFF/, 'legacy faucet control must fail closed while master power is off');
 has(canonicalDashboard, /if\s*\(!isCryptoCrawlerMasterPowerOn\(\)\)[\s\S]{0,500}source:\s*'master_power_off'/, 'dashboard network-facing reads must return an offline snapshot while master power is off');
 has(canonicalDashboard, /onCryptoCrawlerManualPowerPhaseChange[\s\S]{0,400}dashboardIntervals\.clear\(\)/, 'dashboard recurring timers must be cleared when master power transitions OFF');
+has(admin, /router\.get\('\/health'[\s\S]{0,900}!isCryptoCrawlerMasterPowerOn\(\)[\s\S]{0,600}queried:\s*false/, 'legacy admin health polling must perform zero database/RPC I/O while OFF');
+has(truthfulDiagnostics, /router\.get\('\/health'[\s\S]{0,700}!isCryptoCrawlerMasterPowerOn\(\)[\s\S]{0,600}queried:\s*false/, 'front-of-router truthful health polling must perform zero database/RPC I/O while OFF');
 
 has(dashboard, /aria-label="CryptoCrawler master power"/, 'master dashboard must render the lifecycle power switch');
 has(dashboard, /checked=\{isSystemRunning\}/, 'master switch must display backend runtime truth');
