@@ -493,7 +493,10 @@ must(
 );
 must(
   !welcomePage.includes("setLocation('/badblue')") &&
-    welcomePage.includes('setLocation(`/lexara-consent/${selectedType.id}`)'),
+    (
+      welcomePage.includes('setLocation(`/lexara-consent/${selectedType.id}`)') ||
+      welcomePage.includes('setLocation("/lexara-consent/" + selectedType.id)')
+    ),
   'every bookshelf law area enters the same LEXARA consent/specialization flow',
 );
 for (const lawType of productLawTypes) {
