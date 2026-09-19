@@ -252,6 +252,7 @@ async function callOpenAICompatibleHarmonyProvider(
   prompt: string,
   systemPrompt: string | undefined,
   maxTokens: number,
+  signal?: AbortSignal,
 ): Promise<{ content: string; tokensUsed: number }> {
   const configs: Partial<Record<AIProvider, { baseUrl: string; key?: string }>> = {
     [AIProvider.CEREBRAS]: {
@@ -276,6 +277,9 @@ async function callOpenAICompatibleHarmonyProvider(
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8_000);
+  const relayAbort = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener('abort', relayAbort, { once: true });
   try {
     const response = await fetch(`${config.baseUrl}/chat/completions`, {
       method: 'POST',
@@ -305,6 +309,7 @@ async function callOpenAICompatibleHarmonyProvider(
     };
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener('abort', relayAbort);
   }
 }
 
@@ -344,11 +349,15 @@ async function callCohereHarmony(
   prompt: string,
   systemPrompt: string | undefined,
   maxTokens: number,
+  signal?: AbortSignal,
 ): Promise<{ content: string; tokensUsed: number }> {
   const key = process.env.COHERE_API_KEY?.trim();
   if (!key) throw new Error('cohere is not configured');
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8_000);
+  const relayAbort = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener('abort', relayAbort, { once: true });
   try {
     const response = await fetch('https://api.cohere.com/v2/chat', {
       method: 'POST',
@@ -377,6 +386,7 @@ async function callCohereHarmony(
     return { content, tokensUsed };
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener('abort', relayAbort);
   }
 }
 
@@ -1239,6 +1249,7 @@ export class AICollaborationOrchestrator {
               ),
               task.requestTimeoutMs || 6_000,
               task.provider,
+              task.signal,
             );
             content = response.content;
             tokensUsed = response.tokensUsed;
@@ -1248,6 +1259,7 @@ export class AICollaborationOrchestrator {
               systemPrompt: task.systemPrompt,
               maxTokens: outputTokenLimit,
               timeoutMs: task.requestTimeoutMs || 6_000,
+              signal: task.signal,
             });
             content = result.content;
             tokensUsed = Math.ceil(content.length / 4);
@@ -1264,6 +1276,7 @@ export class AICollaborationOrchestrator {
               prompt,
               task.systemPrompt,
               outputTokenLimit,
+              task.signal,
             ),
             task.requestTimeoutMs || 6_000,
             task.provider,
@@ -1276,7 +1289,7 @@ export class AICollaborationOrchestrator {
         case AIProvider.COHERE: {
           const result = await withHarmonyDeadline(
             process.env.COHERE_API_KEY?.trim()
-              ? callCohereHarmony(task.model, prompt, task.systemPrompt, outputTokenLimit)
+              ? callCohereHarmony(task.model, prompt, task.systemPrompt, outputTokenLimit, task.signal)
               : callOpenAICompatibleHarmonyProvider(
                   AIProvider.HUGGINGFACE,
                   CURRENT_AI_MODELS.cohereViaHuggingFace,
