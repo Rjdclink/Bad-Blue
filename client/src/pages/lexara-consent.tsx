@@ -77,7 +77,8 @@ export default function LexaraConsentPage() {
       stream.getTracks().forEach(track => track.stop());
 
       const backendReady =
-        readiness?.liveVoiceConfigured !== false
+        readiness?.liveVoiceConfigured === true
+        && readiness?.speechOutputVerified === true
         && readiness?.legalReasoningConfigured !== false;
       setMicReady(microphoneGranted);
       setSpeakerReady(audioUnlocked);
@@ -116,7 +117,7 @@ export default function LexaraConsentPage() {
   }, [prepareLiveConversation]);
 
   const continueLive = useCallback(() => {
-    if (!domainId || !accepted || !micReady || !speakerReady || voiceServiceReady === false) return;
+    if (!domainId || !accepted || !micReady || !speakerReady || voiceServiceReady !== true) return;
     setLexaraLiveEnabled('true');
     setLocation(`/legal-consultation/${domainId}?live=true`);
   }, [accepted, domainId, micReady, setLocation, speakerReady, voiceServiceReady]);
