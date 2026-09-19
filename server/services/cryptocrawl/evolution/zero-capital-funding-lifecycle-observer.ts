@@ -2,6 +2,7 @@ import { getCryptaraZeroInitialCapitalFundingLearning, type ZeroCapitalFundingOb
 import { measuredCandidateRegistry, type MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
 
 let installed = false;
+let unsubscribe: (() => void) | null = null;
 const lastFingerprint = new Map<string, string>();
 const MAX_FINGERPRINTS = 4096;
 
@@ -108,8 +109,15 @@ function observe(candidate: MeasuredCandidate): void {
 export function ensureZeroCapitalFundingLifecycleObserver(): void {
   if (installed) return;
   installed = true;
-  measuredCandidateRegistry.onUpdate(observe);
+  unsubscribe = measuredCandidateRegistry.onUpdate(observe);
   for (const candidate of measuredCandidateRegistry.getRecent(512)) observe(candidate);
+}
+
+export function stopZeroCapitalFundingLifecycleObserver(): void {
+  unsubscribe?.();
+  unsubscribe = null;
+  installed = false;
+  lastFingerprint.clear();
 }
 
 export const zeroCapitalFundingLifecycleObserverAuthority = Object.freeze({

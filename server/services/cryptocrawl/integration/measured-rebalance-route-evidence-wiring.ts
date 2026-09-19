@@ -297,7 +297,7 @@ async function refreshOnce(): Promise<void> {
 }
 
 function scheduleNext(): void {
-  if (process.env.NO_INTERVALS === 'true' || timer) return;
+  if (!installed || process.env.NO_INTERVALS === 'true' || timer) return;
   timer = setTimeout(async () => {
     timer = null;
     await refreshOnce().catch(error => {
@@ -316,6 +316,14 @@ export function ensureMeasuredRebalanceRouteEvidenceWiring(): void {
   if (installed) return;
   installed = true;
   void refreshOnce().catch(() => undefined).finally(scheduleNext);
+}
+
+export async function stopMeasuredRebalanceRouteEvidenceWiring(): Promise<void> {
+  installed = false;
+  if (timer) clearTimeout(timer);
+  timer = null;
+  const inFlight = refreshInFlight;
+  if (inFlight) await inFlight.catch(() => undefined);
 }
 
 export function getMeasuredRebalanceRouteEvidenceWiringStatus() {

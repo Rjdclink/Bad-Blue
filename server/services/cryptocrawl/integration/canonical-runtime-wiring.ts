@@ -1,5 +1,9 @@
 import logger from '../../../logger.js';
 import { ensureProviderMeshPendingStream, providerMeshPendingStream } from '../capital-free/provider-mesh-pending-stream.js';
+import {
+  ensureZeroCapitalFundingLifecycleObserver,
+  stopZeroCapitalFundingLifecycleObserver,
+} from '../evolution/zero-capital-funding-lifecycle-observer.js';
 import { startCanonicalZeroCapitalDiscovery, stopCanonicalZeroCapitalDiscovery } from '../discovery/zero-capital-canonical-discovery.js';
 import { multiTopologyDiscoveryController } from '../discovery/multi-topology-discovery-controller.js';
 import { ghostWalletUltraWorker } from '../ghost-wallet/ghost-wallet-ultra-worker.js';
@@ -34,6 +38,10 @@ import { getCryptaraHyperBridgeBootstrapSnapshot } from './cryptara-supabase-hyp
 import { ensureInventoryConstrainedCexExecutionWiring } from './inventory-constrained-cex-execution-wiring.js';
 import { ensureKalshiBpsOptimizationWiring, stopKalshiBpsOptimizationWiring } from './kalshi-bps-optimization-wiring.js';
 import { ensureMeasuredCandidateExpiryGuardWiring } from './measured-candidate-expiry-guard-wiring.js';
+import {
+  ensureMeasuredRebalanceRouteEvidenceWiring,
+  stopMeasuredRebalanceRouteEvidenceWiring,
+} from './measured-rebalance-route-evidence-wiring.js';
 import { logZeroCapitalReadinessDiagnostics } from './zero-capital-readiness-diagnostics.js';
 import { ensureLearningLifecycleWiring, stopLearningLifecycleWiring } from './learning-lifecycle-wiring.js';
 import { ensureMonteCarloCalibrationWiring } from './monte-carlo-calibration-wiring.js';
@@ -279,6 +287,8 @@ function installCanonicalRuntime(): void {
   install('inventory_constrained_cex_execution', () => ensureInventoryConstrainedCexExecutionWiring());
   install('cross_venue_timing_guard', () => ensureCrossVenueTimingGuardWiring());
   install('measured_candidate_expiry_guard', () => ensureMeasuredCandidateExpiryGuardWiring());
+  install('zero_capital_funding_lifecycle_observer', () => ensureZeroCapitalFundingLifecycleObserver());
+  install('measured_rebalance_route_evidence', () => ensureMeasuredRebalanceRouteEvidenceWiring());
   install('dynamic_profitability_admission', () => ensureDynamicProfitabilityAdmissionWiring());
   install('stage_one_bootstrap_authority', () => ensureStageOneBootstrapAuthority());
   install('canonical_intelligence_repository_hydrate', () => canonicalIntelligenceRepository.hydrate());
@@ -536,6 +546,7 @@ export async function deactivateCanonicalCryptoCrawlerRuntimeWiring(): Promise<v
   stopCryptoRuntimeObservability();
   stopExpandedNetworkObservability();
   stopExternalCapitalSelectionObserver();
+  stopZeroCapitalFundingLifecycleObserver();
   stopCryptaraTwoSpeedRevalidationWiring();
 
   const { stopTelemetryBootstrap } = await import('./telemetry-bootstrap.js');
@@ -544,6 +555,7 @@ export async function deactivateCanonicalCryptoCrawlerRuntimeWiring(): Promise<v
     providerMeshPendingStream.stop(),
     stopTelemetryBootstrap(),
     stopLearningLifecycleWiring(),
+    stopMeasuredRebalanceRouteEvidenceWiring(),
   ]);
 
   installed = false;

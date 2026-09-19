@@ -110,6 +110,10 @@ has(canonicalRuntime, /multiTopologyDiscoveryController\.stop\(\)/, 'master deac
 has(canonicalRuntime, /ghostWalletUltraWorker\.stop\(\)/, 'master deactivation must stop Ghost worker activity');
 has(canonicalRuntime, /providerMeshPendingStream\.stop\(\)/, 'master deactivation must stop pending-provider streams');
 has(canonicalRuntime, /stopPredictionMarketDiscoveryWiring\(\)/, 'master deactivation must stop prediction-market cadence');
+has(canonicalRuntime, /ensureZeroCapitalFundingLifecycleObserver\(\)/, 'manual start must preserve zero-capital funding lifecycle learning');
+has(canonicalRuntime, /stopZeroCapitalFundingLifecycleObserver\(\)/, 'manual stop must detach zero-capital funding lifecycle learning');
+has(canonicalRuntime, /ensureMeasuredRebalanceRouteEvidenceWiring\(\)/, 'manual start must preserve measured rebalance route evidence acquisition');
+has(canonicalRuntime, /stopMeasuredRebalanceRouteEvidenceWiring\(\)/, 'manual stop must await measured rebalance route evidence shutdown');
 has(canonicalRuntime, /stopOrderBookEvolutionWiring\(\)/, 'master deactivation must stop order-book evolution cadence');
 has(canonicalRuntime, /stopCexFourModeObservabilityWiring\(\)/, 'master deactivation must stop CEX mode cadence');
 has(canonicalRuntime, /stopCexInventoryReadinessWiring\(\)/, 'master deactivation must stop inventory hydration cadence');
