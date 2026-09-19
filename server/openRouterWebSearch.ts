@@ -387,9 +387,13 @@ function collectUrls(value: unknown, output = new Set<string>()): Set<string> {
 async function callCurrentWebSearchTool(
   query: string,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<{ answer: string; sources: string[] }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const relayAbort = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener('abort', relayAbort, { once: true });
   try {
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
@@ -428,6 +432,7 @@ async function callCurrentWebSearchTool(
     return { answer, sources };
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener('abort', relayAbort);
   }
 }
 
@@ -519,6 +524,7 @@ export async function orchestratedWebSearch(
   options?: {
     useOnlinePlugin?: boolean;
     timeout?: number;
+    signal?: AbortSignal;
   }
 ): Promise<WebSearchResult> {
   if (!isOpenRouterWebSearchAvailable()) {
@@ -531,7 +537,7 @@ export async function orchestratedWebSearch(
     // :online model variants and the legacy web plugin are deprecated. Use the
     // current OpenRouter server-side web-search tool so LEXARA is not coupled
     // to a stale hard-coded free-model catalog.
-    const current = await callCurrentWebSearchTool(query, options.timeout || 10_000);
+    const current = await callCurrentWebSearchTool(query, options.timeout || 10_000, options.signal);
     console.log(`[OpenRouter WebSearch] Current server-tool search completed in ${Date.now() - startTime}ms`);
     return {
       query,

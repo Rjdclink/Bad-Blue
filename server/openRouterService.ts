@@ -59,7 +59,7 @@ export interface OpenRouterTextResult {
   latencyMs: number;
 }
 
-const AUTO_ROUTER_COOLDOWN_MS = 60_000;
+const AUTO_ROUTER_COOLDOWN_MS = 3_000;
 let autoRouterCooldownUntil = 0;
 let autoRouterLastError: string | null = null;
 
@@ -93,6 +93,7 @@ export async function generateOpenRouterText(
     timeoutMs?: number;
     sessionId?: string;
     model?: string;
+    signal?: AbortSignal;
   } = {},
 ): Promise<OpenRouterTextResult> {
   if (!OPENROUTER_API_KEY) {
@@ -103,8 +104,11 @@ export async function generateOpenRouterText(
   }
 
   const controller = new AbortController();
-  const timeoutMs = Math.max(4_000, Math.min(options.timeoutMs ?? 18_000, 30_000));
+  const timeoutMs = Math.max(1_000, Math.min(options.timeoutMs ?? 18_000, 30_000));
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const relayAbort = () => controller.abort();
+  if (options.signal?.aborted) controller.abort();
+  else options.signal?.addEventListener('abort', relayAbort, { once: true });
   const startedAt = Date.now();
 
   try {
@@ -156,15 +160,19 @@ export async function generateOpenRouterText(
     const name = error instanceof Error ? error.name.toLowerCase() : '';
     const cancellationShaped = name === 'aborterror'
       || /operation was aborted|request was aborted|cancelled|canceled/i.test(message);
-    // A request-local timeout/cancellation is not evidence that OpenRouter is
-    // unhealthy for subsequent turns. Only genuine provider failures cool it.
-    if (!cancellationShaped) {
+    // A model-level 4xx or a request-local timeout/cancellation is not evidence
+    // that every OpenRouter-backed logical participant is unhealthy. Only
+    // transport-wide auth/rate-limit/5xx/network failures get a very short
+    // shared cooldown; Harmony keeps model failures route-local.
+    const transportWideFailure = /\((?:401|429|5\d\d)\)|fetch failed|network|socket|econnreset/i.test(message);
+    if (!cancellationShaped && transportWideFailure) {
       autoRouterLastError = message;
       autoRouterCooldownUntil = Date.now() + AUTO_ROUTER_COOLDOWN_MS;
     }
     throw error instanceof Error ? error : new Error(message);
   } finally {
     clearTimeout(timer);
+    options.signal?.removeEventListener('abort', relayAbort);
   }
 }
 

@@ -121,14 +121,29 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       includeAudio,
     });
 
-    const conversationResult = await generateLexaraConversationResponse(prompt, {
-      previousMessages,
-      lawType,
-      lawTypeName,
-      jurisdiction,
-      behaviorMode,
-      sessionId,
-    });
+    const requestController = new AbortController();
+    const abortRequest = () => requestController.abort();
+    const abortIfDisconnected = () => {
+      if (!res.writableEnded) requestController.abort();
+    };
+    req.once('aborted', abortRequest);
+    res.once('close', abortIfDisconnected);
+
+    let conversationResult: Awaited<ReturnType<typeof generateLexaraConversationResponse>>;
+    try {
+      conversationResult = await generateLexaraConversationResponse(prompt, {
+        previousMessages,
+        lawType,
+        lawTypeName,
+        jurisdiction,
+        behaviorMode,
+        sessionId,
+        signal: requestController.signal,
+      });
+    } finally {
+      req.off('aborted', abortRequest);
+      res.off('close', abortIfDisconnected);
+    }
 
     const responseText = conversationResult.text;
     const model = 'lexara-legal-orchestrator';

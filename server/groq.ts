@@ -21,11 +21,22 @@ interface GroqChatCompletionRequest {
   messages: GroqChatMessage[];
   temperature?: number;
   max_tokens?: number;
+  signal?: AbortSignal;
 }
 
 let groqModelCatalogCache: { models: Set<string>; expiresAt: number } | null = null;
-const groqBlockedModels = new Set<string>();
+const groqBlockedModels = new Map<string, number>();
 const GROQ_MODEL_CATALOG_TTL_MS = 10 * 60_000;
+const GROQ_MODEL_BLOCK_TTL_MS = 2 * 60_000;
+
+function isGroqModelBlocked(model: string): boolean {
+  const until = groqBlockedModels.get(model) || 0;
+  if (until <= Date.now()) {
+    groqBlockedModels.delete(model);
+    return false;
+  }
+  return true;
+}
 
 function normalizeGroqModelId(model: string): string {
   const trimmed = String(model || '').trim();
@@ -71,16 +82,17 @@ async function resolveGroqModel(requestedModel: string, apiKey: string): Promise
   const capabilityCandidates = [
     requested,
     DEFAULT_GROQ_MODEL,
-    'openai/gpt-oss-120b',
     'openai/gpt-oss-20b',
-    'qwen/qwen3.6-27b',
+    'openai/gpt-oss-120b',
+    'llama-3.1-8b-instant',
+    'llama-3.3-70b-versatile',
     ...discoveredTextModels,
   ]
     .map(normalizeGroqModelId)
     .filter((model, index, all) => !!model && all.indexOf(model) === index);
 
   const candidate = capabilityCandidates.find(model =>
-    !groqBlockedModels.has(model)
+    !isGroqModelBlocked(model)
     && (!models || models.size === 0 || models.has(model))
   );
 
@@ -123,13 +135,15 @@ async function callGroqAPI(request: GroqChatCompletionRequest): Promise<string> 
     if (attempted.has(model)) break;
     attempted.add(model);
 
+    const { signal, ...wireRequest } = request;
     response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ ...request, model }),
+      body: JSON.stringify({ ...wireRequest, model }),
+      signal,
     });
 
     if (response.ok) break;
@@ -146,7 +160,7 @@ async function callGroqAPI(request: GroqChatCompletionRequest): Promise<string> 
       );
 
     if (routeLocalModelFailure) {
-      groqBlockedModels.add(model);
+      groqBlockedModels.set(model, Date.now() + GROQ_MODEL_BLOCK_TTL_MS);
       continue;
     }
 

@@ -74,13 +74,15 @@ must(
   collaboration.includes('getConfiguredHarmonyProviders') &&
   collaboration.includes('fallbackProviders') &&
   collaboration.includes('rankFallbackProviders') &&
-  collaboration.includes('alternatives.slice(0, 1)') &&
+  collaboration.includes('fallbackLimit') &&
+  collaboration.includes('recoveryBatch') &&
+  collaboration.includes('harmonyTransportCooldownUntil') &&
   collaboration.includes('requestTimeoutMs') &&
   collaboration.includes('maxFallbacks') &&
   collaboration.includes('withHarmonyDeadline') &&
   collaboration.includes('Promise.any') &&
   collaboration.includes("model: 'harmony-current'"),
-  'shared orchestrator exposes the full configured capability pool while each task uses a bounded capability-matched subset, one synthesis authority, deadlines, and one route-local alternate',
+  'shared orchestrator exposes the full configured capability pool as a hot reserve while each task uses a bounded capability-matched hedge, one synthesis authority, deadlines, and route-local recovery',
 );
 
 must(
@@ -161,12 +163,12 @@ must(
 );
 
 must(
-  !groq.includes("'llama-3.1-8b-instant'") &&
-  !groq.includes("'llama-3.3-70b-versatile'") &&
-  !fullSystemTest.includes("'llama-3.1-8b-instant'") &&
-  !quickDiagnostic.includes("'llama-3.1-8b-instant'") &&
-  !runDiagnostics.includes("'llama-3.1-8b-instant'"),
-  'shutdown Groq developer-tier Llama model IDs are absent from runtime and diagnostic fallbacks',
+  groq.includes("'llama-3.1-8b-instant'") &&
+  groq.includes("'llama-3.3-70b-versatile'") &&
+  groq.includes("'openai/gpt-oss-20b'") &&
+  groq.includes("'openai/gpt-oss-120b'") &&
+  groq.includes('orpheus|canopylabs'),
+  'Groq recovery uses current production text models while excluding preview speech models from chat routing',
 );
 
 const activeRuntimeFiles = [
@@ -219,8 +221,6 @@ const retiredOrSuperseded = [
   /kimi-k2/i,
   /gpt-4o-mini/i,
   /mistral-7b/i,
-  /llama-3\.1-8b-instant/i,
-  /llama-3\.3-70b-versatile/i,
   /groq-llama-3\.3-70b/i,
   /llama-3\.1-nemotron/i,
   /cloudflare\/llama-3\.1/i,

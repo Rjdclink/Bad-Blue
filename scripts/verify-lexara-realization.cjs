@@ -51,6 +51,7 @@ const harmonyRootReview = read('docs/LEXARA_HARMONY_ROOT_CAUSE_10_SOURCE_REVIEW_
 const harmonyImplementationReview = read('docs/LEXARA_HARMONY_IMPLEMENTATION_10_SOURCE_REVIEW_20260918.md');
 const realtimeCapabilityReview = read('docs/LEXARA_REALTIME_CAPABILITY_HARMONY_20_SOURCE_REVIEW_20260918.md');
 const integratedRealtimeReview = read('docs/LEXARA_INTEGRATED_REALTIME_IMPLEMENTATION_10_SOURCE_REVIEW_20260918.md');
+const hotReserveReview = read('docs/LEXARA_HOT_RESERVE_17_PROVIDER_10_SOURCE_REVIEW_20260919.md');
 
 must(
   voiceMode.includes('preferServerRecognition') &&
@@ -108,7 +109,8 @@ must(
   conversation.includes('isStrongBargeIn') &&
     conversation.includes('meta.bargeInProbe') &&
     conversation.includes('orderedEchoRatio') &&
-    conversation.includes('genericAcknowledgements') &&
+    conversation.includes('shortInterruption') &&
+    conversation.includes('nonInterruptingClosers') &&
     conversation.includes('autoInterruptRef.current()'),
   'barge-in is preserved through transcript-validated probes with sequence-aware echo and generic-acknowledgement rejection',
 );
@@ -166,21 +168,26 @@ must(
     harmony.includes('selectProvidersForTask') &&
     harmony.includes('AIModelSelector.scoreProvidersForTask') &&
     harmony.includes("role: 'harmony-synthesizer'") &&
-    harmony.includes('alternatives.slice(0, 1)') &&
+    harmony.includes('fallbackLimit') &&
+    harmony.includes('recoveryBatch') &&
+    harmony.includes('harmonyTransportCooldownUntil') &&
+    harmony.includes("return 'legal-fast'") &&
     harmony.includes('withHarmonyDeadline') &&
     harmonyRegistry.includes('HARMONY_17_PARTICIPANTS') &&
-    orchestrator.includes('maxParticipants: 2') &&
+    orchestrator.includes('maxParticipants: 3') &&
     orchestrator.includes('estimatedTokens: 450') &&
-    orchestrator.includes('requestTimeoutMs: 2_200') &&
-    orchestrator.includes('maxFallbacks: 0') &&
+    orchestrator.includes('requestTimeoutMs: 1_800') &&
+    orchestrator.includes('maxFallbacks: 2') &&
     harmony.includes('fastSynthesisTask') &&
+    harmony.includes("firstSuccessful.role === 'legal-analyst'") &&
     harmony.includes('harmonyProviderRuntimeScore') &&
     harmony.includes('task.requestTimeoutMs || task.timeout || options.requestTimeoutMs') &&
     harmonyWarmup.includes('prewarmHarmonyProviders') &&
     harmonyWarmup.includes('isHarmonyProviderWarmHealthy') &&
+    harmonyWarmup.includes('getHarmonyWarmState') &&
     harmonyWarmup.includes("'catalog'") &&
     groq.includes('warmGroqModelCatalog'),
-  'Lexara draws from the full 17-participant capability pool while each live turn uses a small capability-matched subset with one synthesis authority and bounded route-local failover',
+  'Lexara keeps all 17 configured participants as a hot reserve while only a three-route capability/latency hedge owns normal turn latency',
 );
 must(
   !authorityResearch.includes('GoogleGenAI') &&
@@ -215,8 +222,13 @@ must(
 );
 must(
   openRouter.includes('cancellationShaped') &&
+    openRouter.includes('signal?: AbortSignal') &&
+    modernWebSearch.includes('signal?: AbortSignal') &&
+    lexaraChatRoutes.includes("req.once('aborted', abortRequest)") &&
+    authorityResearch.includes('signal?: AbortSignal') &&
+    harmony.includes('isHarmonyRequestCancellation') &&
     conversation.includes('pendingUserTurnQueueRef'),
-  'request cancellation cannot poison the live provider mesh',
+  'request cancellation propagates across browser, server orchestration, OpenRouter, and authority retrieval without poisoning provider health',
 );
 must(
   claude.includes('samplingControlsDeprecated') &&
@@ -225,6 +237,9 @@ must(
     claude.includes('blockTypes') &&
     groq.includes("https://api.groq.com/openai/v1/models") &&
     groq.includes('groqBlockedModels') &&
+    groq.includes('GROQ_MODEL_BLOCK_TTL_MS') &&
+    groq.includes('llama-3.1-8b-instant') &&
+    groq.includes('llama-3.3-70b-versatile') &&
     groq.includes('normalizeGroqModelId') &&
     groq.includes('orpheus|canopylabs') &&
     groq.includes('model_terms_required') &&
@@ -369,5 +384,8 @@ must(realtimeImplementationLines.length === 10, 'literal 10-source realtime impl
 const integratedRealtimeSourceSection = integratedRealtimeReview.split('## Sources — exactly 10')[1]?.split('## Implementation sequence')[0] || '';
 const integratedRealtimeSourceLines = integratedRealtimeSourceSection.split('\n').filter(line => /^\d+\.\s/.test(line));
 must(integratedRealtimeSourceLines.length === 10, 'literal 10-source integrated realtime implementation review is present');
+const hotReserveSourceSection = hotReserveReview.split('## Sources — exactly 10')[1]?.split('## Implemented resolution sequence')[0] || '';
+const hotReserveSourceLines = hotReserveSourceSection.split('\n').filter(line => /^\d+\.\s/.test(line));
+must(hotReserveSourceLines.length === 10, 'literal 10-source hot-reserve reliability implementation review is present');
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA realization verification passed.');

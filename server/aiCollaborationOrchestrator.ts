@@ -21,6 +21,7 @@ import {
 } from './aiHarmonyModelRegistry';
 import {
   getHarmonyResolvedModel,
+  getHarmonyWarmState,
   isHarmonyProviderWarmHealthy,
   markHarmonyProviderWarmSuccess,
 } from './aiHarmonyWarmup';
@@ -42,6 +43,8 @@ export interface CollaborationTask {
   timeout?: number;
   requestTimeoutMs?: number;
   maxFallbacks?: number;
+  signal?: AbortSignal;
+  allowCoolingRecovery?: boolean;
 }
 
 /**
@@ -106,6 +109,37 @@ export type CollaborationRole = keyof typeof COLLABORATION_ROLES;
 export type CollaborationProviderPolicy = 'default' | 'capability-first' | 'capability-first-no-google';
 
 const harmonyProviderCooldownUntil = new Map<AIProvider, number>();
+const harmonyTransportCooldownUntil = new Map<string, number>();
+
+function harmonyTransportDomain(provider: AIProvider): string {
+  if (provider === AIProvider.CLAUDE || provider === AIProvider.CLAUDE_OPUS) return 'anthropic';
+  if (provider === AIProvider.GROQ) return 'groq';
+  if (provider === AIProvider.GPT_OSS) {
+    return process.env.GROQ_API_KEY?.trim() ? 'groq' : 'openrouter';
+  }
+  if ([
+    AIProvider.DEEPSEEK,
+    AIProvider.GROK,
+    AIProvider.KIMI,
+    AIProvider.QWEN,
+    AIProvider.GPT5_MINI,
+    AIProvider.OPENROUTER,
+    AIProvider.FALCON,
+    AIProvider.CODE_LLAMA,
+    AIProvider.GPT_NEOX,
+    AIProvider.PERPLEXITY,
+    AIProvider.FIREWORKS,
+  ].includes(provider)) return 'openrouter';
+  if (provider === AIProvider.COHERE && !process.env.COHERE_API_KEY?.trim()) return 'huggingface';
+  if (provider === AIProvider.TOGETHER && !process.env.TOGETHER_API_KEY?.trim()) return 'huggingface';
+  return String(provider);
+}
+
+function isHarmonyRequestCancellation(error: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return /superseded generation/i.test(message);
+}
 
 interface HarmonyProviderRuntime {
   ewmaLatencyMs: number;
@@ -135,16 +169,26 @@ function recordHarmonyProviderRuntime(
 
 function harmonyProviderRuntimeScore(provider: AIProvider): number {
   const runtime = harmonyProviderRuntime.get(provider);
-  if (!runtime) return 0;
+  const readiness = getHarmonyWarmState(provider);
+  const readinessScore = readiness === 'ready'
+    ? 70
+    : readiness === 'catalog'
+      ? 10
+      : readiness === 'unknown'
+        ? 0
+        : -180;
+  if (!runtime) return readinessScore;
   const samples = runtime.successes + runtime.failures;
   const failureRate = samples > 0 ? runtime.failures / samples : 0;
   const latencyBonus = Math.max(-90, Math.min(90, (1_500 - runtime.ewmaLatencyMs) / 15));
   const reliabilityPenalty = failureRate * 140;
-  return Math.round(latencyBonus - reliabilityPenalty);
+  return Math.round(readinessScore + latencyBonus - reliabilityPenalty);
 }
 
 function harmonyProviderAvailable(provider: AIProvider): boolean {
+  const transport = harmonyTransportDomain(provider);
   return (harmonyProviderCooldownUntil.get(provider) || 0) <= Date.now()
+    && (harmonyTransportCooldownUntil.get(transport) || 0) <= Date.now()
     && isHarmonyProviderWarmHealthy(provider);
 }
 
@@ -172,10 +216,23 @@ function markHarmonyProviderFailure(provider: AIProvider, error: unknown): void 
             ? 5_000
             : 15_000;
   harmonyProviderCooldownUntil.set(provider, Date.now() + cooldownMs);
+
+  if (/429|rate limit|quota|401|invalid api key|authentication|fetch failed|socket|econnreset|network/i.test(message)) {
+    const transportCooldownMs = /401|invalid api key|authentication/.test(message)
+      ? 60_000
+      : /429|rate limit|quota/.test(message)
+        ? 10_000
+        : 3_000;
+    harmonyTransportCooldownUntil.set(
+      harmonyTransportDomain(provider),
+      Date.now() + transportCooldownMs,
+    );
+  }
 }
 
 function markHarmonyProviderSuccess(provider: AIProvider): void {
   harmonyProviderCooldownUntil.delete(provider);
+  harmonyTransportCooldownUntil.delete(harmonyTransportDomain(provider));
   markHarmonyProviderWarmSuccess(provider);
 }
 
@@ -194,6 +251,8 @@ async function callOpenAICompatibleHarmonyProvider(
   prompt: string,
   systemPrompt: string | undefined,
   maxTokens: number,
+  timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<{ content: string; tokensUsed: number }> {
   const configs: Partial<Record<AIProvider, { baseUrl: string; key?: string }>> = {
     [AIProvider.CEREBRAS]: {
@@ -217,7 +276,10 @@ async function callOpenAICompatibleHarmonyProvider(
   if (!config?.key) throw new Error(`${provider} is not configured`);
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8_000);
+  const timer = setTimeout(() => controller.abort(), Math.max(1_000, timeoutMs));
+  const relayAbort = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener('abort', relayAbort, { once: true });
   try {
     const response = await fetch(`${config.baseUrl}/chat/completions`, {
       method: 'POST',
@@ -247,6 +309,7 @@ async function callOpenAICompatibleHarmonyProvider(
     };
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener('abort', relayAbort);
   }
 }
 
@@ -254,11 +317,20 @@ async function withHarmonyDeadline<T>(
   promise: Promise<T>,
   timeoutMs: number,
   provider: AIProvider,
+  signal?: AbortSignal,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let abortHandler: (() => void) | undefined;
   try {
+    const abortPromise = new Promise<T>((_resolve, reject) => {
+      if (!signal) return;
+      abortHandler = () => reject(new DOMException('Superseded generation', 'AbortError'));
+      if (signal.aborted) abortHandler();
+      else signal.addEventListener('abort', abortHandler, { once: true });
+    });
     return await Promise.race([
       promise,
+      abortPromise,
       new Promise<T>((_resolve, reject) => {
         timer = setTimeout(
           () => reject(new Error(`${provider} timed out after ${timeoutMs}ms`)),
@@ -268,6 +340,7 @@ async function withHarmonyDeadline<T>(
     ]);
   } finally {
     if (timer) clearTimeout(timer);
+    if (signal && abortHandler) signal.removeEventListener('abort', abortHandler);
   }
 }
 
@@ -276,11 +349,16 @@ async function callCohereHarmony(
   prompt: string,
   systemPrompt: string | undefined,
   maxTokens: number,
+  timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<{ content: string; tokensUsed: number }> {
   const key = process.env.COHERE_API_KEY?.trim();
   if (!key) throw new Error('cohere is not configured');
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8_000);
+  const timer = setTimeout(() => controller.abort(), Math.max(1_000, timeoutMs));
+  const relayAbort = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener('abort', relayAbort, { once: true });
   try {
     const response = await fetch('https://api.cohere.com/v2/chat', {
       method: 'POST',
@@ -309,6 +387,7 @@ async function callCohereHarmony(
     return { content, tokensUsed };
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener('abort', relayAbort);
   }
 }
 
@@ -330,17 +409,25 @@ export class AICollaborationOrchestrator {
       maxParticipants?: number;
       requestTimeoutMs?: number;
       maxFallbacks?: number;
+      signal?: AbortSignal;
     } = {},
   ): Promise<OrchestratedResponse> {
     const startTime = Date.now();
     const context = attributes.context || UsageContext.USER;
     
-    const eligibleProviders = getAvailableProvidersForContext(context, options.providerPolicy);
+    const configuredProviders = getAvailableProvidersForContext(context, options.providerPolicy);
+    const callerPool = new Set(_availableProviders.length ? _availableProviders : configuredProviders);
+    const eligibleProviders = configuredProviders.filter(provider => callerPool.has(provider));
     const healthyProviders = eligibleProviders.filter(harmonyProviderAvailable);
-    const candidateProviders = healthyProviders;
+    const initialCandidateProviders = healthyProviders.length > 0 ? healthyProviders : eligibleProviders;
 
-    if (candidateProviders.length === 0) {
+    if (initialCandidateProviders.length === 0) {
       throw new Error(`No providers available for ${context} context`);
+    }
+    if (healthyProviders.length === 0 && eligibleProviders.length > 0) {
+      console.warn('[HARMONY] All configured routes were cooling; entering bounded recovery mode', {
+        configured: eligibleProviders.length,
+      });
     }
 
     // Harmony is a capability pool, not a fan-out mandate. Select the smallest
@@ -348,7 +435,7 @@ export class AICollaborationOrchestrator {
     // configured participant remains eligible for tasks where its strengths fit.
     const providers = this.selectProvidersForTask(
       attributes,
-      candidateProviders,
+      initialCandidateProviders,
       options.maxParticipants,
     );
     
@@ -356,21 +443,31 @@ export class AICollaborationOrchestrator {
     const strategy = this.selectStrategy(attributes, providers);
     
     // Build collaboration tasks
+    const reserveProviders = eligibleProviders.filter(provider => !providers.includes(provider));
     const tasks = this.buildCollaborationTasks(
       taskName,
       query,
       attributes,
       providers,
       strategy
-    ).map(task => ({
-      ...task,
-      systemPrompt: options.systemPrompt,
-      requestTimeoutMs: task.requestTimeoutMs || task.timeout || options.requestTimeoutMs,
-      maxFallbacks: task.maxFallbacks ?? options.maxFallbacks,
-      // Failover can use any healthy capability-compatible route from the pool,
-      // including routes not selected for the first attempt.
-      fallbackProviders: candidateProviders.filter(provider => provider !== task.provider),
-    }));
+    ).map((task, index) => {
+      const offset = reserveProviders.length ? index % reserveProviders.length : 0;
+      const rotatedReserve = reserveProviders.length
+        ? [...reserveProviders.slice(offset), ...reserveProviders.slice(0, offset)]
+        : [];
+      return {
+        ...task,
+        systemPrompt: options.systemPrompt,
+        requestTimeoutMs: task.requestTimeoutMs || task.timeout || options.requestTimeoutMs,
+        maxFallbacks: task.maxFallbacks ?? options.maxFallbacks,
+        signal: options.signal,
+        allowCoolingRecovery: healthyProviders.length === 0,
+        fallbackProviders: [
+          ...rotatedReserve,
+          ...providers.filter(provider => provider !== task.provider),
+        ],
+      };
+    });
 
     // Strategy builders that already end in a synthesizer keep that single
     // authority. Multi-perspective strategies get one synthesis pass; parallel
@@ -404,7 +501,7 @@ export class AICollaborationOrchestrator {
         systemPrompt: options.systemPrompt,
         priority: maxPriority + 1,
         dependencies: allContributionIds,
-        fallbackProviders: candidateProviders.filter(candidate => candidate !== finalProvider),
+        fallbackProviders: eligibleProviders.filter(candidate => candidate !== finalProvider),
         requestTimeoutMs: options.requestTimeoutMs,
         maxFallbacks: options.maxFallbacks,
         attributes: { ...attributes, needsVerification: true },
@@ -414,8 +511,45 @@ export class AICollaborationOrchestrator {
     // Execute tasks
     const results = await this.executeCollaborationTasks(tasks, attributes);
     
-    // Synthesize final answer
-    const finalAnswer = this.synthesizeResults(query, results, strategy);
+    // Synthesize final answer. If every model-specific route failed, preserve
+    // the previously functional auto-router path as a bounded recovery route
+    // inside Harmony rather than declaring the legal service unavailable while
+    // gateway-level recovery is still possible.
+    let finalAnswer = this.synthesizeResults(query, results, strategy);
+    if (
+      /^No successful responses from collaboration\.?$/i.test(finalAnswer.trim())
+      && process.env.OPENROUTER_API_KEY?.trim()
+      && !options.signal?.aborted
+    ) {
+      try {
+        const recovery = await generateOpenRouterText(query, {
+          model: CURRENT_AI_MODELS.openRouterAuto,
+          systemPrompt: options.systemPrompt,
+          maxTokens: Math.max(256, Math.min(900, Number(attributes.estimatedTokens || 450))),
+          timeoutMs: Math.max(2_500, options.requestTimeoutMs || 2_500),
+          signal: options.signal,
+        });
+        const recovered: CollaborationResult = {
+          taskId: `${taskName}-auto-router-recovery`,
+          provider: AIProvider.OPENROUTER,
+          model: recovery.model,
+          role: 'legal-analyst',
+          content: recovery.content,
+          tokensUsed: Math.ceil(recovery.content.length / 4),
+          latencyMs: recovery.latencyMs,
+          success: true,
+        };
+        results.push(recovered);
+        markHarmonyProviderSuccess(AIProvider.OPENROUTER);
+        recordHarmonyProviderRuntime(AIProvider.OPENROUTER, true, recovery.latencyMs);
+        finalAnswer = recovery.content;
+      } catch (recoveryError) {
+        console.warn('[HARMONY] Canonical auto-router recovery failed', {
+          task: taskName,
+          error: recoveryError instanceof Error ? recoveryError.message : String(recoveryError),
+        });
+      }
+    }
     
     // Calculate totals
     const totalTokens = results.reduce((sum, r) => sum + (r.tokensUsed || 0), 0);
@@ -438,7 +572,10 @@ export class AICollaborationOrchestrator {
     attrs: TaskAttributes,
     providers: AIProvider[]
   ): string {
-    // Legal analysis requires careful orchestration
+    if (attrs.needsLegalAnalysis && attrs.needsFastResponse) {
+      return 'legal-fast';
+    }
+
     if (attrs.needsLegalAnalysis) {
       return 'legal-analysis';
     }
@@ -490,6 +627,7 @@ export class AICollaborationOrchestrator {
     const tasks: CollaborationTask[] = [];
     
     switch (strategy) {
+      case 'legal-fast':
       case 'legal-analysis':
         tasks.push(...this.buildLegalAnalysisTasks(taskName, query, attrs, providers));
         break;
@@ -548,7 +686,9 @@ export class AICollaborationOrchestrator {
             ? 'rapid-searcher'
             : 'pattern-analyst';
       const focus = role === 'legal-analyst'
-        ? 'Analyze legal issues, defenses, procedure, uncertainty, and the highest-value missing fact.'
+        ? (attrs.needsFastResponse
+            ? 'Produce a direct, user-ready legal answer to the current turn. Lead with the answer, preserve material uncertainty, and keep it concise unless detail is necessary.'
+            : 'Analyze legal issues, defenses, procedure, uncertainty, and the highest-value missing fact.')
         : role === 'verifier'
           ? 'Stress-test assumptions, jurisdiction, legal support, factual gaps, and citation reliability.'
           : role === 'rapid-searcher'
@@ -562,7 +702,7 @@ export class AICollaborationOrchestrator {
         role,
         prompt: `${focus} Use only authority actually supplied in the prompt and never fabricate citations.\n\n${query}`,
         priority: 1,
-        timeout: attrs.needsFastResponse ? 1_500 : undefined,
+        timeout: attrs.needsFastResponse ? 2_500 : undefined,
         attributes: { ...attrs, needsLegalAnalysis: true, needsVerification: true, needsReasoning: true },
       });
     }
@@ -581,7 +721,7 @@ export class AICollaborationOrchestrator {
         prompt: 'Synthesize the successful specialist analyses into one direct, natural spoken answer to the user. Answer the current question or statement first. Default to 2-5 concise sentences unless additional detail is materially necessary or explicitly requested. Remove repetition, preserve uncertainty, never invent authority, and do not mention internal providers.\n\n[Results will be provided]',
         priority: 2,
         dependencies,
-        timeout: attrs.needsFastResponse ? 1_200 : undefined,
+        timeout: attrs.needsFastResponse ? 2_000 : undefined,
         attributes: { ...attrs, needsLegalAnalysis: true, needsVerification: true, needsReasoning: true },
       });
     }
@@ -895,10 +1035,9 @@ export class AICollaborationOrchestrator {
     const results: CollaborationResult[] = [];
     const completedTasks = new Map<string, CollaborationResult>();
 
-    // Low-latency legal turns use the two selected specialists as a hedge. The
-    // first usable specialist contribution unlocks the single synthesis
-    // authority immediately; the other specialist may finish in the background
-    // to update provider health, but it no longer owns tail latency.
+    // Low-latency legal turns launch only the small capability-matched hedge.
+    // The rest of the configured 17-provider pool stays hot as route-local
+    // reserve capacity. The first usable contribution owns the latency path.
     const fastSynthesisTask = tasks.find(task =>
       task.role === 'synthesizer'
       && task.attributes.needsFastResponse
@@ -907,14 +1046,26 @@ export class AICollaborationOrchestrator {
     if (fastSynthesisTask) {
       const dependencyIds = new Set(fastSynthesisTask.dependencies || []);
       const sourceTasks = tasks.filter(task => dependencyIds.has(task.id));
-      const sourcePromises = sourceTasks.map(task =>
-        this.executeTask(task, completedTasks).then(result => {
+      const hedgeEntries = sourceTasks.map(task => {
+        const controller = new AbortController();
+        const relayAbort = () => controller.abort(task.signal?.reason);
+        if (task.signal?.aborted) controller.abort(task.signal.reason);
+        else task.signal?.addEventListener('abort', relayAbort, { once: true });
+
+        const promise = this.executeTask(
+          { ...task, signal: controller.signal },
+          completedTasks,
+        ).then(result => {
+          task.signal?.removeEventListener('abort', relayAbort);
           if (result.success && result.content.trim()) {
             completedTasks.set(task.id, result);
           }
           return result;
-        })
-      );
+        });
+
+        return { task, controller, promise };
+      });
+      const sourcePromises = hedgeEntries.map(entry => entry.promise);
 
       try {
         const firstSuccessful = await Promise.any(
@@ -928,21 +1079,33 @@ export class AICollaborationOrchestrator {
         results.push(firstSuccessful);
         completedTasks.set(firstSuccessful.taskId, firstSuccessful);
 
+        // First-valid-response wins. Cancel every losing hedge immediately so
+        // extra configured providers reduce tail latency without multiplying
+        // background work or poisoning health after the answer is already won.
+        for (const entry of hedgeEntries) {
+          if (entry.task.id !== firstSuccessful.taskId) {
+            entry.controller.abort('hedge-loser');
+          }
+        }
+
+        // A complete legal-analyst answer already passed the full LEXARA system
+        // prompt and should not be held behind a second mandatory model call.
+        if (firstSuccessful.role === 'legal-analyst') {
+          return results;
+        }
+
         const synthesis = await this.executeTask(
           {
             ...fastSynthesisTask,
-            // The first successful hedge has just proven both availability and
-            // low latency for this exact turn. Reuse that healthy route for the
-            // single synthesis pass instead of switching to an unproven route.
             provider: firstSuccessful.provider,
             model: this.getDefaultModelForProvider(firstSuccessful.provider),
+            fallbackProviders: fastSynthesisTask.fallbackProviders?.filter(
+              provider => provider !== firstSuccessful.provider,
+            ),
           },
           completedTasks,
         );
         results.push(synthesis);
-
-        // Observe the slower hedge without awaiting it on the user-facing path.
-        void Promise.allSettled(sourcePromises);
         return results;
       } catch {
         const settled = await Promise.all(sourcePromises);
@@ -1067,7 +1230,10 @@ export class AICollaborationOrchestrator {
     );
 
     try {
-      if (!harmonyProviderAvailable(task.provider)) {
+      if (task.signal?.aborted) {
+        throw new DOMException('Superseded generation', 'AbortError');
+      }
+      if (!harmonyProviderAvailable(task.provider) && !task.allowCoolingRecovery) {
         throw new Error(`${task.provider} is cooling down after a recent route failure`);
       }
 
@@ -1081,12 +1247,13 @@ export class AICollaborationOrchestrator {
             runProvider(
               task.provider,
               prompt,
-              { model: task.model, systemPrompt: task.systemPrompt },
+              { model: task.model, systemPrompt: task.systemPrompt, signal: task.signal },
               outputTokenLimit,
               taskMetadata,
             ),
             task.requestTimeoutMs || 6_000,
             task.provider,
+            task.signal,
           );
           content = response.content;
           tokensUsed = response.tokensUsed;
@@ -1097,12 +1264,13 @@ export class AICollaborationOrchestrator {
             runProvider(
               AIProvider.CLAUDE,
               prompt,
-              { model: task.model, systemPrompt: task.systemPrompt },
+              { model: task.model, systemPrompt: task.systemPrompt, signal: task.signal },
               outputTokenLimit,
               taskMetadata,
             ),
             task.requestTimeoutMs || 6_000,
             task.provider,
+            task.signal,
           );
           content = response.content;
           tokensUsed = response.tokensUsed;
@@ -1125,6 +1293,7 @@ export class AICollaborationOrchestrator {
             systemPrompt: task.systemPrompt,
             maxTokens: outputTokenLimit,
             timeoutMs: task.requestTimeoutMs || 6_000,
+            signal: task.signal,
           });
           content = result.content;
           tokensUsed = Math.ceil(content.length / 4);
@@ -1136,12 +1305,13 @@ export class AICollaborationOrchestrator {
               runProvider(
                 AIProvider.GROQ,
                 prompt,
-                { model: getHarmonyResolvedModel(AIProvider.GROQ), systemPrompt: task.systemPrompt },
+                { model: getHarmonyResolvedModel(AIProvider.GROQ), systemPrompt: task.systemPrompt, signal: task.signal },
                 outputTokenLimit,
                 taskMetadata,
               ),
               task.requestTimeoutMs || 6_000,
               task.provider,
+              task.signal,
             );
             content = response.content;
             tokensUsed = response.tokensUsed;
@@ -1151,6 +1321,7 @@ export class AICollaborationOrchestrator {
               systemPrompt: task.systemPrompt,
               maxTokens: outputTokenLimit,
               timeoutMs: task.requestTimeoutMs || 6_000,
+              signal: task.signal,
             });
             content = result.content;
             tokensUsed = Math.ceil(content.length / 4);
@@ -1167,9 +1338,12 @@ export class AICollaborationOrchestrator {
               prompt,
               task.systemPrompt,
               outputTokenLimit,
+              task.requestTimeoutMs || 6_000,
+              task.signal,
             ),
             task.requestTimeoutMs || 6_000,
             task.provider,
+            task.signal,
           );
           content = result.content;
           tokensUsed = result.tokensUsed;
@@ -1178,16 +1352,26 @@ export class AICollaborationOrchestrator {
         case AIProvider.COHERE: {
           const result = await withHarmonyDeadline(
             process.env.COHERE_API_KEY?.trim()
-              ? callCohereHarmony(task.model, prompt, task.systemPrompt, outputTokenLimit)
+              ? callCohereHarmony(
+                  task.model,
+                  prompt,
+                  task.systemPrompt,
+                  outputTokenLimit,
+                  task.requestTimeoutMs || 6_000,
+                  task.signal,
+                )
               : callOpenAICompatibleHarmonyProvider(
                   AIProvider.HUGGINGFACE,
                   CURRENT_AI_MODELS.cohereViaHuggingFace,
                   prompt,
                   task.systemPrompt,
                   outputTokenLimit,
+                  task.requestTimeoutMs || 6_000,
+                  task.signal,
                 ),
             task.requestTimeoutMs || 6_000,
             task.provider,
+            task.signal,
           );
           content = result.content;
           tokensUsed = result.tokensUsed;
@@ -1202,6 +1386,8 @@ export class AICollaborationOrchestrator {
                   prompt,
                   task.systemPrompt,
                   outputTokenLimit,
+                  task.requestTimeoutMs || 6_000,
+                  task.signal,
                 )
               : callOpenAICompatibleHarmonyProvider(
                   AIProvider.HUGGINGFACE,
@@ -1209,9 +1395,12 @@ export class AICollaborationOrchestrator {
                   prompt,
                   task.systemPrompt,
                   outputTokenLimit,
+                  task.requestTimeoutMs || 6_000,
+                  task.signal,
                 ),
             task.requestTimeoutMs || 6_000,
             task.provider,
+            task.signal,
           );
           content = result.content;
           tokensUsed = result.tokensUsed;
@@ -1226,6 +1415,7 @@ export class AICollaborationOrchestrator {
             systemPrompt: task.systemPrompt,
             maxTokens: outputTokenLimit,
             timeoutMs: task.requestTimeoutMs || 6_000,
+            signal: task.signal,
           });
           content = result.content;
           tokensUsed = Math.ceil(content.length / 4);
@@ -1242,19 +1432,42 @@ export class AICollaborationOrchestrator {
         recordHarmonyProviderRuntime(task.provider, true, Date.now() - startTime);
       }
     } catch (error: any) {
+      if (isHarmonyRequestCancellation(error, task.signal)) {
+        return {
+          taskId: task.id,
+          provider: task.provider,
+          model: task.model,
+          role: task.role,
+          content: '',
+          tokensUsed: 0,
+          latencyMs: Date.now() - startTime,
+          success: false,
+          error: 'Superseded generation',
+        };
+      }
+
       markHarmonyProviderFailure(task.provider, error);
       recordHarmonyProviderRuntime(task.provider, false, Date.now() - startTime);
-      const alternatives = this.rankFallbackProviders(
+      console.warn('[HARMONY] Provider route failed', {
+        task: task.id,
+        provider: task.provider,
+        model: task.model,
+        transport: harmonyTransportDomain(task.provider),
+        latencyMs: Date.now() - startTime,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      const allAlternatives = this.rankFallbackProviders(
         task,
         (task.fallbackProviders || [])
-          .filter(provider => provider !== task.provider)
-          .filter(harmonyProviderAvailable),
+          .filter(provider => provider !== task.provider),
       );
-      if ((task.maxFallbacks ?? 1) > 0 && alternatives.length > 0) {
-        // One capability-matched alternate is enough for route-local recovery.
-        // A failed provider must not create a retry fan-out or hold the user
-        // hostage while multiple unhealthy routes are retried.
-        const recoveryBatch = alternatives.slice(0, 1);
+      const healthyAlternatives = allAlternatives.filter(harmonyProviderAvailable);
+      const coolingAlternatives = allAlternatives.filter(provider => !harmonyProviderAvailable(provider));
+      const alternatives = [...healthyAlternatives, ...coolingAlternatives];
+      const fallbackLimit = Math.max(0, Math.min(task.maxFallbacks ?? 1, 3));
+      if (fallbackLimit > 0 && alternatives.length > 0) {
+        const recoveryBatch = alternatives.slice(0, fallbackLimit);
         try {
           const fallback = await Promise.any(
             recoveryBatch.map(async provider => {
@@ -1265,6 +1478,7 @@ export class AICollaborationOrchestrator {
                   model: this.getDefaultModelForProvider(provider),
                   fallbackProviders: [],
                   maxFallbacks: 0,
+                  allowCoolingRecovery: !harmonyProviderAvailable(provider),
                 },
                 completedTasks,
               );
@@ -1325,11 +1539,12 @@ export class AICollaborationOrchestrator {
       return successfulResults[0].content;
     }
     
-    if (strategy === 'legal-analysis') {
+    if (strategy === 'legal-analysis' || strategy === 'legal-fast') {
       const synthesized = successfulResults.find(result => result.role === 'synthesizer');
       if (synthesized?.content?.trim()) return synthesized.content.trim();
       const legal = successfulResults.find(result => result.role === 'legal-analyst');
       if (legal?.content?.trim()) return legal.content.trim();
+      return successfulResults[0].content.trim();
     }
 
     // For other strategies, combine results
@@ -1365,7 +1580,7 @@ export class AICollaborationOrchestrator {
     if (attrs.needsFastResponse) desired.push('fast-chat');
 
     const defaultMax = attrs.needsFastResponse
-      ? 2
+      ? 3
       : attrs.complexity === TaskComplexity.COMPREHENSIVE
         ? 3
         : attrs.complexity === TaskComplexity.MODERATE
@@ -1394,8 +1609,12 @@ export class AICollaborationOrchestrator {
         if (selected.includes(candidate.provider)) continue;
         const capabilities = getHarmonyCapabilities(candidate.provider);
         const cover = Array.from(uncovered).filter(capability => capabilities.includes(capability)).length;
-        if (!best || cover > best.cover || (cover === best.cover && candidate.score > best.score)) {
-          best = { provider: candidate.provider, cover, score: candidate.score };
+        const transportAlreadySelected = selected.some(
+          provider => harmonyTransportDomain(provider) === harmonyTransportDomain(candidate.provider),
+        );
+        const effectiveScore = candidate.score - (transportAlreadySelected ? 120 : 0);
+        if (!best || cover > best.cover || (cover === best.cover && effectiveScore > best.score)) {
+          best = { provider: candidate.provider, cover, score: effectiveScore };
         }
       }
       if (!best || best.cover === 0) break;
@@ -1403,6 +1622,15 @@ export class AICollaborationOrchestrator {
       for (const capability of getHarmonyCapabilities(best.provider)) uncovered.delete(capability);
     }
 
+    for (const candidate of ranked) {
+      if (selected.length >= maxParticipants) break;
+      const transportAlreadySelected = selected.some(
+        provider => harmonyTransportDomain(provider) === harmonyTransportDomain(candidate.provider),
+      );
+      if (!selected.includes(candidate.provider) && !transportAlreadySelected) {
+        selected.push(candidate.provider);
+      }
+    }
     for (const candidate of ranked) {
       if (selected.length >= maxParticipants) break;
       if (!selected.includes(candidate.provider)) selected.push(candidate.provider);
@@ -1427,11 +1655,13 @@ export class AICollaborationOrchestrator {
     if (task.attributes.needsFastResponse) desired.add('fast-chat');
 
     return [...providers].sort((a, b) => {
-      const score = (provider: AIProvider) =>
-        getHarmonyCapabilities(provider).reduce(
-          (sum, capability) => sum + (desired.has(capability) ? 1 : 0),
-          0,
+      const score = (provider: AIProvider) => {
+        const transportDiversity = harmonyTransportDomain(provider) === harmonyTransportDomain(task.provider) ? -80 : 40;
+        return getHarmonyCapabilities(provider).reduce(
+          (sum, capability) => sum + (desired.has(capability) ? 25 : 0),
+          harmonyProviderRuntimeScore(provider) + transportDiversity,
         );
+      };
       return score(b) - score(a);
     });
   }

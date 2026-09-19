@@ -22,6 +22,7 @@ export interface LexaraAuthorityResearch {
 export interface LexaraAuthorityResearchContext {
   jurisdiction?: string;
   domainName?: string;
+  signal?: AbortSignal;
 }
 
 const MAX_RESEARCH_PROMPT_CHARACTERS = 6_000;
@@ -75,7 +76,7 @@ function cleanUrl(value: unknown): string | null {
   return /^https?:\/\//i.test(url) ? url : null;
 }
 
-async function discoverAuthoritySources(query: string): Promise<LexaraAuthoritySource[]> {
+async function discoverAuthoritySources(query: string, signal?: AbortSignal): Promise<LexaraAuthoritySource[]> {
   type Discovered = { url: string; title: string; excerpt?: string };
 
   const firecrawlDiscovery = async (): Promise<Discovered[]> => {
@@ -84,6 +85,9 @@ async function discoverAuthoritySources(query: string): Promise<LexaraAuthorityS
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), RESEARCH_TIMEOUT_MS);
+    const relayAbort = () => controller.abort();
+    if (signal?.aborted) controller.abort();
+    else signal?.addEventListener('abort', relayAbort, { once: true });
     try {
       const response = await fetch('https://api.firecrawl.dev/v1/search', {
         method: 'POST',
@@ -130,6 +134,7 @@ async function discoverAuthoritySources(query: string): Promise<LexaraAuthorityS
       return [];
     } finally {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', relayAbort);
     }
   };
 
@@ -138,6 +143,7 @@ async function discoverAuthoritySources(query: string): Promise<LexaraAuthorityS
       const search = await orchestratedWebSearch(query, {
         useOnlinePlugin: true,
         timeout: RESEARCH_TIMEOUT_MS,
+        signal,
       });
       return search.sources.flatMap(urlValue => {
         const url = cleanUrl(urlValue);
@@ -183,6 +189,7 @@ async function discoverAuthoritySources(query: string): Promise<LexaraAuthorityS
 async function enrichAuthoritySourcesWithCrawlerPool(
   sources: LexaraAuthoritySource[],
   selectedCrawlerIds: string[],
+  signal?: AbortSignal,
 ): Promise<LexaraAuthoritySource[]> {
   if (!sources.length) return sources;
   const usePantheon = selectedCrawlerIds.some(id =>
@@ -196,14 +203,23 @@ async function enrichAuthoritySourcesWithCrawlerPool(
   if (!targets.length) return sources;
 
   try {
+    if (signal?.aborted) return sources;
+    let abortHandler: (() => void) | undefined;
+    const aborted = new Promise<null>(resolve => {
+      if (!signal) return;
+      abortHandler = () => resolve(null);
+      signal.addEventListener('abort', abortHandler, { once: true });
+    });
     const enrichment = await Promise.race([
       pantheonRetrievalAdapter.retrieve({
         purpose: 'lexara_legal_research',
         targets,
         depth: 2,
       }),
+      aborted,
       new Promise<null>(resolve => setTimeout(() => resolve(null), CRAWLER_ENRICHMENT_TIMEOUT_MS)),
     ]);
+    if (abortHandler) signal?.removeEventListener('abort', abortHandler);
     if (!enrichment?.evidence?.length) return sources;
 
     const byTarget = new Map(
@@ -263,9 +279,11 @@ export async function researchLegalAuthority(
   try {
     // Discovery accepts natural-language legal queries; URL-only crawlers are
     // used only after discovery. Google/Gemini is never a LEXARA dependency.
-    const discoveredSources = await discoverAuthoritySources(query);
+    if (context.signal?.aborted) return null;
+    const discoveredSources = await discoverAuthoritySources(query, context.signal);
     if (!discoveredSources.length) return null;
-    const sources = await enrichAuthoritySourcesWithCrawlerPool(discoveredSources, selectedCrawlers);
+    if (context.signal?.aborted) return null;
+    const sources = await enrichAuthoritySourcesWithCrawlerPool(discoveredSources, selectedCrawlers, context.signal);
 
     const summary = sources
       .map((source, index) => {
