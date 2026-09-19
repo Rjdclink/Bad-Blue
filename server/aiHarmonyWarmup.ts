@@ -111,6 +111,14 @@ export function getHarmonyWarmStatus(): HarmonyWarmStatus[] {
   );
 }
 
+export function getHarmonyWarmState(provider: AIProvider): HarmonyWarmState {
+  return warmStatus.get(provider)?.state || 'unknown';
+}
+
+export function getHarmonyInferenceReadyCount(): number {
+  return getHarmonyWarmStatus().filter(status => status.state === 'ready').length;
+}
+
 /**
  * Unknown routes remain eligible. Only a route that has been positively checked
  * and found unusable is suppressed until the next warmup or a successful call.
