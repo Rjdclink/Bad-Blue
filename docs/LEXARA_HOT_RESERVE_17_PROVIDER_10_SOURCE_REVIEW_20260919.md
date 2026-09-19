@@ -15,7 +15,7 @@ This change cross-references the identified LEXARA root causes against current `
 7. MDN — Fetch cancellation with AbortController: https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch
 8. OpenTelemetry — Trace semantic conventions: https://opentelemetry.io/docs/specs/semconv/general/trace/
 9. Anthropic — Stop reasons and fallback: https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons
-10. Groq — Supported production models and Models API: https://console.groq.com/docs/models
+10. Groq — Model deprecations and recommended replacements: https://console.groq.com/docs/deprecations
 
 ## Implemented resolution sequence
 
@@ -29,7 +29,7 @@ This change cross-references the identified LEXARA root causes against current `
 8. Introduce a distinct `legal-fast` strategy so legal rigor and fast-response intent no longer conflict in strategy selection.
 9. Propagate browser disconnect/turn supersession into server orchestration, authority search and OpenRouter fetch cancellation.
 10. Reduce OpenRouter's explicit user-facing timeout floor so a requested sub-four-second legal-turn deadline is actually honored.
-11. Use current Groq production text models, exclude preview/speech models from the production recovery chain, and expire model-level permission blocks instead of poisoning the process indefinitely.
+11. Use Groq's current recommended replacement text models, exclude deprecated developer-tier Llama IDs and speech models from the production recovery chain, and expire model-level permission blocks instead of poisoning the process indefinitely.
 12. Log provider/model/transport/latency/error for failed Harmony routes so degraded turns identify the actual failing route.
 13. Abort authority discovery after the conversational research budget rather than letting stale research continue behind the next turn.
 14. Expose legal-reasoning readiness independently from microphone/TTS readiness.
