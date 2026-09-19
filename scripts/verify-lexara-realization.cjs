@@ -55,6 +55,7 @@ const hotReserveReview = read('docs/LEXARA_HOT_RESERVE_17_PROVIDER_10_SOURCE_REV
 const consentPage = read('client/src/pages/lexara-consent.tsx');
 const mistral = read('server/mistral.ts');
 const gemini = read('server/gemini.ts');
+const ttsMesh = read('server/lexara/LexaraTTSMesh.ts');
 
 must(
   voiceMode.includes('preferServerRecognition') &&
@@ -125,8 +126,21 @@ must(
 );
 must(
   synthesis.includes('/api/lexara/tts/session') &&
-    !synthesis.includes('speechSynthesis'),
-  'ElevenLabs streaming is the only active Lexara acoustic identity',
+    synthesis.includes('adaptive-tts-mesh') &&
+    !synthesis.includes("setProvider('elevenlabs')") &&
+    !synthesis.includes('speechSynthesis') &&
+    ttsMesh.includes("type LexaraTTSProviderId") &&
+    ttsMesh.includes("'mistral'") &&
+    ttsMesh.includes("'gemini'") &&
+    ttsMesh.includes("'deepgram'") &&
+    ttsMesh.includes("'xai'") &&
+    ttsMesh.includes("'groq'") &&
+    ttsMesh.includes("'openrouter'") &&
+    ttsMesh.includes("'azure'") &&
+    ttsMesh.includes("'elevenlabs'") &&
+    ttsMesh.includes('billing_blocked') &&
+    ttsMesh.includes('synthesizeLexaraSpeechWithFailover'),
+  'LEXARA keeps one acoustic persona across a quota-aware multi-provider TTS mesh with route-local failover',
 );
 must(
   speechClient.includes('async resume(): Promise<void>') &&
@@ -146,18 +160,23 @@ must(
 );
 must(
   lexaraRoutes.indexOf("name: 'groq-whisper'") <
+    lexaraRoutes.indexOf("name: 'deepgram-nova'") &&
+    lexaraRoutes.indexOf("name: 'deepgram-nova'") <
     lexaraRoutes.indexOf("name: 'elevenlabs-scribe'") &&
-    lexaraRoutes.includes('generic_transcript_disagreement') &&
+    lexaraRoutes.includes('requiresIndependentVerification') &&
+    lexaraRoutes.includes('independent_asr_disagreement') &&
+    lexaraRoutes.includes('playback_overlap_unverified') &&
     lexaraRoutes.includes('startedDuringPlayback'),
-  'low-latency Groq Whisper is preferred while suspicious generic closers receive route-local ElevenLabs verification',
+  'Groq Whisper is latency-first while playback-overlap turns require independent Deepgram/ElevenLabs ownership verification',
 );
 must(
   voiceRoutes.includes('/api/lexara/tts/session') &&
-    voiceRoutes.includes("ELEVENLABS_TTS_OUTPUT_FORMAT") &&
-    voiceRoutes.includes("'mp3_44100_128'") &&
+    voiceRoutes.includes('getLexaraTTSReadiness') &&
+    voiceRoutes.includes('synthesizeLexaraSpeechWithFailover') &&
+    voiceRoutes.includes("provider: 'adaptive-tts-mesh'") &&
     synthesis.includes('shouldBufferLexaraPlaybackOnThisDevice') &&
     synthesis.includes('bufferStreamingSessionForMobile'),
-  'ElevenLabs uses full-quality audio with buffered mobile playback and progressive desktop streaming',
+  'LEXARA voice sessions use adaptive provider failover while retaining mobile buffered playback recovery',
 );
 must(
   voiceRoutes.includes('/api/lexara/voice/profile'),
@@ -286,9 +305,15 @@ must(
   lexaraChatRoutes.includes("router.post('/acknowledge'") &&
     orchestrator.includes('getLexaraImmediateAcknowledgement') &&
     orchestrator.includes('presenceOnly') &&
-    conversation.includes("fetch('/api/lexara/acknowledge'") &&
-    conversation.includes('acknowledgementSpeech'),
-  'Lexara has an immediate spoken acknowledgement lane independent of deep legal analysis',
+    conversation.includes("fetch('/api/lexara/acknowledge'"),
+  'Lexara retains immediate presence/control acknowledgement without making filler mandatory',
+);
+must(
+  orchestrator.includes("text: ''") &&
+    !orchestrator.includes("I'm reviewing the facts you've provided.") &&
+    conversation.includes('explicitPlaybackControl') &&
+    conversation.includes('validatedBargeInUtterancesRef'),
+  'non-semantic spoken filler is silent and playback-overlap user turns require verified ownership',
 );
 must(
   conversation.includes('sanitizeLikelySpeechArtifacts') &&
