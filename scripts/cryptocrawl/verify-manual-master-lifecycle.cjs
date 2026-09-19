@@ -48,8 +48,7 @@ lacks(productionBootstrap, /ensureCryptocrawlOverflowRuntimeSchema\s*\(/, 'produ
 has(productionBootstrap, /await import\('\.\/index\.js'\)/, 'production wrapper must load the application without CryptoCrawler prebootstrap');
 
 has(manualPower, /let\s+phase:\s*CryptoCrawlerManualPowerPhase\s*=\s*'OFF'/, 'manual power authority must default OFF');
-has(manualPower, /phase\s*===\s*'STARTING'\s*\|\|\s*phase\s*===\s*'ON'/, 'database access must be limited to startup/on phases');
-lacks(manualPower, /phase\s*===\s*'STOPPING'/, 'STOPPING must reject all new CryptoCrawler database work');
+has(manualPower, /phase\s*===\s*'STARTING'\s*\|\|\s*phase\s*===\s*'ON'\s*\|\|\s*phase\s*===\s*'STOPPING'/, 'database access may remain available only for active startup/runtime and bounded stop cleanup; OFF is fail-closed');
 has(runtimeDatabase, /installManualPowerDatabaseGuard\(nextPool,\s*'ordinary'\)/, 'ordinary CryptoCrawler DB pool must be fail-closed behind manual power');
 has(runtimeDatabase, /installManualPowerDatabaseGuard\(nextPool,\s*'coordination'\)/, 'coordination CryptoCrawler DB pool must be fail-closed behind manual power on each recreation');
 has(runtimeDatabase, /export async function closeCryptocrawlRuntimeDatabasePools\(\)/, 'master stop must close CryptoCrawler database sockets');
