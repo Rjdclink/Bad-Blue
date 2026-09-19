@@ -32,6 +32,7 @@ const learningLifecycle = read('server/services/cryptocrawl/integration/learning
 const deepLearning = read('server/services/cryptocrawl/learning/deep-learning-store.ts');
 const instantLearning = read('server/services/cryptocrawl/learning/instant-learning-engine.ts');
 const learningCompat = read('server/services/cryptocrawl/learning/supabase-compatibility.ts');
+const eden = read('server/services/cryptocrawl/eden/service.ts');
 const truthfulDiagnostics = read('server/services/cryptocrawl/api/truthful-admin-diagnostics.ts');
 
 lacks(boot, /automaticCryptoCrawlerRuntimeRequired/, 'server boot must not own CryptoCrawler automatic resume');
@@ -47,7 +48,8 @@ lacks(productionBootstrap, /ensureCryptocrawlOverflowRuntimeSchema\s*\(/, 'produ
 has(productionBootstrap, /await import\('\.\/index\.js'\)/, 'production wrapper must load the application without CryptoCrawler prebootstrap');
 
 has(manualPower, /let\s+phase:\s*CryptoCrawlerManualPowerPhase\s*=\s*'OFF'/, 'manual power authority must default OFF');
-has(manualPower, /phase\s*===\s*'STARTING'\s*\|\|\s*phase\s*===\s*'ON'\s*\|\|\s*phase\s*===\s*'STOPPING'/, 'database access must be limited to lifecycle transition/on phases');
+has(manualPower, /phase\s*===\s*'STARTING'\s*\|\|\s*phase\s*===\s*'ON'/, 'database access must be limited to startup/on phases');
+lacks(manualPower, /phase\s*===\s*'STOPPING'/, 'STOPPING must reject all new CryptoCrawler database work');
 has(runtimeDatabase, /installManualPowerDatabaseGuard\(nextPool,\s*'ordinary'\)/, 'ordinary CryptoCrawler DB pool must be fail-closed behind manual power');
 has(runtimeDatabase, /installManualPowerDatabaseGuard\(nextPool,\s*'coordination'\)/, 'coordination CryptoCrawler DB pool must be fail-closed behind manual power on each recreation');
 has(runtimeDatabase, /export async function closeCryptocrawlRuntimeDatabasePools\(\)/, 'master stop must close CryptoCrawler database sockets');
@@ -65,6 +67,9 @@ lacks(instantLearning, /constructor\(\)[\s\S]{0,160}initializeSupabase\(\)/, 'In
 lacks(learningCompat.trimEnd(), /normalizeLegacySupabaseLearningEnvironment\(\);\s*$/, 'legacy learning compatibility must not rewrite Supabase aliases at module import');
 has(learningLifecycle, /normalizeLegacySupabaseLearningEnvironment\(\)/, 'manual runtime activation must explicitly prepare legacy learning compatibility');
 has(learningLifecycle, /export async function stopLearningLifecycleWiring\(\)/, 'learning persistence must expose a reversible manual stop hook');
+lacks(learningLifecycle, /stopLearningLifecycleWiring[\s\S]{0,500}await\s+deep\.stop\(\)/, 'learning shutdown must not issue a final Supabase persistence write after STOPPING begins');
+has(eden, /if\s*\(!isCryptoCrawlerDatabaseAccessAllowed\(\)\)[\s\S]{0,120}CRYPTOCRAWLER_MASTER_POWER_OFF/, 'Eden persistence must fail closed while CryptoCrawler is not STARTING or ON');
+has(eden, /onCryptoCrawlerManualPowerPhaseChange[\s\S]{0,300}this\.supabase\s*=\s*null/, 'Eden must drop its Supabase client reference when Master Power reaches OFF');
 has(canonicalRuntime, /stopLearningLifecycleWiring\(\)/, 'canonical master stop must stop learning persistence and detach Supabase mirrors');
 has(learningLifecycle, /normalizeLegacySupabaseLearningEnvironment\(\)[\s\S]{0,500}activateSupabaseMirror\(\)/, 'manual runtime activation must bind the legacy learning mirror only after power opens');
 
