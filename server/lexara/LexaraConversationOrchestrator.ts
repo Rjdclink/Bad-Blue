@@ -351,13 +351,16 @@ export async function generateLexaraConversationResponse(
   const relayResearchAbort = () => researchController.abort();
   if (context.signal?.aborted) researchController.abort();
   else context.signal?.addEventListener('abort', relayResearchAbort, { once: true });
-  const researchBudgetTimer = setTimeout(() => researchController.abort(), LIVE_RESEARCH_BUDGET_MS);
-  const authorityResearch = await researchLegalAuthority(cleanPrompt, {
+  const authorityResearchPromise = researchLegalAuthority(cleanPrompt, {
     jurisdiction,
     domainName,
     signal: researchController.signal,
   }).catch(() => null);
-  clearTimeout(researchBudgetTimer);
+  const authorityResearch = await Promise.race([
+    authorityResearchPromise,
+    new Promise<null>(resolve => setTimeout(() => resolve(null), LIVE_RESEARCH_BUDGET_MS)),
+  ]);
+  if (!authorityResearch) researchController.abort();
   context.signal?.removeEventListener('abort', relayResearchAbort);
   const researchWaitMs = Date.now() - researchStartedAt;
 
