@@ -24,6 +24,112 @@
 
 import type { PersonRecord, SearchQuery } from '../types';
 
+interface WikipediaSearchItem {
+  title?: string;
+  snippet?: string;
+}
+
+interface WikidataSearchItem {
+  id?: string;
+  label?: string;
+  description?: string;
+  aliases?: string[];
+}
+
+function normalizedName(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function isPlausibleNameMatch(candidate: string | undefined, query: SearchQuery): boolean {
+  if (!candidate) return false;
+  const candidateName = normalizedName(candidate);
+  const first = normalizedName(query.firstName);
+  const last = normalizedName(query.lastName);
+  return Boolean(first && last && candidateName.includes(first) && candidateName.includes(last));
+}
+
+async function fetchJson(url: string, timeoutMs: number): Promise<any> {
+  const response = await fetch(url, {
+    headers: {
+      'Accept': 'application/json',
+      'User-Agent': 'LegalWhat-PANTHEON/1.0 (public-data research)',
+    },
+    signal: AbortSignal.timeout(Math.max(1000, timeoutMs)),
+  });
+  if (!response.ok) {
+    throw new Error(`Public data request failed: ${response.status} ${response.statusText}`);
+  }
+  return response.json();
+}
+
+async function searchWikipedia(query: SearchQuery, timeoutMs: number): Promise<WikipediaSearchItem[]> {
+  const fullName = `${query.firstName} ${query.lastName}`.trim();
+  const params = new URLSearchParams({
+    action: 'query',
+    list: 'search',
+    srsearch: `"${fullName}"`,
+    srlimit: '5',
+    format: 'json',
+    origin: '*',
+  });
+  const data = await fetchJson(`https://en.wikipedia.org/w/api.php?${params.toString()}`, timeoutMs);
+  return Array.isArray(data?.query?.search) ? data.query.search : [];
+}
+
+async function searchWikidata(query: SearchQuery, timeoutMs: number): Promise<WikidataSearchItem[]> {
+  const fullName = `${query.firstName} ${query.lastName}`.trim();
+  const params = new URLSearchParams({
+    action: 'wbsearchentities',
+    search: fullName,
+    language: 'en',
+    uselang: 'en',
+    type: 'item',
+    limit: '5',
+    format: 'json',
+    origin: '*',
+  });
+  const data = await fetchJson(`https://www.wikidata.org/w/api.php?${params.toString()}`, timeoutMs);
+  return Array.isArray(data?.search) ? data.search : [];
+}
+
+function extractWikidataDateOfBirth(entity: any): Date | undefined {
+  const raw = entity?.claims?.P569?.[0]?.mainsnak?.datavalue?.value?.time;
+  if (typeof raw !== 'string') return undefined;
+  const normalized = raw.replace(/^\+/, '');
+  const parsed = new Date(normalized);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+}
+
+function ageFromBirthDate(birthDate: Date): number {
+  const now = new Date();
+  let age = now.getUTCFullYear() - birthDate.getUTCFullYear();
+  const beforeBirthday =
+    now.getUTCMonth() < birthDate.getUTCMonth() ||
+    (now.getUTCMonth() === birthDate.getUTCMonth() && now.getUTCDate() < birthDate.getUTCDate());
+  if (beforeBirthday) age -= 1;
+  return age;
+}
+
+async function fetchWikidataEntity(id: string, timeoutMs: number): Promise<any | null> {
+  const params = new URLSearchParams({
+    action: 'wbgetentities',
+    ids: id,
+    languages: 'en',
+    props: 'labels|aliases|claims',
+    format: 'json',
+    origin: '*',
+  });
+  const data = await fetchJson(`https://www.wikidata.org/w/api.php?${params.toString()}`, timeoutMs);
+  return data?.entities?.[id] ?? null;
+}
+
+function satisfiedFieldsFor(data: Partial<PersonRecord>, required: RequiredField[]): RequiredField[] {
+  return required.filter(field => {
+    const value = data[field];
+    return Array.isArray(value) ? value.length > 0 : value !== undefined && value !== null && value !== '';
+  });
+}
+
 // ============================================
 // TIER DEFINITIONS
 // ============================================
@@ -148,7 +254,7 @@ export interface RouterResult {
   /** Claims about the data found */
   claims: string[];
   
-  /** Confidence score (0-1), placeholder for step 3 */
+  /** Confidence score (0-1) based on requested-field coverage */
   confidence: number | null;
   
   /** How the data was obtained */
@@ -283,48 +389,31 @@ class T0StaticHandler implements TierHandler {
  */
 class T1FetchParseHandler implements TierHandler {
   tier = CapabilityTier.T1_FETCH_PARSE;
-  providesFields: RequiredField[] = ['fullName', 'age', 'addresses', 'phones'];
+  providesFields: RequiredField[] = ['fullName'];
   
   async execute(
     query: SearchQuery,
     requiredFields: RequiredField[],
     timeoutMs: number
   ): Promise<TierExecutionResult> {
-    // NOTE: In production, this would make actual HTTP requests
-    // For now, we simulate the capability without external calls
-    
-    const canProvide = requiredFields.filter(f => this.providesFields.includes(f));
-    
-    // Simulate basic data that could be fetched from public APIs
-    const data: Partial<PersonRecord> = {
-      fullName: `${query.firstName} ${query.lastName}`,
-    };
-    
-    // If we have location info, we can potentially provide addresses
-    if (query.city && query.state && canProvide.includes('addresses')) {
-      data.addresses = [{
-        street: '',
-        city: query.city,
-        state: query.state,
-        zip: '',
-      }];
+    const results = await searchWikipedia(query, timeoutMs);
+    const match = results.find(item => isPlausibleNameMatch(item.title, query));
+    const data: Partial<PersonRecord> = {};
+
+    if (match?.title) {
+      data.fullName = match.title;
     }
-    
-    const satisfiedFields: RequiredField[] = [];
-    if (data.fullName) satisfiedFields.push('fullName');
-    if (data.addresses && data.addresses.length > 0) satisfiedFields.push('addresses');
-    
-    const unsatisfiedFields = requiredFields.filter(f => !satisfiedFields.includes(f));
-    
+
+    const satisfiedFields = satisfiedFieldsFor(data, requiredFields);
+    const unsatisfiedFields = requiredFields.filter(field => !satisfiedFields.includes(field));
+
     return {
       success: satisfiedFields.length > 0,
-      data,
-      claims: [
-        `Constructed name from query: ${data.fullName}`,
-        ...(data.addresses ? [`Location hint: ${query.city}, ${query.state}`] : []),
-      ],
+      data: satisfiedFields.length > 0 ? data : null,
+      claims: match?.title ? [`Wikipedia public-index match: ${match.title}`] : [],
       satisfiedFields,
       unsatisfiedFields,
+      error: match ? undefined : 'No plausible Wikipedia public-index match',
     };
   }
 }
@@ -335,38 +424,59 @@ class T1FetchParseHandler implements TierHandler {
  */
 class T2ApiReplayHandler implements TierHandler {
   tier = CapabilityTier.T2_API_REPLAY;
-  providesFields: RequiredField[] = ['fullName', 'age', 'addresses', 'phones', 'emails'];
+  providesFields: RequiredField[] = ['fullName', 'age', 'aliases'];
   
   async execute(
     query: SearchQuery,
     requiredFields: RequiredField[],
     timeoutMs: number
   ): Promise<TierExecutionResult> {
-    // NOTE: In production, this would call actual APIs
-    // For now, we simulate the capability
-    
-    const data: Partial<PersonRecord> = {
-      fullName: `${query.firstName} ${query.lastName}`,
-    };
-    
-    if (query.age) {
-      data.age = query.age;
+    const candidates = await searchWikidata(query, timeoutMs);
+    const match = candidates.find(item => isPlausibleNameMatch(item.label, query));
+    if (!match?.id) {
+      return {
+        success: false,
+        data: null,
+        claims: [],
+        satisfiedFields: [],
+        unsatisfiedFields: requiredFields,
+        error: 'No plausible Wikidata entity match',
+      };
     }
-    
-    const satisfiedFields: RequiredField[] = ['fullName'];
-    if (data.age) satisfiedFields.push('age');
-    
-    const unsatisfiedFields = requiredFields.filter(f => !satisfiedFields.includes(f));
-    
+
+    const entity = await fetchWikidataEntity(match.id, timeoutMs);
+    const label = entity?.labels?.en?.value;
+    const aliases = Array.isArray(entity?.aliases?.en)
+      ? entity.aliases.en.map((item: any) => item?.value).filter((value: unknown): value is string => typeof value === 'string')
+      : [];
+    const birthDate = extractWikidataDateOfBirth(entity);
+
+    const data: Partial<PersonRecord> = {};
+    if (isPlausibleNameMatch(label || match.label, query)) {
+      data.fullName = label || match.label;
+    }
+    if (birthDate) {
+      const age = ageFromBirthDate(birthDate);
+      if (age >= 0 && age <= 130) data.age = age;
+    }
+    if (aliases.length > 0) {
+      data.aliases = Array.from(new Set(aliases)).slice(0, 25);
+    }
+
+    const satisfiedFields = satisfiedFieldsFor(data, requiredFields);
+    const unsatisfiedFields = requiredFields.filter(field => !satisfiedFields.includes(field));
+
     return {
       success: satisfiedFields.length > 0,
-      data,
+      data: satisfiedFields.length > 0 ? data : null,
       claims: [
-        `API lookup for: ${data.fullName}`,
-        ...(data.age ? [`Age from query: ${data.age}`] : []),
+        `Wikidata entity match: ${match.id}`,
+        ...(data.age !== undefined ? ['Age derived from public date-of-birth claim'] : []),
+        ...(data.aliases?.length ? [`Public aliases found: ${data.aliases.length}`] : []),
       ],
       satisfiedFields,
       unsatisfiedFields,
+      error: satisfiedFields.length > 0 ? undefined : 'Matched Wikidata entity did not satisfy requested fields',
     };
   }
 }
@@ -378,49 +488,35 @@ class T2ApiReplayHandler implements TierHandler {
  */
 class T3LightJsHandler implements TierHandler {
   tier = CapabilityTier.T3_LIGHT_JS;
-  providesFields: RequiredField[] = ['fullName', 'age', 'addresses', 'phones', 'emails', 'relatives'];
+  providesFields: RequiredField[] = ['fullName', 'aliases'];
   
   async execute(
     query: SearchQuery,
     requiredFields: RequiredField[],
     timeoutMs: number
   ): Promise<TierExecutionResult> {
-    // NOTE: This tier is OPTIONAL and cheap
-    // It does NOT use Playwright or a full browser
-    // In production, it might use a lightweight JS sandbox
-    
-    const data: Partial<PersonRecord> = {
-      fullName: `${query.firstName} ${query.lastName}`,
-    };
-    
-    if (query.age) {
-      data.age = query.age;
+    // Last cheap tier: use Wikidata's search response aliases directly. This is
+    // a real public JSON lookup and deliberately fails closed when it cannot
+    // corroborate the target instead of manufacturing data from the query.
+    const candidates = await searchWikidata(query, timeoutMs);
+    const match = candidates.find(item => isPlausibleNameMatch(item.label, query));
+    const data: Partial<PersonRecord> = {};
+
+    if (match?.label) data.fullName = match.label;
+    if (Array.isArray(match?.aliases) && match.aliases.length > 0) {
+      data.aliases = Array.from(new Set(match.aliases)).slice(0, 25);
     }
-    
-    if (query.city && query.state) {
-      data.addresses = [{
-        street: '',
-        city: query.city,
-        state: query.state,
-        zip: '',
-      }];
-    }
-    
-    const satisfiedFields: RequiredField[] = ['fullName'];
-    if (data.age) satisfiedFields.push('age');
-    if (data.addresses && data.addresses.length > 0) satisfiedFields.push('addresses');
-    
-    const unsatisfiedFields = requiredFields.filter(f => !satisfiedFields.includes(f));
-    
+
+    const satisfiedFields = satisfiedFieldsFor(data, requiredFields);
+    const unsatisfiedFields = requiredFields.filter(field => !satisfiedFields.includes(field));
+
     return {
       success: satisfiedFields.length > 0,
-      data,
-      claims: [
-        `Light JS processing for: ${data.fullName}`,
-        'No browser used - lightweight execution only',
-      ],
+      data: satisfiedFields.length > 0 ? data : null,
+      claims: match?.id ? [`Wikidata search corroboration: ${match.id}`] : [],
       satisfiedFields,
       unsatisfiedFields,
+      error: satisfiedFields.length > 0 ? undefined : 'No corroborating public structured-data result',
     };
   }
 }
@@ -634,7 +730,9 @@ export class CapabilityRouter {
         success: true,
         data: bestResult.data,
         claims: bestResult.claims,
-        confidence: null, // Placeholder for step 3
+        confidence: requiredFields.length > 0
+          ? Math.min(0.95, bestResult.satisfiedFields.length / requiredFields.length)
+          : 0.5,
         provenance: bestProvenance,
         gaps: finalGaps,
         tiersAttempted,

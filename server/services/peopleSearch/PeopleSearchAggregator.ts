@@ -279,6 +279,41 @@ export class PeopleSearchAggregator {
     return digits.length >= 10 ? digits.slice(-10) : digits;
   }
 
+  private extractPublicIdentityFields(text: string, query: SearchQuery): { age?: number; aliases: string[] } {
+    const normalized = text.replace(/\s+/g, ' ').trim();
+    const lower = normalized.toLowerCase();
+    const first = query.firstName.trim().toLowerCase();
+    const last = query.lastName.trim().toLowerCase();
+
+    if (!first || !last || !lower.includes(first) || !lower.includes(last)) {
+      return { aliases: [] };
+    }
+
+    const ageMatch = normalized.match(/\bage\s*[:\-]?\s*(\d{1,3})\b/i);
+    const age = ageMatch ? Number(ageMatch[1]) : undefined;
+    const safeAge = age !== undefined && age >= 18 && age <= 120 ? age : undefined;
+
+    const aliases: string[] = [];
+    const aliasPatterns = [
+      /\b(?:also known as|aka|a\.k\.a\.|aliases?)\s*[:\-]?\s*([^.;|]{2,120})/gi,
+      /\b(?:other names?)\s*[:\-]?\s*([^.;|]{2,120})/gi,
+    ];
+    for (const pattern of aliasPatterns) {
+      for (const match of normalized.matchAll(pattern)) {
+        match[1]
+          .split(/,|\band\b/i)
+          .map(value => value.trim())
+          .filter(value => value.length >= 2 && value.length <= 80)
+          .forEach(value => aliases.push(value));
+      }
+    }
+
+    return {
+      age: safeAge,
+      aliases: Array.from(new Set(aliases)).slice(0, 25),
+    };
+  }
+
   private selectIdentityMatchedRecords(records: PersonRecord[], query: SearchQuery): PersonRecord[] {
     if (!query.phone) return records;
 
@@ -420,27 +455,39 @@ export class PeopleSearchAggregator {
       });
     }
     
-    // Build basic PersonRecord from extracted data
-    // NOTE: This is a simplified extraction. Full implementation would parse
-    // HTML structures specific to each source (addresses, phones, etc.)
+    // Parse corroborated public identity fields from the extracted documents.
+    // Sensitive contact/location fields remain empty unless a dedicated source
+    // adapter returns them through its existing structured contract.
+    const identityEvidence = extractions.map(extraction => {
+      const metadataText = extraction.metadata
+        ? Object.values(extraction.metadata).filter(value => typeof value === 'string').join(' ')
+        : '';
+      return this.extractPublicIdentityFields(
+        [extraction.title, extraction.mainText, metadataText].filter(Boolean).join(' '),
+        query,
+      );
+    });
+
+    const discoveredAge = identityEvidence.find(evidence => evidence.age !== undefined)?.age;
+    const aliases = Array.from(new Set(identityEvidence.flatMap(evidence => evidence.aliases))).slice(0, 25);
+    const corroboratingSources = identityEvidence.filter(
+      evidence => evidence.age !== undefined || evidence.aliases.length > 0
+    ).length;
+
     const basicRecord: PersonRecord = {
       fullName: `${query.firstName} ${query.lastName}`,
-      age: query.age,
+      age: discoveredAge ?? query.age,
       addresses: [],
       phones: [],
       emails: [],
       relatives: [],
-      aliases: [],
+      aliases,
       source: extractions.map(e => `${e.provider}:${e.tier}`).join(', ') || 'http-extraction',
       scrapedAt: new Date(),
-      confidence: extractions.length > 0 ? 0.6 : 0.3,
+      confidence: extractions.length > 0
+        ? Math.min(0.85, 0.45 + (corroboratingSources * 0.1))
+        : 0.2,
     };
-    
-    // TODO: Parse extracted HTML to populate addresses, phones, etc.
-    // For now, just attach metadata as a reference
-    if (extractions.length > 0 && extractions[0].metadata) {
-      console.log('[PeopleSearch] Sample metadata:', extractions[0].metadata);
-    }
     
     return basicRecord;
   }

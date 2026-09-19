@@ -81,6 +81,15 @@ interface SearchConfig {
  * Main people search function
  * Aggregates data from multiple public sources
  */
+function buildPantheonSearchTargets(name: string): string[] {
+  const trimmed = name.trim();
+  if (!trimmed) return [];
+  return [
+    `https://www.google.com/search?q=${encodeURIComponent(`"${trimmed}" public records`)}`,
+    `https://www.google.com/search?q=${encodeURIComponent(`"${trimmed}" news court business professional`)}`,
+  ];
+}
+
 export async function conductPeopleSearch(
   searchQuery: string,
   config: Partial<SearchConfig> = {}
@@ -338,7 +347,7 @@ async function searchPublicRecords(name: string): Promise<OSINTSource> {
     if (canActivatePantheon().available) {
       try {
         await pantheonOrchestrator.initialize();
-        const crawlerResults = await pantheonOrchestrator.search([name], {
+        const crawlerResults = await pantheonOrchestrator.search(buildPantheonSearchTargets(name), {
           depth: 2,
           crawlers: ['startrek', 'birdofprey'],
           maxResultsPerCrawler: 10,
@@ -432,7 +441,7 @@ async function searchSocialMedia(name: string): Promise<OSINTSource> {
     if (canActivatePantheon().available) {
       try {
         await pantheonOrchestrator.initialize();
-        const crawlerResults = await pantheonOrchestrator.search([name], {
+        const crawlerResults = await pantheonOrchestrator.search(buildPantheonSearchTargets(name), {
           depth: 2,
           crawlers: ['sixdegrees'],
           maxResultsPerCrawler: 20,
@@ -498,7 +507,7 @@ async function searchProfessionalNetworks(name: string): Promise<OSINTSource> {
     if (canActivatePantheon().available) {
       try {
         await pantheonOrchestrator.initialize();
-        const crawlerResults = await pantheonOrchestrator.search([name], {
+        const crawlerResults = await pantheonOrchestrator.search(buildPantheonSearchTargets(name), {
           depth: 1,
           crawlers: ['startrek'],
           maxResultsPerCrawler: 10,
@@ -561,7 +570,7 @@ async function searchNewsAndArticles(name: string): Promise<OSINTSource> {
     if (canActivatePantheon() && mentions.length < 5) {
       try {
         await pantheonOrchestrator.initialize();
-        const crawlerResults = await pantheonOrchestrator.search([name], {
+        const crawlerResults = await pantheonOrchestrator.search(buildPantheonSearchTargets(name), {
           depth: 2,
           crawlers: ['blizzard'],
           maxResultsPerCrawler: 20,
@@ -619,7 +628,7 @@ async function searchCourtRecords(name: string): Promise<OSINTSource> {
     if (canActivatePantheon().available) {
       try {
         await pantheonOrchestrator.initialize();
-        const crawlerResults = await pantheonOrchestrator.search([name], {
+        const crawlerResults = await pantheonOrchestrator.search(buildPantheonSearchTargets(name), {
           depth: 3,
           crawlers: ['cerberus', 'lich'],
           maxResultsPerCrawler: 15,
@@ -997,10 +1006,39 @@ export async function conductFullOSINT(
       };
     }
 
-    // Level 1+: STAR TREK crawler (fast warp-speed data retrieval)
-    console.log('[PANTHEON OSINT] STAR TREK crawler: Fast warp-speed data retrieval activated');
-    // In production, this would execute StarTrekCrawler warp jumps and transporter beaming
-    // For now, we're using the enhanced web search which already provides fast retrieval
+    // Level 1+: STAR TREK crawler (fast public-web retrieval)
+    console.log('[PANTHEON OSINT] STAR TREK crawler: executing bounded public-web retrieval');
+    try {
+      const { StarTrekCrawler } = await import('./services/crawlers/StarTrekCrawler');
+      const starTrek = new StarTrekCrawler();
+      starTrek.setPrimeDirective(true);
+      await starTrek.setPhaserSetting(3);
+
+      const starTargets = [
+        `https://www.google.com/search?q=${encodeURIComponent(searchQuery + ' public records')}`,
+        `https://www.google.com/search?q=${encodeURIComponent(searchQuery + ' news')}`,
+      ];
+      const starResults = await Promise.allSettled(starTargets.map(target => starTrek.firePhaser(target)));
+      const successfulStarResults = starResults
+        .filter((result): result is PromiseFulfilledResult<any> => result.status === 'fulfilled')
+        .map(result => result.value)
+        .filter(result => result?.content && result.confidence > 0);
+
+      if (successfulStarResults.length > 0) {
+        enhancedReport.onlineMentions.push(...successfulStarResults.map(result => result.content));
+        enhancedReport.sources.push({
+          name: 'STAR TREK Public Web Retrieval',
+          data: {
+            resultsCount: successfulStarResults.length,
+            targets: successfulStarResults.map(result => result.target),
+          },
+          confidence: successfulStarResults.reduce((sum, result) => sum + result.confidence, 0) / successfulStarResults.length,
+          timestamp: new Date(),
+        });
+      }
+    } catch (starTrekError: any) {
+      logger.warn('[PANTHEON OSINT] STAR TREK retrieval failed route-locally:', starTrekError?.message || starTrekError);
+    }
     
     // Level 2+: Social intelligence via WRAITH crawler (Sherlock)
     if (shouldActivateWRAITH) {

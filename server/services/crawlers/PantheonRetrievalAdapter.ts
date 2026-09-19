@@ -10,6 +10,7 @@ import {
   type CrawlerSelectionPurpose,
 } from './CrawlerSelectionUtility';
 import { cainReaperSupervisor, type CrawlerSupervisionResult } from './CainReaperSupervisor';
+import { twoStageDeployer } from '../pantheon/razors/TwoStageDeployer';
 
 export interface RetrievalEvidence {
   crawler: string;
@@ -56,6 +57,56 @@ export class PantheonRetrievalAdapter {
     recordCrawlerOutcomes(results);
 
     const evidence = results.map(normalizeResult);
+
+    if (request.purpose === 'background_report') {
+      const extendedRuns = await Promise.allSettled(
+        request.targets.map(target => twoStageDeployer.deployBackgroundReport(target))
+      );
+
+      for (let index = 0; index < extendedRuns.length; index++) {
+        const run = extendedRuns[index];
+        const target = request.targets[index];
+        if (run.status !== 'fulfilled') continue;
+
+        for (const razor of run.value.razorResults) {
+          if (!razor.success) continue;
+          evidence.push({
+            crawler: `razor:${razor.razorType}`,
+            target,
+            content: JSON.stringify(razor.data),
+            confidence: Number.isFinite(razor.confidence) ? razor.confidence : 0,
+            retrievedAt: new Date().toISOString(),
+            metadata: {
+              capabilityClass: 'razor',
+              source: razor.source,
+              extractionTimeMs: razor.extractionTimeMs,
+            },
+          });
+        }
+
+        for (const secondary of run.value.secondaryResults) {
+          for (const signature of secondary.signatures) {
+            evidence.push({
+              crawler: secondary.crawler,
+              target,
+              content: JSON.stringify({
+                evidenceHash: signature.hash,
+                probability: signature.probability,
+                structuralDensity: signature.structuralDensity,
+                constraintCount: signature.constraints.length,
+              }),
+              confidence: Number.isFinite(signature.probability) ? signature.probability : 0,
+              retrievedAt: signature.timestamp.toISOString(),
+              metadata: {
+                capabilityClass: 'pantheon-secondary',
+                entropySignature: true,
+              },
+            });
+          }
+        }
+      }
+    }
+
     return {
       available: true,
       plan,

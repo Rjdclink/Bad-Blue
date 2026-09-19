@@ -15,6 +15,7 @@ import type {
   RenderResult,
   ProviderHealth,
 } from './types';
+import { HttpProvider } from './HttpProvider';
 
 /**
  * Tier 1 ZenRows Provider - remote browser rendering
@@ -82,10 +83,18 @@ export class ZenRowsProvider implements ExtractorProvider {
   }
   
   /**
-   * Extract - not implemented (use HttpProvider.extract on rendered HTML)
+   * Normalize rendered HTML through the same deterministic parser used by the
+   * HTTP tier. Rendering and extraction remain separate capabilities, but both
+   * now implement the common ExtractorProvider contract end to end.
    */
   async extract(htmlOrBytes: string | Buffer, rules: ExtractionRules): Promise<ExtractedData> {
-    throw new Error('ZenRowsProvider.extract() not implemented - use HttpProvider.extract() on rendered HTML');
+    const parser = new HttpProvider();
+    const extracted = await parser.extract(htmlOrBytes, rules);
+    return {
+      ...extracted,
+      needsRender: false,
+      confidence: Math.max(extracted.confidence, 0.85),
+    };
   }
   
   /**

@@ -1180,6 +1180,8 @@ export class USCCrawler extends EventEmitter {
   private config: CrawlerConfig;
   private coordinationState: CoordinationState;
   private taskQueue: Array<{ id: string; crawler: string; task: any; priority: number }> = [];
+  private taskHandlers: Map<string, (task: any) => Promise<unknown> | unknown> = new Map();
+  private activeCrawlerTasks: Map<string, number> = new Map();
   private isRunning: boolean = false;
   private startTime: number = 0;
   private tasksProcessed: number = 0;
@@ -1213,6 +1215,13 @@ export class USCCrawler extends EventEmitter {
     this.isRunning = false;
     console.log('[USC] Coordination deactivated');
     this.emit('stopped', { crawler: 'usc', timestamp: Date.now() });
+  }
+
+  /**
+   * Register the real executor for a crawler queue lane.
+   */
+  registerTaskHandler(crawler: string, handler: (task: any) => Promise<unknown> | unknown): void {
+    this.taskHandlers.set(crawler, handler);
   }
 
   /**
@@ -1270,22 +1279,28 @@ export class USCCrawler extends EventEmitter {
     
     this.emit('sync:start', { syncId, crawlers, timestamp: Date.now() });
     
-    // Coordination logic
     const startTime = Date.now();
-    
-    // In a real implementation, this would coordinate actual crawler execution
-    // For now, we emit coordination events
+    const deadline = startTime + Math.max(250, this.config.coordinationLatency * 50);
+    const tracked = new Set(crawlers);
+
     for (const crawler of crawlers) {
       this.emit('sync:crawler', { syncId, crawler });
     }
-    
-    const syncTime = Date.now() - startTime;
-    
-    this.emit('sync:complete', { syncId, syncTime, crawlers });
-    
-    if (syncTime < this.config.coordinationLatency) {
-      this.coordinationState.synchronizationStatus = 'synchronized';
+
+    while (Date.now() < deadline) {
+      const queued = this.taskQueue.some(task => tracked.has(task.crawler));
+      const active = Array.from(tracked).some(crawler => (this.activeCrawlerTasks.get(crawler) || 0) > 0);
+      if (!queued && !active) break;
+      await new Promise(resolve => setTimeout(resolve, Math.max(1, Math.min(10, this.config.coordinationLatency))));
     }
+
+    const queuedRemaining = this.taskQueue.some(task => tracked.has(task.crawler));
+    const activeRemaining = Array.from(tracked).some(crawler => (this.activeCrawlerTasks.get(crawler) || 0) > 0);
+    const syncTime = Date.now() - startTime;
+    const synchronized = !queuedRemaining && !activeRemaining;
+
+    this.coordinationState.synchronizationStatus = synchronized ? 'synchronized' : 'degraded';
+    this.emit('sync:complete', { syncId, syncTime, crawlers, synchronized });
   }
 
   /**
@@ -1317,6 +1332,7 @@ export class USCCrawler extends EventEmitter {
   private async executeTask(task: { id: string; crawler: string; task: any; priority: number }): Promise<void> {
     this.coordinationState.activeTaskCount++;
     this.tasksProcessed++;
+    this.activeCrawlerTasks.set(task.crawler, (this.activeCrawlerTasks.get(task.crawler) || 0) + 1);
 
     const startTime = Date.now();
 
@@ -1326,19 +1342,43 @@ export class USCCrawler extends EventEmitter {
       priority: task.priority,
     });
 
-    // Simulate task execution
-    await new Promise(resolve => setTimeout(resolve, 5)); // Ultra-low latency
+    try {
+      const inlineExecutor =
+        typeof task.task === 'function'
+          ? task.task
+          : task.task && typeof task.task.execute === 'function'
+            ? () => task.task.execute()
+            : null;
+      const registeredExecutor = this.taskHandlers.get(task.crawler);
+      const executor = inlineExecutor || registeredExecutor;
 
-    const executionTime = Date.now() - startTime;
+      if (!executor) {
+        throw new Error(`No executable task handler registered for crawler "${task.crawler}"`);
+      }
 
-    this.emit('task:complete', {
-      taskId: task.id,
-      crawler: task.crawler,
-      executionTime,
-    });
+      const result = await executor(task.task);
+      const executionTime = Date.now() - startTime;
 
-    this.coordinationState.activeTaskCount--;
-    this.coordinationState.queueDepth = this.taskQueue.length;
+      this.emit('task:complete', {
+        taskId: task.id,
+        crawler: task.crawler,
+        executionTime,
+        result,
+      });
+    } catch (error) {
+      this.emit('task:failed', {
+        taskId: task.id,
+        crawler: task.crawler,
+        executionTime: Date.now() - startTime,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      this.coordinationState.activeTaskCount--;
+      const remaining = Math.max(0, (this.activeCrawlerTasks.get(task.crawler) || 1) - 1);
+      if (remaining === 0) this.activeCrawlerTasks.delete(task.crawler);
+      else this.activeCrawlerTasks.set(task.crawler, remaining);
+      this.coordinationState.queueDepth = this.taskQueue.length;
+    }
   }
 
   getMetrics(): CrawlerMetrics {

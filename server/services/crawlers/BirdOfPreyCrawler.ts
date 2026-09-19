@@ -20,7 +20,11 @@ async function executeRequest(url: string, options: RequestOptions, stealth?: St
   const timeoutId = setTimeout(() => controller.abort(), options.timeout || 30000);
   try {
     if (stealth) await stealth.connect(url, 'high');
-    return await fetch(url, { ...options, signal: controller.signal });
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    if (!response.ok) {
+      throw new Error(`Crawler request failed: HTTP ${response.status}`);
+    }
+    return response;
   } finally { clearTimeout(timeoutId); }
 }
 
