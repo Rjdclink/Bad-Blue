@@ -51,15 +51,104 @@ interface StreamingAudioSession {
 }
 
 const SERVER_TTS_FETCH_TIMEOUT_MS = 20_000;
-const MOBILE_SESSION_BUFFER_TIMEOUT_MS = 12_000;
+const NEXT_CHUNK_PREFETCH_TIMEOUT_MS = 20_000;
 const MIN_PLAYBACK_WATCHDOG_MS = 10_000;
-
-function shouldBufferLexaraPlaybackOnThisDevice(textLength: number): boolean {
-  return typeof navigator !== 'undefined'
-    && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
-    && textLength > 420;
-}
+const FIRST_SPEECH_CHUNK_MAX_CHARS = 210;
+const SPEECH_CHUNK_MAX_CHARS = 340;
 const MAX_PLAYBACK_WATCHDOG_MS = 240_000;
+
+function splitOversizedSpeechUnit(value: string, maxChars: number): string[] {
+  const clean = value.replace(/\s+/g, ' ').trim();
+  if (!clean) return [];
+  if (clean.length <= maxChars) return [clean];
+
+  const clauses = clean
+    .split(/(?<=[,;:])\s+/)
+    .map(part => part.trim())
+    .filter(Boolean);
+  const parts: string[] = [];
+  let current = '';
+
+  const pushWords = (chunk: string) => {
+    const words = chunk.split(/\s+/).filter(Boolean);
+    let wordBuffer = '';
+    for (const word of words) {
+      const candidate = wordBuffer ? `${wordBuffer} ${word}` : word;
+      if (candidate.length > maxChars && wordBuffer) {
+        parts.push(wordBuffer);
+        wordBuffer = word;
+      } else {
+        wordBuffer = candidate;
+      }
+    }
+    if (wordBuffer) parts.push(wordBuffer);
+  };
+
+  for (const clause of clauses.length ? clauses : [clean]) {
+    const candidate = current ? `${current} ${clause}` : clause;
+    if (candidate.length <= maxChars) {
+      current = candidate;
+      continue;
+    }
+    if (current) {
+      parts.push(current);
+      current = '';
+    }
+    if (clause.length <= maxChars) {
+      current = clause;
+    } else {
+      pushWords(clause);
+    }
+  }
+  if (current) parts.push(current);
+  return parts;
+}
+
+function splitLexaraSpeechChunks(text: string): string[] {
+  const clean = text.replace(/\s+/g, ' ').trim();
+  if (!clean) return [];
+
+  const sentences = clean.match(/[^.!?]+[.!?]+|[^.!?]+$/g)?.map(part => part.trim()).filter(Boolean) || [clean];
+  const chunks: string[] = [];
+  let current = '';
+
+  const flush = () => {
+    if (!current) return;
+    chunks.push(current);
+    current = '';
+  };
+
+  for (const sentence of sentences) {
+    const maxChars = chunks.length === 0 ? FIRST_SPEECH_CHUNK_MAX_CHARS : SPEECH_CHUNK_MAX_CHARS;
+    const candidate = current ? `${current} ${sentence}` : sentence;
+    if (candidate.length <= maxChars) {
+      current = candidate;
+      continue;
+    }
+
+    flush();
+    const unitLimit = chunks.length === 0 ? FIRST_SPEECH_CHUNK_MAX_CHARS : SPEECH_CHUNK_MAX_CHARS;
+    const pieces = splitOversizedSpeechUnit(sentence, unitLimit);
+    for (const piece of pieces) {
+      if (piece.length >= unitLimit) {
+        chunks.push(piece);
+      } else if (!current) {
+        current = piece;
+      } else {
+        const combined = `${current} ${piece}`;
+        if (combined.length <= SPEECH_CHUNK_MAX_CHARS) current = combined;
+        else {
+          flush();
+          current = piece;
+        }
+      }
+      if (chunks.length === 0 && current.length >= FIRST_SPEECH_CHUNK_MAX_CHARS * 0.72) flush();
+    }
+  }
+
+  flush();
+  return chunks.length ? chunks : [clean];
+}
 
 export function useVoiceSynthesis(): VoiceSynthesisResult {
   const { toast } = useToast();
@@ -156,15 +245,21 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     }
   }, []);
 
-  const bufferStreamingSessionForMobile = useCallback(async (audioUrl: string): Promise<Blob> => {
+  const fetchPreparedSessionAudio = useCallback(async (audioUrl: string): Promise<ServerAudio> => {
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), MOBILE_SESSION_BUFFER_TIMEOUT_MS);
+    const timeout = window.setTimeout(() => controller.abort(), NEXT_CHUNK_PREFETCH_TIMEOUT_MS);
     try {
       const response = await fetch(audioUrl, { signal: controller.signal });
-      if (!response.ok) throw new Error(`LEXARA buffered playback failed (${response.status})`);
+      if (!response.ok) throw new Error(`LEXARA prepared playback failed (${response.status})`);
       const blob = await response.blob();
-      if (!blob.size) throw new Error('LEXARA buffered playback returned empty audio');
-      return blob;
+      if (!blob.size) throw new Error('LEXARA prepared playback returned empty audio');
+      const parsedDuration = Number(response.headers.get('X-Audio-Duration'));
+      return {
+        blob,
+        voiceId: response.headers.get('X-Voice-Id'),
+        durationMs: Number.isFinite(parsedDuration) && parsedDuration > 0 ? parsedDuration : null,
+        provider: response.headers.get('X-Provider'),
+      };
     } finally {
       window.clearTimeout(timeout);
     }
@@ -217,59 +312,117 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     options: VoiceSynthesisOptions,
     turnId: number,
   ): Promise<void> => {
-    let playback: Promise<PlaybackOutcome>;
+    const chunks = splitLexaraSpeechChunks(text);
+    if (!chunks.length) return;
+
     let selectedProvider: string | null = null;
-    let expectedDuration = Math.max(5_000, text.length * 70);
+    let startedPlayback = false;
+    let preparedCurrent: Promise<ServerAudio | null> | null = null;
+    const interruption = makeInterruptionPromise();
 
-    try {
-      const session = await createStreamingAudioSession(text);
-      if (turnId !== activeTurnRef.current) return;
-      selectedProvider = session.provider;
-
-      if (shouldBufferLexaraPlaybackOnThisDevice(text.length)) {
-        // The observed production stream finishes in well under a second, so on
-        // mobile it is better to absorb that tiny delay once and play from a
-        // complete local Blob than risk repeated media-buffer starvation while
-        // microphone capture and echo cancellation are active.
-        const blob = await bufferStreamingSessionForMobile(session.audioUrl);
-        if (turnId !== activeTurnRef.current) return;
-        playback = LexaraServerTTS.play(blob).then<PlaybackOutcome>(() => 'ended');
-      } else {
-        playback = LexaraServerTTS.play({ audioUrl: session.audioUrl }).then<PlaybackOutcome>(() => 'ended');
+    const prepareChunk = async (chunk: string): Promise<ServerAudio | null> => {
+      try {
+        const session = await createStreamingAudioSession(chunk);
+        if (turnId !== activeTurnRef.current) return null;
+        const audio = await fetchPreparedSessionAudio(session.audioUrl);
+        return {
+          ...audio,
+          provider: audio.provider || session.provider,
+          voiceId: audio.voiceId || session.voiceId,
+        };
+      } catch {
+        return null;
       }
-    } catch {
-      // Route-local recovery: retain the proven buffered endpoint if streaming
-      // session creation/buffering is unavailable, without switching acoustic identity.
-      const audio = await fetchServerAudio(text);
+    };
+
+    for (let index = 0; index < chunks.length; index += 1) {
       if (turnId !== activeTurnRef.current) return;
-      selectedProvider = audio.provider;
-      expectedDuration = audio.durationMs || expectedDuration;
-      playback = LexaraServerTTS.play(audio.blob).then<PlaybackOutcome>(() => 'ended');
+
+      const chunk = chunks[index];
+      let playback: Promise<PlaybackOutcome>;
+      let expectedDuration = Math.max(4_000, chunk.length * 70);
+
+      try {
+        if (index === 0) {
+          // Never hold the first spoken sentence behind a full-answer mobile
+          // buffer. A short first chunk begins server synthesis immediately and
+          // is handed directly to the already-unlocked persistent media element.
+          const session = await createStreamingAudioSession(chunk);
+          if (turnId !== activeTurnRef.current) return;
+          selectedProvider = session.provider;
+          playback = LexaraServerTTS.play({ audioUrl: session.audioUrl })
+            .then<PlaybackOutcome>(() => 'ended');
+        } else {
+          const prepared = preparedCurrent ? await preparedCurrent : await prepareChunk(chunk);
+          preparedCurrent = null;
+          if (turnId !== activeTurnRef.current) return;
+
+          if (prepared?.blob?.size) {
+            selectedProvider = prepared.provider || selectedProvider;
+            expectedDuration = prepared.durationMs || expectedDuration;
+            playback = LexaraServerTTS.play(prepared.blob).then<PlaybackOutcome>(() => 'ended');
+          } else {
+            const audio = await fetchServerAudio(chunk);
+            if (turnId !== activeTurnRef.current) return;
+            selectedProvider = audio.provider || selectedProvider;
+            expectedDuration = audio.durationMs || expectedDuration;
+            playback = LexaraServerTTS.play(audio.blob).then<PlaybackOutcome>(() => 'ended');
+          }
+        }
+      } catch {
+        // Chunk-local recovery keeps the current conversational turn alive.
+        const audio = await fetchServerAudio(chunk);
+        if (turnId !== activeTurnRef.current) return;
+        selectedProvider = audio.provider || selectedProvider;
+        expectedDuration = audio.durationMs || expectedDuration;
+        playback = LexaraServerTTS.play(audio.blob).then<PlaybackOutcome>(() => 'ended');
+      }
+
+      if (!startedPlayback) {
+        startedPlayback = true;
+        setProvider(selectedProvider || 'adaptive-tts-mesh');
+        setIsLoading(false);
+        setIsSpeaking(true);
+        options.onStart?.();
+      }
+
+      // Prepare exactly one chunk ahead while the current chunk is playing.
+      // This hides provider synthesis latency without creating an unbounded
+      // fan-out or making interruption wait for future audio.
+      if (index + 1 < chunks.length && !preparedCurrent) {
+        preparedCurrent = prepareChunk(chunks[index + 1]);
+      }
+
+      const outcome = await Promise.race([
+        playback,
+        interruption,
+        makePlaybackWatchdog(expectedDuration + 8_000),
+      ]);
+
+      clearPlaybackWatchdog();
+
+      if (turnId !== activeTurnRef.current || outcome === 'interrupted') {
+        LexaraServerTTS.stop();
+        return;
+      }
+      if (outcome === 'timeout') {
+        LexaraServerTTS.stop();
+        setIsSpeaking(false);
+        return;
+      }
     }
 
-    setProvider(selectedProvider || 'adaptive-tts-mesh');
-    setIsLoading(false);
-    setIsSpeaking(true);
-    options.onStart?.();
-    const outcome = await Promise.race([
-      playback,
-      makeInterruptionPromise(),
-      makePlaybackWatchdog(expectedDuration + 8_000),
-    ]);
-
-    clearPlaybackWatchdog();
     interruptionResolverRef.current = null;
-
-    if (turnId !== activeTurnRef.current || outcome === 'interrupted') return;
-    if (outcome === 'timeout') {
-      LexaraServerTTS.stop();
-      setIsSpeaking(false);
-      return;
-    }
-
     setIsSpeaking(false);
     options.onEnd?.();
-  }, [bufferStreamingSessionForMobile, clearPlaybackWatchdog, createStreamingAudioSession, fetchServerAudio, makeInterruptionPromise, makePlaybackWatchdog]);
+  }, [
+    clearPlaybackWatchdog,
+    createStreamingAudioSession,
+    fetchPreparedSessionAudio,
+    fetchServerAudio,
+    makeInterruptionPromise,
+    makePlaybackWatchdog,
+  ]);
 
   const speak = useCallback(async (
     text: string,

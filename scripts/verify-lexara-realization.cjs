@@ -68,7 +68,7 @@ must(
 must(
   voiceMode.includes('serverEchoCancellationRef') &&
     voiceMode.includes('shouldProbeBargeIn?: () => boolean') &&
-    voiceMode.includes('SERVER_BARGE_IN_PROBE_MS = 450') &&
+    voiceMode.includes('SERVER_BARGE_IN_PROBE_MS = 320') &&
     voiceMode.includes('recorder.requestData()') &&
     voiceMode.includes('bargeInProbe: true') &&
     voiceMode.includes('startedDuringPlayback') &&
@@ -117,8 +117,11 @@ must(
     conversation.includes('orderedEchoRatio') &&
     conversation.includes('shortInterruption') &&
     conversation.includes('nonInterruptingClosers') &&
-    conversation.includes('autoInterruptRef.current()'),
-  'barge-in is preserved through transcript-validated probes with sequence-aware echo and generic-acknowledgement rejection',
+    conversation.includes('substantiveSingleWord') &&
+    conversation.includes('autoInterruptRef.current()') &&
+    voiceMode.includes('SERVER_BARGE_IN_PROBE_MS = 320') &&
+    voiceMode.includes('constraints.latency = { ideal: 0.02 }'),
+  'barge-in is restored for natural one-word and multiword interruption while echo-screening and final-turn authority remain conservative',
 );
 must(
   avatar.includes('LEXARA_ATTORNEY_IMAGE_SOURCES') &&
@@ -148,15 +151,24 @@ must(
     ttsMesh.includes("mistralai/voxtral-mini-tts-2603") &&
     ttsMesh.includes('/v1/user/subscription') &&
     !ttsMesh.includes("process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY") &&
+    ttsMesh.includes("'gb_jane_neutral'") &&
+    !ttsMesh.includes("'en_paul_neutral'") &&
+    ttsMesh.includes('no verified female English voice') &&
+    ttsMesh.includes("model.startsWith('google/') ? 'pcm' : 'mp3'") &&
+    ttsMesh.includes("mimeType: 'audio/wav'") &&
+    ttsMesh.includes('pcm16MonoToWav(pcm, 24_000)') &&
+    ttsMesh.includes('LEXARA_TTS_REQUEST_TIMEOUT_MS = 8_000') &&
+    ttsMesh.includes('slowRoutePenalty') &&
+    !ttsMesh.includes("'microsoft/mai-voice-2-flash'") &&
     ttsMesh.includes('synthesizeLexaraSpeechWithFailover'),
-  'LEXARA admits only canary-verified TTS routes, resolves provider voice/model prerequisites, and keeps failures route-local',
+  'LEXARA admits only verified TTS routes, enforces the female voice profile, and keeps model-specific provider failures local',
 );
 must(
   speechClient.includes('async resume(): Promise<void>') &&
     speechClient.includes('pause(): void') &&
     speechClient.includes('getLexaraPlaybackAudioElement') &&
     !speechClient.includes('const audio = new Audio(audioUrl)'),
-  'single persistent user-unlocked ElevenLabs playback channel owns pause/resume',
+  'single persistent user-unlocked LEXARA playback channel owns pause/resume and interruption',
 );
 must(
   lexaraRoutes.includes("form.append('response_format', 'verbose_json')") &&
@@ -174,9 +186,10 @@ must(
     lexaraRoutes.indexOf("name: 'elevenlabs-scribe'") &&
     lexaraRoutes.includes('requiresIndependentVerification') &&
     lexaraRoutes.includes('independent_asr_disagreement') &&
-    lexaraRoutes.includes('playback_overlap_unverified') &&
+    lexaraRoutes.includes('&& !bargeInProbe') &&
+    lexaraRoutes.includes('speechDurationMs < 900') &&
     lexaraRoutes.includes('startedDuringPlayback'),
-  'Groq Whisper is latency-first while playback-overlap turns require independent Deepgram/ElevenLabs ownership verification',
+  'Groq Whisper owns low-latency non-authoritative barge-in while short final overlap turns retain independent ownership verification',
 );
 must(
   voiceRoutes.includes('/api/lexara/tts/session') &&
@@ -190,9 +203,13 @@ must(
     conversation.includes('checkVoiceBackendReadiness') &&
     conversation.includes("data?.speechOutputVerified === true") &&
     conversation.includes("'Voice reconnecting'") &&
-    synthesis.includes('shouldBufferLexaraPlaybackOnThisDevice') &&
-    synthesis.includes('bufferStreamingSessionForMobile'),
-  'LEXARA voice sessions require verified provider readiness and the client badge reflects operational synthesis truth',
+    synthesis.includes('splitLexaraSpeechChunks') &&
+    synthesis.includes('FIRST_SPEECH_CHUNK_MAX_CHARS') &&
+    synthesis.includes('Prepare exactly one chunk ahead') &&
+    synthesis.includes('fetchPreparedSessionAudio') &&
+    !synthesis.includes('shouldBufferLexaraPlaybackOnThisDevice') &&
+    !synthesis.includes('bufferStreamingSessionForMobile'),
+  'LEXARA voice readiness stays truthful while short first-chunk playback and one-ahead synthesis remove full-answer mobile buffering latency',
 );
 must(
   voiceRoutes.includes('/api/lexara/voice/profile'),
