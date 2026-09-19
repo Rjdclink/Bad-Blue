@@ -25,6 +25,10 @@ const manualPower = read('server/services/cryptocrawl/runtime/manual-power-state
 const runtimeDatabase = read('server/services/cryptocrawl/runtime/cryptocrawl-runtime-database.ts');
 const overflowBootstrap = read('server/services/cryptocrawl/integration/cryptara-supabase-hyper-bridge-bootstrap.ts');
 const migrations = read('server/migrations/reconcileAppSchema.ts');
+const learningCompatibility = read('server/services/cryptocrawl/learning/supabase-compatibility.ts');
+const deepLearning = read('server/services/cryptocrawl/learning/deep-learning-store.ts');
+const instantLearning = read('server/services/cryptocrawl/learning/instant-learning-engine.ts');
+const learningLifecycle = read('server/services/cryptocrawl/integration/learning-lifecycle-wiring.ts');
 
 lacks(boot, /automaticCryptoCrawlerRuntimeRequired/, 'server boot must not own CryptoCrawler automatic resume');
 lacks(boot, /startCryptoCrawlerRuntime/, 'server boot must never invoke the CryptoCrawler start authority');
@@ -44,6 +48,12 @@ has(runtimeDatabase, /installManualPowerDatabaseGuard\(pool,\s*'ordinary'\)/, 'o
 has(runtimeDatabase, /installManualPowerDatabaseGuard\(coordinationPool,\s*'coordination'\)/, 'coordination CryptoCrawler DB pool must be fail-closed behind manual power');
 has(overflowBootstrap, /if\s*\(!isCryptoCrawlerDatabaseAccessAllowed\(\)\)/, 'Overflow bootstrap must fail closed while master power is OFF');
 has(migrations, /Skipped while master power is OFF; zero CryptoCrawler schema I\/O executed/, 'application startup migrations must skip CryptoCrawler schema I/O while OFF');
+lacks(learningCompatibility, /\nnormalizeLegacySupabaseLearningEnvironment\(\);\s*$/, 'learning compatibility must not mutate Supabase aliases at module import');
+lacks(deepLearning, /constructor\(\)\s*\{[\s\S]{0,180}initializeSupabase\(\)/, 'DeepLearningStore constructor must not bind Supabase while CryptoCrawler is OFF');
+lacks(instantLearning, /constructor\(\)\s*\{[\s\S]{0,180}initializeSupabase\(\)/, 'InstantLearningEngine constructor must not bind Supabase while CryptoCrawler is OFF');
+has(learningLifecycle, /normalizeLegacySupabaseLearningEnvironment\(\)[\s\S]{0,300}activateSupabaseMirror\(\)/, 'manual runtime activation must bind the legacy learning mirror only after power opens');
+has(learningLifecycle, /export async function stopLearningLifecycleWiring\(\)/, 'learning persistence must expose a master-stop cleanup');
+has(canonicalRuntime, /stopLearningLifecycleWiring\(\)/, 'canonical master stop must stop learning persistence and detach Supabase mirrors');
 
 has(admin, /lifecycle:\s*'STOPPED'/, 'canonical lifecycle must initialize STOPPED');
 has(admin, /running:\s*false/, 'canonical lifecycle must initialize not running');
