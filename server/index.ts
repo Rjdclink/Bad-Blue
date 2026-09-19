@@ -49,7 +49,10 @@ import cookieParser from "cookie-parser";
 import { serveStatic, log } from "./vite";
 import { createServer, type Server } from "http";
 
-import { runAllSchemaMigrations } from "./migrations/reconcileAppSchema";
+import {
+  runAllSchemaMigrations,
+  releaseRollingDeploymentPoolHeadroom,
+} from "./migrations/reconcileAppSchema";
 
 const app = express();
 
@@ -705,6 +708,7 @@ httpServer = createServer(app);
     databaseRuntimeMode = 'primary';
 
     await runMigrations();
+    releaseRollingDeploymentPoolHeadroom('application_database_ready');
 
     const { runStartupSchemaVerification } = await import('./db');
     const schemaReady = await runStartupSchemaVerification();
