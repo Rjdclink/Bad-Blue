@@ -71,7 +71,7 @@ function startupTrace(event: string, details: Record<string, unknown> = {}): voi
   );
 }
 
-type DatabaseRuntimeMode = 'initializing' | 'primary' | 'overflow_proxy';
+type DatabaseRuntimeMode = 'initializing' | 'primary' | 'overflow_proxy' | 'neon_failover';
 
 let isReady = false;
 let isFullyInitialized = false; // Tracks full HTTP/application surface initialization
@@ -365,6 +365,26 @@ async function initializeDatabase(): Promise<boolean> {
   } catch (error: any) {
     lastError = error;
     console.error('[STARTUP] ❌ Database admission window ended:', error?.message ?? error);
+  }
+
+  // Primary Supabase admission has exhausted its bounded recovery window.
+  // LegalWhat may now use the explicitly configured Neon standby, but only when
+  // db.ts proves the standby contains the required application schema. Failure
+  // of this optional lane is local and leaves all existing Supabase behavior intact.
+  try {
+    const { activateLegalWhatNeonFallback, isLegalWhatNeonFailoverConfigured } = await import('./db');
+    if (isLegalWhatNeonFailoverConfigured) {
+      const activated = await activateLegalWhatNeonFallback('primary_supabase_admission_unavailable');
+      if (activated) {
+        await retryDatabaseProbeWithinBudget();
+        databaseRuntimeMode = 'neon_failover';
+        console.warn('[STARTUP] ✓ LegalWhat admitted through schema-gated Neon failover');
+        startupTrace('database_initialization_completed', { connected: true, recovered: true, lane: 'neon_failover' });
+        return true;
+      }
+    }
+  } catch (neonError: any) {
+    console.warn('[STARTUP] Optional Neon failover unavailable; preserving primary behavior:', neonError?.message ?? neonError);
   }
 
   // Recreate pools only when the local node-postgres pool itself is positively

@@ -25,6 +25,9 @@ const envSchema = z.object({
   SUPABASE_URL: z.string().url('SUPABASE_URL must be a valid URL').optional(),
   LEGALWHAT_AUTH_SUPABASE_URL: z.string().url('LEGALWHAT_AUTH_SUPABASE_URL must be a valid URL').optional(),
   SUPABASE_DB_URL: z.string().optional().default(''),
+  // Optional LegalWhat-only PostgreSQL failover. These never replace the canonical Supabase URL.
+  NEON_DATABASE_URL: z.string().optional().default(''),
+  NEON_DIRECT_DATABASE_URL: z.string().optional().default(''),
   
   // Application
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
@@ -166,6 +169,15 @@ export function loadConfig(): Config {
       }
       if (!isPostgresConnectionString(dbUrl)) {
         throw new Error(`${dbUrlSource} must be a postgres:// or postgresql:// connection string`);
+      }
+    }
+
+    for (const [name, value] of [
+      ['NEON_DATABASE_URL', config.NEON_DATABASE_URL],
+      ['NEON_DIRECT_DATABASE_URL', config.NEON_DIRECT_DATABASE_URL],
+    ] as const) {
+      if (value && !isPostgresConnectionString(value)) {
+        throw new Error(`${name} must be a postgres:// or postgresql:// connection string`);
       }
     }
 
