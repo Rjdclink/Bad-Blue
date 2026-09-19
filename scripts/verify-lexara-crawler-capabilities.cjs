@@ -78,6 +78,75 @@ for (const name of ['FarmCrawler', 'PhantomCrawler', 'NovaCrawler']) {
 }
 if (!process.exitCode) ok('previously declaration-only PANTHEON species have concrete bounded implementations');
 
+const backgroundAdapter = fs.readFileSync('server/services/crawlers/PantheonRetrievalAdapter.ts', 'utf8');
+const backgroundPeopleSearch = fs.readFileSync('server/peopleSearch.ts', 'utf8');
+const capabilityRouter = fs.readFileSync('server/services/peopleSearch/router/CapabilityRouter.ts', 'utf8');
+const apiDiscovery = fs.readFileSync('server/services/peopleSearch/extractor/ApiDiscoveryProvider.ts', 'utf8');
+const zenRows = fs.readFileSync('server/services/peopleSearch/extractor/ZenRowsProvider.ts', 'utf8');
+const starTrek = fs.readFileSync('server/services/crawlers/StarTrekCrawler.ts', 'utf8');
+const trinity = fs.readFileSync('server/services/crawlers/TrinityCrawlers.ts', 'utf8');
+const twoStage = fs.readFileSync('server/services/pantheon/razors/TwoStageDeployer.ts', 'utf8');
+const pantheonOrchestrator = fs.readFileSync('server/services/pantheonCrawlerOrchestrator.ts', 'utf8');
+const pantheonIce = fs.readFileSync('server/services/pantheon/crawlers/ice.ts', 'utf8');
+const usc = fs.readFileSync('server/services/crawlers/SixCrawlerInitiative.ts', 'utf8');
+const cain = fs.readFileSync('server/services/crawlers/CainAndReaper.ts', 'utf8');
+
+if (!backgroundAdapter.includes('deployBackgroundReport') || !backgroundAdapter.includes('capabilityClass')) {
+  fail('background reports are not wired to extended PANTHEON capability execution');
+}
+if (
+  !twoStage.includes('FarmCrawler') ||
+  !twoStage.includes('PhantomCrawler') ||
+  !twoStage.includes('NovaCrawler') ||
+  !twoStage.includes('sensitive_personal_data')
+) {
+  fail('background-report two-stage deployment must execute all secondary species with sensitive-output redaction');
+}
+if (
+  capabilityRouter.includes('simulate the capability') ||
+  capabilityRouter.includes('Constructed name from query') ||
+  !capabilityRouter.includes('searchWikipedia') ||
+  !capabilityRouter.includes('searchWikidata')
+) {
+  fail('people-search capability router regressed to simulated query-derived data');
+}
+if (apiDiscovery.includes('TODO: Parse inline JSON data') || !apiDiscovery.includes('extractInlineState')) {
+  fail('inline application-state extraction is not executable');
+}
+if (zenRows.includes('ZenRowsProvider.extract() not implemented') || !zenRows.includes('new HttpProvider()')) {
+  fail('rendered HTML extraction remains unimplemented');
+}
+if (
+  starTrek.includes('.example.com') ||
+  starTrek.includes('Simulate 70% success rate') ||
+  !starTrek.includes('setNavigationSeeds') ||
+  !starTrek.includes('no responsive predicted deep URL')
+) {
+  fail('StarTrek still contains fabricated navigation or transport success');
+}
+if (trinity.includes('return Promise.race([this.leftHead.attack') || !trinity.includes('firstSuccessful')) {
+  fail('Trinity crawler parallel paths can still fail on the first rejected head');
+}
+if (pantheonOrchestrator.includes('confidence: result.confidence ||')) {
+  fail('PANTHEON orchestrator still converts real zero-confidence failures into positive evidence');
+}
+if (pantheonIce.includes('extractGPSFromFile') || !pantheonIce.includes("createHash('sha256')")) {
+  fail('ICE resource extraction must use bounded public metadata rather than precise GPS harvesting');
+}
+if (
+  !backgroundPeopleSearch.includes('buildPantheonSearchTargets') ||
+  backgroundPeopleSearch.includes('pantheonOrchestrator.search([name]')
+) {
+  fail('people-search PANTHEON fallback still passes a person name as a URL');
+}
+if (usc.includes('Simulate task execution') || !usc.includes('registerTaskHandler')) {
+  fail('USC task execution remains simulated');
+}
+if (cain.includes('Would be retrieved from persistent storage in production') || !cain.includes('recalculateEvolutionaryDebt')) {
+  fail('Cain evolutionary debt remains a hard-coded placeholder');
+}
+if (!process.exitCode) ok('background-report PANTHEON runtime uses real fail-closed utilities with extended safe capability wiring');
+
 const payoutVerification = fs.readFileSync('server/services/cryptocrawl/compensation/compensationGuarantee.ts', 'utf8');
 if (payoutVerification.includes('Math.random() > 0.05')) fail('verification crawlers still use simulated random truth');
 if (!payoutVerification.includes('Read-only deterministic evidence verification')) fail('verification crawlers are not deterministic/read-only');
