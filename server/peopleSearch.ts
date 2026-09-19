@@ -939,6 +939,8 @@ export async function conductFullOSINT(
     phone?: string;
     domain?: string;
     searchDepth?: number; // 1-4, default 2
+    forceAllCrawlers?: boolean;
+    reportBudgetMs?: number;
   }
 ): Promise<PeopleSearchReport & {
   emails?: any;
@@ -948,6 +950,8 @@ export async function conductFullOSINT(
   crawlersActivated?: string[];
 }> {
   const searchDepth = options?.searchDepth || 2;
+  const forceAllCrawlers = options?.forceAllCrawlers === true;
+  const reportBudgetMs = options?.reportBudgetMs;
   const crawlersActivated: string[] = [];
   
   // Log search depth
@@ -957,23 +961,23 @@ export async function conductFullOSINT(
   crawlersActivated.push('ICE');
   
   // Level 1+: Add STAR TREK (fast warp-speed search)
-  if (searchDepth >= 1) {
+  if (searchDepth >= 1 || forceAllCrawlers) {
     crawlersActivated.push('STAR_TREK');
   }
 
-  // Level 2+: Add WRAITH (social intelligence via Sherlock)
-  const shouldActivateWRAITH = searchDepth >= 2;
+  // Background reports always activate WRAITH; depth controls effort, not participation.
+  const shouldActivateWRAITH = forceAllCrawlers || searchDepth >= 2;
   if (shouldActivateWRAITH) {
     crawlersActivated.push('WRAITH');
   }
 
   // Level 3+: Add HYDRA, LICH, CERBERUS, BLIZZARD DRAGON
-  if (searchDepth >= 3) {
-    crawlersActivated.push('HYDRA', 'LICH', 'CERBERUS', 'BLIZZARD_DRAGON');
+  if (forceAllCrawlers || searchDepth >= 3) {
+    crawlersActivated.push('HYDRA', 'LICH', 'CERBERUS', 'BLIZZARD_DRAGON', 'FARM', 'PHANTOM', 'NOVA');
   }
 
-  // Level 4: Add GENESIS orchestrator (EYE OF GOD)
-  if (searchDepth >= 4) {
+  // Background reports always include GENESIS orchestration.
+  if (forceAllCrawlers || searchDepth >= 4) {
     crawlersActivated.push('GENESIS');
   }
 
@@ -1087,8 +1091,8 @@ export async function conductFullOSINT(
     } // End of WRAITH activation block
 
     // Level 3+: HYDRA + LICH + CERBERUS + BLIZZARD DRAGON activation via PANTHEON
-    if (searchDepth >= 3) {
-      console.log('[PANTHEON OSINT] Activating Level 3 crawlers via PANTHEON Orchestrator');
+    if (forceAllCrawlers || searchDepth >= 3) {
+      console.log('[PANTHEON OSINT] Activating complete PANTHEON crawler roster');
       
       // Check if PANTHEON is available (not blocked by cryptocrawler)
       const pantheonStatus = canActivatePantheon();
@@ -1107,6 +1111,7 @@ export async function conductFullOSINT(
             purpose: 'background_report',
             targets: searchTargets,
             depth: searchDepth as 1 | 2 | 3 | 4,
+            budgetMs: reportBudgetMs,
           });
           const crawlerResults = crawlerRetrieval.evidence;
           for (const crawlerName of new Set(crawlerResults.map(result => result.crawler))) {
@@ -1154,8 +1159,8 @@ export async function conductFullOSINT(
     }
 
     // Level 4: GENESIS orchestrator (EYE OF GOD)
-    if (searchDepth >= 4) {
-      console.log('[PANTHEON OSINT] 👁️ EYE OF GOD: activating bounded avalanche traversal');
+    if (forceAllCrawlers || searchDepth >= 4) {
+      console.log('[PANTHEON OSINT] 👁️ GENESIS: activating bounded avalanche traversal');
       
       // Check PANTHEON availability again
       const pantheonStatus = canActivatePantheon();
@@ -1193,8 +1198,11 @@ export async function conductFullOSINT(
     let spiderfootData;
     if (await spiderfootClient.healthCheck()) {
       const scanId = await spiderfootClient.startScan(searchQuery);
+      const spiderFootTimeoutMs = reportBudgetMs
+        ? Math.min(600_000, Math.max(120_000, Math.floor(reportBudgetMs / 3)))
+        : 120_000;
       await spiderfootClient.waitForScanCompletion(scanId, {
-        timeoutMs: 120_000,
+        timeoutMs: spiderFootTimeoutMs,
         pollIntervalMs: 1_500,
       });
       spiderfootData = await spiderfootClient.getScanResults(scanId);
