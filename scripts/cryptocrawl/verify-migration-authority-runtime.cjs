@@ -26,7 +26,7 @@ const dockerfile = read('Dockerfile');
 
 // Session-level startup coordination must never use the ordinary pool because
 // db.ts may route that pool through Supavisor transaction mode (6543).
-assert.match(reconciler, /import\s*\{\s*coordinationPool,\s*pool\s*\}\s*from\s*'\.\.\/db'/);
+assert.match(reconciler, /import\s*\{[^}]*\bcoordinationPool\b[^}]*\bpool\b[^}]*\}\s*from\s*'\.\.\/db'/);
 assert.match(reconciler, /coordinator\s*=\s*await\s+coordinationPool\.connect\(\)/);
 assert.doesNotMatch(reconciler, /coordinator\s*=\s*await\s+pool\.connect\(\)/);
 assert.match(reconciler, /SELECT pg_try_advisory_lock\(hashtextextended\(\$1, 0\)\) AS acquired/);
