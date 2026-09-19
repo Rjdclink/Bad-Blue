@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 158 210" role="presentation">
+<defs>
+ <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+  <stop offset="0" stop-color="#fff0a6"/><stop offset="0.18" stop-color="#d9a62a"/><stop offset="0.42" stop-color="#fff2a8"/><stop offset="0.67" stop-color="#b57910"/><stop offset="1" stop-color="#f4ca55"/>
+ </linearGradient>
+ <filter id="s" x="-20%" y="-20%" width="140%" height="160%"><feDropShadow dx="0" dy="5" stdDeviation="3" flood-color="#000" flood-opacity=".55"/></filter>
+</defs>
+<path d="M 95,2 L 88,2 L 79,6 L 74,13 L 77,19 L 77,24 L 74,27 L 77,37 L 86,37 L 92,48 L 86,60 L 73,73 L 73,80 L 76,83 L 75,86 L 50,107 L 36,112 L 27,121 L 29,128 L 37,137 L 82,158 L 89,164 L 87,173 L 74,182 L 52,184 L 52,189 L 44,196 L 42,203 L 46,205 L 61,207 L 105,207 L 125,203 L 123,195 L 116,190 L 116,185 L 107,181 L 109,163 L 101,156 L 118,153 L 127,141 L 127,127 L 124,121 L 108,104 L 106,87 L 109,81 L 110,86 L 116,91 L 115,95 L 118,91 L 114,85 L 117,80 L 120,82 L 120,85 L 121,84 L 119,79 L 120,75 L 124,77 L 123,81 L 125,79 L 125,75 L 121,72 L 124,68 L 123,63 L 129,61 L 125,59 L 128,46 L 120,39 L 121,30 L 115,24 L 111,12 Z M 102,171 L 103,171 L 105,173 L 105,181 L 104,182 L 98,182 L 97,181 L 97,180 L 98,179 L 98,177 L 99,176 L 99,175 L 101,173 L 101,172 Z M 91,122 L 90,123 L 86,123 L 85,122 L 83,122 L 82,121 L 80,121 L 79,120 L 76,120 L 75,119 L 73,119 L 72,118 L 70,118 L 69,117 L 66,117 L 65,116 L 62,116 L 61,115 L 53,115 L 52,114 L 54,112 L 56,112 L 57,111 L 58,111 L 59,110 L 61,110 L 62,109 L 63,109 L 64,108 L 65,108 L 66,107 L 67,107 L 68,106 L 69,106 L 70,105 L 71,105 L 72,104 L 73,104 L 74,103 L 75,103 L 77,101 L 78,101 L 81,98 L 83,100 L 83,101 L 84,102 L 84,103 L 85,104 L 85,105 L 87,107 L 87,108 L 89,110 L 89,111 L 90,112 L 90,116 L 91,117 Z" fill="url(#g)" fill-rule="evenodd" filter="url(#s)" stroke="#8c5b0e" stroke-width="1.2" vector-effect="non-scaling-stroke"/>
+</svg>
