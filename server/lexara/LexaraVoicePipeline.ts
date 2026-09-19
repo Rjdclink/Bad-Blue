@@ -25,6 +25,7 @@ import * as path from 'path';
 import { createLogger } from '../logger';
 import { getEnv } from '../config';
 import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js';
+import { getLexaraTTSReadiness, refreshLexaraTTSReadiness, synthesizeLexaraSpeechWithFailover, type LexaraTTSProviderId } from './LexaraTTSMesh';
 
 const log = createLogger('LexaraVoicePipeline');
 
@@ -94,7 +95,7 @@ export const LEXARA_VOICE_PROFILE: LexaraVoiceProfile = {
 // TYPES
 // ============================================================================
 
-export type VoiceProvider = 'elevenlabs';
+export type VoiceProvider = 'adaptive' | LexaraTTSProviderId;
 export type EmotionalContext = 'neutral' | 'empathetic' | 'authoritative' | 'reassuring' | 'serious';
 
 export interface VoiceSynthesisRequest {
@@ -354,7 +355,6 @@ class AudioPersistence {
 // ============================================================================
 
 export class LexaraVoicePipeline extends EventEmitter {
-  private elevenLabsProvider: ElevenLabsTTSProvider;
   private persistence: AudioPersistence;
   private isInitialized: boolean = false;
 
@@ -368,7 +368,6 @@ export class LexaraVoicePipeline extends EventEmitter {
   }) {
     super();
     
-    this.elevenLabsProvider = new ElevenLabsTTSProvider();
     this.persistence = new AudioPersistence(config?.storageDir);
   }
 
@@ -376,28 +375,14 @@ export class LexaraVoicePipeline extends EventEmitter {
    * Initialize the voice pipeline
    */
   async initialize(): Promise<void> {
-    log.info('[LexaraVoicePipeline] Initializing...');
-
-    // Check provider availability
-    await this.elevenLabsProvider.checkAvailability();
-
-    const status = this.elevenLabsProvider.getStatus();
-
-    log.info('[LexaraVoicePipeline] Provider status', {
-      elevenlabs: status.available,
-      voiceId: this.elevenLabsProvider.getVoiceId() || 'not set',
-    });
-
-    if (!status.available) {
-      log.warn('[LexaraVoicePipeline] ElevenLabs not available. Voice synthesis will be unavailable.', {
-        error: status.lastError,
-      });
-    }
-
+    log.info('[LexaraVoicePipeline] Initializing canonical adaptive voice mesh...');
+    const readiness = await refreshLexaraTTSReadiness(false);
     this.isInitialized = true;
-    this.emit('initialized', { elevenlabs: status });
-    
-    log.info('[LexaraVoicePipeline] Initialized with ElevenLabs provider');
+    this.emit('initialized', readiness);
+    log.info('[LexaraVoicePipeline] Adaptive voice mesh initialized', {
+      healthyProviders: readiness.healthyProviders,
+      configuredProviders: readiness.configuredProviders,
+    });
   }
 
   /**
@@ -421,44 +406,30 @@ export class LexaraVoicePipeline extends EventEmitter {
       await this.initialize();
     }
 
-    // Validate provider is available
-    if (!this.elevenLabsProvider.isAvailable()) {
-      throw new Error(
-        'ElevenLabs TTS is not available. ' +
-        'Please set ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID environment variables.'
-      );
-    }
-
-    // Determine emotional context
     const context = request.context || this.inferContext(request.text, request.speechContext);
-
-    // Build voice settings
-    const settings = this.buildSettings(request.settings, context);
-
-    // Generate SSML for enhanced synthesis
     const ssml = this.generateSSML(request.text, context);
 
     let audioData: Buffer;
     let latencyMs: number;
     let qualityScore: number;
+    let mimeType: string;
+    let provider: LexaraTTSProviderId;
 
     try {
-      const result = await this.elevenLabsProvider.synthesize(request.text, settings, context);
+      const result = await synthesizeLexaraSpeechWithFailover(request.text);
       audioData = result.audioData;
       latencyMs = result.latencyMs;
-      qualityScore = result.quality;
+      qualityScore = 0.95;
+      mimeType = result.mimeType;
+      provider = result.provider;
 
       this.synthesisCount++;
       this.totalLatencyMs += latencyMs;
-
     } catch (error) {
       this.errorCount++;
       log.error('[LexaraVoicePipeline] Synthesis failed', { traceId, error });
       throw error;
     }
-
-    // MIME type is always audio/mpeg for ElevenLabs
-    const mimeType = 'audio/mpeg';
 
     // Persist audio if requested (default: true)
     let audioRef: string;
@@ -490,7 +461,7 @@ export class LexaraVoicePipeline extends EventEmitter {
       audioData: request.persist === false ? audioData : undefined,
       mimeType,
       durationMs,
-      provider: 'elevenlabs',
+      provider,
       persisted,
       generatedAt: Date.now(),
       latencyMs: Date.now() - startTime,
@@ -504,7 +475,7 @@ export class LexaraVoicePipeline extends EventEmitter {
     log.info('[LexaraVoicePipeline] Synthesis complete', {
       traceId,
       audioId,
-      provider: 'elevenlabs',
+      provider,
       durationMs,
       latencyMs: result.latencyMs,
       quality: qualityScore,
@@ -622,15 +593,20 @@ export class LexaraVoicePipeline extends EventEmitter {
   /**
    * Get provider statuses
    */
-  getProviderStatuses(): { elevenlabs: ProviderStatus; coqui: ProviderStatus; openai: ProviderStatus } {
-    const elevenLabsStatus = this.elevenLabsProvider.getStatus();
-    
-    // Return unavailable status for deprecated providers (keep original names for API compatibility)
-    return {
-      elevenlabs: elevenLabsStatus,
-      coqui: { name: 'elevenlabs', available: false, lastError: 'Coqui is deprecated - use ElevenLabs', lastCheck: Date.now() },
-      openai: { name: 'elevenlabs', available: false, lastError: 'OpenAI TTS is deprecated - use ElevenLabs', lastCheck: Date.now() },
-    };
+  getProviderStatuses(): Record<string, ProviderStatus> {
+    const readiness = getLexaraTTSReadiness();
+    return Object.fromEntries(
+      readiness.providers.map(status => [
+        status.provider,
+        {
+          name: status.provider,
+          available: status.healthy,
+          latencyMs: status.ewmaLatencyMs || undefined,
+          lastError: status.lastFailure || undefined,
+          lastCheck: status.verifiedAt || Date.now(),
+        } satisfies ProviderStatus,
+      ]),
+    );
   }
 
   /**
@@ -648,7 +624,7 @@ export class LexaraVoicePipeline extends EventEmitter {
       avgLatencyMs: this.synthesisCount > 0 ? this.totalLatencyMs / this.synthesisCount : 0,
       errorCount: this.errorCount,
       errorRate: this.synthesisCount > 0 ? this.errorCount / (this.synthesisCount + this.errorCount) : 0,
-      preferredProvider: 'elevenlabs',
+      preferredProvider: 'adaptive',
     };
   }
 
@@ -656,7 +632,7 @@ export class LexaraVoicePipeline extends EventEmitter {
    * Refresh provider availability
    */
   async refreshProviders(): Promise<void> {
-    await this.elevenLabsProvider.checkAvailability();
+    await refreshLexaraTTSReadiness(false);
     this.emit('providers-refreshed', this.getProviderStatuses());
   }
 }
