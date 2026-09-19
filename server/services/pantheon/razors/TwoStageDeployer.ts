@@ -27,14 +27,27 @@ const STAGE_2_TIMEOUT = 30000;          // 30 seconds for secondary
 const MIN_CONFIDENCE_THRESHOLD = 0.6;   // 60% confidence to skip stage 2
 const MIN_SUCCESS_COUNT = 5;            // At least 5 razors must succeed
 
+export interface BackgroundCapabilityAudit {
+  crawler: string;
+  capabilityClass: 'razor' | 'pantheon-secondary';
+  status: 'completed_with_evidence' | 'completed_no_evidence' | 'failed' | 'timed_out' | 'unavailable_no_content';
+  evidenceCount: number;
+  attempts: number;
+  targets: number;
+  error?: string;
+}
+
 export interface BackgroundSecondaryResult {
   crawler: 'hydra' | 'wraith' | 'ice' | 'farm' | 'phantom' | 'nova';
   signatures: EntropySignature[];
+  status: BackgroundCapabilityAudit['status'];
+  error?: string;
 }
 
 export interface BackgroundReportDeployment {
   razorResults: RazorResult[];
   secondaryResults: BackgroundSecondaryResult[];
+  audit: BackgroundCapabilityAudit[];
   totalTimeMs: number;
 }
 
@@ -65,10 +78,35 @@ export class TwoStageDeployer {
       ? (await this.deployStage1(content, target, razorTimeoutMs)).map(result => this.sanitizeBackgroundRazorResult(result))
       : [];
     const secondaryResults = await this.deployAllSecondary(target, secondaryTimeoutMs);
+    const razorAudit: BackgroundCapabilityAudit[] = this.razors.map(razor => {
+      const result = razorResults.find(candidate => candidate.razorType === razor.type);
+      return {
+        crawler: `razor:${razor.type}`,
+        capabilityClass: 'razor',
+        status: !content
+          ? 'unavailable_no_content'
+          : result?.success
+            ? 'completed_with_evidence'
+            : 'completed_no_evidence',
+        evidenceCount: result?.success ? 1 : 0,
+        attempts: content ? 1 : 0,
+        targets: 1,
+      };
+    });
+    const secondaryAudit: BackgroundCapabilityAudit[] = secondaryResults.map(result => ({
+      crawler: result.crawler,
+      capabilityClass: 'pantheon-secondary',
+      status: result.status,
+      evidenceCount: result.signatures.length,
+      attempts: 1,
+      targets: 1,
+      ...(result.error ? { error: result.error } : {}),
+    }));
 
     return {
       razorResults,
       secondaryResults,
+      audit: [...razorAudit, ...secondaryAudit],
       totalTimeMs: Date.now() - startedAt,
     };
   }
@@ -135,9 +173,19 @@ export class TwoStageDeployer {
             setTimeout(() => reject(new Error(`${spec.crawler}_timeout`)), perCrawlerTimeoutMs)
           ),
         ]);
-        return { crawler: spec.crawler, signatures } satisfies BackgroundSecondaryResult;
-      } catch {
-        return { crawler: spec.crawler, signatures: [] } satisfies BackgroundSecondaryResult;
+        return {
+          crawler: spec.crawler,
+          signatures,
+          status: signatures.length > 0 ? 'completed_with_evidence' : 'completed_no_evidence',
+        } satisfies BackgroundSecondaryResult;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          crawler: spec.crawler,
+          signatures: [],
+          status: /timeout/i.test(message) ? 'timed_out' : 'failed',
+          error: message.slice(0, 300),
+        } satisfies BackgroundSecondaryResult;
       }
     });
 

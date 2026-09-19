@@ -1439,6 +1439,8 @@ export class DatabaseStorage implements IStorage {
     reportData: any;
     status?: 'processing' | 'completed' | 'failed';
     errorMessage?: string;
+    createdAt?: Date;
+    completedAt?: Date | null;
   }): Promise<PeopleSearchReport> {
     const values: any = {
       userId: data.userId,
@@ -1447,8 +1449,12 @@ export class DatabaseStorage implements IStorage {
       reportData: data.reportData,
       status: data.status || 'processing',
       errorMessage: data.errorMessage || null,
-      createdAt: new Date(),
-      completedAt: data.status === 'completed' ? new Date() : null,
+      createdAt: data.createdAt || new Date(),
+      completedAt: data.completedAt !== undefined
+        ? data.completedAt
+        : data.status === 'completed' || data.status === 'failed'
+          ? new Date()
+          : null,
     };
     if (data.id) values.id = data.id;
 
@@ -1466,12 +1472,13 @@ export class DatabaseStorage implements IStorage {
     reportId: string,
     status: 'processing' | 'completed' | 'failed',
     reportData?: any,
-    errorMessage?: string
+    errorMessage?: string,
+    completedAt?: Date | null,
   ): Promise<PeopleSearchReport> {
     const updateData: any = {
       status,
       errorMessage: errorMessage || null,
-      completedAt: status === 'processing' ? null : new Date(),
+      completedAt: status === 'processing' ? null : completedAt || new Date(),
     };
     
     // Only update reportData if provided
