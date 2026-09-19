@@ -85,6 +85,9 @@ const pantheonReportConfig = fs.readFileSync('shared/pantheonReportConfig.ts', '
 const pantheonReportJobs = fs.readFileSync('server/services/pantheon/PantheonBackgroundReportJob.ts', 'utf8');
 const pantheonReportStore = fs.readFileSync('server/services/pantheon/PantheonReportStore.ts', 'utf8');
 const pantheonCss = fs.readFileSync('client/src/pages/pantheon.css', 'utf8');
+const pantheonReportAccess = fs.readFileSync('server/services/pantheon/PantheonReportAccess.ts', 'utf8');
+const pantheonReportPdf = fs.readFileSync('server/services/pantheon/PantheonBackgroundReportPdf.ts', 'utf8');
+const pantheonStorage = fs.readFileSync('server/storage.ts', 'utf8');
 const pantheonRoutes = fs.readFileSync('server/routes.ts', 'utf8');
 const crawlerSelection = fs.readFileSync('server/services/crawlers/CrawlerSelectionUtility.ts', 'utf8');
 const seedFirstConfig = fs.readFileSync('server/lib/seedFirstConfig.ts', 'utf8');
@@ -112,35 +115,58 @@ if (
   fail('Pantheon report durations are not canonically wired to 5/10/20/30 minutes');
 }
 if (
-  !pantheonPage.includes('Generated Background Report') ||
   !pantheonPage.includes("/api/osint/report-jobs") ||
+  !pantheonPage.includes("/download") ||
+  !pantheonPage.includes('Download Background Report') ||
+  !pantheonPage.includes('downloadReady') ||
+  !pantheonPage.includes('pantheon.activeReportJobId') ||
   pantheonPage.includes("/api/osint/full-search") ||
   pantheonPage.includes('new AbortController()') ||
-  !pantheonPage.includes('pantheon.activeReportJobId') ||
-  !pantheonPage.includes('isPeopleSearchReport')
+  pantheonPage.includes('ResultsDisplay') ||
+  pantheonPage.includes('LocationHeatmap') ||
+  pantheonPage.includes('payload.data') ||
+  pantheonPage.includes('report-document')
 ) {
-  fail('Pantheon page is not using the durable refresh-safe report workspace');
+  fail('Pantheon page is not using the durable download-only report delivery flow');
 }
 if (
   !pantheonReportStore.includes("EAUTHQUERY") ||
-  !pantheonReportStore.includes("local report journal") ||
-  !pantheonReportStore.includes("writeJournal(record)") ||
+  !pantheonReportStore.includes("current.code") ||
+  !pantheonReportStore.includes("RAILWAY_VOLUME_MOUNT_PATH") ||
+  !pantheonReportStore.includes("MAX_MIRROR_ATTEMPTS") ||
+  !pantheonReportStore.includes("TERMINAL_JOURNAL_RETENTION_MS") ||
+  !pantheonReportStore.includes("scheduleMirror(record.id)") ||
   !pantheonRoutes.includes("createPantheonReportRecord") ||
   !pantheonRoutes.includes("getPantheonReportRecord") ||
-  !pantheonReportJobs.includes("updatePantheonReportRecord")
+  !pantheonReportJobs.includes("updatePantheonReportRecord") ||
+  !pantheonStorage.includes("createdAt?: Date") ||
+  !pantheonStorage.includes("completedAt?: Date | null")
 ) {
-  fail('Pantheon report jobs can still be aborted by a transient persistence outage');
+  fail('Pantheon report jobs can still be aborted or corrupted by a transient persistence outage');
 }
 if (
-  pantheonPage.includes('<CardTitle>Report Workspace</CardTitle>') ||
-  pantheonPage.includes('Your completed PANTHEON background report will populate here.') ||
-  !pantheonPage.includes('report-document') ||
-  !pantheonPage.includes('Online Mentions') ||
-  !pantheonPage.includes('Risk & Reputation') ||
-  !pantheonCss.includes('max-width: none') ||
-  !pantheonCss.includes('min-height: 65vh')
+  !pantheonReportAccess.includes("HttpOnly") ||
+  !pantheonReportAccess.includes("createHmac('sha256'") ||
+  !pantheonRoutes.includes("issuePantheonReportAccess") ||
+  !pantheonRoutes.includes("verifyPantheonReportAccess") ||
+  !pantheonRoutes.includes("app.get('/api/osint/report-jobs/:reportId/download'") ||
+  !pantheonRoutes.includes("Content-Disposition") ||
+  !pantheonRoutes.includes("application/pdf") ||
+  !pantheonRoutes.includes("downloadReady") ||
+  pantheonRoutes.includes("data: report.status === 'completed'")
 ) {
-  fail('Pantheon page does not expose the full permanent report document area');
+  fail('Pantheon completed reports are not securely delivered as download-only artifacts');
+}
+if (
+  !pantheonReportPdf.includes('COMPREHENSIVE PUBLIC-SOURCE BACKGROUND REPORT') ||
+  !pantheonReportPdf.includes('Court / Case History') ||
+  !pantheonReportPdf.includes('Crawler Coverage') ||
+  !pantheonReportPdf.includes('Source Provenance') ||
+  !pantheonReportPdf.includes('not an official government record') ||
+  !pantheonCss.includes('report-download-button') ||
+  pantheonCss.includes('min-height: 65vh')
+) {
+  fail('Pantheon downloadable report is incomplete or the old inline report workspace remains');
 }
 if (
   !pantheonRoutes.includes("app.post('/api/osint/report-jobs'") ||
@@ -153,8 +179,11 @@ if (
 if (
   !crawlerSelection.includes("request.purpose === 'background_report'") ||
   !crawlerSelection.includes('depth controls effort, not participation') ||
-  !backgroundOrchestrator.includes('searchAllIsolated') ||
-  !backgroundAdapter.includes('searchAllIsolated(request.targets') ||
+  !backgroundOrchestrator.includes('searchAllIsolatedWithAudit') ||
+  !backgroundAdapter.includes('searchAllIsolatedWithAudit(request.targets') ||
+  !backgroundPeopleSearch.includes('buildPantheonBackgroundTargets') ||
+  !backgroundPeopleSearch.includes('searchCaseHistory(searchQuery') ||
+  !backgroundPeopleSearch.includes('crawlerAudit') ||
   !seedFirstConfig.includes('DEFAULT_DISABLED_CRAWLERS: readonly PermittedCrawlerName[] = [] as const')
 ) {
   fail('Pantheon background reports do not preserve the complete crawler roster');
@@ -162,6 +191,8 @@ if (
 if (
   !backgroundAdapter.includes('deployBackgroundReport') ||
   !backgroundAdapter.includes("request.purpose === 'background_report'") ||
+  !backgroundAdapter.includes('crawlerAudit') ||
+  !twoStage.includes('BackgroundCapabilityAudit') ||
   !twoStage.includes('FarmCrawler') ||
   !twoStage.includes('PhantomCrawler') ||
   !twoStage.includes('NovaCrawler')
