@@ -143,7 +143,8 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
     doc.text(`Subject: ${subject}`);
     doc.text(`Generated: ${formatDate(input.completedAt || new Date())}`);
     doc.text(`Investigation started: ${formatDate(input.createdAt)}`);
-    doc.text(`Search depth: ${report.searchDepthUsed ?? cleanText(input.job?.searchDepth) || 'N/A'}`);
+    const searchDepth = report.searchDepthUsed ?? (cleanText(input.job?.searchDepth) || 'N/A');
+    doc.text(`Search depth: ${searchDepth}`);
     doc.text(`Overall confidence: ${percent(report.confidenceScore)}`);
     doc.moveDown(0.5);
     doc.font('Helvetica-Oblique').fontSize(8).text(
