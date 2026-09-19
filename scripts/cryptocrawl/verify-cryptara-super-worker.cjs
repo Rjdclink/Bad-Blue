@@ -77,7 +77,7 @@ requirePattern(leaseAuthority, /requestCryptaraSharedInformation/, 'expired runt
 
 requirePattern(governance, /installCryptaraSuperWorkerAdmission\(\)[\s\S]{0,900}stageManager\.restorePersistence/, 'manual CryptoCrawler start installs its DB admission governor before governed persistence');
 forbidPattern(governance, /releaseRollingDeploymentPoolHeadroom/, 'CryptoCrawler governance must not control LegalWhat application-pool headroom');
-requirePattern(serverIndex, /await\s+runMigrations\(\)[\s\S]{0,240}releaseRollingDeploymentPoolHeadroom\('application_database_ready'\)/, 'LegalWhat restores its application-pool headroom independently after application migrations');
+requirePattern(serverIndex, /await\s+initializeDatabase\(\)[\s\S]{0,900}releaseRollingDeploymentPoolHeadroom\('application_database_ready'\)/, 'LegalWhat restores its application-pool headroom independently after application database readiness');
 requirePattern(governance, /stageManager\.restorePersistence[\s\S]{0,2400}activateCryptaraSuperWorkerIntelligence\(\)/, 'resource intelligence activates only after critical governance persistence enters the governed lane');
 requirePattern(governance, /getCryptaraSuperWorkerSnapshot/, 'governance observes Super Worker efficiency telemetry');
 forbidPattern(governance, /superWorker[^\n]{0,180}(execute|SUBMIT_TX|executionAuthority\s*:\s*true)/i, 'governance uses the Super Worker as execution authority');
