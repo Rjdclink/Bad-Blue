@@ -393,19 +393,6 @@ export default function PantheonPage() {
           {/* Permanent Background Report Workspace */}
           <section className="results" aria-live="polite">
             <h2>Generated Background Report</h2>
-            {reportState === 'idle' && !results && (
-              <Card className="results-display">
-                <CardHeader>
-                  <CardTitle>Report Workspace</CardTitle>
-                  <CardDescription>
-                    Your completed PANTHEON background report will populate here.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="text-sm text-muted-foreground">
-                  Start an investigation above. Every configured PANTHEON crawler participates; the selected level sets the investigation budget.
-                </CardContent>
-              </Card>
-            )}
             {reportState === 'processing' && (
               <Card className="results-display">
                 <CardHeader>
@@ -431,7 +418,11 @@ export default function PantheonPage() {
                 </CardContent>
               </Card>
             )}
-            {results && <ResultsDisplay data={results} />}
+            {results && (
+              <article className="report-document" aria-label="Completed PANTHEON background report">
+                <ResultsDisplay data={results} />
+              </article>
+            )}
           </section>
 
           {results && locationMap.heatmap.length > 0 && (
@@ -640,6 +631,30 @@ function ResultsDisplay({ data }: { data: PeopleSearchReport }) {
             <h3 className="font-semibold text-base mb-3">Public Records</h3>
             <ul className="space-y-2">
               {data.publicRecords.map((item, idx) => (
+                <li key={idx} className="text-sm leading-relaxed">• {item}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Online Mentions */}
+        {data.onlineMentions && data.onlineMentions.length > 0 && (
+          <div>
+            <h3 className="font-semibold text-base mb-3">Online Mentions</h3>
+            <ul className="space-y-2">
+              {data.onlineMentions.map((item, idx) => (
+                <li key={idx} className="text-sm leading-relaxed">• {item}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Risk & Reputation */}
+        {data.riskAndReputation && data.riskAndReputation.length > 0 && (
+          <div>
+            <h3 className="font-semibold text-base mb-3">Risk & Reputation</h3>
+            <ul className="space-y-2">
+              {data.riskAndReputation.map((item, idx) => (
                 <li key={idx} className="text-sm leading-relaxed">• {item}</li>
               ))}
             </ul>

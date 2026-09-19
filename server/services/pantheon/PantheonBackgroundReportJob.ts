@@ -1,4 +1,4 @@
-import { storage } from '../../storage';
+import { updatePantheonReportRecord } from './PantheonReportStore';
 import { conductFullOSINT } from '../../peopleSearch';
 import { canActivatePantheon } from '../pantheonCrawlerOrchestrator';
 import {
@@ -40,7 +40,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
   const startedAt = new Date();
   const budgetMs = getPantheonReportDurationMs(input.searchDepth);
 
-  await storage.updatePeopleSearchReportStatus(input.reportId, 'processing', {
+  await updatePantheonReportRecord(input.reportId, 'processing', {
     job: jobEnvelope(input, 'running', { startedAt: startedAt.toISOString() }),
     report: null,
   });
@@ -76,7 +76,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       if (timer) clearTimeout(timer);
     }
 
-    await storage.updatePeopleSearchReportStatus(input.reportId, 'completed', {
+    await updatePantheonReportRecord(input.reportId, 'completed', {
       job: jobEnvelope(input, 'completed', {
         startedAt: startedAt.toISOString(),
         completedAt: new Date().toISOString(),
@@ -85,7 +85,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await storage.updatePeopleSearchReportStatus(input.reportId, 'failed', {
+    await updatePantheonReportRecord(input.reportId, 'failed', {
       job: jobEnvelope(input, 'failed', {
         startedAt: startedAt.toISOString(),
         failedAt: new Date().toISOString(),
