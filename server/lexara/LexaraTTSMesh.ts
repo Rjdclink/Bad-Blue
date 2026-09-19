@@ -620,6 +620,24 @@ async function synthesizeOpenRouter(text: string, probe = false): Promise<Lexara
     }, probe ? LEXARA_TTS_PROBE_TIMEOUT_MS : LEXARA_TTS_REQUEST_TIMEOUT_MS);
 
     if (response.ok) {
+      if (model.startsWith('google/')) {
+        const pcm = Buffer.from(await response.arrayBuffer());
+        if (!pcm.length) {
+          const message = 'openrouter Gemini TTS returned empty PCM audio';
+          markFailure(provider, 'invalid_response', message);
+          throw new Error(message);
+        }
+        const latencyMs = Date.now() - startedAt;
+        markSuccess(provider, latencyMs);
+        return {
+          provider,
+          audioData: pcm16MonoToWav(pcm, 24_000),
+          mimeType: 'audio/wav',
+          voiceId,
+          model,
+          latencyMs,
+        };
+      }
       return requireAudioResponse(provider, response, voiceId, model, startedAt);
     }
 
