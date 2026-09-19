@@ -23,8 +23,8 @@ assert.match(worker, /function activeOverflowPool\(\)/);
 assert.doesNotMatch(worker, /\bnew\s+(?:pg\.)?Pool\s*\(/);
 assert.doesNotMatch(worker, /function primaryDatabaseUrl\(\)|process\.env\.SUPABASE_DATABASE_URL(?!_OVERFLOW)/);
 assert.match(worker, /CRYPTOCRAWL_OVERFLOW_POOL_MAX, 2, 1, 2/);
-assert.match(worker, /max:\s*overflowPoolMax/);
-assert.match(worker, /min:\s*0/);
+assert.match(worker, /runtimeOverflowPool\.options\?\.max \?\? overflowPoolMax/);
+assert.doesNotMatch(worker, /\bnew\s+(?:pg\.)?Pool\s*\(/);
 assert.doesNotMatch(worker, /setInterval\s*\(/);
 
 // Proxy authority is explicitly noncritical. Future systems must opt in through
