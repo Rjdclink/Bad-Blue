@@ -135,8 +135,8 @@ function satisfiedFieldsFor(data: Partial<PersonRecord>, required: RequiredField
 // ============================================
 
 /**
- * Capability tiers - cheapest to most expensive
- * NOTE: T4+ (browser/Playwright) are NOT implemented here - they come later
+ * Cheap non-browser capability tiers. Browser execution is intentionally
+ * owned by the separate PlaywrightTier adapter.
  */
 export enum CapabilityTier {
   /** T0: Static/embedded state - cached or pre-known data */
@@ -150,11 +150,8 @@ export enum CapabilityTier {
   
   /** T3: Light JS - Minimal JS execution without full browser */
   T3_LIGHT_JS = 'T3_LIGHT_JS',
-  
-  // T4+ (BROWSER/PLAYWRIGHT) - NOT IMPLEMENTED IN THIS STEP
-  // These are placeholders to show the full ladder
-  // T4_HEADLESS_BROWSER = 'T4_HEADLESS_BROWSER',
-  // T5_FULL_BROWSER = 'T5_FULL_BROWSER',
+  // Browser escalation remains a separate capability authority so cheap
+  // public-data routing never silently initializes a browser.
 }
 
 /**
