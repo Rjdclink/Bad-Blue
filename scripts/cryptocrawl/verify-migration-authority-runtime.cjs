@@ -109,7 +109,9 @@ assert.match(primaryArchiveWorker, /compGoverned:\s*true/);
 assert.match(admissionWorker, /export async function withCryptaraSupabaseAdmission/);
 assert.match(admissionWorker, /const permit = await governor\.acquire\(priority\)/);
 assert.match(admissionWorker, /permit\.release\(failure, Date\.now\(\) - startedAt\)/);
-assert.match(admissionWorker, /if \(this !== pool\)[\s\S]{0,220}originalConnect\.call\(this/);
+assert.match(admissionWorker, /const\s+target:\s*any\s*=\s*pool\s+as\s+any/);
+assert.doesNotMatch(admissionWorker, /Pool\.prototype/);
+assert.match(admissionWorker, /export function uninstallCryptaraSupabaseAdmissionWorker\(\)/);
 
 // Production CryptoCrawler admission is source-owned and requires both Overflow
 // transport and the complete runtime schema. A schema failure must retry the actual
