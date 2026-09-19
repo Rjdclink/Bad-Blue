@@ -105,10 +105,8 @@ export function ensureLearningLifecycleWiring(): void {
 export async function stopLearningLifecycleWiring(): Promise<void> {
   const deep = deepLearningStore as unknown as DeepLearningRuntime;
   const instant = instantLearningEngine as unknown as InstantLearningRuntime;
-  try {
-    await deep.stop();
-  } finally {
-    deep.deactivateSupabaseMirror();
-    instant.deactivateSupabaseMirror();
-  }
+  // STOPPING is a no-new-I/O phase. Do not perform a final Supabase persistence
+  // write while shutting down; detach the mirrors immediately.
+  deep.deactivateSupabaseMirror();
+  instant.deactivateSupabaseMirror();
 }
