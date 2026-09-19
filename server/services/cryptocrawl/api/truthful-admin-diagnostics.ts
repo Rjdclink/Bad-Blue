@@ -10,6 +10,10 @@ import { loadDynamicChainRegistry } from '../core/dynamic-chain-registry.js';
 import { stageManager } from '../governance/stage-management.js';
 import { marketDataProviders } from '../intelligence/market-data-providers.js';
 import { getCryptoCrawlerRuntimeAttestation, isRuntimeIdentitySafe } from '../runtime/runtime-attestation.js';
+import {
+  getCryptoCrawlerManualPowerPhase,
+  isCryptoCrawlerMasterPowerOn,
+} from '../runtime/manual-power-state.js';
 
 const router = express.Router();
 
@@ -178,6 +182,21 @@ async function readRecentCryptoLogs(limit: number): Promise<{
 }
 
 router.get('/health', async (_req, res) => {
+  if (!isCryptoCrawlerMasterPowerOn()) {
+    return res.json({
+      success: true,
+      status: 'stopped',
+      observedAt: Date.now(),
+      masterPower: getCryptoCrawlerManualPowerPhase(),
+      runtime: getCryptoCrawlerRuntimeAttestation(),
+      checks: {
+        database: { ready: false, queried: false, detail: 'CryptoCrawler Master Power is OFF' },
+        cexCore: { ready: false, queried: false },
+        rpc: { queried: false, chains: [] },
+      },
+    });
+  }
+
   try {
     const [database, core] = await Promise.all([
       databaseEvidence(),
