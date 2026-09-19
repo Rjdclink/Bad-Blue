@@ -34,6 +34,7 @@ const instantLearning = read('server/services/cryptocrawl/learning/instant-learn
 const learningCompat = read('server/services/cryptocrawl/learning/supabase-compatibility.ts');
 const eden = read('server/services/cryptocrawl/eden/service.ts');
 const truthfulDiagnostics = read('server/services/cryptocrawl/api/truthful-admin-diagnostics.ts');
+const livePriceMesh = read('server/services/cryptocrawl/bridge/live-price-mesh.ts');
 
 lacks(boot, /automaticCryptoCrawlerRuntimeRequired/, 'server boot must not own CryptoCrawler automatic resume');
 lacks(boot, /startCryptoCrawlerRuntime/, 'server boot must never invoke the CryptoCrawler start authority');

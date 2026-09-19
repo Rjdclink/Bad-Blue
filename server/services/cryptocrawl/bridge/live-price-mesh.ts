@@ -1,4 +1,5 @@
 import { coinGeckoPriceClient } from './coingecko-client.js';
+import { isCryptoCrawlerMasterPowerOn } from '../runtime/manual-power-state.js';
 import {
   createZeroCapitalPriceEvidence,
   getFreshZeroCapitalPriceEvidence,
@@ -16,6 +17,7 @@ class LivePriceMesh {
   private readonly symbolRefreshInFlight = new Map<string, Promise<void>>();
   private readonly hotSymbols = ['USDC', 'USDT'] as const;
   private residentPlaneStarted = false;
+  private residentPlaneTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
     this.startResidentPricePlane();
@@ -80,14 +82,18 @@ class LivePriceMesh {
     if (this.residentPlaneStarted) return;
     this.residentPlaneStarted = true;
     const tick = () => {
+      // CryptoCrawler price residency is subordinate to the manual master power.
+      // Keep the module import-safe for LegalWhat/Pantheon/Lexara: while OFF it
+      // performs no crypto provider I/O and consumes no recurring crypto work.
+      if (!isCryptoCrawlerMasterPowerOn()) return;
       const now = Date.now();
       const due = this.hotSymbols.filter(symbol => this.needsRefresh(symbol, now));
       if (due.length > 0) this.primeResidentSymbolPrices(due);
     };
     const initial = setTimeout(tick, 0);
     initial.unref?.();
-    const timer = setInterval(tick, this.backgroundCadenceMs());
-    timer.unref?.();
+    this.residentPlaneTimer = setInterval(tick, this.backgroundCadenceMs());
+    this.residentPlaneTimer.unref?.();
   }
 
   /**
@@ -95,6 +101,7 @@ class LivePriceMesh {
    * in-flight refresh. Overlapping callers reuse the same promise per symbol.
    */
   private ensureRefresh(symbols: readonly string[]): Promise<void>[] {
+    if (!isCryptoCrawlerMasterPowerOn()) return [];
     const normalized = this.normalizedSymbols(symbols);
     const waiters: Promise<void>[] = [];
     const missing: string[] = [];
@@ -134,7 +141,7 @@ class LivePriceMesh {
    */
   async getLiveSymbolPrices(symbols: string[]): Promise<Map<string, number>> {
     const normalized = this.normalizedSymbols(symbols);
-    if (normalized.length === 0) return new Map<string, number>();
+    if (normalized.length === 0 || !isCryptoCrawlerMasterPowerOn()) return new Map<string, number>();
     const waiters = this.ensureRefresh(normalized);
     if (waiters.length > 0) await Promise.all(waiters);
 
