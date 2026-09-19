@@ -9,6 +9,10 @@ import {
   formatAuthorityResearchForSystem,
   researchLegalAuthority,
 } from './LexaraAuthorityResearch';
+import {
+  formatLexaraDomainSpecialization,
+  getLexaraLegalDomainProfile,
+} from './LexaraLegalDomainProfiles';
 
 export interface LexaraConversationMessage {
   role: 'user' | 'lexara' | 'assistant';
@@ -283,11 +287,16 @@ function buildLegalSystemPrompt(
   jurisdiction?: string,
 ): string {
   const domainName = trustedDomainName(context.lawType);
+  const domainProfile = getLexaraLegalDomainProfile(context.lawType);
   const behaviorMode = context.behaviorMode === 'personable'
     ? 'warm and conversational'
     : 'calm, precise, and professional';
 
   let expertise = `Active legal domain: ${domainName}.`;
+  const specialization = formatLexaraDomainSpecialization(domainProfile);
+  if (specialization) {
+    expertise += `\n\n${specialization}`;
+  }
   if (mappedLawType) {
     expertise += ` Internal specialization key: ${mappedLawType.replace(/-/g, ' ')}.`;
   }
@@ -331,6 +340,7 @@ export async function generateLexaraConversationResponse(
     || normalizeJurisdiction(context.jurisdiction)
     || inferPriorUserJurisdiction(context.previousMessages);
   const domainName = trustedDomainName(context.lawType);
+  const domainProfile = getLexaraLegalDomainProfile(context.lawType);
 
   // Pure presence checks are conversational control turns, not legal-analysis
   // jobs. Returning here prevents "Are you still there?" from launching a
@@ -354,6 +364,8 @@ export async function generateLexaraConversationResponse(
   const authorityResearchPromise = researchLegalAuthority(cleanPrompt, {
     jurisdiction,
     domainName,
+    researchHints: domainProfile?.researchHints,
+    preferredOfficialDomains: domainProfile?.preferredOfficialDomains,
     signal: researchController.signal,
   }).catch(() => null);
   const authorityResearch = await Promise.race([
