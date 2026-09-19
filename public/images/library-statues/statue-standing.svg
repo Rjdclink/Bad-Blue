@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 150 210" role="presentation">
+<defs>
+ <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+  <stop offset="0" stop-color="#fff0a6"/><stop offset="0.18" stop-color="#d9a62a"/><stop offset="0.42" stop-color="#fff2a8"/><stop offset="0.67" stop-color="#b57910"/><stop offset="1" stop-color="#f4ca55"/>
+ </linearGradient>
+ <filter id="s" x="-20%" y="-20%" width="140%" height="160%"><feDropShadow dx="0" dy="5" stdDeviation="3" flood-color="#000" flood-opacity=".55"/></filter>
+</defs>
+<path d="M 63,5 L 53,12 L 51,18 L 55,26 L 55,31 L 45,38 L 47,39 L 46,46 L 46,43 L 49,42 L 49,58 L 45,61 L 48,63 L 51,62 L 55,55 L 58,58 L 56,63 L 62,60 L 59,65 L 56,65 L 64,65 L 60,68 L 64,68 L 71,62 L 73,63 L 70,82 L 61,96 L 62,101 L 66,93 L 69,92 L 68,97 L 73,89 L 73,82 L 80,65 L 84,43 L 94,55 L 82,67 L 78,76 L 83,90 L 86,109 L 86,123 L 80,133 L 82,161 L 77,167 L 82,183 L 66,185 L 61,190 L 61,198 L 58,200 L 58,203 L 76,207 L 106,205 L 109,203 L 106,198 L 106,190 L 101,185 L 90,184 L 87,181 L 94,125 L 101,99 L 100,76 L 109,55 L 106,34 L 86,23 L 76,11 L 74,5 Z M 47,61 L 48,60 L 49,60 L 50,61 L 49,62 L 48,62 Z M 49,59 L 50,58 L 51,59 L 51,60 L 50,61 L 49,60 Z M 68,54 L 70,56 L 70,59 L 69,60 L 68,59 L 68,58 L 67,57 L 67,55 Z M 66,53 L 67,52 L 68,53 L 68,54 L 67,55 L 66,54 Z M 73,41 L 75,43 L 75,47 L 74,48 L 73,47 L 73,46 L 72,45 L 72,42 Z M 48,41 L 49,40 L 50,41 L 49,42 Z M 49,40 L 50,39 L 51,40 L 50,41 Z M 49,36 L 50,37 L 48,39 L 47,39 L 46,38 L 48,36 Z M 49,36 L 50,35 L 51,35 L 52,36 L 51,37 L 50,37 Z" fill="url(#g)" fill-rule="evenodd" filter="url(#s)" stroke="#8c5b0e" stroke-width="1.2" vector-effect="non-scaling-stroke"/>
+</svg>
