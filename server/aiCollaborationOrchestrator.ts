@@ -253,6 +253,7 @@ async function callOpenAICompatibleHarmonyProvider(
   prompt: string,
   systemPrompt: string | undefined,
   maxTokens: number,
+  timeoutMs: number,
   signal?: AbortSignal,
 ): Promise<{ content: string; tokensUsed: number }> {
   const configs: Partial<Record<AIProvider, { baseUrl: string; key?: string }>> = {
@@ -277,7 +278,7 @@ async function callOpenAICompatibleHarmonyProvider(
   if (!config?.key) throw new Error(`${provider} is not configured`);
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8_000);
+  const timer = setTimeout(() => controller.abort(), Math.max(1_000, timeoutMs));
   const relayAbort = () => controller.abort();
   if (signal?.aborted) controller.abort();
   else signal?.addEventListener('abort', relayAbort, { once: true });
@@ -350,12 +351,13 @@ async function callCohereHarmony(
   prompt: string,
   systemPrompt: string | undefined,
   maxTokens: number,
+  timeoutMs: number,
   signal?: AbortSignal,
 ): Promise<{ content: string; tokensUsed: number }> {
   const key = process.env.COHERE_API_KEY?.trim();
   if (!key) throw new Error('cohere is not configured');
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8_000);
+  const timer = setTimeout(() => controller.abort(), Math.max(1_000, timeoutMs));
   const relayAbort = () => controller.abort();
   if (signal?.aborted) controller.abort();
   else signal?.addEventListener('abort', relayAbort, { once: true });
@@ -1192,7 +1194,7 @@ export class AICollaborationOrchestrator {
             runProvider(
               task.provider,
               prompt,
-              { model: task.model, systemPrompt: task.systemPrompt },
+              { model: task.model, systemPrompt: task.systemPrompt, signal: task.signal },
               outputTokenLimit,
               taskMetadata,
             ),
@@ -1209,7 +1211,7 @@ export class AICollaborationOrchestrator {
             runProvider(
               AIProvider.CLAUDE,
               prompt,
-              { model: task.model, systemPrompt: task.systemPrompt },
+              { model: task.model, systemPrompt: task.systemPrompt, signal: task.signal },
               outputTokenLimit,
               taskMetadata,
             ),
@@ -1250,7 +1252,7 @@ export class AICollaborationOrchestrator {
               runProvider(
                 AIProvider.GROQ,
                 prompt,
-                { model: getHarmonyResolvedModel(AIProvider.GROQ), systemPrompt: task.systemPrompt },
+                { model: getHarmonyResolvedModel(AIProvider.GROQ), systemPrompt: task.systemPrompt, signal: task.signal },
                 outputTokenLimit,
                 taskMetadata,
               ),
@@ -1283,6 +1285,7 @@ export class AICollaborationOrchestrator {
               prompt,
               task.systemPrompt,
               outputTokenLimit,
+              task.requestTimeoutMs || 6_000,
               task.signal,
             ),
             task.requestTimeoutMs || 6_000,
@@ -1296,13 +1299,21 @@ export class AICollaborationOrchestrator {
         case AIProvider.COHERE: {
           const result = await withHarmonyDeadline(
             process.env.COHERE_API_KEY?.trim()
-              ? callCohereHarmony(task.model, prompt, task.systemPrompt, outputTokenLimit, task.signal)
+              ? callCohereHarmony(
+                  task.model,
+                  prompt,
+                  task.systemPrompt,
+                  outputTokenLimit,
+                  task.requestTimeoutMs || 6_000,
+                  task.signal,
+                )
               : callOpenAICompatibleHarmonyProvider(
                   AIProvider.HUGGINGFACE,
                   CURRENT_AI_MODELS.cohereViaHuggingFace,
                   prompt,
                   task.systemPrompt,
                   outputTokenLimit,
+                  task.requestTimeoutMs || 6_000,
                   task.signal,
                 ),
             task.requestTimeoutMs || 6_000,
@@ -1322,6 +1333,7 @@ export class AICollaborationOrchestrator {
                   prompt,
                   task.systemPrompt,
                   outputTokenLimit,
+                  task.requestTimeoutMs || 6_000,
                   task.signal,
                 )
               : callOpenAICompatibleHarmonyProvider(
@@ -1330,6 +1342,7 @@ export class AICollaborationOrchestrator {
                   prompt,
                   task.systemPrompt,
                   outputTokenLimit,
+                  task.requestTimeoutMs || 6_000,
                   task.signal,
                 ),
             task.requestTimeoutMs || 6_000,
