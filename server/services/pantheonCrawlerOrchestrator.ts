@@ -252,8 +252,11 @@ export class PantheonCrawlerOrchestrator {
   /**
    * Initialize all crawler systems
    */
-  async initialize(): Promise<void> {
-    if (this.initialized) return;
+  async initialize(lockDurationMs: number = 600000): Promise<void> {
+    if (this.initialized) {
+      acquireSystemLock('pantheon', Math.max(600000, lockDurationMs));
+      return;
+    }
     
     // Check if PANTHEON is available
     if (!isPantheonAvailable()) {
@@ -261,7 +264,7 @@ export class PantheonCrawlerOrchestrator {
     }
     
     // Acquire system lock
-    if (!acquireSystemLock('pantheon', 600000)) { // 10 minute lock
+    if (!acquireSystemLock('pantheon', Math.max(600000, lockDurationMs))) {
       throw new Error('Failed to acquire system lock for PANTHEON');
     }
     
@@ -312,8 +315,11 @@ export class PantheonCrawlerOrchestrator {
    * Execute comprehensive PANTHEON search
    */
   async search(targets: string[], options: PantheonSearchOptions): Promise<CrawlerResult[]> {
+    const requestedBudgetMs = Math.max(600000, options.timeout || 0);
     if (!this.initialized) {
-      await this.initialize();
+      await this.initialize(requestedBudgetMs);
+    } else {
+      acquireSystemLock('pantheon', requestedBudgetMs);
     }
     
     const results: CrawlerResult[] = [];
