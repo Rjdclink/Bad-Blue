@@ -107,6 +107,22 @@ const LEXARA_FEMALE_VOICE = {
   openrouterGemini: process.env.OPENROUTER_GEMINI_TTS_VOICE?.trim() || 'Kore',
 } as const;
 
+export function getLexaraVoiceProfileBindings() {
+  return {
+    name: 'LEXARA',
+    gender: 'female' as const,
+    bindings: {
+      deepgram: LEXARA_FEMALE_VOICE.deepgram,
+      gemini: LEXARA_FEMALE_VOICE.gemini,
+      groq: LEXARA_FEMALE_VOICE.groq,
+      azure: LEXARA_FEMALE_VOICE.azure,
+      xai: LEXARA_FEMALE_VOICE.xai,
+      openrouterMistral: LEXARA_FEMALE_VOICE.openrouterMistral,
+      openrouterGemini: LEXARA_FEMALE_VOICE.openrouterGemini,
+    },
+  };
+}
+
 function providerIndependenceDomain(provider: LexaraTTSProviderId): string {
   if (provider !== 'openrouter') return provider;
   const model = stateFor(provider).lastModel || '';
