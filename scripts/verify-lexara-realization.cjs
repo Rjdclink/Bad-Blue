@@ -367,7 +367,7 @@ must(
     !orchestrator.includes('harmonyDeadline') &&
     orchestrator.includes('LIVE_REASONING_PROVIDER_ATTEMPT_MS = 4_500') &&
     orchestrator.includes('LIVE_REASONING_MAX_FALLBACKS = 3') &&
-    orchestrator.includes('requestTimeoutMs: LIVE_REASONING_INITIAL_ATTEMPT_MS') &&
+    orchestrator.includes('requestTimeoutMs: LIVE_REASONING_PROVIDER_ATTEMPT_MS') &&
     orchestrator.includes('maxFallbacks: LIVE_REASONING_MAX_FALLBACKS') &&
     harmony.includes('fastSynthesisTask') &&
     harmony.includes("firstSuccessful.role === 'legal-analyst'") &&
