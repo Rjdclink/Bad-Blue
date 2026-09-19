@@ -22,6 +22,7 @@ export interface LexaraConversationContext {
   jurisdiction?: string;
   behaviorMode?: 'personable' | 'professional';
   sessionId?: string;
+  signal?: AbortSignal;
 }
 
 export interface LexaraConversationResult {
@@ -346,14 +347,18 @@ export async function generateLexaraConversationResponse(
   // It uses the platform retrieval stack and never makes Google/Gemini a LEXARA
   // dependency. A search outage must not kill the dialogue.
   const researchStartedAt = Date.now();
-  const authorityResearchPromise = researchLegalAuthority(cleanPrompt, {
+  const researchController = new AbortController();
+  const relayResearchAbort = () => researchController.abort();
+  if (context.signal?.aborted) researchController.abort();
+  else context.signal?.addEventListener('abort', relayResearchAbort, { once: true });
+  const researchBudgetTimer = setTimeout(() => researchController.abort(), LIVE_RESEARCH_BUDGET_MS);
+  const authorityResearch = await researchLegalAuthority(cleanPrompt, {
     jurisdiction,
     domainName,
-  });
-  const authorityResearch = await Promise.race([
-    authorityResearchPromise,
-    new Promise<null>(resolve => setTimeout(() => resolve(null), LIVE_RESEARCH_BUDGET_MS)),
-  ]);
+    signal: researchController.signal,
+  }).catch(() => null);
+  clearTimeout(researchBudgetTimer);
+  context.signal?.removeEventListener('abort', relayResearchAbort);
   const researchWaitMs = Date.now() - researchStartedAt;
 
   const systemPrompt = buildLegalSystemPrompt(context, mappedLawType, jurisdiction)
@@ -385,9 +390,10 @@ export async function generateLexaraConversationResponse(
         {
           providerPolicy: 'capability-first',
           systemPrompt,
-          maxParticipants: 2,
-          requestTimeoutMs: 2_200,
-          maxFallbacks: 0,
+          maxParticipants: 3,
+          requestTimeoutMs: 1_800,
+          maxFallbacks: 2,
+          signal: context.signal,
         },
       );
       if (!/^No successful responses from collaboration\.?$/i.test(harmony.finalAnswer.trim())) {
@@ -410,6 +416,8 @@ export async function generateLexaraConversationResponse(
     totalMs: Date.now() - turnStartedAt,
     grounded: !!authorityResearch,
     providersConfigured: harmonyProviders.length,
+    initialHedgeParticipants: Math.min(3, harmonyProviders.length),
+    reserveParticipants: Math.max(0, harmonyProviders.length - 3),
     degraded: /^The live legal-reasoning service is temporarily unavailable/.test(text),
   });
 
