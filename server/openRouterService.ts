@@ -59,7 +59,7 @@ export interface OpenRouterTextResult {
   latencyMs: number;
 }
 
-const AUTO_ROUTER_COOLDOWN_MS = 60_000;
+const AUTO_ROUTER_COOLDOWN_MS = 3_000;
 let autoRouterCooldownUntil = 0;
 let autoRouterLastError: string | null = null;
 
@@ -160,9 +160,12 @@ export async function generateOpenRouterText(
     const name = error instanceof Error ? error.name.toLowerCase() : '';
     const cancellationShaped = name === 'aborterror'
       || /operation was aborted|request was aborted|cancelled|canceled/i.test(message);
-    // A request-local timeout/cancellation is not evidence that OpenRouter is
-    // unhealthy for subsequent turns. Only genuine provider failures cool it.
-    if (!cancellationShaped) {
+    // A model-level 4xx or a request-local timeout/cancellation is not evidence
+    // that every OpenRouter-backed logical participant is unhealthy. Only
+    // transport-wide auth/rate-limit/5xx/network failures get a very short
+    // shared cooldown; Harmony keeps model failures route-local.
+    const transportWideFailure = /\((?:401|429|5\d\d)\)|fetch failed|network|socket|econnreset/i.test(message);
+    if (!cancellationShaped && transportWideFailure) {
       autoRouterLastError = message;
       autoRouterCooldownUntil = Date.now() + AUTO_ROUTER_COOLDOWN_MS;
     }
