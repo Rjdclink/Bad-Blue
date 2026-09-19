@@ -143,13 +143,23 @@ function mergeCrawlerAudit(entries: NonNullable<PeopleSearchReport['crawlerAudit
       merged.set(key, { ...entry });
       continue;
     }
-    const preferredStatus = (statusRank[entry.status] || 0) > (statusRank[existing.status] || 0)
-      ? entry.status
-      : existing.status;
+    const evidenceCount = existing.evidenceCount + entry.evidenceCount;
+    const statuses = [existing.status, entry.status];
+    const preferredStatus = evidenceCount > 0
+      ? 'completed_with_evidence'
+      : statuses.includes('timed_out')
+        ? 'timed_out'
+        : statuses.includes('failed')
+          ? 'failed'
+          : statuses.includes('unavailable_no_content')
+            ? 'unavailable_no_content'
+            : (statusRank[entry.status] || 0) > (statusRank[existing.status] || 0)
+              ? entry.status
+              : existing.status;
     merged.set(key, {
       ...existing,
       status: preferredStatus,
-      evidenceCount: existing.evidenceCount + entry.evidenceCount,
+      evidenceCount,
       attempts: existing.attempts + entry.attempts,
       targets: Math.max(existing.targets, entry.targets),
       error: existing.error || entry.error,
