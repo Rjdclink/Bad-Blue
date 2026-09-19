@@ -1322,7 +1322,7 @@ export class AICollaborationOrchestrator {
             model,
             systemPrompt: task.systemPrompt,
             maxTokens: outputTokenLimit,
-            timeoutMs: task.requestTimeoutMs || 6_000,
+            timeoutMs: taskTimeoutMs,
             signal: attempt.signal,
           });
           content = result.content;
@@ -1339,9 +1339,9 @@ export class AICollaborationOrchestrator {
                 outputTokenLimit,
                 taskMetadata,
               ),
-              task.requestTimeoutMs || 6_000,
+              taskTimeoutMs,
               task.provider,
-              task.signal,
+              attempt.signal,
             );
             content = response.content;
             tokensUsed = response.tokensUsed;
@@ -1350,7 +1350,7 @@ export class AICollaborationOrchestrator {
               model: task.model || 'openai/gpt-oss-120b',
               systemPrompt: task.systemPrompt,
               maxTokens: outputTokenLimit,
-              timeoutMs: task.requestTimeoutMs || 6_000,
+              timeoutMs: taskTimeoutMs,
               signal: attempt.signal,
             });
             content = result.content;
@@ -1368,8 +1368,8 @@ export class AICollaborationOrchestrator {
               prompt,
               task.systemPrompt,
               outputTokenLimit,
-              task.requestTimeoutMs || 6_000,
-              task.signal,
+              taskTimeoutMs,
+              attempt.signal,
             ),
             taskTimeoutMs,
             task.provider,
@@ -1387,8 +1387,8 @@ export class AICollaborationOrchestrator {
                   prompt,
                   task.systemPrompt,
                   outputTokenLimit,
-                  task.requestTimeoutMs || 6_000,
-                  task.signal,
+                  taskTimeoutMs,
+                  attempt.signal,
                 )
               : callOpenAICompatibleHarmonyProvider(
                   AIProvider.HUGGINGFACE,
@@ -1396,8 +1396,8 @@ export class AICollaborationOrchestrator {
                   prompt,
                   task.systemPrompt,
                   outputTokenLimit,
-                  task.requestTimeoutMs || 6_000,
-                  task.signal,
+                  taskTimeoutMs,
+                  attempt.signal,
                 ),
             taskTimeoutMs,
             task.provider,
@@ -1416,8 +1416,8 @@ export class AICollaborationOrchestrator {
                   prompt,
                   task.systemPrompt,
                   outputTokenLimit,
-                  task.requestTimeoutMs || 6_000,
-                  task.signal,
+                  taskTimeoutMs,
+                  attempt.signal,
                 )
               : callOpenAICompatibleHarmonyProvider(
                   AIProvider.HUGGINGFACE,
@@ -1425,8 +1425,8 @@ export class AICollaborationOrchestrator {
                   prompt,
                   task.systemPrompt,
                   outputTokenLimit,
-                  task.requestTimeoutMs || 6_000,
-                  task.signal,
+                  taskTimeoutMs,
+                  attempt.signal,
                 ),
             taskTimeoutMs,
             task.provider,
@@ -1444,7 +1444,7 @@ export class AICollaborationOrchestrator {
             model: CURRENT_AI_MODELS.openRouterAuto,
             systemPrompt: task.systemPrompt,
             maxTokens: outputTokenLimit,
-            timeoutMs: task.requestTimeoutMs || 6_000,
+            timeoutMs: taskTimeoutMs,
             signal: attempt.signal,
           });
           content = result.content;
