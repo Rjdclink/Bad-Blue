@@ -118,8 +118,9 @@ requirePattern(schema, /cryptocrawl_governance_state/, 'Overflow schema verifica
 requirePattern(schema, /cryptocrawler_kraken_nonce_state/, 'Overflow schema verification must cover Kraken nonce state');
 requirePattern(schema, /cryptocrawler_claim_resource_slot/, 'Overflow schema verification must cover lease claim authority');
 
-requirePattern(bootstrap, /ensureCryptocrawlOverflowRuntimeSchema/, 'bootstrap must provision and verify complete Overflow authority schema');
-requirePattern(bootstrap, /complete CryptoCrawler runtime schema verified on Overflow/, 'bootstrap must log complete Overflow authority readiness');
+requirePattern(bootstrap, /CRYPTOCRAWLER_MANUAL_POWER_PHASE\s*=\s*'OFF'/, 'production bootstrap must default CryptoCrawler Master Power OFF');
+requirePattern(bootstrap, /zero CryptoCrawler database\/network startup I\/O/, 'production bootstrap must explicitly remain CryptoCrawler-I/O-free');
+forbidPattern(bootstrap, /startCryptaraHyperBridgeBootstrap\s*\(|ensureCryptocrawlOverflowRuntimeSchema\s*\(/, 'production bootstrap must not touch Overflow/schema before manual start');
 
 // Source-level legacy imports are inventoried rather than accepted as runtime
 // authority. The production esbuild router must rewrite every reachable one and
@@ -181,4 +182,4 @@ if (violations.length > 0) {
   process.exit(1);
 }
 
-console.log(`[overflow-complete-runtime-authority] verified ${files.length} CryptoCrawler source files; inventoried ${directDbImports.length} legacy server/db import(s) for mandatory production redirection; node-postgres owners=${postgresPoolOwners.map(item => `${item.file}:${item.count}`).join(', ')}; complete Overflow schema gate and no duplicate terminal scheduler verified`);
+console.log(`[overflow-complete-runtime-authority] verified ${files.length} CryptoCrawler source files; inventoried ${directDbImports.length} legacy server/db import(s) for mandatory production redirection; node-postgres owners=${postgresPoolOwners.map(item => `${item.file}:${item.count}`).join(', ')}; manual-start-only Overflow authority and no duplicate terminal scheduler verified`);
