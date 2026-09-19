@@ -21,7 +21,7 @@ import express, { Request, Response } from 'express';
 import multer from 'multer';
 import { logger } from '../logger';
 import { LEXARA_KERNEL, mergePersonaWithKernel } from '../lexara/personaKernel';
-import { getLexaraTTSReadiness, synthesizeLexaraSpeechWithFailover } from '../lexara/LexaraTTSMesh';
+import { getLexaraTTSReadiness, refreshLexaraTTSReadiness, synthesizeLexaraSpeechWithFailover } from '../lexara/LexaraTTSMesh';
 import { callAIWithFallback } from '../aiSubAgent';
 import { LEXARA_PERSONA } from '../../shared/lexaraVoicePersona';
 import { isAuthenticated } from '../auth';
@@ -288,14 +288,25 @@ router.post('/audio-chunk', express.raw({ type: 'application/octet-stream', limi
 
 /**
  * GET /api/lexara/voice/live-readiness
- * Cheap capability check used by the consent interstitial. It never exposes
- * credentials and does not spend provider quota.
+ * Operational capability check used by the consent interstitial and live badge.
+ * A configured key is not enough: speech output is reported live only after a
+ * real bounded synthesis canary has verified at least one provider route.
  */
-router.get('/voice/live-readiness', (_req: Request, res: Response) => {
+router.get('/voice/live-readiness', async (_req: Request, res: Response) => {
   const groqConfigured = !!process.env.GROQ_API_KEY?.trim();
+  const deepgramConfigured = !!process.env.DEEPGRAM_API_KEY?.trim();
   const elevenLabsScribeConfigured = !!process.env.ELEVENLABS_API_KEY?.trim();
-  const speechInputConfigured = groqConfigured || elevenLabsScribeConfigured;
-  const ttsReadiness = getLexaraTTSReadiness();
+  const speechInputConfigured = groqConfigured || deepgramConfigured || elevenLabsScribeConfigured;
+
+  let ttsReadiness = getLexaraTTSReadiness();
+  if (!ttsReadiness.available && ttsReadiness.configuredProviders.length > 0) {
+    await Promise.race([
+      refreshLexaraTTSReadiness(false),
+      new Promise(resolve => setTimeout(resolve, 1_200)),
+    ]);
+    ttsReadiness = getLexaraTTSReadiness();
+  }
+
   const harmonyParticipants = getConfiguredHarmonyParticipants();
   const harmonyWarm = getHarmonyWarmStatus();
   const inferenceReady = harmonyWarm.filter(status => status.state === 'ready').length;
@@ -306,14 +317,17 @@ router.get('/voice/live-readiness', (_req: Request, res: Response) => {
     success: true,
     speechInputConfigured,
     speechOutputConfigured: ttsReadiness.available,
+    speechOutputVerified: ttsReadiness.available,
     liveVoiceConfigured: speechInputConfigured && ttsReadiness.available,
     inputProviders: [
       ...(groqConfigured ? ['groq-whisper'] : []),
+      ...(deepgramConfigured ? ['deepgram-nova'] : []),
       ...(elevenLabsScribeConfigured ? ['elevenlabs-scribe'] : []),
     ],
     outputProvider: ttsReadiness.healthyProviders[0] || null,
     outputProviders: ttsReadiness.healthyProviders,
     outputProviderStates: ttsReadiness.providers,
+    outputVerifiedAt: ttsReadiness.verifiedAt,
     legalReasoningConfigured: harmonyParticipants.length > 0,
     legalReasoningParticipants: harmonyParticipants.length,
     legalReasoningInferenceReady: inferenceReady,
