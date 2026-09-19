@@ -35,7 +35,7 @@ assert.match(reconciler, /SELECT pg_try_advisory_lock\(hashtextextended\(\$1, 0\
 // 6543 lane keeps node-postgres client-side query_timeout, while server-side
 // statement_timeout remains available only on session/direct fallback and the
 // dedicated session-capable coordination lane.
-assert.match(db, /\.\.\.\(ordinaryUsesTransactionPool\s*\?\s*\{\}\s*:\s*\{\s*statement_timeout:\s*30000\s*\}\)/);
+assert.match(db, /\.\.\.\(activeUsesTransactionPool\s*\?\s*\{\}\s*:\s*\{\s*statement_timeout:\s*30000\s*\}\)/);
 assert.match(db, /query_timeout:\s*30000/);
 assert.match(db, /getCoordinationPoolConfig[\s\S]{0,900}statement_timeout:\s*15000/);
 assert.match(db, /getCoordinationPoolConfig[\s\S]{0,900}query_timeout:\s*15000/);
@@ -180,6 +180,7 @@ assert.doesNotMatch(adminApi, /export async function startCryptoCrawlerRuntime\(
 assert.match(reconciler, /canonicalSteadyMax/);
 assert.match(reconciler, /requestedSteadyMax[\s\S]{0,220}canonicalSteadyMax/);
 assert.match(reconciler, /steadyMax\s*=\s*Math\.min\(canonicalSteadyMax,\s*requestedSteadyMax\)/);
+assert.match(reconciler, /getApplicationDatabaseSteadyPoolCeiling\(\)[\s\S]{0,420}Math\.min\(state\.steadyMax,\s*activeSteadyCeiling\)/);
 assert.doesNotMatch(reconciler, /BADBLUE_DATABASE_POOL_MAX'[\s\S]{0,100},\s*12\)/);
 
 // The manual numbered runner must actually work in this ESM package.

@@ -221,10 +221,23 @@ function databaseErrorText(error: unknown): string {
   return parts.join(' | ').toLowerCase();
 }
 
+function isSupavisorTransactionRouteUnavailable(error: unknown): boolean {
+  const message = databaseErrorText(error);
+  return (
+    message.includes('eauthquery') ||
+    (
+      message.includes('xx000') &&
+      message.includes('authentication query failed') &&
+      message.includes('connection to database not available')
+    )
+  );
+}
+
 function isDatabaseAdmissionPressureError(error: unknown): boolean {
   const message = databaseErrorText(error);
   const timeoutContext = message.includes('timeout') || message.includes('timed out') || message.includes('connection terminated');
   return (
+    isSupavisorTransactionRouteUnavailable(error) ||
     message.includes('53300') || // PostgreSQL too_many_connections
     message.includes('57p03') || // cannot_connect_now / transient admission failure
     message.includes('etimedout') ||
@@ -283,6 +296,7 @@ async function retryDatabaseProbeWithinBudget(): Promise<void> {
   const startedAt = Date.now();
   let attempt = 0;
   let lastError: unknown = null;
+  let sessionFallbackAttempted = false;
 
   while (Date.now() - startedAt < budgetMs && attempt < STARTUP_DATABASE_MAX_PROBES) {
     attempt += 1;
@@ -305,6 +319,21 @@ async function retryDatabaseProbeWithinBudget(): Promise<void> {
 
       if (isPermanentDatabaseStartupError(error) || isLocalPoolFailure(error)) {
         throw error;
+      }
+
+      if (!sessionFallbackAttempted && isSupavisorTransactionRouteUnavailable(error)) {
+        sessionFallbackAttempted = true;
+        try {
+          const { activateApplicationSessionFallback } = await import('./db');
+          const admitted = await activateApplicationSessionFallback('transaction_pool_auth_backend_unavailable');
+          if (admitted) {
+            console.warn('[RETRY] LegalWhat admitted through bounded Supavisor session fallback');
+            return;
+          }
+        } catch (fallbackError: any) {
+          lastError = fallbackError;
+          console.warn(`[RETRY] Supavisor session fallback unavailable: ${databaseErrorText(fallbackError).slice(0, 700)}`);
+        }
       }
 
       const remainingMs = Math.max(0, budgetMs - elapsedMs);
