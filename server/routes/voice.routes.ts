@@ -16,6 +16,7 @@ import { asyncHandler } from '../errorHandler';
 import { createLogger } from '../logger';
 import { isAuthenticated } from '../auth';
 import { getLexaraTTSReadiness, getLexaraVoiceProfileBindings, openLexaraSpeechStream, refreshLexaraTTSReadiness, synthesizeLexaraSpeechWithFailover, warmLexaraTTSMesh } from '../lexara/LexaraTTSMesh';
+import { issueLexaraRealtimeVoiceTicket } from '../lexara/LexaraRealtimeVoiceGateway';
 
 const log = createLogger('VoiceRoutes');
 
@@ -43,13 +44,53 @@ function boundedVoiceSetting(name: string, fallback: number): number {
 
 export function setupVoiceRoutes(app: Express): void {
   /**
+   * POST /api/lexara/realtime-ticket
+   * Mint a short-lived, one-use ticket for the same-origin duplex WebSocket.
+   * Browser code never receives the Deepgram credential.
+   */
+  app.post('/api/lexara/realtime-ticket', isAuthenticated, (req: Request, res: Response) => {
+    const deepgramConfigured = !!(process.env.DEEPGRAM_API_KEY?.trim() || process.env.DEEPGRAM?.trim());
+    if (!deepgramConfigured) {
+      return res.status(503).json({
+        success: false,
+        error: 'LEXARA realtime voice is not configured',
+      });
+    }
+
+    const subject = typeof (req.user as any)?.id === 'string'
+      ? String((req.user as any).id)
+      : typeof (req.user as any)?.claims?.sub === 'string'
+        ? String((req.user as any).claims.sub)
+        : null;
+    const ticket = issueLexaraRealtimeVoiceTicket(subject);
+    return res.json({
+      success: true,
+      ...ticket,
+      endpoint: '/api/lexara/realtime',
+      provider: 'deepgram-flux',
+    });
+  });
+
+  /**
    * POST /api/lexara/voice/playback-event
    * Browser playback telemetry for diagnosing mobile buffer starvation and
    * distinguishing intentional barge-in from media stalls.
    */
   app.post('/api/lexara/voice/playback-event', (req: Request, res: Response) => {
     const event = typeof req.body?.event === 'string' ? req.body.event.trim().slice(0, 32) : '';
-    const allowed = new Set(['play', 'playing', 'waiting', 'stalled', 'ended', 'error', 'interrupted']);
+    const allowed = new Set([
+      'play',
+      'playing',
+      'waiting',
+      'stalled',
+      'ended',
+      'error',
+      'interrupted',
+      'realtime-first-audio',
+      'realtime-playing',
+      'realtime-interrupted',
+      'realtime-ended',
+    ]);
     if (!allowed.has(event)) return res.status(204).end();
 
     log.info('[LEXARA Audio] playback event', {
@@ -58,7 +99,17 @@ export function setupVoiceRoutes(app: Express): void {
       readyState: Number.isFinite(Number(req.body?.readyState)) ? Number(req.body.readyState) : null,
       networkState: Number.isFinite(Number(req.body?.networkState)) ? Number(req.body.networkState) : null,
       paused: typeof req.body?.paused === 'boolean' ? req.body.paused : null,
-      source: req.body?.source === 'buffered' ? 'buffered' : 'streaming',
+      source: req.body?.source === 'buffered'
+        ? 'buffered'
+        : req.body?.source === 'realtime'
+          ? 'realtime'
+          : 'streaming',
+      provider: typeof req.body?.provider === 'string' ? req.body.provider.slice(0, 80) : null,
+      turnId: typeof req.body?.turnId === 'string' ? req.body.turnId.slice(0, 120) : null,
+      startupMs: Number.isFinite(Number(req.body?.startupMs)) ? Number(req.body.startupMs) : null,
+      totalMs: Number.isFinite(Number(req.body?.totalMs)) ? Number(req.body.totalMs) : null,
+      playbackOffsetMs: Number.isFinite(Number(req.body?.playbackOffsetMs)) ? Number(req.body.playbackOffsetMs) : null,
+      renderedFrames: Number.isFinite(Number(req.body?.renderedFrames)) ? Number(req.body.renderedFrames) : null,
       client: typeof req.body?.userAgent === 'string' ? req.body.userAgent.slice(0, 220) : null,
     });
     return res.status(204).end();

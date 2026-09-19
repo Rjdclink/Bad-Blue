@@ -667,8 +667,21 @@ const rawPort = process.env.PORT ?? null;
 const port = Number(rawPort) || 3000;
 const listenHost = '0.0.0.0';
 startupTrace('listen_prepared', { rawPort, resolvedPort: port, host: listenHost });
-httpServer = createServer(app); 
+httpServer = createServer(app);
   startupTrace('http_server_created');
+
+  // Realtime LEXARA voice attaches to the actual listening server. The route
+  // is additive and failure-local: legacy HTTP STT/TTS remains available.
+  try {
+    const { attachLexaraRealtimeVoiceGateway } = await import('./lexara/LexaraRealtimeVoiceGateway');
+    attachLexaraRealtimeVoiceGateway(httpServer);
+    startupTrace('lexara_realtime_voice_gateway_attached');
+  } catch (error) {
+    console.warn('[LEXARA Realtime] Gateway attachment skipped; legacy voice remains active', error);
+    startupTrace('lexara_realtime_voice_gateway_degraded', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 
   httpServer.on('error', (error: any) => {
     startupError = error?.message ?? 'HTTP server failed to start';
