@@ -25,6 +25,8 @@ import { lexaraSpeakTest } from '../lexara/LexaraTTSRouter';
 import { callAIWithFallback } from '../aiSubAgent';
 import { LEXARA_PERSONA } from '../../shared/lexaraVoicePersona';
 import { isAuthenticated } from '../auth';
+import { getConfiguredHarmonyParticipants } from '../aiHarmonyModelRegistry';
+import { getHarmonyWarmStatus } from '../aiHarmonyWarmup';
 
 const router = express.Router();
 router.use(isAuthenticated);
@@ -293,6 +295,11 @@ router.get('/voice/live-readiness', (_req: Request, res: Response) => {
   const groqConfigured = !!process.env.GROQ_API_KEY?.trim();
   const elevenLabsConfigured = !!process.env.ELEVENLABS_API_KEY?.trim();
   const elevenLabsVoiceConfigured = !!process.env.ELEVENLABS_VOICE_ID?.trim();
+  const harmonyParticipants = getConfiguredHarmonyParticipants();
+  const harmonyWarm = getHarmonyWarmStatus();
+  const inferenceReady = harmonyWarm.filter(status => status.state === 'ready').length;
+  const catalogEligible = harmonyWarm.filter(status => status.state === 'catalog').length;
+  const degraded = harmonyWarm.filter(status => status.state === 'degraded').length;
 
   return res.json({
     success: true,
@@ -307,6 +314,11 @@ router.get('/voice/live-readiness', (_req: Request, res: Response) => {
       ...(elevenLabsConfigured ? ['elevenlabs-scribe'] : []),
     ],
     outputProvider: elevenLabsConfigured && elevenLabsVoiceConfigured ? 'elevenlabs' : null,
+    legalReasoningConfigured: harmonyParticipants.length > 0,
+    legalReasoningParticipants: harmonyParticipants.length,
+    legalReasoningInferenceReady: inferenceReady,
+    legalReasoningCatalogEligible: catalogEligible,
+    legalReasoningDegraded: degraded,
   });
 });
 
