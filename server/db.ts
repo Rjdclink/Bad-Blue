@@ -105,7 +105,7 @@ let ordinarySessionFallbackActive = false;
 // admission has failed and only if the Neon schema proves compatible.
 const neonDatabaseUrl = normalizedOptionalDatabaseUrl(process.env.NEON_DATABASE_URL);
 const neonDirectDatabaseUrl = normalizedOptionalDatabaseUrl(process.env.NEON_DIRECT_DATABASE_URL);
-export const isLegalWhatNeonFailoverConfigured = Boolean(neonDatabaseUrl && neonDirectDatabaseUrl);
+export const isLegalWhatNeonFailoverConfigured = Boolean(neonDatabaseUrl);
 let legalWhatNeonFallbackActive = false;
 // Transaction-mode clients are multiplexed by Supavisor. If no transaction lane
 // is available, use a deliberately smaller session fallback so multiple Railway
@@ -284,8 +284,8 @@ export async function activateLegalWhatNeonFallback(reason: string): Promise<boo
   if (!isLegalWhatNeonFailoverConfigured || legalWhatNeonFallbackActive) {
     return legalWhatNeonFallbackActive;
   }
-  if (!isPostgresConnectionString(neonDatabaseUrl) || !isPostgresConnectionString(neonDirectDatabaseUrl)) {
-    throw new Error('[DATABASE] Neon failover URLs must be PostgreSQL connection strings');
+  if (!isPostgresConnectionString(neonDatabaseUrl)) {
+    throw new Error('[DATABASE] NEON_DATABASE_URL must be a PostgreSQL connection string');
   }
   if (pool.totalCount > 0 || pool.waitingCount > 0) {
     console.warn('[DATABASE] Neon failover skipped because ordinary pool is already active');
