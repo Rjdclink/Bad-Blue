@@ -65,6 +65,15 @@ export interface PeopleSearchReport {
   summary: string;
   confidenceScore: number;
   sources: OSINTSource[];
+  crawlerAudit?: Array<{
+    crawler: string;
+    capabilityClass: string;
+    status: string;
+    evidenceCount: number;
+    attempts: number;
+    targets: number;
+    error?: string;
+  }>;
   mlnlpAnalysis?: MLNLPResult; // ML/NLP intelligence results
 }
 
@@ -88,6 +97,79 @@ function buildPantheonSearchTargets(name: string): string[] {
     `https://www.google.com/search?q=${encodeURIComponent(`"${trimmed}" public records`)}`,
     `https://www.google.com/search?q=${encodeURIComponent(`"${trimmed}" news court business professional`)}`,
   ];
+}
+
+function buildPantheonBackgroundTargets(name: string, location: string | undefined, depth: number): string[] {
+  const trimmed = name.trim();
+  if (!trimmed) return [];
+  const locationTerm = String(location || '').trim();
+  const subject = locationTerm ? `"${trimmed}" "${locationTerm}"` : `"${trimmed}"`;
+  const queryFamilies = [
+    'public records government',
+    'court case docket litigation',
+    'property assessor deed ownership',
+    'business corporation registration',
+    'professional license credential',
+    'employment education biography',
+    'news archive media',
+    'social profile professional directory',
+    'site:.gov',
+    'public filing record',
+  ];
+  const counts: Record<number, number> = { 1: 4, 2: 6, 3: 8, 4: 10 };
+  const selected = queryFamilies.slice(0, counts[depth] || 10);
+  return selected.map((family, index) => {
+    const query = `${subject} ${family}`;
+    return index % 2 === 0
+      ? `https://www.google.com/search?q=${encodeURIComponent(query)}`
+      : `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
+  });
+}
+
+function mergeCrawlerAudit(entries: NonNullable<PeopleSearchReport['crawlerAudit']>): NonNullable<PeopleSearchReport['crawlerAudit']> {
+  const merged = new Map<string, NonNullable<PeopleSearchReport['crawlerAudit']>[number]>();
+  const statusRank: Record<string, number> = {
+    completed_with_evidence: 5,
+    completed_no_evidence: 4,
+    timed_out: 3,
+    unavailable_no_content: 2,
+    failed: 1,
+  };
+
+  for (const entry of entries) {
+    const key = `${entry.capabilityClass}:${entry.crawler}`;
+    const existing = merged.get(key);
+    if (!existing) {
+      merged.set(key, { ...entry });
+      continue;
+    }
+    const preferredStatus = (statusRank[entry.status] || 0) > (statusRank[existing.status] || 0)
+      ? entry.status
+      : existing.status;
+    merged.set(key, {
+      ...existing,
+      status: preferredStatus,
+      evidenceCount: existing.evidenceCount + entry.evidenceCount,
+      attempts: existing.attempts + entry.attempts,
+      targets: Math.max(existing.targets, entry.targets),
+      error: existing.error || entry.error,
+    });
+  }
+  return [...merged.values()].sort((a, b) => a.capabilityClass.localeCompare(b.capabilityClass) || a.crawler.localeCompare(b.crawler));
+}
+
+function dedupeReportStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const raw of values) {
+    const value = String(raw || '').trim();
+    if (!value) continue;
+    const key = value.toLowerCase().replace(/\s+/g, ' ');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(value);
+  }
+  return output;
 }
 
 export async function conductPeopleSearch(
@@ -1016,8 +1098,9 @@ export async function conductFullOSINT(
       console.warn('[People Search] Invalid searchQuery provided:', searchQuery);
       return {
         ...enhancedReport,
+        crawlerAudit: mergeCrawlerAudit(enhancedReport.crawlerAudit || []),
         searchDepthUsed: searchDepth,
-        crawlersActivated
+        crawlersActivated: [...new Set(crawlersActivated)]
       };
     }
 
@@ -1029,10 +1112,7 @@ export async function conductFullOSINT(
       starTrek.setPrimeDirective(true);
       await starTrek.setPhaserSetting(3);
 
-      const starTargets = [
-        `https://www.google.com/search?q=${encodeURIComponent(searchQuery + ' public records')}`,
-        `https://www.google.com/search?q=${encodeURIComponent(searchQuery + ' news')}`,
-      ];
+      const starTargets = buildPantheonBackgroundTargets(searchQuery, options?.location, searchDepth).slice(0, 4);
       const starResults = await Promise.allSettled(starTargets.map(target => starTrek.firePhaser(target)));
       const successfulStarResults = starResults
         .filter((result): result is PromiseFulfilledResult<any> => result.status === 'fulfilled')
@@ -1111,10 +1191,7 @@ export async function conductFullOSINT(
       if (pantheonStatus.available) {
         try {
           // Generate search targets from the query
-          const searchTargets = [
-            `https://www.google.com/search?q=${encodeURIComponent(searchQuery + ' public records')}`,
-            `https://www.google.com/search?q=${encodeURIComponent(searchQuery + ' news')}`,
-          ];
+          const searchTargets = buildPantheonBackgroundTargets(searchQuery, options?.location, searchDepth);
           
           // Use the shared adapter so crawler selection, retrieval provenance,
           // outcome learning, and Cain/Reaper supervision match seeded reports.
@@ -1125,6 +1202,10 @@ export async function conductFullOSINT(
             budgetMs: reportBudgetMs,
           });
           const crawlerResults = crawlerRetrieval.evidence;
+          enhancedReport.crawlerAudit = mergeCrawlerAudit([
+            ...(enhancedReport.crawlerAudit || []),
+            ...crawlerRetrieval.crawlerAudit,
+          ]);
           for (const crawlerName of new Set(crawlerResults.map(result => result.crawler))) {
             if (!crawlersActivated.includes(crawlerName)) {
               crawlersActivated.push(crawlerName);
@@ -1157,16 +1238,14 @@ export async function conductFullOSINT(
             }
           }
           
-          console.log(`[PANTHEON OSINT] Level 3 crawlers completed: ${crawlerResults.length} results`);
+          console.log(`[PANTHEON OSINT] Full crawler roster completed: ${crawlerResults.length} evidence results`);
+          enhancedReport.summary += CRAWLER_MESSAGES.LEVEL_3_SUMMARY;
         } catch (crawlerError: any) {
           console.error('[PANTHEON OSINT] Crawler orchestration failed:', crawlerError.message);
         }
       } else {
         console.log(`[PANTHEON OSINT] PANTHEON unavailable: ${pantheonStatus.reason}`);
       }
-      
-      // Add summary indicating advanced crawlers were activated
-      enhancedReport.summary += CRAWLER_MESSAGES.LEVEL_3_SUMMARY;
     }
 
     // Level 4: GENESIS orchestrator (EYE OF GOD)
@@ -1196,13 +1275,12 @@ export async function conductFullOSINT(
             });
             
             console.log(`[PANTHEON OSINT] GENESIS avalanche completed: ${avalancheResults.length} results`);
+            enhancedReport.summary += CRAWLER_MESSAGES.LEVEL_4_SUMMARY;
           }
         } catch (genesisError: any) {
           console.error('[PANTHEON OSINT] GENESIS orchestration failed:', genesisError.message);
         }
       }
-      
-      enhancedReport.summary += CRAWLER_MESSAGES.LEVEL_4_SUMMARY;
     }
 
     // SpiderFoot scan (when a compatible self-hosted instance is configured).
@@ -1228,20 +1306,37 @@ export async function conductFullOSINT(
       breachData = await breachDetection.checkBreaches(emailData.emails[0]);
     }
 
+    // Legal/court history is a distinct evidence lane and must fail locally.
+    try {
+      enhancedReport.caseHistory = await searchCaseHistory(searchQuery, searchDepth >= 3 ? 25 : 12);
+    } catch (caseHistoryError) {
+      logger.warn('[PANTHEON OSINT] Case-history search failed route-locally:', caseHistoryError);
+    }
+
+    enhancedReport.contactInformation = dedupeReportStrings(enhancedReport.contactInformation);
+    enhancedReport.socialMediaPresence = dedupeReportStrings(enhancedReport.socialMediaPresence);
+    enhancedReport.employmentAndEducation = dedupeReportStrings(enhancedReport.employmentAndEducation);
+    enhancedReport.locationHistory = dedupeReportStrings(enhancedReport.locationHistory);
+    enhancedReport.publicRecords = dedupeReportStrings(enhancedReport.publicRecords);
+    enhancedReport.onlineMentions = dedupeReportStrings(enhancedReport.onlineMentions);
+    enhancedReport.riskAndReputation = dedupeReportStrings(enhancedReport.riskAndReputation);
+    enhancedReport.crawlerAudit = mergeCrawlerAudit(enhancedReport.crawlerAudit || []);
+
     return {
       ...enhancedReport,
       emails: emailData,
       breaches: breachData,
       spiderfoot: spiderfootData,
       searchDepthUsed: searchDepth,
-      crawlersActivated,
+      crawlersActivated: [...new Set(crawlersActivated)],
     };
   } catch (error) {
     console.error('[Full OSINT] Error:', error);
     return {
       ...enhancedReport,
+      crawlerAudit: mergeCrawlerAudit(enhancedReport.crawlerAudit || []),
       searchDepthUsed: searchDepth,
-      crawlersActivated,
+      crawlersActivated: [...new Set(crawlersActivated)],
     };
   }
 }
