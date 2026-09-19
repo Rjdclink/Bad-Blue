@@ -340,7 +340,7 @@ export const RATE_LIMIT_CONFIG = {
 export const SYSTEM_VERSION = {
   app: '1.0.0',
   engines: {
-    voice: 'v2.0.0-elevenlabs',
+    voice: 'v3.0.0-adaptive-verified-mesh',
     geo: 'v1.5.0-hybrid',
     crawler: 'v3.0.0-trinity',
     lexara: 'v2.1.0-persona',
