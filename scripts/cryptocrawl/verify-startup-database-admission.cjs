@@ -23,6 +23,7 @@ const governance = read('server/services/cryptocrawl/governance/index.ts');
 const superWorker = read('server/services/cryptocrawl/integration/cryptara-super-worker.ts');
 const leaseAuthority = read('server/services/cryptocrawl/execution/resource-lease-authority.ts');
 const stageState = read('server/services/cryptocrawl/governance/stage-state-store.ts');
+const badblueWorker = read('server/badblueWorker.ts');
 
 requirePattern(railway, /healthcheckPath\s*=\s*"\/api\/ready"/, 'Railway must promote only a fully initialized deployment');
 requirePattern(index, /function\s+databaseRetryDelayMs[\s\S]*Math\.random/, 'database retry must use bounded jitter');
@@ -44,6 +45,11 @@ requirePattern(index, /else\s+if\s*\(isDatabaseAdmissionPressureError\(lastError
 requirePattern(index, /else\s+if\s*\(isPermanentDatabaseStartupError\(lastError\)\)[\s\S]{0,260}pool reset suppressed/i, 'permanent auth/config faults must not recreate pools');
 requirePattern(index, /Unknown transient database\/network failure; pool reset suppressed to avoid reconnect amplification/i, 'unknown transient network faults must suppress pool recreation');
 requirePattern(index, /localPoolFailure:\s*isLocalPoolFailure\(lastError\)/, 'startup telemetry must distinguish proven local pool failure from upstream/transient failure');
+requirePattern(index, /const\s+\{\s*pool,\s*coordinationPool\s*\}\s*=\s*await\s+import\('\.\/db'\)[\s\S]{0,500}Promise\.allSettled/, 'graceful shutdown must close both LegalWhat database lanes');
+requirePattern(badblueWorker, /probeDatabaseAuthority[\s\S]{0,700}const\s+\{\s*pool\s*\}\s*=\s*await\s+import\('\.\/db'\)[\s\S]{0,300}pool\.query\(\{\s*text:\s*'SELECT 1',\s*query_timeout:\s*5_000\s*\}\)/, 'LegalWhat heartbeat must use only the canonical application pool');
+forbidPattern(badblueWorker, /CRYPTOCRAWL_OVERFLOW_RUNTIME_SCHEMA_READY|cryptocrawl-runtime-database/, 'LegalWhat heartbeat must never wake or borrow CryptoCrawler Overflow');
+forbidPattern(badblueWorker, /repairDatabaseConnection[\s\S]{0,1800}resetPool\s*\(/, 'LegalWhat maintenance must not recreate pools after upstream Supabase failures');
+requirePattern(badblueWorker, /automatic pool recreation suppressed[\s\S]{0,900}upstream_admission_pressure_no_pool_reset/, 'worker must record pressure without reconnect amplification');
 
 // CryptoCrawler must not participate in process-start database admission. LegalWhat
 // proves its own application database; CryptoCrawler Overflow/schema readiness is
