@@ -86,7 +86,8 @@ forbidPattern(migrations, /BADBLUE_DATABASE_ROLLOUT_POOL_MAX/, 'an environment o
 requirePattern(migrations, /export\s+function\s+releaseRollingDeploymentPoolHeadroom[\s\S]{0,900}getApplicationDatabaseSteadyPoolCeiling\(\)[\s\S]{0,500}state\.options\.max\s*=\s*Math\.min\(state\.steadyMax,\s*activeSteadyCeiling\)/, 'rollout release must preserve the active transaction-or-session route ceiling');
 forbidPattern(migrations, /const\s+restore\s*=\s*setTimeout\([\s\S]{0,500}options\.max\s*=\s*steadyMax/, 'an unready deployment must never re-expand its database pool on a wall-clock timer');
 requirePattern(superWorker, /installCryptaraSuperWorkerAdmission[\s\S]{0,420}installCryptaraSupabaseAdmissionWorker\(\)/, 'Super Worker admission arm must delegate to the existing Cryptara DB governor');
-requirePattern(index, /await\s+runMigrations\(\)[\s\S]{0,220}releaseRollingDeploymentPoolHeadroom\('application_database_ready'\)/, 'LegalWhat must restore its ordinary DB capacity independently of CryptoCrawler');
+requirePattern(index, /schema_mutation_skipped[\s\S]{0,500}runtime_verification_only[\s\S]{0,500}releaseRollingDeploymentPoolHeadroom\('application_database_ready'\)/, 'LegalWhat must restore ordinary DB capacity after admission without mutating schema at runtime');
+forbidPattern(index, /await\s+runMigrations\(\)/, 'application startup must never own schema mutation');
 requirePattern(governance, /installCryptaraSuperWorkerAdmission\(\)[\s\S]{0,900}stageManager\.restorePersistence/, 'manual CryptoCrawler start must install its DB admission governor before governed persistence');
 forbidPattern(governance, /releaseRollingDeploymentPoolHeadroom/, 'CryptoCrawler start must not mutate LegalWhat application-pool headroom');
 
