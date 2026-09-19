@@ -1237,7 +1237,7 @@ async function verifyProvider(provider: LexaraTTSProviderId, force = false): Pro
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      log.warn('[LEXARA TTS] readiness probe failed locally', { provider, error: message });
+      log.debug('[LEXARA TTS] provider readiness probe degraded locally; mesh fallback remains authoritative', { provider, error: message });
       return false;
     } finally {
       probeInFlight.delete(provider);
