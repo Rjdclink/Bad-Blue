@@ -153,7 +153,10 @@ must(
     !ttsMesh.includes("process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY") &&
     ttsMesh.includes("'gb_jane_neutral'") &&
     !ttsMesh.includes("'en_paul_neutral'") &&
-    ttsMesh.includes('no verified female English voice') &&
+    ttsMesh.includes('fetchMistralVoiceDetails') &&
+    ttsMesh.includes('workerCount = Math.min(8') &&
+    ttsMesh.includes('configured Mistral TTS voice is not a verified female English voice') &&
+    ttsMesh.includes('mistral preset catalog contains no verifiable female English voice') &&
     ttsMesh.includes("model.startsWith('google/') ? 'pcm' : 'mp3'") &&
     ttsMesh.includes("mimeType: 'audio/wav'") &&
     ttsMesh.includes('pcm16MonoToWav(pcm, 24_000)') &&
