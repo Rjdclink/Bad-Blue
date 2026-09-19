@@ -21,6 +21,7 @@ const governance = read('server/services/cryptocrawl/governance/index.ts');
 const leaseAuthority = read('server/services/cryptocrawl/execution/resource-lease-authority.ts');
 const migrations = read('server/migrations/reconcileAppSchema.ts');
 const dataFabric = read('server/services/quantiComp/dataFabric.ts');
+const serverIndex = read('server/index.ts');
 
 requirePattern(superWorker, /governor:\s*'cryptara'/, 'Cryptara remains the resource policy owner');
 requirePattern(superWorker, /authority:\s*'resource_proxy_only'/, 'Super Worker remains proxy/resource authority only');
@@ -74,7 +75,10 @@ requirePattern(leaseAuthority, /primeCryptaraSharedInformation/, 'runtime lease 
 requirePattern(leaseAuthority, /if \(now < authorityReadyUntil\) return true;/, 'primed schema truth short-circuits before any broker eviction can trigger another DB probe');
 requirePattern(leaseAuthority, /requestCryptaraSharedInformation/, 'expired runtime lease authority consumes shared broker truth');
 
-requirePattern(governance, /installCryptaraSuperWorkerAdmission\(\)[\s\S]{0,500}releaseRollingDeploymentPoolHeadroom/, 'Super Worker admission owns DB flow before rollout headroom is released');
+requirePattern(governance, /installCryptaraSuperWorkerAdmission\(\)[\s\S]{0,700}stageManager\.restorePersistence/, 'manual CryptoCrawler start installs its DB admission governor before governed persistence');
+forbidPattern(governance, /releaseRollingDeploymentPoolHeadroom/, 'CryptoCrawler governance must not own LegalWhat application-pool headroom');
+requirePattern(serverIndex, /await\s+runMigrations\(\)[\s\S]{0,240}releaseRollingDeploymentPoolHeadroom\('application_database_ready'\)/, 'LegalWhat releases its rollout headroom independently after application database migrations');
+requirePattern(migrations, /export function releaseRollingDeploymentPoolHeadroom\(reason = 'application_database_ready'\)/, 'application database headroom authority remains explicitly application-owned');
 requirePattern(governance, /stageManager\.restorePersistence[\s\S]{0,2400}activateCryptaraSuperWorkerIntelligence\(\)/, 'resource intelligence activates only after critical governance persistence enters the governed lane');
 requirePattern(governance, /getCryptaraSuperWorkerSnapshot/, 'governance observes Super Worker efficiency telemetry');
 forbidPattern(governance, /superWorker[^\n]{0,180}(execute|SUBMIT_TX|executionAuthority\s*:\s*true)/i, 'governance uses the Super Worker as execution authority');
