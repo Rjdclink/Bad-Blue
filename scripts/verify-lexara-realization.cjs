@@ -17,6 +17,9 @@ const conversation = read('client/src/components/LexaraConversation.tsx');
 const avatar = read('client/src/components/LexaraEtherealAvatar.tsx');
 const synthesis = read('client/src/hooks/useVoiceSynthesis.ts');
 const speechClient = read('client/src/lib/lexaraSpeechClient.ts');
+const realtimeVoiceClient = read('client/src/lib/lexaraRealtimeVoiceClient.ts');
+const realtimeVoiceGateway = read('server/lexara/LexaraRealtimeVoiceGateway.ts');
+const serverIndex = read('server/index.ts');
 const lexaraRoutes = read('server/routes/lexara.routes.ts');
 const lexaraChatRoutes = read('server/routes/lexara.chat.routes.ts');
 const voiceRoutes = read('server/routes/voice.routes.ts');
@@ -83,13 +86,18 @@ must(
   'conversation storage is versioned to quarantine corrupt prior turns',
 );
 must(
-  voiceMode.includes('const SERVER_VAD_SILENCE_MS = 1_000') &&
+  voiceMode.includes('SERVER_VAD_MIN_SILENCE_MS = 1_800') &&
+    voiceMode.includes('SERVER_VAD_MAX_SILENCE_MS = 3_200') &&
+    voiceMode.includes('fallbackSilenceWindowMs') &&
+    voiceMode.includes('initializeRealtimeRecognition') &&
+    voiceMode.includes("provider: 'deepgram-flux'") &&
     conversation.includes('const BROWSER_FINAL_FALLBACK_SETTLE_MS = 1_200') &&
     conversation.includes('const SERVER_VOICE_TURN_SETTLE_MS = 300') &&
+    conversation.includes('const FLUX_FINAL_SETTLE_MS = 40') &&
     conversation.includes('const VOICE_END_GRACE_MS = 850') &&
     conversation.includes('const INCOMPLETE_TURN_GRACE_MS = 2_200') &&
     conversation.includes('isLikelyIncompleteUtterance'),
-  'voice endpointing reduces dead air while retaining a longer incomplete-thought grace path',
+  'semantic Flux endpointing is primary on mobile while the legacy fallback waits adaptively through natural pauses',
 );
 const liveTurnHandler = conversation.split('const handleUserMessage = useCallback')[1]?.split('handleMessageRef.current = handleUserMessage')[0] || '';
 must(
@@ -117,6 +125,7 @@ must(
     conversation.includes('orderedEchoRatio') &&
     conversation.includes('shortInterruption') &&
     conversation.includes('nonInterruptingClosers') &&
+    conversation.includes('nonInterruptingBackchannels') &&
     conversation.includes('substantiveSingleWord') &&
     conversation.includes('autoInterruptRef.current()') &&
     voiceMode.includes('SERVER_BARGE_IN_PROBE_MS = 320') &&
@@ -192,6 +201,64 @@ must(
     speechClient.includes('getLexaraPlaybackAudioElement') &&
     !speechClient.includes('const audio = new Audio(audioUrl)'),
   'single persistent user-unlocked LEXARA playback channel owns pause/resume and interruption',
+);
+must(
+  speechClient.includes("latencyHint: 'interactive'") &&
+    !speechClient.includes('    audio.load();') &&
+    realtimeVoiceClient.includes('CAPTURE_FRAME_MS = 80') &&
+    realtimeVoiceClient.includes('AudioWorkletNode') &&
+    realtimeVoiceClient.includes("'lexara-capture-processor'") &&
+    realtimeVoiceClient.includes("'lexara-playback-processor'") &&
+    realtimeVoiceClient.includes("type: 'tts_interrupt'") &&
+    realtimeVoiceClient.includes('playbackOffsetMs') &&
+    realtimeVoiceClient.includes('cumulativeRenderedFrames') &&
+    synthesis.includes('lexaraRealtimeVoiceClient.isReady()') &&
+    synthesis.includes("setProvider('deepgram-flux')") &&
+    synthesis.includes('await speakWithServer') &&
+    synthesis.includes('/api/lexara/tts/session'),
+  'realtime PCM/AudioWorklet speech is latency-first while the verified HTTP TTS mesh remains route-local recovery',
+);
+must(
+  realtimeVoiceClient.includes("reportRealtimeVoiceEvent('realtime-first-audio'") &&
+    realtimeVoiceClient.includes("reportRealtimeVoiceEvent('realtime-playing'") &&
+    realtimeVoiceClient.includes("reportRealtimeVoiceEvent('realtime-interrupted'") &&
+    realtimeVoiceClient.includes("reportRealtimeVoiceEvent('realtime-ended'") &&
+    realtimeVoiceClient.includes('startThresholdFrames') &&
+    realtimeVoiceClient.includes('0.024') &&
+    voiceRoutes.includes("'realtime-first-audio'") &&
+    voiceRoutes.includes("'realtime-playing'") &&
+    voiceRoutes.includes("'realtime-interrupted'") &&
+    voiceRoutes.includes("'realtime-ended'"),
+  'realtime voice measures first-audio, first-rendered-sample, interruption, and completion while buffering only a tiny jitter window',
+);
+must(
+  realtimeVoiceGateway.includes("wss://api.deepgram.com/v2/listen") &&
+    realtimeVoiceGateway.includes("wss://api.deepgram.com/v2/speak") &&
+    realtimeVoiceGateway.includes("'flux-general-en'") &&
+    realtimeVoiceGateway.includes("'flux-haley-en'") &&
+    realtimeVoiceGateway.includes("type: 'Configure'") &&
+    realtimeVoiceGateway.includes("type: 'ForceEndTurn'") &&
+    realtimeVoiceGateway.includes("type: 'Speak'") &&
+    realtimeVoiceGateway.includes("type: 'Flush'") &&
+    realtimeVoiceGateway.includes("type: 'Interrupt'") &&
+    realtimeVoiceGateway.includes("type: 'time_ms'") &&
+    realtimeVoiceGateway.includes('recentTurnIds') &&
+    realtimeVoiceGateway.includes('issueLexaraRealtimeVoiceTicket') &&
+    voiceRoutes.includes('/api/lexara/realtime-ticket') &&
+    serverIndex.includes('attachLexaraRealtimeVoiceGateway'),
+  'one authenticated persistent Flux duplex session owns semantic turns, synthesis, dedupe, and precise interruption',
+);
+must(
+  voiceMode.includes("eventType === 'StartOfTurn'") &&
+    voiceMode.includes("eventType === 'TurnResumed'") &&
+    voiceMode.includes("eventType === 'EagerEndOfTurn'") &&
+    voiceMode.includes("eventType !== 'EndOfTurn'") &&
+    voiceMode.includes('serverRealtimeFallbackRef') &&
+    voiceMode.includes('initializeServerRecognition(stream)') &&
+    voiceMode.includes('startServerVad()') &&
+    conversation.includes('keyterms: voiceKeyterms') &&
+    conversation.includes("meta.provider === 'deepgram-flux'"),
+  'Flux turn events graft onto existing echo/barge-in authority and automatically recover to the legacy server recognizer',
 );
 must(
   lexaraRoutes.includes("form.append('response_format', 'verbose_json')") &&

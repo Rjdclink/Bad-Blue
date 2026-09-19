@@ -49,6 +49,7 @@ type ConversationPhase =
 const CONVERSATION_STORAGE_SCHEMA_VERSION = 2;
 const BROWSER_FINAL_FALLBACK_SETTLE_MS = 1_200;
 const SERVER_VOICE_TURN_SETTLE_MS = 300;
+const FLUX_FINAL_SETTLE_MS = 40;
 const VOICE_END_GRACE_MS = 850;
 const INCOMPLETE_TURN_GRACE_MS = 2_200;
 const CHAT_TURN_TIMEOUT_MS = 10_000;
@@ -313,7 +314,13 @@ function isStrongBargeIn(text: string, meta: VoiceTranscriptMeta): boolean {
   const nonInterruptingClosers = new Set([
     'thank you', 'thanks', 'bye', 'goodbye', 'you',
   ]);
-  if (nonInterruptingClosers.has(normalized)) return false;
+  const nonInterruptingBackchannels = new Set([
+    'uh huh', 'uhuh', 'mm hmm', 'mmhmm', 'mhm', 'hmm',
+  ]);
+  if (
+    nonInterruptingClosers.has(normalized)
+    || nonInterruptingBackchannels.has(normalized)
+  ) return false;
 
   // Short acknowledgements can be either backchannels or deliberate barge-ins.
   // Admit them only when they begin during playback and carry enough acoustic
@@ -485,9 +492,20 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     }
   }, [clearVoiceTurnTimer]);
 
+  const voiceKeyterms = useMemo(
+    () => [...new Set([
+      'LEXARA',
+      'LegalWhat',
+      lawTypeName || '',
+      jurisdiction || '',
+    ].map(value => value.trim()).filter(Boolean))],
+    [jurisdiction, lawTypeName],
+  );
+
   const voiceMode = useVoiceMode({
     continuous: true,
     interimResults: true,
+    keyterms: voiceKeyterms,
     shouldProbeBargeIn: () => phaseRef.current === 'speaking',
     onVoiceStart: () => {
       // Voice activity means the user may be continuing a turn, so cancel any
@@ -631,13 +649,15 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
       clearVoiceTurnTimer();
       const bufferedTurn = voiceTurnBufferRef.current.trim();
-      const settleMs = isLikelyIncompleteUtterance(bufferedTurn)
-        ? INCOMPLETE_TURN_GRACE_MS
-        : meta.engine === 'server'
-          ? SERVER_VOICE_TURN_SETTLE_MS
-          : voiceEndPendingRef.current
-            ? VOICE_END_GRACE_MS
-            : BROWSER_FINAL_FALLBACK_SETTLE_MS;
+      const settleMs = meta.provider === 'deepgram-flux'
+        ? FLUX_FINAL_SETTLE_MS
+        : isLikelyIncompleteUtterance(bufferedTurn)
+          ? INCOMPLETE_TURN_GRACE_MS
+          : meta.engine === 'server'
+            ? SERVER_VOICE_TURN_SETTLE_MS
+            : voiceEndPendingRef.current
+              ? VOICE_END_GRACE_MS
+              : BROWSER_FINAL_FALLBACK_SETTLE_MS;
       voiceTurnTimerRef.current = window.setTimeout(flushVoiceTurn, settleMs);
     },
     onError: error => {

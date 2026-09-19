@@ -12,6 +12,7 @@ import {
   LexaraServerTTS,
   Lexara,
 } from '@/lib/lexaraSpeechClient';
+import { lexaraRealtimeVoiceClient } from '@/lib/lexaraRealtimeVoiceClient';
 
 export interface VoiceSynthesisOptions {
   context?: SpeechContext;
@@ -181,6 +182,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     activeTurnRef.current += 1;
     clearPlaybackWatchdog();
     interruptActiveWait();
+    lexaraRealtimeVoiceClient.interrupt();
     LexaraServerTTS.stop();
 
     setIsSpeaking(false);
@@ -472,9 +474,42 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     setError(null);
 
     try {
+      let realtimeStarted = false;
+      if (lexaraRealtimeVoiceClient.isReady()) {
+        try {
+          setProvider('deepgram-flux');
+          await lexaraRealtimeVoiceClient.speak(
+            cleanText,
+            `lexara-turn-${turnId}`,
+            {
+              onStart: () => {
+                realtimeStarted = true;
+                setIsLoading(false);
+                setIsSpeaking(true);
+                options.onStart?.();
+              },
+            },
+          );
+          if (turnId !== activeTurnRef.current) return;
+          setIsSpeaking(false);
+          setIsLoading(false);
+          options.onEnd?.();
+          return;
+        } catch {
+          // Persistent realtime speech is the latency-first route, not a new
+          // mandatory dependency. A socket/provider failure stays local and the
+          // already-proven adaptive HTTP mesh immediately recovers the turn.
+          lexaraRealtimeVoiceClient.interrupt();
+          if (turnId !== activeTurnRef.current) return;
+        }
+      }
+
+      const fallbackOptions = realtimeStarted
+        ? { ...options, onStart: undefined }
+        : options;
       // One persona, multiple provider routes. The server mesh keeps failures
       // route-local and only surfaces an error after compatible TTS routes fail.
-      await speakWithServer(cleanText, options, turnId);
+      await speakWithServer(cleanText, fallbackOptions, turnId);
     } catch (err) {
       clearPlaybackWatchdog();
       interruptionResolverRef.current = null;

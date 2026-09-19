@@ -96,7 +96,14 @@ function reportLexaraPlaybackEvent(event: string, audio?: HTMLAudioElement | nul
 
 export async function getLexaraSharedAudioContext(): Promise<AudioContext> {
   if (!audioContext || audioContext.state === 'closed') {
-    audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const AudioContextConstructor = window.AudioContext || (window as any).webkitAudioContext;
+    try {
+      audioContext = new AudioContextConstructor({ latencyHint: 'interactive' });
+    } catch {
+      // Older WebKit variants can reject constructor options. Preserve the
+      // proven compatibility path rather than making low-latency tuning mandatory.
+      audioContext = new AudioContextConstructor();
+    }
   }
 
   if (audioContext.state === 'suspended') {
@@ -233,7 +240,9 @@ export const LexaraServerTTS = {
     const audio = getLexaraPlaybackAudioElement();
     audio.src = audioUrl;
     audio.volume = 1;
-    audio.load();
+    // Assigning src already starts the media resource selection algorithm.
+    // Do not call load() here: on Android it resets the element and can discard
+    // already-arriving streamed bytes before playback begins.
     playbackState.currentAudio = audio;
     playbackState.currentObjectUrl = shouldRevokeUrl ? audioUrl : null;
     playbackState.isPlaying = false;

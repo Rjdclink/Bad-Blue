@@ -9,6 +9,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useToast } from './use-toast';
 import { getLexaraSharedAudioContext } from '@/lib/lexaraSpeechClient';
+import { lexaraRealtimeVoiceClient, type LexaraRealtimeSttEvent } from '@/lib/lexaraRealtimeVoiceClient';
 
 export interface VoiceTranscriptMeta {
   engine: LexaraVoiceEngine;
@@ -33,6 +34,7 @@ export interface VoiceModeOptions {
   onVoiceStart?: (meta: VoiceActivityMeta) => void;
   onVoiceEnd?: (meta: VoiceActivityMeta) => void;
   shouldProbeBargeIn?: () => boolean;
+  keyterms?: string[];
   continuous?: boolean;
   interimResults?: boolean;
 }
@@ -62,7 +64,8 @@ const MAX_NETWORK_RESTART_DELAY_MS = 5_000;
 const SERVER_VAD_MIN_THRESHOLD = 0.014;
 const SERVER_VAD_MAX_THRESHOLD = 0.075;
 const SERVER_VAD_NOISE_MULTIPLIER = 2.8;
-const SERVER_VAD_SILENCE_MS = 1_000;
+const SERVER_VAD_MIN_SILENCE_MS = 1_800;
+const SERVER_VAD_MAX_SILENCE_MS = 3_200;
 const SERVER_MIN_SPEECH_MS = 220;
 const SERVER_VOICE_CONFIRM_MS = 120;
 const SERVER_VOICE_RECENCY_MS = 90;
@@ -82,6 +85,22 @@ function preferredMicrophoneConstraints(): MediaTrackConstraints {
   if (supported.latency) constraints.latency = { ideal: 0.02 };
 
   return constraints;
+}
+
+function fallbackSilenceWindowMs(speechMs: number): number {
+  if (speechMs >= 12_000) return SERVER_VAD_MAX_SILENCE_MS;
+  if (speechMs >= 5_000) return 2_400;
+  return SERVER_VAD_MIN_SILENCE_MS;
+}
+
+function averageFluxConfidence(event: LexaraRealtimeSttEvent): number | undefined {
+  const values = Array.isArray(event.words)
+    ? event.words
+      .map(word => Number(word?.confidence))
+      .filter(Number.isFinite)
+    : [];
+  if (!values.length) return undefined;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
 function preferredRecordingMimeType(): string | undefined {
@@ -163,6 +182,11 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
   const serverTranscriptionQueueRef = useRef<Promise<void>>(Promise.resolve());
   const serverRecognitionEpochRef = useRef(0);
   const serverEchoCancellationRef = useRef<boolean | undefined>(undefined);
+  const serverRealtimeActiveRef = useRef(false);
+  const serverRealtimeFallbackInFlightRef = useRef(false);
+  const serverRealtimeTurnStartedDuringPlaybackRef = useRef<Set<number>>(new Set());
+  const serverRealtimeTurnStartedAtRef = useRef<Map<number, number>>(new Map());
+  const serverRealtimeFallbackRef = useRef<() => void>(() => undefined);
   const recentFinalTranscriptRef = useRef<{ normalized: string; at: number } | null>(null);
 
   useEffect(() => {
@@ -579,7 +603,8 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
         const speechMs = now - speechStartedAt;
         const silenceMs = now - serverSilenceStartedAtRef.current;
 
-        if (speechMs >= SERVER_MIN_SPEECH_MS && silenceMs >= SERVER_VAD_SILENCE_MS) {
+        const silenceWindowMs = fallbackSilenceWindowMs(speechMs);
+        if (speechMs >= SERVER_MIN_SPEECH_MS && silenceMs >= silenceWindowMs) {
           finishServerUtterance(false);
         }
       }
@@ -597,6 +622,126 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
 
     serverVadFrameRef.current = window.requestAnimationFrame(frame);
   }, [beginServerUtterance, finishServerUtterance, shouldBeListening]);
+
+  const initializeRealtimeRecognition = useCallback(async (stream: MediaStream): Promise<boolean> => {
+    const audioTrack = stream.getAudioTracks()[0];
+    const settings = audioTrack?.getSettings?.();
+    serverEchoCancellationRef.current = typeof settings?.echoCancellation === 'boolean'
+      ? settings.echoCancellation
+      : undefined;
+    serverStreamRef.current = stream;
+
+    const onSttEvent = (event: LexaraRealtimeSttEvent) => {
+      const eventType = String(event.event || '');
+      const text = String(event.transcript || '').replace(/\s+/g, ' ').trim();
+      const turnIndexRaw = Number(event.turn_index);
+      const turnIndex = Number.isFinite(turnIndexRaw)
+        ? turnIndexRaw
+        : serverUtteranceSequenceRef.current + 1;
+
+      if (!Number.isFinite(turnIndexRaw)) {
+        serverUtteranceSequenceRef.current = turnIndex;
+      } else {
+        serverUtteranceSequenceRef.current = Math.max(serverUtteranceSequenceRef.current, turnIndex);
+      }
+
+      const startedDuringPlayback = serverRealtimeTurnStartedDuringPlaybackRef.current.has(turnIndex);
+      const startedAt = serverRealtimeTurnStartedAtRef.current.get(turnIndex);
+      const speechDurationMs = startedAt === undefined
+        ? undefined
+        : Math.max(0, performance.now() - startedAt);
+      const confidence = averageFluxConfidence(event);
+
+      if (eventType === 'StartOfTurn') {
+        const beganDuringPlayback = optionsRef.current.shouldProbeBargeIn?.() === true;
+        if (beganDuringPlayback) {
+          serverRealtimeTurnStartedDuringPlaybackRef.current.add(turnIndex);
+        }
+        serverRealtimeTurnStartedAtRef.current.set(turnIndex, performance.now());
+        setIsListening(true);
+        optionsRef.current.onVoiceStart?.({
+          engine: 'server',
+          echoCancellation: serverEchoCancellationRef.current,
+        });
+
+        if (text) {
+          setInterimTranscript(text);
+          emitTranscript(text, false, {
+            engine: 'server',
+            provider: 'deepgram-flux',
+            confidence,
+            speechDurationMs: 0,
+            bargeInProbe: beganDuringPlayback,
+            utteranceId: turnIndex,
+            startedDuringPlayback: beganDuringPlayback,
+          });
+        }
+        return;
+      }
+
+      if (eventType === 'TurnResumed') {
+        if (text) setInterimTranscript(text);
+        return;
+      }
+
+      if (eventType === 'EagerEndOfTurn' || eventType === 'Update') {
+        if (!text) return;
+        setInterimTranscript(text);
+        emitTranscript(text, false, {
+          engine: 'server',
+          provider: 'deepgram-flux',
+          confidence,
+          speechDurationMs,
+          bargeInProbe: startedDuringPlayback,
+          utteranceId: turnIndex,
+          startedDuringPlayback,
+        });
+        return;
+      }
+
+      if (eventType !== 'EndOfTurn' || !text) return;
+
+      setTranscript(prev => (prev ? `${prev} ${text}` : text));
+      setInterimTranscript('');
+      optionsRef.current.onVoiceEnd?.({
+        engine: 'server',
+        echoCancellation: serverEchoCancellationRef.current,
+      });
+      emitTranscript(text, true, {
+        engine: 'server',
+        provider: 'deepgram-flux',
+        confidence,
+        speechDurationMs,
+        utteranceId: turnIndex,
+        startedDuringPlayback,
+      });
+      serverRealtimeTurnStartedDuringPlaybackRef.current.delete(turnIndex);
+      serverRealtimeTurnStartedAtRef.current.delete(turnIndex);
+    };
+
+    try {
+      await lexaraRealtimeVoiceClient.connect({
+        stream,
+        keyterms: optionsRef.current.keyterms,
+        onSttEvent,
+        onFatal: () => {
+          if (!enabledRef.current || engineRef.current !== 'server') return;
+          serverRealtimeFallbackRef.current();
+        },
+      });
+      serverRealtimeActiveRef.current = true;
+      serverAudioContextRef.current = await getLexaraSharedAudioContext();
+      lexaraRealtimeVoiceClient.setInputEnabled(shouldBeListening());
+      setIsListening(shouldBeListening());
+      return true;
+    } catch {
+      lexaraRealtimeVoiceClient.close(false);
+      serverRealtimeActiveRef.current = false;
+      serverRealtimeTurnStartedDuringPlaybackRef.current.clear();
+      serverRealtimeTurnStartedAtRef.current.clear();
+      return false;
+    }
+  }, [emitTranscript, shouldBeListening]);
 
   const initializeServerRecognition = useCallback(async (stream: MediaStream) => {
     serverRecognitionEpochRef.current += 1;
@@ -628,6 +773,13 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
 
   const cleanupServerRecognition = useCallback((stopTracks = true) => {
     serverRecognitionEpochRef.current += 1;
+    if (serverRealtimeActiveRef.current) {
+      lexaraRealtimeVoiceClient.setInputEnabled(false);
+      lexaraRealtimeVoiceClient.close(false);
+      serverRealtimeActiveRef.current = false;
+      serverRealtimeTurnStartedDuringPlaybackRef.current.clear();
+      serverRealtimeTurnStartedAtRef.current.clear();
+    }
     stopServerVad();
     finishServerUtterance(true);
     transcriptionAbortRef.current?.abort();
@@ -655,6 +807,40 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       serverStreamRef.current = null;
     }
   }, [finishServerUtterance, stopServerVad]);
+
+  const fallbackRealtimeToLegacyServerRecognition = useCallback(async () => {
+    if (
+      serverRealtimeFallbackInFlightRef.current
+      || !enabledRef.current
+      || engineRef.current !== 'server'
+      || !serverRealtimeActiveRef.current
+    ) return;
+
+    const stream = serverStreamRef.current;
+    if (!stream) return;
+
+    serverRealtimeFallbackInFlightRef.current = true;
+    try {
+      lexaraRealtimeVoiceClient.setInputEnabled(false);
+      lexaraRealtimeVoiceClient.close(false);
+      serverRealtimeActiveRef.current = false;
+      serverRealtimeTurnStartedDuringPlaybackRef.current.clear();
+      serverRealtimeTurnStartedAtRef.current.clear();
+      await initializeServerRecognition(stream);
+      if (shouldBeListening()) startServerVad();
+      setError(null);
+    } catch (error) {
+      const nextError = error instanceof Error ? error : new Error('LEXARA realtime voice recovery failed');
+      setError(nextError);
+      optionsRef.current.onError?.(nextError);
+    } finally {
+      serverRealtimeFallbackInFlightRef.current = false;
+    }
+  }, [initializeServerRecognition, shouldBeListening, startServerVad]);
+
+  serverRealtimeFallbackRef.current = () => {
+    void fallbackRealtimeToLegacyServerRecognition();
+  };
 
   const switchToServerRecognition = useCallback(async (): Promise<boolean> => {
     if (!isServerRecognitionSupported()) return false;
@@ -898,8 +1084,15 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       // LEXARA owns endpointing and can wait for a complete thought. Desktop can
       // retain native recognition for lowest latency.
       const preferServerRecognition = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
-      if (preferServerRecognition && isServerRecognitionSupported()) {
-        await initializeServerRecognition(stream);
+      if (preferServerRecognition) {
+        const realtimeReady = await initializeRealtimeRecognition(stream);
+        if (!realtimeReady) {
+          if (!isServerRecognitionSupported()) {
+            stream.getTracks().forEach(track => track.stop());
+            throw new Error('Live speech input is unavailable on this browser. Text mode remains available.');
+          }
+          await initializeServerRecognition(stream);
+        }
         engineRef.current = 'server';
         setEngine('server');
       } else if (isSpeechRecognitionSupported()) {
@@ -934,6 +1127,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     }
   }, [
     cleanupServerRecognition,
+    initializeRealtimeRecognition,
     initializeServerRecognition,
     initializeSpeechRecognition,
     isServerRecognitionSupported,
@@ -949,7 +1143,12 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     if (!enabledRef.current) return;
 
     if (engineRef.current === 'server') {
-      startServerVad();
+      if (serverRealtimeActiveRef.current) {
+        lexaraRealtimeVoiceClient.setInputEnabled(true);
+        setIsListening(true);
+      } else {
+        startServerVad();
+      }
       return;
     }
 
@@ -973,8 +1172,13 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     resetTransientRecovery();
 
     if (engineRef.current === 'server') {
-      stopServerVad();
-      finishServerUtterance(false);
+      if (serverRealtimeActiveRef.current) {
+        lexaraRealtimeVoiceClient.setInputEnabled(false);
+        setIsListening(false);
+      } else {
+        stopServerVad();
+        finishServerUtterance(false);
+      }
       return;
     }
 
@@ -994,8 +1198,13 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     clearRestartTimer();
 
     if (engineRef.current === 'server') {
-      stopServerVad();
-      finishServerUtterance(true);
+      if (serverRealtimeActiveRef.current) {
+        lexaraRealtimeVoiceClient.setInputEnabled(false);
+        setIsListening(false);
+      } else {
+        stopServerVad();
+        finishServerUtterance(true);
+      }
       return;
     }
 
@@ -1015,7 +1224,12 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     clearRestartTimer();
 
     if (engineRef.current === 'server') {
-      startServerVad();
+      if (serverRealtimeActiveRef.current) {
+        lexaraRealtimeVoiceClient.setInputEnabled(true);
+        setIsListening(true);
+      } else {
+        startServerVad();
+      }
       return;
     }
 
@@ -1067,8 +1281,13 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       if (!enabledRef.current || engineRef.current !== 'server') return;
 
       if (document.visibilityState === 'hidden') {
-        stopServerVad();
-        finishServerUtterance(false);
+        if (serverRealtimeActiveRef.current) {
+          lexaraRealtimeVoiceClient.setInputEnabled(false);
+          setIsListening(false);
+        } else {
+          stopServerVad();
+          finishServerUtterance(false);
+        }
         return;
       }
 
@@ -1081,7 +1300,14 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
             // A later explicit user gesture can resume audio on stricter UAs.
           }
         }
-        if (shouldBeListening()) startServerVad();
+        if (shouldBeListening()) {
+          if (serverRealtimeActiveRef.current) {
+            lexaraRealtimeVoiceClient.setInputEnabled(true);
+            setIsListening(true);
+          } else {
+            startServerVad();
+          }
+        }
       })();
     };
 
@@ -1108,6 +1334,16 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       recognitionRef.current = null;
     };
   }, [cleanupServerRecognition, clearRestartTimer, resetTransientRecovery]);
+
+  useEffect(() => {
+    if (!serverRealtimeActiveRef.current) return;
+    lexaraRealtimeVoiceClient.configureStt({
+      keyterms: options.keyterms,
+      eagerEotThreshold: 0.4,
+      eotThreshold: 0.7,
+      eotTimeoutMs: 6_000,
+    });
+  }, [options.keyterms]);
 
   return {
     isEnabled,
