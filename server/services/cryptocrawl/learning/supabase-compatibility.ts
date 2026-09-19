@@ -1,4 +1,5 @@
 import logger from '../../../logger.js';
+import { isCryptoCrawlerDatabaseAccessAllowed } from '../runtime/manual-power-state.js';
 
 function clean(value: string | undefined): string | null {
   if (!value) return null;
@@ -41,6 +42,9 @@ function deriveProjectUrl(databaseUrl: string | null): string | null {
  * evaluated so no learning path silently binds itself back to Primary.
  */
 export function normalizeLegacySupabaseLearningEnvironment(): void {
+  if (!isCryptoCrawlerDatabaseAccessAllowed()) {
+    throw new Error('CRYPTOCRAWLER_MASTER_POWER_OFF');
+  }
   const overflowDatabaseUrl = clean(process.env.SUPABASE_DATABASE_URL_OVERFLOW);
   const existingUrl = clean(process.env.SUPABASE_URL_OVERFLOW);
   const url = existingUrl || deriveProjectUrl(overflowDatabaseUrl);
@@ -69,4 +73,3 @@ export function normalizeLegacySupabaseLearningEnvironment(): void {
   });
 }
 
-normalizeLegacySupabaseLearningEnvironment();
