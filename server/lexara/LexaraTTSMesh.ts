@@ -337,11 +337,51 @@ async function requireAudioResponse(
   };
 }
 
+async function fetchMistralVoiceDetails(voiceId: string): Promise<MistralVoice | null> {
+  try {
+    const response = await fetchWithTimeout(
+      `https://api.mistral.ai/v1/audio/voices/${encodeURIComponent(voiceId)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.MISTRAL_API_KEY!.trim()}`,
+          Accept: 'application/json',
+        },
+      },
+      2_500,
+    );
+    if (!response.ok) return null;
+    const detail = await response.json() as MistralVoice;
+    return detail?.id ? detail : null;
+  } catch {
+    return null;
+  }
+}
+
 async function resolveMistralVoiceId(force = false): Promise<string> {
-  const explicit = process.env.MISTRAL_TTS_VOICE_ID?.trim();
-  if (explicit) return explicit;
   if (!force && mistralVoiceCache && mistralVoiceCache.expiresAt > Date.now()) {
     return mistralVoiceCache.id;
+  }
+
+  const speaksEnglish = (voice: MistralVoice) =>
+    !voice.languages?.length || voice.languages.some(language => /^en(?:-|$)/i.test(language));
+  const isFemale = (voice: MistralVoice) => String(voice.gender || '').toLowerCase() === 'female';
+  const isKnownFemalePreset = (voice: MistralVoice) => {
+    const identity = [voice.name, voice.slug].filter(Boolean).join(' ').toLowerCase();
+    return /(?:^|[_ -])jane(?:[_ -]|$)|(?:^|[_ -])marie(?:[_ -]|$)|female/.test(identity);
+  };
+  const isVerifiedFemaleEnglish = (voice: MistralVoice) =>
+    speaksEnglish(voice) && (isFemale(voice) || isKnownFemalePreset(voice));
+
+  const explicit = process.env.MISTRAL_TTS_VOICE_ID?.trim();
+  if (explicit) {
+    const detail = await fetchMistralVoiceDetails(explicit);
+    if (detail && isVerifiedFemaleEnglish(detail)) {
+      mistralVoiceCache = { id: explicit, expiresAt: Date.now() + MISTRAL_VOICE_CACHE_TTL_MS };
+      return explicit;
+    }
+    const message = 'configured Mistral TTS voice is not a verified female English voice';
+    markFailure('mistral', 'configuration_blocked', message);
+    throw new Error(message);
   }
 
   const response = await fetchWithTimeout(
@@ -378,21 +418,45 @@ async function resolveMistralVoiceId(force = false): Promise<string> {
       .filter(Boolean)
       .some(value => String(value).toLowerCase() === preferredName);
   };
-  const speaksEnglish = (voice: MistralVoice) =>
-    !voice.languages?.length || voice.languages.some(language => /^en(?:-|$)/i.test(language));
-  const isFemale = (voice: MistralVoice) => String(voice.gender || '').toLowerCase() === 'female';
 
-  const isKnownFemalePreset = (voice: MistralVoice) => {
-    const identity = [voice.name, voice.slug].filter(Boolean).join(' ').toLowerCase();
-    return /(?:^|[_ -])jane(?:[_ -]|$)|(?:^|[_ -])marie(?:[_ -]|$)|female/.test(identity);
-  };
-  const selected =
-    voices.find(voice => matchesName(voice) && (isFemale(voice) || isKnownFemalePreset(voice)))
-    || voices.find(voice => speaksEnglish(voice) && isFemale(voice))
-    || voices.find(voice => speaksEnglish(voice) && isKnownFemalePreset(voice));
+  // The list endpoint intentionally returns only lightweight voice metadata.
+  // Prefer an obviously female catalog name when one is available; otherwise
+  // resolve full voice details with bounded concurrency until a female English
+  // preset is proven.
+  const listVerified = voices.find(voice => matchesName(voice) && isKnownFemalePreset(voice))
+    || voices.find(voice => isKnownFemalePreset(voice));
+  if (listVerified?.id) {
+    const detail = await fetchMistralVoiceDetails(String(listVerified.id));
+    if (detail && isVerifiedFemaleEnglish(detail)) {
+      const id = String(detail.id);
+      mistralVoiceCache = { id, expiresAt: Date.now() + MISTRAL_VOICE_CACHE_TTL_MS };
+      return id;
+    }
+  }
+
+  const orderedVoices = preferredName
+    ? [...voices.filter(matchesName), ...voices.filter(voice => !matchesName(voice))]
+    : voices;
+  let selected: MistralVoice | null = null;
+  let cursor = 0;
+  const workerCount = Math.min(8, orderedVoices.length);
+
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (!selected) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= orderedVoices.length) return;
+      const candidate = orderedVoices[index];
+      const detail = await fetchMistralVoiceDetails(String(candidate.id));
+      if (detail && isVerifiedFemaleEnglish(detail)) {
+        selected = detail;
+        return;
+      }
+    }
+  }));
 
   if (!selected?.id) {
-    const message = 'mistral voice catalog returned no verified female English voice';
+    const message = 'mistral preset catalog contains no verifiable female English voice';
     markFailure('mistral', 'configuration_blocked', message);
     throw new Error(message);
   }
