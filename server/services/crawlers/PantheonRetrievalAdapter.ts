@@ -127,10 +127,14 @@ export class PantheonRetrievalAdapter {
           return false;
         }
       });
-      const publicResources = await acquirePublicResources(
-        urlTargets,
-        Math.min(12_000, Math.max(1_000, Math.floor(remainingBudgetMs() / Math.max(1, request.targets.length)))),
-      );
+      const publicResources: Awaited<ReturnType<typeof acquirePublicResources>> = [];
+      const perTargetTimeoutMs = Math.min(12_000, Math.max(2_000, Math.floor((request.budgetMs || 60_000) / Math.max(1, request.targets.length))));
+      const acquisitionBatchSize = 24;
+      for (let offset = 0; offset < urlTargets.length && collectionOpen(); offset += acquisitionBatchSize) {
+        const batch = urlTargets.slice(offset, offset + acquisitionBatchSize);
+        const batchResults = await acquirePublicResources(batch, Math.min(perTargetTimeoutMs, Math.max(1_000, remainingBudgetMs())));
+        publicResources.push(...batchResults);
+      }
       for (const resource of publicResources) {
         crawlerAudit.push({
           crawler: 'public-acquisition',
