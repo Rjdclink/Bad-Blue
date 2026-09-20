@@ -1,3 +1,4 @@
+import { PANTHEON_VERIFIED_SOURCES_BATCH_01 } from './sources/batch01';
 /**
  * PANTHEON sovereign source registry.
  *
@@ -84,6 +85,13 @@ export function buildPantheonCategoryTargets(
  if (!identity) return [];
  const out:PantheonSourceTarget[]=[]; const seen=new Set<string>();
  const add=(x:PantheonSourceTarget)=>{ if(!seen.has(x.url)){seen.add(x.url);out.push(x);} };
+ // Verified direct authorities are always attempted before generated discovery URLs.
+ for (const source of PANTHEON_VERIFIED_SOURCES_BATCH_01) {
+   if (!source.categories.includes(category)) continue;
+   const q=`${identity} ${category}`;
+   add({category,url:source.url,authority:source.authority,jurisdiction:source.jurisdiction,query:q});
+   if(out.length>=limit) return out.slice(0,limit);
+ }
  for(const [root,authority] of AUTHORITIES){
    const q=`${identity} ${category}`;
    add({category,url:searchUrl('https://www.google.com/search?q=',`site:${new URL(root).hostname} ${q}`),authority:'discovery',jurisdiction:'US',query:q});
