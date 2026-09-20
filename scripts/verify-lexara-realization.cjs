@@ -15,10 +15,6 @@ function must(condition, message) {
 const voiceMode = read('client/src/hooks/useVoiceMode.ts');
 const conversation = read('client/src/components/LexaraConversation.tsx');
 const avatar = read('client/src/components/LexaraEtherealAvatar.tsx');
-const neuralAvatarClient = read('client/src/lib/lexaraNeuralAvatarClient.ts');
-const neuralAvatarWorker = read('public/workers/lexara-neural-avatar-worker.js');
-const quantiAvatarCompute = read('server/services/quantiComp/lexaraAvatarCompute.ts');
-const endToEndNeuralAvatarReview = read('docs/LEXARA_END_TO_END_NEURAL_AVATAR_100_SOURCE_BLUEPRINT_20260920.md');
 const embodimentEngine = read('client/src/lib/lexaraEmbodimentEngine.ts');
 const synthesis = read('client/src/hooks/useVoiceSynthesis.ts');
 const speechClient = read('client/src/lib/lexaraSpeechClient.ts');
@@ -147,57 +143,24 @@ must(
 );
 must(
   avatar.includes('VITE_LEXARA_LIVE_AVATAR_ENABLED') &&
-    avatar.includes("VITE_LEXARA_PROCEDURAL_AVATAR_FALLBACK ?? '0'") &&
-    avatar.includes('lexaraNeuralAvatarClient.ensureTurn') &&
-    avatar.includes('lexaraNeuralAvatarClient.render') &&
-    avatar.includes('drawNeuralPortraitFrame') &&
-    avatar.includes('lexaraNeuralAvatarClient.markFramePresented') &&
-    avatar.includes("data-live-avatar={LIVE_AVATAR_ENABLED ? 'quanticomp-neural-webgpu' : 'static'}") &&
-    avatar.includes('PROCEDURAL_FALLBACK_ENABLED') &&
+    avatar.includes('window.requestAnimationFrame') &&
+    avatar.includes('<canvas') &&
+    avatar.includes('LexaraEmbodimentEngine') &&
+    avatar.includes('drawMouth') &&
+    avatar.includes('drawBlink') &&
+    avatar.includes("data-live-avatar={LIVE_AVATAR_ENABLED ? 'embodied-canvas' : 'static'}") &&
+    avatar.includes('prefers-reduced-motion') &&
     avatar.includes('getLexaraServerPlaybackClock') &&
     avatar.includes('lexaraRealtimeVoiceClient.getPlaybackClock()') &&
+    avatar.includes("style={{ contain: 'layout paint' }}") &&
+    avatar.includes("'avatar-renderer-ready'") &&
+    avatar.includes("'avatar-motion-started'") &&
+    !avatar.includes('HEAD_MASK') &&
+    !avatar.includes('MOUTH_MASK') &&
+    !avatar.includes('TORSO_MASK') &&
     !avatar.includes("/api/lexara/chat") &&
     !avatar.includes("/api/lexara/tts/session"),
-  'LEXARA presentation consumes QuantiComp-planned neural pixels while procedural deformation is explicit opt-in only and cannot enter reasoning/TTS authority',
-);
-must(
-  neuralAvatarClient.includes("/api/lexara/avatar/plan") &&
-    neuralAvatarClient.includes("mode: 'client_webgpu'") &&
-    neuralAvatarClient.includes("new Worker(workerPath") &&
-    neuralAvatarClient.includes("'gpu' in navigator") &&
-    neuralAvatarClient.includes('markFramePresented') &&
-    neuralAvatarClient.includes("'avatar-neural-frame'") &&
-    neuralAvatarClient.includes('message.bitmap instanceof ImageBitmap') &&
-    neuralAvatarClient.includes('previous?.bitmap.close()') &&
-    neuralAvatarClient.includes('/api/lexara/avatar/end'),
-  'browser neural client obtains a QuantiComp generation, owns one neural worker, presents transferable frames, and explicitly closes stale GPU-backed images',
-);
-must(
-  neuralAvatarWorker.includes('onnxruntime-web@') &&
-    neuralAvatarWorker.includes("executionProviders: ['webgpu']") &&
-    neuralAvatarWorker.includes('LP-Distilled0.1.onnx') &&
-    neuralAvatarWorker.includes('appearance_feature_extractor.onnx') &&
-    neuralAvatarWorker.includes('feature_3d') &&
-    neuralAvatarWorker.includes('pose_control_vector') &&
-    neuralAvatarWorker.includes('expression_control_vector') &&
-    neuralAvatarWorker.includes('pendingControls = message') &&
-    neuralAvatarWorker.includes('request.generation !== currentGeneration') &&
-    neuralAvatarWorker.includes('canvas.transferToImageBitmap()') &&
-    neuralAvatarWorker.includes('caches.open(MODEL_CACHE)') &&
-    neuralAvatarWorker.includes('OffscreenCanvas'),
-  'dedicated WebGPU worker performs actual ONNX portrait inference, caches immutable model weights, and keeps a one-slot latest-wins visual queue',
-);
-must(
-  quantiAvatarCompute.includes('planTurn(') &&
-    quantiAvatarCompute.includes("mode: 'client_webgpu'") &&
-    quantiAvatarCompute.includes('clientWebGpuReady') &&
-    quantiAvatarCompute.includes('beginTurn(sessionId, turnId)') &&
-    quantiAvatarCompute.includes('advanceSupersessionGeneration') &&
-    voiceRoutes.includes('/api/lexara/avatar/plan') &&
-    voiceRoutes.includes('lexaraAvatarCompute.planTurn') &&
-    voiceRoutes.includes('/api/lexara/avatar/end') &&
-    voiceRoutes.includes('lexaraAvatarCompute.endTurn'),
-  'live LEXARA routes now connect conversation turns through QuantiComp generation fencing to real client neural compute',
+  'LEXARA uses a visible fail-open embodied canvas renderer rather than the retired sub-pixel CSS-mask shimmer, and visual work cannot enter the reasoning/TTS critical path',
 );
 must(
   embodimentEngine.includes("export type LexaraEmbodimentMode = 'idle' | 'listening' | 'thinking' | 'speaking'") &&
@@ -226,16 +189,12 @@ must(
   'avatar synchronization derives mouth cues from the already-rendered realtime PCM clock without changing the proven 24ms speech-start buffer or becoming playback authority',
 );
 must(
-  voiceRoutes.includes("'avatar-quanti-plan'") &&
-    voiceRoutes.includes("'avatar-neural-ready'") &&
-    voiceRoutes.includes("'avatar-neural-frame'") &&
-    voiceRoutes.includes("'avatar-neural-unavailable'") &&
-    voiceRoutes.includes("'avatar-neural-error'") &&
-    voiceRoutes.includes('generation:') &&
-    voiceRoutes.includes('inferenceMs:') &&
-    neuralAvatarClient.includes("reportAvatarEvent('avatar-neural-frame'") &&
-    avatar.includes('lexaraNeuralAvatarClient.markFramePresented(neuralFrame)'),
-  'production telemetry distinguishes planning, model readiness, actual presented neural pixels, local fallback, and neural failure',
+  voiceRoutes.includes("'avatar-renderer-ready'") &&
+    voiceRoutes.includes("'avatar-motion-started'") &&
+    voiceRoutes.includes("'avatar-renderer-error'") &&
+    voiceRoutes.includes('mouthOpen:') &&
+    voiceRoutes.includes('reducedMotion:'),
+  'production logs can distinguish voice playback from a real rendered avatar and actual speech-linked mouth motion',
 );
 must(
   synthesis.includes('/api/lexara/tts/session') &&
@@ -727,9 +686,6 @@ must(liveAvatarSourceLines.length === 100, 'literal 100-source LEXARA live-avata
 const embodiedConversationSourceSection = embodiedConversationReview.split('## Sources — exactly 50')[1]?.split('## Acceptance criteria')[0] || '';
 const embodiedConversationSourceLines = embodiedConversationSourceSection.split('\n').filter(line => /^\d+\.\s/.test(line));
 must(embodiedConversationSourceLines.length === 50, 'literal 50-source LEXARA embodied-conversation implementation blueprint is present');
-const endToEndNeuralAvatarSourceSection = endToEndNeuralAvatarReview.split('## Sources — exactly 100')[1]?.split('## Implementation contract')[0] || '';
-const endToEndNeuralAvatarSourceLines = endToEndNeuralAvatarSourceSection.split('\n').filter(line => /^\d+\.\s/.test(line));
-must(endToEndNeuralAvatarSourceLines.length === 100, 'literal 100-source end-to-end neural-avatar implementation blueprint is present');
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA realization verification passed.');
 // Practice-area specialization gate (31-book LegalWhat library).

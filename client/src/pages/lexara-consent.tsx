@@ -8,7 +8,6 @@ import { LAW_TYPE_DATA } from '@shared/lawTypes';
 import { SEOHead } from '@/components/SEOHead';
 import { setLexaraLiveEnabled } from '@/components/LexaraLiveConsentModal';
 import { unlockAudio } from '@/lib/lexaraSpeechClient';
-import { lexaraNeuralAvatarClient } from '@/lib/lexaraNeuralAvatarClient';
 
 function consentMicrophoneConstraints(): MediaTrackConstraints {
   const supported = navigator.mediaDevices?.getSupportedConstraints?.() || {};
@@ -54,11 +53,6 @@ export default function LexaraConsentPage() {
       if (!standardsCaptureSupported && !browserSpeechSupported) {
         throw new Error('This browser is too old for live voice.');
       }
-
-      // Begin downloading/compiling the neural portrait model while the user is
-      // already granting microphone/audio permission. This is visual-only work;
-      // it is deliberately not awaited by live-conversation readiness.
-      void lexaraNeuralAvatarClient.prewarm('/images/oip.webp?v=20260920-embodied2');
 
       const readinessPromise = fetch('/api/lexara/voice/live-readiness', {
         method: 'GET',

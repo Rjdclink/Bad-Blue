@@ -12,22 +12,6 @@ export interface LexaraAvatarBehaviorVector {
   observedAt: number;
 }
 
-export interface LexaraAvatarClientCapabilities {
-  webgpu: boolean;
-  worker: boolean;
-  offscreenCanvas: boolean;
-  imageBitmap: boolean;
-}
-
-export interface LexaraAvatarTurnPlan {
-  mode: 'client_webgpu' | 'ray_remote' | 'static_fallback';
-  sessionId: string;
-  turnId: string;
-  generation: number;
-  workerPath?: string;
-  reason?: string;
-}
-
 export interface LexaraAvatarSegmentInput {
   sessionId: string;
   turnId: string;
@@ -131,50 +115,6 @@ export class LexaraAvatarComputeCoordinator {
       nextGeneration * 1_000_000,
       'lexara-avatar-visual',
     );
-  }
-
-  planTurn(
-    sessionIdValue: string,
-    turnIdValue: string,
-    capabilities: LexaraAvatarClientCapabilities,
-  ): LexaraAvatarTurnPlan {
-    const sessionId = normalizedId(sessionIdValue, 'session');
-    const turnId = normalizedId(turnIdValue, 'turn');
-    const generation = this.beginTurn(sessionId, turnId);
-    const clientWebGpuReady = (
-      capabilities?.webgpu === true &&
-      capabilities?.worker === true &&
-      capabilities?.offscreenCanvas === true &&
-      capabilities?.imageBitmap === true
-    );
-
-    if (clientWebGpuReady) {
-      return {
-        mode: 'client_webgpu',
-        sessionId,
-        turnId,
-        generation,
-        workerPath: '/workers/lexara-neural-avatar-worker.js?v=20260920-e2e1',
-      };
-    }
-
-    if (lexaraRayAvatarBackend.isConfigured()) {
-      return {
-        mode: 'ray_remote',
-        sessionId,
-        turnId,
-        generation,
-        reason: 'client_webgpu_unavailable',
-      };
-    }
-
-    return {
-      mode: 'static_fallback',
-      sessionId,
-      turnId,
-      generation,
-      reason: 'no_neural_compute_backend_available',
-    };
   }
 
   publishIdentityContext(
