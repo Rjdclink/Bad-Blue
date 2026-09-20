@@ -30,7 +30,9 @@ export function buildSpectraPriorityTargets(subject:string,clues?:string,limit=S
  for(const source of getSpectraSources()){
   const key=source.url.toLowerCase(); if(seen.has(key))continue; seen.add(key);
   const category=(source.categories[0]||'identity') as PantheonBackgroundCategory;
-  targets.push({sourceId:source.id,sourceName:source.name,category,url:source.url,authority:source.authority,jurisdiction:source.jurisdiction,query:`${identity} ${source.categories.join(' ')}`,priority:source.priority,reason:source.priority==='critical'?'direct identity/location/corroboration evidence':source.priority==='high'?'recursive records, social, web, or contextual pivot':'supporting corroboration and completeness source'});
+  let host=''; try { host=new URL(source.url).hostname; } catch { host=''; }
+  const sourceScopedQuery=[host?`site:${host}`:'',identity,source.categories.join(' ')].filter(Boolean).join(' ');
+  targets.push({sourceId:source.id,sourceName:source.name,category,url:source.url,authority:source.authority,jurisdiction:source.jurisdiction,query:sourceScopedQuery,priority:source.priority,reason:source.priority==='critical'?'direct identity/location/corroboration evidence':source.priority==='high'?'recursive records, social, web, or contextual pivot':'supporting corroboration and completeness source'});
   if(targets.length>=Math.max(1,limit))break;
  }
  return targets;
