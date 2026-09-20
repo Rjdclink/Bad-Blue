@@ -92,6 +92,7 @@ class LexaraNeuralAvatarClient {
   private workerImageUrl = '';
   private workerReady = false;
   private activeTurnId: string | null = null;
+  private planningTurnId: string | null = null;
   private generation = 0;
   private planSerial = 0;
   private lastRenderAt = 0;
@@ -150,7 +151,9 @@ class LexaraNeuralAvatarClient {
       this.ensureWorker(imageUrl);
       return;
     }
+    if (this.planningTurnId === turnId) return;
 
+    this.planningTurnId = turnId;
     const serial = ++this.planSerial;
     this.status = {
       ...this.status,
@@ -234,6 +237,8 @@ class LexaraNeuralAvatarClient {
         turnId,
         error: this.status.reason,
       });
+    } finally {
+      if (this.planningTurnId === turnId) this.planningTurnId = null;
     }
   }
 
@@ -455,7 +460,9 @@ class LexaraNeuralAvatarClient {
   }
 
   private flushLastControls(): void {
-    if (this.lastControls) this.render(this.lastControls, Number.POSITIVE_INFINITY);
+    if (!this.lastControls) return;
+    this.lastRenderAt = 0;
+    this.render(this.lastControls, performance.now());
   }
 
   private closeLatestFrame(): void {
