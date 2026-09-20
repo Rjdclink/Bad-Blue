@@ -33,6 +33,8 @@ export interface VoiceModeOptions {
   onError?: (error: Error) => void;
   onVoiceStart?: (meta: VoiceActivityMeta) => void;
   onVoiceEnd?: (meta: VoiceActivityMeta) => void;
+  onEagerTurn?: (text: string) => void;
+  onTurnResumed?: () => void;
   shouldProbeBargeIn?: () => boolean;
   keyterms?: string[];
   continuous?: boolean;
@@ -681,10 +683,22 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
 
       if (eventType === 'TurnResumed') {
         if (text) setInterimTranscript(text);
+        optionsRef.current.onTurnResumed?.();
         return;
       }
 
-      if (eventType === 'EagerEndOfTurn' || eventType === 'Update') {
+      if (eventType === 'EagerEndOfTurn') {
+        if (!text) return;
+        setInterimTranscript(text);
+        optionsRef.current.onEagerTurn?.(text);
+        emitTranscript(text, false, {
+          engine: 'server', provider: 'deepgram-flux', confidence, speechDurationMs,
+          bargeInProbe: startedDuringPlayback, utteranceId: turnIndex, startedDuringPlayback,
+        });
+        return;
+      }
+
+      if (eventType === 'Update') {
         if (!text) return;
         setInterimTranscript(text);
         emitTranscript(text, false, {
