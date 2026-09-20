@@ -13,6 +13,8 @@ export interface PantheonReportJobInput {
   name: string;
   location?: string;
   searchDepth: PantheonSearchDepth;
+  resumeFromCategory?: number;
+  initialReport?: any;
 }
 
 interface PersistedPantheonJob {
@@ -20,6 +22,7 @@ interface PersistedPantheonJob {
   name?: string;
   location?: string;
   searchDepth?: number;
+  completedCategories?: number;
 }
 
 const activeJobs = new Map<string, Promise<void>>();
@@ -68,6 +71,8 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       location: input.location,
       searchDepth: input.searchDepth,
       deadlineAt: deadlineAt.getTime(),
+      startCategoryIndex: input.resumeFromCategory,
+      initialReport: input.initialReport,
       onCategoryStart: async ({ index, label, completedCategories }) => {
         console.log('[PANTHEON CATEGORY] start', { reportId: input.reportId, index: index + 1, label, completedCategories });
         await updatePantheonReportRecord(input.reportId, 'processing', {
@@ -165,7 +170,7 @@ export function resumePantheonReportJobFromRecord(report: {
   if (report.status !== 'processing' || isPantheonReportJobActive(report.id)) return null;
 
   const envelope = (report.reportData && typeof report.reportData === 'object')
-    ? report.reportData as { job?: PersistedPantheonJob }
+    ? report.reportData as { job?: PersistedPantheonJob; report?: any }
     : {};
   const job = envelope.job;
   const name = String(job?.name || report.searchQuery || '').trim();
@@ -177,5 +182,7 @@ export function resumePantheonReportJobFromRecord(report: {
     name,
     location: job?.location || undefined,
     searchDepth: normalizePantheonSearchDepth(job?.searchDepth),
+    resumeFromCategory: Math.max(0, Number(job?.completedCategories || 0)),
+    initialReport: envelope.report,
   });
 }
