@@ -171,8 +171,11 @@ if (
 if (
   !pantheonRoutes.includes("app.post('/api/osint/report-jobs'") ||
   !pantheonRoutes.includes("app.get('/api/osint/report-jobs/:reportId'") ||
-  !pantheonReportJobs.includes('forceAllCrawlers: true') ||
-  !pantheonReportJobs.includes('resumePantheonReportJobFromRecord')
+  !pantheonReportJobs.includes('conductPantheonCategoryWorkflow') ||
+  !pantheonReportJobs.includes('resumePantheonReportJobFromRecord') ||
+  !pantheonReportJobs.includes('resumeFromCategory') ||
+  !pantheonReportStore.includes('writeSupabaseMirror') ||
+  !pantheonReportStore.includes('readSupabaseMirror')
 ) {
   fail('Pantheon server-side report jobs are not durable/recoverable');
 }
