@@ -237,6 +237,31 @@ export class QuantiCompRuntime extends EventEmitter {
     return promise;
   }
 
+  /**
+   * Advance a generation fence without submitting replacement work. This is
+   * used by realtime streams when a turn is interrupted/ended and the correct
+   * behavior is to shed stale visual work immediately.
+   */
+  advanceSupersessionGeneration(
+    supersessionKeyValue: string,
+    generation: number,
+    resourceDomain?: string,
+  ): number {
+    const supersessionKey = String(supersessionKeyValue || '').trim();
+    if (!supersessionKey || !Number.isSafeInteger(generation) || generation < 0) {
+      throw new QuantiCompError(
+        'Generation advancement requires a key and non-negative safe integer generation',
+        'INVALID_WORKLOAD',
+        { supersessionKey, generation },
+      );
+    }
+    const latest = this.latestGenerationByKey.get(supersessionKey);
+    if (latest !== undefined && generation <= latest) return latest;
+    this.latestGenerationByKey.set(supersessionKey, generation);
+    this.supersedeOlderWork(supersessionKey, generation, resourceDomain);
+    return generation;
+  }
+
   getStatus(): QuantiRuntimeStatus {
     return {
       version: QUANTI_COMP_VERSION,
