@@ -1081,10 +1081,6 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
         appendMessage('lexara', answer);
         setGaze('camera');
-        // Commit the transcript to the screen before audio is allowed to take
-        // the floor. requestAnimationFrame preserves the optimized TTS path while
-        // preventing fast audio startup from outrunning React paint on mobile.
-        await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()));
         await speakLexara(answer, generation);
       }
     } catch (error: any) {
