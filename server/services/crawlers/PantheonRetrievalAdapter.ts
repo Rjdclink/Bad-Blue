@@ -13,6 +13,7 @@ import {
 import { cainReaperSupervisor, type CrawlerSupervisionResult } from './CainReaperSupervisor';
 import { twoStageDeployer } from '../pantheon/razors/TwoStageDeployer';
 import { SixCrawlerInitiative } from './SixCrawlerInitiative';
+import { acquirePublicResources } from './PublicAcquisitionInfrastructure';
 
 export interface RetrievalEvidence {
   crawler: string;
@@ -93,6 +94,40 @@ export class PantheonRetrievalAdapter {
     recordCrawlerOutcomes(results);
 
     const evidence = results.map(normalizeResult);
+
+    if (request.purpose === 'background_report') {
+      const publicResources = await acquirePublicResources(
+        request.targets,
+        Math.min(12_000, Math.max(3_000, Math.floor((request.budgetMs || 60_000) / Math.max(1, request.targets.length)))),
+      );
+      for (const resource of publicResources) {
+        crawlerAudit.push({
+          crawler: 'public-acquisition',
+          capabilityClass: 'pantheon-secondary',
+          status: resource.ok && resource.content.trim() ? 'completed_with_evidence' : 'unavailable_no_content',
+          evidenceCount: resource.ok && resource.content.trim() ? 1 : 0,
+          attempts: 1,
+          targets: 1,
+          error: resource.error,
+        });
+        if (!resource.ok || !resource.content.trim()) continue;
+        evidence.push({
+          crawler: 'public-acquisition',
+          target: resource.url,
+          content: resource.content,
+          confidence: 0.72,
+          retrievedAt: resource.retrievedAt,
+          metadata: {
+            capabilityClass: 'no-key-public-acquisition',
+            contentType: resource.contentType,
+            kind: resource.kind,
+            httpStatus: resource.status,
+            etag: resource.etag,
+            lastModified: resource.lastModified,
+          },
+        });
+      }
+    }
 
     if (request.purpose === 'background_report' && evidence.length > 0) {
       // Feed real retrieved evidence through the Seven-Crawler analytical family.
