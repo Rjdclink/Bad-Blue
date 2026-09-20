@@ -4,6 +4,7 @@ import {
   getCurrentModelForProvider,
 } from './aiHarmonyModelRegistry';
 import { warmGroqModelCatalog } from './groq';
+import { callClaude } from './claude';
 
 export type HarmonyWarmState = 'unknown' | 'catalog' | 'ready' | 'degraded';
 
@@ -179,7 +180,7 @@ export async function prewarmHarmonyProviders(): Promise<HarmonyWarmStatus[]> {
             provider,
             result.model || model,
             startedAt,
-            result.ready ? 'catalog' : 'degraded',
+            result.ready ? 'ready' : 'degraded',
             result.error,
           );
         }
@@ -240,7 +241,27 @@ export async function prewarmHarmonyProviders(): Promise<HarmonyWarmStatus[]> {
             candidate => wantsOpus ? /opus/i.test(candidate) : /sonnet/i.test(candidate),
             candidate => /claude/i.test(candidate),
           ]);
-          return record(provider, resolved || model, startedAt, resolved ? 'catalog' : 'degraded', resolved ? undefined : 'no live compatible Anthropic model');
+          if (!resolved) {
+            return record(provider, model, startedAt, 'degraded', 'no live compatible Anthropic model');
+          }
+
+          // Prove the selected model can actually infer. This runs in background
+          // warmup and never gates the working Lexara voice/text path.
+          const controller = new AbortController();
+          const timer = setTimeout(
+            () => controller.abort(new Error(`${provider} readiness probe timed out`)),
+            CATALOG_TIMEOUT_MS,
+          );
+          try {
+            await callClaude('Reply OK.', {
+              model: resolved,
+              maxTokens: 16,
+              signal: controller.signal,
+            });
+            return record(provider, resolved, startedAt, 'ready');
+          } finally {
+            clearTimeout(timer);
+          }
         }
 
         if (provider === AIProvider.MISTRAL) {
