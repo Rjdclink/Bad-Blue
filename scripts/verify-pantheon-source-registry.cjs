@@ -30,6 +30,13 @@ for(const obsolete of ['Scanning Databases','Social Analysis','Location Tracking
   if(progress.includes(obsolete)) throw new Error('Synthetic progress tag still present: '+obsolete);
 }
 if(page.includes('CapabilityCard')) throw new Error('Legacy oversized capability cards still present');
+const adapter=fs.readFileSync('server/services/crawlers/PantheonRetrievalAdapter.ts','utf8');
+for(const crawler of ['startrek','birdofprey','sixdegrees','cerberus','blizzard','lich']){
+  if(!adapter.includes("'"+crawler+"'")) throw new Error('Background adapter missing primary crawler: '+crawler);
+}
+if(!adapter.includes('searchAllIsolatedWithAudit')) throw new Error('Background crawler fan-out is not failure-isolated/audited');
+if(!adapter.includes('Seven-Crawler Initiative') && !adapter.includes('SixCrawlerInitiative')) throw new Error('Seven-crawler analytical family not wired');
+if(!adapter.includes('twoStageDeployer.deployBackgroundReport')) throw new Error('Extended razor/secondary crawler stage not wired');
 let total=0;
 for(let n=1;n<=23;n++){
   const nn=String(n).padStart(2,'0');
