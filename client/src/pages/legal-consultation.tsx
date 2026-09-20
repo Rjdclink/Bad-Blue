@@ -10,7 +10,7 @@ import LexaraCaseTools from '@/components/LexaraCaseTools';
 import LexaraLiveConsentModal, { getLexaraLiveEnabled } from '@/components/LexaraLiveConsentModal';
 import { useLocation, useRoute, useSearch } from 'wouter';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, Mic, Scale } from 'lucide-react';
+import { ArrowLeft, Mic, Scale, ScanSearch } from 'lucide-react';
 import { SEOHead } from '@/components/SEOHead';
 import { LAW_TYPE_DATA } from '@shared/lawTypes';
 
@@ -92,10 +92,11 @@ export default function LegalConsultationPage() {
             <Button
               variant="outline"
               onClick={() => setLocation(toolsMode ? canonicalPath : `${canonicalPath}?mode=tools`)}
-              className="min-h-11 touch-manipulation"
+              className="min-h-12 gap-2 px-4 text-sm font-semibold touch-manipulation sm:px-5 sm:text-base"
+              aria-label={toolsMode ? 'Return to live conversation' : 'Open Media Analyzer'}
             >
-              <span className="sm:hidden">{toolsMode ? 'Live' : 'Tools'}</span>
-              <span className="hidden sm:inline">{toolsMode ? 'Live conversation' : 'Case tools'}</span>
+              {!toolsMode && <ScanSearch className="h-5 w-5" aria-hidden="true" />}
+              <span>{toolsMode ? 'Live conversation' : 'Media Analyzer'}</span>
             </Button>
             <Button
               variant="outline"
