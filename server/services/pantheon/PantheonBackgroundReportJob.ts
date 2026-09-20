@@ -66,6 +66,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       throw new Error('PANTHEON investigation budget expired before collection could begin');
     }
 
+    let latestPartialReport = input.initialReport || null;
     const { report, categoryOutcomes } = await conductPantheonCategoryWorkflow({
       name: input.name,
       location: input.location,
@@ -85,10 +86,11 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
             completedCategories,
             totalCategories: PANTHEON_REPORT_CATEGORIES.length,
           }),
-          report: null,
+          report: latestPartialReport,
         });
       },
       onCategoryComplete: async ({ index, label, completedCategories, outcome, partialReport }) => {
+        latestPartialReport = partialReport;
         console.log('[PANTHEON CATEGORY] complete', {
           reportId: input.reportId,
           index: index + 1,
