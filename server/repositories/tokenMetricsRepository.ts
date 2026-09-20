@@ -4,7 +4,7 @@
  * Migration-ready: Replaces in-memory metrics tracking
  */
 
-import { db } from '../services/cryptocrawl/runtime/cryptocrawl-runtime-database.js';
+import { db } from '../db.js';
 import { aiUsageMetrics, type InsertAiUsageMetric, type AiUsageMetric } from '../../shared/schema';
 import { eq, and, gte, sql } from 'drizzle-orm';
 

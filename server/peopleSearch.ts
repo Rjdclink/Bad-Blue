@@ -17,6 +17,7 @@ import {
 } from './services/legalIntelligence';
 import type { SherlockResult } from './services/socialIntelligence/types';
 import { pantheonRetrievalAdapter } from './services/crawlers/PantheonRetrievalAdapter';
+import { buildPantheonBackgroundRegistryTargets, PANTHEON_BACKGROUND_CATEGORIES } from './services/pantheon/PantheonSovereignSourceRegistry';
 
 // PANTHEON Crawler Orchestrator - Utilizes all crawler functions
 import {
@@ -99,31 +100,35 @@ function buildPantheonSearchTargets(name: string): string[] {
   ];
 }
 
+const PANTHEON_DEPTH_SOURCE_BUDGET: Record<number, number> = {
+  1: 450,   // 5 minutes: highest-value direct authorities first
+  2: 1200,  // 10 minutes: broader direct-source sweep
+  3: 2800,  // 20 minutes: deep registry traversal + corroboration
+  4: 4500,  // 30 minutes: maximum registry intensity
+};
+
 function buildPantheonBackgroundTargets(name: string, location: string | undefined, depth: number): string[] {
-  const trimmed = name.trim();
-  if (!trimmed) return [];
-  const locationTerm = String(location || '').trim();
-  const subject = locationTerm ? `"${trimmed}" "${locationTerm}"` : `"${trimmed}"`;
-  const queryFamilies = [
-    'public records government',
-    'court case docket litigation',
-    'property assessor deed ownership',
-    'business corporation registration',
-    'professional license credential',
-    'employment education biography',
-    'news archive media',
-    'social profile professional directory',
-    'site:.gov',
-    'public filing record',
-  ];
-  const counts: Record<number, number> = { 1: 4, 2: 6, 3: 8, 4: 10 };
-  const selected = queryFamilies.slice(0, counts[depth] || 10);
-  return selected.map((family, index) => {
-    const query = `${subject} ${family}`;
-    return index % 2 === 0
-      ? `https://www.google.com/search?q=${encodeURIComponent(query)}`
-      : `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
-  });
+  const normalizedDepth = Math.max(1, Math.min(4, Math.floor(depth || 1)));
+  const sourceBudget = PANTHEON_DEPTH_SOURCE_BUDGET[normalizedDepth];
+  // Ask for enough candidates to expose the full verified registry at the
+  // highest intensity. Registry ordering is authoritative/direct first.
+  const targets = buildPantheonBackgroundRegistryTargets(name, location, 300);
+  const authorityRank: Record<string, number> = { primary: 0, secondary: 1, archive: 2, discovery: 3 };
+  const categoryRank = new Map(PANTHEON_BACKGROUND_CATEGORIES.map((category, index) => [category, index]));
+  const seen = new Set<string>();
+
+  return targets
+    .sort((a, b) =>
+      (authorityRank[a.authority] ?? 9) - (authorityRank[b.authority] ?? 9) ||
+      (categoryRank.get(a.category) ?? 999) - (categoryRank.get(b.category) ?? 999)
+    )
+    .filter(target => {
+      if (seen.has(target.url)) return false;
+      seen.add(target.url);
+      return true;
+    })
+    .slice(0, sourceBudget)
+    .map(target => target.url);
 }
 
 function mergeCrawlerAudit(entries: NonNullable<PeopleSearchReport['crawlerAudit']>): NonNullable<PeopleSearchReport['crawlerAudit']> {

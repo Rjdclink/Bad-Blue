@@ -492,6 +492,14 @@ export class PantheonCrawlerOrchestrator {
     const requestedBudgetMs = Math.max(600000, options.timeout || 0);
     await this.initialize(requestedBudgetMs);
 
+    const validTargets = [...new Set(targets)].filter(target => {
+      try {
+        const url = new URL(target);
+        return url.protocol === 'http:' || url.protocol === 'https:';
+      } catch {
+        return false;
+      }
+    });
     const crawlersToUse = options.crawlers || this.getCrawlersForDepth(options.depth);
     const executions = await Promise.all(
       crawlersToUse.map(async crawler => {
@@ -502,7 +510,7 @@ export class PantheonCrawlerOrchestrator {
         for (let attempt = 0; attempt < 2; attempt++) {
           attempts += 1;
           try {
-            results = await this.search(targets, {
+            results = await this.search(validTargets, {
               ...options,
               crawlers: [crawler],
             });
@@ -527,7 +535,7 @@ export class PantheonCrawlerOrchestrator {
               : 'completed_no_evidence',
           evidenceCount,
           attempts,
-          targets: targets.length,
+          targets: validTargets.length,
           ...(lastError ? { error: lastError.slice(0, 300) } : {}),
         };
 

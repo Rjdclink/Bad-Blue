@@ -258,6 +258,9 @@ export class SixDegreesCrawler {
    * Returns graph structure for analysis
    */
   async mapConnections(target: string, maxDegrees: number = 2): Promise<{ nodes: Node[]; edges: Edge[] }> {
+    // Each report target gets an isolated graph. Never leak stale domains or
+    // failed links from a previous subject/source into the next traversal.
+    this.clearGraph();
     await this.buildGraph(target, maxDegrees);
     
     return {

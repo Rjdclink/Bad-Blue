@@ -3,19 +3,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { PANTHEON_REPORT_DURATIONS_MS } from '@shared/pantheonReportConfig';
-import { 
-  Clock, 
-  Database, 
-  Search, 
-  Network, 
-  FileText, 
-  Users, 
-  MapPin,
-  Eye,
-  CheckCircle2,
-  Zap,
-  Cpu
-} from 'lucide-react';
+import { Search, Eye } from 'lucide-react';
 
 interface PantheonProgressTrackerProps {
   searchDepth: number;
@@ -23,38 +11,11 @@ interface PantheonProgressTrackerProps {
   onComplete?: () => void;
 }
 
-interface SearchStage {
-  id: string;
-  icon: any;
-  label: string;
-  duration: number; // percentage of total time
-  color: string;
-}
-
 const DEPTH_DURATIONS = PANTHEON_REPORT_DURATIONS_MS;
 
-const SEARCH_STAGES: SearchStage[] = [
-  { id: 'init', icon: Zap, label: 'Initializing', duration: 5, color: 'text-yellow-500' },
-  { id: 'databases', icon: Database, label: 'Scanning Databases', duration: 20, color: 'text-blue-500' },
-  { id: 'social', icon: Network, label: 'Social Analysis', duration: 15, color: 'text-purple-500' },
-  { id: 'records', icon: FileText, label: 'Public Records', duration: 20, color: 'text-green-500' },
-  { id: 'location', icon: MapPin, label: 'Location Tracking', duration: 15, color: 'text-orange-500' },
-  { id: 'relationships', icon: Users, label: 'Relationships', duration: 15, color: 'text-pink-500' },
-  { id: 'analysis', icon: Search, label: 'Deep Analysis', duration: 10, color: 'text-cyan-500' },
-];
-
-const EYE_OF_GOD_STAGES: SearchStage[] = [
-  { id: 'init', icon: Eye, label: 'EYE Activation', duration: 3, color: 'text-red-500' },
-  { id: 'quantum', icon: Zap, label: 'Quantum Scan', duration: 12, color: 'text-yellow-500' },
-  { id: 'databases', icon: Database, label: 'Database Sweep', duration: 15, color: 'text-blue-500' },
-  { id: 'social', icon: Network, label: 'Network Crawl', duration: 12, color: 'text-purple-500' },
-  { id: 'records', icon: FileText, label: 'Records Deep Dive', duration: 15, color: 'text-green-500' },
-  { id: 'location', icon: MapPin, label: 'Location History', duration: 10, color: 'text-orange-500' },
-  { id: 'relationships', icon: Users, label: 'Relationship Graph', duration: 12, color: 'text-pink-500' },
-  { id: 'patterns', icon: Search, label: 'Pattern Recognition', duration: 10, color: 'text-cyan-500' },
-  { id: 'synthesis', icon: Cpu, label: 'Intelligence Synthesis', duration: 8, color: 'text-red-500' },
-  { id: 'complete', icon: CheckCircle2, label: 'Complete Intel', duration: 3, color: 'text-emerald-500' },
-];
+const PANTHEON_CATEGORIES = [
+  'Identity & Identity Verification','Phone Numbers','Email Addresses','Current Address','Address History','Relatives & Family','Associates & Household Connections','Social-Media Profiles','Usernames & Online Accounts','Photos & Public Images','Employment History','Education','Professional Licenses & Credentials','Business Ownership & Affiliations','Property & Real Estate','Vehicles & Transportation Records','Court Records','Criminal Records','Arrest & Police Records','Incarceration & Corrections','Probation & Parole Information','Warrants & Wanted-Person Records','Sex-Offender Registries','Civil Litigation & Judgments','Bankruptcies, Liens & Financial Public Records','Marriage, Divorce & Vital-Record Information','News & Media Mentions','Internet & Web Footprint','Government, Political & Public-Service Records','Relationship & Timeline Intelligence'
+] as const;
 
 export function PantheonProgressTracker({ 
   searchDepth, 
@@ -62,19 +23,14 @@ export function PantheonProgressTracker({
   onComplete 
 }: PantheonProgressTrackerProps) {
   const [progress, setProgress] = useState(0);
-  const [currentStage, setCurrentStage] = useState(0);
   const [elapsedTime, setElapsedTime] = useState(0);
-  const [stageProgress, setStageProgress] = useState(0);
 
-  const stages = searchDepth === 4 ? EYE_OF_GOD_STAGES : SEARCH_STAGES;
   const totalDuration = DEPTH_DURATIONS[searchDepth as keyof typeof DEPTH_DURATIONS] || 30000;
 
   useEffect(() => {
     if (!isSearching) {
       setProgress(0);
-      setCurrentStage(0);
       setElapsedTime(0);
-      setStageProgress(0);
       return;
     }
 
@@ -86,34 +42,12 @@ export function PantheonProgressTracker({
       setProgress(progressPercent);
       setElapsedTime(elapsed);
 
-      // Calculate which stage we're in
-      let cumulativeDuration = 0;
-      let foundStage = 0;
-      let stageStartPercent = 0;
-
-      for (let i = 0; i < stages.length; i++) {
-        const stageEndPercent = cumulativeDuration + stages[i].duration;
-        if (progressPercent < stageEndPercent) {
-          foundStage = i;
-          stageStartPercent = cumulativeDuration;
-          break;
-        }
-        cumulativeDuration = stageEndPercent;
-      }
-
-      setCurrentStage(foundStage);
-
-      // Calculate progress within current stage
-      const stageRange = stages[foundStage]?.duration || 1;
-      const progressInStage = ((progressPercent - stageStartPercent) / stageRange) * 100;
-      setStageProgress(Math.min(progressInStage, 100));
-
       // The server-side job is authoritative. The visual clock never aborts or
       // completes the investigation; it waits for persisted job status.
     }, 50); // Update every 50ms for smooth animation
 
     return () => clearInterval(interval);
-  }, [isSearching, searchDepth, totalDuration, stages, onComplete]);
+  }, [isSearching, searchDepth, totalDuration, onComplete]);
 
   if (!isSearching && progress === 0) {
     return null;
@@ -245,72 +179,19 @@ export function PantheonProgressTracker({
           />
         </div>
 
-        {/* Current Stage */}
-        <div className={`p-3 rounded-lg bg-gradient-to-r ${
-          searchDepth === 4 
-            ? 'from-red-950/50 to-pink-950/50 border border-red-500/30' 
-            : 'from-primary/10 to-primary/5 border border-primary/20'
-        }`}>
-          <div className="flex items-center gap-3">
-            {(() => {
-              const StageIcon = stages[currentStage]?.icon || Search;
-              return (
-                <StageIcon 
-                  className={`w-5 h-5 ${stages[currentStage]?.color || 'text-primary'} animate-pulse`} 
-                />
-              );
-            })()}
-            <div className="flex-1">
-              <span className="font-semibold text-sm">
-                {stages[currentStage]?.label || 'Processing...'}
-              </span>
-              <Progress 
-                value={stageProgress} 
-                className="h-1 mt-1"
-              />
-            </div>
-            <span className="text-xs text-muted-foreground font-mono">
-              {Math.round(stageProgress)}%
-            </span>
+        {/* Real registry categories: one compact panel rather than synthetic scan-stage tags. */}
+        <div className="rounded-lg border border-primary/20 bg-primary/5 p-4">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <span className="font-semibold text-sm">30 Background Report Categories</span>
+            <span className="text-xs text-muted-foreground">4,500-source registry</span>
           </div>
-        </div>
-
-        {/* Stage Indicators */}
-        <div className="grid grid-cols-3 md:grid-cols-5 lg:grid-cols-7 gap-2">
-          {stages.map((stage, index) => {
-            const StageIcon = stage.icon;
-            const isPast = index < currentStage;
-            const isCurrent = index === currentStage;
-
-            return (
-              <div
-                key={stage.id}
-                className={`relative flex flex-col items-center gap-1 p-2 rounded-lg transition-all duration-300 ${
-                  isPast 
-                    ? 'bg-green-950/30 border border-green-500/30' 
-                    : isCurrent 
-                    ? `${searchDepth === 4 ? 'bg-red-900/40 border-2 border-red-500/50' : 'bg-primary/20 border-2 border-primary/50'} scale-105 shadow-lg` 
-                    : 'bg-muted/20 border border-muted opacity-40'
-                }`}
-              >
-                {isPast && (
-                  <CheckCircle2 className="w-3 h-3 text-green-500 absolute -top-1 -right-1 animate-pulse" />
-                )}
-                <StageIcon 
-                  className={`w-4 h-4 ${
-                    isPast 
-                      ? 'text-green-500' 
-                      : isCurrent 
-                      ? `${stage.color} animate-pulse` 
-                      : 'text-muted-foreground'
-                  }`} 
-                />
-                <span className="text-[10px] text-center leading-tight">
-                  {stage.label}
-                </span>
-              </div>
-            );
-          })}
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-1.5">
+            {PANTHEON_CATEGORIES.map((category, index) => (
+              <span key={category} className="text-[11px] leading-snug text-muted-foreground">
+                {index + 1}. {category}
+              </span>
+            ))}
+          </div>
         </div>
       </CardContent>
     </Card>

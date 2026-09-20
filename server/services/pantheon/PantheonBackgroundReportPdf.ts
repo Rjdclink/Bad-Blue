@@ -83,10 +83,17 @@ function percent(value: unknown): string {
 }
 
 function addSectionTitle(doc: PDFKit.PDFDocument, title: string): void {
-  if (doc.y > 680) doc.addPage();
-  doc.moveDown(0.7);
-  doc.font('Helvetica-Bold').fontSize(13).text(title.toUpperCase());
-  doc.moveDown(0.35);
+  if (doc.y > 675) doc.addPage();
+  doc.moveDown(0.8);
+  const y = doc.y;
+  doc.font('Helvetica-Bold').fontSize(12).fillColor('#183B63').text(title.toUpperCase());
+  doc.moveTo(48, y + 17).lineTo(564, y + 17).lineWidth(0.7).strokeColor('#B7C7D8').stroke();
+  doc.fillColor('#111827').moveDown(0.55);
+}
+
+function addLabelValue(doc: PDFKit.PDFDocument, label: string, value: unknown): void {
+  doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#374151').text(label, { continued: true });
+  doc.font('Helvetica').fillColor('#111827').text(`  ${cleanText(value) || 'Not recorded'}`);
 }
 
 function addList(doc: PDFKit.PDFDocument, items: unknown[] | undefined): void {
@@ -134,32 +141,35 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
     const report = input.report;
     const subject = cleanText(report.identitySummary?.name) || 'Unknown subject';
 
-    doc.font('Helvetica-Bold').fontSize(18).text('LEGAL WHAT? — PANTHEON', { align: 'center' });
-    doc.moveDown(0.25);
-    doc.fontSize(15).text('COMPREHENSIVE PUBLIC-SOURCE BACKGROUND REPORT', { align: 'center' });
-    doc.moveDown(0.8);
-    doc.font('Helvetica').fontSize(9);
-    doc.text(`Report ID: ${input.reportId}`);
-    doc.text(`Subject: ${subject}`);
-    doc.text(`Generated: ${formatDate(input.completedAt || new Date())}`);
-    doc.text(`Investigation started: ${formatDate(input.createdAt)}`);
+    doc.rect(0, 0, 612, 118).fill('#102A43');
+    doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(11).text('LEGAL WHAT?', 48, 35);
+    doc.fontSize(24).text('PANTHEON', 48, 53);
+    doc.font('Helvetica').fontSize(10).fillColor('#D9E7F5').text('Comprehensive Public-Source Background Report', 48, 84);
+    doc.y = 138;
+    addLabelValue(doc, 'SUBJECT', subject);
+    addLabelValue(doc, 'REPORT ID', input.reportId);
+    addLabelValue(doc, 'GENERATED', formatDate(input.completedAt || new Date()));
+    addLabelValue(doc, 'INVESTIGATION STARTED', formatDate(input.createdAt));
     const searchDepth = report.searchDepthUsed ?? (cleanText(input.job?.searchDepth) || 'N/A');
-    doc.text(`Search depth: ${searchDepth}`);
-    doc.text(`Overall confidence: ${percent(report.confidenceScore)}`);
-    doc.moveDown(0.5);
-    doc.font('Helvetica-Oblique').fontSize(8).text(
+    addLabelValue(doc, 'SEARCH DEPTH', searchDepth);
+    addLabelValue(doc, 'OVERALL CONFIDENCE', percent(report.confidenceScore));
+    doc.moveDown(0.7);
+    doc.roundedRect(48, doc.y, 516, 46, 5).fillAndStroke('#F4F7FA', '#D5DEE8');
+    const noticeY = doc.y + 9;
+    doc.fillColor('#4B5563').font('Helvetica-Oblique').fontSize(7.8).text(
       'This report summarizes evidence returned from lawful public-source research and configured data services. It is not an official government record, criminal-history certification, or substitute for source-record verification.',
-      { align: 'justify' },
+      58, noticeY, { width: 496, align: 'justify', lineGap: 1 },
     );
+    doc.fillColor('#111827');
+    doc.y = noticeY + 46;
 
     addSectionTitle(doc, 'Identity Summary');
-    doc.font('Helvetica').fontSize(9);
-    doc.text(`Name: ${subject}`);
-    doc.text(`Aliases: ${(report.identitySummary?.aliases || []).map(cleanText).filter(Boolean).join(', ') || 'None verified'}`);
-    doc.text(`Age: ${cleanText(report.identitySummary?.age) || 'Not verified'}`);
-    doc.text(`Date of birth: ${cleanText(report.identitySummary?.dateOfBirth) || 'Not verified'}`);
-    doc.text(`Gender: ${cleanText(report.identitySummary?.gender) || 'Not verified'}`);
-    doc.text(`Verification status: ${cleanText(report.identitySummary?.verificationStatus) || 'Not recorded'}`);
+    addLabelValue(doc, 'Name', subject);
+    addLabelValue(doc, 'Aliases', (report.identitySummary?.aliases || []).map(cleanText).filter(Boolean).join(', ') || 'None verified');
+    addLabelValue(doc, 'Age', cleanText(report.identitySummary?.age) || 'Not verified');
+    addLabelValue(doc, 'Date of birth', cleanText(report.identitySummary?.dateOfBirth) || 'Not verified');
+    addLabelValue(doc, 'Gender', cleanText(report.identitySummary?.gender) || 'Not verified');
+    addLabelValue(doc, 'Verification status', cleanText(report.identitySummary?.verificationStatus) || 'Not recorded');
 
     addSectionTitle(doc, 'Executive Summary');
     doc.font('Helvetica').fontSize(9).text(cleanText(report.summary) || 'No synthesis was produced.', { align: 'justify', lineGap: 2 });
@@ -243,11 +253,10 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
     const pageRange = doc.bufferedPageRange();
     for (let index = pageRange.start; index < pageRange.start + pageRange.count; index++) {
       doc.switchToPage(index);
-      doc.font('Helvetica').fontSize(7).text(
-        `Legal What? PANTHEON | Report ${input.reportId.slice(0, 8)} | Page ${index + 1} of ${pageRange.count}`,
-        48,
-        748,
-        { width: 516, align: 'center' },
+      doc.moveTo(48, 742).lineTo(564, 742).lineWidth(0.5).strokeColor('#D5DEE8').stroke();
+      doc.font('Helvetica').fontSize(7).fillColor('#6B7280').text(
+        `LEGAL WHAT? • PANTHEON   |   Report ${input.reportId.slice(0, 8)}   |   Page ${index + 1} of ${pageRange.count}`,
+        48, 750, { width: 516, align: 'center' },
       );
     }
 

@@ -158,7 +158,7 @@ if (
   fail('Pantheon completed reports are not securely delivered as download-only artifacts');
 }
 if (
-  !pantheonReportPdf.includes('COMPREHENSIVE PUBLIC-SOURCE BACKGROUND REPORT') ||
+  !pantheonReportPdf.toUpperCase().includes('COMPREHENSIVE PUBLIC-SOURCE BACKGROUND REPORT') ||
   !pantheonReportPdf.includes('Court / Case History') ||
   !pantheonReportPdf.includes('Crawler Coverage') ||
   !pantheonReportPdf.includes('Source Provenance') ||
@@ -214,8 +214,8 @@ if (
 ) {
   fail('BirdOfPrey background-report retrieval still fabricates identity metadata or accepts failed HTTP as evidence');
 }
-if (!sixDegrees.includes('Crawler request failed: HTTP')) {
-  fail('SixDegrees background-report retrieval accepts non-success HTTP as evidence');
+if (!sixDegrees.includes('Crawler request failed: HTTP') ||\n  !sixDegrees.includes('this.clearGraph()')) {
+  fail('SixDegrees background-report retrieval accepts non-success HTTP as evidence or leaks graph state between targets');
 }
 if (
   !trinity.includes('firstSuccessful') ||
