@@ -285,7 +285,12 @@ export class LexaraEmbodimentEngine {
           )
         : 0;
 
-    const rawLevel = audio.active ? clamp(audio.level * 1.45, 0, 1) : fallbackSpeech;
+    const measuredLevelAvailable = Number.isFinite(audio.level);
+    const rawLevel = audio.active
+      ? measuredLevelAvailable
+        ? clamp(audio.level * 1.45, 0, 1)
+        : fallbackSpeech
+      : 0;
     const attack = rawLevel > this.smoothedMouthOpen ? 18 : 10;
     this.smoothedMouthOpen = exponentialSmoothing(this.smoothedMouthOpen, rawLevel, dtSec, attack);
 
