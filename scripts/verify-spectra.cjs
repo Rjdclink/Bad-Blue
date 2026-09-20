@@ -29,6 +29,7 @@ const runtime = read('client/src/hooks/useGeoRuntime.ts');
 const fusion = read('server/services/geoconsole/inputFusionEngine.ts');
 const dockerfile = read('Dockerfile');
 const exifTool = read('server/services/locationIntelligence/ExifToolExtractor.ts');
+const sourceRegistry = read('server/services/spectra/SpectraSourceRegistry.ts');
 
 console.log('\nSPECTRA UNIFIED EXPERIENCE\n');
 
@@ -130,6 +131,21 @@ test('SPECTRA acquisition uses existing OSINT engine with a route-local timeout'
   routes.includes('conductFullOSINT') &&
   routes.includes('settleWithin(') &&
   routes.includes('SPECTRA_OSINT_TIMEOUT_MS'));
+test('SPECTRA has a prioritized durable source registry wired into acquisition',
+  sourceRegistry.includes('SPECTRA_SOURCE_REGISTRY') &&
+  sourceRegistry.includes('selectSpectraSources') &&
+  sourceRegistry.includes("'P0'") &&
+  routes.includes("from '../services/spectra/SpectraSourceRegistry'") &&
+  routes.includes('discoveryQueries.sourcePass') &&
+  routes.includes('selectSpectraSources(clueKinds, 18)'));
+test('SPECTRA registry spans identity, social, geospatial, media and public-record branches',
+  sourceRegistry.includes("'identity-people-search'") &&
+  sourceRegistry.includes("'social-discovery'") &&
+  sourceRegistry.includes("'maps-geocoding'") &&
+  sourceRegistry.includes("'metadata'") &&
+  sourceRegistry.includes("'public-records'") &&
+  sourceRegistry.includes("'image-geolocation'") &&
+  sourceRegistry.includes("'geospatial-fusion'"));
 test('SPECTRA broad discovery runs independently of deep OSINT',
   routes.includes('runDiscoveryPass') &&
   routes.includes('Promise.allSettled') &&
