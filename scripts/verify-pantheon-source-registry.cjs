@@ -37,6 +37,10 @@ for(const crawler of ['startrek','birdofprey','sixdegrees','cerberus','blizzard'
 if(!adapter.includes('searchAllIsolatedWithAudit')) throw new Error('Background crawler fan-out is not failure-isolated/audited');
 if(!adapter.includes('Seven-Crawler Initiative') && !adapter.includes('SixCrawlerInitiative')) throw new Error('Seven-crawler analytical family not wired');
 if(!adapter.includes('twoStageDeployer.deployBackgroundReport')) throw new Error('Extended razor/secondary crawler stage not wired');
+const orchestrator=fs.readFileSync('server/services/pantheonCrawlerOrchestrator.ts','utf8');
+for(const token of ['validTargets','new URL(target)',"url.protocol === 'http:'","url.protocol === 'https:'",'Promise.all(','searchAllIsolatedWithAudit']){
+  if(!orchestrator.includes(token)) throw new Error('Crawler execution hardening missing: '+token);
+}
 let total=0;
 for(let n=1;n<=23;n++){
   const nn=String(n).padStart(2,'0');
