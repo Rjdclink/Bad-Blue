@@ -27,6 +27,14 @@ export interface CityStateLocation {
   city: string;
   state: string;
   accuracyMeters: number;
+  resolution?: 'address' | 'city_state' | 'freeform';
+}
+
+export interface AddressHint {
+  street: string;
+  city?: string;
+  state?: string;
+  postalcode?: string;
 }
 
 function normalizeSpaces(value: string): string {
@@ -45,6 +53,42 @@ function cleanCity(value: string): string {
     .replace(/^(?:in|at|from|near|around|city of|located in)\s+/i, '')
     .replace(/^[,;:\-\s]+|[,;:\-\s]+$/g, '')
     .trim();
+}
+
+const STREET_SUFFIX_RE = '(?:street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|lane|ln|court|ct|circle|cir|parkway|pkwy|highway|hwy|way|place|pl|terrace|ter|trail|trl)';
+const STREET_ADDRESS_RE = new RegExp(
+  '\\b(\\d{1,7}[A-Za-z]?(?:[-/]\\d{1,7}[A-Za-z]?)?\\s+(?:[NSEW]\\.?\\s+)?[A-Za-z0-9][A-Za-z0-9 .\'’-]{0,70}?\\s+' + STREET_SUFFIX_RE + '\\.?)(?:\\s+(?:apt|apartment|unit|suite|ste|#)\\s*[A-Za-z0-9-]+)?\\b',
+  'i',
+);
+
+export function extractStreetAddressHint(input: string): AddressHint | null {
+  const text = normalizeSpaces(input);
+  const street = text.match(STREET_ADDRESS_RE)?.[1]?.trim();
+  if (!street) return null;
+  const regional = extractCityStateHint(text);
+  const zip = text.match(/\\b\\d{5}(?:-\\d{4})?\\b/)?.[0];
+  return {
+    street,
+    city: regional?.city,
+    state: regional?.state,
+    postalcode: zip,
+  };
+}
+
+export function extractLocationClues(input: string): string[] {
+  const text = normalizeSpaces(input);
+  if (!text) return [];
+  const clues: string[] = [];
+  const address = extractStreetAddressHint(text);
+  const regional = extractCityStateHint(text);
+  if (address) {
+    clues.push([address.street, address.city, address.state, address.postalcode].filter(Boolean).join(', '));
+    clues.push(address.street);
+  }
+  if (regional) clues.push(regional.query);
+  const contextual = extractFreeformLocationHint(text);
+  if (contextual) clues.push(contextual);
+  return [...new Set(clues.map(value => normalizeSpaces(value)).filter(Boolean))];
 }
 
 export function extractCityStateHint(input: string): { city: string; state: string; query: string } | null {
@@ -199,27 +243,46 @@ async function waitForGeocoderSlot(): Promise<void> {
   lastRequestAt = Date.now();
 }
 
-async function queryGeocoder(url: URL): Promise<Array<{
+const geocoderCache = new Map<string, { expiresAt: number; results: Array<{ lat?: string; lon?: string; display_name?: string; boundingbox?: string[] }> }>();
+
+async function queryGeocoder(url: URL, strategy = 'unknown'): Promise<Array<{
   lat?: string;
   lon?: string;
   display_name?: string;
   boundingbox?: string[];
 }>> {
+  const cacheKey = url.toString();
+  const cached = geocoderCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.results;
   await waitForGeocoderSlot();
-  const response = await fetch(url, {
+  let response: Response;
+  try {
+    response = await fetch(url, {
     headers: {
       Accept: 'application/json',
       'User-Agent': 'LegalWhat-SPECTRA-Geocoder/1.0',
     },
-    signal: AbortSignal.timeout(7000),
-  });
-  if (!response.ok) throw new Error('Location service is unavailable.');
-  return response.json() as Promise<Array<{
+      signal: AbortSignal.timeout(7000),
+    });
+  } catch (error) {
+    const errorType = error instanceof Error ? error.name : 'unknown';
+    console.warn('[SPECTRA_GEOCODER] request_failed', { strategy, errorType });
+    throw error;
+  }
+  if (!response.ok) {
+    console.warn('[SPECTRA_GEOCODER] http_error', { strategy, status: response.status });
+    throw new Error('Location service is unavailable.');
+  }
+  const results = await response.json() as Array<{
     lat?: string;
     lon?: string;
     display_name?: string;
     boundingbox?: string[];
-  }>>;
+  }>;
+  geocoderCache.set(cacheKey, { expiresAt: Date.now() + 5 * 60_000, results });
+  if (results.length === 0) console.info('[SPECTRA_GEOCODER] no_match', { strategy });
+  else console.info('[SPECTRA_GEOCODER] matched', { strategy, resultCount: results.length });
+  return results;
 }
 
 export async function geocodeFreeformLocation(input: string): Promise<CityStateLocation | null> {
@@ -232,7 +295,7 @@ export async function geocodeFreeformLocation(input: string): Promise<CityStateL
   url.searchParams.set('addressdetails', '1');
   url.searchParams.set('q', query);
 
-  const results = await queryGeocoder(url);
+  const results = await queryGeocoder(url, 'freeform');
   const result = results[0];
   const latitude = Number(result?.lat);
   const longitude = Number(result?.lon);
@@ -245,6 +308,7 @@ export async function geocodeFreeformLocation(input: string): Promise<CityStateL
     city: query,
     state: '',
     accuracyMeters: geocoderAccuracyMeters(latitude, longitude, result?.boundingbox),
+    resolution: 'freeform',
   };
 }
 
@@ -260,7 +324,7 @@ export async function geocodeCityState(input: string): Promise<CityStateLocation
   url.searchParams.set('state', hint.state);
   url.searchParams.set('country', 'United States');
 
-  const results = await queryGeocoder(url);
+  const results = await queryGeocoder(url, 'city_state');
   const result = results[0];
   const latitude = Number(result?.lat);
   const longitude = Number(result?.lon);
@@ -273,5 +337,85 @@ export async function geocodeCityState(input: string): Promise<CityStateLocation
     city: hint.city,
     state: hint.state,
     accuracyMeters: geocoderAccuracyMeters(latitude, longitude, result?.boundingbox),
+    resolution: 'city_state',
   };
+}
+
+
+export async function geocodeBestLocation(input: string): Promise<CityStateLocation | null> {
+  const text = normalizeSpaces(input);
+  if (!text) return null;
+
+  const address = extractStreetAddressHint(text);
+  if (address) {
+    const structured = new URL('/search', GEOCODER_BASE_URL);
+    structured.searchParams.set('format', 'jsonv2');
+    structured.searchParams.set('limit', '1');
+    structured.searchParams.set('addressdetails', '1');
+    structured.searchParams.set('street', address.street);
+    if (address.city) structured.searchParams.set('city', address.city);
+    if (address.state) structured.searchParams.set('state', address.state);
+    if (address.postalcode) structured.searchParams.set('postalcode', address.postalcode);
+    structured.searchParams.set('country', 'United States');
+
+    try {
+      const results = await queryGeocoder(structured, 'structured_address');
+      const result = results[0];
+      const latitude = Number(result?.lat);
+      const longitude = Number(result?.lon);
+      if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+        return {
+          latitude,
+          longitude,
+          displayName: result?.display_name || [address.street, address.city, address.state].filter(Boolean).join(', '),
+          city: address.city || '',
+          state: address.state || '',
+          accuracyMeters: geocoderAccuracyMeters(latitude, longitude, result?.boundingbox),
+          resolution: 'address',
+        };
+      }
+    } catch {
+      // Failure is isolated; regional/free-form strategies below remain available.
+    }
+  }
+
+  try {
+    const regional = await geocodeCityState(text);
+    if (regional) return regional;
+  } catch {
+    // Not every clue contains city/state. Continue to free-form interpretation.
+  }
+
+  for (const clue of extractLocationClues(text)) {
+    try {
+      const direct = new URL('/search', GEOCODER_BASE_URL);
+      direct.searchParams.set('format', 'jsonv2');
+      direct.searchParams.set('limit', '1');
+      direct.searchParams.set('addressdetails', '1');
+      direct.searchParams.set('q', clue);
+      const results = await queryGeocoder(direct, 'normalized_freeform');
+      const result = results[0];
+      const latitude = Number(result?.lat);
+      const longitude = Number(result?.lon);
+      if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+        return {
+          latitude,
+          longitude,
+          displayName: result?.display_name || clue,
+          city: '',
+          state: '',
+          accuracyMeters: geocoderAccuracyMeters(latitude, longitude, result?.boundingbox),
+          resolution: 'freeform',
+        };
+      }
+    } catch {
+      // One interpretation/provider attempt must not discard the clue.
+    }
+  }
+
+  console.info('[SPECTRA_GEOCODER] clue_unresolved', {
+    hasStreetAddress: Boolean(address),
+    clueCount: extractLocationClues(text).length,
+  });
+  return null;
 }
