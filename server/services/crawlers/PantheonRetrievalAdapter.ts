@@ -48,7 +48,14 @@ export class PantheonRetrievalAdapter {
     targets: string[];
     depth?: 1 | 2 | 3 | 4;
     budgetMs?: number;
+    deadlineAt?: number;
   }): Promise<PantheonRetrievalResponse> {
+    const startedAt = Date.now();
+    const deadlineAt = request.deadlineAt
+      ?? (request.budgetMs == null ? undefined : startedAt + request.budgetMs);
+    const remainingMs = () => deadlineAt == null ? Number.POSITIVE_INFINITY : Math.max(0, deadlineAt - Date.now());
+    const hasCollectionTime = (reserveMs = 250) => remainingMs() > reserveMs;
+
     const firstTarget = request.targets[0];
     let host: string | undefined;
     if (firstTarget) {
@@ -95,7 +102,7 @@ export class PantheonRetrievalAdapter {
       depth: plan.depth,
       crawlers: plan.crawlers,
       stormIntensity: plan.depth === 4 ? 'storm' as const : 'snow' as const,
-      timeout: request.budgetMs,
+      timeout: Number.isFinite(remainingMs()) ? remainingMs() : request.budgetMs,
     };
     let results: CrawlerResult[];
     let crawlerAudit: PantheonRetrievalResponse['crawlerAudit'] = [];
@@ -121,7 +128,7 @@ export class PantheonRetrievalAdapter {
       });
       const publicResources = await acquirePublicResources(
         urlTargets,
-        Math.min(12_000, Math.max(3_000, Math.floor((request.budgetMs || 60_000) / Math.max(1, request.targets.length)))),
+        Math.min(12_000, Math.max(1_000, Math.floor((Number.isFinite(remainingMs()) ? remainingMs() : (request.budgetMs || 60_000)) / Math.max(1, request.targets.length)))),
       );
       for (const resource of publicResources) {
         crawlerAudit.push({
@@ -152,7 +159,7 @@ export class PantheonRetrievalAdapter {
       }
     }
 
-    if (request.purpose === 'background_report' && evidence.length > 0) {
+    if (request.purpose === 'background_report' && evidence.length > 0 && hasCollectionTime(1_000)) {
       // Feed real retrieved evidence through the Seven-Crawler analytical family.
       // Retrieval remains the responsibility of the public-source crawler fleet;
       // these seven preserve their original analytic intent and cooperate over the
@@ -244,14 +251,50 @@ export class PantheonRetrievalAdapter {
           return false;
         }
       });
-      const extendedRuns = await Promise.allSettled(
-        extendedTargets.map(target => twoStageDeployer.deployBackgroundReport(target, undefined, request.budgetMs))
-      );
+      // Keep the 4,500-source path bounded: never launch thousands of
+      // simultaneous razor operations, and never start new work after deadline.
+      const extendedRuns: any[] = new Array(extendedTargets.length);
+      let nextTargetIndex = 0;
+      const workerCount = Math.min(8, extendedTargets.length);
+      const workers = Array.from({ length: workerCount }, async () => {
+        while (hasCollectionTime(250)) {
+          const index = nextTargetIndex++;
+          if (index >= extendedTargets.length) return;
+          try {
+            const value = await twoStageDeployer.deployBackgroundReport(
+              extendedTargets[index],
+              undefined,
+              Number.isFinite(remainingMs()) ? remainingMs() : request.budgetMs,
+            );
+            extendedRuns[index] = { status: 'fulfilled', value };
+          } catch (reason) {
+            extendedRuns[index] = { status: 'rejected', reason };
+          }
+        }
+      });
+      await Promise.all(workers);
+
+      // Materialize unstarted targets as deadline cancellations for an auditable
+      // manifest rather than silently pretending they ran.
+      for (let index = 0; index < extendedTargets.length; index++) {
+        if (!extendedRuns[index]) {
+          extendedRuns[index] = { status: 'cancelled', reason: new Error('Pantheon collection deadline reached') };
+          crawlerAudit.push({
+            crawler: 'pantheon-razor-dispatch',
+            capabilityClass: 'pantheon-secondary',
+            status: 'cancelled_at_deadline',
+            evidenceCount: 0,
+            attempts: 0,
+            targets: 1,
+            error: 'Collection deadline reached before dispatch',
+          });
+        }
+      }
 
       for (let index = 0; index < extendedRuns.length; index++) {
         const run = extendedRuns[index];
         const target = extendedTargets[index];
-        if (run.status !== 'fulfilled') continue;
+        if (!run || run.status !== 'fulfilled') continue;
 
         for (const razor of run.value.razorResults) {
           if (!razor.success) continue;
