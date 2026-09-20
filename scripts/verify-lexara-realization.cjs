@@ -17,6 +17,7 @@ const conversation = read('client/src/components/LexaraConversation.tsx');
 const avatar = read('client/src/components/LexaraEtherealAvatar.tsx');
 const viewport = read('client/src/components/LexaraViewport.tsx');
 const embodimentEngine = read('client/src/lib/lexaraEmbodimentEngine.ts');
+const gpuRenderer = read('client/src/lib/lexaraGpuRenderer.ts');
 const synthesis = read('client/src/hooks/useVoiceSynthesis.ts');
 const speechClient = read('client/src/lib/lexaraSpeechClient.ts');
 const realtimeVoiceClient = read('client/src/lib/lexaraRealtimeVoiceClient.ts');
@@ -65,6 +66,19 @@ const mistral = read('server/mistral.ts');
 const gemini = read('server/gemini.ts');
 const ttsMesh = read('server/lexara/LexaraTTSMesh.ts');
 const ttsRouter = read('server/lexara/LexaraTTSRouter.ts');
+
+must(
+  gpuRenderer.includes("requestAdapter({ powerPreference: 'high-performance' })") &&
+    gpuRenderer.includes("canvas.getContext('webgpu')") &&
+    gpuRenderer.includes("let targetFps = 60") &&
+    gpuRenderer.includes("targetFps = 30") &&
+    gpuRenderer.includes("device.lost.then") &&
+    avatar.includes("createLexaraGpuRenderer") &&
+    avatar.includes("data-gpu-renderer=") &&
+    avatar.includes("fallback: 'canvas2d'") &&
+    avatar.includes("opacity: gpuReady ? 0 : 1"),
+  'LEXARA uses adaptive browser WebGPU at 60/30 FPS with fail-open Canvas2D and static portrait fallbacks',
+);
 
 must(
   voiceMode.includes('preferServerRecognition') &&

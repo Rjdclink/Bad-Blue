@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { getLexaraServerPlaybackClock } from '@/lib/lexaraSpeechClient';
 import { lexaraRealtimeVoiceClient } from '@/lib/lexaraRealtimeVoiceClient';
+import { createLexaraGpuRenderer, type LexaraGpuRenderer } from '@/lib/lexaraGpuRenderer';
 import {
   LexaraEmbodimentEngine,
   type LexaraEmbodimentFrame,
@@ -39,7 +40,7 @@ const SIZE_CONFIG = {
 };
 
 const LIVE_AVATAR_ENABLED = String(import.meta.env.VITE_LEXARA_LIVE_AVATAR_ENABLED ?? '1') !== '0';
-const TARGET_FPS = 30;
+const CANVAS_FALLBACK_FPS = 30;
 
 interface LatestAvatarInput {
   isSpeaking: boolean;
@@ -437,6 +438,9 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
   const portraitRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const gpuCanvasRef = useRef<HTMLCanvasElement>(null);
+  const gpuRendererRef = useRef<LexaraGpuRenderer | null>(null);
+  const [gpuReady, setGpuReady] = useState(false);
   const latestInputRef = useRef<LatestAvatarInput>({
     isSpeaking,
     isListening,
@@ -511,13 +515,34 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
     image.onload = () => {
       skinColor = sampleImageColor(image, 0.515, 0.258, skinColor);
       engine.reset(performance.now());
+      const gpuCanvas = gpuCanvasRef.current;
+      if (gpuCanvas && !reducedMotion) {
+        void createLexaraGpuRenderer(gpuCanvas, image, () => {
+          gpuRendererRef.current?.dispose();
+          gpuRendererRef.current = null;
+          setGpuReady(false);
+          reportAvatarEvent('avatar-renderer-error', { rendererPath: 'webgpu', fallback: 'canvas2d' });
+        }).then(renderer => {
+          if (disposed || !renderer) {
+            renderer?.dispose();
+            return;
+          }
+          gpuRendererRef.current = renderer;
+          const rect = container.getBoundingClientRect();
+          renderer.resize(rect.width, rect.height, window.devicePixelRatio || 1);
+          setGpuReady(true);
+          reportAvatarEvent('avatar-renderer-ready', { rendererPath: renderer.tier, fallback: 'canvas2d' });
+        }).catch(() => {
+          setGpuReady(false);
+        });
+      }
     };
 
     const paint = (nowMs: number) => {
       if (disposed) return;
       frameHandle = window.requestAnimationFrame(paint);
       if (!image.complete || !image.naturalWidth || !image.naturalHeight) return;
-      if (nowMs - lastPaintMs < 1000 / TARGET_FPS) return;
+      if (nowMs - lastPaintMs < 1000 / (gpuRendererRef.current ? 60 : CANVAS_FALLBACK_FPS)) return;
       lastPaintMs = nowMs;
 
       if (rendererFailed) return;
@@ -547,6 +572,13 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
           turnId: realtimeClock.turnId,
         },
       });
+
+      const gpuRenderer = gpuRendererRef.current;
+      if (gpuRenderer) {
+        const gpuRect = container.getBoundingClientRect();
+        gpuRenderer.resize(gpuRect.width, gpuRect.height, window.devicePixelRatio || 1);
+        gpuRenderer.render(frame, nowMs);
+      }
 
       // Apply a tiny coherent portrait transform underneath the local facial/body
       // rig. This makes breathing/head posture visibly readable on mobile while
@@ -611,6 +643,8 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
     return () => {
       disposed = true;
       window.cancelAnimationFrame(frameHandle);
+      gpuRendererRef.current?.dispose();
+      gpuRendererRef.current = null;
       observer?.disconnect();
       window.removeEventListener('resize', resizeCanvas);
       ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -629,6 +663,7 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
       style={{ contain: 'layout paint' }}
       aria-label="LEXARA professional legal assistant"
       data-live-avatar={LIVE_AVATAR_ENABLED ? 'portrait-rig-v3' : 'static'}
+      data-gpu-renderer={gpuReady ? (gpuRendererRef.current?.tier ?? 'webgpu') : 'canvas2d'}
       data-reduced-motion={reducedMotion ? 'true' : 'false'}
     >
       <img
@@ -636,7 +671,7 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
         src={imageSrc}
         alt="LEXARA professional attorney seated behind her desk"
         className="h-full w-full bg-slate-950 object-contain object-center will-change-transform"
-        style={{ transformOrigin: '50% 58%' }}
+        style={{ transformOrigin: '50% 58%', opacity: gpuReady ? 0 : 1 }}
         draggable={false}
         decoding="async"
         fetchPriority="high"
@@ -644,6 +679,15 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
           setImageIndex(current => Math.min(current + 1, LEXARA_ATTORNEY_IMAGE_SOURCES.length - 1));
         }}
       />
+
+      {LIVE_AVATAR_ENABLED && (
+        <canvas
+          ref={gpuCanvasRef}
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 h-full w-full select-none"
+          style={{ opacity: gpuReady ? 1 : 0 }}
+        />
+      )}
 
       {LIVE_AVATAR_ENABLED && (
         <canvas
