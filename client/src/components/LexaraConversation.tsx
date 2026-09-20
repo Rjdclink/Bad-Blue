@@ -1,5 +1,5 @@
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Loader2, Mic, MicOff, Send } from 'lucide-react';
+import { AlertCircle, Download, FileText, Loader2, Mic, MicOff, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useVoiceMode, type VoiceTranscriptMeta } from '@/hooks/useVoiceMode';
 import { useVoiceSynthesis } from '@/hooks/useVoiceSynthesis';
@@ -433,6 +433,8 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const [audioLevel, setAudioLevel] = useState(0);
   const [emotion, setEmotion] = useState<LEXARAEmotionHint>('calm');
   const [gaze, setGaze] = useState<LEXARAGazeHint>('camera');
+  const [conversationDocument, setConversationDocument] = useState<{ title: string; content: string } | null>(null);
+  const [documentBusy, setDocumentBusy] = useState(false);
 
   const conversationRef = useRef<ConversationMessage[]>(initialStateRef.current.messages);
   const phaseRef = useRef<ConversationPhase>('initializing');
@@ -1072,6 +1074,36 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
       const data = await response.json();
       if (generation !== generationRef.current) return;
+      if (data?.documentIntent?.requested === true) {
+        const resolvedJurisdiction = String(data?.jurisdiction || jurisdiction || '').trim();
+        if (resolvedJurisdiction) {
+          setDocumentBusy(true);
+          const facts = [...previousMessages, { role: 'user', content: message }]
+            .map(item => `${item.role === 'user' ? 'USER' : 'LEXARA'}: ${item.content}`)
+            .join('\n\n')
+            .slice(-30000);
+          void fetch('/api/lexara/documents/generate', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              state: resolvedJurisdiction,
+              facts,
+              lawType: lawTypeId,
+              documentType: String(data.documentIntent.documentType || 'Custom Document'),
+              instructions: 'Create the requested document from the conversation facts. Preserve unknown required facts as bracketed placeholders.',
+            }),
+          }).then(async documentResponse => {
+            const documentData = await documentResponse.json().catch(() => ({}));
+            if (!documentResponse.ok) throw new Error(documentData?.error || 'Document generation failed');
+            setConversationDocument({
+              title: String(documentData?.title || data.documentIntent.documentType || 'Legal Document'),
+              content: String(documentData?.document || ''),
+            });
+          }).catch(error => setErrorMessage(friendlyError(error)))
+            .finally(() => setDocumentBusy(false));
+        }
+      }
       // Model/research work is complete before TTS begins. A barge-in during
       // answer playback is a new turn, not an "analysis still running" check-in.
       analysisActiveRef.current = false;
@@ -1315,6 +1347,21 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     return 'Text consultation';
   }, [phase]);
 
+  const downloadConversationDocument = async (format: 'docx' | 'pdf') => {
+    if (!conversationDocument?.content) return;
+    const response = await fetch('/api/lexara/documents/export', {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: conversationDocument.title, content: conversationDocument.content, format }),
+    });
+    if (!response.ok) throw new Error('Document export failed');
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `${conversationDocument.title.replace(/[^a-z0-9._-]+/gi, '-') }.${format}`;
+    document.body.appendChild(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url);
+  };
+
   const submitText = (event: FormEvent) => {
     event.preventDefault();
     handleUserMessage(userInput);
@@ -1403,6 +1450,31 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
               </div>
             </div>
           ))}
+
+          {(conversationDocument || documentBusy) && (
+            <div className="flex justify-start">
+              <div className="max-w-[92%] rounded-2xl border bg-card p-4 text-sm shadow-sm">
+                <div className="mb-2 flex items-center gap-2 font-semibold"><FileText className="h-4 w-4" />LEXARA Document</div>
+                {documentBusy ? (
+                  <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Preparing editable document…</div>
+                ) : conversationDocument ? (
+                  <>
+                    <div className="mb-3 font-medium">{conversationDocument.title}</div>
+                    <textarea
+                      value={conversationDocument.content}
+                      onChange={event => setConversationDocument({ ...conversationDocument, content: event.target.value })}
+                      className="mb-3 min-h-48 w-full rounded-md border bg-background p-3 font-mono text-xs"
+                      aria-label="Editable legal document"
+                    />
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="outline" onClick={() => void downloadConversationDocument('docx')}><Download className="mr-1 h-4 w-4" />DOCX</Button>
+                      <Button size="sm" variant="outline" onClick={() => void downloadConversationDocument('pdf')}><Download className="mr-1 h-4 w-4" />PDF</Button>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            </div>
+          )}
 
           {interimTranscript && !isSpeaking && (
             <div className="flex justify-end">
