@@ -23,6 +23,7 @@ type QueueItem<Input = unknown, Result = unknown> = {
   resolve: (value: QuantiExecutionResult<Result>) => void;
   reject: (error: Error) => void;
   cancelled: boolean;
+  superseded: boolean;
   externalSignal?: AbortSignal;
   executionController?: AbortController;
   cleanupExternalAbort?: () => void;
@@ -130,6 +131,8 @@ export class QuantiCompRuntime extends EventEmitter {
   private readonly interactionModel = new QuantiInteractionModel();
   private readonly profiles = new Map<string, ProfileState>();
   private readonly inFlightByKey = new Map<string, Promise<QuantiExecutionResult<unknown>>>();
+  private readonly latestGenerationByKey = new Map<string, number>();
+  private readonly activeItems = new Set<QueueItem>();
   private readonly maxConcurrency: number;
   private readonly workerId: string;
   private activeExecutions = 0;
@@ -159,6 +162,31 @@ export class QuantiCompRuntime extends EventEmitter {
       return Promise.reject(new QuantiCompError('Workload aborted before submission', 'ABORTED', { workloadId: workload.id }));
     }
 
+    const supersessionKey = workload.policy.supersessionKey?.trim();
+    const generation = workload.policy.generation;
+    if (supersessionKey) {
+      if (!Number.isSafeInteger(generation) || Number(generation) < 0) {
+        return Promise.reject(new QuantiCompError(
+          'Generation-fenced workload requires a non-negative safe integer generation',
+          'INVALID_WORKLOAD',
+          { workloadId: workload.id, supersessionKey, generation },
+        ));
+      }
+      const normalizedGeneration = Number(generation);
+      const latest = this.latestGenerationByKey.get(supersessionKey);
+      if (latest !== undefined && normalizedGeneration < latest) {
+        return Promise.reject(new QuantiCompError(
+          'Workload generation was superseded before submission',
+          'SUPERSEDED',
+          { workloadId: workload.id, supersessionKey, generation: normalizedGeneration, latestGeneration: latest },
+        ));
+      }
+      if (latest === undefined || normalizedGeneration > latest) {
+        this.latestGenerationByKey.set(supersessionKey, normalizedGeneration);
+        this.supersedeOlderWork(supersessionKey, normalizedGeneration, workload.resourceHints?.resourceDomain);
+      }
+    }
+
     const dedupeKey = workload.policy.allowDeduplication ? workload.policy.dedupeKey : undefined;
     if (dedupeKey) {
       const existing = this.inFlightByKey.get(dedupeKey);
@@ -178,6 +206,7 @@ export class QuantiCompRuntime extends EventEmitter {
         resolve,
         reject,
         cancelled: false,
+        superseded: false,
         externalSignal: options.signal,
       };
       if (options.signal) {
@@ -206,6 +235,31 @@ export class QuantiCompRuntime extends EventEmitter {
       }).catch(() => undefined);
     }
     return promise;
+  }
+
+  /**
+   * Advance a generation fence without submitting replacement work. This is
+   * used by realtime streams when a turn is interrupted/ended and the correct
+   * behavior is to shed stale visual work immediately.
+   */
+  advanceSupersessionGeneration(
+    supersessionKeyValue: string,
+    generation: number,
+    resourceDomain?: string,
+  ): number {
+    const supersessionKey = String(supersessionKeyValue || '').trim();
+    if (!supersessionKey || !Number.isSafeInteger(generation) || generation < 0) {
+      throw new QuantiCompError(
+        'Generation advancement requires a key and non-negative safe integer generation',
+        'INVALID_WORKLOAD',
+        { supersessionKey, generation },
+      );
+    }
+    const latest = this.latestGenerationByKey.get(supersessionKey);
+    if (latest !== undefined && generation <= latest) return latest;
+    this.latestGenerationByKey.set(supersessionKey, generation);
+    this.supersedeOlderWork(supersessionKey, generation, resourceDomain);
+    return generation;
   }
 
   getStatus(): QuantiRuntimeStatus {
@@ -256,6 +310,12 @@ export class QuantiCompRuntime extends EventEmitter {
       }));
     }
     this.inFlightByKey.clear();
+    this.latestGenerationByKey.clear();
+    for (const item of this.activeItems) {
+      item.cancelled = true;
+      item.executionController?.abort();
+    }
+    this.activeItems.clear();
     this.profiler.shutdown();
     this.emit('shutdown');
   }
@@ -270,6 +330,45 @@ export class QuantiCompRuntime extends EventEmitter {
     if (typeof workload.execute !== 'function' || typeof workload.validate !== 'function') {
       throw new QuantiCompError('Workload execute and validate functions are required', 'INVALID_WORKLOAD', { workloadId: workload.id });
     }
+    const hasSupersessionKey = Boolean(workload.policy.supersessionKey?.trim());
+    const hasGeneration = workload.policy.generation !== undefined;
+    if (hasSupersessionKey !== hasGeneration) {
+      throw new QuantiCompError(
+        'supersessionKey and generation must be supplied together',
+        'INVALID_WORKLOAD',
+        { workloadId: workload.id },
+      );
+    }
+  }
+
+  private isSuperseded(item: QueueItem): boolean {
+    const key = item.workload.policy.supersessionKey?.trim();
+    const generation = item.workload.policy.generation;
+    if (!key || generation === undefined) return item.superseded;
+    const latest = this.latestGenerationByKey.get(key);
+    return item.superseded || (latest !== undefined && generation < latest);
+  }
+
+  private supersedeOlderWork(key: string, generation: number, resourceDomain?: string): void {
+    for (const item of this.activeItems) {
+      const policy = item.workload.policy;
+      if (policy.supersessionKey?.trim() !== key || policy.generation === undefined || policy.generation >= generation) continue;
+      if (policy.preemptible !== true) continue;
+      const activeDomain = item.workload.resourceHints?.resourceDomain;
+      if (resourceDomain && activeDomain && resourceDomain !== activeDomain) continue;
+      item.superseded = true;
+      item.cancelled = true;
+      item.executionController?.abort();
+      this.emit('workload-superseded', {
+        workloadId: item.workload.id,
+        supersessionKey: key,
+        generation: policy.generation,
+        latestGeneration: generation,
+        running: true,
+      });
+    }
+    this.emit('generation-advanced', { supersessionKey: key, generation });
+    this.schedulePump();
   }
 
   private schedulePump(): void {
@@ -285,6 +384,17 @@ export class QuantiCompRuntime extends EventEmitter {
     while (this.initialized && this.activeExecutions < this.maxConcurrency && this.queue.size > 0) {
       const item = this.queue.pop();
       if (!item) break;
+      if (this.isSuperseded(item)) {
+        item.cleanupExternalAbort?.();
+        this.recordFailure(item.workload.kind);
+        this.failedExecutions += 1;
+        item.reject(new QuantiCompError('Workload superseded before execution', 'SUPERSEDED', {
+          workloadId: item.workload.id,
+          supersessionKey: item.workload.policy.supersessionKey,
+          generation: item.workload.policy.generation,
+        }));
+        continue;
+      }
       if (item.cancelled || item.externalSignal?.aborted) {
         item.cleanupExternalAbort?.();
         this.recordFailure(item.workload.kind);
@@ -303,7 +413,9 @@ export class QuantiCompRuntime extends EventEmitter {
         continue;
       }
       this.activeExecutions += 1;
+      this.activeItems.add(item);
       void this.executeItem(item).finally(() => {
+        this.activeItems.delete(item);
         this.activeExecutions -= 1;
         this.schedulePump();
       });
@@ -348,7 +460,11 @@ export class QuantiCompRuntime extends EventEmitter {
         timeout.unref?.();
       });
       const abortPromise = new Promise<never>((_, reject) => {
-        const rejectAbort = () => reject(new QuantiCompError('Workload aborted', 'ABORTED', { workloadId: workload.id }));
+        const rejectAbort = () => reject(new QuantiCompError(
+          this.isSuperseded(item) ? 'Workload superseded during execution' : 'Workload aborted',
+          this.isSuperseded(item) ? 'SUPERSEDED' : 'ABORTED',
+          { workloadId: workload.id, supersessionKey: workload.policy.supersessionKey, generation: workload.policy.generation },
+        ));
         if (controller.signal.aborted) rejectAbort();
         else controller.signal.addEventListener('abort', rejectAbort, { once: true });
       });
@@ -368,6 +484,13 @@ export class QuantiCompRuntime extends EventEmitter {
       ]);
       const executionMs = performance.now() - executionStart;
 
+      if (this.isSuperseded(item)) {
+        throw new QuantiCompError('Workload superseded during execution', 'SUPERSEDED', {
+          workloadId: workload.id,
+          supersessionKey: workload.policy.supersessionKey,
+          generation: workload.policy.generation,
+        });
+      }
       if (controller.signal.aborted) {
         throw new QuantiCompError('Workload aborted', 'ABORTED', { workloadId: workload.id });
       }
@@ -377,6 +500,13 @@ export class QuantiCompRuntime extends EventEmitter {
       const validationMs = performance.now() - validationStart;
       if (!valid) {
         throw new QuantiCompError('Workload result validation failed', 'VALIDATION_FAILED', { workloadId: workload.id });
+      }
+      if (this.isSuperseded(item)) {
+        throw new QuantiCompError('Validated result became stale before publication', 'SUPERSEDED', {
+          workloadId: workload.id,
+          supersessionKey: workload.policy.supersessionKey,
+          generation: workload.policy.generation,
+        });
       }
 
       const cpu = process.cpuUsage(beforeCpu);

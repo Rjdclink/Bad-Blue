@@ -10,6 +10,12 @@ export interface QuantiResourceHints {
   expectedDurationMs?: number;
   preferredBackend?: QuantiBackend;
   parallelismHint?: number;
+  /**
+   * Optional isolation domain used only by workloads that explicitly opt into
+   * realtime preemption. This lets a newer LEXARA visual turn shed older visual
+   * work without touching legal reasoning, TTS, or unrelated compute.
+   */
+  resourceDomain?: string;
 }
 
 export interface QuantiExecutionPolicy {
@@ -22,6 +28,17 @@ export interface QuantiExecutionPolicy {
   dedupeKey?: string;
   usefulWorkUnits?: number;
   strictValidation?: boolean;
+  /**
+   * Generation fencing for deadline-sensitive streaming workloads. Workloads
+   * that omit these fields preserve the existing QuantiComp behavior.
+   */
+  supersessionKey?: string;
+  generation?: number;
+  /**
+   * Allows a newer generation in the same resourceDomain to abort this work.
+   * It never grants cross-domain preemption authority.
+   */
+  preemptible?: boolean;
 }
 
 export interface QuantiExecutionContext {
@@ -135,6 +152,7 @@ export type QuantiCompErrorCode =
   | 'TIMEOUT'
   | 'VALIDATION_FAILED'
   | 'EXECUTION_FAILED'
+  | 'SUPERSEDED'
   | 'SHUTDOWN';
 
 export class QuantiCompError extends Error {
