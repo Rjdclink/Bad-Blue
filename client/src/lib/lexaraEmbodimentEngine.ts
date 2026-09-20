@@ -32,6 +32,10 @@ export interface LexaraEmbodimentFrame {
   torsoScaleX: number;
   torsoScaleY: number;
   shoulderLift: number;
+  shoulderAsymmetry: number;
+  breathHold: number;
+  jawTension: number;
+  fidget: number;
   nod: number;
   browLift: number;
   smile: number;
@@ -119,6 +123,10 @@ export class LexaraEmbodimentEngine {
   private previousMode: LexaraEmbodimentMode = 'idle';
   private smoothedMouthOpen = 0;
   private smoothedGestureEnergy = 0;
+  private nextFidgetMs = 0;
+  private fidgetUntilMs = 0;
+  private nextBreathHoldMs = 0;
+  private breathHoldUntilMs = 0;
   private headXFilter = new OneEuroScalar(1.2, 0.18);
   private headYFilter = new OneEuroScalar(1.2, 0.18);
   private gazeXFilter = new OneEuroScalar(2.0, 0.3);
@@ -159,6 +167,10 @@ export class LexaraEmbodimentEngine {
     this.previousMode = 'idle';
     this.smoothedMouthOpen = 0;
     this.smoothedGestureEnergy = 0;
+    this.nextFidgetMs = nowMs + 3500 + this.random() * 6500;
+    this.fidgetUntilMs = 0;
+    this.nextBreathHoldMs = nowMs + 7000 + this.random() * 11000;
+    this.breathHoldUntilMs = 0;
     this.gazeTargetX = 0;
     this.gazeTargetY = 0;
     this.headXFilter.reset();
@@ -270,7 +282,25 @@ export class LexaraEmbodimentEngine {
         : input.mode === 'thinking' ? 5.1
           : input.mode === 'listening' ? 4.5
             : 4.7;
-    const breath = Math.sin((timeSec / breathingPeriod) * Math.PI * 2);
+    // Human respiration is not a metronome. Thinking/listening can briefly hold
+    // or soften a breath; speaking suppresses holds so audio-linked motion wins.
+    if (input.mode !== 'speaking' && nowMs >= this.nextBreathHoldMs && this.breathHoldUntilMs <= nowMs) {
+      this.breathHoldUntilMs = nowMs + 260 + this.random() * 820;
+      this.nextBreathHoldMs = this.breathHoldUntilMs + 6500 + this.random() * 12000;
+    }
+    const breathHold = this.breathHoldUntilMs > nowMs
+      ? clamp((this.breathHoldUntilMs - nowMs) / 1080)
+      : 0;
+    const rawBreath = Math.sin((timeSec / breathingPeriod) * Math.PI * 2);
+    const breath = rawBreath * (1 - breathHold * 0.88);
+
+    if (nowMs >= this.nextFidgetMs && this.fidgetUntilMs <= nowMs) {
+      this.fidgetUntilMs = nowMs + 420 + this.random() * 1250;
+      this.nextFidgetMs = this.fidgetUntilMs + 4200 + this.random() * 10000;
+    }
+    const fidget = this.fidgetUntilMs > nowMs
+      ? Math.sin((this.fidgetUntilMs - nowMs) * 0.021) * (input.mode === 'thinking' ? 0.72 : 0.34)
+      : 0;
 
     const audio = input.audio;
     const speechClockSec = audio.currentTimeSec > 0 ? audio.currentTimeSec : timeSec;
@@ -359,7 +389,15 @@ export class LexaraEmbodimentEngine {
       torsoY: clamp(breath * 0.32 - listeningLean * 0.12, -1, 1),
       torsoScaleX: 1 + breath * 0.0018,
       torsoScaleY: 1 + breath * 0.0048 + (input.mode === 'listening' ? 0.0014 : 0),
-      shoulderLift: clamp(breath * 0.36 + this.smoothedGestureEnergy * 0.16, -1, 1),
+      shoulderLift: clamp(breath * 0.30 + this.smoothedGestureEnergy * 0.13, -1, 1),
+      shoulderAsymmetry: clamp(Math.sin(timeSec * 0.41 + 1.7) * 0.12 + fidget * 0.24, -1, 1),
+      breathHold,
+      jawTension: clamp(
+        (input.emotionHint === 'serious' || input.emotionHint === 'authoritative' ? 0.22 : 0.05)
+          + (input.mode === 'thinking' ? 0.12 : 0)
+          + onset * 0.08,
+      ),
+      fidget: clamp(fidget, -1, 1),
       nod: clamp(nod, -1, 1),
       browLift: clamp(browTarget, -1, 1),
       smile: clamp(emotionSmile, -1, 1),
