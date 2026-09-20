@@ -61,20 +61,12 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       reportBudgetMs: budgetMs,
     });
 
-    let timer: NodeJS.Timeout | undefined;
-    const budgetGuard = new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error(`PANTHEON report exceeded its ${Math.round(budgetMs / 60000)} minute investigation budget`)),
-        budgetMs + 30_000,
-      );
-    });
-
-    let report: Awaited<typeof reportPromise>;
-    try {
-      report = await Promise.race([reportPromise, budgetGuard]);
-    } finally {
-      if (timer) clearTimeout(timer);
-    }
+    // The selected duration is an evidence-collection budget, not a report
+    // death timer. conductFullOSINT receives that budget and is responsible for
+    // stopping low-value acquisition. Once collection is underway, allow it to
+    // aggregate the evidence it already obtained into the canonical report.
+    // This prevents a valid investigation from being discarded at 5/10/20/30m.
+    const report = await reportPromise;
 
     await updatePantheonReportRecord(input.reportId, 'completed', {
       job: jobEnvelope(input, 'completed', {
