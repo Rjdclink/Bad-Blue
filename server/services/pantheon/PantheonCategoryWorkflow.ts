@@ -83,6 +83,8 @@ export async function conductPantheonCategoryWorkflow(input: {
   location?: string;
   searchDepth: 1 | 2 | 3 | 4;
   deadlineAt: number;
+  startCategoryIndex?: number;
+  initialReport?: PeopleSearchReport;
   onCategoryStart?: (state: { index: number; label: string; completedCategories: number }) => Promise<void>;
   onCategoryComplete?: (state: { index: number; label: string; completedCategories: number; outcome: PantheonCategoryOutcome; partialReport: PeopleSearchReport }) => Promise<void>;
 }): Promise<{ report: PeopleSearchReport; categoryOutcomes: PantheonCategoryOutcome[] }> {
@@ -91,7 +93,7 @@ export async function conductPantheonCategoryWorkflow(input: {
   const categoryOutcomes: PantheonCategoryOutcome[] = [];
   const targetLimit = categoryTargetLimit(input.searchDepth);
 
-  const report: PeopleSearchReport = {
+  const report: PeopleSearchReport = input.initialReport ? { ...input.initialReport } : {
     identitySummary: { name: input.name, verificationStatus: 'Public-source evidence review completed' },
     contactInformation: [],
     socialMediaPresence: [],
@@ -106,10 +108,11 @@ export async function conductPantheonCategoryWorkflow(input: {
     crawlerAudit: [],
   };
 
-  for (let index = 0; index < PANTHEON_REPORT_CATEGORIES.length; index += 1) {
+  const startCategoryIndex = Math.max(0, Math.min(PANTHEON_REPORT_CATEGORIES.length - 1, input.startCategoryIndex || 0));
+  for (let index = startCategoryIndex; index < PANTHEON_REPORT_CATEGORIES.length; index += 1) {
     const category = PANTHEON_REPORT_CATEGORIES[index];
     const startedAt = new Date().toISOString();
-    await input.onCategoryStart?.({ index, label: category.label, completedCategories: categoryOutcomes.length });
+    await input.onCategoryStart?.({ index, label: category.label, completedCategories: index });
 
     const remainingCategories = PANTHEON_REPORT_CATEGORIES.length - index;
     const remainingMs = Math.max(1, input.deadlineAt - Date.now());
@@ -181,12 +184,12 @@ export async function conductPantheonCategoryWorkflow(input: {
     report.crawlerAudit = mergeAudit(audits);
     const completedWithEvidence = categoryOutcomes.filter(item => item.evidenceCount > 0).length;
     report.confidenceScore = categoryOutcomes.length ? completedWithEvidence / categoryOutcomes.length : 0;
-    report.summary = `PANTHEON completed ${categoryOutcomes.length} of ${PANTHEON_REPORT_CATEGORIES.length} authoritative report categories. Each completed category records its crawler outcomes and provenance before advancement.`;
+    report.summary = `PANTHEON completed ${index + 1} of ${PANTHEON_REPORT_CATEGORIES.length} authoritative report categories. Each completed category records its crawler outcomes and provenance before advancement.`;
 
     await input.onCategoryComplete?.({
       index,
       label: category.label,
-      completedCategories: categoryOutcomes.length,
+      completedCategories: index + 1,
       outcome,
       partialReport: { ...report },
     });
