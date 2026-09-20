@@ -16,7 +16,8 @@ import {
 import type { GPSPoint } from '../services/geoconsole/types';
 import { inputFusionEngine } from '../services/geoconsole/inputFusionEngine';
 import { assessLocationQuality } from '../services/geoconsole/location-quality';
-import { buildSpectraDiscoveryWaves } from '../services/spectra/SpectraSourceRegistry';
+import { buildSpectraDiscoveryWaves, getSpectraSourceCatalogStats } from '../services/spectra/SpectraSourceRegistry';
+import { pantheonRetrievalAdapter } from '../services/crawlers/PantheonRetrievalAdapter';
 
 const router = Router();
 router.use(isAuthenticated);
@@ -487,7 +488,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
   try {
     // SPECTRA treats discovery systems as parallel evidence sources. A failure
     // in one adapter is local and never prevents other acquisition paths.
-    const [osintResult, firstPass] = await Promise.all([
+    const [osintResult, firstPass, catalogRetrieval] = await Promise.all([
       settleWithin(
         conductFullOSINT(searchQuery, {
           location: details,
@@ -498,6 +499,16 @@ router.post('/acquire', async (req: Request, res: Response) => {
         'Deep OSINT acquisition',
       ),
       runDiscoveryPass([...new Set([...discoveryQueries.firstPass, ...criticalSourceQueries])]),
+      settleWithin(
+        pantheonRetrievalAdapter.retrieve({
+          purpose: 'background_report',
+          targets: directSourceTargets,
+          depth: 4,
+          budgetMs: SPECTRA_OSINT_TIMEOUT_MS,
+        }),
+        SPECTRA_OSINT_TIMEOUT_MS,
+        'SPECTRA catalog retrieval',
+      ),
     ]);
 
     const report = osintResult.status === 'fulfilled'
@@ -587,6 +598,17 @@ router.post('/acquire', async (req: Request, res: Response) => {
           : undefined,
       };
     });
+
+    if (catalogRetrieval.status === 'fulfilled') {
+      for (const item of catalogRetrieval.value.evidence) {
+        collectCoordinateObservations(
+          { content: item.content, metadata: item.metadata, target: item.target },
+          String(item.crawler || 'spectra-catalog'),
+          normalizeConfidence(item.confidence),
+          observations,
+        );
+      }
+    }
 
     for (const source of report.sources || []) {
       collectCoordinateObservations(
@@ -713,6 +735,10 @@ router.post('/acquire', async (req: Request, res: Response) => {
       ?? 0;
 
     const sourceKeys = new Set<string>();
+    const sourceCatalog = getSpectraSourceCatalogStats();
+    if (catalogRetrieval.status === 'fulfilled') {
+      for (const item of catalogRetrieval.value.evidence) sourceKeys.add(String(item.target).trim().toLowerCase());
+    }
     for (const point of directEvidence) {
       sourceKeys.add(
         String(point.correlationGroup || `media:${point.source}`).trim().toLowerCase()
@@ -735,6 +761,9 @@ router.post('/acquire', async (req: Request, res: Response) => {
         identityConfidence,
         locationConfidence,
         sourceCount: sourceKeys.size,
+        sourceCatalog,
+        catalogRetrievalAvailable: catalogRetrieval.status === 'fulfilled' && catalogRetrieval.value.available,
+        catalogEvidenceCount: catalogRetrieval.status === 'fulfilled' ? catalogRetrieval.value.evidence.length : 0,
         evidenceItemCount:
           directEvidence.length +
           (Array.isArray(report.sources) ? report.sources.length : 0) +
