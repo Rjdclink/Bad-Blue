@@ -125,12 +125,15 @@ class LexaraPlaybackProcessor extends AudioWorkletProcessor {
     }
 
     let writeOffset = 0;
+    let energySum = 0;
     while (writeOffset < output.length && this.queue.length) {
       const current = this.queue[0];
       const available = current.length - this.queueOffset;
       const count = Math.min(available, output.length - writeOffset);
       for (let i = 0; i < count; i += 1) {
-        output[writeOffset + i] = current[this.queueOffset + i] / 0x8000;
+        const sample = current[this.queueOffset + i] / 0x8000;
+        output[writeOffset + i] = sample;
+        energySum += sample * sample;
       }
       writeOffset += count;
       this.queueOffset += count;
@@ -143,12 +146,16 @@ class LexaraPlaybackProcessor extends AudioWorkletProcessor {
       }
     }
 
+    const level = writeOffset > 0
+      ? Math.min(1, Math.sqrt(energySum / writeOffset) * 2.4)
+      : 0;
+
     if (this.hadAudio && this.queue.length === 0) {
       this.hadAudio = false;
       this.started = false;
-      this.port.postMessage({ type: 'drained', renderedFrames: this.renderedFrames });
+      this.port.postMessage({ type: 'drained', renderedFrames: this.renderedFrames, level });
     } else if (writeOffset > 0) {
-      this.port.postMessage({ type: 'rendered', renderedFrames: this.renderedFrames });
+      this.port.postMessage({ type: 'rendered', renderedFrames: this.renderedFrames, level });
     }
 
     return true;
@@ -225,12 +232,30 @@ class LexaraRealtimeVoiceClient {
   private activeSpeech: ActiveSpeech | null = null;
   private ready = false;
   private renderedFrames = 0;
+  private playbackLevel = 0;
   private cumulativeRenderedFrames = 0;
   private onSttEvent: ((event: LexaraRealtimeSttEvent) => void) | null = null;
   private onFatal: ((error: Error) => void) | null = null;
 
   isReady(): boolean {
     return this.ready && this.socket?.readyState === WebSocket.OPEN;
+  }
+
+  getPlaybackClock(): {
+    active: boolean;
+    currentTimeSec: number;
+    level: number;
+    sampleRate: number | null;
+    turnId: string | null;
+  } {
+    const sampleRate = this.context?.sampleRate || 0;
+    return {
+      active: Boolean(this.activeSpeech?.started && this.renderedFrames > 0),
+      currentTimeSec: sampleRate > 0 ? this.renderedFrames / sampleRate : 0,
+      level: Math.max(0, Math.min(1, this.playbackLevel)),
+      sampleRate: sampleRate > 0 ? sampleRate : null,
+      turnId: this.activeSpeech?.turnId || null,
+    };
   }
 
   async connect(options: ConnectOptions): Promise<void> {
@@ -314,6 +339,10 @@ class LexaraRealtimeVoiceClient {
       const renderedFrames = Number(event.data?.renderedFrames);
       if (Number.isFinite(renderedFrames)) {
         this.renderedFrames = Math.max(this.renderedFrames, renderedFrames);
+      }
+      const level = Number(event.data?.level);
+      if (Number.isFinite(level)) {
+        this.playbackLevel = Math.max(0, Math.min(1, level));
       }
       const active = this.activeSpeech;
       if (
@@ -438,6 +467,7 @@ class LexaraRealtimeVoiceClient {
     this.clearPlayback();
     this.playback?.port.postMessage({ type: 'reset_counter' });
     this.renderedFrames = 0;
+    this.playbackLevel = 0;
 
     const promise = new Promise<void>((resolve, reject) => {
       const timeout = window.setTimeout(() => {
@@ -626,6 +656,7 @@ class LexaraRealtimeVoiceClient {
   }
 
   private clearPlayback(): void {
+    this.playbackLevel = 0;
     this.playback?.port.postMessage({ type: 'clear' });
   }
 }
