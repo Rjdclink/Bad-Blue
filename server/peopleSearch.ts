@@ -1045,6 +1045,11 @@ export async function conductFullOSINT(
   const forceAllCrawlers = options?.forceAllCrawlers === true;
   const reportBudgetMs = options?.reportBudgetMs;
   const crawlersActivated: string[] = [];
+  const investigationStartedAt = Date.now();
+  const remainingBudgetMs = () => reportBudgetMs == null
+    ? Number.POSITIVE_INFINITY
+    : Math.max(0, reportBudgetMs - (Date.now() - investigationStartedAt));
+  const hasCollectionBudget = (reserveMs = 15_000) => remainingBudgetMs() > reserveMs;
   
   // Log search depth
   console.log(`[PANTHEON OSINT] Starting Level ${searchDepth} search for: ${searchQuery}`);
@@ -1192,7 +1197,7 @@ export async function conductFullOSINT(
     } // End of WRAITH activation block
 
     // Level 3+: HYDRA + LICH + CERBERUS + BLIZZARD DRAGON activation via PANTHEON
-    if (forceAllCrawlers || searchDepth >= 3) {
+    if ((forceAllCrawlers || searchDepth >= 3) && hasCollectionBudget(20_000)) {
       console.log('[PANTHEON OSINT] Activating complete PANTHEON crawler roster');
       
       // Check if PANTHEON is available (not blocked by cryptocrawler)
@@ -1209,7 +1214,7 @@ export async function conductFullOSINT(
             purpose: 'background_report',
             targets: searchTargets,
             depth: searchDepth as 1 | 2 | 3 | 4,
-            budgetMs: reportBudgetMs,
+            budgetMs: Number.isFinite(remainingBudgetMs()) ? remainingBudgetMs() : undefined,
           });
           const crawlerResults = crawlerRetrieval.evidence;
           enhancedReport.crawlerAudit = mergeCrawlerAudit([
@@ -1259,7 +1264,7 @@ export async function conductFullOSINT(
     }
 
     // Level 4: GENESIS orchestrator (EYE OF GOD)
-    if (forceAllCrawlers || searchDepth >= 4) {
+    if ((forceAllCrawlers || searchDepth >= 4) && hasCollectionBudget(45_000)) {
       console.log('[PANTHEON OSINT] 👁️ GENESIS: activating bounded avalanche traversal');
       
       // Check PANTHEON availability again
@@ -1295,7 +1300,7 @@ export async function conductFullOSINT(
 
     // SpiderFoot scan (when a compatible self-hosted instance is configured).
     let spiderfootData;
-    if (await spiderfootClient.healthCheck()) {
+    if (hasCollectionBudget(120_000) && await spiderfootClient.healthCheck()) {
       const scanId = await spiderfootClient.startScan(searchQuery);
       const spiderFootTimeoutMs = reportBudgetMs
         ? Math.min(600_000, Math.max(120_000, Math.floor(reportBudgetMs / 3)))
@@ -1307,18 +1312,22 @@ export async function conductFullOSINT(
       spiderfootData = await spiderfootClient.getScanResults(scanId);
     }
 
-    // Email finding
-    const emailData = await emailFinder.findEmail(searchQuery, options?.domain);
+    // Email finding. Preserve enough time to aggregate a valid report.
+    const emailData = hasCollectionBudget(20_000)
+      ? await emailFinder.findEmail(searchQuery, options?.domain)
+      : { emails: [] };
 
     // Breach detection
     let breachData;
-    if (emailData.emails.length > 0) {
+    if (hasCollectionBudget(20_000) && emailData.emails.length > 0) {
       breachData = await breachDetection.checkBreaches(emailData.emails[0]);
     }
 
     // Legal/court history is a distinct evidence lane and must fail locally.
     try {
-      enhancedReport.caseHistory = await searchCaseHistory(searchQuery, searchDepth >= 3 ? 25 : 12);
+      enhancedReport.caseHistory = hasCollectionBudget(20_000)
+        ? await searchCaseHistory(searchQuery, searchDepth >= 3 ? 25 : 12)
+        : [];
     } catch (caseHistoryError) {
       logger.warn('[PANTHEON OSINT] Case-history search failed route-locally:', caseHistoryError);
     }
