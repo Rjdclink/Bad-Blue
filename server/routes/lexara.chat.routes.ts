@@ -32,6 +32,25 @@ function cleanOptionalString(value: unknown, maxLength = MAX_CONTEXT_FIELD_CHARA
   return trimmed.slice(0, maxLength);
 }
 
+function detectDocumentIntent(prompt: string): { requested: boolean; documentType: string } {
+  const p = prompt.toLowerCase();
+  const requested = /\b(draft|prepare|create|generate|write|download|downloadable|export|pdf|docx|word document|motion|brief|memorandum|affidavit|declaration|complaint|answer|petition|letter|agreement|subpoena|discovery)\b/.test(p);
+  let documentType = 'Custom Document';
+  if (/motion to suppress/.test(p)) documentType = 'Motion to Suppress';
+  else if (/motion to dismiss/.test(p)) documentType = 'Motion to Dismiss';
+  else if (/motion to compel/.test(p)) documentType = 'Motion to Compel';
+  else if (/sentencing memorandum/.test(p)) documentType = 'Sentencing Memorandum';
+  else if (/memorandum|memo/.test(p)) documentType = 'Memorandum of Law';
+  else if (/brief/.test(p)) documentType = 'Supporting Brief';
+  else if (/affidavit/.test(p)) documentType = 'Affidavit';
+  else if (/declaration/.test(p)) documentType = 'Declaration';
+  else if (/complaint/.test(p)) documentType = 'Complaint';
+  else if (/petition/.test(p)) documentType = 'Habeas Petition';
+  else if (/demand letter/.test(p)) documentType = 'Demand Letter';
+  else if (/motion/.test(p)) documentType = 'Motion';
+  return { requested, documentType };
+}
+
 function sanitizePreviousMessages(value: unknown): LexaraConversationMessage[] {
   if (!Array.isArray(value)) return [];
 
@@ -112,6 +131,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
     const jurisdiction = cleanOptionalString((rawContext as any).jurisdiction, 80);
     const behaviorMode = (rawContext as any).behaviorMode === 'personable' ? 'personable' : 'professional';
     const sessionId = cleanOptionalString((rawContext as any).sessionId, 128);
+    const documentIntent = detectDocumentIntent(prompt);
 
     log.info('[LEXARA] Conversational legal turn received', {
       promptLength: prompt.length,
@@ -233,6 +253,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       persistenceStatus: isMaster ? 'master-ephemeral' : 'queued',
       jobCompleted: true,
       jobStatus: 'completed',
+      documentIntent,
     });
   } catch (error) {
     log.error('[LEXARA] Chat endpoint error', { error });
