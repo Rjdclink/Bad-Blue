@@ -527,7 +527,7 @@ export async function resetPool(): Promise<void> {
             application_name: isRailway ? 'legalwhat-neon-failover' : 'legalwhat-neon-failover-local',
           } as any
         : getPoolConfig();
-      nextMainConfig.max = Math.min(Number(nextMainConfig.max || mainPoolMax), previousEffectiveMainMax);
+      // Preserve the exact governed active ceiling across either database lane.\n      nextMainConfig.max = Math.min(mainPoolMax, previousEffectiveMainMax);
       pool = new Pool(nextMainConfig);
       coordinationPool = legalWhatNeonFallbackActive
         ? new Pool({
