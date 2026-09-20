@@ -136,6 +136,14 @@ must(
   'barge-in is restored for natural one-word and multiword interruption while echo-screening and final-turn authority remain conservative',
 );
 must(
+  avatar.includes("renderer: 'lexara-portrait-rig-v3'") &&
+    avatar.includes("data-live-avatar={LIVE_AVATAR_ENABLED ? 'portrait-rig-v3' : 'static'}") &&
+    avatar.includes('visibleMotion') &&
+    viewport.includes('LEXARAAttorneyPortrait'),
+  'production Lexara viewport uses the visibly animated attorney portrait rig rather than the legacy Ethereal identity',
+);
+
+must(
   avatar.includes('LEXARA_ATTORNEY_IMAGE_SOURCES') &&
     avatar.includes('object-contain') &&
     avatar.includes('onError'),
