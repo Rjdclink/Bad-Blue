@@ -51,7 +51,7 @@ for(let n=1;n<=23;n++){
   if(!registry.includes("from './sources/batch"+nn+"'")) throw new Error('Registry missing import batch '+nn);
   if(!registry.includes('...'+exportToken)) throw new Error('Registry missing spread batch '+nn);
 
-  const literals=[...src.matchAll(/['"`](https?:\\/\\/[^'"`\\s]+)['"`]/g)].map(m=>m[1]);
+  const literals=[...src.matchAll(new RegExp('[\\\'\"`](https?://[^\\\'\"`\\\\s]+)[\\\'\"`]','g'))].map(m=>m[1]);
   const unique=[...new Set(literals)];
   if(unique.length<expected) throw new Error('Batch '+nn+' has only '+unique.length+' distinct URL literals; expected at least '+expected+' to support its runtime exact-count guard');
 
