@@ -90,6 +90,9 @@ export function setupVoiceRoutes(app: Express): void {
       'realtime-playing',
       'realtime-interrupted',
       'realtime-ended',
+      'avatar-renderer-ready',
+      'avatar-motion-started',
+      'avatar-renderer-error',
     ]);
     if (!allowed.has(event)) return res.status(204).end();
 
@@ -110,6 +113,10 @@ export function setupVoiceRoutes(app: Express): void {
       totalMs: Number.isFinite(Number(req.body?.totalMs)) ? Number(req.body.totalMs) : null,
       playbackOffsetMs: Number.isFinite(Number(req.body?.playbackOffsetMs)) ? Number(req.body.playbackOffsetMs) : null,
       renderedFrames: Number.isFinite(Number(req.body?.renderedFrames)) ? Number(req.body.renderedFrames) : null,
+      renderer: typeof req.body?.renderer === 'string' ? req.body.renderer.slice(0, 64) : null,
+      reducedMotion: typeof req.body?.reducedMotion === 'boolean' ? req.body.reducedMotion : null,
+      mode: typeof req.body?.mode === 'string' ? req.body.mode.slice(0, 24) : null,
+      mouthOpen: Number.isFinite(Number(req.body?.mouthOpen)) ? Number(req.body.mouthOpen) : null,
       client: typeof req.body?.userAgent === 'string' ? req.body.userAgent.slice(0, 220) : null,
     });
     return res.status(204).end();
