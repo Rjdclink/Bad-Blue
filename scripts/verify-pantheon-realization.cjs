@@ -14,10 +14,15 @@ const jobs = read('server/services/pantheon/PantheonBackgroundReportJob.ts');
 const peopleSearch = read('server/peopleSearch.ts');
 const categoryWorkflow = read('server/services/pantheon/PantheonCategoryWorkflow.ts');
 const progressTracker = read('client/src/components/PantheonProgressTracker.tsx');
+const selector = read('client/src/components/DoomsdayClockSelector.tsx');
+const config = read('shared/pantheonReportConfig.ts');
+const people = read('server/peopleSearch.ts');
 const firecrawl = read('server/services/shadowRetrieval/firecrawlAdapter.ts');
 const reportStore = read('server/services/pantheon/PantheonReportStore.ts');
 
 const checks = [
+  ['three public scan choices are 10 20 30 minutes', config.includes("1: 10 * 60_000") && config.includes("2: 20 * 60_000") && config.includes("3: 30 * 60_000") && !selector.includes('title: "EYE OF GOD"')],
+  ['scan intensity tracks selected duration', people.includes('1: 1200') && people.includes('2: 2800') && people.includes('3: 4500')],
   ['durable report status is retryable', routes.includes('report_store_converging') && routes.includes("Retry-After")],
   ['client retries transient report-store status', client.includes('[404, 429, 502, 503, 504]')],
   ['downloadable PDF route exists', routes.includes('/api/osint/report-jobs/:reportId/download')],
