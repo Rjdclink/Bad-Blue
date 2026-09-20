@@ -102,6 +102,7 @@ export class QuantiTensorFabric extends EventEmitter {
   private capacityEvictions = 0;
 
   constructor(options: QuantiTensorFabricOptions = {}) {
+    super();
     this.maxPooledBytes = Math.max(
       256 * 1024,
       positiveFinite(
