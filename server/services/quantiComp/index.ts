@@ -66,4 +66,20 @@ export {
   type QuantiParallelismStatus,
   type QuantiParallelismErrorCode,
 } from './parallelismGovernor.js';
+export {
+  LexaraRayAvatarBackend,
+  lexaraRayAvatarBackend,
+  type LexaraRayAvatarRequest,
+  type LexaraRayAvatarResponse,
+  type LexaraRayAvatarFrame,
+  type LexaraRayAvatarStatus,
+} from './lexaraRayAvatarBackend.js';
+export {
+  LexaraAvatarComputeCoordinator,
+  lexaraAvatarCompute,
+  type LexaraAvatarBehaviorVector,
+  type LexaraAvatarSegmentInput,
+  type LexaraAvatarComputeResult,
+  type LexaraAvatarComputeStatus,
+} from './lexaraAvatarCompute.js';
 export { QuantiCompRuntime, quantiComp, type QuantiCompRuntimeOptions, type QuantiSubmitOptions } from './runtime.js';
