@@ -640,7 +640,7 @@ class LexaraRealtimeVoiceClient {
     active.playbackDrained = false;
     if (active.progressTimeout !== null) window.clearTimeout(active.progressTimeout);
     active.progressTimeout = window.setTimeout(() => {
-      if (this.activeSpeech !== active || active.metadataComplete) return;
+      if (this.activeSpeech !== active) return;
       const error = new Error('LEXARA realtime audio stream stalled');
       this.clearPlayback();
       this.failActiveSpeech(error);
@@ -677,10 +677,6 @@ class LexaraRealtimeVoiceClient {
     if (payload.type === 'SpeechMetadata') {
       const active = this.activeSpeech;
       if (!active) return;
-      if (active.progressTimeout !== null) {
-        window.clearTimeout(active.progressTimeout);
-        active.progressTimeout = null;
-      }
       active.metadataComplete = true;
       this.maybeResolveSpeech(active);
       return;
