@@ -538,7 +538,7 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
         audio: {
           active: audioActive,
           currentTimeSec: audioTime,
-          level: realtimeClock.active ? realtimeClock.level : 0,
+          level: realtimeClock.active ? realtimeClock.level : Number.NaN,
           brightness: realtimeClock.active ? realtimeClock.brightness : undefined,
           zeroCrossingRate: realtimeClock.active ? realtimeClock.zeroCrossingRate : undefined,
           turnId: realtimeClock.turnId,
