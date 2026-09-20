@@ -13,6 +13,10 @@ interface PantheonProgressTrackerProps {
   deadlineAt?: string | null;
   phase?: string;
   completed?: boolean;
+  categoryNumber?: number | null;
+  categoryName?: string | null;
+  completedCategories?: number;
+  totalCategories?: number;
 }
 
 const DEPTH_DURATIONS = PANTHEON_REPORT_DURATIONS_MS;
@@ -29,6 +33,10 @@ export function PantheonProgressTracker({
   deadlineAt,
   phase = 'collecting',
   completed = false,
+  categoryNumber = null,
+  categoryName = null,
+  completedCategories = 0,
+  totalCategories = PANTHEON_CATEGORIES.length,
 }: PantheonProgressTrackerProps) {
   const [progress, setProgress] = useState(0);
   const [elapsedTime, setElapsedTime] = useState(0);
@@ -54,12 +62,13 @@ export function PantheonProgressTracker({
       const elapsed = Math.max(0, Date.now() - startTime);
       const boundedElapsed = Math.min(elapsed, effectiveDuration);
       setElapsedTime(boundedElapsed);
-      setProgress(Math.min((boundedElapsed / effectiveDuration) * 100, 99));
+      const authoritativeProgress = totalCategories > 0 ? (completedCategories / totalCategories) * 100 : 0;
+      setProgress(Math.min(authoritativeProgress, 99));
     };
     tick();
     const interval = setInterval(tick, 50);
     return () => clearInterval(interval);
-  }, [completed, deadlineAt, isSearching, onComplete, startedAt, totalDuration]);
+  }, [completed, completedCategories, deadlineAt, isSearching, onComplete, startedAt, totalCategories, totalDuration]);
 
   const parsedDeadlineAt = deadlineAt ? Date.parse(deadlineAt) : NaN;
   const remainingMs = Number.isFinite(parsedDeadlineAt)
@@ -194,8 +203,8 @@ export function PantheonProgressTracker({
         {/* Current category plus complete registry taxonomy. */}
         <div className="rounded-lg border border-cyan-500/30 bg-slate-950/70 p-3 text-center">
           <div className="text-xs uppercase tracking-wide text-muted-foreground">Current stage</div>
-          <div className="mt-1 font-semibold">{completed ? 'Report assembly complete' : finalizing ? 'Finalizing report from collected evidence' : PANTHEON_CATEGORIES[Math.min(PANTHEON_CATEGORIES.length - 1, Math.floor((progress / 100) * PANTHEON_CATEGORIES.length))]}</div>
-          <div className="mt-1 text-xs text-muted-foreground">{finalizing ? 'Collection closed — assembling available evidence' : <>Category {completed ? PANTHEON_CATEGORIES.length : Math.min(PANTHEON_CATEGORIES.length, Math.floor((progress / 100) * PANTHEON_CATEGORIES.length) + 1)} of {PANTHEON_CATEGORIES.length}</>}</div>
+          <div className="mt-1 font-semibold">{completed ? 'Report assembly complete' : finalizing ? 'Finalizing report from collected evidence' : (categoryName || PANTHEON_CATEGORIES[Math.min(PANTHEON_CATEGORIES.length - 1, Math.max(0, (categoryNumber || 1) - 1))])}</div>
+          <div className="mt-1 text-xs text-muted-foreground">{finalizing ? 'Collection closed — assembling available evidence' : <>Category {completed ? totalCategories : Math.min(totalCategories, Math.max(1, categoryNumber || completedCategories + 1))} of {totalCategories}</>}</div>
         </div>
 
         {/* Real registry categories: one compact panel rather than synthetic scan-stage tags. */}
