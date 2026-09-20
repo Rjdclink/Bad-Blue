@@ -14,6 +14,7 @@ import { cainReaperSupervisor, type CrawlerSupervisionResult } from './CainReape
 import { twoStageDeployer } from '../pantheon/razors/TwoStageDeployer';
 import { SixCrawlerInitiative } from './SixCrawlerInitiative';
 import { acquirePublicResources } from './PublicAcquisitionInfrastructure';
+import { defaultFirecrawlAdapter } from '../shadowRetrieval/firecrawlAdapter';
 
 export interface RetrievalEvidence {
   crawler: string;
@@ -117,6 +118,81 @@ export class PantheonRetrievalAdapter {
     recordCrawlerOutcomes(results);
 
     const evidence = results.map(normalizeResult);
+
+    // Firecrawl is an explicit background-report retrieval lane, not merely a
+    // registered capability. Give it category-specific URL work on every
+    // background-report invocation and record the outcome even when unavailable.
+    if (request.purpose === 'background_report' && collectionOpen()) {
+      const firecrawlTargets = request.targets.filter(target => {
+        try {
+          const parsed = new URL(target);
+          return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+        } catch {
+          return false;
+        }
+      }).slice(0, 2);
+
+      if (!defaultFirecrawlAdapter.isEnabled()) {
+        crawlerAudit.push({
+          crawler: 'firecrawl',
+          capabilityClass: 'pantheon-secondary',
+          status: 'unavailable_no_content',
+          evidenceCount: 0,
+          attempts: 0,
+          targets: firecrawlTargets.length,
+          error: 'Firecrawl adapter unavailable or API key not configured',
+        });
+      } else if (firecrawlTargets.length === 0) {
+        crawlerAudit.push({
+          crawler: 'firecrawl',
+          capabilityClass: 'pantheon-secondary',
+          status: 'completed_no_evidence',
+          evidenceCount: 0,
+          attempts: 0,
+          targets: 0,
+        });
+      } else {
+        const firecrawlBudget = Math.max(1_000, Math.min(8_000, Math.floor(remainingBudgetMs() / Math.max(1, firecrawlTargets.length))));
+        const firecrawlRuns = await Promise.allSettled(firecrawlTargets.map(target =>
+          defaultFirecrawlAdapter.scrape(target, {
+            formats: ['markdown'],
+            onlyMainContent: true,
+            timeout: firecrawlBudget,
+          })
+        ));
+        let firecrawlEvidenceCount = 0;
+        let firecrawlFailures = 0;
+        firecrawlRuns.forEach((run, index) => {
+          const target = firecrawlTargets[index];
+          if (run.status !== 'fulfilled' || !run.value.success) {
+            firecrawlFailures += 1;
+            return;
+          }
+          const content = String(run.value.markdown || run.value.html || '').trim();
+          if (!content) return;
+          firecrawlEvidenceCount += 1;
+          evidence.push({
+            crawler: 'firecrawl',
+            target,
+            content,
+            confidence: 0.82,
+            retrievedAt: new Date().toISOString(),
+            metadata: { capabilityClass: 'firecrawl', source: 'firecrawl-scrape' },
+          });
+        });
+        crawlerAudit.push({
+          crawler: 'firecrawl',
+          capabilityClass: 'pantheon-secondary',
+          status: firecrawlEvidenceCount > 0 ? 'completed_with_evidence'
+            : firecrawlFailures === firecrawlTargets.length ? 'failed'
+            : 'completed_no_evidence',
+          evidenceCount: firecrawlEvidenceCount,
+          attempts: firecrawlRuns.length,
+          targets: firecrawlTargets.length,
+          error: firecrawlFailures > 0 ? `${firecrawlFailures} Firecrawl target(s) failed` : undefined,
+        });
+      }
+    }
 
     if (request.purpose === 'background_report' && collectionOpen()) {
       const urlTargets = request.targets.filter(target => {
