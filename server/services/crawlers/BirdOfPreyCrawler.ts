@@ -156,6 +156,29 @@ export class BirdOfPreyCrawler {
 
   async hunt(prey: string): Promise<Data> {
     await this.perfectCloak();
+    // BirdOfPrey is a URL acquisition crawler, not a search-query engine.
+    // Never pass free-form discovery expressions into fetch()/StealthInfrastructure.
+    let parsed: URL;
+    try {
+      parsed = new URL(prey);
+    } catch {
+      return {
+        content: '',
+        confidence: 0,
+        timestamp: Date.now(),
+        target: prey,
+        metadata: { skipped: true, reason: 'discovery_query_requires_url_resolution' },
+      };
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return {
+        content: '',
+        confidence: 0,
+        timestamp: Date.now(),
+        target: prey,
+        metadata: { skipped: true, reason: 'unsupported_url_protocol' },
+      };
+    }
     const reconPasses = 3;
     let vulnerability = 0;
     for (let i = 0; i < reconPasses; i++) {
