@@ -15,10 +15,12 @@ function must(condition, message) {
 const voiceMode = read('client/src/hooks/useVoiceMode.ts');
 const conversation = read('client/src/components/LexaraConversation.tsx');
 const avatar = read('client/src/components/LexaraEtherealAvatar.tsx');
+const embodimentEngine = read('client/src/lib/lexaraEmbodimentEngine.ts');
 const synthesis = read('client/src/hooks/useVoiceSynthesis.ts');
 const speechClient = read('client/src/lib/lexaraSpeechClient.ts');
 const realtimeVoiceClient = read('client/src/lib/lexaraRealtimeVoiceClient.ts');
 const liveAvatarReview = read('docs/LEXARA_LIVE_AVATAR_100_SOURCE_REVIEW_20260920.md');
+const embodiedConversationReview = read('docs/LEXARA_EMBODIED_CONVERSATION_50_SOURCE_BLUEPRINT_20260920.md');
 const realtimeVoiceGateway = read('server/lexara/LexaraRealtimeVoiceGateway.ts');
 const serverIndex = read('server/index.ts');
 const lexaraRoutes = read('server/routes/lexara.routes.ts');
@@ -142,23 +144,57 @@ must(
 must(
   avatar.includes('VITE_LEXARA_LIVE_AVATAR_ENABLED') &&
     avatar.includes('window.requestAnimationFrame') &&
-    avatar.includes('HEAD_MASK') &&
-    avatar.includes('MOUTH_MASK') &&
-    avatar.includes('TORSO_MASK') &&
+    avatar.includes('<canvas') &&
+    avatar.includes('LexaraEmbodimentEngine') &&
+    avatar.includes('drawMouth') &&
+    avatar.includes('drawBlink') &&
+    avatar.includes("data-live-avatar={LIVE_AVATAR_ENABLED ? 'embodied-canvas' : 'static'}") &&
     avatar.includes('prefers-reduced-motion') &&
     avatar.includes('getLexaraServerPlaybackClock') &&
     avatar.includes('lexaraRealtimeVoiceClient.getPlaybackClock()') &&
     avatar.includes("style={{ contain: 'layout paint' }}") &&
-    !avatar.includes('fetch('),
-  'live attorney motion is compositor-driven, rollbackable, read-only, and never inserts a network dependency into speech',
+    avatar.includes("'avatar-renderer-ready'") &&
+    avatar.includes("'avatar-motion-started'") &&
+    !avatar.includes('HEAD_MASK') &&
+    !avatar.includes('MOUTH_MASK') &&
+    !avatar.includes('TORSO_MASK') &&
+    !avatar.includes("/api/lexara/chat") &&
+    !avatar.includes("/api/lexara/tts/session"),
+  'LEXARA uses a visible fail-open embodied canvas renderer rather than the retired sub-pixel CSS-mask shimmer, and visual work cannot enter the reasoning/TTS critical path',
+);
+must(
+  embodimentEngine.includes("export type LexaraEmbodimentMode = 'idle' | 'listening' | 'thinking' | 'speaking'") &&
+    embodimentEngine.includes('class OneEuroScalar') &&
+    embodimentEngine.includes('scheduleBlink') &&
+    embodimentEngine.includes('scheduleNod') &&
+    embodimentEngine.includes('scheduleGazeShift') &&
+    embodimentEngine.includes("input.mode === 'listening'") &&
+    embodimentEngine.includes("input.mode === 'thinking'") &&
+    embodimentEngine.includes("input.mode === 'speaking'") &&
+    embodimentEngine.includes('speechClockSec') &&
+    embodimentEngine.includes('mouthOpen') &&
+    embodimentEngine.includes('gestureEnergy'),
+  'one persistent behavioral planner coordinates listening, thinking, speaking, gaze, blink, respiration, nod, gesture and speech-linked facial state',
 );
 must(
   realtimeVoiceClient.includes('getPlaybackClock():') &&
     realtimeVoiceClient.includes('playbackLevel') &&
+    realtimeVoiceClient.includes('playbackBrightness') &&
+    realtimeVoiceClient.includes('playbackZeroCrossingRate') &&
     realtimeVoiceClient.includes('energySum += sample * sample') &&
-    realtimeVoiceClient.includes("type: 'rendered', renderedFrames: this.renderedFrames, level") &&
+    realtimeVoiceClient.includes('diffEnergySum += diff * diff') &&
+    realtimeVoiceClient.includes('zeroCrossings += 1') &&
+    realtimeVoiceClient.includes('startThresholdFrames = Math.max(128, Math.round(sampleRate * 0.024))') &&
     speechClient.includes('getLexaraServerPlaybackClock'),
-  'avatar synchronization observes the already-rendered realtime/server audio clocks without becoming playback authority',
+  'avatar synchronization derives mouth cues from the already-rendered realtime PCM clock without changing the proven 24ms speech-start buffer or becoming playback authority',
+);
+must(
+  voiceRoutes.includes("'avatar-renderer-ready'") &&
+    voiceRoutes.includes("'avatar-motion-started'") &&
+    voiceRoutes.includes("'avatar-renderer-error'") &&
+    voiceRoutes.includes('mouthOpen:') &&
+    voiceRoutes.includes('reducedMotion:'),
+  'production logs can distinguish voice playback from a real rendered avatar and actual speech-linked mouth motion',
 );
 must(
   synthesis.includes('/api/lexara/tts/session') &&
@@ -647,6 +683,9 @@ must(hotReserveSourceLines.length === 10, 'literal 10-source hot-reserve reliabi
 const liveAvatarSourceSection = liveAvatarReview.split('## Sources - exactly 100')[1]?.split('## Implementation decision')[0] || '';
 const liveAvatarSourceLines = liveAvatarSourceSection.split('\n').filter(line => /^\d+\.\s/.test(line));
 must(liveAvatarSourceLines.length === 100, 'literal 100-source LEXARA live-avatar implementation blueprint is present');
+const embodiedConversationSourceSection = embodiedConversationReview.split('## Sources — exactly 50')[1]?.split('## Acceptance criteria')[0] || '';
+const embodiedConversationSourceLines = embodiedConversationSourceSection.split('\n').filter(line => /^\d+\.\s/.test(line));
+must(embodiedConversationSourceLines.length === 50, 'literal 50-source LEXARA embodied-conversation implementation blueprint is present');
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA realization verification passed.');
 // Practice-area specialization gate (31-book LegalWhat library).
