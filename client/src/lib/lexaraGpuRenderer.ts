@@ -139,8 +139,10 @@ export async function createLexaraGpuRenderer(
 
   const resize = (cssWidth: number, cssHeight: number, dpr: number) => {
     const safeDpr = Math.min(Math.max(1, dpr), tier === 'webgpu-60' ? 1.5 : 1.25);
-    canvas.width = Math.max(1, Math.round(cssWidth * safeDpr));
-    canvas.height = Math.max(1, Math.round(cssHeight * safeDpr));
+    const pixelWidth = Math.max(1, Math.round(cssWidth * safeDpr));
+    const pixelHeight = Math.max(1, Math.round(cssHeight * safeDpr));
+    if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
+    if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
     canvas.style.width = `${cssWidth}px`;
     canvas.style.height = `${cssHeight}px`;
   };
