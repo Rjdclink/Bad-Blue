@@ -1,5 +1,5 @@
 import {
-  buildPantheonCategoryTargets,
+  PANTHEON_VERIFIED_SOURCE_INVENTORY,
   type PantheonBackgroundCategory,
   type PantheonSourceTarget,
 } from '../pantheon/PantheonSovereignSourceRegistry';
@@ -7,100 +7,101 @@ import {
 export type SpectraSourcePriority = 'critical' | 'high' | 'supporting';
 
 export interface SpectraSourceTarget extends PantheonSourceTarget {
+  sourceId: string;
+  sourceName: string;
   priority: SpectraSourcePriority;
   reason: string;
 }
 
-const CRITICAL: PantheonBackgroundCategory[] = [
+const CRITICAL = new Set<string>([
   'identity','identity-resolution','residence','contacts','relatives','associates',
   'geography','chronology','corroboration','contradictions','historical','provenance',
-];
+]);
 
-const HIGH: PantheonBackgroundCategory[] = [
+const HIGH = new Set<string>([
   'social','usernames','internet','news','employment','education','credentials','business',
   'corporate','property','transportation','civil-litigation','criminal','arrests','corrections',
   'probation-parole','warrants','courts','family-probate','vital-records','government-employment',
   'military','campaign-finance','professional-discipline','regulatory','organizations','nonprofits',
   'publications','professional-web','domain-web','adverse-media','relationship-graph','false-positive',
-];
+]);
 
-const SUPPORTING: PantheonBackgroundCategory[] = [
-  'financial-public','banking-affiliations','securities','bankruptcy','sex-offender','estate',
-  'tax-public','government-contracting','lobbying','sanctions','foreign-connections',
-  'foreign-residence','immigration','intellectual-property','breach-notices','confidence',
-  'completeness','crawler-audit','source-audit',
-];
-
-function rank(category: PantheonBackgroundCategory): SpectraSourcePriority {
-  if (CRITICAL.includes(category)) return 'critical';
-  if (HIGH.includes(category)) return 'high';
+function rank(categories: readonly string[]): SpectraSourcePriority {
+  if (categories.some(category => CRITICAL.has(category))) return 'critical';
+  if (categories.some(category => HIGH.has(category))) return 'high';
   return 'supporting';
 }
 
-function scoreAuthority(authority: PantheonSourceTarget['authority']): number {
-  if (authority === 'primary') return 4;
-  if (authority === 'archive') return 3;
-  if (authority === 'secondary') return 2;
-  return 1;
+function authorityScore(authority: string): number {
+  return authority === 'primary' ? 3 : authority === 'secondary' ? 2 : 1;
 }
 
 /**
- * Persistent SPECTRA source router.
- *
- * The canonical source URLs remain in PantheonSovereignSourceRegistry and its
- * verified batches. SPECTRA compiles those sources into a target-specific,
- * priority-ordered retrieval plan. This keeps the source catalog in one place
- * while making the full relevant inventory immediately reusable by SPECTRA.
+ * Complete persistent SPECTRA catalog. Every canonical verified source is kept
+ * addressable by id/name/url/categories/jurisdiction and pre-ranked for routing.
  */
+export const SPECTRA_SOURCE_CATALOG = PANTHEON_VERIFIED_SOURCE_INVENTORY.map(source => ({
+  ...source,
+  priority: rank(source.categories),
+}));
+
+export const SPECTRA_SOURCE_CATALOG_BY_ID = new Map(
+  SPECTRA_SOURCE_CATALOG.map(source => [source.id, source] as const),
+);
+
+export function getSpectraSources(
+  categories: readonly PantheonBackgroundCategory[] = [],
+  jurisdiction?: string,
+) {
+  const wanted = new Set<string>(categories);
+  return SPECTRA_SOURCE_CATALOG
+    .filter(source => !wanted.size || source.categories.some(category => wanted.has(category)))
+    .filter(source => !jurisdiction || source.jurisdiction === jurisdiction || source.jurisdiction === 'US')
+    .sort((a, b) => {
+      const p = { critical: 3, high: 2, supporting: 1 };
+      return p[b.priority] - p[a.priority] || authorityScore(b.authority) - authorityScore(a.authority);
+    });
+}
+
 export function buildSpectraPriorityTargets(
   subject: string,
   clues?: string,
-  limit = 1200,
+  limit = SPECTRA_SOURCE_CATALOG.length,
 ): SpectraSourceTarget[] {
-  const buckets: SpectraSourceTarget[] = [];
-  const categories = [...CRITICAL, ...HIGH, ...SUPPORTING];
-
-  for (const category of categories) {
-    const priority = rank(category);
-    const perCategory = priority === 'critical' ? 36 : priority === 'high' ? 20 : 10;
-    for (const target of buildPantheonCategoryTargets(category, subject, clues, perCategory)) {
-      buckets.push({
-        ...target,
-        priority,
-        reason: priority === 'critical'
-          ? 'direct identity/location/corroboration evidence'
-          : priority === 'high'
-            ? 'recursive identity, records, social, web, or contextual pivot'
-            : 'supporting corroboration and completeness source',
-      });
-    }
-  }
+  const identity = [subject.trim(), String(clues || '').trim()].filter(Boolean).map(value => `"${value}"`).join(' ');
+  if (!identity) return [];
 
   const seen = new Set<string>();
-  return buckets
-    .sort((a, b) => {
-      const priorityScore = { critical: 3, high: 2, supporting: 1 };
-      return priorityScore[b.priority] - priorityScore[a.priority]
-        || scoreAuthority(b.authority) - scoreAuthority(a.authority);
-    })
-    .filter(target => {
-      const key = target.url.toLowerCase();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .slice(0, Math.max(1, limit));
+  const targets: SpectraSourceTarget[] = [];
+  for (const source of getSpectraSources()) {
+    const key = source.url.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const category = (source.categories[0] || 'identity') as PantheonBackgroundCategory;
+    targets.push({
+      sourceId: source.id,
+      sourceName: source.name,
+      category,
+      url: source.url,
+      authority: source.authority,
+      jurisdiction: source.jurisdiction,
+      query: `${identity} ${source.categories.join(' ')}`,
+      priority: source.priority,
+      reason: source.priority === 'critical'
+        ? 'direct identity/location/corroboration evidence'
+        : source.priority === 'high'
+          ? 'recursive records, social, web, or contextual pivot'
+          : 'supporting corroboration and completeness source',
+    });
+    if (targets.length >= Math.max(1, limit)) break;
+  }
+  return targets;
 }
 
-export function buildSpectraDiscoveryWaves(
-  subject: string,
-  clues?: string,
-): { priority: SpectraSourcePriority; queries: string[] }[] {
+export function buildSpectraDiscoveryWaves(subject: string, clues?: string) {
   const targets = buildSpectraPriorityTargets(subject, clues);
   return (['critical','high','supporting'] as SpectraSourcePriority[]).map(priority => ({
     priority,
-    queries: [...new Set(
-      targets.filter(target => target.priority === priority).map(target => target.query)
-    )],
-  })).filter(wave => wave.queries.length > 0);
+    targets: targets.filter(target => target.priority === priority),
+  })).filter(wave => wave.targets.length > 0);
 }
