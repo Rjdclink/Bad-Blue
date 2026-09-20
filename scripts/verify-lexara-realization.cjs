@@ -376,7 +376,7 @@ must(
     synthesis.includes('FIRST_SPEECH_CHUNK_MAX_CHARS') &&
     synthesis.includes('Prepare exactly one chunk ahead') &&
     synthesis.includes('fetchPreparedSessionAudio') &&
-    synthesis.includes("FIRST_SPEECH_CHUNK_MAX_CHARS = 140") &&
+    synthesis.includes("FIRST_SPEECH_CHUNK_MAX_CHARS = 72") &&
     synthesis.includes("PlaybackOutcome = 'ended' | 'interrupted' | 'timeout' | 'failed'") &&
     synthesis.includes('voice playback failed after route-local recovery') &&
     synthesis.includes('voice playback timed out') &&
@@ -580,8 +580,8 @@ must(
     !liveTurnHandler.includes('if (pendingUserTurnRef.current) return;') &&
     orchestrator.includes('Default to 2-5 concise spoken sentences') &&
     orchestrator.includes('Do not say "thank you," "goodbye,"') &&
-    orchestrator.includes('LIVE_RESEARCH_BUDGET_MS = 700') &&
-    authorityResearch.includes('const RESEARCH_TIMEOUT_MS = 2_200') &&
+    orchestrator.includes('LIVE_RESEARCH_BUDGET_MS = 3200') &&
+    authorityResearch.includes('const RESEARCH_TIMEOUT_MS = 2_400') &&
     conversation.includes("acknowledgement = String(acknowledgementData?.acknowledgement || '').trim()"),
   'active-analysis turns are cancellable, acknowledgements remain non-semantic but conversational, answers are concise/direct, and authority research is bounded off the live latency tail',
 );
