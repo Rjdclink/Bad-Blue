@@ -58,6 +58,15 @@ const FIRST_SPEECH_CHUNK_MAX_CHARS = 140;
 const SPEECH_CHUNK_MAX_CHARS = 300;
 const MAX_PLAYBACK_WATCHDOG_MS = 240_000;
 
+function requiresMediaElementSpeechOutput(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  // Production telemetry on Android Chrome proved the progressive HTMLMediaElement
+  // route reaches playing/ended while the AudioWorklet realtime route can render
+  // PCM frames without producing audible speaker output. Keep realtime connected
+  // for low-latency STT/barge-in, but use the proven media output sink on Android.
+  return /Android/i.test(navigator.userAgent);
+}
+
 function splitOversizedSpeechUnit(value: string, maxChars: number): string[] {
   const clean = value.replace(/\s+/g, ' ').trim();
   if (!clean) return [];
@@ -475,7 +484,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
 
     try {
       let realtimeStarted = false;
-      if (lexaraRealtimeVoiceClient.isReady()) {
+      if (lexaraRealtimeVoiceClient.isReady() && !requiresMediaElementSpeechOutput()) {
         try {
           setProvider('deepgram-flux');
           await lexaraRealtimeVoiceClient.speak(
