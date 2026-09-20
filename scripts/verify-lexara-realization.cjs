@@ -138,7 +138,7 @@ must(
 must(
   avatar.includes("renderer: 'lexara-portrait-rig-v3'") &&
     avatar.includes("data-live-avatar={LIVE_AVATAR_ENABLED ? 'portrait-rig-v3' : 'static'}") &&
-    avatar.includes('visibleMotion') &&
+    avatar.includes('portraitRef.current') &&
     viewport.includes('LEXARAAttorneyPortrait'),
   'production Lexara viewport uses the visibly animated attorney portrait rig rather than the legacy Ethereal identity',
 );
