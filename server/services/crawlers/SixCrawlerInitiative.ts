@@ -1871,6 +1871,14 @@ export class SixCrawlerInitiative extends EventEmitter {
     this.woo = new WooCrawler(this.config);
     this.silence = new SilenceCrawler(this.config);
 
+    // USC dispatches real work to each specialized analytical crawler.
+    this.usc.registerExecutor('mirror', task => this.mirror.renderDualState(task.environmentId, task.rawState));
+    this.usc.registerExecutor('key', task => this.key.mapIdentityFlow(task.principalId, task.context));
+    this.usc.registerExecutor('chewer', task => this.chewer.ingestData(task.source, task.data));
+    this.usc.registerExecutor('computational', task => this.computational.analyzePatterns(task.data));
+    this.usc.registerExecutor('woo', task => this.woo.prepareContext(task.interfaceId, task.permissions || ['observe']));
+    this.usc.registerExecutor('silence', task => this.silence.detectBlindSpots(task.observedDimensions || [], task.context || {}));
+
     // Wire up crawler communications
     this.setupCrawlerCommunications();
   }
