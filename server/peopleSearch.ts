@@ -101,10 +101,10 @@ function buildPantheonSearchTargets(name: string): string[] {
 }
 
 const PANTHEON_DEPTH_SOURCE_BUDGET: Record<number, number> = {
-  1: 450,   // 5 minutes: highest-value direct authorities first
-  2: 1200,  // 10 minutes: broader direct-source sweep
-  3: 2800,  // 20 minutes: deep registry traversal + corroboration
-  4: 4500,  // 30 minutes: maximum registry intensity
+  1: 1200,  // 10 minutes: focused complete-crawler investigation
+  2: 2800,  // 20 minutes: broader/deeper registry traversal and corroboration
+  3: 4500,  // 30 minutes: maximum standard registry intensity
+  4: 4500,  // legacy maximum mode retains the 30-minute maximum budget
 };
 
 function buildPantheonBackgroundTargets(name: string, location: string | undefined, depth: number): string[] {

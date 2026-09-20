@@ -61,18 +61,6 @@ export function DoomsdayClockSelector({ onSearchStart, isSearching = false }: Do
       glowColor: "shadow-orange-500/50",
       badgeColor: "bg-orange-500/20 text-orange-300",
     },
-    {
-      level: 4,
-      icon: "👁️",
-      title: "EYE OF GOD",
-      duration: PANTHEON_REPORT_DURATION_LABELS[4],
-      description: "All crawlers with the maximum investigation budget and deepest traversal",
-      color: "from-red-500 to-red-600",
-      borderColor: "border-red-500/50",
-      hoverColor: "hover:border-red-400",
-      glowColor: "shadow-red-500/50",
-      badgeColor: "bg-red-500/20 text-red-300",
-    },
   ];
 
   const handleSearch = () => {
@@ -141,7 +129,7 @@ export function DoomsdayClockSelector({ onSearchStart, isSearching = false }: Do
       </div>
 
       {/* Doomsday Clock Selector */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {depthLevels.map((depth) => {
           const isSelected = selectedDepth === depth.level;
           const isHovered = hoveredDepth === depth.level;

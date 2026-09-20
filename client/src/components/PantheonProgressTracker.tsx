@@ -40,6 +40,7 @@ export function PantheonProgressTracker({
 }: PantheonProgressTrackerProps) {
   const [progress, setProgress] = useState(0);
   const [elapsedTime, setElapsedTime] = useState(0);
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   const totalDuration = DEPTH_DURATIONS[searchDepth as keyof typeof DEPTH_DURATIONS] || 30000;
 
@@ -47,6 +48,7 @@ export function PantheonProgressTracker({
     if (completed) {
       setProgress(100);
       setElapsedTime(totalDuration);
+      setNowMs(Date.now());
       onComplete?.();
       return;
     }
@@ -62,6 +64,7 @@ export function PantheonProgressTracker({
       const elapsed = Math.max(0, Date.now() - startTime);
       const boundedElapsed = Math.min(elapsed, effectiveDuration);
       setElapsedTime(boundedElapsed);
+      setNowMs(Date.now());
       const authoritativeProgress = totalCategories > 0 ? (completedCategories / totalCategories) * 100 : 0;
       setProgress(Math.min(authoritativeProgress, 99));
     };
@@ -72,9 +75,9 @@ export function PantheonProgressTracker({
 
   const parsedDeadlineAt = deadlineAt ? Date.parse(deadlineAt) : NaN;
   const remainingMs = Number.isFinite(parsedDeadlineAt)
-    ? Math.max(0, parsedDeadlineAt - Date.now())
+    ? Math.max(0, parsedDeadlineAt - nowMs)
     : Math.max(0, totalDuration - elapsedTime);
-  const finalizing = !completed && (phase === 'finalizing' || (isSearching && remainingMs === 0));
+  const finalizing = !completed && phase === 'finalizing';
   const minutes = Math.floor(remainingMs / 60000);
   const seconds = Math.floor((remainingMs % 60000) / 1000);
   const milliseconds = Math.floor((remainingMs % 1000) / 10);
@@ -119,7 +122,7 @@ export function PantheonProgressTracker({
             searchDepth === 4 ? 'bg-red-500/5' : 'bg-cyan-500/5'
           } rounded-xl animate-pulse`} />
           
-          <div className="relative z-10 flex items-center justify-center gap-1">
+          <div className="relative z-10 flex items-center justify-center gap-1 min-w-0 overflow-hidden">
             {/* Minutes */}
             <div className="flex flex-col items-center">
               <div className="flex gap-1">
@@ -169,18 +172,9 @@ export function PantheonProgressTracker({
             {/* Milliseconds */}
             <div className="flex flex-col items-center">
               <div className="flex gap-1">
-                <DigitDisplay 
-                  digit={Math.floor(milliseconds / 10)} 
-                  color={searchDepth === 4 ? 'red' : 'cyan'}
-                  small 
-                />
-                <DigitDisplay 
-                  digit={milliseconds % 10} 
-                  color={searchDepth === 4 ? 'red' : 'cyan'}
-                  small 
-                />
-              </div>
-              <span className="text-xs text-muted-foreground mt-1 font-mono">MS</span>
+                <div className="flex flex-col items-center min-w-0">
+              <span className="text-cyan-300 font-mono text-sm tabular-nums">{formatDigit(milliseconds)}</span>
+              <span className="text-[10px] text-muted-foreground mt-1 font-mono">MS</span>
             </div>
           </div>
 

@@ -14,10 +14,15 @@ const jobs = read('server/services/pantheon/PantheonBackgroundReportJob.ts');
 const peopleSearch = read('server/peopleSearch.ts');
 const categoryWorkflow = read('server/services/pantheon/PantheonCategoryWorkflow.ts');
 const progressTracker = read('client/src/components/PantheonProgressTracker.tsx');
+const selector = read('client/src/components/DoomsdayClockSelector.tsx');
+const config = read('shared/pantheonReportConfig.ts');
+const people = read('server/peopleSearch.ts');
 const firecrawl = read('server/services/shadowRetrieval/firecrawlAdapter.ts');
 const reportStore = read('server/services/pantheon/PantheonReportStore.ts');
 
 const checks = [
+  ['three public scan choices are 10 20 30 minutes', config.includes("1: 10 * 60_000") && config.includes("2: 20 * 60_000") && config.includes("3: 30 * 60_000") && !selector.includes('title: "EYE OF GOD"')],
+  ['scan intensity tracks selected duration', people.includes('1: 1200') && people.includes('2: 2800') && people.includes('3: 4500')],
   ['durable report status is retryable', routes.includes('report_store_converging') && routes.includes("Retry-After")],
   ['client retries transient report-store status', client.includes('[404, 429, 502, 503, 504]')],
   ['downloadable PDF route exists', routes.includes('/api/osint/report-jobs/:reportId/download')],
@@ -39,6 +44,9 @@ const checks = [
   ['30 displayed categories are backend-authoritative', categoryWorkflow.includes('PANTHEON_REPORT_CATEGORIES') && jobs.includes('onCategoryComplete') && jobs.includes('completedCategories')],
   ['category advancement follows retrieval completion', categoryWorkflow.indexOf('await pantheonRetrievalAdapter.retrieve') < categoryWorkflow.indexOf('onCategoryComplete?.')],
   ['client progress follows completed categories', progressTracker.includes('completedCategories / totalCategories') && !progressTracker.includes('Math.floor((progress / 100) * PANTHEON_CATEGORIES.length)')],
+  ['progress stage is backend authoritative', progressTracker.includes("phase === 'finalizing'") && !progressTracker.includes("remainingMs === 0")],
+  ['progress clock rerenders from authoritative deadline', progressTracker.includes('setNowMs(Date.now())') && progressTracker.includes('parsedDeadlineAt - nowMs')],
+  ['mobile timer clips safely inside its container', progressTracker.includes('min-w-0 overflow-hidden')],
   ['Firecrawl executes in background-report retrieval', adapter.includes("crawler: 'firecrawl'") && adapter.includes('defaultFirecrawlAdapter.scrape') && firecrawl.includes('scrapeUrl')],
   ['category checkpoints support exact resume', jobs.includes('resumeFromCategory') && categoryWorkflow.includes('startCategoryIndex') && jobs.includes('initialReport')],
   ['category crawler outcomes are persisted before advancement', jobs.includes('lastCategoryOutcome: outcome') && jobs.includes('partialReport')],

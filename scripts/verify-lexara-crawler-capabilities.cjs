@@ -105,14 +105,14 @@ const spiderfoot = fs.readFileSync('server/services/spiderfootClient.ts', 'utf8'
 const stealth = fs.readFileSync('server/services/stealth/StealthInfrastructure.ts', 'utf8');
 
 if (
-  !pantheonReportConfig.includes("1: 5 * 60_000") ||
-  !pantheonReportConfig.includes("2: 10 * 60_000") ||
-  !pantheonReportConfig.includes("3: 20 * 60_000") ||
+  !pantheonReportConfig.includes("1: 10 * 60_000") ||
+  !pantheonReportConfig.includes("2: 20 * 60_000") ||
+  !pantheonReportConfig.includes("3: 30 * 60_000") ||
   !pantheonReportConfig.includes("4: 30 * 60_000") ||
   !pantheonSelector.includes('PANTHEON_REPORT_DURATION_LABELS') ||
   !pantheonProgress.includes('PANTHEON_REPORT_DURATIONS_MS')
 ) {
-  fail('Pantheon report durations are not canonically wired to 5/10/20/30 minutes');
+  fail('Pantheon report durations are not canonically wired to 10/20/30 minute levels');
 }
 if (
   !pantheonPage.includes("/api/osint/report-jobs") ||

@@ -1,16 +1,16 @@
 export type PantheonSearchDepth = 1 | 2 | 3 | 4;
 
 export const PANTHEON_REPORT_DURATIONS_MS: Record<PantheonSearchDepth, number> = {
-  1: 5 * 60_000,
-  2: 10 * 60_000,
-  3: 20 * 60_000,
+  1: 10 * 60_000,
+  2: 20 * 60_000,
+  3: 30 * 60_000,
   4: 30 * 60_000,
 };
 
 export const PANTHEON_REPORT_DURATION_LABELS: Record<PantheonSearchDepth, string> = {
-  1: '5 minutes',
-  2: '10 minutes',
-  3: '20 minutes',
+  1: '10 minutes',
+  2: '20 minutes',
+  3: '30 minutes',
   4: '30 minutes',
 };
 
