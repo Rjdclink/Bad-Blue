@@ -242,6 +242,23 @@ class LexaraNeuralAvatarClient {
     }
   }
 
+  markFramePresented(frame: LexaraNeuralAvatarFrame): void {
+    if (
+      frame.generation !== this.generation ||
+      frame.turnId !== this.activeTurnId ||
+      this.neuralFrameReportedGeneration === frame.generation
+    ) return;
+    this.neuralFrameReportedGeneration = frame.generation;
+    reportAvatarEvent('avatar-neural-frame', {
+      renderer: frame.renderer,
+      generation: frame.generation,
+      turnId: frame.turnId,
+      sequence: frame.sequence,
+      inferenceMs: Math.round(frame.inferenceMs),
+      averageInferenceMs: Math.round(frame.averageInferenceMs),
+    });
+  }
+
   render(controls: LexaraNeuralAvatarControls, nowMs = performance.now()): void {
     this.lastControls = controls;
     if (
@@ -411,17 +428,6 @@ class LexaraNeuralAvatarClient {
         reason: null,
       };
 
-      if (this.neuralFrameReportedGeneration !== this.generation) {
-        this.neuralFrameReportedGeneration = this.generation;
-        reportAvatarEvent('avatar-neural-frame', {
-          renderer: next.renderer,
-          generation: next.generation,
-          turnId: next.turnId,
-          sequence: next.sequence,
-          inferenceMs: Math.round(next.inferenceMs),
-          averageInferenceMs: Math.round(next.averageInferenceMs),
-        });
-      }
       return;
     }
 
