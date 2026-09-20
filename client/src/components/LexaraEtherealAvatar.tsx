@@ -70,6 +70,36 @@ function getMode(input: LatestAvatarInput): LexaraEmbodimentMode {
   return 'idle';
 }
 
+function reportAvatarEvent(
+  event: 'avatar-renderer-ready' | 'avatar-motion-started' | 'avatar-renderer-error',
+  details: Record<string, unknown> = {},
+): void {
+  const payload = JSON.stringify({
+    event,
+    source: 'avatar',
+    renderer: 'embodied-canvas-v2',
+    ...details,
+    userAgent: navigator.userAgent,
+  });
+  try {
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon(
+        '/api/lexara/voice/playback-event',
+        new Blob([payload], { type: 'application/json' }),
+      );
+      return;
+    }
+  } catch {
+    // Avatar telemetry is observational only.
+  }
+  void fetch('/api/lexara/voice/playback-event', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: payload,
+    keepalive: true,
+  }).catch(() => undefined);
+}
+
 function containLayout(
   canvasWidth: number,
   canvasHeight: number,
@@ -444,6 +474,9 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
     let disposed = false;
     let frameHandle = 0;
     let lastPaintMs = 0;
+    let rendererReported = false;
+    let rendererFailed = false;
+    let lastMotionTurnKey = '';
     let skinColor = 'rgb(177, 132, 108)';
     const engine = new LexaraEmbodimentEngine(0x4c455841);
     const image = new Image();
@@ -484,6 +517,8 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
       if (nowMs - lastPaintMs < 1000 / TARGET_FPS) return;
       lastPaintMs = nowMs;
 
+      if (rendererFailed) return;
+
       const input = latestInputRef.current;
       const mode = getMode(input);
       const realtimeClock = lexaraRealtimeVoiceClient.getPlaybackClock();
@@ -522,7 +557,39 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
         image.naturalWidth,
         image.naturalHeight,
       );
-      renderEmbodiedFrame(ctx, image, layout, frame, reducedMotion, skinColor);
+
+      try {
+        renderEmbodiedFrame(ctx, image, layout, frame, reducedMotion, skinColor);
+
+        if (!rendererReported) {
+          rendererReported = true;
+          reportAvatarEvent('avatar-renderer-ready', {
+            reducedMotion,
+            mode,
+          });
+        }
+
+        if (mode === 'speaking' && frame.mouthOpen > 0.08) {
+          const turnKey = realtimeClock.turnId || `server-${Math.floor(audioTime * 2)}`;
+          if (turnKey && turnKey !== lastMotionTurnKey) {
+            lastMotionTurnKey = turnKey;
+            reportAvatarEvent('avatar-motion-started', {
+              reducedMotion,
+              mode,
+              turnId: realtimeClock.turnId,
+              mouthOpen: Number(frame.mouthOpen.toFixed(3)),
+            });
+          }
+        }
+      } catch (error) {
+        rendererFailed = true;
+        ctx.clearRect(0, 0, rect.width, rect.height);
+        reportAvatarEvent('avatar-renderer-error', {
+          reducedMotion,
+          mode,
+          error: error instanceof Error ? error.message.slice(0, 160) : 'unknown',
+        });
+      }
     };
 
     frameHandle = window.requestAnimationFrame(paint);
