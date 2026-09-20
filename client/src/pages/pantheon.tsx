@@ -322,71 +322,46 @@ export default function PantheonPage() {
             </p>
           </section>
           
-          {/* Capabilities Grid */}
+          {/* PANTHEON registry categories — mirrors the real 4,500-source search taxonomy. */}
           <section className="capabilities">
-            <h2>Capabilities</h2>
-            
-            <div className="capabilities-grid">
-              <CapabilityCard
-                icon="🔍"
-                title="Real-Time Identity Resolution"
-                description="Aggregate and resolve identities across multiple databases instantly"
-              />
-              
-              <CapabilityCard
-                icon="🌐"
-                title="Relationship Mapping"
-                description="Uncover social graphs, family connections, and professional networks"
-              />
-              
-              <CapabilityCard
-                icon="📍"
-                title="Location Tracking"
-                description="Historical addresses, current locations, and movement patterns"
-              />
-              
-              <CapabilityCard
-                icon="💼"
-                title="Employment Discovery"
-                description="Current and past employers, business affiliations, and professional roles"
-              />
-              
-              <CapabilityCard
-                icon="👤"
-                title="Digital Footprint Aggregation"
-                description="Social media presence, online activity, and public digital records"
-              />
-              
-              <CapabilityCard
-                icon="⚖️"
-                title="Court & Property Records"
-                description="Legal history, property ownership, and public filings"
-              />
-              
-              <CapabilityCard
-                icon="🎓"
-                title="Credential Verification"
-                description="Professional licenses, certifications, and educational background"
-              />
-              
-              <CapabilityCard
-                icon="👥"
-                title="Associated Persons"
-                description="Family members, roommates, colleagues, and known associates"
-              />
-              
-              <CapabilityCard
-                icon="🎭"
-                title="Alias Detection"
-                description="Identify alternate names, nicknames, and consolidated identities"
-              />
-              
-              <CapabilityCard
-                icon="🔄"
-                title="Continuous Monitoring"
-                description="Automated profile updates as new public information becomes available"
-              />
-            </div>
+            <h2>Background Report Categories</h2>
+            <Card className="pantheon-category-card">
+              <CardContent className="p-5">
+                <p className="text-sm text-muted-foreground mb-4">30 categories searched across PANTHEON's prioritized public-source registry.</p>
+                <div className="pantheon-category-list">
+                  <span className="pantheon-category-item">1. Identity & Identity Verification</span>
+                  <span className="pantheon-category-item">2. Phone Numbers</span>
+                  <span className="pantheon-category-item">3. Email Addresses</span>
+                  <span className="pantheon-category-item">4. Current Address</span>
+                  <span className="pantheon-category-item">5. Address History</span>
+                  <span className="pantheon-category-item">6. Relatives & Family</span>
+                  <span className="pantheon-category-item">7. Associates & Household Connections</span>
+                  <span className="pantheon-category-item">8. Social-Media Profiles</span>
+                  <span className="pantheon-category-item">9. Usernames & Online Accounts</span>
+                  <span className="pantheon-category-item">10. Photos & Public Images</span>
+                  <span className="pantheon-category-item">11. Employment History</span>
+                  <span className="pantheon-category-item">12. Education</span>
+                  <span className="pantheon-category-item">13. Professional Licenses & Credentials</span>
+                  <span className="pantheon-category-item">14. Business Ownership & Affiliations</span>
+                  <span className="pantheon-category-item">15. Property & Real Estate</span>
+                  <span className="pantheon-category-item">16. Vehicles & Transportation Records</span>
+                  <span className="pantheon-category-item">17. Court Records</span>
+                  <span className="pantheon-category-item">18. Criminal Records</span>
+                  <span className="pantheon-category-item">19. Arrest & Police Records</span>
+                  <span className="pantheon-category-item">20. Incarceration & Corrections</span>
+                  <span className="pantheon-category-item">21. Probation & Parole Information</span>
+                  <span className="pantheon-category-item">22. Warrants & Wanted-Person Records</span>
+                  <span className="pantheon-category-item">23. Sex-Offender Registries</span>
+                  <span className="pantheon-category-item">24. Civil Litigation & Judgments</span>
+                  <span className="pantheon-category-item">25. Bankruptcies, Liens & Financial Public Records</span>
+                  <span className="pantheon-category-item">26. Marriage, Divorce & Vital-Record Information</span>
+                  <span className="pantheon-category-item">27. News & Media Mentions</span>
+                  <span className="pantheon-category-item">28. Internet & Web Footprint</span>
+                  <span className="pantheon-category-item">29. Government, Political & Public-Service Records</span>
+                  <span className="pantheon-category-item">30. Relationship & Timeline Intelligence</span>
+                </div>
+              </CardContent>
+            </Card>
           </section>
           
           {/* Search Depth Selector */}
@@ -504,22 +479,5 @@ export default function PantheonPage() {
         </div>
       </div>
     </>
-  );
-}
-
-// Component: Capability Card
-function CapabilityCard({ icon, title, description }: {
-  icon: string;
-  title: string;
-  description: string;
-}) {
-  return (
-    <Card className="capability-card">
-      <CardContent className="p-6">
-        <div className="icon text-4xl mb-3">{icon}</div>
-        <h3 className="font-semibold text-lg mb-2 leading-snug">{title}</h3>
-        <p className="text-sm text-muted-foreground leading-relaxed">{description}</p>
-      </CardContent>
-    </Card>
   );
 }
