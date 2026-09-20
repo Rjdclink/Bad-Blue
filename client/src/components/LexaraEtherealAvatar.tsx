@@ -616,6 +616,7 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
         const neuralFrame = lexaraNeuralAvatarClient.getLatestFrame();
         if (neuralFrame) {
           drawNeuralPortraitFrame(ctx, neuralFrame.bitmap, layout);
+          lexaraNeuralAvatarClient.markFramePresented(neuralFrame);
           rendererReported = true;
         } else if (PROCEDURAL_FALLBACK_ENABLED) {
           // Explicit opt-in only. The default fallback is the unchanged static
