@@ -26,9 +26,12 @@ const checks = [
   ['credential-free public acquisition participates', adapter.includes('acquirePublicResources') && acquisition.includes('Private-network acquisition is not permitted')],
   ['external failures are route-local', adapter.includes('Promise.allSettled')],
   ['discovery expressions are separated from URL acquisition', adapter.includes('new URL(firstTarget)') && adapter.includes('const urlTargets = request.targets.filter')],
-  ['report duration is an evidence budget, not a kill timer', jobs.includes('const report = await reportPromise') && !jobs.includes('Promise.race([reportPromise, budgetGuard])')],
+  ['report duration uses one immutable server deadline', jobs.includes('deadlineAt') && jobs.includes('reportDeadlineAt: deadlineAt.getTime()')],
+  ['collection deadline propagates into retrieval', peopleSearch.includes('deadlineAt: reportDeadlineAt') && adapter.includes('deadlineAt?: number') && adapter.includes('remainingBudgetMs')],
   ['collection budget preserves aggregation time', peopleSearch.includes('remainingBudgetMs') && peopleSearch.includes('hasCollectionBudget')],
   ['background jobs force complete crawler participation', jobs.includes('forceAllCrawlers: true') && peopleSearch.includes('const runFullRoster = forceAllCrawlers || searchDepth >= 3')],
+  ['full roster starts before legacy base lane can starve it', peopleSearch.includes('const fullRosterPromise =') && peopleSearch.indexOf('const fullRosterPromise =') < peopleSearch.indexOf('const enhancedReport = await conductEnhancedPeopleSearch')],
+  ['registry acquisition stops launching work at deadline', adapter.includes('collectionOpen()') && adapter.includes('offset < extendedTargets.length && collectionOpen()')],
 ];
 
 const failed = checks.filter(([, ok]) => !ok);
