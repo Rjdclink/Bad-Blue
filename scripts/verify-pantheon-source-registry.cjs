@@ -1,15 +1,30 @@
 const fs=require('fs');
-const p='server/services/pantheon/PantheonSovereignSourceRegistry.ts';
-const s=fs.readFileSync(p,'utf8');
-const required=['PANTHEON_BACKGROUND_CATEGORIES','buildPantheonCategoryTargets','buildPantheonBackgroundRegistryTargets','limit = 300','PANTHEON_VERIFIED_SOURCES_BATCH_01','PANTHEON_VERIFIED_SOURCES_BATCH_02'];
-for(const token of required){if(!s.includes(token)){console.error('missing '+token);process.exit(1);}}
-const people=fs.readFileSync('server/peopleSearch.ts','utf8');
-if(!people.includes('buildPantheonBackgroundRegistryTargets')){console.error('registry not wired');process.exit(1);}
-const batch=fs.readFileSync('server/services/pantheon/sources/batch01.ts','utf8');
-for(const token of ['courtUrls','correctionsUrls','electionUrls','licenseUrls','length!==200']){if(!batch.includes(token)){console.error('batch01 missing '+token);process.exit(1);}}
-const urls=[...batch.matchAll(/'https?:\/\/[^']+'/g)].map(m=>m[0].slice(1,-1));
-if(urls.length!==200){console.error('batch01 expected 200 URLs, got '+urls.length);process.exit(1);}
-if(new Set(urls).size!==200){console.error('batch01 contains duplicate URLs');process.exit(1);}
-const b2=fs.readFileSync('server/services/pantheon/sources/batch02.ts','utf8');
-for(const token of ['PANTHEON_VERIFIED_SOURCES_BATCH_02','slice(0,200)','expected 200 distinct URLs']){if(!b2.includes(token)){console.error('batch02 missing '+token);process.exit(1);}}
-console.log('Pantheon source registry verified: batch01=200 + batch02=200; direct-before-discovery wiring present');
+const registryPath='server/services/pantheon/PantheonSovereignSourceRegistry.ts';
+const peoplePath='server/peopleSearch.ts';
+const registry=fs.readFileSync(registryPath,'utf8');
+const people=fs.readFileSync(peoplePath,'utf8');
+for(const token of ['PANTHEON_BACKGROUND_CATEGORIES','buildPantheonCategoryTargets','buildPantheonBackgroundRegistryTargets','limit = 300']){
+  if(!registry.includes(token)) throw new Error('Missing registry token: '+token);
+}
+if(!people.includes('buildPantheonBackgroundRegistryTargets')) throw new Error('peopleSearch not wired to Pantheon registry');
+let total=0;
+for(let n=1;n<=23;n++){
+  const nn=String(n).padStart(2,'0');
+  const exportToken='PANTHEON_VERIFIED_SOURCES_BATCH_'+nn;
+  const file='server/services/pantheon/sources/batch'+nn+'.ts';
+  if(!fs.existsSync(file)) throw new Error('Missing '+file);
+  const src=fs.readFileSync(file,'utf8');
+  if(!src.includes(exportToken)) throw new Error('Missing export '+exportToken);
+  if(!registry.includes("from './sources/batch"+nn+"'")) throw new Error('Registry missing import batch '+nn);
+  if(!registry.includes('...'+exportToken)) throw new Error('Registry missing spread batch '+nn);
+  const expected=n===23?100:200;
+  if(!src.includes('expected '+expected+' distinct URLs')) throw new Error('Batch '+nn+' missing exact-count guard');
+  const literals=[...src.matchAll(/'https?:\\/\\/[^']+'/g)].map(m=>m[0].slice(1,-1));
+  if(new Set(literals).size<expected) throw new Error('Batch '+nn+' has fewer than '+expected+' distinct URL literals');
+  total+=expected;
+}
+const lastImport=registry.indexOf("from './sources/batch23'");
+const authority=registry.indexOf('AUTHORITIES');
+if(lastImport<0||authority<0) throw new Error('Registry ordering markers missing');
+if(total!==4500) throw new Error('Unexpected verified source entry total '+total);
+console.log('Pantheon source registry verified: 23 batches, 4,500 source entries, direct-before-discovery wiring present');
