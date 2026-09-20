@@ -71,7 +71,7 @@ assert(
     && avatar.includes("'/images/oip.webp?v=20260920-embodied2'")
     && avatar.includes('object-contain')
     && avatar.includes('onError')
-    && avatar.includes("data-live-avatar={LIVE_AVATAR_ENABLED ? 'portrait-rig-v3' : 'static'}"),
+    && avatar.includes("data-live-avatar={LIVE_AVATAR_ENABLED ? 'embodied-canvas' : 'static'}"),
   "LEXARA attorney image is not reinstated",
 );
 assert(!avatar.includes("<svg"), "Retired ethereal SVG is still rendered");
