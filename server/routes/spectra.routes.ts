@@ -473,18 +473,27 @@ router.post('/acquire', async (req: Request, res: Response) => {
     : subject;
   const searchQuery = resolvedName || details;
   const resolvedTargetLabel = resolvedName || phone || normalizedTarget;
-  const sourceWaves = buildSpectraDiscoveryWaves(resolvedTargetLabel, details);
-  const criticalSourceQueries = sourceWaves.find(wave => wave.priority === 'critical')?.targets.slice(0, 36).map(source => source.query) || [];
-  const highSourceQueries = sourceWaves.find(wave => wave.priority === 'high')?.targets.slice(0, 24).map(source => source.query) || [];
-  const supportingSourceQueries = sourceWaves.find(wave => wave.priority === 'supporting')?.targets.slice(0, 12).map(source => source.query) || [];
-  const discoveryQueries = buildDiscoveryQueries({
-    resolvedName: resolvedName || '',
-    normalizedTarget,
-    details,
-    phone,
-  });
 
   try {
+    const discoveryQueries = buildDiscoveryQueries({
+      resolvedName: resolvedName || '',
+      normalizedTarget,
+      details,
+      phone,
+    });
+    // Catalog broadening requires a concrete identity anchor. This preserves
+    // the generic-target noise guard while still allowing any supplied clue to
+    // participate once a name or phone identifies the subject.
+    const strongIdentityAnchor = Boolean(resolvedName || phone);
+    const sourceWaves = strongIdentityAnchor
+      ? buildSpectraDiscoveryWaves(resolvedTargetLabel, details)
+      : [];
+    const criticalSourceQueries = sourceWaves.find(wave => wave.priority === 'critical')
+      ?.targets.slice(0, 36).map(source => source.query) || [];
+    const highSourceQueries = sourceWaves.find(wave => wave.priority === 'high')
+      ?.targets.slice(0, 24).map(source => source.query) || [];
+    const supportingSourceQueries = sourceWaves.find(wave => wave.priority === 'supporting')
+      ?.targets.slice(0, 12).map(source => source.query) || [];
     // SPECTRA treats discovery systems as parallel evidence sources. A failure
     // in one adapter is local and never prevents other acquisition paths.
     const [osintResult, firstPass] = await Promise.all([
@@ -542,7 +551,10 @@ router.post('/acquire', async (req: Request, res: Response) => {
     }
 
     const broadenedSourceCount = new Set(discoveryResults.map(discoverySourceKey).filter(Boolean)).size;
-    if (discoveryResults.length < 80 || broadenedSourceCount < 24) {
+    if (
+      supportingSourceQueries.length > 0 &&
+      (discoveryResults.length < 80 || broadenedSourceCount < 24)
+    ) {
       const supportingPass = await runDiscoveryPass(supportingSourceQueries);
       discoveryResults = dedupeDiscoveryResults([...discoveryResults, ...supportingPass.results]);
       discoveryQueriesAttempted += supportingPass.attempted;
