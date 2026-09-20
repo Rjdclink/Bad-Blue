@@ -3484,9 +3484,9 @@ Contact: ${foiaRequest.userEmail || userEmail}
     }
 
     try {
-      const { geocodeCityState } = await import('./services/geoconsole/city-state-geocoder');
-      const location = await geocodeCityState(String(req.body?.location || ''));
-      if (!location) return res.status(404).json({ success: false, error: 'City and state could not be located.' });
+      const { geocodeBestLocation } = await import('./services/geoconsole/city-state-geocoder');
+      const location = await geocodeBestLocation(String(req.body?.location || ''));
+      if (!location) return res.status(404).json({ success: false, error: 'No usable geographic candidate was resolved from the supplied clue.' });
       return res.json({ success: true, data: location });
     } catch (error) {
       return res.status(400).json({

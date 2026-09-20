@@ -31,6 +31,7 @@ const dockerfile = read('Dockerfile');
 const exifTool = read('server/services/locationIntelligence/ExifToolExtractor.ts');
 const spectraSources = read('server/services/spectra/SpectraSourceRegistry.ts');
 const pantheonSources = read('server/services/pantheon/PantheonSovereignSourceRegistry.ts');
+const geocoder = read('server/services/geoconsole/city-state-geocoder.ts');
 
 console.log('\nSPECTRA UNIFIED EXPERIENCE\n');
 
@@ -75,15 +76,26 @@ test('Media intelligence is folded into the conversation',
 test('SPECTRA map exposes simplified shell',
   dashboard.includes('spectraShell?: boolean') &&
   dashboard.includes('!spectraShell && inspectorOpen'));
-test('Conversation remains primary before acquisition',
-  spectra.includes("const showMap =") &&
-  spectra.includes("phase === 'acquiring'") &&
-  spectra.includes("phase === 'active'"));
-test('Map is visible and progressively populated during acquisition',
-  spectra.includes("phase === 'acquiring' ||") &&
+test('SPECTRA map is unconditional from initial load',
+  spectra.includes('const showMap = true') &&
+  spectra.includes('<GeoconsoleRadarDashboard') &&
+  !spectra.includes("const showMap =\n    phase === 'acquiring'"));
+test('Map is progressively populated from supplied clues',
   spectra.includes('/api/geoconsole/geocode-city-state') &&
   spectra.includes('Regional context mapped; broadening identity discovery') &&
   spectra.includes('Acquired so far'));
+test('Natural-language clues are decomposed into address and regional candidates',
+  geocoder.includes('extractStreetAddressHint') &&
+  geocoder.includes('extractLocationClues') &&
+  geocoder.includes('geocodeBestLocation') &&
+  geocoder.includes("strategy, 'structured_address'") === false &&
+  geocoder.includes("queryGeocoder(structured, 'structured_address')") &&
+  geocoder.includes("queryGeocoder(direct, 'normalized_freeform')"));
+test('Geocoder failures are classified without logging raw clue text',
+  geocoder.includes("'[SPECTRA_GEOCODER] request_failed'") &&
+  geocoder.includes("'[SPECTRA_GEOCODER] no_match'") &&
+  geocoder.includes('errorType') &&
+  !geocoder.includes('console.warn(input)'));
 test('Direct media evidence is sent to the server and preserved immediately',
   spectra.includes('directEvidence: extraEvidence.map') &&
   routes.includes('directEvidenceSchema') &&

@@ -8,6 +8,7 @@ import {
   extractFreeformLocationHint,
   geocodeCityState,
   geocodeFreeformLocation,
+  geocodeBestLocation,
 } from '../services/geoconsole/city-state-geocoder';
 import {
   normalizeClientEvidence,
@@ -667,21 +668,10 @@ router.post('/acquire', async (req: Request, res: Response) => {
       );
 
       try {
-        const structuredHint = locationInputs
-          .map(value => extractCityStateHint(value))
-          .find((value): value is NonNullable<ReturnType<typeof extractCityStateHint>> => Boolean(value));
-
-        let region = structuredHint
-          ? await geocodeCityState(structuredHint.query)
-          : null;
-
-        if (!region) {
-          const freeformInput = locationInputs.find(value =>
-            Boolean(extractFreeformLocationHint(value))
-          );
-          if (freeformInput) {
-            region = await geocodeFreeformLocation(freeformInput);
-          }
+        let region = null;
+        for (const locationInput of locationInputs) {
+          region = await geocodeBestLocation(locationInput);
+          if (region) break;
         }
 
         if (region) {

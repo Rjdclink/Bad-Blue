@@ -568,11 +568,9 @@ export default function SpectraPage() {
           ? 'SPECTRA is acquiring the target…'
           : 'Add information, or say “new target”…';
 
-  const showMap =
-    phase === 'acquiring' ||
-    phase === 'active' ||
-    observations.length > 0 ||
-    candidateLocations.length > 0;
+  // SPECTRA is map-first: the canonical map is present from initial load,
+  // before a target or clue exists. Evidence progressively populates it.
+  const showMap = true;
 
   return (
     <div className="min-h-screen bg-slate-950 text-white">
