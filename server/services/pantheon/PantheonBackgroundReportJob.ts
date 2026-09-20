@@ -71,11 +71,9 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       reportDeadlineAt: deadlineAt.getTime(),
     });
 
-    // The selected duration is an evidence-collection budget, not a report
-    // death timer. conductFullOSINT receives that budget and is responsible for
-    // stopping low-value acquisition. Once collection is underway, allow it to
-    // aggregate the evidence it already obtained into the canonical report.
-    // This prevents a valid investigation from being discarded at 5/10/20/30m.
+    // Collection owns the selected 5/10/20/30 minute window. The crawler
+    // pipeline receives the immutable deadline and stops starting new retrieval
+    // work when it closes; the promise then returns the evidence already gathered.
     const report = await reportPromise;
 
     await updatePantheonReportRecord(input.reportId, 'processing', {
