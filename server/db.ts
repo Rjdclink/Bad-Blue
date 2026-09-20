@@ -328,14 +328,39 @@ export async function activateLegalWhatNeonFallback(reason: string): Promise<boo
       throw new Error(`Neon failover schema is not ready; missing: ${missing.join(', ')}`);
     }
 
+    // Move BOTH LegalWhat application lanes together. Leaving the coordination
+    // lane on restricted Supabase would make session/admin helpers fail even
+    // though ordinary Drizzle queries had already moved to Neon.
+    const coordinationCandidate = new Pool({
+      connectionString: neonDirectDatabaseUrl || neonDatabaseUrl,
+      idleTimeoutMillis: 15000,
+      connectionTimeoutMillis: 15000,
+      max: Math.min(coordinationPoolMax, 2),
+      min: 0,
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 10000,
+      ssl: sslConfig(),
+      statement_timeout: 15000,
+      query_timeout: 15000,
+      application_name: isRailway ? 'legalwhat-neon-coordination' : 'legalwhat-neon-coordination-local',
+    } as any);
+    try {
+      await coordinationCandidate.query({ text: 'SELECT 1', query_timeout: 5_000 } as any);
+    } catch (error) {
+      await coordinationCandidate.end().catch(() => undefined);
+      throw error;
+    }
+
     const previousPool = pool;
-    await previousPool.end().catch(() => undefined);
+    const previousCoordinationPool = coordinationPool;
+    await Promise.allSettled([previousPool.end(), previousCoordinationPool.end()]);
     pool = candidate;
+    coordinationPool = coordinationCandidate;
     db = drizzle(pool, { schema });
     legalWhatNeonFallbackActive = true;
     ordinarySessionFallbackActive = false;
     attachPoolErrorHandlers();
-    console.warn(`[DATABASE] LegalWhat Neon failover activated (reason=${reason}); Supabase authority preserved for later reconciliation`);
+    console.warn(`[DATABASE] LegalWhat Neon failover activated (reason=${reason}); ordinary + coordination data planes are on Neon; Supabase authority preserved for later reconciliation`);
     return true;
   } catch (error) {
     await candidate.end().catch(() => undefined);
@@ -479,16 +504,46 @@ export async function resetPool(): Promise<void> {
         console.warn('[DATABASE] Error closing old pools (may already be closed):', error);
       }
 
-      // Use getDatabaseUrl from config for consistency
-      const newDatabaseUrl = getDatabaseUrl();
+      // A local pool reset must preserve the currently admitted database lane.
+      // Never silently jump from a healthy Neon failover back to restricted
+      // Supabase merely because a socket/pool needed recreation.
+      const newDatabaseUrl = legalWhatNeonFallbackActive ? neonDatabaseUrl : getDatabaseUrl();
       if (!newDatabaseUrl) {
         throw new Error('Database URL not available for pool reset');
       }
 
-      const nextMainConfig = getPoolConfig();
-      nextMainConfig.max = Math.min(mainPoolMax, previousEffectiveMainMax);
+      const nextMainConfig = legalWhatNeonFallbackActive
+        ? {
+            connectionString: neonDatabaseUrl,
+            idleTimeoutMillis: 15000,
+            connectionTimeoutMillis: 15000,
+            max: Math.min(mainPoolMax, previousEffectiveMainMax, 5),
+            min: 0,
+            keepAlive: true,
+            keepAliveInitialDelayMillis: 10000,
+            ssl: sslConfig(),
+            statement_timeout: 30000,
+            query_timeout: 30000,
+            application_name: isRailway ? 'legalwhat-neon-failover' : 'legalwhat-neon-failover-local',
+          } as any
+        : getPoolConfig();
+      nextMainConfig.max = Math.min(Number(nextMainConfig.max || mainPoolMax), previousEffectiveMainMax);
       pool = new Pool(nextMainConfig);
-      coordinationPool = new Pool(getCoordinationPoolConfig());
+      coordinationPool = legalWhatNeonFallbackActive
+        ? new Pool({
+            connectionString: neonDirectDatabaseUrl || neonDatabaseUrl,
+            idleTimeoutMillis: 15000,
+            connectionTimeoutMillis: 15000,
+            max: Math.min(coordinationPoolMax, 2),
+            min: 0,
+            keepAlive: true,
+            keepAliveInitialDelayMillis: 10000,
+            ssl: sslConfig(),
+            statement_timeout: 15000,
+            query_timeout: 15000,
+            application_name: isRailway ? 'legalwhat-neon-coordination' : 'legalwhat-neon-coordination-local',
+          } as any)
+        : new Pool(getCoordinationPoolConfig());
       attachPoolErrorHandlers();
       db = drizzle(pool, { schema });
 
