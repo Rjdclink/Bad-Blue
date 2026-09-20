@@ -68,9 +68,10 @@ assert(app.includes('body.style.overscrollBehaviorX = "none"'), "Master shell mu
 
 assert(
   avatar.includes('LEXARA_ATTORNEY_IMAGE_SOURCES')
-    && avatar.includes("'/images/oip.webp?v=20260918-lexara3'")
+    && avatar.includes("'/images/oip.webp?v=20260920-embodied2'")
     && avatar.includes('object-contain')
-    && avatar.includes('onError'),
+    && avatar.includes('onError')
+    && avatar.includes("data-live-avatar={LIVE_AVATAR_ENABLED ? 'embodied-canvas' : 'static'}"),
   "LEXARA attorney image is not reinstated",
 );
 assert(!avatar.includes("<svg"), "Retired ethereal SVG is still rendered");
