@@ -132,8 +132,11 @@ export function extractCityStateHint(input: string): { city: string; state: stri
 
     // Within a longer sentence, require explicit location language so a state
     // name used in an employer/person name is not mistaken for geography.
-    const cityMatch = before.match(
-      /(?:^|[,;.]|\b(?:in|at|from|near|around|city(?:\s+of)?)\s+)([A-Za-z][A-Za-z.'\-]*(?:\s+[A-Za-z][A-Za-z.'\-]*){0,3})\s*$/i,
+    const explicitLocation = before.match(
+      /\b(?:located\s+in|last\s+known\s+(?:in|at)|in|at|from|near|around|city(?:\s+of)?)\s+([A-Za-z][A-Za-z.'\-]*(?:\s+[A-Za-z][A-Za-z.'\-]*){0,3})\s*,?\s*$/i,
+    );
+    const cityMatch = explicitLocation || before.match(
+      /(?:^|[,;.])\s*([A-Za-z][A-Za-z.'\-]*(?:\s+[A-Za-z][A-Za-z.'\-]*){0,3})\s*$/i,
     );
     const city = cleanCity(cityMatch?.[1] || '');
     if (city.length >= 2 && city.length <= 100) {
