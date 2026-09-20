@@ -29,11 +29,11 @@ export interface LexaraAuthorityResearchContext {
 
 const MAX_RESEARCH_PROMPT_CHARACTERS = 6_000;
 const MAX_RESEARCH_SUMMARY_CHARACTERS = 7_000;
-const MAX_AUTHORITY_SOURCES = 8;
-const RESEARCH_TIMEOUT_MS = 2_200;
-const CRAWLER_ENRICHMENT_TIMEOUT_MS = 1_600;
+const MAX_AUTHORITY_SOURCES = 12;
+const RESEARCH_TIMEOUT_MS = 2_400;
+const CRAWLER_ENRICHMENT_TIMEOUT_MS = 1_800;
 
-const AUTHORITY_SENSITIVE_PATTERN = /\b(?:cite|citation|source|authority|case\s*law|precedent|holding|statute|statutory|code\s+section|regulation|c\.f\.r\.|u\.s\.c\.|court\s+rule|rule\s+\d|legal\s+standard|elements?\s+of|controlling\s+law|current\s+law|recent\s+law|supreme\s+court|circuit\s+court|appellate\s+court|statute\s+of\s+limitations|limitations\s+period|filing\s+deadline|appeal\s+deadline|notice\s+deadline|deadline|jurisdiction|venue|preemption)\b/i;
+const AUTHORITY_SENSITIVE_PATTERN = /\b(?:cite|citation|source|authority|case\s*law|precedent|holding|statute|statutory|code\s+section|regulation|c\.f\.r\.|u\.s\.c\.|court\s+rule|rule\s+\d|legal\s+standard|elements?\s+of|controlling\s+law|current\s+law|recent\s+law|supreme\s+court|circuit\s+court|appellate\s+court|judge|judges|court|sentenc(?:e|ed|es|ing)|statistics?|data|rates?|average|compare|comparison|lenien(?:t|cy)|harsh(?:er|ness)?|outcomes?|disposition|statute\s+of\s+limitations|limitations\s+period|filing\s+deadline|appeal\s+deadline|notice\s+deadline|deadline|jurisdiction|venue|preemption)\b/i;
 
 const HIGH_CONSEQUENCE_PATTERN = /\b(?:criminal\s+charge|charged\s+with|arrested|indicted|sentencing|post[- ]conviction|habeas|2254|2255|ineffective\s+assistance|actual\s+innocence|deportation|removal\s+proceedings|asylum|child\s+custody|termination\s+of\s+parental\s+rights|restraining\s+order|protective\s+order|eviction|foreclosure|injunction|appeal|hearing\s+(?:today|tomorrow)|court\s+(?:today|tomorrow))\b/i;
 
@@ -201,7 +201,7 @@ async function enrichAuthoritySourcesWithCrawlerPool(
 
   // Discovery providers often already return enough primary-source text.
   // Only pay crawler-enrichment latency for sources that still lack evidence.
-  const targets = sources.filter(source => !source.excerpt?.trim()).slice(0, 2).map(source => source.url);
+  const targets = sources.filter(source => !source.excerpt?.trim()).slice(0, 6).map(source => source.url);
   if (!targets.length) return sources;
 
   try {
