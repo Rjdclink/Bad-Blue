@@ -65,7 +65,7 @@
     "verify:spectra": "node scripts/verify-spectra.cjs",
     "verify:lexara-realization": "node scripts/verify-lexara-realization.cjs",
     "verify:ai-harmony": "node scripts/verify-ai-harmony-platform.cjs",
-    "verify:pantheon-realization": "node scripts/verify-pantheon-realization.cjs"
+    "verify:pantheon-source-registry": "node scripts/verify-pantheon-source-registry.cjs",\n    "verify:pantheon-realization": "npm run verify:pantheon-source-registry && node scripts/verify-pantheon-realization.cjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",
