@@ -48,6 +48,15 @@ export {
   type QuantiFloat64StateInfo,
 } from './dataFabric.js';
 export {
+  QuantiTensorFabric,
+  quantiTensorFabric,
+  type QuantiTensorFabricOptions,
+  type QuantiTensorFabricStatus,
+  type QuantiTensorLease,
+  type QuantiPinnedTensorState,
+  type QuantiTensorStateInfo,
+} from './tensorFabric.js';
+export {
   QuantiParallelismGovernor,
   QuantiParallelismError,
   quantiParallelismGovernor,
