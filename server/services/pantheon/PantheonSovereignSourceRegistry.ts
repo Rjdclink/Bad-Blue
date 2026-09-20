@@ -6,6 +6,7 @@ import { PANTHEON_VERIFIED_SOURCES_BATCH_05 } from './sources/batch05';
 import { PANTHEON_VERIFIED_SOURCES_BATCH_06 } from './sources/batch06';
 import { PANTHEON_VERIFIED_SOURCES_BATCH_07 } from './sources/batch07';
 import { PANTHEON_VERIFIED_SOURCES_BATCH_08 } from './sources/batch08';
+import { PANTHEON_VERIFIED_SOURCES_BATCH_09 } from './sources/batch09';
 /**
  * PANTHEON sovereign source registry.
  *
@@ -93,7 +94,7 @@ export function buildPantheonCategoryTargets(
  const out:PantheonSourceTarget[]=[]; const seen=new Set<string>();
  const add=(x:PantheonSourceTarget)=>{ if(!seen.has(x.url)){seen.add(x.url);out.push(x);} };
  // Verified direct authorities are always attempted before generated discovery URLs.
- for (const source of [...PANTHEON_VERIFIED_SOURCES_BATCH_01, ...PANTHEON_VERIFIED_SOURCES_BATCH_02, ...PANTHEON_VERIFIED_SOURCES_BATCH_03, ...PANTHEON_VERIFIED_SOURCES_BATCH_04, ...PANTHEON_VERIFIED_SOURCES_BATCH_05, ...PANTHEON_VERIFIED_SOURCES_BATCH_06, ...PANTHEON_VERIFIED_SOURCES_BATCH_07, ...PANTHEON_VERIFIED_SOURCES_BATCH_08]) {
+ for (const source of [...PANTHEON_VERIFIED_SOURCES_BATCH_01, ...PANTHEON_VERIFIED_SOURCES_BATCH_02, ...PANTHEON_VERIFIED_SOURCES_BATCH_03, ...PANTHEON_VERIFIED_SOURCES_BATCH_04, ...PANTHEON_VERIFIED_SOURCES_BATCH_05, ...PANTHEON_VERIFIED_SOURCES_BATCH_06, ...PANTHEON_VERIFIED_SOURCES_BATCH_07, ...PANTHEON_VERIFIED_SOURCES_BATCH_08, ...PANTHEON_VERIFIED_SOURCES_BATCH_09]) {
    if (!source.categories.includes(category)) continue;
    const q=`${identity} ${category}`;
    add({category,url:source.url,authority:source.authority,jurisdiction:source.jurisdiction,query:q});
