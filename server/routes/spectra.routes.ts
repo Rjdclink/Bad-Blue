@@ -16,6 +16,7 @@ import {
 import type { GPSPoint } from '../services/geoconsole/types';
 import { inputFusionEngine } from '../services/geoconsole/inputFusionEngine';
 import { assessLocationQuality } from '../services/geoconsole/location-quality';
+import { buildSpectraPriorityTargets } from '../services/spectra/SpectraSourceRegistry';
 
 const router = Router();
 router.use(isAuthenticated);
@@ -472,6 +473,8 @@ router.post('/acquire', async (req: Request, res: Response) => {
     : subject;
   const searchQuery = resolvedName || details;
   const resolvedTargetLabel = resolvedName || phone || normalizedTarget;
+  const prioritySourceTargets = buildSpectraPriorityTargets(resolvedTargetLabel, details, 220);
+  const prioritySourceQueries = prioritySourceTargets.slice(0, 24).map(source => source.query);
   const discoveryQueries = buildDiscoveryQueries({
     resolvedName: resolvedName || '',
     normalizedTarget,
@@ -492,7 +495,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
         SPECTRA_OSINT_TIMEOUT_MS,
         'Deep OSINT acquisition',
       ),
-      runDiscoveryPass(discoveryQueries.firstPass),
+      runDiscoveryPass([...new Set([...discoveryQueries.firstPass, ...prioritySourceQueries])]),
     ]);
 
     const report = osintResult.status === 'fulfilled'
