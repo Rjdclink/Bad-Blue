@@ -462,6 +462,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const autoInterruptRef = useRef<() => void>(() => undefined);
   const lastFinalVoiceSegmentRef = useRef<{ text: string; at: number }>({ text: '', at: 0 });
   const validatedBargeInUtterancesRef = useRef<Set<number>>(new Set());
+  const speculativeRequestRef = useRef<{ text: string; controller: AbortController; promise: Promise<Response> } | null>(null);
 
   const clearVoiceTurnTimer = useCallback(() => {
     if (voiceTurnTimerRef.current !== null) {
@@ -507,6 +508,38 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     interimResults: true,
     keyterms: voiceKeyterms,
     shouldProbeBargeIn: () => phaseRef.current === 'speaking',
+    onEagerTurn: (text) => {
+      const eager = text.trim();
+      if (!eager || phaseRef.current === 'speaking' || currentRequestRef.current) return;
+      speculativeRequestRef.current?.controller.abort();
+      const controller = new AbortController();
+      const previousMessages = conversationRef.current
+        .filter(item => !nonSemanticLexaraMessageIdsRef.current.has(item.id))
+        .map(item => ({ role: item.role, content: item.content }));
+      const promise = fetch('/api/lexara/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          prompt: eager,
+          includeAudio: false,
+          speculative: true,
+          context: {
+            previousMessages,
+            lawType: lawTypeId,
+            lawTypeName,
+            jurisdiction,
+            sessionId: sessionIdRef.current,
+            behaviorMode: 'professional',
+          },
+        }),
+      });
+      speculativeRequestRef.current = { text: eager, controller, promise };
+    },
+    onTurnResumed: () => {
+      speculativeRequestRef.current?.controller.abort();
+      speculativeRequestRef.current = null;
+    },
     onVoiceStart: () => {
       // Voice activity means the user may be continuing a turn, so cancel any
       // pending commit. It does NOT own interruption authority: speaker echo can
@@ -943,16 +976,22 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       // Start the deep legal/Harmony path immediately, but do not make the user
       // wait silently for it. The acknowledgement endpoint is deliberately
       // sub-LLM and returns a context-aware conversational response right away.
-      const analysisPromise = fetch('/api/lexara/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
-          prompt: message,
-          includeAudio: false,
-          context: sharedContext,
-        }),
-      });
+      const speculative = speculativeRequestRef.current;
+      const canReuseSpeculative = speculative?.text === message;
+      const analysisPromise = canReuseSpeculative
+        ? speculative!.promise
+        : fetch('/api/lexara/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: controller.signal,
+            body: JSON.stringify({
+              prompt: message,
+              includeAudio: false,
+              context: sharedContext,
+            }),
+          });
+      if (!canReuseSpeculative) speculative?.controller.abort();
+      speculativeRequestRef.current = null;
 
       const acknowledgementPromise = fetch('/api/lexara/acknowledge', {
         method: 'POST',
