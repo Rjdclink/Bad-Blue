@@ -664,7 +664,7 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
       )}
       style={{ contain: 'layout paint' }}
       aria-label="LEXARA professional legal assistant"
-      data-live-avatar={LIVE_AVATAR_ENABLED ? (gpuReady ? 'portrait-rig-webgpu-v4' : 'portrait-rig-v3') : 'static'}
+      data-live-avatar={LIVE_AVATAR_ENABLED ? 'portrait-rig-v3' : 'static'}
       data-gpu-renderer={gpuReady ? (gpuRendererRef.current?.tier ?? 'webgpu') : 'canvas2d'}
       data-reduced-motion={reducedMotion ? 'true' : 'false'}
     >
