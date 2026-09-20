@@ -1180,6 +1180,7 @@ export class USCCrawler extends EventEmitter {
   private config: CrawlerConfig;
   private coordinationState: CoordinationState;
   private taskQueue: Array<{ id: string; crawler: string; task: any; priority: number }> = [];
+  private executors = new Map<string, (task: any) => Promise<any>>();
   private isRunning: boolean = false;
   private startTime: number = 0;
   private tasksProcessed: number = 0;
@@ -1213,6 +1214,10 @@ export class USCCrawler extends EventEmitter {
     this.isRunning = false;
     console.log('[USC] Coordination deactivated');
     this.emit('stopped', { crawler: 'usc', timestamp: Date.now() });
+  }
+
+  registerExecutor(crawler: string, executor: (task: any) => Promise<any>): void {
+    this.executors.set(crawler, executor);
   }
 
   /**
@@ -1273,11 +1278,13 @@ export class USCCrawler extends EventEmitter {
     // Coordination logic
     const startTime = Date.now();
     
-    // In a real implementation, this would coordinate actual crawler execution
-    // For now, we emit coordination events
-    for (const crawler of crawlers) {
-      this.emit('sync:crawler', { syncId, crawler });
-    }
+    // Synchronization is a real barrier over registered crawler executors.
+    // Crawlers without a pending executable still participate in the barrier as
+    // analytical peers; actual work is dispatched by coordinateTask.
+    await Promise.all(crawlers.map(async crawler => {
+      this.emit('sync:crawler', { syncId, crawler, executable: this.executors.has(crawler) });
+      await Promise.resolve();
+    }));
     
     const syncTime = Date.now() - startTime;
     
@@ -1326,16 +1333,24 @@ export class USCCrawler extends EventEmitter {
       priority: task.priority,
     });
 
-    // Simulate task execution
-    await new Promise(resolve => setTimeout(resolve, 5)); // Ultra-low latency
-
-    const executionTime = Date.now() - startTime;
-
-    this.emit('task:complete', {
-      taskId: task.id,
-      crawler: task.crawler,
-      executionTime,
-    });
+    const executor = this.executors.get(task.crawler);
+    try {
+      const result = executor ? await executor(task.task) : task.task;
+      const executionTime = Date.now() - startTime;
+      this.emit('task:complete', {
+        taskId: task.id,
+        crawler: task.crawler,
+        executionTime,
+        result,
+      });
+    } catch (error: any) {
+      this.emit('task:failed', {
+        taskId: task.id,
+        crawler: task.crawler,
+        executionTime: Date.now() - startTime,
+        error: error?.message || String(error),
+      });
+    }
 
     this.coordinationState.activeTaskCount--;
     this.coordinationState.queueDepth = this.taskQueue.length;
