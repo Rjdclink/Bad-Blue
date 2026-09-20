@@ -10,6 +10,8 @@ interface PantheonProgressTrackerProps {
   isSearching: boolean;
   onComplete?: () => void;
   startedAt?: string | null;
+  deadlineAt?: string | null;
+  phase?: string | null;
   completed?: boolean;
 }
 
@@ -24,6 +26,8 @@ export function PantheonProgressTracker({
   isSearching,
   onComplete,
   startedAt,
+  deadlineAt,
+  phase,
   completed = false,
 }: PantheonProgressTrackerProps) {
   const [progress, setProgress] = useState(0);
@@ -41,19 +45,27 @@ export function PantheonProgressTracker({
     if (!isSearching) return;
 
     const parsedStartedAt = startedAt ? Date.parse(startedAt) : NaN;
+    const parsedDeadlineAt = deadlineAt ? Date.parse(deadlineAt) : NaN;
     const startTime = Number.isFinite(parsedStartedAt) ? parsedStartedAt : Date.now();
+    const authoritativeDuration = Number.isFinite(parsedDeadlineAt)
+      ? Math.max(1, parsedDeadlineAt - startTime)
+      : totalDuration;
     const tick = () => {
       const elapsed = Math.max(0, Date.now() - startTime);
-      const boundedElapsed = Math.min(elapsed, totalDuration);
+      const boundedElapsed = Math.min(elapsed, authoritativeDuration);
       setElapsedTime(boundedElapsed);
-      setProgress(Math.min((boundedElapsed / totalDuration) * 100, 99));
+      setProgress(Math.min((boundedElapsed / authoritativeDuration) * 100, 99));
     };
     tick();
     const interval = setInterval(tick, 50);
     return () => clearInterval(interval);
-  }, [completed, isSearching, onComplete, startedAt, totalDuration]);
+  }, [completed, deadlineAt, isSearching, onComplete, startedAt, totalDuration]);
 
-  const remainingMs = Math.max(0, totalDuration - elapsedTime);
+  const parsedDeadlineAt = deadlineAt ? Date.parse(deadlineAt) : NaN;
+  const remainingMs = Number.isFinite(parsedDeadlineAt)
+    ? Math.max(0, parsedDeadlineAt - Date.now())
+    : Math.max(0, totalDuration - elapsedTime);
+  const finalizing = !completed && (phase === 'finalizing' || (isSearching && remainingMs === 0));
   const minutes = Math.floor(remainingMs / 60000);
   const seconds = Math.floor((remainingMs % 60000) / 1000);
   const milliseconds = Math.floor((remainingMs % 1000) / 10);
@@ -77,7 +89,7 @@ export function PantheonProgressTracker({
               <Search className="w-6 h-6 text-primary animate-pulse" />
             )}
             <h3 className="font-bold text-xl">
-              {searchDepth === 4 ? 'EYE OF GOD' : 'PANTHEON'} Intelligence Scan
+              {finalizing ? 'Finalizing Background Report' : `${searchDepth === 4 ? 'EYE OF GOD' : 'PANTHEON'} Intelligence Scan`}
             </h3>
           </div>
           <Badge variant="secondary" className={`text-base px-3 py-1 ${searchDepth === 4 ? 'bg-red-500/20 text-red-400 border-red-500/50' : ''}`}>
@@ -182,7 +194,7 @@ export function PantheonProgressTracker({
         {/* Current category plus complete registry taxonomy. */}
         <div className="rounded-lg border border-cyan-500/30 bg-slate-950/70 p-3 text-center">
           <div className="text-xs uppercase tracking-wide text-muted-foreground">Current stage</div>
-          <div className="mt-1 font-semibold">{completed ? 'Report assembly complete' : PANTHEON_CATEGORIES[Math.min(PANTHEON_CATEGORIES.length - 1, Math.floor((progress / 100) * PANTHEON_CATEGORIES.length))]}</div>
+          <div className="mt-1 font-semibold">{completed ? 'Report assembly complete' : finalizing ? 'Finalizing collected evidence' : PANTHEON_CATEGORIES[Math.min(PANTHEON_CATEGORIES.length - 1, Math.floor((progress / 100) * PANTHEON_CATEGORIES.length))]}</div>
           <div className="mt-1 text-xs text-muted-foreground">Category {completed ? PANTHEON_CATEGORIES.length : Math.min(PANTHEON_CATEGORIES.length, Math.floor((progress / 100) * PANTHEON_CATEGORIES.length) + 1)} of {PANTHEON_CATEGORIES.length}</div>
         </div>
 
