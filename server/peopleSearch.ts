@@ -1038,6 +1038,7 @@ export async function conductFullOSINT(
     searchDepth?: number; // 1-4, default 2
     forceAllCrawlers?: boolean;
     reportBudgetMs?: number;
+    reportDeadlineAt?: number;
   }
 ): Promise<PeopleSearchReport & {
   emails?: any;
@@ -1051,9 +1052,11 @@ export async function conductFullOSINT(
   const reportBudgetMs = options?.reportBudgetMs;
   const crawlersActivated: string[] = [];
   const investigationStartedAt = Date.now();
-  const remainingBudgetMs = () => reportBudgetMs == null
+  const reportDeadlineAt = options?.reportDeadlineAt
+    ?? (reportBudgetMs == null ? undefined : investigationStartedAt + reportBudgetMs);
+  const remainingBudgetMs = () => reportDeadlineAt == null
     ? Number.POSITIVE_INFINITY
-    : Math.max(0, reportBudgetMs - (Date.now() - investigationStartedAt));
+    : Math.max(0, reportDeadlineAt - Date.now());
   const hasCollectionBudget = (reserveMs = 15_000) => remainingBudgetMs() > reserveMs;
   
   // Log search depth
@@ -1206,7 +1209,7 @@ export async function conductFullOSINT(
     } // End of WRAITH activation block
 
     // Level 3+: HYDRA + LICH + CERBERUS + BLIZZARD DRAGON activation via PANTHEON
-    if (runFullRoster && hasCollectionBudget(20_000)) {
+    if (runFullRoster && (forceAllCrawlers || hasCollectionBudget(20_000))) {
       console.log('[PANTHEON OSINT] Activating complete PANTHEON crawler roster');
       
       // Check if PANTHEON is available (not blocked by cryptocrawler)
@@ -1224,6 +1227,7 @@ export async function conductFullOSINT(
             targets: searchTargets,
             depth: searchDepth as 1 | 2 | 3 | 4,
             budgetMs: Number.isFinite(remainingBudgetMs()) ? remainingBudgetMs() : undefined,
+            deadlineAt: reportDeadlineAt,
           });
           const crawlerResults = crawlerRetrieval.evidence;
           enhancedReport.crawlerAudit = mergeCrawlerAudit([
@@ -1273,7 +1277,7 @@ export async function conductFullOSINT(
     }
 
     // Level 4: GENESIS orchestrator (EYE OF GOD)
-    if ((forceAllCrawlers || searchDepth >= 4) && hasCollectionBudget(45_000)) {
+    if ((forceAllCrawlers || searchDepth >= 4) && (forceAllCrawlers || hasCollectionBudget(45_000))) {
       console.log('[PANTHEON OSINT] 👁️ GENESIS: activating bounded avalanche traversal');
       
       // Check PANTHEON availability again

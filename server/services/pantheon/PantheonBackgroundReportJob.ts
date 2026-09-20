@@ -24,7 +24,7 @@ interface PersistedPantheonJob {
 
 const activeJobs = new Map<string, Promise<void>>();
 
-function jobEnvelope(input: PantheonReportJobInput, state: 'queued' | 'running' | 'completed' | 'failed', extra: Record<string, unknown> = {}) {
+function jobEnvelope(input: PantheonReportJobInput, state: 'queued' | 'running' | 'finalizing' | 'completed' | 'failed', extra: Record<string, unknown> = {}) {
   const budgetMs = getPantheonReportDurationMs(input.searchDepth);
   return {
     state,
@@ -39,14 +39,18 @@ function jobEnvelope(input: PantheonReportJobInput, state: 'queued' | 'running' 
 async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void> {
   const startedAt = new Date();
   const budgetMs = getPantheonReportDurationMs(input.searchDepth);
+  const deadlineAt = new Date(startedAt.getTime() + budgetMs);
 
   await updatePantheonReportRecord(input.reportId, 'processing', {
-    job: jobEnvelope(input, 'running', { startedAt: startedAt.toISOString() }),
+    job: jobEnvelope(input, 'running', {
+      startedAt: startedAt.toISOString(),
+      deadlineAt: deadlineAt.toISOString(),
+    }),
     report: null,
   });
 
   try {
-    const availabilityDeadline = Date.now() + budgetMs;
+    const availabilityDeadline = deadlineAt.getTime();
     while (!canActivatePantheon().available) {
       if (Date.now() >= availabilityDeadline) {
         throw new Error('PANTHEON remained unavailable for the entire investigation budget');
@@ -54,11 +58,17 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       await new Promise(resolve => setTimeout(resolve, 5_000));
     }
 
+    const remainingCollectionMs = Math.max(0, deadlineAt.getTime() - Date.now());
+    if (remainingCollectionMs <= 0) {
+      throw new Error('PANTHEON investigation budget expired before collection could begin');
+    }
+
     const reportPromise = conductFullOSINT(input.name, {
       location: input.location,
       searchDepth: input.searchDepth,
       forceAllCrawlers: true,
-      reportBudgetMs: budgetMs,
+      reportBudgetMs: remainingCollectionMs,
+      reportDeadlineAt: deadlineAt.getTime(),
     });
 
     // The selected duration is an evidence-collection budget, not a report
@@ -68,9 +78,19 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
     // This prevents a valid investigation from being discarded at 5/10/20/30m.
     const report = await reportPromise;
 
+    await updatePantheonReportRecord(input.reportId, 'processing', {
+      job: jobEnvelope(input, 'finalizing', {
+        startedAt: startedAt.toISOString(),
+        deadlineAt: deadlineAt.toISOString(),
+        finalizingAt: new Date().toISOString(),
+      }),
+      report,
+    });
+
     await updatePantheonReportRecord(input.reportId, 'completed', {
       job: jobEnvelope(input, 'completed', {
         startedAt: startedAt.toISOString(),
+        deadlineAt: deadlineAt.toISOString(),
         completedAt: new Date().toISOString(),
       }),
       report,
@@ -80,6 +100,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
     await updatePantheonReportRecord(input.reportId, 'failed', {
       job: jobEnvelope(input, 'failed', {
         startedAt: startedAt.toISOString(),
+        deadlineAt: deadlineAt.toISOString(),
         failedAt: new Date().toISOString(),
       }),
       report: null,

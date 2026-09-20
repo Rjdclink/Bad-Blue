@@ -48,7 +48,15 @@ export class PantheonRetrievalAdapter {
     targets: string[];
     depth?: 1 | 2 | 3 | 4;
     budgetMs?: number;
+    deadlineAt?: number;
   }): Promise<PantheonRetrievalResponse> {
+    const retrievalStartedAt = Date.now();
+    const deadlineAt = request.deadlineAt
+      ?? (request.budgetMs == null ? undefined : retrievalStartedAt + request.budgetMs);
+    const remainingBudgetMs = () => deadlineAt == null
+      ? Number.POSITIVE_INFINITY
+      : Math.max(0, deadlineAt - Date.now());
+    const collectionOpen = () => remainingBudgetMs() > 0;
     const firstTarget = request.targets[0];
     let host: string | undefined;
     if (firstTarget) {
@@ -95,7 +103,7 @@ export class PantheonRetrievalAdapter {
       depth: plan.depth,
       crawlers: plan.crawlers,
       stormIntensity: plan.depth === 4 ? 'storm' as const : 'snow' as const,
-      timeout: request.budgetMs,
+      timeout: Number.isFinite(remainingBudgetMs()) ? Math.max(1, remainingBudgetMs()) : request.budgetMs,
     };
     let results: CrawlerResult[];
     let crawlerAudit: PantheonRetrievalResponse['crawlerAudit'] = [];
@@ -110,7 +118,7 @@ export class PantheonRetrievalAdapter {
 
     const evidence = results.map(normalizeResult);
 
-    if (request.purpose === 'background_report') {
+    if (request.purpose === 'background_report' && collectionOpen()) {
       const urlTargets = request.targets.filter(target => {
         try {
           const parsed = new URL(target);
@@ -121,7 +129,7 @@ export class PantheonRetrievalAdapter {
       });
       const publicResources = await acquirePublicResources(
         urlTargets,
-        Math.min(12_000, Math.max(3_000, Math.floor((request.budgetMs || 60_000) / Math.max(1, request.targets.length)))),
+        Math.min(12_000, Math.max(1_000, Math.floor(remainingBudgetMs() / Math.max(1, request.targets.length)))),
       );
       for (const resource of publicResources) {
         crawlerAudit.push({
@@ -152,7 +160,7 @@ export class PantheonRetrievalAdapter {
       }
     }
 
-    if (request.purpose === 'background_report' && evidence.length > 0) {
+    if (request.purpose === 'background_report' && evidence.length > 0 && collectionOpen()) {
       // Feed real retrieved evidence through the Seven-Crawler analytical family.
       // Retrieval remains the responsibility of the public-source crawler fleet;
       // these seven preserve their original analytic intent and cooperate over the
@@ -244,13 +252,19 @@ export class PantheonRetrievalAdapter {
           return false;
         }
       });
-      const extendedRuns = await Promise.allSettled(
-        extendedTargets.map(target => twoStageDeployer.deployBackgroundReport(target, undefined, request.budgetMs))
-      );
+      const EXTENDED_CONCURRENCY = 8;
+      const extendedRuns: Array<{ target: string; run: PromiseSettledResult<Awaited<ReturnType<typeof twoStageDeployer.deployBackgroundReport>>> }> = [];
+      for (let offset = 0; offset < extendedTargets.length && collectionOpen(); offset += EXTENDED_CONCURRENCY) {
+        const batch = extendedTargets.slice(offset, offset + EXTENDED_CONCURRENCY);
+        const perBatchBudget = Number.isFinite(remainingBudgetMs()) ? Math.max(1, remainingBudgetMs()) : request.budgetMs;
+        const settled = await Promise.allSettled(
+          batch.map(target => twoStageDeployer.deployBackgroundReport(target, undefined, perBatchBudget))
+        );
+        settled.forEach((run, index) => extendedRuns.push({ target: batch[index], run }));
+      }
 
-      for (let index = 0; index < extendedRuns.length; index++) {
-        const run = extendedRuns[index];
-        const target = extendedTargets[index];
+      for (const entry of extendedRuns) {
+        const { run, target } = entry;
         if (run.status !== 'fulfilled') continue;
 
         for (const razor of run.value.razorResults) {
