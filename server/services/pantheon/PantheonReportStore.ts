@@ -283,7 +283,7 @@ export async function createPantheonReportRecord(input: {
         });
       }
     }
-  } else {
+  } else if (canMirrorIdentity(record.userId)) {
     scheduleMirror(record.id);
   }
 
@@ -335,7 +335,7 @@ export async function updatePantheonReportRecord(
         });
       }
     }
-  } else {
+  } else if (canMirrorIdentity(next.userId)) {
     scheduleMirror(reportId);
   }
 
@@ -374,6 +374,6 @@ export async function getPantheonReportRecord(reportId: string): Promise<Pantheo
   }
 
   const local = await readJournal(reportId);
-  if (local) scheduleMirror(reportId);
+  if (local && canMirrorIdentity(local.userId)) scheduleMirror(reportId);
   return local;
 }
