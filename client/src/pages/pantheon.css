@@ -373,3 +373,9 @@
     background: linear-gradient(135deg, #0a1929 0%, #0f1b2e 50%, #0d1117 100%);
   }
 }
+
+/* Compact registry-backed category presentation */
+.pantheon-category-card { max-width: 100%; }
+.pantheon-category-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.45rem .9rem; }
+.pantheon-category-item { font-size:.78rem; line-height:1.25rem; color:hsl(var(--muted-foreground)); }
+@media (min-width: 768px) { .pantheon-category-list { grid-template-columns:repeat(3,minmax(0,1fr)); } }
