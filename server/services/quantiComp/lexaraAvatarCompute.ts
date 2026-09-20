@@ -88,6 +88,11 @@ export class LexaraAvatarComputeCoordinator {
       lastSequence: -1,
       updatedAt: Date.now(),
     });
+    quantiComp.advanceSupersessionGeneration(
+      `lexara-avatar:${sessionId}`,
+      generation * 1_000_000,
+      'lexara-avatar-visual',
+    );
     return generation;
   }
 
@@ -96,13 +101,20 @@ export class LexaraAvatarComputeCoordinator {
     const turnId = normalizedId(turnIdValue, 'turn');
     const state = this.sessions.get(sessionId);
     if (!state || state.turnId !== turnId) return;
-    // Advancing the generation fences any in-flight result from this turn.
+    // Advancing the generation fence cancels/suppresses any in-flight visual
+    // result from this turn even when there is no replacement segment yet.
+    const nextGeneration = state.generation + 1;
     this.sessions.set(sessionId, {
       ...state,
-      generation: state.generation + 1,
+      generation: nextGeneration,
       lastSequence: Number.MAX_SAFE_INTEGER,
       updatedAt: Date.now(),
     });
+    quantiComp.advanceSupersessionGeneration(
+      `lexara-avatar:${sessionId}`,
+      nextGeneration * 1_000_000,
+      'lexara-avatar-visual',
+    );
   }
 
   publishIdentityContext(
