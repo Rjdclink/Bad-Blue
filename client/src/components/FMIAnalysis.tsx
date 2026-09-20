@@ -108,7 +108,7 @@ export default function FMIAnalysis({
     },
     onError: (error: Error) => {
       toast({
-        title: "F.M.I. Upload Failed",
+        title: "Media Analyzer Upload Failed",
         description: error.message,
         variant: "destructive",
       });
@@ -154,7 +154,32 @@ export default function FMIAnalysis({
     },
   });
 
+  const supportedAccept = {
+    'image/jpeg': ['.jpg', '.jpeg'], 'image/png': ['.png'], 'image/gif': ['.gif'],
+    'image/webp': ['.webp'], 'image/bmp': ['.bmp'], 'image/tiff': ['.tif', '.tiff'],
+    'application/pdf': ['.pdf'], 'application/msword': ['.doc'],
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+    'application/vnd.ms-excel': ['.xls'],
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+    'text/plain': ['.txt'], 'text/csv': ['.csv'], 'message/rfc822': ['.eml'],
+    'video/mp4': ['.mp4'], 'video/quicktime': ['.mov'], 'video/x-msvideo': ['.avi'],
+    'video/mpeg': ['.mpeg', '.mpg'], 'video/webm': ['.webm'],
+    'audio/mpeg': ['.mp3'], 'audio/wav': ['.wav'], 'audio/ogg': ['.ogg'],
+    'audio/mp4': ['.m4a', '.mp4'], 'audio/x-m4a': ['.m4a'],
+  } as const;
+
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    accept: supportedAccept,
+    onDropRejected: (rejections) => {
+      const first = rejections[0];
+      const code = first?.errors?.[0]?.code;
+      const message = code === 'file-too-large'
+        ? 'That file exceeds the 100 MB Media Analyzer limit.'
+        : code === 'file-invalid-type'
+          ? 'That file type is not supported by Media Analyzer.'
+          : first?.errors?.[0]?.message || 'The selected media could not be accepted.';
+      toast({ title: 'Media Analyzer Upload Failed', description: message, variant: 'destructive' });
+    },
     onDrop: async (acceptedFiles) => {
       if (!state) {
         toast({
@@ -232,7 +257,7 @@ export default function FMIAnalysis({
               <Brain className="w-6 h-6 text-primary" />
             </div>
             <div>
-              <CardTitle className="text-xl">F.M.I. — Forensic Media Intelligence</CardTitle>
+              <CardTitle className="text-xl">Media Analyzer</CardTitle>
               <CardDescription className="text-gray-300">
                 Evidence extraction and legal-context analysis for {lawTypeName.toLowerCase()} matters
               </CardDescription>
@@ -263,19 +288,18 @@ export default function FMIAnalysis({
                   ? 'F.M.I. is processing evidence…'
                   : isDragActive
                     ? 'Drop files for F.M.I. analysis'
-                    : 'Upload Evidence to F.M.I.'}
+: 'Click Here to Upload & Analyze Media'}
             </p>
             <p className="text-sm text-gray-400 mb-4">
               Supported media is extracted from the actual stored file, then analyzed in the selected legal context.
             </p>
             <Button
               type="button"
-              variant="outline"
               disabled={!state || busy}
-              className="text-white border-gray-600 hover:bg-primary/20"
+              className="min-h-12 bg-amber-400 px-5 font-bold text-slate-950 hover:bg-amber-300 border border-amber-500"
             >
-              <Upload className="w-4 h-4 mr-2" />
-              Select Files
+              <Upload className="w-5 h-5 mr-2" />
+              Click Here to Upload & Analyze Media
             </Button>
 
             {uploadProgress > 0 && (
