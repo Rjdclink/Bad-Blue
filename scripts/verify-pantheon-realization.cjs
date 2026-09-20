@@ -10,6 +10,8 @@ const routes = read('server/routes.ts');
 const pdf = read('server/services/pantheon/PantheonBackgroundReportPdf.ts');
 const client = read('client/src/pages/pantheon.tsx');
 const acquisition = read('server/services/crawlers/PublicAcquisitionInfrastructure.ts');
+const jobs = read('server/services/pantheon/PantheonBackgroundReportJob.ts');
+const peopleSearch = read('server/peopleSearch.ts');
 
 const checks = [
   ['durable report status is retryable', routes.includes('report_store_converging') && routes.includes("Retry-After")],
