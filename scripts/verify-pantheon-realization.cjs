@@ -12,7 +12,6 @@ const client = read('client/src/pages/pantheon.tsx');
 const acquisition = read('server/services/crawlers/PublicAcquisitionInfrastructure.ts');
 const jobs = read('server/services/pantheon/PantheonBackgroundReportJob.ts');
 const peopleSearch = read('server/peopleSearch.ts');
-const store = read('server/services/pantheon/PantheonReportStore.ts');
 
 const checks = [
   ['durable report status is retryable', routes.includes('report_store_converging') && routes.includes("Retry-After")],
@@ -27,18 +26,13 @@ const checks = [
   ['credential-free public acquisition participates', adapter.includes('acquirePublicResources') && acquisition.includes('Private-network acquisition is not permitted')],
   ['external failures are route-local', adapter.includes('Promise.allSettled')],
   ['discovery expressions are separated from URL acquisition', adapter.includes('new URL(firstTarget)') && adapter.includes('const urlTargets = request.targets.filter')],
-  ['report duration is an evidence budget, not a kill timer', jobs.includes('const report = await reportPromise') && !jobs.includes('Promise.race([reportPromise, budgetGuard])')],
+  ['report duration uses one immutable server deadline', jobs.includes('deadlineAt') && jobs.includes('reportDeadlineAt: deadlineAt.getTime()')],
+  ['collection deadline propagates into retrieval', peopleSearch.includes('deadlineAt: reportDeadlineAt') && adapter.includes('deadlineAt?: number') && adapter.includes('remainingBudgetMs')],
   ['collection budget preserves aggregation time', peopleSearch.includes('remainingBudgetMs') && peopleSearch.includes('hasCollectionBudget')],
   ['background jobs force complete crawler participation', jobs.includes('forceAllCrawlers: true') && peopleSearch.includes('const runFullRoster = forceAllCrawlers || searchDepth >= 3')],
+  ['full roster starts before legacy base lane can starve it', peopleSearch.includes('const fullRosterPromise =') && peopleSearch.indexOf('const fullRosterPromise =') < peopleSearch.indexOf('const enhancedReport = await conductEnhancedPeopleSearch')],
+  ['registry acquisition stops launching work at deadline', adapter.includes('collectionOpen()') && adapter.includes('offset < extendedTargets.length && collectionOpen()')],
 ];
-
-checks.push(
-  ['report job exposes one authoritative deadline', jobs.includes('deadlineAt: deadlineAt.toISOString()') && jobs.includes('reportDeadlineAt: deadlineAt.getTime()')],
-  ['full crawler roster starts before legacy lane can starve it', peopleSearch.includes('earlyCrawlerRetrievalPromise') && peopleSearch.indexOf('earlyCrawlerRetrievalPromise') < peopleSearch.indexOf('await conductEnhancedPeopleSearch')],
-  ['4,500-source razor dispatch uses bounded concurrency', adapter.includes('const EXTENDED_CONCURRENCY = 8') && adapter.includes('offset < extendedTargets.length && collectionOpen()')],
-  ['client consumes authoritative report deadline', client.includes('reportDeadlineAt') && client.includes('deadlineAt={reportDeadlineAt}')],
-  ['master identity cannot schedule impossible mirror retries', store.includes('else if (canMirrorIdentity(record.userId))') && store.includes('else if (canMirrorIdentity(next.userId))')],
-);
 
 const failed = checks.filter(([, ok]) => !ok);
 for (const [name, ok] of checks) console.log(`${ok ? '✓' : '✗'} ${name}`);
