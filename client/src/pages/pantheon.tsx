@@ -62,7 +62,10 @@ export default function PantheonPage() {
         const payload = await response.json().catch(() => ({}));
 
         if (!response.ok) {
-          if ([429, 502, 503, 504].includes(response.status) && consecutivePollFailures < 8) {
+          // A freshly-created durable job can briefly be invisible while the report
+          // journal/database mirror converges across production instances. Treat that
+          // bounded 404 exactly like other transient report-store conditions.
+          if ([404, 429, 502, 503, 504].includes(response.status) && consecutivePollFailures < 8) {
             consecutivePollFailures += 1;
             const retrySeconds = Number(response.headers.get('Retry-After')) || Math.min(10, consecutivePollFailures * 2);
             pollTimer = setTimeout(poll, retrySeconds * 1000);

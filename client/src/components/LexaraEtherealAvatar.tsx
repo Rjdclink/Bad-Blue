@@ -328,13 +328,15 @@ function renderEmbodiedFrame(
     ctx,
     image,
     layout,
-    { cx: 0.515, cy: 0.675, rx: 0.285, ry: 0.30 },
+    { cx: 0.515, cy: 0.775, rx: 0.275, ry: 0.19 },
     {
       dx: torsoDx,
       dy: torsoDy,
       rotationDeg: frame.torsoX * 0.22 * motionScale,
-      scaleX: reducedMotion ? 1 : frame.torsoScaleX,
-      scaleY: reducedMotion ? 1 + (frame.torsoScaleY - 1) * 0.35 : frame.torsoScaleY,
+      // Never scale the throat/upper chest patch. Respiration is represented by
+      // bounded lower-torso translation so the neck cannot visibly stretch.
+      scaleX: reducedMotion ? 1 : 1 + (frame.torsoScaleX - 1) * 0.35,
+      scaleY: reducedMotion ? 1 : 1 + (frame.torsoScaleY - 1) * 0.22,
       alpha: 0.985,
     },
   );
@@ -342,8 +344,8 @@ function renderEmbodiedFrame(
   // Hand/forearm regions move only when the behavior planner has speaking or
   // backchannel energy. This is not a canned gesture clip; it is continuous
   // motion coupled to the current behavioral state.
-  if (!reducedMotion && frame.gestureEnergy > 0.08) {
-    const handMotion = frame.gestureEnergy;
+  if (!reducedMotion && (frame.gestureEnergy > 0.08 || Math.abs(frame.fidget) > 0.08)) {
+    const handMotion = Math.min(1, frame.gestureEnergy + Math.abs(frame.fidget) * 0.34);
     drawImageWithLocalTransform(
       ctx,
       image,
@@ -352,7 +354,7 @@ function renderEmbodiedFrame(
       {
         dx: Math.sin(frame.mouthOpen * 7.2 + frame.nod) * width * 0.0024 * handMotion,
         dy: -height * 0.0020 * handMotion,
-        rotationDeg: -0.55 * handMotion,
+        rotationDeg: -0.55 * handMotion + frame.fidget * 0.42,
         alpha: 0.98,
       },
     );
@@ -364,7 +366,7 @@ function renderEmbodiedFrame(
       {
         dx: width * 0.0014 * handMotion,
         dy: height * 0.0012 * handMotion,
-        rotationDeg: 0.38 * handMotion,
+        rotationDeg: 0.38 * handMotion - frame.fidget * 0.28,
         alpha: 0.98,
       },
     );

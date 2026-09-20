@@ -3646,7 +3646,15 @@ Contact: ${foiaRequest.userEmail || userEmail}
     const { getPantheonReportRecord } = await import('./services/pantheon/PantheonReportStore');
     const report = await getPantheonReportRecord(reportId);
     if (!report) {
-      return res.status(404).json({ success: false, code: 'not_found', message: 'Report job not found.' });
+      // Report creation is journal-first and the database mirror can converge a
+      // moment later on another production instance. A syntactically valid,
+      // authorized report id is therefore retryable before it is declared gone.
+      res.setHeader('Retry-After', '2');
+      return res.status(503).json({
+        success: false,
+        code: 'report_store_converging',
+        message: 'The background report job is still becoming available. Retry shortly.',
+      });
     }
     if (!routeAccess.privileged && report.userId !== routeAccess.userId) {
       return res.status(403).json({ success: false, code: 'forbidden', message: 'Report job does not belong to this account.' });
