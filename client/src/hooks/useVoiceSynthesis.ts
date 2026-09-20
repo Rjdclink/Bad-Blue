@@ -54,7 +54,7 @@ interface StreamingAudioSession {
 const SERVER_TTS_FETCH_TIMEOUT_MS = 20_000;
 const NEXT_CHUNK_PREFETCH_TIMEOUT_MS = 20_000;
 const MIN_PLAYBACK_WATCHDOG_MS = 10_000;
-const FIRST_SPEECH_CHUNK_MAX_CHARS = 140;
+const FIRST_SPEECH_CHUNK_MAX_CHARS = 72;
 const SPEECH_CHUNK_MAX_CHARS = 300;
 const MAX_PLAYBACK_WATCHDOG_MS = 240_000;
 
@@ -234,7 +234,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
 
   const createStreamingAudioSession = useCallback(async (text: string): Promise<StreamingAudioSession> => {
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 8_000);
+    const timeout = window.setTimeout(() => controller.abort(), 4_000);
 
     try {
       const response = await fetch('/api/lexara/tts/session', {
@@ -359,9 +359,22 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
           // Never hold the first spoken sentence behind a full-answer mobile
           // buffer. A short first chunk begins server synthesis immediately and
           // is handed directly to the already-unlocked persistent media element.
+          const sessionStartedAt = performance.now();
           const session = await createStreamingAudioSession(chunk);
           if (turnId !== activeTurnRef.current) return;
           selectedProvider = session.provider;
+          void fetch('/api/lexara/voice/playback-event', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              event: 'tts-session-ready',
+              source: 'streaming',
+              provider: session.provider,
+              turnId,
+              startupMs: Math.round(performance.now() - sessionStartedAt),
+            }),
+            keepalive: true,
+          }).catch(() => undefined);
           playback = LexaraServerTTS.play({ audioUrl: session.audioUrl })
             .then<PlaybackOutcome>(() => 'ended')
             .catch<PlaybackOutcome>(() => 'failed');
