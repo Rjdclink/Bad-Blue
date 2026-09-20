@@ -173,7 +173,11 @@ must(
     embodimentEngine.includes("input.mode === 'speaking'") &&
     embodimentEngine.includes('speechClockSec') &&
     embodimentEngine.includes('mouthOpen') &&
-    embodimentEngine.includes('gestureEnergy'),
+    embodimentEngine.includes('gestureEnergy') &&
+    embodimentEngine.includes('breathHold') &&
+    embodimentEngine.includes('jawTension') &&
+    embodimentEngine.includes('shoulderAsymmetry') &&
+    embodimentEngine.includes('fidget'),
   'one persistent behavioral planner coordinates listening, thinking, speaking, gaze, blink, respiration, nod, gesture and speech-linked facial state',
 );
 must(
