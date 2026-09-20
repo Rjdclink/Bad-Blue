@@ -1099,24 +1099,22 @@ export async function conductFullOSINT(
 
   console.log(`[PANTHEON OSINT] Crawlers activated:`, crawlersActivated.join(', '));
 
-  // Launch the complete crawler roster before legacy/enhanced lanes so slow
-  // early work cannot consume the report deadline before the full roster starts.
+  // A background-report job explicitly requests the full roster. The selected
+  // duration controls collection effort, never whether a crawler family participates.
   const runFullRoster = forceAllCrawlers || searchDepth >= 3;
-  const pantheonStatusAtStart = canActivatePantheon();
-  const earlySearchTargets = runFullRoster && pantheonStatusAtStart.available
-    ? buildPantheonBackgroundTargets(searchQuery, options?.location, searchDepth)
-    : [];
-  const earlyCrawlerRetrievalPromise = runFullRoster && earlySearchTargets.length > 0 && hasCollectionBudget(1_000)
+
+  // Start the broad base search and the full registry crawler fan-out together.
+  // This prevents the legacy two-crawler base lane from consuming the collection
+  // window before the complete PANTHEON roster receives work.
+  const fullRosterPromise = runFullRoster && canActivatePantheon().available && hasCollectionBudget(2_000)
     ? pantheonRetrievalAdapter.retrieve({
         purpose: 'background_report',
-        targets: earlySearchTargets,
+        targets: buildPantheonBackgroundTargets(searchQuery, options?.location, searchDepth),
         depth: searchDepth as 1 | 2 | 3 | 4,
         budgetMs: Number.isFinite(remainingBudgetMs()) ? remainingBudgetMs() : undefined,
         deadlineAt: reportDeadlineAt,
       })
     : null;
-
-  // The legacy/enhanced lane now runs concurrently with the complete roster.
   const enhancedReport = await conductEnhancedPeopleSearch(searchQuery, options);
 
   if (options?.phone) {
@@ -1220,61 +1218,39 @@ export async function conductFullOSINT(
       }
     } // End of WRAITH activation block
 
-    // Level 3+: HYDRA + LICH + CERBERUS + BLIZZARD DRAGON activation via PANTHEON
-    if (runFullRoster && earlyCrawlerRetrievalPromise) {
-      console.log('[PANTHEON OSINT] Activating complete PANTHEON crawler roster');
-      
-      // Check if PANTHEON is available (not blocked by cryptocrawler)
-      const pantheonStatus = canActivatePantheon();
-      
-      if (pantheonStatus.available) {
-        try {
-          // Await the roster that was started before the legacy lanes.
-          const crawlerRetrieval = await earlyCrawlerRetrievalPromise;
-          const crawlerResults = crawlerRetrieval.evidence;
-          enhancedReport.crawlerAudit = mergeCrawlerAudit([
-            ...(enhancedReport.crawlerAudit || []),
-            ...crawlerRetrieval.crawlerAudit,
-          ]);
-          for (const crawlerName of new Set(crawlerResults.map(result => result.crawler))) {
-            if (!crawlersActivated.includes(crawlerName)) {
-              crawlersActivated.push(crawlerName);
-            }
-          }
-          
-          // Process crawler results
-          if (crawlerResults.length > 0) {
-            const crawlerSummary = crawlerResults
-              .filter(r => r.content && r.confidence > 0.5)
-              .map(r => `[${r.crawler.toUpperCase()}] ${r.content.substring(0, 200)}...`)
-              .join('\n\n');
-            
-            if (crawlerSummary) {
-              enhancedReport.onlineMentions.push(...crawlerResults.map(r => r.content).filter(Boolean));
-              
-              enhancedReport.sources.push({
-                name: 'PANTHEON Crawler Orchestrator',
-                data: { 
-                  crawlersUsed: [...new Set(crawlerResults.map(r => r.crawler))],
-                  resultsCount: crawlerResults.length,
-                  averageConfidence: crawlerResults.reduce((a, b) => a + b.confidence, 0) / crawlerResults.length,
-                  selectionPlan: crawlerRetrieval.plan,
-                  supervision: crawlerRetrieval.supervision,
-                  unavailableReason: crawlerRetrieval.reason,
-                },
-                confidence: 0.85,
-                timestamp: new Date(),
-              });
-            }
-          }
-          
-          console.log(`[PANTHEON OSINT] Full crawler roster completed: ${crawlerResults.length} evidence results`);
-          enhancedReport.summary += CRAWLER_MESSAGES.LEVEL_3_SUMMARY;
-        } catch (crawlerError: any) {
-          console.error('[PANTHEON OSINT] Crawler orchestration failed:', crawlerError.message);
+    // Complete PANTHEON crawler roster was launched in parallel with the base lane.
+    if (fullRosterPromise) {
+      console.log('[PANTHEON OSINT] Awaiting complete PANTHEON crawler roster');
+      try {
+        const crawlerRetrieval = await fullRosterPromise;
+        const crawlerResults = crawlerRetrieval.evidence;
+        enhancedReport.crawlerAudit = mergeCrawlerAudit([
+          ...(enhancedReport.crawlerAudit || []),
+          ...crawlerRetrieval.crawlerAudit,
+        ]);
+        for (const crawlerName of new Set(crawlerResults.map(result => result.crawler))) {
+          if (!crawlersActivated.includes(crawlerName)) crawlersActivated.push(crawlerName);
         }
-      } else {
-        console.log(`[PANTHEON OSINT] PANTHEON unavailable: ${pantheonStatus.reason}`);
+        if (crawlerResults.length > 0) {
+          enhancedReport.onlineMentions.push(...crawlerResults.map(result => result.content).filter(Boolean));
+          enhancedReport.sources.push({
+            name: 'PANTHEON Crawler Orchestrator',
+            data: {
+              crawlersUsed: [...new Set(crawlerResults.map(result => result.crawler))],
+              resultsCount: crawlerResults.length,
+              averageConfidence: crawlerResults.reduce((sum, result) => sum + result.confidence, 0) / crawlerResults.length,
+              selectionPlan: crawlerRetrieval.plan,
+              supervision: crawlerRetrieval.supervision,
+              unavailableReason: crawlerRetrieval.reason,
+            },
+            confidence: 0.85,
+            timestamp: new Date(),
+          });
+        }
+        enhancedReport.summary += CRAWLER_MESSAGES.LEVEL_3_SUMMARY;
+        console.log(`[PANTHEON OSINT] Full crawler roster completed: ${crawlerResults.length} evidence results`);
+      } catch (crawlerError: any) {
+        logger.warn('[PANTHEON OSINT] Full crawler roster failed route-locally:', crawlerError?.message || crawlerError);
       }
     }
 
