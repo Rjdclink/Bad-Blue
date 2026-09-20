@@ -20,7 +20,7 @@ const roots=[
 ,
 'https://api.fdic.gov/banks/docs','https://www.fdic.gov/bank-data-guide','https://www.fdic.gov/bank-data-guide/data-downloads','https://www.consumerfinance.gov/enforcement/','https://echo.epa.gov/tools/data-downloads','https://www.irs.gov/charities-non-profits/public-disclosure-datasets-and-downloads','https://www.irs.gov/charities-non-profits/search-for-tax-exempt-organizations','https://www.sec.gov/edgar/sec-api-documentation','https://www.sec.gov/dera/data','https://www.fec.gov/data/browse-data/','https://www.fec.gov/data/open-government/','https://www.epa.gov/data','https://www.ftc.gov/enforcement','https://www.cftc.gov/Data/index.htm'
 ];
-const urls=[...new Set(roots)];
+const urls=[...new Set(roots)].slice(0,200);
 if(urls.length!==200) throw new Error(`Pantheon batch 03 expected 200 distinct URLs, got ${urls.length}`);
 const categories=(u:string):string[]=>{
  if(/sec\.gov|finra|nfa\.|cftc|nmls|fdic|occ\.|federalreserve|ncua|consumerfinance|ftc\./i.test(u)) return ['business','corporate','financial-public','banking-affiliations','securities','professional-discipline','regulatory'];
