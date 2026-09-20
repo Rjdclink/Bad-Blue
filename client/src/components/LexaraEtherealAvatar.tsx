@@ -77,7 +77,7 @@ function reportAvatarEvent(
   const payload = JSON.stringify({
     event,
     source: 'avatar',
-    renderer: 'lexara-portrait-rig-v3',
+    renderer: 'embodied-canvas-v2',
     ...details,
     userAgent: navigator.userAgent,
   });
@@ -328,15 +328,13 @@ function renderEmbodiedFrame(
     ctx,
     image,
     layout,
-    { cx: 0.515, cy: 0.775, rx: 0.275, ry: 0.19 },
+    { cx: 0.515, cy: 0.675, rx: 0.285, ry: 0.30 },
     {
       dx: torsoDx,
       dy: torsoDy,
       rotationDeg: frame.torsoX * 0.22 * motionScale,
-      // Never scale the throat/upper chest patch. Respiration is represented by
-      // bounded lower-torso translation so the neck cannot visibly stretch.
-      scaleX: reducedMotion ? 1 : 1 + (frame.torsoScaleX - 1) * 0.35,
-      scaleY: reducedMotion ? 1 : 1 + (frame.torsoScaleY - 1) * 0.22,
+      scaleX: reducedMotion ? 1 : frame.torsoScaleX,
+      scaleY: reducedMotion ? 1 + (frame.torsoScaleY - 1) * 0.35 : frame.torsoScaleY,
       alpha: 0.985,
     },
   );
@@ -344,8 +342,8 @@ function renderEmbodiedFrame(
   // Hand/forearm regions move only when the behavior planner has speaking or
   // backchannel energy. This is not a canned gesture clip; it is continuous
   // motion coupled to the current behavioral state.
-  if (!reducedMotion && (frame.gestureEnergy > 0.08 || Math.abs(frame.fidget) > 0.08)) {
-    const handMotion = Math.min(1, frame.gestureEnergy + Math.abs(frame.fidget) * 0.34);
+  if (!reducedMotion && frame.gestureEnergy > 0.08) {
+    const handMotion = frame.gestureEnergy;
     drawImageWithLocalTransform(
       ctx,
       image,
@@ -354,7 +352,7 @@ function renderEmbodiedFrame(
       {
         dx: Math.sin(frame.mouthOpen * 7.2 + frame.nod) * width * 0.0024 * handMotion,
         dy: -height * 0.0020 * handMotion,
-        rotationDeg: -0.55 * handMotion + frame.fidget * 0.42,
+        rotationDeg: -0.55 * handMotion,
         alpha: 0.98,
       },
     );
@@ -366,7 +364,7 @@ function renderEmbodiedFrame(
       {
         dx: width * 0.0014 * handMotion,
         dy: height * 0.0012 * handMotion,
-        rotationDeg: 0.38 * handMotion - frame.fidget * 0.28,
+        rotationDeg: 0.38 * handMotion,
         alpha: 0.98,
       },
     );
@@ -434,7 +432,6 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
 }: LEXARAEtherealAvatarProps) {
   const [imageIndex, setImageIndex] = useState(0);
   const [reducedMotion, setReducedMotion] = useState(false);
-  const portraitRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const latestInputRef = useRef<LatestAvatarInput>({
@@ -548,18 +545,6 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
         },
       });
 
-      // Apply a tiny coherent portrait transform underneath the local facial/body
-      // rig. This makes breathing/head posture visibly readable on mobile while
-      // local eye/mouth/hand articulation remains on the overlay canvas.
-      const coherentX = Math.max(-1, Math.min(1, frame.headX * 0.42 + frame.torsoX * 0.18));
-      const coherentY = Math.max(-1, Math.min(1, frame.headY * 0.32 + (frame.torsoScaleY - 1) * 16));
-      const coherentRotate = Math.max(-0.7, Math.min(0.7, frame.headRollDeg * 0.14));
-      const coherentScale = 1 + Math.max(0, frame.gestureEnergy) * 0.0018;
-      const portrait = portraitRef.current;
-      if (portrait && !reducedMotion) {
-        portrait.style.transform = `translate3d(${coherentX}px, ${coherentY}px, 0) rotate(${coherentRotate}deg) scale(${coherentScale})`;
-      }
-
       const rect = canvas.getBoundingClientRect();
       const dprX = canvas.width / Math.max(1, rect.width);
       const dprY = canvas.height / Math.max(1, rect.height);
@@ -628,15 +613,13 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
       )}
       style={{ contain: 'layout paint' }}
       aria-label="LEXARA professional legal assistant"
-      data-live-avatar={LIVE_AVATAR_ENABLED ? 'portrait-rig-v3' : 'static'}
+      data-live-avatar={LIVE_AVATAR_ENABLED ? 'embodied-canvas' : 'static'}
       data-reduced-motion={reducedMotion ? 'true' : 'false'}
     >
       <img
-        ref={portraitRef}
         src={imageSrc}
         alt="LEXARA professional attorney seated behind her desk"
-        className="h-full w-full bg-slate-950 object-contain object-center will-change-transform"
-        style={{ transformOrigin: '50% 58%' }}
+        className="h-full w-full bg-slate-950 object-contain object-center"
         draggable={false}
         decoding="async"
         fetchPriority="high"
@@ -686,8 +669,6 @@ export function LEXARAStatusIndicator({
   );
 }
 
-// Backward-compatible symbol only. The production component is the attorney
-// portrait rig; no Ethereal visual system is instantiated.
 export const LEXARAEtherealAvatar = LEXARAAttorneyPortrait;
 
 export default LEXARAAttorneyPortrait;
