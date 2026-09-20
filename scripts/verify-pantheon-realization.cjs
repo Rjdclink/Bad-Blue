@@ -31,6 +31,14 @@ const checks = [
   ['background jobs force complete crawler participation', jobs.includes('forceAllCrawlers: true') && peopleSearch.includes('const runFullRoster = forceAllCrawlers || searchDepth >= 3')],
 ];
 
+checks.push(
+  ['report job exposes one authoritative deadline', jobs.includes('deadlineAt: deadlineAt.toISOString()') && jobs.includes('reportDeadlineAt: deadlineAt.getTime()')],
+  ['full crawler roster launches before legacy lane can starve it', peopleSearch.includes('earlyCrawlerRetrievalPromise') && peopleSearch.indexOf('earlyCrawlerRetrievalPromise') < peopleSearch.indexOf('await conductEnhancedPeopleSearch')],
+  ['4,500-source razor dispatch is bounded', adapter.includes('const workerCount = Math.min(8, extendedTargets.length)') && adapter.includes('cancelled_at_deadline')],
+  ['client consumes authoritative report deadline', client.includes('reportDeadlineAt') && client.includes('deadlineAt={reportDeadlineAt}')],
+  ['master report identity does not schedule impossible mirror retries', store.includes('else if (canMirrorIdentity(record.userId))') && store.includes('else if (canMirrorIdentity(next.userId))')],
+);
+
 const failed = checks.filter(([, ok]) => !ok);
 for (const [name, ok] of checks) console.log(`${ok ? '✓' : '✗'} ${name}`);
 if (failed.length) {
