@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { getLexaraServerPlaybackClock } from '@/lib/lexaraSpeechClient';
 import { lexaraRealtimeVoiceClient } from '@/lib/lexaraRealtimeVoiceClient';
+import { lexaraNeuralAvatarClient } from '@/lib/lexaraNeuralAvatarClient';
 import {
   LexaraEmbodimentEngine,
   type LexaraEmbodimentFrame,
@@ -39,7 +40,9 @@ const SIZE_CONFIG = {
 };
 
 const LIVE_AVATAR_ENABLED = String(import.meta.env.VITE_LEXARA_LIVE_AVATAR_ENABLED ?? '1') !== '0';
+const PROCEDURAL_FALLBACK_ENABLED = String(import.meta.env.VITE_LEXARA_PROCEDURAL_AVATAR_FALLBACK ?? '0') === '1';
 const TARGET_FPS = 30;
+const NEURAL_FACE_CROP = { x: 0.34, y: 0.14, width: 0.35, height: 0.35 } as const;
 
 interface LatestAvatarInput {
   isSpeaking: boolean;
@@ -303,6 +306,30 @@ function drawMouth(
   ctx.restore();
 }
 
+function drawNeuralPortraitFrame(
+  ctx: CanvasRenderingContext2D,
+  bitmap: ImageBitmap,
+  layout: ImageLayout,
+): void {
+  const dx = layout.x + layout.width * NEURAL_FACE_CROP.x;
+  const dy = layout.y + layout.height * NEURAL_FACE_CROP.y;
+  const dw = layout.width * NEURAL_FACE_CROP.width;
+  const dh = layout.height * NEURAL_FACE_CROP.height;
+  const cx = layout.x + layout.width * 0.515;
+  const cy = layout.y + layout.height * 0.325;
+  const rx = layout.width * 0.145;
+  const ry = layout.height * 0.185;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+  ctx.clip();
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(bitmap, dx, dy, dw, dh);
+  ctx.restore();
+}
+
 function renderEmbodiedFrame(
   ctx: CanvasRenderingContext2D,
   image: HTMLImageElement,
@@ -477,6 +504,7 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
     let rendererReported = false;
     let rendererFailed = false;
     let lastMotionTurnKey = '';
+    let activeNeuralTurnKey = '';
     let skinColor = 'rgb(177, 132, 108)';
     const engine = new LexaraEmbodimentEngine(0x4c455841);
     const image = new Image();
@@ -508,6 +536,7 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
     image.onload = () => {
       skinColor = sampleImageColor(image, 0.515, 0.258, skinColor);
       engine.reset(performance.now());
+      void lexaraNeuralAvatarClient.prewarm(imageSrc);
     };
 
     const paint = (nowMs: number) => {
@@ -559,26 +588,60 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
       );
 
       try {
-        renderEmbodiedFrame(ctx, image, layout, frame, reducedMotion, skinColor);
-
-        if (!rendererReported) {
-          rendererReported = true;
-          reportAvatarEvent('avatar-renderer-ready', {
-            reducedMotion,
-            mode,
-          });
+        const neuralTurnKey = realtimeClock.turnId || (audioActive ? 'http-audio' : 'presence');
+        if (neuralTurnKey !== activeNeuralTurnKey) {
+          activeNeuralTurnKey = neuralTurnKey;
+          void lexaraNeuralAvatarClient.ensureTurn(neuralTurnKey, imageSrc);
         }
 
-        if (mode === 'speaking' && frame.mouthOpen > 0.08) {
-          const turnKey = realtimeClock.turnId || `server-${Math.floor(audioTime * 2)}`;
-          if (turnKey && turnKey !== lastMotionTurnKey) {
-            lastMotionTurnKey = turnKey;
-            reportAvatarEvent('avatar-motion-started', {
+        lexaraNeuralAvatarClient.render({
+          mode: frame.mode,
+          breath: frame.breath,
+          blink: frame.blink,
+          gazeX: frame.gazeX,
+          gazeY: frame.gazeY,
+          headX: frame.headX,
+          headY: frame.headY,
+          headRollDeg: frame.headRollDeg,
+          headPitch: frame.headPitch,
+          browLift: frame.browLift,
+          smile: frame.smile,
+          mouthOpen: frame.mouthOpen,
+          mouthWide: frame.mouthWide,
+          mouthRound: frame.mouthRound,
+          gestureEnergy: frame.gestureEnergy,
+          attention: frame.attention,
+        }, nowMs);
+
+        const neuralFrame = lexaraNeuralAvatarClient.getLatestFrame();
+        if (neuralFrame) {
+          drawNeuralPortraitFrame(ctx, neuralFrame.bitmap, layout);
+          rendererReported = true;
+        } else if (PROCEDURAL_FALLBACK_ENABLED) {
+          // Explicit opt-in only. The default fallback is the unchanged static
+          // attorney portrait; we do not pretend CSS/canvas deformation is a
+          // neural human when real neural pixels are unavailable.
+          renderEmbodiedFrame(ctx, image, layout, frame, reducedMotion, skinColor);
+          if (!rendererReported) {
+            rendererReported = true;
+            reportAvatarEvent('avatar-renderer-ready', {
               reducedMotion,
               mode,
-              turnId: realtimeClock.turnId,
-              mouthOpen: Number(frame.mouthOpen.toFixed(3)),
+              renderer: 'procedural-explicit-fallback',
             });
+          }
+          if (mode === 'speaking' && frame.mouthOpen > 0.08) {
+            const turnKey = realtimeClock.turnId || `server-${Math.floor(audioTime * 2)}`;
+            if (turnKey && turnKey !== lastMotionTurnKey) {
+              lastMotionTurnKey = turnKey;
+              reportAvatarEvent('avatar-motion-started', {
+                reducedMotion,
+                mode,
+                turnId: realtimeClock.turnId,
+                mouthOpen: Number(frame.mouthOpen.toFixed(3)),
+                renderer: 'procedural-explicit-fallback',
+              });
+            }
           }
         }
       } catch (error) {
@@ -598,6 +661,7 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
       window.cancelAnimationFrame(frameHandle);
       observer?.disconnect();
       window.removeEventListener('resize', resizeCanvas);
+      void lexaraNeuralAvatarClient.endCurrentTurn();
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, canvas.width, canvas.height);
     };
@@ -613,7 +677,7 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
       )}
       style={{ contain: 'layout paint' }}
       aria-label="LEXARA professional legal assistant"
-      data-live-avatar={LIVE_AVATAR_ENABLED ? 'embodied-canvas' : 'static'}
+      data-live-avatar={LIVE_AVATAR_ENABLED ? 'quanticomp-neural-webgpu' : 'static'}
       data-reduced-motion={reducedMotion ? 'true' : 'false'}
     >
       <img
