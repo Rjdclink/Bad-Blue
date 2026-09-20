@@ -608,6 +608,13 @@ must(
   'mobile audio playback exposes waiting/stalled/playing telemetry to production',
 );
 must(
+  realtimeVoiceClient.includes('REALTIME_AUDIO_STALL_TIMEOUT_MS') &&
+    realtimeVoiceClient.includes('LEXARA realtime audio stream stalled') &&
+    realtimeVoiceClient.includes('active.progressTimeout') &&
+    realtimeVoiceClient.includes('this.failActiveSpeech(error)'),
+  'realtime audio stalls fail into the existing voice fallback instead of silently hanging after partial frames',
+);
+must(
   viteConfig.includes('publicDir: path.resolve(__dirname, "public")') &&
     fs.existsSync('public/images/oip.webp') &&
     serverVite.includes('Static asset not found'),
