@@ -105,6 +105,17 @@ export async function callClaude(
 
     return { content, tokensUsed };
   } catch (error: any) {
+    // Preserve cancellation semantics. Harmony deliberately aborts losing hedges
+    // and provider deadlines; wrapping those aborts as generic Claude failures
+    // poisoned provider health and produced misleading production errors.
+    if (options.signal?.aborted) {
+      const reason = options.signal.reason;
+      if (reason instanceof Error || reason instanceof DOMException) throw reason;
+      throw new DOMException(
+        typeof reason === 'string' ? reason : 'Claude request cancelled',
+        'AbortError',
+      );
+    }
     console.error('[Claude] Error:', error);
     throw new Error(`Claude API error: ${error.message}`);
   }
