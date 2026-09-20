@@ -27,7 +27,7 @@ interface GroqChatCompletionRequest {
 let groqModelCatalogCache: { models: Set<string>; expiresAt: number } | null = null;
 const groqBlockedModels = new Map<string, number>();
 const GROQ_MODEL_CATALOG_TTL_MS = 10 * 60_000;
-const GROQ_MODEL_BLOCK_TTL_MS = 2 * 60_000;
+const GROQ_MODEL_BLOCK_TTL_MS = 10 * 60_000;
 
 function isGroqModelBlocked(model: string): boolean {
   const until = groqBlockedModels.get(model) || 0;
@@ -228,6 +228,15 @@ export async function warmGroqModelCatalog(): Promise<{ ready: boolean; model?: 
   const apiKey = process.env.GROQ_API_KEY?.trim();
   if (!apiKey) return { ready: false, error: 'not configured' };
   try {
+    // Catalog presence is not readiness: org/project model permissions are enforced
+    // only when inference is attempted. Probe the same fail-local resolver used by
+    // production so blocked/retired models are skipped before Harmony selects Groq.
+    await callGroqAPI({
+      model: DEFAULT_GROQ_MODEL,
+      messages: [{ role: 'user', content: 'Reply OK.' }],
+      temperature: 0,
+      max_tokens: 16,
+    });
     const model = await resolveGroqModel(DEFAULT_GROQ_MODEL, apiKey);
     return { ready: true, model };
   } catch (error) {
