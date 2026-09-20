@@ -16,6 +16,7 @@ import {
 import type { GPSPoint } from '../services/geoconsole/types';
 import { inputFusionEngine } from '../services/geoconsole/inputFusionEngine';
 import { assessLocationQuality } from '../services/geoconsole/location-quality';
+import { selectSpectraSources } from '../services/spectra/SpectraSourceRegistry';
 
 const router = Router();
 router.use(isAuthenticated);
@@ -174,7 +175,7 @@ function buildDiscoveryQueries(args: {
   normalizedTarget: string;
   details: string;
   phone?: string;
-}): { firstPass: string[]; secondPass: string[] } {
+}): { firstPass: string[]; secondPass: string[]; sourcePass: string[] } {
   const { resolvedName, normalizedTarget, details, phone } = args;
   const quotedName = resolvedName ? `"${resolvedName}"` : '';
   const quotedPhone = phone ? `"${phone}"` : '';
@@ -201,9 +202,30 @@ function buildDiscoveryQueries(args: {
     [strongIdentityAnchor, 'property court business records'].join(' '),
   ] : [];
 
+  const clueKinds = [
+    resolvedName ? 'name' : '',
+    phone ? 'phone' : '',
+    /@|\bemail\b/i.test(compactDetails) ? 'email' : '',
+    /\b(?:street|st|road|rd|avenue|ave|boulevard|blvd|address|zip|postal)\b/i.test(compactDetails) ? 'address' : '',
+    /\b(?:instagram|facebook|twitter|tiktok|reddit|username|handle|profile)\b/i.test(compactDetails) ? 'username' : '',
+    /\b(?:photo|image|video)\b/i.test(compactDetails) ? 'image' : '',
+    /\b(?:city|state|county|near|located|location)\b/i.test(compactDetails) ? 'location' : '',
+  ].filter(Boolean);
+
+  // The registry is a durable source catalog. It supplies prioritized source
+  // families to discovery without making any one provider authoritative.
+  const sourcePass = strongIdentityAnchor
+    ? selectSpectraSources(clueKinds, 18)
+        .flatMap(entry => (entry.domains || []).slice(0, 4).map(domain =>
+          [strongIdentityAnchor, `site:${domain}`, compactDetails].filter(Boolean).join(' ')
+        ))
+        .slice(0, 36)
+    : [];
+
   return {
     firstPass: [...new Set(firstPass)],
     secondPass: [...new Set(secondPass)],
+    sourcePass: [...new Set(sourcePass)],
   };
 }
 
@@ -533,6 +555,20 @@ router.post('/acquire', async (req: Request, res: Response) => {
       ]);
       discoveryQueriesAttempted += secondPass.attempted;
       discoveryQueriesFailed += secondPass.failed;
+      discoveryPasses += 1;
+    }
+
+    // Registry-directed fan-out is isolated from the broad discovery passes.
+    // This makes the researched source catalog directly retrievable by SPECTRA
+    // while retaining unifiedSearch's provider fallback and result normalization.
+    if (discoveryQueries.sourcePass.length > 0 && firstPassSourceCount < 20) {
+      const sourcePass = await runDiscoveryPass(discoveryQueries.sourcePass);
+      discoveryResults = dedupeDiscoveryResults([
+        ...discoveryResults,
+        ...sourcePass.results,
+      ]);
+      discoveryQueriesAttempted += sourcePass.attempted;
+      discoveryQueriesFailed += sourcePass.failed;
       discoveryPasses += 1;
     }
 
