@@ -77,7 +77,7 @@ function reportAvatarEvent(
   const payload = JSON.stringify({
     event,
     source: 'avatar',
-    renderer: 'embodied-canvas-v2',
+    renderer: 'lexara-portrait-rig-v3',
     ...details,
     userAgent: navigator.userAgent,
   });
@@ -615,7 +615,7 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
       )}
       style={{ contain: 'layout paint' }}
       aria-label="LEXARA professional legal assistant"
-      data-live-avatar={LIVE_AVATAR_ENABLED ? 'embodied-canvas' : 'static'}
+      data-live-avatar={LIVE_AVATAR_ENABLED ? 'portrait-rig-v3' : 'static'}
       data-reduced-motion={reducedMotion ? 'true' : 'false'}
     >
       <img
@@ -671,6 +671,8 @@ export function LEXARAStatusIndicator({
   );
 }
 
+// Backward-compatible symbol only. The production component is the attorney
+// portrait rig; no Ethereal visual system is instantiated.
 export const LEXARAEtherealAvatar = LEXARAAttorneyPortrait;
 
 export default LEXARAAttorneyPortrait;
