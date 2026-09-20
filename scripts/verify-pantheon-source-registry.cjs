@@ -1,8 +1,12 @@
 const fs=require('fs');
 const registryPath='server/services/pantheon/PantheonSovereignSourceRegistry.ts';
 const peoplePath='server/peopleSearch.ts';
+const pagePath='client/src/pages/pantheon.tsx';
+const progressPath='client/src/components/PantheonProgressTracker.tsx';
 const registry=fs.readFileSync(registryPath,'utf8');
 const people=fs.readFileSync(peoplePath,'utf8');
+const page=fs.readFileSync(pagePath,'utf8');
+const progress=fs.readFileSync(progressPath,'utf8');
 for(const token of ['PANTHEON_BACKGROUND_CATEGORIES','buildPantheonCategoryTargets','buildPantheonBackgroundRegistryTargets','limit = 300']){
   if(!registry.includes(token)) throw new Error('Missing registry token: '+token);
 }
@@ -18,6 +22,14 @@ for(const token of [
 ]){
   if(!people.includes(token)) throw new Error('Missing depth-intensity wiring token: '+token);
 }
+for(const token of ['Background Report Categories','Identity & Identity Verification','Relationship & Timeline Intelligence']){
+  if(!page.includes(token)) throw new Error('Pantheon page missing real category UI token: '+token);
+  if(!progress.includes(token)) throw new Error('Pantheon timer missing real category UI token: '+token);
+}
+for(const obsolete of ['Scanning Databases','Social Analysis','Location Tracking','Continuous Monitoring']){
+  if(progress.includes(obsolete)) throw new Error('Synthetic progress tag still present: '+obsolete);
+}
+if(page.includes('CapabilityCard')) throw new Error('Legacy oversized capability cards still present');
 let total=0;
 for(let n=1;n<=23;n++){
   const nn=String(n).padStart(2,'0');
