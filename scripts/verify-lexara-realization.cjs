@@ -157,7 +157,7 @@ must(
     avatar.includes('LexaraEmbodimentEngine') &&
     avatar.includes('drawMouth') &&
     avatar.includes('drawBlink') &&
-    avatar.includes("data-live-avatar={LIVE_AVATAR_ENABLED ? 'embodied-canvas' : 'static'}") &&
+    avatar.includes("data-live-avatar={LIVE_AVATAR_ENABLED ? 'portrait-rig-v3' : 'static'}") &&
     avatar.includes('prefers-reduced-motion') &&
     avatar.includes('getLexaraServerPlaybackClock') &&
     avatar.includes('lexaraRealtimeVoiceClient.getPlaybackClock()') &&
