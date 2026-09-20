@@ -59,6 +59,12 @@ async function verifyGenerationShedding(): Promise<void> {
   );
   const latest = await fresh;
   assert.equal(latest.result, 4);
+  // QuantiComp rejects the stale generation as soon as its AbortSignal is
+  // tripped. The cooperative workload may observe that signal on its next
+  // event-loop turn, so verify propagation without racing that turn.
+  for (let i = 0; i < 50 && !oldAborted; i += 1) {
+    await new Promise(resolve => setTimeout(resolve, 1));
+  }
   assert.equal(oldAborted, true);
 
   await assert.rejects(
