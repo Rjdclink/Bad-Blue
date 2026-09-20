@@ -170,10 +170,8 @@ export function PantheonProgressTracker({
             </div>
 
             {/* Milliseconds */}
-            <div className="flex flex-col items-center">
-              <div className="flex gap-1">
-                <div className="flex flex-col items-center min-w-0">
-              <span className="text-cyan-300 font-mono text-sm tabular-nums">{formatDigit(milliseconds)}</span>
+            <div className="flex flex-col items-center min-w-0">
+              <span className="text-cyan-300 font-mono text-sm tabular-nums">{formatDigit(milliseconds, 3)}</span>
               <span className="text-[10px] text-muted-foreground mt-1 font-mono">MS</span>
             </div>
           </div>
