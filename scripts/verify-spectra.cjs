@@ -29,6 +29,8 @@ const runtime = read('client/src/hooks/useGeoRuntime.ts');
 const fusion = read('server/services/geoconsole/inputFusionEngine.ts');
 const dockerfile = read('Dockerfile');
 const exifTool = read('server/services/locationIntelligence/ExifToolExtractor.ts');
+const spectraSources = read('server/services/spectra/SpectraSourceRegistry.ts');
+const pantheonSources = read('server/services/pantheon/PantheonSovereignSourceRegistry.ts');
 
 console.log('\nSPECTRA UNIFIED EXPERIENCE\n');
 
@@ -208,6 +210,19 @@ test('Independent evidence is preserved while duplicate source counting is preve
 test('Regional geocoder uncertainty is preserved',
   read('server/services/geoconsole/city-state-geocoder.ts').includes('accuracyMeters') &&
   read('client/src/components/geoconsole/MapLibreIntelligenceMap.tsx').includes('spectra-candidate-area'));
+test('SPECTRA has the complete canonical verified source inventory available',
+  pantheonSources.includes('PANTHEON_VERIFIED_SOURCE_INVENTORY') &&
+  spectraSources.includes('PANTHEON_VERIFIED_SOURCE_INVENTORY') &&
+  spectraSources.includes('SPECTRA_SOURCE_CATALOG'));
+test('SPECTRA source catalog is priority compiled and directly retrievable',
+  spectraSources.includes("'critical' | 'high' | 'supporting'") &&
+  spectraSources.includes('SPECTRA_SOURCE_CATALOG_BY_ID') &&
+  spectraSources.includes('getSpectraSources'));
+test('SPECTRA acquisition pipes prioritized source waves into discovery',
+  routes.includes('buildSpectraDiscoveryWaves') &&
+  routes.includes('criticalSourceQueries') &&
+  routes.includes('highSourceQueries') &&
+  routes.includes('supportingSourceQueries'));
 test('SPECTRA API is mounted',
   serverRoutes.includes("app.use('/api/spectra', spectraRoutes.default)"));
 

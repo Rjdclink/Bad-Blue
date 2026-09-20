@@ -16,6 +16,7 @@ import {
 import type { GPSPoint } from '../services/geoconsole/types';
 import { inputFusionEngine } from '../services/geoconsole/inputFusionEngine';
 import { assessLocationQuality } from '../services/geoconsole/location-quality';
+import { buildSpectraDiscoveryWaves } from '../services/spectra/SpectraSourceRegistry';
 
 const router = Router();
 router.use(isAuthenticated);
@@ -472,14 +473,27 @@ router.post('/acquire', async (req: Request, res: Response) => {
     : subject;
   const searchQuery = resolvedName || details;
   const resolvedTargetLabel = resolvedName || phone || normalizedTarget;
-  const discoveryQueries = buildDiscoveryQueries({
-    resolvedName: resolvedName || '',
-    normalizedTarget,
-    details,
-    phone,
-  });
 
   try {
+    const discoveryQueries = buildDiscoveryQueries({
+      resolvedName: resolvedName || '',
+      normalizedTarget,
+      details,
+      phone,
+    });
+    // Catalog broadening requires a concrete identity anchor. This preserves
+    // the generic-target noise guard while still allowing any supplied clue to
+    // participate once a name or phone identifies the subject.
+    const strongIdentityAnchor = Boolean(resolvedName || phone);
+    const sourceWaves = strongIdentityAnchor
+      ? buildSpectraDiscoveryWaves(resolvedTargetLabel, details)
+      : [];
+    const criticalSourceQueries = sourceWaves.find(wave => wave.priority === 'critical')
+      ?.targets.slice(0, 36).map(source => source.query) || [];
+    const highSourceQueries = sourceWaves.find(wave => wave.priority === 'high')
+      ?.targets.slice(0, 24).map(source => source.query) || [];
+    const supportingSourceQueries = sourceWaves.find(wave => wave.priority === 'supporting')
+      ?.targets.slice(0, 12).map(source => source.query) || [];
     // SPECTRA treats discovery systems as parallel evidence sources. A failure
     // in one adapter is local and never prevents other acquisition paths.
     const [osintResult, firstPass] = await Promise.all([
@@ -492,7 +506,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
         SPECTRA_OSINT_TIMEOUT_MS,
         'Deep OSINT acquisition',
       ),
-      runDiscoveryPass(discoveryQueries.firstPass),
+      runDiscoveryPass([...new Set([...discoveryQueries.firstPass, ...criticalSourceQueries])]),
     ]);
 
     const report = osintResult.status === 'fulfilled'
@@ -526,13 +540,25 @@ router.post('/acquire', async (req: Request, res: Response) => {
       firstPassSourceCount < 12 ||
       (Array.isArray(report.sources) ? report.sources.length : 0) < 8
     ) {
-      const secondPass = await runDiscoveryPass(discoveryQueries.secondPass);
+      const secondPass = await runDiscoveryPass([...new Set([...discoveryQueries.secondPass, ...highSourceQueries])]);
       discoveryResults = dedupeDiscoveryResults([
         ...discoveryResults,
         ...secondPass.results,
       ]);
       discoveryQueriesAttempted += secondPass.attempted;
       discoveryQueriesFailed += secondPass.failed;
+      discoveryPasses += 1;
+    }
+
+    const broadenedSourceCount = new Set(discoveryResults.map(discoverySourceKey).filter(Boolean)).size;
+    if (
+      supportingSourceQueries.length > 0 &&
+      (discoveryResults.length < 80 || broadenedSourceCount < 24)
+    ) {
+      const supportingPass = await runDiscoveryPass(supportingSourceQueries);
+      discoveryResults = dedupeDiscoveryResults([...discoveryResults, ...supportingPass.results]);
+      discoveryQueriesAttempted += supportingPass.attempted;
+      discoveryQueriesFailed += supportingPass.failed;
       discoveryPasses += 1;
     }
 
