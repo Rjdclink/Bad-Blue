@@ -440,7 +440,6 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gpuCanvasRef = useRef<HTMLCanvasElement>(null);
   const gpuRendererRef = useRef<LexaraGpuRenderer | null>(null);
-  const latestFrameRef = useRef<LexaraEmbodimentFrame | null>(null);
   const [gpuReady, setGpuReady] = useState(false);
   const latestInputRef = useRef<LatestAvatarInput>({
     isSpeaking,
@@ -574,7 +573,6 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
         },
       });
 
-      latestFrameRef.current = frame;
       const gpuRenderer = gpuRendererRef.current;
       if (gpuRenderer) {
         const gpuRect = container.getBoundingClientRect();
