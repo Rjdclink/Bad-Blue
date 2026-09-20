@@ -15,6 +15,7 @@ const peopleSearch = read('server/peopleSearch.ts');
 const categoryWorkflow = read('server/services/pantheon/PantheonCategoryWorkflow.ts');
 const progressTracker = read('client/src/components/PantheonProgressTracker.tsx');
 const firecrawl = read('server/services/shadowRetrieval/firecrawlAdapter.ts');
+const reportStore = read('server/services/pantheon/PantheonReportStore.ts');
 
 const checks = [
   ['durable report status is retryable', routes.includes('report_store_converging') && routes.includes("Retry-After")],
@@ -41,6 +42,9 @@ const checks = [
   ['Firecrawl executes in background-report retrieval', adapter.includes("crawler: 'firecrawl'") && adapter.includes('defaultFirecrawlAdapter.scrape') && firecrawl.includes('scrapeUrl')],
   ['category checkpoints support exact resume', jobs.includes('resumeFromCategory') && categoryWorkflow.includes('startCategoryIndex') && jobs.includes('initialReport')],
   ['category crawler outcomes are persisted before advancement', jobs.includes('lastCategoryOutcome: outcome') && jobs.includes('partialReport')],
+  ['category UI progression is backed by category-scoped audited execution', categoryWorkflow.includes('buildPantheonCategoryTargets') && categoryWorkflow.includes("purpose: 'background_report'") && categoryWorkflow.includes('crawlerAudit')],
+  ['background job persists partial evidence before category advancement', jobs.includes('completedCategories') && jobs.includes('categoryName') && jobs.includes('partialReport')],
+  ['report state has cross-restart Supabase mirror', reportStore.includes('writeSupabaseMirror') && reportStore.includes('readSupabaseMirror') && reportStore.includes('pantheon-report-state')],
 ];
 
 const failed = checks.filter(([, ok]) => !ok);
@@ -51,26 +55,3 @@ if (failed.length) {
 }
 console.log(`Pantheon realization verification passed (${checks.length}/${checks.length}).`);
 
-
-const categoryWorkflow = fs.readFileSync('server/services/pantheon/PantheonCategoryWorkflow.ts', 'utf8');
-must(
-  categoryWorkflow.includes('PANTHEON_REPORT_CATEGORIES') &&
-  categoryWorkflow.includes('buildPantheonCategoryTargets') &&
-  categoryWorkflow.includes("purpose: 'background_report'") &&
-  categoryWorkflow.includes('onCategoryComplete') &&
-  categoryWorkflow.includes('crawlerAudit'),
-  'Pantheon category UI progression is backed by category-scoped crawler execution and audited outcomes',
-);
-must(
-  backgroundJob.includes('conductPantheonCategoryWorkflow') &&
-  backgroundJob.includes('completedCategories') &&
-  backgroundJob.includes('categoryName') &&
-  backgroundJob.includes('partialReport'),
-  'Pantheon background job persists partial report evidence before advancing categories',
-);
-must(
-  reportStore.includes('writeSupabaseMirror') &&
-  reportStore.includes('readSupabaseMirror') &&
-  reportStore.includes('pantheon-report-state'),
-  'Pantheon report state has a cross-restart Supabase storage mirror with local/database fallbacks',
-);
