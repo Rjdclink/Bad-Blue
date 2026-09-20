@@ -474,9 +474,9 @@ router.post('/acquire', async (req: Request, res: Response) => {
   const searchQuery = resolvedName || details;
   const resolvedTargetLabel = resolvedName || phone || normalizedTarget;
   const sourceWaves = buildSpectraDiscoveryWaves(resolvedTargetLabel, details);
-  const criticalSourceQueries = sourceWaves.find(wave => wave.priority === 'critical')?.queries.slice(0, 36) || [];
-  const highSourceQueries = sourceWaves.find(wave => wave.priority === 'high')?.queries.slice(0, 24) || [];
-  const supportingSourceQueries = sourceWaves.find(wave => wave.priority === 'supporting')?.queries.slice(0, 12) || [];
+  const criticalSourceQueries = sourceWaves.find(wave => wave.priority === 'critical')?.targets.slice(0, 36).map(source => source.query) || [];
+  const highSourceQueries = sourceWaves.find(wave => wave.priority === 'high')?.targets.slice(0, 24).map(source => source.query) || [];
+  const supportingSourceQueries = sourceWaves.find(wave => wave.priority === 'supporting')?.targets.slice(0, 12).map(source => source.query) || [];
   const discoveryQueries = buildDiscoveryQueries({
     resolvedName: resolvedName || '',
     normalizedTarget,
