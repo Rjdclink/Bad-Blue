@@ -426,7 +426,7 @@ export default function PantheonPage() {
                   <CardContent className="text-sm text-muted-foreground">
                     {reportPhase === 'finalizing'
                       ? 'PANTHEON has stopped collection and is finalizing the evidence already gathered. The download control will appear when the report is ready.'
-                      : 'PANTHEON is collecting and cross-checking public-source evidence. The download control will appear here when the report is'} complete.
+                      : 'PANTHEON is collecting and cross-checking public-source evidence. The download control will appear here when the report is complete.'}
                   </CardContent>
                 </Card>
               )}
