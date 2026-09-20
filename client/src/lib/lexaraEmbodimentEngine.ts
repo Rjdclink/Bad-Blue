@@ -116,6 +116,7 @@ export class LexaraEmbodimentEngine {
   private gazeTargetX = 0;
   private gazeTargetY = 0;
   private lastAudioLevel = 0;
+  private previousMode: LexaraEmbodimentMode = 'idle';
   private smoothedMouthOpen = 0;
   private smoothedGestureEnergy = 0;
   private headXFilter = new OneEuroScalar(1.2, 0.18);
@@ -155,6 +156,7 @@ export class LexaraEmbodimentEngine {
     this.blinkStartMs = -1;
     this.nodStartMs = -1;
     this.lastAudioLevel = 0;
+    this.previousMode = 'idle';
     this.smoothedMouthOpen = 0;
     this.smoothedGestureEnergy = 0;
     this.gazeTargetX = 0;
@@ -177,6 +179,20 @@ export class LexaraEmbodimentEngine {
     if (!this.nextBlinkMs) this.scheduleBlink(nowMs);
     if (!this.nextNodMs) this.scheduleNod(nowMs, input.mode);
     if (!this.nextGazeShiftMs) this.scheduleGazeShift(nowMs, input.mode);
+
+    if (input.mode !== this.previousMode) {
+      // State transitions should be visible immediately rather than waiting on
+      // an idle timer that was scheduled several seconds earlier.
+      this.scheduleGazeShift(nowMs - 850, input.mode);
+      if (input.mode === 'listening') {
+        this.nextNodMs = nowMs + 850 + this.random() * 1250;
+      } else if (input.mode === 'speaking') {
+        this.nextNodMs = nowMs + 1450 + this.random() * 1700;
+      } else {
+        this.scheduleNod(nowMs, input.mode);
+      }
+      this.previousMode = input.mode;
+    }
 
     // Blink scheduler: non-periodic, occasionally double-blinks, and never waits
     // on network/model work.
@@ -257,12 +273,13 @@ export class LexaraEmbodimentEngine {
     const breath = Math.sin((timeSec / breathingPeriod) * Math.PI * 2);
 
     const audio = input.audio;
+    const speechClockSec = audio.currentTimeSec > 0 ? audio.currentTimeSec : timeSec;
     const fallbackSpeech =
       input.mode === 'speaking'
         ? clamp(
             0.38
-              + Math.sin(audio.currentTimeSec * 24.7) * 0.23
-              + Math.sin(audio.currentTimeSec * 41.3 + 0.8) * 0.16,
+              + Math.sin(speechClockSec * 24.7) * 0.23
+              + Math.sin(speechClockSec * 41.3 + 0.8) * 0.16,
             0.04,
             0.92,
           )
@@ -279,10 +296,10 @@ export class LexaraEmbodimentEngine {
 
     const mouthWideTarget = audio.active
       ? clamp(zcr * 2.6 + brightness * 0.62 + onset * 0.22)
-      : clamp(0.4 + Math.sin(audio.currentTimeSec * 10.3) * 0.2);
+      : clamp(0.4 + Math.sin(speechClockSec * 10.3) * 0.2);
     const mouthRoundTarget = audio.active
       ? clamp((1 - zcr) * 0.58 + (1 - brightness) * 0.28)
-      : clamp(0.35 + Math.sin(audio.currentTimeSec * 7.1 + 1.4) * 0.18);
+      : clamp(0.35 + Math.sin(speechClockSec * 7.1 + 1.4) * 0.18);
 
     const gestureTarget = input.mode === 'speaking'
       ? clamp(this.smoothedMouthOpen * 0.72 + onset * 0.55)
@@ -309,7 +326,7 @@ export class LexaraEmbodimentEngine {
     const thinkingBias = input.mode === 'thinking' ? (gazeX >= 0 ? 0.72 : -0.72) : 0;
     const listeningLean = input.mode === 'listening' ? 0.28 : 0;
     const speechBeat = input.mode === 'speaking'
-      ? Math.sin((audio.active ? audio.currentTimeSec : timeSec) * 5.4) * this.smoothedGestureEnergy
+      ? Math.sin((audio.active ? speechClockSec : timeSec) * 5.4) * this.smoothedGestureEnergy
       : 0;
 
     const headXTarget = gazeX * 0.44 + thinkingBias * 0.35 + Math.sin(timeSec * 0.47) * 0.10;
