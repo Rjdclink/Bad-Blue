@@ -23,6 +23,7 @@ const roots=[
 'https://www.openownership.org/','https://register.openownership.org/','https://www.gleif.org/en/lei-data/gleif-api','https://www.gleif.org/en/lei-search','https://lei.bloomberg.com/leis/view/','https://www.lei.bloomberg.com/','https://www.iso.org/iso-17442-lei.html','https://www.gleif.org/en/lei-data/global-lei-index','https://www.gleif.org/en/lei-data/lei-mapping','https://www.gleif.org/en/lei-data/gleif-golden-copy/download-the-golden-copy',
 'https://opencorporates.com/','https://opencorporates.com/companies','https://opencorporates.com/registers','https://opencorporates.com/statements','https://opencorporates.com/info/api','https://opencorporates.com/info/data','https://opencorporates.com/info/licence','https://opencorporates.com/info/about','https://opencorporates.com/info/our-data','https://opencorporates.com/info/glossary',
 'https://www.sec.gov/data-research/sec-markets-data/company-information-about-active-investment-adviser-firms'
+,'https://reports.adviserinfo.sec.gov/'
 ];
 const urls=[...new Set(roots)].slice(0,200);
 if(urls.length!==200) throw new Error(`Pantheon batch 17 expected 200 distinct URLs, got ${urls.length}`);
