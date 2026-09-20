@@ -50,3 +50,27 @@ if (failed.length) {
   process.exit(1);
 }
 console.log(`Pantheon realization verification passed (${checks.length}/${checks.length}).`);
+
+
+const categoryWorkflow = fs.readFileSync('server/services/pantheon/PantheonCategoryWorkflow.ts', 'utf8');
+must(
+  categoryWorkflow.includes('PANTHEON_REPORT_CATEGORIES') &&
+  categoryWorkflow.includes('buildPantheonCategoryTargets') &&
+  categoryWorkflow.includes("purpose: 'background_report'") &&
+  categoryWorkflow.includes('onCategoryComplete') &&
+  categoryWorkflow.includes('crawlerAudit'),
+  'Pantheon category UI progression is backed by category-scoped crawler execution and audited outcomes',
+);
+must(
+  backgroundJob.includes('conductPantheonCategoryWorkflow') &&
+  backgroundJob.includes('completedCategories') &&
+  backgroundJob.includes('categoryName') &&
+  backgroundJob.includes('partialReport'),
+  'Pantheon background job persists partial report evidence before advancing categories',
+);
+must(
+  reportStore.includes('writeSupabaseMirror') &&
+  reportStore.includes('readSupabaseMirror') &&
+  reportStore.includes('pantheon-report-state'),
+  'Pantheon report state has a cross-restart Supabase storage mirror with local/database fallbacks',
+);
