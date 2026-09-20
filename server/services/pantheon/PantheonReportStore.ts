@@ -71,6 +71,13 @@ function canTryDatabase(): boolean {
   return Date.now() >= databaseUnavailableUntil;
 }
 
+function canMirrorIdentity(userId: string): boolean {
+  // Master-bypass sessions are intentionally ephemeral and are not rows in the
+  // authenticated-user table, so persisting them through the FK-backed report
+  // table can only fail. Their durable local journal remains authoritative.
+  return userId !== 'admin-master-root';
+}
+
 function normalizeRecord(record: any): PantheonReportRecord {
   return {
     id: String(record.id),
@@ -156,6 +163,7 @@ async function readJournal(reportId: string): Promise<PantheonReportRecord | nul
 }
 
 async function mirrorRecord(record: PantheonReportRecord): Promise<void> {
+  if (!canMirrorIdentity(record.userId)) return;
   if (!canTryDatabase()) {
     scheduleMirror(record.id);
     return;
@@ -250,7 +258,7 @@ export async function createPantheonReportRecord(input: {
   // can therefore never prevent the real report job from starting.
   await writeJournal(record);
 
-  if (canTryDatabase()) {
+  if (canMirrorIdentity(record.userId) && canTryDatabase()) {
     try {
       const persisted = await storage.createPeopleSearchReport({
         id: record.id,
@@ -300,7 +308,7 @@ export async function updatePantheonReportRecord(
   };
   await writeJournal(next);
 
-  if (canTryDatabase()) {
+  if (canMirrorIdentity(next.userId) && canTryDatabase()) {
     try {
       const existing = await storage.getPeopleSearchReport(reportId);
       if (existing) {
@@ -340,6 +348,9 @@ export async function getPantheonReportRecord(reportId: string): Promise<Pantheo
   } catch {
     return null;
   }
+
+  const localFirst = await readJournal(reportId);
+  if (localFirst && !canMirrorIdentity(localFirst.userId)) return localFirst;
 
   if (canTryDatabase()) {
     try {

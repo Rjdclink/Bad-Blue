@@ -6,6 +6,7 @@ import { SEOHead } from '@/components/SEOHead';
 import { GeoconsoleRadarDashboard } from '@/components/geoconsole';
 import { useVoiceMode } from '@/hooks/useVoiceMode';
 import { useVoiceSynthesis } from '@/hooks/useVoiceSynthesis';
+import { getLexaraLiveEnabled } from '@/components/LexaraLiveConsentModal';
 import type { GPSPoint, LocationCandidate } from '@shared/geoconsoleTypes';
 
 type Phase = 'awaiting_target' | 'awaiting_details' | 'acquiring' | 'active' | 'error';
@@ -80,6 +81,7 @@ export default function SpectraPage() {
   const messageHandlerRef = useRef<(message: string) => void>(() => undefined);
   const lastSpokenTextRef = useRef<{ normalized: string; expiresAt: number } | null>(null);
   const recentVoiceTurnRef = useRef<{ normalized: string; at: number } | null>(null);
+  const initialVoicePromptRef = useRef(false);
 
   const voiceSynthesis = useVoiceSynthesis();
   const voiceMode = useVoiceMode({
@@ -137,6 +139,27 @@ export default function SpectraPage() {
   const addMessage = useCallback((role: Message['role'], content: string) => {
     setMessages(previous => [...previous, makeMessage(role, content)]);
   }, []);
+
+  useEffect(() => {
+    if (initialVoicePromptRef.current || getLexaraLiveEnabled() !== 'true') return;
+    initialVoicePromptRef.current = true;
+
+    void (async () => {
+      try {
+        await voiceMode.enable();
+        await voiceSynthesis.speak(FIRST_PROMPT, {
+          context: 'guidance',
+          autoPlay: true,
+          assistantName: 'SPECTRA',
+          onEnd: () => voiceMode.startListening(),
+          onError: () => voiceMode.startListening(),
+        });
+      } catch {
+        // Keep the typed SPECTRA workflow available when browser audio policy
+        // or microphone permission prevents automatic voice activation.
+      }
+    })();
+  }, [voiceMode.enable, voiceMode.startListening, voiceSynthesis]);
 
   const speakIfEnabled = useCallback((text: string) => {
     if (!voiceMode.isEnabled) return;
