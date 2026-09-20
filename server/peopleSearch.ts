@@ -1095,6 +1095,10 @@ export async function conductFullOSINT(
   // Run base enhanced search with depth-aware crawler selection
   const enhancedReport = await conductEnhancedPeopleSearch(searchQuery, options);
 
+  // A background-report job explicitly requests the full roster. The selected
+  // duration controls collection effort, never whether a crawler family participates.
+  const runFullRoster = forceAllCrawlers || searchDepth >= 3;
+
   if (options?.phone) {
     const digits = options.phone.replace(/\D/g, '');
     if (digits.length >= 10) {
@@ -1197,7 +1201,7 @@ export async function conductFullOSINT(
     } // End of WRAITH activation block
 
     // Level 3+: HYDRA + LICH + CERBERUS + BLIZZARD DRAGON activation via PANTHEON
-    if ((forceAllCrawlers || searchDepth >= 3) && hasCollectionBudget(20_000)) {
+    if (runFullRoster && hasCollectionBudget(20_000)) {
       console.log('[PANTHEON OSINT] Activating complete PANTHEON crawler roster');
       
       // Check if PANTHEON is available (not blocked by cryptocrawler)
