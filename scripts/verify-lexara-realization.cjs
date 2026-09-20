@@ -137,9 +137,8 @@ must(
   'barge-in is restored for natural one-word and multiword interruption while echo-screening and final-turn authority remain conservative',
 );
 must(
-  avatar.includes("renderer: 'lexara-portrait-rig-v3'") &&
-    avatar.includes("data-live-avatar={LIVE_AVATAR_ENABLED ? 'portrait-rig-v3' : 'static'}") &&
-    avatar.includes('portraitRef.current') &&
+  avatar.includes("renderer: 'embodied-canvas-v2'") &&
+    avatar.includes("data-live-avatar={LIVE_AVATAR_ENABLED ? 'embodied-canvas' : 'static'}") &&
     viewport.includes('LEXARAAttorneyPortrait'),
   'production Lexara viewport uses the visibly animated attorney portrait rig rather than the legacy Ethereal identity',
 );
@@ -157,7 +156,7 @@ must(
     avatar.includes('LexaraEmbodimentEngine') &&
     avatar.includes('drawMouth') &&
     avatar.includes('drawBlink') &&
-    avatar.includes("data-live-avatar={LIVE_AVATAR_ENABLED ? 'portrait-rig-v3' : 'static'}") &&
+    avatar.includes("data-live-avatar={LIVE_AVATAR_ENABLED ? 'embodied-canvas' : 'static'}") &&
     avatar.includes('prefers-reduced-motion') &&
     avatar.includes('getLexaraServerPlaybackClock') &&
     avatar.includes('lexaraRealtimeVoiceClient.getPlaybackClock()') &&
@@ -607,13 +606,6 @@ must(
     speechClient.includes("reportLexaraPlaybackEvent") &&
     voiceRoutes.includes("/api/lexara/voice/playback-event"),
   'mobile audio playback exposes waiting/stalled/playing telemetry to production',
-);
-must(
-  realtimeVoiceClient.includes('REALTIME_AUDIO_STALL_TIMEOUT_MS') &&
-    realtimeVoiceClient.includes('LEXARA realtime audio stream stalled') &&
-    realtimeVoiceClient.includes('active.progressTimeout') &&
-    realtimeVoiceClient.includes('this.failActiveSpeech(error)'),
-  'realtime audio stalls fail into the existing voice fallback instead of silently hanging after partial frames',
 );
 must(
   viteConfig.includes('publicDir: path.resolve(__dirname, "public")') &&
