@@ -65,6 +65,13 @@ export class PantheonRetrievalAdapter {
       targetCount: request.targets.length,
       host,
     });
+    // Background-report depth controls effort and source breadth, not crawler
+    // participation. Always fan out through the complete specialized primary
+    // roster; each route remains failure-isolated and auditable.
+    if (request.purpose === 'background_report') {
+      plan.crawlers = ['startrek', 'birdofprey', 'sixdegrees', 'cerberus', 'blizzard', 'lich'];
+      plan.rationale.unshift('Background report requires the complete specialized primary crawler roster.');
+    }
     const availability = canActivatePantheon();
     if (!availability.available) {
       return {
