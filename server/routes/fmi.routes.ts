@@ -20,6 +20,7 @@ import { mapProductLawTypeToExpert } from '@shared/legalDomainMapping';
 import { apiRateLimit } from '../rateLimit';
 import { analyzeFMIEvidence, type FMIFile } from '../fmiIntelligenceTool';
 import { extractLexaraEvidenceContent } from '../lexara/LexaraMediaExtraction';
+import { MASTER_INTERNAL_EMAIL, MASTER_USER_ID } from '../masterPassword';
 
 const log = createLogger('FMI-Routes');
 
@@ -35,6 +36,16 @@ function isAllowedLawType(value: unknown): value is string {
 
 function normalizeFmiAnalysisLawType(value: string): string {
   return mapProductLawTypeToExpert(value) || value;
+}
+
+async function ensureFmiPersistenceUser(userId: string): Promise<void> {
+  if (userId !== MASTER_USER_ID) return;
+  await pool.query(
+    `INSERT INTO users (id, email, first_name, last_name, status, has_paid_for_access, created_at, updated_at)
+     VALUES ($1, $2, 'PANTHEON', 'Admin', 'active', true, NOW(), NOW())
+     ON CONFLICT (id) DO NOTHING`,
+    [MASTER_USER_ID, MASTER_INTERNAL_EMAIL],
+  );
 }
 
 function getAuthenticatedUserId(req: Request): string | undefined {
@@ -153,6 +164,11 @@ export function setupFMIRoutes(app: Express): void {
       });
 
       try {
+        // Master authentication is deliberately stateless, while evidence_files
+        // correctly enforces a users FK. Materialize only the stable synthetic
+        // master identity at the persistence boundary so uploads work without
+        // coupling master login itself to the database.
+        await ensureFmiPersistenceUser(userId);
         const result = await pool.query(
           `INSERT INTO evidence_files (
             user_id, file_name, file_type, file_size, storage_path,
