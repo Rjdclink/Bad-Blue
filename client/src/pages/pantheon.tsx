@@ -12,7 +12,7 @@ import { PantheonProgressTracker } from '@/components/PantheonProgressTracker';
 import { SEOHead } from "@/components/SEOHead";
 import { AppHeader } from "@/components/AppHeader";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Shield, AlertCircle, Download } from "lucide-react";
+import { Shield, AlertCircle, Download, Search } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { getPantheonReportDurationLabel, normalizePantheonSearchDepth } from "@shared/pantheonReportConfig";
 import './pantheon.css';
@@ -325,9 +325,15 @@ export default function PantheonPage() {
           {/* PANTHEON registry categories — mirrors the real 4,500-source search taxonomy. */}
           <section className="capabilities">
             <h2>Background Report Categories</h2>
-            <Card className="pantheon-category-card">
+            <Card className="pantheon-category-card capability-card">
               <CardContent className="p-5">
-                <p className="text-sm text-muted-foreground mb-4">30 categories searched across PANTHEON's prioritized public-source registry.</p>
+                <div className="pantheon-category-heading">
+                  <div className="capability-icon"><Search className="w-8 h-8" /></div>
+                  <div>
+                    <h3>Public-Source Background Intelligence</h3>
+                    <p>30 categories searched across PANTHEON's prioritized 4,500-source registry.</p>
+                  </div>
+                </div>
                 <div className="pantheon-category-list">
                   <span className="pantheon-category-item">1. Identity & Identity Verification</span>
                   <span className="pantheon-category-item">2. Phone Numbers</span>
