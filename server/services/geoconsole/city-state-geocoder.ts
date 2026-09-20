@@ -66,7 +66,7 @@ export function extractStreetAddressHint(input: string): AddressHint | null {
   const street = text.match(STREET_ADDRESS_RE)?.[1]?.trim();
   if (!street) return null;
   const regional = extractCityStateHint(text);
-  const zip = text.match(/\\b\\d{5}(?:-\\d{4})?\\b/)?.[0];
+  const zip = text.match(/\b\d{5}(?:-\d{4})?\b/)?.[0];
   return {
     street,
     city: regional?.city,
