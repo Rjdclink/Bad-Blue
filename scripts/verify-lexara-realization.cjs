@@ -17,7 +17,7 @@ const conversation = read('client/src/components/LexaraConversation.tsx');
 const avatar = read('client/src/components/LexaraEtherealAvatar.tsx');
 const synthesis = read('client/src/hooks/useVoiceSynthesis.ts');
 const speechClient = read('client/src/lib/lexaraSpeechClient.ts');
-const realtimeVoiceClient = read('client/src/lib/lexaraRealtimeVoiceClient.ts');
+const realtimeVoiceClient = read('client/src/lib/lexaraRealtimeVoiceClient.ts');\nconst liveAvatarReview = read('docs/LEXARA_LIVE_AVATAR_100_SOURCE_REVIEW_20260920.md');
 const realtimeVoiceGateway = read('server/lexara/LexaraRealtimeVoiceGateway.ts');
 const serverIndex = read('server/index.ts');
 const lexaraRoutes = read('server/routes/lexara.routes.ts');
@@ -137,6 +137,27 @@ must(
     avatar.includes('object-contain') &&
     avatar.includes('onError'),
   'attorney-behind-desk visual has cache-safe fallback and preserves composition',
+);
+must(
+  avatar.includes('VITE_LEXARA_LIVE_AVATAR_ENABLED') &&
+    avatar.includes('window.requestAnimationFrame') &&
+    avatar.includes('HEAD_MASK') &&
+    avatar.includes('MOUTH_MASK') &&
+    avatar.includes('TORSO_MASK') &&
+    avatar.includes('prefers-reduced-motion') &&
+    avatar.includes('getLexaraServerPlaybackClock') &&
+    avatar.includes('lexaraRealtimeVoiceClient.getPlaybackClock()') &&
+    avatar.includes("style={{ contain: 'layout paint' }}") &&
+    !avatar.includes('fetch('),
+  'live attorney motion is compositor-driven, rollbackable, read-only, and never inserts a network dependency into speech',
+);
+must(
+  realtimeVoiceClient.includes('getPlaybackClock():') &&
+    realtimeVoiceClient.includes('playbackLevel') &&
+    realtimeVoiceClient.includes('energySum += sample * sample') &&
+    realtimeVoiceClient.includes("type: 'rendered', renderedFrames: this.renderedFrames, level") &&
+    speechClient.includes('getLexaraServerPlaybackClock'),
+  'avatar synchronization observes the already-rendered realtime/server audio clocks without becoming playback authority',
 );
 must(
   synthesis.includes('/api/lexara/tts/session') &&
@@ -622,6 +643,9 @@ must(integratedRealtimeSourceLines.length === 10, 'literal 10-source integrated 
 const hotReserveSourceSection = hotReserveReview.split('## Sources — exactly 10')[1]?.split('## Implemented resolution sequence')[0] || '';
 const hotReserveSourceLines = hotReserveSourceSection.split('\n').filter(line => /^\d+\.\s/.test(line));
 must(hotReserveSourceLines.length === 10, 'literal 10-source hot-reserve reliability implementation review is present');
+const liveAvatarSourceSection = liveAvatarReview.split('## Sources - exactly 100')[1]?.split('## Implementation decision')[0] || '';
+const liveAvatarSourceLines = liveAvatarSourceSection.split('\n').filter(line => /^\d+\.\s/.test(line));
+must(liveAvatarSourceLines.length === 100, 'literal 100-source LEXARA live-avatar implementation blueprint is present');
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA realization verification passed.');
 // Practice-area specialization gate (31-book LegalWhat library).
