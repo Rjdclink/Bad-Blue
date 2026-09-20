@@ -60,6 +60,30 @@ function getLexaraPlaybackAudioElement(): HTMLAudioElement {
   return playbackAudioElement;
 }
 
+/**
+ * Read-only presentation clock for visual subscribers such as the live avatar.
+ * This never starts, pauses, buffers, or otherwise participates in speech playback.
+ */
+export function getLexaraServerPlaybackClock(): {
+  active: boolean;
+  currentTimeSec: number;
+  durationSec: number | null;
+} {
+  const audio = playbackState.currentAudio;
+  const currentTimeSec = audio && Number.isFinite(audio.currentTime)
+    ? Math.max(0, audio.currentTime)
+    : 0;
+  const durationSec = audio && Number.isFinite(audio.duration) && audio.duration > 0
+    ? audio.duration
+    : null;
+
+  return {
+    active: Boolean(playbackState.isPlaying && audio && !audio.paused && !audio.ended),
+    currentTimeSec,
+    durationSec,
+  };
+}
+
 const SILENT_AUDIO_BASE64 = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
 
 function reportLexaraPlaybackEvent(event: string, audio?: HTMLAudioElement | null): void {
