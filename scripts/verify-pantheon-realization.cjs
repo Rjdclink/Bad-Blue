@@ -26,7 +26,7 @@ const checks = [
   ['credential-free public acquisition participates', adapter.includes('acquirePublicResources') && acquisition.includes('Private-network acquisition is not permitted')],
   ['external failures are route-local', adapter.includes('Promise.allSettled')],
   ['discovery expressions are separated from URL acquisition', adapter.includes('new URL(firstTarget)') && adapter.includes('const urlTargets = request.targets.filter')],
-  ['report duration is an evidence budget, not a kill timer', jobs.includes('const report = await reportPromise') && !jobs.includes('Promise.race([reportPromise, budgetGuard])'],
+  ['report duration is an evidence budget, not a kill timer', jobs.includes('const report = await reportPromise') && !jobs.includes('Promise.race([reportPromise, budgetGuard])')],
   ['collection budget preserves aggregation time', peopleSearch.includes('remainingBudgetMs') && peopleSearch.includes('hasCollectionBudget')],
 ];
 
