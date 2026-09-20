@@ -15,6 +15,7 @@ function must(condition, message) {
 const voiceMode = read('client/src/hooks/useVoiceMode.ts');
 const conversation = read('client/src/components/LexaraConversation.tsx');
 const avatar = read('client/src/components/LexaraEtherealAvatar.tsx');
+const viewport = read('client/src/components/LexaraViewport.tsx');
 const embodimentEngine = read('client/src/lib/lexaraEmbodimentEngine.ts');
 const synthesis = read('client/src/hooks/useVoiceSynthesis.ts');
 const speechClient = read('client/src/lib/lexaraSpeechClient.ts');
