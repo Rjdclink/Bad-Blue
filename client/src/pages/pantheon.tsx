@@ -34,6 +34,7 @@ export default function PantheonPage() {
   const [reportState, setReportState] = useState<'idle' | 'processing' | 'completed' | 'failed'>('idle');
   const [reportError, setReportError] = useState<string | null>(null);
   const [downloadReady, setDownloadReady] = useState(false);
+  const [reportStartedAt, setReportStartedAt] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const { toast } = useToast();
   
@@ -85,6 +86,8 @@ export default function PantheonPage() {
           });
         }
 
+        if (typeof job?.startedAt === 'string') setReportStartedAt(job.startedAt);
+
         if (payload.status === 'processing') {
           setSearching(true);
           setDownloadReady(false);
@@ -113,6 +116,13 @@ export default function PantheonPage() {
         setReportError(payload.error || 'The background report failed.');
       } catch (error) {
         if (cancelled) return;
+        // A mobile network transition or transient proxy interruption must not
+        // convert a still-running durable report into a terminal UI failure.
+        if (consecutivePollFailures < 8) {
+          consecutivePollFailures += 1;
+          pollTimer = setTimeout(poll, Math.min(10_000, consecutivePollFailures * 1_500));
+          return;
+        }
         setSearching(false);
         setDownloadReady(false);
         setReportState('failed');
@@ -133,6 +143,7 @@ export default function PantheonPage() {
     setDownloadReady(false);
     setReportState('processing');
     setReportError(null);
+    setReportStartedAt(new Date().toISOString());
 
     try {
       const response = await fetch('/api/osint/report-jobs', {
@@ -381,11 +392,13 @@ export default function PantheonPage() {
           </section>
           
           {/* Progress Tracker */}
-          {searching && searchConfig && (
+          {searchConfig && reportState !== 'idle' && (
             <section className="search-progress">
-              <PantheonProgressTracker 
+              <PantheonProgressTracker
                 searchDepth={searchConfig.searchDepth}
-                isSearching={searching}
+                isSearching={reportState === 'processing'}
+                startedAt={reportStartedAt}
+                completed={reportState === 'completed'}
               />
             </section>
           )}
