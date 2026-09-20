@@ -13,6 +13,8 @@ const acquisition = read('server/services/crawlers/PublicAcquisitionInfrastructu
 const jobs = read('server/services/pantheon/PantheonBackgroundReportJob.ts');
 const peopleSearch = read('server/peopleSearch.ts');
 
+const peopleSearch = fs.readFileSync('server/peopleSearch.ts', 'utf8');
+
 const checks = [
   ['durable report status is retryable', routes.includes('report_store_converging') && routes.includes("Retry-After")],
   ['client retries transient report-store status', client.includes('[404, 429, 502, 503, 504]')],
@@ -29,6 +31,8 @@ const checks = [
   ['report duration is an evidence budget, not a kill timer', jobs.includes('const report = await reportPromise') && !jobs.includes('Promise.race([reportPromise, budgetGuard])')],
   ['collection budget preserves aggregation time', peopleSearch.includes('remainingBudgetMs') && peopleSearch.includes('hasCollectionBudget')],
 ];
+
+  ['background jobs force complete crawler participation', jobs.includes('forceAllCrawlers: true') && peopleSearch.includes('const runFullRoster = forceAllCrawlers || searchDepth >= 3')],
 
 const failed = checks.filter(([, ok]) => !ok);
 for (const [name, ok] of checks) console.log(`${ok ? '✓' : '✗'} ${name}`);
