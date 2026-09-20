@@ -379,3 +379,10 @@
 .pantheon-category-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.45rem .9rem; }
 .pantheon-category-item { font-size:.78rem; line-height:1.25rem; color:hsl(var(--muted-foreground)); }
 @media (min-width: 768px) { .pantheon-category-list { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+
+.pantheon-category-card.capability-card { background: linear-gradient(135deg, #174a78 0%, #1f365e 100%); border-radius: 1.25rem; box-shadow: 0 10px 24px rgba(15,23,42,.16); color: #fff; }
+.pantheon-category-heading { display:flex; align-items:center; gap:1rem; margin-bottom:1rem; }
+.pantheon-category-heading h3 { margin:0; font-size:1.15rem; font-weight:700; color:#fff; }
+.pantheon-category-heading p { margin:.25rem 0 0; font-size:.78rem; line-height:1.2rem; color:rgba(255,255,255,.82); }
+.pantheon-category-heading .capability-icon { flex:0 0 auto; display:flex; align-items:center; justify-content:center; color:#22d3ee; }
+.pantheon-category-card .pantheon-category-item { color:rgba(255,255,255,.9); }
