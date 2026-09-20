@@ -148,7 +148,6 @@ export class LexaraRayAvatarBackend {
         },
       );
       if (!response.ok) {
-        this.recordFailure();
         throw new Error(`LEXARA_RAY_AVATAR_HTTP_${response.status}`);
       }
       const payload = await response.json() as Partial<LexaraRayAvatarResponse>;
