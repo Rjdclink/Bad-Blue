@@ -214,7 +214,8 @@ if (
 ) {
   fail('BirdOfPrey background-report retrieval still fabricates identity metadata or accepts failed HTTP as evidence');
 }
-if (!sixDegrees.includes('Crawler request failed: HTTP') ||\n  !sixDegrees.includes('this.clearGraph()')) {
+if (!sixDegrees.includes('Crawler request failed: HTTP') ||
+  !sixDegrees.includes('this.clearGraph()')) {
   fail('SixDegrees background-report retrieval accepts non-success HTTP as evidence or leaks graph state between targets');
 }
 if (
