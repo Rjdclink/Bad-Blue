@@ -1099,13 +1099,25 @@ export async function conductFullOSINT(
 
   console.log(`[PANTHEON OSINT] Crawlers activated:`, crawlersActivated.join(', '));
 
-  // Run base enhanced search with depth-aware crawler selection
-  // Run base enhanced search with depth-aware crawler selection
-  const enhancedReport = await conductEnhancedPeopleSearch(searchQuery, options);
-
-  // A background-report job explicitly requests the full roster. The selected
-  // duration controls collection effort, never whether a crawler family participates.
+  // Launch the complete crawler roster before legacy/enhanced lanes so slow
+  // early work cannot consume the report deadline before the full roster starts.
   const runFullRoster = forceAllCrawlers || searchDepth >= 3;
+  const pantheonStatusAtStart = canActivatePantheon();
+  const earlySearchTargets = runFullRoster && pantheonStatusAtStart.available
+    ? buildPantheonBackgroundTargets(searchQuery, options?.location, searchDepth)
+    : [];
+  const earlyCrawlerRetrievalPromise = runFullRoster && earlySearchTargets.length > 0 && hasCollectionBudget(1_000)
+    ? pantheonRetrievalAdapter.retrieve({
+        purpose: 'background_report',
+        targets: earlySearchTargets,
+        depth: searchDepth as 1 | 2 | 3 | 4,
+        budgetMs: Number.isFinite(remainingBudgetMs()) ? remainingBudgetMs() : undefined,
+        deadlineAt: reportDeadlineAt,
+      })
+    : null;
+
+  // The legacy/enhanced lane now runs concurrently with the complete roster.
+  const enhancedReport = await conductEnhancedPeopleSearch(searchQuery, options);
 
   if (options?.phone) {
     const digits = options.phone.replace(/\D/g, '');
@@ -1209,7 +1221,7 @@ export async function conductFullOSINT(
     } // End of WRAITH activation block
 
     // Level 3+: HYDRA + LICH + CERBERUS + BLIZZARD DRAGON activation via PANTHEON
-    if (runFullRoster && (forceAllCrawlers || hasCollectionBudget(20_000))) {
+    if (runFullRoster && earlyCrawlerRetrievalPromise) {
       console.log('[PANTHEON OSINT] Activating complete PANTHEON crawler roster');
       
       // Check if PANTHEON is available (not blocked by cryptocrawler)
@@ -1217,18 +1229,8 @@ export async function conductFullOSINT(
       
       if (pantheonStatus.available) {
         try {
-          // Generate search targets from the query
-          const searchTargets = buildPantheonBackgroundTargets(searchQuery, options?.location, searchDepth);
-          
-          // Use the shared adapter so crawler selection, retrieval provenance,
-          // outcome learning, and Cain/Reaper supervision match seeded reports.
-          const crawlerRetrieval = await pantheonRetrievalAdapter.retrieve({
-            purpose: 'background_report',
-            targets: searchTargets,
-            depth: searchDepth as 1 | 2 | 3 | 4,
-            budgetMs: Number.isFinite(remainingBudgetMs()) ? remainingBudgetMs() : undefined,
-            deadlineAt: reportDeadlineAt,
-          });
+          // Await the roster that was started before the legacy lanes.
+          const crawlerRetrieval = await earlyCrawlerRetrievalPromise;
           const crawlerResults = crawlerRetrieval.evidence;
           enhancedReport.crawlerAudit = mergeCrawlerAudit([
             ...(enhancedReport.crawlerAudit || []),
