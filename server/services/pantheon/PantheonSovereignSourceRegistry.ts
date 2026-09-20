@@ -12,6 +12,7 @@ import { PANTHEON_VERIFIED_SOURCES_BATCH_11 } from './sources/batch11';
 import { PANTHEON_VERIFIED_SOURCES_BATCH_12 } from './sources/batch12';
 import { PANTHEON_VERIFIED_SOURCES_BATCH_13 } from './sources/batch13';
 import { PANTHEON_VERIFIED_SOURCES_BATCH_14 } from './sources/batch14';
+import { PANTHEON_VERIFIED_SOURCES_BATCH_15 } from './sources/batch15';
 /**
  * PANTHEON sovereign source registry.
  *
@@ -99,7 +100,7 @@ export function buildPantheonCategoryTargets(
  const out:PantheonSourceTarget[]=[]; const seen=new Set<string>();
  const add=(x:PantheonSourceTarget)=>{ if(!seen.has(x.url)){seen.add(x.url);out.push(x);} };
  // Verified direct authorities are always attempted before generated discovery URLs.
- for (const source of [...PANTHEON_VERIFIED_SOURCES_BATCH_01, ...PANTHEON_VERIFIED_SOURCES_BATCH_02, ...PANTHEON_VERIFIED_SOURCES_BATCH_03, ...PANTHEON_VERIFIED_SOURCES_BATCH_04, ...PANTHEON_VERIFIED_SOURCES_BATCH_05, ...PANTHEON_VERIFIED_SOURCES_BATCH_06, ...PANTHEON_VERIFIED_SOURCES_BATCH_07, ...PANTHEON_VERIFIED_SOURCES_BATCH_08, ...PANTHEON_VERIFIED_SOURCES_BATCH_09, ...PANTHEON_VERIFIED_SOURCES_BATCH_10, ...PANTHEON_VERIFIED_SOURCES_BATCH_11, ...PANTHEON_VERIFIED_SOURCES_BATCH_12, ...PANTHEON_VERIFIED_SOURCES_BATCH_13, ...PANTHEON_VERIFIED_SOURCES_BATCH_14]) {
+ for (const source of [...PANTHEON_VERIFIED_SOURCES_BATCH_01, ...PANTHEON_VERIFIED_SOURCES_BATCH_02, ...PANTHEON_VERIFIED_SOURCES_BATCH_03, ...PANTHEON_VERIFIED_SOURCES_BATCH_04, ...PANTHEON_VERIFIED_SOURCES_BATCH_05, ...PANTHEON_VERIFIED_SOURCES_BATCH_06, ...PANTHEON_VERIFIED_SOURCES_BATCH_07, ...PANTHEON_VERIFIED_SOURCES_BATCH_08, ...PANTHEON_VERIFIED_SOURCES_BATCH_09, ...PANTHEON_VERIFIED_SOURCES_BATCH_10, ...PANTHEON_VERIFIED_SOURCES_BATCH_11, ...PANTHEON_VERIFIED_SOURCES_BATCH_12, ...PANTHEON_VERIFIED_SOURCES_BATCH_13, ...PANTHEON_VERIFIED_SOURCES_BATCH_14, ...PANTHEON_VERIFIED_SOURCES_BATCH_15]) {
    if (!source.categories.includes(category)) continue;
    const q=`${identity} ${category}`;
    add({category,url:source.url,authority:source.authority,jurisdiction:source.jurisdiction,query:q});
