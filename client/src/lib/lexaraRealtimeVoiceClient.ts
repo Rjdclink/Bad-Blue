@@ -677,6 +677,10 @@ class LexaraRealtimeVoiceClient {
     if (payload.type === 'SpeechMetadata') {
       const active = this.activeSpeech;
       if (!active) return;
+      if (active.progressTimeout !== null) {
+        window.clearTimeout(active.progressTimeout);
+        active.progressTimeout = null;
+      }
       active.metadataComplete = true;
       this.maybeResolveSpeech(active);
       return;
@@ -686,6 +690,7 @@ class LexaraRealtimeVoiceClient {
       const active = this.activeSpeech;
       if (!active) return;
       window.clearTimeout(active.timeout);
+      if (active.progressTimeout !== null) window.clearTimeout(active.progressTimeout);
       this.activeSpeech = null;
       active.resolve();
     }
