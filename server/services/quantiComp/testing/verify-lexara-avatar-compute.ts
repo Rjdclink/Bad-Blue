@@ -4,6 +4,7 @@ import path from 'node:path';
 import { QuantiCompError } from '../types.js';
 import { QuantiCompRuntime } from '../runtime.js';
 import { QuantiTensorFabric } from '../tensorFabric.js';
+import { LexaraAvatarComputeCoordinator } from '../lexaraAvatarCompute.js';
 
 async function verifyGenerationShedding(): Promise<void> {
   const runtime = new QuantiCompRuntime({ maxConcurrency: 1, workerId: 'lexara-avatar-test' });
@@ -193,6 +194,26 @@ function verifyTensorFabric(): void {
   fabric.shutdown();
 }
 
+function verifyClientWebGpuPlanning(): void {
+  const coordinator = new LexaraAvatarComputeCoordinator();
+  const plan = coordinator.planTurn(
+    'test-browser-session',
+    'test-browser-turn',
+    {
+      webgpu: true,
+      worker: true,
+      offscreenCanvas: true,
+      imageBitmap: true,
+    },
+  );
+  assert.equal(plan.mode, 'client_webgpu');
+  assert.equal(plan.sessionId, 'test-browser-session');
+  assert.equal(plan.turnId, 'test-browser-turn');
+  assert.ok(plan.generation > 0);
+  assert.match(String(plan.workerPath), /lexara-neural-avatar-worker/);
+  coordinator.endTurn('test-browser-session', 'test-browser-turn');
+}
+
 function verifyBlueprint(): void {
   const file = path.resolve(
     process.cwd(),
@@ -214,5 +235,6 @@ function verifyBlueprint(): void {
 await verifyGenerationShedding();
 await verifyDomainIsolation();
 verifyTensorFabric();
+verifyClientWebGpuPlanning();
 verifyBlueprint();
 console.log('QuantiComp LEXARA realtime avatar compute verification passed');
