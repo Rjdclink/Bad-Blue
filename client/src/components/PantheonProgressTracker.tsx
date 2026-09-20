@@ -9,6 +9,8 @@ interface PantheonProgressTrackerProps {
   searchDepth: number;
   isSearching: boolean;
   onComplete?: () => void;
+  startedAt?: string | null;
+  completed?: boolean;
 }
 
 const DEPTH_DURATIONS = PANTHEON_REPORT_DURATIONS_MS;
@@ -20,7 +22,9 @@ const PANTHEON_CATEGORIES = [
 export function PantheonProgressTracker({ 
   searchDepth, 
   isSearching,
-  onComplete 
+  onComplete,
+  startedAt,
+  completed = false,
 }: PantheonProgressTrackerProps) {
   const [progress, setProgress] = useState(0);
   const [elapsedTime, setElapsedTime] = useState(0);
@@ -28,30 +32,26 @@ export function PantheonProgressTracker({
   const totalDuration = DEPTH_DURATIONS[searchDepth as keyof typeof DEPTH_DURATIONS] || 30000;
 
   useEffect(() => {
-    if (!isSearching) {
-      setProgress(0);
-      setElapsedTime(0);
+    if (completed) {
+      setProgress(100);
+      setElapsedTime(totalDuration);
+      onComplete?.();
       return;
     }
+    if (!isSearching) return;
 
-    const startTime = Date.now();
-    const interval = setInterval(() => {
-      const elapsed = Date.now() - startTime;
-      const progressPercent = Math.min((elapsed / totalDuration) * 100, 99);
-      
-      setProgress(progressPercent);
-      setElapsedTime(elapsed);
-
-      // The server-side job is authoritative. The visual clock never aborts or
-      // completes the investigation; it waits for persisted job status.
-    }, 50); // Update every 50ms for smooth animation
-
+    const parsedStartedAt = startedAt ? Date.parse(startedAt) : NaN;
+    const startTime = Number.isFinite(parsedStartedAt) ? parsedStartedAt : Date.now();
+    const tick = () => {
+      const elapsed = Math.max(0, Date.now() - startTime);
+      const boundedElapsed = Math.min(elapsed, totalDuration);
+      setElapsedTime(boundedElapsed);
+      setProgress(Math.min((boundedElapsed / totalDuration) * 100, 99));
+    };
+    tick();
+    const interval = setInterval(tick, 50);
     return () => clearInterval(interval);
-  }, [isSearching, searchDepth, totalDuration, onComplete]);
-
-  if (!isSearching && progress === 0) {
-    return null;
-  }
+  }, [completed, isSearching, onComplete, startedAt, totalDuration]);
 
   const remainingMs = Math.max(0, totalDuration - elapsedTime);
   const minutes = Math.floor(remainingMs / 60000);
@@ -177,6 +177,13 @@ export function PantheonProgressTracker({
             value={progress} 
             className={`h-3 ${searchDepth === 4 ? 'bg-red-950' : 'bg-slate-900'}`}
           />
+        </div>
+
+        {/* Current category plus complete registry taxonomy. */}
+        <div className="rounded-lg border border-cyan-500/30 bg-slate-950/70 p-3 text-center">
+          <div className="text-xs uppercase tracking-wide text-muted-foreground">Current stage</div>
+          <div className="mt-1 font-semibold">{completed ? 'Report assembly complete' : PANTHEON_CATEGORIES[Math.min(PANTHEON_CATEGORIES.length - 1, Math.floor((progress / 100) * PANTHEON_CATEGORIES.length))]}</div>
+          <div className="mt-1 text-xs text-muted-foreground">Category {completed ? PANTHEON_CATEGORIES.length : Math.min(PANTHEON_CATEGORIES.length, Math.floor((progress / 100) * PANTHEON_CATEGORIES.length) + 1)} of {PANTHEON_CATEGORIES.length}</div>
         </div>
 
         {/* Real registry categories: one compact panel rather than synthetic scan-stage tags. */}
