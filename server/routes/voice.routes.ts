@@ -17,6 +17,7 @@ import { createLogger } from '../logger';
 import { isAuthenticated } from '../auth';
 import { getLexaraTTSReadiness, getLexaraVoiceProfileBindings, openLexaraSpeechStream, refreshLexaraTTSReadiness, synthesizeLexaraSpeechWithFailover, warmLexaraTTSMesh } from '../lexara/LexaraTTSMesh';
 import { issueLexaraRealtimeVoiceTicket } from '../lexara/LexaraRealtimeVoiceGateway';
+import { lexaraAvatarCompute } from '../services/quantiComp/lexaraAvatarCompute';
 
 const log = createLogger('VoiceRoutes');
 
@@ -72,6 +73,70 @@ export function setupVoiceRoutes(app: Express): void {
   });
 
   /**
+   * POST /api/lexara/avatar/plan
+   * QuantiComp is the visual-compute planner. It grants a generation and selects
+   * client WebGPU first when the browser has the required primitives; optional
+   * Ray remains a separate accelerator target. Speech never waits for this.
+   */
+  app.post('/api/lexara/avatar/plan', (req: Request, res: Response) => {
+    try {
+      const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId : '';
+      const turnId = typeof req.body?.turnId === 'string' ? req.body.turnId : '';
+      const capabilities = {
+        webgpu: req.body?.capabilities?.webgpu === true,
+        worker: req.body?.capabilities?.worker === true,
+        offscreenCanvas: req.body?.capabilities?.offscreenCanvas === true,
+        imageBitmap: req.body?.capabilities?.imageBitmap === true,
+      };
+      const plan = lexaraAvatarCompute.planTurn(sessionId, turnId, capabilities);
+      log.info('[LEXARA Avatar] QuantiComp turn plan', {
+        sessionId: plan.sessionId.slice(0, 80),
+        turnId: plan.turnId.slice(0, 80),
+        generation: plan.generation,
+        mode: plan.mode,
+        clientWebGpu: capabilities.webgpu,
+        rayConfigured: lexaraAvatarCompute.getStatus().ray.configured,
+      });
+      return res.json({ success: true, ...plan });
+    } catch (error) {
+      log.warn('[LEXARA Avatar] plan rejected', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return res.status(400).json({
+        success: false,
+        error: 'LEXARA avatar plan rejected',
+      });
+    }
+  });
+
+  /**
+   * POST /api/lexara/avatar/end
+   * Advances the generation fence so interrupted/completed visual work becomes
+   * stale immediately. This endpoint cannot stop or alter speech.
+   */
+  app.post('/api/lexara/avatar/end', (req: Request, res: Response) => {
+    try {
+      const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId : '';
+      const turnId = typeof req.body?.turnId === 'string' ? req.body.turnId : '';
+      lexaraAvatarCompute.endTurn(sessionId, turnId);
+    } catch {
+      // Visual teardown is fail-open and never affects voice.
+    }
+    return res.status(204).end();
+  });
+
+  app.get('/api/lexara/avatar/status', (_req: Request, res: Response) => {
+    const status = lexaraAvatarCompute.getStatus();
+    return res.json({
+      success: true,
+      clientWebGpuSupported: true,
+      ray: status.ray,
+      sessions: status.sessions,
+      tensorFabric: status.tensorFabric,
+    });
+  });
+
+  /**
    * POST /api/lexara/voice/playback-event
    * Browser playback telemetry for diagnosing mobile buffer starvation and
    * distinguishing intentional barge-in from media stalls.
@@ -93,6 +158,11 @@ export function setupVoiceRoutes(app: Express): void {
       'avatar-renderer-ready',
       'avatar-motion-started',
       'avatar-renderer-error',
+      'avatar-quanti-plan',
+      'avatar-neural-ready',
+      'avatar-neural-frame',
+      'avatar-neural-unavailable',
+      'avatar-neural-error',
     ]);
     if (!allowed.has(event)) return res.status(204).end();
 
@@ -117,6 +187,11 @@ export function setupVoiceRoutes(app: Express): void {
       reducedMotion: typeof req.body?.reducedMotion === 'boolean' ? req.body.reducedMotion : null,
       mode: typeof req.body?.mode === 'string' ? req.body.mode.slice(0, 24) : null,
       mouthOpen: Number.isFinite(Number(req.body?.mouthOpen)) ? Number(req.body.mouthOpen) : null,
+      generation: Number.isFinite(Number(req.body?.generation)) ? Number(req.body.generation) : null,
+      sequence: Number.isFinite(Number(req.body?.sequence)) ? Number(req.body.sequence) : null,
+      inferenceMs: Number.isFinite(Number(req.body?.inferenceMs)) ? Number(req.body.inferenceMs) : null,
+      averageInferenceMs: Number.isFinite(Number(req.body?.averageInferenceMs)) ? Number(req.body.averageInferenceMs) : null,
+      reason: typeof req.body?.reason === 'string' ? req.body.reason.slice(0, 160) : null,
       client: typeof req.body?.userAgent === 'string' ? req.body.userAgent.slice(0, 220) : null,
     });
     return res.status(204).end();
