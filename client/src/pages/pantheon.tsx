@@ -35,6 +35,8 @@ export default function PantheonPage() {
   const [reportError, setReportError] = useState<string | null>(null);
   const [downloadReady, setDownloadReady] = useState(false);
   const [reportStartedAt, setReportStartedAt] = useState<string | null>(null);
+  const [reportDeadlineAt, setReportDeadlineAt] = useState<string | null>(null);
+  const [reportPhase, setReportPhase] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const { toast } = useToast();
   
@@ -87,6 +89,8 @@ export default function PantheonPage() {
         }
 
         if (typeof job?.startedAt === 'string') setReportStartedAt(job.startedAt);
+        if (typeof job?.deadlineAt === 'string') setReportDeadlineAt(job.deadlineAt);
+        if (typeof job?.phase === 'string') setReportPhase(job.phase);
 
         if (payload.status === 'processing') {
           setSearching(true);
@@ -144,6 +148,8 @@ export default function PantheonPage() {
     setReportState('processing');
     setReportError(null);
     setReportStartedAt(new Date().toISOString());
+    setReportDeadlineAt(null);
+    setReportPhase('collecting');
 
     try {
       const response = await fetch('/api/osint/report-jobs', {
@@ -398,6 +404,8 @@ export default function PantheonPage() {
                 searchDepth={searchConfig.searchDepth}
                 isSearching={reportState === 'processing'}
                 startedAt={reportStartedAt}
+                deadlineAt={reportDeadlineAt}
+                phase={reportPhase}
                 completed={reportState === 'completed'}
               />
             </section>
@@ -416,7 +424,9 @@ export default function PantheonPage() {
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="text-sm text-muted-foreground">
-                    PANTHEON is collecting and cross-checking public-source evidence. The download control will appear here when the report is complete.
+                    {reportPhase === 'finalizing'
+                      ? 'PANTHEON has stopped collection and is finalizing the evidence already gathered. The download control will appear when the report is ready.'
+                      : 'PANTHEON is collecting and cross-checking public-source evidence. The download control will appear here when the report is'} complete.
                   </CardContent>
                 </Card>
               )}
