@@ -13,7 +13,7 @@ for(const token of ['PANTHEON_BACKGROUND_CATEGORIES','buildPantheonCategoryTarge
   if(!registry.includes(token)) throw new Error('Missing registry token: '+token);
 }
 if(!people.includes('buildPantheonBackgroundRegistryTargets')) throw new Error('peopleSearch not wired to Pantheon registry');
-for(const token of ['PANTHEON_DEPTH_SOURCE_BUDGET','1: 450','2: 1200','3: 2800','4: 4500','authorityRank','.slice(0, sourceBudget)']){
+for(const token of ['PANTHEON_DEPTH_SOURCE_BUDGET','1: 1200','2: 2800','3: 4500','4: 4500','authorityRank','.slice(0, sourceBudget)']){
   if(!people.includes(token)) throw new Error('Missing depth-intensity wiring token: '+token);
 }
 for(const token of ['Background Report Categories','Identity & Identity Verification','Relationship & Timeline Intelligence']){
