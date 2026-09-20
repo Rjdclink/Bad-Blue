@@ -127,7 +127,7 @@ COPY --from=builder /app/server/migrations/overflow/003_cryptocrawler_runtime_pr
 COPY --from=builder /app/server/migrations/overflow/004_cryptocrawler_terminal_support.sql ./dist/migrations/overflow/004_cryptocrawler_terminal_support.sql
 
 COPY --from=builder /app/scripts ./scripts
-COPY --from=builder /app/contracts/cryptocrawl ./contracts/cryptocrawl
+# Pantheon production preflight reads these source manifests directly. Keep the\n# verification inputs in the runtime image so deployment validation cannot fail\n# solely because the multi-stage image omitted source-only files.\nCOPY --from=builder /app/server/services/pantheon ./server/services/pantheon\nCOPY --from=builder /app/server/peopleSearch.ts ./server/peopleSearch.ts\nCOPY --from=builder /app/client/src/pages/pantheon.tsx ./client/src/pages/pantheon.tsx\nCOPY --from=builder /app/client/src/components/PantheonProgressTracker.tsx ./client/src/components/PantheonProgressTracker.tsx\nCOPY --from=builder /app/contracts/cryptocrawl ./contracts/cryptocrawl
 COPY --from=builder /app/artifacts/cryptocrawl ./artifacts/cryptocrawl
 COPY --from=builder /app/server/services/cryptocrawl/config/chains.json ./config/chains.json
 EXPOSE 5000
