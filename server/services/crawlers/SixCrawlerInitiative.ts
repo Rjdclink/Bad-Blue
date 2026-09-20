@@ -2016,9 +2016,25 @@ export class SixCrawlerInitiative extends EventEmitter {
     );
     observedDimensions.push('network_traffic', 'file_access');
 
-    // Step 2: USC coordinates execution
+    // Step 2: USC coordinates execution and dispatches the same real public
+    // evidence state to each specialist. Direct calls below still collect typed
+    // return values; USC dispatch provides cooperative, observable execution.
     console.log('[Step 2] The USC: Establishing coordination...');
     await this.usc.synchronize(['woo', 'mirror', 'key', 'chewer', 'computational', 'silence']);
+    await this.usc.coordinateTask('woo', {
+      interfaceId: target.environmentId,
+      permissions: ['observe', 'map', 'analyze'],
+    }, 8);
+    await this.usc.coordinateTask('mirror', {
+      environmentId: target.environmentId,
+      rawState: engagementContext,
+    }, 8);
+    for (const feed of target.dataFeeds) {
+      await this.usc.coordinateTask('chewer', feed, 9);
+    }
+    await this.usc.coordinateTask('computational', {
+      data: target.dataFeeds.flatMap(feed => feed.data),
+    }, 9);
 
     // Step 3: Mirror renders dual-state (Cannot see: Intent)
     console.log('[Step 3] The Mirror: Rendering dual-state environment...');
