@@ -12,6 +12,9 @@ const client = read('client/src/pages/pantheon.tsx');
 const acquisition = read('server/services/crawlers/PublicAcquisitionInfrastructure.ts');
 const jobs = read('server/services/pantheon/PantheonBackgroundReportJob.ts');
 const peopleSearch = read('server/peopleSearch.ts');
+const categoryWorkflow = read('server/services/pantheon/PantheonCategoryWorkflow.ts');
+const progressTracker = read('client/src/components/PantheonProgressTracker.tsx');
+const firecrawl = read('server/services/shadowRetrieval/firecrawlAdapter.ts');
 
 const checks = [
   ['durable report status is retryable', routes.includes('report_store_converging') && routes.includes("Retry-After")],
@@ -32,6 +35,12 @@ const checks = [
   ['background jobs force complete crawler participation', jobs.includes('forceAllCrawlers: true') && peopleSearch.includes('const runFullRoster = forceAllCrawlers || searchDepth >= 3')],
   ['full roster starts before legacy base lane can starve it', peopleSearch.includes('const fullRosterPromise =') && peopleSearch.indexOf('const fullRosterPromise =') < peopleSearch.indexOf('const enhancedReport = await conductEnhancedPeopleSearch')],
   ['registry acquisition stops launching work at deadline', adapter.includes('collectionOpen()') && adapter.includes('offset < extendedTargets.length && collectionOpen()')],
+  ['30 displayed categories are backend-authoritative', categoryWorkflow.includes('PANTHEON_REPORT_CATEGORIES') && jobs.includes('onCategoryComplete') && jobs.includes('completedCategories')],
+  ['category advancement follows retrieval completion', categoryWorkflow.indexOf('await pantheonRetrievalAdapter.retrieve') < categoryWorkflow.indexOf('onCategoryComplete?.')],
+  ['client progress follows completed categories', progressTracker.includes('completedCategories / totalCategories') && !progressTracker.includes('Math.floor((progress / 100) * PANTHEON_CATEGORIES.length)')],
+  ['Firecrawl executes in background-report retrieval', adapter.includes("crawler: 'firecrawl'") && adapter.includes('defaultFirecrawlAdapter.scrape') && firecrawl.includes('scrapeUrl')],
+  ['category checkpoints support exact resume', jobs.includes('resumeFromCategory') && categoryWorkflow.includes('startCategoryIndex') && jobs.includes('initialReport')],
+  ['category crawler outcomes are persisted before advancement', jobs.includes('lastCategoryOutcome: outcome') && jobs.includes('partialReport')],
 ];
 
 const failed = checks.filter(([, ok]) => !ok);

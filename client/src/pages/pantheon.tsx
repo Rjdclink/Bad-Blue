@@ -37,6 +37,10 @@ export default function PantheonPage() {
   const [reportStartedAt, setReportStartedAt] = useState<string | null>(null);
   const [reportDeadlineAt, setReportDeadlineAt] = useState<string | null>(null);
   const [reportPhase, setReportPhase] = useState<string>('collecting');
+  const [reportCategoryNumber, setReportCategoryNumber] = useState<number | null>(null);
+  const [reportCategoryName, setReportCategoryName] = useState<string | null>(null);
+  const [completedCategories, setCompletedCategories] = useState(0);
+  const [totalCategories, setTotalCategories] = useState(30);
   const [downloading, setDownloading] = useState(false);
   const { toast } = useToast();
   
@@ -91,6 +95,10 @@ export default function PantheonPage() {
         if (typeof job?.startedAt === 'string') setReportStartedAt(job.startedAt);
         if (typeof job?.deadlineAt === 'string') setReportDeadlineAt(job.deadlineAt);
         if (typeof job?.state === 'string') setReportPhase(job.state);
+        if (Number.isFinite(Number(job?.categoryNumber))) setReportCategoryNumber(Number(job.categoryNumber));
+        if (typeof job?.categoryName === 'string') setReportCategoryName(job.categoryName);
+        if (Number.isFinite(Number(job?.completedCategories))) setCompletedCategories(Number(job.completedCategories));
+        if (Number.isFinite(Number(job?.totalCategories))) setTotalCategories(Number(job.totalCategories));
 
         if (payload.status === 'processing') {
           setSearching(true);
@@ -150,6 +158,10 @@ export default function PantheonPage() {
     setReportStartedAt(new Date().toISOString());
     setReportDeadlineAt(null);
     setReportPhase('collecting');
+    setReportCategoryNumber(1);
+    setReportCategoryName(null);
+    setCompletedCategories(0);
+    setTotalCategories(30);
 
     try {
       const response = await fetch('/api/osint/report-jobs', {
@@ -407,6 +419,10 @@ export default function PantheonPage() {
                 deadlineAt={reportDeadlineAt}
                 phase={reportPhase}
                 completed={reportState === 'completed'}
+                categoryNumber={reportCategoryNumber}
+                categoryName={reportCategoryName}
+                completedCategories={completedCategories}
+                totalCategories={totalCategories}
               />
             </section>
           )}
