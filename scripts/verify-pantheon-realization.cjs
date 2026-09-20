@@ -14,8 +14,8 @@ const acquisition = read('server/services/crawlers/PublicAcquisitionInfrastructu
 const checks = [
   ['durable report status is retryable', routes.includes('report_store_converging') && routes.includes("Retry-After")],
   ['client retries transient report-store status', client.includes('[404, 429, 502, 503, 504]')],
-  ['downloadable PDF route exists', routes.includes('/api/osint/report-jobs/:id/pdf')],
-  ['PDF includes provenance/crawler audit', pdf.includes('crawlerAudit') && pdf.includes('Sources Consulted')],
+  ['downloadable PDF route exists', routes.includes('/api/osint/report-jobs/:reportId/download')],
+  ['PDF includes provenance/crawler audit', pdf.includes('crawlerAudit') && pdf.includes('Source Provenance')],
   ['all primary crawler execution isolated', adapter.includes('searchAllIsolatedWithAudit')],
   ['razor extraction participates', adapter.includes('deployBackgroundReport')],
   ['Cain/Reaper supervision participates', adapter.includes('cainReaperSupervisor.supervise')],
