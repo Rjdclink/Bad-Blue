@@ -50,7 +50,15 @@ export class PantheonRetrievalAdapter {
     budgetMs?: number;
   }): Promise<PantheonRetrievalResponse> {
     const firstTarget = request.targets[0];
-    const host = firstTarget ? new URL(firstTarget).host : undefined;
+    let host: string | undefined;
+    if (firstTarget) {
+      try {
+        const parsed = new URL(firstTarget);
+        if (parsed.protocol === 'http:' || parsed.protocol === 'https:') host = parsed.host;
+      } catch {
+        // Discovery expressions are valid planner inputs but never URL hosts.
+      }
+    }
     const plan = selectCrawlerPlan({
       purpose: request.purpose,
       depth: request.depth || 4,
@@ -96,8 +104,16 @@ export class PantheonRetrievalAdapter {
     const evidence = results.map(normalizeResult);
 
     if (request.purpose === 'background_report') {
+      const urlTargets = request.targets.filter(target => {
+        try {
+          const parsed = new URL(target);
+          return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+        } catch {
+          return false;
+        }
+      });
       const publicResources = await acquirePublicResources(
-        request.targets,
+        urlTargets,
         Math.min(12_000, Math.max(3_000, Math.floor((request.budgetMs || 60_000) / Math.max(1, request.targets.length)))),
       );
       for (const resource of publicResources) {
@@ -213,13 +229,21 @@ export class PantheonRetrievalAdapter {
     }
 
     if (request.purpose === 'background_report') {
+      const extendedTargets = request.targets.filter(target => {
+        try {
+          const parsed = new URL(target);
+          return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+        } catch {
+          return false;
+        }
+      });
       const extendedRuns = await Promise.allSettled(
-        request.targets.map(target => twoStageDeployer.deployBackgroundReport(target, undefined, request.budgetMs))
+        extendedTargets.map(target => twoStageDeployer.deployBackgroundReport(target, undefined, request.budgetMs))
       );
 
       for (let index = 0; index < extendedRuns.length; index++) {
         const run = extendedRuns[index];
-        const target = request.targets[index];
+        const target = extendedTargets[index];
         if (run.status !== 'fulfilled') continue;
 
         for (const razor of run.value.razorResults) {

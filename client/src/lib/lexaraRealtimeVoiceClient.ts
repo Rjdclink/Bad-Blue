@@ -33,10 +33,12 @@ interface ActiveSpeech {
   timeout: number;
   requestedAt: number;
   renderReported: boolean;
+  progressTimeout: number | null;
 }
 
 const CONNECT_TIMEOUT_MS = 9_000;
 const SPEECH_TIMEOUT_MS = 180_000;
+const REALTIME_AUDIO_STALL_TIMEOUT_MS = 2_500;
 const CAPTURE_FRAME_MS = 80;
 
 const loadedWorkletContexts = new WeakSet<AudioContext>();
@@ -534,6 +536,7 @@ class LexaraRealtimeVoiceClient {
         timeout,
         requestedAt: performance.now(),
         renderReported: false,
+        progressTimeout: null,
       };
     });
 
@@ -577,6 +580,7 @@ class LexaraRealtimeVoiceClient {
 
     if (active) {
       window.clearTimeout(active.timeout);
+      if (active.progressTimeout !== null) window.clearTimeout(active.progressTimeout);
       this.activeSpeech = null;
       active.resolve();
     }
@@ -634,6 +638,13 @@ class LexaraRealtimeVoiceClient {
       active.onStart?.();
     }
     active.playbackDrained = false;
+    if (active.progressTimeout !== null) window.clearTimeout(active.progressTimeout);
+    active.progressTimeout = window.setTimeout(() => {
+      if (this.activeSpeech !== active) return;
+      const error = new Error('LEXARA realtime audio stream stalled');
+      this.clearPlayback();
+      this.failActiveSpeech(error);
+    }, REALTIME_AUDIO_STALL_TIMEOUT_MS);
     this.playback.port.postMessage({ type: 'audio', buffer }, [buffer]);
   }
 
@@ -675,6 +686,7 @@ class LexaraRealtimeVoiceClient {
       const active = this.activeSpeech;
       if (!active) return;
       window.clearTimeout(active.timeout);
+      if (active.progressTimeout !== null) window.clearTimeout(active.progressTimeout);
       this.activeSpeech = null;
       active.resolve();
     }
@@ -684,6 +696,7 @@ class LexaraRealtimeVoiceClient {
     if (this.activeSpeech !== active) return;
     if (!active.metadataComplete || !active.playbackDrained) return;
     window.clearTimeout(active.timeout);
+    if (active.progressTimeout !== null) window.clearTimeout(active.progressTimeout);
     this.cumulativeRenderedFrames += this.renderedFrames;
     this.renderedFrames = 0;
     this.activeSpeech = null;
@@ -698,6 +711,7 @@ class LexaraRealtimeVoiceClient {
     const active = this.activeSpeech;
     if (!active) return;
     window.clearTimeout(active.timeout);
+    if (active.progressTimeout !== null) window.clearTimeout(active.progressTimeout);
     this.activeSpeech = null;
     active.reject(error);
   }

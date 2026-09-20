@@ -10,6 +10,8 @@ const routes = read('server/routes.ts');
 const pdf = read('server/services/pantheon/PantheonBackgroundReportPdf.ts');
 const client = read('client/src/pages/pantheon.tsx');
 const acquisition = read('server/services/crawlers/PublicAcquisitionInfrastructure.ts');
+const jobs = read('server/services/pantheon/PantheonBackgroundReportJob.ts');
+const peopleSearch = read('server/peopleSearch.ts');
 
 const checks = [
   ['durable report status is retryable', routes.includes('report_store_converging') && routes.includes("Retry-After")],
@@ -23,6 +25,10 @@ const checks = [
   ['USC has real executor dispatch', initiative.includes('registerExecutor') && initiative.includes('await executor(task.task)')],
   ['credential-free public acquisition participates', adapter.includes('acquirePublicResources') && acquisition.includes('Private-network acquisition is not permitted')],
   ['external failures are route-local', adapter.includes('Promise.allSettled')],
+  ['discovery expressions are separated from URL acquisition', adapter.includes('new URL(firstTarget)') && adapter.includes('const urlTargets = request.targets.filter')],
+  ['report duration is an evidence budget, not a kill timer', jobs.includes('const report = await reportPromise') && !jobs.includes('Promise.race([reportPromise, budgetGuard])')],
+  ['collection budget preserves aggregation time', peopleSearch.includes('remainingBudgetMs') && peopleSearch.includes('hasCollectionBudget')],
+  ['background jobs force complete crawler participation', jobs.includes('forceAllCrawlers: true') && peopleSearch.includes('const runFullRoster = forceAllCrawlers || searchDepth >= 3')],
 ];
 
 const failed = checks.filter(([, ok]) => !ok);

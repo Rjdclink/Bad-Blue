@@ -29,7 +29,7 @@ import { useVoiceMode } from '@/hooks/useVoiceMode';
 import { useVoiceSynthesis } from '@/hooks/useVoiceSynthesis';
 import { cn } from '@/lib/utils';
 import { 
-  LEXARAEtherealAvatar, 
+  LEXARAAttorneyPortrait, 
   LEXARAStatusIndicator,
   type LEXARAEmotionHint,
   type LEXARAGazeHint,
@@ -979,7 +979,7 @@ export default function LexaraViewport() {
             
             {/* Avatar */}
             <div className="w-full h-full max-w-lg max-h-[600px] relative">
-              <LEXARAEtherealAvatar
+              <LEXARAAttorneyPortrait
                 isSpeaking={voiceSynthesis.isSpeaking}
                 isListening={voiceMode.isListening}
                 isThinking={isThinking}

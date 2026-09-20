@@ -77,7 +77,7 @@ function reportAvatarEvent(
   const payload = JSON.stringify({
     event,
     source: 'avatar',
-    renderer: 'embodied-canvas-v2',
+    renderer: 'lexara-portrait-rig-v3',
     ...details,
     userAgent: navigator.userAgent,
   });
@@ -434,6 +434,7 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
 }: LEXARAEtherealAvatarProps) {
   const [imageIndex, setImageIndex] = useState(0);
   const [reducedMotion, setReducedMotion] = useState(false);
+  const portraitRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const latestInputRef = useRef<LatestAvatarInput>({
@@ -547,6 +548,18 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
         },
       });
 
+      // Apply a tiny coherent portrait transform underneath the local facial/body
+      // rig. This makes breathing/head posture visibly readable on mobile while
+      // local eye/mouth/hand articulation remains on the overlay canvas.
+      const coherentX = Math.max(-1, Math.min(1, frame.headX * 0.42 + frame.torsoX * 0.18));
+      const coherentY = Math.max(-1, Math.min(1, frame.headY * 0.32 + (frame.torsoScaleY - 1) * 16));
+      const coherentRotate = Math.max(-0.7, Math.min(0.7, frame.headRollDeg * 0.14));
+      const coherentScale = 1 + Math.max(0, frame.gestureEnergy) * 0.0018;
+      const portrait = portraitRef.current;
+      if (portrait && !reducedMotion) {
+        portrait.style.transform = `translate3d(${coherentX}px, ${coherentY}px, 0) rotate(${coherentRotate}deg) scale(${coherentScale})`;
+      }
+
       const rect = canvas.getBoundingClientRect();
       const dprX = canvas.width / Math.max(1, rect.width);
       const dprY = canvas.height / Math.max(1, rect.height);
@@ -615,13 +628,15 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
       )}
       style={{ contain: 'layout paint' }}
       aria-label="LEXARA professional legal assistant"
-      data-live-avatar={LIVE_AVATAR_ENABLED ? 'embodied-canvas' : 'static'}
+      data-live-avatar={LIVE_AVATAR_ENABLED ? 'portrait-rig-v3' : 'static'}
       data-reduced-motion={reducedMotion ? 'true' : 'false'}
     >
       <img
+        ref={portraitRef}
         src={imageSrc}
         alt="LEXARA professional attorney seated behind her desk"
-        className="h-full w-full bg-slate-950 object-contain object-center"
+        className="h-full w-full bg-slate-950 object-contain object-center will-change-transform"
+        style={{ transformOrigin: '50% 58%' }}
         draggable={false}
         decoding="async"
         fetchPriority="high"
@@ -671,6 +686,8 @@ export function LEXARAStatusIndicator({
   );
 }
 
+// Backward-compatible symbol only. The production component is the attorney
+// portrait rig; no Ethereal visual system is instantiated.
 export const LEXARAEtherealAvatar = LEXARAAttorneyPortrait;
 
 export default LEXARAAttorneyPortrait;
