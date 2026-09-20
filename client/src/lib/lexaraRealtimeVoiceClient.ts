@@ -126,6 +126,10 @@ class LexaraPlaybackProcessor extends AudioWorkletProcessor {
 
     let writeOffset = 0;
     let energySum = 0;
+    let diffEnergySum = 0;
+    let zeroCrossings = 0;
+    let previousSample = 0;
+    let hasPreviousSample = false;
     while (writeOffset < output.length && this.queue.length) {
       const current = this.queue[0];
       const available = current.length - this.queueOffset;
@@ -134,6 +138,15 @@ class LexaraPlaybackProcessor extends AudioWorkletProcessor {
         const sample = current[this.queueOffset + i] / 0x8000;
         output[writeOffset + i] = sample;
         energySum += sample * sample;
+        if (hasPreviousSample) {
+          const diff = sample - previousSample;
+          diffEnergySum += diff * diff;
+          if ((sample >= 0 && previousSample < 0) || (sample < 0 && previousSample >= 0)) {
+            zeroCrossings += 1;
+          }
+        }
+        previousSample = sample;
+        hasPreviousSample = true;
       }
       writeOffset += count;
       this.queueOffset += count;
@@ -149,13 +162,31 @@ class LexaraPlaybackProcessor extends AudioWorkletProcessor {
     const level = writeOffset > 0
       ? Math.min(1, Math.sqrt(energySum / writeOffset) * 2.4)
       : 0;
+    const brightness = writeOffset > 1
+      ? Math.min(1, Math.sqrt(diffEnergySum / (writeOffset - 1)) * 3.4)
+      : 0;
+    const zeroCrossingRate = writeOffset > 1
+      ? Math.min(1, zeroCrossings / (writeOffset - 1))
+      : 0;
 
     if (this.hadAudio && this.queue.length === 0) {
       this.hadAudio = false;
       this.started = false;
-      this.port.postMessage({ type: 'drained', renderedFrames: this.renderedFrames, level });
+      this.port.postMessage({
+        type: 'drained',
+        renderedFrames: this.renderedFrames,
+        level,
+        brightness,
+        zeroCrossingRate,
+      });
     } else if (writeOffset > 0) {
-      this.port.postMessage({ type: 'rendered', renderedFrames: this.renderedFrames, level });
+      this.port.postMessage({
+        type: 'rendered',
+        renderedFrames: this.renderedFrames,
+        level,
+        brightness,
+        zeroCrossingRate,
+      });
     }
 
     return true;
@@ -233,6 +264,8 @@ class LexaraRealtimeVoiceClient {
   private ready = false;
   private renderedFrames = 0;
   private playbackLevel = 0;
+  private playbackBrightness = 0;
+  private playbackZeroCrossingRate = 0;
   private cumulativeRenderedFrames = 0;
   private onSttEvent: ((event: LexaraRealtimeSttEvent) => void) | null = null;
   private onFatal: ((error: Error) => void) | null = null;
@@ -245,6 +278,8 @@ class LexaraRealtimeVoiceClient {
     active: boolean;
     currentTimeSec: number;
     level: number;
+    brightness: number;
+    zeroCrossingRate: number;
     sampleRate: number | null;
     turnId: string | null;
   } {
@@ -253,6 +288,8 @@ class LexaraRealtimeVoiceClient {
       active: Boolean(this.activeSpeech?.started && this.renderedFrames > 0),
       currentTimeSec: sampleRate > 0 ? this.renderedFrames / sampleRate : 0,
       level: Math.max(0, Math.min(1, this.playbackLevel)),
+      brightness: Math.max(0, Math.min(1, this.playbackBrightness)),
+      zeroCrossingRate: Math.max(0, Math.min(1, this.playbackZeroCrossingRate)),
       sampleRate: sampleRate > 0 ? sampleRate : null,
       turnId: this.activeSpeech?.turnId || null,
     };
@@ -343,6 +380,14 @@ class LexaraRealtimeVoiceClient {
       const level = Number(event.data?.level);
       if (Number.isFinite(level)) {
         this.playbackLevel = Math.max(0, Math.min(1, level));
+      }
+      const brightness = Number(event.data?.brightness);
+      if (Number.isFinite(brightness)) {
+        this.playbackBrightness = Math.max(0, Math.min(1, brightness));
+      }
+      const zeroCrossingRate = Number(event.data?.zeroCrossingRate);
+      if (Number.isFinite(zeroCrossingRate)) {
+        this.playbackZeroCrossingRate = Math.max(0, Math.min(1, zeroCrossingRate));
       }
       const active = this.activeSpeech;
       if (
@@ -468,6 +513,8 @@ class LexaraRealtimeVoiceClient {
     this.playback?.port.postMessage({ type: 'reset_counter' });
     this.renderedFrames = 0;
     this.playbackLevel = 0;
+    this.playbackBrightness = 0;
+    this.playbackZeroCrossingRate = 0;
 
     const promise = new Promise<void>((resolve, reject) => {
       const timeout = window.setTimeout(() => {
@@ -657,6 +704,8 @@ class LexaraRealtimeVoiceClient {
 
   private clearPlayback(): void {
     this.playbackLevel = 0;
+    this.playbackBrightness = 0;
+    this.playbackZeroCrossingRate = 0;
     this.playback?.port.postMessage({ type: 'clear' });
   }
 }
