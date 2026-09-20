@@ -17,6 +17,7 @@ import {
 } from './services/legalIntelligence';
 import type { SherlockResult } from './services/socialIntelligence/types';
 import { pantheonRetrievalAdapter } from './services/crawlers/PantheonRetrievalAdapter';
+import { buildPantheonBackgroundRegistryTargets, PANTHEON_BACKGROUND_CATEGORIES } from './services/pantheon/PantheonSovereignSourceRegistry';
 
 // PANTHEON Crawler Orchestrator - Utilizes all crawler functions
 import {
@@ -100,30 +101,24 @@ function buildPantheonSearchTargets(name: string): string[] {
 }
 
 function buildPantheonBackgroundTargets(name: string, location: string | undefined, depth: number): string[] {
-  const trimmed = name.trim();
-  if (!trimmed) return [];
-  const locationTerm = String(location || '').trim();
-  const subject = locationTerm ? `"${trimmed}" "${locationTerm}"` : `"${trimmed}"`;
-  const queryFamilies = [
-    'public records government',
-    'court case docket litigation',
-    'property assessor deed ownership',
-    'business corporation registration',
-    'professional license credential',
-    'employment education biography',
-    'news archive media',
-    'social profile professional directory',
-    'site:.gov',
-    'public filing record',
-  ];
-  const counts: Record<number, number> = { 1: 4, 2: 6, 3: 8, 4: 10 };
-  const selected = queryFamilies.slice(0, counts[depth] || 10);
-  return selected.map((family, index) => {
-    const query = `${subject} ${family}`;
-    return index % 2 === 0
-      ? `https://www.google.com/search?q=${encodeURIComponent(query)}`
-      : `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
-  });
+  const perCategory = depth >= 4 ? 8 : depth === 3 ? 5 : depth === 2 ? 3 : 2;
+  const targets = buildPantheonBackgroundRegistryTargets(name, location, perCategory);
+  // Interleave categories so a bounded run broadens evidence classes before
+  // spending additional budget inside any one class.
+  const byCategory = new Map<string, string[]>();
+  for (const target of targets) {
+    const list = byCategory.get(target.category) || [];
+    list.push(target.url);
+    byCategory.set(target.category, list);
+  }
+  const output: string[] = [];
+  for (let i = 0; i < perCategory; i++) {
+    for (const category of PANTHEON_BACKGROUND_CATEGORIES) {
+      const url = byCategory.get(category)?.[i];
+      if (url) output.push(url);
+    }
+  }
+  return output;
 }
 
 function mergeCrawlerAudit(entries: NonNullable<PeopleSearchReport['crawlerAudit']>): NonNullable<PeopleSearchReport['crawlerAudit']> {
