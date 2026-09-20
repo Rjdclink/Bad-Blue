@@ -434,7 +434,7 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
 }: LEXARAEtherealAvatarProps) {
   const [imageIndex, setImageIndex] = useState(0);
   const [reducedMotion, setReducedMotion] = useState(false);
-  const [visibleMotion, setVisibleMotion] = useState({ x: 0, y: 0, rotate: 0, scale: 1 });
+  const portraitRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const latestInputRef = useRef<LatestAvatarInput>({
@@ -555,13 +555,9 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
       const coherentY = Math.max(-1, Math.min(1, frame.headY * 0.32 + (frame.torsoScaleY - 1) * 16));
       const coherentRotate = Math.max(-0.7, Math.min(0.7, frame.headRollDeg * 0.14));
       const coherentScale = 1 + Math.max(0, frame.gestureEnergy) * 0.0018;
-      if (Math.abs(coherentX) + Math.abs(coherentY) + Math.abs(coherentRotate) > 0.025 || mode === 'speaking') {
-        setVisibleMotion({
-          x: coherentX,
-          y: coherentY,
-          rotate: coherentRotate,
-          scale: coherentScale,
-        });
+      const portrait = portraitRef.current;
+      if (portrait && !reducedMotion) {
+        portrait.style.transform = `translate3d(${coherentX}px, ${coherentY}px, 0) rotate(${coherentRotate}deg) scale(${coherentScale})`;
       }
 
       const rect = canvas.getBoundingClientRect();
@@ -636,15 +632,11 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
       data-reduced-motion={reducedMotion ? 'true' : 'false'}
     >
       <img
+        ref={portraitRef}
         src={imageSrc}
         alt="LEXARA professional attorney seated behind her desk"
         className="h-full w-full bg-slate-950 object-contain object-center will-change-transform"
-        style={{
-          transform: LIVE_AVATAR_ENABLED && !reducedMotion
-            ? `translate3d(${visibleMotion.x}px, ${visibleMotion.y}px, 0) rotate(${visibleMotion.rotate}deg) scale(${visibleMotion.scale})`
-            : undefined,
-          transformOrigin: '50% 58%',
-        }}
+        style={{ transformOrigin: '50% 58%' }}
         draggable={false}
         decoding="async"
         fetchPriority="high"
