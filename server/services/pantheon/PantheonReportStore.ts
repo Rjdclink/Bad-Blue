@@ -55,7 +55,7 @@ function errorText(error: unknown): string {
 
 function isTransientDatabaseFailure(error: unknown): boolean {
   const message = errorText(error);
-  return /EAUTHQUERY|ECIRCUITBREAKER|connection to database not available|connection terminated|connection timeout|ETIMEDOUT|ECONNRESET|08006|57P01|too many clients|remaining connection slots/i.test(message);
+  return /EAUTHQUERY|ECIRCUITBREAKER|connection to database not available|connection terminated|connection timeout|ETIMEDOUT|ECONNRESET|08006|57P01|too many clients|remaining connection slots|CRYPTOCRAWLER_MASTER_POWER_OFF/i.test(message);
 }
 
 function openDatabaseCircuit(error: unknown): void {
