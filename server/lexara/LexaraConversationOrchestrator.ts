@@ -1,6 +1,4 @@
 import { AICollaborationOrchestrator } from '../aiCollaborationOrchestrator';
-import { generateOpenRouterText } from '../openRouterService';
-import { CURRENT_AI_MODELS } from '../aiHarmonyModelRegistry';
 import { UsageContext } from '../aiTokenGovernor';
 import { TaskComplexity, TaskPriority } from '../aiModelSelector';
 import { getConfiguredHarmonyProviders } from '../aiHarmonyModelRegistry';
@@ -41,10 +39,6 @@ const MAX_HISTORY_MESSAGES = 16;
 const MAX_HISTORY_CHARACTERS = 14000;
 const MAX_PROMPT_CHARACTERS = 7000;
 const LIVE_RESEARCH_BUDGET_MS = 700;
-// Provider attempts stay bounded, but the conversation has no independent master
-// kill-switch. Only the caller may cancel a superseded/disconnected turn.
-const LIVE_REASONING_PROVIDER_ATTEMPT_MS = 4_500;
-const LIVE_REASONING_MAX_FALLBACKS = 3;
 
 export type LexaraAcknowledgementKind =
   | 'presence'
@@ -352,10 +346,6 @@ export async function generateLexaraConversationResponse(
   let text = '';
   const harmonyStartedAt = Date.now();
   if (harmonyProviders.length > 0) {
-    // Do not wrap Harmony in a second aggregate deadline. Provider-local deadlines,
-    // health scoring and fallback limits bound failed routes. The caller signal is
-    // reserved for a genuinely superseded/disconnected user turn, so a slow
-    // primary can never abort its own recovery routes.
     try {
       const harmony = await AICollaborationOrchestrator.orchestrateCollaboration(
         'lexara-live-conversation',
@@ -375,8 +365,8 @@ export async function generateLexaraConversationResponse(
           providerPolicy: 'capability-first',
           systemPrompt,
           maxParticipants: 3,
-          requestTimeoutMs: LIVE_REASONING_PROVIDER_ATTEMPT_MS,
-          maxFallbacks: LIVE_REASONING_MAX_FALLBACKS,
+          requestTimeoutMs: 1_800,
+          maxFallbacks: 2,
           signal: context.signal,
         },
       );
@@ -390,37 +380,8 @@ export async function generateLexaraConversationResponse(
     }
   }
 
-  // Independent recovery lane: Harmony and its provider/model routing are one
-  // failure domain. If that entire domain produces no usable answer, make one
-  // bounded direct gateway attempt before exposing degraded mode. This path is
-  // deliberately outside AICollaborationOrchestrator so an orchestration bug,
-  // provider-health bookkeeping error, or exhausted Harmony route cannot become
-  // a global LEXARA outage.
-  if (!text && process.env.OPENROUTER_API_KEY?.trim() && !context.signal?.aborted) {
-    try {
-      const recovery = await generateOpenRouterText(userPrompt, {
-        model: CURRENT_AI_MODELS.openRouterAuto,
-        systemPrompt,
-        maxTokens: 700,
-        timeoutMs: LIVE_REASONING_PROVIDER_ATTEMPT_MS,
-        signal: context.signal,
-      });
-      text = recovery.content.trim();
-      if (text) {
-        console.info('[LEXARA Recovery] independent gateway recovered live legal turn', {
-          model: recovery.model,
-          latencyMs: recovery.latencyMs,
-        });
-      }
-    } catch (error) {
-      console.warn('[LEXARA Recovery] independent gateway unavailable', {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  // Safety remains narrow: only after both the normal capability pool and the
-  // independent recovery lane are exhausted do we decline to invent current law.
+  // Never substitute legacy template knowledge for current legal reasoning. If
+  // every live Harmony path is unavailable, fail safe rather than inventing law.
   if (!text) text = degradedLegalResponse(jurisdiction);
 
   console.info('[LEXARA Performance] live turn', {
