@@ -31,6 +31,92 @@ const MAX_MIRROR_ATTEMPTS = 30;
 const MAX_MEMORY_RECORDS = 24;
 const TERMINAL_JOURNAL_RETENTION_MS = 6 * 60 * 60_000;
 
+const SUPABASE_MIRROR_BUCKET = 'pantheon-report-state';
+const SUPABASE_MIRROR_TIMEOUT_MS = 1_500;
+let supabaseMirrorBucketReady = false;
+
+function supabaseMirrorConfig(): { url: string; key: string } | null {
+  const url = String(process.env.SUPABASE_URL || '').replace(/\/$/, '');
+  const key = String(process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+  return url && key ? { url, key } : null;
+}
+
+async function supabaseMirrorFetch(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SUPABASE_MIRROR_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function ensureSupabaseMirrorBucket(config: { url: string; key: string }): Promise<boolean> {
+  if (supabaseMirrorBucketReady) return true;
+  const headers = {
+    Authorization: `Bearer ${config.key}`,
+    apikey: config.key,
+    'Content-Type': 'application/json',
+  };
+  try {
+    const probe = await supabaseMirrorFetch(`${config.url}/storage/v1/bucket/${SUPABASE_MIRROR_BUCKET}`, { headers });
+    if (probe.ok) {
+      supabaseMirrorBucketReady = true;
+      return true;
+    }
+    if (probe.status !== 404) return false;
+    const created = await supabaseMirrorFetch(`${config.url}/storage/v1/bucket`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ id: SUPABASE_MIRROR_BUCKET, name: SUPABASE_MIRROR_BUCKET, public: false }),
+    });
+    supabaseMirrorBucketReady = created.ok || created.status === 409;
+    return supabaseMirrorBucketReady;
+  } catch {
+    return false;
+  }
+}
+
+async function writeSupabaseMirror(record: PantheonReportRecord): Promise<void> {
+  const config = supabaseMirrorConfig();
+  if (!config || !(await ensureSupabaseMirrorBucket(config))) return;
+  try {
+    const response = await supabaseMirrorFetch(
+      `${config.url}/storage/v1/object/${SUPABASE_MIRROR_BUCKET}/${safeReportId(record.id)}.json`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${config.key}`,
+          apikey: config.key,
+          'Content-Type': 'application/json',
+          'x-upsert': 'true',
+        },
+        body: JSON.stringify(serializable(record)),
+      },
+    );
+    if (!response.ok) {
+      console.warn('[PANTHEON REPORT STORE] Supabase state mirror write rejected', { reportId: record.id, status: response.status });
+    }
+  } catch (error) {
+    console.warn('[PANTHEON REPORT STORE] Supabase state mirror write unavailable', { reportId: record.id, error: errorText(error).slice(0, 300) });
+  }
+}
+
+async function readSupabaseMirror(reportId: string): Promise<PantheonReportRecord | null> {
+  const config = supabaseMirrorConfig();
+  if (!config || !(await ensureSupabaseMirrorBucket(config))) return null;
+  try {
+    const response = await supabaseMirrorFetch(
+      `${config.url}/storage/v1/object/authenticated/${SUPABASE_MIRROR_BUCKET}/${safeReportId(reportId)}.json`,
+      { headers: { Authorization: `Bearer ${config.key}`, apikey: config.key } },
+    );
+    if (!response.ok) return null;
+    return normalizeRecord(await response.json());
+  } catch {
+    return null;
+  }
+}
+
 function safeReportId(reportId: string): string {
   const normalized = String(reportId || '').trim();
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalized)) {
@@ -257,6 +343,7 @@ export async function createPantheonReportRecord(input: {
   // Journal before touching the remote database. A transient provider outage
   // can therefore never prevent the real report job from starting.
   await writeJournal(record);
+  await writeSupabaseMirror(record);
 
   if (canMirrorIdentity(record.userId) && canTryDatabase()) {
     try {
@@ -307,6 +394,7 @@ export async function updatePantheonReportRecord(
     completedAt: status === 'processing' ? null : new Date(),
   };
   await writeJournal(next);
+  await writeSupabaseMirror(next);
 
   if (canMirrorIdentity(next.userId) && canTryDatabase()) {
     try {
@@ -351,6 +439,15 @@ export async function getPantheonReportRecord(reportId: string): Promise<Pantheo
 
   const localFirst = await readJournal(reportId);
   if (localFirst && !canMirrorIdentity(localFirst.userId)) return localFirst;
+
+  if (!localFirst) {
+    const mirrored = await readSupabaseMirror(reportId);
+    if (mirrored) {
+      await writeJournal(mirrored);
+      if (mirrored.status !== 'processing') scheduleTerminalCleanup(mirrored);
+      return mirrored;
+    }
+  }
 
   if (canTryDatabase()) {
     try {
