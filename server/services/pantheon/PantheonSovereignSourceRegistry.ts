@@ -9,6 +9,7 @@ import { PANTHEON_VERIFIED_SOURCES_BATCH_08 } from './sources/batch08';
 import { PANTHEON_VERIFIED_SOURCES_BATCH_09 } from './sources/batch09';
 import { PANTHEON_VERIFIED_SOURCES_BATCH_10 } from './sources/batch10';
 import { PANTHEON_VERIFIED_SOURCES_BATCH_11 } from './sources/batch11';
+import { PANTHEON_VERIFIED_SOURCES_BATCH_12 } from './sources/batch12';
 /**
  * PANTHEON sovereign source registry.
  *
@@ -96,7 +97,7 @@ export function buildPantheonCategoryTargets(
  const out:PantheonSourceTarget[]=[]; const seen=new Set<string>();
  const add=(x:PantheonSourceTarget)=>{ if(!seen.has(x.url)){seen.add(x.url);out.push(x);} };
  // Verified direct authorities are always attempted before generated discovery URLs.
- for (const source of [...PANTHEON_VERIFIED_SOURCES_BATCH_01, ...PANTHEON_VERIFIED_SOURCES_BATCH_02, ...PANTHEON_VERIFIED_SOURCES_BATCH_03, ...PANTHEON_VERIFIED_SOURCES_BATCH_04, ...PANTHEON_VERIFIED_SOURCES_BATCH_05, ...PANTHEON_VERIFIED_SOURCES_BATCH_06, ...PANTHEON_VERIFIED_SOURCES_BATCH_07, ...PANTHEON_VERIFIED_SOURCES_BATCH_08, ...PANTHEON_VERIFIED_SOURCES_BATCH_09, ...PANTHEON_VERIFIED_SOURCES_BATCH_10, ...PANTHEON_VERIFIED_SOURCES_BATCH_11]) {
+ for (const source of [...PANTHEON_VERIFIED_SOURCES_BATCH_01, ...PANTHEON_VERIFIED_SOURCES_BATCH_02, ...PANTHEON_VERIFIED_SOURCES_BATCH_03, ...PANTHEON_VERIFIED_SOURCES_BATCH_04, ...PANTHEON_VERIFIED_SOURCES_BATCH_05, ...PANTHEON_VERIFIED_SOURCES_BATCH_06, ...PANTHEON_VERIFIED_SOURCES_BATCH_07, ...PANTHEON_VERIFIED_SOURCES_BATCH_08, ...PANTHEON_VERIFIED_SOURCES_BATCH_09, ...PANTHEON_VERIFIED_SOURCES_BATCH_10, ...PANTHEON_VERIFIED_SOURCES_BATCH_11, ...PANTHEON_VERIFIED_SOURCES_BATCH_12]) {
    if (!source.categories.includes(category)) continue;
    const q=`${identity} ${category}`;
    add({category,url:source.url,authority:source.authority,jurisdiction:source.jurisdiction,query:q});
