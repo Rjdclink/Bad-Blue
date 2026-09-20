@@ -1,6 +1,6 @@
 import type { LexaraEmbodimentFrame } from '@/lib/lexaraEmbodimentEngine';
 
-export type LexaraGpuTier = 'webgpu-60' | 'webgpu-45' | 'webgpu-30';
+export type LexaraGpuTier = 'webgpu-60' | 'webgpu-30';
 
 export interface LexaraGpuRenderer {
   tier: LexaraGpuTier;
@@ -49,6 +49,19 @@ fn influence(uv: vec2f, center: vec2f, radius: vec2f) -> f32 {
 @fragment
 fn fs(input: Out) -> @location(0) vec4f {
   var uv = input.uv;
+  let canvasAspect = params.viewport.x / max(1.0, params.viewport.y);
+  let imageAspect = params.viewport.z / max(1.0, params.viewport.w);
+  if (canvasAspect > imageAspect) {
+    let occupied = imageAspect / canvasAspect;
+    let edge = (1.0 - occupied) * 0.5;
+    if (uv.x < edge || uv.x > 1.0 - edge) { discard; }
+    uv.x = (uv.x - edge) / occupied;
+  } else {
+    let occupied = canvasAspect / imageAspect;
+    let edge = (1.0 - occupied) * 0.5;
+    if (uv.y < edge || uv.y > 1.0 - edge) { discard; }
+    uv.y = (uv.y - edge) / occupied;
+  }
   let headMask = influence(uv, vec2f(0.515, 0.322), vec2f(0.15, 0.245));
   let torsoMask = influence(uv, vec2f(0.515, 0.76), vec2f(0.31, 0.22));
   let mouthMask = influence(uv, vec2f(0.516, 0.432), vec2f(0.052, 0.038));
@@ -155,7 +168,7 @@ export async function createLexaraGpuRenderer(
       frame.headX, frame.headY, frame.headRollDeg, frame.headPitch,
       frame.torsoX, frame.torsoY, frame.breath, frame.gestureEnergy,
       frame.mouthOpen, frame.gazeX, frame.gazeY, frame.blink,
-      canvas.width, canvas.height, 0, 0,
+      canvas.width, canvas.height, texture.width, texture.height,
     ]);
     device.queue.writeBuffer(uniformBuffer, 0, values);
     const encoder = device.createCommandEncoder();
@@ -178,14 +191,11 @@ export async function createLexaraGpuRenderer(
     if (elapsed >= 2500) {
       const actualFps = rendered * 1000 / elapsed;
       if (targetFps === 60 && actualFps < 50) {
-        targetFps = 45;
-        tier = 'webgpu-45';
-      } else if (targetFps === 45 && actualFps < 37) {
         targetFps = 30;
         tier = 'webgpu-30';
-      } else if (targetFps < 60 && actualFps > targetFps * 1.18) {
-        targetFps = targetFps === 30 ? 45 : 60;
-        tier = targetFps === 60 ? 'webgpu-60' : 'webgpu-45';
+      } else if (targetFps === 30 && actualFps > 42) {
+        targetFps = 60;
+        tier = 'webgpu-60';
       }
       rendered = 0;
       sampleStart = nowMs;
