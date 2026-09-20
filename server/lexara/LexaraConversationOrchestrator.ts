@@ -41,7 +41,10 @@ const MAX_HISTORY_MESSAGES = 16;
 const MAX_HISTORY_CHARACTERS = 14000;
 const MAX_PROMPT_CHARACTERS = 7000;
 const LIVE_RESEARCH_BUDGET_MS = 700;
-// Provider attempts stay bounded, but the conversation has no independent master\n// kill-switch. Only the caller may cancel a superseded/disconnected turn.\nconst LIVE_REASONING_PROVIDER_ATTEMPT_MS = 4_500;\nconst LIVE_REASONING_MAX_FALLBACKS = 3;
+// Provider attempts stay bounded, but the conversation has no independent master
+// kill-switch. Only the caller may cancel a superseded/disconnected turn.
+const LIVE_REASONING_PROVIDER_ATTEMPT_MS = 4_500;
+const LIVE_REASONING_MAX_FALLBACKS = 3;
 
 export type LexaraAcknowledgementKind =
   | 'presence'
