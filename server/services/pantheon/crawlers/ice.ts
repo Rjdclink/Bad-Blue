@@ -1,7 +1,6 @@
 import { BaseCrawler } from '../baseCrawler';
 import { EntropySignature, CrawlerType } from '../core';
 import { createHash } from 'crypto';
-import axios from 'axios';
 import * as cheerio from 'cheerio';
 import { acquirePublicResource } from '../../crawlers/PublicAcquisitionInfrastructure';
 
@@ -197,36 +196,28 @@ export class IceCrawler extends BaseCrawler {
       const resolvedUrl = new URL(url, this.task.target).toString();
 
       if (resolvedUrl.match(/\.(jpg|jpeg|png)(?:[?#].*)?$/i)) {
-        const response = await axios.get(resolvedUrl, {
-          responseType: 'arraybuffer',
-          timeout: 3000,
-          maxContentLength: 5 * 1024 * 1024,
-          maxBodyLength: 5 * 1024 * 1024,
-          headers: { 'User-Agent': 'Mozilla/5.0' },
-        });
-        const bytes = Buffer.from(response.data);
+        const response = await acquirePublicResource(resolvedUrl, 3000);
+        if (!response.ok) return null;
+        const bytes = Buffer.from(response.content);
         return this.generateEntropySignature({
           type: 'image_resource',
-          url: resolvedUrl,
+          url: response.url,
           size: bytes.length,
-          contentType: response.headers['content-type'] || null,
+          contentType: response.contentType || null,
           sha256: createHash('sha256').update(bytes).digest('hex'),
         });
       }
       
       if (resolvedUrl.match(/\.(pdf|doc|docx|xls|xlsx)(?:[?#].*)?$/i)) {
-        const response = await axios.head(resolvedUrl, {
-          timeout: 3000,
-          maxRedirects: 3,
-          headers: { 'User-Agent': 'Mozilla/5.0' },
-        });
+        const response = await acquirePublicResource(resolvedUrl, 3000);
+        if (!response.ok) return null;
         return this.generateEntropySignature({
           type: 'document_resource',
-          url: resolvedUrl,
-          extension: new URL(resolvedUrl).pathname.split('.').pop()?.toLowerCase(),
-          contentType: response.headers['content-type'] || null,
-          contentLength: Number(response.headers['content-length'] || 0) || null,
-          lastModified: response.headers['last-modified'] || null,
+          url: response.url,
+          extension: new URL(response.url).pathname.split('.').pop()?.toLowerCase(),
+          contentType: response.contentType || null,
+          contentLength: response.content.length || null,
+          lastModified: response.lastModified || null,
         });
       }
       
