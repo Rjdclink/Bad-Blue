@@ -1,5 +1,6 @@
 import { PhylacterySystem } from '../storage/PhylacterySystem';
 import { StealthInfrastructure } from '../stealth/StealthInfrastructure';
+import { acquirePublicResource } from './PublicAcquisitionInfrastructure';
 
 /**
  * 🦅 BIRD OF PREY CRAWLER
@@ -15,17 +16,12 @@ interface Data { content: string; confidence: number; timestamp: number; target:
 interface RequestOptions { method?: string; headers?: Record<string, string>; body?: any; timeout?: number; }
 interface CloakingSignature { userAgent: string; createdAt: number; }
 
-async function executeRequest(url: string, options: RequestOptions, stealth?: StealthInfrastructure): Promise<Response> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), options.timeout || 30000);
-  try {
-    if (stealth) await stealth.connect(url, 'high');
-    const response = await fetch(url, { ...options, signal: controller.signal });
-    if (!response.ok) {
-      throw new Error(`Crawler request failed: HTTP ${response.status}`);
-    }
-    return response;
-  } finally { clearTimeout(timeoutId); }
+async function executeRequest(url: string, options: RequestOptions, _stealth?: StealthInfrastructure): Promise<Response> {
+  const method = String(options.method || 'GET').toUpperCase();
+  if (method !== 'GET' && method !== 'HEAD') throw new Error(`Pantheon crawler network method rejected: ${method}`);
+  const result = await acquirePublicResource(url, options.timeout || 30_000);
+  if (!result.ok) throw new Error(`Crawler request failed: ${result.errorType || 'network_failure'} ${result.status || ''} ${result.error || ''}`.trim());
+  return new Response(method === 'HEAD' ? null : result.content, { status: result.status || 200, headers: { 'content-type': result.contentType } });
 }
 
 function parseResults(html: string, maxLength = 1000): Data {
