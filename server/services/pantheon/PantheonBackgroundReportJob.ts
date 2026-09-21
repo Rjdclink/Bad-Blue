@@ -68,12 +68,28 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
 
     let latestPartialReport = input.initialReport || null;
     const { report, categoryOutcomes } = await conductPantheonCategoryWorkflow({
+      investigationId: input.reportId,
       name: input.name,
       location: input.location,
       searchDepth: input.searchDepth,
       deadlineAt: deadlineAt.getTime(),
       startCategoryIndex: input.resumeFromCategory,
       initialReport: input.initialReport,
+      onCategoryState: async ({ index, label, phase, completedCategories }) => {
+        await updatePantheonReportRecord(input.reportId, 'processing', {
+          job: jobEnvelope(input, phase === 'PERSISTING' ? 'finalizing' : 'running', {
+            startedAt: startedAt.toISOString(),
+            deadlineAt: deadlineAt.toISOString(),
+            categoryIndex: index,
+            categoryNumber: index + 1,
+            categoryName: label,
+            categoryPhase: phase,
+            completedCategories,
+            totalCategories: PANTHEON_REPORT_CATEGORIES.length,
+          }),
+          report: latestPartialReport,
+        });
+      },
       onCategoryStart: async ({ index, label, completedCategories }) => {
         console.log('[PANTHEON CATEGORY] start', { reportId: input.reportId, index: index + 1, label, completedCategories });
         await updatePantheonReportRecord(input.reportId, 'processing', {
