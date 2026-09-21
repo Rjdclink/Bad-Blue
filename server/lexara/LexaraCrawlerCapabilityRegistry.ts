@@ -63,7 +63,6 @@ const hasFirecrawl = () => !!process.env.FIRECRAWL_API_KEY?.trim();
 const hasOpenRouter = () => !!process.env.OPENROUTER_API_KEY?.trim();
 const hasPacer = () => !!(process.env.PACER_USERNAME?.trim() && process.env.PACER_PASSWORD?.trim());
 const hasSpiderFoot = () => !!process.env.SPIDERFOOT_URL?.trim();
-const hasBrowser = () => !!process.env.BROWSER_WS_ENDPOINT?.trim();
 
 function c(
   id: string,
@@ -137,7 +136,7 @@ export const LEXARA_CRAWLER_CAPABILITY_POOL: readonly LexaraCrawlerDescriptor[] 
   c('warrant-database', 'WarrantDatabaseScraper', 'criminal', 'server/services/criminalRecords/sources/WarrantDatabaseScraper.ts', ['criminal-records', 'public-records'], 'retrieval', 'deep', always),
   c('sex-offender-registry', 'SexOffenderRegistryScraper', 'criminal', 'server/services/criminalRecords/sources/SexOffenderRegistryScraper.ts', ['criminal-records', 'public-records'], 'retrieval', 'deep', always),
 
-  c('fast-people-search', 'FastPeopleSearchScraper', 'people', 'server/services/peopleSearch/sources/FastPeopleSearchScraper.ts', ['people-search', 'identity', 'contact', 'address'], 'retrieval', 'deep', hasBrowser),
+  c('fast-people-search', 'FastPeopleSearchScraper', 'people', 'server/services/peopleSearch/sources/FastPeopleSearchScraper.ts', ['people-search', 'identity', 'contact', 'address'], 'retrieval', 'deep', always),
   c('true-people-search', 'TruePeopleSearchScraper', 'people', 'server/services/peopleSearch/sources/TruePeopleSearchScraper.ts', ['people-search', 'identity', 'contact', 'address'], 'retrieval', 'deep', hasBrowser),
   c('whitepages', 'WhitePagesScraper', 'people', 'server/services/peopleSearch/sources/WhitePagesScraper.ts', ['people-search', 'identity', 'contact', 'address'], 'retrieval', 'deep', hasBrowser),
   c('social-media-scraper', 'SocialMediaScraperService', 'people', 'server/services/socialMediaScraper.ts', ['social-media', 'identity'], 'retrieval', 'deep'),
