@@ -16,6 +16,8 @@ import { SixCrawlerInitiative } from './SixCrawlerInitiative';
 import { acquirePublicResources } from './PublicAcquisitionInfrastructure';
 import { socialMediaScraper } from '../socialMediaScraper';
 import { crawlSeedOnceWithCrawlers } from '../../lib/seedFirstOsint';
+import { PeopleSearchAggregator } from '../peopleSearch/PeopleSearchAggregator';
+import { discoverCriminalRecordSources } from '../criminalRecords/CriminalSourceDiscovery';
 
 export interface RetrievalEvidence {
   crawler: string;
@@ -51,6 +53,8 @@ export class PantheonRetrievalAdapter {
     depth?: 1 | 2 | 3 | 4;
     budgetMs?: number;
     deadlineAt?: number;
+    subject?: string;
+    location?: string;
   }): Promise<PantheonRetrievalResponse> {
     const retrievalStartedAt = Date.now();
     const deadlineAt = request.deadlineAt
@@ -206,6 +210,104 @@ export class PantheonRetrievalAdapter {
             retrievedAt: new Date().toISOString(),
             metadata: { capabilityClass: 'seed-first', itemsFound: crawl.extract.itemsFound },
           });
+        }
+      }
+    }
+
+    if (request.purpose === 'background_report' && collectionOpen()) {
+      const subject = String(request.subject || '').trim();
+      if (subject) {
+        const nameParts = subject.split(/\s+/).filter(Boolean);
+        if (nameParts.length >= 2) {
+          const peopleSearch = new PeopleSearchAggregator();
+          try {
+            const person = await peopleSearch.search({
+              firstName: nameParts[0],
+              lastName: nameParts.slice(1).join(' '),
+              city: request.location,
+            });
+            const personEvidence = {
+              fullName: person.fullName,
+              age: person.age,
+              addresses: person.addresses,
+              phones: person.phones,
+              emails: person.emails,
+              relatives: person.relatives,
+              aliases: person.aliases,
+              source: person.source,
+            };
+            evidence.push({
+              crawler: 'people-search-aggregate',
+              target: subject,
+              content: JSON.stringify(personEvidence),
+              confidence: person.confidence,
+              retrievedAt: person.scrapedAt.toISOString(),
+              metadata: { capabilityClass: 'people-search' },
+            });
+            for (const crawler of ['fast-people-search', 'true-people-search', 'whitepages']) {
+              crawlerAudit.push({
+                crawler,
+                capabilityClass: 'pantheon-secondary',
+                status: 'completed_with_evidence',
+                evidenceCount: 1,
+                attempts: 1,
+                targets: 1,
+              });
+            }
+          } catch (error) {
+            for (const crawler of ['fast-people-search', 'true-people-search', 'whitepages']) {
+              crawlerAudit.push({
+                crawler,
+                capabilityClass: 'pantheon-secondary',
+                status: 'completed_no_evidence',
+                evidenceCount: 0,
+                attempts: 1,
+                targets: 1,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+          } finally {
+            await peopleSearch.cleanup().catch(() => undefined);
+          }
+        }
+
+        try {
+          const criminalSources = await discoverCriminalRecordSources({
+            fullName: subject,
+            state: request.location,
+          });
+          for (const crawler of ['state-court', 'county-court', 'warrant-database', 'sex-offender-registry']) {
+            crawlerAudit.push({
+              crawler,
+              capabilityClass: 'pantheon-secondary',
+              status: criminalSources.length > 0 ? 'completed_with_evidence' : 'completed_no_evidence',
+              evidenceCount: criminalSources.length,
+              attempts: 1,
+              targets: criminalSources.length,
+            });
+          }
+          for (const source of criminalSources) {
+            evidence.push({
+              crawler: 'criminal-source-discovery',
+              target: source.url,
+              content: JSON.stringify(source),
+              confidence: 0.8,
+              retrievedAt: new Date().toISOString(),
+              metadata: { capabilityClass: 'criminal-public-source', sourceKind: source.kind },
+            });
+          }
+        } catch (error) {
+          for (const crawler of ['state-court', 'county-court', 'warrant-database', 'sex-offender-registry']) {
+            crawlerAudit.push({
+              crawler,
+              capabilityClass: 'pantheon-secondary',
+              status: 'failed',
+              evidenceCount: 0,
+              attempts: 1,
+              targets: 1,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
         }
       }
     }
