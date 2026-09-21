@@ -257,15 +257,6 @@ export class PantheonRetrievalAdapter {
       const previousInitiativeAuth = process.env.SIX_CRAWLER_AUTHORIZED;
       process.env.SIX_CRAWLER_AUTHORIZED = 'true';
       const sevenBudgetMs = Number.isFinite(remainingBudgetMs()) ? remainingBudgetMs() : 120_000;
-      if (sevenBudgetMs <= 0) {
-        return {
-          available: true,
-          plan,
-          evidence,
-          crawlerAudit,
-          supervision: await cainReaperSupervisor.supervise(plan, evidence),
-        };
-      }
       const initiative = new SixCrawlerInitiative({
         authorizedMode: true,
         enableDualState: true,
