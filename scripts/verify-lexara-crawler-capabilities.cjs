@@ -48,6 +48,12 @@ for (const name of requiredNames) {
 }
 if (!process.exitCode) ok('full crawler inventory is represented in Lexara capability selection');
 
+if (!registry.includes("const hasBrowser = () => process.env.PUPPETEER_DISABLED !== 'true'")) {
+  fail('browser-backed crawlers incorrectly require a remote websocket despite bundled browser support');
+} else {
+  ok('browser-backed crawlers recognize bundled production browser capability');
+}
+
 const pacer = fs.readFileSync('server/services/criminalRecords/sources/PACERScraper.ts', 'utf8');
 if (
   !pacer.includes('pacer.login.uscourts.gov/services/cso-auth') ||
