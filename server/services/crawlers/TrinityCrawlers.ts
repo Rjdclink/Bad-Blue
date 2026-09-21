@@ -129,23 +129,18 @@ export class BlizzardCrawler {
 
   // Avalanche Mode (30 lines)
   async triggerAvalanche(initial: string): Promise<Data[]> {
-    const results: Data[] = [];
-    let currentTargets = [initial];
-    const visited = new Set<string>();
-    for (let wave = 0; wave < 5 && currentTargets.length > 0; wave++) {
-      const intensity: StormIntensity = wave === 0 ? 'flurry' : wave < 3 ? 'snow' : 'storm';
-      const waveResults = await this.deploy(currentTargets, intensity);
-      results.push(...waveResults);
-      currentTargets.forEach(t => visited.add(t));
-      const nextTargets: string[] = [];
-      for (const result of waveResults) {
-        const extracted = this.extractRelatedTargets(result.content);
-        for (const target of extracted) if (!visited.has(target) && nextTargets.length < 10) nextTargets.push(target);
-      }
-      currentTargets = nextTargets;
-      if (currentTargets.length === 0) break;
-    }
-    return results;
+    // Pantheon crawlers may analyze the controller-issued URL only. Discovered
+    // links are candidates returned in metadata; they are never executable work
+    // until PantheonCategoryWorkflow admits and schedules them.
+    const waveResults = await this.deploy([initial], 'flurry');
+    return waveResults.map(result => ({
+      ...result,
+      metadata: {
+        ...(result.metadata || {}),
+        discoveredCandidates: this.extractRelatedTargets(result.content),
+        discoveryExecutionAuthority: 'PantheonCategoryWorkflow',
+      },
+    }));
   }
 
   private extractRelatedTargets(content: string): string[] {
