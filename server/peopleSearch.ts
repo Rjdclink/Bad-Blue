@@ -460,7 +460,7 @@ async function searchPublicRecords(name: string): Promise<OSINTSource> {
               rawData: crawlerResults,
               crawlerUsed: 'PANTHEON',
             },
-            confidence: 0.85,
+            confidence: crawlerResults.reduce((sum, result) => sum + result.confidence, 0) / crawlerResults.length,
             timestamp: new Date(),
           };
         }
