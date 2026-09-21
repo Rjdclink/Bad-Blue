@@ -73,8 +73,11 @@ export class PantheonRetrievalAdapter {
     if (request.authority && request.authority.deadlineAt <= retrievalStartedAt) {
       throw new Error('Pantheon background retrieval rejected: work authorization deadline expired');
     }
-    const deadlineAt = request.deadlineAt
+    const requestedDeadlineAt = request.deadlineAt
       ?? (request.budgetMs == null ? undefined : retrievalStartedAt + request.budgetMs);
+    const deadlineAt = request.authority
+      ? Math.min(request.authority.deadlineAt, requestedDeadlineAt ?? request.authority.deadlineAt)
+      : requestedDeadlineAt;
     const remainingBudgetMs = () => deadlineAt == null
       ? Number.POSITIVE_INFINITY
       : Math.max(0, deadlineAt - Date.now());
