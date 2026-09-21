@@ -12,7 +12,6 @@ const pdf = read('server/services/pantheon/PantheonBackgroundReportPdf.ts');
 const client = read('client/src/pages/pantheon.tsx');
 const acquisition = read('server/services/crawlers/PublicAcquisitionInfrastructure.ts');
 const jobs = read('server/services/pantheon/PantheonBackgroundReportJob.ts');
-const peopleSearch = read('server/peopleSearch.ts');
 const categoryWorkflow = read('server/services/pantheon/PantheonCategoryWorkflow.ts');
 
 const checks = [
