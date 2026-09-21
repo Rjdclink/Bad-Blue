@@ -347,14 +347,17 @@ export class PantheonRetrievalAdapter {
     }
 
     if (request.purpose === 'background_report') {
-      const extendedTargets = request.targets.filter(target => {
+      const evidenceTargets = [...new Set(evidence.map(item => item.target).filter(target => {
         try {
           const parsed = new URL(target);
           return parsed.protocol === 'http:' || parsed.protocol === 'https:';
         } catch {
           return false;
         }
-      });
+      }))];
+      // Extraction/secondary analysis runs against sources that actually yielded
+      // evidence. Do not refetch every registry target through every secondary.
+      const extendedTargets = evidenceTargets;
       const EXTENDED_CONCURRENCY = 8;
       const extendedRuns: Array<{ target: string; run: PromiseSettledResult<Awaited<ReturnType<typeof twoStageDeployer.deployBackgroundReport>>> }> = [];
       for (let offset = 0; offset < extendedTargets.length && collectionOpen(); offset += EXTENDED_CONCURRENCY) {
