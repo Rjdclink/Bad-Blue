@@ -292,7 +292,7 @@ export async function conductPantheonCategoryWorkflow(input: {
 
     const ledgerGroups = category.registry.map(registryCategory => ({
       registryCategory,
-      targets: buildPantheonCategoryTargets(registryCategory, input.name, input.location, undefined),
+      targets: buildPantheonCategoryTargets(registryCategory, input.name, input.location, 300),
     }));
     const urlLedger = buildCategoryLedger(ledgerGroups);
     const targetGroups = ledgerGroups.map(group => group.targets);
