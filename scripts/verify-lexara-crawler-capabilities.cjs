@@ -136,7 +136,7 @@ if (
   !pantheonReportStore.includes("MAX_MIRROR_ATTEMPTS") ||
   !pantheonReportStore.includes("TERMINAL_JOURNAL_RETENTION_MS") ||
   !pantheonReportStore.includes("scheduleMirror(record.id)") ||
-  !pantheonRoutes.includes("createPantheonReportRecord") ||
+  !pantheonRoutes.includes("createIdempotentPantheonReportRecord") ||
   !pantheonRoutes.includes("getPantheonReportRecord") ||
   !pantheonReportJobs.includes("updatePantheonReportRecord") ||
   !pantheonStorage.includes("createdAt?: Date") ||
