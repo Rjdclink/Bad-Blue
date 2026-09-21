@@ -17,7 +17,6 @@ import { acquirePublicResources } from './PublicAcquisitionInfrastructure';
 import { socialMediaScraper } from '../socialMediaScraper';
 import { crawlSeedOnceWithCrawlers } from '../../lib/seedFirstOsint';
 import { PeopleSearchAggregator } from '../peopleSearch/PeopleSearchAggregator';
-import { discoverCriminalRecordSources } from '../criminalRecords/CriminalSourceDiscovery';
 
 export interface RetrievalEvidence {
   crawler: string;
@@ -271,44 +270,6 @@ export class PantheonRetrievalAdapter {
           }
         }
 
-        try {
-          const criminalSources = await discoverCriminalRecordSources({
-            fullName: subject,
-            state: request.location,
-          });
-          for (const crawler of ['state-court', 'county-court', 'warrant-database', 'sex-offender-registry']) {
-            crawlerAudit.push({
-              crawler,
-              capabilityClass: 'pantheon-secondary',
-              status: criminalSources.length > 0 ? 'completed_with_evidence' : 'completed_no_evidence',
-              evidenceCount: criminalSources.length,
-              attempts: 1,
-              targets: criminalSources.length,
-            });
-          }
-          for (const source of criminalSources) {
-            evidence.push({
-              crawler: 'criminal-source-discovery',
-              target: source.url,
-              content: JSON.stringify(source),
-              confidence: 0.8,
-              retrievedAt: new Date().toISOString(),
-              metadata: { capabilityClass: 'criminal-public-source', sourceKind: source.kind },
-            });
-          }
-        } catch (error) {
-          for (const crawler of ['state-court', 'county-court', 'warrant-database', 'sex-offender-registry']) {
-            crawlerAudit.push({
-              crawler,
-              capabilityClass: 'pantheon-secondary',
-              status: 'failed',
-              evidenceCount: 0,
-              attempts: 1,
-              targets: 1,
-              error: error instanceof Error ? error.message : String(error),
-            });
-          }
-        }
       }
     }
 
