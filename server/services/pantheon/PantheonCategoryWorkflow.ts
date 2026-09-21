@@ -1,5 +1,11 @@
 import type { PeopleSearchReport } from '../../peopleSearch';
 import type { PantheonReportCategoryLabel } from './PantheonCrawlerCapabilityMatrix';
+import {
+  finalizePantheonCategoryCapabilityOutcomes,
+  resolveHealthyPantheonPrimaryCapabilities,
+  type PantheonCapabilityHealth,
+  type PantheonCapabilityOutcome,
+} from './PantheonCapabilityRuntime';
 import { pantheonRetrievalAdapter, type PantheonRetrievalResponse } from '../crawlers/PantheonRetrievalAdapter';
 import { admitPantheonUrl } from '../crawlers/PublicAcquisitionInfrastructure';
 import {
@@ -112,6 +118,7 @@ export interface PantheonCategoryOutcome {
   expectedCapabilities: string[];
   completionState: PantheonCategoryCompletionState;
   completionReason: string;
+  capabilityOutcomes: PantheonCapabilityOutcome[];
 }
 
 function mergeAudit(entries: PantheonRetrievalResponse['crawlerAudit']) {
@@ -247,6 +254,8 @@ function transportFor(entry: PantheonUrlLedgerEntry): PantheonUrlLedgerEntry['tr
 }
 
 function buildCategoryLedger(
+  categoryLabel: string,
+  requiredCapabilities: string[],
   groups: Array<{ registryCategory: PantheonBackgroundCategory; targets: ReturnType<typeof buildPantheonCategoryTargets> }>,
 ): PantheonUrlLedgerEntry[] {
   const seen = new Set<string>();
@@ -273,7 +282,7 @@ function buildCategoryLedger(
           return {
             capability: routed.capability,
             capabilityReason: routed.reason,
-            requiredCapabilities: plannedPantheonCrawlerCapabilitiesForCategory(categoryLabel),
+            requiredCapabilities,
           };
         })(),
         transport: selectedTransport,
@@ -331,6 +340,7 @@ export async function conductPantheonCategoryWorkflow(input: {
   deadlineAt: number;
   startCategoryIndex?: number;
   initialReport?: PeopleSearchReport;
+  capabilityHealth: PantheonCapabilityHealth[];
   onCategoryState?: (state: { index: number; label: string; phase: PantheonCategoryPhase; completedCategories: number }) => Promise<void>;
   onCategoryStart?: (state: { index: number; label: string; completedCategories: number }) => Promise<void>;
   onCategoryComplete?: (state: { index: number; label: string; completedCategories: number; outcome: PantheonCategoryOutcome; partialReport: PeopleSearchReport }) => Promise<void>;
@@ -377,13 +387,15 @@ export async function conductPantheonCategoryWorkflow(input: {
     // This is a hard category share, not a fresh budget for every URL. It keeps
     // early categories from consuming the entire report deadline.
     const categoryDeadlineAt = Math.min(input.deadlineAt - finalizationReserveMs, Date.now() + categoryBudgetMs);
-    const expectedCapabilities = plannedPantheonCrawlerCapabilitiesForCategory(category.label);
+    const capabilityRoute = resolveHealthyPantheonPrimaryCapabilities(category.label, input.capabilityHealth);
+    const expectedCapabilities = capabilityRoute.requested;
+    const executableCapabilities = capabilityRoute.selected;
 
     const ledgerGroups = category.registry.map(registryCategory => ({
       registryCategory,
       targets: buildPantheonCategoryTargets(registryCategory, input.name, input.location, 300),
     }));
-    const urlLedger = buildCategoryLedger(ledgerGroups);
+    const urlLedger = buildCategoryLedger(category.label, executableCapabilities, ledgerGroups);
     const targetGroups = ledgerGroups.map(group => group.targets);
     // Interleave registry facets so a multi-facet category cannot be monopolized
     // by the first tag. Within each facet, direct primary authorities run first,
@@ -480,7 +492,7 @@ export async function conductPantheonCategoryWorkflow(input: {
             const routedCandidate = capabilityFor(category.label, candidate);
             candidate.capability = routedCandidate.capability;
             candidate.capabilityReason = routedCandidate.reason;
-            candidate.requiredCapabilities = plannedPantheonCrawlerCapabilitiesForCategory(category.label);
+            candidate.requiredCapabilities = executableCapabilities;
             candidate.transport = transportFor(candidate);
             urlLedger.push(candidate);
             prioritizedTargets.push(candidate.url);
@@ -568,6 +580,11 @@ export async function conductPantheonCategoryWorkflow(input: {
         entry.state = 'no_evidence';
       }
     }
+    const capabilityOutcomes = finalizePantheonCategoryCapabilityOutcomes({
+      categoryLabel: category.label,
+      health: input.capabilityHealth,
+      crawlerAudit: retrieval.crawlerAudit,
+    });
     const assessment = assessPantheonCategoryOutcome({
       label: category.label,
       targetCount: activeUrls.size,
@@ -597,6 +614,7 @@ export async function conductPantheonCategoryWorkflow(input: {
       expectedCapabilities: assessment.expectedCapabilities,
       completionState: assessment.state,
       completionReason: assessment.reason,
+      capabilityOutcomes,
     };
     categoryOutcomes.push(outcome);
     const completedCategoryCount = categoryOutcomes.filter(item => item.completionState === 'completed').length;

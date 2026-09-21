@@ -1,4 +1,8 @@
 import { getPantheonPrimaryCrawlerCapabilitiesForCategory } from './PantheonCrawlerCapabilityMatrix';
+import {
+  assessPantheonCapabilityCoverage,
+  type PantheonCapabilityOutcome,
+} from './PantheonCapabilityRuntime';
 
 export const PANTHEON_CORE_CRAWLER_CAPABILITIES = [
   'startrek', 'birdofprey', 'sixdegrees', 'cerberus', 'blizzard', 'lich',
@@ -124,6 +128,7 @@ export interface PantheonInvestigationAssessment {
   completedCategoryCount: number;
   partialCategoryCount: number;
   missingCapabilities: PantheonCoreCrawlerCapability[];
+  capabilityCoverage: ReturnType<typeof assessPantheonCapabilityCoverage>;
   releaseEligible: boolean;
 }
 

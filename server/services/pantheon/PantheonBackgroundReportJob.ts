@@ -3,6 +3,10 @@ import { conductPantheonCategoryWorkflow, PANTHEON_REPORT_CATEGORIES } from './P
 import { assessPantheonInvestigation } from './PantheonInvestigationController';
 import { canActivatePantheon } from '../pantheonCrawlerOrchestrator';
 import {
+  getPantheonCapabilityTelemetry,
+  runPantheonCapabilityHealthChecks,
+} from './PantheonCapabilityRuntime';
+import {
   getPantheonReportDurationMs,
   normalizePantheonSearchDepth,
   type PantheonSearchDepth,
@@ -62,6 +66,19 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       await new Promise(resolve => setTimeout(resolve, 5_000));
     }
 
+    const capabilityHealth = await runPantheonCapabilityHealthChecks({
+      investigationId: input.reportId,
+      deadlineAt: deadlineAt.getTime(),
+    });
+    await updatePantheonReportRecord(input.reportId, 'processing', {
+      job: jobEnvelope(input, 'running', {
+        startedAt: startedAt.toISOString(),
+        deadlineAt: deadlineAt.toISOString(),
+        capabilityHealth,
+      }),
+      report: null,
+    });
+
     const remainingCollectionMs = Math.max(0, deadlineAt.getTime() - Date.now());
     if (remainingCollectionMs <= 0) {
       throw new Error('PANTHEON investigation budget expired before collection could begin');
@@ -76,6 +93,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       deadlineAt: deadlineAt.getTime(),
       startCategoryIndex: input.resumeFromCategory,
       initialReport: input.initialReport,
+      capabilityHealth,
       onCategoryState: async ({ index, label, phase, completedCategories }) => {
         await updatePantheonReportRecord(input.reportId, 'processing', {
           job: jobEnvelope(input, phase === 'PERSISTING' ? 'finalizing' : 'running', {
@@ -155,6 +173,8 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
         completedCategories: investigation.completedCategoryCount,
         partialCategories: investigation.partialCategoryCount,
         missingCrawlerCapabilities: investigation.missingCapabilities,
+        capabilityCoverage: investigation.capabilityCoverage,
+        capabilityTelemetry: getPantheonCapabilityTelemetry(),
       }),
       report,
       categoryOutcomes,
@@ -169,6 +189,8 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
         completedCategories: investigation.completedCategoryCount,
         partialCategories: investigation.partialCategoryCount,
         missingCrawlerCapabilities: investigation.missingCapabilities,
+        capabilityCoverage: investigation.capabilityCoverage,
+        capabilityTelemetry: getPantheonCapabilityTelemetry(),
       }),
       report,
       categoryOutcomes,

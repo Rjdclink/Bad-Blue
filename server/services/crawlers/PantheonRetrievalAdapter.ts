@@ -15,6 +15,7 @@ import { twoStageDeployer } from '../pantheon/razors/TwoStageDeployer';
 import { acquirePublicResources } from './PublicAcquisitionInfrastructure';
 import { defaultFirecrawlAdapter } from '../shadowRetrieval/firecrawlAdapter';
 import { shadowRetrieval } from '../shadowRetrieval';
+import { getPantheonCategoryCapabilities } from '../pantheon/PantheonCrawlerCapabilityMatrix';
 
 export interface RetrievalEvidence {
   crawler: string;
@@ -209,6 +210,7 @@ export class PantheonRetrievalAdapter {
     // provide attributable subject evidence.
 
     if (request.purpose === 'background_report') {
+      const applicableCapabilities = getPantheonCategoryCapabilities(request.categoryLabel || '');
       const extendedTargets = request.targets.filter(target => {
         try {
           const parsed = new URL(target);
@@ -227,7 +229,7 @@ export class PantheonRetrievalAdapter {
           Number.isFinite(remainingBudgetMs()) ? Math.max(1, remainingBudgetMs()) : extendedLaneBudget,
         );
         const settled = await Promise.allSettled(
-          batch.map(target => twoStageDeployer.deployBackgroundReport(target, undefined, perBatchBudget))
+          batch.map(target => twoStageDeployer.deployBackgroundReport(target, undefined, perBatchBudget, applicableCapabilities))
         );
         settled.forEach((run, index) => extendedRuns.push({ target: batch[index], run }));
       }

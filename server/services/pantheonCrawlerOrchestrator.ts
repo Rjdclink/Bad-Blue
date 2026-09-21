@@ -207,6 +207,14 @@ export interface CrawlerResult {
   metadata?: Record<string, any>;
 }
 
+export interface CrawlerSourceOutcome {
+  sourceUrl: string;
+  status: 'completed_with_evidence' | 'completed_no_evidence' | 'failed' | 'timed_out';
+  retrievedAt: string;
+  durationMs: number;
+  error?: string;
+}
+
 export interface CrawlerExecutionAudit {
   crawler: string;
   capabilityClass: 'primary';
@@ -214,6 +222,8 @@ export interface CrawlerExecutionAudit {
   evidenceCount: number;
   attempts: number;
   targets: number;
+  durationMs?: number;
+  sourceOutcomes?: CrawlerSourceOutcome[];
   error?: string;
 }
 
@@ -504,6 +514,7 @@ export class PantheonCrawlerOrchestrator {
     const crawlersToUse = options.crawlers || this.getCrawlersForDepth(options.depth);
     const executions = await Promise.all(
       crawlersToUse.map(async crawler => {
+        const executionStartedAt = Date.now();
         let attempts = 0;
         let results: CrawlerResult[] = [];
         let lastError = '';
@@ -534,6 +545,23 @@ export class PantheonCrawlerOrchestrator {
         }
 
         const evidenceCount = results.filter(result => Boolean(result.content) && result.confidence > 0).length;
+        const durationMs = Date.now() - executionStartedAt;
+        const sourceOutcomes: CrawlerSourceOutcome[] = validTargets.map(target => {
+          const result = results.find(candidate => candidate.target === target);
+          return {
+            sourceUrl: target,
+            status: result && result.content && result.confidence > 0
+              ? 'completed_with_evidence'
+              : /timed out/i.test(lastError)
+                ? 'timed_out'
+                : lastError
+                  ? 'failed'
+                  : 'completed_no_evidence',
+            retrievedAt: new Date().toISOString(),
+            durationMs,
+            ...(lastError ? { error: lastError.slice(0, 300) } : {}),
+          };
+        });
         const audit: CrawlerExecutionAudit = {
           crawler,
           capabilityClass: 'primary',
@@ -547,6 +575,8 @@ export class PantheonCrawlerOrchestrator {
           evidenceCount,
           attempts,
           targets: validTargets.length,
+          durationMs,
+          sourceOutcomes,
           ...(lastError ? { error: lastError.slice(0, 300) } : {}),
         };
 
