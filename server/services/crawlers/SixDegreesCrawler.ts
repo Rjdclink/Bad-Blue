@@ -1,5 +1,6 @@
 import { PhylacterySystem } from '../storage/PhylacterySystem';
 import { StealthInfrastructure } from '../stealth/StealthInfrastructure';
+import { acquirePublicResource } from './PublicAcquisitionInfrastructure';
 
 /**
  * 🌐 SIX DEGREES CRAWLER
@@ -59,24 +60,19 @@ interface RequestOptions {
 
 // Utility functions
 async function executeRequest(url: string, options: RequestOptions, stealth?: StealthInfrastructure): Promise<Response> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), options.timeout || 30000);
-  try {
-    if (stealth) await stealth.connect(url, 'medium');
-    const response = await fetch(url, { ...options, signal: controller.signal });
-    if (!response.ok) {
-      throw new Error(`Crawler request failed: HTTP ${response.status}`);
-    }
-    return response;
-  } finally {
-    clearTimeout(timeoutId);
-  }
+  void stealth;
+  const resource = await acquirePublicResource(url, options.timeout || 30000);
+  if (!resource.ok) throw new Error(resource.error || `Crawler request failed: HTTP ${resource.status}`);
+  return new Response(resource.content, {
+    status: resource.status,
+    headers: { 'content-type': resource.contentType },
+  });
 }
 
 function parseResults(html: string, maxLength = 1000): Data {
   return {
-    content: html.replace(/<[^>]*>/g, ' ').substring(0, maxLength),
-    confidence: 0.8,
+    content: html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, maxLength),
+    confidence: html.replace(/<[^>]*>/g, ' ').trim() ? 0.8 : 0,
     timestamp: Date.now(),
     target: ''
   };
