@@ -394,6 +394,32 @@ export async function conductPantheonCategoryWorkflow(input: {
         });
         retrievalEvidence.push(...batchRetrieval.evidence);
         retrievalAudit.push(...batchRetrieval.crawlerAudit);
+
+        // Crawler-discovered URLs are non-executable candidates. The controller
+        // alone may admit them to this category's ledger and priority queue.
+        for (const item of batchRetrieval.evidence) {
+          const candidates = Array.isArray(item.metadata?.discoveredCandidates)
+            ? item.metadata.discoveredCandidates as unknown[]
+            : [];
+          for (const rawCandidate of candidates) {
+            const admission = admitPantheonUrl(String(rawCandidate || ''));
+            if (!admission.ok || urlLedger.some(entry => entry.url === admission.url)) continue;
+            const parent = urlLedger.find(entry => entry.url === canonicalUrl(item.target));
+            const candidate: PantheonUrlLedgerEntry = {
+              url: admission.url,
+              priority: Math.max(50, (parent?.priority || 100) - 25),
+              authority: 'discovery',
+              registryCategory: parent?.registryCategory || category.registry[0],
+              state: 'pending',
+              attempts: 0,
+              evidenceIds: [],
+            };
+            candidate.capability = capabilityFor(category.label, candidate);
+            candidate.transport = transportFor(candidate);
+            urlLedger.push(candidate);
+            prioritizedTargets.push(candidate.url);
+          }
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         retrievalAudit.push({
