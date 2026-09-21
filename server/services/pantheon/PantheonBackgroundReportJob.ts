@@ -1,5 +1,5 @@
 import { updatePantheonReportRecord } from './PantheonReportStore';
-import { conductFullOSINT } from '../../peopleSearch';
+import { conductPantheonCategoryWorkflow, PANTHEON_REPORT_CATEGORIES } from './PantheonCategoryWorkflow';
 import { canActivatePantheon } from '../pantheonCrawlerOrchestrator';
 import {
   getPantheonReportDurationMs,
@@ -13,6 +13,8 @@ export interface PantheonReportJobInput {
   name: string;
   location?: string;
   searchDepth: PantheonSearchDepth;
+  resumeFromCategory?: number;
+  initialReport?: any;
 }
 
 interface PersistedPantheonJob {
@@ -20,6 +22,7 @@ interface PersistedPantheonJob {
   name?: string;
   location?: string;
   searchDepth?: number;
+  completedCategories?: number;
 }
 
 const activeJobs = new Map<string, Promise<void>>();
@@ -63,18 +66,54 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       throw new Error('PANTHEON investigation budget expired before collection could begin');
     }
 
-    const reportPromise = conductFullOSINT(input.name, {
+    let latestPartialReport = input.initialReport || null;
+    const { report, categoryOutcomes } = await conductPantheonCategoryWorkflow({
+      name: input.name,
       location: input.location,
       searchDepth: input.searchDepth,
-      forceAllCrawlers: true,
-      reportBudgetMs: remainingCollectionMs,
-      reportDeadlineAt: deadlineAt.getTime(),
+      deadlineAt: deadlineAt.getTime(),
+      startCategoryIndex: input.resumeFromCategory,
+      initialReport: input.initialReport,
+      onCategoryStart: async ({ index, label, completedCategories }) => {
+        console.log('[PANTHEON CATEGORY] start', { reportId: input.reportId, index: index + 1, label, completedCategories });
+        await updatePantheonReportRecord(input.reportId, 'processing', {
+          job: jobEnvelope(input, 'running', {
+            startedAt: startedAt.toISOString(),
+            deadlineAt: deadlineAt.toISOString(),
+            categoryIndex: index,
+            categoryNumber: index + 1,
+            categoryName: label,
+            completedCategories,
+            totalCategories: PANTHEON_REPORT_CATEGORIES.length,
+          }),
+          report: latestPartialReport,
+        });
+      },
+      onCategoryComplete: async ({ index, label, completedCategories, outcome, partialReport }) => {
+        latestPartialReport = partialReport;
+        console.log('[PANTHEON CATEGORY] complete', {
+          reportId: input.reportId,
+          index: index + 1,
+          label,
+          completedCategories,
+          evidenceCount: outcome.evidenceCount,
+          crawlerOutcomes: outcome.crawlerAudit.length,
+        });
+        await updatePantheonReportRecord(input.reportId, 'processing', {
+          job: jobEnvelope(input, 'running', {
+            startedAt: startedAt.toISOString(),
+            deadlineAt: deadlineAt.toISOString(),
+            categoryIndex: Math.min(index + 1, PANTHEON_REPORT_CATEGORIES.length - 1),
+            categoryNumber: Math.min(index + 2, PANTHEON_REPORT_CATEGORIES.length),
+            categoryName: PANTHEON_REPORT_CATEGORIES[Math.min(index + 1, PANTHEON_REPORT_CATEGORIES.length - 1)]?.label,
+            completedCategories,
+            totalCategories: PANTHEON_REPORT_CATEGORIES.length,
+            lastCategoryOutcome: outcome,
+          }),
+          report: partialReport,
+        });
+      },
     });
-
-    // Collection owns the selected 5/10/20/30 minute window. The crawler
-    // pipeline receives the immutable deadline and stops starting new retrieval
-    // work when it closes; the promise then returns the evidence already gathered.
-    const report = await reportPromise;
 
     await updatePantheonReportRecord(input.reportId, 'processing', {
       job: jobEnvelope(input, 'finalizing', {
@@ -83,6 +122,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
         finalizingAt: new Date().toISOString(),
       }),
       report,
+      categoryOutcomes,
     });
 
     await updatePantheonReportRecord(input.reportId, 'completed', {
@@ -92,6 +132,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
         completedAt: new Date().toISOString(),
       }),
       report,
+      categoryOutcomes,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -131,7 +172,7 @@ export function resumePantheonReportJobFromRecord(report: {
   if (report.status !== 'processing' || isPantheonReportJobActive(report.id)) return null;
 
   const envelope = (report.reportData && typeof report.reportData === 'object')
-    ? report.reportData as { job?: PersistedPantheonJob }
+    ? report.reportData as { job?: PersistedPantheonJob; report?: any }
     : {};
   const job = envelope.job;
   const name = String(job?.name || report.searchQuery || '').trim();
@@ -143,5 +184,7 @@ export function resumePantheonReportJobFromRecord(report: {
     name,
     location: job?.location || undefined,
     searchDepth: normalizePantheonSearchDepth(job?.searchDepth),
+    resumeFromCategory: Math.max(0, Number(job?.completedCategories || 0)),
+    initialReport: envelope.report,
   });
 }
