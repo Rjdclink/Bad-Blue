@@ -72,6 +72,7 @@ export interface PantheonUrlLedgerEntry {
     retrievedAt?: string;
   };
   capability?: string;
+  capabilityReason?: string;
   transport?: 'direct-http'|'browser'|'search-provider'|'specialized-adapter'|'archive';
   startedAt?: string;
   completedAt?: string;
@@ -207,13 +208,13 @@ function sourcePriority(authority: 'primary'|'secondary'|'discovery'|'archive'):
   return ({ primary: 400, secondary: 300, archive: 200, discovery: 100 })[authority];
 }
 
-function capabilityFor(categoryLabel: string, entry: PantheonUrlLedgerEntry): string {
+function capabilityFor(categoryLabel: string, entry: PantheonUrlLedgerEntry): { capability: string; reason: string } {
   const value = `${categoryLabel} ${entry.registryCategory} ${entry.url}`.toLowerCase();
-  if (/relationship|associate|family|relative|social|username/.test(value)) return 'sixdegrees';
-  if (/court|criminal|arrest|warrant|offender|correction|probation|parole|government/.test(value)) return 'cerberus';
-  if (/news|media|business|property|employment|education|credential/.test(value)) return 'blizzard';
-  if (/timeline|corroboration|contradiction/.test(value)) return 'lich';
-  return 'startrek';
+  if (/relationship|associate|family|relative|social|username/.test(value)) return { capability: 'sixdegrees', reason: 'relationship-social-identity graph source' };
+  if (/court|criminal|arrest|warrant|offender|correction|probation|parole|government/.test(value)) return { capability: 'cerberus', reason: 'government-legal-record source' };
+  if (/news|media|business|property|employment|education|credential/.test(value)) return { capability: 'blizzard', reason: 'broad public-web corroboration source' };
+  if (/timeline|corroboration|contradiction/.test(value)) return { capability: 'lich', reason: 'timeline-corroboration analysis source' };
+  return { capability: 'startrek', reason: 'general authoritative public-source retrieval' };
 }
 
 function transportFor(entry: PantheonUrlLedgerEntry): PantheonUrlLedgerEntry['transport'] {
@@ -245,7 +246,10 @@ function buildCategoryLedger(
         state: 'pending',
         attempts: 0,
         evidenceIds: [],
-        capability: capabilityFor(group.registryCategory, { url, priority: sourcePriority(candidate.authority), authority: candidate.authority, registryCategory: group.registryCategory, state: 'pending', attempts: 0, evidenceIds: [] }),
+        ...(() => {
+          const routed = capabilityFor(group.registryCategory, { url, priority: sourcePriority(candidate.authority), authority: candidate.authority, registryCategory: group.registryCategory, state: 'pending', attempts: 0, evidenceIds: [] });
+          return { capability: routed.capability, capabilityReason: routed.reason };
+        })(),
         transport: transportFor({ url, priority: sourcePriority(candidate.authority), authority: candidate.authority, registryCategory: group.registryCategory, state: 'pending', attempts: 0, evidenceIds: [] }),
       });
     }
@@ -438,7 +442,9 @@ export async function conductPantheonCategoryWorkflow(input: {
               attempts: 0,
               evidenceIds: [],
             };
-            candidate.capability = capabilityFor(category.label, candidate);
+            const routedCandidate = capabilityFor(category.label, candidate);
+            candidate.capability = routedCandidate.capability;
+            candidate.capabilityReason = routedCandidate.reason;
             candidate.transport = transportFor(candidate);
             urlLedger.push(candidate);
             prioritizedTargets.push(candidate.url);
