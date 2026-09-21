@@ -299,6 +299,10 @@ if (!baseRazor.includes("typeof val === 'boolean' && val === true") || !baseRazo
 if (!retrievalAdapter.includes("crawlSeedOnceWithCrawlers") || !retrievalAdapter.includes("'seed-startrek'") || !retrievalAdapter.includes("'seed-sixdegrees'")) fail('Seed-first crawler skills are not wired into Pantheon');
 if (!retrievalAdapter.includes("socialMediaScraper.getTwitterProfile")) fail('Social-media crawler is not wired into Pantheon');
 if (!retrievalAdapter.includes('sevenEvidenceCounts') || !retrievalAdapter.includes('seven_crawler_deadline')) fail('Seven-crawler analysis is not evidence-derived and deadline bounded');
+if (!retrievalAdapter.includes('new PeopleSearchAggregator()') || !retrievalAdapter.includes("crawler: 'people-search-aggregate'")) fail('People-search crawler family is not wired into canonical Pantheon retrieval');
+if (!retrievalAdapter.includes("crawler: 'criminal-public-records'")) fail('Criminal public-source evidence is not wired into canonical Pantheon retrieval');
+if (!retrievalAdapter.includes('const evidenceTargets = [...new Set(evidence.map')) fail('Secondary Pantheon analysis is not routed from accepted evidence');
+if (!backgroundPeopleSearch.includes('subject: searchQuery') || !backgroundPeopleSearch.includes('location: options?.location')) fail('Pantheon controller is missing subject/location context');
 const peopleAggregator = fs.readFileSync('server/services/peopleSearch/PeopleSearchAggregator.ts', 'utf8');
 const webSearchService = fs.readFileSync('server/webSearchService.ts', 'utf8');
 if (!peopleAggregator.includes('no person-level evidence') || peopleAggregator.includes('age: ageMatch ? Number(ageMatch[1]) : query.age')) fail('People-search fallback can promote query input as observed evidence');
