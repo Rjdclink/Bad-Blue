@@ -13,6 +13,10 @@ interface PantheonProgressTrackerProps {
   deadlineAt?: string | null;
   phase?: string;
   completed?: boolean;
+  categoryNumber?: number | null;
+  categoryName?: string | null;
+  completedCategories?: number | null;
+  totalCategories?: number | null;
 }
 
 const DEPTH_DURATIONS = PANTHEON_REPORT_DURATIONS_MS;
@@ -29,6 +33,10 @@ export function PantheonProgressTracker({
   deadlineAt,
   phase = 'collecting',
   completed = false,
+  categoryNumber,
+  categoryName,
+  completedCategories,
+  totalCategories,
 }: PantheonProgressTrackerProps) {
   const [progress, setProgress] = useState(0);
   const [elapsedTime, setElapsedTime] = useState(0);
@@ -65,7 +73,21 @@ export function PantheonProgressTracker({
   const remainingMs = Number.isFinite(parsedDeadlineAt)
     ? Math.max(0, parsedDeadlineAt - Date.now())
     : Math.max(0, totalDuration - elapsedTime);
-  const finalizing = !completed && (phase === 'finalizing' || (isSearching && remainingMs === 0));
+  const finalizing = !completed && phase === 'finalizing';
+  const authoritativeTotalCategories = Math.max(1, totalCategories || PANTHEON_CATEGORIES.length);
+  const authoritativeCompletedCategories = Math.max(0, Math.min(authoritativeTotalCategories, completedCategories || 0));
+  const authoritativeCategoryNumber = Math.max(
+    1,
+    Math.min(authoritativeTotalCategories, categoryNumber || Math.min(authoritativeTotalCategories, authoritativeCompletedCategories + 1)),
+  );
+  const authoritativeProgress = completed
+    ? 100
+    : finalizing
+      ? Math.min(99, (authoritativeCompletedCategories / authoritativeTotalCategories) * 100)
+      : Math.min(99, (authoritativeCompletedCategories / authoritativeTotalCategories) * 100);
+  const displayedProgress = Number.isFinite(categoryNumber as number) || Number.isFinite(completedCategories as number)
+    ? authoritativeProgress
+    : progress;
   const minutes = Math.floor(remainingMs / 60000);
   const seconds = Math.floor((remainingMs % 60000) / 1000);
   const milliseconds = Math.floor((remainingMs % 1000) / 10);
@@ -93,7 +115,7 @@ export function PantheonProgressTracker({
             </h3>
           </div>
           <Badge variant="secondary" className={`text-base px-3 py-1 ${searchDepth === 4 ? 'bg-red-500/20 text-red-400 border-red-500/50' : ''}`}>
-            {Math.round(progress)}%
+            {Math.round(displayedProgress)}%
           </Badge>
         </div>
 
@@ -186,7 +208,7 @@ export function PantheonProgressTracker({
         {/* Progress Bar */}
         <div className="space-y-2">
           <Progress 
-            value={progress} 
+            value={displayedProgress} 
             className={`h-3 ${searchDepth === 4 ? 'bg-red-950' : 'bg-slate-900'}`}
           />
         </div>
@@ -194,8 +216,8 @@ export function PantheonProgressTracker({
         {/* Current category plus complete registry taxonomy. */}
         <div className="rounded-lg border border-cyan-500/30 bg-slate-950/70 p-3 text-center">
           <div className="text-xs uppercase tracking-wide text-muted-foreground">Current stage</div>
-          <div className="mt-1 font-semibold">{completed ? 'Report assembly complete' : finalizing ? 'Finalizing report from collected evidence' : PANTHEON_CATEGORIES[Math.min(PANTHEON_CATEGORIES.length - 1, Math.floor((progress / 100) * PANTHEON_CATEGORIES.length))]}</div>
-          <div className="mt-1 text-xs text-muted-foreground">{finalizing ? 'Collection closed — assembling available evidence' : <>Category {completed ? PANTHEON_CATEGORIES.length : Math.min(PANTHEON_CATEGORIES.length, Math.floor((progress / 100) * PANTHEON_CATEGORIES.length) + 1)} of {PANTHEON_CATEGORIES.length}</>}</div>
+          <div className="mt-1 font-semibold">{completed ? 'Report assembly complete' : finalizing ? 'Finalizing report from collected evidence' : categoryName || PANTHEON_CATEGORIES[authoritativeCategoryNumber - 1]}</div>
+          <div className="mt-1 text-xs text-muted-foreground">{finalizing ? 'Collection closed — assembling available evidence' : <>Category {completed ? authoritativeTotalCategories : authoritativeCategoryNumber} of {authoritativeTotalCategories}</>}</div>
         </div>
 
         {/* Real registry categories: one compact panel rather than synthetic scan-stage tags. */}
