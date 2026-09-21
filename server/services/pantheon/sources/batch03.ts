@@ -28,7 +28,8 @@ const categories=(u:string):string[]=>{
  if(/cms|hhs|fda|clinicaltrials|hrsa/i.test(u)) return ['credentials','professional-discipline','regulatory','professional-web'];
  if(/osha|dol\.|nlrb|eeoc/i.test(u)) return ['employment','credentials','professional-discipline','regulatory'];
  if(/usaspending|sam\.gov|fpds|grants|acquisition|sba\.|dla\./i.test(u)) return ['business','government-contracting','organizations'];
- if(/epa|fmcsa|faa/i.test(u)) return ['business','transportation','regulatory'];
+ if(/fmcsa|faa/i.test(u)) return ['business','transportation','regulatory'];
+ if(/epa/i.test(u)) return ['business','regulatory','government-contracting'];
  if(/ofac|bis\.|trade\.gov|state\.gov|interpol/i.test(u)) return ['sanctions','foreign-connections','regulatory'];
  if(/irs|fec|senate|house|opensecrets/i.test(u)) return ['nonprofits','campaign-finance','lobbying','organizations'];
  return ['business','regulatory'];
