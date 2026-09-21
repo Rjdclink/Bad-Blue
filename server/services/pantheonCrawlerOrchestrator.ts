@@ -594,14 +594,16 @@ export class PantheonCrawlerOrchestrator {
     console.log('[PANTHEON] Triggering AVALANCHE mode...');
     const results = await this.blizzard.triggerAvalanche(initialTarget);
     
-    return results.map(r => ({
-      crawler: 'blizzard-avalanche',
-      target: r.target,
-      content: r.content || '',
-      confidence: r.confidence || 0.8,
-      timestamp: r.timestamp,
-      metadata: { mode: 'avalanche' },
-    }));
+    return results
+      .filter(r => Boolean(r.content?.trim()) && Number.isFinite(r.confidence) && r.confidence > 0)
+      .map(r => ({
+        crawler: 'blizzard-avalanche',
+        target: r.target,
+        content: r.content,
+        confidence: r.confidence,
+        timestamp: r.timestamp,
+        metadata: { mode: 'avalanche' },
+      }));
   }
   
   /**
