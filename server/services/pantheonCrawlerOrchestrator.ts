@@ -32,6 +32,12 @@
 import { PhylacterySystem } from './storage/PhylacterySystem';
 import { StealthInfrastructure } from './stealth/StealthInfrastructure';
 import type { PantheonPrimaryCrawlerId } from './pantheon/PantheonCrawlerCapabilityMatrix';
+import {
+  createPantheonDeadline,
+  pantheonAbortableDelay,
+  racePantheonAbort,
+  throwIfPantheonAborted,
+} from './pantheon/PantheonDeadline';
 
 // Crawler imports
 import { 
@@ -243,6 +249,7 @@ export interface PantheonSearchOptions {
   stealth?: boolean;
   /** Storm intensity for Blizzard crawler */
   stormIntensity?: 'flurry' | 'snow' | 'storm' | 'blizzard' | 'whiteout';
+  signal?: AbortSignal;
 }
 
 /**
@@ -336,6 +343,7 @@ export class PantheonCrawlerOrchestrator {
    * Execute comprehensive PANTHEON search
    */
   async search(targets: string[], options: PantheonSearchOptions): Promise<CrawlerResult[]> {
+    throwIfPantheonAborted(options.signal);
     const requestedBudgetMs = Math.max(600000, options.timeout || 0);
     if (!this.initialized) {
       await this.initialize(requestedBudgetMs);
@@ -354,6 +362,7 @@ export class PantheonCrawlerOrchestrator {
       try {
         console.log('[PANTHEON] Activating STAR TREK crawler...');
         for (const target of targets) {
+          throwIfPantheonAborted(options.signal);
           const result = await this.startrek.warpTo(target);
           if (result) {
             results.push({
@@ -376,6 +385,7 @@ export class PantheonCrawlerOrchestrator {
       try {
         console.log('[PANTHEON] Activating BIRD OF PREY crawler (cloaked)...');
         for (const target of targets) {
+          throwIfPantheonAborted(options.signal);
           const result = await this.birdofprey.hunt(target);
           if (result) {
             results.push({
@@ -398,6 +408,7 @@ export class PantheonCrawlerOrchestrator {
       try {
         console.log('[PANTHEON] Activating SIX DEGREES crawler...');
         for (const target of targets) {
+          throwIfPantheonAborted(options.signal);
           const graph = await this.sixdegrees.mapConnections(target, 2);
           if (graph) {
             results.push({
@@ -423,6 +434,7 @@ export class PantheonCrawlerOrchestrator {
       try {
         console.log('[PANTHEON] Activating CERBERUS crawler (three-headed)...');
         for (const target of targets) {
+          throwIfPantheonAborted(options.signal);
           const result = await this.cerberus.attack(target);
           if (result) {
             results.push({
@@ -445,7 +457,9 @@ export class PantheonCrawlerOrchestrator {
       try {
         const intensity = options.stormIntensity || 'snow';
         console.log(`[PANTHEON] Activating BLIZZARD crawler (${intensity} intensity)...`);
+        throwIfPantheonAborted(options.signal);
         const blizzardResults = await this.blizzard.deploy(targets, intensity);
+        throwIfPantheonAborted(options.signal);
         for (const result of blizzardResults) {
           results.push({
             crawler: 'blizzard',
@@ -466,6 +480,7 @@ export class PantheonCrawlerOrchestrator {
       try {
         console.log('[PANTHEON] Activating LICH crawler (forbidden magic)...');
         for (const target of targets) {
+          throwIfPantheonAborted(options.signal);
           const spellType = options.depth >= 4 ? 'forbidden' : options.depth >= 3 ? 'complex' : 'simple';
           const result = await this.lich.castSpell(target, spellType);
           if (result) {
@@ -501,6 +516,7 @@ export class PantheonCrawlerOrchestrator {
     options: PantheonSearchOptions,
   ): Promise<{ results: CrawlerResult[]; audit: CrawlerExecutionAudit[] }> {
     const requestedBudgetMs = Math.max(1_000, options.timeout || 60_000);
+    throwIfPantheonAborted(options.signal);
     await this.initialize(requestedBudgetMs);
 
     const validTargets = [...new Set(targets)].filter(target => {
@@ -523,24 +539,25 @@ export class PantheonCrawlerOrchestrator {
         for (let attempt = 0; attempt < 2; attempt++) {
           attempts += 1;
           try {
-            const searchPromise = this.search(validTargets, {
-              ...options,
-              timeout: routeBudgetMs,
-              crawlers: [crawler],
-            });
-            results = await Promise.race([
-              searchPromise,
-              new Promise<CrawlerResult[]>((_, reject) =>
-                setTimeout(() => reject(new Error(`crawler route timed out after ${routeBudgetMs}ms`)), routeBudgetMs)
-              ),
-            ]);
+            const routeDeadline = createPantheonDeadline(Date.now() + routeBudgetMs, options.signal);
+            try {
+              const searchPromise = this.search(validTargets, {
+                ...options,
+                timeout: routeBudgetMs,
+                crawlers: [crawler],
+                signal: routeDeadline.signal,
+              });
+              results = await racePantheonAbort(searchPromise, routeDeadline.signal);
+            } finally {
+              routeDeadline.dispose();
+            }
             if (results.some(result => Boolean(result.content) && result.confidence > 0)) break;
           } catch (error) {
             lastError = error instanceof Error ? error.message : String(error);
           }
 
           if (attempt === 0 && requestedBudgetMs > routeBudgetMs) {
-            await new Promise(resolve => setTimeout(resolve, 250));
+            await pantheonAbortableDelay(250, options.signal);
           }
         }
 

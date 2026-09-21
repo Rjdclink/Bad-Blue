@@ -21,6 +21,7 @@ import { IceCrawler } from '../crawlers/ice';
 import { FarmCrawler, PhantomCrawler, NovaCrawler } from '../crawlers/utility';
 import { CrawlerType, CrawlerTask, EntropySignature } from '../core';
 import { acquirePublicResource } from '../../crawlers/PublicAcquisitionInfrastructure';
+import { createPantheonDeadline, racePantheonAbort, throwIfPantheonAborted } from '../PantheonDeadline';
 import {
   PANTHEON_RAZOR_SKILL_IDS,
   PANTHEON_SECONDARY_CRAWLER_IDS,
@@ -88,13 +89,15 @@ export class TwoStageDeployer {
     html?: string,
     reportBudgetMs?: number,
     capabilityIds?: readonly PantheonCapabilityId[],
+    signal?: AbortSignal,
   ): Promise<BackgroundReportDeployment> {
+    throwIfPantheonAborted(signal);
     const startedAt = Date.now();
     const boundedBudget = Math.max(30_000, reportBudgetMs || 60_000);
     const fetchTimeoutMs = Math.min(30_000, Math.max(5_000, Math.floor(boundedBudget / 30)));
     const razorTimeoutMs = Math.min(60_000, Math.max(STAGE_1_TIMEOUT, Math.floor(boundedBudget / 20)));
     const secondaryTimeoutMs = Math.min(120_000, Math.max(10_000, Math.floor(boundedBudget / 12)));
-    const content = html || await this.fetchContent(target, fetchTimeoutMs);
+    const content = html || await this.fetchContent(target, fetchTimeoutMs, signal);
     const allowed = new Set<PantheonCapabilityId>(capabilityIds || [
       ...PANTHEON_RAZOR_SKILL_IDS,
       ...PANTHEON_SECONDARY_CRAWLER_IDS,
@@ -102,9 +105,9 @@ export class TwoStageDeployer {
     const selectedRazors = this.razors.filter(razor => allowed.has(('razor:' + razor.type) as PantheonCapabilityId));
     const selectedSecondary = PANTHEON_SECONDARY_CRAWLER_IDS.filter(id => allowed.has(id));
     const razorResults = content
-      ? (await this.deployStage1(content, target, razorTimeoutMs, selectedRazors)).map(result => this.sanitizeBackgroundRazorResult(result))
+      ? (await this.deployStage1(content, target, razorTimeoutMs, selectedRazors, signal)).map(result => this.sanitizeBackgroundRazorResult(result))
       : [];
-    const secondaryResults = await this.deployAllSecondary(target, secondaryTimeoutMs, selectedSecondary);
+    const secondaryResults = await this.deployAllSecondary(target, secondaryTimeoutMs, selectedSecondary, signal);
     const razorAudit: BackgroundCapabilityAudit[] = selectedRazors.map(razor => {
       const result = razorResults.find(candidate => candidate.razorType === razor.type);
       return {
@@ -194,7 +197,9 @@ export class TwoStageDeployer {
     target: string,
     perCrawlerTimeoutMs: number = 10_000,
     allowedIds: readonly PantheonSecondaryCrawlerId[] = PANTHEON_SECONDARY_CRAWLER_IDS,
+    signal?: AbortSignal,
   ): Promise<BackgroundSecondaryResult[]> {
+    throwIfPantheonAborted(signal);
     const specs: Array<{
       crawler: PantheonSecondaryCrawlerId;
       type: CrawlerType;
@@ -221,12 +226,13 @@ export class TwoStageDeployer {
       };
       const crawler = spec.create(task);
       try {
-        const signatures = await Promise.race([
-          crawler.execute(),
-          new Promise<EntropySignature[]>((_, reject) =>
-            setTimeout(() => reject(new Error(`${spec.crawler}_timeout`)), perCrawlerTimeoutMs)
-          ),
-        ]);
+        const routeDeadline = createPantheonDeadline(Date.now() + perCrawlerTimeoutMs, signal);
+        let signatures: EntropySignature[];
+        try {
+          signatures = await racePantheonAbort(crawler.execute(), routeDeadline.signal);
+        } finally {
+          routeDeadline.dispose();
+        }
         return {
           crawler: spec.crawler,
           signatures,
@@ -377,28 +383,25 @@ export class TwoStageDeployer {
     url: string,
     overallTimeoutMs: number = STAGE_1_TIMEOUT,
     razors: BaseRazor[] = this.razors,
+    signal?: AbortSignal,
   ): Promise<RazorResult[]> {
+    throwIfPantheonAborted(signal);
     const perRazorTimeout = overallTimeoutMs / Math.max(1, razors.length);
     
-    const promises = razors.map(razor => 
-      razor.run(html, url, perRazorTimeout)
+    const completed: RazorResult[] = [];
+    const promises = razors.map(razor =>
+      razor.run(html, url, perRazorTimeout).then(result => {
+        completed.push(result);
+        return result;
+      })
     );
-
-    // Execute all razors in parallel with overall timeout
+    const stageDeadline = createPantheonDeadline(Date.now() + overallTimeoutMs, signal);
     try {
-      const results = await Promise.race([
-        Promise.all(promises),
-        new Promise<RazorResult[]>((_, reject) => 
-          setTimeout(() => reject(new Error('stage1_timeout')), overallTimeoutMs)
-        )
-      ]);
-      return results;
+      return await racePantheonAbort(Promise.all(promises), stageDeadline.signal);
     } catch {
-      // Return whatever completed
-      const settled = await Promise.allSettled(promises);
-      return settled
-        .filter((r): r is PromiseFulfilledResult<RazorResult> => r.status === 'fulfilled')
-        .map(r => r.value);
+      return completed;
+    } finally {
+      stageDeadline.dispose();
     }
   }
 
@@ -451,8 +454,8 @@ export class TwoStageDeployer {
   /**
    * Fetch content from target URL
    */
-  private async fetchContent(url: string, timeoutMs: number = 5000): Promise<string | null> {
-    const result = await acquirePublicResource(url, timeoutMs);
+  private async fetchContent(url: string, timeoutMs: number = 5000, signal?: AbortSignal): Promise<string | null> {
+    const result = await acquirePublicResource(url, timeoutMs, undefined, signal);
     return result.ok && result.content.trim() ? result.content : null;
   }
 

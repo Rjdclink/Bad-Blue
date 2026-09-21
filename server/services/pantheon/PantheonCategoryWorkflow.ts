@@ -1,5 +1,13 @@
 import type { PeopleSearchReport } from '../../peopleSearch';
 import type { PantheonReportCategoryLabel } from './PantheonCrawlerCapabilityMatrix';
+import { createPantheonDeadline, throwIfPantheonAborted } from './PantheonDeadline';
+import { runPantheonBounded } from './PantheonBoundedScheduler';
+import {
+  canonicalPantheonEvidenceUrl,
+  cleanPantheonEvidenceContent,
+  processPantheonEvidence,
+  dedupePantheonEvidence,
+} from './PantheonEvidencePipeline';
 import {
   finalizePantheonCategoryCapabilityOutcomes,
   resolveHealthyPantheonPrimaryCapabilities,
@@ -10,8 +18,6 @@ import { pantheonRetrievalAdapter, type PantheonRetrievalResponse } from '../cra
 import { admitPantheonUrl } from '../crawlers/PublicAcquisitionInfrastructure';
 import {
   assessPantheonCategoryOutcome,
-  isLivePantheonCrawlerAudit,
-  plannedPantheonCrawlerCapabilitiesForCategory,
   type PantheonCategoryCompletionState,
 } from './PantheonInvestigationController';
 import {
@@ -50,9 +56,9 @@ export const PANTHEON_REPORT_CATEGORIES = [
   { label: 'Internet & Web Footprint', registry: ['internet','domain-web','professional-web'] },
   { label: 'Government, Political & Public-Service Records', registry: ['government-employment','campaign-finance','lobbying','government-contracting'] },
   { label: 'Relationship & Timeline Intelligence', registry: ['relationship-graph','chronology','corroboration','contradictions','provenance'] },
-] as const satisfies readonly { label: string; registry: readonly PantheonBackgroundCategory[] }[];
+] as const satisfies readonly { label: PantheonReportCategoryLabel; registry: readonly PantheonBackgroundCategory[] }[];
 
-export type PantheonCategoryPhase = 'PENDING' | 'ACTIVE' | 'URL_WORK' | 'EVIDENCE_VALIDATION' | 'PERSISTING' | 'COMPLETE';
+export type PantheonCategoryPhase = 'PENDING' | 'ACTIVE' | 'URL_WORK' | 'EVIDENCE_VALIDATION' | 'PERSISTING' | 'COMPLETE' | 'PARTIAL';
 
 export interface PantheonWorkAuthorization {
   investigationId: string;
@@ -163,69 +169,6 @@ function intensityPolicy(depth: number) {
     { corroborationTarget: 1, discoveryExpansion: 1, fallbackDepth: 1 };
 }
 
-function canonicalUrl(value: string): string {
-  try {
-    const url = new URL(value);
-    url.hash = '';
-    for (const key of [...url.searchParams.keys()]) {
-      if (/^(utm_|fbclid|gclid)/i.test(key)) url.searchParams.delete(key);
-    }
-    return url.toString();
-  } catch {
-    return value.trim();
-  }
-}
-
-function cleanEvidenceContent(value: string): string {
-  return String(value || '')
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function isBlockedOrDiagnosticEvidence(text: string): boolean {
-  const lowered = text.toLowerCase();
-  return [
-    'our systems have detected unusual traffic',
-    'enable javascript on your web browser',
-    'captcha',
-    'access denied',
-    'forbidden',
-    'too many requests',
-    'rate limit',
-    'robot check',
-    'verify you are human',
-    'press / to jump to the search box',
-    'accessibility help',
-    'quick settings',
-  ].some(marker => lowered.includes(marker));
-}
-
-function isReportableEvidence(
-  item: PantheonRetrievalResponse['evidence'][number],
-  subject: string,
-  location?: string,
-): boolean {
-  if (item.metadata?.entropySignature || item.metadata?.cooperativeAnalysis) return false;
-  const text = cleanEvidenceContent(item.content);
-  if (text.length < 40) return false;
-  const lowered = text.toLowerCase();
-  if (lowered.includes('<!doctype') || lowered.includes('function(') || lowered.includes('webpack')) return false;
-  if (isBlockedOrDiagnosticEvidence(text)) return false;
-
-  // Customer findings must actually mention the subject (or a strong identity
-  // component), rather than merely proving that a registry/search page loaded.
-  const subjectTokens = subject.toLowerCase().split(/\s+/).map(v => v.trim()).filter(v => v.length >= 2);
-  const subjectMatches = subjectTokens.filter(token => lowered.includes(token)).length;
-  const locationTokens = String(location || '').toLowerCase().split(/[\s,]+/).filter(v => v.length >= 3);
-  const locationMatch = locationTokens.some(token => lowered.includes(token));
-  return subjectTokens.length === 0
-    ? false
-    : subjectMatches >= Math.min(2, subjectTokens.length) || (subjectMatches >= 1 && locationMatch);
-}
-
 function sourcePriority(authority: 'primary'|'secondary'|'discovery'|'archive'): number {
   return ({ primary: 400, secondary: 300, archive: 200, discovery: 100 })[authority];
 }
@@ -319,20 +262,10 @@ function interleaveCategoryTargets(
   return out;
 }
 
-function dedupeEvidence(items: PantheonRetrievalResponse['evidence']) {
-  const seen = new Set<string>();
-  return items.filter(item => {
-    const content = cleanEvidenceContent(item.content);
-    const key = `${canonicalUrl(item.target)}|${content.slice(0, 500).toLowerCase()}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
 let activeCanonicalInvestigation: string | null = null;
 
-export async function conductPantheonCategoryWorkflow(input: {
+
+export interface PantheonCategoryWorkflowInput {
   investigationId: string;
   name: string;
   location?: string;
@@ -341,54 +274,41 @@ export async function conductPantheonCategoryWorkflow(input: {
   startCategoryIndex?: number;
   initialReport?: PeopleSearchReport;
   capabilityHealth?: readonly PantheonCapabilityHealth[];
+  signal?: AbortSignal;
+  categoryConcurrency?: number;
   onCategoryState?: (state: { index: number; label: string; phase: PantheonCategoryPhase; completedCategories: number }) => Promise<void>;
   onCategoryStart?: (state: { index: number; label: string; completedCategories: number }) => Promise<void>;
   onCategoryComplete?: (state: { index: number; label: string; completedCategories: number; outcome: PantheonCategoryOutcome; partialReport: PeopleSearchReport }) => Promise<void>;
-}): Promise<{ report: PeopleSearchReport; categoryOutcomes: PantheonCategoryOutcome[] }> {
-  const capabilityHealth = input.capabilityHealth || [];
-  if (!input.investigationId) throw new Error('Pantheon canonical workflow requires investigationId');
-  if (activeCanonicalInvestigation && activeCanonicalInvestigation !== input.investigationId) {
-    throw new Error(`Pantheon canonical workflow already active for ${activeCanonicalInvestigation}`);
-  }
-  activeCanonicalInvestigation = input.investigationId;
-  try {
-  const evidence: PantheonRetrievalResponse['evidence'] = [];
-  const audits: PantheonRetrievalResponse['crawlerAudit'] = [];
-  const categoryOutcomes: PantheonCategoryOutcome[] = [];
-  const productiveWorkTarget = categoryProductiveWorkTarget(input.searchDepth);
-  const policy = intensityPolicy(input.searchDepth);
+}
 
-  const report: PeopleSearchReport = input.initialReport ? { ...input.initialReport } : {
-    identitySummary: { name: input.name, verificationStatus: 'Public-source evidence review completed' },
-    contactInformation: [],
-    socialMediaPresence: [],
-    employmentAndEducation: [],
-    locationHistory: [],
-    publicRecords: [],
-    onlineMentions: [],
-    riskAndReputation: [],
-    summary: '',
-    confidenceScore: 0,
-    sources: [],
-    crawlerAudit: [],
-  };
+interface PantheonCategoryExecution {
+  outcome: PantheonCategoryOutcome;
+  evidence: PantheonRetrievalResponse['evidence'];
+  audit: PantheonRetrievalResponse['crawlerAudit'];
+}
 
-  const startCategoryIndex = Math.max(0, Math.min(PANTHEON_REPORT_CATEGORIES.length - 1, input.startCategoryIndex || 0));
-  for (let index = startCategoryIndex; index < PANTHEON_REPORT_CATEGORIES.length; index += 1) {
+interface PantheonCategoryExecutionInput extends PantheonCategoryWorkflowInput {
+  index: number;
+  capabilityHealth: readonly PantheonCapabilityHealth[];
+  categoryDeadlineAt: number;
+  finalizationReserveMs: number;
+  productiveWorkTarget: number;
+  policy: ReturnType<typeof intensityPolicy>;
+  signal: AbortSignal;
+  completedCount: () => number;
+}
+
+async function executePantheonCategory(input: PantheonCategoryExecutionInput): Promise<PantheonCategoryExecution> {
+  const index = input.index;
     const category = PANTHEON_REPORT_CATEGORIES[index];
     const startedAt = new Date().toISOString();
-    const completedBeforeCategory = categoryOutcomes.filter(item => item.completionState === 'completed').length;
+    const completedBeforeCategory = input.completedCount();
     await input.onCategoryState?.({ index, label: category.label, phase: 'ACTIVE', completedCategories: completedBeforeCategory });
     await input.onCategoryStart?.({ index, label: category.label, completedCategories: completedBeforeCategory });
 
-    const remainingCategories = PANTHEON_REPORT_CATEGORIES.length - index;
-    const remainingMs = Math.max(1, input.deadlineAt - Date.now());
-    const finalizationReserveMs = Math.min(15_000, Math.max(2_000, Math.floor(remainingMs * 0.08)));
-    const categoryBudgetMs = Math.max(1_500, Math.floor(Math.max(1, remainingMs - finalizationReserveMs) / remainingCategories));
-    // This is a hard category share, not a fresh budget for every URL. It keeps
-    // early categories from consuming the entire report deadline.
-    const categoryDeadlineAt = Math.min(input.deadlineAt - finalizationReserveMs, Date.now() + categoryBudgetMs);
-    const capabilityRoute = resolveHealthyPantheonPrimaryCapabilities(category.label, capabilityHealth);
+    const finalizationReserveMs = input.finalizationReserveMs;
+    const categoryDeadlineAt = input.categoryDeadlineAt;
+    const capabilityRoute = resolveHealthyPantheonPrimaryCapabilities(category.label, input.capabilityHealth);
     const expectedCapabilities = capabilityRoute.requested;
     const executableCapabilities = capabilityRoute.selected;
 
@@ -411,7 +331,8 @@ export async function conductPantheonCategoryWorkflow(input: {
     await input.onCategoryState?.({ index, label: category.label, phase: 'URL_WORK', completedCategories: completedBeforeCategory });
 
     let productiveWorkUnits = 0;
-    while (cursor < prioritizedTargets.length && productiveWorkUnits < productiveWorkTarget) {
+    while (cursor < prioritizedTargets.length && productiveWorkUnits < input.productiveWorkTarget) {
+      throwIfPantheonAborted(input.signal);
       const remainingForWork = categoryDeadlineAt - Date.now();
       if (remainingForWork <= 750) break;
 
@@ -449,6 +370,7 @@ export async function conductPantheonCategoryWorkflow(input: {
               : entry?.capability ? [entry.capability] : [];
           }),
           transportHint: batch.map(url => urlLedger.find(item => item.url === url)?.transport).filter(Boolean) as string[],
+          signal: input.signal,
           authority: {
             investigationId: input.investigationId,
             categoryId: `${input.investigationId}:${index}`,
@@ -466,8 +388,8 @@ export async function conductPantheonCategoryWorkflow(input: {
         retrievalAudit.push(...batchRetrieval.crawlerAudit);
         const producedEvidence = batchRetrieval.evidence.filter(item => item.content.trim() && item.confidence > 0);
         if (producedEvidence.length > 0) {
-          const independentSources = new Set(producedEvidence.map(item => canonicalUrl(item.target))).size;
-          productiveWorkUnits += Math.min(policy.corroborationTarget, Math.max(1, independentSources));
+          const independentSources = new Set(producedEvidence.map(item => canonicalPantheonEvidenceUrl(item.target))).size;
+          productiveWorkUnits += Math.min(input.policy.corroborationTarget, Math.max(1, independentSources));
         }
 
         // Crawler-discovered URLs are non-executable candidates. The controller
@@ -479,7 +401,7 @@ export async function conductPantheonCategoryWorkflow(input: {
           for (const rawCandidate of candidates) {
             const admission = admitPantheonUrl(String(rawCandidate || ''));
             if (!admission.ok || urlLedger.some(entry => entry.url === admission.url)) continue;
-            const parent = urlLedger.find(entry => entry.url === canonicalUrl(item.target));
+            const parent = urlLedger.find(entry => entry.url === canonicalPantheonEvidenceUrl(item.target));
             const candidate: PantheonUrlLedgerEntry = {
               url: admission.url,
               priority: Math.max(50, (parent?.priority || 100) - 25),
@@ -531,29 +453,25 @@ export async function conductPantheonCategoryWorkflow(input: {
     };
 
     await input.onCategoryState?.({ index, label: category.label, phase: 'EVIDENCE_VALIDATION', completedCategories: completedBeforeCategory });
-    const reportable = dedupeEvidence(
-      retrieval.evidence.filter(item => isReportableEvidence(item, input.name, input.location))
-    );
-    evidence.push(...reportable.map(item => ({
+    const validation = processPantheonEvidence(retrieval.evidence, input.name, input.location);
+    const reportable = validation.accepted;
+    const acceptedEvidence = reportable.map(item => ({
       ...item,
-      content: cleanEvidenceContent(item.content).slice(0, 1800),
-      target: canonicalUrl(item.target),
+      content: cleanPantheonEvidenceContent(item.content).slice(0, 1800),
+      target: canonicalPantheonEvidenceUrl(item.target),
       metadata: { ...(item.metadata || {}), reportCategory: category.label, categoryIndex: index },
-    })));
-    audits.push(...retrieval.crawlerAudit);
+    }));
 
     const urlsAttempted = retrieval.crawlerAudit.reduce((sum, item) => sum + Number(item.targets || 0), 0);
     const urlsSuccessful = retrieval.crawlerAudit.reduce((sum, item) => sum + Number(item.evidenceCount || 0), 0);
-    const crawlersUsed = [...new Set(retrieval.crawlerAudit
-      .filter(isLivePantheonCrawlerAudit)
-      .map(item => item.crawler))];
-    const evidenceByUrl = new Map(reportable.map((item, evidenceIndex) => [canonicalUrl(item.target), `${index}:${evidenceIndex}`]));
+    const crawlersUsed = [...new Set(reportable.map(item => item.crawler).filter(Boolean))];
+    const evidenceByUrl = new Map(reportable.map((item, evidenceIndex) => [canonicalPantheonEvidenceUrl(item.target), `${index}:${evidenceIndex}`]));
     const auditFailures = retrieval.crawlerAudit.filter(item => item.status === 'failed' || item.status === 'timed_out');
     for (const entry of urlLedger) {
       if (!activeUrls.has(entry.url)) continue;
       const evidenceId = evidenceByUrl.get(entry.url);
       entry.completedAt = new Date().toISOString();
-      const matchingEvidence = reportable.find(item => canonicalUrl(item.target) === entry.url);
+      const matchingEvidence = reportable.find(item => canonicalPantheonEvidenceUrl(item.target) === entry.url);
       const matchingAudit = retrieval.crawlerAudit.find(item => Number(item.targets || 0) > 0);
       entry.result = {
         status: evidenceId ? 200 : 0,
@@ -583,7 +501,7 @@ export async function conductPantheonCategoryWorkflow(input: {
     }
     const capabilityOutcomes = finalizePantheonCategoryCapabilityOutcomes({
       categoryLabel: category.label,
-      health: capabilityHealth,
+      health: input.capabilityHealth,
       crawlerAudit: retrieval.crawlerAudit,
     });
     const assessment = assessPantheonCategoryOutcome({
@@ -601,12 +519,12 @@ export async function conductPantheonCategoryWorkflow(input: {
       targetCount: activeUrls.size,
       evidenceCount: reportable.length,
       crawlerAudit: retrieval.crawlerAudit,
-      findings: reportable.map(item => cleanEvidenceContent(item.content).slice(0, 1800)),
+      findings: reportable.map(item => cleanPantheonEvidenceContent(item.content).slice(0, 1800)),
       urlsAttempted,
       urlsSuccessful,
       urlsFailed: Math.max(0, urlsAttempted - urlsSuccessful),
       crawlersUsed,
-      evidenceRejected: Math.max(0, retrieval.evidence.length - reportable.length),
+      evidenceRejected: validation.rejected.length,
       urlLedger,
       cursor,
       ledgerVersion: 1,
@@ -617,47 +535,127 @@ export async function conductPantheonCategoryWorkflow(input: {
       completionReason: assessment.reason,
       capabilityOutcomes,
     };
-    categoryOutcomes.push(outcome);
-    const completedCategoryCount = categoryOutcomes.filter(item => item.completionState === 'completed').length;
 
-    const uniqueEvidence = dedupeEvidence(evidence);
-    const webCategory = /social|username|photo|news|internet|media/i;
-    report.onlineMentions = uniqueEvidence
-      .filter(item => webCategory.test(String(item.metadata?.reportCategory || '')))
-      .map(item => `[${String(item.metadata?.reportCategory || 'Evidence')}] ${item.content} — Source: ${item.target}`);
-    report.publicRecords = uniqueEvidence
-      .filter(item => !webCategory.test(String(item.metadata?.reportCategory || '')))
-      .map(item => `[${String(item.metadata?.reportCategory || 'Evidence')}] ${item.content} — Source: ${item.target}`);
-    report.sources = uniqueEvidence.map(item => ({
-      name: `${String(item.metadata?.reportCategory || 'PANTHEON Evidence')} — ${item.crawler}`,
-      data: { url: item.target, finding: item.content },
-      confidence: item.confidence,
-      timestamp: new Date(item.retrievedAt),
-    }));
-    report.crawlerAudit = mergeAudit(audits);
-    const completedWithEvidence = categoryOutcomes.filter(item => item.evidenceCount > 0).length;
-    report.confidenceScore = categoryOutcomes.length ? completedWithEvidence / categoryOutcomes.length : 0;
-    const partialCategoryCount = categoryOutcomes.length - completedCategoryCount;
-    report.summary = partialCategoryCount === 0
-      ? `PANTHEON completed ${completedCategoryCount} of ${PANTHEON_REPORT_CATEGORIES.length} categories with live source work and required crawler coverage.`
-      : `PANTHEON completed ${completedCategoryCount} of ${PANTHEON_REPORT_CATEGORIES.length} categories with live source work; ${partialCategoryCount} ${partialCategoryCount === 1 ? 'category remains' : 'categories remain'} partial or unavailable and are identified in this report.`;
+  return { outcome, evidence: acceptedEvidence, audit: retrieval.crawlerAudit };
+}
 
-    await input.onCategoryState?.({ index, label: category.label, phase: 'PERSISTING', completedCategories: completedBeforeCategory });
-    // Persistence is the gate. Category N cannot become COMPLETE and N+1 cannot
-    // become ACTIVE until the caller has durably persisted this transaction.
-    if (!input.onCategoryComplete) throw new Error('Pantheon category persistence callback is required');
-    await input.onCategoryComplete({
-      index,
-      label: category.label,
-      completedCategories: completedCategoryCount,
-      outcome,
-      partialReport: { ...report },
-    });
-    await input.onCategoryState?.({ index, label: category.label, phase: 'COMPLETE', completedCategories: completedCategoryCount });
+function applyPantheonCategoryExecutions(
+  report: PeopleSearchReport,
+  executions: readonly PantheonCategoryExecution[],
+): void {
+  const evidence = executions.flatMap(item => item.evidence);
+  const audits = executions.flatMap(item => item.audit);
+  const categoryOutcomes = executions.map(item => item.outcome);
+  const uniqueEvidence = dedupePantheonEvidence(evidence);
+  const webCategory = /social|username|photo|news|internet|media/i;
+  report.onlineMentions = uniqueEvidence
+    .filter(item => webCategory.test(String(item.metadata?.reportCategory || '')))
+    .map(item => `[${String(item.metadata?.reportCategory || 'Evidence')}] ${item.content} — Source: ${item.target}`);
+  report.publicRecords = uniqueEvidence
+    .filter(item => !webCategory.test(String(item.metadata?.reportCategory || '')))
+    .map(item => `[${String(item.metadata?.reportCategory || 'Evidence')}] ${item.content} — Source: ${item.target}`);
+  report.sources = uniqueEvidence.map(item => ({
+    name: `${String(item.metadata?.reportCategory || 'PANTHEON Evidence')} — ${item.crawler}`,
+    data: { url: item.target, finding: item.content },
+    confidence: item.confidence,
+    timestamp: new Date(item.retrievedAt),
+  }));
+  report.crawlerAudit = mergeAudit(audits);
+  const completedCategoryCount = categoryOutcomes.filter(item => item.completionState === 'completed').length;
+  const completedWithEvidence = categoryOutcomes.filter(item => item.evidenceCount > 0).length;
+  report.confidenceScore = PANTHEON_REPORT_CATEGORIES.length
+    ? completedWithEvidence / PANTHEON_REPORT_CATEGORIES.length
+    : 0;
+  const unresolved = categoryOutcomes.filter(item => item.completionState !== 'completed');
+  report.summary = unresolved.length === 0 && categoryOutcomes.length === PANTHEON_REPORT_CATEGORIES.length
+    ? `PANTHEON completed all ${PANTHEON_REPORT_CATEGORIES.length} categories with live source work and required crawler coverage.`
+    : `PANTHEON completed ${completedCategoryCount} of ${PANTHEON_REPORT_CATEGORIES.length} categories with live source work; unresolved categories: ${unresolved.map(item => `${item.label} (${item.completionReason})`).join('; ') || 'not yet executed'}.`;
+}
+
+export async function conductPantheonCategoryWorkflow(
+  input: PantheonCategoryWorkflowInput,
+): Promise<{ report: PeopleSearchReport; categoryOutcomes: PantheonCategoryOutcome[] }> {
+  if (!input.investigationId) throw new Error('Pantheon canonical workflow requires investigationId');
+  if (!input.onCategoryComplete) throw new Error('Pantheon category persistence callback is required');
+  if (activeCanonicalInvestigation && activeCanonicalInvestigation !== input.investigationId) {
+    throw new Error(`Pantheon canonical workflow already active for ${activeCanonicalInvestigation}`);
   }
+  activeCanonicalInvestigation = input.investigationId;
+  const deadline = createPantheonDeadline(input.deadlineAt, input.signal);
+  try {
+    const capabilityHealth = input.capabilityHealth || [];
+    const report: PeopleSearchReport = input.initialReport ? { ...input.initialReport } : {
+      identitySummary: { name: input.name, verificationStatus: 'Public-source evidence review completed' },
+      contactInformation: [],
+      socialMediaPresence: [],
+      employmentAndEducation: [],
+      locationHistory: [],
+      publicRecords: [],
+      onlineMentions: [],
+      riskAndReputation: [],
+      summary: '',
+      confidenceScore: 0,
+      sources: [],
+      crawlerAudit: [],
+    };
 
-  return { report, categoryOutcomes };
+    const startCategoryIndex = Math.max(0, Math.min(PANTHEON_REPORT_CATEGORIES.length - 1, input.startCategoryIndex || 0));
+    const indexes = Array.from(
+      { length: PANTHEON_REPORT_CATEGORIES.length - startCategoryIndex },
+      (_, offset) => startCategoryIndex + offset,
+    );
+    const concurrency = Math.max(1, Math.min(4, input.categoryConcurrency || 4, indexes.length || 1));
+    const remainingMs = Math.max(1, input.deadlineAt - Date.now());
+    const finalizationReserveMs = Math.min(15_000, Math.max(2_000, Math.floor(remainingMs * 0.08)));
+    const waveCount = Math.max(1, Math.ceil(indexes.length / concurrency));
+    const categoryBudgetMs = Math.max(1_500, Math.floor(Math.max(1, remainingMs - finalizationReserveMs) / waveCount));
+    const completed = new Map<number, PantheonCategoryExecution>();
+    let persistenceTail: Promise<void> = Promise.resolve();
+
+    const executions = await runPantheonBounded(indexes, concurrency, async index => {
+      const execution = await executePantheonCategory({
+        ...input,
+        index,
+        capabilityHealth,
+        finalizationReserveMs,
+        categoryDeadlineAt: Math.min(input.deadlineAt - finalizationReserveMs, Date.now() + categoryBudgetMs),
+        productiveWorkTarget: categoryProductiveWorkTarget(input.searchDepth),
+        policy: intensityPolicy(input.searchDepth),
+        signal: deadline.signal,
+        completedCount: () => [...completed.values()].filter(item => item.outcome.completionState === 'completed').length,
+      });
+
+      const persist = persistenceTail.then(async () => {
+        completed.set(index, execution);
+        const ordered = [...completed.values()].sort((left, right) => left.outcome.index - right.outcome.index);
+        applyPantheonCategoryExecutions(report, ordered);
+        const completedCategories = ordered.filter(item => item.outcome.completionState === 'completed').length;
+        await input.onCategoryState?.({ index, label: execution.outcome.label, phase: 'PERSISTING', completedCategories });
+        await input.onCategoryComplete!({
+          index,
+          label: execution.outcome.label,
+          completedCategories,
+          outcome: execution.outcome,
+          partialReport: { ...report },
+        });
+        await input.onCategoryState?.({
+          index,
+          label: execution.outcome.label,
+          phase: execution.outcome.completionState === 'completed' ? 'COMPLETE' : 'PARTIAL',
+          completedCategories,
+        });
+      });
+      persistenceTail = persist.catch(() => undefined);
+      await persist;
+      return execution;
+    }, deadline.signal);
+
+    await persistenceTail;
+    const ordered = executions.sort((left, right) => left.outcome.index - right.outcome.index);
+    applyPantheonCategoryExecutions(report, ordered);
+    return { report, categoryOutcomes: ordered.map(item => item.outcome) };
   } finally {
+    deadline.dispose();
     if (activeCanonicalInvestigation === input.investigationId) activeCanonicalInvestigation = null;
   }
 }

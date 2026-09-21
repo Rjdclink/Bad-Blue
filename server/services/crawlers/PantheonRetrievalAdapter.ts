@@ -16,6 +16,7 @@ import { acquirePublicResources } from './PublicAcquisitionInfrastructure';
 import { defaultFirecrawlAdapter } from '../shadowRetrieval/firecrawlAdapter';
 import { shadowRetrieval } from '../shadowRetrieval';
 import { getPantheonCategoryCapabilities } from '../pantheon/PantheonCrawlerCapabilityMatrix';
+import { throwIfPantheonAborted } from '../pantheon/PantheonDeadline';
 
 export interface RetrievalEvidence {
   crawler: string;
@@ -56,6 +57,7 @@ export class PantheonRetrievalAdapter {
     categoryLabel?: string;
     capabilityHint?: string[];
     transportHint?: string[];
+    signal?: AbortSignal;
     authority?: {
       investigationId: string;
       categoryId: string;
@@ -69,6 +71,7 @@ export class PantheonRetrievalAdapter {
       capability?: string;
     };
   }): Promise<PantheonRetrievalResponse> {
+    throwIfPantheonAborted(request.signal);
     if (request.purpose === 'background_report') {
       const authority = request.authority;
       if (!authority?.investigationId || !authority.categoryId || !authority.workId || !authority.canonicalUrl || !authority.capability) {
@@ -93,7 +96,7 @@ export class PantheonRetrievalAdapter {
     const remainingBudgetMs = () => deadlineAt == null
       ? Number.POSITIVE_INFINITY
       : Math.max(0, deadlineAt - Date.now());
-    const collectionOpen = () => remainingBudgetMs() > 0;
+    const collectionOpen = () => remainingBudgetMs() > 0 && !request.signal?.aborted;
     const firstTarget = request.targets[0];
     let host: string | undefined;
     if (firstTarget) {
@@ -167,6 +170,7 @@ export class PantheonRetrievalAdapter {
       crawlers: plan.crawlers,
       stormIntensity: plan.depth === 4 ? 'storm' as const : 'snow' as const,
       timeout: primaryBudgetMs,
+      signal: request.signal,
     };
     let results: CrawlerResult[];
     let crawlerAudit: PantheonRetrievalResponse['crawlerAudit'] = [];
@@ -177,6 +181,7 @@ export class PantheonRetrievalAdapter {
     } else {
       results = await pantheonOrchestrator.search(request.targets, searchOptions);
     }
+    throwIfPantheonAborted(request.signal);
     recordCrawlerOutcomes(results);
 
     const evidence = results.map(normalizeResult).filter(item => item.content.trim() && item.confidence > 0);
@@ -229,7 +234,13 @@ export class PantheonRetrievalAdapter {
           Number.isFinite(remainingBudgetMs()) ? Math.max(1, remainingBudgetMs()) : extendedLaneBudget,
         );
         const settled = await Promise.allSettled(
-          batch.map(target => twoStageDeployer.deployBackgroundReport(target, undefined, perBatchBudget, applicableCapabilities))
+          batch.map(target => twoStageDeployer.deployBackgroundReport(
+            target,
+            results.find(result => result.target === target && result.content.trim())?.content,
+            perBatchBudget,
+            applicableCapabilities,
+            request.signal,
+          ))
         );
         settled.forEach((run, index) => extendedRuns.push({ target: batch[index], run }));
       }
