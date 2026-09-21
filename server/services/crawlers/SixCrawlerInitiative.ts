@@ -2048,6 +2048,10 @@ export class SixCrawlerInitiative extends EventEmitter {
     console.log('[Step 4] The Key: Reconstructing access patterns...');
     const identityFlows: IdentityFlow[] = [];
     for (const principal of target.principals) {
+      await this.usc.coordinateTask('key', {
+        principalId: principal,
+        context: { environment: target.environmentId },
+      }, 9);
       const flow = await this.key.mapIdentityFlow(principal, { environment: target.environmentId });
       identityFlows.push(flow);
       await this.usc.routeIntelligence('key', 'computational', flow);
@@ -2077,6 +2081,10 @@ export class SixCrawlerInitiative extends EventEmitter {
     });
 
     // Test detection probability
+    await this.usc.coordinateTask('silence', {
+      observedDimensions,
+      context: { environment: target.environmentId, dataVolume: allDataPoints.length },
+    }, 9);
     const detectionProbability = await this.silence.testDetectionProbability(allDataPoints);
 
     console.log('');
