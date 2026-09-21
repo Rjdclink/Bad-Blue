@@ -64,10 +64,22 @@ export class PantheonRetrievalAdapter {
       deadlineAt: number;
       subject: string;
       location?: string;
+      workId?: string;
+      canonicalUrl?: string;
+      capability?: string;
     };
   }): Promise<PantheonRetrievalResponse> {
-    if (request.purpose === 'background_report' && !request.authority) {
-      throw new Error('Pantheon background retrieval rejected: missing canonical workflow authorization');
+    if (request.purpose === 'background_report') {
+      const authority = request.authority;
+      if (!authority?.investigationId || !authority.categoryId || !authority.workId || !authority.canonicalUrl || !authority.capability) {
+        throw new Error('Pantheon background retrieval rejected: incomplete canonical work authorization');
+      }
+      if (request.targets.length !== 1 || request.targets[0] !== authority.canonicalUrl) {
+        throw new Error('Pantheon background retrieval rejected: work authorization URL mismatch');
+      }
+      if (!(request.capabilityHint || []).includes(authority.capability)) {
+        throw new Error('Pantheon background retrieval rejected: work authorization capability mismatch');
+      }
     }
     const retrievalStartedAt = Date.now();
     if (request.authority && request.authority.deadlineAt <= retrievalStartedAt) {
