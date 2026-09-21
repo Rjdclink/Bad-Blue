@@ -287,6 +287,11 @@ for (const crawler of ['woo', 'mirror', 'key', 'chewer', 'computational', 'silen
   if (!initiative.includes(`coordinateTask('${crawler}'`)) fail(`USC does not dispatch ${crawler} skill`);
 }
 if (!baseRazor.includes("typeof val === 'boolean' && val === true") || !baseRazor.includes("val !== 0")) fail('Razor empty defaults can still be promoted to evidence');
+if (!retrievalAdapter.includes("crawlSeedOnceWithCrawlers") || !retrievalAdapter.includes("'seed-startrek'") || !retrievalAdapter.includes("'seed-sixdegrees'")) fail('Seed-first crawler skills are not wired into Pantheon');
+if (!retrievalAdapter.includes("socialMediaScraper.getTwitterProfile")) fail('Social-media crawler is not wired into Pantheon');
+if (!retrievalAdapter.includes(".filter(result => Boolean(result.content?.trim())") || !retrievalAdapter.includes("result.confidence > 0")) fail('Pantheon adapter does not enforce evidence truth at its boundary');
+if (!twoStage.includes("crawler: \`razor-\${razor.type}\`")) fail('Razor audit IDs do not match canonical crawler registry IDs');
+if (!retrievalAdapter.includes("crawler: \`razor-\${razor.razorType}\`")) fail('Razor evidence IDs do not match canonical crawler registry IDs');
 if (!process.exitCode) ok('crawler network boundaries, Razor evidence truth, and seven-crawler skill dispatch are realized');
 
 if (!process.exitCode) ok('background-report crawler path is real, fail-closed, scope-bounded, and evidence-truthful');
