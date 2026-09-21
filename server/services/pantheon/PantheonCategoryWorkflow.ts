@@ -78,7 +78,7 @@ function mergeAudit(entries: PantheonRetrievalResponse['crawlerAudit']) {
 function categoryTargetLimit(depth: number): number {
   // Investigation intensity controls source breadth, never crawler participation.
   // Keep the work bounded per category so all 30 categories receive time.
-  return ({ 1: 40, 2: 94, 3: 150, 4: 150 } as Record<number, number>)[depth] || 40;
+  return ({ 1: 40, 2: 90, 3: 180, 4: 300 } as Record<number, number>)[depth] || 40;
 }
 
 function canonicalUrl(value: string): string {
@@ -125,15 +125,20 @@ function isReportableEvidence(
     : subjectMatches >= Math.min(2, subjectTokens.length) || (subjectMatches >= 1 && locationMatch);
 }
 
+function sourcePriority(authority: 'primary'|'secondary'|'discovery'|'archive'): number {
+  return ({ primary: 400, secondary: 300, archive: 200, discovery: 100 })[authority];
+}
+
 function interleaveCategoryTargets(
   groups: Array<ReturnType<typeof buildPantheonCategoryTargets>>,
   limit: number,
 ): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
+  const prioritized = groups.map(group => [...group].sort((a, b) => sourcePriority(b.authority) - sourcePriority(a.authority)));
   for (let row = 0; out.length < limit; row += 1) {
     let added = false;
-    for (const group of groups) {
+    for (const group of prioritized) {
       const candidate = group[row];
       if (!candidate) continue;
       added = true;
@@ -233,7 +238,9 @@ export async function conductPantheonCategoryWorkflow(input: {
       buildPantheonCategoryTargets(registryCategory, input.name, input.location, targetLimit)
     );
     // Interleave registry facets so a multi-facet category cannot be monopolized
-    // by the first tag. Source inventory remains priority ordered within each facet.
+    // by the first tag. Within every facet, direct primary authorities run first,
+    // then secondary sources, archives, and finally broad discovery URLs.
+    // Intensity expands breadth (40/90/180/300 URLs) without disabling crawlers.
     const uniqueTargets = interleaveCategoryTargets(targetGroups, targetLimit);
 
     let retrieval: PantheonRetrievalResponse;
