@@ -17,7 +17,6 @@ import { acquirePublicResources } from './PublicAcquisitionInfrastructure';
 import { socialMediaScraper } from '../socialMediaScraper';
 import { LEXARA_CRAWLER_CAPABILITY_POOL } from '../../lexara/LexaraCrawlerCapabilityRegistry';
 import { crawlSeedOnceWithCrawlers } from '../../lib/seedFirstOsint';
-import { discoverCriminalRecordSources } from '../criminalRecords';
 
 export interface RetrievalEvidence {
   crawler: string;
@@ -397,58 +396,6 @@ export class PantheonRetrievalAdapter {
       }
     }
 
-    if (request.purpose === 'background_report' && collectionOpen()) {
-      const subject = request.targets
-        .map(target => {
-          try {
-            const parsed = new URL(target);
-            return parsed.searchParams.get('q') || '';
-          } catch {
-            return '';
-          }
-        })
-        .find(Boolean)
-        ?.replace(/["']/g, '')
-        .replace(/\b(public records|news|court|business|professional)\b/gi, '')
-        .trim();
-      if (subject && subject.length >= 2 && subject.length <= 160) {
-        try {
-          const discoveries = await discoverCriminalRecordSources({ fullName: subject });
-          for (const id of ['state-court', 'county-court', 'warrant-database', 'sex-offender-registry']) {
-            crawlerAudit.push({
-              crawler: id,
-              capabilityClass: 'pantheon-secondary',
-              status: discoveries.length > 0 ? 'completed_with_source_discovery' : 'completed_no_evidence',
-              evidenceCount: discoveries.length,
-              attempts: 1,
-              targets: discoveries.length,
-            });
-          }
-          if (discoveries.length > 0) {
-            evidence.push({
-              crawler: 'criminal-source-discovery',
-              target: request.targets[0] || 'pantheon-background-report',
-              content: JSON.stringify(discoveries),
-              confidence: 0.8,
-              retrievedAt: new Date().toISOString(),
-              metadata: { capabilityClass: 'criminal-public-source-discovery' },
-            });
-          }
-        } catch (error) {
-          for (const id of ['state-court', 'county-court', 'warrant-database', 'sex-offender-registry']) {
-            crawlerAudit.push({
-              crawler: id,
-              capabilityClass: 'pantheon-secondary',
-              status: 'failed',
-              evidenceCount: 0,
-              attempts: 1,
-              targets: 1,
-              error: error instanceof Error ? error.message : String(error),
-            });
-          }
-        }
-      }
-    }
 
     if (request.purpose === 'background_report') {
       const observed = new Set(crawlerAudit.map(item => item.crawler));
@@ -460,7 +407,6 @@ export class PantheonRetrievalAdapter {
         'razor-record', 'razor-asset', 'razor-court', 'razor-business',
         'razor-relation', 'razor-media', 'social-media-scraper',
         'seed-startrek', 'seed-birdofprey', 'seed-trinity', 'seed-sixdegrees',
-        'state-court', 'county-court', 'warrant-database', 'sex-offender-registry',
       ]);
       for (const descriptor of LEXARA_CRAWLER_CAPABILITY_POOL) {
         if (descriptor.family === 'crypto-observational' || directlyRealized.has(descriptor.id) || observed.has(descriptor.id)) continue;
