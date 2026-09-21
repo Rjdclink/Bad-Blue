@@ -31,7 +31,7 @@ const checks = [
   ['collection deadline propagates into retrieval', peopleSearch.includes('deadlineAt: reportDeadlineAt') && adapter.includes('deadlineAt?: number') && adapter.includes('remainingBudgetMs')],
   ['collection budget preserves aggregation time', peopleSearch.includes('remainingBudgetMs') && peopleSearch.includes('hasCollectionBudget')],
   ['background jobs force complete crawler participation', jobs.includes('forceAllCrawlers: true') && peopleSearch.includes('const runFullRoster = forceAllCrawlers || searchDepth >= 3')],
-  ['full roster starts before legacy base lane can starve it', peopleSearch.includes('const fullRosterPromise =') && peopleSearch.indexOf('const fullRosterPromise =') < peopleSearch.indexOf('const enhancedReport = await conductEnhancedPeopleSearch')],
+  ['full roster starts before legacy base lane can starve it', peopleSearch.includes('let fullRosterPromise =') && peopleSearch.indexOf('let fullRosterPromise =') < peopleSearch.indexOf('const enhancedReport = await conductEnhancedPeopleSearch')],
   ['registry acquisition stops launching work at deadline', adapter.includes('collectionOpen()') && adapter.includes('offset < extendedTargets.length && collectionOpen()')],
   ['full roster rejection is handled immediately', peopleSearch.includes("error => ({ ok: false as const, error })")],
   ['transient Pantheon availability is rechecked', peopleSearch.includes('if (!fullRosterPromise && runFullRoster') && peopleSearch.includes('canActivatePantheon().available')],
