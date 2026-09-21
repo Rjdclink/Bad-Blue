@@ -65,6 +65,7 @@ export interface PantheonUrlLedgerEntry {
   evidenceIds: string[];
   failureReason?: string;
   capability?: string;
+  transport?: 'direct-http'|'browser'|'search-provider'|'specialized-adapter'|'archive';
   startedAt?: string;
   completedAt?: string;
 }
@@ -186,6 +187,24 @@ function sourcePriority(authority: 'primary'|'secondary'|'discovery'|'archive'):
   return ({ primary: 400, secondary: 300, archive: 200, discovery: 100 })[authority];
 }
 
+function capabilityFor(categoryLabel: string, entry: PantheonUrlLedgerEntry): string {
+  const value = `${categoryLabel} ${entry.registryCategory} ${entry.url}`.toLowerCase();
+  if (/relationship|associate|family|relative|social|username/.test(value)) return 'sixdegrees';
+  if (/court|criminal|arrest|warrant|offender|correction|probation|parole|government/.test(value)) return 'cerberus';
+  if (/news|media|business|property|employment|education|credential/.test(value)) return 'blizzard';
+  if (/timeline|corroboration|contradiction/.test(value)) return 'lich';
+  return 'startrek';
+}
+
+function transportFor(entry: PantheonUrlLedgerEntry): PantheonUrlLedgerEntry['transport'] {
+  const url = entry.url.toLowerCase();
+  if (/google\.com\/search|bing\.com\/search|duckduckgo\.com/.test(url)) return 'search-provider';
+  if (/archive\.org|web\.archive\.org/.test(url)) return 'archive';
+  if (/linkedin|facebook|instagram|tiktok|x\.com/.test(url)) return 'browser';
+  if (/api\.|\/api\/|\.json(?:$|\?)/.test(url)) return 'specialized-adapter';
+  return 'direct-http';
+}
+
 function buildCategoryLedger(
   groups: Array<{ registryCategory: PantheonBackgroundCategory; targets: ReturnType<typeof buildPantheonCategoryTargets> }>,
 ): PantheonUrlLedgerEntry[] {
@@ -204,6 +223,8 @@ function buildCategoryLedger(
         state: 'pending',
         attempts: 0,
         evidenceIds: [],
+        capability: capabilityFor(group.registryCategory, { url, priority: sourcePriority(candidate.authority), authority: candidate.authority, registryCategory: group.registryCategory, state: 'pending', attempts: 0, evidenceIds: [] }),
+        transport: transportFor({ url, priority: sourcePriority(candidate.authority), authority: candidate.authority, registryCategory: group.registryCategory, state: 'pending', attempts: 0, evidenceIds: [] }),
       });
     }
   }
@@ -338,6 +359,8 @@ export async function conductPantheonCategoryWorkflow(input: {
           subject: input.name,
           location: input.location,
           categoryLabel: category.label,
+          capabilityHint: batch.map(url => urlLedger.find(item => item.url === url)?.capability).filter(Boolean) as string[],
+          transportHint: batch.map(url => urlLedger.find(item => item.url === url)?.transport).filter(Boolean) as string[],
           authority: {
             investigationId: input.investigationId,
             categoryId: `${input.investigationId}:${index}`,
