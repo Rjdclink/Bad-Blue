@@ -17,6 +17,21 @@ interface CrawlerAuditEntry {
   error?: string;
 }
 
+interface PantheonCategoryOutcomeForPdf {
+  index?: number;
+  label?: string;
+  targetCount?: number;
+  evidenceCount?: number;
+  findings?: string[];
+  urlsAttempted?: number;
+  urlsSuccessful?: number;
+  urlsFailed?: number;
+  crawlersUsed?: string[];
+  evidenceRejected?: number;
+  crawlerAudit?: CrawlerAuditEntry[];
+  categoryOutcomes?: PantheonCategoryOutcomeForPdf[];
+}
+
 interface PantheonReportForPdf {
   identitySummary?: {
     name?: string;
@@ -51,6 +66,7 @@ export interface PantheonPdfInput {
   job?: Record<string, unknown> | null;
   createdAt?: Date | string | null;
   completedAt?: Date | string | null;
+  categoryOutcomes?: PantheonCategoryOutcomeForPdf[];
 }
 
 function cleanText(value: unknown): string {
@@ -174,43 +190,34 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
     addSectionTitle(doc, 'Executive Summary');
     doc.font('Helvetica').fontSize(9).text(cleanText(report.summary) || 'No synthesis was produced.', { align: 'justify', lineGap: 2 });
 
-    addSectionTitle(doc, 'Contact Information');
-    addList(doc, report.contactInformation);
-
-    addSectionTitle(doc, 'Location History');
-    addList(doc, report.locationHistory);
-
-    addSectionTitle(doc, 'Employment & Education');
-    addList(doc, report.employmentAndEducation);
-
-    addSectionTitle(doc, 'Social & Digital Footprint');
-    addList(doc, report.socialMediaPresence);
-
-    addSectionTitle(doc, 'Public Records');
-    addList(doc, report.publicRecords);
-
-    addSectionTitle(doc, 'Court / Case History');
-    addList(doc, (report.caseHistory || []).map(item => compactEvidence(item, 1200)));
-
-    addSectionTitle(doc, 'Online & Media Mentions');
-    addList(doc, report.onlineMentions);
-
-    addSectionTitle(doc, 'Risk & Reputation Indicators');
-    addList(doc, report.riskAndReputation);
-
-    if (report.emails) {
-      addSectionTitle(doc, 'Email Discovery');
-      doc.font('Helvetica').fontSize(8).text(compactEvidence(report.emails), { lineGap: 2 });
-    }
-
-    if (report.breaches) {
-      addSectionTitle(doc, 'Public Breach Indicators');
-      doc.font('Helvetica').fontSize(8).text(compactEvidence(report.breaches), { lineGap: 2 });
-    }
-
-    if (report.spiderfoot) {
-      addSectionTitle(doc, 'SpiderFoot OSINT');
-      doc.font('Helvetica').fontSize(8).text(compactEvidence(report.spiderfoot), { lineGap: 2 });
+    addSectionTitle(doc, '30-Category Investigation Results');
+    const categoryOutcomes = input.categoryOutcomes || report.categoryOutcomes || [];
+    const canonicalCategories = [
+      'Identity & Identity Verification','Phone Numbers','Email Addresses','Current Address','Address History','Relatives & Family','Associates & Household Connections','Social-Media Profiles','Usernames & Online Accounts','Photos & Public Images','Employment History','Education','Professional Licenses & Credentials','Business Ownership & Affiliations','Property & Real Estate','Vehicles & Transportation Records','Court Records','Criminal Records','Arrest & Police Records','Incarceration & Corrections','Probation & Parole Information','Warrants & Wanted-Person Records','Sex-Offender Registries','Civil Litigation & Judgments','Bankruptcies, Liens & Financial Public Records','Marriage, Divorce & Vital-Record Information','News & Media Mentions','Internet & Web Footprint','Government, Political & Public-Service Records','Relationship & Timeline Intelligence'
+    ] as const;
+    for (let index = 0; index < canonicalCategories.length; index += 1) {
+      if (doc.y > 650) doc.addPage();
+      const outcome = categoryOutcomes.find(item => Number(item.index) === index);
+      doc.font('Helvetica-Bold').fontSize(10).fillColor('#183B63').text(`${index + 1}. ${canonicalCategories[index]}`);
+      doc.font('Helvetica').fontSize(8).fillColor('#111827');
+      if (!outcome) {
+        doc.text('No persisted category outcome was available. This category is not represented as completed.');
+      } else {
+        doc.text(`URLs attempted: ${Number(outcome.urlsAttempted || 0)} | Successful retrieval/evidence paths: ${Number(outcome.urlsSuccessful || 0)} | Failed paths: ${Number(outcome.urlsFailed || 0)}`);
+        const crawlers = (outcome.crawlersUsed || []).map(cleanText).filter(Boolean);
+        if (crawlers.length) doc.text(`Crawler capabilities used: ${crawlers.join(', ')}`);
+        const findings = (outcome.findings || []).map(cleanText).filter(Boolean);
+        if (!findings.length) {
+          doc.font('Helvetica-Oblique').text('No verified subject-specific finding returned by the completed category investigation.');
+        } else {
+          doc.font('Helvetica');
+          for (const finding of findings.slice(0, 30)) {
+            if (doc.y > 705) doc.addPage();
+            doc.text(`• ${finding}`, { indent: 8, lineGap: 1 });
+          }
+        }
+      }
+      doc.moveDown(0.6);
     }
 
     // Crawler diagnostics remain internal. Customer reports contain findings and
