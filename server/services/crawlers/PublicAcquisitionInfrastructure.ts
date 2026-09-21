@@ -189,8 +189,10 @@ function recordHostResult(host: string, status: number, latencyMs: number, retry
   }
 }
 
-async function acquireOnce(url: URL, timeoutMs: number): Promise<PublicAcquisitionResult> {
-  const deadlineAt = Date.now() + Math.max(500, timeoutMs);
+async function acquireOnce(url: URL, timeoutMs: number, hardDeadlineAt?: number): Promise<PublicAcquisitionResult> {
+  const deadlineAt = hardDeadlineAt == null
+    ? Date.now() + Math.max(500, timeoutMs)
+    : Math.min(hardDeadlineAt, Date.now() + Math.max(1, timeoutMs));
   const host = url.hostname.toLowerCase();
   const admitted = await waitForHost(host, deadlineAt);
   if (!admitted) return { ...failureResult(url.toString(), 0, new Error('Host circuit open or acquisition deadline exhausted')), errorType: 'circuit_open' };
@@ -281,7 +283,7 @@ export async function acquirePublicResource(rawUrl: string, timeoutMs = 12_000, 
     let last = failureResult(key, 0, new Error('Acquisition not attempted'));
     for (let attempt = 0; attempt <= MAX_RETRIES && Date.now() < deadlineAt; attempt++) {
       const remaining = Math.max(1, deadlineAt - Date.now());
-      last = await acquireOnce(url, remaining);
+      last = await acquireOnce(url, remaining, deadlineAt);
       if (last.ok) break;
       const retryable = last.status === 408 || last.status === 429 || last.status === 500 || last.status === 502 || last.status === 503 || last.status === 504 ||
         ['timeout','tls_failure','network_failure'].includes(String(last.errorType));
