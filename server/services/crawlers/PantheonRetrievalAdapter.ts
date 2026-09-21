@@ -14,6 +14,7 @@ import { cainReaperSupervisor, type CrawlerSupervisionResult } from './CainReape
 import { twoStageDeployer } from '../pantheon/razors/TwoStageDeployer';
 import { SixCrawlerInitiative } from './SixCrawlerInitiative';
 import { acquirePublicResources } from './PublicAcquisitionInfrastructure';
+import { socialMediaScraper } from '../socialMediaScraper';
 
 export interface RetrievalEvidence {
   crawler: string;
@@ -157,6 +158,44 @@ export class PantheonRetrievalAdapter {
             lastModified: resource.lastModified,
           },
         });
+      }
+    }
+
+    if (request.purpose === 'background_report' && collectionOpen()) {
+      const socialHandles = [...new Set(request.targets.flatMap(target => {
+        try {
+          const parsed = new URL(target);
+          const host = parsed.hostname.toLowerCase();
+          if (host === 'x.com' || host === 'twitter.com' || host.includes('nitter')) {
+            const handle = parsed.pathname.split('/').filter(Boolean)[0];
+            return handle ? [handle] : [];
+          }
+        } catch {
+          // Non-URL targets are not social profile URLs.
+        }
+        return [];
+      }))].slice(0, 8);
+      for (const handle of socialHandles) {
+        const profile = await socialMediaScraper.getTwitterProfile(handle);
+        crawlerAudit.push({
+          crawler: 'social-media-scraper',
+          capabilityClass: 'pantheon-secondary',
+          status: profile.success ? 'completed_with_evidence' : 'unavailable_no_content',
+          evidenceCount: profile.success ? 1 : 0,
+          attempts: 1,
+          targets: 1,
+          error: profile.error,
+        });
+        if (profile.success) {
+          evidence.push({
+            crawler: 'social-media-scraper',
+            target: profile.source,
+            content: JSON.stringify(profile),
+            confidence: 0.72,
+            retrievedAt: new Date().toISOString(),
+            metadata: { capabilityClass: 'people-social', handle },
+          });
+        }
       }
     }
 
