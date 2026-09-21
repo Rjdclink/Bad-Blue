@@ -81,8 +81,8 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
         : {
           ...initialized,
           outcome: state.outcome,
-          state: 'pending',
-          phase: 'PENDING',
+          state: 'pending' as const,
+          phase: 'PENDING' as const,
         };
     })
     : initializedStates;
@@ -351,15 +351,19 @@ export function resumePantheonReportJobFromRecord(report: {
   if (!name || !idempotencyKey || consent?.accepted !== true || !consent.version || !consent.acceptedAt) return null;
 
   const persistedStates = Array.isArray(envelope.categoryStates) ? envelope.categoryStates : [];
+  const legacyCompletedCount = Math.max(0, Math.min(
+    PANTHEON_REPORT_CATEGORIES.length,
+    Number(job?.completedCategories || 0),
+  ));
   const resumeCategoryIndexes = persistedStates.length === PANTHEON_REPORT_CATEGORIES.length
     ? persistedStates.filter(state => state.state !== 'completed').map(state => state.index)
     : Array.from(
-      { length: PANTHEON_REPORT_CATEGORIES.length - Math.max(0, Number(job?.completedCategories || 0)) },
-      (_, offset) => Math.max(0, Number(job?.completedCategories || 0)) + offset,
+      { length: PANTHEON_REPORT_CATEGORIES.length - legacyCompletedCount },
+      (_, offset) => legacyCompletedCount + offset,
     );
   const initialCategoryOutcomes = [
-    ...(Array.isArray(envelope.categoryOutcomes) ? envelope.categoryOutcomes : []),
     ...persistedStates.flatMap(state => state.outcome ? [state.outcome] : []),
+    ...(Array.isArray(envelope.categoryOutcomes) ? envelope.categoryOutcomes : []),
   ].filter((outcome, position, values) =>
     values.findIndex(candidate => candidate.index === outcome.index) === position &&
     !resumeCategoryIndexes.includes(outcome.index));

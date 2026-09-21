@@ -12,9 +12,6 @@ import {
 } from './CrawlerSelectionUtility';
 import { type CrawlerSupervisionResult } from './CainReaperSupervisor';
 import { twoStageDeployer } from '../pantheon/razors/TwoStageDeployer';
-import { acquirePublicResources } from './PublicAcquisitionInfrastructure';
-import { defaultFirecrawlAdapter } from '../shadowRetrieval/firecrawlAdapter';
-import { shadowRetrieval } from '../shadowRetrieval';
 import {
   getPantheonCategoryCapabilities,
   getPantheonPrimaryCrawlerCapabilitiesForCategory,

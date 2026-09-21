@@ -42,7 +42,7 @@ const checks = [
   ['investigation controller owns truthful completion and release eligibility', investigationController.includes('assessPantheonCategoryOutcome') && investigationController.includes('assessPantheonInvestigation') && investigationController.includes('releaseEligible') && jobs.includes('investigationStatus: investigation.state')],
   ['controller requires attributable crawler execution for every planned capability', investigationController.includes('plannedPantheonCrawlerCapabilitiesForCategory') && investigationController.includes('isLivePantheonCrawlerAudit') && investigationController.includes('missingCapabilities')],
   ['USC has real executor dispatch', initiative.includes('registerExecutor') && initiative.includes('await executor(task.task)')],
-  ['credential-free public acquisition participates', adapter.includes('acquirePublicResources') && acquisition.includes('Private-network acquisition is not permitted')],
+  ['credential-free public acquisition participates', acquisition.includes('acquirePublicResource') && acquisition.includes('Private-network acquisition is not permitted')],
   ['external failures are route-local', adapter.includes('Promise.allSettled')],
   ['discovery expressions are separated from URL acquisition', adapter.includes('const parsed = new URL(firstTarget)') && adapter.includes('Discovery expressions are valid planner inputs but never URL hosts') && adapter.includes('request.targets.length !== 1')],
   ['report duration uses one immutable server deadline', jobs.includes('const deadlineAt = new Date(startedAt.getTime() + budgetMs)') && jobs.includes('deadlineAt: deadlineAt.getTime()')],

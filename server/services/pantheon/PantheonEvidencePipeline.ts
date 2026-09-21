@@ -67,7 +67,8 @@ function rejectionReason(
 ): PantheonEvidenceRejectionReason | undefined {
   const metadataText = JSON.stringify(item.metadata || {});
   if (item.metadata?.entropySignature || item.metadata?.cooperativeAnalysis ||
-      /(?:simulat(?:e|ed|ion)|mirrored|synthetic|test[ _-]?mode)/i.test([metadataText, item.crawler, item.sourceUrl].join(' '))) {
+      /(?:simulat(?:e|ed|ion)|mirrored|synthetic|test[ _-]?mode)/i.test([metadataText, item.crawler, item.sourceUrl].join(' ')) ||
+      /\b(?:simulated|synthetic|mirrored)\s+(?:environment|output|result|data)\b/i.test(item.content)) {
     return 'simulation_or_test_output';
   }
   if (!item.content.trim() || !(item.confidence > 0)) return 'empty_or_low_confidence';
@@ -84,6 +85,7 @@ function rejectionReason(
 }
 
 export function requireVerifiedPantheonEvidence(items: readonly RetrievalEvidence[]): RetrievalEvidence[] {
+  items.forEach(validatePantheonSourceResult);
   const rejected = items.filter(item =>
     item.metadata?.evidenceState !== 'verified_live_source' ||
     item.metadata?.subjectMatch !== true ||

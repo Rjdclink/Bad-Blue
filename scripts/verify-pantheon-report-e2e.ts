@@ -60,8 +60,12 @@ async function main() {
   }
   if (!simulatedRejected) throw new Error('simulated source-result contract was not rejected');
 
-  const processed = processPantheonEvidence([liveResult], submission.name, submission.location);
-  if (processed.accepted.length !== 1 || processed.rejected.length !== 0) {
+  const processed = processPantheonEvidence([
+    liveResult,
+    { ...liveResult, metadata: { simulated: true } },
+  ], submission.name, submission.location);
+  if (processed.accepted.length !== 1 || processed.rejected.length !== 1 ||
+      processed.rejected[0].reason !== 'simulation_or_test_output') {
     throw new Error('verified-live evidence gate failed');
   }
   requireVerifiedPantheonEvidence(processed.accepted);

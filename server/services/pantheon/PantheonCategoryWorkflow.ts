@@ -676,7 +676,10 @@ function applyPantheonCategoryExecutions(
     });
   }
   report.sources = [...sourceMap.values()];
-  report.crawlerAudit = mergeAudit([...(baseReport.crawlerAudit || []), ...audits]);
+  report.crawlerAudit = mergeAudit([
+    ...((baseReport.crawlerAudit || []) as PantheonRetrievalResponse['crawlerAudit']),
+    ...audits,
+  ]);
   const completedCategoryCount = categoryOutcomes.filter(item => item.completionState === 'completed').length;
   const completedWithEvidence = categoryOutcomes.filter(item => item.evidenceCount > 0).length;
   report.confidenceScore = PANTHEON_REPORT_CATEGORIES.length

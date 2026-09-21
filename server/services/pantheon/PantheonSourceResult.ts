@@ -75,6 +75,9 @@ export function createPantheonSourceResult(input: {
     },
     metadata: { ...(input.metadata || {}) },
   };
+  if (/(?:simulat(?:e|ed|ion)|mirrored|synthetic|test[ _-]?mode)/i.test(JSON.stringify(result.metadata || {}))) {
+    throw new Error('Pantheon production source result rejected simulated or test metadata');
+  }
   validatePantheonSourceResult(result);
   return result;
 }
@@ -88,7 +91,10 @@ export function validatePantheonSourceResult(value: PantheonStructuredSourceResu
       !Number.isFinite(Date.parse(value.retrievedAt)) || value.provenance.sourceUrl !== value.sourceUrl) {
     throw new Error('Pantheon source result is missing provenance or capability attribution');
   }
-  if (/(?:simulat(?:e|ed|ion)|mirrored|synthetic|test[ _-]?mode)/i.test(JSON.stringify(value.metadata || {}))) {
-    throw new Error('Pantheon production source result rejected simulated or test metadata');
+  const parsedSourceUrl = new URL(value.sourceUrl);
+  if (!['http:', 'https:'].includes(parsedSourceUrl.protocol) || value.status !== 'completed_with_evidence') {
+    throw new Error('Pantheon source result has an invalid source or status');
   }
+  const expectedContentHash = createHash('sha256').update(value.content).digest('hex');
+  if (value.contentHash !== expectedContentHash) throw new Error('Pantheon source result content hash mismatch');
 }
