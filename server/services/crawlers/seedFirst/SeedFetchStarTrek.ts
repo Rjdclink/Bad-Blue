@@ -2,6 +2,7 @@ import type { SeedFirstCrawler } from '../seedFirstCrawlerSet';
 import { getSeedSignal, getSeedFingerprint } from './seedAbortBus.ts';
 import FirecrawlApp from '@mendable/firecrawl-js';
 import { MIN_CONTENT_LENGTH } from '../../../lib/seedFirstConfig';
+import { acquirePublicResource } from '../PublicAcquisitionInfrastructure';
 
 export const SeedFetchStarTrek: SeedFirstCrawler = {
   name: 'SeedFetchStarTrek',
@@ -15,6 +16,9 @@ export const SeedFetchStarTrek: SeedFirstCrawler = {
 
       const seedSignal = getSeedSignal(seedUrl);
       if (seedSignal?.aborted) return { emails: [], phones: [], links: [], coordinates: [], itemsFound: 0, timedOut: true };
+
+      const boundary = await acquirePublicResource(seedUrl, Math.min(timeoutMs, 5000));
+      if (!boundary.ok) return { emails: [], phones: [], links: [], coordinates: [], itemsFound: 0, timedOut: false };
 
       const fp = getSeedFingerprint(seedUrl);
       const userAgent = fp?.userAgent || 'SeedFirst/1.0';
