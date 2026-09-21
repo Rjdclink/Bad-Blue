@@ -292,6 +292,9 @@ for (const crawler of ['woo', 'mirror', 'key', 'chewer', 'computational', 'silen
 if (!baseRazor.includes("typeof val === 'boolean' && val === true") || !baseRazor.includes("val !== 0")) fail('Razor empty defaults can still be promoted to evidence');
 if (!retrievalAdapter.includes("crawlSeedOnceWithCrawlers") || !retrievalAdapter.includes("'seed-startrek'") || !retrievalAdapter.includes("'seed-sixdegrees'")) fail('Seed-first crawler skills are not wired into Pantheon');
 if (!retrievalAdapter.includes("socialMediaScraper.getTwitterProfile")) fail('Social-media crawler is not wired into Pantheon');
+if (!retrievalAdapter.includes('sevenEvidenceCounts') || !retrievalAdapter.includes('seven_crawler_deadline')) fail('Seven-crawler analysis is not evidence-derived and deadline bounded');
+const peopleAggregator = fs.readFileSync('server/services/peopleSearch/PeopleSearchAggregator.ts', 'utf8');
+if (!peopleAggregator.includes('no person-level evidence') || peopleAggregator.includes('age: ageMatch ? Number(ageMatch[1]) : query.age')) fail('People-search fallback can promote query input as observed evidence');
 if (!retrievalAdapter.includes(".filter(result => Boolean(result.content?.trim())") || !retrievalAdapter.includes("result.confidence > 0")) fail('Pantheon adapter does not enforce evidence truth at its boundary');
 if (!twoStage.includes("crawler: \`razor-\${razor.type}\`")) fail('Razor audit IDs do not match canonical crawler registry IDs');
 if (!retrievalAdapter.includes("crawler: \`razor-\${razor.razorType}\`")) fail('Razor evidence IDs do not match canonical crawler registry IDs');
