@@ -54,6 +54,8 @@ export class PantheonRetrievalAdapter {
     subject?: string;
     location?: string;
     categoryLabel?: string;
+    capabilityHint?: string[];
+    transportHint?: string[];
     authority?: {
       investigationId: string;
       categoryId: string;
@@ -98,9 +100,9 @@ export class PantheonRetrievalAdapter {
     // primary roster while targeted categories avoid redundant transports.
     if (request.purpose === 'background_report') {
       const category = String(request.categoryLabel || '').toLowerCase();
-      // Intensity controls effort/budget only. It never removes a capability
-      // that the active category may require.
-      const specialized = new Set<string>();
+      // URL ledger capability hints are authoritative. Category inference is a
+      // fallback for legacy registry entries that do not yet carry a hint.
+      const specialized = new Set<string>((request.capabilityHint || []).filter(Boolean));
       if (/social|username|photo|internet|media|associate|relationship|timeline/.test(category)) {
         specialized.add('sixdegrees');
         specialized.add('birdofprey');
