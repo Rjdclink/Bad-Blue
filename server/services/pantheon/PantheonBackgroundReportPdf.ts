@@ -213,20 +213,8 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
       doc.font('Helvetica').fontSize(8).text(compactEvidence(report.spiderfoot), { lineGap: 2 });
     }
 
-    addSectionTitle(doc, 'Crawler Coverage');
-    const audit = report.crawlerAudit || [];
-    if (audit.length > 0) {
-      doc.font('Helvetica').fontSize(8);
-      for (const entry of audit) {
-        if (doc.y > 710) doc.addPage();
-        doc.text(
-          `${cleanText(entry.crawler) || 'crawler'} [${cleanText(entry.capabilityClass) || 'crawler'}] — ${cleanText(entry.status) || 'unknown'}; evidence=${Number(entry.evidenceCount || 0)}; attempts=${Number(entry.attempts || 1)}; targets=${Number(entry.targets || 0)}${entry.error ? `; note=${cleanText(entry.error)}` : ''}`,
-          { lineGap: 1 },
-        );
-      }
-    } else {
-      addList(doc, report.crawlersActivated || []);
-    }
+    // Crawler diagnostics remain internal. Customer reports contain findings and
+    // source provenance, never execution/audit internals.
 
     addSectionTitle(doc, 'Source Provenance');
     const sources = report.sources || [];
@@ -238,8 +226,11 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
         doc.font('Helvetica-Bold').fontSize(9).text(`${index + 1}. ${cleanText(source.name) || 'Source'}`);
         doc.font('Helvetica').fontSize(8);
         doc.text(`Confidence: ${percent(source.confidence)} | Retrieved: ${formatDate(source.timestamp)}`);
-        const evidence = compactEvidence(source.data, 1400);
-        if (evidence) doc.text(evidence, { lineGap: 1 });
+        const sourceData = source.data && typeof source.data === 'object'
+          ? source.data as Record<string, unknown>
+          : {};
+        const sourceUrl = cleanText(sourceData.url);
+        if (sourceUrl) doc.text(`Source: ${sourceUrl}`, { lineGap: 1 });
         doc.moveDown(0.4);
       });
     }
