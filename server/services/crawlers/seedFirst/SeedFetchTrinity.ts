@@ -1,6 +1,6 @@
 import type { SeedFirstCrawler } from '../seedFirstCrawlerSet';
 import { sanitizeUrlStrict } from '../../../lib/seedFirstOsint.ts';
-import { getSeedSignal, getSeedFingerprint } from './seedAbortBus.ts';
+import { getSeedSignal } from './seedAbortBus.ts';
 import { acquirePublicResource } from '../PublicAcquisitionInfrastructure';
 
 function uniq<T>(arr: T[]): T[] {
@@ -10,13 +10,9 @@ function uniq<T>(arr: T[]): T[] {
 export const SeedFetchTrinity: SeedFirstCrawler = {
   name: 'SeedFetchTrinity',
   async crawlSeed(seedUrl: string, timeoutMs: number) {
-    const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const seedSignal = getSeedSignal(seedUrl);
-      const signal = seedSignal
-        ? AbortSignal.any([controller.signal, seedSignal])
-        : controller.signal;
+      if (seedSignal?.aborted) return { emails: [], phones: [], links: [], coordinates: [], itemsFound: 0, timedOut: true };
       const resource = await acquirePublicResource(seedUrl, timeoutMs);
       if (!resource.ok) {
         return { emails: [], phones: [], links: [], coordinates: [], itemsFound: 0, timedOut: false };
@@ -54,8 +50,6 @@ export const SeedFetchTrinity: SeedFirstCrawler = {
     } catch (e: any) {
       const timedOut = e?.name === 'AbortError';
       return { emails: [], phones: [], links: [], coordinates: [], itemsFound: 0, timedOut };
-    } finally {
-      clearTimeout(t);
     }
   },
 };
