@@ -1106,14 +1106,20 @@ export async function conductFullOSINT(
   // Start the broad base search and the full registry crawler fan-out together.
   // This prevents the legacy two-crawler base lane from consuming the collection
   // window before the complete PANTHEON roster receives work.
-  const fullRosterPromise = runFullRoster && canActivatePantheon().available && hasCollectionBudget(2_000)
-    ? pantheonRetrievalAdapter.retrieve({
-        purpose: 'background_report',
-        targets: buildPantheonBackgroundTargets(searchQuery, options?.location, searchDepth),
-        depth: searchDepth as 1 | 2 | 3 | 4,
-        budgetMs: Number.isFinite(remainingBudgetMs()) ? remainingBudgetMs() : undefined,
-        deadlineAt: reportDeadlineAt,
-      })
+  const startFullRoster = () => pantheonRetrievalAdapter.retrieve({
+    purpose: 'background_report',
+    targets: buildPantheonBackgroundTargets(searchQuery, options?.location, searchDepth),
+    depth: searchDepth as 1 | 2 | 3 | 4,
+    budgetMs: Number.isFinite(remainingBudgetMs()) ? remainingBudgetMs() : undefined,
+    deadlineAt: reportDeadlineAt,
+  });
+  // Attach the rejection handler immediately: a crawler failure is route-local
+  // and can never become an unhandled rejection while the base lane is running.
+  let fullRosterPromise = runFullRoster && canActivatePantheon().available && hasCollectionBudget(2_000)
+    ? startFullRoster().then(
+        value => ({ ok: true as const, value }),
+        error => ({ ok: false as const, error }),
+      )
     : null;
   const enhancedReport = await conductEnhancedPeopleSearch(searchQuery, options);
 
@@ -1219,11 +1225,23 @@ export async function conductFullOSINT(
     } // End of WRAITH activation block
 
     // Complete PANTHEON crawler roster was launched in parallel with the base lane.
+    if (!fullRosterPromise && runFullRoster && hasCollectionBudget(2_000) && canActivatePantheon().available) {
+      // Availability can change while the base lane runs (for example, after a
+      // transient CryptoCrawler lock). Recheck once before abandoning the roster.
+      fullRosterPromise = startFullRoster().then(
+        value => ({ ok: true as const, value }),
+        error => ({ ok: false as const, error }),
+      );
+    }
     if (fullRosterPromise) {
       console.log('[PANTHEON OSINT] Awaiting complete PANTHEON crawler roster');
       try {
-        const crawlerRetrieval = await fullRosterPromise;
-        const crawlerResults = crawlerRetrieval.evidence;
+        const rosterOutcome = await fullRosterPromise;
+        if (!rosterOutcome.ok) throw rosterOutcome.error;
+        const crawlerRetrieval = rosterOutcome.value;
+        const crawlerResults = crawlerRetrieval.evidence.filter(result =>
+          Boolean(result.content?.trim()) && Number.isFinite(result.confidence) && result.confidence > 0
+        );
         enhancedReport.crawlerAudit = mergeCrawlerAudit([
           ...(enhancedReport.crawlerAudit || []),
           ...crawlerRetrieval.crawlerAudit,
