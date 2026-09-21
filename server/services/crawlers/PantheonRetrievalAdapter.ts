@@ -312,7 +312,7 @@ export class PantheonRetrievalAdapter {
         for (const razor of run.value.razorResults) {
           if (!razor.success) continue;
           evidence.push({
-            crawler: `razor:${razor.razorType}`,
+            crawler: `razor-${razor.razorType}`,
             target,
             content: JSON.stringify(razor.data),
             confidence: Number.isFinite(razor.confidence) ? razor.confidence : 0,
