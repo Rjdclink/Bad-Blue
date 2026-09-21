@@ -282,9 +282,12 @@ class ZombieArmyController {
     const attacks: Promise<Data>[] = [];
     for (let i = 0; i < armySize && i < this.army.length; i++) attacks.push(this.army[i].attack(target).catch(() => this.resurrectZombie(i, target)));
     const results = await Promise.allSettled(attacks);
-    const successful = results.find(r => r.status === 'fulfilled');
-    if (successful && successful.status === 'fulfilled') return successful.value;
-    throw new Error('Zombie army defeated');
+    const successful = results.find(
+      (result): result is PromiseFulfilledResult<Data> =>
+        result.status === 'fulfilled' && result.value.confidence > 0 && result.value.content.trim().length > 0
+    );
+    if (successful) return successful.value;
+    return { content: '', confidence: 0, timestamp: Date.now(), target, metadata: { outcome: 'completed_no_evidence' } };
   }
   private async resurrectZombie(index: number, target: string): Promise<Data> {
     const soul = await this.phylactery.retrieveSoul(target);
