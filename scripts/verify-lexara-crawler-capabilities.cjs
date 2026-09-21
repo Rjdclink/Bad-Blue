@@ -298,6 +298,9 @@ if (!retrievalAdapter.includes("crawler: \`razor-\${razor.razorType}\`")) fail('
 if (!backgroundOrchestrator.includes("result.content?.trim()") || !backgroundOrchestrator.includes("result.confidence > 0")) fail('Primary orchestrator can promote empty crawler results');
 if (!wraithCrawler.includes('successfulSamples > 0') || !wraithCrawler.includes('async.statusCode > 0')) fail('Wraith can emit signatures without successful retrieval');
 if (!trinity.includes("confidence: content ? 0.8 : 0")) fail('Trinity can assign confidence to empty content');
+if (!starTrek.includes("confidence: html.replace(/<[^>]*>/g, ' ').trim() ? 0.8 : 0")) fail('StarTrek can assign confidence to empty content');
+if (!birdOfPrey.includes("confidence: content ? 0.8 : 0")) fail('BirdOfPrey can assign confidence to empty content');
+if (!sixDegrees.includes("confidence: html.replace(/<[^>]*>/g, ' ').trim() ? 0.8 : 0")) fail('SixDegrees can assign confidence to empty content');
 if (!process.exitCode) ok('crawler network boundaries, Razor evidence truth, and seven-crawler skill dispatch are realized');
 
 if (!process.exitCode) ok('background-report crawler path is real, fail-closed, scope-bounded, and evidence-truthful');
