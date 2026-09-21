@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
-import { PANTHEON_REPORT_DURATIONS_MS } from '@shared/pantheonReportConfig';
+import { PANTHEON_REPORT_DURATIONS_MS, PANTHEON_REPORT_DURATION_LABELS } from '@shared/pantheonReportConfig';
 import { Search, Eye } from 'lucide-react';
 
 interface PantheonProgressTrackerProps {
@@ -119,6 +119,11 @@ export function PantheonProgressTracker({
           <Badge variant="secondary" className={`text-base px-3 py-1 ${searchDepth === 4 ? 'bg-red-500/20 text-red-400 border-red-500/50' : ''}`}>
             {Math.round(displayedProgress)}%
           </Badge>
+        </div>
+
+        <div className="flex items-center justify-between rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-sm">
+          <span className="text-muted-foreground">Selected intensity</span>
+          <span className="font-semibold">{PANTHEON_REPORT_DURATION_LABELS[searchDepth as keyof typeof PANTHEON_REPORT_DURATION_LABELS]} investigation</span>
         </div>
 
         {/* Digital Countdown Timer */}
