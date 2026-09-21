@@ -1,3 +1,4 @@
+import { acquirePublicResource } from './PublicAcquisitionInfrastructure';
 /**
  * 🚀 STAR TREK CRAWLER - Federation Explorer
  * 
@@ -32,13 +33,11 @@ interface RequestOptions {
 
 // Utility function for HTTP requests
 async function executeRequest(url: string, options: RequestOptions): Promise<Response> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), options.timeout || 30000);
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } finally {
-    clearTimeout(timeoutId);
-  }
+  const method = String(options.method || 'GET').toUpperCase();
+  if (method !== 'GET' && method !== 'HEAD') throw new Error(`Pantheon crawler network method rejected: ${method}`);
+  const result = await acquirePublicResource(url, options.timeout || 30_000);
+  if (!result.ok) throw new Error(`Crawler request failed: ${result.errorType || 'network_failure'} ${result.status || ''} ${result.error || ''}`.trim());
+  return new Response(method === 'HEAD' ? null : result.content, { status: result.status || 200, headers: { 'content-type': result.contentType } });
 }
 
 // Parse HTML results
