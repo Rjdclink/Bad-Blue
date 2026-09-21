@@ -210,7 +210,7 @@ class ZombieHead implements CerberusHead {
   async attack(target: string): Promise<Data> {
     this.usageCount++; const start = Date.now();
     const soul = await this.phylactery.retrieveSoul(target);
-    const strategy = soul?.strategy || { method: 'GET', retries: 3 };
+    const strategy = soul?.strategy || { method: 'GET' };
     try {
       const response = await executeRequest(target, { method: strategy.method, headers: { 'User-Agent': 'Zombie-Crawler' }, timeout: 10000 });
       const html = await response.text(); const data = parseResults(html);
@@ -219,7 +219,7 @@ class ZombieHead implements CerberusHead {
       this.successCount++; this.updateMetrics(Date.now() - start); return data;
     } catch (error) {
       this.deaths++;
-      if (this.deaths > 5) await this.phylactery.harvestSoul(target, 0, { method: 'POST', retries: 5 });
+      if (this.deaths > 5) await this.phylactery.harvestSoul(target, 0, { method: 'GET', retryAuthority: 'canonical-acquisition' });
       this.updateMetrics(Date.now() - start); throw error;
     }
   }
@@ -248,13 +248,11 @@ export class CerberusCrawler {
       'Cerberus'
     );
   }
-  async loyalAttack(target: string, maxRetries: number): Promise<Data> {
-    for (let i = 0; i < maxRetries; i++) {
-      try { return await this.attack(target); }
-      catch (error) { if (i === maxRetries - 1) throw error; await this.regenerateHead('hydra'); }
-    }
-    // Fallback if loop exits without return
-    throw new Error('Attack failed after all retries');
+  async loyalAttack(target: string, _maxRetries: number): Promise<Data> {
+    // Network retry authority belongs exclusively to PublicAcquisitionInfrastructure.
+    // Cerberus may vary analytical heads, but it may not create an outer network
+    // retry loop around the canonical gateway.
+    return this.attack(target);
   }
   async regenerateHead(head: 'ice' | 'hydra' | 'zombie'): Promise<void> {
     if (head === 'ice') this.leftHead = new IceHead(this.underworldVault);
