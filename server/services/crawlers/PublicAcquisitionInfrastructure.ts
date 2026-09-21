@@ -4,6 +4,14 @@ import { isIP } from 'net';
 
 export type PublicAcquisitionKind = 'html' | 'json' | 'xml' | 'rss' | 'csv' | 'text';
 
+export interface PantheonAcquisitionAuthority {
+  investigationId: string;
+  categoryId: string;
+  workId: string;
+  capability: string;
+  deadlineAt: number;
+}
+
 export interface PublicAcquisitionResult {
   url: string;
   ok: boolean;
@@ -235,7 +243,10 @@ async function acquireOnce(url: URL, timeoutMs: number): Promise<PublicAcquisiti
   }
 }
 
-export async function acquirePublicResource(rawUrl: string, timeoutMs = 12_000): Promise<PublicAcquisitionResult> {
+export async function acquirePublicResource(rawUrl: string, timeoutMs = 12_000, authority?: PantheonAcquisitionAuthority): Promise<PublicAcquisitionResult> {
+  if (authority && authority.deadlineAt <= Date.now()) {
+    return failureResult(String(rawUrl || ''), 0, new Error('Pantheon acquisition authorization expired'));
+  }
   let url: URL;
   try {
     url = canonicalPublicUrl(rawUrl);
@@ -249,7 +260,9 @@ export async function acquirePublicResource(rawUrl: string, timeoutMs = 12_000):
   if (existing) return existing;
 
   const task = (async () => {
-    const deadlineAt = Date.now() + Math.max(500, timeoutMs);
+    const deadlineAt = authority
+      ? Math.min(authority.deadlineAt, Date.now() + Math.max(500, timeoutMs))
+      : Date.now() + Math.max(500, timeoutMs);
     let last = failureResult(key, 0, new Error('Acquisition not attempted'));
     for (let attempt = 0; attempt <= MAX_RETRIES && Date.now() < deadlineAt; attempt++) {
       const remaining = Math.max(1, deadlineAt - Date.now());
@@ -274,9 +287,9 @@ export async function acquirePublicResource(rawUrl: string, timeoutMs = 12_000):
   }
 }
 
-export async function acquirePublicResources(urls: string[], timeoutMs?: number): Promise<PublicAcquisitionResult[]> {
+export async function acquirePublicResources(urls: string[], timeoutMs?: number, authority?: PantheonAcquisitionAuthority): Promise<PublicAcquisitionResult[]> {
   const unique = [...new Set(urls.map(value => String(value || '').trim()).filter(Boolean))].slice(0, 40);
-  const settled = await Promise.allSettled(unique.map(url => acquirePublicResource(url, timeoutMs)));
+  const settled = await Promise.allSettled(unique.map((url, index) => acquirePublicResource(url, timeoutMs, authority ? { ...authority, workId: `${authority.workId}:${index}` } : undefined)));
   return settled.map((result, index) => result.status === 'fulfilled'
     ? result.value
     : failureResult(unique[index], 0, result.reason));
