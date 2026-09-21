@@ -501,6 +501,7 @@ export class PantheonCrawlerOrchestrator {
       }
     });
     const crawlersToUse = options.crawlers || this.getCrawlersForDepth(options.depth);
+    const deadlineAt = options.timeout ? Date.now() + Math.max(1, options.timeout) : undefined;
     const executions = await Promise.all(
       crawlersToUse.map(async crawler => {
         let attempts = 0;
@@ -508,23 +509,29 @@ export class PantheonCrawlerOrchestrator {
         let lastError = '';
 
         for (let attempt = 0; attempt < 2; attempt++) {
+          if (deadlineAt != null && Date.now() >= deadlineAt) {
+            lastError = 'Crawler collection deadline reached';
+            break;
+          }
           attempts += 1;
           try {
+            const remainingMs = deadlineAt == null ? options.timeout : Math.max(1, deadlineAt - Date.now());
             results = await this.search(validTargets, {
               ...options,
+              timeout: remainingMs,
               crawlers: [crawler],
             });
-            if (results.some(result => Boolean(result.content) && result.confidence > 0)) break;
+            if (results.some(result => Boolean(result.content?.trim()) && Number.isFinite(result.confidence) && result.confidence > 0)) break;
           } catch (error) {
             lastError = error instanceof Error ? error.message : String(error);
           }
 
-          if (attempt === 0) {
+          if (attempt === 0 && (deadlineAt == null || Date.now() + 500 < deadlineAt)) {
             await new Promise(resolve => setTimeout(resolve, 500));
           }
         }
 
-        const evidenceCount = results.filter(result => Boolean(result.content) && result.confidence > 0).length;
+        const evidenceCount = results.filter(result => Boolean(result.content?.trim()) && Number.isFinite(result.confidence) && result.confidence > 0).length;
         const audit: CrawlerExecutionAudit = {
           crawler,
           capabilityClass: 'primary',
