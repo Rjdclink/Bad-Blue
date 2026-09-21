@@ -205,7 +205,8 @@ export class SixDegreesCrawler {
           const resolved = new URL(link, baseUrl);
           if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') continue;
           const linkDomain = this.extractDomain(resolved.toString());
-          if (linkDomain && linkDomain !== domain) {
+          const sourceDomain = this.extractDomain(baseUrl);
+          if (linkDomain && linkDomain !== sourceDomain) {
             edges.push({
               from: domain,
               to: linkDomain,
