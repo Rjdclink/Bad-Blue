@@ -77,13 +77,16 @@ export async function acquirePublicResource(rawUrl: string, timeoutMs = 12_000):
       current = allowedPublicUrl(new URL(location, current).toString());
     }
     if (!response) throw new Error('Public acquisition produced no response');
+    if ([301, 302, 303, 307, 308].includes(response.status)) {
+      throw new Error('Public acquisition exceeded redirect limit');
+    }
     const contentType = response.headers.get('content-type') || '';
     const text = (await response.text()).slice(0, 2_000_000);
     return {
-      url: response.url || url.toString(),
+      url: current.toString(),
       ok: response.ok,
       status: response.status,
-      kind: kindFor(contentType, response.url || url.toString()),
+      kind: kindFor(contentType, current.toString()),
       contentType,
       content: text,
       etag: response.headers.get('etag') || undefined,
