@@ -98,6 +98,7 @@ const starTrek = fs.readFileSync('server/services/crawlers/StarTrekCrawler.ts', 
 const birdOfPrey = fs.readFileSync('server/services/crawlers/BirdOfPreyCrawler.ts', 'utf8');
 const sixDegrees = fs.readFileSync('server/services/crawlers/SixDegreesCrawler.ts', 'utf8');
 const trinity = fs.readFileSync('server/services/crawlers/TrinityCrawlers.ts', 'utf8');
+const orchestrator = fs.readFileSync('server/services/pantheonCrawlerOrchestrator.ts', 'utf8');
 const starTrek = fs.readFileSync('server/services/crawlers/StarTrekCrawler.ts', 'utf8');
 const birdOfPrey = fs.readFileSync('server/services/crawlers/BirdOfPreyCrawler.ts', 'utf8');
 const sixDegrees = fs.readFileSync('server/services/crawlers/SixDegreesCrawler.ts', 'utf8');
