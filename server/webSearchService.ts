@@ -207,10 +207,13 @@ export async function unifiedSearch(
 
     recordSuccess('pantheon');
 
-    if (!crawlerResults || crawlerResults.length === 0) return [];
+    const crawlerEvidence = (crawlerResults || []).filter(r =>
+      Boolean(r.content?.trim()) && Number.isFinite(r.confidence) && r.confidence > 0
+    );
+    if (crawlerEvidence.length === 0) return [];
 
     // Convert and lightly normalize/deduplicate by URL when present
-    const mapped: EnhancedSearchResult[] = crawlerResults.map((r, idx) => {
+    const mapped: EnhancedSearchResult[] = crawlerEvidence.map((r, idx) => {
       const url = (r.metadata as any)?.url || (r.metadata as any)?.sourceUrl || '';
       const reliability: EnhancedSearchResult['reliability'] =
         r.confidence >= 0.85 ? 'high' : r.confidence >= 0.7 ? 'medium' : 'low';
