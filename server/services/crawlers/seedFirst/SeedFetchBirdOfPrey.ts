@@ -3,6 +3,7 @@ import { getSeedSignal, getSeedFingerprint } from './seedAbortBus.ts';
 import puppeteer from 'puppeteer';
 import { existsSync } from 'fs';
 import { MIN_CONTENT_LENGTH } from '../../../lib/seedFirstConfig';
+import { sanitizeUrlStrict } from '../../../lib/seedFirstOsint';
 
 function uniq<T>(arr: T[]): T[] {
   return Array.from(new Set(arr));
@@ -26,6 +27,10 @@ export const SeedFetchBirdOfPrey: SeedFirstCrawler = {
       const seedSignal = getSeedSignal(seedUrl);
       const signal = seedSignal ? AbortSignal.any([controller.signal, seedSignal]) : controller.signal;
       if (signal.aborted) return { emails: [], phones: [], links: [], coordinates: [], itemsFound: 0, timedOut: true };
+
+      const sanitizedSeed = sanitizeUrlStrict(seedUrl);
+      if (!sanitizedSeed.ok) return { emails: [], phones: [], links: [], coordinates: [], itemsFound: 0, timedOut: false };
+      seedUrl = sanitizedSeed.normalized;
 
       const fp = getSeedFingerprint(seedUrl);
       const userAgent = fp?.userAgent || 'SeedFirst/1.0';
