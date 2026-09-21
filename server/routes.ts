@@ -3909,21 +3909,16 @@ Contact: ${foiaRequest.userEmail || userEmail}
       const extract = best?.result.extract || null;
 
       const processingTimeMs = Date.now() - startTime;
-      const { pantheonRetrievalAdapter } = await import('./services/crawlers/PantheonRetrievalAdapter');
-      const fullCrawlerRetrieval = await pantheonRetrievalAdapter.retrieve({
-        purpose: 'background_report',
-        depth: searchDepth,
-        targets: [seedDecision.seedUrl],
-      });
-      const fullCrawlerResults = fullCrawlerRetrieval.evidence;
+      // Legacy seed endpoint is not an authoritative Pantheon background-report
+      // execution path. Background-report crawler work is issued exclusively by
+      // PantheonCategoryWorkflow through PantheonBackgroundReportJob.
+      const fullCrawlerResults: any[] = [];
       const fullCrawlerMeta: Record<string, unknown> = {
-        available: fullCrawlerRetrieval.available,
-        reason: fullCrawlerRetrieval.reason,
+        available: false,
+        reason: 'Canonical Pantheon background-report execution is owned by PantheonCategoryWorkflow',
         depth: searchDepth,
-        resultCount: fullCrawlerResults.length,
-        crawlersUsed: [...new Set(fullCrawlerResults.map(result => result.crawler))],
-        selectionPlan: fullCrawlerRetrieval.plan,
-        supervision: fullCrawlerRetrieval.supervision,
+        resultCount: 0,
+        crawlersUsed: [],
       };
 
       if (!extract || !extract.itemsFound) {
