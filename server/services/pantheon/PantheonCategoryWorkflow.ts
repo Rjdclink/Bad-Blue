@@ -54,6 +54,8 @@ export interface PantheonWorkAuthorization {
   location?: string;
 }
 
+export type PantheonWorkType = 'authoritative-source'|'discovery-search'|'candidate-validation'|'corroboration';
+
 export type PantheonUrlState = 'pending'|'assigned'|'retrieving'|'retrieved'|'accepted'|'rejected'|'blocked'|'rate_limited'|'dead'|'timed_out'|'no_evidence';
 
 export interface PantheonUrlLedgerEntry {
@@ -61,6 +63,7 @@ export interface PantheonUrlLedgerEntry {
   priority: number;
   authority: 'primary'|'secondary'|'archive'|'discovery';
   registryCategory: PantheonBackgroundCategory;
+  workType: PantheonWorkType;
   state: PantheonUrlState;
   attempts: number;
   evidenceIds: string[];
@@ -218,6 +221,11 @@ function capabilityFor(categoryLabel: string, entry: PantheonUrlLedgerEntry): { 
   return { capability: 'startrek', reason: 'general authoritative public-source retrieval' };
 }
 
+function workTypeFor(authority: PantheonUrlLedgerEntry['authority'], transport: PantheonUrlLedgerEntry['transport']): PantheonWorkType {
+  if (authority === 'discovery' || transport === 'search-provider') return 'discovery-search';
+  return 'authoritative-source';
+}
+
 function transportFor(entry: PantheonUrlLedgerEntry): PantheonUrlLedgerEntry['transport'] {
   const url = entry.url.toLowerCase();
   if (/google\.com\/search|bing\.com\/search|duckduckgo\.com/.test(url)) return 'search-provider';
@@ -239,19 +247,21 @@ function buildCategoryLedger(
       const url = admission.url;
       if (seen.has(url)) continue;
       seen.add(url);
+      const selectedTransport = candidate.transport || transportFor({ url, priority: sourcePriority(candidate.authority), authority: candidate.authority, registryCategory: group.registryCategory, workType: 'authoritative-source', state: 'pending', attempts: 0, evidenceIds: [] });
       ledger.push({
         url,
         priority: sourcePriority(candidate.authority),
         authority: candidate.authority,
         registryCategory: group.registryCategory,
+        workType: workTypeFor(candidate.authority, selectedTransport),
         state: 'pending',
         attempts: 0,
         evidenceIds: [],
         ...(() => {
-          const routed = capabilityFor(group.registryCategory, { url, priority: sourcePriority(candidate.authority), authority: candidate.authority, registryCategory: group.registryCategory, state: 'pending', attempts: 0, evidenceIds: [] });
+          const routed = capabilityFor(group.registryCategory, { url, priority: sourcePriority(candidate.authority), authority: candidate.authority, registryCategory: group.registryCategory, workType: 'authoritative-source', state: 'pending', attempts: 0, evidenceIds: [] });
           return { capability: routed.capability, capabilityReason: routed.reason };
         })(),
-        transport: candidate.transport || transportFor({ url, priority: sourcePriority(candidate.authority), authority: candidate.authority, registryCategory: group.registryCategory, state: 'pending', attempts: 0, evidenceIds: [] }),
+        transport: selectedTransport,
       });
     }
   }
@@ -440,6 +450,7 @@ export async function conductPantheonCategoryWorkflow(input: {
               priority: Math.max(50, (parent?.priority || 100) - 25),
               authority: 'discovery',
               registryCategory: parent?.registryCategory || category.registry[0],
+              workType: 'candidate-validation',
               state: 'pending',
               attempts: 0,
               evidenceIds: [],
