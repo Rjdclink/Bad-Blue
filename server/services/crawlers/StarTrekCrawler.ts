@@ -76,7 +76,9 @@ export class StarTrekCrawler {
       seeds
         .map(seed => {
           try {
-            return new URL(seed).toString().replace(/\/$/, '');
+            const url = new URL(seed);
+            if (url.protocol !== 'http:' && url.protocol !== 'https:') return '';
+            return url.toString().replace(/\/$/, '');
           } catch {
             return '';
           }
