@@ -1,5 +1,6 @@
 import { PhylacterySystem } from '../storage/PhylacterySystem';
 import { StealthInfrastructure } from '../stealth/StealthInfrastructure';
+import { acquirePublicResource } from './PublicAcquisitionInfrastructure';
 
 // Types
 interface RequestProfile {
@@ -15,22 +16,13 @@ interface Data { content: string; confidence: number; headUsed?: string; timesta
 interface RequestOptions { method?: string; headers?: Record<string, string>; body?: any; timeout?: number; }
 
 // Shared Utilities
-async function executeRequest(url: string, options: RequestOptions, stealth?: StealthInfrastructure): Promise<Response> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), options.timeout || 30000);
-  try {
-    // Route through StealthInfrastructure if available
-    if (stealth) {
-      await stealth.connect(url, 'medium');
-    }
-    const response = await fetch(url, { ...options, signal: controller.signal });
-    if (!response.ok) {
-      throw new Error(`Crawler request failed: HTTP ${response.status}`);
-    }
-    return response;
-  } finally {
-    clearTimeout(timeoutId);
-  }
+async function executeRequest(url: string, options: RequestOptions, _stealth?: StealthInfrastructure): Promise<Response> {
+  const method = String(options.method || 'GET').toUpperCase();
+  if (method !== 'GET' && method !== 'HEAD') throw new Error(`Pantheon crawler network method rejected: ${method}`);
+  const result = await acquirePublicResource(url, options.timeout || 30_000);
+  if (!result.ok) throw new Error(`Crawler request failed: ${result.errorType || 'network_failure'} ${result.status || ''} ${result.error || ''}`.trim());
+  const headers = new Headers({ 'content-type': result.contentType });
+  return new Response(method === 'HEAD' ? null : result.content, { status: result.status || 200, headers });
 }
 function parseResults(html: string): Data { return { content: html.replace(/<[^>]*>/g, ' ').substring(0, 1000), confidence: 0.8, timestamp: Date.now(), target: '' }; }
 function calculateConfidence(data: Data): number { return data.content.length > 100 ? 0.9 : 0.5; }
@@ -259,7 +251,7 @@ export class CerberusCrawler {
   async loyalAttack(target: string, maxRetries: number): Promise<Data> {
     for (let i = 0; i < maxRetries; i++) {
       try { return await this.attack(target); }
-      catch (error) { if (i === maxRetries - 1) throw error; await this.regenerateHead('hydra'); await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1))); }
+      catch (error) { if (i === maxRetries - 1) throw error; await this.regenerateHead('hydra'); }
     }
     // Fallback if loop exits without return
     throw new Error('Attack failed after all retries');
