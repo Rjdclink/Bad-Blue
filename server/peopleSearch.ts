@@ -1106,15 +1106,10 @@ export async function conductFullOSINT(
   // Start the broad base search and the full registry crawler fan-out together.
   // This prevents the legacy two-crawler base lane from consuming the collection
   // window before the complete PANTHEON roster receives work.
-  const fullRosterPromise = runFullRoster && canActivatePantheon().available && hasCollectionBudget(2_000)
-    ? pantheonRetrievalAdapter.retrieve({
-        purpose: 'background_report',
-        targets: buildPantheonBackgroundTargets(searchQuery, options?.location, searchDepth),
-        depth: searchDepth as 1 | 2 | 3 | 4,
-        budgetMs: Number.isFinite(remainingBudgetMs()) ? remainingBudgetMs() : undefined,
-        deadlineAt: reportDeadlineAt,
-      })
-    : null;
+  // Legacy people-search enrichment may not originate canonical Pantheon
+  // background-report crawler execution. The category workflow is the sole
+  // background-report work issuer.
+  const fullRosterPromise = null;
   const enhancedReport = await conductEnhancedPeopleSearch(searchQuery, options);
 
   if (options?.phone) {

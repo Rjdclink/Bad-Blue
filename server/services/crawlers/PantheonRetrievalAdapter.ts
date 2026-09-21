@@ -54,10 +54,42 @@ export class PantheonRetrievalAdapter {
     subject?: string;
     location?: string;
     categoryLabel?: string;
+    capabilityHint?: string[];
+    transportHint?: string[];
+    authority?: {
+      investigationId: string;
+      categoryId: string;
+      categoryIndex: number;
+      categoryLabel: string;
+      deadlineAt: number;
+      subject: string;
+      location?: string;
+      workId?: string;
+      canonicalUrl?: string;
+      capability?: string;
+    };
   }): Promise<PantheonRetrievalResponse> {
+    if (request.purpose === 'background_report') {
+      const authority = request.authority;
+      if (!authority?.investigationId || !authority.categoryId || !authority.workId || !authority.canonicalUrl || !authority.capability) {
+        throw new Error('Pantheon background retrieval rejected: incomplete canonical work authorization');
+      }
+      if (request.targets.length !== 1 || request.targets[0] !== authority.canonicalUrl) {
+        throw new Error('Pantheon background retrieval rejected: work authorization URL mismatch');
+      }
+      if (!(request.capabilityHint || []).includes(authority.capability)) {
+        throw new Error('Pantheon background retrieval rejected: work authorization capability mismatch');
+      }
+    }
     const retrievalStartedAt = Date.now();
-    const deadlineAt = request.deadlineAt
+    if (request.authority && request.authority.deadlineAt <= retrievalStartedAt) {
+      throw new Error('Pantheon background retrieval rejected: work authorization deadline expired');
+    }
+    const requestedDeadlineAt = request.deadlineAt
       ?? (request.budgetMs == null ? undefined : retrievalStartedAt + request.budgetMs);
+    const deadlineAt = request.authority
+      ? Math.min(request.authority.deadlineAt, requestedDeadlineAt ?? request.authority.deadlineAt)
+      : requestedDeadlineAt;
     const remainingBudgetMs = () => deadlineAt == null
       ? Number.POSITIVE_INFINITY
       : Math.max(0, deadlineAt - Date.now());
@@ -83,8 +115,9 @@ export class PantheonRetrievalAdapter {
     // primary roster while targeted categories avoid redundant transports.
     if (request.purpose === 'background_report') {
       const category = String(request.categoryLabel || '').toLowerCase();
-      const specialized = new Set(plan.crawlers);
-      specialized.add('startrek');
+      // URL ledger capability hints are authoritative. Category inference is a
+      // fallback for legacy registry entries that do not yet carry a hint.
+      const specialized = new Set<string>((request.capabilityHint || []).filter(Boolean));
       if (/social|username|photo|internet|media|associate|relationship|timeline/.test(category)) {
         specialized.add('sixdegrees');
         specialized.add('birdofprey');
@@ -97,6 +130,9 @@ export class PantheonRetrievalAdapter {
         specialized.add('blizzard');
       }
       if (/relationship|timeline|corroboration|contradiction/.test(category)) specialized.add('lich');
+      if (specialized.size === 0) specialized.add('startrek');
+      // Search depth/intensity never removes a capability selected by the URL
+      // ledger. It only governs budget and productive-work depth upstream.
       plan.crawlers = [...specialized];
       plan.rationale.unshift(`Background category capability routing: ${request.categoryLabel || 'general'}.`);
     }
@@ -145,184 +181,28 @@ export class PantheonRetrievalAdapter {
 
     const evidence = results.map(normalizeResult).filter(item => item.content.trim() && item.confidence > 0);
 
-    // Firecrawl is an explicit background-report retrieval lane, not merely a
-    // registered capability. Give it category-specific URL work on every
-    // background-report invocation and record the outcome even when unavailable.
-    if (request.purpose === 'background_report' && collectionOpen()) {
-      const firecrawlTargets = request.targets.filter(target => {
-        try {
-          const parsed = new URL(target);
-          return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-        } catch {
-          return false;
-        }
-      }).slice(0, Math.min(request.targets.length, Math.max(2, (request.depth || 1) * 2)));
-
-      if (!defaultFirecrawlAdapter.isEnabled()) {
-        crawlerAudit.push({
-          crawler: 'firecrawl',
-          capabilityClass: 'pantheon-secondary',
-          status: 'unavailable_no_content',
-          evidenceCount: 0,
-          attempts: 0,
-          targets: firecrawlTargets.length,
-          error: 'Firecrawl adapter unavailable or API key not configured',
-        });
-      } else if (firecrawlTargets.length === 0) {
-        crawlerAudit.push({
-          crawler: 'firecrawl',
-          capabilityClass: 'pantheon-secondary',
-          status: 'completed_no_evidence',
-          evidenceCount: 0,
-          attempts: 0,
-          targets: 0,
-        });
-      } else {
-        const firecrawlLaneBudget = Math.max(1_000, Math.floor(totalBudgetMs * 0.15));
-        const firecrawlBudget = Math.max(750, Math.min(8_000, Math.floor(firecrawlLaneBudget / Math.max(1, firecrawlTargets.length))));
-        const firecrawlRuns = await Promise.allSettled(firecrawlTargets.map(target =>
-          defaultFirecrawlAdapter.scrape(target, {
-            formats: ['markdown'],
-            onlyMainContent: true,
-            timeout: firecrawlBudget,
-          })
-        ));
-        let firecrawlEvidenceCount = 0;
-        let firecrawlFailures = 0;
-        firecrawlRuns.forEach((run, index) => {
-          const target = firecrawlTargets[index];
-          if (run.status !== 'fulfilled' || !run.value.success) {
-            firecrawlFailures += 1;
-            return;
-          }
-          const content = String(run.value.markdown || run.value.html || '').trim();
-          if (!content) return;
-          firecrawlEvidenceCount += 1;
-          evidence.push({
-            crawler: 'firecrawl',
-            target,
-            content,
-            confidence: 0.82,
-            retrievedAt: new Date().toISOString(),
-            metadata: { capabilityClass: 'firecrawl', source: 'firecrawl-scrape' },
-          });
-        });
-        crawlerAudit.push({
-          crawler: 'firecrawl',
-          capabilityClass: 'pantheon-secondary',
-          status: firecrawlEvidenceCount > 0 ? 'completed_with_evidence'
-            : firecrawlFailures === firecrawlTargets.length ? 'failed'
-            : 'completed_no_evidence',
-          evidenceCount: firecrawlEvidenceCount,
-          attempts: firecrawlRuns.length,
-          targets: firecrawlTargets.length,
-          error: firecrawlFailures > 0 ? `${firecrawlFailures} Firecrawl target(s) failed` : undefined,
-        });
-      }
-    }
-
-    // Puppeteer is a first-class browser lane for JavaScript-rendered sources.
-    // It runs independently of Firecrawl so either provider can fail without
-    // suppressing the other or the primary crawler roster.
-    if (request.purpose === 'background_report' && collectionOpen()) {
-      const puppeteerTargets = request.targets.filter(target => {
-        try {
-          const parsed = new URL(target);
-          return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-        } catch {
-          return false;
-        }
-      }).slice(0, Math.min(request.targets.length, Math.max(2, (request.depth || 1) * 2)));
-
-      const puppeteerLaneBudget = Math.max(1_000, Math.floor(totalBudgetMs * 0.15));
-      const perTargetBudget = Math.max(750, Math.min(10_000,
-        Math.floor(puppeteerLaneBudget / Math.max(1, puppeteerTargets.length))));
-      const runs = await Promise.allSettled(puppeteerTargets.map(target =>
-        shadowRetrieval.retrieve(target, {
-          method: 'puppeteer',
-          timeout: perTargetBudget,
-          retry: { maxRetries: 1 },
-        })
-      ));
-      let found = 0;
-      let failed = 0;
-      runs.forEach((run, index) => {
-        const target = puppeteerTargets[index];
-        if (run.status !== 'fulfilled' || !run.value.success) {
-          failed += 1;
-          return;
-        }
-        const raw = run.value.data;
-        const content = typeof raw === 'string' ? raw : JSON.stringify(raw || '');
-        if (!content.trim()) return;
-        found += 1;
-        evidence.push({
-          crawler: 'puppeteer',
-          target,
-          content,
-          confidence: 0.8,
-          retrievedAt: new Date().toISOString(),
-          metadata: { capabilityClass: 'browser', source: 'puppeteer' },
-        });
+    // Specialized extraction providers may enrich content already admitted
+    // through the canonical acquisition gateway; they are not independent
+    // Pantheon network authorities.
+    if (request.purpose === 'background_report') {
+      crawlerAudit.push({
+        crawler: 'firecrawl',
+        capabilityClass: 'pantheon-secondary',
+        status: 'completed_no_evidence',
+        evidenceCount: 0,
+        attempts: 0,
+        targets: 0,
+        error: 'Independent Firecrawl acquisition disabled; canonical acquisition owns Pantheon networking',
       });
       crawlerAudit.push({
         crawler: 'puppeteer',
         capabilityClass: 'pantheon-secondary',
-        status: found > 0 ? 'completed_with_evidence'
-          : failed === puppeteerTargets.length && puppeteerTargets.length > 0 ? 'failed'
-          : 'completed_no_evidence',
-        evidenceCount: found,
-        attempts: runs.length,
-        targets: puppeteerTargets.length,
-        error: failed > 0 ? `${failed} Puppeteer target(s) failed` : undefined,
+        status: 'completed_no_evidence',
+        evidenceCount: 0,
+        attempts: 0,
+        targets: 0,
+        error: 'Independent Puppeteer acquisition disabled; browser capability requires controller-authorized transport',
       });
-    }
-
-    if (request.purpose === 'background_report' && collectionOpen()) {
-      const urlTargets = request.targets.filter(target => {
-        try {
-          const parsed = new URL(target);
-          return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-        } catch {
-          return false;
-        }
-      });
-      const publicResources: Awaited<ReturnType<typeof acquirePublicResources>> = [];
-      const publicLaneBudget = Math.max(1_000, Math.floor(totalBudgetMs * 0.15));
-      const perTargetTimeoutMs = Math.min(8_000, Math.max(750, Math.floor(publicLaneBudget / Math.max(1, request.targets.length))));
-      const acquisitionBatchSize = 24;
-      for (let offset = 0; offset < urlTargets.length && collectionOpen(); offset += acquisitionBatchSize) {
-        const batch = urlTargets.slice(offset, offset + acquisitionBatchSize);
-        const batchResults = await acquirePublicResources(batch, Math.min(perTargetTimeoutMs, Math.max(1_000, remainingBudgetMs())));
-        publicResources.push(...batchResults);
-      }
-      for (const resource of publicResources) {
-        crawlerAudit.push({
-          crawler: 'public-acquisition',
-          capabilityClass: 'pantheon-secondary',
-          status: resource.ok && resource.content.trim() ? 'completed_with_evidence' : 'unavailable_no_content',
-          evidenceCount: resource.ok && resource.content.trim() ? 1 : 0,
-          attempts: 1,
-          targets: 1,
-          error: resource.error,
-        });
-        if (!resource.ok || !resource.content.trim()) continue;
-        evidence.push({
-          crawler: 'public-acquisition',
-          target: resource.url,
-          content: resource.content,
-          confidence: 0.72,
-          retrievedAt: resource.retrievedAt,
-          metadata: {
-            capabilityClass: 'no-key-public-acquisition',
-            contentType: resource.contentType,
-            kind: resource.kind,
-            httpStatus: resource.status,
-            etag: resource.etag,
-            lastModified: resource.lastModified,
-          },
-        });
-      }
     }
 
     if (request.purpose === 'background_report' && evidence.length > 0 && collectionOpen()) {

@@ -4,6 +4,14 @@ import { isIP } from 'net';
 
 export type PublicAcquisitionKind = 'html' | 'json' | 'xml' | 'rss' | 'csv' | 'text';
 
+export interface PantheonAcquisitionAuthority {
+  investigationId: string;
+  categoryId: string;
+  workId: string;
+  capability: string;
+  deadlineAt: number;
+}
+
 export interface PublicAcquisitionResult {
   url: string;
   ok: boolean;
@@ -25,6 +33,9 @@ interface HostState {
   consecutiveFailures: number;
   circuitOpenUntil: number;
   latencyEwmaMs: number;
+  forbiddenUntil: number;
+  notFoundCount: number;
+  rateLimitedCount: number;
 }
 
 const hostStates = new Map<string, HostState>();
@@ -43,7 +54,7 @@ const BLOCKED_HOST_HINTS = /(?:googletagmanager|google-analytics|doubleclick|new
 function stateFor(host: string): HostState {
   let state = hostStates.get(host);
   if (!state) {
-    state = { active: 0, nextAllowedAt: 0, consecutiveFailures: 0, circuitOpenUntil: 0, latencyEwmaMs: 0 };
+    state = { active: 0, nextAllowedAt: 0, consecutiveFailures: 0, circuitOpenUntil: 0, latencyEwmaMs: 0, forbiddenUntil: 0, notFoundCount: 0, rateLimitedCount: 0 };
     hostStates.set(host, state);
   }
   return state;
@@ -79,6 +90,14 @@ async function assertPublicResolution(url: URL): Promise<void> {
   const records = await dns.lookup(url.hostname, { all: true, verbatim: true });
   if (!records.length) throw new Error('Public acquisition hostname did not resolve');
   if (records.some(record => isPrivateHost(record.address))) throw new Error('Public acquisition hostname resolves to a private network');
+}
+
+export function admitPantheonUrl(raw: string): { ok: true; url: string } | { ok: false; reason: string } {
+  try {
+    return { ok: true, url: canonicalPublicUrl(raw).toString() };
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 function canonicalPublicUrl(raw: string): URL {
@@ -140,7 +159,7 @@ function failureResult(url: string, status: number, error: unknown, retryMs?: nu
 async function waitForHost(host: string, deadlineAt: number): Promise<boolean> {
   const state = stateFor(host);
   while (Date.now() < deadlineAt) {
-    if (state.circuitOpenUntil > Date.now()) return false;
+    if (state.circuitOpenUntil > Date.now() || state.forbiddenUntil > Date.now()) return false;
     if (state.active < MAX_PER_HOST && state.nextAllowedAt <= Date.now()) {
       state.active += 1;
       return true;
@@ -165,6 +184,11 @@ function recordHostResult(host: string, status: number, latencyMs: number, retry
     return;
   }
   state.consecutiveFailures += 1;
+  if (status === 403) {
+    state.forbiddenUntil = Math.max(state.forbiddenUntil, Date.now() + CIRCUIT_OPEN_MS);
+  }
+  if (status === 404) state.notFoundCount += 1;
+  if (status === 429) state.rateLimitedCount += 1;
   if (status === 429 || status === 503) {
     state.nextAllowedAt = Math.max(state.nextAllowedAt, Date.now() + (retryMs || Math.min(MAX_BACKOFF_MS, 1000 * 2 ** Math.min(4, state.consecutiveFailures))));
   }
@@ -173,8 +197,10 @@ function recordHostResult(host: string, status: number, latencyMs: number, retry
   }
 }
 
-async function acquireOnce(url: URL, timeoutMs: number): Promise<PublicAcquisitionResult> {
-  const deadlineAt = Date.now() + Math.max(500, timeoutMs);
+async function acquireOnce(url: URL, timeoutMs: number, hardDeadlineAt?: number): Promise<PublicAcquisitionResult> {
+  const deadlineAt = hardDeadlineAt == null
+    ? Date.now() + Math.max(500, timeoutMs)
+    : Math.min(hardDeadlineAt, Date.now() + Math.max(1, timeoutMs));
   const host = url.hostname.toLowerCase();
   const admitted = await waitForHost(host, deadlineAt);
   if (!admitted) return { ...failureResult(url.toString(), 0, new Error('Host circuit open or acquisition deadline exhausted')), errorType: 'circuit_open' };
@@ -203,7 +229,9 @@ async function acquireOnce(url: URL, timeoutMs: number): Promise<PublicAcquisiti
       if (![301, 302, 303, 307, 308].includes(response.status)) break;
       const location = response.headers.get('location');
       if (!location) break;
-      current = canonicalPublicUrl(new URL(location, current).toString());
+      const redirectAdmission = admitPantheonUrl(new URL(location, current).toString());
+      if (!redirectAdmission.ok) throw new Error(`Redirect rejected by Pantheon URL admission: ${redirectAdmission.reason}`);
+      current = new URL(redirectAdmission.url);
     }
     if (!response) throw new Error('Public acquisition produced no response');
     if ([301, 302, 303, 307, 308].includes(response.status)) throw new Error('Public acquisition exceeded redirect limit');
@@ -235,7 +263,17 @@ async function acquireOnce(url: URL, timeoutMs: number): Promise<PublicAcquisiti
   }
 }
 
-export async function acquirePublicResource(rawUrl: string, timeoutMs = 12_000): Promise<PublicAcquisitionResult> {
+export async function acquirePantheonResource(rawUrl: string, timeoutMs: number, authority: PantheonAcquisitionAuthority): Promise<PublicAcquisitionResult> {
+  if (!authority?.investigationId || !authority.categoryId || !authority.workId || !authority.capability) {
+    return failureResult(String(rawUrl || ''), 0, new Error('Pantheon acquisition rejected: incomplete work authorization'));
+  }
+  return acquirePublicResource(rawUrl, timeoutMs, authority);
+}
+
+export async function acquirePublicResource(rawUrl: string, timeoutMs = 12_000, authority?: PantheonAcquisitionAuthority): Promise<PublicAcquisitionResult> {
+  if (authority && authority.deadlineAt <= Date.now()) {
+    return failureResult(String(rawUrl || ''), 0, new Error('Pantheon acquisition authorization expired'));
+  }
   let url: URL;
   try {
     url = canonicalPublicUrl(rawUrl);
@@ -249,11 +287,13 @@ export async function acquirePublicResource(rawUrl: string, timeoutMs = 12_000):
   if (existing) return existing;
 
   const task = (async () => {
-    const deadlineAt = Date.now() + Math.max(500, timeoutMs);
+    const deadlineAt = authority
+      ? Math.min(authority.deadlineAt, Date.now() + Math.max(500, timeoutMs))
+      : Date.now() + Math.max(500, timeoutMs);
     let last = failureResult(key, 0, new Error('Acquisition not attempted'));
     for (let attempt = 0; attempt <= MAX_RETRIES && Date.now() < deadlineAt; attempt++) {
       const remaining = Math.max(1, deadlineAt - Date.now());
-      last = await acquireOnce(url, remaining);
+      last = await acquireOnce(url, remaining, deadlineAt);
       if (last.ok) break;
       const retryable = last.status === 408 || last.status === 429 || last.status === 500 || last.status === 502 || last.status === 503 || last.status === 504 ||
         ['timeout','tls_failure','network_failure'].includes(String(last.errorType));
@@ -274,9 +314,9 @@ export async function acquirePublicResource(rawUrl: string, timeoutMs = 12_000):
   }
 }
 
-export async function acquirePublicResources(urls: string[], timeoutMs?: number): Promise<PublicAcquisitionResult[]> {
+export async function acquirePublicResources(urls: string[], timeoutMs?: number, authority?: PantheonAcquisitionAuthority): Promise<PublicAcquisitionResult[]> {
   const unique = [...new Set(urls.map(value => String(value || '').trim()).filter(Boolean))].slice(0, 40);
-  const settled = await Promise.allSettled(unique.map(url => acquirePublicResource(url, timeoutMs)));
+  const settled = await Promise.allSettled(unique.map((url, index) => acquirePublicResource(url, timeoutMs, authority ? { ...authority, workId: `${authority.workId}:${index}` } : undefined)));
   return settled.map((result, index) => result.status === 'fulfilled'
     ? result.value
     : failureResult(unique[index], 0, result.reason));
@@ -288,5 +328,8 @@ export function getPublicAcquisitionHostHealth(): Record<string, Omit<HostState,
     consecutiveFailures: state.consecutiveFailures,
     circuitOpenUntil: state.circuitOpenUntil,
     latencyEwmaMs: state.latencyEwmaMs,
+    forbiddenUntil: state.forbiddenUntil,
+    notFoundCount: state.notFoundCount,
+    rateLimitedCount: state.rateLimitedCount,
   }]));
 }

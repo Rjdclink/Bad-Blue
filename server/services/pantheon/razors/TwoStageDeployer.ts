@@ -20,6 +20,7 @@ import { WraithCrawler } from '../crawlers/wraith';
 import { IceCrawler } from '../crawlers/ice';
 import { FarmCrawler, PhantomCrawler, NovaCrawler } from '../crawlers/utility';
 import { CrawlerType, CrawlerTask, EntropySignature } from '../core';
+import { acquirePublicResource } from '../../crawlers/PublicAcquisitionInfrastructure';
 
 // Configuration
 const STAGE_1_TIMEOUT = 5000;           // 5 seconds for all razors
@@ -334,22 +335,8 @@ export class TwoStageDeployer {
    * Fetch content from target URL
    */
   private async fetchContent(url: string, timeoutMs: number = 5000): Promise<string | null> {
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), timeoutMs);
-      
-      const response = await fetch(url, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PantheonBot/1.0)' },
-        signal: controller.signal,
-      });
-      
-      clearTimeout(timeout);
-      
-      if (!response.ok) return null;
-      return await response.text();
-    } catch {
-      return null;
-    }
+    const result = await acquirePublicResource(url, timeoutMs);
+    return result.ok && result.content.trim() ? result.content : null;
   }
 
   /**

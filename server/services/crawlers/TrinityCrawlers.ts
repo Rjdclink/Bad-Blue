@@ -1,5 +1,6 @@
 import { PhylacterySystem } from '../storage/PhylacterySystem';
 import { StealthInfrastructure } from '../stealth/StealthInfrastructure';
+import { acquirePublicResource } from './PublicAcquisitionInfrastructure';
 
 // Types
 interface RequestProfile {
@@ -15,22 +16,13 @@ interface Data { content: string; confidence: number; headUsed?: string; timesta
 interface RequestOptions { method?: string; headers?: Record<string, string>; body?: any; timeout?: number; }
 
 // Shared Utilities
-async function executeRequest(url: string, options: RequestOptions, stealth?: StealthInfrastructure): Promise<Response> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), options.timeout || 30000);
-  try {
-    // Route through StealthInfrastructure if available
-    if (stealth) {
-      await stealth.connect(url, 'medium');
-    }
-    const response = await fetch(url, { ...options, signal: controller.signal });
-    if (!response.ok) {
-      throw new Error(`Crawler request failed: HTTP ${response.status}`);
-    }
-    return response;
-  } finally {
-    clearTimeout(timeoutId);
-  }
+async function executeRequest(url: string, options: RequestOptions, _stealth?: StealthInfrastructure): Promise<Response> {
+  const method = String(options.method || 'GET').toUpperCase();
+  if (method !== 'GET' && method !== 'HEAD') throw new Error(`Pantheon crawler network method rejected: ${method}`);
+  const result = await acquirePublicResource(url, options.timeout || 30_000);
+  if (!result.ok) throw new Error(`Crawler request failed: ${result.errorType || 'network_failure'} ${result.status || ''} ${result.error || ''}`.trim());
+  const headers = new Headers({ 'content-type': result.contentType });
+  return new Response(method === 'HEAD' ? null : result.content, { status: result.status || 200, headers });
 }
 function parseResults(html: string): Data { return { content: html.replace(/<[^>]*>/g, ' ').substring(0, 1000), confidence: 0.8, timestamp: Date.now(), target: '' }; }
 function calculateConfidence(data: Data): number { return data.content.length > 100 ? 0.9 : 0.5; }
@@ -137,23 +129,18 @@ export class BlizzardCrawler {
 
   // Avalanche Mode (30 lines)
   async triggerAvalanche(initial: string): Promise<Data[]> {
-    const results: Data[] = [];
-    let currentTargets = [initial];
-    const visited = new Set<string>();
-    for (let wave = 0; wave < 5 && currentTargets.length > 0; wave++) {
-      const intensity: StormIntensity = wave === 0 ? 'flurry' : wave < 3 ? 'snow' : 'storm';
-      const waveResults = await this.deploy(currentTargets, intensity);
-      results.push(...waveResults);
-      currentTargets.forEach(t => visited.add(t));
-      const nextTargets: string[] = [];
-      for (const result of waveResults) {
-        const extracted = this.extractRelatedTargets(result.content);
-        for (const target of extracted) if (!visited.has(target) && nextTargets.length < 10) nextTargets.push(target);
-      }
-      currentTargets = nextTargets;
-      if (currentTargets.length === 0) break;
-    }
-    return results;
+    // Pantheon crawlers may analyze the controller-issued URL only. Discovered
+    // links are candidates returned in metadata; they are never executable work
+    // until PantheonCategoryWorkflow admits and schedules them.
+    const waveResults = await this.deploy([initial], 'flurry');
+    return waveResults.map(result => ({
+      ...result,
+      metadata: {
+        ...(result.metadata || {}),
+        discoveredCandidates: this.extractRelatedTargets(result.content),
+        discoveryExecutionAuthority: 'PantheonCategoryWorkflow',
+      },
+    }));
   }
 
   private extractRelatedTargets(content: string): string[] {
@@ -218,7 +205,7 @@ class ZombieHead implements CerberusHead {
   async attack(target: string): Promise<Data> {
     this.usageCount++; const start = Date.now();
     const soul = await this.phylactery.retrieveSoul(target);
-    const strategy = soul?.strategy || { method: 'GET', retries: 3 };
+    const strategy = soul?.strategy || { method: 'GET' };
     try {
       const response = await executeRequest(target, { method: strategy.method, headers: { 'User-Agent': 'Zombie-Crawler' }, timeout: 10000 });
       const html = await response.text(); const data = parseResults(html);
@@ -227,7 +214,7 @@ class ZombieHead implements CerberusHead {
       this.successCount++; this.updateMetrics(Date.now() - start); return data;
     } catch (error) {
       this.deaths++;
-      if (this.deaths > 5) await this.phylactery.harvestSoul(target, 0, { method: 'POST', retries: 5 });
+      if (this.deaths > 5) await this.phylactery.harvestSoul(target, 0, { method: 'GET', retryAuthority: 'canonical-acquisition' });
       this.updateMetrics(Date.now() - start); throw error;
     }
   }
@@ -256,13 +243,11 @@ export class CerberusCrawler {
       'Cerberus'
     );
   }
-  async loyalAttack(target: string, maxRetries: number): Promise<Data> {
-    for (let i = 0; i < maxRetries; i++) {
-      try { return await this.attack(target); }
-      catch (error) { if (i === maxRetries - 1) throw error; await this.regenerateHead('hydra'); await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1))); }
-    }
-    // Fallback if loop exits without return
-    throw new Error('Attack failed after all retries');
+  async loyalAttack(target: string, _maxRetries: number): Promise<Data> {
+    // Network retry authority belongs exclusively to PublicAcquisitionInfrastructure.
+    // Cerberus may vary analytical heads, but it may not create an outer network
+    // retry loop around the canonical gateway.
+    return this.attack(target);
   }
   async regenerateHead(head: 'ice' | 'hydra' | 'zombie'): Promise<void> {
     if (head === 'ice') this.leftHead = new IceHead(this.underworldVault);
