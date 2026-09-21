@@ -301,6 +301,7 @@ if (!retrievalAdapter.includes("socialMediaScraper.getTwitterProfile")) fail('So
 if (!retrievalAdapter.includes('sevenEvidenceCounts') || !retrievalAdapter.includes('seven_crawler_deadline')) fail('Seven-crawler analysis is not evidence-derived and deadline bounded');
 const peopleAggregator = fs.readFileSync('server/services/peopleSearch/PeopleSearchAggregator.ts', 'utf8');
 if (!peopleAggregator.includes('no person-level evidence') || peopleAggregator.includes('age: ageMatch ? Number(ageMatch[1]) : query.age')) fail('People-search fallback can promote query input as observed evidence');
+if (registry.includes("hasBrowser)")) fail('People-search crawler readiness ignores the implemented HTTP fallback');
 if (!retrievalAdapter.includes(".filter(result => Boolean(result.content?.trim())") || !retrievalAdapter.includes("result.confidence > 0")) fail('Pantheon adapter does not enforce evidence truth at its boundary');
 if (!twoStage.includes("crawler: \`razor-\${razor.type}\`")) fail('Razor audit IDs do not match canonical crawler registry IDs');
 if (!retrievalAdapter.includes("crawler: \`razor-\${razor.razorType}\`")) fail('Razor evidence IDs do not match canonical crawler registry IDs');
