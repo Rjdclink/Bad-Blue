@@ -174,9 +174,9 @@ export class PantheonRetrievalAdapter {
         }
       });
       const seedLimit = Number.isFinite(remainingBudgetMs())
-        ? Math.max(1, Math.min(12, Math.floor(remainingBudgetMs() / 15_000)))
+        ? Math.min(12, Math.floor(remainingBudgetMs() / 15_000))
         : 12;
-      for (const target of seedTargets.slice(0, seedLimit)) {
+      for (const target of seedTargets.slice(0, Math.max(0, seedLimit))) {
         if (!collectionOpen()) break;
         const crawl = await crawlSeedOnceWithCrawlers(target);
         for (const attempt of crawl.attempts) {
