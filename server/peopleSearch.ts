@@ -1286,19 +1286,22 @@ export async function conductFullOSINT(
             `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}`
           );
           
-          if (avalancheResults.length > 0) {
+          const avalancheEvidence = avalancheResults.filter(result =>
+            Boolean(result.content?.trim()) && Number.isFinite(result.confidence) && result.confidence > 0
+          );
+          if (avalancheEvidence.length > 0) {
             enhancedReport.sources.push({
               name: 'GENESIS Orchestrator (Eye of God)',
-              data: { 
+              data: {
                 mode: 'avalanche',
-                resultsCount: avalancheResults.length,
+                resultsCount: avalancheEvidence.length,
                 cascadeDepth: 5,
               },
-              confidence: 0.95,
+              confidence: avalancheEvidence.reduce((sum, result) => sum + result.confidence, 0) / avalancheEvidence.length,
               timestamp: new Date(),
             });
-            
-            console.log(`[PANTHEON OSINT] GENESIS avalanche completed: ${avalancheResults.length} results`);
+
+            console.log(`[PANTHEON OSINT] GENESIS avalanche completed: ${avalancheEvidence.length} evidence results`);
             enhancedReport.summary += CRAWLER_MESSAGES.LEVEL_4_SUMMARY;
           }
         } catch (genesisError: any) {
