@@ -27,7 +27,10 @@ async function executeRequest(url: string, options: RequestOptions, stealth?: St
     headers: { 'content-type': resource.contentType },
   });
 }
-function parseResults(html: string): Data { return { content: html.replace(/<[^>]*>/g, ' ').substring(0, 1000), confidence: 0.8, timestamp: Date.now(), target: '' }; }
+function parseResults(html: string): Data {
+  const content = html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 1000);
+  return { content, confidence: content ? 0.8 : 0, timestamp: Date.now(), target: '' };
+}
 function calculateConfidence(data: Data): number { return data.content.length > 100 ? 0.9 : 0.5; }
 
 async function firstSuccessful(promises: Promise<Data>[], label: string): Promise<Data> {
