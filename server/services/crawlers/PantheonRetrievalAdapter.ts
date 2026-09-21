@@ -15,7 +15,6 @@ import { twoStageDeployer } from '../pantheon/razors/TwoStageDeployer';
 import { SixCrawlerInitiative } from './SixCrawlerInitiative';
 import { acquirePublicResources } from './PublicAcquisitionInfrastructure';
 import { socialMediaScraper } from '../socialMediaScraper';
-import { LEXARA_CRAWLER_CAPABILITY_POOL } from '../../lexara/LexaraCrawlerCapabilityRegistry';
 import { crawlSeedOnceWithCrawlers } from '../../lib/seedFirstOsint';
 
 export interface RetrievalEvidence {
@@ -400,31 +399,6 @@ export class PantheonRetrievalAdapter {
     }
 
 
-    if (request.purpose === 'background_report') {
-      const observed = new Set(crawlerAudit.map(item => item.crawler));
-      const directlyRealized = new Set([
-        'startrek', 'birdofprey', 'sixdegrees', 'cerberus', 'blizzard', 'lich',
-        'mirror', 'key', 'chewer', 'computational', 'usc', 'woo', 'silence',
-        'ice', 'hydra', 'wraith', 'farm', 'phantom', 'nova',
-        'razor-identity', 'razor-contact', 'razor-address', 'razor-social',
-        'razor-record', 'razor-asset', 'razor-court', 'razor-business',
-        'razor-relation', 'razor-media', 'social-media-scraper',
-        'seed-startrek', 'seed-birdofprey', 'seed-trinity', 'seed-sixdegrees',
-      ]);
-      for (const descriptor of LEXARA_CRAWLER_CAPABILITY_POOL) {
-        if (descriptor.family === 'crypto-observational' || directlyRealized.has(descriptor.id) || observed.has(descriptor.id)) continue;
-        const configured = descriptor.configured?.() !== false;
-        crawlerAudit.push({
-          crawler: descriptor.id,
-          capabilityClass: 'pantheon-secondary',
-          status: configured ? 'available_via_specialized_route' : 'unavailable_not_configured',
-          evidenceCount: 0,
-          attempts: 0,
-          targets: request.targets.length,
-          error: configured ? undefined : (descriptor.notes || 'Required provider configuration is unavailable'),
-        });
-      }
-    }
 
     return {
       available: true,
