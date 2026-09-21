@@ -1,5 +1,6 @@
 import { PhylacterySystem } from '../storage/PhylacterySystem';
 import { StealthInfrastructure } from '../stealth/StealthInfrastructure';
+import { acquirePublicResource } from './PublicAcquisitionInfrastructure';
 
 /**
  * 🦅 BIRD OF PREY CRAWLER
@@ -16,20 +17,18 @@ interface RequestOptions { method?: string; headers?: Record<string, string>; bo
 interface CloakingSignature { userAgent: string; createdAt: number; }
 
 async function executeRequest(url: string, options: RequestOptions, stealth?: StealthInfrastructure): Promise<Response> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), options.timeout || 30000);
-  try {
-    if (stealth) await stealth.connect(url, 'high');
-    const response = await fetch(url, { ...options, signal: controller.signal });
-    if (!response.ok) {
-      throw new Error(`Crawler request failed: HTTP ${response.status}`);
-    }
-    return response;
-  } finally { clearTimeout(timeoutId); }
+  void stealth;
+  const resource = await acquirePublicResource(url, options.timeout || 30000);
+  if (!resource.ok) throw new Error(resource.error || `Crawler request failed: HTTP ${resource.status}`);
+  return new Response(resource.content, {
+    status: resource.status,
+    headers: { 'content-type': resource.contentType },
+  });
 }
 
 function parseResults(html: string, maxLength = 1000): Data {
-  return { content: html.replace(/<[^>]*>/g, ' ').substring(0, maxLength), confidence: 0.8, timestamp: Date.now(), target: '' };
+  const content = html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, maxLength);
+  return { content, confidence: content ? 0.8 : 0, timestamp: Date.now(), target: '' };
 }
 
 export class BirdOfPreyCrawler {
@@ -92,7 +91,7 @@ export class BirdOfPreyCrawler {
     }, this.stealth);
     const html = await response.text();
     const data = parseResults(html, 1500);
-    data.target = target; data.confidence = 0.8 + (power / 100);
+    data.target = target; data.confidence = data.content ? 0.8 + (power / 100) : 0;
     data.metadata = { weapon: 'disruptor', power, requestsPerMinute, detectionRisk, cloaked: this.cloaked };
     this.killCount++;
     return data;
@@ -110,7 +109,7 @@ export class BirdOfPreyCrawler {
     }, this.stealth);
     const html = await response.text();
     const data = parseResults(html, 3000);
-    data.target = target; data.confidence = 0.95;
+    data.target = target; data.confidence = data.content ? 0.95 : 0;
     data.metadata = { weapon: 'photon-torpedo', power, yield: 'maximum', cloaked: this.cloaked };
     this.killCount++;
     return data;
