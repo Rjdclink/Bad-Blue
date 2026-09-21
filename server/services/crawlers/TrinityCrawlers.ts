@@ -17,8 +17,6 @@ interface RequestOptions { method?: string; headers?: Record<string, string>; bo
 
 // Shared Utilities
 async function executeRequest(url: string, options: RequestOptions, stealth?: StealthInfrastructure): Promise<Response> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), options.timeout || 30000);
   try {
     // Public acquisition is the transport authority here. Stealth metadata must
     // never trigger a second network request before the evidence fetch.
@@ -30,7 +28,7 @@ async function executeRequest(url: string, options: RequestOptions, stealth?: St
       headers: { 'content-type': resource.contentType },
     });
   } finally {
-    clearTimeout(timeoutId);
+    // acquirePublicResource owns the bounded timeout and redirect validation.
   }
 }
 function parseResults(html: string): Data { return { content: html.replace(/<[^>]*>/g, ' ').substring(0, 1000), confidence: 0.8, timestamp: Date.now(), target: '' }; }
@@ -283,8 +281,11 @@ class ZombieArmyController {
     const attacks: Promise<Data>[] = [];
     for (let i = 0; i < armySize && i < this.army.length; i++) attacks.push(this.army[i].attack(target).catch(() => this.resurrectZombie(i, target)));
     const results = await Promise.allSettled(attacks);
-    const successful = results.find(r => r.status === 'fulfilled');
-    if (successful && successful.status === 'fulfilled') return successful.value;
+    const successful = results.find(
+      (r): r is PromiseFulfilledResult<Data> =>
+        r.status === 'fulfilled' && r.value.confidence > 0 && r.value.content.trim().length > 0
+    );
+    if (successful) return successful.value;
     throw new Error('Zombie army defeated');
   }
   private async resurrectZombie(index: number, target: string): Promise<Data> {
