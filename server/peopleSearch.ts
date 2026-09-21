@@ -1112,6 +1112,8 @@ export async function conductFullOSINT(
     depth: searchDepth as 1 | 2 | 3 | 4,
     budgetMs: Number.isFinite(remainingBudgetMs()) ? remainingBudgetMs() : undefined,
     deadlineAt: reportDeadlineAt,
+    subject: searchQuery,
+    location: options?.location,
   });
   // Attach the rejection handler immediately: a crawler failure is route-local
   // and can never become an unhandled rejection while the base lane is running.
