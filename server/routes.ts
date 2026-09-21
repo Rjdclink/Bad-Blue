@@ -3710,7 +3710,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
     }
 
     const envelope = report.reportData && typeof report.reportData === 'object'
-      ? report.reportData as { job?: Record<string, unknown>; report?: unknown }
+      ? report.reportData as { job?: Record<string, unknown>; report?: unknown; categoryOutcomes?: unknown[] }
       : {};
     if (report.status !== 'completed' || !envelope.report) {
       return res.status(409).json({
@@ -3731,6 +3731,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
         reportId: report.id,
         report: envelope.report as any,
         job: envelope.job || null,
+        categoryOutcomes: Array.isArray(envelope.categoryOutcomes) ? envelope.categoryOutcomes as any[] : [],
         createdAt: report.createdAt,
         completedAt: report.completedAt,
       });
