@@ -136,6 +136,7 @@ export function assessPantheonInvestigation(categories: readonly {
   completionState?: PantheonCategoryCompletionState;
   expectedCapabilities?: readonly string[];
   crawlerAudit?: readonly CrawlerAuditLike[];
+  capabilityOutcomes?: readonly PantheonCapabilityOutcome[];
 }[]): PantheonInvestigationAssessment {
   const required = new Set<PantheonCoreCrawlerCapability>();
   const executed = new Set<PantheonCoreCrawlerCapability>();
@@ -156,12 +157,17 @@ export function assessPantheonInvestigation(categories: readonly {
   }
 
   const missingCapabilities = [...required].filter(capability => !executed.has(capability));
+  const capabilityCoverage = assessPantheonCapabilityCoverage(categories);
   const partialCategoryCount = Math.max(0, categories.length - completedCategoryCount);
+  const releaseEligible = partialCategoryCount === 0
+    && missingCapabilities.length === 0
+    && capabilityCoverage.eligible;
   return {
-    state: partialCategoryCount === 0 && missingCapabilities.length === 0 ? 'completed' : 'partial',
+    state: releaseEligible ? 'completed' : 'partial',
     completedCategoryCount,
     partialCategoryCount,
     missingCapabilities,
-    releaseEligible: partialCategoryCount === 0 && missingCapabilities.length === 0,
+    capabilityCoverage,
+    releaseEligible,
   };
 }

@@ -340,11 +340,12 @@ export async function conductPantheonCategoryWorkflow(input: {
   deadlineAt: number;
   startCategoryIndex?: number;
   initialReport?: PeopleSearchReport;
-  capabilityHealth: PantheonCapabilityHealth[];
+  capabilityHealth?: readonly PantheonCapabilityHealth[];
   onCategoryState?: (state: { index: number; label: string; phase: PantheonCategoryPhase; completedCategories: number }) => Promise<void>;
   onCategoryStart?: (state: { index: number; label: string; completedCategories: number }) => Promise<void>;
   onCategoryComplete?: (state: { index: number; label: string; completedCategories: number; outcome: PantheonCategoryOutcome; partialReport: PeopleSearchReport }) => Promise<void>;
 }): Promise<{ report: PeopleSearchReport; categoryOutcomes: PantheonCategoryOutcome[] }> {
+  const capabilityHealth = input.capabilityHealth || [];
   if (!input.investigationId) throw new Error('Pantheon canonical workflow requires investigationId');
   if (activeCanonicalInvestigation && activeCanonicalInvestigation !== input.investigationId) {
     throw new Error(`Pantheon canonical workflow already active for ${activeCanonicalInvestigation}`);
@@ -387,7 +388,7 @@ export async function conductPantheonCategoryWorkflow(input: {
     // This is a hard category share, not a fresh budget for every URL. It keeps
     // early categories from consuming the entire report deadline.
     const categoryDeadlineAt = Math.min(input.deadlineAt - finalizationReserveMs, Date.now() + categoryBudgetMs);
-    const capabilityRoute = resolveHealthyPantheonPrimaryCapabilities(category.label, input.capabilityHealth);
+    const capabilityRoute = resolveHealthyPantheonPrimaryCapabilities(category.label, capabilityHealth);
     const expectedCapabilities = capabilityRoute.requested;
     const executableCapabilities = capabilityRoute.selected;
 
@@ -582,7 +583,7 @@ export async function conductPantheonCategoryWorkflow(input: {
     }
     const capabilityOutcomes = finalizePantheonCategoryCapabilityOutcomes({
       categoryLabel: category.label,
-      health: input.capabilityHealth,
+      health: capabilityHealth,
       crawlerAudit: retrieval.crawlerAudit,
     });
     const assessment = assessPantheonCategoryOutcome({
