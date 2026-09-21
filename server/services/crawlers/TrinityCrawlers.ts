@@ -17,19 +17,15 @@ interface RequestOptions { method?: string; headers?: Record<string, string>; bo
 
 // Shared Utilities
 async function executeRequest(url: string, options: RequestOptions, stealth?: StealthInfrastructure): Promise<Response> {
-  try {
-    // Public acquisition is the transport authority here. Stealth metadata must
-    // never trigger a second network request before the evidence fetch.
-    void stealth;
-    const resource = await acquirePublicResource(url, options.timeout || 30000);
-    if (!resource.ok) throw new Error(resource.error || `Crawler request failed: HTTP ${resource.status}`);
-    return new Response(resource.content, {
-      status: resource.status,
-      headers: { 'content-type': resource.contentType },
-    });
-  } finally {
-    // acquirePublicResource owns the bounded timeout and redirect validation.
-  }
+  // Public acquisition is the transport authority here. Stealth metadata must
+  // never trigger a second network request before the evidence fetch.
+  void stealth;
+  const resource = await acquirePublicResource(url, options.timeout || 30000);
+  if (!resource.ok) throw new Error(resource.error || `Crawler request failed: HTTP ${resource.status}`);
+  return new Response(resource.content, {
+    status: resource.status,
+    headers: { 'content-type': resource.contentType },
+  });
 }
 function parseResults(html: string): Data { return { content: html.replace(/<[^>]*>/g, ' ').substring(0, 1000), confidence: 0.8, timestamp: Date.now(), target: '' }; }
 function calculateConfidence(data: Data): number { return data.content.length > 100 ? 0.9 : 0.5; }
