@@ -70,10 +70,10 @@ export class TwoStageDeployer {
    */
   async deployBackgroundReport(target: string, html?: string, reportBudgetMs?: number): Promise<BackgroundReportDeployment> {
     const startedAt = Date.now();
-    const boundedBudget = Math.max(30_000, reportBudgetMs || 60_000);
-    const fetchTimeoutMs = Math.min(30_000, Math.max(5_000, Math.floor(boundedBudget / 30)));
-    const razorTimeoutMs = Math.min(60_000, Math.max(STAGE_1_TIMEOUT, Math.floor(boundedBudget / 20)));
-    const secondaryTimeoutMs = Math.min(120_000, Math.max(10_000, Math.floor(boundedBudget / 12)));
+    const boundedBudget = Math.max(1, reportBudgetMs || 60_000);
+    const fetchTimeoutMs = Math.min(30_000, Math.max(1, Math.floor(boundedBudget / 30)));
+    const razorTimeoutMs = Math.min(60_000, Math.max(1, Math.floor(boundedBudget / 20)));
+    const secondaryTimeoutMs = Math.min(120_000, Math.max(1, Math.floor(boundedBudget / 12)));
     const content = html || await this.fetchContent(target, fetchTimeoutMs);
     const razorResults = content
       ? (await this.deployStage1(content, target, razorTimeoutMs)).map(result => this.sanitizeBackgroundRazorResult(result))
