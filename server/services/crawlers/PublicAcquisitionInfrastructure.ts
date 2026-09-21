@@ -229,7 +229,9 @@ async function acquireOnce(url: URL, timeoutMs: number, hardDeadlineAt?: number)
       if (![301, 302, 303, 307, 308].includes(response.status)) break;
       const location = response.headers.get('location');
       if (!location) break;
-      current = canonicalPublicUrl(new URL(location, current).toString());
+      const redirectAdmission = admitPantheonUrl(new URL(location, current).toString());
+      if (!redirectAdmission.ok) throw new Error(`Redirect rejected by Pantheon URL admission: ${redirectAdmission.reason}`);
+      current = new URL(redirectAdmission.url);
     }
     if (!response) throw new Error('Public acquisition produced no response');
     if ([301, 302, 303, 307, 308].includes(response.status)) throw new Error('Public acquisition exceeded redirect limit');
