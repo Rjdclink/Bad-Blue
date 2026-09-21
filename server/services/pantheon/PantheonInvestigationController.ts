@@ -1,3 +1,5 @@
+import { getPantheonPrimaryCrawlerCapabilitiesForCategory } from './PantheonCrawlerCapabilityMatrix';
+
 export const PANTHEON_CORE_CRAWLER_CAPABILITIES = [
   'startrek', 'birdofprey', 'sixdegrees', 'cerberus', 'blizzard', 'lich',
 ] as const;
@@ -42,21 +44,7 @@ const SIMULATION_MARKERS = /(?:simulat(?:e|ed|ion)|mirrored|synthetic|test[ _-]?
 const TERMINAL_LEDGER_STATES = new Set(['accepted', 'rejected', 'blocked', 'rate_limited', 'dead', 'timed_out', 'no_evidence']);
 
 export function plannedPantheonCrawlerCapabilitiesForCategory(label: string): PantheonCoreCrawlerCapability[] {
-  const value = String(label || '').toLowerCase();
-  const capabilities = new Set<PantheonCoreCrawlerCapability>(['startrek', 'blizzard']);
-
-  if (/identity|phone|email|address|relative|associate|social|username|photo|relationship|timeline/.test(value)) {
-    capabilities.add('birdofprey');
-    capabilities.add('sixdegrees');
-  }
-  if (/court|criminal|arrest|warrant|offender|incarceration|probation|parole|government|public-service|license|judgment|bankrupt|lien/.test(value)) {
-    capabilities.add('cerberus');
-  }
-  if (/relationship|timeline|history|corroboration|contradiction|news|media|internet/.test(value)) {
-    capabilities.add('lich');
-  }
-
-  return PANTHEON_CORE_CRAWLER_CAPABILITIES.filter(capability => capabilities.has(capability));
+  return [...getPantheonPrimaryCrawlerCapabilitiesForCategory(label)];
 }
 
 export function isPantheonSimulatedOutput(value: unknown): boolean {

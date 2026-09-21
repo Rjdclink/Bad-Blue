@@ -1,4 +1,5 @@
 import type { PeopleSearchReport } from '../../peopleSearch';
+import type { PantheonReportCategoryLabel } from './PantheonCrawlerCapabilityMatrix';
 import { pantheonRetrievalAdapter, type PantheonRetrievalResponse } from '../crawlers/PantheonRetrievalAdapter';
 import { admitPantheonUrl } from '../crawlers/PublicAcquisitionInfrastructure';
 import {

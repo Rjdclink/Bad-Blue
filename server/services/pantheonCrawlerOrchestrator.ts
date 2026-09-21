@@ -31,6 +31,7 @@
 
 import { PhylacterySystem } from './storage/PhylacterySystem';
 import { StealthInfrastructure } from './stealth/StealthInfrastructure';
+import type { PantheonPrimaryCrawlerId } from './pantheon/PantheonCrawlerCapabilityMatrix';
 
 // Crawler imports
 import { 
@@ -223,7 +224,7 @@ export interface PantheonSearchOptions {
   /** Search depth level (1-4) */
   depth: 1 | 2 | 3 | 4;
   /** Specific crawlers to use (default: all applicable) */
-  crawlers?: ('blizzard' | 'cerberus' | 'lich' | 'startrek' | 'birdofprey' | 'sixdegrees')[];
+  crawlers?: PantheonPrimaryCrawlerId[];
   /** Maximum results per crawler */
   maxResultsPerCrawler?: number;
   /** Timeout in milliseconds */
@@ -566,7 +567,7 @@ export class PantheonCrawlerOrchestrator {
   /**
    * Get appropriate crawlers based on search depth
    */
-  private getCrawlersForDepth(depth: 1 | 2 | 3 | 4): string[] {
+  private getCrawlersForDepth(depth: 1 | 2 | 3 | 4): PantheonPrimaryCrawlerId[] {
     switch (depth) {
       case 1:
         return ['startrek'];
