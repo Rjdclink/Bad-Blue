@@ -119,9 +119,12 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
           job: jobEnvelope(input, 'running', {
             startedAt: startedAt.toISOString(),
             deadlineAt: deadlineAt.toISOString(),
-            categoryIndex: Math.min(index + 1, PANTHEON_REPORT_CATEGORIES.length - 1),
-            categoryNumber: Math.min(index + 2, PANTHEON_REPORT_CATEGORIES.length),
-            categoryName: PANTHEON_REPORT_CATEGORIES[Math.min(index + 1, PANTHEON_REPORT_CATEGORIES.length - 1)]?.label,
+            // Persist the category that actually completed. The workflow
+            // controller alone activates the next category afterward.
+            categoryIndex: index,
+            categoryNumber: index + 1,
+            categoryName: label,
+            categoryPhase: 'PERSISTING',
             completedCategories,
             totalCategories: PANTHEON_REPORT_CATEGORIES.length,
             lastCategoryOutcome: outcome,
