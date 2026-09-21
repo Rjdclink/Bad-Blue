@@ -13,6 +13,7 @@ const client = read('client/src/pages/pantheon.tsx');
 const acquisition = read('server/services/crawlers/PublicAcquisitionInfrastructure.ts');
 const jobs = read('server/services/pantheon/PantheonBackgroundReportJob.ts');
 const peopleSearch = read('server/peopleSearch.ts');
+const categoryWorkflow = read('server/services/pantheon/PantheonCategoryWorkflow.ts');
 
 const checks = [
   ['durable report status is retryable', routes.includes('report_store_converging') && routes.includes("Retry-After")],
@@ -27,10 +28,13 @@ const checks = [
   ['credential-free public acquisition participates', adapter.includes('acquirePublicResources') && acquisition.includes('Private-network acquisition is not permitted')],
   ['external failures are route-local', adapter.includes('Promise.allSettled')],
   ['discovery expressions are separated from URL acquisition', adapter.includes('new URL(firstTarget)') && adapter.includes('const urlTargets = request.targets.filter')],
-  ['report duration uses one immutable server deadline', jobs.includes('deadlineAt') && jobs.includes('reportDeadlineAt: deadlineAt.getTime()')],
+  ['report duration uses one immutable server deadline', jobs.includes('deadlineAt') && jobs.includes('deadlineAt: deadlineAt.getTime()')],
+  ['canonical report job uses sequential category controller', jobs.includes('conductPantheonCategoryWorkflow') && categoryWorkflow.includes('PANTHEON_REPORT_CATEGORIES')],
+  ['category controller passes subject context to crawler orchestration', categoryWorkflow.includes('subject: input.name') && categoryWorkflow.includes('location: input.location')],
+  ['deadline finalizes unrun categories explicitly', categoryWorkflow.includes('remaining categories are explicitly marked timed out')],
   ['collection deadline propagates into retrieval', peopleSearch.includes('deadlineAt: reportDeadlineAt') && adapter.includes('deadlineAt?: number') && adapter.includes('remainingBudgetMs')],
   ['collection budget preserves aggregation time', peopleSearch.includes('remainingBudgetMs') && peopleSearch.includes('hasCollectionBudget')],
-  ['background jobs force complete crawler participation', jobs.includes('forceAllCrawlers: true') && peopleSearch.includes('const runFullRoster = forceAllCrawlers || searchDepth >= 3')],
+  ['background categories force complete crawler participation', categoryWorkflow.includes("purpose: 'background_report'") && adapter.includes("plan.crawlers = ['startrek', 'birdofprey', 'sixdegrees', 'cerberus', 'blizzard', 'lich']")],
   ['full roster starts before legacy base lane can starve it', peopleSearch.includes('let fullRosterPromise =') && peopleSearch.indexOf('let fullRosterPromise =') < peopleSearch.indexOf('const enhancedReport = await conductEnhancedPeopleSearch')],
   ['registry acquisition stops launching work at deadline', adapter.includes('collectionOpen()') && adapter.includes('offset < extendedTargets.length && collectionOpen()')],
   ['full roster rejection is handled immediately', peopleSearch.includes("error => ({ ok: false as const, error })")],
