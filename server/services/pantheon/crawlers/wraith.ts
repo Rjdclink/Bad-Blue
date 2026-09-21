@@ -63,11 +63,7 @@ export class WraithCrawler extends BaseCrawler {
       const start = Date.now();
       
       try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 1000);
-        
         const response = await acquirePublicResource(target, 1000);
-        clearTimeout(timeoutId);
         if (response.ok) successfulSamples++;
         measurements.push(Date.now() - start);
       } catch {
@@ -98,9 +94,6 @@ export class WraithCrawler extends BaseCrawler {
    * Probes for async processing indicators
    */
   private async detectAsyncEchoes(target: string): Promise<AsyncEchoResult> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 500);
-    
     try {
       const response = await acquirePublicResource(target, 500);
       return {
@@ -119,8 +112,6 @@ export class WraithCrawler extends BaseCrawler {
         statusCode: 0,
         responseTime: null
       };
-    } finally {
-      clearTimeout(timeoutId);
     }
   }
 }
