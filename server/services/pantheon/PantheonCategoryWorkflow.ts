@@ -65,6 +65,12 @@ export interface PantheonUrlLedgerEntry {
   attempts: number;
   evidenceIds: string[];
   failureReason?: string;
+  result?: {
+    status: number;
+    evidenceCount: number;
+    crawler?: string;
+    retrievedAt?: string;
+  };
   capability?: string;
   transport?: 'direct-http'|'browser'|'search-provider'|'specialized-adapter'|'archive';
   startedAt?: string;
@@ -463,6 +469,14 @@ export async function conductPantheonCategoryWorkflow(input: {
       if (!activeUrls.has(entry.url)) continue;
       const evidenceId = evidenceByUrl.get(entry.url);
       entry.completedAt = new Date().toISOString();
+      const matchingEvidence = reportable.find(item => canonicalUrl(item.target) === entry.url);
+      const matchingAudit = retrieval.crawlerAudit.find(item => Number(item.targets || 0) > 0);
+      entry.result = {
+        status: evidenceId ? 200 : 0,
+        evidenceCount: evidenceId ? 1 : 0,
+        crawler: matchingEvidence?.crawler || matchingAudit?.crawler,
+        retrievedAt: matchingEvidence?.retrievedAt || entry.completedAt,
+      };
       if (evidenceId) {
         entry.state = 'accepted';
         entry.evidenceIds.push(evidenceId);
