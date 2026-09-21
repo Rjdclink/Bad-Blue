@@ -21,19 +21,27 @@ export class WraithCrawler extends BaseCrawler {
     const signatures: EntropySignature[] = [];
     
     try {
-      // Harvest timing jitter
+      // Harvest timing jitter only when at least one public retrieval succeeds.
       const timings = await this.measureTimingJitter(this.task.target);
-      signatures.push(this.generateEntropySignature({ 
-        type: 'timing', 
-        ...timings 
-      }));
-      
-      // Detect async echoes
+      if (timings.successfulSamples > 0) {
+        signatures.push(this.generateEntropySignature({
+          type: 'timing',
+          avg: timings.avg,
+          variance: timings.variance,
+          jitter: timings.jitter,
+          samples: timings.samples,
+          stability: timings.stability,
+        }));
+      }
+
+      // Detect async echoes only from an actual response.
       const async = await this.detectAsyncEchoes(this.task.target);
-      signatures.push(this.generateEntropySignature({ 
-        type: 'async', 
-        ...async 
-      }));
+      if (async.statusCode > 0) {
+        signatures.push(this.generateEntropySignature({
+          type: 'async',
+          ...async
+        }));
+      }
     } catch {
       // Ghosts fail silently
     }
@@ -47,8 +55,9 @@ export class WraithCrawler extends BaseCrawler {
    * 
    * High jitter = unstable system = exploitable entropy
    */
-  private async measureTimingJitter(target: string): Promise<TimingJitterResult> {
+  private async measureTimingJitter(target: string): Promise<TimingJitterResult & { successfulSamples: number }> {
     const measurements: number[] = [];
+    let successfulSamples = 0;
     
     for (let i = 0; i < 5; i++) {
       const start = Date.now();
@@ -57,9 +66,9 @@ export class WraithCrawler extends BaseCrawler {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 1000);
         
-        await acquirePublicResource(target, 1000);
-        
+        const response = await acquirePublicResource(target, 1000);
         clearTimeout(timeoutId);
+        if (response.ok) successfulSamples++;
         measurements.push(Date.now() - start);
       } catch {
         // Failed requests still provide timing data
@@ -79,7 +88,8 @@ export class WraithCrawler extends BaseCrawler {
       variance, 
       jitter,
       samples: measurements.length,
-      stability: avg > 0 ? jitter / avg : 0 // Lower = more stable
+      stability: avg > 0 ? jitter / avg : 0, // Lower = more stable
+      successfulSamples,
     };
   }
 
