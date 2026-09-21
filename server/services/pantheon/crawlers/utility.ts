@@ -1,97 +1,107 @@
+import { createHash } from 'node:crypto';
 import { BaseCrawler } from '../baseCrawler';
-import { CrawlerType, type CrawlerTask, type EntropySignature } from '../core';
+import {
+  attachCrawlerCapabilityOutput,
+  CrawlerType,
+  requireVerifiedCrawlerSourceSnapshot,
+  type CrawlerSourceSnapshot,
+  type CrawlerTask,
+  type EntropySignature,
+} from '../core';
 
-async function fetchPublicTarget(target: string, timeoutMs: number): Promise<{
-  url: string;
-  status: number;
-  contentType: string;
-  content: string;
-}> {
-  const url = new URL(target);
-  if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Unsupported crawler protocol');
+abstract class SingleSnapshotCrawler extends BaseCrawler {
+  private executed = false;
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, {
-      redirect: 'follow',
-      signal: controller.signal,
-      headers: {
-        Accept: 'text/html,application/json,text/plain;q=0.9,*/*;q=0.5',
-        'User-Agent': 'LegalWhat-PANTHEON/1.0',
-      },
-    });
-    const text = (await response.text()).slice(0, 250_000);
-    return {
-      url: response.url || url.toString(),
-      status: response.status,
-      contentType: response.headers.get('content-type') || '',
-      content: text,
-    };
-  } finally {
-    clearTimeout(timer);
+  protected claimSnapshot(): Readonly<CrawlerSourceSnapshot> | undefined {
+    const snapshot = requireVerifiedCrawlerSourceSnapshot(this.task);
+    if (this.executed) return undefined;
+    this.executed = true;
+    return snapshot;
+  }
+
+  protected signature(
+    snapshot: Readonly<CrawlerSourceSnapshot>,
+    output: Readonly<Record<string, unknown>>,
+  ): EntropySignature {
+    return attachCrawlerCapabilityOutput(this.generateEntropySignature(output), snapshot, output);
   }
 }
 
-/**
- * FARM: bounded evidence fingerprinting/deduplication. The historical enum
- * description mentioned hash work; this implementation is strictly public-data
- * evidence hashing and never performs password/credential cracking.
- */
-export class FarmCrawler extends BaseCrawler {
-  private executed = false;
-
+/** FARM: deterministic evidence fingerprinting and deduplication metadata. */
+export class FarmCrawler extends SingleSnapshotCrawler {
   constructor(task: CrawlerTask) {
     super(task, CrawlerType.FARM);
   }
 
   async execute(): Promise<EntropySignature[]> {
-    if (this.executed) return [];
-    this.executed = true;
-    const fetched = await fetchPublicTarget(this.task.target, Math.max(1_000, Math.min(this.task.quantum, 8_000)));
-    return [this.generateEntropySignature({
-      url: fetched.url,
-      status: fetched.status,
-      contentType: fetched.contentType,
-      contentLength: fetched.content.length,
-      evidence: fetched.content,
-    })];
+    const snapshot = this.claimSnapshot();
+    if (!snapshot) return [];
+    const output = Object.freeze({
+      function: 'snapshot-evidence-fingerprinting',
+      algorithm: 'sha256',
+      digest: createHash('sha256').update(snapshot.content).digest('hex'),
+      contentLength: snapshot.content.length,
+      contentType: snapshot.contentType,
+    });
+    return [this.signature(snapshot, output)];
   }
 }
 
-/**
- * PHANTOM: low-overhead public-source observation. It uses ordinary HTTP and
- * does not attempt to evade access controls or detection.
- */
-export class PhantomCrawler extends BaseCrawler {
-  private executed = false;
-
+/** PHANTOM: passive structural observation without access-control evasion. */
+export class PhantomCrawler extends SingleSnapshotCrawler {
   constructor(task: CrawlerTask) {
     super(task, CrawlerType.PHANTOM);
   }
 
   async execute(): Promise<EntropySignature[]> {
-    if (this.executed) return [];
-    this.executed = true;
-    const fetched = await fetchPublicTarget(this.task.target, Math.max(1_000, Math.min(this.task.quantum, 6_000)));
-    return [this.generateEntropySignature(fetched)];
+    const snapshot = this.claimSnapshot();
+    if (!snapshot) return [];
+    const content = snapshot.content;
+    const output = Object.freeze({
+      function: 'snapshot-structural-observation',
+      contentLength: content.length,
+      lineCount: content.split(/\r?\n/).length,
+      linkCount: (content.match(/<a\b/gi) || []).length,
+      scriptCount: (content.match(/<script\b/gi) || []).length,
+      tableCount: (content.match(/<table\b/gi) || []).length,
+      formCount: (content.match(/<form\b/gi) || []).length,
+      requestsPerformed: 0,
+    });
+    return [this.signature(snapshot, output)];
   }
 }
 
-/**
- * NOVA: short-lived burst retrieval for latency-sensitive public evidence.
- */
-export class NovaCrawler extends BaseCrawler {
-  private executed = false;
-
+/** NOVA: bounded salient-term extraction for latency-sensitive analysis. */
+export class NovaCrawler extends SingleSnapshotCrawler {
   constructor(task: CrawlerTask) {
     super(task, CrawlerType.NOVA);
   }
 
   async execute(): Promise<EntropySignature[]> {
-    if (this.executed) return [];
-    this.executed = true;
-    const fetched = await fetchPublicTarget(this.task.target, Math.max(800, Math.min(this.task.quantum, 4_000)));
-    return [this.generateEntropySignature(fetched)];
+    const snapshot = this.claimSnapshot();
+    if (!snapshot) return [];
+    const text = snapshot.content
+      .replace(/<script\b[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style\b[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 100_000);
+    const frequencies = new Map<string, number>();
+    for (const token of text.toLowerCase().match(/[a-z0-9][a-z0-9'-]{2,}/g) || []) {
+      frequencies.set(token, (frequencies.get(token) || 0) + 1);
+    }
+    const salientTerms = [...frequencies.entries()]
+      .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+      .slice(0, 20)
+      .map(([term, count]) => ({ term, count }));
+    const output = Object.freeze({
+      function: 'snapshot-salient-term-extraction',
+      analyzedCharacters: text.length,
+      uniqueTerms: frequencies.size,
+      salientTerms,
+      requestsPerformed: 0,
+    });
+    return [this.signature(snapshot, output)];
   }
 }

@@ -1,6 +1,6 @@
 import { PhylacterySystem } from '../storage/PhylacterySystem';
 import { StealthInfrastructure } from '../stealth/StealthInfrastructure';
-import { acquirePublicResource } from './PublicAcquisitionInfrastructure';
+import { acquirePublicResource, admitPantheonUrl } from './PublicAcquisitionInfrastructure';
 
 /**
  * 🌐 SIX DEGREES CRAWLER
@@ -58,6 +58,16 @@ interface RequestOptions {
   timeout?: number;
 }
 
+export function canonicalizeSixDegreesTarget(value: string): { domain: string; url: string } {
+  const raw = String(value || '').trim();
+  if (!raw) throw new Error('Invalid domain');
+  const candidate = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  const admitted = admitPantheonUrl(candidate);
+  if (!admitted.ok) throw new Error(admitted.reason);
+  const parsed = new URL(admitted.url);
+  return { domain: parsed.host.toLowerCase(), url: parsed.toString() };
+}
+
 // Utility functions
 async function executeRequest(url: string, options: RequestOptions, _stealth?: StealthInfrastructure): Promise<Response> {
   const method = String(options.method || 'GET').toUpperCase();
@@ -99,7 +109,15 @@ export class SixDegreesCrawler {
     }
 
     const visited = new Set<string>();
-    const queue: Array<{ domain: string; degree: number }> = [{ domain: seed, degree: 0 }];
+    // Keep graph identity as a canonical host while retaining the exact
+    // controller-issued seed URL for its first fetch. This prevents recursive
+    // scheme prefixes without discarding a meaningful path/query.
+    const canonicalSeed = canonicalizeSixDegreesTarget(seed);
+    const queue: Array<{ domain: string; url: string; degree: number }> = [{
+      domain: canonicalSeed.domain,
+      url: canonicalSeed.url,
+      degree: 0,
+    }];
 
     while (queue.length > 0) {
       const current = queue.shift();
@@ -121,7 +139,7 @@ export class SixDegreesCrawler {
 
       // Discover connections
       try {
-        const connections = await this.discoverConnections(current.domain);
+        const connections = await this.discoverConnections(current.url, current.domain);
         
         // Store edges
         this.edges.set(current.domain, connections);
@@ -135,52 +153,32 @@ export class SixDegreesCrawler {
           
           // Add to queue for next degree
           if (!visited.has(edge.to)) {
-            queue.push({ domain: edge.to, degree: current.degree + 1 });
+            const related = canonicalizeSixDegreesTarget(edge.to);
+            queue.push({ domain: related.domain, url: related.url, degree: current.degree + 1 });
           }
         }
-      } catch {
+      } catch (error) {
         this.edges.set(current.domain, []);
+        if (current.degree === 0) {
+          throw new Error(`SixDegrees assigned URL acquisition failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
     }
   }
 
   // Helper: construct safe URL from domain
   private constructUrl(domain: string): string {
-    // Validate and sanitize domain
-    if (!domain || typeof domain !== 'string') {
-      throw new Error('Invalid domain');
-    }
-
-    // Remove any whitespace or control characters
-    const sanitized = domain.trim();
-    
-    // If already a valid URL, validate and return
-    if (sanitized.startsWith('http://') || sanitized.startsWith('https://')) {
-      try {
-        const url = new URL(sanitized);
-        return url.toString();
-      } catch {
-        throw new Error('Invalid URL format');
-      }
-    }
-
-    // Construct URL from domain
-    try {
-      const url = new URL(`https://${sanitized}`);
-      return url.toString();
-    } catch {
-      throw new Error('Invalid domain format');
-    }
+    return canonicalizeSixDegreesTarget(domain).url;
   }
 
   // Discover connections for a domain
-  private async discoverConnections(domain: string): Promise<Edge[]> {
+  private async discoverConnections(targetUrl: string, domain: string): Promise<Edge[]> {
     const edges: Edge[] = [];
 
     try {
       // Fetch domain content with validated URL
       const response = await executeRequest(
-        this.constructUrl(domain),
+        this.constructUrl(targetUrl),
         {
           method: 'GET',
           headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SixDegreesBot/1.0)' },
@@ -233,8 +231,9 @@ export class SixDegreesCrawler {
         }
       }
     } catch (error) {
-      // Return empty array on error
-      console.error(`Failed to fetch ${domain}:`, error);
+      // The assigned seed must fail truthfully instead of turning an unfetched
+      // graph node into apparent evidence. Higher-degree failures remain local.
+      throw error;
     }
 
     return edges;
@@ -242,8 +241,7 @@ export class SixDegreesCrawler {
 
   private extractDomain(url: string): string {
     try {
-      const urlObj = new URL(url);
-      return urlObj.hostname;
+      return canonicalizeSixDegreesTarget(url).domain;
     } catch {
       return '';
     }
@@ -253,7 +251,7 @@ export class SixDegreesCrawler {
    * Map connections for a target up to specified degrees
    * Returns graph structure for analysis
    */
-  async mapConnections(target: string, maxDegrees: number = 2): Promise<{ nodes: Node[]; edges: Edge[] }> {
+  async mapConnections(target: string, maxDegrees: number = 1): Promise<{ nodes: Node[]; edges: Edge[] }> {
     // Each report target gets an isolated graph. Never leak stale domains or
     // failed links from a previous subject/source into the next traversal.
     this.clearGraph();

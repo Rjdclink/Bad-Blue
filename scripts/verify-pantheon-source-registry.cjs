@@ -38,7 +38,7 @@ for(const token of ['isPantheonSimulatedOutput','assessPantheonInvestigation','i
 if(!adapter.includes('twoStageDeployer.deployBackgroundReport')) throw new Error('Extended razor/secondary crawler stage not wired');
 
 const orchestrator=fs.readFileSync('server/services/pantheonCrawlerOrchestrator.ts','utf8');
-for(const token of ['validTargets','new URL(target)',"url.protocol === 'http:'","url.protocol === 'https:'",'Promise.all(','searchAllIsolatedWithAudit']){
+for(const token of ['validTargets','new URL(target)',"url.protocol !== 'http:'","url.protocol !== 'https:'",'admitPantheonUrl(target)','Promise.all(','searchAllIsolatedWithAudit']){
   if(!orchestrator.includes(token)) throw new Error('Crawler execution hardening missing: '+token);
 }
 

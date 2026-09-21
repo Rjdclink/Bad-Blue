@@ -93,6 +93,7 @@ export class BlizzardCrawler {
   // Parallel Deployer (30 lines)
   async deploy(targets: string[], intensity: StormIntensity): Promise<Data[]> {
     const config = this.getStormConfig(intensity);
+    const canonicalPantheonRun = isPantheonAcquisitionContextActive();
     const results: Data[] = [];
     for (const target of targets) {
       const cached = isPantheonAcquisitionContextActive()
@@ -100,12 +101,16 @@ export class BlizzardCrawler {
         : await this.iceCache.retrieveIceCrystal<Data>(target);
       if (cached) { results.push(cached); continue; }
       const snowflakes: Promise<Data>[] = [];
-      for (let i = 0; i < config.snowflakesPerTarget; i++) {
+      // The canonical gateway already provides bounded retries and a shared
+      // host governor. Parallel copies of the identical URL only duplicated
+      // evidence; one attributed acquisition is the production work unit.
+      const snowflakesPerTarget = canonicalPantheonRun ? 1 : config.snowflakesPerTarget;
+      for (let i = 0; i < snowflakesPerTarget; i++) {
         snowflakes.push(this.deploySnowflake(this.generateSnowflake(target)));
         if (snowflakes.length >= config.concurrency) {
           const batch = await Promise.allSettled(snowflakes.splice(0, config.concurrency));
           batch.forEach(r => r.status === 'fulfilled' && results.push(r.value));
-          await new Promise(resolve => setTimeout(resolve, config.delayBetweenWaves));
+          if (!canonicalPantheonRun) await new Promise(resolve => setTimeout(resolve, config.delayBetweenWaves));
         }
       }
       if (snowflakes.length > 0) {
@@ -266,6 +271,15 @@ export class CerberusCrawler {
     this.rightHead = new ZombieHead(phylactery);
   }
   async attack(target: string): Promise<Data> {
+    if (isPantheonAcquisitionContextActive()) {
+      const result = await this.leftHead.attack(target);
+      result.metadata = {
+        ...(result.metadata || {}),
+        executionMode: 'single-canonical-acquisition',
+        duplicateHeadFanoutSuppressed: true,
+      };
+      return result;
+    }
     return firstSuccessful(
       [this.leftHead.attack(target), this.centerHead.attack(target), this.rightHead.attack(target)],
       'Cerberus'
@@ -344,7 +358,7 @@ class GhostSwarmSpawner {
     return firstSuccessful(ghosts, 'Ghost swarm');
   }
   private async spawnGhost(target: string, ghostId: number): Promise<Data> {
-    const response = await executeRequest(target, { method: 'GET', headers: { 'User-Agent': `Ghost-${ghostId}`, 'X-Ghost-Phase': 'ethereal' }, timeout: 5000 }, this.stealth);
+    const response = await executeRequest(target, { method: 'GET', headers: { 'User-Agent': `LegalWhat-Pantheon-Ghost/${ghostId}` }, timeout: 5000 }, this.stealth);
     const html = await response.text();
     const data = parseResults(html);
     data.target = target;
@@ -367,8 +381,8 @@ export class LichCrawler {
     const data = type === 'simple' ? await this.commandZombies(target) : await this.commandGhosts(target);
     await this.harvestSoul(target, data); return data;
   }
-  async commandZombies(target: string): Promise<Data> { const data = await this.zombieArmy.deploy(target, 3); this.lichAge++; return data; }
-  async commandGhosts(target: string): Promise<Data> { const data = await this.ghostSwarm.spawn(target, 5); this.lichAge++; return data; }
+  async commandZombies(target: string): Promise<Data> { const data = await this.zombieArmy.deploy(target, isPantheonAcquisitionContextActive() ? 1 : 3); this.lichAge++; return data; }
+  async commandGhosts(target: string): Promise<Data> { const data = await this.ghostSwarm.spawn(target, isPantheonAcquisitionContextActive() ? 1 : 5); this.lichAge++; return data; }
   async harvestSoul(target: string, data: Data): Promise<void> {
     const power = calculateConfidence(data);
     await this.phylactery.harvestSoul(target, power, { method: 'GET', success: true });

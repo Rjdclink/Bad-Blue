@@ -12,6 +12,9 @@ export interface PantheonAcquisitionAuthority {
   workId: string;
   capability: string;
   deadlineAt: number;
+  canonicalUrl?: string;
+  route?: 'primary' | 'fallback';
+  fallbackFor?: string;
 }
 
 interface PantheonAcquisitionContext {
@@ -38,6 +41,10 @@ export function isPantheonAcquisitionContextActive(): boolean {
   return Boolean(acquisitionContext.getStore()?.authority);
 }
 
+export function getPantheonAcquisitionContext(): Readonly<PantheonAcquisitionContext> | undefined {
+  return acquisitionContext.getStore();
+}
+
 export interface PublicAcquisitionResult {
   url: string;
   ok: boolean;
@@ -49,7 +56,7 @@ export interface PublicAcquisitionResult {
   lastModified?: string;
   retrievedAt: string;
   error?: string;
-  errorType?: 'rate_limited'|'forbidden'|'not_found'|'dns_failure'|'tls_failure'|'timeout'|'invalid_url'|'unsupported_content'|'circuit_open'|'network_failure'|'http_error';
+  errorType?: 'rate_limited'|'auth_required'|'forbidden'|'not_found'|'dns_failure'|'tls_failure'|'timeout'|'invalid_url'|'unsupported_content'|'circuit_open'|'network_failure'|'http_error';
   retryAfterMs?: number;
 }
 
@@ -68,6 +75,7 @@ const hostStates = new Map<string, HostState>();
 const inflight = new Map<string, Promise<PublicAcquisitionResult>>();
 const recent = new Map<string, { at: number; value: PublicAcquisitionResult }>();
 const RECENT_TTL_MS = 30_000;
+const RECENT_MAX_ENTRIES = 2_000;
 const MAX_PER_HOST = 2;
 const MAX_RETRIES = 2;
 const MAX_BACKOFF_MS = 12_000;
@@ -76,6 +84,10 @@ const CIRCUIT_OPEN_MS = 30_000;
 
 const BLOCKED_EXTENSIONS = /\.(?:css|js|mjs|map|woff2?|ttf|otf|eot|png|jpe?g|gif|webp|svg|ico|mp[34]|m4[av]|avi|mov|webm|zip|gz|rar|7z|exe|dmg|apk)(?:$|[?#])/i;
 const BLOCKED_HOST_HINTS = /(?:googletagmanager|google-analytics|doubleclick|newrelic|addthis|chartbeat|optimizely|tinypass|fonts\.googleapis|fonts\.gstatic|static\.files\.bbci|m\.files\.bbci|assets\.guim|static\.guim|i\.guim|j\.ophan)/i;
+const MALFORMED_RECURSIVE_SCHEME = /^https?:\/\/https?(?::?\/\/|%3a%2f%2f)/i;
+const AUTH_ROUTE_HINT = /(?:^|\/)(?:login|log-in|log_in|signin|sign-in|sign_in|users\/sign_in|account\/login|oauth\/authorize)(?:\/|$)/i;
+const CREDENTIAL_QUERY_KEY = /^(?:api[_-]?key|apikey|access[_-]?token|auth[_-]?token|client[_-]?secret|session[_-]?token|signature)$/i;
+const TELEMETRY_SECRET_QUERY_KEY = /(?:key|token|secret|password|signature|authorization|credential)/i;
 
 function stateFor(host: string): HostState {
   let state = hostStates.get(host);
@@ -98,14 +110,21 @@ function kindFor(contentType: string, url: string): PublicAcquisitionKind {
 
 function isPrivateHost(host: string): boolean {
   const normalized = host.toLowerCase().replace(/^\[|\]$/g, '');
-  return normalized === 'localhost' || normalized.endsWith('.localhost') ||
-    normalized === '0.0.0.0' || normalized === '::1' || normalized === '::' ||
-    normalized.startsWith('::ffff:127.') || normalized.startsWith('::ffff:10.') ||
-    normalized.startsWith('::ffff:192.168.') || /^::ffff:172\.(1[6-9]|2\d|3[01])\./.test(normalized) ||
-    normalized.startsWith('::ffff:169.254.') || normalized.startsWith('fc') || normalized.startsWith('fd') ||
-    normalized.startsWith('fe8') || normalized.startsWith('fe9') || normalized.startsWith('fea') || normalized.startsWith('feb') ||
-    /^127\./.test(normalized) || /^10\./.test(normalized) || /^192\.168\./.test(normalized) ||
-    /^169\.254\./.test(normalized) || /^172\.(1[6-9]|2\d|3[01])\./.test(normalized);
+  if (normalized === 'localhost' || normalized.endsWith('.localhost')) return true;
+  const version = isIP(normalized);
+  if (version === 4) {
+    return normalized === '0.0.0.0' || /^127\./.test(normalized) || /^10\./.test(normalized) ||
+      /^192\.168\./.test(normalized) || /^169\.254\./.test(normalized) ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(normalized);
+  }
+  if (version === 6) {
+    return normalized === '::1' || normalized === '::' ||
+      normalized.startsWith('::ffff:127.') || normalized.startsWith('::ffff:10.') ||
+      normalized.startsWith('::ffff:192.168.') || /^::ffff:172\.(1[6-9]|2\d|3[01])\./.test(normalized) ||
+      normalized.startsWith('::ffff:169.254.') || normalized.startsWith('fc') || normalized.startsWith('fd') ||
+      normalized.startsWith('fe8') || normalized.startsWith('fe9') || normalized.startsWith('fea') || normalized.startsWith('feb');
+  }
+  return false;
 }
 
 async function assertPublicResolution(url: URL): Promise<void> {
@@ -128,11 +147,19 @@ export function admitPantheonUrl(raw: string): { ok: true; url: string } | { ok:
 
 function canonicalPublicUrl(raw: string): URL {
   const cleaned = String(raw || '').trim().replace(/[),.;]+$/, '');
+  if (MALFORMED_RECURSIVE_SCHEME.test(cleaned)) {
+    throw new Error('Malformed recursive URL rejected');
+  }
   const url = new URL(cleaned);
   if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Unsupported acquisition protocol');
   if (isPrivateHost(url.hostname)) throw new Error('Private-network acquisition is not permitted');
+  if (url.username || url.password) throw new Error('Credential-gated URL skipped: embedded credentials are not permitted');
+  if (AUTH_ROUTE_HINT.test(url.pathname)) throw new Error('Credential-gated URL skipped: sign-in route');
   url.hash = '';
   for (const key of [...url.searchParams.keys()]) {
+    if (CREDENTIAL_QUERY_KEY.test(key)) {
+      throw new Error('Credential-gated URL skipped: API key or access token required');
+    }
     if (/^(?:utm_|fbclid$|gclid$|mc_cid$|mc_eid$)/i.test(key)) url.searchParams.delete(key);
   }
   if (BLOCKED_EXTENSIONS.test(url.pathname) || BLOCKED_HOST_HINTS.test(url.hostname)) {
@@ -144,6 +171,32 @@ function canonicalPublicUrl(raw: string): URL {
 function blockedResponseBody(value: string): boolean {
   const lowered = value.toLowerCase();
   return ['our systems have detected unusual traffic','captcha','verify you are human','access denied','enable javascript on your web browser'].some(marker => lowered.includes(marker));
+}
+
+/**
+ * Detects credential walls after a public GET without attempting to evade them.
+ * A normal public page that merely links to a sign-in page is not rejected.
+ */
+export function detectPublicAccessBarrier(value: string, contentType = ''): string | undefined {
+  const sample = String(value || '').slice(0, 300_000);
+  const lowered = sample.toLowerCase();
+  if (!lowered.trim()) return undefined;
+
+  const apiKeyWall = /(?:api[ _-]?key|access token)\s+(?:is\s+)?(?:missing|required|invalid)|(?:missing|required)\s+(?:an?\s+)?(?:api[ _-]?key|access token)|["'](?:unauthorized|authentication_required)["']/.test(lowered);
+  if (apiKeyWall) return 'Credential-gated response skipped: API key or access token required';
+
+  const title = lowered.match(/<title[^>]*>([\s\S]{0,200}?)<\/title>/i)?.[1]?.replace(/<[^>]+>/g, ' ').trim() || '';
+  const titledLoginWall = /^(?:sign[ -]?in|log[ -]?in|authentication required|authorization required|access required)(?:\s|[-|:]).*|^(?:sign[ -]?in|log[ -]?in|authentication required|authorization required|access required)$/.test(title);
+  const explicitLoginWall = /(?:please|you must|must|need to|required to)\s+(?:sign[ -]?in|log[ -]?in)\s+(?:to|before)\s+(?:continue|view|access|proceed)|(?:sign[ -]?in|log[ -]?in)\s+(?:is\s+)?required\s+(?:to|for)/.test(lowered);
+  const credentialForm = /<form[^>]+(?:action|id|class)=["'][^"']*(?:login|signin|sign-in|sign_in|authentication)[^"']*["']/i.test(sample) &&
+    /<input[^>]+type=["']password["']/i.test(sample);
+  if (titledLoginWall || explicitLoginWall || credentialForm) {
+    return 'Credential-gated response skipped: sign-in required';
+  }
+
+  const paywall = /(?:subscribe|subscription|membership)\s+(?:is\s+)?required\s+(?:to|for)\s+(?:continue|view|access|read)/.test(lowered);
+  if (paywall) return 'Credential-gated response skipped: subscription required';
+  return undefined;
 }
 
 function supportedContentType(value: string): boolean {
@@ -164,14 +217,64 @@ function retryAfterMs(response: Response): number | undefined {
 
 function classify(status: number, error?: unknown): PublicAcquisitionResult['errorType'] {
   if (status === 429) return 'rate_limited';
+  if (status === 401 || status === 402 || status === 407) return 'auth_required';
   if (status === 403) return 'forbidden';
   if (status === 404) return 'not_found';
   const message = error instanceof Error ? error.message : String(error || '');
+  if (/credential-gated|sign[ -]?in required|api[ _-]?key.*required|access token.*required|subscription required/i.test(message)) return 'auth_required';
   if (/ENOTFOUND|EAI_AGAIN|hostname did not resolve/i.test(message)) return 'dns_failure';
   if (/TLS|SSL|secure.*connection|ECONNRESET/i.test(message)) return 'tls_failure';
   if (/abort|timed out|timeout/i.test(message)) return 'timeout';
-  if (/invalid|unsupported acquisition|eligible for acquisition/i.test(message)) return 'invalid_url';
+  if (/invalid|malformed recursive|unsupported acquisition|eligible for acquisition|outside the canonical work authorization/i.test(message)) return 'invalid_url';
   return status > 0 ? 'http_error' : 'network_failure';
+}
+
+function telemetryUrl(raw: string): string {
+  try {
+    const url = new URL(String(raw || ''));
+    for (const key of [...url.searchParams.keys()]) {
+      if (TELEMETRY_SECRET_QUERY_KEY.test(key)) url.searchParams.set(key, '[REDACTED]');
+    }
+    url.username = '';
+    url.password = '';
+    return url.toString().slice(0, 2_000);
+  } catch {
+    return String(raw || '').replace(/[\r\n\t]/g, ' ').slice(0, 2_000);
+  }
+}
+
+function logAcquisitionEvent(
+  authority: PantheonAcquisitionAuthority | undefined,
+  event: 'dispatch' | 'outcome' | 'rejected',
+  url: string,
+  details: Record<string, unknown> = {},
+): void {
+  if (!authority) return;
+  console.log(`[PANTHEON][URL] ${JSON.stringify({
+    event,
+    investigationId: authority.investigationId,
+    categoryId: authority.categoryId,
+    workId: authority.workId,
+    capability: authority.capability,
+    route: authority.route || 'primary',
+    ...(authority.fallbackFor ? { fallbackFor: authority.fallbackFor } : {}),
+    url: telemetryUrl(url),
+    ...details,
+  })}`);
+}
+
+function rememberRecent(key: string, value: PublicAcquisitionResult): void {
+  const now = Date.now();
+  recent.set(key, { at: now, value });
+  if (recent.size <= RECENT_MAX_ENTRIES) return;
+  for (const [candidateKey, candidate] of recent) {
+    if (now - candidate.at >= RECENT_TTL_MS) recent.delete(candidateKey);
+  }
+  while (recent.size > RECENT_MAX_ENTRIES) {
+    const oldest = recent.keys().next().value as string | undefined;
+    if (!oldest) break;
+    recent.delete(oldest);
+  }
 }
 
 function failureResult(url: string, status: number, error: unknown, retryMs?: number): PublicAcquisitionResult {
@@ -290,6 +393,10 @@ async function acquireOnce(
     if (blockedResponseBody(text)) {
       return { ...failureResult(current.toString(), response.status, new Error('Blocked/challenge response is not investigative evidence')), errorType: 'http_error' };
     }
+    const accessBarrier = requestOptions.method === 'HEAD' ? undefined : detectPublicAccessBarrier(text, contentType);
+    if (accessBarrier) {
+      return { ...failureResult(current.toString(), response.status, new Error(accessBarrier)), errorType: 'auth_required' };
+    }
     return {
       url: current.toString(), ok: true, status: response.status, kind: kindFor(contentType, current.toString()),
       contentType, content: text, etag: response.headers.get('etag') || undefined,
@@ -323,32 +430,80 @@ export async function acquirePublicResource(
   signal?: AbortSignal,
   requestOptions: PublicAcquisitionRequestOptions = {},
 ): Promise<PublicAcquisitionResult> {
+  const telemetryStartedAt = Date.now();
   const inherited = acquisitionContext.getStore();
   authority = authority || inherited?.authority;
   signal = signal || inherited?.signal;
   try {
     throwIfPantheonAborted(signal);
   } catch (error) {
-    return failureResult(String(rawUrl || ''), 0, error);
+    const result = failureResult(String(rawUrl || ''), 0, error);
+    logAcquisitionEvent(authority, 'rejected', String(rawUrl || ''), { method: requestOptions.method || 'GET', status: result.status, errorType: result.errorType, durationMs: Date.now() - telemetryStartedAt });
+    return result;
   }
   if (authority && authority.deadlineAt <= Date.now()) {
-    return failureResult(String(rawUrl || ''), 0, new Error('Pantheon acquisition authorization expired'));
+    const result = failureResult(String(rawUrl || ''), 0, new Error('Pantheon acquisition authorization expired'));
+    logAcquisitionEvent(authority, 'rejected', String(rawUrl || ''), { method: requestOptions.method || 'GET', status: result.status, errorType: result.errorType, durationMs: Date.now() - telemetryStartedAt });
+    return result;
   }
   let url: URL;
   try {
     url = canonicalPublicUrl(rawUrl);
   } catch (error) {
-    return failureResult(String(rawUrl || ''), 0, error);
+    const result = failureResult(String(rawUrl || ''), 0, error);
+    logAcquisitionEvent(authority, 'rejected', String(rawUrl || ''), { method: requestOptions.method || 'GET', status: result.status, errorType: result.errorType, durationMs: Date.now() - telemetryStartedAt });
+    return result;
+  }
+  if (authority?.canonicalUrl) {
+    try {
+      const authorized = canonicalPublicUrl(authority.canonicalUrl).toString();
+      if (url.toString() !== authorized) {
+        const result = failureResult(url.toString(), 0, new Error('Pantheon acquisition rejected: URL is outside the canonical work authorization'));
+        logAcquisitionEvent(authority, 'rejected', url.toString(), {
+          method: requestOptions.method || 'GET',
+          status: result.status,
+          errorType: result.errorType,
+          durationMs: Date.now() - telemetryStartedAt,
+        });
+        return result;
+      }
+    } catch (error) {
+      const result = failureResult(url.toString(), 0, error);
+      logAcquisitionEvent(authority, 'rejected', url.toString(), {
+        method: requestOptions.method || 'GET',
+        status: result.status,
+        errorType: result.errorType,
+        durationMs: Date.now() - telemetryStartedAt,
+      });
+      return result;
+    }
   }
   const cacheKey = url.toString();
   const method = requestOptions.method || 'GET';
+  logAcquisitionEvent(authority, 'dispatch', cacheKey, { method });
+  // One canonical source snapshot is shared by every crawler participating in
+  // the same investigation. Each caller still receives its own execution audit
+  // and telemetry, while duplicate GET fanout cannot hammer a host.
   const key = authority
-    ? `${cacheKey}#${authority.investigationId}:${authority.categoryId}:${authority.workId}:${authority.capability}:${method}`
+    ? `${cacheKey}#${authority.investigationId}:${method}`
     : `${cacheKey}#public:${method}`;
   const cached = recent.get(key);
-  if (cached && Date.now() - cached.at < RECENT_TTL_MS) return cached.value;
+  if (cached && Date.now() - cached.at < RECENT_TTL_MS) {
+    logAcquisitionEvent(authority, 'outcome', cached.value.url, {
+      method, status: cached.value.status, outcome: cached.value.ok ? 'completed' : 'skipped_or_failed',
+      errorType: cached.value.errorType, durationMs: Date.now() - telemetryStartedAt, cache: 'recent',
+    });
+    return cached.value;
+  }
   const existing = inflight.get(key);
-  if (existing) return existing;
+  if (existing) {
+    const result = await existing;
+    logAcquisitionEvent(authority, 'outcome', result.url, {
+      method, status: result.status, outcome: result.ok ? 'completed' : 'skipped_or_failed',
+      errorType: result.errorType, durationMs: Date.now() - telemetryStartedAt, cache: 'inflight',
+    });
+    return result;
+  }
 
   const task = (async () => {
     const deadlineAt = authority
@@ -368,12 +523,22 @@ export async function acquirePublicResource(
       if (delay <= 0 || Date.now() + delay >= deadlineAt) break;
       await pantheonAbortableDelay(delay, signal);
     }
-    recent.set(key, { at: Date.now(), value: last });
+    rememberRecent(key, last);
     return last;
   })();
   inflight.set(key, task);
   try {
-    return await task;
+    const result = await task;
+    logAcquisitionEvent(authority, 'outcome', result.url, {
+      method, status: result.status, outcome: result.ok ? 'completed' : 'skipped_or_failed',
+      errorType: result.errorType, durationMs: Date.now() - telemetryStartedAt,
+    });
+    return result;
+  } catch (error) {
+    logAcquisitionEvent(authority, 'outcome', cacheKey, {
+      method, status: 0, outcome: 'failed', errorType: classify(0, error), durationMs: Date.now() - telemetryStartedAt,
+    });
+    throw error;
   } finally {
     inflight.delete(key);
   }

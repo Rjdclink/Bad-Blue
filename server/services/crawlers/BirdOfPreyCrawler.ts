@@ -91,7 +91,7 @@ export class BirdOfPreyCrawler {
     const signature = this.signatures.get(this.cloakStrength >= 2.0 ? 'quantum' : 'current');
     const response = await executeRequest(target, {
       method: 'GET',
-      headers: { 'User-Agent': signature?.userAgent || this.generateStealthUserAgent(), 'X-Disruptor-Power': power.toString(), 'X-Weapon-Type': 'disruptor', 'X-Cloaked': this.cloaked.toString() },
+      headers: { 'User-Agent': signature?.userAgent || this.generateStealthUserAgent() },
       timeout: 5000
     }, this.stealth);
     const html = await response.text();
@@ -109,7 +109,7 @@ export class BirdOfPreyCrawler {
     const signature = this.signatures.get(this.cloakStrength >= 2.0 ? 'quantum' : 'current');
     const response = await executeRequest(target, {
       method: 'GET',
-      headers: { 'User-Agent': signature?.userAgent || this.generateStealthUserAgent(), 'X-Weapon-Type': 'photon-torpedo', 'X-Weapon-Yield': 'maximum', 'X-Cloaked': this.cloaked.toString() },
+      headers: { 'User-Agent': signature?.userAgent || this.generateStealthUserAgent() },
       timeout: 10000
     }, this.stealth);
     const html = await response.text();
@@ -159,7 +159,6 @@ export class BirdOfPreyCrawler {
   }
 
   async hunt(prey: string): Promise<Data> {
-    await this.perfectCloak();
     // BirdOfPrey is a URL acquisition crawler, not a search-query engine.
     // Never pass free-form discovery expressions into fetch()/StealthInfrastructure.
     let parsed: URL;
@@ -183,22 +182,23 @@ export class BirdOfPreyCrawler {
         metadata: { skipped: true, reason: 'unsupported_url_protocol' },
       };
     }
-    const reconPasses = 3;
-    let vulnerability = 0;
-    for (let i = 0; i < reconPasses; i++) {
-      try {
-        const response = await executeRequest(prey, { method: 'HEAD', headers: { 'User-Agent': this.generateStealthUserAgent() }, timeout: 3000 }, this.stealth);
-        if (response.status === 200) vulnerability += 0.3;
-        if (!response.headers.get('x-frame-options')) vulnerability += 0.2;
-        if (!response.headers.get('x-content-type-options')) vulnerability += 0.2;
-        await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 1000));
-      } catch { vulnerability -= 0.1; }
-    }
-    let data: Data;
-    if (vulnerability > 0.5) data = await this.photonTorpedo(prey);
-    else if (vulnerability > 0.3) data = await this.overloadDisruptors(prey);
-    else data = await this.fireDisruptors(prey, 10);
-    data.metadata = { ...data.metadata, attackPattern: 'hunt', stalkedFor: reconPasses, vulnerabilityScore: vulnerability, strikeType: vulnerability > 0.5 ? 'photon-torpedo' : vulnerability > 0.3 ? 'overload' : 'standard' };
+    // Production retrieval is a single lawful public GET. The previous route
+    // sent three vulnerability-style HEAD probes and then a fourth request;
+    // those probes added latency and were not evidence collection.
+    const response = await executeRequest(prey, {
+      method: 'GET',
+      headers: { 'User-Agent': 'LegalWhat-Pantheon-BirdOfPrey/1.0 public-record research' },
+      timeout: 10_000,
+    }, this.stealth);
+    const html = await response.text();
+    const data = parseResults(html, 3_000);
+    data.target = prey;
+    data.confidence = 0.85;
+    data.metadata = {
+      ...(data.metadata || {}),
+      retrievalMode: 'single-lawful-public-get',
+      probesPerformed: 0,
+    };
     return data;
   }
 

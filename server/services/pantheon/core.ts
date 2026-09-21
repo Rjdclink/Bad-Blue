@@ -38,6 +38,27 @@ export interface EntropySignature {
   timestamp: Date;
   priority?: number;         // NEW: Priority score for processing
   stealthMode?: boolean;     // NEW: Stealth flag
+  source?: Readonly<{
+    url: string;
+    retrievedAt: string;
+    provenance: CrawlerSourceSnapshot['provenance'];
+    verified: true;
+  }>;
+  capabilityOutput?: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * Immutable live-source material acquired once by the canonical primary lane.
+ * Secondary capabilities may analyze this snapshot, but have no network
+ * authority of their own.
+ */
+export interface CrawlerSourceSnapshot {
+  readonly sourceUrl: string;
+  readonly content: string;
+  readonly contentType: string;
+  readonly retrievedAt: string;
+  readonly provenance: 'canonical-primary-live-get' | 'canonical-health-check-live-get' | 'canonical-legacy-live-get';
+  readonly verified: true;
 }
 
 // Crawler task definition - ENHANCED
@@ -52,6 +73,32 @@ export interface CrawlerTask {
   warpFactor?: number;     // NEW: 1-10, speed multiplier
   retryCount?: number;     // NEW: Retry counter
   maxRetries?: number;     // NEW: Max retries allowed
+  sourceSnapshot?: Readonly<CrawlerSourceSnapshot>;
+}
+
+export function requireVerifiedCrawlerSourceSnapshot(task: CrawlerTask): Readonly<CrawlerSourceSnapshot> {
+  const snapshot = task.sourceSnapshot;
+  if (!snapshot || snapshot.verified !== true || !snapshot.sourceUrl || !snapshot.content.trim()) {
+    throw new Error(`${task.type} unavailable: verified canonical source snapshot is required`);
+  }
+  return snapshot;
+}
+
+export function attachCrawlerCapabilityOutput(
+  signature: EntropySignature,
+  snapshot: Readonly<CrawlerSourceSnapshot>,
+  capabilityOutput: Readonly<Record<string, unknown>>,
+): EntropySignature {
+  return {
+    ...signature,
+    source: Object.freeze({
+      url: snapshot.sourceUrl,
+      retrievedAt: snapshot.retrievedAt,
+      provenance: snapshot.provenance,
+      verified: true as const,
+    }),
+    capabilityOutput: Object.freeze({ ...capabilityOutput }),
+  };
 }
 
 // Crawler species types - ENHANCED

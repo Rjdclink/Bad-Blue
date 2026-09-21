@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { storage } from '../../storage';
 
@@ -531,7 +531,7 @@ async function updatePantheonReportRecordUnlocked(
       persistedAt: new Date().toISOString(),
     },
     errorMessage: errorMessage || null,
-    completedAt: status === 'processing' ? null : new Date(),
+    completedAt: status === 'processing' ? null : current.completedAt || new Date(),
   };
   await writeJournal(next);
   await writeSupabaseMirror(next);
@@ -573,27 +573,85 @@ async function updatePantheonReportRecordUnlocked(
 export interface PantheonPdfArtifact {
   bytes: number;
   sha256: string;
-  storedAt: string;
+  generatedAt: string;
+  storedAt: string | null;
+  persistence: {
+    durable: boolean;
+    regenerable: true;
+    local: {
+      stored: boolean;
+      durable: boolean;
+      mode: '0600' | null;
+      error?: string;
+    };
+    remote: {
+      provider: 'supabase';
+      configured: boolean;
+      stored: boolean;
+      error?: string;
+    };
+  };
 }
 
 async function pdfArtifactPath(reportId: string): Promise<string> {
-  await mkdir(fallbackDirectory, { recursive: true });
+  await mkdir(fallbackDirectory, { recursive: true, mode: 0o700 });
   return path.join(fallbackDirectory, `${safeReportId(reportId)}.pdf`);
 }
 
-export async function persistPantheonPdfArtifact(reportId: string, buffer: Buffer): Promise<PantheonPdfArtifact> {
-  const target = await pdfArtifactPath(reportId);
-  const temporary = `${target}.tmp-${process.pid}-${crypto.randomUUID()}`;
-  await writeFile(temporary, buffer);
-  await rename(temporary, target);
-  const artifact = {
-    bytes: buffer.length,
-    sha256: crypto.createHash('sha256').update(buffer).digest('hex'),
-    storedAt: new Date().toISOString(),
-  };
+function isDurableLocalArtifact(target: string): boolean {
+  const mountPath = String(process.env.RAILWAY_VOLUME_MOUNT_PATH || '').trim();
+  if (!mountPath) return false;
+  const relative = path.relative(path.resolve(mountPath), path.resolve(target));
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
 
-  const localDurable = Boolean(process.env.RAILWAY_VOLUME_MOUNT_PATH);
+function safePersistenceError(error: unknown): string {
+  return errorText(error).slice(0, 300) || 'persistence unavailable';
+}
+
+export async function persistPantheonPdfArtifact(reportId: string, buffer: Buffer): Promise<PantheonPdfArtifact> {
+  const generatedAt = new Date().toISOString();
+  let target: string | null = null;
+  let temporary: string | null = null;
+  let localStored = false;
+  let localDurable = false;
+  let localMode: '0600' | null = null;
+  let localError: string | undefined;
+  try {
+    target = await pdfArtifactPath(reportId);
+    temporary = `${target}.tmp-${process.pid}-${crypto.randomUUID()}`;
+    await writeFile(temporary, buffer, { mode: 0o600 });
+    await rename(temporary, target);
+    temporary = null;
+    try {
+      await chmod(target, 0o600);
+      localMode = '0600';
+    } catch (error) {
+      console.warn('[PANTHEON REPORT STORE] PDF permissions could not be tightened; artifact remains regenerable', {
+        reportId,
+        error: safePersistenceError(error),
+      });
+    }
+    localStored = true;
+    localDurable = isDurableLocalArtifact(target);
+  } catch (error) {
+    localError = safePersistenceError(error);
+    console.warn('[PANTHEON REPORT STORE] Local PDF persistence unavailable; verified report model remains downloadable', {
+      reportId,
+      error: localError,
+    });
+    if (temporary) {
+      try {
+        await unlink(temporary);
+      } catch {
+        // The temporary artifact was never created or was already removed.
+      }
+    }
+  }
+
   const config = supabaseMirrorConfig();
+  let remoteStored = false;
+  let remoteError: string | undefined;
   if (config && await ensureSupabaseMirrorBucket(config)) {
     try {
       const response = await supabaseMirrorFetch(
@@ -610,38 +668,82 @@ export async function persistPantheonPdfArtifact(reportId: string, buffer: Buffe
         },
       );
       if (!response.ok) throw new Error(`Pantheon PDF durable mirror rejected artifact (${response.status})`);
+      remoteStored = true;
     } catch (error) {
-      if (!localDurable) throw error;
-      console.warn('[PANTHEON REPORT STORE] Remote PDF mirror unavailable; Railway volume copy remains authoritative', {
+      remoteError = safePersistenceError(error);
+      console.warn('[PANTHEON REPORT STORE] Remote PDF mirror unavailable; verified report model remains authoritative', {
         reportId,
-        error: errorText(error).slice(0, 300),
+        error: remoteError,
       });
     }
-  } else if (process.env.NODE_ENV === 'production' && !localDurable) {
-    throw new Error('Pantheon PDF has no durable production storage target');
+  } else if (config) {
+    remoteError = 'Supabase PDF mirror bucket unavailable';
   }
-  return artifact;
+
+  const storedAt = localStored || remoteStored ? new Date().toISOString() : null;
+  return {
+    bytes: buffer.length,
+    sha256: crypto.createHash('sha256').update(buffer).digest('hex'),
+    generatedAt,
+    storedAt,
+    persistence: {
+      durable: localDurable || remoteStored,
+      regenerable: true,
+      local: {
+        stored: localStored,
+        durable: localDurable,
+        mode: localMode,
+        ...(localError ? { error: localError } : {}),
+      },
+      remote: {
+        provider: 'supabase',
+        configured: Boolean(config),
+        stored: remoteStored,
+        ...(remoteError ? { error: remoteError } : {}),
+      },
+    },
+  };
 }
 
 export async function readPantheonPdfArtifact(reportId: string, expectedSha256?: string): Promise<Buffer | null> {
-  let buffer: Buffer | null = null;
+  reportId = safeReportId(reportId);
+  let localBuffer: Buffer | null = null;
   try {
-    buffer = await readFile(await pdfArtifactPath(reportId));
+    localBuffer = await readFile(await pdfArtifactPath(reportId));
   } catch {
-    const config = supabaseMirrorConfig();
-    if (config && await ensureSupabaseMirrorBucket(config)) {
+    // Fall through to the optional durable mirror.
+  }
+  if (localBuffer) {
+    const localHash = crypto.createHash('sha256').update(localBuffer).digest('hex');
+    if (!expectedSha256 || localHash === expectedSha256) return localBuffer;
+    console.warn('[PANTHEON REPORT STORE] Local PDF artifact failed integrity verification; trying durable mirror', {
+      reportId,
+    });
+  }
+
+  const config = supabaseMirrorConfig();
+  if (config && await ensureSupabaseMirrorBucket(config)) {
+    try {
       const response = await supabaseMirrorFetch(
         `${config.url}/storage/v1/object/authenticated/${SUPABASE_MIRROR_BUCKET}/${safeReportId(reportId)}.pdf`,
         { headers: { Authorization: `Bearer ${config.key}`, apikey: config.key } },
       );
-      if (response.ok) buffer = Buffer.from(await response.arrayBuffer());
+      if (response.ok) {
+        const remoteBuffer = Buffer.from(await response.arrayBuffer());
+        const remoteHash = crypto.createHash('sha256').update(remoteBuffer).digest('hex');
+        if (!expectedSha256 || remoteHash === expectedSha256) return remoteBuffer;
+        console.warn('[PANTHEON REPORT STORE] Remote PDF artifact failed integrity verification; report regeneration required', {
+          reportId,
+        });
+      }
+    } catch (error) {
+      console.warn('[PANTHEON REPORT STORE] Remote PDF artifact unavailable; report regeneration required', {
+        reportId,
+        error: safePersistenceError(error),
+      });
     }
   }
-  if (!buffer) return null;
-  if (expectedSha256 && crypto.createHash('sha256').update(buffer).digest('hex') !== expectedSha256) {
-    throw new Error('Pantheon PDF artifact failed integrity verification');
-  }
-  return buffer;
+  return null;
 }
 
 export async function lookupPantheonReportRecord(reportId: string): Promise<PantheonReportLookupResult> {

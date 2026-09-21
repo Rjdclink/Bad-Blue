@@ -45,9 +45,11 @@ for (const token of [
   if (!evidence.includes(token)) throw new Error('Evidence normalization/filtering gate missing: ' + token);
 }
 for (const token of [
-  'citationId: item.evidenceId',
+  'item.metadata?.citationId || item.evidenceId',
   'contentHash: item.contentHash',
   'provenance: item.provenance',
+  'categoryClaim: item.metadata?.categoryClaim',
+  'evidenceRank: item.metadata?.evidenceRank',
   'PANTHEON_CRAWLER_CAPABILITY_MATRIX',
   'reportEvidenceEligible === true',
 ]) {
