@@ -308,7 +308,17 @@ export class PantheonRetrievalAdapter {
       const acquisitionBatchSize = 24;
       for (let offset = 0; offset < urlTargets.length && collectionOpen(); offset += acquisitionBatchSize) {
         const batch = urlTargets.slice(offset, offset + acquisitionBatchSize);
-        const batchResults = await acquirePublicResources(batch, Math.min(perTargetTimeoutMs, Math.max(1_000, remainingBudgetMs())));
+        const batchResults = await acquirePublicResources(
+          batch,
+          Math.min(perTargetTimeoutMs, Math.max(1_000, remainingBudgetMs())),
+          request.authority ? {
+            investigationId: request.authority.investigationId,
+            categoryId: request.authority.categoryId,
+            workId: `${request.authority.categoryId}:public:${offset}`,
+            capability: 'public-acquisition',
+            deadlineAt: request.authority.deadlineAt,
+          } : undefined,
+        );
         publicResources.push(...batchResults);
       }
       for (const resource of publicResources) {
