@@ -303,12 +303,22 @@ export class PantheonRetrievalAdapter {
           retrievedAt: new Date().toISOString(),
           metadata: { capabilityClass: 'seven-crawler', cooperativeAnalysis: true },
         });
+        const sevenEvidenceCounts: Record<string, number> = {
+          mirror: operation.environmentState ? 1 : 0,
+          key: operation.identityFlows.length,
+          chewer: operation.dataDigests.length,
+          computational: operation.analysis ? 1 : 0,
+          usc: initiative.getStatus().coordination ? 1 : 0,
+          woo: operation.environmentState ? 1 : 0,
+          silence: operation.blindSpots.length + (operation.detectionProbability ? 1 : 0),
+        };
         for (const crawler of ['mirror', 'key', 'chewer', 'computational', 'usc', 'woo', 'silence']) {
+          const evidenceCount = sevenEvidenceCounts[crawler] || 0;
           crawlerAudit.push({
             crawler,
             capabilityClass: 'pantheon-secondary',
-            status: 'completed_with_evidence',
-            evidenceCount: 1,
+            status: evidenceCount > 0 ? 'completed_with_evidence' : 'completed_no_evidence',
+            evidenceCount,
             attempts: 1,
             targets: request.targets.length,
           });
