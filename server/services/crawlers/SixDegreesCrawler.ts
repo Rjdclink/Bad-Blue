@@ -112,20 +112,21 @@ export class SixDegreesCrawler {
 
       visited.add(current.domain);
 
-      // Create or update node
-      if (!this.graph.has(current.domain)) {
-        this.graph.set(current.domain, {
-          domain: current.domain,
-          connections: [],
-          type: 'website',
-          authority: this.calculateAuthority(current.domain)
-        });
-      }
-
-      // Discover connections
+      // Discover first. A target is not admitted to the graph until a real
+      // retrieval succeeds; this prevents unreachable URLs from becoming
+      // synthetic relationship evidence.
       try {
         const connections = await this.discoverConnections(current.domain);
-        
+
+        if (!this.graph.has(current.domain)) {
+          this.graph.set(current.domain, {
+            domain: current.domain,
+            connections: [],
+            type: 'website',
+            authority: this.calculateAuthority(current.domain)
+          });
+        }
+
         // Store edges
         this.edges.set(current.domain, connections);
 
@@ -237,8 +238,8 @@ export class SixDegreesCrawler {
         }
       }
     } catch (error) {
-      // Return empty array on error
       console.error(`Failed to fetch ${domain}:`, error);
+      throw error;
     }
 
     return edges;
