@@ -83,6 +83,8 @@ const checks = [
   ['category UI progression is backed by category-scoped audited execution', categoryWorkflow.includes('buildPantheonCategoryTargets') && categoryWorkflow.includes("purpose: 'background_report'") && categoryWorkflow.includes('crawlerAudit')],
   ['workflow is explicit sequence authority', categoryWorkflow.includes("PantheonCategoryPhase = 'PENDING' | 'ACTIVE' | 'URL_WORK' | 'EVIDENCE_VALIDATION' | 'PERSISTING' | 'COMPLETE'") && jobs.includes('onCategoryState')],
   ['only one canonical Pantheon investigation controller may execute', categoryWorkflow.includes('activeCanonicalInvestigation') && categoryWorkflow.includes('already active for') && categoryWorkflow.includes('finally')],
+  ['category advancement is gated by durable persistence', categoryWorkflow.includes('category persistence callback is required') && categoryWorkflow.indexOf('await input.onCategoryComplete({') < categoryWorkflow.indexOf("phase: 'COMPLETE'")],
+  ['report lifecycle cannot pre-advance the next category', jobs.includes("categoryPhase: 'PERSISTING'") && jobs.includes('categoryIndex: index') && jobs.includes('categoryName: label')],
   ['background retrieval fails closed without workflow authorization', adapter.includes('missing canonical workflow authorization') && adapter.includes('work authorization deadline expired')],
   ['investigation identity propagates from report job into workflow', jobs.includes('investigationId: input.reportId') && categoryWorkflow.includes('investigationId: string')],
   ['category authority propagates into retrieval', categoryWorkflow.includes('authority: {') && categoryWorkflow.includes('categoryId:') && categoryWorkflow.includes('deadlineAt:')],
