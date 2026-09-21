@@ -17,6 +17,7 @@ interface SearchConfig {
   name: string;
   location?: string;
   searchDepth: number;
+  consent: true;
 }
 
 export function DoomsdayClockSelector({
@@ -27,6 +28,7 @@ export function DoomsdayClockSelector({
   const [selectedDepth, setSelectedDepth] = useState<number>(1);
   const [name, setName] = useState("");
   const [location, setLocation] = useState("");
+  const [consentAccepted, setConsentAccepted] = useState(false);
   const [hoveredDepth, setHoveredDepth] = useState<number | null>(null);
 
   const depthLevels = [
@@ -69,7 +71,7 @@ export function DoomsdayClockSelector({
   ];
 
   const handleSearch = () => {
-    if (isSearching || isRestoring || !name.trim()) {
+    if (isSearching || isRestoring || !name.trim() || !consentAccepted) {
       return;
     }
     
@@ -77,6 +79,7 @@ export function DoomsdayClockSelector({
       name: name.trim(),
       location: location.trim() || undefined,
       searchDepth: selectedDepth,
+      consent: true,
     });
   };
 
@@ -217,12 +220,26 @@ export function DoomsdayClockSelector({
         })}
       </div>
 
+      <label className="flex items-start gap-3 rounded-md border p-3 text-sm">
+        <input
+          type="checkbox"
+          checked={consentAccepted}
+          onChange={(event) => setConsentAccepted(event.target.checked)}
+          disabled={isSearching || isRestoring}
+          className="mt-1 h-4 w-4"
+          aria-describedby="pantheon-consent-description"
+        />
+        <span id="pantheon-consent-description">
+          I confirm that I am authorized to conduct this lawful public-record search.
+        </span>
+      </label>
+
       {/* Search Button with Enhanced Styling */}
       <Button
         onClick={handleSearch}
-        disabled={isSearching || isRestoring || !name.trim()}
+        disabled={isSearching || isRestoring || !name.trim() || !consentAccepted}
         className={`w-full h-14 text-lg font-bold transition-all duration-300
-          ${!isSearching && !isRestoring && name.trim() 
+          ${!isSearching && !isRestoring && name.trim() && consentAccepted 
             ? 'bg-gradient-to-r from-red-600 to-pink-600 hover:from-red-700 hover:to-pink-700 shadow-xl hover:shadow-2xl hover:scale-[1.02]' 
             : ''
           }

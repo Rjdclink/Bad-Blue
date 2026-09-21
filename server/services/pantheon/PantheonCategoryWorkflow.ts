@@ -1,5 +1,8 @@
 import type { PeopleSearchReport } from '../../peopleSearch';
-import type { PantheonReportCategoryLabel } from './PantheonCrawlerCapabilityMatrix';
+import {
+  getPantheonCategoryCapabilities,
+  type PantheonReportCategoryLabel,
+} from './PantheonCrawlerCapabilityMatrix';
 import { createPantheonDeadline, throwIfPantheonAborted } from './PantheonDeadline';
 import { runPantheonBounded } from './PantheonBoundedScheduler';
 import {
@@ -7,6 +10,7 @@ import {
   cleanPantheonEvidenceContent,
   processPantheonEvidence,
   dedupePantheonEvidence,
+  requireVerifiedPantheonEvidence,
 } from './PantheonEvidencePipeline';
 import {
   finalizePantheonCategoryCapabilityOutcomes,
@@ -22,7 +26,9 @@ import {
 } from './PantheonInvestigationController';
 import {
   buildPantheonCategoryTargets,
+  preflightPantheonSourceTargets,
   type PantheonBackgroundCategory,
+  type PantheonSourcePreflightIssue,
 } from './PantheonSovereignSourceRegistry';
 
 export const PANTHEON_REPORT_CATEGORIES = [
@@ -125,6 +131,64 @@ export interface PantheonCategoryOutcome {
   completionState: PantheonCategoryCompletionState;
   completionReason: string;
   capabilityOutcomes: PantheonCapabilityOutcome[];
+  sourcePreflightIssues: PantheonSourcePreflightIssue[];
+}
+
+export interface PantheonPersistedCategoryState {
+  index: number;
+  label: PantheonReportCategoryLabel;
+  state: 'pending' | 'active' | 'completed' | 'partial';
+  phase: PantheonCategoryPhase;
+  protectedBudgetMs: number;
+  sourcePlan: {
+    registryCategories: readonly PantheonBackgroundCategory[];
+    capabilities: string[];
+    transports: string[];
+    urls: string[];
+    preflightIssues: PantheonSourcePreflightIssue[];
+  };
+  outcome?: PantheonCategoryOutcome;
+}
+
+export function initializePantheonCategoryPlans(input: {
+  name: string;
+  location?: string;
+  searchDepth: 1 | 2 | 3 | 4;
+  budgetMs: number;
+  concurrency?: number;
+}): PantheonPersistedCategoryState[] {
+  const concurrency = Math.max(1, Math.min(4, input.concurrency || 4));
+  const waveCount = Math.ceil(PANTHEON_REPORT_CATEGORIES.length / concurrency);
+  const finalizationReserveMs = Math.min(15_000, Math.max(2_000, Math.floor(input.budgetMs * 0.08)));
+  const protectedBudgetMs = Math.max(1_500, Math.floor((input.budgetMs - finalizationReserveMs) / waveCount));
+  const urlLimit = Math.min(300, categoryProductiveWorkTarget(input.searchDepth) * 2);
+
+  return PANTHEON_REPORT_CATEGORIES.map((category, index) => {
+    const perRegistryLimit = Math.max(1, Math.ceil(urlLimit / category.registry.length));
+    const rawTargets = category.registry.flatMap(registryCategory =>
+      buildPantheonCategoryTargets(registryCategory, input.name, input.location, perRegistryLimit)
+    );
+    const preflight = preflightPantheonSourceTargets(
+      rawTargets,
+      category.registry[0],
+      input.name,
+      input.location,
+    );
+    return {
+      index,
+      label: category.label,
+      state: 'pending',
+      phase: 'PENDING',
+      protectedBudgetMs,
+      sourcePlan: {
+        registryCategories: category.registry,
+        capabilities: getPantheonCategoryCapabilities(category.label),
+        transports: [...new Set(preflight.targets.map(target => target.transport))],
+        urls: preflight.targets.map(target => target.url),
+        preflightIssues: preflight.issues,
+      },
+    };
+  });
 }
 
 function mergeAudit(entries: PantheonRetrievalResponse['crawlerAudit']) {
@@ -312,9 +376,19 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
     const expectedCapabilities = capabilityRoute.requested;
     const executableCapabilities = capabilityRoute.selected;
 
-    const ledgerGroups = category.registry.map(registryCategory => ({
-      registryCategory,
-      targets: buildPantheonCategoryTargets(registryCategory, input.name, input.location, 300),
+    const preflightGroups = category.registry.map(registryCategory => {
+      const preflight = preflightPantheonSourceTargets(
+        buildPantheonCategoryTargets(registryCategory, input.name, input.location, 300),
+        registryCategory,
+        input.name,
+        input.location,
+      );
+      return { registryCategory, ...preflight };
+    });
+    const sourcePreflightIssues = preflightGroups.flatMap(group => group.issues);
+    const ledgerGroups = preflightGroups.map(group => ({
+      registryCategory: group.registryCategory,
+      targets: group.targets,
     }));
     const urlLedger = buildCategoryLedger(category.label, executableCapabilities, ledgerGroups);
     const targetGroups = ledgerGroups.map(group => group.targets);
@@ -534,6 +608,7 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
       completionState: assessment.state,
       completionReason: assessment.reason,
       capabilityOutcomes,
+      sourcePreflightIssues,
     };
 
   return { outcome, evidence: acceptedEvidence, audit: retrieval.crawlerAudit };
@@ -543,7 +618,7 @@ function applyPantheonCategoryExecutions(
   report: PeopleSearchReport,
   executions: readonly PantheonCategoryExecution[],
 ): void {
-  const evidence = executions.flatMap(item => item.evidence);
+  const evidence = requireVerifiedPantheonEvidence(executions.flatMap(item => item.evidence));
   const audits = executions.flatMap(item => item.audit);
   const categoryOutcomes = executions.map(item => item.outcome);
   const uniqueEvidence = dedupePantheonEvidence(evidence);
@@ -567,6 +642,16 @@ function applyPantheonCategoryExecutions(
     ? completedWithEvidence / PANTHEON_REPORT_CATEGORIES.length
     : 0;
   const unresolved = categoryOutcomes.filter(item => item.completionState !== 'completed');
+  (report as any).coverageGaps = unresolved.map(item => ({
+    category: item.label,
+    state: item.completionState,
+    reason: item.completionReason,
+    pendingUrls: item.pendingUrls,
+    missingCapabilities: item.capabilityOutcomes
+      .filter(capability => capability.applicable && !['completed_with_evidence', 'completed_no_evidence'].includes(capability.status))
+      .map(capability => capability.capabilityId),
+  }));
+  (report as any).reportCompleteness = unresolved.length === 0 && categoryOutcomes.length === PANTHEON_REPORT_CATEGORIES.length ? 'complete' : 'partial';
   report.summary = unresolved.length === 0 && categoryOutcomes.length === PANTHEON_REPORT_CATEGORIES.length
     ? `PANTHEON completed all ${PANTHEON_REPORT_CATEGORIES.length} categories with live source work and required crawler coverage.`
     : `PANTHEON completed ${completedCategoryCount} of ${PANTHEON_REPORT_CATEGORIES.length} categories with live source work; unresolved categories: ${unresolved.map(item => `${item.label} (${item.completionReason})`).join('; ') || 'not yet executed'}.`;

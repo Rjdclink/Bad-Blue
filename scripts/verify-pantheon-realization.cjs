@@ -24,6 +24,7 @@ const investigationController = read('server/services/pantheon/PantheonInvestiga
 const evidencePipeline = read('server/services/pantheon/PantheonEvidencePipeline.ts');
 const scheduler = read('server/services/pantheon/PantheonBoundedScheduler.ts');
 const deadline = read('server/services/pantheon/PantheonDeadline.ts');
+const entityResolution = read('server/services/pantheon/PantheonEntityResolution.ts');
 
 const checks = [
   ['three public scan choices are 10 20 30 minutes', config.includes("1: 10 * 60_000") && config.includes("2: 20 * 60_000") && config.includes("3: 30 * 60_000") && !selector.includes('title: "EYE OF GOD"')],
@@ -32,7 +33,7 @@ const checks = [
   ['client retries only transient report-store status without unlocking an unresolved job', client.includes('[429, 502, 503, 504]') && client.includes('response.status === 404 || response.status === 410') && client.includes('consecutivePollFailures = Math.min(8, consecutivePollFailures + 1)')],
   ['persisted report recovery does not impersonate an active search', client.includes('restoringPersistedJob') && client.includes('setRestoringPersistedJob(true)') && !client.includes("setReportJobId(persistedJobId);\n      setSearching(true)")],
   ['persisted report recovery is bounded by server retention', client.includes('ACTIVE_REPORT_MAX_AGE_MS = 6 * 60 * 60_000') && client.includes('JSON.stringify({ jobId, savedAt: normalizedSavedAt })')],
-  ['restoration keeps form fields editable while duplicate submission stays blocked', selector.includes('disabled={isSearching}') && selector.includes('disabled={isSearching || isRestoring || !name.trim()}') && selector.includes('isSearching || isRestoring || !name.trim()')],
+  ['restoration keeps form fields editable while duplicate submission stays blocked', selector.includes('disabled={isSearching}') && selector.includes('disabled={isSearching || isRestoring || !name.trim() || !consentAccepted}') && selector.includes('isSearching || isRestoring || !name.trim()')],
   ['downloadable PDF route exists', routes.includes('/api/osint/report-jobs/:reportId/download')],
   ['PDF includes provenance/crawler audit', pdf.includes('crawlerAudit') && pdf.includes('Source Provenance')],
   ['all primary crawler execution isolated', adapter.includes('searchAllIsolatedWithAudit')],
@@ -78,7 +79,7 @@ const checks = [
   ['transport and capability hints reach retrieval adapter', categoryWorkflow.includes('capabilityHint: batch.flatMap') && categoryWorkflow.includes('requiredCapabilities') && categoryWorkflow.includes('transportHint: batch.map')],
   ['customer report filters raw execution diagnostics and exposes truthful coverage', !pdf.includes("addSectionTitle(doc, 'Crawler Coverage')") && pdf.includes('Crawler diagnostics remain internal') && pdf.includes('Coverage status:') && pdf.includes('REPORT COVERAGE')],
   ['multi-facet categories interleave source families', categoryWorkflow.includes('interleaveCategoryTargets') && categoryWorkflow.includes('targetGroups')],
-  ['customer evidence requires subject relevance', evidencePipeline.includes('subjectMatches') && evidencePipeline.includes('locationMatch')],
+  ['customer evidence requires subject relevance', entityResolution.includes('exact_normalized_name') && entityResolution.includes('location_correlates') && evidencePipeline.includes('matchPantheonSubject')],
   ['canonical URL dedupe precedes crawler execution', evidencePipeline.includes('canonicalPantheonEvidenceUrl') && evidencePipeline.includes('new Set<string>()')],
   ['raw HTML script style and tags are stripped before reporting', evidencePipeline.includes("replace(/<script") && evidencePipeline.includes("replace(/<style")],
   ['report findings and provenance are separated from crawler diagnostics', categoryWorkflow.includes('data: { url: item.target, finding: item.content }') && !pdf.includes("addSectionTitle(doc, 'Crawler Coverage')")],

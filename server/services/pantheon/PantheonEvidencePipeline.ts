@@ -1,4 +1,5 @@
 import type { RetrievalEvidence } from '../crawlers/PantheonRetrievalAdapter';
+import { matchPantheonSubject } from './PantheonEntityResolution';
 
 export type PantheonEvidenceRejectionReason =
   | 'simulation_or_test_output'
@@ -70,14 +71,20 @@ function rejectionReason(
   }
   if (blockedOrDiagnostic(text)) return 'diagnostic_or_block_page';
 
-  const lowered = text.toLowerCase();
-  const subjectTokens = subject.toLowerCase().split(/\s+/).map(value => value.trim()).filter(value => value.length >= 2);
-  const subjectMatches = subjectTokens.filter(token => lowered.includes(token)).length;
-  const locationTokens = String(location || '').toLowerCase().split(/[\s,]+/).filter(value => value.length >= 3);
-  const locationMatch = locationTokens.some(token => lowered.includes(token));
-  const entityMatch = subjectTokens.length > 0 &&
-    (subjectMatches >= Math.min(2, subjectTokens.length) || (subjectMatches >= 1 && locationMatch));
-  return entityMatch ? undefined : 'subject_mismatch';
+  const entityMatch = matchPantheonSubject(item, subject, location);
+  return entityMatch.matched ? undefined : 'subject_mismatch';
+}
+
+export function requireVerifiedPantheonEvidence(items: readonly RetrievalEvidence[]): RetrievalEvidence[] {
+  const rejected = items.filter(item =>
+    item.metadata?.evidenceState !== 'verified_live_source' ||
+    item.metadata?.subjectMatch !== true ||
+    !item.metadata?.provenance
+  );
+  if (rejected.length) {
+    throw new Error('Pantheon analysis rejected unverified or unattributed evidence');
+  }
+  return [...items];
 }
 
 export function dedupePantheonEvidence(items: readonly RetrievalEvidence[]): RetrievalEvidence[] {
@@ -99,6 +106,7 @@ export function processPantheonEvidence(
   const accepted: RetrievalEvidence[] = [];
   const rejected: PantheonRejectedEvidence[] = [];
   for (const item of items) {
+    const entityMatch = matchPantheonSubject(item, subject, location);
     const reason = rejectionReason(item, subject, location);
     if (reason) rejected.push({ evidence: item, reason });
     else accepted.push({
@@ -109,6 +117,12 @@ export function processPantheonEvidence(
         ...(item.metadata || {}),
         evidenceState: 'verified_live_source',
         subjectMatch: true,
+        entityMatch,
+        provenance: {
+          sourceUrl: canonicalPantheonEvidenceUrl(item.target),
+          retrievedAt: item.retrievedAt,
+          crawler: item.crawler,
+        },
       },
     });
   }

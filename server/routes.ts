@@ -3574,26 +3574,36 @@ Contact: ${foiaRequest.userEmail || userEmail}
       });
     }
 
-    const name = String(req.body?.name || '').trim();
-    const location = String(req.body?.location || '').trim();
-    if (!name) {
-      return res.status(400).json({ success: false, code: 'invalid_request', message: 'Target name is required.' });
-    }
-
-    const { normalizePantheonSearchDepth, getPantheonReportDurationMs } = await import('@shared/pantheonReportConfig');
-    const searchDepth = normalizePantheonSearchDepth(req.body?.searchDepth);
-    const budgetMs = getPantheonReportDurationMs(searchDepth);
     const userId = String(access.user?.id || access.user?.claims?.sub || req.user?.id || req.user?.claims?.sub || '').trim();
     if (!userId) {
       return res.status(401).json({ success: false, code: 'unauthenticated', message: 'Authentication required.' });
     }
 
+    let submission;
     try {
-      const { createPantheonReportRecord } = await import('./services/pantheon/PantheonReportStore');
-      const initial = await createPantheonReportRecord({
+      const { validatePantheonJobSubmission } = await import('./services/pantheon/PantheonJobSubmission');
+      submission = validatePantheonJobSubmission(req.body, req.get('Idempotency-Key'));
+    } catch (error) {
+      const code = error instanceof Error ? error.message : 'invalid_request';
+      return res.status(400).json({
+        success: false,
+        code,
+        message: code === 'consent_required'
+          ? 'Authorization consent is required.'
+          : 'The target, location, search depth, or idempotency key is invalid.',
+      });
+    }
+    const { name, location, searchDepth, idempotencyKey, consent } = submission;
+    const { getPantheonReportDurationMs } = await import('@shared/pantheonReportConfig');
+    const budgetMs = getPantheonReportDurationMs(searchDepth);
+
+    try {
+      const { createIdempotentPantheonReportRecord } = await import('./services/pantheon/PantheonReportStore');
+      const { record: initial, created } = await createIdempotentPantheonReportRecord({
         userId,
         searchQuery: name,
         subjectName: name,
+        idempotencyKey,
         reportData: {
           job: {
             state: 'queued',
@@ -3601,30 +3611,39 @@ Contact: ${foiaRequest.userEmail || userEmail}
             location: location || null,
             searchDepth,
             budgetMs,
+            idempotencyKey,
+            consent,
             queuedAt: new Date().toISOString(),
           },
           report: null,
+          categoryOutcomes: [],
         },
       });
 
       const { issuePantheonReportAccess } = await import('./services/pantheon/PantheonReportAccess');
       issuePantheonReportAccess(res, initial.id, userId);
 
-      const { startPantheonReportJob } = await import('./services/pantheon/PantheonBackgroundReportJob');
-      void startPantheonReportJob({
-        reportId: initial.id,
-        userId,
-        name,
-        location: location || undefined,
-        searchDepth,
-      }).catch(error => {
+      const { startPantheonReportJob, resumePantheonReportJobFromRecord } = await import('./services/pantheon/PantheonBackgroundReportJob');
+      const execution = created
+        ? startPantheonReportJob({
+            reportId: initial.id,
+            userId,
+            name,
+            location,
+            searchDepth,
+            idempotencyKey,
+            consent,
+          })
+        : resumePantheonReportJobFromRecord(initial);
+      void execution?.catch(error => {
         console.error('[PANTHEON REPORT JOB] Background execution failed:', error);
       });
 
-      return res.status(202).json({
+      return res.status(created ? 202 : 200).json({
         success: true,
         jobId: initial.id,
-        status: 'processing',
+        status: initial.status,
+        reused: !created,
         searchDepth,
         budgetMs,
         monitorUrl: `/api/osint/report-jobs/${initial.id}`,

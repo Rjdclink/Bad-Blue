@@ -30,6 +30,7 @@ const memoryRecords = new Map<string, PantheonReportRecord>();
 const mirrorAttempts = new Map<string, number>();
 const mirrorTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const cleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const idempotentCreates = new Map<string, Promise<{ record: PantheonReportRecord; created: boolean }>>();
 let databaseUnavailableUntil = 0;
 const DATABASE_COOLDOWN_MS = 60_000;
 const MAX_MIRROR_ATTEMPTS = 30;
@@ -330,6 +331,7 @@ function scheduleMirror(reportId: string): void {
 }
 
 export async function createPantheonReportRecord(input: {
+  id?: string;
   userId: string;
   searchQuery: string;
   subjectName?: string;
@@ -337,7 +339,7 @@ export async function createPantheonReportRecord(input: {
 }): Promise<PantheonReportRecord> {
   const now = new Date();
   const record: PantheonReportRecord = {
-    id: crypto.randomUUID(),
+    id: input.id || crypto.randomUUID(),
     userId: input.userId,
     searchQuery: input.searchQuery,
     subjectName: input.subjectName || null,
@@ -383,6 +385,72 @@ export async function createPantheonReportRecord(input: {
   }
 
   return record;
+}
+
+
+interface PantheonIdempotentCreateInput {
+  userId: string;
+  searchQuery: string;
+  subjectName?: string;
+  reportData: any;
+  idempotencyKey: string;
+}
+
+function idempotencyDigest(userId: string, key: string): string {
+  return crypto.createHash('sha256').update(userId + '\u0000' + key).digest('hex');
+}
+
+async function idempotencyIndexPath(userId: string, key: string): Promise<string> {
+  await mkdir(fallbackDirectory, { recursive: true });
+  return path.join(fallbackDirectory, 'idempotency-' + idempotencyDigest(userId, key) + '.json');
+}
+
+async function claimIdempotentReportId(userId: string, key: string): Promise<{ reportId: string; created: boolean }> {
+  const target = await idempotencyIndexPath(userId, key);
+  try {
+    const parsed = JSON.parse(await readFile(target, 'utf8'));
+    return { reportId: safeReportId(String(parsed.reportId || '')), created: false };
+  } catch {
+    const reportId = crypto.randomUUID();
+    try {
+      await writeFile(
+        target,
+        JSON.stringify({ reportId, createdAt: new Date().toISOString() }),
+        { encoding: 'utf8', flag: 'wx' },
+      );
+      return { reportId, created: true };
+    } catch (error: any) {
+      if (error?.code !== 'EEXIST') throw error;
+      const parsed = JSON.parse(await readFile(target, 'utf8'));
+      return { reportId: safeReportId(String(parsed.reportId || '')), created: false };
+    }
+  }
+}
+
+export async function createIdempotentPantheonReportRecord(
+  input: PantheonIdempotentCreateInput,
+): Promise<{ record: PantheonReportRecord; created: boolean }> {
+  const operationKey = idempotencyDigest(input.userId, input.idempotencyKey);
+  const active = idempotentCreates.get(operationKey);
+  if (active) return active;
+
+  const operation = (async () => {
+    const claim = await claimIdempotentReportId(input.userId, input.idempotencyKey);
+    const existing = await getPantheonReportRecord(claim.reportId);
+    if (existing) return { record: existing, created: false };
+
+    const record = await createPantheonReportRecord({
+      id: claim.reportId,
+      userId: input.userId,
+      searchQuery: input.searchQuery,
+      subjectName: input.subjectName,
+      reportData: input.reportData,
+    });
+    return { record, created: claim.created };
+  })().finally(() => idempotentCreates.delete(operationKey));
+
+  idempotentCreates.set(operationKey, operation);
+  return operation;
 }
 
 export async function updatePantheonReportRecord(

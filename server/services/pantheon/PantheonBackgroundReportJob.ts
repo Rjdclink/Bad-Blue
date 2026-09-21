@@ -1,5 +1,9 @@
 import { updatePantheonReportRecord } from './PantheonReportStore';
-import { conductPantheonCategoryWorkflow, PANTHEON_REPORT_CATEGORIES } from './PantheonCategoryWorkflow';
+import {
+  conductPantheonCategoryWorkflow,
+  initializePantheonCategoryPlans,
+  PANTHEON_REPORT_CATEGORIES,
+} from './PantheonCategoryWorkflow';
 import { assessPantheonInvestigation } from './PantheonInvestigationController';
 import { canActivatePantheon } from '../pantheonCrawlerOrchestrator';
 import {
@@ -20,6 +24,8 @@ export interface PantheonReportJobInput {
   searchDepth: PantheonSearchDepth;
   resumeFromCategory?: number;
   initialReport?: any;
+  idempotencyKey: string;
+  consent: { accepted: true; version: string; acceptedAt: string };
 }
 
 interface PersistedPantheonJob {
@@ -28,6 +34,8 @@ interface PersistedPantheonJob {
   location?: string;
   searchDepth?: number;
   completedCategories?: number;
+  idempotencyKey?: string;
+  consent?: { accepted?: boolean; version?: string; acceptedAt?: string };
 }
 
 const activeJobs = new Map<string, Promise<void>>();
@@ -40,6 +48,8 @@ function jobEnvelope(input: PantheonReportJobInput, state: 'queued' | 'running' 
     location: input.location || null,
     searchDepth: input.searchDepth,
     budgetMs,
+    idempotencyKey: input.idempotencyKey,
+    consent: input.consent,
     ...extra,
   };
 }
@@ -48,12 +58,19 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
   const startedAt = new Date();
   const budgetMs = getPantheonReportDurationMs(input.searchDepth);
   const deadlineAt = new Date(startedAt.getTime() + budgetMs);
+  const categoryStates = initializePantheonCategoryPlans({
+    name: input.name,
+    location: input.location,
+    searchDepth: input.searchDepth,
+    budgetMs,
+  });
 
   await updatePantheonReportRecord(input.reportId, 'processing', {
     job: jobEnvelope(input, 'running', {
       startedAt: startedAt.toISOString(),
       deadlineAt: deadlineAt.toISOString(),
     }),
+    categoryStates,
     report: null,
   });
 
@@ -76,6 +93,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
         deadlineAt: deadlineAt.toISOString(),
         capabilityHealth,
       }),
+      categoryStates,
       report: null,
     });
 
@@ -95,6 +113,17 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       initialReport: input.initialReport,
       capabilityHealth,
       onCategoryState: async ({ index, label, phase, completedCategories }) => {
+        const categoryState = categoryStates[index];
+        if (categoryState) {
+          categoryState.phase = phase;
+          categoryState.state = phase === 'COMPLETE'
+            ? 'completed'
+            : phase === 'PARTIAL'
+              ? 'partial'
+              : phase === 'PENDING'
+                ? 'pending'
+                : 'active';
+        }
         await updatePantheonReportRecord(input.reportId, 'processing', {
           job: jobEnvelope(input, phase === 'PERSISTING' ? 'finalizing' : 'running', {
             startedAt: startedAt.toISOString(),
@@ -106,6 +135,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
             completedCategories,
             totalCategories: PANTHEON_REPORT_CATEGORIES.length,
           }),
+          categoryStates,
           report: latestPartialReport,
         });
       },
@@ -121,11 +151,18 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
             completedCategories,
             totalCategories: PANTHEON_REPORT_CATEGORIES.length,
           }),
+          categoryStates,
           report: latestPartialReport,
         });
       },
       onCategoryComplete: async ({ index, label, completedCategories, outcome, partialReport }) => {
         latestPartialReport = partialReport;
+        const categoryState = categoryStates[index];
+        if (categoryState) {
+          categoryState.outcome = outcome;
+          categoryState.state = outcome.completionState === 'completed' ? 'completed' : 'partial';
+          categoryState.phase = outcome.completionState === 'completed' ? 'COMPLETE' : 'PARTIAL';
+        }
         console.log('[PANTHEON CATEGORY] complete', {
           reportId: input.reportId,
           index: index + 1,
@@ -153,6 +190,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
             categoryLedgerPendingUrls: outcome.pendingUrls,
             categoryUrlLedger: outcome.urlLedger,
           }),
+          categoryStates,
           report: partialReport,
         });
       },
@@ -176,6 +214,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
         capabilityCoverage: investigation.capabilityCoverage,
         capabilityTelemetry: getPantheonCapabilityTelemetry(),
       }),
+      categoryStates,
       report,
       categoryOutcomes,
     });
@@ -192,6 +231,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
         capabilityCoverage: investigation.capabilityCoverage,
         capabilityTelemetry: getPantheonCapabilityTelemetry(),
       }),
+      categoryStates,
       report,
       categoryOutcomes,
     });
@@ -203,6 +243,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
         deadlineAt: deadlineAt.toISOString(),
         failedAt: new Date().toISOString(),
       }),
+      categoryStates,
       report: null,
     }, message.slice(0, 500));
   }
@@ -237,7 +278,9 @@ export function resumePantheonReportJobFromRecord(report: {
     : {};
   const job = envelope.job;
   const name = String(job?.name || report.searchQuery || '').trim();
-  if (!name) return null;
+  const idempotencyKey = String(job?.idempotencyKey || '').trim();
+  const consent = job?.consent;
+  if (!name || !idempotencyKey || consent?.accepted !== true || !consent.version || !consent.acceptedAt) return null;
 
   return startPantheonReportJob({
     reportId: report.id,
@@ -247,5 +290,7 @@ export function resumePantheonReportJobFromRecord(report: {
     searchDepth: normalizePantheonSearchDepth(job?.searchDepth),
     resumeFromCategory: Math.max(0, Number(job?.completedCategories || 0)),
     initialReport: envelope.report,
+    idempotencyKey,
+    consent: { accepted: true, version: consent.version, acceptedAt: consent.acceptedAt },
   });
 }
