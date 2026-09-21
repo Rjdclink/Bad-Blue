@@ -16,6 +16,7 @@ interface PantheonProgressTrackerProps {
   categoryNumber?: number | null;
   categoryName?: string | null;
   completedCategories?: number;
+  processedCategories?: number;
   totalCategories?: number;
 }
 
@@ -36,6 +37,7 @@ export function PantheonProgressTracker({
   categoryNumber = null,
   categoryName = null,
   completedCategories = 0,
+  processedCategories = 0,
   totalCategories = PANTHEON_CATEGORIES.length,
 }: PantheonProgressTrackerProps) {
   const [progress, setProgress] = useState(0);
@@ -65,13 +67,13 @@ export function PantheonProgressTracker({
       const boundedElapsed = Math.min(elapsed, effectiveDuration);
       setElapsedTime(boundedElapsed);
       setNowMs(Date.now());
-      const authoritativeProgress = totalCategories > 0 ? (completedCategories / totalCategories) * 100 : 0;
+      const authoritativeProgress = totalCategories > 0 ? (processedCategories / totalCategories) * 100 : 0;
       setProgress(Math.min(authoritativeProgress, 99));
     };
     tick();
     const interval = setInterval(tick, 50);
     return () => clearInterval(interval);
-  }, [completed, completedCategories, deadlineAt, isSearching, onComplete, startedAt, totalCategories, totalDuration]);
+  }, [completed, deadlineAt, isSearching, onComplete, processedCategories, startedAt, totalCategories, totalDuration]);
 
   const parsedDeadlineAt = deadlineAt ? Date.parse(deadlineAt) : NaN;
   const remainingMs = Number.isFinite(parsedDeadlineAt)
@@ -196,7 +198,7 @@ export function PantheonProgressTracker({
         <div className="rounded-lg border border-cyan-500/30 bg-slate-950/70 p-3 text-center">
           <div className="text-xs uppercase tracking-wide text-muted-foreground">Current stage</div>
           <div className="mt-1 font-semibold">{completed ? 'Report assembly complete' : finalizing ? 'Finalizing report from collected evidence' : (categoryName || PANTHEON_CATEGORIES[Math.min(PANTHEON_CATEGORIES.length - 1, Math.max(0, (categoryNumber || 1) - 1))])}</div>
-          <div className="mt-1 text-xs text-muted-foreground">{finalizing ? 'Collection closed — assembling available evidence' : <>Category {completed ? totalCategories : Math.min(totalCategories, Math.max(1, categoryNumber || completedCategories + 1))} of {totalCategories}</>}</div>
+          <div className="mt-1 text-xs text-muted-foreground">{finalizing ? 'Collection closed — assembling available evidence' : <>Category {completed ? totalCategories : Math.min(totalCategories, Math.max(1, categoryNumber || processedCategories + 1))} of {totalCategories} · {completedCategories} fully covered</>}</div>
         </div>
 
         {/* Real registry categories: one compact panel rather than synthetic scan-stage tags. */}

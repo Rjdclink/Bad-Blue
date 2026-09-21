@@ -11,10 +11,19 @@ const workflow = read('server/services/pantheon/PantheonCategoryWorkflow.ts');
 const orchestrator = read('server/services/pantheonCrawlerOrchestrator.ts');
 const twoStage = read('server/services/pantheon/razors/TwoStageDeployer.ts');
 const acquisition = read('server/services/crawlers/PublicAcquisitionInfrastructure.ts');
+const portable = read('server/services/pantheon/PantheonPortableCapabilityExecutor.ts');
 
 const primary = ['startrek','birdofprey','sixdegrees','cerberus','blizzard','lich'];
 const secondary = ['hydra','wraith','ice','farm','phantom','nova'];
 const razors = ['identity','contact','address','social','record','asset','court','business','relation','media'];
+const portableIds = [
+  'mirror','key','chewer','computational','usc','woo','silence',
+  'seed-startrek','seed-birdofprey','seed-trinity','seed-sixdegrees',
+  'instant-legal','adaptive-legal','legal-crawler','beneficial','public-record',
+  'pacer','state-court','county-court','warrant-database','sex-offender-registry',
+  'fast-people-search','true-people-search','whitepages','social-media-scraper',
+  'firecrawl','openrouter-web-search','spiderfoot','puppeteer','apify','crawl4ai-pattern',
+];
 const transports = ['direct-http','browser','search-provider','specialized-adapter','archive'];
 const executableFunctions = [
   'StarTrekCrawler.warpTo',
@@ -60,6 +69,9 @@ for (const id of [...primary, ...secondary]) {
 for (const id of razors) {
   if (!matrix.includes("'razor:" + id + "'")) throw new Error('Capability matrix missing razor skill: ' + id);
 }
+for (const id of portableIds) {
+  if (!matrix.includes("'" + id + "'")) throw new Error('Capability matrix missing portable crawler function: ' + id);
+}
 for (const transport of transports) {
   if (!matrix.includes("'" + transport + "'")) throw new Error('Capability matrix missing transport: ' + transport);
 }
@@ -70,8 +82,11 @@ for (const fn of executableFunctions) {
 const categoryEntries = [...matrix.matchAll(/^  '(?:[^']+)': (?:IDENTITY|CONTACT|ADDRESS|RELATIONSHIP|SOCIAL|BUSINESS|ASSET|LEGAL|MEDIA|\[)/gm)];
 if (categoryEntries.length !== 30) throw new Error('Capability matrix must declare exactly 30 category routes; found ' + categoryEntries.length);
 
-if (!controller.includes('getPantheonPrimaryCrawlerCapabilitiesForCategory')) {
+if (!controller.includes('getPantheonCategoryCapabilities')) {
   throw new Error('Investigation controller is not driven by the capability matrix');
+}
+for (const token of ['runPortablePantheonCapabilities','contentHash','replacementDisclosure','sourceOutcomes']) {
+  if (!portable.includes(token)) throw new Error('Portable capability executor missing real-result contract: ' + token);
 }
 if (!workflow.includes('PantheonReportCategoryLabel')) {
   throw new Error('Workflow categories are not type-checked against the capability matrix');
@@ -93,4 +108,4 @@ if (!acquisition.includes('export async function acquirePublicResource')) {
   throw new Error('Canonical public transport executor missing');
 }
 
-console.log('Pantheon crawler-capability matrix verification passed: 22 capabilities, 5 transports, 30 report categories.');
+console.log('Pantheon crawler-capability matrix verification passed: 53 non-crypto capabilities, 5 transports, 30 report categories.');

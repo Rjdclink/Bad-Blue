@@ -39,13 +39,55 @@ export const PANTHEON_RAZOR_SKILL_IDS = [
   'razor:media',
 ] as const;
 
+/**
+ * Non-crypto capabilities from the platform crawler inventory that are useful
+ * to a public-record background report.  Credentialed vendors are represented
+ * by a disclosed, credential-free local/public-source equivalent; they never
+ * impersonate a paid or authenticated upstream service.
+ */
+export const PANTHEON_PORTABLE_CAPABILITY_IDS = [
+  'mirror',
+  'key',
+  'chewer',
+  'computational',
+  'usc',
+  'woo',
+  'silence',
+  'seed-startrek',
+  'seed-birdofprey',
+  'seed-trinity',
+  'seed-sixdegrees',
+  'instant-legal',
+  'adaptive-legal',
+  'legal-crawler',
+  'beneficial',
+  'public-record',
+  'pacer',
+  'state-court',
+  'county-court',
+  'warrant-database',
+  'sex-offender-registry',
+  'fast-people-search',
+  'true-people-search',
+  'whitepages',
+  'social-media-scraper',
+  'firecrawl',
+  'openrouter-web-search',
+  'spiderfoot',
+  'puppeteer',
+  'apify',
+  'crawl4ai-pattern',
+] as const;
+
 export type PantheonPrimaryCrawlerId = typeof PANTHEON_PRIMARY_CRAWLER_IDS[number];
 export type PantheonSecondaryCrawlerId = typeof PANTHEON_SECONDARY_CRAWLER_IDS[number];
 export type PantheonRazorSkillId = typeof PANTHEON_RAZOR_SKILL_IDS[number];
+export type PantheonPortableCapabilityId = typeof PANTHEON_PORTABLE_CAPABILITY_IDS[number];
 export type PantheonCapabilityId =
   | PantheonPrimaryCrawlerId
   | PantheonSecondaryCrawlerId
-  | PantheonRazorSkillId;
+  | PantheonRazorSkillId
+  | PantheonPortableCapabilityId;
 
 export const PANTHEON_REPORT_CATEGORY_LABELS = [
   'Identity & Identity Verification',
@@ -99,6 +141,8 @@ export interface PantheonCapabilityDescriptor {
   transports: readonly PantheonTransport[];
   outputFields: readonly string[];
   reportEvidenceEligible: boolean;
+  executionMode?: 'native' | 'credential-free-equivalent';
+  replacementDisclosure?: string;
 }
 
 const ALL_SOURCE_TRANSPORTS = [
@@ -142,6 +186,59 @@ function capability(
 const SOURCE_OUTPUT = ['sourceUrl', 'content', 'confidence', 'retrievedAt'] as const;
 const STRUCTURED_OUTPUT = ['sourceUrl', 'structuredData', 'confidence', 'extractionTimeMs'] as const;
 const OBSERVATION_OUTPUT = ['sourceUrl', 'status', 'timingMs', 'retrievedAt'] as const;
+
+const PORTABLE_SPECS: ReadonlyArray<{
+  id: PantheonPortableCapabilityId;
+  skill: string;
+  taskKind: PantheonTaskKind;
+  disclosure: string;
+}> = [
+  { id: 'mirror', skill: 'source canonicalization and cross-source consistency comparison', taskKind: 'observe-source-transport', disclosure: 'Production deterministic mirror-equivalent over live source content.' },
+  { id: 'key', skill: 'subject-token and identity-key extraction', taskKind: 'extract-structured-evidence', disclosure: 'Production deterministic identity-key equivalent over live source content.' },
+  { id: 'chewer', skill: 'structured field and document-shape extraction', taskKind: 'extract-structured-evidence', disclosure: 'Production deterministic structured-extraction equivalent over live source content.' },
+  { id: 'computational', skill: 'pattern frequency and corroboration analysis', taskKind: 'extract-structured-evidence', disclosure: 'Production deterministic pattern-analysis equivalent over live source content.' },
+  { id: 'usc', skill: 'source consistency and provenance verification', taskKind: 'observe-source-transport', disclosure: 'Production deterministic coordination/verification equivalent over live source content.' },
+  { id: 'woo', skill: 'co-occurrence and relationship signal analysis', taskKind: 'extract-structured-evidence', disclosure: 'Production deterministic relationship-analysis equivalent over live source content.' },
+  { id: 'silence', skill: 'expected-field gap and blind-spot analysis', taskKind: 'extract-structured-evidence', disclosure: 'Production deterministic gap-analysis equivalent over live source content.' },
+  { id: 'seed-startrek', skill: 'seed-page link and authority discovery', taskKind: 'discover-related-sources', disclosure: 'Local seed discovery replaces Firecrawl-dependent seed fetching.' },
+  { id: 'seed-birdofprey', skill: 'seed-page DOM and navigation discovery', taskKind: 'discover-related-sources', disclosure: 'Local HTML/DOM discovery replaces remote-browser-dependent seed fetching.' },
+  { id: 'seed-trinity', skill: 'seed response verification and link discovery', taskKind: 'discover-related-sources', disclosure: 'Canonical live acquisition supplies verified seed content.' },
+  { id: 'seed-sixdegrees', skill: 'seed relationship-link graph extraction', taskKind: 'discover-related-sources', disclosure: 'Local relationship graph extraction over verified seed content.' },
+  { id: 'instant-legal', skill: 'legal authority and citation signal extraction', taskKind: 'extract-structured-evidence', disclosure: 'Credential-free legal extraction over verified public sources.' },
+  { id: 'adaptive-legal', skill: 'adaptive legal-document structure analysis', taskKind: 'extract-structured-evidence', disclosure: 'Credential-free deterministic legal pattern equivalent.' },
+  { id: 'legal-crawler', skill: 'case-law statute and regulation field extraction', taskKind: 'extract-structured-evidence', disclosure: 'Public-source legal crawler equivalent uses the canonical acquisition result.' },
+  { id: 'beneficial', skill: 'beneficial ownership and affiliation signal analysis', taskKind: 'extract-structured-evidence', disclosure: 'Public filing analysis replaces credentialed ownership enrichment.' },
+  { id: 'public-record', skill: 'public-record identifier and change-signal extraction', taskKind: 'extract-structured-evidence', disclosure: 'Local public-record extractor over lawful live sources.' },
+  { id: 'pacer', skill: 'federal docket signal extraction from public court/RECAP sources', taskKind: 'extract-structured-evidence', disclosure: 'No PACER access is claimed; public court opinions, RECAP pages, and open bulk records are used.' },
+  { id: 'state-court', skill: 'state-court case and docket field extraction', taskKind: 'extract-structured-evidence', disclosure: 'Public state-court source adapter.' },
+  { id: 'county-court', skill: 'county-court case and docket field extraction', taskKind: 'extract-structured-evidence', disclosure: 'Public county-court source adapter.' },
+  { id: 'warrant-database', skill: 'official wanted-person and warrant field extraction', taskKind: 'extract-structured-evidence', disclosure: 'Official public warrant-source adapter; blocked portals remain disclosed.' },
+  { id: 'sex-offender-registry', skill: 'official registry field extraction', taskKind: 'extract-structured-evidence', disclosure: 'Official public registry adapter; challenges are never bypassed.' },
+  { id: 'fast-people-search', skill: 'identity contact and address signals from lawful public sources', taskKind: 'extract-structured-evidence', disclosure: 'Commercial site scraping is not claimed; lawful public-source equivalent is used.' },
+  { id: 'true-people-search', skill: 'identity corroboration from lawful public sources', taskKind: 'extract-structured-evidence', disclosure: 'Commercial site scraping is not claimed; lawful public-source equivalent is used.' },
+  { id: 'whitepages', skill: 'public contact-directory field extraction', taskKind: 'extract-structured-evidence', disclosure: 'Authenticated directory access is not claimed; lawful public-source equivalent is used.' },
+  { id: 'social-media-scraper', skill: 'public social-profile link and handle extraction', taskKind: 'discover-related-sources', disclosure: 'Only public HTML links are analyzed; authentication and challenges are not bypassed.' },
+  { id: 'firecrawl', skill: 'HTML-to-text and link extraction', taskKind: 'extract-structured-evidence', disclosure: 'Local Cheerio-style extraction replaces the Firecrawl cloud API.' },
+  { id: 'openrouter-web-search', skill: 'deterministic search-result parsing and ranking', taskKind: 'discover-related-sources', disclosure: 'Deterministic parsing replaces OpenRouter and does not use generated evidence.' },
+  { id: 'spiderfoot', skill: 'public identifier and relationship pivot extraction', taskKind: 'extract-structured-evidence', disclosure: 'Local passive OSINT pivots replace a remote SpiderFoot service.' },
+  { id: 'puppeteer', skill: 'DOM-derived text link and metadata extraction', taskKind: 'extract-structured-evidence', disclosure: 'Local DOM parsing is used; remote browser credentials are not required.' },
+  { id: 'apify', skill: 'bounded extraction task scheduling and result shaping', taskKind: 'extract-structured-evidence', disclosure: 'The internal bounded scheduler replaces the Apify cloud task runner.' },
+  { id: 'crawl4ai-pattern', skill: 'adaptive semantic pattern extraction', taskKind: 'extract-structured-evidence', disclosure: 'Local deterministic pattern extraction replaces a separately hosted Crawl4AI service.' },
+];
+
+const PORTABLE_CAPABILITIES = Object.fromEntries(PORTABLE_SPECS.map(spec => [spec.id, {
+  id: spec.id,
+  capabilityClass: spec.taskKind === 'extract-structured-evidence' ? 'evidence-extraction' : 'secondary-retrieval',
+  skill: spec.skill,
+  implementationPath: 'server/services/pantheon/PantheonPortableCapabilityExecutor.ts',
+  executableFunction: 'runPortablePantheonCapabilities',
+  taskKind: spec.taskKind,
+  transports: ALL_SOURCE_TRANSPORTS,
+  outputFields: spec.taskKind === 'observe-source-transport' ? OBSERVATION_OUTPUT : STRUCTURED_OUTPUT,
+  reportEvidenceEligible: false,
+  executionMode: 'credential-free-equivalent',
+  replacementDisclosure: spec.disclosure,
+}])) as unknown as Record<PantheonPortableCapabilityId, PantheonCapabilityDescriptor>;
 
 export const PANTHEON_CRAWLER_CAPABILITY_MATRIX = {
   startrek: capability(
@@ -364,6 +461,7 @@ export const PANTHEON_CRAWLER_CAPABILITY_MATRIX = {
     true,
     STRUCTURED_OUTPUT,
   ),
+  ...PORTABLE_CAPABILITIES,
 } satisfies Record<PantheonCapabilityId, PantheonCapabilityDescriptor>;
 
 export interface PantheonTransportTask {
@@ -412,15 +510,27 @@ export const PANTHEON_TRANSPORT_TASKS = {
   },
 } satisfies Record<PantheonTransport, PantheonTransportTask>;
 
-const BASE_PUBLIC = ['startrek', 'blizzard', 'ice', 'farm', 'phantom', 'nova'] as const;
-const IDENTITY = [...BASE_PUBLIC, 'birdofprey', 'razor:identity', 'razor:record'] as const;
-const CONTACT = [...BASE_PUBLIC, 'birdofprey', 'razor:contact'] as const;
-const ADDRESS = [...BASE_PUBLIC, 'birdofprey', 'razor:address', 'razor:record'] as const;
+const UNIVERSAL_PORTABLE = [
+  'mirror', 'key', 'chewer', 'computational', 'usc', 'woo', 'silence',
+  'seed-startrek', 'seed-birdofprey', 'seed-trinity', 'seed-sixdegrees',
+  'firecrawl', 'openrouter-web-search', 'spiderfoot', 'puppeteer', 'apify', 'crawl4ai-pattern',
+] as const;
+const PEOPLE_PORTABLE = ['fast-people-search', 'true-people-search', 'whitepages', 'social-media-scraper'] as const;
+const LEGAL_PORTABLE = [
+  'instant-legal', 'adaptive-legal', 'legal-crawler', 'public-record', 'pacer',
+  'state-court', 'county-court', 'warrant-database', 'sex-offender-registry',
+] as const;
+const BUSINESS_PORTABLE = ['beneficial', 'public-record'] as const;
+
+const BASE_PUBLIC = ['startrek', 'blizzard', 'ice', 'farm', 'phantom', 'nova', ...UNIVERSAL_PORTABLE] as const;
+const IDENTITY = [...BASE_PUBLIC, ...PEOPLE_PORTABLE, 'birdofprey', 'razor:identity', 'razor:record'] as const;
+const CONTACT = [...BASE_PUBLIC, ...PEOPLE_PORTABLE, 'birdofprey', 'razor:contact'] as const;
+const ADDRESS = [...BASE_PUBLIC, ...PEOPLE_PORTABLE, 'birdofprey', 'razor:address', 'razor:record'] as const;
 const RELATIONSHIP = [...BASE_PUBLIC, 'sixdegrees', 'lich', 'hydra', 'razor:relation'] as const;
 const SOCIAL = [...BASE_PUBLIC, 'birdofprey', 'sixdegrees', 'hydra', 'razor:social', 'razor:media'] as const;
-const BUSINESS = [...BASE_PUBLIC, 'birdofprey', 'razor:business', 'razor:record'] as const;
-const ASSET = [...BASE_PUBLIC, 'cerberus', 'razor:asset', 'razor:record'] as const;
-const LEGAL = [...BASE_PUBLIC, 'cerberus', 'birdofprey', 'razor:court', 'razor:record'] as const;
+const BUSINESS = [...BASE_PUBLIC, ...BUSINESS_PORTABLE, 'birdofprey', 'razor:business', 'razor:record'] as const;
+const ASSET = [...BASE_PUBLIC, ...BUSINESS_PORTABLE, 'cerberus', 'razor:asset', 'razor:record'] as const;
+const LEGAL = [...BASE_PUBLIC, ...LEGAL_PORTABLE, 'cerberus', 'birdofprey', 'razor:court', 'razor:record'] as const;
 const MEDIA = [...BASE_PUBLIC, 'birdofprey', 'hydra', 'razor:media'] as const;
 
 export const PANTHEON_CATEGORY_CAPABILITY_MATRIX = {
