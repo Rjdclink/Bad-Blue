@@ -82,7 +82,7 @@ export class TwoStageDeployer {
     const razorAudit: BackgroundCapabilityAudit[] = this.razors.map(razor => {
       const result = razorResults.find(candidate => candidate.razorType === razor.type);
       return {
-        crawler: `razor:${razor.type}`,
+        crawler: `razor-${razor.type}`,
         capabilityClass: 'razor',
         status: !content
           ? 'unavailable_no_content'
