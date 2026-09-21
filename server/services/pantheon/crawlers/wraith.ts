@@ -1,5 +1,6 @@
 import { BaseCrawler } from '../baseCrawler';
 import { EntropySignature, CrawlerType, CrawlerTask, TimingJitterResult, AsyncEchoResult } from '../core';
+import { acquirePublicResource } from '../../crawlers/PublicAcquisitionInfrastructure';
 
 /**
  * WRAITH CRAWLER - Ghost Layer Entropy Harvester
@@ -56,11 +57,7 @@ export class WraithCrawler extends BaseCrawler {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 1000);
         
-        await fetch(target, { 
-          method: 'HEAD',
-          headers: { 'User-Agent': 'Mozilla/5.0' },
-          signal: controller.signal
-        });
+        await acquirePublicResource(target, 1000);
         
         clearTimeout(timeoutId);
         measurements.push(Date.now() - start);
@@ -95,20 +92,13 @@ export class WraithCrawler extends BaseCrawler {
     const timeoutId = setTimeout(() => controller.abort(), 500);
     
     try {
-      const response = await fetch(target, { 
-        headers: { 
-          'User-Agent': 'Mozilla/5.0',
-          'X-Ghost-Probe': 'true' // Ghost signature
-        },
-        signal: controller.signal
-      });
-      
+      const response = await acquirePublicResource(target, 500);
       return {
-        asyncDetected: !!response.headers.get('x-async'),
-        serverSignature: response.headers.get('server') || 'unknown',
-        hasAsyncHeader: !!response.headers.get('x-async-context'),
+        asyncDetected: false,
+        serverSignature: response.contentType || 'unknown',
+        hasAsyncHeader: false,
         statusCode: response.status,
-        responseTime: response.headers.get('x-response-time') || null
+        responseTime: null
       };
     } catch {
       // IMMEDIATE SKIP - ghosts fail silently
