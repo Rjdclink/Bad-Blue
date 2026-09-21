@@ -53,6 +53,22 @@ export interface PantheonWorkAuthorization {
   location?: string;
 }
 
+export type PantheonUrlState = 'pending'|'assigned'|'retrieving'|'retrieved'|'accepted'|'rejected'|'blocked'|'rate_limited'|'dead'|'timed_out'|'no_evidence';
+
+export interface PantheonUrlLedgerEntry {
+  url: string;
+  priority: number;
+  authority: 'primary'|'secondary'|'archive'|'discovery';
+  registryCategory: PantheonBackgroundCategory;
+  state: PantheonUrlState;
+  attempts: number;
+  evidenceIds: string[];
+  failureReason?: string;
+  capability?: string;
+  startedAt?: string;
+  completedAt?: string;
+}
+
 export interface PantheonCategoryOutcome {
   index: number;
   label: string;
@@ -67,6 +83,8 @@ export interface PantheonCategoryOutcome {
   urlsFailed: number;
   crawlersUsed: string[];
   evidenceRejected: number;
+  urlLedger: PantheonUrlLedgerEntry[];
+  cursor: number;
 }
 
 function mergeAudit(entries: PantheonRetrievalResponse['crawlerAudit']) {
@@ -168,6 +186,30 @@ function sourcePriority(authority: 'primary'|'secondary'|'discovery'|'archive'):
   return ({ primary: 400, secondary: 300, archive: 200, discovery: 100 })[authority];
 }
 
+function buildCategoryLedger(
+  groups: Array<{ registryCategory: PantheonBackgroundCategory; targets: ReturnType<typeof buildPantheonCategoryTargets> }>,
+): PantheonUrlLedgerEntry[] {
+  const seen = new Set<string>();
+  const ledger: PantheonUrlLedgerEntry[] = [];
+  for (const group of groups) {
+    for (const candidate of group.targets) {
+      const url = canonicalUrl(candidate.url);
+      if (seen.has(url)) continue;
+      seen.add(url);
+      ledger.push({
+        url,
+        priority: sourcePriority(candidate.authority),
+        authority: candidate.authority,
+        registryCategory: group.registryCategory,
+        state: 'pending',
+        attempts: 0,
+        evidenceIds: [],
+      });
+    }
+  }
+  return ledger.sort((a, b) => b.priority - a.priority || a.url.localeCompare(b.url));
+}
+
 function interleaveCategoryTargets(
   groups: Array<ReturnType<typeof buildPantheonCategoryTargets>>,
   limit: number,
@@ -248,15 +290,26 @@ export async function conductPantheonCategoryWorkflow(input: {
     const finalizationReserveMs = Math.min(15_000, Math.max(2_000, Math.floor(remainingMs * 0.08)));
     const categoryBudgetMs = Math.max(1_500, Math.floor(Math.max(1, remainingMs - finalizationReserveMs) / remainingCategories));
 
-    const targetGroups = category.registry.map(registryCategory =>
-      buildPantheonCategoryTargets(registryCategory, input.name, input.location, targetLimit)
-    );
+    const ledgerGroups = category.registry.map(registryCategory => ({
+      registryCategory,
+      targets: buildPantheonCategoryTargets(registryCategory, input.name, input.location, undefined),
+    }));
+    const urlLedger = buildCategoryLedger(ledgerGroups);
+    const targetGroups = ledgerGroups.map(group => group.targets);
     // Interleave registry facets so a multi-facet category cannot be monopolized
     // by the first tag. Within each facet, direct primary authorities run first,
     // followed by secondary sources, archives, and broad discovery URLs.
     // The established 10/20/30-minute intensity levels expand URL breadth
     // through the existing 40/94/150 per-category budgets.
     const uniqueTargets = interleaveCategoryTargets(targetGroups, targetLimit);
+    const activeUrls = new Set(uniqueTargets);
+    for (const entry of urlLedger) {
+      if (activeUrls.has(entry.url)) {
+        entry.state = 'assigned';
+        entry.attempts += 1;
+        entry.startedAt = new Date().toISOString();
+      }
+    }
 
     await input.onCategoryState?.({ index, label: category.label, phase: 'URL_WORK', completedCategories: index });
     let retrieval: PantheonRetrievalResponse;
@@ -314,6 +367,18 @@ export async function conductPantheonCategoryWorkflow(input: {
     const urlsAttempted = retrieval.crawlerAudit.reduce((sum, item) => sum + Number(item.targets || 0), 0);
     const urlsSuccessful = retrieval.crawlerAudit.reduce((sum, item) => sum + Number(item.evidenceCount || 0), 0);
     const crawlersUsed = [...new Set(retrieval.crawlerAudit.filter(item => Number(item.attempts || 0) > 0).map(item => item.crawler))];
+    const evidenceByUrl = new Map(reportable.map((item, evidenceIndex) => [canonicalUrl(item.target), `${index}:${evidenceIndex}`]));
+    for (const entry of urlLedger) {
+      if (!activeUrls.has(entry.url)) continue;
+      const evidenceId = evidenceByUrl.get(entry.url);
+      entry.completedAt = new Date().toISOString();
+      if (evidenceId) {
+        entry.state = 'accepted';
+        entry.evidenceIds.push(evidenceId);
+      } else {
+        entry.state = 'no_evidence';
+      }
+    }
     const outcome: PantheonCategoryOutcome = {
       index,
       label: category.label,
@@ -328,6 +393,8 @@ export async function conductPantheonCategoryWorkflow(input: {
       urlsFailed: Math.max(0, urlsAttempted - urlsSuccessful),
       crawlersUsed,
       evidenceRejected: Math.max(0, retrieval.evidence.length - reportable.length),
+      urlLedger,
+      cursor: uniqueTargets.length,
     };
     categoryOutcomes.push(outcome);
 
