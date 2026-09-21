@@ -93,7 +93,7 @@ export class TwoStageDeployer {
   ): Promise<BackgroundReportDeployment> {
     throwIfPantheonAborted(signal);
     const startedAt = Date.now();
-    const boundedBudget = Math.max(30_000, reportBudgetMs || 60_000);
+    const boundedBudget = Math.max(1_000, reportBudgetMs || 60_000);
     const fetchTimeoutMs = Math.min(30_000, Math.max(5_000, Math.floor(boundedBudget / 30)));
     const razorTimeoutMs = Math.min(60_000, Math.max(STAGE_1_TIMEOUT, Math.floor(boundedBudget / 20)));
     const secondaryTimeoutMs = Math.min(120_000, Math.max(10_000, Math.floor(boundedBudget / 12)));

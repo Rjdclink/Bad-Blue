@@ -53,6 +53,21 @@ export function matchPantheonSubject(
     factors.push('single_name_token');
   }
 
+  if (fullNameMatch && tokens.length >= 3) {
+    score += 0.15;
+    factors.push('distinctive_multi_token_name');
+  }
+
+  try {
+    const host = new URL(item.sourceUrl).hostname.toLowerCase();
+    if (fullNameMatch && (host.endsWith('.gov') || host.endsWith('.edu'))) {
+      score += 0.15;
+      factors.push('authoritative_public_domain');
+    }
+  } catch {
+    conflicts.push('invalid_source_url');
+  }
+
   const normalizedLocation = normalize(location);
   const locationTokens = normalizedLocation.split(' ').filter(token => token.length >= 3);
   if (locationTokens.length && locationTokens.some(token => content.split(' ').includes(token))) {
@@ -72,7 +87,7 @@ export function matchPantheonSubject(
 
   const boundedScore = Math.min(1, score);
   return {
-    matched: boundedScore >= 0.65 && conflicts.length === 0,
+    matched: boundedScore >= 0.8 && conflicts.length === 0,
     score: boundedScore,
     factors,
     conflicts,

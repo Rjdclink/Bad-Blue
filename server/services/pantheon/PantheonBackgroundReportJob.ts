@@ -1,4 +1,8 @@
-import { updatePantheonReportRecord } from './PantheonReportStore';
+import {
+  listRecoverablePantheonReportRecords,
+  persistPantheonPdfArtifact,
+  updatePantheonReportRecord,
+} from './PantheonReportStore';
 import {
   conductPantheonCategoryWorkflow,
   initializePantheonCategoryPlans,
@@ -49,7 +53,7 @@ interface PersistedPantheonJob {
 
 const activeJobs = new Map<string, Promise<void>>();
 
-function jobEnvelope(input: PantheonReportJobInput, state: 'queued' | 'running' | 'finalizing' | 'completed' | 'failed', extra: Record<string, unknown> = {}) {
+function jobEnvelope(input: PantheonReportJobInput, state: 'queued' | 'running' | 'finalizing' | 'completed' | 'partial' | 'failed', extra: Record<string, unknown> = {}) {
   const budgetMs = getPantheonReportDurationMs(input.searchDepth);
   return {
     state,
@@ -144,6 +148,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       categoryIndexes: input.resumeCategoryIndexes,
       initialReport: input.initialReport,
       initialCategoryOutcomes: input.initialCategoryOutcomes,
+      initialCategoryStates: categoryStates,
       capabilityHealth,
       onCategoryState: async ({ index, label, phase }) => {
         const categoryState = categoryStates[index];
@@ -259,6 +264,10 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       categoryOutcomes,
     });
     const pdfVerification = verifyPantheonPdfBuffer(pdfBuffer, 2);
+    const pdfArtifact = await persistPantheonPdfArtifact(input.reportId, pdfBuffer);
+    if (pdfArtifact.sha256 !== pdfVerification.sha256 || pdfArtifact.bytes !== pdfVerification.bytes) {
+      throw new Error('Persisted Pantheon PDF does not match the verified report artifact');
+    }
 
     await updatePantheonReportRecord(input.reportId, 'processing', {
       job: jobEnvelope(input, 'finalizing', {
@@ -277,10 +286,12 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       report,
       categoryOutcomes,
       pdfVerification,
+      pdfArtifact,
     });
 
-    await updatePantheonReportRecord(input.reportId, 'completed', {
-      job: jobEnvelope(input, 'completed', {
+    const finalStatus = investigation.releaseEligible ? 'completed' as const : 'partial' as const;
+    await updatePantheonReportRecord(input.reportId, finalStatus, {
+      job: jobEnvelope(input, finalStatus, {
         startedAt: startedAt.toISOString(),
         deadlineAt: deadlineAt.toISOString(),
         completedAt: pdfCompletedAt.toISOString(),
@@ -296,6 +307,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       report,
       categoryOutcomes,
       pdfVerification,
+      pdfArtifact,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -310,6 +322,28 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       report: latestPartialReport,
     }, message.slice(0, 500));
   }
+}
+
+let recoveryWorkerStarted = false;
+let recoveryTimer: ReturnType<typeof setInterval> | null = null;
+
+export function startPantheonRecoveryWorker(): void {
+  if (recoveryWorkerStarted) return;
+  recoveryWorkerStarted = true;
+  const recover = async () => {
+    try {
+      const records = await listRecoverablePantheonReportRecords();
+      for (const record of records) {
+        const resumed = resumePantheonReportJobFromRecord(record);
+        if (resumed) void resumed.catch(error => console.error('[PANTHEON REPORT JOB] Recovery failed:', error));
+      }
+    } catch (error) {
+      console.error('[PANTHEON REPORT JOB] Recovery scan failed:', error);
+    }
+  };
+  void recover();
+  recoveryTimer = setInterval(() => void recover(), 30_000);
+  recoveryTimer.unref?.();
 }
 
 export function startPantheonReportJob(input: PantheonReportJobInput): Promise<void> {
@@ -365,8 +399,7 @@ export function resumePantheonReportJobFromRecord(report: {
     ...persistedStates.flatMap(state => state.outcome ? [state.outcome] : []),
     ...(Array.isArray(envelope.categoryOutcomes) ? envelope.categoryOutcomes : []),
   ].filter((outcome, position, values) =>
-    values.findIndex(candidate => candidate.index === outcome.index) === position &&
-    !resumeCategoryIndexes.includes(outcome.index));
+    values.findIndex(candidate => candidate.index === outcome.index) === position);
 
   return startPantheonReportJob({
     reportId: report.id,

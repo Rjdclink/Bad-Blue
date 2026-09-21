@@ -1,6 +1,6 @@
 import { PhylacterySystem } from '../storage/PhylacterySystem';
 import { StealthInfrastructure } from '../stealth/StealthInfrastructure';
-import { acquirePublicResource } from './PublicAcquisitionInfrastructure';
+import { acquirePublicResource, isPantheonAcquisitionContextActive } from './PublicAcquisitionInfrastructure';
 
 // Types
 interface RequestProfile {
@@ -19,12 +19,28 @@ interface RequestOptions { method?: string; headers?: Record<string, string>; bo
 async function executeRequest(url: string, options: RequestOptions, _stealth?: StealthInfrastructure): Promise<Response> {
   const method = String(options.method || 'GET').toUpperCase();
   if (method !== 'GET' && method !== 'HEAD') throw new Error(`Pantheon crawler network method rejected: ${method}`);
-  const result = await acquirePublicResource(url, options.timeout || 30_000);
+  const result = await acquirePublicResource(url, options.timeout || 30_000, undefined, undefined, {
+    method: method as 'GET' | 'HEAD',
+    headers: options.headers,
+  });
   if (!result.ok) throw new Error(`Crawler request failed: ${result.errorType || 'network_failure'} ${result.status || ''} ${result.error || ''}`.trim());
   const headers = new Headers({ 'content-type': result.contentType });
   return new Response(method === 'HEAD' ? null : result.content, { status: result.status || 200, headers });
 }
-function parseResults(html: string): Data { return { content: html.replace(/<[^>]*>/g, ' ').substring(0, 1000), confidence: 0.8, timestamp: Date.now(), target: '' }; }
+function parseResults(html: string): Data {
+  const discoveredCandidates = [...new Set(
+    [...html.matchAll(/href=["']([^"']+)["']/gi)]
+      .map(match => match[1])
+      .filter(value => /^https?:\/\//i.test(value)),
+  )].slice(0, 20);
+  return {
+    content: html.replace(/<[^>]*>/g, ' ').substring(0, 1000),
+    confidence: 0.8,
+    timestamp: Date.now(),
+    target: '',
+    metadata: { discoveredCandidates },
+  };
+}
 function calculateConfidence(data: Data): number { return data.content.length > 100 ? 0.9 : 0.5; }
 
 async function firstSuccessful(promises: Promise<Data>[], label: string): Promise<Data> {
@@ -79,7 +95,9 @@ export class BlizzardCrawler {
     const config = this.getStormConfig(intensity);
     const results: Data[] = [];
     for (const target of targets) {
-      const cached = await this.iceCache.retrieveIceCrystal<Data>(target);
+      const cached = isPantheonAcquisitionContextActive()
+        ? null
+        : await this.iceCache.retrieveIceCrystal<Data>(target);
       if (cached) { results.push(cached); continue; }
       const snowflakes: Promise<Data>[] = [];
       for (let i = 0; i < config.snowflakesPerTarget; i++) {
@@ -113,7 +131,15 @@ export class BlizzardCrawler {
       data.target = snowflake.target;
       await this.iceCache.storeIceCrystal(snowflake.target, data, 3600000);
       return data;
-    } catch { return { content: '', confidence: 0, timestamp: Date.now(), target: snowflake.target }; }
+    } catch (error) {
+      return {
+        content: '',
+        confidence: 0,
+        timestamp: Date.now(),
+        target: snowflake.target,
+        metadata: { error: error instanceof Error ? error.message : String(error), failed: true },
+      };
+    }
   }
 
   private getStormConfig(intensity: StormIntensity): StormConfig {
@@ -157,7 +183,9 @@ class IceHead implements CerberusHead {
   constructor(phylactery: PhylacterySystem) { this.phylactery = phylactery; }
   async attack(target: string): Promise<Data> {
     this.usageCount++; const start = Date.now();
-    const cached = await this.phylactery.retrieveIceCrystal<Data>(target);
+    const cached = isPantheonAcquisitionContextActive()
+      ? null
+      : await this.phylactery.retrieveIceCrystal<Data>(target);
     if (cached) { this.successCount++; this.updateMetrics(Date.now() - start); return { ...cached, headUsed: 'ice' }; }
     const response = await executeRequest(target, { method: 'GET', timeout: 5000 });
     const html = await response.text(); const data = parseResults(html);
@@ -320,7 +348,7 @@ class GhostSwarmSpawner {
     const html = await response.text();
     const data = parseResults(html);
     data.target = target;
-    data.metadata = { ghost: true, id: ghostId };
+    data.metadata = { ...data.metadata, ghost: true, id: ghostId };
     return data;
   }
   getSwarmStatus(): { active: number; total: number } { return { active: this.activeGhosts.size, total: this.totalGhosts }; }

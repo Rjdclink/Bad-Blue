@@ -13,7 +13,8 @@ export type PantheonEvidenceRejectionReason =
   | 'subject_mismatch'
   | 'duplicate_evidence'
   | 'conflicting_evidence'
-  | 'weak_evidence';
+  | 'weak_evidence'
+  | 'discovery_result_not_evidence';
 
 export interface PantheonRejectedEvidence {
   evidence: RetrievalEvidence;
@@ -65,6 +66,9 @@ function rejectionReason(
   subject: string,
   location?: string,
 ): PantheonEvidenceRejectionReason | undefined {
+  if (item.metadata?.discoveryOnly === true || item.provenance?.transport === 'search-provider') {
+    return 'discovery_result_not_evidence';
+  }
   const metadataText = JSON.stringify(item.metadata || {});
   if (item.metadata?.entropySignature || item.metadata?.cooperativeAnalysis ||
       /(?:simulat(?:e|ed|ion)|mirrored|synthetic|test[ _-]?mode)/i.test([metadataText, item.crawler, item.sourceUrl].join(' ')) ||

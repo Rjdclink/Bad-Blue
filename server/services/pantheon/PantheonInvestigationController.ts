@@ -1,4 +1,7 @@
-import { getPantheonPrimaryCrawlerCapabilitiesForCategory } from './PantheonCrawlerCapabilityMatrix';
+import {
+  getPantheonPrimaryCrawlerCapabilitiesForCategory,
+  PANTHEON_REPORT_CATEGORY_LABELS,
+} from './PantheonCrawlerCapabilityMatrix';
 import {
   assessPantheonCapabilityCoverage,
   type PantheonCapabilityOutcome,
@@ -17,6 +20,13 @@ interface CrawlerAuditLike {
   attempts?: number;
   targets?: number;
   error?: string;
+  sourceOutcomes?: readonly {
+    sourceUrl?: string;
+    status?: string;
+    retrievedAt?: string;
+    durationMs?: number;
+    error?: string;
+  }[];
 }
 
 interface LedgerEntryLike {
@@ -33,6 +43,8 @@ export interface PantheonCategoryAssessmentInput {
   expectedCapabilities?: readonly string[];
   crawlerAudit: readonly CrawlerAuditLike[];
   urlLedger: readonly LedgerEntryLike[];
+  requiredWorkCount?: number;
+  successfulWorkCount?: number;
 }
 
 export interface PantheonCategoryAssessment {
@@ -45,7 +57,7 @@ export interface PantheonCategoryAssessment {
 }
 
 const SIMULATION_MARKERS = /(?:simulat(?:e|ed|ion)|mirrored|synthetic|test[ _-]?mode|seven-crawler-initiative|cooperativeanalysis|entropysignature)/i;
-const TERMINAL_LEDGER_STATES = new Set(['accepted', 'rejected', 'blocked', 'rate_limited', 'dead', 'timed_out', 'no_evidence']);
+const TERMINAL_LEDGER_STATES = new Set(['accepted', 'rejected', 'blocked', 'rate_limited', 'dead', 'timed_out', 'no_evidence', 'not_applicable']);
 
 export function plannedPantheonCrawlerCapabilitiesForCategory(label: string): PantheonCoreCrawlerCapability[] {
   return [...getPantheonPrimaryCrawlerCapabilitiesForCategory(label)];
@@ -57,9 +69,16 @@ export function isPantheonSimulatedOutput(value: unknown): boolean {
 
 export function isLivePantheonCrawlerAudit(audit: CrawlerAuditLike): audit is CrawlerAuditLike & { crawler: PantheonCoreCrawlerCapability } {
   const crawler = String(audit.crawler || '').toLowerCase();
+  const attributableOutcomes = (audit.sourceOutcomes || []).filter(outcome =>
+    /^https?:\/\//i.test(String(outcome.sourceUrl || ''))
+      && Boolean(outcome.retrievedAt)
+      && Number.isFinite(Number(outcome.durationMs))
+      && Boolean(outcome.status)
+  );
   return PANTHEON_CORE_CRAWLER_CAPABILITIES.includes(crawler as PantheonCoreCrawlerCapability)
     && Number(audit.attempts || 0) > 0
     && Number(audit.targets || 0) > 0
+    && attributableOutcomes.length > 0
     && !isPantheonSimulatedOutput([audit.crawler, audit.status, audit.error].join(' '));
 }
 
@@ -85,11 +104,26 @@ export function assessPantheonCategoryOutcome(input: PantheonCategoryAssessmentI
   const failedCapabilities = liveAudits
     .filter(audit => /^(failed|timed_out)$/i.test(String(audit.status || '')))
     .map(audit => audit.crawler);
+  const requiredWorkCount = Math.max(1, Number(input.requiredWorkCount || input.targetCount || 0));
+  const successfulWorkCount = Math.max(0, Number(input.successfulWorkCount ?? attemptedEntries.filter(entry =>
+    ['accepted', 'rejected', 'no_evidence'].includes(String(entry.state || ''))
+  ).length));
 
   if (input.targetCount <= 0 || attemptedEntries.length === 0) {
     return {
       state: 'not_started',
       reason: 'No live source URL was completed for this category.',
+      expectedCapabilities,
+      executedCapabilities,
+      missingCapabilities,
+      attemptedUrlCount: attemptedEntries.length,
+    };
+  }
+
+  if (successfulWorkCount < requiredWorkCount) {
+    return {
+      state: 'partial',
+      reason: `Only ${successfulWorkCount} of ${requiredWorkCount} required live source work units completed.`,
       expectedCapabilities,
       executedCapabilities,
       missingCapabilities,
@@ -133,6 +167,8 @@ export interface PantheonInvestigationAssessment {
 }
 
 export function assessPantheonInvestigation(categories: readonly {
+  index?: number;
+  label?: string;
   completionState?: PantheonCategoryCompletionState;
   expectedCapabilities?: readonly string[];
   crawlerAudit?: readonly CrawlerAuditLike[];
@@ -158,8 +194,13 @@ export function assessPantheonInvestigation(categories: readonly {
 
   const missingCapabilities = [...required].filter(capability => !executed.has(capability));
   const capabilityCoverage = assessPantheonCapabilityCoverage(categories);
-  const partialCategoryCount = Math.max(0, categories.length - completedCategoryCount);
-  const releaseEligible = partialCategoryCount === 0
+  const categoriesByIndex = new Map(categories.map(category => [category.index, category]));
+  const allCategoriesPresent = categories.length === PANTHEON_REPORT_CATEGORY_LABELS.length
+    && categoriesByIndex.size === PANTHEON_REPORT_CATEGORY_LABELS.length
+    && PANTHEON_REPORT_CATEGORY_LABELS.every((label, index) => categoriesByIndex.get(index)?.label === label);
+  const partialCategoryCount = Math.max(0, PANTHEON_REPORT_CATEGORY_LABELS.length - completedCategoryCount);
+  const releaseEligible = allCategoriesPresent
+    && partialCategoryCount === 0
     && missingCapabilities.length === 0
     && capabilityCoverage.eligible;
   return {

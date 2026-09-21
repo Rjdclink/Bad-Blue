@@ -8,9 +8,13 @@ import {
   type PantheonPrimaryCrawlerId,
   type PantheonReportCategoryLabel,
 } from './PantheonCrawlerCapabilityMatrix';
-import { acquirePantheonResource } from '../crawlers/PublicAcquisitionInfrastructure';
+import {
+  acquirePantheonResource,
+  runWithPantheonAcquisitionContext,
+} from '../crawlers/PublicAcquisitionInfrastructure';
 import { pantheonOrchestrator } from '../pantheonCrawlerOrchestrator';
 import { twoStageDeployer } from './razors/TwoStageDeployer';
+import { createPantheonDeadline } from './PantheonDeadline';
 
 export type PantheonCapabilityHealthStatus = 'healthy' | 'degraded' | 'unavailable';
 export type PantheonCapabilityOutcomeStatus =
@@ -142,18 +146,41 @@ export async function runPantheonCapabilityHealthChecks(input: {
   }
 
   const perFamilyBudgetMs = Math.max(1_500, Math.min(5_000, healthDeadlineAt - Date.now()));
+  const healthDeadline = createPantheonDeadline(healthDeadlineAt);
   const [primaryRun, extendedRun] = await Promise.allSettled([
-    pantheonOrchestrator.searchAllIsolatedWithAudit(
-      [acquisition.url],
+    runWithPantheonAcquisitionContext(
       {
-        depth: 4,
-        crawlers: [...PANTHEON_PRIMARY_CRAWLER_IDS],
-        timeout: perFamilyBudgetMs,
-        stormIntensity: 'flurry',
+        investigationId: input.investigationId,
+        categoryId: input.investigationId + ':health',
+        workId: input.investigationId + ':health:primary',
+        capability: 'health-primary',
+        deadlineAt: healthDeadlineAt,
       },
+      healthDeadline.signal,
+      () => pantheonOrchestrator.searchAllIsolatedWithAudit(
+        [acquisition.url],
+        {
+          depth: 4,
+          crawlers: [...PANTHEON_PRIMARY_CRAWLER_IDS],
+          timeout: perFamilyBudgetMs,
+          stormIntensity: 'flurry',
+          signal: healthDeadline.signal,
+        },
+      ),
     ),
-    twoStageDeployer.healthCheckAllCapabilities(acquisition.url, acquisition.content, perFamilyBudgetMs),
+    runWithPantheonAcquisitionContext(
+      {
+        investigationId: input.investigationId,
+        categoryId: input.investigationId + ':health',
+        workId: input.investigationId + ':health:extended',
+        capability: 'health-extended',
+        deadlineAt: healthDeadlineAt,
+      },
+      healthDeadline.signal,
+      () => twoStageDeployer.healthCheckAllCapabilities(acquisition.url, acquisition.content, perFamilyBudgetMs),
+    ),
   ]);
+  healthDeadline.dispose();
 
   const audits: AuditLike[] = [];
   if (primaryRun.status === 'fulfilled') audits.push(...primaryRun.value.audit);

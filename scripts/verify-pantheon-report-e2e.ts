@@ -12,6 +12,11 @@ import {
   PANTHEON_REPORT_CATEGORIES,
 } from '../server/services/pantheon/PantheonCategoryWorkflow';
 import { validatePantheonJobSubmission } from '../server/services/pantheon/PantheonJobSubmission';
+import {
+  assessPantheonCategoryOutcome,
+  assessPantheonInvestigation,
+  isLivePantheonCrawlerAudit,
+} from '../server/services/pantheon/PantheonInvestigationController';
 
 async function main() {
   const submission = validatePantheonJobSubmission({
@@ -60,6 +65,50 @@ async function main() {
   }
   if (!simulatedRejected) throw new Error('simulated source-result contract was not rejected');
 
+  const attributableAudit = {
+    crawler: 'startrek',
+    status: 'completed_no_evidence',
+    attempts: 1,
+    targets: 1,
+    sourceOutcomes: [{
+      sourceUrl: 'https://example.gov/public-record/123',
+      status: 'completed_no_evidence',
+      retrievedAt,
+      durationMs: 120,
+    }],
+  };
+  if (!isLivePantheonCrawlerAudit(attributableAudit) || isLivePantheonCrawlerAudit({ ...attributableAudit, sourceOutcomes: [] })) {
+    throw new Error('attributable crawler-result contract failed');
+  }
+  const zeroWork = assessPantheonCategoryOutcome({
+    label: 'Identity & Identity Verification',
+    targetCount: 0,
+    expectedCapabilities: ['startrek'],
+    crawlerAudit: [],
+    urlLedger: [],
+    requiredWorkCount: 1,
+    successfulWorkCount: 0,
+  });
+  if (zeroWork.state === 'completed') throw new Error('zero-work category was incorrectly completed');
+  const incompleteQuota = assessPantheonCategoryOutcome({
+    label: 'Identity & Identity Verification',
+    targetCount: 1,
+    expectedCapabilities: ['startrek'],
+    crawlerAudit: [attributableAudit],
+    urlLedger: [{ state: 'no_evidence', attempts: 1, startedAt: retrievedAt, completedAt: retrievedAt, result: { status: 200 } }],
+    requiredWorkCount: 2,
+    successfulWorkCount: 1,
+  });
+  if (incompleteQuota.state !== 'partial') throw new Error('incomplete live-work quota was incorrectly completed');
+  const incompleteInvestigation = assessPantheonInvestigation(PANTHEON_REPORT_CATEGORIES.slice(0, 29).map((category, index) => ({
+    index,
+    label: category.label,
+    completionState: 'completed' as const,
+  })));
+  if (incompleteInvestigation.releaseEligible || incompleteInvestigation.state !== 'partial') {
+    throw new Error('investigation missing one of 30 categories was incorrectly release eligible');
+  }
+
   const processed = processPantheonEvidence([
     liveResult,
     { ...liveResult, metadata: { simulated: true } },
@@ -78,8 +127,10 @@ async function main() {
     targetCount: 1,
     evidenceCount: index === 0 ? 1 : 0,
     urlsAttempted: 1,
-    urlsSuccessful: index === 0 ? 1 : 0,
-    urlsFailed: index === 0 ? 0 : 1,
+    urlsSuccessful: index === 29 ? 0 : 1,
+    urlsFailed: index === 29 ? 1 : 0,
+    requiredWorkCount: 1,
+    successfulWorkCount: index === 29 ? 0 : 1,
     crawlersUsed: index === 0 ? ['startrek'] : [],
     evidenceRejected: 0,
     findings: index === 0 ? [processed.accepted[0].content] : [],

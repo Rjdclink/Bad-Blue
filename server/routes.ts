@@ -850,6 +850,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       'import express from "express"; const app = express(); registerRoutes(app);'
     );
   }
+
+  const { startPantheonRecoveryWorker } = await import('./services/pantheon/PantheonBackgroundReportJob');
+  startPantheonRecoveryWorker();
   
   // Auth middleware setup
   await setupAuth(app);
@@ -3703,12 +3706,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
       return res.status(403).json({ success: false, code: 'forbidden', message: 'Report job does not belong to this account.' });
     }
 
-    if (report.status === 'processing') {
-      const { resumePantheonReportJobFromRecord } = await import('./services/pantheon/PantheonBackgroundReportJob');
-      const resumed = resumePantheonReportJobFromRecord(report);
-      if (resumed) void resumed.catch(error => console.error('[PANTHEON REPORT JOB] Resume failed:', error));
-      res.setHeader('Retry-After', '2');
-    }
+    if (report.status === 'processing') res.setHeader('Retry-After', '2');
 
     const envelope = report.reportData && typeof report.reportData === 'object'
       ? report.reportData as { job?: unknown; report?: unknown; pdfVerification?: { verified?: boolean } }
@@ -3721,8 +3719,8 @@ Contact: ${foiaRequest.userEmail || userEmail}
       status: report.status,
       job: envelope.job || null,
       subjectName: report.subjectName || report.searchQuery,
-      downloadReady: report.status === 'completed' && Boolean(envelope.report) && envelope.pdfVerification?.verified === true,
-      downloadUrl: report.status === 'completed' && envelope.report && envelope.pdfVerification?.verified === true
+      downloadReady: ['completed', 'partial'].includes(report.status) && Boolean(envelope.report) && envelope.pdfVerification?.verified === true,
+      downloadUrl: ['completed', 'partial'].includes(report.status) && envelope.report && envelope.pdfVerification?.verified === true
         ? `/api/osint/report-jobs/${report.id}/download`
         : null,
       error: report.status === 'failed' ? report.errorMessage || 'Background report failed.' : null,
@@ -3757,10 +3755,11 @@ Contact: ${foiaRequest.userEmail || userEmail}
         job?: Record<string, unknown>;
         report?: unknown;
         categoryOutcomes?: unknown[];
-        pdfVerification?: { verified?: boolean };
+        pdfVerification?: { verified?: boolean; sha256?: string };
+        pdfArtifact?: { sha256?: string; bytes?: number };
       }
       : {};
-    if (report.status !== 'completed' || !envelope.report || envelope.pdfVerification?.verified !== true) {
+    if (!['completed', 'partial'].includes(report.status) || !envelope.report || envelope.pdfVerification?.verified !== true) {
       return res.status(409).json({
         success: false,
         code: 'report_not_ready',
@@ -3773,20 +3772,13 @@ Contact: ${foiaRequest.userEmail || userEmail}
     }
 
     try {
-      const {
-        generatePantheonBackgroundReportPdf,
-        pantheonReportFilename,
-        verifyPantheonPdfBuffer,
-      } = await import('./services/pantheon/PantheonBackgroundReportPdf');
-      const pdf = await generatePantheonBackgroundReportPdf({
-        reportId: report.id,
-        report: envelope.report as any,
-        job: envelope.job || null,
-        categoryOutcomes: Array.isArray(envelope.categoryOutcomes) ? envelope.categoryOutcomes as any[] : [],
-        createdAt: report.createdAt,
-        completedAt: report.completedAt,
-      });
-      verifyPantheonPdfBuffer(pdf, 2);
+      const { pantheonReportFilename, verifyPantheonPdfBuffer } = await import('./services/pantheon/PantheonBackgroundReportPdf');
+      const { readPantheonPdfArtifact } = await import('./services/pantheon/PantheonReportStore');
+      const expectedHash = envelope.pdfArtifact?.sha256 || envelope.pdfVerification?.sha256;
+      const pdf = await readPantheonPdfArtifact(report.id, expectedHash);
+      if (!pdf) throw new Error('Persisted Pantheon PDF artifact is unavailable');
+      const verified = verifyPantheonPdfBuffer(pdf, 2);
+      if (expectedHash && verified.sha256 !== expectedHash) throw new Error('Pantheon PDF artifact hash mismatch');
       const filename = pantheonReportFilename(envelope.report as any, report.id);
 
       res.setHeader('Content-Type', 'application/pdf');
@@ -3809,6 +3801,12 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // NOTE: We intentionally do NOT use apiRateLimit/isAuthenticated here so we can map "blocked" states
   // into an empty-state JSON response instead of surfacing 4xx/5xx to the UI.
   app.post('/api/osint/full-search', async (req, res) => {
+    return res.status(410).json({
+      success: false,
+      code: 'canonical_pantheon_job_required',
+      message: 'Use /api/osint/report-jobs so all 30 categories, crawler coverage gates, durable state, and the verified PDF artifact are enforced.',
+    });
+
     const startTime = Date.now();
     const correlationId = crypto.randomBytes(16).toString('hex');
     const body = (req.body || {}) as any;

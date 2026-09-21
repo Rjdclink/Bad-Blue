@@ -24,6 +24,7 @@ import {
   type PantheonStructuredSourceResult,
 } from '../pantheon/PantheonSourceResult';
 import { createPantheonDeadline, throwIfPantheonAborted } from '../pantheon/PantheonDeadline';
+import { runWithPantheonAcquisitionContext } from './PublicAcquisitionInfrastructure';
 
 export type RetrievalEvidence = PantheonStructuredSourceResult;
 
@@ -138,19 +139,21 @@ export class PantheonRetrievalAdapter {
           (PANTHEON_PRIMARY_CRAWLER_IDS as readonly string[]).includes(capability)
         ),
       );
-      if (/social|username|photo|internet|media|associate|relationship|timeline/.test(category)) {
-        specialized.add('sixdegrees');
-        specialized.add('birdofprey');
+      if (specialized.size === 0) {
+        if (/social|username|photo|internet|media|associate|relationship|timeline/.test(category)) {
+          specialized.add('sixdegrees');
+          specialized.add('birdofprey');
+        }
+        if (/court|criminal|arrest|warrant|offender|incarceration|probation|parole|public record|government/.test(category)) {
+          specialized.add('cerberus');
+          specialized.add('birdofprey');
+        }
+        if (/news|internet|media|business|property|employment|education|credential/.test(category)) {
+          specialized.add('blizzard');
+        }
+        if (/relationship|timeline|corroboration|contradiction/.test(category)) specialized.add('lich');
+        if (specialized.size === 0) specialized.add('startrek');
       }
-      if (/court|criminal|arrest|warrant|offender|incarceration|probation|parole|public record|government/.test(category)) {
-        specialized.add('cerberus');
-        specialized.add('birdofprey');
-      }
-      if (/news|internet|media|business|property|employment|education|credential/.test(category)) {
-        specialized.add('blizzard');
-      }
-      if (/relationship|timeline|corroboration|contradiction/.test(category)) specialized.add('lich');
-      if (specialized.size === 0) specialized.add('startrek');
       // Search depth/intensity never removes a capability selected by the URL
       // ledger. It only governs budget and productive-work depth upstream.
       plan.crawlers = [...specialized];
@@ -192,7 +195,18 @@ export class PantheonRetrievalAdapter {
     let results: CrawlerResult[];
     let crawlerAudit: PantheonRetrievalResponse['crawlerAudit'] = [];
     if (request.purpose === 'background_report') {
-      const isolated = await pantheonOrchestrator.searchAllIsolatedWithAudit(request.targets, searchOptions);
+      const acquisitionAuthority = {
+        investigationId: request.authority!.investigationId,
+        categoryId: request.authority!.categoryId,
+        workId: request.authority!.workId!,
+        capability: request.authority!.capability!,
+        deadlineAt: deadlineAt!,
+      };
+      const isolated = await runWithPantheonAcquisitionContext(
+        acquisitionAuthority,
+        operationSignal,
+        () => pantheonOrchestrator.searchAllIsolatedWithAudit(request.targets, searchOptions),
+      );
       results = isolated.results;
       crawlerAudit = isolated.audit;
 
@@ -211,12 +225,16 @@ export class PantheonRetrievalAdapter {
           Math.floor(primaryBudgetMs * 0.25),
           Number.isFinite(remainingBudgetMs()) ? remainingBudgetMs() : primaryBudgetMs,
         ));
-        const fallbackRun = await pantheonOrchestrator.searchAllIsolatedWithAudit(request.targets, {
-          ...searchOptions,
-          crawlers: [fallback],
-          timeout: fallbackBudgetMs,
-          signal: operationSignal,
-        });
+        const fallbackRun = await runWithPantheonAcquisitionContext(
+          { ...acquisitionAuthority, workId: `${acquisitionAuthority.workId}:fallback:${fallback}`, capability: fallback },
+          operationSignal,
+          () => pantheonOrchestrator.searchAllIsolatedWithAudit(request.targets, {
+            ...searchOptions,
+            crawlers: [fallback],
+            timeout: fallbackBudgetMs,
+            signal: operationSignal,
+          }),
+        );
         results.push(...fallbackRun.results);
         crawlerAudit.push(...fallbackRun.audit.map(audit => ({
           ...audit,
@@ -232,10 +250,15 @@ export class PantheonRetrievalAdapter {
 
     const evidence = results
       .filter(result => result.content.trim() && result.confidence > 0)
-      .map(result => normalizeResult(result, {
-        categoryLabel: request.categoryLabel,
-        transport: (request.transportHint?.[0] || 'direct-http') as PantheonTransport,
-      }));
+      .map(result => {
+        const audit = crawlerAudit.find(entry => entry.crawler === result.crawler);
+        const sourceOutcome = audit?.sourceOutcomes?.find(outcome => outcome.sourceUrl === result.target);
+        return normalizeResult(result, {
+          categoryLabel: request.categoryLabel,
+          transport: (request.transportHint?.[0] || 'direct-http') as PantheonTransport,
+          durationMs: Number(sourceOutcome?.durationMs || audit?.durationMs || 0),
+        });
+      });
 
     // Specialized extraction providers may enrich content already admitted
     // through the canonical acquisition gateway; they are not independent
@@ -285,12 +308,22 @@ export class PantheonRetrievalAdapter {
           Number.isFinite(remainingBudgetMs()) ? Math.max(1, remainingBudgetMs()) : extendedLaneBudget,
         );
         const settled = await Promise.allSettled(
-          batch.map(target => twoStageDeployer.deployBackgroundReport(
-            target,
-            results.find(result => result.target === target && result.content.trim())?.content,
-            perBatchBudget,
-            applicableCapabilities,
+          batch.map((target, batchIndex) => runWithPantheonAcquisitionContext(
+            {
+              investigationId: request.authority!.investigationId,
+              categoryId: request.authority!.categoryId,
+              workId: `${request.authority!.workId}:extended:${offset + batchIndex}`,
+              capability: 'extended-pantheon',
+              deadlineAt: deadlineAt!,
+            },
             operationSignal,
+            () => twoStageDeployer.deployBackgroundReport(
+              target,
+              results.find(result => result.target === target && result.content.trim())?.content,
+              perBatchBudget,
+              applicableCapabilities,
+              operationSignal,
+            ),
           ))
         );
         settled.forEach((run, index) => extendedRuns.push({ target: batch[index], run }));
@@ -377,8 +410,15 @@ export class PantheonRetrievalAdapter {
 
 function normalizeResult(
   result: CrawlerResult,
-  context: { categoryLabel?: string; transport: PantheonTransport },
+  context: { categoryLabel?: string; transport: PantheonTransport; durationMs: number },
 ): RetrievalEvidence {
+  const discoveryOnly = context.transport === 'search-provider';
+  const discoveredCandidates = discoveryOnly
+    ? [...new Set([
+        ...(Array.isArray(result.metadata?.discoveredCandidates) ? result.metadata.discoveredCandidates : []),
+        ...(result.content.match(/https?:\/\/[^\s<>"')\]]+/g) || []),
+      ])].slice(0, 20)
+    : [];
   return createPantheonSourceResult({
     crawler: result.crawler,
     capabilityId: result.crawler,
@@ -387,8 +427,12 @@ function normalizeResult(
     content: result.content,
     confidence: result.confidence,
     retrievedAt: new Date(result.timestamp).toISOString(),
+    durationMs: context.durationMs,
     transport: context.transport,
-    metadata: result.metadata,
+    metadata: {
+      ...(result.metadata || {}),
+      ...(discoveryOnly ? { discoveryOnly: true, discoveredCandidates } : {}),
+    },
   });
 }
 

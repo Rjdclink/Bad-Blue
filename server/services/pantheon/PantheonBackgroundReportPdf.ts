@@ -32,6 +32,8 @@ interface PantheonCategoryOutcomeForPdf {
   completionState?: string;
   completionReason?: string;
   evidenceRejected?: number;
+  requiredWorkCount?: number;
+  successfulWorkCount?: number;
   crawlerAudit?: CrawlerAuditEntry[];
   categoryOutcomes?: PantheonCategoryOutcomeForPdf[];
 }
@@ -70,6 +72,7 @@ interface PantheonReportForPdf {
     pendingUrls?: number;
     missingCapabilities?: string[];
   }>;
+  categoryOutcomes?: PantheonCategoryOutcomeForPdf[];
 }
 
 export interface PantheonPdfInput {
@@ -157,6 +160,34 @@ export interface PantheonPdfVerification {
   verifiedAt: string;
 }
 
+export function verifyPantheonReportModel(input: PantheonPdfInput): void {
+  const outcomes = input.categoryOutcomes || input.report.categoryOutcomes || [];
+  const indexes = outcomes.map(outcome => Number(outcome.index));
+  if (indexes.some(index => !Number.isInteger(index) || index < 0 || index >= 30)) {
+    throw new Error('Pantheon report model contains an invalid category index');
+  }
+  if (new Set(indexes).size !== indexes.length) {
+    throw new Error('Pantheon report model contains duplicate category outcomes');
+  }
+  if (input.report.reportCompleteness === 'complete') {
+    if (outcomes.length !== 30 || outcomes.some(outcome => outcome.completionState !== 'completed')) {
+      throw new Error('Pantheon report cannot claim complete coverage without 30 completed category outcomes');
+    }
+    if ((input.report.coverageGaps || []).length > 0) {
+      throw new Error('Pantheon report cannot claim complete coverage while coverage gaps exist');
+    }
+  }
+  for (const outcome of outcomes) {
+    if (outcome.completionState === 'completed' && Number(outcome.urlsAttempted || 0) <= 0) {
+      throw new Error(`Pantheon category ${Number(outcome.index) + 1} cannot be represented as worked without an attempted URL`);
+    }
+    if (outcome.completionState === 'completed'
+      && Number(outcome.successfulWorkCount || outcome.urlsSuccessful || 0) < Number(outcome.requiredWorkCount || 1)) {
+      throw new Error(`Pantheon category ${Number(outcome.index) + 1} claimed completion without its live-work quota`);
+    }
+  }
+}
+
 export function verifyPantheonPdfBuffer(buffer: Buffer, expectedMinimumPages = 1): PantheonPdfVerification {
   const raw = buffer.toString('latin1');
   const pageCount = (raw.match(/\/Type\s*\/Page\b/g) || []).length;
@@ -179,6 +210,7 @@ export function verifyPantheonPdfBuffer(buffer: Buffer, expectedMinimumPages = 1
 }
 
 export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInput): Promise<Buffer> {
+  verifyPantheonReportModel(input);
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
       size: 'LETTER',
@@ -269,6 +301,7 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
       } else {
         doc.text(`Coverage status: ${cleanText(outcome.completionState) || 'not recorded'}${outcome.completionReason ? ` — ${cleanText(outcome.completionReason)}` : ''}`);
         doc.text(`URLs attempted: ${Number(outcome.urlsAttempted || 0)} | Successful retrieval/evidence paths: ${Number(outcome.urlsSuccessful || 0)} | Failed paths: ${Number(outcome.urlsFailed || 0)}`);
+        doc.text(`Required live work: ${Number(outcome.requiredWorkCount || 0)} | Completed live work: ${Number(outcome.successfulWorkCount || 0)}`);
         const crawlers = (outcome.crawlersUsed || []).map(cleanText).filter(Boolean);
         if (crawlers.length) doc.text(`Crawler capabilities used: ${crawlers.join(', ')}`);
         const findings = (outcome.findings || []).map(cleanText).filter(Boolean);
@@ -276,7 +309,7 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
           doc.font('Helvetica-Oblique').text('No verified subject-specific finding returned by the completed category investigation.');
         } else {
           doc.font('Helvetica');
-          for (const finding of findings.slice(0, 30)) {
+          for (const finding of findings) {
             if (doc.y > 705) doc.addPage();
             doc.text(`• ${finding}`, { indent: 8, lineGap: 1 });
           }
@@ -325,10 +358,10 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
     const pageRange = doc.bufferedPageRange();
     for (let index = pageRange.start; index < pageRange.start + pageRange.count; index++) {
       doc.switchToPage(index);
-      doc.moveTo(48, 724).lineTo(564, 724).lineWidth(0.5).strokeColor('#D5DEE8').stroke();
+      doc.moveTo(48, 694).lineTo(564, 694).lineWidth(0.5).strokeColor('#D5DEE8').stroke();
       doc.font('Helvetica').fontSize(7).fillColor('#6B7280').text(
         `LEGAL WHAT? • PANTHEON   |   Report ${input.reportId.slice(0, 8)}   |   Page ${index + 1} of ${pageRange.count}`,
-        48, 730, { width: 516, align: 'center', lineBreak: false },
+        48, 700, { width: 516, align: 'center', lineBreak: false },
       );
     }
 

@@ -254,6 +254,8 @@ export interface PantheonSearchOptions {
   /** Storm intensity for Blizzard crawler */
   stormIntensity?: 'flurry' | 'snow' | 'storm' | 'blizzard' | 'whiteout';
   signal?: AbortSignal;
+  /** Preserve crawler failures for attributable per-capability audits. */
+  strictErrors?: boolean;
 }
 
 /**
@@ -381,6 +383,7 @@ export class PantheonCrawlerOrchestrator {
         }
       } catch (error) {
         console.warn('[PANTHEON] StarTrek crawler error:', error);
+        if (options.strictErrors) throw error;
       }
     }
     
@@ -404,6 +407,7 @@ export class PantheonCrawlerOrchestrator {
         }
       } catch (error) {
         console.warn('[PANTHEON] BirdOfPrey crawler error:', error);
+        if (options.strictErrors) throw error;
       }
     }
     
@@ -424,12 +428,18 @@ export class PantheonCrawlerOrchestrator {
               metadata: { 
                 nodeCount: graph.nodes?.length || 0,
                 edgeCount: graph.edges?.length || 0,
+                discoveredCandidates: (graph.nodes || [])
+                  .map(node => node.domain)
+                  .filter(Boolean)
+                  .map(domain => `https://${domain}`)
+                  .slice(0, 20),
               },
             });
           }
         }
       } catch (error) {
         console.warn('[PANTHEON] SixDegrees crawler error:', error);
+        if (options.strictErrors) throw error;
       }
     }
     
@@ -453,6 +463,7 @@ export class PantheonCrawlerOrchestrator {
         }
       } catch (error) {
         console.warn('[PANTHEON] Cerberus crawler error:', error);
+        if (options.strictErrors) throw error;
       }
     }
     
@@ -476,6 +487,7 @@ export class PantheonCrawlerOrchestrator {
         }
       } catch (error) {
         console.warn('[PANTHEON] Blizzard crawler error:', error);
+        if (options.strictErrors) throw error;
       }
     }
     
@@ -503,6 +515,7 @@ export class PantheonCrawlerOrchestrator {
         }
       } catch (error) {
         console.warn('[PANTHEON] Lich crawler error:', error);
+        if (options.strictErrors) throw error;
       }
     }
     
@@ -550,12 +563,17 @@ export class PantheonCrawlerOrchestrator {
                 timeout: routeBudgetMs,
                 crawlers: [crawler],
                 signal: routeDeadline.signal,
+                strictErrors: true,
               });
               results = await racePantheonAbort(searchPromise, routeDeadline.signal);
             } finally {
               routeDeadline.dispose();
             }
             if (results.some(result => Boolean(result.content) && result.confidence > 0)) break;
+            const reportedError = results.find(result => result.metadata?.error || result.metadata?.failed);
+            if (reportedError) {
+              lastError = String(reportedError.metadata?.error || 'Crawler reported an acquisition failure');
+            }
           } catch (error) {
             lastError = error instanceof Error ? error.message : String(error);
           }
