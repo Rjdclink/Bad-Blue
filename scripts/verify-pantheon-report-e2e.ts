@@ -1,4 +1,8 @@
-import { generatePantheonBackgroundReportPdf } from '../server/services/pantheon/PantheonBackgroundReportPdf';
+import {
+  generatePantheonBackgroundReportPdf,
+  verifyPantheonPdfBuffer,
+} from '../server/services/pantheon/PantheonBackgroundReportPdf';
+import { createPantheonSourceResult } from '../server/services/pantheon/PantheonSourceResult';
 import {
   processPantheonEvidence,
   requireVerifiedPantheonEvidence,
@@ -28,23 +32,36 @@ async function main() {
     throw new Error('all 30 pending source plans were not initialized');
   }
 
-  const processed = processPantheonEvidence([{
+  const retrievedAt = new Date().toISOString();
+  const liveResult = createPantheonSourceResult({
     crawler: 'startrek',
-    target: 'https://example.gov/public-record/123',
+    capabilityId: 'startrek',
+    categoryLabel: 'Identity & Identity Verification',
+    sourceUrl: 'https://example.gov/public-record/123',
     content: 'Jane Example appears in this official public record for Sioux Falls, South Dakota with a verified filing.',
     confidence: 0.9,
-    retrievedAt: new Date().toISOString(),
-    metadata: { httpStatus: 200 },
-  }, {
-    crawler: 'startrek',
-    target: 'https://example.gov/simulation',
-    content: 'Jane Example synthetic simulated mirrored test-mode output for Sioux Falls, South Dakota.',
-    confidence: 0.9,
-    retrievedAt: new Date().toISOString(),
-    metadata: { simulated: true },
-  }], submission.name, submission.location);
-  if (processed.accepted.length !== 1 || processed.rejected.length !== 1 ||
-      processed.rejected[0].reason !== 'simulation_or_test_output') {
+    retrievedAt,
+    durationMs: 120,
+    transport: 'direct-http',
+    httpStatus: 200,
+  });
+  let simulatedRejected = false;
+  try {
+    createPantheonSourceResult({
+      crawler: 'startrek',
+      sourceUrl: 'https://example.gov/simulation',
+      content: 'Jane Example synthetic simulated mirrored test-mode output for Sioux Falls, South Dakota.',
+      confidence: 0.9,
+      retrievedAt,
+      metadata: { simulated: true },
+    });
+  } catch {
+    simulatedRejected = true;
+  }
+  if (!simulatedRejected) throw new Error('simulated source-result contract was not rejected');
+
+  const processed = processPantheonEvidence([liveResult], submission.name, submission.location);
+  if (processed.accepted.length !== 1 || processed.rejected.length !== 0) {
     throw new Error('verified-live evidence gate failed');
   }
   requireVerifiedPantheonEvidence(processed.accepted);
@@ -84,16 +101,21 @@ async function main() {
       }],
       sources: [{
         name: 'Identity & Identity Verification — startrek',
-        data: { url: processed.accepted[0].target, finding: processed.accepted[0].content },
+        data: {
+          citationId: processed.accepted[0].evidenceId,
+          evidenceId: processed.accepted[0].evidenceId,
+          url: processed.accepted[0].sourceUrl,
+          contentHash: processed.accepted[0].contentHash,
+          provenance: processed.accepted[0].provenance,
+          finding: processed.accepted[0].content,
+        },
         confidence: processed.accepted[0].confidence,
         timestamp: new Date(processed.accepted[0].retrievedAt),
       }],
     },
   });
-  const raw = pdf.toString('latin1');
-  const pageCount = (raw.match(/\/Type\s*\/Page\b/g) || []).length;
-  const streamCount = (raw.match(/\bstream\r?\n/g) || []).length;
-  if (!raw.startsWith('%PDF-') || pdf.length < 5_000 || pageCount < 2 || streamCount < pageCount) {
+  const verification = verifyPantheonPdfBuffer(pdf, 2);
+  if (!verification.verified || verification.pageCount < 2 || verification.sha256.length !== 64) {
     throw new Error('PDF render/layout verification failed');
   }
   console.log('Pantheon end-to-end coverage, provenance, evidence, and PDF layout verification passed.');

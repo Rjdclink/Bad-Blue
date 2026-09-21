@@ -3711,7 +3711,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
     }
 
     const envelope = report.reportData && typeof report.reportData === 'object'
-      ? report.reportData as { job?: unknown; report?: unknown }
+      ? report.reportData as { job?: unknown; report?: unknown; pdfVerification?: { verified?: boolean } }
       : {};
 
     res.setHeader('Cache-Control', 'private, no-store');
@@ -3721,8 +3721,8 @@ Contact: ${foiaRequest.userEmail || userEmail}
       status: report.status,
       job: envelope.job || null,
       subjectName: report.subjectName || report.searchQuery,
-      downloadReady: report.status === 'completed' && Boolean(envelope.report),
-      downloadUrl: report.status === 'completed' && envelope.report
+      downloadReady: report.status === 'completed' && Boolean(envelope.report) && envelope.pdfVerification?.verified === true,
+      downloadUrl: report.status === 'completed' && envelope.report && envelope.pdfVerification?.verified === true
         ? `/api/osint/report-jobs/${report.id}/download`
         : null,
       error: report.status === 'failed' ? report.errorMessage || 'Background report failed.' : null,
@@ -3753,15 +3753,22 @@ Contact: ${foiaRequest.userEmail || userEmail}
     }
 
     const envelope = report.reportData && typeof report.reportData === 'object'
-      ? report.reportData as { job?: Record<string, unknown>; report?: unknown; categoryOutcomes?: unknown[] }
+      ? report.reportData as {
+        job?: Record<string, unknown>;
+        report?: unknown;
+        categoryOutcomes?: unknown[];
+        pdfVerification?: { verified?: boolean };
+      }
       : {};
-    if (report.status !== 'completed' || !envelope.report) {
+    if (report.status !== 'completed' || !envelope.report || envelope.pdfVerification?.verified !== true) {
       return res.status(409).json({
         success: false,
         code: 'report_not_ready',
         message: report.status === 'failed'
           ? report.errorMessage || 'Background report failed.'
-          : 'Background report is still being generated.',
+          : envelope.pdfVerification?.verified !== true
+            ? 'Background report PDF verification has not completed.'
+            : 'Background report is still being generated.',
       });
     }
 
@@ -3769,6 +3776,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
       const {
         generatePantheonBackgroundReportPdf,
         pantheonReportFilename,
+        verifyPantheonPdfBuffer,
       } = await import('./services/pantheon/PantheonBackgroundReportPdf');
       const pdf = await generatePantheonBackgroundReportPdf({
         reportId: report.id,
@@ -3778,6 +3786,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
         createdAt: report.createdAt,
         completedAt: report.completedAt,
       });
+      verifyPantheonPdfBuffer(pdf, 2);
       const filename = pantheonReportFilename(envelope.report as any, report.id);
 
       res.setHeader('Content-Type', 'application/pdf');

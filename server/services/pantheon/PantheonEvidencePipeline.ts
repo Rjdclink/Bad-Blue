@@ -1,12 +1,19 @@
 import type { RetrievalEvidence } from '../crawlers/PantheonRetrievalAdapter';
 import { matchPantheonSubject } from './PantheonEntityResolution';
+import {
+  createPantheonSourceResult,
+  validatePantheonSourceResult,
+} from './PantheonSourceResult';
 
 export type PantheonEvidenceRejectionReason =
   | 'simulation_or_test_output'
   | 'empty_or_low_confidence'
   | 'diagnostic_or_block_page'
   | 'unparseable_content'
-  | 'subject_mismatch';
+  | 'subject_mismatch'
+  | 'duplicate_evidence'
+  | 'conflicting_evidence'
+  | 'weak_evidence';
 
 export interface PantheonRejectedEvidence {
   evidence: RetrievalEvidence;
@@ -60,10 +67,11 @@ function rejectionReason(
 ): PantheonEvidenceRejectionReason | undefined {
   const metadataText = JSON.stringify(item.metadata || {});
   if (item.metadata?.entropySignature || item.metadata?.cooperativeAnalysis ||
-      /(?:simulat(?:e|ed|ion)|mirrored|synthetic|test[ _-]?mode)/i.test(metadataText)) {
+      /(?:simulat(?:e|ed|ion)|mirrored|synthetic|test[ _-]?mode)/i.test([metadataText, item.crawler, item.sourceUrl].join(' '))) {
     return 'simulation_or_test_output';
   }
   if (!item.content.trim() || !(item.confidence > 0)) return 'empty_or_low_confidence';
+  if (item.confidence < 0.35) return 'weak_evidence';
   const text = cleanPantheonEvidenceContent(item.content);
   if (text.length < 40 || text.toLowerCase().includes('<!doctype') ||
       text.toLowerCase().includes('function(') || text.toLowerCase().includes('webpack')) {
@@ -79,7 +87,9 @@ export function requireVerifiedPantheonEvidence(items: readonly RetrievalEvidenc
   const rejected = items.filter(item =>
     item.metadata?.evidenceState !== 'verified_live_source' ||
     item.metadata?.subjectMatch !== true ||
-    !item.metadata?.provenance
+    !item.provenance?.sourceUrl ||
+    !item.contentHash ||
+    !item.evidenceId
   );
   if (rejected.length) {
     throw new Error('Pantheon analysis rejected unverified or unattributed evidence');
@@ -103,28 +113,82 @@ export function processPantheonEvidence(
   subject: string,
   location?: string,
 ): { accepted: RetrievalEvidence[]; rejected: PantheonRejectedEvidence[] } {
-  const accepted: RetrievalEvidence[] = [];
+  const candidates: RetrievalEvidence[] = [];
   const rejected: PantheonRejectedEvidence[] = [];
+  const duplicateKeys = new Set<string>();
+
   for (const item of items) {
+    validatePantheonSourceResult(item);
     const entityMatch = matchPantheonSubject(item, subject, location);
     const reason = rejectionReason(item, subject, location);
-    if (reason) rejected.push({ evidence: item, reason });
-    else accepted.push({
-      ...item,
-      target: canonicalPantheonEvidenceUrl(item.target),
+    if (reason) {
+      rejected.push({ evidence: item, reason });
+      continue;
+    }
+
+    const normalized = createPantheonSourceResult({
+      crawler: item.crawler,
+      capabilityId: item.capabilityId,
+      categoryLabel: item.categoryLabel,
+      sourceUrl: canonicalPantheonEvidenceUrl(item.sourceUrl),
       content: cleanPantheonEvidenceContent(item.content),
+      confidence: item.confidence,
+      retrievedAt: item.retrievedAt,
+      durationMs: item.provenance.durationMs,
+      transport: item.provenance.transport,
+      httpStatus: item.provenance.httpStatus,
+      contentType: item.provenance.contentType,
       metadata: {
         ...(item.metadata || {}),
         evidenceState: 'verified_live_source',
         subjectMatch: true,
         entityMatch,
-        provenance: {
-          sourceUrl: canonicalPantheonEvidenceUrl(item.target),
-          retrievedAt: item.retrievedAt,
-          crawler: item.crawler,
-        },
+        analysisEligible: true,
       },
     });
+    const duplicateKey = normalized.contentHash;
+    if (duplicateKeys.has(duplicateKey)) {
+      rejected.push({ evidence: item, reason: 'duplicate_evidence' });
+      continue;
+    }
+    duplicateKeys.add(duplicateKey);
+    candidates.push(normalized);
   }
-  return { accepted: dedupePantheonEvidence(accepted), rejected };
+
+  const accepted: RetrievalEvidence[] = [];
+  const claimWinners = new Map<string, RetrievalEvidence>();
+  for (const candidate of candidates) {
+    const claimType = String(candidate.metadata?.claimType || '').trim();
+    const claimKey = String(candidate.metadata?.claimKey || '').trim();
+    const claimValue = String(candidate.metadata?.claimValue || '').trim().toLowerCase();
+    if (!claimType || !claimKey || !claimValue) {
+      accepted.push(candidate);
+      continue;
+    }
+
+    const key = claimType + '|' + claimKey;
+    const winner = claimWinners.get(key);
+    if (!winner) {
+      claimWinners.set(key, candidate);
+      accepted.push(candidate);
+      continue;
+    }
+    const winnerValue = String(winner.metadata?.claimValue || '').trim().toLowerCase();
+    if (winnerValue === claimValue) {
+      accepted.push(candidate);
+      continue;
+    }
+
+    if (candidate.confidence > winner.confidence) {
+      const winnerIndex = accepted.indexOf(winner);
+      if (winnerIndex >= 0) accepted.splice(winnerIndex, 1);
+      rejected.push({ evidence: winner, reason: 'conflicting_evidence' });
+      claimWinners.set(key, candidate);
+      accepted.push(candidate);
+    } else {
+      rejected.push({ evidence: candidate, reason: 'conflicting_evidence' });
+    }
+  }
+
+  return { accepted, rejected };
 }

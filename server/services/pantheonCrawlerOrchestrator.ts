@@ -219,6 +219,8 @@ export interface CrawlerSourceOutcome {
   retrievedAt: string;
   durationMs: number;
   error?: string;
+  route?: 'primary' | 'fallback';
+  fallbackFor?: string;
 }
 
 export interface CrawlerExecutionAudit {
@@ -231,6 +233,8 @@ export interface CrawlerExecutionAudit {
   durationMs?: number;
   sourceOutcomes?: CrawlerSourceOutcome[];
   error?: string;
+  route?: 'primary' | 'fallback';
+  fallbackFor?: string;
 }
 
 /**
@@ -594,6 +598,7 @@ export class PantheonCrawlerOrchestrator {
           targets: validTargets.length,
           durationMs,
           sourceOutcomes,
+          route: 'primary',
           ...(lastError ? { error: lastError.slice(0, 300) } : {}),
         };
 

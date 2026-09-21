@@ -27,7 +27,7 @@ for (const token of ['cursor += 1','results[index] = await worker','Promise.all(
 for (const token of ['createPantheonDeadline','racePantheonAbort','pantheonAbortableDelay','removeEventListener']) {
   if (!deadline.includes(token)) throw new Error('Cancellable deadline invariant missing: ' + token);
 }
-if (!adapter.includes('signal?: AbortSignal') || !adapter.includes('signal: request.signal') ||
+if (!adapter.includes('signal?: AbortSignal') || !adapter.includes('operationSignal') || !adapter.includes('operationDeadline?.dispose') ||
     !orchestrator.includes('signal?: AbortSignal') || !orchestrator.includes('racePantheonAbort')) {
   throw new Error('Retrieval cancellation does not reach each primary crawler route');
 }

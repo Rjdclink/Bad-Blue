@@ -3,7 +3,13 @@ import {
   conductPantheonCategoryWorkflow,
   initializePantheonCategoryPlans,
   PANTHEON_REPORT_CATEGORIES,
+  type PantheonCategoryOutcome,
+  type PantheonPersistedCategoryState,
 } from './PantheonCategoryWorkflow';
+import {
+  generatePantheonBackgroundReportPdf,
+  verifyPantheonPdfBuffer,
+} from './PantheonBackgroundReportPdf';
 import { assessPantheonInvestigation } from './PantheonInvestigationController';
 import { canActivatePantheon } from '../pantheonCrawlerOrchestrator';
 import {
@@ -23,7 +29,10 @@ export interface PantheonReportJobInput {
   location?: string;
   searchDepth: PantheonSearchDepth;
   resumeFromCategory?: number;
+  resumeCategoryIndexes?: readonly number[];
   initialReport?: any;
+  initialCategoryOutcomes?: readonly PantheonCategoryOutcome[];
+  initialCategoryStates?: readonly PantheonPersistedCategoryState[];
   idempotencyKey: string;
   consent: { accepted: true; version: string; acceptedAt: string };
 }
@@ -58,20 +67,40 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
   const startedAt = new Date();
   const budgetMs = getPantheonReportDurationMs(input.searchDepth);
   const deadlineAt = new Date(startedAt.getTime() + budgetMs);
-  const categoryStates = initializePantheonCategoryPlans({
+  const initializedStates = initializePantheonCategoryPlans({
     name: input.name,
     location: input.location,
     searchDepth: input.searchDepth,
     budgetMs,
   });
+  const categoryStates: PantheonPersistedCategoryState[] = input.initialCategoryStates?.length === PANTHEON_REPORT_CATEGORIES.length
+    ? input.initialCategoryStates.map((state, index) => {
+      const initialized = initializedStates[index];
+      return state.state === 'completed'
+        ? { ...state, sourcePlan: { ...state.sourcePlan } }
+        : {
+          ...initialized,
+          outcome: state.outcome,
+          state: 'pending',
+          phase: 'PENDING',
+        };
+    })
+    : initializedStates;
+  const persistedOutcomes = () => categoryStates
+    .flatMap(state => state.outcome ? [state.outcome] : [])
+    .sort((left, right) => left.index - right.index);
+  let latestPartialReport = input.initialReport || null;
 
   await updatePantheonReportRecord(input.reportId, 'processing', {
     job: jobEnvelope(input, 'running', {
       startedAt: startedAt.toISOString(),
       deadlineAt: deadlineAt.toISOString(),
+      completedCategories: persistedOutcomes().filter(outcome => outcome.completionState === 'completed').length,
+      totalCategories: PANTHEON_REPORT_CATEGORIES.length,
     }),
     categoryStates,
-    report: null,
+    categoryOutcomes: persistedOutcomes(),
+    report: latestPartialReport,
   });
 
   try {
@@ -92,9 +121,12 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
         startedAt: startedAt.toISOString(),
         deadlineAt: deadlineAt.toISOString(),
         capabilityHealth,
+        completedCategories: persistedOutcomes().filter(outcome => outcome.completionState === 'completed').length,
+        totalCategories: PANTHEON_REPORT_CATEGORIES.length,
       }),
       categoryStates,
-      report: null,
+      categoryOutcomes: persistedOutcomes(),
+      report: latestPartialReport,
     });
 
     const remainingCollectionMs = Math.max(0, deadlineAt.getTime() - Date.now());
@@ -102,7 +134,6 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       throw new Error('PANTHEON investigation budget expired before collection could begin');
     }
 
-    let latestPartialReport = input.initialReport || null;
     const { report, categoryOutcomes } = await conductPantheonCategoryWorkflow({
       investigationId: input.reportId,
       name: input.name,
@@ -110,9 +141,11 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       searchDepth: input.searchDepth,
       deadlineAt: deadlineAt.getTime(),
       startCategoryIndex: input.resumeFromCategory,
+      categoryIndexes: input.resumeCategoryIndexes,
       initialReport: input.initialReport,
+      initialCategoryOutcomes: input.initialCategoryOutcomes,
       capabilityHealth,
-      onCategoryState: async ({ index, label, phase, completedCategories }) => {
+      onCategoryState: async ({ index, label, phase }) => {
         const categoryState = categoryStates[index];
         if (categoryState) {
           categoryState.phase = phase;
@@ -124,6 +157,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
                 ? 'pending'
                 : 'active';
         }
+        const completedCategories = categoryStates.filter(state => state.state === 'completed').length;
         await updatePantheonReportRecord(input.reportId, 'processing', {
           job: jobEnvelope(input, phase === 'PERSISTING' ? 'finalizing' : 'running', {
             startedAt: startedAt.toISOString(),
@@ -136,10 +170,12 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
             totalCategories: PANTHEON_REPORT_CATEGORIES.length,
           }),
           categoryStates,
+          categoryOutcomes: persistedOutcomes(),
           report: latestPartialReport,
         });
       },
-      onCategoryStart: async ({ index, label, completedCategories }) => {
+      onCategoryStart: async ({ index, label }) => {
+        const completedCategories = categoryStates.filter(state => state.state === 'completed').length;
         console.log('[PANTHEON CATEGORY] start', { reportId: input.reportId, index: index + 1, label, completedCategories });
         await updatePantheonReportRecord(input.reportId, 'processing', {
           job: jobEnvelope(input, 'running', {
@@ -152,10 +188,11 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
             totalCategories: PANTHEON_REPORT_CATEGORIES.length,
           }),
           categoryStates,
+          categoryOutcomes: persistedOutcomes(),
           report: latestPartialReport,
         });
       },
-      onCategoryComplete: async ({ index, label, completedCategories, outcome, partialReport }) => {
+      onCategoryComplete: async ({ index, label, outcome, partialReport }) => {
         latestPartialReport = partialReport;
         const categoryState = categoryStates[index];
         if (categoryState) {
@@ -163,6 +200,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
           categoryState.state = outcome.completionState === 'completed' ? 'completed' : 'partial';
           categoryState.phase = outcome.completionState === 'completed' ? 'COMPLETE' : 'PARTIAL';
         }
+        const completedCategories = categoryStates.filter(state => state.state === 'completed').length;
         console.log('[PANTHEON CATEGORY] complete', {
           reportId: input.reportId,
           index: index + 1,
@@ -191,6 +229,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
             categoryUrlLedger: outcome.urlLedger,
           }),
           categoryStates,
+          categoryOutcomes: persistedOutcomes(),
           report: partialReport,
         });
       },
@@ -200,7 +239,26 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
     Object.assign(report as any, {
       investigationStatus: investigation.state,
       investigationCoverage: investigation,
+      searchDepthUsed: input.searchDepth,
+      crawlersActivated: [...new Set((report.crawlerAudit || [])
+        .filter((entry: any) => Number(entry.evidenceCount || 0) > 0)
+        .map((entry: any) => String(entry.crawler || ''))
+        .filter(Boolean))],
     });
+    latestPartialReport = report;
+    const pdfCompletedAt = new Date();
+    const pdfBuffer = await generatePantheonBackgroundReportPdf({
+      reportId: input.reportId,
+      report: report as any,
+      job: {
+        investigationStatus: investigation.state,
+        searchDepth: input.searchDepth,
+      },
+      createdAt: startedAt,
+      completedAt: pdfCompletedAt,
+      categoryOutcomes,
+    });
+    const pdfVerification = verifyPantheonPdfBuffer(pdfBuffer, 2);
 
     await updatePantheonReportRecord(input.reportId, 'processing', {
       job: jobEnvelope(input, 'finalizing', {
@@ -213,27 +271,31 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
         missingCrawlerCapabilities: investigation.missingCapabilities,
         capabilityCoverage: investigation.capabilityCoverage,
         capabilityTelemetry: getPantheonCapabilityTelemetry(),
+        pdfVerification,
       }),
       categoryStates,
       report,
       categoryOutcomes,
+      pdfVerification,
     });
 
     await updatePantheonReportRecord(input.reportId, 'completed', {
       job: jobEnvelope(input, 'completed', {
         startedAt: startedAt.toISOString(),
         deadlineAt: deadlineAt.toISOString(),
-        completedAt: new Date().toISOString(),
+        completedAt: pdfCompletedAt.toISOString(),
         investigationStatus: investigation.state,
         completedCategories: investigation.completedCategoryCount,
         partialCategories: investigation.partialCategoryCount,
         missingCrawlerCapabilities: investigation.missingCapabilities,
         capabilityCoverage: investigation.capabilityCoverage,
         capabilityTelemetry: getPantheonCapabilityTelemetry(),
+        pdfVerification,
       }),
       categoryStates,
       report,
       categoryOutcomes,
+      pdfVerification,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -244,7 +306,8 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
         failedAt: new Date().toISOString(),
       }),
       categoryStates,
-      report: null,
+      categoryOutcomes: persistedOutcomes(),
+      report: latestPartialReport,
     }, message.slice(0, 500));
   }
 }
@@ -274,7 +337,12 @@ export function resumePantheonReportJobFromRecord(report: {
   if (report.status !== 'processing' || isPantheonReportJobActive(report.id)) return null;
 
   const envelope = (report.reportData && typeof report.reportData === 'object')
-    ? report.reportData as { job?: PersistedPantheonJob; report?: any }
+    ? report.reportData as {
+      job?: PersistedPantheonJob;
+      report?: any;
+      categoryStates?: PantheonPersistedCategoryState[];
+      categoryOutcomes?: PantheonCategoryOutcome[];
+    }
     : {};
   const job = envelope.job;
   const name = String(job?.name || report.searchQuery || '').trim();
@@ -282,14 +350,30 @@ export function resumePantheonReportJobFromRecord(report: {
   const consent = job?.consent;
   if (!name || !idempotencyKey || consent?.accepted !== true || !consent.version || !consent.acceptedAt) return null;
 
+  const persistedStates = Array.isArray(envelope.categoryStates) ? envelope.categoryStates : [];
+  const resumeCategoryIndexes = persistedStates.length === PANTHEON_REPORT_CATEGORIES.length
+    ? persistedStates.filter(state => state.state !== 'completed').map(state => state.index)
+    : Array.from(
+      { length: PANTHEON_REPORT_CATEGORIES.length - Math.max(0, Number(job?.completedCategories || 0)) },
+      (_, offset) => Math.max(0, Number(job?.completedCategories || 0)) + offset,
+    );
+  const initialCategoryOutcomes = [
+    ...(Array.isArray(envelope.categoryOutcomes) ? envelope.categoryOutcomes : []),
+    ...persistedStates.flatMap(state => state.outcome ? [state.outcome] : []),
+  ].filter((outcome, position, values) =>
+    values.findIndex(candidate => candidate.index === outcome.index) === position &&
+    !resumeCategoryIndexes.includes(outcome.index));
+
   return startPantheonReportJob({
     reportId: report.id,
     userId: report.userId,
     name,
     location: job?.location || undefined,
     searchDepth: normalizePantheonSearchDepth(job?.searchDepth),
-    resumeFromCategory: Math.max(0, Number(job?.completedCategories || 0)),
+    resumeCategoryIndexes,
     initialReport: envelope.report,
+    initialCategoryOutcomes,
+    initialCategoryStates: persistedStates,
     idempotencyKey,
     consent: { accepted: true, version: consent.version, acceptedAt: consent.acceptedAt },
   });
