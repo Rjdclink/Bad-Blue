@@ -465,9 +465,13 @@ export function isPantheonReportCategoryLabel(value: string): value is PantheonR
   return (PANTHEON_REPORT_CATEGORY_LABELS as readonly string[]).includes(value);
 }
 
+function categoryCapabilities(label: PantheonReportCategoryLabel): readonly PantheonCapabilityId[] {
+  return PANTHEON_CATEGORY_CAPABILITY_MATRIX[label] as readonly PantheonCapabilityId[];
+}
+
 export function getPantheonCategoryCapabilities(label: string): PantheonCapabilityId[] {
   if (!isPantheonReportCategoryLabel(label)) return ['startrek', 'blizzard'];
-  return [...PANTHEON_CATEGORY_CAPABILITY_MATRIX[label]];
+  return [...categoryCapabilities(label)];
 }
 
 export function getPantheonPrimaryCrawlerCapabilitiesForCategory(label: string): PantheonPrimaryCrawlerId[] {
@@ -485,7 +489,7 @@ export function buildPantheonExecutableWorkUnits(input: {
   if (!isPantheonReportCategoryLabel(input.categoryLabel)) {
     throw new Error('Pantheon capability matrix rejected unknown report category: ' + input.categoryLabel);
   }
-  return PANTHEON_CATEGORY_CAPABILITY_MATRIX[input.categoryLabel]
+  return categoryCapabilities(input.categoryLabel)
     .map(capabilityId => PANTHEON_CRAWLER_CAPABILITY_MATRIX[capabilityId])
     .filter(descriptor => descriptor.transports.includes(input.transport))
     .map(descriptor => ({
@@ -521,7 +525,7 @@ export function validatePantheonCrawlerCapabilityMatrix(): {
     throw new Error('Pantheon capability matrix must contain exactly 30 report categories');
   }
   for (const label of PANTHEON_REPORT_CATEGORY_LABELS) {
-    const assigned = PANTHEON_CATEGORY_CAPABILITY_MATRIX[label];
+    const assigned = categoryCapabilities(label);
     if (!assigned.length) throw new Error('Pantheon category has no executable capability: ' + label);
     if (!assigned.some(id => PANTHEON_CRAWLER_CAPABILITY_MATRIX[id].capabilityClass === 'primary-retrieval')) {
       throw new Error('Pantheon category has no primary retrieval task: ' + label);
@@ -536,7 +540,7 @@ export function validatePantheonCrawlerCapabilityMatrix(): {
     if (!descriptor.implementationPath || !descriptor.executableFunction || !descriptor.skill) {
       throw new Error('Pantheon capability is not bound to executable work: ' + id);
     }
-    if (!categoryLabels.some(label => PANTHEON_CATEGORY_CAPABILITY_MATRIX[label].includes(id))) {
+    if (!categoryLabels.some(label => categoryCapabilities(label).includes(id))) {
       throw new Error('Pantheon capability is not permitted for any report category: ' + id);
     }
   }
