@@ -26,11 +26,15 @@ for(const obsolete of ['Scanning Databases','Social Analysis','Location Tracking
 if(page.includes('CapabilityCard')) throw new Error('Legacy oversized capability cards still present');
 
 const adapter=fs.readFileSync('server/services/crawlers/PantheonRetrievalAdapter.ts','utf8');
+const controller=fs.readFileSync('server/services/pantheon/PantheonInvestigationController.ts','utf8');
 for(const crawler of ['startrek','birdofprey','sixdegrees','cerberus','blizzard','lich']){
   if(!adapter.includes("'"+crawler+"'")) throw new Error('Background adapter missing primary crawler: '+crawler);
 }
 if(!adapter.includes('searchAllIsolatedWithAudit')) throw new Error('Background crawler fan-out is not failure-isolated/audited');
-if(!adapter.includes('Seven-Crawler Initiative') && !adapter.includes('SixCrawlerInitiative')) throw new Error('Seven-crawler analytical family not wired');
+if(adapter.includes('SevenCrawlerInitiative') || adapter.includes('SixCrawlerInitiative')) throw new Error('Simulated seven-crawler path must be excluded from background reports');
+for(const token of ['isPantheonSimulatedOutput','assessPantheonInvestigation','isLivePantheonCrawlerAudit']){
+  if(!controller.includes(token)) throw new Error('Real investigation controller missing: '+token);
+}
 if(!adapter.includes('twoStageDeployer.deployBackgroundReport')) throw new Error('Extended razor/secondary crawler stage not wired');
 
 const orchestrator=fs.readFileSync('server/services/pantheonCrawlerOrchestrator.ts','utf8');
