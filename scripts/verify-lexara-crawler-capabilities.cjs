@@ -159,7 +159,8 @@ if (
 }
 if (
   !pantheonReportPdf.toUpperCase().includes('COMPREHENSIVE PUBLIC-SOURCE BACKGROUND REPORT') ||
-  !pantheonReportPdf.includes('Court / Case History') ||
+  !pantheonReportPdf.includes('30-Category Investigation Results') ||
+  !pantheonReportPdf.includes('Relationship & Timeline Intelligence') ||
   pantheonReportPdf.includes("addSectionTitle(doc, 'Crawler Coverage')") ||
   !pantheonReportPdf.includes('Source Provenance') ||
   !pantheonReportPdf.includes('not an official government record') ||
