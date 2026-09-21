@@ -273,7 +273,6 @@ export class PantheonRetrievalAdapter {
       try {
         // The initiative's production gate is for its historical security mode.
         // PANTHEON supplies only already-retrieved public-source evidence here.
-        await initiative.start();
         const operation = await Promise.race([
           initiative.executeOperation({
             environmentId: `pantheon-background-${Date.now()}`,
