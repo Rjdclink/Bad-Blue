@@ -486,7 +486,10 @@ export async function conductPantheonCategoryWorkflow(input: {
     report.summary = `PANTHEON completed ${index + 1} of ${PANTHEON_REPORT_CATEGORIES.length} authoritative report categories. Each completed category records its crawler outcomes and provenance before advancement.`;
 
     await input.onCategoryState?.({ index, label: category.label, phase: 'PERSISTING', completedCategories: index });
-    await input.onCategoryComplete?.({
+    // Persistence is the gate. Category N cannot become COMPLETE and N+1 cannot
+    // become ACTIVE until the caller has durably persisted this transaction.
+    if (!input.onCategoryComplete) throw new Error('Pantheon category persistence callback is required');
+    await input.onCategoryComplete({
       index,
       label: category.label,
       completedCategories: index + 1,
