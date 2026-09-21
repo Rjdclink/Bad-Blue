@@ -37,6 +37,7 @@ const checks = [
   ['transient Pantheon availability is rechecked', peopleSearch.includes('if (!fullRosterPromise && runFullRoster') && peopleSearch.includes('canActivatePantheon().available')],
   ['zero-confidence crawler attempts are excluded from evidence', peopleSearch.includes('crawlerRetrieval.evidence.filter') && peopleSearch.includes('result.confidence > 0')],
   ['isolated crawler retries obey collection deadline', orchestrator.includes('const deadlineAt = options.timeout ? Date.now()') && orchestrator.includes("Crawler collection deadline reached") && orchestrator.includes('deadlineAt - Date.now()')],
+  ['orchestrator initialization honors requested investigation budget', orchestrator.includes('Math.max(1, options.timeout || 600000)') && !orchestrator.includes('Math.max(600000, options.timeout || 0)')],
   ['isolated crawler evidence requires finite positive confidence', orchestrator.includes('Number.isFinite(result.confidence)') && orchestrator.includes('result.content?.trim()')],
 ];
 
