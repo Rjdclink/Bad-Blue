@@ -51,6 +51,7 @@ const checks = [
   ['Puppeteer cannot independently acquire Pantheon URLs', adapter.includes('Independent Puppeteer acquisition disabled') && !adapter.includes("method: 'puppeteer'")],
   ['investigation intensity scales category source breadth to registry contract', categoryWorkflow.includes('1: 40') && categoryWorkflow.includes('2: 94') && categoryWorkflow.includes('3: 150') && categoryWorkflow.includes('4: 150')],
   ['each category owns a URL ledger', categoryWorkflow.includes('PantheonUrlLedgerEntry') && categoryWorkflow.includes('urlLedger')],
+  ['each category ledger is an explicit persistent transaction', categoryWorkflow.includes('ledgerVersion: 1') && categoryWorkflow.includes('totalLedgerUrls') && categoryWorkflow.includes('pendingUrls') && jobs.includes('categoryLedgerVersion: outcome.ledgerVersion') && jobs.includes('categoryUrlLedger: outcome.urlLedger')],
   ['URL ledger records explicit URL states and attempts', categoryWorkflow.includes("'pending'|'assigned'|'retrieving'|'retrieved'|'accepted'|'rejected'") && categoryWorkflow.includes('attempts: number')],
   ['fixed category batch replaced by live priority cursor', categoryWorkflow.includes('while (cursor < prioritizedTargets.length') && categoryWorkflow.includes('const batchSize = Math.min(8')],
   ['failed work advances cursor to replacement URLs', categoryWorkflow.includes('cursor += batch.length') && categoryWorkflow.includes("entry.state = 'rate_limited'") && categoryWorkflow.includes("entry.state = 'dead'")],
