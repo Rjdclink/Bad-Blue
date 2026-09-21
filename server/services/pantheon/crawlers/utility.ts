@@ -1,5 +1,6 @@
 import { BaseCrawler } from '../baseCrawler';
 import { CrawlerType, type CrawlerTask, type EntropySignature } from '../core';
+import { acquirePublicResource } from '../../crawlers/PublicAcquisitionInfrastructure';
 
 async function fetchPublicTarget(target: string, timeoutMs: number): Promise<{
   url: string;
@@ -7,30 +8,14 @@ async function fetchPublicTarget(target: string, timeoutMs: number): Promise<{
   contentType: string;
   content: string;
 }> {
-  const url = new URL(target);
-  if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Unsupported crawler protocol');
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, {
-      redirect: 'follow',
-      signal: controller.signal,
-      headers: {
-        Accept: 'text/html,application/json,text/plain;q=0.9,*/*;q=0.5',
-        'User-Agent': 'LegalWhat-PANTHEON/1.0',
-      },
-    });
-    const text = (await response.text()).slice(0, 250_000);
-    return {
-      url: response.url || url.toString(),
-      status: response.status,
-      contentType: response.headers.get('content-type') || '',
-      content: text,
-    };
-  } finally {
-    clearTimeout(timer);
-  }
+  const result = await acquirePublicResource(target, timeoutMs);
+  if (!result.ok) throw new Error(result.error || `Crawler request failed: HTTP ${result.status}`);
+  return {
+    url: result.url,
+    status: result.status,
+    contentType: result.contentType,
+    content: result.content.slice(0, 250_000),
+  };
 }
 
 /**
