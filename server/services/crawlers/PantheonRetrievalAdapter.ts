@@ -101,11 +101,18 @@ export class PantheonRetrievalAdapter {
       };
     }
 
+    // Reserve category time for independent Firecrawl, Puppeteer, public
+    // acquisition, and extended PANTHEON lanes. A slow primary crawler may not
+    // consume the entire category budget and suppress the rest of the roster.
+    const totalBudgetMs = Number.isFinite(remainingBudgetMs())
+      ? Math.max(1_000, remainingBudgetMs())
+      : Math.max(1_000, request.budgetMs || 60_000);
+    const primaryBudgetMs = Math.max(1_000, Math.floor(totalBudgetMs * 0.35));
     const searchOptions = {
       depth: plan.depth,
       crawlers: plan.crawlers,
       stormIntensity: plan.depth === 4 ? 'storm' as const : 'snow' as const,
-      timeout: Number.isFinite(remainingBudgetMs()) ? Math.max(1, remainingBudgetMs()) : request.budgetMs,
+      timeout: primaryBudgetMs,
     };
     let results: CrawlerResult[];
     let crawlerAudit: PantheonRetrievalResponse['crawlerAudit'] = [];
@@ -153,7 +160,8 @@ export class PantheonRetrievalAdapter {
           targets: 0,
         });
       } else {
-        const firecrawlBudget = Math.max(1_000, Math.min(8_000, Math.floor(remainingBudgetMs() / Math.max(1, firecrawlTargets.length))));
+        const firecrawlLaneBudget = Math.max(1_000, Math.floor(totalBudgetMs * 0.15));
+        const firecrawlBudget = Math.max(750, Math.min(8_000, Math.floor(firecrawlLaneBudget / Math.max(1, firecrawlTargets.length))));
         const firecrawlRuns = await Promise.allSettled(firecrawlTargets.map(target =>
           defaultFirecrawlAdapter.scrape(target, {
             formats: ['markdown'],
@@ -208,8 +216,9 @@ export class PantheonRetrievalAdapter {
         }
       }).slice(0, Math.min(request.targets.length, Math.max(2, (request.depth || 1) * 2)));
 
-      const perTargetBudget = Math.max(1_500, Math.min(10_000,
-        Math.floor(remainingBudgetMs() / Math.max(1, puppeteerTargets.length))));
+      const puppeteerLaneBudget = Math.max(1_000, Math.floor(totalBudgetMs * 0.15));
+      const perTargetBudget = Math.max(750, Math.min(10_000,
+        Math.floor(puppeteerLaneBudget / Math.max(1, puppeteerTargets.length))));
       const runs = await Promise.allSettled(puppeteerTargets.map(target =>
         shadowRetrieval.retrieve(target, {
           method: 'puppeteer',
@@ -261,7 +270,8 @@ export class PantheonRetrievalAdapter {
         }
       });
       const publicResources: Awaited<ReturnType<typeof acquirePublicResources>> = [];
-      const perTargetTimeoutMs = Math.min(12_000, Math.max(2_000, Math.floor((request.budgetMs || 60_000) / Math.max(1, request.targets.length))));
+      const publicLaneBudget = Math.max(1_000, Math.floor(totalBudgetMs * 0.15));
+      const perTargetTimeoutMs = Math.min(8_000, Math.max(750, Math.floor(publicLaneBudget / Math.max(1, request.targets.length))));
       const acquisitionBatchSize = 24;
       for (let offset = 0; offset < urlTargets.length && collectionOpen(); offset += acquisitionBatchSize) {
         const batch = urlTargets.slice(offset, offset + acquisitionBatchSize);
@@ -393,7 +403,11 @@ export class PantheonRetrievalAdapter {
       const extendedRuns: Array<{ target: string; run: PromiseSettledResult<Awaited<ReturnType<typeof twoStageDeployer.deployBackgroundReport>>> }> = [];
       for (let offset = 0; offset < extendedTargets.length && collectionOpen(); offset += EXTENDED_CONCURRENCY) {
         const batch = extendedTargets.slice(offset, offset + EXTENDED_CONCURRENCY);
-        const perBatchBudget = Number.isFinite(remainingBudgetMs()) ? Math.max(1, remainingBudgetMs()) : request.budgetMs;
+        const extendedLaneBudget = Math.max(1_000, Math.floor(totalBudgetMs * 0.20));
+        const perBatchBudget = Math.min(
+          extendedLaneBudget,
+          Number.isFinite(remainingBudgetMs()) ? Math.max(1, remainingBudgetMs()) : extendedLaneBudget,
+        );
         const settled = await Promise.allSettled(
           batch.map(target => twoStageDeployer.deployBackgroundReport(target, undefined, perBatchBudget))
         );
@@ -402,7 +416,18 @@ export class PantheonRetrievalAdapter {
 
       for (const entry of extendedRuns) {
         const { run, target } = entry;
-        if (run.status !== 'fulfilled') continue;
+        if (run.status !== 'fulfilled') {
+          crawlerAudit.push({
+            crawler: 'extended-pantheon',
+            capabilityClass: 'pantheon-secondary',
+            status: 'failed',
+            evidenceCount: 0,
+            attempts: 1,
+            targets: 1,
+            error: run.reason instanceof Error ? run.reason.message : String(run.reason),
+          });
+          continue;
+        }
 
         for (const razor of run.value.razorResults) {
           if (!razor.success) continue;
