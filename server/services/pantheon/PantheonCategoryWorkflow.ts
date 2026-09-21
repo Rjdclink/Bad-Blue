@@ -102,13 +102,50 @@ function cleanEvidenceContent(value: string): string {
     .trim();
 }
 
-function isReportableEvidence(item: PantheonRetrievalResponse['evidence'][number]): boolean {
+function isReportableEvidence(
+  item: PantheonRetrievalResponse['evidence'][number],
+  subject: string,
+  location?: string,
+): boolean {
   if (item.metadata?.entropySignature || item.metadata?.cooperativeAnalysis) return false;
   const text = cleanEvidenceContent(item.content);
   if (text.length < 40) return false;
   const lowered = text.toLowerCase();
   if (lowered.includes('<!doctype') || lowered.includes('function(') || lowered.includes('webpack')) return false;
-  return true;
+
+  // Customer findings must actually mention the subject (or a strong identity
+  // component), rather than merely proving that a registry/search page loaded.
+  const subjectTokens = subject.toLowerCase().split(/\s+/).map(v => v.trim()).filter(v => v.length >= 2);
+  const subjectMatches = subjectTokens.filter(token => lowered.includes(token)).length;
+  const locationTokens = String(location || '').toLowerCase().split(/[\s,]+/).filter(v => v.length >= 3);
+  const locationMatch = locationTokens.some(token => lowered.includes(token));
+  return subjectTokens.length === 0
+    ? false
+    : subjectMatches >= Math.min(2, subjectTokens.length) || (subjectMatches >= 1 && locationMatch);
+}
+
+function interleaveCategoryTargets(
+  groups: Array<ReturnType<typeof buildPantheonCategoryTargets>>,
+  limit: number,
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (let row = 0; out.length < limit; row += 1) {
+    let added = false;
+    for (const group of groups) {
+      const candidate = group[row];
+      if (!candidate) continue;
+      added = true;
+      const url = canonicalUrl(candidate.url);
+      if (!seen.has(url)) {
+        seen.add(url);
+        out.push(url);
+        if (out.length >= limit) break;
+      }
+    }
+    if (!added) break;
+  }
+  return out;
 }
 
 function dedupeEvidence(items: PantheonRetrievalResponse['evidence']) {
@@ -163,12 +200,12 @@ export async function conductPantheonCategoryWorkflow(input: {
     const finalizationReserveMs = Math.min(15_000, Math.max(2_000, Math.floor(remainingMs * 0.08)));
     const categoryBudgetMs = Math.max(1_500, Math.floor(Math.max(1, remainingMs - finalizationReserveMs) / remainingCategories));
 
-    const targets = category.registry.flatMap(registryCategory =>
+    const targetGroups = category.registry.map(registryCategory =>
       buildPantheonCategoryTargets(registryCategory, input.name, input.location, targetLimit)
     );
-    const uniqueTargets = [...new Map(
-      targets.map(target => [canonicalUrl(target.url), canonicalUrl(target.url)] as const)
-    ).values()].slice(0, targetLimit);
+    // Interleave registry facets so a multi-facet category cannot be monopolized
+    // by the first tag. Source inventory remains priority ordered within each facet.
+    const uniqueTargets = interleaveCategoryTargets(targetGroups, targetLimit);
 
     let retrieval: PantheonRetrievalResponse;
     try {
@@ -198,7 +235,9 @@ export async function conductPantheonCategoryWorkflow(input: {
       };
     }
 
-    const reportable = dedupeEvidence(retrieval.evidence.filter(isReportableEvidence));
+    const reportable = dedupeEvidence(
+      retrieval.evidence.filter(item => isReportableEvidence(item, input.name, input.location))
+    );
     evidence.push(...reportable.map(item => ({
       ...item,
       content: cleanEvidenceContent(item.content).slice(0, 1800),
@@ -219,10 +258,13 @@ export async function conductPantheonCategoryWorkflow(input: {
     categoryOutcomes.push(outcome);
 
     const uniqueEvidence = dedupeEvidence(evidence);
-    report.onlineMentions = uniqueEvidence.map(item => item.content).filter(Boolean);
-    report.publicRecords = uniqueEvidence.map(item =>
-      `[${String(item.metadata?.reportCategory || 'Evidence')}] ${item.content} — Source: ${item.target}`
-    );
+    const webCategory = /social|username|photo|news|internet|media/i;
+    report.onlineMentions = uniqueEvidence
+      .filter(item => webCategory.test(String(item.metadata?.reportCategory || '')))
+      .map(item => `[${String(item.metadata?.reportCategory || 'Evidence')}] ${item.content} — Source: ${item.target}`);
+    report.publicRecords = uniqueEvidence
+      .filter(item => !webCategory.test(String(item.metadata?.reportCategory || '')))
+      .map(item => `[${String(item.metadata?.reportCategory || 'Evidence')}] ${item.content} — Source: ${item.target}`);
     report.sources = uniqueEvidence.map(item => ({
       name: `${String(item.metadata?.reportCategory || 'PANTHEON Evidence')} — ${item.crawler}`,
       data: { url: item.target, finding: item.content },
