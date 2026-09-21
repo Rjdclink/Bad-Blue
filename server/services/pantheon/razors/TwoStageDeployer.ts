@@ -78,7 +78,7 @@ export class TwoStageDeployer {
     const razorResults = content
       ? (await this.deployStage1(content, target, razorTimeoutMs)).map(result => this.sanitizeBackgroundRazorResult(result))
       : [];
-    const secondaryResults = html ? [] : await this.deployAllSecondary(target, secondaryTimeoutMs);
+    const secondaryResults = await this.deployAllSecondary(target, secondaryTimeoutMs);
     const razorAudit: BackgroundCapabilityAudit[] = this.razors.map(razor => {
       const result = razorResults.find(candidate => candidate.razorType === razor.type);
       return {
