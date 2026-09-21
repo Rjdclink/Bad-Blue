@@ -13,6 +13,7 @@ const client = read('client/src/pages/pantheon.tsx');
 const acquisition = read('server/services/crawlers/PublicAcquisitionInfrastructure.ts');
 const jobs = read('server/services/pantheon/PantheonBackgroundReportJob.ts');
 const categoryWorkflow = read('server/services/pantheon/PantheonCategoryWorkflow.ts');
+const acquisition = read('server/services/crawlers/PublicAcquisitionInfrastructure.ts');
 const progress = read('client/src/components/PantheonProgressTracker.tsx');
 
 const checks = [
@@ -37,6 +38,15 @@ const checks = [
   ['canonical report job uses sequential category controller', jobs.includes('conductPantheonCategoryWorkflow') && categoryWorkflow.includes('PANTHEON_REPORT_CATEGORIES')],
   ['category controller passes subject context to crawler orchestration', categoryWorkflow.includes('subject: input.name') && categoryWorkflow.includes('location: input.location')],
   ['deadline finalizes unrun categories explicitly', categoryWorkflow.includes('remaining categories are explicitly marked timed out')],
+  ['intensity scales prioritized URL breadth', categoryWorkflow.includes('1: 40, 2: 90, 3: 180, 4: 300') && categoryWorkflow.includes('sourcePriority')],
+  ['shared host governor limits per-host concurrency', acquisition.includes('MAX_PER_HOST = 2') && acquisition.includes('waitForHost')],
+  ['429 and 503 honor shared cooldown', acquisition.includes("status === 429 || status === 503") && acquisition.includes('retryAfterMs')],
+  ['bounded retries use backoff and jitter', acquisition.includes('MAX_RETRIES = 2') && acquisition.includes('Math.random() * 350')],
+  ['terminal 403/404 are not retryable', acquisition.includes("last.status === 408 || last.status === 429") && !acquisition.includes("last.status === 403 ||")],
+  ['duplicate URL acquisition is shared', acquisition.includes('const inflight = new Map') && acquisition.includes('const recent = new Map')],
+  ['non-investigative static resources are rejected', acquisition.includes('BLOCKED_EXTENSIONS') && acquisition.includes('BLOCKED_HOST_HINTS')],
+  ['host circuits stop repeated failing dependencies', acquisition.includes('CIRCUIT_FAILURE_THRESHOLD') && acquisition.includes('circuitOpenUntil')],
+  ['DNS and redirect destinations are revalidated', acquisition.includes('assertPublicResolution(current)') && acquisition.includes("redirect: 'manual'")],
   ['progress category is server-checkpoint driven', progress.includes('categoryNumber?: number | null') && progress.includes('categoryName || PANTHEON_CATEGORIES')],
   ['progress percentage is category-completion driven', progress.includes('authoritativeCompletedCategories / authoritativeTotalCategories') && progress.includes('displayedProgress')],
   ['timer is anchored to server deadline', progress.includes('parsedDeadlineAt') && progress.includes('awaitingServerClock')],
