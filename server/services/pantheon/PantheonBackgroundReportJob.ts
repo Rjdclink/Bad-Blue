@@ -125,6 +125,8 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
             completedCategories,
             totalCategories: PANTHEON_REPORT_CATEGORIES.length,
             lastCategoryOutcome: outcome,
+            categoryCursor: outcome.cursor,
+            categoryUrlLedger: outcome.urlLedger,
           }),
           report: partialReport,
         });
