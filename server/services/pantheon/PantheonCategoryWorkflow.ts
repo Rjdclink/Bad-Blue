@@ -74,6 +74,7 @@ export interface PantheonUrlLedgerEntry {
   capability?: string;
   capabilityReason?: string;
   transport?: 'direct-http'|'browser'|'search-provider'|'specialized-adapter'|'archive';
+  transportAttempts?: Array<{ transport: NonNullable<PantheonUrlLedgerEntry['transport']>; outcome: 'pending'|'succeeded'|'failed'; reason?: string }>;
   startedAt?: string;
   completedAt?: string;
 }
@@ -387,6 +388,7 @@ export async function conductPantheonCategoryWorkflow(input: {
           entry.state = 'assigned';
           entry.attempts += 1;
           entry.startedAt = new Date().toISOString();
+          entry.transportAttempts = [...(entry.transportAttempts || []), { transport: entry.transport || 'direct-http', outcome: 'pending' }];
         }
       }
 
@@ -513,7 +515,11 @@ export async function conductPantheonCategoryWorkflow(input: {
       if (evidenceId) {
         entry.state = 'accepted';
         entry.evidenceIds.push(evidenceId);
+        const lastTransport = entry.transportAttempts?.[entry.transportAttempts.length - 1];
+        if (lastTransport) lastTransport.outcome = 'succeeded';
       } else if (auditFailures.some(item => /429|rate/i.test(String(item.error || '')))) {
+        const lastTransport = entry.transportAttempts?.[entry.transportAttempts.length - 1];
+        if (lastTransport) { lastTransport.outcome = 'failed'; lastTransport.reason = 'rate_limited'; }
         entry.state = 'rate_limited';
         entry.failureReason = 'rate_limited';
       } else if (auditFailures.some(item => item.status === 'timed_out')) {
