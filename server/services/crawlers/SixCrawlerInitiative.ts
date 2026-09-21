@@ -2081,10 +2081,6 @@ export class SixCrawlerInitiative extends EventEmitter {
     });
 
     // Test detection probability
-    await this.usc.coordinateTask('woo', {
-      interfaceId: target.environmentId,
-      permissions: ['observe', 'map', 'analyze'],
-    }, 8);
     await this.usc.coordinateTask('silence', {
       observedDimensions,
       context: { environment: target.environmentId, dataVolume: allDataPoints.length },
