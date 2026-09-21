@@ -432,6 +432,16 @@ export async function conductPantheonCategoryWorkflow(input: {
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        const failedEntry = urlLedger.find(item => item.url === firstUrl);
+        if (failedEntry) {
+          failedEntry.completedAt = new Date().toISOString();
+          failedEntry.failureReason = message.slice(0, 300);
+          failedEntry.state = /429|rate/i.test(message) ? 'rate_limited'
+            : /timeout|deadline/i.test(message) ? 'timed_out'
+            : /403|forbidden/i.test(message) ? 'blocked'
+            : 'dead';
+          failedEntry.result = { status: 0, evidenceCount: 0, retrievedAt: failedEntry.completedAt };
+        }
         retrievalAudit.push({
           crawler: 'category-orchestrator',
           capabilityClass: 'pantheon-secondary',
