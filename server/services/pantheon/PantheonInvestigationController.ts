@@ -1,6 +1,8 @@
 import {
-  getPantheonPrimaryCrawlerCapabilitiesForCategory,
+  getPantheonCategoryCapabilities,
+  PANTHEON_CRAWLER_CAPABILITY_MATRIX,
   PANTHEON_REPORT_CATEGORY_LABELS,
+  type PantheonCapabilityId,
 } from './PantheonCrawlerCapabilityMatrix';
 import {
   assessPantheonCapabilityCoverage,
@@ -50,24 +52,24 @@ export interface PantheonCategoryAssessmentInput {
 export interface PantheonCategoryAssessment {
   state: PantheonCategoryCompletionState;
   reason: string;
-  expectedCapabilities: PantheonCoreCrawlerCapability[];
-  executedCapabilities: PantheonCoreCrawlerCapability[];
-  missingCapabilities: PantheonCoreCrawlerCapability[];
+  expectedCapabilities: PantheonCapabilityId[];
+  executedCapabilities: PantheonCapabilityId[];
+  missingCapabilities: PantheonCapabilityId[];
   attemptedUrlCount: number;
 }
 
 const SIMULATION_MARKERS = /(?:simulat(?:e|ed|ion)|mirrored|synthetic|test[ _-]?mode|seven-crawler-initiative|cooperativeanalysis|entropysignature)/i;
 const TERMINAL_LEDGER_STATES = new Set(['accepted', 'rejected', 'blocked', 'rate_limited', 'dead', 'timed_out', 'no_evidence', 'not_applicable']);
 
-export function plannedPantheonCrawlerCapabilitiesForCategory(label: string): PantheonCoreCrawlerCapability[] {
-  return [...getPantheonPrimaryCrawlerCapabilitiesForCategory(label)];
+export function plannedPantheonCrawlerCapabilitiesForCategory(label: string): PantheonCapabilityId[] {
+  return getPantheonCategoryCapabilities(label);
 }
 
 export function isPantheonSimulatedOutput(value: unknown): boolean {
   return SIMULATION_MARKERS.test(String(value || ''));
 }
 
-export function isLivePantheonCrawlerAudit(audit: CrawlerAuditLike): audit is CrawlerAuditLike & { crawler: PantheonCoreCrawlerCapability } {
+export function isLivePantheonCrawlerAudit(audit: CrawlerAuditLike): audit is CrawlerAuditLike & { crawler: PantheonCapabilityId } {
   const crawler = String(audit.crawler || '').toLowerCase();
   const attributableOutcomes = (audit.sourceOutcomes || []).filter(outcome =>
     /^https?:\/\//i.test(String(outcome.sourceUrl || ''))
@@ -75,7 +77,7 @@ export function isLivePantheonCrawlerAudit(audit: CrawlerAuditLike): audit is Cr
       && Number.isFinite(Number(outcome.durationMs))
       && Boolean(outcome.status)
   );
-  return PANTHEON_CORE_CRAWLER_CAPABILITIES.includes(crawler as PantheonCoreCrawlerCapability)
+  return Object.prototype.hasOwnProperty.call(PANTHEON_CRAWLER_CAPABILITY_MATRIX, crawler)
     && Number(audit.attempts || 0) > 0
     && Number(audit.targets || 0) > 0
     && attributableOutcomes.length > 0
@@ -87,8 +89,8 @@ export function assessPantheonCategoryOutcome(input: PantheonCategoryAssessmentI
     (input.expectedCapabilities?.length
       ? input.expectedCapabilities
       : plannedPantheonCrawlerCapabilitiesForCategory(input.label)
-    ).filter((capability): capability is PantheonCoreCrawlerCapability =>
-      PANTHEON_CORE_CRAWLER_CAPABILITIES.includes(capability as PantheonCoreCrawlerCapability)
+    ).filter((capability): capability is PantheonCapabilityId =>
+      Object.prototype.hasOwnProperty.call(PANTHEON_CRAWLER_CAPABILITY_MATRIX, capability)
     )
   )];
 
@@ -161,7 +163,7 @@ export interface PantheonInvestigationAssessment {
   state: 'completed' | 'partial';
   completedCategoryCount: number;
   partialCategoryCount: number;
-  missingCapabilities: PantheonCoreCrawlerCapability[];
+  missingCapabilities: PantheonCapabilityId[];
   capabilityCoverage: ReturnType<typeof assessPantheonCapabilityCoverage>;
   releaseEligible: boolean;
 }
@@ -174,15 +176,15 @@ export function assessPantheonInvestigation(categories: readonly {
   crawlerAudit?: readonly CrawlerAuditLike[];
   capabilityOutcomes?: readonly PantheonCapabilityOutcome[];
 }[]): PantheonInvestigationAssessment {
-  const required = new Set<PantheonCoreCrawlerCapability>();
-  const executed = new Set<PantheonCoreCrawlerCapability>();
+  const required = new Set<PantheonCapabilityId>();
+  const executed = new Set<PantheonCapabilityId>();
   let completedCategoryCount = 0;
 
   for (const category of categories) {
     if (category.completionState === 'completed') completedCategoryCount += 1;
     for (const capability of category.expectedCapabilities || []) {
-      if (PANTHEON_CORE_CRAWLER_CAPABILITIES.includes(capability as PantheonCoreCrawlerCapability)) {
-        required.add(capability as PantheonCoreCrawlerCapability);
+      if (Object.prototype.hasOwnProperty.call(PANTHEON_CRAWLER_CAPABILITY_MATRIX, capability)) {
+        required.add(capability as PantheonCapabilityId);
       }
     }
     for (const audit of category.crawlerAudit || []) {

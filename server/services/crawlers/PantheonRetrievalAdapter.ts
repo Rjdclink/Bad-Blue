@@ -16,6 +16,7 @@ import {
   getPantheonCategoryCapabilities,
   getPantheonPrimaryCrawlerCapabilitiesForCategory,
   PANTHEON_PRIMARY_CRAWLER_IDS,
+  type PantheonCapabilityId,
   type PantheonPrimaryCrawlerId,
   type PantheonTransport,
 } from '../pantheon/PantheonCrawlerCapabilityMatrix';
@@ -25,6 +26,7 @@ import {
 } from '../pantheon/PantheonSourceResult';
 import { createPantheonDeadline, throwIfPantheonAborted } from '../pantheon/PantheonDeadline';
 import { runWithPantheonAcquisitionContext } from './PublicAcquisitionInfrastructure';
+import { runPortablePantheonCapabilities } from '../pantheon/PantheonPortableCapabilityExecutor';
 
 export type RetrievalEvidence = PantheonStructuredSourceResult;
 
@@ -51,6 +53,9 @@ export interface PantheonRetrievalResponse {
     }>;
     route?: 'primary' | 'fallback';
     fallbackFor?: string;
+    executionMode?: 'credential-free-equivalent';
+    replacementDisclosure?: string;
+    capabilityOutput?: Record<string, unknown>;
   }>;
   supervision?: CrawlerSupervisionResult;
 }
@@ -178,9 +183,9 @@ export class PantheonRetrievalAdapter {
       };
     }
 
-    // Reserve category time for independent Firecrawl, Puppeteer, public
-    // acquisition, and extended PANTHEON lanes. A slow primary crawler may not
-    // consume the entire category budget and suppress the rest of the roster.
+    // Reserve category time for canonical acquisition and the independently
+    // audited extraction/analysis lanes. A slow primary crawler may not consume
+    // the entire category budget and suppress the rest of the roster.
     const totalBudgetMs = Number.isFinite(remainingBudgetMs())
       ? Math.max(1_000, remainingBudgetMs())
       : Math.max(1_000, request.budgetMs || 60_000);
@@ -260,36 +265,11 @@ export class PantheonRetrievalAdapter {
         });
       });
 
-    // Specialized extraction providers may enrich content already admitted
-    // through the canonical acquisition gateway; they are not independent
-    // Pantheon network authorities.
     if (request.purpose === 'background_report') {
-      crawlerAudit.push({
-        crawler: 'firecrawl',
-        capabilityClass: 'pantheon-secondary',
-        status: 'not_applicable',
-        evidenceCount: 0,
-        attempts: 0,
-        targets: 0,
-        error: 'Not applicable: canonical acquisition owns Pantheon networking for this authorized URL',
-      });
-      crawlerAudit.push({
-        crawler: 'puppeteer',
-        capabilityClass: 'pantheon-secondary',
-        status: 'not_applicable',
-        evidenceCount: 0,
-        attempts: 0,
-        targets: 0,
-        error: 'Not applicable: browser transport was not authorized for this URL work unit',
-      });
-    }
-
-    // Simulation-only analytical initiatives are deliberately excluded from
-    // production background reports. They neither retrieve public sources nor
-    // provide attributable subject evidence.
-
-    if (request.purpose === 'background_report') {
-      const applicableCapabilities = getPantheonCategoryCapabilities(request.categoryLabel || '');
+      const permittedCapabilities = new Set(getPantheonCategoryCapabilities(request.categoryLabel || ''));
+      const applicableCapabilities = [...new Set(request.capabilityHint || [])]
+        .filter((capability): capability is PantheonCapabilityId =>
+          permittedCapabilities.has(capability as PantheonCapabilityId));
       const extendedTargets = request.targets.filter(target => {
         try {
           const parsed = new URL(target);
@@ -390,6 +370,26 @@ export class PantheonRetrievalAdapter {
             }));
           }
         }
+      }
+
+      // Paid-key, account-bound, and separately hosted capabilities execute as
+      // disclosed local/public-source equivalents over the same verified live
+      // source content. This preserves their actual function without claiming
+      // access to a vendor service or generating substitute evidence.
+      for (const target of extendedTargets) {
+        const liveResult = results.find(result => result.target === target && result.content.trim());
+        const content = liveResult?.content || '';
+        crawlerAudit.push(...await runPortablePantheonCapabilities({
+          capabilityIds: applicableCapabilities,
+          sourceUrl: target,
+          content,
+          subject: request.subject || '',
+          location: request.location,
+          discoveredCandidates: Array.isArray(liveResult?.metadata?.discoveredCandidates)
+            ? liveResult.metadata.discoveredCandidates
+            : [],
+          signal: operationSignal,
+        }));
       }
     }
 

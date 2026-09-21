@@ -137,6 +137,7 @@ export default function PantheonPage() {
   const [reportCategoryNumber, setReportCategoryNumber] = useState<number | null>(null);
   const [reportCategoryName, setReportCategoryName] = useState<string | null>(null);
   const [completedCategories, setCompletedCategories] = useState(0);
+  const [processedCategories, setProcessedCategories] = useState(0);
   const [totalCategories, setTotalCategories] = useState(30);
   const [downloading, setDownloading] = useState(false);
   const { toast } = useToast();
@@ -217,6 +218,7 @@ export default function PantheonPage() {
         if (Number.isFinite(Number(job?.categoryNumber))) setReportCategoryNumber(Number(job.categoryNumber));
         if (typeof job?.categoryName === 'string') setReportCategoryName(job.categoryName);
         if (Number.isFinite(Number(job?.completedCategories))) setCompletedCategories(Number(job.completedCategories));
+        if (Number.isFinite(Number(job?.processedCategories))) setProcessedCategories(Number(job.processedCategories));
         if (Number.isFinite(Number(job?.totalCategories))) setTotalCategories(Number(job.totalCategories));
 
         if (payload.status === 'processing') {
@@ -287,6 +289,7 @@ export default function PantheonPage() {
     setReportCategoryNumber(1);
     setReportCategoryName(null);
     setCompletedCategories(0);
+    setProcessedCategories(0);
     setTotalCategories(30);
 
     try {
@@ -553,6 +556,7 @@ export default function PantheonPage() {
                 categoryNumber={reportCategoryNumber}
                 categoryName={reportCategoryName}
                 completedCategories={completedCategories}
+                processedCategories={processedCategories}
                 totalCategories={totalCategories}
               />
             </section>

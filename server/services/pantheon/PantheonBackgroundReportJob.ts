@@ -47,6 +47,7 @@ interface PersistedPantheonJob {
   location?: string;
   searchDepth?: number;
   completedCategories?: number;
+  processedCategories?: number;
   idempotencyKey?: string;
   consent?: { accepted?: boolean; version?: string; acceptedAt?: string };
 }
@@ -65,6 +66,20 @@ function jobEnvelope(input: PantheonReportJobInput, state: 'queued' | 'running' 
     consent: input.consent,
     ...extra,
   };
+}
+
+async function withStageDeadline<T>(label: string, timeoutMs: number, operation: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Pantheon ${label} exceeded ${timeoutMs}ms`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void> {
@@ -93,6 +108,19 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
   const persistedOutcomes = () => categoryStates
     .flatMap(state => state.outcome ? [state.outcome] : [])
     .sort((left, right) => left.index - right.index);
+  const processedCategoryCount = () => categoryStates.filter(state =>
+    state.state === 'completed' || state.state === 'partial'
+  ).length;
+  const visibleCategory = (fallbackIndex: number) => {
+    const state = categoryStates
+      .filter(candidate => candidate.state === 'active')
+      .sort((left, right) => left.index - right.index)[0]
+      || categoryStates
+        .filter(candidate => candidate.state === 'pending')
+        .sort((left, right) => left.index - right.index)[0]
+      || categoryStates[fallbackIndex];
+    return state || { index: fallbackIndex, label: PANTHEON_REPORT_CATEGORIES[fallbackIndex]?.label || 'Report finalization' };
+  };
   let latestPartialReport = input.initialReport || null;
 
   await updatePantheonReportRecord(input.reportId, 'processing', {
@@ -100,6 +128,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       startedAt: startedAt.toISOString(),
       deadlineAt: deadlineAt.toISOString(),
       completedCategories: persistedOutcomes().filter(outcome => outcome.completionState === 'completed').length,
+      processedCategories: processedCategoryCount(),
       totalCategories: PANTHEON_REPORT_CATEGORIES.length,
     }),
     categoryStates,
@@ -116,9 +145,15 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       await new Promise(resolve => setTimeout(resolve, 5_000));
     }
 
+    console.log('[PANTHEON REPORT JOB] capability preflight started', { reportId: input.reportId });
     const capabilityHealth = await runPantheonCapabilityHealthChecks({
       investigationId: input.reportId,
       deadlineAt: deadlineAt.getTime(),
+    });
+    console.log('[PANTHEON REPORT JOB] capability preflight completed', {
+      reportId: input.reportId,
+      checked: capabilityHealth.length,
+      unavailable: capabilityHealth.filter(item => item.status === 'unavailable').length,
     });
     await updatePantheonReportRecord(input.reportId, 'processing', {
       job: jobEnvelope(input, 'running', {
@@ -126,6 +161,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
         deadlineAt: deadlineAt.toISOString(),
         capabilityHealth,
         completedCategories: persistedOutcomes().filter(outcome => outcome.completionState === 'completed').length,
+        processedCategories: processedCategoryCount(),
         totalCategories: PANTHEON_REPORT_CATEGORIES.length,
       }),
       categoryStates,
@@ -138,6 +174,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       throw new Error('PANTHEON investigation budget expired before collection could begin');
     }
 
+    console.log('[PANTHEON REPORT JOB] category collection started', { reportId: input.reportId, categories: PANTHEON_REPORT_CATEGORIES.length });
     const { report, categoryOutcomes } = await conductPantheonCategoryWorkflow({
       investigationId: input.reportId,
       name: input.name,
@@ -162,34 +199,22 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
                 ? 'pending'
                 : 'active';
         }
-        const completedCategories = categoryStates.filter(state => state.state === 'completed').length;
-        await updatePantheonReportRecord(input.reportId, 'processing', {
-          job: jobEnvelope(input, phase === 'PERSISTING' ? 'finalizing' : 'running', {
-            startedAt: startedAt.toISOString(),
-            deadlineAt: deadlineAt.toISOString(),
-            categoryIndex: index,
-            categoryNumber: index + 1,
-            categoryName: label,
-            categoryPhase: phase,
-            completedCategories,
-            totalCategories: PANTHEON_REPORT_CATEGORIES.length,
-          }),
-          categoryStates,
-          categoryOutcomes: persistedOutcomes(),
-          report: latestPartialReport,
-        });
+        // Start and completion callbacks are the durable checkpoints. Avoid a
+        // remote/database write for every transient phase transition.
       },
       onCategoryStart: async ({ index, label }) => {
         const completedCategories = categoryStates.filter(state => state.state === 'completed').length;
+        const visible = visibleCategory(index);
         console.log('[PANTHEON CATEGORY] start', { reportId: input.reportId, index: index + 1, label, completedCategories });
         await updatePantheonReportRecord(input.reportId, 'processing', {
           job: jobEnvelope(input, 'running', {
             startedAt: startedAt.toISOString(),
             deadlineAt: deadlineAt.toISOString(),
-            categoryIndex: index,
-            categoryNumber: index + 1,
-            categoryName: label,
+            categoryIndex: visible.index,
+            categoryNumber: visible.index + 1,
+            categoryName: visible.label,
             completedCategories,
+            processedCategories: processedCategoryCount(),
             totalCategories: PANTHEON_REPORT_CATEGORIES.length,
           }),
           categoryStates,
@@ -206,13 +231,20 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
           categoryState.phase = outcome.completionState === 'completed' ? 'COMPLETE' : 'PARTIAL';
         }
         const completedCategories = categoryStates.filter(state => state.state === 'completed').length;
-        console.log('[PANTHEON CATEGORY] complete', {
+        const visible = visibleCategory(index);
+        const executedCapabilityCount = new Set(outcome.crawlerAudit
+          .filter(entry => Number(entry.attempts || 0) > 0)
+          .map(entry => entry.crawler)).size;
+        console.log('[PANTHEON CATEGORY] outcome', {
           reportId: input.reportId,
           index: index + 1,
           label,
+          state: outcome.completionState,
           completedCategories,
           evidenceCount: outcome.evidenceCount,
-          crawlerOutcomes: outcome.crawlerAudit.length,
+          executedCapabilityCount,
+          successfulWorkCount: outcome.successfulWorkCount,
+          requiredWorkCount: outcome.requiredWorkCount,
         });
         await updatePantheonReportRecord(input.reportId, 'processing', {
           job: jobEnvelope(input, 'running', {
@@ -220,11 +252,12 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
             deadlineAt: deadlineAt.toISOString(),
             // Persist the category that actually completed. The workflow
             // controller alone activates the next category afterward.
-            categoryIndex: index,
-            categoryNumber: index + 1,
-            categoryName: label,
+            categoryIndex: visible.index,
+            categoryNumber: visible.index + 1,
+            categoryName: visible.label,
             categoryPhase: 'PERSISTING',
             completedCategories,
+            processedCategories: processedCategoryCount(),
             totalCategories: PANTHEON_REPORT_CATEGORIES.length,
             lastCategoryOutcome: outcome,
             categoryCursor: outcome.cursor,
@@ -239,6 +272,10 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
         });
       },
     });
+    console.log('[PANTHEON REPORT JOB] category collection closed', {
+      reportId: input.reportId,
+      processedCategories: categoryOutcomes.length,
+    });
 
     const investigation = assessPantheonInvestigation(categoryOutcomes);
     Object.assign(report as any, {
@@ -246,13 +283,16 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       investigationCoverage: investigation,
       searchDepthUsed: input.searchDepth,
       crawlersActivated: [...new Set((report.crawlerAudit || [])
-        .filter((entry: any) => Number(entry.evidenceCount || 0) > 0)
+        .filter((entry: any) => Number(entry.attempts || 0) > 0
+          && Number(entry.targets || 0) > 0
+          && ['completed_with_evidence', 'completed_no_evidence'].includes(String(entry.status || '')))
         .map((entry: any) => String(entry.crawler || ''))
         .filter(Boolean))],
     });
     latestPartialReport = report;
     const pdfCompletedAt = new Date();
-    const pdfBuffer = await generatePantheonBackgroundReportPdf({
+    console.log('[PANTHEON REPORT JOB] PDF rendering started', { reportId: input.reportId });
+    const pdfBuffer = await withStageDeadline('PDF rendering', 30_000, generatePantheonBackgroundReportPdf({
       reportId: input.reportId,
       report: report as any,
       job: {
@@ -262,9 +302,10 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       createdAt: startedAt,
       completedAt: pdfCompletedAt,
       categoryOutcomes,
-    });
+    }));
     const pdfVerification = verifyPantheonPdfBuffer(pdfBuffer, 2);
-    const pdfArtifact = await persistPantheonPdfArtifact(input.reportId, pdfBuffer);
+    console.log('[PANTHEON REPORT JOB] PDF verified', { reportId: input.reportId, bytes: pdfVerification.bytes, sha256: pdfVerification.sha256 });
+    const pdfArtifact = await withStageDeadline('PDF persistence', 20_000, persistPantheonPdfArtifact(input.reportId, pdfBuffer));
     if (pdfArtifact.sha256 !== pdfVerification.sha256 || pdfArtifact.bytes !== pdfVerification.bytes) {
       throw new Error('Persisted Pantheon PDF does not match the verified report artifact');
     }
@@ -276,6 +317,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
         finalizingAt: new Date().toISOString(),
         investigationStatus: investigation.state,
         completedCategories: investigation.completedCategoryCount,
+        processedCategories: categoryOutcomes.length,
         partialCategories: investigation.partialCategoryCount,
         missingCrawlerCapabilities: investigation.missingCapabilities,
         capabilityCoverage: investigation.capabilityCoverage,
@@ -297,6 +339,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
         completedAt: pdfCompletedAt.toISOString(),
         investigationStatus: investigation.state,
         completedCategories: investigation.completedCategoryCount,
+        processedCategories: categoryOutcomes.length,
         partialCategories: investigation.partialCategoryCount,
         missingCrawlerCapabilities: investigation.missingCapabilities,
         capabilityCoverage: investigation.capabilityCoverage,
@@ -309,8 +352,15 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       pdfVerification,
       pdfArtifact,
     });
+    console.log('[PANTHEON REPORT JOB] terminal report persisted', {
+      reportId: input.reportId,
+      status: finalStatus,
+      processedCategories: categoryOutcomes.length,
+      completedCategories: investigation.completedCategoryCount,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    console.error('[PANTHEON REPORT JOB] failed', { reportId: input.reportId, error: message.slice(0, 500) });
     await updatePantheonReportRecord(input.reportId, 'failed', {
       job: jobEnvelope(input, 'failed', {
         startedAt: startedAt.toISOString(),

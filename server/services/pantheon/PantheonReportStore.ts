@@ -39,7 +39,22 @@ const TERMINAL_JOURNAL_RETENTION_MS = 6 * 60 * 60_000;
 
 const SUPABASE_MIRROR_BUCKET = 'pantheon-report-state';
 const SUPABASE_MIRROR_TIMEOUT_MS = 1_500;
+const DATABASE_OPERATION_TIMEOUT_MS = 8_000;
 let supabaseMirrorBucketReady = false;
+
+async function withDatabaseTimeout<T>(operation: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Pantheon report database operation timed out')), DATABASE_OPERATION_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 function supabaseMirrorConfig(): { url: string; key: string } | null {
   const url = String(process.env.SUPABASE_URL || '').replace(/\/$/, '');
@@ -150,7 +165,7 @@ function errorText(error: unknown): string {
 
 function isTransientDatabaseFailure(error: unknown): boolean {
   const message = errorText(error);
-  return /EAUTHQUERY|ECIRCUITBREAKER|connection to database not available|connection terminated|connection timeout|ETIMEDOUT|ECONNRESET|08006|57P01|too many clients|remaining connection slots|CRYPTOCRAWLER_MASTER_POWER_OFF/i.test(message);
+  return /EAUTHQUERY|ECIRCUITBREAKER|connection to database not available|connection terminated|connection timeout|operation timed out|ETIMEDOUT|ECONNRESET|08006|57P01|too many clients|remaining connection slots|CRYPTOCRAWLER_MASTER_POWER_OFF/i.test(message);
 }
 
 function openDatabaseCircuit(error: unknown): void {
@@ -272,9 +287,9 @@ async function mirrorRecord(record: PantheonReportRecord): Promise<void> {
   }
 
   try {
-    const existing = await storage.getPeopleSearchReport(record.id);
+    const existing = await withDatabaseTimeout(storage.getPeopleSearchReport(record.id));
     if (!existing) {
-      await storage.createPeopleSearchReport({
+      await withDatabaseTimeout(storage.createPeopleSearchReport({
         id: record.id,
         userId: record.userId,
         searchQuery: record.searchQuery,
@@ -284,19 +299,19 @@ async function mirrorRecord(record: PantheonReportRecord): Promise<void> {
         errorMessage: record.errorMessage || undefined,
         createdAt: record.createdAt,
         completedAt: record.completedAt,
-      });
+      }));
       mirrorAttempts.delete(record.id);
       if (record.status !== 'processing') scheduleTerminalCleanup(record);
       return;
     }
 
-    await storage.updatePeopleSearchReportStatus(
+    await withDatabaseTimeout(storage.updatePeopleSearchReportStatus(
       record.id,
       record.status as any,
       record.reportData,
       record.errorMessage || undefined,
       record.completedAt,
-    );
+    ));
     mirrorAttempts.delete(record.id);
     if (record.status !== 'processing') scheduleTerminalCleanup(record);
   } catch (error) {
@@ -368,7 +383,7 @@ export async function createPantheonReportRecord(input: {
 
   if (canMirrorIdentity(record.userId) && canTryDatabase()) {
     try {
-      const persisted = await storage.createPeopleSearchReport({
+      const persisted = await withDatabaseTimeout(storage.createPeopleSearchReport({
         id: record.id,
         userId: record.userId,
         searchQuery: record.searchQuery,
@@ -377,7 +392,7 @@ export async function createPantheonReportRecord(input: {
         status: 'processing',
         createdAt: record.createdAt,
         completedAt: null,
-      });
+      }));
       mirrorAttempts.delete(record.id);
       return normalizeRecord(persisted);
     } catch (error) {
@@ -523,15 +538,15 @@ async function updatePantheonReportRecordUnlocked(
 
   if (canMirrorIdentity(next.userId) && canTryDatabase()) {
     try {
-      const existing = await storage.getPeopleSearchReport(reportId);
+      const existing = await withDatabaseTimeout(storage.getPeopleSearchReport(reportId));
       if (existing) {
-        const persisted = await storage.updatePeopleSearchReportStatus(
+        const persisted = await withDatabaseTimeout(storage.updatePeopleSearchReportStatus(
           reportId,
           status as any,
           next.reportData,
           errorMessage,
           next.completedAt,
-        );
+        ));
         mirrorAttempts.delete(reportId);
         if (status !== 'processing') scheduleTerminalCleanup(next);
         return normalizeRecord(persisted);
@@ -654,7 +669,7 @@ export async function lookupPantheonReportRecord(reportId: string): Promise<Pant
 
   if (canTryDatabase()) {
     try {
-      const persisted = await storage.getPeopleSearchReport(reportId);
+      const persisted = await withDatabaseTimeout(storage.getPeopleSearchReport(reportId));
       if (persisted) {
         const normalized = normalizeRecord(persisted);
         if (localFirst && persistenceRevision(localFirst) >= persistenceRevision(normalized)) {

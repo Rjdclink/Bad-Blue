@@ -1,5 +1,6 @@
 import {
   PANTHEON_CRAWLER_CAPABILITY_MATRIX,
+  PANTHEON_PORTABLE_CAPABILITY_IDS,
   PANTHEON_PRIMARY_CRAWLER_IDS,
   PANTHEON_REPORT_CATEGORY_LABELS,
   getPantheonCategoryCapabilities,
@@ -8,6 +9,7 @@ import {
   type PantheonPrimaryCrawlerId,
   type PantheonReportCategoryLabel,
 } from './PantheonCrawlerCapabilityMatrix';
+import { runPortablePantheonCapabilities } from './PantheonPortableCapabilityExecutor';
 import {
   acquirePantheonResource,
   runWithPantheonAcquisitionContext,
@@ -34,6 +36,8 @@ export interface PantheonCapabilityHealth {
   durationMs: number;
   reason: string;
   fallbackCapabilityId?: PantheonCapabilityId;
+  executionMode?: 'native' | 'credential-free-equivalent';
+  replacementDisclosure?: string;
 }
 
 export interface PantheonCapabilitySourceOutcome {
@@ -56,6 +60,8 @@ export interface PantheonCapabilityOutcome {
   reason?: string;
   fallbackCapabilityId?: PantheonCapabilityId;
   fallbackExecuted?: boolean;
+  executionMode?: 'native' | 'credential-free-equivalent';
+  replacementDisclosure?: string;
 }
 
 export interface PantheonCapabilityTelemetry {
@@ -120,19 +126,38 @@ export async function runPantheonCapabilityHealthChecks(input: {
   probeUrl?: string;
 }): Promise<PantheonCapabilityHealth[]> {
   const startedAt = Date.now();
-  const probeUrl = input.probeUrl || 'https://www.usa.gov/';
   const healthDeadlineAt = Math.min(input.deadlineAt, startedAt + 12_000);
-  const acquisition = await acquirePantheonResource(
-    probeUrl,
-    Math.max(1, healthDeadlineAt - Date.now()),
+  const probeUrls = input.probeUrl
+    ? [input.probeUrl]
+    : [
+      'https://www.usa.gov/',
+      'https://www.federalregister.gov/api/v1/documents.json?per_page=1',
+      'https://www.sec.gov/files/company_tickers.json',
+    ];
+  let acquisition = await acquirePantheonResource(
+    probeUrls[0],
+    Math.max(1, Math.min(4_000, healthDeadlineAt - Date.now())),
     {
       investigationId: input.investigationId,
       categoryId: input.investigationId + ':health',
-      workId: input.investigationId + ':health:transport',
+      workId: input.investigationId + ':health:transport:0',
       capability: 'health-preflight',
       deadlineAt: healthDeadlineAt,
     },
   );
+  for (let index = 1; (!acquisition.ok || !acquisition.content.trim()) && index < probeUrls.length && Date.now() < healthDeadlineAt; index += 1) {
+    acquisition = await acquirePantheonResource(
+      probeUrls[index],
+      Math.max(1, Math.min(4_000, healthDeadlineAt - Date.now())),
+      {
+        investigationId: input.investigationId,
+        categoryId: input.investigationId + ':health',
+        workId: input.investigationId + ':health:transport:' + index,
+        capability: 'health-preflight',
+        deadlineAt: healthDeadlineAt,
+      },
+    );
+  }
 
   if (!acquisition.ok || !acquisition.content.trim()) {
     const checkedAt = new Date().toISOString();
@@ -147,7 +172,7 @@ export async function runPantheonCapabilityHealthChecks(input: {
 
   const perFamilyBudgetMs = Math.max(1_500, Math.min(5_000, healthDeadlineAt - Date.now()));
   const healthDeadline = createPantheonDeadline(healthDeadlineAt);
-  const [primaryRun, extendedRun] = await Promise.allSettled([
+  const [primaryRun, extendedRun, portableRun] = await Promise.allSettled([
     runWithPantheonAcquisitionContext(
       {
         investigationId: input.investigationId,
@@ -179,20 +204,31 @@ export async function runPantheonCapabilityHealthChecks(input: {
       healthDeadline.signal,
       () => twoStageDeployer.healthCheckAllCapabilities(acquisition.url, acquisition.content, perFamilyBudgetMs),
     ),
+    runPortablePantheonCapabilities({
+      capabilityIds: PANTHEON_PORTABLE_CAPABILITY_IDS,
+      sourceUrl: acquisition.url,
+      content: acquisition.content,
+      subject: 'United States',
+      signal: healthDeadline.signal,
+    }),
   ]);
   healthDeadline.dispose();
 
   const audits: AuditLike[] = [];
   if (primaryRun.status === 'fulfilled') audits.push(...primaryRun.value.audit);
   if (extendedRun.status === 'fulfilled') audits.push(...extendedRun.value);
+  if (portableRun.status === 'fulfilled') audits.push(...portableRun.value);
 
   const checkedAt = new Date().toISOString();
   const health = (Object.keys(PANTHEON_CRAWLER_CAPABILITY_MATRIX) as PantheonCapabilityId[]).map(capabilityId => {
+    const descriptor = PANTHEON_CRAWLER_CAPABILITY_MATRIX[capabilityId];
     const audit = audits.find(item => item.crawler === capabilityId);
     if (!audit) {
       const familyFailure = PANTHEON_CRAWLER_CAPABILITY_MATRIX[capabilityId].capabilityClass === 'primary-retrieval'
         ? primaryRun
-        : extendedRun;
+        : (PANTHEON_PORTABLE_CAPABILITY_IDS as readonly string[]).includes(capabilityId)
+          ? portableRun
+          : extendedRun;
       return {
         capabilityId,
         status: 'unavailable' as const,
@@ -201,6 +237,8 @@ export async function runPantheonCapabilityHealthChecks(input: {
         reason: familyFailure.status === 'rejected'
           ? String(familyFailure.reason)
           : 'Capability produced no health-check outcome',
+        executionMode: descriptor.executionMode || 'native',
+        replacementDisclosure: descriptor.replacementDisclosure,
       };
     }
     const status: PantheonCapabilityHealthStatus = auditHealthy(audit.status)
@@ -213,7 +251,9 @@ export async function runPantheonCapabilityHealthChecks(input: {
       status,
       checkedAt,
       durationMs: Number(audit.durationMs || 0),
-      reason: audit.error || ('Live health check returned ' + audit.status),
+      reason: audit.error || descriptor.replacementDisclosure || ('Live health check returned ' + audit.status),
+      executionMode: descriptor.executionMode || 'native',
+      replacementDisclosure: descriptor.replacementDisclosure,
     };
   });
 
@@ -299,6 +339,8 @@ export function finalizePantheonCategoryCapabilityOutcomes(input: {
         durationMs: 0,
         sourceOutcomes: [],
         reason: 'Capability is not permitted for this report category by the capability matrix',
+        executionMode: PANTHEON_CRAWLER_CAPABILITY_MATRIX[capabilityId].executionMode || 'native',
+        replacementDisclosure: PANTHEON_CRAWLER_CAPABILITY_MATRIX[capabilityId].replacementDisclosure,
       };
     }
 
@@ -345,6 +387,8 @@ export function finalizePantheonCategoryCapabilityOutcomes(input: {
       reason,
       fallbackCapabilityId,
       fallbackExecuted,
+      executionMode: PANTHEON_CRAWLER_CAPABILITY_MATRIX[capabilityId].executionMode || 'native',
+      replacementDisclosure: PANTHEON_CRAWLER_CAPABILITY_MATRIX[capabilityId].replacementDisclosure,
     };
   });
 
