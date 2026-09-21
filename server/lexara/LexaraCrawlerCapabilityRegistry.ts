@@ -63,7 +63,9 @@ const hasFirecrawl = () => !!process.env.FIRECRAWL_API_KEY?.trim();
 const hasOpenRouter = () => !!process.env.OPENROUTER_API_KEY?.trim();
 const hasPacer = () => !!(process.env.PACER_USERNAME?.trim() && process.env.PACER_PASSWORD?.trim());
 const hasSpiderFoot = () => !!process.env.SPIDERFOOT_URL?.trim();
-const hasBrowser = () => !!process.env.BROWSER_WS_ENDPOINT?.trim();
+// Browser-backed crawlers run with the bundled local browser by default; a
+// remote websocket endpoint is an optional override, not a prerequisite.
+const hasBrowser = () => process.env.PUPPETEER_DISABLED !== 'true';
 
 function c(
   id: string,
