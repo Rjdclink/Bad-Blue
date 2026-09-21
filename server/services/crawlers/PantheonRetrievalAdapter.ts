@@ -225,6 +225,7 @@ export class PantheonRetrievalAdapter {
         return [];
       }))].slice(0, 8);
       for (const handle of socialHandles) {
+        if (!collectionOpen()) break;
         const profile = await socialMediaScraper.getTwitterProfile(handle);
         crawlerAudit.push({
           crawler: 'social-media-scraper',
