@@ -413,7 +413,7 @@ export class PantheonCrawlerOrchestrator {
         console.log('[PANTHEON] Activating CERBERUS crawler (three-headed)...');
         for (const target of targets) {
           const result = await this.cerberus.attack(target);
-          if (result) {
+          if (result && result.content?.trim() && Number.isFinite(result.confidence) && result.confidence > 0) {
             results.push({
               crawler: 'cerberus',
               target,
@@ -436,6 +436,7 @@ export class PantheonCrawlerOrchestrator {
         console.log(`[PANTHEON] Activating BLIZZARD crawler (${intensity} intensity)...`);
         const blizzardResults = await this.blizzard.deploy(targets, intensity);
         for (const result of blizzardResults) {
+          if (!result.content?.trim() || !Number.isFinite(result.confidence) || result.confidence <= 0) continue;
           results.push({
             crawler: 'blizzard',
             target: result.target,
@@ -457,7 +458,7 @@ export class PantheonCrawlerOrchestrator {
         for (const target of targets) {
           const spellType = options.depth >= 4 ? 'forbidden' : options.depth >= 3 ? 'complex' : 'simple';
           const result = await this.lich.castSpell(target, spellType);
-          if (result) {
+          if (result && result.content?.trim() && Number.isFinite(result.confidence) && result.confidence > 0) {
             results.push({
               crawler: 'lich',
               target,
