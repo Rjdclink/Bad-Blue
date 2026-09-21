@@ -77,7 +77,7 @@ function mergeAudit(entries: PantheonRetrievalResponse['crawlerAudit']) {
 function categoryTargetLimit(depth: number): number {
   // Investigation intensity controls source breadth, never crawler participation.
   // Keep the work bounded per category so all 30 categories receive time.
-  return ({ 1: 8, 2: 16, 3: 24, 4: 32 } as Record<number, number>)[depth] || 8;
+  return ({ 1: 40, 2: 94, 3: 150, 4: 150 } as Record<number, number>)[depth] || 40;
 }
 
 function canonicalUrl(value: string): string {
