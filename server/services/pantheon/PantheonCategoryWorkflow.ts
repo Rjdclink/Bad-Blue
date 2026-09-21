@@ -38,6 +38,21 @@ export const PANTHEON_REPORT_CATEGORIES = [
   { label: 'Relationship & Timeline Intelligence', registry: ['relationship-graph','chronology','corroboration','contradictions','provenance'] },
 ] as const satisfies readonly { label: string; registry: readonly PantheonBackgroundCategory[] }[];
 
+export type PantheonCategoryPhase = 'PENDING' | 'ACTIVE' | 'URL_WORK' | 'EVIDENCE_VALIDATION' | 'PERSISTING' | 'COMPLETE';
+
+export interface PantheonWorkAuthorization {
+  investigationId: string;
+  categoryId: string;
+  categoryIndex: number;
+  categoryLabel: string;
+  workId: string;
+  canonicalUrl: string;
+  capability: string;
+  deadlineAt: number;
+  subject: string;
+  location?: string;
+}
+
 export interface PantheonCategoryOutcome {
   index: number;
   label: string;
@@ -190,12 +205,14 @@ function dedupeEvidence(items: PantheonRetrievalResponse['evidence']) {
 }
 
 export async function conductPantheonCategoryWorkflow(input: {
+  investigationId: string;
   name: string;
   location?: string;
   searchDepth: 1 | 2 | 3 | 4;
   deadlineAt: number;
   startCategoryIndex?: number;
   initialReport?: PeopleSearchReport;
+  onCategoryState?: (state: { index: number; label: string; phase: PantheonCategoryPhase; completedCategories: number }) => Promise<void>;
   onCategoryStart?: (state: { index: number; label: string; completedCategories: number }) => Promise<void>;
   onCategoryComplete?: (state: { index: number; label: string; completedCategories: number; outcome: PantheonCategoryOutcome; partialReport: PeopleSearchReport }) => Promise<void>;
 }): Promise<{ report: PeopleSearchReport; categoryOutcomes: PantheonCategoryOutcome[] }> {
@@ -223,6 +240,7 @@ export async function conductPantheonCategoryWorkflow(input: {
   for (let index = startCategoryIndex; index < PANTHEON_REPORT_CATEGORIES.length; index += 1) {
     const category = PANTHEON_REPORT_CATEGORIES[index];
     const startedAt = new Date().toISOString();
+    await input.onCategoryState?.({ index, label: category.label, phase: 'ACTIVE', completedCategories: index });
     await input.onCategoryStart?.({ index, label: category.label, completedCategories: index });
 
     const remainingCategories = PANTHEON_REPORT_CATEGORIES.length - index;
@@ -240,6 +258,7 @@ export async function conductPantheonCategoryWorkflow(input: {
     // through the existing 40/94/150 per-category budgets.
     const uniqueTargets = interleaveCategoryTargets(targetGroups, targetLimit);
 
+    await input.onCategoryState?.({ index, label: category.label, phase: 'URL_WORK', completedCategories: index });
     let retrieval: PantheonRetrievalResponse;
     try {
       retrieval = await pantheonRetrievalAdapter.retrieve({
@@ -251,6 +270,15 @@ export async function conductPantheonCategoryWorkflow(input: {
         subject: input.name,
         location: input.location,
         categoryLabel: category.label,
+        authority: {
+          investigationId: input.investigationId,
+          categoryId: `${input.investigationId}:${index}`,
+          categoryIndex: index,
+          categoryLabel: category.label,
+          deadlineAt: Math.min(input.deadlineAt - finalizationReserveMs, Date.now() + categoryBudgetMs),
+          subject: input.name,
+          location: input.location,
+        },
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -271,6 +299,7 @@ export async function conductPantheonCategoryWorkflow(input: {
       };
     }
 
+    await input.onCategoryState?.({ index, label: category.label, phase: 'EVIDENCE_VALIDATION', completedCategories: index });
     const reportable = dedupeEvidence(
       retrieval.evidence.filter(item => isReportableEvidence(item, input.name, input.location))
     );
@@ -321,6 +350,7 @@ export async function conductPantheonCategoryWorkflow(input: {
     report.confidenceScore = categoryOutcomes.length ? completedWithEvidence / categoryOutcomes.length : 0;
     report.summary = `PANTHEON completed ${index + 1} of ${PANTHEON_REPORT_CATEGORIES.length} authoritative report categories. Each completed category records its crawler outcomes and provenance before advancement.`;
 
+    await input.onCategoryState?.({ index, label: category.label, phase: 'PERSISTING', completedCategories: index });
     await input.onCategoryComplete?.({
       index,
       label: category.label,
@@ -328,6 +358,7 @@ export async function conductPantheonCategoryWorkflow(input: {
       outcome,
       partialReport: { ...report },
     });
+    await input.onCategoryState?.({ index, label: category.label, phase: 'COMPLETE', completedCategories: index + 1 });
   }
 
   return { report, categoryOutcomes };
