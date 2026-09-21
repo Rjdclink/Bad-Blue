@@ -451,7 +451,10 @@ export class PantheonRetrievalAdapter {
         const batch = extendedTargets.slice(offset, offset + EXTENDED_CONCURRENCY);
         const perBatchBudget = Number.isFinite(remainingBudgetMs()) ? Math.max(1, remainingBudgetMs()) : request.budgetMs;
         const settled = await Promise.allSettled(
-          batch.map(target => twoStageDeployer.deployBackgroundReport(target, undefined, perBatchBudget))
+          batch.map(target => {
+            const accepted = evidence.find(item => item.target === target && item.content.trim());
+            return twoStageDeployer.deployBackgroundReport(target, accepted?.content, perBatchBudget);
+          })
         );
         settled.forEach((run, index) => extendedRuns.push({ target: batch[index], run }));
       }
