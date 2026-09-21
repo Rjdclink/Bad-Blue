@@ -303,6 +303,16 @@ if (!birdOfPrey.includes("confidence: content ? 0.8 : 0")) fail('BirdOfPrey can 
 if (!sixDegrees.includes("confidence: html.replace(/<[^>]*>/g, ' ').trim() ? 0.8 : 0")) fail('SixDegrees can assign confidence to empty content');
 if (!process.exitCode) ok('crawler network boundaries, Razor evidence truth, and seven-crawler skill dispatch are realized');
 
+const seedStarTrek = fs.readFileSync('server/services/crawlers/seedFirst/SeedFetchStarTrek.ts', 'utf8');
+const seedBird = fs.readFileSync('server/services/crawlers/seedFirst/SeedFetchBirdOfPrey.ts', 'utf8');
+const seedTrinity = fs.readFileSync('server/services/crawlers/seedFirst/SeedFetchTrinity.ts', 'utf8');
+const seedSixDegrees = fs.readFileSync('server/services/crawlers/seedFirst/SeedFetchSixDegrees.ts', 'utf8');
+const publicRecordScraper = fs.readFileSync('server/services/iceEngine/scraping/PublicRecordScraper.ts', 'utf8');
+for (const source of [seedStarTrek, seedBird, seedTrinity, seedSixDegrees, publicRecordScraper]) {
+  if (!source.includes('acquirePublicResource')) fail('A crawler retrieval lane bypasses the public acquisition boundary');
+}
+if (seedStarTrek.includes('const itemsFound = 2')) fail('Seed StarTrek still reports a fixed evidence count');
+if (!retrievalAdapter.includes('Math.max(0, seedLimit)')) fail('Seed crawlers can still start after the Pantheon deadline is exhausted');
 if (!process.exitCode) ok('background-report crawler path is real, fail-closed, scope-bounded, and evidence-truthful');
 
 const payoutVerification = fs.readFileSync('server/services/cryptocrawl/compensation/compensationGuarantee.ts', 'utf8');
