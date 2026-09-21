@@ -75,7 +75,51 @@ function mergeAudit(entries: PantheonRetrievalResponse['crawlerAudit']) {
 }
 
 function categoryTargetLimit(depth: number): number {
-  return ({ 1: 4, 2: 6, 3: 8, 4: 10 } as Record<number, number>)[depth] || 6;
+  // Investigation intensity controls source breadth, never crawler participation.
+  // Keep the work bounded per category so all 30 categories receive time.
+  return ({ 1: 8, 2: 16, 3: 24, 4: 32 } as Record<number, number>)[depth] || 8;
+}
+
+function canonicalUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    url.hash = '';
+    for (const key of [...url.searchParams.keys()]) {
+      if (/^(utm_|fbclid|gclid)/i.test(key)) url.searchParams.delete(key);
+    }
+    return url.toString();
+  } catch {
+    return value.trim();
+  }
+}
+
+function cleanEvidenceContent(value: string): string {
+  return String(value || '')
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isReportableEvidence(item: PantheonRetrievalResponse['evidence'][number]): boolean {
+  if (item.metadata?.entropySignature || item.metadata?.cooperativeAnalysis) return false;
+  const text = cleanEvidenceContent(item.content);
+  if (text.length < 40) return false;
+  const lowered = text.toLowerCase();
+  if (lowered.includes('<!doctype') || lowered.includes('function(') || lowered.includes('webpack')) return false;
+  return true;
+}
+
+function dedupeEvidence(items: PantheonRetrievalResponse['evidence']) {
+  const seen = new Set<string>();
+  return items.filter(item => {
+    const content = cleanEvidenceContent(item.content);
+    const key = `${canonicalUrl(item.target)}|${content.slice(0, 500).toLowerCase()}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 export async function conductPantheonCategoryWorkflow(input: {
@@ -122,7 +166,9 @@ export async function conductPantheonCategoryWorkflow(input: {
     const targets = category.registry.flatMap(registryCategory =>
       buildPantheonCategoryTargets(registryCategory, input.name, input.location, targetLimit)
     );
-    const uniqueTargets = [...new Set(targets.map(target => target.url))].slice(0, targetLimit);
+    const uniqueTargets = [...new Map(
+      targets.map(target => [canonicalUrl(target.url), canonicalUrl(target.url)] as const)
+    ).values()].slice(0, targetLimit);
 
     let retrieval: PantheonRetrievalResponse;
     try {
@@ -152,8 +198,11 @@ export async function conductPantheonCategoryWorkflow(input: {
       };
     }
 
-    evidence.push(...retrieval.evidence.map(item => ({
+    const reportable = dedupeEvidence(retrieval.evidence.filter(isReportableEvidence));
+    evidence.push(...reportable.map(item => ({
       ...item,
+      content: cleanEvidenceContent(item.content).slice(0, 1800),
+      target: canonicalUrl(item.target),
       metadata: { ...(item.metadata || {}), reportCategory: category.label, categoryIndex: index },
     })));
     audits.push(...retrieval.crawlerAudit);
@@ -164,22 +213,21 @@ export async function conductPantheonCategoryWorkflow(input: {
       startedAt,
       completedAt: new Date().toISOString(),
       targetCount: uniqueTargets.length,
-      evidenceCount: retrieval.evidence.length,
+      evidenceCount: reportable.length,
       crawlerAudit: retrieval.crawlerAudit,
     };
     categoryOutcomes.push(outcome);
 
-    report.onlineMentions = evidence.map(item => item.content).filter(Boolean);
-    report.publicRecords = evidence.map(item => `[${String(item.metadata?.reportCategory || 'Evidence')}] ${item.target}`);
-    report.sources = categoryOutcomes.map(item => ({
-      name: `PANTHEON Category ${item.index + 1}: ${item.label}`,
-      data: {
-        targets: item.targetCount,
-        evidence: item.evidenceCount,
-        crawlerAudit: item.crawlerAudit,
-      },
-      confidence: item.evidenceCount > 0 ? 0.8 : 0,
-      timestamp: new Date(item.completedAt),
+    const uniqueEvidence = dedupeEvidence(evidence);
+    report.onlineMentions = uniqueEvidence.map(item => item.content).filter(Boolean);
+    report.publicRecords = uniqueEvidence.map(item =>
+      `[${String(item.metadata?.reportCategory || 'Evidence')}] ${item.content} — Source: ${item.target}`
+    );
+    report.sources = uniqueEvidence.map(item => ({
+      name: `${String(item.metadata?.reportCategory || 'PANTHEON Evidence')} — ${item.crawler}`,
+      data: { url: item.target, finding: item.content },
+      confidence: item.confidence,
+      timestamp: new Date(item.retrievedAt),
     }));
     report.crawlerAudit = mergeAudit(audits);
     const completedWithEvidence = categoryOutcomes.filter(item => item.evidenceCount > 0).length;

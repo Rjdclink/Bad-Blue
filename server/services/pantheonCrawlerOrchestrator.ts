@@ -209,7 +209,7 @@ export interface CrawlerResult {
 export interface CrawlerExecutionAudit {
   crawler: string;
   capabilityClass: 'primary';
-  status: 'completed_with_evidence' | 'completed_no_evidence' | 'failed';
+  status: 'completed_with_evidence' | 'completed_no_evidence' | 'failed' | 'timed_out';
   evidenceCount: number;
   attempts: number;
   targets: number;
@@ -489,7 +489,7 @@ export class PantheonCrawlerOrchestrator {
     targets: string[],
     options: PantheonSearchOptions,
   ): Promise<{ results: CrawlerResult[]; audit: CrawlerExecutionAudit[] }> {
-    const requestedBudgetMs = Math.max(600000, options.timeout || 0);
+    const requestedBudgetMs = Math.max(1_000, options.timeout || 60_000);
     await this.initialize(requestedBudgetMs);
 
     const validTargets = [...new Set(targets)].filter(target => {
@@ -507,20 +507,28 @@ export class PantheonCrawlerOrchestrator {
         let results: CrawlerResult[] = [];
         let lastError = '';
 
+        const routeBudgetMs = Math.max(1_000, Math.floor(requestedBudgetMs / 2));
         for (let attempt = 0; attempt < 2; attempt++) {
           attempts += 1;
           try {
-            results = await this.search(validTargets, {
+            const searchPromise = this.search(validTargets, {
               ...options,
+              timeout: routeBudgetMs,
               crawlers: [crawler],
             });
+            results = await Promise.race([
+              searchPromise,
+              new Promise<CrawlerResult[]>((_, reject) =>
+                setTimeout(() => reject(new Error(`crawler route timed out after ${routeBudgetMs}ms`)), routeBudgetMs)
+              ),
+            ]);
             if (results.some(result => Boolean(result.content) && result.confidence > 0)) break;
           } catch (error) {
             lastError = error instanceof Error ? error.message : String(error);
           }
 
-          if (attempt === 0) {
-            await new Promise(resolve => setTimeout(resolve, 500));
+          if (attempt === 0 && requestedBudgetMs > routeBudgetMs) {
+            await new Promise(resolve => setTimeout(resolve, 250));
           }
         }
 
@@ -530,9 +538,11 @@ export class PantheonCrawlerOrchestrator {
           capabilityClass: 'primary',
           status: evidenceCount > 0
             ? 'completed_with_evidence'
-            : lastError
-              ? 'failed'
-              : 'completed_no_evidence',
+            : /timed out/i.test(lastError)
+              ? 'timed_out'
+              : lastError
+                ? 'failed'
+                : 'completed_no_evidence',
           evidenceCount,
           attempts,
           targets: validTargets.length,

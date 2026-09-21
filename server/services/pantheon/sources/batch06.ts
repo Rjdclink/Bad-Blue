@@ -13,7 +13,8 @@ const urls=[...new Set(roots)].slice(0,200);
 if(urls.length!==200) throw new Error(`Pantheon batch 06 expected 200 distinct URLs, got ${urls.length}`);
 const cats=(u:string):string[]=>{
  if(/linkedin|facebook|instagram|threads|x\.com|bsky|mastodon|tiktok|youtube|reddit|pinterest|tumblr|flickr|quora|soundcloud|bandcamp|spotify|twitch|meetup|strava/i.test(u)) return ['social','usernames','associates','internet'];
- if(/github|gitlab|bitbucket|stackoverflow|dev\.to|hashnode|codepen|kaggle|orcid|researchgate|academia|pubmed|arxiv|ssrn|crossref|openalex|scholar/i.test(u)) return ['professional-web','publications','education','employment','usernames'];
+ if(/orcid|researchgate|academia|pubmed|arxiv|ssrn|crossref|openalex|scholar/i.test(u)) return ['professional-web','publications','education','credentials','usernames'];
+ if(/github|gitlab|bitbucket|stackoverflow|dev\.to|hashnode|codepen|kaggle/i.test(u)) return ['professional-web','publications','employment','usernames','internet'];
  if(/reuters|apnews|npr|pbs|bbc|guardian|nytimes|washingtonpost|wsj|usatoday|tribune|globe|inquirer|news|newspapers|gdelt|mediacloud|propublica|icij|documentcloud/i.test(u)) return ['news','adverse-media','internet','historical'];
  if(/archive|commoncrawl|arquivo|loc\.gov/i.test(u)) return ['internet','historical','publications'];
  if(/zoominfo|crunchbase|bloomberg|dnb|bbb|glassdoor|indeed|usajobs|opm|guidestar|candid|fec|senate|congress|opensecrets/i.test(u)) return ['employment','business','organizations','professional-web'];
