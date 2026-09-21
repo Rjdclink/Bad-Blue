@@ -265,6 +265,28 @@ if (
 ) {
   fail('background-report Cain/Reaper supervision still reports hard-coded evolutionary debt');
 }
+const publicAcquisition = fs.readFileSync('server/services/crawlers/PublicAcquisitionInfrastructure.ts', 'utf8');
+const utilityCrawlers = fs.readFileSync('server/services/pantheon/crawlers/utility.ts', 'utf8');
+const hydraCrawler = fs.readFileSync('server/services/pantheon/crawlers/hydra.ts', 'utf8');
+const wraithCrawler = fs.readFileSync('server/services/pantheon/crawlers/wraith.ts', 'utf8');
+const initiative = fs.readFileSync('server/services/crawlers/SixCrawlerInitiative.ts', 'utf8');
+if (
+  !publicAcquisition.includes("redirect: 'manual'") ||
+  !publicAcquisition.includes('allowedPublicUrl(new URL(location, current).toString())') ||
+  !utilityCrawlers.includes('acquirePublicResource') ||
+  !hydraCrawler.includes('acquirePublicResource') ||
+  !wraithCrawler.includes('acquirePublicResource') ||
+  !pantheonIce.includes('acquirePublicResource') ||
+  !twoStage.includes('acquirePublicResource') ||
+  !trinity.includes('acquirePublicResource')
+) {
+  fail('Pantheon crawler network lanes do not consistently enforce the public acquisition boundary');
+}
+for (const crawler of ['woo', 'mirror', 'key', 'chewer', 'computational', 'silence']) {
+  if (!initiative.includes(`coordinateTask('${crawler}'`)) fail(`USC does not dispatch ${crawler} skill`);
+}
+if (!process.exitCode) ok('crawler network boundaries and seven-crawler skill dispatch are realized');
+
 if (!process.exitCode) ok('background-report crawler path is real, fail-closed, scope-bounded, and evidence-truthful');
 
 const payoutVerification = fs.readFileSync('server/services/cryptocrawl/compensation/compensationGuarantee.ts', 'utf8');
