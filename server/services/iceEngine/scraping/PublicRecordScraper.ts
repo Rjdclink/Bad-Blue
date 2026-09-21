@@ -1,4 +1,4 @@
-import puppeteer from 'puppeteer';
+import { acquirePublicResource } from '../../crawlers/PublicAcquisitionInfrastructure';
 
 interface ScraperConfig {
   url: string;
@@ -21,55 +21,28 @@ export class PublicRecordScraper {
 
   async scrape(config: ScraperConfig): Promise<ScraperResult> {
     const { url, maxRetries = 3, timeout = 30000 } = config;
-    
+
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
         await this.rateLimit();
-        
-        const browser = await puppeteer.launch({
-          headless: true,
-          args: ['--no-sandbox', '--disable-setuid-sandbox'],
-          executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-        });
-
-        try {
-          const page = await browser.newPage();
-          const response = await page.goto(url, { 
-            waitUntil: 'networkidle2', 
-            timeout 
-          });
-          
-          const content = await page.content();
-          const headers: Record<string, string> = {};
-          
-          if (response) {
-            const responseHeaders = response.headers();
-            Object.keys(responseHeaders).forEach(key => {
-              headers[key] = responseHeaders[key];
-            });
-          }
-
-          return {
-            content,
-            statusCode: response?.status() ?? 200,
-            headers,
-            timestamp: new Date(),
-          };
-        } finally {
-          await browser.close();
-        }
+        const resource = await acquirePublicResource(url, timeout);
+        if (!resource.ok) throw new Error(resource.error || `HTTP ${resource.status}`);
+        return {
+          content: resource.content,
+          statusCode: resource.status,
+          headers: { 'content-type': resource.contentType },
+          timestamp: new Date(),
+        };
       } catch (error: any) {
         console.error(`[PublicRecordScraper] Attempt ${attempt + 1} failed:`, error.message);
-        
         if (attempt < maxRetries - 1) {
-          await new Promise(resolve => setTimeout(resolve, this.retryDelays[attempt]));
+          await new Promise(resolve => setTimeout(resolve, this.retryDelays[Math.min(attempt, this.retryDelays.length - 1)]));
         } else {
           throw new Error(`Failed to scrape ${url} after ${maxRetries} attempts: ${error.message}`);
         }
       }
     }
-    
-    // This line should never be reached, but TypeScript requires a return
+
     throw new Error(`Failed to scrape ${url}`);
   }
 
