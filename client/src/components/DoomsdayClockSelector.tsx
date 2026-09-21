@@ -15,6 +15,7 @@ interface DoomsdayClockSelectorProps {
 
 interface SearchConfig {
   name: string;
+  identifierType: 'name' | 'phone' | 'email' | 'username' | 'address' | 'business' | 'property' | 'vin';
   location?: string;
   searchDepth: number;
   consent: true;
@@ -27,6 +28,7 @@ export function DoomsdayClockSelector({
 }: DoomsdayClockSelectorProps) {
   const [selectedDepth, setSelectedDepth] = useState<number>(1);
   const [name, setName] = useState("");
+  const [identifierType, setIdentifierType] = useState<SearchConfig['identifierType']>('name');
   const [location, setLocation] = useState("");
   const [consentAccepted, setConsentAccepted] = useState(false);
   const [hoveredDepth, setHoveredDepth] = useState<number | null>(null);
@@ -77,6 +79,7 @@ export function DoomsdayClockSelector({
     
     onSearchStart({
       name: name.trim(),
+      identifierType,
       location: location.trim() || undefined,
       searchDepth: selectedDepth,
       consent: true,
@@ -106,12 +109,33 @@ export function DoomsdayClockSelector({
       {/* Input Fields */}
       <div className="grid gap-4">
         <div className="grid gap-2">
+          <Label htmlFor="pantheon-identifier-type" className="text-base font-semibold">
+            Starting Identifier
+          </Label>
+          <select
+            id="pantheon-identifier-type"
+            value={identifierType}
+            onChange={(event) => setIdentifierType(event.target.value as SearchConfig['identifierType'])}
+            disabled={isSearching}
+            className="h-12 rounded-md border-2 border-input bg-background px-3 text-base"
+          >
+            <option value="name">Name</option>
+            <option value="phone">Phone</option>
+            <option value="email">Email</option>
+            <option value="username">Username</option>
+            <option value="address">Address</option>
+            <option value="business">Business</option>
+            <option value="property">Property or parcel</option>
+            <option value="vin">VIN</option>
+          </select>
+        </div>
+        <div className="grid gap-2">
           <Label htmlFor="pantheon-name" className="text-base font-semibold">
-            Target Name *
+            Target {identifierType === 'name' ? 'Name' : 'Identifier'} *
           </Label>
           <Input
             id="pantheon-name"
-            placeholder="e.g., John Smith"
+            placeholder={identifierType === 'name' ? 'e.g., John Smith' : `Enter ${identifierType}`}
             value={name}
             onChange={(e) => setName(e.target.value)}
             onKeyPress={handleKeyPress}

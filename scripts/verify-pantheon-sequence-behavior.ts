@@ -27,9 +27,17 @@ for (const depth of [1, 2, 3] as const) {
   }
 }
 
+assert.ok(sourcePriority('discovery') > sourcePriority('primary'));
 assert.ok(sourcePriority('primary') > sourcePriority('secondary'));
 assert.ok(sourcePriority('secondary') > sourcePriority('archive'));
-assert.ok(sourcePriority('archive') > sourcePriority('discovery'));
+
+const subjectFirstPlan = initializePantheonCategoryPlans({
+  name: 'Jane Example',
+  location: 'New York, NY',
+  searchDepth: 1,
+  budgetMs: 10 * 60_000,
+})[0];
+assert.ok(subjectFirstPlan.sourcePlan.urls[0]?.includes('/search?'), 'subject-scoped discovery must lead the category frontier');
 
 const aborted = new AbortController();
 aborted.abort(new Error('fixture deadline'));

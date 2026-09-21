@@ -24,8 +24,8 @@ for (const token of [
 for (const token of [
   'type RetrievalEvidence = PantheonStructuredSourceResult',
   'createPantheonSourceResult',
-  "route: 'fallback'",
-  'fallbackFor',
+  'canonicalContent',
+  'linkedCandidates',
   'operationSignal',
   'operationDeadline?.dispose',
 ]) {
@@ -33,6 +33,10 @@ for (const token of [
 }
 if (adapter.includes('synthetic fallback') || adapter.includes('simulated fallback')) {
   throw new Error('Production retrieval adapter contains a simulated fallback');
+}
+if (!workflow.includes('reassignRetryableCapabilityWork') ||
+    !workflow.includes('Route-local retry assigned after')) {
+  throw new Error('Route-local fallback is not reassigned to an alternative compatible source');
 }
 for (const token of [
   'validatePantheonSourceResult(item)',

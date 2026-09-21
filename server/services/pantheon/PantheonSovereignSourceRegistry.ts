@@ -22,6 +22,11 @@ import { PANTHEON_VERIFIED_SOURCES_BATCH_20 } from './sources/batch20';
 import { PANTHEON_VERIFIED_SOURCES_BATCH_21 } from './sources/batch21';
 import { PANTHEON_VERIFIED_SOURCES_BATCH_22 } from './sources/batch22';
 import { PANTHEON_VERIFIED_SOURCES_BATCH_23 } from './sources/batch23';
+import {
+  compilePantheonSourceRegistry,
+  pantheonSourceExclusionsForCategory,
+  type PantheonSourceAccessMode,
+} from './PantheonSourceRegistryCompiler';
 /**
  * PANTHEON sovereign source registry.
  *
@@ -52,6 +57,15 @@ export interface PantheonSourceTarget {
   jurisdiction: string;
   query: string;
   transport: PantheonTransport;
+  sourceKind?: 'api'|'bulk-dataset'|'sitemap'|'rss'|'public-page'|'search'|'archive';
+  freshnessWeight?: number;
+  expectedValue?: number;
+  /** Whether this exact target contains the submitted subject query. */
+  subjectScoped?: boolean;
+  sourceIds?: string[];
+  originalUrls?: string[];
+  accessMode?: Extract<PantheonSourceAccessMode, 'public'|'contact-registration'>;
+  accessReason?: string;
 }
 
 export const PANTHEON_VERIFIED_SOURCE_INVENTORY = [
@@ -69,9 +83,16 @@ export const PANTHEON_VERIFIED_SOURCE_INVENTORY = [
   ...PANTHEON_VERIFIED_SOURCES_BATCH_23,
 ] as const;
 
+export const PANTHEON_COMPILED_SOURCE_REGISTRY = compilePantheonSourceRegistry(
+  PANTHEON_VERIFIED_SOURCE_INVENTORY,
+);
+export const PANTHEON_EXECUTABLE_SOURCE_INVENTORY = PANTHEON_COMPILED_SOURCE_REGISTRY.executable;
+export const PANTHEON_SOURCE_EXCLUSION_LEDGER = PANTHEON_COMPILED_SOURCE_REGISTRY.exclusions;
+export const PANTHEON_SOURCE_REGISTRY_DIAGNOSTICS = PANTHEON_COMPILED_SOURCE_REGISTRY.diagnostics;
+
 const AUTHORITIES = [
   ['https://www.usa.gov/','primary'],['https://www.uscourts.gov/','primary'],
-  ['https://pacer.uscourts.gov/','primary'],['https://www.supremecourt.gov/','primary'],
+  ['https://www.supremecourt.gov/','primary'],
   ['https://www.justice.gov/','primary'],['https://www.fbi.gov/','primary'],
   ['https://www.bop.gov/','primary'],['https://www.usmarshals.gov/','primary'],
   ['https://www.nsopw.gov/','primary'],['https://www.archives.gov/','primary'],
@@ -122,6 +143,23 @@ function transportForSource(url: string, authority: PantheonSourceTarget['author
  return 'direct-http';
 }
 
+function sourceKindFor(url: string, authority: PantheonSourceTarget['authority']): NonNullable<PantheonSourceTarget['sourceKind']> {
+ const value=url.toLowerCase();
+ if(authority==='discovery'||/google\.com\/search|bing\.com\/search|search\.brave\.com/.test(value)) return 'search';
+ if(authority==='archive'||/archive\.org|arquivo\.pt|mementoweb/.test(value)) return 'archive';
+ if(/(?:^|\/)sitemap(?:[_-]|\.|\/)|sitemap\.xml/.test(value)) return 'sitemap';
+ if(/(?:rss|atom|feed)(?:\.|\/|$)/.test(value)) return 'rss';
+ if(/(?:bulk|download|dataset|data\.)/.test(value)) return 'bulk-dataset';
+ if(/api\.|\/api\/|\.json(?:$|\?)/.test(value)) return 'api';
+ return 'public-page';
+}
+
+function sourceWeights(kind: NonNullable<PantheonSourceTarget['sourceKind']>, authority: PantheonSourceTarget['authority']) {
+ const kindValue=({api:95,'bulk-dataset':92,sitemap:88,rss:84,'public-page':78,search:70,archive:62})[kind];
+ const authorityValue=({primary:100,secondary:82,discovery:68,archive:60})[authority];
+ return { freshnessWeight: kind==='rss'||kind==='api'?95:kind==='archive'?45:75, expectedValue: Math.round((kindValue+authorityValue)/2) };
+}
+
 function searchUrl(prefix:string, query:string) { return prefix + encodeURIComponent(query); }
 
 /** At least 300 deterministic retrieval URLs per category, generated on demand. */
@@ -134,12 +172,12 @@ export function buildPantheonCategoryTargets(
  const identity = [subject.trim(), String(location||'').trim()].filter(Boolean).map(v=>`"${v}"`).join(' ');
  if (!identity) return [];
  const out:PantheonSourceTarget[]=[]; const seen=new Set<string>();
- const add=(x:Omit<PantheonSourceTarget,'transport'> & {transport?:PantheonTransport})=>{ if(!seen.has(x.url)){seen.add(x.url);out.push({...x,transport:x.transport||transportForSource(x.url,x.authority)});} };
+ const add=(x:Omit<PantheonSourceTarget,'transport'|'subjectScoped'|'sourceKind'|'freshnessWeight'|'expectedValue'> & {transport?:PantheonTransport;subjectScoped?:boolean;sourceKind?:PantheonSourceTarget['sourceKind'];freshnessWeight?:number;expectedValue?:number})=>{ if(!seen.has(x.url)){const sourceKind=x.sourceKind||sourceKindFor(x.url,x.authority);const weights=sourceWeights(sourceKind,x.authority);seen.add(x.url);out.push({...x,transport:x.transport||transportForSource(x.url,x.authority),sourceKind,freshnessWeight:x.freshnessWeight??weights.freshnessWeight,expectedValue:x.expectedValue??weights.expectedValue,subjectScoped:x.subjectScoped===true});} };
  // Pair each verified authority with a subject-specific discovery task. A bare
  // agency home page is useful for source discovery, but is never mistaken for
  // a person-specific result merely because it is authoritative.
  const normalizedLocation=String(location||'').toUpperCase();
- const inventory=PANTHEON_VERIFIED_SOURCE_INVENTORY
+ const inventory=PANTHEON_EXECUTABLE_SOURCE_INVENTORY
    .filter(source=>source.categories.includes(category))
    .sort((left,right)=>{
      const score=(jurisdiction:string)=>normalizedLocation.includes(jurisdiction.replace(/^US-/,''))?3:/^(?:US|FEDERAL|NATIONAL)$/i.test(jurisdiction)?2:1;
@@ -156,18 +194,34 @@ export function buildPantheonCategoryTargets(
      jurisdiction:source.jurisdiction,
      query:q,
      transport:'search-provider',
+     subjectScoped:true,
+     sourceIds:[...source.sourceIds],
+     originalUrls:[...source.originalUrls],
+     accessMode:source.accessMode,
+     accessReason:source.accessReason,
    });
-   add({category,url:source.url,authority:source.authority,jurisdiction:source.jurisdiction,query:q});
+   add({
+     category,
+     url:source.url,
+     authority:source.authority,
+     jurisdiction:source.jurisdiction,
+     query:q,
+     subjectScoped:false,
+     sourceIds:[...source.sourceIds],
+     originalUrls:[...source.originalUrls],
+     accessMode:source.accessMode,
+     accessReason:source.accessReason,
+   });
    if(out.length>=limit) return out.slice(0,limit);
  }
  for(const [root,authority] of AUTHORITIES){
    const q=`${identity} ${category}`;
-   add({category,url:searchUrl('https://www.google.com/search?q=',`site:${new URL(root).hostname} ${q}`),authority:'discovery',jurisdiction:'US',query:q});
+   add({category,url:searchUrl('https://www.google.com/search?q=',`site:${new URL(root).hostname} ${q}`),authority:'discovery',jurisdiction:'US',query:q,subjectScoped:true});
  }
  for(const facet of facets){
    for(const host of DISCOVERY_HOSTS){
      const q=`${identity} ${category} ${facet}`;
-     add({category,url:searchUrl(host,q),authority:'discovery',jurisdiction:location||'US',query:q});
+     add({category,url:searchUrl(host,q),authority:'discovery',jurisdiction:location||'US',query:q,subjectScoped:true});
      if(out.length>=limit) return out.slice(0,limit);
    }
  }
@@ -178,7 +232,10 @@ export function buildPantheonCategoryTargets(
 export interface PantheonSourcePreflightIssue {
   originalUrl: string;
   reason: string;
-  replacementUrl: string;
+  replacementUrl?: string;
+  disposition?: 'replaced'|'excluded';
+  accessRequirement?: PantheonSourceAccessMode;
+  sourceIds?: string[];
 }
 
 export function preflightPantheonSourceTargets(
@@ -188,7 +245,16 @@ export function preflightPantheonSourceTargets(
   location?: string,
 ): { targets: PantheonSourceTarget[]; issues: PantheonSourcePreflightIssue[] } {
   const accepted: PantheonSourceTarget[] = [];
-  const issues: PantheonSourcePreflightIssue[] = [];
+  const issues: PantheonSourcePreflightIssue[] = pantheonSourceExclusionsForCategory(
+    PANTHEON_SOURCE_EXCLUSION_LEDGER,
+    category,
+  ).map(exclusion => ({
+    originalUrl: exclusion.originalUrls[0] || exclusion.canonicalUrl || 'unknown',
+    reason: exclusion.reason,
+    disposition: 'excluded' as const,
+    accessRequirement: exclusion.accessMode,
+    sourceIds: [...exclusion.sourceIds],
+  }));
   const seen = new Set<string>();
   for (const target of targets) {
     const admission = admitPantheonUrl(target.url);
@@ -212,11 +278,18 @@ export function preflightPantheonSourceTargets(
       jurisdiction: location || 'US',
       query,
       transport: 'search-provider',
+      sourceKind: 'search',
+      freshnessWeight: 70,
+      expectedValue: 69,
+      subjectScoped: true,
     });
     issues.push({
       originalUrl: target.url,
       reason: admission.reason,
       replacementUrl: replacementAdmission.url,
+      disposition: 'replaced',
+      accessRequirement: 'excluded-invalid',
+      sourceIds: target.sourceIds ? [...target.sourceIds] : undefined,
     });
   }
   return { targets: accepted, issues };

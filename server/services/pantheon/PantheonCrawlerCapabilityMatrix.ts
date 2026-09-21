@@ -169,7 +169,7 @@ function capability(
       ? ['direct-http', 'browser', 'search-provider', 'archive']
       : taskKind === 'observe-source-transport'
         ? ['direct-http', 'browser', 'archive']
-        : ['direct-http', 'browser', 'specialized-adapter', 'archive'];
+      : ['direct-http', 'browser', 'search-provider', 'specialized-adapter', 'archive'];
   return {
     id,
     capabilityClass,
@@ -741,7 +741,16 @@ export function buildPantheonCapabilityWorkLedger(input: {
       };
     }
 
-    const compatible = executableByCapability.get(capabilityId) || [];
+    const compatible = [...(executableByCapability.get(capabilityId) || [])].sort((left, right) => {
+      const preference = (transport: PantheonTransport | undefined) => {
+        if (descriptor.taskKind === 'discover-related-sources') return transport === 'search-provider' ? 0 : 1;
+        if (descriptor.taskKind === 'extract-structured-evidence' || descriptor.taskKind === 'observe-source-transport') {
+          return transport === 'search-provider' ? 2 : 0;
+        }
+        return transport === 'search-provider' ? 0 : 1;
+      };
+      return preference(left.transport) - preference(right.transport);
+    });
     if (!compatible.length) {
       return {
         ...base,

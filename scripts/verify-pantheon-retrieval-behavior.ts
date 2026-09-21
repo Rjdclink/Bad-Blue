@@ -5,6 +5,7 @@ import {
   detectPublicAccessBarrier,
 } from '../server/services/crawlers/PublicAcquisitionInfrastructure';
 import { canonicalizeSixDegreesTarget } from '../server/services/crawlers/SixDegreesCrawler';
+import { extractPantheonDiscoveredCandidates } from '../server/services/crawlers/PantheonRetrievalAdapter';
 
 const publicUrl = admitPantheonUrl('https://example.com/public-record?q=smith&utm_source=test#section');
 assert.equal(publicUrl.ok, true, 'a normal public evidence URL must be admitted');
@@ -15,6 +16,18 @@ assert.equal(
   admitPantheonUrl('https://fdc.myflorida.com/public-records').ok,
   true,
   'ordinary hostnames beginning with an IPv6-looking prefix must remain public',
+);
+
+assert.deepEqual(
+  extractPantheonDiscoveredCandidates(
+    '<a href="/records/jane-example">Record</a><a href="https://news.example.org/jane-example">News</a>',
+    'https://records.example.gov/search?q=jane',
+  ).slice(0, 2),
+  [
+    'https://records.example.gov/records/jane-example',
+    'https://news.example.org/jane-example',
+  ],
+  'subject discovery must preserve absolute results and resolve relative result URLs before ledger admission',
 );
 
 for (const rejected of [

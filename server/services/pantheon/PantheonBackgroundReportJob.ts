@@ -26,12 +26,32 @@ import {
   normalizePantheonSearchDepth,
   type PantheonSearchDepth,
 } from '@shared/pantheonReportConfig';
+import {
+  buildPantheonControlledQueryPlan,
+  normalizePantheonStartingIdentifier,
+  type PantheonControlledQueryPlan,
+  type PantheonStartingIdentifier,
+} from './PantheonQueryPlan';
+import { buildPantheonInvestigationIntelligence } from './PantheonInvestigationIntelligence';
+import {
+  loadPantheonSavedSearchSnapshot,
+  persistPantheonSavedSearchSnapshot,
+} from './PantheonSavedSearchStore';
+import { createPantheonRegistrationAuthority } from './PantheonContactRegistrationBroker';
+import {
+  claimPantheonJobLease,
+  releasePantheonJobLease,
+  renewPantheonJobLease,
+} from './PantheonFrontierStore';
+import { storage } from '../../storage';
 
 export interface PantheonReportJobInput {
   reportId: string;
   userId: string;
   name: string;
   location?: string;
+  startingIdentifier: PantheonStartingIdentifier;
+  queryPlan: PantheonControlledQueryPlan;
   searchDepth: PantheonSearchDepth;
   resumeFromCategory?: number;
   resumeCategoryIndexes?: readonly number[];
@@ -40,6 +60,7 @@ export interface PantheonReportJobInput {
   initialCategoryStates?: readonly PantheonPersistedCategoryState[];
   idempotencyKey: string;
   consent: { accepted: true; version: string; acceptedAt: string };
+  recoveryAttempt?: number;
 }
 
 interface PersistedPantheonJob {
@@ -51,6 +72,11 @@ interface PersistedPantheonJob {
   processedCategories?: number;
   idempotencyKey?: string;
   consent?: { accepted?: boolean; version?: string; acceptedAt?: string };
+  startingIdentifier?: PantheonStartingIdentifier;
+  queryPlan?: PantheonControlledQueryPlan;
+  recoveryAttempt?: number;
+  heartbeatAt?: string;
+  deadLetter?: { reason: string; failedAt: string; recoveryAttempts: number };
 }
 
 const activeJobs = new Map<string, Promise<void>>();
@@ -61,10 +87,14 @@ function jobEnvelope(input: PantheonReportJobInput, state: 'queued' | 'running' 
     state,
     name: input.name,
     location: input.location || null,
+    startingIdentifier: input.startingIdentifier,
+    queryPlan: input.queryPlan,
     searchDepth: input.searchDepth,
     budgetMs,
     idempotencyKey: input.idempotencyKey,
     consent: input.consent,
+    heartbeatAt: new Date().toISOString(),
+    recoveryAttempt: Math.max(0, Number(input.recoveryAttempt || 0)),
     ...extra,
   };
 }
@@ -91,6 +121,8 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
   const initializedStates = initializePantheonCategoryPlans({
     name: input.name,
     location: input.location,
+    startingIdentifier: input.startingIdentifier,
+    queryPlan: input.queryPlan,
     searchDepth: input.searchDepth,
     budgetMs,
   });
@@ -183,11 +215,22 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       throw new Error('PANTHEON investigation budget expired before collection could begin');
     }
 
+    const registrationUser = await storage.getUser(input.userId).catch(() => undefined);
+    const registrationAuthority = createPantheonRegistrationAuthority(registrationUser);
+    console.log('[PANTHEON REPORT JOB] contact-only source access', {
+      reportId: input.reportId,
+      enabled: registrationAuthority.enabled,
+      approvedHostCount: registrationAuthority.allowedHosts.size,
+      ...(registrationAuthority.enabled ? {} : { reason: registrationAuthority.unavailableReason }),
+    });
+
     console.log('[PANTHEON REPORT JOB] category collection started', { reportId: input.reportId, categories: PANTHEON_REPORT_CATEGORIES.length });
     const { report, categoryOutcomes } = await conductPantheonCategoryWorkflow({
       investigationId: input.reportId,
       name: input.name,
       location: input.location,
+      startingIdentifier: input.startingIdentifier,
+      queryPlan: input.queryPlan,
       searchDepth: input.searchDepth,
       deadlineAt: deadlineAt.getTime(),
       startCategoryIndex: input.resumeFromCategory,
@@ -196,6 +239,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       initialCategoryOutcomes: input.initialCategoryOutcomes,
       initialCategoryStates: categoryStates,
       capabilityHealth,
+      registrationAuthority,
       onCategoryState: async ({ index, label, phase }) => {
         const categoryState = categoryStates[index];
         if (categoryState) {
@@ -294,6 +338,19 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
     });
 
     const investigation = assessPantheonInvestigation(categoryOutcomes);
+    const previousIntelligence = await loadPantheonSavedSearchSnapshot(input.userId, input.queryPlan.planId);
+    const investigationIntelligence = buildPantheonInvestigationIntelligence({
+      report,
+      categoryOutcomes,
+      queryPlan: input.queryPlan,
+      previous: previousIntelligence,
+    });
+    const savedSearch = await persistPantheonSavedSearchSnapshot({
+      userId: input.userId,
+      planId: input.queryPlan.planId,
+      reportId: input.reportId,
+      intelligence: investigationIntelligence,
+    });
     Object.assign(report as any, {
       investigationStatus: investigation.state,
       investigationCoverage: investigation,
@@ -304,6 +361,12 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
           && ['completed_with_evidence', 'completed_no_evidence'].includes(String(entry.status || '')))
         .map((entry: any) => String(entry.crawler || ''))
         .filter(Boolean))],
+      investigationIntelligence,
+      savedSearch: {
+        mode: 'controlled-change-detection-on-subsequent-investigation',
+        ...savedSearch,
+        changeAlertCount: investigationIntelligence.changeAlerts.length,
+      },
     });
     latestPartialReport = report;
     await updatePantheonReportRecord(input.reportId, 'processing', {
@@ -432,6 +495,11 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
         startedAt: startedAt.toISOString(),
         deadlineAt: deadlineAt.toISOString(),
         failedAt: new Date().toISOString(),
+        deadLetter: {
+          reason: message.slice(0, 500),
+          failedAt: new Date().toISOString(),
+          recoveryAttempts: Math.max(0, Number(input.recoveryAttempt || 0)),
+        },
       }),
       categoryStates,
       categoryOutcomes: persistedOutcomes(),
@@ -466,7 +534,25 @@ export function startPantheonReportJob(input: PantheonReportJobInput): Promise<v
   const existing = activeJobs.get(input.reportId);
   if (existing) return existing;
 
-  const job = runPantheonReportJob(input)
+  const job = (async () => {
+    const lease = await claimPantheonJobLease(input.reportId);
+    if (!lease.acquired) {
+      console.log('[PANTHEON REPORT JOB] duplicate cross-replica execution suppressed', { reportId: input.reportId });
+      return;
+    }
+    const heartbeat = setInterval(() => {
+      void renewPantheonJobLease(lease).then(renewed => {
+        if (!renewed) console.warn('[PANTHEON REPORT JOB] durable lease ownership was lost', { reportId: input.reportId });
+      });
+    }, 30_000);
+    heartbeat.unref?.();
+    try {
+      await runPantheonReportJob(input);
+    } finally {
+      clearInterval(heartbeat);
+      await releasePantheonJobLease(lease);
+    }
+  })()
     .finally(() => activeJobs.delete(input.reportId));
 
   activeJobs.set(input.reportId, job);
@@ -517,11 +603,35 @@ export function resumePantheonReportJobFromRecord(report: {
   ].filter((outcome, position, values) =>
     values.findIndex(candidate => candidate.index === outcome.index) === position);
 
+  const startingIdentifier = job?.startingIdentifier || normalizePantheonStartingIdentifier({
+    kind: 'name',
+    value: name,
+  });
+  const queryPlan = job?.queryPlan || buildPantheonControlledQueryPlan({
+    primary: startingIdentifier,
+    location: job?.location || undefined,
+    searchDepth: normalizePantheonSearchDepth(job?.searchDepth),
+  });
+  const recoveryAttempt = Math.max(0, Number(job?.recoveryAttempt || 0));
+  if (recoveryAttempt >= 3) {
+    const reason = 'Pantheon recovery attempts exhausted; job moved to dead-letter state for explicit review.';
+    return updatePantheonReportRecord(report.id, 'failed', {
+      ...envelope,
+      job: {
+        ...job,
+        state: 'failed',
+        failedAt: new Date().toISOString(),
+        deadLetter: { reason, failedAt: new Date().toISOString(), recoveryAttempts: recoveryAttempt },
+      },
+    }, reason).then(() => undefined);
+  }
   return startPantheonReportJob({
     reportId: report.id,
     userId: report.userId,
     name,
     location: job?.location || undefined,
+    startingIdentifier,
+    queryPlan,
     searchDepth: normalizePantheonSearchDepth(job?.searchDepth),
     resumeCategoryIndexes,
     initialReport: envelope.report,
@@ -529,5 +639,6 @@ export function resumePantheonReportJobFromRecord(report: {
     initialCategoryStates: persistedStates,
     idempotencyKey,
     consent: { accepted: true, version: consent.version, acceptedAt: consent.acceptedAt },
+    recoveryAttempt: recoveryAttempt + 1,
   });
 }

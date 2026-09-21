@@ -14,7 +14,6 @@ import { type CrawlerSupervisionResult } from './CainReaperSupervisor';
 import { twoStageDeployer } from '../pantheon/razors/TwoStageDeployer';
 import {
   getPantheonCategoryCapabilities,
-  getPantheonPrimaryCrawlerCapabilitiesForCategory,
   PANTHEON_PRIMARY_CRAWLER_IDS,
   PANTHEON_RAZOR_SKILL_IDS,
   PANTHEON_SECONDARY_CRAWLER_IDS,
@@ -91,6 +90,7 @@ export class PantheonRetrievalAdapter {
       workId?: string;
       canonicalUrl?: string;
       capability?: string;
+      requestHeaders?: Record<string, string>;
     };
   }): Promise<PantheonRetrievalResponse> {
     throwIfPantheonAborted(request.signal);
@@ -215,6 +215,7 @@ export class PantheonRetrievalAdapter {
         deadlineAt: deadlineAt!,
         canonicalUrl: request.authority!.canonicalUrl!,
         route: 'primary' as const,
+        requestHeaders: request.authority!.requestHeaders,
       };
       // Acquire one full canonical snapshot first. Primary crawlers share the
       // gateway cache, while extraction capabilities receive this untruncated
@@ -233,44 +234,10 @@ export class PantheonRetrievalAdapter {
       results = isolated.results;
       crawlerAudit = isolated.audit;
 
-      const failedRoutes = isolated.audit.filter(audit => audit.status === 'failed' || audit.status === 'timed_out');
-      const preferredFallbacks = getPantheonPrimaryCrawlerCapabilitiesForCategory(request.categoryLabel || '');
-      const fallbackCandidates = [...preferredFallbacks, ...PANTHEON_PRIMARY_CRAWLER_IDS];
-      const usedFallbacks = new Set<string>();
-      for (const failed of failedRoutes.slice(0, 2)) {
-        if (!collectionOpen()) break;
-        const fallback = fallbackCandidates.find(candidate =>
-          candidate !== failed.crawler && !usedFallbacks.has(candidate)
-        ) as PantheonPrimaryCrawlerId | undefined;
-        if (!fallback) continue;
-        usedFallbacks.add(fallback);
-        const fallbackBudgetMs = Math.max(750, Math.min(
-          Math.floor(primaryBudgetMs * 0.25),
-          Number.isFinite(remainingBudgetMs()) ? remainingBudgetMs() : primaryBudgetMs,
-        ));
-        const fallbackRun = await runWithPantheonAcquisitionContext(
-          {
-            ...acquisitionAuthority,
-            workId: `${acquisitionAuthority.workId}:fallback:${fallback}`,
-            capability: fallback,
-            route: 'fallback' as const,
-            fallbackFor: failed.crawler,
-          },
-          operationSignal,
-          () => pantheonOrchestrator.searchAllIsolatedWithAudit(request.targets, {
-            ...searchOptions,
-            crawlers: [fallback],
-            timeout: fallbackBudgetMs,
-            signal: operationSignal,
-          }),
-        );
-        results.push(...fallbackRun.results);
-        crawlerAudit.push(...fallbackRun.audit.map(audit => ({
-          ...audit,
-          route: 'fallback' as const,
-          fallbackFor: failed.crawler,
-        })));
-      }
+      // A crawler-local retry of the same canonical URL cannot repair a 401,
+      // 403, 404, challenge page, or cached network outcome. The category
+      // controller performs the useful fallback: reassign the capability to a
+      // different compatible URL while preserving the failed source outcome.
     } else {
       results = await pantheonOrchestrator.search(request.targets, searchOptions);
     }
@@ -290,6 +257,12 @@ export class PantheonRetrievalAdapter {
           contentType: canonicalAcquisition?.contentType,
           requestedUrl: request.targets[0],
           finalUrl: canonicalAcquisition?.url,
+          canonicalContent: canonicalAcquisition?.ok ? canonicalAcquisition.content : undefined,
+          redirectChain: canonicalAcquisition?.redirectChain,
+          parser: canonicalAcquisition?.parser,
+          ocrApplied: canonicalAcquisition?.ocrApplied,
+          rawSnapshot: canonicalAcquisition?.snapshot,
+          lastModified: canonicalAcquisition?.lastModified,
         });
       });
 
@@ -328,6 +301,7 @@ export class PantheonRetrievalAdapter {
               capability: 'extended-pantheon',
               deadlineAt: deadlineAt!,
               canonicalUrl: target,
+              requestHeaders: request.authority!.requestHeaders,
             },
             operationSignal,
             () => twoStageDeployer.deployBackgroundReport(
@@ -458,6 +432,27 @@ export class PantheonRetrievalAdapter {
   }
 }
 
+export function extractPantheonDiscoveredCandidates(
+  content: string,
+  baseUrl: string,
+  inherited: readonly unknown[] = [],
+): string[] {
+  const linkedCandidates = [...content.matchAll(/href=["']([^"']+)["']/gi)]
+    .flatMap(match => {
+      try {
+        const url = new URL(String(match[1] || ''), baseUrl);
+        return url.protocol === 'http:' || url.protocol === 'https:' ? [url.toString()] : [];
+      } catch {
+        return [];
+      }
+    });
+  return [...new Set([
+    ...inherited.map(value => String(value || '')).filter(Boolean),
+    ...linkedCandidates,
+    ...(content.match(/https?:\/\/[^\s<>"')\]]+/g) || []),
+  ])].slice(0, 100);
+}
+
 function normalizeResult(
   result: CrawlerResult,
   context: {
@@ -468,31 +463,52 @@ function normalizeResult(
     contentType?: string;
     requestedUrl?: string;
     finalUrl?: string;
+    canonicalContent?: string;
+    redirectChain?: string[];
+    parser?: string;
+    ocrApplied?: boolean;
+    rawSnapshot?: PublicAcquisitionResult['snapshot'];
+    lastModified?: string;
   },
 ): RetrievalEvidence {
   const discoveryOnly = context.transport === 'search-provider';
+  const canonicalContent = context.canonicalContent || result.content;
+  const pageTitle = /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(canonicalContent)?.[1]
+    ?.replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 500);
   const discoveredCandidates = discoveryOnly
-    ? [...new Set([
-        ...(Array.isArray(result.metadata?.discoveredCandidates) ? result.metadata.discoveredCandidates : []),
-        ...(result.content.match(/https?:\/\/[^\s<>"')\]]+/g) || []),
-      ])].slice(0, 20)
+    ? extractPantheonDiscoveredCandidates(
+        canonicalContent,
+        context.finalUrl || result.target,
+        Array.isArray(result.metadata?.discoveredCandidates) ? result.metadata.discoveredCandidates : [],
+      )
     : [];
   return createPantheonSourceResult({
     crawler: result.crawler,
     capabilityId: result.crawler,
     categoryLabel: context.categoryLabel,
     sourceUrl: result.target,
-    content: result.content,
+    content: canonicalContent,
     confidence: result.confidence,
     retrievedAt: new Date(result.timestamp).toISOString(),
     durationMs: context.durationMs,
     transport: context.transport,
     httpStatus: context.httpStatus,
     contentType: context.contentType,
+    requestedUrl: context.requestedUrl || result.target,
+    finalUrl: context.finalUrl || result.target,
+    redirectChain: context.redirectChain,
+    parser: context.parser,
+    ocrApplied: context.ocrApplied,
+    rawSnapshot: context.rawSnapshot,
+    lastModified: context.lastModified,
     metadata: {
       ...(result.metadata || {}),
       requestedUrl: context.requestedUrl || result.target,
       finalUrl: context.finalUrl || result.target,
+      ...(pageTitle ? { pageTitle } : {}),
       ...(discoveryOnly ? { discoveryOnly: true, discoveredCandidates } : {}),
     },
   });

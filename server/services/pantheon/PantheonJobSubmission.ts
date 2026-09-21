@@ -1,10 +1,18 @@
 import { normalizePantheonSearchDepth, type PantheonSearchDepth } from '@shared/pantheonReportConfig';
+import {
+  buildPantheonControlledQueryPlan,
+  normalizePantheonStartingIdentifier,
+  type PantheonControlledQueryPlan,
+  type PantheonStartingIdentifier,
+} from './PantheonQueryPlan';
 
 export const PANTHEON_CONSENT_VERSION = 'pantheon-public-records-v1';
 
 export interface ValidPantheonJobSubmission {
   name: string;
   location?: string;
+  startingIdentifier: PantheonStartingIdentifier;
+  queryPlan: PantheonControlledQueryPlan;
   searchDepth: PantheonSearchDepth;
   idempotencyKey: string;
   consent: {
@@ -25,9 +33,13 @@ export function validatePantheonJobSubmission(
   idempotencyHeader?: unknown,
 ): ValidPantheonJobSubmission {
   const input = body && typeof body === 'object' ? body as Record<string, unknown> : {};
-  const name = normalizeText(input.name, 120);
+  const startingIdentifier = normalizePantheonStartingIdentifier({
+    kind: input.identifierType,
+    value: input.identifierValue,
+    legacyName: input.name,
+  });
+  const name = startingIdentifier.value;
   const location = normalizeText(input.location, 160);
-  if (name.length < 2 || !/[\p{L}\p{N}]/u.test(name)) throw new Error('invalid_target_name');
 
   const rawDepth = Number(input.searchDepth);
   if (![1, 2, 3].includes(rawDepth)) throw new Error('invalid_search_depth');
@@ -36,10 +48,18 @@ export function validatePantheonJobSubmission(
   const idempotencyKey = String(idempotencyHeader || input.idempotencyKey || '').trim();
   if (!/^[A-Za-z0-9._:-]{16,128}$/.test(idempotencyKey)) throw new Error('invalid_idempotency_key');
 
+  const searchDepth = normalizePantheonSearchDepth(rawDepth);
+  const queryPlan = buildPantheonControlledQueryPlan({
+    primary: startingIdentifier,
+    location: location || undefined,
+    searchDepth,
+  });
   return {
     name,
     location: location || undefined,
-    searchDepth: normalizePantheonSearchDepth(rawDepth),
+    startingIdentifier,
+    queryPlan,
+    searchDepth,
     idempotencyKey,
     consent: {
       accepted: true,

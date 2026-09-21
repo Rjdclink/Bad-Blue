@@ -84,6 +84,7 @@ function persistReportJob(jobId: string, savedAt = Date.now()): void {
 
 interface SearchConfig {
   name: string;
+  identifierType: 'name' | 'phone' | 'email' | 'username' | 'address' | 'business' | 'property' | 'vin';
   location?: string;
   searchDepth: number;
   consent: true;
@@ -92,6 +93,7 @@ interface SearchConfig {
 function submissionFingerprint(config: SearchConfig): string {
   return JSON.stringify({
     name: config.name.trim().normalize('NFKC'),
+    identifierType: config.identifierType,
     location: (config.location || '').trim().normalize('NFKC'),
     searchDepth: normalizePantheonSearchDepth(config.searchDepth),
   });
@@ -206,6 +208,7 @@ export default function PantheonPage() {
         if (job?.name) {
           setSearchConfig({
             name: String(job.name),
+            identifierType: String(job.startingIdentifier?.kind || 'name') as SearchConfig['identifierType'],
             location: job.location ? String(job.location) : undefined,
             searchDepth: normalizePantheonSearchDepth(job.searchDepth),
             consent: true,
@@ -300,6 +303,8 @@ export default function PantheonPage() {
         credentials: 'include',
         body: JSON.stringify({
           name: config.name,
+          identifierType: config.identifierType,
+          identifierValue: config.name,
           location: config.location,
           searchDepth: config.searchDepth,
           consent: config.consent,

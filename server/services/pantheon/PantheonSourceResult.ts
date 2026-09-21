@@ -23,6 +23,21 @@ export interface PantheonStructuredSourceResult {
     durationMs: number;
     httpStatus?: number;
     contentType?: string;
+    requestedUrl?: string;
+    finalUrl?: string;
+    redirectChain?: string[];
+    parser?: string;
+    ocrApplied?: boolean;
+    rawSnapshot?: {
+      rawSha256: string;
+      rawBytes: number;
+      compressedBytes: number;
+      storageKey: string;
+      immutable: true;
+      durable: boolean;
+      capturedAt: string;
+    };
+    lastModified?: string;
   };
   metadata: Record<string, unknown>;
 }
@@ -39,6 +54,13 @@ export function createPantheonSourceResult(input: {
   transport?: PantheonTransport;
   httpStatus?: number;
   contentType?: string;
+  requestedUrl?: string;
+  finalUrl?: string;
+  redirectChain?: string[];
+  parser?: string;
+  ocrApplied?: boolean;
+  rawSnapshot?: PantheonStructuredSourceResult['provenance']['rawSnapshot'];
+  lastModified?: string;
   metadata?: Record<string, unknown>;
 }): PantheonStructuredSourceResult {
   const content = String(input.content || '').trim();
@@ -72,6 +94,13 @@ export function createPantheonSourceResult(input: {
       durationMs: Math.max(0, Number(input.durationMs) || 0),
       ...(input.httpStatus == null ? {} : { httpStatus: input.httpStatus }),
       ...(input.contentType ? { contentType: input.contentType } : {}),
+      ...(input.requestedUrl ? { requestedUrl: input.requestedUrl } : {}),
+      ...(input.finalUrl ? { finalUrl: input.finalUrl } : {}),
+      ...(input.redirectChain?.length ? { redirectChain: [...input.redirectChain] } : {}),
+      ...(input.parser ? { parser: input.parser } : {}),
+      ...(input.ocrApplied == null ? {} : { ocrApplied: input.ocrApplied }),
+      ...(input.rawSnapshot ? { rawSnapshot: { ...input.rawSnapshot } } : {}),
+      ...(input.lastModified ? { lastModified: input.lastModified } : {}),
     },
     metadata: { ...(input.metadata || {}) },
   };

@@ -3596,7 +3596,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
           : 'The target, location, search depth, or idempotency key is invalid.',
       });
     }
-    const { name, location, searchDepth, idempotencyKey, consent } = submission;
+    const { name, location, startingIdentifier, queryPlan, searchDepth, idempotencyKey, consent } = submission;
     const { getPantheonReportDurationMs } = await import('@shared/pantheonReportConfig');
     const budgetMs = getPantheonReportDurationMs(searchDepth);
 
@@ -3612,6 +3612,8 @@ Contact: ${foiaRequest.userEmail || userEmail}
             state: 'queued',
             name,
             location: location || null,
+            startingIdentifier,
+            queryPlan,
             searchDepth,
             budgetMs,
             idempotencyKey,
@@ -3633,6 +3635,8 @@ Contact: ${foiaRequest.userEmail || userEmail}
             userId,
             name,
             location,
+            startingIdentifier,
+            queryPlan,
             searchDepth,
             idempotencyKey,
             consent,

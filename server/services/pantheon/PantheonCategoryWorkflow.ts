@@ -14,6 +14,7 @@ import {
   PANTHEON_CATEGORY_CONCURRENCY_LIMIT,
   PANTHEON_URL_CONCURRENCY_PER_CATEGORY,
   runPantheonBounded,
+  runPantheonTransportBounded,
   runPantheonUrlBounded,
 } from './PantheonBoundedScheduler';
 import {
@@ -39,8 +40,22 @@ import {
   buildPantheonCategoryTargets,
   preflightPantheonSourceTargets,
   type PantheonBackgroundCategory,
+  type PantheonSourceTarget,
   type PantheonSourcePreflightIssue,
 } from './PantheonSovereignSourceRegistry';
+import type { PantheonControlledQueryPlan, PantheonStartingIdentifier } from './PantheonQueryPlan';
+import {
+  ensurePantheonContactRegistration,
+  type PantheonRegistrationAuthority,
+} from './PantheonContactRegistrationBroker';
+import {
+  claimPantheonFrontierItem,
+  completePantheonFrontierItem,
+  preparePantheonFrontier,
+  syncPantheonFrontierStates,
+  type PantheonFrontierClaim,
+  type PantheonFrontierSeed,
+} from './PantheonFrontierStore';
 
 export const PANTHEON_REPORT_CATEGORIES = [
   { label: 'Identity & Identity Verification', registry: ['identity','identity-resolution','false-positive'] },
@@ -99,7 +114,17 @@ export interface PantheonUrlLedgerEntry {
   priority: number;
   authority: 'primary'|'secondary'|'archive'|'discovery';
   registryCategory: PantheonBackgroundCategory;
+  jurisdiction: string;
+  sourceKind: NonNullable<PantheonSourceTarget['sourceKind']>;
+  priorityFactors: {
+    relevance: number;
+    authority: number;
+    freshness: number;
+    expectedValue: number;
+  };
   workType: PantheonWorkType;
+  /** True only when the URL itself is scoped to the submitted subject. */
+  subjectScoped: boolean;
   state: PantheonUrlState;
   attempts: number;
   evidenceIds: string[];
@@ -117,6 +142,10 @@ export interface PantheonUrlLedgerEntry {
   transportAttempts?: Array<{ transport: NonNullable<PantheonUrlLedgerEntry['transport']>; outcome: 'pending'|'succeeded'|'failed'; reason?: string }>;
   startedAt?: string;
   completedAt?: string;
+  sourceIds?: string[];
+  originalUrls?: string[];
+  accessMode?: 'public'|'contact-registration';
+  accessReason?: string;
 }
 
 export interface PantheonCategoryOutcome {
@@ -146,6 +175,12 @@ export interface PantheonCategoryOutcome {
   capabilityOutcomes: PantheonCapabilityOutcome[];
   capabilityWorkLedger: PantheonExecutableWorkUnit[];
   sourcePreflightIssues: PantheonSourcePreflightIssue[];
+  reviewItems: Array<{
+    reason: string;
+    sourceUrl?: string;
+    citationId?: string;
+    excerpt?: string;
+  }>;
 }
 
 export interface PantheonPersistedCategoryState {
@@ -167,6 +202,8 @@ export interface PantheonPersistedCategoryState {
 export function initializePantheonCategoryPlans(input: {
   name: string;
   location?: string;
+  startingIdentifier?: PantheonStartingIdentifier;
+  queryPlan?: PantheonControlledQueryPlan;
   searchDepth: 1 | 2 | 3 | 4;
   budgetMs: number;
   concurrency?: number;
@@ -263,10 +300,23 @@ function intensityPolicy(depth: number) {
 }
 
 export function sourcePriority(authority: 'primary'|'secondary'|'discovery'|'archive'): number {
-  // Direct authorities are attempted before secondary/archive sources.
-  // Discovery remains executable and may append separately admitted result
-  // candidates, but a search navigation URL never outranks a direct source.
-  return ({ primary: 400, secondary: 300, archive: 200, discovery: 100 })[authority];
+  // Subject-specific discovery is the frontier for a background report. Bare
+  // authority roots remain available for source health/discovery, but cannot
+  // monopolize the selected depth before any subject result is found.
+  return ({ discovery: 500, primary: 400, secondary: 300, archive: 200 })[authority];
+}
+
+function targetPriority(target: PantheonSourceTarget): { priority: number; factors: PantheonUrlLedgerEntry['priorityFactors'] } {
+  const factors = {
+    relevance: target.subjectScoped ? 100 : 25,
+    authority: ({ primary: 100, secondary: 78, discovery: 64, archive: 55 })[target.authority],
+    freshness: Math.max(0, Math.min(100, Number(target.freshnessWeight ?? 75))),
+    expectedValue: Math.max(0, Math.min(100, Number(target.expectedValue ?? 70))),
+  };
+  return {
+    priority: Math.round(factors.relevance * 5 + factors.authority * 3 + factors.freshness + factors.expectedValue * 2),
+    factors,
+  };
 }
 
 function capabilityFor(categoryLabel: string, entry: PantheonUrlLedgerEntry): { capability: string; reason: string } {
@@ -298,7 +348,7 @@ function admittedDiscoveryCandidate(raw: unknown): ReturnType<typeof admitPanthe
   try {
     const parsed = new URL(value);
     if (/(?:^|\.)(?:google\.com|bing\.com|search\.brave\.com)$/i.test(parsed.hostname)) {
-      const embedded = ['url', 'q', 'target'].map(key => parsed.searchParams.get(key)).find(item => /^https?:\/\//i.test(String(item || '')));
+      const embedded = ['url', 'q', 'target', 'uddg'].map(key => parsed.searchParams.get(key)).find(item => /^https?:\/\//i.test(String(item || '')));
       if (!embedded) return { ok: false, reason: 'Search-provider navigation URL is not an attributable source result' };
       candidate = String(embedded);
     }
@@ -324,18 +374,45 @@ function buildCategoryLedger(
       const url = admission.url;
       if (seen.has(url)) continue;
       seen.add(url);
-      const selectedTransport = candidate.transport || transportFor({ url, priority: sourcePriority(candidate.authority), authority: candidate.authority, registryCategory: group.registryCategory, workType: 'authoritative-source', state: 'pending', attempts: 0, evidenceIds: [] });
-      ledger.push({
+      const ranked = targetPriority(candidate);
+      const ledgerSeed: PantheonUrlLedgerEntry = {
         url,
-        priority: sourcePriority(candidate.authority),
+        priority: ranked.priority,
         authority: candidate.authority,
         registryCategory: group.registryCategory,
-        workType: workTypeFor(candidate.authority, selectedTransport),
+        jurisdiction: candidate.jurisdiction,
+        sourceKind: candidate.sourceKind || 'public-page',
+        priorityFactors: ranked.factors,
+        workType: 'authoritative-source',
+        subjectScoped: false,
         state: 'pending',
         attempts: 0,
         evidenceIds: [],
+        sourceIds: candidate.sourceIds ? [...candidate.sourceIds] : undefined,
+        originalUrls: candidate.originalUrls ? [...candidate.originalUrls] : undefined,
+        accessMode: candidate.accessMode || 'public',
+        accessReason: candidate.accessReason,
+      };
+      const selectedTransport = candidate.transport || transportFor(ledgerSeed);
+      ledger.push({
+        url,
+        priority: ranked.priority,
+        authority: candidate.authority,
+        registryCategory: group.registryCategory,
+        jurisdiction: candidate.jurisdiction,
+        sourceKind: candidate.sourceKind || 'public-page',
+        priorityFactors: ranked.factors,
+        workType: workTypeFor(candidate.authority, selectedTransport),
+        subjectScoped: candidate.subjectScoped === true,
+        state: 'pending',
+        attempts: 0,
+        evidenceIds: [],
+        sourceIds: candidate.sourceIds ? [...candidate.sourceIds] : undefined,
+        originalUrls: candidate.originalUrls ? [...candidate.originalUrls] : undefined,
+        accessMode: candidate.accessMode || 'public',
+        accessReason: candidate.accessReason,
         ...(() => {
-          const routed = capabilityFor(group.registryCategory, { url, priority: sourcePriority(candidate.authority), authority: candidate.authority, registryCategory: group.registryCategory, workType: 'authoritative-source', state: 'pending', attempts: 0, evidenceIds: [] });
+          const routed = capabilityFor(group.registryCategory, ledgerSeed);
           const assignedCapability = primaryCapabilities.length
             ? primaryCapabilities[assignmentIndex++ % primaryCapabilities.length]
             : routed.capability;
@@ -361,18 +438,21 @@ function buildCategoryLedger(
   return sorted;
 }
 
-function interleaveCategoryTargets(
+export function interleaveCategoryTargets(
   groups: Array<ReturnType<typeof buildPantheonCategoryTargets>>,
   limit: number,
 ): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
-  const authorityOrder: PantheonSourceTarget['authority'][] = ['primary', 'secondary', 'archive', 'discovery'];
-  for (const authority of authorityOrder) {
-    const authorityGroups = groups.map(group => group.filter(candidate => candidate.authority === authority));
-    for (let row = 0; out.length < limit; row += 1) {
-      let added = false;
-      for (const group of authorityGroups) {
+  const authorityOrder: PantheonSourceTarget['authority'][] = ['discovery', 'primary', 'secondary', 'archive'];
+  const authorityGroups = new Map(authorityOrder.map(authority => [
+    authority,
+    groups.map(group => group.filter(candidate => candidate.authority === authority)),
+  ]));
+  for (let row = 0; out.length < limit; row += 1) {
+    let added = false;
+    for (const authority of authorityOrder) {
+      for (const group of authorityGroups.get(authority) || []) {
         const candidate = group[row];
         if (!candidate) continue;
         added = true;
@@ -385,7 +465,7 @@ function interleaveCategoryTargets(
           if (out.length >= limit) break;
         }
       }
-      if (!added) break;
+      if (out.length >= limit) break;
     }
   }
   return out;
@@ -395,6 +475,8 @@ export interface PantheonCategoryWorkflowInput {
   investigationId: string;
   name: string;
   location?: string;
+  startingIdentifier?: PantheonStartingIdentifier;
+  queryPlan?: PantheonControlledQueryPlan;
   searchDepth: 1 | 2 | 3 | 4;
   deadlineAt: number;
   startCategoryIndex?: number;
@@ -405,6 +487,7 @@ export interface PantheonCategoryWorkflowInput {
   capabilityHealth?: readonly PantheonCapabilityHealth[];
   signal?: AbortSignal;
   categoryConcurrency?: number;
+  registrationAuthority?: PantheonRegistrationAuthority;
   onCategoryState?: (state: { index: number; label: string; phase: PantheonCategoryPhase; completedCategories: number }) => Promise<void>;
   onCategoryStart?: (state: { index: number; label: string; completedCategories: number }) => Promise<void>;
   onCategoryComplete?: (state: { index: number; label: string; completedCategories: number; outcome: PantheonCategoryOutcome; partialReport: PeopleSearchReport }) => Promise<void>;
@@ -609,6 +692,18 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
         entry.capabilityReason = `executable work ledger assignment for ${assignedPrimary.capabilityId}`;
       }
     }
+    const frontierSeedFor = (entry: PantheonUrlLedgerEntry): PantheonFrontierSeed => ({
+      reportId: input.investigationId,
+      categoryIndex: index,
+      categoryLabel: category.label,
+      canonicalUrl: entry.url,
+      priority: entry.priority,
+      transport: entry.transport || 'direct-http',
+      capability: entry.capability || executableCapabilities[0] || 'startrek',
+      requiredCapabilities: entry.requiredCapabilities || [],
+      state: entry.state,
+    });
+    await preparePantheonFrontier(schedulableEntries.map(frontierSeedFor));
     const prioritizedTargets = urlLedger
       .filter(entry => entry.state === 'pending' || entry.state === 'retryable')
       .sort((left, right) => left.priority === right.priority
@@ -625,7 +720,9 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
     await input.onCategoryState?.({ index, label: category.label, phase: 'URL_WORK', completedCategories: completedBeforeCategory });
 
     const requiredWorkCount = Math.min(input.productiveWorkTarget, urlLedger.length);
-    let productiveWorkUnits = urlLedger.filter(entry => ['accepted', 'no_evidence'].includes(entry.state)).length;
+    const isProductiveLedgerOutcome = (entry: PantheonUrlLedgerEntry) =>
+      entry.state === 'accepted' || (entry.state === 'no_evidence' && entry.subjectScoped);
+    let productiveWorkUnits = urlLedger.filter(isProductiveLedgerOutcome).length;
     const completedCapabilities = () => new Set(capabilityWorkLedger
       .filter(unit => unit.state === 'completed')
       .map(unit => unit.capabilityId));
@@ -660,7 +757,6 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
         }
       }
 
-      const waveStart = cursor;
       const waveUrls = prioritizedTargets.slice(cursor, cursor + waveSize);
       cursor += waveUrls.length;
       const workByUrl = new Map<string, {
@@ -702,50 +798,126 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
         workByUrl.set(url, { entry, assignedCapabilityWork, authorityCapability });
       }
 
-      const waveResults = await runPantheonUrlBounded(waveUrls, async (url, waveIndex) => {
+      const waveResults = await runPantheonUrlBounded(waveUrls, async (url) => {
         const work = workByUrl.get(url)!;
         const requestDeadlineAt = Math.min(
           input.deadlineAt - finalizationReserveMs,
           Date.now() + Math.min(18_000, Math.max(750, categoryDeadlineAt - Date.now())),
         );
+        let frontierClaim: PantheonFrontierClaim | undefined;
         try {
-          const retrieval = await pantheonRetrievalAdapter.retrieve({
-            purpose: 'background_report',
-            targets: [url],
-            depth: input.searchDepth,
-            budgetMs: Math.max(750, Math.min(18_000, categoryDeadlineAt - Date.now())),
-            deadlineAt: requestDeadlineAt,
-            subject: input.name,
-            location: input.location,
-            categoryLabel: category.label,
-            capabilityHint: work.entry?.requiredCapabilities?.length
-              ? work.entry.requiredCapabilities
-              : work.entry?.capability ? [work.entry.capability] : [],
-            transportHint: work.entry?.transport ? [work.entry.transport] : [],
-            signal: input.signal,
-            authority: {
-              investigationId: input.investigationId,
-              categoryId: `${input.investigationId}:${index}`,
-              categoryIndex: index,
-              categoryLabel: category.label,
-              workId: `${input.investigationId}:${index}:${waveStart + waveIndex}`,
-              canonicalUrl: url,
+          frontierClaim = await claimPantheonFrontierItem(
+            frontierSeedFor(work.entry || {
+              url,
+              priority: 0,
+              authority: 'discovery',
+              registryCategory: category.registry[0],
+              jurisdiction: input.location || 'unspecified',
+              sourceKind: 'public-page',
+              priorityFactors: { relevance: 0, authority: 0, freshness: 0, expectedValue: 0 },
+              workType: 'candidate-validation',
+              subjectScoped: false,
+              state: 'pending',
+              attempts: 0,
+              evidenceIds: [],
               capability: work.authorityCapability,
+            }),
+            requestDeadlineAt,
+          );
+          if (!frontierClaim.acquired) return { url, deferred: true as const };
+          const sourceAccess = work.entry?.accessMode === 'contact-registration'
+            ? await ensurePantheonContactRegistration({
+                sourceUrl: url,
+                authority: input.registrationAuthority,
+                deadlineAt: requestDeadlineAt,
+                signal: input.signal,
+              })
+            : { ok: true, requestHeaders: undefined, reason: 'Public source.' };
+          if (!sourceAccess.ok) {
+            throw new Error(`Contact-registration source skipped: ${sourceAccess.reason}`);
+          }
+          const retrieval = await runPantheonTransportBounded(
+            work.entry?.transport || 'direct-http',
+            () => pantheonRetrievalAdapter.retrieve({
+              purpose: 'background_report',
+              targets: [url],
+              depth: input.searchDepth,
+              budgetMs: Math.max(750, Math.min(18_000, categoryDeadlineAt - Date.now())),
               deadlineAt: requestDeadlineAt,
               subject: input.name,
               location: input.location,
+              categoryLabel: category.label,
+              capabilityHint: work.entry?.requiredCapabilities?.length
+                ? work.entry.requiredCapabilities
+                : work.entry?.capability ? [work.entry.capability] : [],
+              transportHint: work.entry?.transport ? [work.entry.transport] : [],
+              signal: input.signal,
+              authority: {
+                investigationId: input.investigationId,
+                categoryId: `${input.investigationId}:${index}`,
+                categoryIndex: index,
+                categoryLabel: category.label,
+                workId: frontierClaim!.workKey,
+                canonicalUrl: url,
+                capability: work.authorityCapability,
+                deadlineAt: requestDeadlineAt,
+                subject: input.name,
+                location: input.location,
+                requestHeaders: sourceAccess.requestHeaders,
+              },
+            }),
+            input.signal,
+          );
+          await completePantheonFrontierItem({
+            claim: frontierClaim,
+            state: 'retrieved',
+            status: retrieval.crawlerAudit.some(item => ['completed_with_evidence', 'completed_no_evidence'].includes(item.status)) ? 200 : 0,
+            evidenceCount: retrieval.evidence.length,
+            crawler: retrieval.evidence[0]?.crawler || retrieval.crawlerAudit[0]?.crawler,
+            provenance: {
+              sourceUrl: url,
+              retrievedAt: new Date().toISOString(),
+              crawlerAudit: retrieval.crawlerAudit,
             },
           });
           return { url, retrieval };
         } catch (error) {
-          return { url, error: error instanceof Error ? error.message : String(error) };
+          const message = error instanceof Error ? error.message : String(error);
+          if (frontierClaim?.acquired) {
+            await completePantheonFrontierItem({
+              claim: frontierClaim,
+              state: /429|rate/i.test(message) ? 'rate_limited'
+                : /timeout|deadline/i.test(message) ? 'timed_out'
+                : /403|forbidden|credential-gated|sign[ -]?in|required.*api[ _-]?key|subscription|contact-registration/i.test(message) ? 'blocked'
+                : 'dead',
+              status: 0,
+              failureReason: message,
+              provenance: { sourceUrl: url, failedAt: new Date().toISOString() },
+            });
+          }
+          return { url, error: message };
         }
       });
 
       for (const waveResult of waveResults) {
         const sourceUrl = waveResult.url;
         const work = workByUrl.get(sourceUrl)!;
-        if ('retrieval' in waveResult) {
+        if ('deferred' in waveResult && waveResult.deferred) {
+          attemptedThisRun.delete(sourceUrl);
+          if (work.entry) {
+            work.entry.state = 'retryable';
+            work.entry.attempts = Math.max(0, work.entry.attempts - 1);
+            work.entry.startedAt = undefined;
+            const lastTransport = work.entry.transportAttempts?.[work.entry.transportAttempts.length - 1];
+            if (lastTransport?.outcome === 'pending') work.entry.transportAttempts?.pop();
+          }
+          for (const unit of work.assignedCapabilityWork) {
+            unit.state = 'retryable';
+            unit.attempts = Math.max(0, unit.attempts - 1);
+          }
+          continue;
+        }
+        if ('retrieval' in waveResult && waveResult.retrieval) {
           const batchRetrieval = waveResult.retrieval;
           retrievalEvidence.push(...batchRetrieval.evidence);
           retrievalAudit.push(...batchRetrieval.crawlerAudit);
@@ -791,7 +963,7 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
         // Rejected/challenge/discovery-only material is not productive work.
         // The quota advances only for evidence that already passes the subject
         // and production gates, or a clean attributable no-evidence outcome.
-        if (acceptedLiveWork || completedNoEvidence) productiveWorkUnits += 1;
+        if (acceptedLiveWork || (completedNoEvidence && work.entry?.subjectScoped)) productiveWorkUnits += 1;
 
         // Crawler-discovered URLs are non-executable candidates. The controller
         // alone may admit them to this category's ledger and priority queue.
@@ -805,10 +977,14 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
             const parent = urlLedger.find(entry => entry.url === canonicalPantheonEvidenceUrl(item.target));
             const candidate: PantheonUrlLedgerEntry = {
               url: admission.url,
-              priority: sourcePriority('secondary'),
+              priority: sourcePriority('discovery') + 1_000,
               authority: 'secondary',
               registryCategory: parent?.registryCategory || category.registry[0],
+              jurisdiction: parent?.jurisdiction || input.location || 'unspecified',
+              sourceKind: 'public-page',
+              priorityFactors: { relevance: 100, authority: 78, freshness: 75, expectedValue: 90 },
               workType: 'candidate-validation',
+              subjectScoped: true,
               state: 'pending',
               attempts: 0,
               evidenceIds: [],
@@ -823,7 +999,7 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
           }
         }
         } else {
-        const message = waveResult.error;
+        const message = String(('error' in waveResult && waveResult.error) || 'Pantheon URL retrieval failed without an error message');
         const failureStatus = /timeout|deadline|abort/i.test(message) ? 'timed_out' as const : 'failed' as const;
         const failedAt = new Date().toISOString();
           const attributableFailures: PantheonRetrievalResponse['crawlerAudit'] = work.assignedCapabilityWork.map(unit => ({
@@ -856,6 +1032,7 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
           failedEntry.state = /429|rate/i.test(message) ? 'rate_limited'
             : /timeout|deadline/i.test(message) ? 'timed_out'
             : /403|forbidden/i.test(message) ? 'blocked'
+            : /contact-registration|credential-gated|sign[ -]?in|required.*api[ _-]?key|subscription|unsupported.*verification/i.test(message) ? 'blocked'
             : 'dead';
           failedEntry.result = { status: 0, evidenceCount: 0, retrievedAt: failedEntry.completedAt };
         }
@@ -945,6 +1122,9 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
       } else if (auditFailures.some(item => item.status === 'timed_out')) {
         entry.state = 'timed_out';
         entry.failureReason = 'timed_out';
+      } else if (auditFailures.some(item => /401|402|403|credential-gated|sign[ -]?in|required.*api[ _-]?key|subscription|contact-registration|unsupported.*verification/i.test(String(item.error || '')))) {
+        entry.state = 'blocked';
+        entry.failureReason = auditFailures.find(item => item.error)?.error || 'Source requires unsupported access credentials.';
       } else if (auditFailures.length > 0) {
         entry.state = 'dead';
         entry.failureReason = auditFailures[0]?.error || 'retrieval_failed';
@@ -963,7 +1143,21 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
         entry.failureReason = 'No attributable primary retrieval outcome was recorded.';
       }
     }
-    const successfulWorkCount = urlLedger.filter(entry => ['accepted', 'no_evidence'].includes(entry.state)).length;
+    await syncPantheonFrontierStates({
+      reportId: input.investigationId,
+      categoryIndex: index,
+      entries: urlLedger
+        .filter(entry => attemptedThisRun.has(entry.url))
+        .map(entry => ({
+          canonicalUrl: entry.url,
+          state: entry.state,
+          status: entry.result?.status,
+          evidenceCount: entry.result?.evidenceCount,
+          crawler: entry.result?.crawler,
+          failureReason: entry.failureReason,
+        })),
+    });
+    const successfulWorkCount = urlLedger.filter(isProductiveLedgerOutcome).length;
     const urlsAttempted = urlLedger.filter(entry => Number(entry.attempts || 0) > 0).length;
     const urlsSuccessful = successfulWorkCount;
     const capabilityOutcomes = finalizePantheonCategoryCapabilityOutcomes({
@@ -1013,6 +1207,12 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
       capabilityOutcomes,
       capabilityWorkLedger,
       sourcePreflightIssues,
+      reviewItems: validation.rejected.slice(0, 200).map(item => ({
+        reason: item.reason,
+        sourceUrl: item.evidence.sourceUrl,
+        citationId: String(item.evidence.metadata?.citationId || item.evidence.evidenceId),
+        excerpt: cleanPantheonEvidenceContent(item.evidence.content).slice(0, 500),
+      })),
     };
 
   return { outcome, evidence: acceptedEvidence, audit: retrieval.crawlerAudit };
@@ -1173,6 +1373,11 @@ export async function conductPantheonCategoryWorkflow(
       sources: [],
       crawlerAudit: [],
     };
+    Object.assign(report as any, {
+      startingIdentifier: input.startingIdentifier || { kind: 'name', value: input.name },
+      queryPlan: input.queryPlan,
+      workflowMode: 'interactive-single-subject',
+    });
 
     const baseReport: PeopleSearchReport = {
       ...report,
@@ -1246,7 +1451,11 @@ export async function conductPantheonCategoryWorkflow(
           priority: 0,
           authority: 'secondary',
           registryCategory: category.registry[0],
+          jurisdiction: input.location || 'unspecified',
+          sourceKind: 'public-page',
+          priorityFactors: { relevance: 25, authority: 78, freshness: 75, expectedValue: 50 },
           workType: 'authoritative-source',
+          subjectScoped: false,
           state: 'pending',
           attempts: 0,
           evidenceIds: [],
@@ -1255,7 +1464,20 @@ export async function conductPantheonCategoryWorkflow(
             ? [expectedCapabilities[urlIndex % expectedCapabilities.length]]
             : ['startrek'],
           failureReason: message.slice(0, 300),
-          transport: transportFor({ url, priority: 0, authority: 'secondary', registryCategory: category.registry[0], workType: 'authoritative-source', state: 'pending', attempts: 0, evidenceIds: [] }),
+          transport: transportFor({
+            url,
+            priority: 0,
+            authority: 'secondary',
+            registryCategory: category.registry[0],
+            jurisdiction: input.location || 'unspecified',
+            sourceKind: 'public-page',
+            priorityFactors: { relevance: 25, authority: 78, freshness: 75, expectedValue: 50 },
+            workType: 'authoritative-source',
+            subjectScoped: false,
+            state: 'pending',
+            attempts: 0,
+            evidenceIds: [],
+          }),
         }));
         const crawlerAudit: PantheonRetrievalResponse['crawlerAudit'] = [{
           crawler: 'category-orchestrator',
@@ -1314,6 +1536,7 @@ export async function conductPantheonCategoryWorkflow(
             }),
             capabilityWorkLedger,
             sourcePreflightIssues: persistedState?.sourcePlan.preflightIssues || [],
+            reviewItems: persistedState?.outcome?.reviewItems || [],
           },
         };
       }

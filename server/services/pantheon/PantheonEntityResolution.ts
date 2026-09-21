@@ -5,7 +5,8 @@ export type PantheonSubjectCorrelate =
   | 'location_token_set'
   | 'structured_location'
   | 'source_identity_attribute'
-  | 'source_record_identifier';
+  | 'source_record_identifier'
+  | 'exact_unique_identifier';
 
 export interface PantheonEntityMatch {
   matched: boolean;
@@ -28,6 +29,24 @@ const RECORD_IDENTIFIER_KEYS = [
   'personId', 'registrationNumber', 'parcelId',
 ] as const;
 const LOCATION_METADATA_KEYS = ['location', 'city', 'address', 'residence', 'jurisdiction'] as const;
+
+function uniqueIdentifierKind(value: string): 'email' | 'phone' | 'username' | 'vin' | undefined {
+  const candidate = String(value || '').trim();
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(candidate)) return 'email';
+  if (/^[A-HJ-NPR-Z0-9]{11,17}$/i.test(candidate)) return 'vin';
+  if (/^@[A-Za-z0-9_.-]{2,64}$/.test(candidate)) return 'username';
+  if (/^\+?[0-9() .-]{7,24}$/.test(candidate) && candidate.replace(/\D/g, '').length >= 7) return 'phone';
+  return undefined;
+}
+
+function exactUniqueIdentifierMatch(content: string, rawSubject: string, kind: ReturnType<typeof uniqueIdentifierKind>): boolean {
+  if (!kind) return false;
+  if (kind === 'phone') {
+    const needle = rawSubject.replace(/\D/g, '');
+    return needle.length >= 7 && content.replace(/\D/g, '').includes(needle);
+  }
+  return normalize(content).includes(normalize(rawSubject));
+}
 
 function clean(value: unknown): string {
   return String(value || '')
@@ -146,6 +165,8 @@ export function matchPantheonSubject(
   const conflicts: string[] = [];
   const independentCorrelates: PantheonSubjectCorrelate[] = [];
   let score = 0;
+  const identifierKind = uniqueIdentifierKind(subject);
+  const exactIdentifierMatch = exactUniqueIdentifierMatch(clean(item.content), subject, identifierKind);
 
   const tokens = words(normalizedSubject)
     .filter(token => token.length >= 2 && !HONORIFICS.has(token));
@@ -174,6 +195,12 @@ export function matchPantheonSubject(
     score += 0.2;
     factors.push('single_name_token');
     conflicts.push('insufficient_subject_specificity');
+  }
+
+  if (exactIdentifierMatch) {
+    score = Math.max(score, 0.92);
+    factors.push(`exact_${identifierKind}_identifier`);
+    independentCorrelates.push('exact_unique_identifier');
   }
 
   if (fullNameMatch && tokens.length >= 3) {
@@ -228,7 +255,7 @@ export function matchPantheonSubject(
 
   const uniqueCorrelates = [...new Set(independentCorrelates)];
   const boundedScore = Math.min(1, score);
-  const reliableNameMatch = fullNameMatch || allNameTokensNearby;
+  const reliableNameMatch = fullNameMatch || allNameTokensNearby || exactIdentifierMatch;
   return {
     matched: reliableNameMatch && uniqueCorrelates.length > 0 && boundedScore >= 0.82 && conflicts.length === 0,
     score: boundedScore,

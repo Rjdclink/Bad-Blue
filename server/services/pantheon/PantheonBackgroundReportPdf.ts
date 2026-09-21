@@ -73,6 +73,27 @@ interface PantheonReportForPdf {
     missingCapabilities?: string[];
   }>;
   categoryOutcomes?: PantheonCategoryOutcomeForPdf[];
+  investigationIntelligence?: {
+    identityGraph?: {
+      subjectNodeId?: string;
+      hopLimit?: number;
+      nodes?: Array<{ id?: string; type?: string; value?: string; current?: boolean; effectiveAt?: string; confidence?: number }>;
+      edges?: Array<{ from?: string; to?: string; type?: string; citationId?: string }>;
+    };
+    factIndexes?: {
+      current?: Array<{ claimKey?: string; value?: string; effectiveAt?: string; citationId?: string }>;
+      historical?: Array<{ claimKey?: string; value?: string; effectiveAt?: string; citationId?: string }>;
+    };
+    timeline?: Array<{ at?: string; label?: string; category?: string; citationId?: string }>;
+    contradictions?: Array<{ claimKey?: string; values?: string[]; citationIds?: string[] }>;
+    manualReview?: Array<{ reason?: string; category?: string; sourceUrl?: string; citationId?: string }>;
+    investigativeLeads?: Array<{ category?: string; value?: string; citationId?: string; reason?: string }>;
+    sourceQuality?: Array<{ host?: string; attempts?: number; succeeded?: number; failed?: number; acceptedEvidence?: number; successRate?: number; failureRate?: number; completenessRate?: number; averageConfidence?: number; accuracyScore?: number; freshnessHours?: number }>;
+    searchScope?: Array<{ category?: string; jurisdictions?: string[]; attemptedUrls?: string[]; successfulUrls?: string[]; failedUrls?: Array<{ url?: string; reason?: string }>; negativeResult?: string }>;
+    negativeResultQualification?: string;
+    incrementalChanges?: { added?: string[]; modified?: string[]; deleted?: string[] };
+    changeAlerts?: Array<{ type?: string; stableId?: string }>;
+  };
 }
 
 export interface PantheonPdfInput {
@@ -146,6 +167,42 @@ function compactEvidence(value: unknown, max = 1800): string {
   return `${text.slice(0, max)}\n…[evidence truncated in printable appendix]`;
 }
 
+function addLinkedUrl(doc: PDFKit.PDFDocument, value: unknown, prefix = '• '): void {
+  const url = cleanText(value);
+  if (!url) return;
+  if (doc.y > 710) doc.addPage();
+  const linked = /^https?:\/\//i.test(url);
+  doc.font('Helvetica').fontSize(6.5).fillColor(linked ? '#0B63B6' : '#111827').text(`${prefix}${url}`, {
+    indent: 8,
+    lineGap: 0.5,
+    ...(linked ? { link: url, underline: true } : {}),
+  });
+  doc.fillColor('#111827');
+}
+
+function addRelationshipDiagram(doc: PDFKit.PDFDocument, intelligence: NonNullable<PantheonReportForPdf['investigationIntelligence']>): void {
+  const nodes = (intelligence.identityGraph?.nodes || []).slice(0, 9);
+  if (nodes.length < 2) return;
+  if (doc.y > 490) doc.addPage();
+  const centerX = 306;
+  const centerY = doc.y + 112;
+  const subject = nodes[0];
+  const related = nodes.slice(1);
+  doc.save();
+  doc.circle(centerX, centerY, 35).fillAndStroke('#DCEBFA', '#183B63');
+  doc.fillColor('#102A43').font('Helvetica-Bold').fontSize(7).text(cleanText(subject.value).slice(0, 28), centerX - 30, centerY - 9, { width: 60, align: 'center' });
+  related.forEach((node, index) => {
+    const angle = (Math.PI * 2 * index / Math.max(1, related.length)) - Math.PI / 2;
+    const x = centerX + Math.cos(angle) * 170;
+    const y = centerY + Math.sin(angle) * 85;
+    doc.moveTo(centerX, centerY).lineTo(x, y).lineWidth(0.6).strokeColor('#8FAAC4').stroke();
+    doc.circle(x, y, 25).fillAndStroke('#F4F7FA', '#71869B');
+    doc.fillColor('#111827').font('Helvetica').fontSize(5.5).text(`${cleanText(node.type)}\n${cleanText(node.value).slice(0, 32)}`, x - 22, y - 11, { width: 44, align: 'center' });
+  });
+  doc.restore();
+  doc.y = centerY + 115;
+}
+
 export function pantheonReportFilename(report: PantheonReportForPdf, reportId: string): string {
   const subject = safeFilenamePart(cleanText(report.identitySummary?.name) || 'subject');
   return `Pantheon-Background-Report-${subject}-${reportId.slice(0, 8)}.pdf`;
@@ -156,6 +213,9 @@ export interface PantheonPdfVerification {
   bytes: number;
   pageCount: number;
   streamCount: number;
+  textObjectCount: number;
+  linkAnnotationCount: number;
+  metadataVerified: true;
   sha256: string;
   verifiedAt: string;
 }
@@ -192,6 +252,8 @@ export function verifyPantheonPdfBuffer(buffer: Buffer, expectedMinimumPages = 1
   const raw = buffer.toString('latin1');
   const pageCount = (raw.match(/\/Type\s*\/Page\b/g) || []).length;
   const streamCount = (raw.match(/\bstream\r?\n/g) || []).length;
+  const textObjectCount = (raw.match(/\bBT\b/g) || []).length;
+  const linkAnnotationCount = (raw.match(/\/Subtype\s*\/Link\b/g) || []).length;
   const minimumPages = Math.max(1, Math.floor(expectedMinimumPages));
   if (!raw.startsWith('%PDF-') || !/%%EOF\s*$/.test(raw) || buffer.length < 5_000) {
     throw new Error('Pantheon PDF verification failed: malformed or truncated document');
@@ -199,11 +261,17 @@ export function verifyPantheonPdfBuffer(buffer: Buffer, expectedMinimumPages = 1
   if (pageCount < minimumPages || streamCount < pageCount) {
     throw new Error(`Pantheon PDF verification failed: expected at least ${minimumPages} rendered pages`);
   }
+  if (textObjectCount < pageCount || !/\/Title\s/.test(raw) || !/\/Author\s/.test(raw) || !/\/Subject\s/.test(raw)) {
+    throw new Error('Pantheon PDF verification failed: text or required document metadata is missing');
+  }
   return {
     verified: true,
     bytes: buffer.length,
     pageCount,
     streamCount,
+    textObjectCount,
+    linkAnnotationCount,
+    metadataVerified: true,
     sha256: createHash('sha256').update(buffer).digest('hex'),
     verifiedAt: new Date().toISOString(),
   };
@@ -221,6 +289,7 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
         Subject: cleanText(input.report.identitySummary?.name) || 'Background Report',
       },
       bufferPages: true,
+      compress: false,
     });
 
     const chunks: Buffer[] = [];
@@ -321,6 +390,75 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
     // Crawler diagnostics remain internal. Customer reports contain findings and
     // source provenance, never execution/audit internals.
 
+    const intelligence = report.investigationIntelligence;
+    if (intelligence) {
+      addSectionTitle(doc, 'Evidence-Backed Relationship Diagram');
+      addRelationshipDiagram(doc, intelligence);
+
+      addSectionTitle(doc, 'Chronological Timeline');
+      const timeline = intelligence.timeline || [];
+      if (!timeline.length) {
+        doc.font('Helvetica-Oblique').fontSize(8).text('No accepted evidence included a usable effective or retrieval date for the subject timeline.');
+      } else {
+        for (const event of timeline) {
+          if (doc.y > 705) doc.addPage();
+          doc.font('Helvetica').fontSize(7.5).text(`• ${formatDate(event.at)} — ${cleanText(event.category)}: ${cleanText(event.label)} [${cleanText(event.citationId)}]`, { indent: 8, lineGap: 1 });
+        }
+      }
+
+      addSectionTitle(doc, 'Current and Historical Fact Indexes');
+      doc.font('Helvetica-Bold').fontSize(8).text('CURRENT');
+      addList(doc, (intelligence.factIndexes?.current || []).map(item => `${cleanText(item.value)}${item.effectiveAt ? ` (effective/retrieved ${formatDate(item.effectiveAt)})` : ''} [${cleanText(item.citationId)}]`));
+      doc.moveDown(0.4);
+      doc.font('Helvetica-Bold').fontSize(8).text('HISTORICAL');
+      addList(doc, (intelligence.factIndexes?.historical || []).map(item => `${cleanText(item.value)}${item.effectiveAt ? ` (effective/retrieved ${formatDate(item.effectiveAt)})` : ''} [${cleanText(item.citationId)}]`));
+
+      addSectionTitle(doc, 'Contradictions, Manual Review, and Investigative Leads');
+      const reviewLines = [
+        ...(intelligence.contradictions || []).map(item => `CONTRADICTION — ${cleanText(item.claimKey)}: ${(item.values || []).map(cleanText).join(' versus ')}; citations ${(item.citationIds || []).map(cleanText).join(', ')}`),
+        ...(intelligence.manualReview || []).map(item => `MANUAL REVIEW — ${cleanText(item.category)}: ${cleanText(item.reason)}${item.citationId ? ` [${cleanText(item.citationId)}]` : ''}${item.sourceUrl ? ` — ${cleanText(item.sourceUrl)}` : ''}`),
+        ...(intelligence.investigativeLeads || []).map(item => `UNVERIFIED LEAD — ${cleanText(item.category)}: ${cleanText(item.value)} (${cleanText(item.reason)})${item.citationId ? ` [${cleanText(item.citationId)}]` : ''}`),
+      ];
+      addList(doc, reviewLines);
+
+      addSectionTitle(doc, 'Per-Source Data Quality');
+      const quality = intelligence.sourceQuality || [];
+      if (!quality.length) {
+        doc.font('Helvetica-Oblique').fontSize(8).text('No per-source quality measurements were available.');
+      } else {
+        for (const item of quality) {
+          if (doc.y > 705) doc.addPage();
+          doc.font('Helvetica').fontSize(7).text(`• ${cleanText(item.host)} — attempts ${Number(item.attempts || 0)}, succeeded ${Number(item.succeeded || 0)}, failed ${Number(item.failed || 0)}, accepted evidence ${Number(item.acceptedEvidence || 0)}, success ${percent(item.successRate)}, failure ${percent(item.failureRate)}, completeness ${percent(item.completenessRate)}, accuracy ${percent(item.accuracyScore)}, freshness ${item.freshnessHours == null ? 'unknown' : `${Math.round(Number(item.freshnessHours))}h`}`, { indent: 8, lineGap: 1 });
+        }
+      }
+
+      addSectionTitle(doc, 'Exact Search Scope, Jurisdictions, and Negative Results');
+      doc.font('Helvetica-Oblique').fontSize(8).text(cleanText(intelligence.negativeResultQualification));
+      for (const scope of intelligence.searchScope || []) {
+        if (doc.y > 685) doc.addPage();
+        doc.moveDown(0.4);
+        doc.font('Helvetica-Bold').fontSize(8).fillColor('#183B63').text(cleanText(scope.category) || 'Category');
+        doc.font('Helvetica').fillColor('#111827').fontSize(7).text(`Jurisdictions checked: ${(scope.jurisdictions || []).map(cleanText).join(', ') || 'none recorded'} | URLs attempted: ${(scope.attemptedUrls || []).length} | successful paths: ${(scope.successfulUrls || []).length} | failed paths: ${(scope.failedUrls || []).length}`);
+        if (scope.negativeResult) doc.font('Helvetica-Oblique').text(cleanText(scope.negativeResult));
+        for (const url of scope.attemptedUrls || []) addLinkedUrl(doc, url);
+        for (const failure of scope.failedUrls || []) {
+          if (doc.y > 710) doc.addPage();
+          doc.font('Helvetica').fontSize(6.5).fillColor('#7F1D1D').text(`  Failed: ${cleanText(failure.url)} — ${cleanText(failure.reason)}`, { indent: 8, lineGap: 0.5 });
+          doc.fillColor('#111827');
+        }
+      }
+
+      const changes = intelligence.incrementalChanges;
+      if (changes && ((changes.added || []).length || (changes.modified || []).length || (changes.deleted || []).length)) {
+        addSectionTitle(doc, 'Changes Since the Previous Matching Investigation');
+        addList(doc, [
+          ...(changes.added || []).map(id => `Added: ${id}`),
+          ...(changes.modified || []).map(id => `Modified: ${id}`),
+          ...(changes.deleted || []).map(id => `Deleted/corrected source-derived fact removed: ${id}`),
+        ]);
+      }
+    }
+
     addSectionTitle(doc, 'Source Provenance');
     const sources = report.sources || [];
     if (sources.length === 0) {
@@ -341,7 +479,7 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
           ? sourceData.provenance as Record<string, unknown>
           : {};
         if (citationId) doc.text(`Citation ID: ${citationId}`, { lineGap: 1 });
-        if (sourceUrl) doc.text(`Source: ${sourceUrl}`, { lineGap: 1 });
+        if (sourceUrl) doc.fillColor('#0B63B6').text(`Source: ${sourceUrl}`, { lineGap: 1, link: sourceUrl, underline: true }).fillColor('#111827');
         if (contentHash) doc.text(`Content SHA-256: ${contentHash}`, { lineGap: 1 });
         const transport = cleanText(provenance.transport);
         if (transport) doc.text(`Retrieval transport: ${transport}`, { lineGap: 1 });

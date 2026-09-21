@@ -381,7 +381,7 @@ export class PantheonCrawlerOrchestrator {
               content: result.content || '',
               confidence: Number.isFinite(result.confidence) ? result.confidence : 0.7,
               timestamp: Date.now(),
-              metadata: { warpFactor: result.metadata?.warpFactor || 5 },
+              metadata: { ...(result.metadata || {}), warpFactor: result.metadata?.warpFactor || 5 },
             });
           }
         }
@@ -405,7 +405,7 @@ export class PantheonCrawlerOrchestrator {
               content: result.content || '',
               confidence: Number.isFinite(result.confidence) ? result.confidence : 0.8,
               timestamp: Date.now(),
-              metadata: { cloakStatus: 'engaged' },
+              metadata: { ...(result.metadata || {}), cloakStatus: 'engaged' },
             });
           }
         }
@@ -469,7 +469,7 @@ export class PantheonCrawlerOrchestrator {
               content: result.content || '',
               confidence: Number.isFinite(result.confidence) ? result.confidence : 0.85,
               timestamp: result.timestamp,
-              metadata: { headUsed: result.headUsed },
+              metadata: { ...(result.metadata || {}), headUsed: result.headUsed },
             });
           }
         }
@@ -494,7 +494,7 @@ export class PantheonCrawlerOrchestrator {
             content: result.content || '',
             confidence: Number.isFinite(result.confidence) ? result.confidence : 0.8,
             timestamp: result.timestamp,
-            metadata: { intensity },
+            metadata: { ...(result.metadata || {}), intensity },
           });
         }
       } catch (error) {
@@ -519,6 +519,7 @@ export class PantheonCrawlerOrchestrator {
               confidence: Number.isFinite(result.confidence) ? result.confidence : 0.9,
               timestamp: result.timestamp,
               metadata: { 
+                ...(result.metadata || {}),
                 spellType,
                 lichStatus: this.lich.getStatus(),
               },

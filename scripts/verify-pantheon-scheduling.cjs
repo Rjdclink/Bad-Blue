@@ -20,6 +20,7 @@ for (const token of [
   "phase: execution.outcome.completionState === 'completed' ? 'COMPLETE' : 'PARTIAL'",
   'urlLedger',
   'transportAttempts',
+  'entry.state === \'accepted\' || (entry.state === \'no_evidence\' && entry.subjectScoped)',
 ]) {
   if (!workflow.includes(token)) throw new Error('Bounded category workflow invariant missing: ' + token);
 }

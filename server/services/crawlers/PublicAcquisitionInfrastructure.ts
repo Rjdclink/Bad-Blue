@@ -3,8 +3,15 @@ import { promises as dns } from 'dns';
 import { isIP } from 'net';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { pantheonAbortableDelay, throwIfPantheonAborted } from '../pantheon/PantheonDeadline';
+import { parsePantheonDocument, type PantheonParsedDocument } from '../pantheon/PantheonDocumentIntelligence';
+import { persistPantheonRawSnapshot, type PantheonRawSnapshotDescriptor } from '../pantheon/PantheonRawSnapshotStore';
+import {
+  acquirePantheonDomainLease,
+  releasePantheonDomainLease,
+  type PantheonDomainLease,
+} from '../pantheon/PantheonFrontierStore';
 
-export type PublicAcquisitionKind = 'html' | 'json' | 'xml' | 'rss' | 'csv' | 'text';
+export type PublicAcquisitionKind = 'html' | 'json' | 'xml' | 'rss' | 'csv' | 'pdf' | 'image' | 'text';
 
 export interface PantheonAcquisitionAuthority {
   investigationId: string;
@@ -15,6 +22,8 @@ export interface PantheonAcquisitionAuthority {
   canonicalUrl?: string;
   route?: 'primary' | 'fallback';
   fallbackFor?: string;
+  /** Ephemeral source session headers; never persisted or emitted to telemetry. */
+  requestHeaders?: Record<string, string>;
 }
 
 interface PantheonAcquisitionContext {
@@ -52,6 +61,10 @@ export interface PublicAcquisitionResult {
   kind: PublicAcquisitionKind;
   contentType: string;
   content: string;
+  parser?: PantheonParsedDocument['parser'];
+  ocrApplied?: boolean;
+  redirectChain?: string[];
+  snapshot?: PantheonRawSnapshotDescriptor;
   etag?: string;
   lastModified?: string;
   retrievedAt: string;
@@ -82,7 +95,7 @@ const MAX_BACKOFF_MS = 12_000;
 const CIRCUIT_FAILURE_THRESHOLD = 4;
 const CIRCUIT_OPEN_MS = 30_000;
 
-const BLOCKED_EXTENSIONS = /\.(?:css|js|mjs|map|woff2?|ttf|otf|eot|png|jpe?g|gif|webp|svg|ico|mp[34]|m4[av]|avi|mov|webm|zip|gz|rar|7z|exe|dmg|apk)(?:$|[?#])/i;
+const BLOCKED_EXTENSIONS = /\.(?:css|js|mjs|map|woff2?|ttf|otf|eot|gif|webp|svg|ico|mp[34]|m4[av]|avi|mov|webm|zip|gz|rar|7z|exe|dmg|apk)(?:$|[?#])/i;
 const BLOCKED_HOST_HINTS = /(?:googletagmanager|google-analytics|doubleclick|newrelic|addthis|chartbeat|optimizely|tinypass|fonts\.googleapis|fonts\.gstatic|static\.files\.bbci|m\.files\.bbci|assets\.guim|static\.guim|i\.guim|j\.ophan)/i;
 const MALFORMED_RECURSIVE_SCHEME = /^https?:\/\/https?(?::?\/\/|%3a%2f%2f)/i;
 const AUTH_ROUTE_HINT = /(?:^|\/)(?:login|log-in|log_in|signin|sign-in|sign_in|users\/sign_in|account\/login|oauth\/authorize)(?:\/|$)/i;
@@ -100,6 +113,8 @@ function stateFor(host: string): HostState {
 
 function kindFor(contentType: string, url: string): PublicAcquisitionKind {
   const value = contentType.toLowerCase();
+  if (value.includes('pdf') || /\.pdf(?:$|[?#])/i.test(url)) return 'pdf';
+  if (/^image\/(?:png|jpe?g|tiff?|bmp)/i.test(value) || /\.(?:png|jpe?g|tiff?|bmp)(?:$|[?#])/i.test(url)) return 'image';
   if (value.includes('json') || url.endsWith('.json')) return 'json';
   if (value.includes('rss') || value.includes('atom')) return 'rss';
   if (value.includes('xml') || url.endsWith('.xml')) return 'xml';
@@ -202,8 +217,8 @@ export function detectPublicAccessBarrier(value: string, contentType = ''): stri
 function supportedContentType(value: string): boolean {
   const type = value.toLowerCase();
   if (!type) return true;
-  return /(?:text\/|json|xml|rss|atom|csv|pdf)/i.test(type) &&
-    !/(?:javascript|css|font|image\/|audio\/|video\/)/i.test(type);
+  return /(?:text\/|json|xml|rss|atom|csv|pdf|image\/(?:png|jpe?g|tiff?|bmp))/i.test(type) &&
+    !/(?:javascript|css|font|audio\/|video\/)/i.test(type);
 }
 
 function retryAfterMs(response: Response): number | undefined {
@@ -299,6 +314,20 @@ async function waitForHost(host: string, deadlineAt: number, signal?: AbortSigna
   return false;
 }
 
+async function waitForDistributedHost(
+  host: string,
+  deadlineAt: number,
+  signal?: AbortSignal,
+): Promise<PantheonDomainLease> {
+  while (Date.now() < deadlineAt) {
+    throwIfPantheonAborted(signal);
+    const lease = await acquirePantheonDomainLease(host, deadlineAt);
+    if (lease.acquired) return lease;
+    await pantheonAbortableDelay(Math.min(150, Math.max(20, deadlineAt - Date.now())), signal);
+  }
+  return { mode: 'database', acquired: false, domain: host };
+}
+
 function releaseHost(host: string): void {
   const state = stateFor(host);
   state.active = Math.max(0, state.active - 1);
@@ -333,6 +362,7 @@ async function acquireOnce(
   hardDeadlineAt?: number,
   signal?: AbortSignal,
   requestOptions: PublicAcquisitionRequestOptions = {},
+  authority?: PantheonAcquisitionAuthority,
 ): Promise<PublicAcquisitionResult> {
   const deadlineAt = hardDeadlineAt == null
     ? Date.now() + Math.max(500, timeoutMs)
@@ -341,10 +371,19 @@ async function acquireOnce(
   const admitted = await waitForHost(host, deadlineAt, signal);
   if (!admitted) return { ...failureResult(url.toString(), 0, new Error('Host circuit open or acquisition deadline exhausted')), errorType: 'circuit_open' };
 
+  const domainLease = await waitForDistributedHost(host, deadlineAt, signal);
+  if (!domainLease.acquired) {
+    releaseHost(host);
+    return { ...failureResult(url.toString(), 0, new Error('Shared host admission deadline exhausted')), errorType: 'circuit_open' };
+  }
+
   const started = Date.now();
+  let distributedStatus = 0;
+  let distributedRetryAfterMs: number | undefined;
   try {
     let current = url;
     let response: Response | undefined;
+    const redirectChain = [current.toString()];
     for (let redirects = 0; redirects <= 5; redirects++) {
       throwIfPantheonAborted(signal);
       await assertPublicResolution(current);
@@ -362,6 +401,7 @@ async function acquireOnce(
           headers: {
             'user-agent': 'LegalWhat-Pantheon/1.0 public-record research',
             accept: 'text/html,application/xhtml+xml,application/json,application/xml,text/xml,text/csv,text/plain,application/pdf;q=0.8',
+            ...(authority?.requestHeaders || {}),
             ...(requestOptions.headers || {}),
           },
         });
@@ -375,11 +415,14 @@ async function acquireOnce(
       const redirectAdmission = admitPantheonUrl(new URL(location, current).toString());
       if (!redirectAdmission.ok) throw new Error(`Redirect rejected by Pantheon URL admission: ${redirectAdmission.reason}`);
       current = new URL(redirectAdmission.url);
+      redirectChain.push(current.toString());
     }
     if (!response) throw new Error('Public acquisition produced no response');
     if ([301, 302, 303, 307, 308].includes(response.status)) throw new Error('Public acquisition exceeded redirect limit');
 
     const retryMs = retryAfterMs(response);
+    distributedStatus = response.status;
+    distributedRetryAfterMs = retryMs;
     const latency = Date.now() - started;
     recordHostResult(host, response.status, latency, retryMs);
 
@@ -389,7 +432,21 @@ async function acquireOnce(
     }
     if (!response.ok) return failureResult(current.toString(), response.status, new Error(`HTTP ${response.status}`), retryMs);
 
-    const text = requestOptions.method === 'HEAD' ? '' : (await response.text()).slice(0, 2_000_000);
+    const declaredLength = Number(response.headers.get('content-length') || 0);
+    if (requestOptions.method !== 'HEAD' && declaredLength > 12_000_000) {
+      return { ...failureResult(current.toString(), response.status, new Error('Investigative source exceeds the 12 MB acquisition limit')), errorType: 'unsupported_content' };
+    }
+    const retrievedAt = new Date().toISOString();
+    const bytes = requestOptions.method === 'HEAD'
+      ? Buffer.alloc(0)
+      : Buffer.from(await response.arrayBuffer());
+    if (bytes.length > 12_000_000) {
+      return { ...failureResult(current.toString(), response.status, new Error('Investigative source exceeds the 12 MB acquisition limit')), errorType: 'unsupported_content' };
+    }
+    const parsed = requestOptions.method === 'HEAD'
+      ? undefined
+      : await parsePantheonDocument({ bytes, contentType, url: current.toString(), signal });
+    const text = parsed?.content || '';
     if (blockedResponseBody(text)) {
       return { ...failureResult(current.toString(), response.status, new Error('Blocked/challenge response is not investigative evidence')), errorType: 'http_error' };
     }
@@ -397,15 +454,33 @@ async function acquireOnce(
     if (accessBarrier) {
       return { ...failureResult(current.toString(), response.status, new Error(accessBarrier)), errorType: 'auth_required' };
     }
+    const snapshot = requestOptions.method === 'HEAD' || !authority
+      ? undefined
+      : await persistPantheonRawSnapshot({
+          investigationId: authority.investigationId,
+          bytes,
+          capturedAt: retrievedAt,
+        });
     return {
       url: current.toString(), ok: true, status: response.status, kind: kindFor(contentType, current.toString()),
       contentType, content: text, etag: response.headers.get('etag') || undefined,
-      lastModified: response.headers.get('last-modified') || undefined, retrievedAt: new Date().toISOString(),
+      lastModified: response.headers.get('last-modified') || undefined, retrievedAt,
+      parser: parsed?.parser,
+      ocrApplied: parsed?.ocrApplied,
+      redirectChain,
+      snapshot,
     };
   } catch (error) {
+    distributedStatus = 0;
     recordHostResult(host, 0, Date.now() - started);
     return failureResult(url.toString(), 0, error);
   } finally {
+    await releasePantheonDomainLease({
+      lease: domainLease,
+      status: distributedStatus,
+      latencyMs: Date.now() - started,
+      retryAfterMs: distributedRetryAfterMs,
+    });
     releaseHost(host);
   }
 }
@@ -513,7 +588,7 @@ export async function acquirePublicResource(
     for (let attempt = 0; attempt <= MAX_RETRIES && Date.now() < deadlineAt; attempt++) {
       throwIfPantheonAborted(signal);
       const remaining = Math.max(1, deadlineAt - Date.now());
-      last = await acquireOnce(url, remaining, deadlineAt, signal, requestOptions);
+      last = await acquireOnce(url, remaining, deadlineAt, signal, requestOptions, authority);
       if (last.ok) break;
       const retryable = last.status === 408 || last.status === 429 || last.status === 500 || last.status === 502 || last.status === 503 || last.status === 504 ||
         ['timeout','tls_failure','network_failure'].includes(String(last.errorType));
@@ -532,6 +607,13 @@ export async function acquirePublicResource(
     logAcquisitionEvent(authority, 'outcome', result.url, {
       method, status: result.status, outcome: result.ok ? 'completed' : 'skipped_or_failed',
       errorType: result.errorType, durationMs: Date.now() - telemetryStartedAt,
+      finalUrl: telemetryUrl(result.url),
+      redirectCount: Math.max(0, Number(result.redirectChain?.length || 1) - 1),
+      contentType: result.contentType || undefined,
+      parser: result.parser,
+      ocrApplied: result.ocrApplied,
+      rawSha256: result.snapshot?.rawSha256,
+      traceId: authority ? `${authority.investigationId}:${authority.categoryId}:${authority.workId}` : undefined,
     });
     return result;
   } catch (error) {

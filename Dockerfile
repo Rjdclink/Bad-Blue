@@ -50,6 +50,8 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     chromium \
     libimage-exiftool-perl \
+    poppler-utils \
+    tesseract-ocr \
     wget \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
@@ -121,6 +123,7 @@ COPY --from=builder /app/server/migrations/057_cryptocrawler_ghost_wallet_runtim
 COPY --from=builder /app/server/migrations/058_cryptocrawler_ghost_wallet_gas_reserve.sql ./dist/migrations/058_cryptocrawler_ghost_wallet_gas_reserve.sql
 COPY --from=builder /app/server/migrations/059_cryptocrawler_zero_capital_rescue_fairness.sql ./dist/migrations/059_cryptocrawler_zero_capital_rescue_fairness.sql
 COPY --from=builder /app/server/migrations/060_lexara_overflow_conversation_history.sql ./dist/migrations/060_lexara_overflow_conversation_history.sql
+COPY --from=builder /app/server/migrations/061_pantheon_durable_frontier.sql ./dist/migrations/061_pantheon_durable_frontier.sql
 COPY --from=builder /app/server/migrations/overflow/001_cryptara_comp_cache.sql ./dist/migrations/overflow/001_cryptara_comp_cache.sql
 COPY --from=builder /app/server/migrations/overflow/002_cryptara_parallel_proxy.sql ./dist/migrations/overflow/002_cryptara_parallel_proxy.sql
 COPY --from=builder /app/server/migrations/overflow/003_cryptocrawler_runtime_prerequisites.sql ./dist/migrations/overflow/003_cryptocrawler_runtime_prerequisites.sql
