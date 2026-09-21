@@ -387,6 +387,7 @@ export async function conductPantheonCategoryWorkflow(input: {
     const urlsSuccessful = retrieval.crawlerAudit.reduce((sum, item) => sum + Number(item.evidenceCount || 0), 0);
     const crawlersUsed = [...new Set(retrieval.crawlerAudit.filter(item => Number(item.attempts || 0) > 0).map(item => item.crawler))];
     const evidenceByUrl = new Map(reportable.map((item, evidenceIndex) => [canonicalUrl(item.target), `${index}:${evidenceIndex}`]));
+    const auditFailures = retrieval.crawlerAudit.filter(item => item.status === 'failed' || item.status === 'timed_out');
     for (const entry of urlLedger) {
       if (!activeUrls.has(entry.url)) continue;
       const evidenceId = evidenceByUrl.get(entry.url);
@@ -394,6 +395,15 @@ export async function conductPantheonCategoryWorkflow(input: {
       if (evidenceId) {
         entry.state = 'accepted';
         entry.evidenceIds.push(evidenceId);
+      } else if (auditFailures.some(item => /429|rate/i.test(String(item.error || '')))) {
+        entry.state = 'rate_limited';
+        entry.failureReason = 'rate_limited';
+      } else if (auditFailures.some(item => item.status === 'timed_out')) {
+        entry.state = 'timed_out';
+        entry.failureReason = 'timed_out';
+      } else if (auditFailures.length > 0) {
+        entry.state = 'dead';
+        entry.failureReason = auditFailures[0]?.error || 'retrieval_failed';
       } else {
         entry.state = 'no_evidence';
       }
