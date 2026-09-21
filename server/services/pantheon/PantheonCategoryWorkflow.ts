@@ -46,6 +46,12 @@ export interface PantheonCategoryOutcome {
   targetCount: number;
   evidenceCount: number;
   crawlerAudit: PantheonRetrievalResponse['crawlerAudit'];
+  findings: string[];
+  urlsAttempted: number;
+  urlsSuccessful: number;
+  urlsFailed: number;
+  crawlersUsed: string[];
+  evidenceRejected: number;
 }
 
 function mergeAudit(entries: PantheonRetrievalResponse['crawlerAudit']) {
@@ -102,6 +108,24 @@ function cleanEvidenceContent(value: string): string {
     .trim();
 }
 
+function isBlockedOrDiagnosticEvidence(text: string): boolean {
+  const lowered = text.toLowerCase();
+  return [
+    'our systems have detected unusual traffic',
+    'enable javascript on your web browser',
+    'captcha',
+    'access denied',
+    'forbidden',
+    'too many requests',
+    'rate limit',
+    'robot check',
+    'verify you are human',
+    'press / to jump to the search box',
+    'accessibility help',
+    'quick settings',
+  ].some(marker => lowered.includes(marker));
+}
+
 function isReportableEvidence(
   item: PantheonRetrievalResponse['evidence'][number],
   subject: string,
@@ -112,6 +136,7 @@ function isReportableEvidence(
   if (text.length < 40) return false;
   const lowered = text.toLowerCase();
   if (lowered.includes('<!doctype') || lowered.includes('function(') || lowered.includes('webpack')) return false;
+  if (isBlockedOrDiagnosticEvidence(text)) return false;
 
   // Customer findings must actually mention the subject (or a strong identity
   // component), rather than merely proving that a registry/search page loaded.
@@ -223,6 +248,9 @@ export async function conductPantheonCategoryWorkflow(input: {
         depth: input.searchDepth,
         budgetMs: categoryBudgetMs,
         deadlineAt: Math.min(input.deadlineAt - finalizationReserveMs, Date.now() + categoryBudgetMs),
+        subject: input.name,
+        location: input.location,
+        categoryLabel: category.label,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -254,6 +282,9 @@ export async function conductPantheonCategoryWorkflow(input: {
     })));
     audits.push(...retrieval.crawlerAudit);
 
+    const urlsAttempted = retrieval.crawlerAudit.reduce((sum, item) => sum + Number(item.targets || 0), 0);
+    const urlsSuccessful = retrieval.crawlerAudit.reduce((sum, item) => sum + Number(item.evidenceCount || 0), 0);
+    const crawlersUsed = [...new Set(retrieval.crawlerAudit.filter(item => Number(item.attempts || 0) > 0).map(item => item.crawler))];
     const outcome: PantheonCategoryOutcome = {
       index,
       label: category.label,
@@ -262,6 +293,12 @@ export async function conductPantheonCategoryWorkflow(input: {
       targetCount: uniqueTargets.length,
       evidenceCount: reportable.length,
       crawlerAudit: retrieval.crawlerAudit,
+      findings: reportable.map(item => cleanEvidenceContent(item.content).slice(0, 1800)),
+      urlsAttempted,
+      urlsSuccessful,
+      urlsFailed: Math.max(0, urlsAttempted - urlsSuccessful),
+      crawlersUsed,
+      evidenceRejected: Math.max(0, retrieval.evidence.length - reportable.length),
     };
     categoryOutcomes.push(outcome);
 
