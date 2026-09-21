@@ -17,6 +17,16 @@ interface CrawlerAuditEntry {
   error?: string;
 }
 
+interface PantheonCategoryOutcomeForPdf {
+  index?: number;
+  label?: string;
+  targetCount?: number;
+  evidenceCount?: number;
+  findings?: string[];
+  crawlerAudit?: CrawlerAuditEntry[];
+  categoryOutcomes?: PantheonCategoryOutcomeForPdf[];
+}
+
 interface PantheonReportForPdf {
   identitySummary?: {
     name?: string;
@@ -49,6 +59,7 @@ export interface PantheonPdfInput {
   reportId: string;
   report: PantheonReportForPdf;
   job?: Record<string, unknown> | null;
+  categoryOutcomes?: PantheonCategoryOutcomeForPdf[];
   createdAt?: Date | string | null;
   completedAt?: Date | string | null;
 }
@@ -211,6 +222,34 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
     if (report.spiderfoot) {
       addSectionTitle(doc, 'SpiderFoot OSINT');
       doc.font('Helvetica').fontSize(8).text(compactEvidence(report.spiderfoot), { lineGap: 2 });
+    }
+
+    addSectionTitle(doc, '30-Category Background Report');
+    const categories = input.categoryOutcomes || report.categoryOutcomes || [];
+    const canonicalCategories = [
+      'Identity & Identity Verification','Phone Numbers','Email Addresses','Current Address','Address History','Relatives & Family','Associates & Household Connections','Social-Media Profiles','Usernames & Online Accounts','Photos & Public Images','Employment History','Education','Professional Licenses & Credentials','Business Ownership & Affiliations','Property & Real Estate','Vehicles & Transportation Records','Court Records','Criminal Records','Arrest & Police Records','Incarceration & Corrections','Probation & Parole Information','Warrants & Wanted-Person Records','Sex-Offender Registries','Civil Litigation & Judgments','Bankruptcies, Liens & Financial Public Records','Marriage, Divorce & Vital-Record Information','News & Media Mentions','Internet & Web Footprint','Government, Political & Public-Service Records','Relationship & Timeline Intelligence'
+    ] as const;
+    for (let categoryIndex = 0; categoryIndex < canonicalCategories.length; categoryIndex++) {
+      if (doc.y > 650) doc.addPage();
+      const outcome = categories.find(item => Number(item.index) === categoryIndex);
+      doc.font('Helvetica-Bold').fontSize(10).fillColor('#183B63').text(`${categoryIndex + 1}. ${canonicalCategories[categoryIndex]}`);
+      doc.font('Helvetica').fontSize(8).fillColor('#111827');
+      const status = outcome
+        ? Number(outcome.evidenceCount || 0) > 0
+          ? `Verified public-source findings: ${Number(outcome.evidenceCount || 0)}`
+          : (outcome.crawlerAudit || []).some(item => item.status === 'timed_out')
+            ? 'Investigation window closed before this category could complete.'
+            : 'No verified finding returned by the searched public sources.'
+        : 'No category execution record was available.';
+      doc.text(status, { lineGap: 1 });
+      const findings = (outcome?.findings || []).map(cleanText).filter(Boolean);
+      if (findings.length > 0) {
+        for (const finding of findings.slice(0, 20)) {
+          if (doc.y > 710) doc.addPage();
+          doc.text(`• ${finding}`, { indent: 8, lineGap: 1 });
+        }
+      }
+      doc.moveDown(0.45);
     }
 
     addSectionTitle(doc, 'Crawler Coverage');
