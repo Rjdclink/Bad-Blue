@@ -51,6 +51,9 @@ export class PantheonRetrievalAdapter {
     depth?: 1 | 2 | 3 | 4;
     budgetMs?: number;
     deadlineAt?: number;
+    subject?: string;
+    location?: string;
+    categoryLabel?: string;
   }): Promise<PantheonRetrievalResponse> {
     const retrievalStartedAt = Date.now();
     const deadlineAt = request.deadlineAt
@@ -75,12 +78,27 @@ export class PantheonRetrievalAdapter {
       targetCount: request.targets.length,
       host,
     });
-    // Background-report depth controls effort and source breadth, not crawler
-    // participation. Always fan out through the complete specialized primary
-    // roster; each route remains failure-isolated and auditable.
+    // Every crawler remains available. Category/URL context determines which
+    // specialized skills are necessary; broad categories retain the complete
+    // primary roster while targeted categories avoid redundant transports.
     if (request.purpose === 'background_report') {
-      plan.crawlers = ['startrek', 'birdofprey', 'sixdegrees', 'cerberus', 'blizzard', 'lich'];
-      plan.rationale.unshift('Background report requires the complete specialized primary crawler roster.');
+      const category = String(request.categoryLabel || '').toLowerCase();
+      const specialized = new Set(plan.crawlers);
+      specialized.add('startrek');
+      if (/social|username|photo|internet|media|associate|relationship|timeline/.test(category)) {
+        specialized.add('sixdegrees');
+        specialized.add('birdofprey');
+      }
+      if (/court|criminal|arrest|warrant|offender|incarceration|probation|parole|public record|government/.test(category)) {
+        specialized.add('cerberus');
+        specialized.add('birdofprey');
+      }
+      if (/news|internet|media|business|property|employment|education|credential/.test(category)) {
+        specialized.add('blizzard');
+      }
+      if (/relationship|timeline|corroboration|contradiction/.test(category)) specialized.add('lich');
+      plan.crawlers = [...specialized];
+      plan.rationale.unshift(`Background category capability routing: ${request.categoryLabel || 'general'}.`);
     }
     const availability = canActivatePantheon();
     if (!availability.available) {
@@ -125,7 +143,7 @@ export class PantheonRetrievalAdapter {
     }
     recordCrawlerOutcomes(results);
 
-    const evidence = results.map(normalizeResult);
+    const evidence = results.map(normalizeResult).filter(item => item.content.trim() && item.confidence > 0);
 
     // Firecrawl is an explicit background-report retrieval lane, not merely a
     // registered capability. Give it category-specific URL work on every
