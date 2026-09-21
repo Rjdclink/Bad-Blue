@@ -357,7 +357,7 @@ export class PantheonRetrievalAdapter {
         if (run.status !== 'fulfilled') continue;
 
         for (const razor of run.value.razorResults) {
-          if (!razor.success) continue;
+          if (!razor.success || !Number.isFinite(razor.confidence) || razor.confidence <= 0 || Object.keys(razor.data || {}).length === 0) continue;
           evidence.push({
             crawler: `razor-${razor.razorType}`,
             target,
