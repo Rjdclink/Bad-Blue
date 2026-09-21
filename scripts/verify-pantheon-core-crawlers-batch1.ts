@@ -30,6 +30,9 @@ async function main() {
   const star = new StarTrekCrawler();
   star.setPrimeDirective(false);
   await star.setPhaserSetting(10);
+  let rejectedNonWebSeed = false;
+  try { star.setNavigationSeeds(['ftp://graph.test']); } catch { rejectedNonWebSeed = true; }
+  assert(rejectedNonWebSeed, 'StarTrek must reject non-HTTP(S) navigation seeds');
   star.setNavigationSeeds(['https://graph.test', 'https://alpha.test', 'https://beta.test']);
   assert((await star.longRangeScan()).length === 3, 'StarTrek long-range discovery failed');
   const starData = await star.warpTo('https://graph.test');
