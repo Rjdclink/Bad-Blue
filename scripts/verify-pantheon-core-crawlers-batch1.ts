@@ -20,7 +20,7 @@ async function main() {
     if (url.includes('unreachable.invalid')) return htmlResponse('unavailable', 503);
     if (init?.method === 'HEAD') return htmlResponse('', 200);
     if (url.includes('graph.test')) {
-      return htmlResponse('<html><body><a href="https://alpha.test/profile">Alpha</a><a href="https://beta.test/about">Beta</a></body></html>');
+      return htmlResponse('<html><body>verified crawler evidence <a href="https://alpha.test/profile">Alpha</a><a href="https://beta.test/about">Beta</a></body></html>');
     }
     if (url.includes('alpha.test')) return htmlResponse('<html><body>Alpha profile <a href="https://graph.test/">Home</a></body></html>');
     if (url.includes('beta.test')) return htmlResponse('<html><body>Beta profile</body></html>');
