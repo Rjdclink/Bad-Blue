@@ -5,6 +5,7 @@ function read(path) {
 }
 
 const adapter = read('server/services/crawlers/PantheonRetrievalAdapter.ts');
+const orchestrator = read('server/services/pantheonCrawlerOrchestrator.ts');
 const initiative = read('server/services/crawlers/SixCrawlerInitiative.ts');
 const routes = read('server/routes.ts');
 const pdf = read('server/services/pantheon/PantheonBackgroundReportPdf.ts');
@@ -35,6 +36,8 @@ const checks = [
   ['full roster rejection is handled immediately', peopleSearch.includes("error => ({ ok: false as const, error })")],
   ['transient Pantheon availability is rechecked', peopleSearch.includes('if (!fullRosterPromise && runFullRoster') && peopleSearch.includes('canActivatePantheon().available')],
   ['zero-confidence crawler attempts are excluded from evidence', peopleSearch.includes('crawlerRetrieval.evidence.filter') && peopleSearch.includes('result.confidence > 0')],
+  ['isolated crawler retries obey collection deadline', orchestrator.includes('const deadlineAt = options.timeout ? Date.now()') && orchestrator.includes("Crawler collection deadline reached") && orchestrator.includes('deadlineAt - Date.now()')],
+  ['isolated crawler evidence requires finite positive confidence', orchestrator.includes('Number.isFinite(result.confidence)') && orchestrator.includes('result.content?.trim()')],
 ];
 
 const failed = checks.filter(([, ok]) => !ok);
