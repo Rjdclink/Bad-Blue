@@ -1,6 +1,7 @@
 import { URL } from 'url';
 import { promises as dns } from 'dns';
 import { isIP } from 'net';
+import { pantheonAbortableDelay, throwIfPantheonAborted } from '../pantheon/PantheonDeadline';
 
 export type PublicAcquisitionKind = 'html' | 'json' | 'xml' | 'rss' | 'csv' | 'text';
 
@@ -156,15 +157,16 @@ function failureResult(url: string, status: number, error: unknown, retryMs?: nu
   };
 }
 
-async function waitForHost(host: string, deadlineAt: number): Promise<boolean> {
+async function waitForHost(host: string, deadlineAt: number, signal?: AbortSignal): Promise<boolean> {
   const state = stateFor(host);
   while (Date.now() < deadlineAt) {
+    throwIfPantheonAborted(signal);
     if (state.circuitOpenUntil > Date.now() || state.forbiddenUntil > Date.now()) return false;
     if (state.active < MAX_PER_HOST && state.nextAllowedAt <= Date.now()) {
       state.active += 1;
       return true;
     }
-    await new Promise(resolve => setTimeout(resolve, Math.min(150, Math.max(20, deadlineAt - Date.now()))));
+    await pantheonAbortableDelay(Math.min(150, Math.max(20, deadlineAt - Date.now())), signal);
   }
   return false;
 }
@@ -197,12 +199,12 @@ function recordHostResult(host: string, status: number, latencyMs: number, retry
   }
 }
 
-async function acquireOnce(url: URL, timeoutMs: number, hardDeadlineAt?: number): Promise<PublicAcquisitionResult> {
+async function acquireOnce(url: URL, timeoutMs: number, hardDeadlineAt?: number, signal?: AbortSignal): Promise<PublicAcquisitionResult> {
   const deadlineAt = hardDeadlineAt == null
     ? Date.now() + Math.max(500, timeoutMs)
     : Math.min(hardDeadlineAt, Date.now() + Math.max(1, timeoutMs));
   const host = url.hostname.toLowerCase();
-  const admitted = await waitForHost(host, deadlineAt);
+  const admitted = await waitForHost(host, deadlineAt, signal);
   if (!admitted) return { ...failureResult(url.toString(), 0, new Error('Host circuit open or acquisition deadline exhausted')), errorType: 'circuit_open' };
 
   const started = Date.now();
@@ -210,10 +212,13 @@ async function acquireOnce(url: URL, timeoutMs: number, hardDeadlineAt?: number)
     let current = url;
     let response: Response | undefined;
     for (let redirects = 0; redirects <= 5; redirects++) {
+      throwIfPantheonAborted(signal);
       await assertPublicResolution(current);
       const remaining = Math.max(1, deadlineAt - Date.now());
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), remaining);
+      const abortFromParent = () => controller.abort(signal?.reason);
+      signal?.addEventListener('abort', abortFromParent, { once: true });
+      const timer = setTimeout(() => controller.abort(new Error('Pantheon acquisition deadline exceeded')), remaining);
       try {
         response = await fetch(current, {
           signal: controller.signal,
@@ -225,6 +230,7 @@ async function acquireOnce(url: URL, timeoutMs: number, hardDeadlineAt?: number)
         });
       } finally {
         clearTimeout(timer);
+        signal?.removeEventListener('abort', abortFromParent);
       }
       if (![301, 302, 303, 307, 308].includes(response.status)) break;
       const location = response.headers.get('location');
@@ -263,14 +269,19 @@ async function acquireOnce(url: URL, timeoutMs: number, hardDeadlineAt?: number)
   }
 }
 
-export async function acquirePantheonResource(rawUrl: string, timeoutMs: number, authority: PantheonAcquisitionAuthority): Promise<PublicAcquisitionResult> {
+export async function acquirePantheonResource(rawUrl: string, timeoutMs: number, authority: PantheonAcquisitionAuthority, signal?: AbortSignal): Promise<PublicAcquisitionResult> {
   if (!authority?.investigationId || !authority.categoryId || !authority.workId || !authority.capability) {
     return failureResult(String(rawUrl || ''), 0, new Error('Pantheon acquisition rejected: incomplete work authorization'));
   }
-  return acquirePublicResource(rawUrl, timeoutMs, authority);
+  return acquirePublicResource(rawUrl, timeoutMs, authority, signal);
 }
 
-export async function acquirePublicResource(rawUrl: string, timeoutMs = 12_000, authority?: PantheonAcquisitionAuthority): Promise<PublicAcquisitionResult> {
+export async function acquirePublicResource(rawUrl: string, timeoutMs = 12_000, authority?: PantheonAcquisitionAuthority, signal?: AbortSignal): Promise<PublicAcquisitionResult> {
+  try {
+    throwIfPantheonAborted(signal);
+  } catch (error) {
+    return failureResult(String(rawUrl || ''), 0, error);
+  }
   if (authority && authority.deadlineAt <= Date.now()) {
     return failureResult(String(rawUrl || ''), 0, new Error('Pantheon acquisition authorization expired'));
   }
@@ -280,8 +291,9 @@ export async function acquirePublicResource(rawUrl: string, timeoutMs = 12_000, 
   } catch (error) {
     return failureResult(String(rawUrl || ''), 0, error);
   }
-  const key = url.toString();
-  const cached = recent.get(key);
+  const cacheKey = url.toString();
+  const key = authority ? cacheKey + '#' + authority.investigationId + ':' + authority.workId : cacheKey;
+  const cached = recent.get(cacheKey);
   if (cached && Date.now() - cached.at < RECENT_TTL_MS) return cached.value;
   const existing = inflight.get(key);
   if (existing) return existing;
@@ -290,10 +302,11 @@ export async function acquirePublicResource(rawUrl: string, timeoutMs = 12_000, 
     const deadlineAt = authority
       ? Math.min(authority.deadlineAt, Date.now() + Math.max(500, timeoutMs))
       : Date.now() + Math.max(500, timeoutMs);
-    let last = failureResult(key, 0, new Error('Acquisition not attempted'));
+    let last = failureResult(cacheKey, 0, new Error('Acquisition not attempted'));
     for (let attempt = 0; attempt <= MAX_RETRIES && Date.now() < deadlineAt; attempt++) {
+      throwIfPantheonAborted(signal);
       const remaining = Math.max(1, deadlineAt - Date.now());
-      last = await acquireOnce(url, remaining, deadlineAt);
+      last = await acquireOnce(url, remaining, deadlineAt, signal);
       if (last.ok) break;
       const retryable = last.status === 408 || last.status === 429 || last.status === 500 || last.status === 502 || last.status === 503 || last.status === 504 ||
         ['timeout','tls_failure','network_failure'].includes(String(last.errorType));
@@ -301,9 +314,9 @@ export async function acquirePublicResource(rawUrl: string, timeoutMs = 12_000, 
       const exponential = Math.min(MAX_BACKOFF_MS, 500 * 2 ** attempt);
       const delay = Math.min(remaining, last.retryAfterMs || (exponential + Math.floor(Math.random() * 350)));
       if (delay <= 0 || Date.now() + delay >= deadlineAt) break;
-      await new Promise(resolve => setTimeout(resolve, delay));
+      await pantheonAbortableDelay(delay, signal);
     }
-    recent.set(key, { at: Date.now(), value: last });
+    recent.set(cacheKey, { at: Date.now(), value: last });
     return last;
   })();
   inflight.set(key, task);
@@ -314,9 +327,9 @@ export async function acquirePublicResource(rawUrl: string, timeoutMs = 12_000, 
   }
 }
 
-export async function acquirePublicResources(urls: string[], timeoutMs?: number, authority?: PantheonAcquisitionAuthority): Promise<PublicAcquisitionResult[]> {
+export async function acquirePublicResources(urls: string[], timeoutMs?: number, authority?: PantheonAcquisitionAuthority, signal?: AbortSignal): Promise<PublicAcquisitionResult[]> {
   const unique = [...new Set(urls.map(value => String(value || '').trim()).filter(Boolean))].slice(0, 40);
-  const settled = await Promise.allSettled(unique.map((url, index) => acquirePublicResource(url, timeoutMs, authority ? { ...authority, workId: `${authority.workId}:${index}` } : undefined)));
+  const settled = await Promise.allSettled(unique.map((url, index) => acquirePublicResource(url, timeoutMs, authority ? { ...authority, workId: `${authority.workId}:${index}` } : undefined, signal)));
   return settled.map((result, index) => result.status === 'fulfilled'
     ? result.value
     : failureResult(unique[index], 0, result.reason));

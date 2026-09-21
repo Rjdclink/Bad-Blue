@@ -66,7 +66,12 @@
     "verify:lexara-realization": "node scripts/verify-lexara-realization.cjs",
     "verify:ai-harmony": "node scripts/verify-ai-harmony-platform.cjs",
     "verify:pantheon-source-registry": "node scripts/verify-pantheon-source-registry.cjs",
-    "verify:pantheon-realization": "npm run verify:pantheon-source-registry && node scripts/verify-pantheon-realization.cjs"
+    "verify:pantheon-realization": "npm run verify:pantheon-source-registry && npm run verify:pantheon-capability-matrix && npm run verify:pantheon-capability-runtime && npm run verify:pantheon-scheduling && npm run verify:pantheon-evidence-lifecycle && npm run verify:pantheon-source-contract && node scripts/verify-pantheon-realization.cjs",
+    "verify:pantheon-capability-matrix": "node scripts/verify-pantheon-capability-matrix.cjs",
+    "verify:pantheon-capability-runtime": "node scripts/verify-pantheon-capability-runtime.cjs",
+    "verify:pantheon-scheduling": "node scripts/verify-pantheon-scheduling.cjs",
+    "verify:pantheon-evidence-lifecycle": "node scripts/verify-pantheon-evidence-lifecycle.cjs && tsx scripts/verify-pantheon-report-e2e.ts",
+    "verify:pantheon-source-contract": "node scripts/verify-pantheon-source-contract.cjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",

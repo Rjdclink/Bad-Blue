@@ -1,3 +1,9 @@
+import { getPantheonPrimaryCrawlerCapabilitiesForCategory } from './PantheonCrawlerCapabilityMatrix';
+import {
+  assessPantheonCapabilityCoverage,
+  type PantheonCapabilityOutcome,
+} from './PantheonCapabilityRuntime';
+
 export const PANTHEON_CORE_CRAWLER_CAPABILITIES = [
   'startrek', 'birdofprey', 'sixdegrees', 'cerberus', 'blizzard', 'lich',
 ] as const;
@@ -42,21 +48,7 @@ const SIMULATION_MARKERS = /(?:simulat(?:e|ed|ion)|mirrored|synthetic|test[ _-]?
 const TERMINAL_LEDGER_STATES = new Set(['accepted', 'rejected', 'blocked', 'rate_limited', 'dead', 'timed_out', 'no_evidence']);
 
 export function plannedPantheonCrawlerCapabilitiesForCategory(label: string): PantheonCoreCrawlerCapability[] {
-  const value = String(label || '').toLowerCase();
-  const capabilities = new Set<PantheonCoreCrawlerCapability>(['startrek', 'blizzard']);
-
-  if (/identity|phone|email|address|relative|associate|social|username|photo|relationship|timeline/.test(value)) {
-    capabilities.add('birdofprey');
-    capabilities.add('sixdegrees');
-  }
-  if (/court|criminal|arrest|warrant|offender|incarceration|probation|parole|government|public-service|license|judgment|bankrupt|lien/.test(value)) {
-    capabilities.add('cerberus');
-  }
-  if (/relationship|timeline|history|corroboration|contradiction|news|media|internet/.test(value)) {
-    capabilities.add('lich');
-  }
-
-  return PANTHEON_CORE_CRAWLER_CAPABILITIES.filter(capability => capabilities.has(capability));
+  return [...getPantheonPrimaryCrawlerCapabilitiesForCategory(label)];
 }
 
 export function isPantheonSimulatedOutput(value: unknown): boolean {
@@ -136,6 +128,7 @@ export interface PantheonInvestigationAssessment {
   completedCategoryCount: number;
   partialCategoryCount: number;
   missingCapabilities: PantheonCoreCrawlerCapability[];
+  capabilityCoverage: ReturnType<typeof assessPantheonCapabilityCoverage>;
   releaseEligible: boolean;
 }
 
@@ -143,6 +136,7 @@ export function assessPantheonInvestigation(categories: readonly {
   completionState?: PantheonCategoryCompletionState;
   expectedCapabilities?: readonly string[];
   crawlerAudit?: readonly CrawlerAuditLike[];
+  capabilityOutcomes?: readonly PantheonCapabilityOutcome[];
 }[]): PantheonInvestigationAssessment {
   const required = new Set<PantheonCoreCrawlerCapability>();
   const executed = new Set<PantheonCoreCrawlerCapability>();
@@ -163,12 +157,17 @@ export function assessPantheonInvestigation(categories: readonly {
   }
 
   const missingCapabilities = [...required].filter(capability => !executed.has(capability));
+  const capabilityCoverage = assessPantheonCapabilityCoverage(categories);
   const partialCategoryCount = Math.max(0, categories.length - completedCategoryCount);
+  const releaseEligible = partialCategoryCount === 0
+    && missingCapabilities.length === 0
+    && capabilityCoverage.eligible;
   return {
-    state: partialCategoryCount === 0 && missingCapabilities.length === 0 ? 'completed' : 'partial',
+    state: releaseEligible ? 'completed' : 'partial',
     completedCategoryCount,
     partialCategoryCount,
     missingCapabilities,
-    releaseEligible: partialCategoryCount === 0 && missingCapabilities.length === 0,
+    capabilityCoverage,
+    releaseEligible,
   };
 }

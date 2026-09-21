@@ -21,6 +21,13 @@ import { IceCrawler } from '../crawlers/ice';
 import { FarmCrawler, PhantomCrawler, NovaCrawler } from '../crawlers/utility';
 import { CrawlerType, CrawlerTask, EntropySignature } from '../core';
 import { acquirePublicResource } from '../../crawlers/PublicAcquisitionInfrastructure';
+import { createPantheonDeadline, racePantheonAbort, throwIfPantheonAborted } from '../PantheonDeadline';
+import {
+  PANTHEON_RAZOR_SKILL_IDS,
+  PANTHEON_SECONDARY_CRAWLER_IDS,
+  type PantheonCapabilityId,
+  type PantheonSecondaryCrawlerId,
+} from '../PantheonCrawlerCapabilityMatrix';
 
 // Configuration
 const STAGE_1_TIMEOUT = 5000;           // 5 seconds for all razors
@@ -35,6 +42,14 @@ export interface BackgroundCapabilityAudit {
   evidenceCount: number;
   attempts: number;
   targets: number;
+  durationMs?: number;
+  sourceOutcomes?: Array<{
+    sourceUrl: string;
+    status: 'completed_with_evidence' | 'completed_no_evidence' | 'failed' | 'timed_out';
+    retrievedAt: string;
+    durationMs: number;
+    error?: string;
+  }>;
   error?: string;
 }
 
@@ -42,6 +57,7 @@ export interface BackgroundSecondaryResult {
   crawler: 'hydra' | 'wraith' | 'ice' | 'farm' | 'phantom' | 'nova';
   signatures: EntropySignature[];
   status: BackgroundCapabilityAudit['status'];
+  durationMs: number;
   error?: string;
 }
 
@@ -68,18 +84,31 @@ export class TwoStageDeployer {
    * contact/location/relationship data are withheld before leaving PANTHEON.
    * All six secondary public-data crawlers execute route-locally in parallel.
    */
-  async deployBackgroundReport(target: string, html?: string, reportBudgetMs?: number): Promise<BackgroundReportDeployment> {
+  async deployBackgroundReport(
+    target: string,
+    html?: string,
+    reportBudgetMs?: number,
+    capabilityIds?: readonly PantheonCapabilityId[],
+    signal?: AbortSignal,
+  ): Promise<BackgroundReportDeployment> {
+    throwIfPantheonAborted(signal);
     const startedAt = Date.now();
     const boundedBudget = Math.max(30_000, reportBudgetMs || 60_000);
     const fetchTimeoutMs = Math.min(30_000, Math.max(5_000, Math.floor(boundedBudget / 30)));
     const razorTimeoutMs = Math.min(60_000, Math.max(STAGE_1_TIMEOUT, Math.floor(boundedBudget / 20)));
     const secondaryTimeoutMs = Math.min(120_000, Math.max(10_000, Math.floor(boundedBudget / 12)));
-    const content = html || await this.fetchContent(target, fetchTimeoutMs);
+    const content = html || await this.fetchContent(target, fetchTimeoutMs, signal);
+    const allowed = new Set<PantheonCapabilityId>(capabilityIds || [
+      ...PANTHEON_RAZOR_SKILL_IDS,
+      ...PANTHEON_SECONDARY_CRAWLER_IDS,
+    ]);
+    const selectedRazors = this.razors.filter(razor => allowed.has(('razor:' + razor.type) as PantheonCapabilityId));
+    const selectedSecondary = PANTHEON_SECONDARY_CRAWLER_IDS.filter(id => allowed.has(id));
     const razorResults = content
-      ? (await this.deployStage1(content, target, razorTimeoutMs)).map(result => this.sanitizeBackgroundRazorResult(result))
+      ? (await this.deployStage1(content, target, razorTimeoutMs, selectedRazors, signal)).map(result => this.sanitizeBackgroundRazorResult(result))
       : [];
-    const secondaryResults = await this.deployAllSecondary(target, secondaryTimeoutMs);
-    const razorAudit: BackgroundCapabilityAudit[] = this.razors.map(razor => {
+    const secondaryResults = await this.deployAllSecondary(target, secondaryTimeoutMs, selectedSecondary, signal);
+    const razorAudit: BackgroundCapabilityAudit[] = selectedRazors.map(razor => {
       const result = razorResults.find(candidate => candidate.razorType === razor.type);
       return {
         crawler: `razor:${razor.type}`,
@@ -92,6 +121,13 @@ export class TwoStageDeployer {
         evidenceCount: result?.success ? 1 : 0,
         attempts: content ? 1 : 0,
         targets: 1,
+        durationMs: Number(result?.extractionTimeMs || 0),
+        sourceOutcomes: [{
+          sourceUrl: target,
+          status: result?.success ? 'completed_with_evidence' : 'completed_no_evidence',
+          retrievedAt: new Date().toISOString(),
+          durationMs: Number(result?.extractionTimeMs || 0),
+        }],
       };
     });
     const secondaryAudit: BackgroundCapabilityAudit[] = secondaryResults.map(result => ({
@@ -101,6 +137,20 @@ export class TwoStageDeployer {
       evidenceCount: result.signatures.length,
       attempts: 1,
       targets: 1,
+      durationMs: result.durationMs,
+      sourceOutcomes: [{
+        sourceUrl: target,
+        status: result.status === 'timed_out'
+          ? 'timed_out'
+          : result.status === 'failed'
+            ? 'failed'
+            : result.signatures.length > 0
+              ? 'completed_with_evidence'
+              : 'completed_no_evidence',
+        retrievedAt: new Date().toISOString(),
+        durationMs: result.durationMs,
+        ...(result.error ? { error: result.error } : {}),
+      }],
       ...(result.error ? { error: result.error } : {}),
     }));
 
@@ -143,9 +193,15 @@ export class TwoStageDeployer {
     return result;
   }
 
-  private async deployAllSecondary(target: string, perCrawlerTimeoutMs: number = 10_000): Promise<BackgroundSecondaryResult[]> {
+  private async deployAllSecondary(
+    target: string,
+    perCrawlerTimeoutMs: number = 10_000,
+    allowedIds: readonly PantheonSecondaryCrawlerId[] = PANTHEON_SECONDARY_CRAWLER_IDS,
+    signal?: AbortSignal,
+  ): Promise<BackgroundSecondaryResult[]> {
+    throwIfPantheonAborted(signal);
     const specs: Array<{
-      crawler: BackgroundSecondaryResult['crawler'];
+      crawler: PantheonSecondaryCrawlerId;
       type: CrawlerType;
       create: (task: CrawlerTask) => { execute(): Promise<EntropySignature[]> };
     }> = [
@@ -157,7 +213,9 @@ export class TwoStageDeployer {
       { crawler: 'nova', type: CrawlerType.NOVA, create: task => new NovaCrawler(task) },
     ];
 
-    const runs = specs.map(async spec => {
+    const selectedSpecs = specs.filter(spec => allowedIds.includes(spec.crawler));
+    const runs = selectedSpecs.map(async spec => {
+      const executionStartedAt = Date.now();
       const task: CrawlerTask = {
         id: `background-${spec.crawler}-${Date.now()}`,
         type: spec.type,
@@ -168,16 +226,18 @@ export class TwoStageDeployer {
       };
       const crawler = spec.create(task);
       try {
-        const signatures = await Promise.race([
-          crawler.execute(),
-          new Promise<EntropySignature[]>((_, reject) =>
-            setTimeout(() => reject(new Error(`${spec.crawler}_timeout`)), perCrawlerTimeoutMs)
-          ),
-        ]);
+        const routeDeadline = createPantheonDeadline(Date.now() + perCrawlerTimeoutMs, signal);
+        let signatures: EntropySignature[];
+        try {
+          signatures = await racePantheonAbort(crawler.execute(), routeDeadline.signal);
+        } finally {
+          routeDeadline.dispose();
+        }
         return {
           crawler: spec.crawler,
           signatures,
           status: signatures.length > 0 ? 'completed_with_evidence' : 'completed_no_evidence',
+          durationMs: Date.now() - executionStartedAt,
         } satisfies BackgroundSecondaryResult;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -185,12 +245,70 @@ export class TwoStageDeployer {
           crawler: spec.crawler,
           signatures: [],
           status: /timeout/i.test(message) ? 'timed_out' : 'failed',
+          durationMs: Date.now() - executionStartedAt,
           error: message.slice(0, 300),
         } satisfies BackgroundSecondaryResult;
       }
     });
 
     return Promise.all(runs);
+  }
+
+  async healthCheckAllCapabilities(
+    target: string,
+    html: string,
+    timeoutMs: number = 3_000,
+  ): Promise<BackgroundCapabilityAudit[]> {
+    const startedAt = Date.now();
+    const [razorRun, secondaryRun] = await Promise.all([
+      this.deployStage1(html, target, timeoutMs, this.razors),
+      this.deployAllSecondary(target, timeoutMs, PANTHEON_SECONDARY_CRAWLER_IDS),
+    ]);
+    const razorAudit: BackgroundCapabilityAudit[] = this.razors.map(razor => {
+      const result = razorRun.find(candidate => candidate.razorType === razor.type);
+      return {
+        crawler: 'razor:' + razor.type,
+        capabilityClass: 'razor',
+        status: result?.success ? 'completed_with_evidence' : 'completed_no_evidence',
+        evidenceCount: result?.success ? 1 : 0,
+        attempts: 1,
+        targets: 1,
+        durationMs: Number(result?.extractionTimeMs || 0),
+        sourceOutcomes: [{
+          sourceUrl: target,
+          status: result?.success ? 'completed_with_evidence' : 'completed_no_evidence',
+          retrievedAt: new Date().toISOString(),
+          durationMs: Number(result?.extractionTimeMs || 0),
+        }],
+      };
+    });
+    const secondaryAudit: BackgroundCapabilityAudit[] = secondaryRun.map(result => ({
+      crawler: result.crawler,
+      capabilityClass: 'pantheon-secondary',
+      status: result.status,
+      evidenceCount: result.signatures.length,
+      attempts: 1,
+      targets: 1,
+      durationMs: result.durationMs,
+      sourceOutcomes: [{
+        sourceUrl: target,
+        status: result.status === 'timed_out'
+          ? 'timed_out'
+          : result.status === 'failed'
+            ? 'failed'
+            : result.signatures.length > 0
+              ? 'completed_with_evidence'
+              : 'completed_no_evidence',
+        retrievedAt: new Date().toISOString(),
+        durationMs: result.durationMs,
+        ...(result.error ? { error: result.error } : {}),
+      }],
+      ...(result.error ? { error: result.error } : {}),
+    }));
+    return [...razorAudit, ...secondaryAudit].map(item => ({
+      ...item,
+      durationMs: item.durationMs || (Date.now() - startedAt),
+    }));
   }
 
   /**
@@ -260,28 +378,30 @@ export class TwoStageDeployer {
   /**
    * Stage 1: Deploy all 10 RAZORS in parallel
    */
-  private async deployStage1(html: string, url: string, overallTimeoutMs: number = STAGE_1_TIMEOUT): Promise<RazorResult[]> {
-    const perRazorTimeout = overallTimeoutMs / this.razors.length;
+  private async deployStage1(
+    html: string,
+    url: string,
+    overallTimeoutMs: number = STAGE_1_TIMEOUT,
+    razors: BaseRazor[] = this.razors,
+    signal?: AbortSignal,
+  ): Promise<RazorResult[]> {
+    throwIfPantheonAborted(signal);
+    const perRazorTimeout = overallTimeoutMs / Math.max(1, razors.length);
     
-    const promises = this.razors.map(razor => 
-      razor.run(html, url, perRazorTimeout)
+    const completed: RazorResult[] = [];
+    const promises = razors.map(razor =>
+      razor.run(html, url, perRazorTimeout).then(result => {
+        completed.push(result);
+        return result;
+      })
     );
-
-    // Execute all razors in parallel with overall timeout
+    const stageDeadline = createPantheonDeadline(Date.now() + overallTimeoutMs, signal);
     try {
-      const results = await Promise.race([
-        Promise.all(promises),
-        new Promise<RazorResult[]>((_, reject) => 
-          setTimeout(() => reject(new Error('stage1_timeout')), overallTimeoutMs)
-        )
-      ]);
-      return results;
+      return await racePantheonAbort(Promise.all(promises), stageDeadline.signal);
     } catch {
-      // Return whatever completed
-      const settled = await Promise.allSettled(promises);
-      return settled
-        .filter((r): r is PromiseFulfilledResult<RazorResult> => r.status === 'fulfilled')
-        .map(r => r.value);
+      return completed;
+    } finally {
+      stageDeadline.dispose();
     }
   }
 
@@ -334,8 +454,8 @@ export class TwoStageDeployer {
   /**
    * Fetch content from target URL
    */
-  private async fetchContent(url: string, timeoutMs: number = 5000): Promise<string | null> {
-    const result = await acquirePublicResource(url, timeoutMs);
+  private async fetchContent(url: string, timeoutMs: number = 5000, signal?: AbortSignal): Promise<string | null> {
+    const result = await acquirePublicResource(url, timeoutMs, undefined, signal);
     return result.ok && result.content.trim() ? result.content : null;
   }
 

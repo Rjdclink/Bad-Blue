@@ -3574,26 +3574,36 @@ Contact: ${foiaRequest.userEmail || userEmail}
       });
     }
 
-    const name = String(req.body?.name || '').trim();
-    const location = String(req.body?.location || '').trim();
-    if (!name) {
-      return res.status(400).json({ success: false, code: 'invalid_request', message: 'Target name is required.' });
-    }
-
-    const { normalizePantheonSearchDepth, getPantheonReportDurationMs } = await import('@shared/pantheonReportConfig');
-    const searchDepth = normalizePantheonSearchDepth(req.body?.searchDepth);
-    const budgetMs = getPantheonReportDurationMs(searchDepth);
     const userId = String(access.user?.id || access.user?.claims?.sub || req.user?.id || req.user?.claims?.sub || '').trim();
     if (!userId) {
       return res.status(401).json({ success: false, code: 'unauthenticated', message: 'Authentication required.' });
     }
 
+    let submission;
     try {
-      const { createPantheonReportRecord } = await import('./services/pantheon/PantheonReportStore');
-      const initial = await createPantheonReportRecord({
+      const { validatePantheonJobSubmission } = await import('./services/pantheon/PantheonJobSubmission');
+      submission = validatePantheonJobSubmission(req.body, req.get('Idempotency-Key'));
+    } catch (error) {
+      const code = error instanceof Error ? error.message : 'invalid_request';
+      return res.status(400).json({
+        success: false,
+        code,
+        message: code === 'consent_required'
+          ? 'Authorization consent is required.'
+          : 'The target, location, search depth, or idempotency key is invalid.',
+      });
+    }
+    const { name, location, searchDepth, idempotencyKey, consent } = submission;
+    const { getPantheonReportDurationMs } = await import('@shared/pantheonReportConfig');
+    const budgetMs = getPantheonReportDurationMs(searchDepth);
+
+    try {
+      const { createIdempotentPantheonReportRecord } = await import('./services/pantheon/PantheonReportStore');
+      const { record: initial, created } = await createIdempotentPantheonReportRecord({
         userId,
         searchQuery: name,
         subjectName: name,
+        idempotencyKey,
         reportData: {
           job: {
             state: 'queued',
@@ -3601,30 +3611,39 @@ Contact: ${foiaRequest.userEmail || userEmail}
             location: location || null,
             searchDepth,
             budgetMs,
+            idempotencyKey,
+            consent,
             queuedAt: new Date().toISOString(),
           },
           report: null,
+          categoryOutcomes: [],
         },
       });
 
       const { issuePantheonReportAccess } = await import('./services/pantheon/PantheonReportAccess');
       issuePantheonReportAccess(res, initial.id, userId);
 
-      const { startPantheonReportJob } = await import('./services/pantheon/PantheonBackgroundReportJob');
-      void startPantheonReportJob({
-        reportId: initial.id,
-        userId,
-        name,
-        location: location || undefined,
-        searchDepth,
-      }).catch(error => {
+      const { startPantheonReportJob, resumePantheonReportJobFromRecord } = await import('./services/pantheon/PantheonBackgroundReportJob');
+      const execution = created
+        ? startPantheonReportJob({
+            reportId: initial.id,
+            userId,
+            name,
+            location,
+            searchDepth,
+            idempotencyKey,
+            consent,
+          })
+        : resumePantheonReportJobFromRecord(initial);
+      void execution?.catch(error => {
         console.error('[PANTHEON REPORT JOB] Background execution failed:', error);
       });
 
-      return res.status(202).json({
+      return res.status(created ? 202 : 200).json({
         success: true,
         jobId: initial.id,
-        status: 'processing',
+        status: initial.status,
+        reused: !created,
         searchDepth,
         budgetMs,
         monitorUrl: `/api/osint/report-jobs/${initial.id}`,
@@ -3692,7 +3711,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
     }
 
     const envelope = report.reportData && typeof report.reportData === 'object'
-      ? report.reportData as { job?: unknown; report?: unknown }
+      ? report.reportData as { job?: unknown; report?: unknown; pdfVerification?: { verified?: boolean } }
       : {};
 
     res.setHeader('Cache-Control', 'private, no-store');
@@ -3702,8 +3721,8 @@ Contact: ${foiaRequest.userEmail || userEmail}
       status: report.status,
       job: envelope.job || null,
       subjectName: report.subjectName || report.searchQuery,
-      downloadReady: report.status === 'completed' && Boolean(envelope.report),
-      downloadUrl: report.status === 'completed' && envelope.report
+      downloadReady: report.status === 'completed' && Boolean(envelope.report) && envelope.pdfVerification?.verified === true,
+      downloadUrl: report.status === 'completed' && envelope.report && envelope.pdfVerification?.verified === true
         ? `/api/osint/report-jobs/${report.id}/download`
         : null,
       error: report.status === 'failed' ? report.errorMessage || 'Background report failed.' : null,
@@ -3734,15 +3753,22 @@ Contact: ${foiaRequest.userEmail || userEmail}
     }
 
     const envelope = report.reportData && typeof report.reportData === 'object'
-      ? report.reportData as { job?: Record<string, unknown>; report?: unknown; categoryOutcomes?: unknown[] }
+      ? report.reportData as {
+        job?: Record<string, unknown>;
+        report?: unknown;
+        categoryOutcomes?: unknown[];
+        pdfVerification?: { verified?: boolean };
+      }
       : {};
-    if (report.status !== 'completed' || !envelope.report) {
+    if (report.status !== 'completed' || !envelope.report || envelope.pdfVerification?.verified !== true) {
       return res.status(409).json({
         success: false,
         code: 'report_not_ready',
         message: report.status === 'failed'
           ? report.errorMessage || 'Background report failed.'
-          : 'Background report is still being generated.',
+          : envelope.pdfVerification?.verified !== true
+            ? 'Background report PDF verification has not completed.'
+            : 'Background report is still being generated.',
       });
     }
 
@@ -3750,6 +3776,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
       const {
         generatePantheonBackgroundReportPdf,
         pantheonReportFilename,
+        verifyPantheonPdfBuffer,
       } = await import('./services/pantheon/PantheonBackgroundReportPdf');
       const pdf = await generatePantheonBackgroundReportPdf({
         reportId: report.id,
@@ -3759,6 +3786,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
         createdAt: report.createdAt,
         completedAt: report.completedAt,
       });
+      verifyPantheonPdfBuffer(pdf, 2);
       const filename = pantheonReportFilename(envelope.report as any, report.id);
 
       res.setHeader('Content-Type', 'application/pdf');

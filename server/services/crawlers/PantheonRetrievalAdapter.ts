@@ -12,18 +12,20 @@ import {
 } from './CrawlerSelectionUtility';
 import { type CrawlerSupervisionResult } from './CainReaperSupervisor';
 import { twoStageDeployer } from '../pantheon/razors/TwoStageDeployer';
-import { acquirePublicResources } from './PublicAcquisitionInfrastructure';
-import { defaultFirecrawlAdapter } from '../shadowRetrieval/firecrawlAdapter';
-import { shadowRetrieval } from '../shadowRetrieval';
+import {
+  getPantheonCategoryCapabilities,
+  getPantheonPrimaryCrawlerCapabilitiesForCategory,
+  PANTHEON_PRIMARY_CRAWLER_IDS,
+  type PantheonPrimaryCrawlerId,
+  type PantheonTransport,
+} from '../pantheon/PantheonCrawlerCapabilityMatrix';
+import {
+  createPantheonSourceResult,
+  type PantheonStructuredSourceResult,
+} from '../pantheon/PantheonSourceResult';
+import { createPantheonDeadline, throwIfPantheonAborted } from '../pantheon/PantheonDeadline';
 
-export interface RetrievalEvidence {
-  crawler: string;
-  target: string;
-  content: string;
-  confidence: number;
-  retrievedAt: string;
-  metadata?: Record<string, unknown>;
-}
+export type RetrievalEvidence = PantheonStructuredSourceResult;
 
 export interface PantheonRetrievalResponse {
   available: boolean;
@@ -38,6 +40,16 @@ export interface PantheonRetrievalResponse {
     attempts: number;
     targets: number;
     error?: string;
+    durationMs?: number;
+    sourceOutcomes?: Array<{
+      sourceUrl: string;
+      status: 'completed_with_evidence' | 'completed_no_evidence' | 'failed' | 'timed_out';
+      retrievedAt: string;
+      durationMs: number;
+      error?: string;
+    }>;
+    route?: 'primary' | 'fallback';
+    fallbackFor?: string;
   }>;
   supervision?: CrawlerSupervisionResult;
 }
@@ -55,6 +67,7 @@ export class PantheonRetrievalAdapter {
     categoryLabel?: string;
     capabilityHint?: string[];
     transportHint?: string[];
+    signal?: AbortSignal;
     authority?: {
       investigationId: string;
       categoryId: string;
@@ -68,6 +81,7 @@ export class PantheonRetrievalAdapter {
       capability?: string;
     };
   }): Promise<PantheonRetrievalResponse> {
+    throwIfPantheonAborted(request.signal);
     if (request.purpose === 'background_report') {
       const authority = request.authority;
       if (!authority?.investigationId || !authority.categoryId || !authority.workId || !authority.canonicalUrl || !authority.capability) {
@@ -92,7 +106,10 @@ export class PantheonRetrievalAdapter {
     const remainingBudgetMs = () => deadlineAt == null
       ? Number.POSITIVE_INFINITY
       : Math.max(0, deadlineAt - Date.now());
-    const collectionOpen = () => remainingBudgetMs() > 0;
+    const operationDeadline = deadlineAt == null ? undefined : createPantheonDeadline(deadlineAt, request.signal);
+    const operationSignal = operationDeadline?.signal || request.signal;
+    try {
+    const collectionOpen = () => remainingBudgetMs() > 0 && !operationSignal?.aborted;
     const firstTarget = request.targets[0];
     let host: string | undefined;
     if (firstTarget) {
@@ -116,7 +133,11 @@ export class PantheonRetrievalAdapter {
       const category = String(request.categoryLabel || '').toLowerCase();
       // URL ledger capability hints are authoritative. Category inference is a
       // fallback for legacy registry entries that do not yet carry a hint.
-      const specialized = new Set<string>((request.capabilityHint || []).filter(Boolean));
+      const specialized = new Set<PantheonPrimaryCrawlerId>(
+        (request.capabilityHint || []).filter((capability): capability is PantheonPrimaryCrawlerId =>
+          (PANTHEON_PRIMARY_CRAWLER_IDS as readonly string[]).includes(capability)
+        ),
+      );
       if (/social|username|photo|internet|media|associate|relationship|timeline/.test(category)) {
         specialized.add('sixdegrees');
         specialized.add('birdofprey');
@@ -166,6 +187,7 @@ export class PantheonRetrievalAdapter {
       crawlers: plan.crawlers,
       stormIntensity: plan.depth === 4 ? 'storm' as const : 'snow' as const,
       timeout: primaryBudgetMs,
+      signal: operationSignal,
     };
     let results: CrawlerResult[];
     let crawlerAudit: PantheonRetrievalResponse['crawlerAudit'] = [];
@@ -173,12 +195,47 @@ export class PantheonRetrievalAdapter {
       const isolated = await pantheonOrchestrator.searchAllIsolatedWithAudit(request.targets, searchOptions);
       results = isolated.results;
       crawlerAudit = isolated.audit;
+
+      const failedRoutes = isolated.audit.filter(audit => audit.status === 'failed' || audit.status === 'timed_out');
+      const preferredFallbacks = getPantheonPrimaryCrawlerCapabilitiesForCategory(request.categoryLabel || '');
+      const fallbackCandidates = [...preferredFallbacks, ...PANTHEON_PRIMARY_CRAWLER_IDS];
+      const usedFallbacks = new Set<string>();
+      for (const failed of failedRoutes.slice(0, 2)) {
+        if (!collectionOpen()) break;
+        const fallback = fallbackCandidates.find(candidate =>
+          candidate !== failed.crawler && !usedFallbacks.has(candidate)
+        ) as PantheonPrimaryCrawlerId | undefined;
+        if (!fallback) continue;
+        usedFallbacks.add(fallback);
+        const fallbackBudgetMs = Math.max(750, Math.min(
+          Math.floor(primaryBudgetMs * 0.25),
+          Number.isFinite(remainingBudgetMs()) ? remainingBudgetMs() : primaryBudgetMs,
+        ));
+        const fallbackRun = await pantheonOrchestrator.searchAllIsolatedWithAudit(request.targets, {
+          ...searchOptions,
+          crawlers: [fallback],
+          timeout: fallbackBudgetMs,
+          signal: operationSignal,
+        });
+        results.push(...fallbackRun.results);
+        crawlerAudit.push(...fallbackRun.audit.map(audit => ({
+          ...audit,
+          route: 'fallback' as const,
+          fallbackFor: failed.crawler,
+        })));
+      }
     } else {
       results = await pantheonOrchestrator.search(request.targets, searchOptions);
     }
+    throwIfPantheonAborted(operationSignal);
     recordCrawlerOutcomes(results);
 
-    const evidence = results.map(normalizeResult).filter(item => item.content.trim() && item.confidence > 0);
+    const evidence = results
+      .filter(result => result.content.trim() && result.confidence > 0)
+      .map(result => normalizeResult(result, {
+        categoryLabel: request.categoryLabel,
+        transport: (request.transportHint?.[0] || 'direct-http') as PantheonTransport,
+      }));
 
     // Specialized extraction providers may enrich content already admitted
     // through the canonical acquisition gateway; they are not independent
@@ -187,20 +244,20 @@ export class PantheonRetrievalAdapter {
       crawlerAudit.push({
         crawler: 'firecrawl',
         capabilityClass: 'pantheon-secondary',
-        status: 'completed_no_evidence',
+        status: 'not_applicable',
         evidenceCount: 0,
         attempts: 0,
         targets: 0,
-        error: 'Independent Firecrawl acquisition disabled; canonical acquisition owns Pantheon networking',
+        error: 'Not applicable: canonical acquisition owns Pantheon networking for this authorized URL',
       });
       crawlerAudit.push({
         crawler: 'puppeteer',
         capabilityClass: 'pantheon-secondary',
-        status: 'completed_no_evidence',
+        status: 'not_applicable',
         evidenceCount: 0,
         attempts: 0,
         targets: 0,
-        error: 'Independent Puppeteer acquisition disabled; browser capability requires controller-authorized transport',
+        error: 'Not applicable: browser transport was not authorized for this URL work unit',
       });
     }
 
@@ -209,6 +266,7 @@ export class PantheonRetrievalAdapter {
     // provide attributable subject evidence.
 
     if (request.purpose === 'background_report') {
+      const applicableCapabilities = getPantheonCategoryCapabilities(request.categoryLabel || '');
       const extendedTargets = request.targets.filter(target => {
         try {
           const parsed = new URL(target);
@@ -227,7 +285,13 @@ export class PantheonRetrievalAdapter {
           Number.isFinite(remainingBudgetMs()) ? Math.max(1, remainingBudgetMs()) : extendedLaneBudget,
         );
         const settled = await Promise.allSettled(
-          batch.map(target => twoStageDeployer.deployBackgroundReport(target, undefined, perBatchBudget))
+          batch.map(target => twoStageDeployer.deployBackgroundReport(
+            target,
+            results.find(result => result.target === target && result.content.trim())?.content,
+            perBatchBudget,
+            applicableCapabilities,
+            operationSignal,
+          ))
         );
         settled.forEach((run, index) => extendedRuns.push({ target: batch[index], run }));
       }
@@ -249,27 +313,33 @@ export class PantheonRetrievalAdapter {
 
         for (const razor of run.value.razorResults) {
           if (!razor.success) continue;
-          evidence.push({
+          evidence.push(createPantheonSourceResult({
             crawler: `razor:${razor.razorType}`,
-            target,
+            capabilityId: `razor:${razor.razorType}`,
+            categoryLabel: request.categoryLabel,
+            sourceUrl: target,
             content: JSON.stringify(razor.data),
             confidence: Number.isFinite(razor.confidence) ? razor.confidence : 0,
             retrievedAt: new Date().toISOString(),
+            durationMs: razor.extractionTimeMs,
+            transport: (request.transportHint?.[0] || 'direct-http') as PantheonTransport,
             metadata: {
               capabilityClass: 'razor',
               source: razor.source,
               extractionTimeMs: razor.extractionTimeMs,
             },
-          });
+          }));
         }
 
         crawlerAudit.push(...run.value.audit);
 
         for (const secondary of run.value.secondaryResults) {
           for (const signature of secondary.signatures) {
-            evidence.push({
+            evidence.push(createPantheonSourceResult({
               crawler: secondary.crawler,
-              target,
+              capabilityId: secondary.crawler,
+              categoryLabel: request.categoryLabel,
+              sourceUrl: target,
               content: JSON.stringify({
                 evidenceHash: signature.hash,
                 probability: signature.probability,
@@ -278,11 +348,13 @@ export class PantheonRetrievalAdapter {
               }),
               confidence: Number.isFinite(signature.probability) ? signature.probability : 0,
               retrievedAt: signature.timestamp.toISOString(),
+              durationMs: secondary.durationMs,
+              transport: (request.transportHint?.[0] || 'direct-http') as PantheonTransport,
               metadata: {
                 capabilityClass: 'pantheon-secondary',
                 entropySignature: true,
               },
-            });
+            }));
           }
         }
       }
@@ -297,18 +369,27 @@ export class PantheonRetrievalAdapter {
       // telemetry is not a report input and is omitted from this production path.
       supervision: undefined,
     };
+    } finally {
+      operationDeadline?.dispose();
+    }
   }
 }
 
-function normalizeResult(result: CrawlerResult): RetrievalEvidence {
-  return {
+function normalizeResult(
+  result: CrawlerResult,
+  context: { categoryLabel?: string; transport: PantheonTransport },
+): RetrievalEvidence {
+  return createPantheonSourceResult({
     crawler: result.crawler,
-    target: result.target,
+    capabilityId: result.crawler,
+    categoryLabel: context.categoryLabel,
+    sourceUrl: result.target,
     content: result.content,
     confidence: result.confidence,
     retrievedAt: new Date(result.timestamp).toISOString(),
+    transport: context.transport,
     metadata: result.metadata,
-  };
+  });
 }
 
 export const pantheonRetrievalAdapter = new PantheonRetrievalAdapter();

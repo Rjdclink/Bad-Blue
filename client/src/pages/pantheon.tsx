@@ -85,6 +85,7 @@ interface SearchConfig {
   name: string;
   location?: string;
   searchDepth: number;
+  consent: true;
 }
 
 
@@ -172,6 +173,7 @@ export default function PantheonPage() {
             name: String(job.name),
             location: job.location ? String(job.location) : undefined,
             searchDepth: normalizePantheonSearchDepth(job.searchDepth),
+            consent: true,
           });
         }
 
@@ -243,14 +245,17 @@ export default function PantheonPage() {
     setTotalCategories(30);
 
     try {
+      const idempotencyKey = crypto.randomUUID();
       const response = await fetch('/api/osint/report-jobs', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
         credentials: 'include',
         body: JSON.stringify({
           name: config.name,
           location: config.location,
           searchDepth: config.searchDepth,
+          consent: config.consent,
+          idempotencyKey,
         }),
       });
       const payload = await response.json().catch(() => ({}));

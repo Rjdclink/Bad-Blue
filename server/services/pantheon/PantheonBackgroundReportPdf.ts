@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import PDFDocument from 'pdfkit';
 
 interface SourceEntry {
@@ -61,6 +62,14 @@ interface PantheonReportForPdf {
   searchDepthUsed?: number;
   crawlersActivated?: string[];
   crawlerAudit?: CrawlerAuditEntry[];
+  reportCompleteness?: 'complete' | 'partial';
+  coverageGaps?: Array<{
+    category?: string;
+    state?: string;
+    reason?: string;
+    pendingUrls?: number;
+    missingCapabilities?: string[];
+  }>;
 }
 
 export interface PantheonPdfInput {
@@ -139,6 +148,36 @@ export function pantheonReportFilename(report: PantheonReportForPdf, reportId: s
   return `Pantheon-Background-Report-${subject}-${reportId.slice(0, 8)}.pdf`;
 }
 
+export interface PantheonPdfVerification {
+  verified: true;
+  bytes: number;
+  pageCount: number;
+  streamCount: number;
+  sha256: string;
+  verifiedAt: string;
+}
+
+export function verifyPantheonPdfBuffer(buffer: Buffer, expectedMinimumPages = 1): PantheonPdfVerification {
+  const raw = buffer.toString('latin1');
+  const pageCount = (raw.match(/\/Type\s*\/Page\b/g) || []).length;
+  const streamCount = (raw.match(/\bstream\r?\n/g) || []).length;
+  const minimumPages = Math.max(1, Math.floor(expectedMinimumPages));
+  if (!raw.startsWith('%PDF-') || !/%%EOF\s*$/.test(raw) || buffer.length < 5_000) {
+    throw new Error('Pantheon PDF verification failed: malformed or truncated document');
+  }
+  if (pageCount < minimumPages || streamCount < pageCount) {
+    throw new Error(`Pantheon PDF verification failed: expected at least ${minimumPages} rendered pages`);
+  }
+  return {
+    verified: true,
+    bytes: buffer.length,
+    pageCount,
+    streamCount,
+    sha256: createHash('sha256').update(buffer).digest('hex'),
+    verifiedAt: new Date().toISOString(),
+  };
+}
+
 export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInput): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
@@ -172,7 +211,12 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
     const searchDepth = report.searchDepthUsed ?? (cleanText(input.job?.searchDepth) || 'N/A');
     addLabelValue(doc, 'SEARCH DEPTH', searchDepth);
     addLabelValue(doc, 'OVERALL CONFIDENCE', percent(report.confidenceScore));
-    addLabelValue(doc, 'REPORT COVERAGE', cleanText(input.job?.investigationStatus) || cleanText((report as Record<string, unknown>).investigationStatus) || 'Not recorded');
+    const reportCompleteness = cleanText(report.reportCompleteness) || cleanText(input.job?.investigationStatus) || cleanText((report as Record<string, unknown>).investigationStatus) || 'partial';
+    addLabelValue(doc, 'REPORT COVERAGE', reportCompleteness);
+    if (reportCompleteness !== 'complete') {
+      doc.fillColor('#B42318').font('Helvetica-Bold').fontSize(10).text('PARTIAL REPORT — exact omissions are listed below.');
+      doc.fillColor('#111827');
+    }
     doc.moveDown(0.7);
     doc.roundedRect(48, doc.y, 516, 46, 5).fillAndStroke('#F4F7FA', '#D5DEE8');
     const noticeY = doc.y + 9;
@@ -193,6 +237,22 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
 
     addSectionTitle(doc, 'Executive Summary');
     doc.font('Helvetica').fontSize(9).text(cleanText(report.summary) || 'No synthesis was produced.', { align: 'justify', lineGap: 2 });
+
+    if (report.reportCompleteness !== 'complete') {
+      addSectionTitle(doc, 'Coverage Gaps & Exact Omissions');
+      const gaps = report.coverageGaps || [];
+      if (!gaps.length) {
+        doc.font('Helvetica-Oblique').fontSize(8).text('One or more category outcomes were not persisted; those categories are omitted.');
+      } else {
+        for (const gap of gaps) {
+          if (doc.y > 700) doc.addPage();
+          doc.font('Helvetica').fontSize(8).text(
+            `• ${cleanText(gap.category) || 'Unknown category'}: ${cleanText(gap.state) || 'partial'} — ${cleanText(gap.reason) || 'coverage incomplete'}; pending URLs: ${Number(gap.pendingUrls || 0)}; missing capabilities: ${(gap.missingCapabilities || []).map(cleanText).filter(Boolean).join(', ') || 'none recorded'}`,
+            { indent: 8, lineGap: 1 },
+          );
+        }
+      }
+    }
 
     addSectionTitle(doc, '30-Category Investigation Results');
     const categoryOutcomes = input.categoryOutcomes || report.categoryOutcomes || [];
@@ -241,8 +301,17 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
         const sourceData = source.data && typeof source.data === 'object'
           ? source.data as Record<string, unknown>
           : {};
+        const citationId = cleanText(sourceData.citationId || sourceData.evidenceId);
         const sourceUrl = cleanText(sourceData.url);
+        const contentHash = cleanText(sourceData.contentHash);
+        const provenance = sourceData.provenance && typeof sourceData.provenance === 'object'
+          ? sourceData.provenance as Record<string, unknown>
+          : {};
+        if (citationId) doc.text(`Citation ID: ${citationId}`, { lineGap: 1 });
         if (sourceUrl) doc.text(`Source: ${sourceUrl}`, { lineGap: 1 });
+        if (contentHash) doc.text(`Content SHA-256: ${contentHash}`, { lineGap: 1 });
+        const transport = cleanText(provenance.transport);
+        if (transport) doc.text(`Retrieval transport: ${transport}`, { lineGap: 1 });
         doc.moveDown(0.4);
       });
     }

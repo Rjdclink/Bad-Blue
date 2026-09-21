@@ -31,6 +31,13 @@
 
 import { PhylacterySystem } from './storage/PhylacterySystem';
 import { StealthInfrastructure } from './stealth/StealthInfrastructure';
+import type { PantheonPrimaryCrawlerId } from './pantheon/PantheonCrawlerCapabilityMatrix';
+import {
+  createPantheonDeadline,
+  pantheonAbortableDelay,
+  racePantheonAbort,
+  throwIfPantheonAborted,
+} from './pantheon/PantheonDeadline';
 
 // Crawler imports
 import { 
@@ -206,6 +213,16 @@ export interface CrawlerResult {
   metadata?: Record<string, any>;
 }
 
+export interface CrawlerSourceOutcome {
+  sourceUrl: string;
+  status: 'completed_with_evidence' | 'completed_no_evidence' | 'failed' | 'timed_out';
+  retrievedAt: string;
+  durationMs: number;
+  error?: string;
+  route?: 'primary' | 'fallback';
+  fallbackFor?: string;
+}
+
 export interface CrawlerExecutionAudit {
   crawler: string;
   capabilityClass: 'primary';
@@ -213,7 +230,11 @@ export interface CrawlerExecutionAudit {
   evidenceCount: number;
   attempts: number;
   targets: number;
+  durationMs?: number;
+  sourceOutcomes?: CrawlerSourceOutcome[];
   error?: string;
+  route?: 'primary' | 'fallback';
+  fallbackFor?: string;
 }
 
 /**
@@ -223,7 +244,7 @@ export interface PantheonSearchOptions {
   /** Search depth level (1-4) */
   depth: 1 | 2 | 3 | 4;
   /** Specific crawlers to use (default: all applicable) */
-  crawlers?: ('blizzard' | 'cerberus' | 'lich' | 'startrek' | 'birdofprey' | 'sixdegrees')[];
+  crawlers?: PantheonPrimaryCrawlerId[];
   /** Maximum results per crawler */
   maxResultsPerCrawler?: number;
   /** Timeout in milliseconds */
@@ -232,6 +253,7 @@ export interface PantheonSearchOptions {
   stealth?: boolean;
   /** Storm intensity for Blizzard crawler */
   stormIntensity?: 'flurry' | 'snow' | 'storm' | 'blizzard' | 'whiteout';
+  signal?: AbortSignal;
 }
 
 /**
@@ -325,6 +347,7 @@ export class PantheonCrawlerOrchestrator {
    * Execute comprehensive PANTHEON search
    */
   async search(targets: string[], options: PantheonSearchOptions): Promise<CrawlerResult[]> {
+    throwIfPantheonAborted(options.signal);
     const requestedBudgetMs = Math.max(600000, options.timeout || 0);
     if (!this.initialized) {
       await this.initialize(requestedBudgetMs);
@@ -343,6 +366,7 @@ export class PantheonCrawlerOrchestrator {
       try {
         console.log('[PANTHEON] Activating STAR TREK crawler...');
         for (const target of targets) {
+          throwIfPantheonAborted(options.signal);
           const result = await this.startrek.warpTo(target);
           if (result) {
             results.push({
@@ -365,6 +389,7 @@ export class PantheonCrawlerOrchestrator {
       try {
         console.log('[PANTHEON] Activating BIRD OF PREY crawler (cloaked)...');
         for (const target of targets) {
+          throwIfPantheonAborted(options.signal);
           const result = await this.birdofprey.hunt(target);
           if (result) {
             results.push({
@@ -387,6 +412,7 @@ export class PantheonCrawlerOrchestrator {
       try {
         console.log('[PANTHEON] Activating SIX DEGREES crawler...');
         for (const target of targets) {
+          throwIfPantheonAborted(options.signal);
           const graph = await this.sixdegrees.mapConnections(target, 2);
           if (graph) {
             results.push({
@@ -412,6 +438,7 @@ export class PantheonCrawlerOrchestrator {
       try {
         console.log('[PANTHEON] Activating CERBERUS crawler (three-headed)...');
         for (const target of targets) {
+          throwIfPantheonAborted(options.signal);
           const result = await this.cerberus.attack(target);
           if (result) {
             results.push({
@@ -434,7 +461,9 @@ export class PantheonCrawlerOrchestrator {
       try {
         const intensity = options.stormIntensity || 'snow';
         console.log(`[PANTHEON] Activating BLIZZARD crawler (${intensity} intensity)...`);
+        throwIfPantheonAborted(options.signal);
         const blizzardResults = await this.blizzard.deploy(targets, intensity);
+        throwIfPantheonAborted(options.signal);
         for (const result of blizzardResults) {
           results.push({
             crawler: 'blizzard',
@@ -455,6 +484,7 @@ export class PantheonCrawlerOrchestrator {
       try {
         console.log('[PANTHEON] Activating LICH crawler (forbidden magic)...');
         for (const target of targets) {
+          throwIfPantheonAborted(options.signal);
           const spellType = options.depth >= 4 ? 'forbidden' : options.depth >= 3 ? 'complex' : 'simple';
           const result = await this.lich.castSpell(target, spellType);
           if (result) {
@@ -490,6 +520,7 @@ export class PantheonCrawlerOrchestrator {
     options: PantheonSearchOptions,
   ): Promise<{ results: CrawlerResult[]; audit: CrawlerExecutionAudit[] }> {
     const requestedBudgetMs = Math.max(1_000, options.timeout || 60_000);
+    throwIfPantheonAborted(options.signal);
     await this.initialize(requestedBudgetMs);
 
     const validTargets = [...new Set(targets)].filter(target => {
@@ -503,6 +534,7 @@ export class PantheonCrawlerOrchestrator {
     const crawlersToUse = options.crawlers || this.getCrawlersForDepth(options.depth);
     const executions = await Promise.all(
       crawlersToUse.map(async crawler => {
+        const executionStartedAt = Date.now();
         let attempts = 0;
         let results: CrawlerResult[] = [];
         let lastError = '';
@@ -511,28 +543,46 @@ export class PantheonCrawlerOrchestrator {
         for (let attempt = 0; attempt < 2; attempt++) {
           attempts += 1;
           try {
-            const searchPromise = this.search(validTargets, {
-              ...options,
-              timeout: routeBudgetMs,
-              crawlers: [crawler],
-            });
-            results = await Promise.race([
-              searchPromise,
-              new Promise<CrawlerResult[]>((_, reject) =>
-                setTimeout(() => reject(new Error(`crawler route timed out after ${routeBudgetMs}ms`)), routeBudgetMs)
-              ),
-            ]);
+            const routeDeadline = createPantheonDeadline(Date.now() + routeBudgetMs, options.signal);
+            try {
+              const searchPromise = this.search(validTargets, {
+                ...options,
+                timeout: routeBudgetMs,
+                crawlers: [crawler],
+                signal: routeDeadline.signal,
+              });
+              results = await racePantheonAbort(searchPromise, routeDeadline.signal);
+            } finally {
+              routeDeadline.dispose();
+            }
             if (results.some(result => Boolean(result.content) && result.confidence > 0)) break;
           } catch (error) {
             lastError = error instanceof Error ? error.message : String(error);
           }
 
           if (attempt === 0 && requestedBudgetMs > routeBudgetMs) {
-            await new Promise(resolve => setTimeout(resolve, 250));
+            await pantheonAbortableDelay(250, options.signal);
           }
         }
 
         const evidenceCount = results.filter(result => Boolean(result.content) && result.confidence > 0).length;
+        const durationMs = Date.now() - executionStartedAt;
+        const sourceOutcomes: CrawlerSourceOutcome[] = validTargets.map(target => {
+          const result = results.find(candidate => candidate.target === target);
+          return {
+            sourceUrl: target,
+            status: result && result.content && result.confidence > 0
+              ? 'completed_with_evidence'
+              : /timed out/i.test(lastError)
+                ? 'timed_out'
+                : lastError
+                  ? 'failed'
+                  : 'completed_no_evidence',
+            retrievedAt: new Date().toISOString(),
+            durationMs,
+            ...(lastError ? { error: lastError.slice(0, 300) } : {}),
+          };
+        });
         const audit: CrawlerExecutionAudit = {
           crawler,
           capabilityClass: 'primary',
@@ -546,6 +596,9 @@ export class PantheonCrawlerOrchestrator {
           evidenceCount,
           attempts,
           targets: validTargets.length,
+          durationMs,
+          sourceOutcomes,
+          route: 'primary',
           ...(lastError ? { error: lastError.slice(0, 300) } : {}),
         };
 
@@ -566,7 +619,7 @@ export class PantheonCrawlerOrchestrator {
   /**
    * Get appropriate crawlers based on search depth
    */
-  private getCrawlersForDepth(depth: 1 | 2 | 3 | 4): string[] {
+  private getCrawlersForDepth(depth: 1 | 2 | 3 | 4): PantheonPrimaryCrawlerId[] {
     switch (depth) {
       case 1:
         return ['startrek'];

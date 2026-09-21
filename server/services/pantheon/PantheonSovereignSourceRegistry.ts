@@ -1,3 +1,4 @@
+import { admitPantheonUrl } from '../crawlers/PublicAcquisitionInfrastructure';
 import { PANTHEON_VERIFIED_SOURCES_BATCH_01 } from './sources/batch01';
 import { PANTHEON_VERIFIED_SOURCES_BATCH_02 } from './sources/batch02';
 import { PANTHEON_VERIFIED_SOURCES_BATCH_03 } from './sources/batch03';
@@ -153,6 +154,54 @@ export function buildPantheonCategoryTargets(
    }
  }
  return out.slice(0,limit);
+}
+
+
+export interface PantheonSourcePreflightIssue {
+  originalUrl: string;
+  reason: string;
+  replacementUrl: string;
+}
+
+export function preflightPantheonSourceTargets(
+  targets: readonly PantheonSourceTarget[],
+  category: PantheonBackgroundCategory,
+  subject: string,
+  location?: string,
+): { targets: PantheonSourceTarget[]; issues: PantheonSourcePreflightIssue[] } {
+  const accepted: PantheonSourceTarget[] = [];
+  const issues: PantheonSourcePreflightIssue[] = [];
+  const seen = new Set<string>();
+  for (const target of targets) {
+    const admission = admitPantheonUrl(target.url);
+    if (admission.ok) {
+      if (!seen.has(admission.url)) {
+        seen.add(admission.url);
+        accepted.push({ ...target, url: admission.url });
+      }
+      continue;
+    }
+
+    const query = [subject, location, category, 'official public record'].filter(Boolean).join(' ');
+    const replacement = 'https://www.bing.com/search?q=' + encodeURIComponent(query);
+    const replacementAdmission = admitPantheonUrl(replacement);
+    if (!replacementAdmission.ok || seen.has(replacementAdmission.url)) continue;
+    seen.add(replacementAdmission.url);
+    accepted.push({
+      category,
+      url: replacementAdmission.url,
+      authority: 'discovery',
+      jurisdiction: location || 'US',
+      query,
+      transport: 'search-provider',
+    });
+    issues.push({
+      originalUrl: target.url,
+      reason: admission.reason,
+      replacementUrl: replacementAdmission.url,
+    });
+  }
+  return { targets: accepted, issues };
 }
 
 export function buildPantheonBackgroundRegistryTargets(subject:string, location?:string, perCategory=300) {
