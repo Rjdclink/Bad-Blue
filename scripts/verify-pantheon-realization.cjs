@@ -76,6 +76,7 @@ const checks = [
   ['investigation identity propagates from report job into workflow', jobs.includes('investigationId: input.reportId') && categoryWorkflow.includes('investigationId: string')],
   ['category authority propagates into retrieval', categoryWorkflow.includes('authority: {') && categoryWorkflow.includes('categoryId:') && categoryWorkflow.includes('deadlineAt:')],
   ['workflow state is persisted by report lifecycle infrastructure', jobs.includes('categoryPhase: phase') && jobs.includes('completedCategories')],
+  ['canonical public acquisition receives workflow authority', adapter.includes("capability: 'public-acquisition'") && acquisition.includes('PantheonAcquisitionAuthority') && acquisition.includes('authority.deadlineAt')],
   ['legacy people search cannot issue background-report retrieval', peopleSearch.includes('const fullRosterPromise = null')],
   ['legacy route cannot issue background-report retrieval', routes.includes('Canonical Pantheon background-report execution is owned by PantheonCategoryWorkflow')],
   ['background job persists partial evidence before category advancement', jobs.includes('completedCategories') && jobs.includes('categoryName') && jobs.includes('partialReport')],
