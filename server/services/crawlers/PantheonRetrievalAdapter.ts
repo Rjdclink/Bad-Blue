@@ -15,6 +15,7 @@ import { twoStageDeployer } from '../pantheon/razors/TwoStageDeployer';
 import { SixCrawlerInitiative } from './SixCrawlerInitiative';
 import { acquirePublicResources } from './PublicAcquisitionInfrastructure';
 import { defaultFirecrawlAdapter } from '../shadowRetrieval/firecrawlAdapter';
+import { shadowRetrieval } from '../shadowRetrieval';
 
 export interface RetrievalEvidence {
   crawler: string;
@@ -130,7 +131,7 @@ export class PantheonRetrievalAdapter {
         } catch {
           return false;
         }
-      }).slice(0, 2);
+      }).slice(0, Math.min(request.targets.length, Math.max(2, (request.depth || 1) * 2)));
 
       if (!defaultFirecrawlAdapter.isEnabled()) {
         crawlerAudit.push({
@@ -192,6 +193,62 @@ export class PantheonRetrievalAdapter {
           error: firecrawlFailures > 0 ? `${firecrawlFailures} Firecrawl target(s) failed` : undefined,
         });
       }
+    }
+
+    // Puppeteer is a first-class browser lane for JavaScript-rendered sources.
+    // It runs independently of Firecrawl so either provider can fail without
+    // suppressing the other or the primary crawler roster.
+    if (request.purpose === 'background_report' && collectionOpen()) {
+      const puppeteerTargets = request.targets.filter(target => {
+        try {
+          const parsed = new URL(target);
+          return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+        } catch {
+          return false;
+        }
+      }).slice(0, Math.min(request.targets.length, Math.max(2, (request.depth || 1) * 2)));
+
+      const perTargetBudget = Math.max(1_500, Math.min(10_000,
+        Math.floor(remainingBudgetMs() / Math.max(1, puppeteerTargets.length))));
+      const runs = await Promise.allSettled(puppeteerTargets.map(target =>
+        shadowRetrieval.retrieve(target, {
+          method: 'puppeteer',
+          timeout: perTargetBudget,
+          retry: { maxRetries: 1 },
+        })
+      ));
+      let found = 0;
+      let failed = 0;
+      runs.forEach((run, index) => {
+        const target = puppeteerTargets[index];
+        if (run.status !== 'fulfilled' || !run.value.success) {
+          failed += 1;
+          return;
+        }
+        const raw = run.value.data;
+        const content = typeof raw === 'string' ? raw : JSON.stringify(raw || '');
+        if (!content.trim()) return;
+        found += 1;
+        evidence.push({
+          crawler: 'puppeteer',
+          target,
+          content,
+          confidence: 0.8,
+          retrievedAt: new Date().toISOString(),
+          metadata: { capabilityClass: 'browser', source: 'puppeteer' },
+        });
+      });
+      crawlerAudit.push({
+        crawler: 'puppeteer',
+        capabilityClass: 'pantheon-secondary',
+        status: found > 0 ? 'completed_with_evidence'
+          : failed === puppeteerTargets.length && puppeteerTargets.length > 0 ? 'failed'
+          : 'completed_no_evidence',
+        evidenceCount: found,
+        attempts: runs.length,
+        targets: puppeteerTargets.length,
+        error: failed > 0 ? `${failed} Puppeteer target(s) failed` : undefined,
+      });
     }
 
     if (request.purpose === 'background_report' && collectionOpen()) {
