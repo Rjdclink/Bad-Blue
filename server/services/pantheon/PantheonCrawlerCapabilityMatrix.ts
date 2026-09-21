@@ -427,7 +427,7 @@ export const PANTHEON_CATEGORY_CAPABILITY_MATRIX = {
   'Usernames & Online Accounts': SOCIAL,
   'Photos & Public Images': MEDIA,
   'Employment History': BUSINESS,
-  Education: [...BUSINESS, 'razor:identity'],
+  'Education': [...BUSINESS, 'razor:identity'],
   'Professional Licenses & Credentials': [...BUSINESS, 'cerberus'],
   'Business Ownership & Affiliations': BUSINESS,
   'Property & Real Estate': ASSET,
