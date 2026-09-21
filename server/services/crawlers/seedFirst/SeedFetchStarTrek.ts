@@ -61,12 +61,14 @@ export const SeedFetchStarTrek: SeedFirstCrawler = {
       // No raw HTML returned in any snapshot pipeline; but the API report can include a snippet.
       // Keep deterministic snippet limited.
       const textSnippet = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 800);
-      const itemsFound = 2;
+      const emails = Array.from(new Set(textSnippet.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || [])).slice(0, 20);
+      const phones = Array.from(new Set(textSnippet.match(/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/g) || [])).slice(0, 20);
+      const itemsFound = emails.length + phones.length + (title ? 1 : 0) + (textSnippet ? 1 : 0);
       return {
         title,
         textSnippet,
-        emails: [],
-        phones: [],
+        emails,
+        phones,
         links: [],
         coordinates: [],
         itemsFound,
