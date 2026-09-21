@@ -183,6 +183,19 @@ function desiredCapabilities(input: LexaraCrawlerSelectionInput): Set<LexaraCraw
   if (/person|people|phone|address|relative|associate|locate/.test(text)) desired.add('people-search');
   if (/social media|facebook|instagram|linkedin|twitter|x\.com|tiktok/.test(text)) desired.add('social-media');
   if (/property|asset|parcel|vehicle|business|company|corporation|llc/.test(text)) desired.add('public-records');
+  if (/background|background report|background check|identity|contact|address|relative|associate|property|asset|business|company|media|news/.test(text)) {
+    desired.add('public-records');
+    desired.add('people-search');
+    desired.add('identity');
+    desired.add('contact');
+    desired.add('address');
+    desired.add('relationships');
+    desired.add('business');
+    desired.add('assets');
+    desired.add('media');
+    desired.add('structured-extraction');
+    desired.add('deep-crawl');
+  }
   if (/crypto|blockchain|token|exchange|arbitrage|wallet|defi/.test(text)) desired.add('crypto-observation');
   if (input.hasDiscoveredUrls) desired.add('semantic-extraction');
   return desired;
