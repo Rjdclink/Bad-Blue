@@ -13,6 +13,7 @@ const client = read('client/src/pages/pantheon.tsx');
 const acquisition = read('server/services/crawlers/PublicAcquisitionInfrastructure.ts');
 const jobs = read('server/services/pantheon/PantheonBackgroundReportJob.ts');
 const categoryWorkflow = read('server/services/pantheon/PantheonCategoryWorkflow.ts');
+const progress = read('client/src/components/PantheonProgressTracker.tsx');
 
 const checks = [
   ['durable report status is retryable', routes.includes('report_store_converging') && routes.includes("Retry-After")],
@@ -33,6 +34,10 @@ const checks = [
   ['canonical report job uses sequential category controller', jobs.includes('conductPantheonCategoryWorkflow') && categoryWorkflow.includes('PANTHEON_REPORT_CATEGORIES')],
   ['category controller passes subject context to crawler orchestration', categoryWorkflow.includes('subject: input.name') && categoryWorkflow.includes('location: input.location')],
   ['deadline finalizes unrun categories explicitly', categoryWorkflow.includes('remaining categories are explicitly marked timed out')],
+  ['progress category is server-checkpoint driven', progress.includes('categoryNumber?: number | null') && progress.includes('categoryName || PANTHEON_CATEGORIES')],
+  ['progress percentage is category-completion driven', progress.includes('authoritativeCompletedCategories / authoritativeTotalCategories') && progress.includes('displayedProgress')],
+  ['timer is anchored to server deadline', progress.includes('parsedDeadlineAt') && progress.includes('awaitingServerClock')],
+  ['intensity display shares canonical duration config', progress.includes('PANTHEON_REPORT_DURATION_LABELS') && client.includes('normalizePantheonSearchDepth(job.searchDepth)')],
   ['collection deadline propagates into retrieval', categoryWorkflow.includes('deadlineAt: Math.min(input.deadlineAt') && adapter.includes('deadlineAt?: number') && adapter.includes('remainingBudgetMs')],
   ['collection budget preserves aggregation time', categoryWorkflow.includes('finalizationReserveMs') && categoryWorkflow.includes('categoryBudgetMs')],
   ['background categories force complete crawler participation', categoryWorkflow.includes("purpose: 'background_report'") && adapter.includes("plan.crawlers = ['startrek', 'birdofprey', 'sixdegrees', 'cerberus', 'blizzard', 'lich']")],
