@@ -490,7 +490,7 @@ export class PantheonCrawlerOrchestrator {
     targets: string[],
     options: PantheonSearchOptions,
   ): Promise<{ results: CrawlerResult[]; audit: CrawlerExecutionAudit[] }> {
-    const requestedBudgetMs = Math.max(600000, options.timeout || 0);
+    const requestedBudgetMs = Math.max(1, options.timeout || 600000);
     await this.initialize(requestedBudgetMs);
 
     const validTargets = [...new Set(targets)].filter(target => {
