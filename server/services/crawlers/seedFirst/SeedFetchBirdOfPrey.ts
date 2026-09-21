@@ -4,6 +4,7 @@ import puppeteer from 'puppeteer';
 import { existsSync } from 'fs';
 import { MIN_CONTENT_LENGTH } from '../../../lib/seedFirstConfig';
 import { sanitizeUrlStrict } from '../../../lib/seedFirstOsint';
+import { acquirePublicResource } from '../PublicAcquisitionInfrastructure';
 
 function uniq<T>(arr: T[]): T[] {
   return Array.from(new Set(arr));
@@ -31,6 +32,9 @@ export const SeedFetchBirdOfPrey: SeedFirstCrawler = {
       const sanitizedSeed = sanitizeUrlStrict(seedUrl);
       if (!sanitizedSeed.ok) return { emails: [], phones: [], links: [], coordinates: [], itemsFound: 0, timedOut: false };
       seedUrl = sanitizedSeed.normalized;
+
+      const boundary = await acquirePublicResource(seedUrl, Math.min(timeoutMs, 5000));
+      if (!boundary.ok) return { emails: [], phones: [], links: [], coordinates: [], itemsFound: 0, timedOut: false };
 
       const fp = getSeedFingerprint(seedUrl);
       const userAgent = fp?.userAgent || 'SeedFirst/1.0';
