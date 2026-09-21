@@ -83,6 +83,7 @@ const pantheonSelector = fs.readFileSync('client/src/components/DoomsdayClockSel
 const pantheonProgress = fs.readFileSync('client/src/components/PantheonProgressTracker.tsx', 'utf8');
 const pantheonReportConfig = fs.readFileSync('shared/pantheonReportConfig.ts', 'utf8');
 const pantheonReportJobs = fs.readFileSync('server/services/pantheon/PantheonBackgroundReportJob.ts', 'utf8');
+const pantheonCategoryWorkflow = fs.readFileSync('server/services/pantheon/PantheonCategoryWorkflow.ts', 'utf8');
 const pantheonReportStore = fs.readFileSync('server/services/pantheon/PantheonReportStore.ts', 'utf8');
 const pantheonCss = fs.readFileSync('client/src/pages/pantheon.css', 'utf8');
 const pantheonReportAccess = fs.readFileSync('server/services/pantheon/PantheonReportAccess.ts', 'utf8');
@@ -168,6 +169,13 @@ if (
   pantheonCss.includes('min-height: 65vh')
 ) {
   fail('Pantheon downloadable report is incomplete or the old inline report workspace remains');
+}
+if (!pantheonReportJobs.includes('conductPantheonCategoryWorkflow') ||
+    !pantheonCategoryWorkflow.includes('PANTHEON_REPORT_CATEGORIES') ||
+    !pantheonCategoryWorkflow.includes('for (let index = startCategoryIndex; index < PANTHEON_REPORT_CATEGORIES.length; index += 1)') ||
+    !pantheonCategoryWorkflow.includes('subject: input.name') ||
+    !pantheonCategoryWorkflow.includes('onCategoryComplete')) {
+  fail('Canonical sequential Pantheon category controller is not fully wired');
 }
 if (
   !pantheonRoutes.includes("app.post('/api/osint/report-jobs'") ||
