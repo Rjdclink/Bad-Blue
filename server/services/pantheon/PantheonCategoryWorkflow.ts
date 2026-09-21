@@ -301,56 +301,75 @@ export async function conductPantheonCategoryWorkflow(input: {
     // followed by secondary sources, archives, and broad discovery URLs.
     // The established 10/20/30-minute intensity levels expand URL breadth
     // through the existing 40/94/150 per-category budgets.
-    const uniqueTargets = interleaveCategoryTargets(targetGroups, targetLimit);
-    const activeUrls = new Set(uniqueTargets);
-    for (const entry of urlLedger) {
-      if (activeUrls.has(entry.url)) {
-        entry.state = 'assigned';
-        entry.attempts += 1;
-        entry.startedAt = new Date().toISOString();
-      }
-    }
-
+    const prioritizedTargets = interleaveCategoryTargets(targetGroups, urlLedger.length);
+    const activeUrls = new Set<string>();
+    const retrievalEvidence: PantheonRetrievalResponse['evidence'] = [];
+    const retrievalAudit: PantheonRetrievalResponse['crawlerAudit'] = [];
+    let cursor = 0;
     await input.onCategoryState?.({ index, label: category.label, phase: 'URL_WORK', completedCategories: index });
-    let retrieval: PantheonRetrievalResponse;
-    try {
-      retrieval = await pantheonRetrievalAdapter.retrieve({
-        purpose: 'background_report',
-        targets: uniqueTargets,
-        depth: input.searchDepth,
-        budgetMs: categoryBudgetMs,
-        deadlineAt: Math.min(input.deadlineAt - finalizationReserveMs, Date.now() + categoryBudgetMs),
-        subject: input.name,
-        location: input.location,
-        categoryLabel: category.label,
-        authority: {
-          investigationId: input.investigationId,
-          categoryId: `${input.investigationId}:${index}`,
-          categoryIndex: index,
-          categoryLabel: category.label,
-          deadlineAt: Math.min(input.deadlineAt - finalizationReserveMs, Date.now() + categoryBudgetMs),
+
+    while (cursor < prioritizedTargets.length && activeUrls.size < targetLimit) {
+      const remainingForWork = Math.min(
+        input.deadlineAt - finalizationReserveMs,
+        Date.now() + categoryBudgetMs,
+      ) - Date.now();
+      if (remainingForWork <= 750) break;
+
+      const batchSize = Math.min(8, targetLimit - activeUrls.size, prioritizedTargets.length - cursor);
+      const batch = prioritizedTargets.slice(cursor, cursor + batchSize);
+      cursor += batch.length;
+      for (const url of batch) {
+        activeUrls.add(url);
+        const entry = urlLedger.find(item => item.url === url);
+        if (entry) {
+          entry.state = 'assigned';
+          entry.attempts += 1;
+          entry.startedAt = new Date().toISOString();
+        }
+      }
+
+      try {
+        const batchRetrieval = await pantheonRetrievalAdapter.retrieve({
+          purpose: 'background_report',
+          targets: batch,
+          depth: input.searchDepth,
+          budgetMs: Math.max(750, remainingForWork),
+          deadlineAt: Math.min(input.deadlineAt - finalizationReserveMs, Date.now() + remainingForWork),
           subject: input.name,
           location: input.location,
-        },
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      retrieval = {
-        available: false,
-        reason: message,
-        plan: { purpose: 'background_report', depth: input.searchDepth, crawlers: [], rationale: ['Category retrieval failed before crawler plan completed.'] } as any,
-        evidence: [],
-        crawlerAudit: [{
+          categoryLabel: category.label,
+          authority: {
+            investigationId: input.investigationId,
+            categoryId: `${input.investigationId}:${index}`,
+            categoryIndex: index,
+            categoryLabel: category.label,
+            deadlineAt: Math.min(input.deadlineAt - finalizationReserveMs, Date.now() + remainingForWork),
+            subject: input.name,
+            location: input.location,
+          },
+        });
+        retrievalEvidence.push(...batchRetrieval.evidence);
+        retrievalAudit.push(...batchRetrieval.crawlerAudit);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        retrievalAudit.push({
           crawler: 'category-orchestrator',
           capabilityClass: 'pantheon-secondary',
           status: 'failed',
           evidenceCount: 0,
           attempts: 1,
-          targets: uniqueTargets.length,
+          targets: batch.length,
           error: message,
-        }],
-      };
+        });
+      }
     }
+
+    const retrieval: PantheonRetrievalResponse = {
+      available: true,
+      plan: { purpose: 'background_report', depth: input.searchDepth, crawlers: [], rationale: ['Live priority cursor executed category URL ledger.'] } as any,
+      evidence: retrievalEvidence,
+      crawlerAudit: retrievalAudit,
+    };
 
     await input.onCategoryState?.({ index, label: category.label, phase: 'EVIDENCE_VALIDATION', completedCategories: index });
     const reportable = dedupeEvidence(
@@ -384,7 +403,7 @@ export async function conductPantheonCategoryWorkflow(input: {
       label: category.label,
       startedAt,
       completedAt: new Date().toISOString(),
-      targetCount: uniqueTargets.length,
+      targetCount: activeUrls.size,
       evidenceCount: reportable.length,
       crawlerAudit: retrieval.crawlerAudit,
       findings: reportable.map(item => cleanEvidenceContent(item.content).slice(0, 1800)),
@@ -394,7 +413,7 @@ export async function conductPantheonCategoryWorkflow(input: {
       crawlersUsed,
       evidenceRejected: Math.max(0, retrieval.evidence.length - reportable.length),
       urlLedger,
-      cursor: uniqueTargets.length,
+      cursor,
     };
     categoryOutcomes.push(outcome);
 
