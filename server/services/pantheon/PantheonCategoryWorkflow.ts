@@ -221,6 +221,8 @@ export async function conductPantheonCategoryWorkflow(input: {
         categoryOutcomes.push(outcome);
         audits.push(...outcome.crawlerAudit);
       }
+      report.crawlerAudit = mergeAudit(audits);
+      report.summary = `PANTHEON reached the investigation deadline after completing ${index} of ${PANTHEON_REPORT_CATEGORIES.length} categories; remaining categories are explicitly marked timed out.`;
       break;
     }
     const finalizationReserveMs = Math.min(15_000, Math.max(2_000, Math.floor(remainingMs * 0.08)));
