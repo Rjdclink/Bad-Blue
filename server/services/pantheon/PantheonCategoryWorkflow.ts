@@ -124,10 +124,20 @@ function mergeAudit(entries: PantheonRetrievalResponse['crawlerAudit']) {
   return [...merged.values()];
 }
 
-function categoryTargetLimit(depth: number): number {
-  // Investigation intensity controls source breadth, never crawler participation.
-  // Keep the work bounded per category so all 30 categories receive time.
+function categoryProductiveWorkTarget(depth: number): number {
+  // Intensity is a productive-work target, not an initial URL batch size.
+  // Failed/blocked/dead URLs are substituted and do not consume this target.
   return ({ 1: 40, 2: 94, 3: 150, 4: 150 } as Record<number, number>)[depth] || 40;
+}
+
+function intensityPolicy(depth: number) {
+  return ({
+    1: { corroborationTarget: 1, discoveryExpansion: 1, fallbackDepth: 1 },
+    2: { corroborationTarget: 2, discoveryExpansion: 2, fallbackDepth: 2 },
+    3: { corroborationTarget: 3, discoveryExpansion: 3, fallbackDepth: 3 },
+    4: { corroborationTarget: 3, discoveryExpansion: 4, fallbackDepth: 4 },
+  } as Record<number, { corroborationTarget: number; discoveryExpansion: number; fallbackDepth: number }>)[depth] ||
+    { corroborationTarget: 1, discoveryExpansion: 1, fallbackDepth: 1 };
 }
 
 function canonicalUrl(value: string): string {
@@ -304,7 +314,8 @@ export async function conductPantheonCategoryWorkflow(input: {
   const evidence: PantheonRetrievalResponse['evidence'] = [];
   const audits: PantheonRetrievalResponse['crawlerAudit'] = [];
   const categoryOutcomes: PantheonCategoryOutcome[] = [];
-  const targetLimit = categoryTargetLimit(input.searchDepth);
+  const productiveWorkTarget = categoryProductiveWorkTarget(input.searchDepth);
+  const policy = intensityPolicy(input.searchDepth);
 
   const report: PeopleSearchReport = input.initialReport ? { ...input.initialReport } : {
     identitySummary: { name: input.name, verificationStatus: 'Public-source evidence review completed' },
@@ -352,7 +363,7 @@ export async function conductPantheonCategoryWorkflow(input: {
     await input.onCategoryState?.({ index, label: category.label, phase: 'URL_WORK', completedCategories: index });
 
     let productiveWorkUnits = 0;
-    while (cursor < prioritizedTargets.length && productiveWorkUnits < targetLimit) {
+    while (cursor < prioritizedTargets.length && productiveWorkUnits < productiveWorkTarget) {
       const remainingForWork = Math.min(
         input.deadlineAt - finalizationReserveMs,
         Date.now() + categoryBudgetMs,
@@ -402,8 +413,11 @@ export async function conductPantheonCategoryWorkflow(input: {
         });
         retrievalEvidence.push(...batchRetrieval.evidence);
         retrievalAudit.push(...batchRetrieval.crawlerAudit);
-        const producedEvidence = batchRetrieval.evidence.some(item => item.content.trim() && item.confidence > 0);
-        if (producedEvidence) productiveWorkUnits += 1;
+        const producedEvidence = batchRetrieval.evidence.filter(item => item.content.trim() && item.confidence > 0);
+        if (producedEvidence.length > 0) {
+          const independentSources = new Set(producedEvidence.map(item => canonicalUrl(item.target))).size;
+          productiveWorkUnits += Math.min(policy.corroborationTarget, Math.max(1, independentSources));
+        }
 
         // Crawler-discovered URLs are non-executable candidates. The controller
         // alone may admit them to this category's ledger and priority queue.
