@@ -1,6 +1,7 @@
 import { BaseCrawler } from '../baseCrawler';
 import { EntropySignature, CrawlerType, CrawlerTask, ExplorationResult } from '../core';
 import { URL } from 'url';
+import { acquirePublicResource } from '../../crawlers/PublicAcquisitionInfrastructure';
 
 /**
  * Pheromone trail - chemical breadcrumbs for path selection
@@ -106,52 +107,20 @@ class HydraHead {
    * Explore target and extract intelligence
    */
   async explore(): Promise<ExplorationResult> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2000);
-    
     try {
-      const response = await fetch(this.target, {
-        headers: { 'User-Agent': 'Mozilla/5.0' },
-        redirect: 'manual',
-        signal: controller.signal
-      });
-      
-      // Check content length to prevent memory exhaustion
-      const contentLengthHeader = response.headers.get('content-length');
-      if (contentLengthHeader && parseInt(contentLengthHeader) > 10_000_000) { // 10MB limit
-        throw new Error('Response too large');
-      }
-      
-      const html = await response.text();
-      const links = this.extractLinks(html, this.target);
+      const resource = await acquirePublicResource(this.target, 2000);
+      if (!resource.ok) throw new Error(resource.error || `HTTP ${resource.status}`);
+      const html = resource.content;
+      const links = this.extractLinks(html, resource.url);
       const richness = this.assessRichness(html);
-      
       return {
-        target: this.target,
-        richness,
-        links: links.slice(0, 10), // Limit for efficiency
-        nextTarget: this.selectNextTarget(links),
-        statusCode: response.status,
-        contentLength: html.length,
-        discovered: links,
-        explored: 1,
-        depth: 1,
-        branches: links.length
+        target: resource.url, richness, links: links.slice(0, 10),
+        nextTarget: this.selectNextTarget(links), statusCode: resource.status,
+        contentLength: html.length, discovered: links, explored: 1, depth: 1, branches: links.length
       };
     } catch {
-      // IMMEDIATE SKIP - mark dead, continue with other heads
       this.alive = false;
-      return { 
-        target: this.target, 
-        richness: 0,
-        nextTarget: '',
-        discovered: [],
-        explored: 0,
-        depth: 0,
-        branches: 0
-      };
-    } finally {
-      clearTimeout(timeoutId);
+      return { target: this.target, richness: 0, nextTarget: '', discovered: [], explored: 0, depth: 0, branches: 0 };
     }
   }
 
