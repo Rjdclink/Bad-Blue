@@ -434,9 +434,16 @@ export class PeopleSearchAggregator {
     const emailMatches = [...new Set(evidenceText.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/gi) || [])];
     const ageMatch = evidenceText.match(/\\bAge\\s*[:,-]?\\s*(\\d{1,3})\\b/i);
 
+    const observedName = `${query.firstName} ${query.lastName}`.trim();
+    const normalizedEvidence = evidenceText.toLowerCase();
+    const nameObserved = observedName.length > 0 && normalizedEvidence.includes(observedName.toLowerCase());
+    if (!nameObserved && phoneMatches.length === 0 && emailMatches.length === 0 && !ageMatch) {
+      throw new Error('People-search sources returned pages but no person-level evidence');
+    }
+
     const record: PersonRecord = {
-      fullName: `${query.firstName} ${query.lastName}`,
-      age: ageMatch ? Number(ageMatch[1]) : query.age,
+      fullName: observedName,
+      age: ageMatch ? Number(ageMatch[1]) : undefined,
       addresses: [],
       phones: phoneMatches.map(number => ({ number })),
       emails: emailMatches,
@@ -444,7 +451,7 @@ export class PeopleSearchAggregator {
       aliases: [],
       source: extractions.map(e => `${e.provider}:${e.tier}`).join(', '),
       scrapedAt: new Date(),
-      confidence: 0.6,
+      confidence: phoneMatches.length > 0 || emailMatches.length > 0 ? 0.7 : 0.55,
     };
     return record;
   }
