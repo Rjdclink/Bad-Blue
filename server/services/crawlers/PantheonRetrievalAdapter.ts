@@ -405,6 +405,7 @@ export class PantheonRetrievalAdapter {
         'razor-identity', 'razor-contact', 'razor-address', 'razor-social',
         'razor-record', 'razor-asset', 'razor-court', 'razor-business',
         'razor-relation', 'razor-media', 'social-media-scraper',
+        'seed-startrek', 'seed-birdofprey', 'seed-trinity', 'seed-sixdegrees',
       ]);
       for (const descriptor of LEXARA_CRAWLER_CAPABILITY_POOL) {
         if (descriptor.family === 'crypto-observational' || directlyRealized.has(descriptor.id) || observed.has(descriptor.id)) continue;
