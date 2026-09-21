@@ -264,7 +264,7 @@ export class PantheonCrawlerOrchestrator {
    */
   async initialize(lockDurationMs: number = 600000): Promise<void> {
     if (this.initialized) {
-      acquireSystemLock('pantheon', Math.max(600000, lockDurationMs));
+      acquireSystemLock('pantheon', Math.max(1, lockDurationMs));
       return;
     }
     
@@ -274,7 +274,7 @@ export class PantheonCrawlerOrchestrator {
     }
     
     // Acquire system lock
-    if (!acquireSystemLock('pantheon', Math.max(600000, lockDurationMs))) {
+    if (!acquireSystemLock('pantheon', Math.max(1, lockDurationMs))) {
       throw new Error('Failed to acquire system lock for PANTHEON');
     }
     
@@ -325,7 +325,7 @@ export class PantheonCrawlerOrchestrator {
    * Execute comprehensive PANTHEON search
    */
   async search(targets: string[], options: PantheonSearchOptions): Promise<CrawlerResult[]> {
-    const requestedBudgetMs = Math.max(600000, options.timeout || 0);
+    const requestedBudgetMs = Math.max(1, options.timeout || 600000);
     if (!this.initialized) {
       await this.initialize(requestedBudgetMs);
     } else {
