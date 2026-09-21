@@ -1,3 +1,4 @@
+import { acquirePublicResource } from './PublicAcquisitionInfrastructure';
 /**
  * 🚀 STAR TREK CRAWLER - Federation Explorer
  * 
@@ -32,20 +33,24 @@ interface RequestOptions {
 
 // Utility function for HTTP requests
 async function executeRequest(url: string, options: RequestOptions): Promise<Response> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), options.timeout || 30000);
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } finally {
-    clearTimeout(timeoutId);
+  const resource = await acquirePublicResource(url, options.timeout || 30000);
+  if (!resource.ok) {
+    return new Response(resource.content || '', {
+      status: resource.status || 502,
+      headers: { 'content-type': resource.contentType || 'text/plain' },
+    });
   }
+  return new Response(resource.content, {
+    status: resource.status,
+    headers: { 'content-type': resource.contentType },
+  });
 }
 
 // Parse HTML results
 function parseResults(html: string, target?: string): Data {
   return {
-    content: html.replace(/<[^>]*>/g, ' ').substring(0, 2000),
-    confidence: 0.8,
+    content: html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 2000),
+    confidence: html.replace(/<[^>]*>/g, ' ').trim() ? 0.8 : 0,
     timestamp: Date.now(),
     target: target || ""
   };
