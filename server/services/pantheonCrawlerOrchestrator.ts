@@ -344,7 +344,7 @@ export class PantheonCrawlerOrchestrator {
         console.log('[PANTHEON] Activating STAR TREK crawler...');
         for (const target of targets) {
           const result = await this.startrek.warpTo(target);
-          if (result) {
+          if (result && result.content?.trim() && Number.isFinite(result.confidence) && result.confidence > 0) {
             results.push({
               crawler: 'startrek',
               target,
@@ -366,7 +366,7 @@ export class PantheonCrawlerOrchestrator {
         console.log('[PANTHEON] Activating BIRD OF PREY crawler (cloaked)...');
         for (const target of targets) {
           const result = await this.birdofprey.hunt(target);
-          if (result) {
+          if (result && result.content?.trim() && Number.isFinite(result.confidence) && result.confidence > 0) {
             results.push({
               crawler: 'birdofprey',
               target,
@@ -388,7 +388,7 @@ export class PantheonCrawlerOrchestrator {
         console.log('[PANTHEON] Activating SIX DEGREES crawler...');
         for (const target of targets) {
           const graph = await this.sixdegrees.mapConnections(target, 2);
-          if (graph) {
+          if (graph.nodes?.length) {
             results.push({
               crawler: 'sixdegrees',
               target,
