@@ -24,5 +24,5 @@ const roots=[
 ];
 const urls=[...new Set(roots)].slice(0,200);
 if(urls.length!==200) throw new Error(`Pantheon batch 13 expected 200 distinct URLs, got ${urls.length}`);
-const cats=(u:string):string[]=>/usps|census|geonames|openstreetmap|usgs/i.test(u)?['residence','contacts','geography','identity-resolution']:/fcc|nanpa|npac|itu|usac|ntia/i.test(u)?['contacts','identity-resolution','corroboration']:['residence','contacts','geography','corroboration'];
+const cats=(u:string):string[]=>/usps|census|geonames|openstreetmap|usgs/i.test(u)?['residence','geography','identity-resolution']:/fcc|nanpa|npac|itu|usac|ntia/i.test(u)?['contacts','identity-resolution','corroboration']:['residence','geography','corroboration'];
 export const PANTHEON_VERIFIED_SOURCES_BATCH_13:PantheonVerifiedSource[]=urls.map((url,i)=>({id:`b13-${String(i+1).padStart(3,'0')}`,name:`Address/telecom corroboration source ${i+1}`,url,jurisdiction:'US',categories:cats(url),authority:/geonames|openstreetmap/.test(url)?'secondary':'primary',verifiedAt:V}));
