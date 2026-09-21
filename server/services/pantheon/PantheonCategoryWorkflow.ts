@@ -1,5 +1,6 @@
 import type { PeopleSearchReport } from '../../peopleSearch';
 import { pantheonRetrievalAdapter, type PantheonRetrievalResponse } from '../crawlers/PantheonRetrievalAdapter';
+import { admitPantheonUrl } from '../crawlers/PublicAcquisitionInfrastructure';
 import {
   buildPantheonCategoryTargets,
   type PantheonBackgroundCategory,
@@ -212,7 +213,9 @@ function buildCategoryLedger(
   const ledger: PantheonUrlLedgerEntry[] = [];
   for (const group of groups) {
     for (const candidate of group.targets) {
-      const url = canonicalUrl(candidate.url);
+      const admission = admitPantheonUrl(candidate.url);
+      if (!admission.ok) continue;
+      const url = admission.url;
       if (seen.has(url)) continue;
       seen.add(url);
       ledger.push({
@@ -244,7 +247,9 @@ function interleaveCategoryTargets(
       const candidate = group[row];
       if (!candidate) continue;
       added = true;
-      const url = canonicalUrl(candidate.url);
+      const admission = admitPantheonUrl(candidate.url);
+      if (!admission.ok) continue;
+      const url = admission.url;
       if (!seen.has(url)) {
         seen.add(url);
         out.push(url);
