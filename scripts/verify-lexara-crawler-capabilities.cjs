@@ -277,6 +277,8 @@ const wraithCrawler = fs.readFileSync('server/services/pantheon/crawlers/wraith.
 const initiative = fs.readFileSync('server/services/crawlers/SixCrawlerInitiative.ts', 'utf8');
 if (
   !publicAcquisition.includes("redirect: 'manual'") ||
+  !publicAcquisition.includes("dns.lookup(url.hostname") ||
+  !publicAcquisition.includes("resolves to a private network") ||
   !publicAcquisition.includes('allowedPublicUrl(new URL(location, current).toString())') ||
   !utilityCrawlers.includes('acquirePublicResource') ||
   !hydraCrawler.includes('acquirePublicResource') ||
