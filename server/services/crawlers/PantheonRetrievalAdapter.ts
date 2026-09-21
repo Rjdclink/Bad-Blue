@@ -98,8 +98,9 @@ export class PantheonRetrievalAdapter {
     // primary roster while targeted categories avoid redundant transports.
     if (request.purpose === 'background_report') {
       const category = String(request.categoryLabel || '').toLowerCase();
-      const specialized = new Set(plan.crawlers);
-      specialized.add('startrek');
+      // Intensity controls effort/budget only. It never removes a capability
+      // that the active category may require.
+      const specialized = new Set<string>();
       if (/social|username|photo|internet|media|associate|relationship|timeline/.test(category)) {
         specialized.add('sixdegrees');
         specialized.add('birdofprey');
@@ -112,6 +113,7 @@ export class PantheonRetrievalAdapter {
         specialized.add('blizzard');
       }
       if (/relationship|timeline|corroboration|contradiction/.test(category)) specialized.add('lich');
+      if (specialized.size === 0) specialized.add('startrek');
       plan.crawlers = [...specialized];
       plan.rationale.unshift(`Background category capability routing: ${request.categoryLabel || 'general'}.`);
     }
