@@ -254,6 +254,10 @@ if (
 ) {
   fail('background-report status text overclaims capabilities beyond returned evidence');
 }
+if (!backgroundPeopleSearch.includes('const avalancheEvidence = avalancheResults.filter') ||
+    backgroundPeopleSearch.includes("confidence: 0.95")) {
+  fail('GENESIS background-report lane can promote failed/zero-confidence crawler attempts');
+}
 if (
   stealth.includes("route: ['VPN', `Tor:${torPort}`]") ||
   stealth.includes("route: ['VPN', `Tor:${torPort}`, 'ProxyChain']")
