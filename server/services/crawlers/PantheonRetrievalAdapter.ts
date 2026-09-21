@@ -16,6 +16,7 @@ import { SixCrawlerInitiative } from './SixCrawlerInitiative';
 import { acquirePublicResources } from './PublicAcquisitionInfrastructure';
 import { socialMediaScraper } from '../socialMediaScraper';
 import { LEXARA_CRAWLER_CAPABILITY_POOL } from '../../lexara/LexaraCrawlerCapabilityRegistry';
+import { crawlSeedOnceWithCrawlers } from '../../lib/seedFirstOsint';
 
 export interface RetrievalEvidence {
   crawler: string;
@@ -161,6 +162,49 @@ export class PantheonRetrievalAdapter {
             lastModified: resource.lastModified,
           },
         });
+      }
+    }
+
+    if (request.purpose === 'background_report' && collectionOpen()) {
+      const seedTargets = request.targets.filter(target => {
+        try {
+          const parsed = new URL(target);
+          return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+        } catch {
+          return false;
+        }
+      }).slice(0, 12);
+      for (const target of seedTargets) {
+        if (!collectionOpen()) break;
+        const crawl = await crawlSeedOnceWithCrawlers(target);
+        for (const attempt of crawl.attempts) {
+          crawlerAudit.push({
+            crawler: attempt.crawlerName === 'SeedFetchStarTrek' ? 'seed-startrek'
+              : attempt.crawlerName === 'SeedFetchBirdOfPrey' ? 'seed-birdofprey'
+              : attempt.crawlerName === 'SeedFetchTrinity' ? 'seed-trinity'
+              : 'seed-sixdegrees',
+            capabilityClass: 'pantheon-secondary',
+            status: attempt.status,
+            evidenceCount: crawl.winner?.crawlerName === attempt.crawlerName && crawl.extract.itemsFound > 0 ? 1 : 0,
+            attempts: attempt.status === 'disabled' || attempt.status === 'aborted' ? 0 : 1,
+            targets: 1,
+            error: attempt.error,
+          });
+        }
+        if (crawl.ok && crawl.winner && crawl.extract.itemsFound > 0) {
+          const crawler = crawl.winner.crawlerName === 'SeedFetchStarTrek' ? 'seed-startrek'
+            : crawl.winner.crawlerName === 'SeedFetchBirdOfPrey' ? 'seed-birdofprey'
+            : crawl.winner.crawlerName === 'SeedFetchTrinity' ? 'seed-trinity'
+            : 'seed-sixdegrees';
+          evidence.push({
+            crawler,
+            target,
+            content: JSON.stringify(crawl.extract),
+            confidence: 0.74,
+            retrievedAt: new Date().toISOString(),
+            metadata: { capabilityClass: 'seed-first', itemsFound: crawl.extract.itemsFound },
+          });
+        }
       }
     }
 
