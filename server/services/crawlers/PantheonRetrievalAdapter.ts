@@ -360,14 +360,15 @@ export class PantheonRetrievalAdapter {
       ]);
       for (const descriptor of LEXARA_CRAWLER_CAPABILITY_POOL) {
         if (descriptor.family === 'crypto-observational' || directlyRealized.has(descriptor.id) || observed.has(descriptor.id)) continue;
+        const configured = descriptor.configured?.() !== false;
         crawlerAudit.push({
           crawler: descriptor.id,
           capabilityClass: 'pantheon-secondary',
-          status: descriptor.configured?.() === false ? 'unavailable_not_configured' : 'available_via_specialized_route',
+          status: configured ? 'available_via_specialized_route' : 'unavailable_not_configured',
           evidenceCount: 0,
           attempts: 0,
           targets: request.targets.length,
-          error: descriptor.configured?.() === false ? (descriptor.notes || 'Required provider configuration is unavailable') : undefined,
+          error: configured ? undefined : (descriptor.notes || 'Required provider configuration is unavailable'),
         });
       }
     }
