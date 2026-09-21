@@ -34,10 +34,14 @@ import { StealthInfrastructure } from './stealth/StealthInfrastructure';
 import type { PantheonPrimaryCrawlerId } from './pantheon/PantheonCrawlerCapabilityMatrix';
 import {
   createPantheonDeadline,
-  pantheonAbortableDelay,
   racePantheonAbort,
   throwIfPantheonAborted,
 } from './pantheon/PantheonDeadline';
+import {
+  admitPantheonUrl,
+  getPantheonAcquisitionContext,
+  runWithPantheonAcquisitionContext,
+} from './crawlers/PublicAcquisitionInfrastructure';
 
 // Crawler imports
 import { 
@@ -47,7 +51,7 @@ import {
 } from './crawlers/TrinityCrawlers';
 import { StarTrekCrawler } from './crawlers/StarTrekCrawler';
 import { BirdOfPreyCrawler } from './crawlers/BirdOfPreyCrawler';
-import { SixDegreesCrawler } from './crawlers/SixDegreesCrawler';
+import { SixDegreesCrawler, canonicalizeSixDegreesTarget } from './crawlers/SixDegreesCrawler';
 
 // ==================== SYSTEM STATE ====================
 
@@ -417,7 +421,9 @@ export class PantheonCrawlerOrchestrator {
         console.log('[PANTHEON] Activating SIX DEGREES crawler...');
         for (const target of targets) {
           throwIfPantheonAborted(options.signal);
-          const graph = await this.sixdegrees.mapConnections(target, 2);
+          // Fetch only the controller-authorized seed. Related links are
+          // returned as candidates for the category ledger, never followed here.
+          const graph = await this.sixdegrees.mapConnections(target, 1);
           if (graph) {
             results.push({
               crawler: 'sixdegrees',
@@ -428,10 +434,16 @@ export class PantheonCrawlerOrchestrator {
               metadata: { 
                 nodeCount: graph.nodes?.length || 0,
                 edgeCount: graph.edges?.length || 0,
-                discoveredCandidates: (graph.nodes || [])
-                  .map(node => node.domain)
+                discoveredCandidates: (graph.edges || [])
+                  .map(edge => edge.to)
                   .filter(Boolean)
-                  .map(domain => `https://${domain}`)
+                  .flatMap(domain => {
+                    try {
+                      return [canonicalizeSixDegreesTarget(domain).url];
+                    } catch {
+                      return [];
+                    }
+                  })
                   .slice(0, 20),
               },
             });
@@ -536,35 +548,98 @@ export class PantheonCrawlerOrchestrator {
     throwIfPantheonAborted(options.signal);
     await this.initialize(requestedBudgetMs);
 
-    const validTargets = [...new Set(targets)].filter(target => {
+    const targetAdmissions: Array<
+      { target: string; canonicalUrl: string } | { target: string; reason: string }
+    > = [...new Set(targets)].map(target => {
       try {
         const url = new URL(target);
-        return url.protocol === 'http:' || url.protocol === 'https:';
-      } catch {
-        return false;
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+          return { target, reason: 'Unsupported acquisition protocol' };
+        }
+        const admitted = admitPantheonUrl(target);
+        return admitted.ok
+          ? { target, canonicalUrl: admitted.url }
+          : { target, reason: admitted.reason };
+      } catch (error) {
+        return {
+          target,
+          reason: error instanceof Error ? error.message : 'Invalid URL',
+        };
       }
     });
+    const validTargets = [...new Set(targetAdmissions.reduce<string[]>((accepted, item) => {
+      if ('canonicalUrl' in item && typeof item.canonicalUrl === 'string') accepted.push(item.canonicalUrl);
+      return accepted;
+    }, []))];
+    const rejectedTargets: Array<{ sourceUrl: string; reason: string }> = targetAdmissions.flatMap(item => 'reason' in item
+      ? [{ sourceUrl: item.target, reason: item.reason }]
+      : []);
     const crawlersToUse = options.crawlers || this.getCrawlersForDepth(options.depth);
+    const inheritedAcquisition = getPantheonAcquisitionContext();
     const executions = await Promise.all(
       crawlersToUse.map(async crawler => {
         const executionStartedAt = Date.now();
         let attempts = 0;
         let results: CrawlerResult[] = [];
-        let lastError = '';
+        let lastError = validTargets.length === 0 && rejectedTargets.length > 0
+          ? `All targets skipped before dispatch: ${rejectedTargets.map(item => item.reason).join('; ')}`
+          : '';
 
-        const routeBudgetMs = Math.max(1_000, Math.floor(requestedBudgetMs / 2));
-        for (let attempt = 0; attempt < 2; attempt++) {
+        for (const target of validTargets) {
+          console.log(`[PANTHEON][CRAWLER-URL] ${JSON.stringify({
+            event: 'dispatch',
+            investigationId: inheritedAcquisition?.authority.investigationId,
+            categoryId: inheritedAcquisition?.authority.categoryId,
+            workId: inheritedAcquisition?.authority.workId,
+            capability: crawler,
+            route: inheritedAcquisition?.authority.route || 'primary',
+            ...(inheritedAcquisition?.authority.fallbackFor ? { fallbackFor: inheritedAcquisition.authority.fallbackFor } : {}),
+            url: target,
+          })}`);
+        }
+        for (const rejected of rejectedTargets) {
+          console.log(`[PANTHEON][CRAWLER-URL] ${JSON.stringify({
+            event: 'outcome',
+            investigationId: inheritedAcquisition?.authority.investigationId,
+            categoryId: inheritedAcquisition?.authority.categoryId,
+            workId: inheritedAcquisition?.authority.workId,
+            capability: crawler,
+            route: inheritedAcquisition?.authority.route || 'primary',
+            ...(inheritedAcquisition?.authority.fallbackFor ? { fallbackFor: inheritedAcquisition.authority.fallbackFor } : {}),
+            url: rejected.sourceUrl,
+            status: 'skipped',
+            durationMs: 0,
+            reason: rejected.reason,
+          })}`);
+        }
+
+        const routeBudgetMs = Math.max(1_000, requestedBudgetMs);
+        // The canonical gateway is the sole retry authority. An outer retry
+        // loop multiplied attempts and could never improve a cached failure.
+        for (let attempt = 0; attempt < 1 && validTargets.length > 0; attempt++) {
           attempts += 1;
           try {
             const routeDeadline = createPantheonDeadline(Date.now() + routeBudgetMs, options.signal);
             try {
-              const searchPromise = this.search(validTargets, {
-                ...options,
-                timeout: routeBudgetMs,
-                crawlers: [crawler],
-                signal: routeDeadline.signal,
-                strictErrors: true,
-              });
+              const executeSearch = () => this.search(validTargets, {
+                  ...options,
+                  timeout: routeBudgetMs,
+                  crawlers: [crawler],
+                  signal: routeDeadline.signal,
+                  strictErrors: true,
+                });
+              const searchPromise = inheritedAcquisition
+                ? runWithPantheonAcquisitionContext(
+                    {
+                      ...inheritedAcquisition.authority,
+                      workId: `${inheritedAcquisition.authority.workId}:crawler:${crawler}:attempt:${attempt + 1}`,
+                      capability: crawler,
+                      deadlineAt: Math.min(inheritedAcquisition.authority.deadlineAt, Date.now() + routeBudgetMs),
+                    },
+                    routeDeadline.signal,
+                    executeSearch,
+                  )
+                : executeSearch();
               results = await racePantheonAbort(searchPromise, routeDeadline.signal);
             } finally {
               routeDeadline.dispose();
@@ -577,15 +652,11 @@ export class PantheonCrawlerOrchestrator {
           } catch (error) {
             lastError = error instanceof Error ? error.message : String(error);
           }
-
-          if (attempt === 0 && requestedBudgetMs > routeBudgetMs) {
-            await pantheonAbortableDelay(250, options.signal);
-          }
         }
 
         const evidenceCount = results.filter(result => Boolean(result.content) && result.confidence > 0).length;
         const durationMs = Date.now() - executionStartedAt;
-        const sourceOutcomes: CrawlerSourceOutcome[] = validTargets.map(target => {
+        const sourceOutcomes: CrawlerSourceOutcome[] = validTargets.map<CrawlerSourceOutcome>(target => {
           const result = results.find(candidate => candidate.target === target);
           return {
             sourceUrl: target,
@@ -600,7 +671,29 @@ export class PantheonCrawlerOrchestrator {
             durationMs,
             ...(lastError ? { error: lastError.slice(0, 300) } : {}),
           };
-        });
+        }).concat(rejectedTargets.map(rejected => ({
+          sourceUrl: rejected.sourceUrl,
+          status: 'failed' as const,
+          retrievedAt: new Date().toISOString(),
+          durationMs: 0,
+          error: `Skipped before dispatch: ${rejected.reason}`.slice(0, 300),
+        })));
+        const rejectedSourceUrls = new Set(rejectedTargets.map(item => item.sourceUrl));
+        for (const outcome of sourceOutcomes.filter(item => !rejectedSourceUrls.has(item.sourceUrl))) {
+          console.log(`[PANTHEON][CRAWLER-URL] ${JSON.stringify({
+            event: 'outcome',
+            investigationId: inheritedAcquisition?.authority.investigationId,
+            categoryId: inheritedAcquisition?.authority.categoryId,
+            workId: inheritedAcquisition?.authority.workId,
+            capability: crawler,
+            route: inheritedAcquisition?.authority.route || 'primary',
+            ...(inheritedAcquisition?.authority.fallbackFor ? { fallbackFor: inheritedAcquisition.authority.fallbackFor } : {}),
+            url: outcome.sourceUrl,
+            status: outcome.status,
+            durationMs: outcome.durationMs,
+            ...(outcome.error ? { error: outcome.error } : {}),
+          })}`);
+        }
         const audit: CrawlerExecutionAudit = {
           crawler,
           capabilityClass: 'primary',

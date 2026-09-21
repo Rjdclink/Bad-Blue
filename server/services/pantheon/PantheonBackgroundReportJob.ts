@@ -2,6 +2,7 @@ import {
   listRecoverablePantheonReportRecords,
   persistPantheonPdfArtifact,
   updatePantheonReportRecord,
+  type PantheonPdfArtifact,
 } from './PantheonReportStore';
 import {
   conductPantheonCategoryWorkflow,
@@ -83,9 +84,10 @@ async function withStageDeadline<T>(label: string, timeoutMs: number, operation:
 }
 
 async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void> {
-  const startedAt = new Date();
+  const queuedAt = new Date();
   const budgetMs = getPantheonReportDurationMs(input.searchDepth);
-  const deadlineAt = new Date(startedAt.getTime() + budgetMs);
+  let startedAt = queuedAt;
+  let deadlineAt = new Date(queuedAt.getTime() + budgetMs);
   const initializedStates = initializePantheonCategoryPlans({
     name: input.name,
     location: input.location,
@@ -125,8 +127,9 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
 
   await updatePantheonReportRecord(input.reportId, 'processing', {
     job: jobEnvelope(input, 'running', {
-      startedAt: startedAt.toISOString(),
-      deadlineAt: deadlineAt.toISOString(),
+      phase: 'preflight',
+      queuedAt: queuedAt.toISOString(),
+      preflightStartedAt: queuedAt.toISOString(),
       completedCategories: persistedOutcomes().filter(outcome => outcome.completionState === 'completed').length,
       processedCategories: processedCategoryCount(),
       totalCategories: PANTHEON_REPORT_CATEGORIES.length,
@@ -137,10 +140,10 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
   });
 
   try {
-    const availabilityDeadline = deadlineAt.getTime();
+    const availabilityDeadline = queuedAt.getTime() + 60_000;
     while (!canActivatePantheon().available) {
       if (Date.now() >= availabilityDeadline) {
-        throw new Error('PANTHEON remained unavailable for the entire investigation budget');
+        throw new Error('PANTHEON remained unavailable for the bounded preflight window');
       }
       await new Promise(resolve => setTimeout(resolve, 5_000));
     }
@@ -148,15 +151,21 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
     console.log('[PANTHEON REPORT JOB] capability preflight started', { reportId: input.reportId });
     const capabilityHealth = await runPantheonCapabilityHealthChecks({
       investigationId: input.reportId,
-      deadlineAt: deadlineAt.getTime(),
+      deadlineAt: availabilityDeadline,
     });
     console.log('[PANTHEON REPORT JOB] capability preflight completed', {
       reportId: input.reportId,
       checked: capabilityHealth.length,
       unavailable: capabilityHealth.filter(item => item.status === 'unavailable').length,
     });
+    // The selected 10/20/30-minute collection budget begins only after the
+    // service is available and live capability preflight has finished.
+    startedAt = new Date();
+    deadlineAt = new Date(startedAt.getTime() + budgetMs);
     await updatePantheonReportRecord(input.reportId, 'processing', {
       job: jobEnvelope(input, 'running', {
+        phase: 'collection',
+        queuedAt: queuedAt.toISOString(),
         startedAt: startedAt.toISOString(),
         deadlineAt: deadlineAt.toISOString(),
         capabilityHealth,
@@ -229,6 +238,13 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
           categoryState.outcome = outcome;
           categoryState.state = outcome.completionState === 'completed' ? 'completed' : 'partial';
           categoryState.phase = outcome.completionState === 'completed' ? 'COMPLETE' : 'PARTIAL';
+          categoryState.sourcePlan = {
+            ...categoryState.sourcePlan,
+            capabilities: [...outcome.expectedCapabilities],
+            transports: [...new Set(outcome.urlLedger.map(entry => entry.transport).filter(Boolean) as string[])],
+            urls: outcome.urlLedger.map(entry => entry.url),
+            preflightIssues: [...outcome.sourcePreflightIssues],
+          };
         }
         const completedCategories = categoryStates.filter(state => state.state === 'completed').length;
         const visible = visibleCategory(index);
@@ -290,7 +306,24 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
         .filter(Boolean))],
     });
     latestPartialReport = report;
-    const pdfCompletedAt = new Date();
+    await updatePantheonReportRecord(input.reportId, 'processing', {
+      job: jobEnvelope(input, 'finalizing', {
+        queuedAt: queuedAt.toISOString(),
+        startedAt: startedAt.toISOString(),
+        deadlineAt: deadlineAt.toISOString(),
+        finalizingAt: new Date().toISOString(),
+        investigationStatus: investigation.state,
+        completedCategories: investigation.completedCategoryCount,
+        processedCategories: categoryOutcomes.length,
+        partialCategories: investigation.partialCategoryCount,
+        missingCrawlerCapabilities: investigation.missingCapabilities,
+        capabilityCoverage: investigation.capabilityCoverage,
+        capabilityTelemetry: getPantheonCapabilityTelemetry(),
+      }),
+      categoryStates,
+      report,
+      categoryOutcomes,
+    });
     console.log('[PANTHEON REPORT JOB] PDF rendering started', { reportId: input.reportId });
     const pdfBuffer = await withStageDeadline('PDF rendering', 30_000, generatePantheonBackgroundReportPdf({
       reportId: input.reportId,
@@ -300,12 +333,45 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
         searchDepth: input.searchDepth,
       },
       createdAt: startedAt,
-      completedAt: pdfCompletedAt,
+      completedAt: new Date(),
       categoryOutcomes,
     }));
+    const pdfCompletedAt = new Date();
     const pdfVerification = verifyPantheonPdfBuffer(pdfBuffer, 2);
     console.log('[PANTHEON REPORT JOB] PDF verified', { reportId: input.reportId, bytes: pdfVerification.bytes, sha256: pdfVerification.sha256 });
-    const pdfArtifact = await withStageDeadline('PDF persistence', 20_000, persistPantheonPdfArtifact(input.reportId, pdfBuffer));
+    let pdfArtifact: PantheonPdfArtifact;
+    try {
+      pdfArtifact = await withStageDeadline('PDF persistence', 20_000, persistPantheonPdfArtifact(input.reportId, pdfBuffer));
+    } catch (error) {
+      const persistenceError = error instanceof Error ? error.message : String(error);
+      console.warn('[PANTHEON REPORT JOB] PDF persistence unavailable; verified report will remain regenerable', {
+        reportId: input.reportId,
+        error: persistenceError.slice(0, 300),
+      });
+      pdfArtifact = {
+        bytes: pdfVerification.bytes,
+        sha256: pdfVerification.sha256,
+        generatedAt: pdfVerification.verifiedAt,
+        storedAt: null,
+        persistence: {
+          durable: false,
+          regenerable: true,
+          local: {
+            stored: false,
+            durable: false,
+            mode: null,
+            error: persistenceError.slice(0, 300),
+          },
+          remote: {
+            provider: 'supabase',
+            configured: Boolean(process.env.SUPABASE_URL
+              && (process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY)),
+            stored: false,
+            error: persistenceError.slice(0, 300),
+          },
+        },
+      };
+    }
     if (pdfArtifact.sha256 !== pdfVerification.sha256 || pdfArtifact.bytes !== pdfVerification.bytes) {
       throw new Error('Persisted Pantheon PDF does not match the verified report artifact');
     }

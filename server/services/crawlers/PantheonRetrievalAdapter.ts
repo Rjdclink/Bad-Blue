@@ -16,6 +16,8 @@ import {
   getPantheonCategoryCapabilities,
   getPantheonPrimaryCrawlerCapabilitiesForCategory,
   PANTHEON_PRIMARY_CRAWLER_IDS,
+  PANTHEON_RAZOR_SKILL_IDS,
+  PANTHEON_SECONDARY_CRAWLER_IDS,
   type PantheonCapabilityId,
   type PantheonPrimaryCrawlerId,
   type PantheonTransport,
@@ -25,7 +27,11 @@ import {
   type PantheonStructuredSourceResult,
 } from '../pantheon/PantheonSourceResult';
 import { createPantheonDeadline, throwIfPantheonAborted } from '../pantheon/PantheonDeadline';
-import { runWithPantheonAcquisitionContext } from './PublicAcquisitionInfrastructure';
+import {
+  acquirePantheonResource,
+  runWithPantheonAcquisitionContext,
+  type PublicAcquisitionResult,
+} from './PublicAcquisitionInfrastructure';
 import { runPortablePantheonCapabilities } from '../pantheon/PantheonPortableCapabilityExecutor';
 
 export type RetrievalEvidence = PantheonStructuredSourceResult;
@@ -198,6 +204,7 @@ export class PantheonRetrievalAdapter {
       signal: operationSignal,
     };
     let results: CrawlerResult[];
+    let canonicalAcquisition: PublicAcquisitionResult | undefined;
     let crawlerAudit: PantheonRetrievalResponse['crawlerAudit'] = [];
     if (request.purpose === 'background_report') {
       const acquisitionAuthority = {
@@ -206,7 +213,18 @@ export class PantheonRetrievalAdapter {
         workId: request.authority!.workId!,
         capability: request.authority!.capability!,
         deadlineAt: deadlineAt!,
+        canonicalUrl: request.authority!.canonicalUrl!,
+        route: 'primary' as const,
       };
+      // Acquire one full canonical snapshot first. Primary crawlers share the
+      // gateway cache, while extraction capabilities receive this untruncated
+      // live content rather than a crawler-specific excerpt.
+      canonicalAcquisition = await acquirePantheonResource(
+        request.authority!.canonicalUrl!,
+        primaryBudgetMs,
+        acquisitionAuthority,
+        operationSignal,
+      );
       const isolated = await runWithPantheonAcquisitionContext(
         acquisitionAuthority,
         operationSignal,
@@ -231,7 +249,13 @@ export class PantheonRetrievalAdapter {
           Number.isFinite(remainingBudgetMs()) ? remainingBudgetMs() : primaryBudgetMs,
         ));
         const fallbackRun = await runWithPantheonAcquisitionContext(
-          { ...acquisitionAuthority, workId: `${acquisitionAuthority.workId}:fallback:${fallback}`, capability: fallback },
+          {
+            ...acquisitionAuthority,
+            workId: `${acquisitionAuthority.workId}:fallback:${fallback}`,
+            capability: fallback,
+            route: 'fallback' as const,
+            fallbackFor: failed.crawler,
+          },
           operationSignal,
           () => pantheonOrchestrator.searchAllIsolatedWithAudit(request.targets, {
             ...searchOptions,
@@ -262,6 +286,10 @@ export class PantheonRetrievalAdapter {
           categoryLabel: request.categoryLabel,
           transport: (request.transportHint?.[0] || 'direct-http') as PantheonTransport,
           durationMs: Number(sourceOutcome?.durationMs || audit?.durationMs || 0),
+          httpStatus: canonicalAcquisition?.status,
+          contentType: canonicalAcquisition?.contentType,
+          requestedUrl: request.targets[0],
+          finalUrl: canonicalAcquisition?.url,
         });
       });
 
@@ -270,6 +298,10 @@ export class PantheonRetrievalAdapter {
       const applicableCapabilities = [...new Set(request.capabilityHint || [])]
         .filter((capability): capability is PantheonCapabilityId =>
           permittedCapabilities.has(capability as PantheonCapabilityId));
+      const extendedCapabilityIds = applicableCapabilities.filter(capability =>
+        (PANTHEON_RAZOR_SKILL_IDS as readonly string[]).includes(capability)
+          || (PANTHEON_SECONDARY_CRAWLER_IDS as readonly string[]).includes(capability)
+      );
       const extendedTargets = request.targets.filter(target => {
         try {
           const parsed = new URL(target);
@@ -280,7 +312,7 @@ export class PantheonRetrievalAdapter {
       });
       const EXTENDED_CONCURRENCY = 8;
       const extendedRuns: Array<{ target: string; run: PromiseSettledResult<Awaited<ReturnType<typeof twoStageDeployer.deployBackgroundReport>>> }> = [];
-      for (let offset = 0; offset < extendedTargets.length && collectionOpen(); offset += EXTENDED_CONCURRENCY) {
+      for (let offset = 0; extendedCapabilityIds.length > 0 && offset < extendedTargets.length && collectionOpen(); offset += EXTENDED_CONCURRENCY) {
         const batch = extendedTargets.slice(offset, offset + EXTENDED_CONCURRENCY);
         const extendedLaneBudget = Math.max(1_000, Math.floor(totalBudgetMs * 0.20));
         const perBatchBudget = Math.min(
@@ -295,13 +327,16 @@ export class PantheonRetrievalAdapter {
               workId: `${request.authority!.workId}:extended:${offset + batchIndex}`,
               capability: 'extended-pantheon',
               deadlineAt: deadlineAt!,
+              canonicalUrl: target,
             },
             operationSignal,
             () => twoStageDeployer.deployBackgroundReport(
               target,
-              results.find(result => result.target === target && result.content.trim())?.content,
+              canonicalAcquisition?.ok && canonicalAcquisition.content.trim()
+                ? canonicalAcquisition.content
+                : results.find(result => result.target === target && result.content.trim())?.content,
               perBatchBudget,
-              applicableCapabilities,
+              extendedCapabilityIds,
               operationSignal,
             ),
           ))
@@ -312,15 +347,28 @@ export class PantheonRetrievalAdapter {
       for (const entry of extendedRuns) {
         const { run, target } = entry;
         if (run.status !== 'fulfilled') {
-          crawlerAudit.push({
-            crawler: 'extended-pantheon',
-            capabilityClass: 'pantheon-secondary',
-            status: 'failed',
+          const message = run.reason instanceof Error ? run.reason.message : String(run.reason);
+          const status = /timeout|deadline|abort/i.test(message) ? 'timed_out' as const : 'failed' as const;
+          const retrievedAt = new Date().toISOString();
+          crawlerAudit.push(...extendedCapabilityIds.map(capabilityId => ({
+            crawler: capabilityId,
+            capabilityClass: (PANTHEON_RAZOR_SKILL_IDS as readonly string[]).includes(capabilityId)
+              ? 'razor' as const
+              : 'pantheon-secondary' as const,
+            status,
             evidenceCount: 0,
             attempts: 1,
             targets: 1,
-            error: run.reason instanceof Error ? run.reason.message : String(run.reason),
-          });
+            error: message,
+            durationMs: 0,
+            sourceOutcomes: [{
+              sourceUrl: target,
+              status,
+              retrievedAt,
+              durationMs: 0,
+              error: message,
+            }],
+          })));
           continue;
         }
 
@@ -378,7 +426,9 @@ export class PantheonRetrievalAdapter {
       // access to a vendor service or generating substitute evidence.
       for (const target of extendedTargets) {
         const liveResult = results.find(result => result.target === target && result.content.trim());
-        const content = liveResult?.content || '';
+        const content = canonicalAcquisition?.ok && canonicalAcquisition.content.trim()
+          ? canonicalAcquisition.content
+          : liveResult?.content || '';
         crawlerAudit.push(...await runPortablePantheonCapabilities({
           capabilityIds: applicableCapabilities,
           sourceUrl: target,
@@ -410,7 +460,15 @@ export class PantheonRetrievalAdapter {
 
 function normalizeResult(
   result: CrawlerResult,
-  context: { categoryLabel?: string; transport: PantheonTransport; durationMs: number },
+  context: {
+    categoryLabel?: string;
+    transport: PantheonTransport;
+    durationMs: number;
+    httpStatus?: number;
+    contentType?: string;
+    requestedUrl?: string;
+    finalUrl?: string;
+  },
 ): RetrievalEvidence {
   const discoveryOnly = context.transport === 'search-provider';
   const discoveredCandidates = discoveryOnly
@@ -429,8 +487,12 @@ function normalizeResult(
     retrievedAt: new Date(result.timestamp).toISOString(),
     durationMs: context.durationMs,
     transport: context.transport,
+    httpStatus: context.httpStatus,
+    contentType: context.contentType,
     metadata: {
       ...(result.metadata || {}),
+      requestedUrl: context.requestedUrl || result.target,
+      finalUrl: context.finalUrl || result.target,
       ...(discoveryOnly ? { discoveryOnly: true, discoveredCandidates } : {}),
     },
   });

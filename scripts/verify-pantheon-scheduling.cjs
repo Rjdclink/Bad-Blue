@@ -12,7 +12,9 @@ const evidence = read('server/services/pantheon/PantheonEvidencePipeline.ts');
 
 for (const token of [
   'runPantheonBounded(indexes, concurrency',
-  'Math.min(4, input.categoryConcurrency || 4',
+  'PANTHEON_CATEGORY_CONCURRENCY_LIMIT',
+  'runPantheonUrlBounded(waveUrls',
+  'deadline.signal, true',
   'waveCount',
   'categoryBudgetMs',
   "phase: execution.outcome.completionState === 'completed' ? 'COMPLETE' : 'PARTIAL'",
@@ -21,7 +23,7 @@ for (const token of [
 ]) {
   if (!workflow.includes(token)) throw new Error('Bounded category workflow invariant missing: ' + token);
 }
-for (const token of ['cursor += 1','results[index] = await worker','Promise.all(Array.from','throwIfPantheonAborted']) {
+for (const token of ['completeAllItemsOnAbort', 'results[index] = await worker','Promise.all(Array.from','PANTHEON_GLOBAL_URL_CONCURRENCY_LIMIT = 8']) {
   if (!scheduler.includes(token)) throw new Error('Bounded scheduler invariant missing: ' + token);
 }
 for (const token of ['createPantheonDeadline','racePantheonAbort','pantheonAbortableDelay','removeEventListener']) {

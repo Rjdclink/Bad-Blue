@@ -23,6 +23,8 @@ export interface RazorResult {
   confidence: number;        // 0-1
   extractionTimeMs: number;
   source?: string;
+  outcome?: 'completed' | 'failed' | 'timed_out';
+  error?: string;
 }
 
 export interface RazorTask {

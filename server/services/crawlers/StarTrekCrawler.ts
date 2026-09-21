@@ -1,4 +1,4 @@
-import { acquirePublicResource } from './PublicAcquisitionInfrastructure';
+import { acquirePublicResource, isPantheonAcquisitionContextActive } from './PublicAcquisitionInfrastructure';
 /**
  * 🚀 STAR TREK CRAWLER - Federation Explorer
  * 
@@ -277,9 +277,7 @@ export class StarTrekCrawler {
       const response = await executeRequest(target, {
         method: 'GET',
         headers: {
-          'User-Agent': `StarFleet-Explorer-${this.phaserSetting}`,
-          'X-Phaser-Setting': String(this.phaserSetting),
-          'X-Prime-Directive': this.primeDirective ? 'enabled' : 'disabled'
+          'User-Agent': 'LegalWhat-Pantheon-StarTrek/1.0 public-record research',
         },
         timeout: this.getTimeoutForSetting()
       });
@@ -368,6 +366,13 @@ export class StarTrekCrawler {
    * Wait for rate limit based on phaser setting
    */
   private async waitForRateLimit(): Promise<void> {
+    // Canonical Pantheon acquisition owns the shared per-host governor,
+    // deadlines, and abort signal. A second crawler-local sleep was neither
+    // cancellable nor host-aware and could consume an entire route budget.
+    if (isPantheonAcquisitionContextActive()) {
+      this.lastRequestTime = Date.now();
+      return;
+    }
     const requestsPerMinute = this.getRequestsPerMinute();
     const minDelayMs = 60000 / requestsPerMinute;
     

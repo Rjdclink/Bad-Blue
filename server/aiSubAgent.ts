@@ -18,6 +18,7 @@ import { promisify } from 'util';
 const exec = promisify(execCallback);
 
 import {
+  canAutonomousProceed,
   generateAutonomousText,
   generateUserText,
   TaskPriority,

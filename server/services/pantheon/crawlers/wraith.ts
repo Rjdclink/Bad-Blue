@@ -1,15 +1,16 @@
 import { BaseCrawler } from '../baseCrawler';
-import { EntropySignature, CrawlerType, CrawlerTask, TimingJitterResult, AsyncEchoResult } from '../core';
+import {
+  attachCrawlerCapabilityOutput,
+  CrawlerType,
+  requireVerifiedCrawlerSourceSnapshot,
+  type CrawlerTask,
+  type EntropySignature,
+} from '../core';
 
 /**
- * WRAITH CRAWLER - Ghost Layer Entropy Harvester
- * 
- * Harvests entropy from the "negative space" of computation:
- * - Timing jitter (variance in response times)
- * - Async echoes (handler signatures)
- * - TCP ghost states
- * 
- * Wraiths fail silently - they leave no trace.
+ * WRAITH: passive asynchronous-structure observation over the already acquired
+ * live snapshot. It performs no timing, vulnerability, header, or network
+ * probes and makes no claims about data absent from the snapshot.
  */
 export class WraithCrawler extends BaseCrawler {
   constructor(task: CrawlerTask) {
@@ -17,110 +18,27 @@ export class WraithCrawler extends BaseCrawler {
   }
 
   async execute(): Promise<EntropySignature[]> {
-    const signatures: EntropySignature[] = [];
-    
-    try {
-      // Harvest timing jitter
-      const timings = await this.measureTimingJitter(this.task.target);
-      signatures.push(this.generateEntropySignature({ 
-        type: 'timing', 
-        ...timings 
-      }));
-      
-      // Detect async echoes
-      const async = await this.detectAsyncEchoes(this.task.target);
-      signatures.push(this.generateEntropySignature({ 
-        type: 'async', 
-        ...async 
-      }));
-    } catch {
-      // Ghosts fail silently
-    }
-    
-    return signatures;
+    const snapshot = requireVerifiedCrawlerSourceSnapshot(this.task);
+    const content = snapshot.content;
+    const asyncScriptCount = (content.match(/<script\b[^>]*(?:\sasync(?:\s|=|>)|\sdefer(?:\s|=|>))/gi) || []).length;
+    const eventStreamMarkers = countMatches(content, /\b(?:EventSource|WebSocket|server-sent events?|text\/event-stream)\b/gi);
+    const backgroundWorkMarkers = countMatches(content, /\b(?:job status|background job|polling|worker|queue|progress endpoint)\b/gi);
+    const output = Object.freeze({
+      function: 'passive-async-structure-observation',
+      asyncScriptCount,
+      eventStreamMarkers,
+      backgroundWorkMarkers,
+      observedCharacters: content.length,
+      probesPerformed: 0,
+    });
+    return [attachCrawlerCapabilityOutput(
+      this.generateEntropySignature(output),
+      snapshot,
+      output,
+    )];
   }
+}
 
-  /**
-   * Measure timing jitter (variance in response times)
-   * Takes 5 samples with 100ms gaps
-   * 
-   * High jitter = unstable system = exploitable entropy
-   */
-  private async measureTimingJitter(target: string): Promise<TimingJitterResult> {
-    const measurements: number[] = [];
-    
-    for (let i = 0; i < 5; i++) {
-      const start = Date.now();
-      
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 1000);
-        
-        await fetch(target, { 
-          method: 'HEAD',
-          headers: { 'User-Agent': 'Mozilla/5.0' },
-          signal: controller.signal
-        });
-        
-        clearTimeout(timeoutId);
-        measurements.push(Date.now() - start);
-      } catch {
-        // Failed requests still provide timing data
-        measurements.push(Date.now() - start);
-      }
-      
-      await this.sleep(100);
-    }
-    
-    // Calculate variance and jitter
-    const avg = measurements.reduce((a, b) => a + b, 0) / measurements.length;
-    const variance = measurements.reduce((a, b) => a + Math.pow(b - avg, 2), 0) / measurements.length;
-    const jitter = Math.sqrt(variance);
-    
-    return { 
-      avg, 
-      variance, 
-      jitter,
-      samples: measurements.length,
-      stability: avg > 0 ? jitter / avg : 0 // Lower = more stable
-    };
-  }
-
-  /**
-   * Detect async handler signatures
-   * Probes for async processing indicators
-   */
-  private async detectAsyncEchoes(target: string): Promise<AsyncEchoResult> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 500);
-    
-    try {
-      const response = await fetch(target, { 
-        headers: { 
-          'User-Agent': 'Mozilla/5.0',
-          'X-Ghost-Probe': 'true' // Ghost signature
-        },
-        signal: controller.signal
-      });
-      
-      return {
-        asyncDetected: !!response.headers.get('x-async'),
-        serverSignature: response.headers.get('server') || 'unknown',
-        hasAsyncHeader: !!response.headers.get('x-async-context'),
-        statusCode: response.status,
-        responseTime: response.headers.get('x-response-time') || null
-      };
-    } catch {
-      // IMMEDIATE SKIP - ghosts fail silently
-      return { 
-        asyncDetected: false,
-        serverSignature: 'unknown',
-        hasAsyncHeader: false,
-        statusCode: 0,
-        responseTime: null
-      };
-    } finally {
-      clearTimeout(timeoutId);
-    }
-  }
+function countMatches(value: string, pattern: RegExp): number {
+  return (value.match(pattern) || []).length;
 }

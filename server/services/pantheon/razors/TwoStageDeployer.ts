@@ -19,7 +19,7 @@ import { HydraCrawler } from '../crawlers/hydra';
 import { WraithCrawler } from '../crawlers/wraith';
 import { IceCrawler } from '../crawlers/ice';
 import { FarmCrawler, PhantomCrawler, NovaCrawler } from '../crawlers/utility';
-import { CrawlerType, CrawlerTask, EntropySignature } from '../core';
+import { CrawlerType, CrawlerTask, EntropySignature, type CrawlerSourceSnapshot } from '../core';
 import { acquirePublicResource } from '../../crawlers/PublicAcquisitionInfrastructure';
 import { createPantheonDeadline, racePantheonAbort, throwIfPantheonAborted } from '../PantheonDeadline';
 import {
@@ -51,6 +51,7 @@ export interface BackgroundCapabilityAudit {
     error?: string;
   }>;
   error?: string;
+  capabilityOutput?: Record<string, unknown>;
 }
 
 export interface BackgroundSecondaryResult {
@@ -59,6 +60,8 @@ export interface BackgroundSecondaryResult {
   status: BackgroundCapabilityAudit['status'];
   durationMs: number;
   error?: string;
+  attempted: boolean;
+  capabilityOutput?: Record<string, unknown>;
 }
 
 export interface BackgroundReportDeployment {
@@ -93,11 +96,17 @@ export class TwoStageDeployer {
   ): Promise<BackgroundReportDeployment> {
     throwIfPantheonAborted(signal);
     const startedAt = Date.now();
-    const boundedBudget = Math.max(1_000, reportBudgetMs || 60_000);
-    const fetchTimeoutMs = Math.min(30_000, Math.max(5_000, Math.floor(boundedBudget / 30)));
-    const razorTimeoutMs = Math.min(60_000, Math.max(STAGE_1_TIMEOUT, Math.floor(boundedBudget / 20)));
-    const secondaryTimeoutMs = Math.min(120_000, Math.max(10_000, Math.floor(boundedBudget / 12)));
-    const content = html || await this.fetchContent(target, fetchTimeoutMs, signal);
+    const boundedBudget = Math.max(500, reportBudgetMs || 60_000);
+    // Both local analysis stages must fit inside the adapter's route-local
+    // budget. Minimum 5/10-second floors previously guaranteed cancellation
+    // before secondary capabilities could report an outcome.
+    const razorTimeoutMs = Math.min(STAGE_1_TIMEOUT, Math.max(200, Math.floor(boundedBudget * 0.45)));
+    const secondaryTimeoutMs = Math.min(5_000, Math.max(200, Math.floor(boundedBudget * 0.45)));
+    // Background execution receives the canonical primary lane's verified live
+    // content. It must never start a second acquisition when that content is
+    // absent; all capabilities disclose unavailability instead.
+    const content = typeof html === 'string' && html.trim() ? html : '';
+    const sourceSnapshot = this.createSourceSnapshot(target, content, 'canonical-primary-live-get');
     const allowed = new Set<PantheonCapabilityId>(capabilityIds || [
       ...PANTHEON_RAZOR_SKILL_IDS,
       ...PANTHEON_SECONDARY_CRAWLER_IDS,
@@ -107,27 +116,40 @@ export class TwoStageDeployer {
     const razorResults = content
       ? (await this.deployStage1(content, target, razorTimeoutMs, selectedRazors, signal)).map(result => this.sanitizeBackgroundRazorResult(result))
       : [];
-    const secondaryResults = await this.deployAllSecondary(target, secondaryTimeoutMs, selectedSecondary, signal);
+    const secondaryResults = await this.deployAllSecondary(target, sourceSnapshot, secondaryTimeoutMs, selectedSecondary, signal);
     const razorAudit: BackgroundCapabilityAudit[] = selectedRazors.map(razor => {
       const result = razorResults.find(candidate => candidate.razorType === razor.type);
+      const status: BackgroundCapabilityAudit['status'] = !content
+        ? 'unavailable_no_content'
+        : !result || result.outcome === 'timed_out'
+          ? 'timed_out'
+          : result.outcome === 'failed'
+            ? 'failed'
+            : result.success
+              ? 'completed_with_evidence'
+              : 'completed_no_evidence';
+      const sourceStatus = status === 'timed_out'
+        ? 'timed_out' as const
+        : status === 'failed' || status === 'unavailable_no_content'
+          ? 'failed' as const
+          : status;
+      const error = result?.error || (!result && content ? 'Razor execution ended without an attributable outcome' : undefined);
       return {
         crawler: `razor:${razor.type}`,
         capabilityClass: 'razor',
-        status: !content
-          ? 'unavailable_no_content'
-          : result?.success
-            ? 'completed_with_evidence'
-            : 'completed_no_evidence',
+        status,
         evidenceCount: result?.success ? 1 : 0,
         attempts: content ? 1 : 0,
         targets: 1,
         durationMs: Number(result?.extractionTimeMs || 0),
         sourceOutcomes: [{
           sourceUrl: target,
-          status: result?.success ? 'completed_with_evidence' : 'completed_no_evidence',
+          status: sourceStatus,
           retrievedAt: new Date().toISOString(),
           durationMs: Number(result?.extractionTimeMs || 0),
+          ...(error ? { error } : {}),
         }],
+        ...(error ? { error } : {}),
       };
     });
     const secondaryAudit: BackgroundCapabilityAudit[] = secondaryResults.map(result => ({
@@ -135,14 +157,14 @@ export class TwoStageDeployer {
       capabilityClass: 'pantheon-secondary',
       status: result.status,
       evidenceCount: result.signatures.length,
-      attempts: 1,
+      attempts: result.attempted ? 1 : 0,
       targets: 1,
       durationMs: result.durationMs,
       sourceOutcomes: [{
         sourceUrl: target,
         status: result.status === 'timed_out'
           ? 'timed_out'
-          : result.status === 'failed'
+          : result.status === 'failed' || result.status === 'unavailable_no_content'
             ? 'failed'
             : result.signatures.length > 0
               ? 'completed_with_evidence'
@@ -152,6 +174,7 @@ export class TwoStageDeployer {
         ...(result.error ? { error: result.error } : {}),
       }],
       ...(result.error ? { error: result.error } : {}),
+      ...(result.capabilityOutput ? { capabilityOutput: result.capabilityOutput } : {}),
     }));
 
     return {
@@ -195,6 +218,7 @@ export class TwoStageDeployer {
 
   private async deployAllSecondary(
     target: string,
+    sourceSnapshot: Readonly<CrawlerSourceSnapshot> | undefined,
     perCrawlerTimeoutMs: number = 10_000,
     allowedIds: readonly PantheonSecondaryCrawlerId[] = PANTHEON_SECONDARY_CRAWLER_IDS,
     signal?: AbortSignal,
@@ -214,6 +238,20 @@ export class TwoStageDeployer {
     ];
 
     const selectedSpecs = specs.filter(spec => allowedIds.includes(spec.crawler));
+    if (!sourceSnapshot) {
+      return selectedSpecs.map(spec => ({
+        crawler: spec.crawler,
+        signatures: [],
+        status: 'unavailable_no_content',
+        durationMs: 0,
+        attempted: false,
+        error: 'Verified canonical source snapshot unavailable',
+        capabilityOutput: {
+          function: 'snapshot-analysis',
+          unavailableReason: 'verified_canonical_source_snapshot_unavailable',
+        },
+      }));
+    }
     const runs = selectedSpecs.map(async spec => {
       const executionStartedAt = Date.now();
       const task: CrawlerTask = {
@@ -223,6 +261,7 @@ export class TwoStageDeployer {
         priority: 10,
         quantum: 10_000,
         entropyBudget: 50,
+        sourceSnapshot,
       };
       const crawler = spec.create(task);
       try {
@@ -238,6 +277,14 @@ export class TwoStageDeployer {
           signatures,
           status: signatures.length > 0 ? 'completed_with_evidence' : 'completed_no_evidence',
           durationMs: Date.now() - executionStartedAt,
+          attempted: true,
+          capabilityOutput: {
+            sourceUrl: sourceSnapshot.sourceUrl,
+            provenance: sourceSnapshot.provenance,
+            verified: sourceSnapshot.verified,
+            signatureCount: signatures.length,
+            outputs: signatures.flatMap(signature => signature.capabilityOutput ? [signature.capabilityOutput] : []),
+          },
         } satisfies BackgroundSecondaryResult;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -246,6 +293,7 @@ export class TwoStageDeployer {
           signatures: [],
           status: /timeout/i.test(message) ? 'timed_out' : 'failed',
           durationMs: Date.now() - executionStartedAt,
+          attempted: true,
           error: message.slice(0, 300),
         } satisfies BackgroundSecondaryResult;
       }
@@ -260,26 +308,37 @@ export class TwoStageDeployer {
     timeoutMs: number = 3_000,
   ): Promise<BackgroundCapabilityAudit[]> {
     const startedAt = Date.now();
+    const sourceSnapshot = this.createSourceSnapshot(target, html, 'canonical-health-check-live-get');
     const [razorRun, secondaryRun] = await Promise.all([
       this.deployStage1(html, target, timeoutMs, this.razors),
-      this.deployAllSecondary(target, timeoutMs, PANTHEON_SECONDARY_CRAWLER_IDS),
+      this.deployAllSecondary(target, sourceSnapshot, timeoutMs, PANTHEON_SECONDARY_CRAWLER_IDS),
     ]);
     const razorAudit: BackgroundCapabilityAudit[] = this.razors.map(razor => {
       const result = razorRun.find(candidate => candidate.razorType === razor.type);
+      const status: BackgroundCapabilityAudit['status'] = !result || result.outcome === 'timed_out'
+        ? 'timed_out'
+        : result.outcome === 'failed'
+          ? 'failed'
+          : result.success
+            ? 'completed_with_evidence'
+            : 'completed_no_evidence';
+      const error = result?.error || (!result ? 'Razor health check ended without an attributable outcome' : undefined);
       return {
         crawler: 'razor:' + razor.type,
         capabilityClass: 'razor',
-        status: result?.success ? 'completed_with_evidence' : 'completed_no_evidence',
+        status,
         evidenceCount: result?.success ? 1 : 0,
         attempts: 1,
         targets: 1,
         durationMs: Number(result?.extractionTimeMs || 0),
         sourceOutcomes: [{
           sourceUrl: target,
-          status: result?.success ? 'completed_with_evidence' : 'completed_no_evidence',
+          status: status === 'timed_out' ? 'timed_out' : status === 'failed' ? 'failed' : status,
           retrievedAt: new Date().toISOString(),
           durationMs: Number(result?.extractionTimeMs || 0),
+          ...(error ? { error } : {}),
         }],
+        ...(error ? { error } : {}),
       };
     });
     const secondaryAudit: BackgroundCapabilityAudit[] = secondaryRun.map(result => ({
@@ -287,14 +346,14 @@ export class TwoStageDeployer {
       capabilityClass: 'pantheon-secondary',
       status: result.status,
       evidenceCount: result.signatures.length,
-      attempts: 1,
+      attempts: result.attempted ? 1 : 0,
       targets: 1,
       durationMs: result.durationMs,
       sourceOutcomes: [{
         sourceUrl: target,
         status: result.status === 'timed_out'
           ? 'timed_out'
-          : result.status === 'failed'
+          : result.status === 'failed' || result.status === 'unavailable_no_content'
             ? 'failed'
             : result.signatures.length > 0
               ? 'completed_with_evidence'
@@ -304,6 +363,7 @@ export class TwoStageDeployer {
         ...(result.error ? { error: result.error } : {}),
       }],
       ...(result.error ? { error: result.error } : {}),
+      ...(result.capabilityOutput ? { capabilityOutput: result.capabilityOutput } : {}),
     }));
     return [...razorAudit, ...secondaryAudit].map(item => ({
       ...item,
@@ -358,7 +418,7 @@ export class TwoStageDeployer {
     // ========================================
     console.log(`[TwoStage] Promoting to Stage 2 (threshold not met)`);
     const stage2Start = Date.now();
-    this.stage2Results = await this.deployStage2(target);
+    this.stage2Results = await this.deployStage2(target, content);
     const stage2Time = Date.now() - stage2Start;
     
     console.log(`[TwoStage] Stage 2 complete: ${this.stage2Results.length} signatures, ${stage2Time}ms`);
@@ -408,7 +468,9 @@ export class TwoStageDeployer {
   /**
    * Stage 2: Deploy secondary crawlers (Hydra, Wraith, Ice)
    */
-  private async deployStage2(target: string): Promise<EntropySignature[]> {
+  private async deployStage2(target: string, content: string): Promise<EntropySignature[]> {
+    const sourceSnapshot = this.createSourceSnapshot(target, content, 'canonical-legacy-live-get');
+    if (!sourceSnapshot) return [];
     const task: CrawlerTask = {
       id: `stage2-${Date.now()}`,
       type: CrawlerType.HYDRA,
@@ -416,6 +478,7 @@ export class TwoStageDeployer {
       priority: 10,
       quantum: STAGE_2_TIMEOUT,
       entropyBudget: 50,
+      sourceSnapshot,
     };
 
     const signatures: EntropySignature[] = [];
@@ -457,6 +520,22 @@ export class TwoStageDeployer {
   private async fetchContent(url: string, timeoutMs: number = 5000, signal?: AbortSignal): Promise<string | null> {
     const result = await acquirePublicResource(url, timeoutMs, undefined, signal);
     return result.ok && result.content.trim() ? result.content : null;
+  }
+
+  private createSourceSnapshot(
+    target: string,
+    content: string | null | undefined,
+    provenance: CrawlerSourceSnapshot['provenance'],
+  ): Readonly<CrawlerSourceSnapshot> | undefined {
+    if (typeof content !== 'string' || !content.trim()) return undefined;
+    return Object.freeze({
+      sourceUrl: target,
+      content,
+      contentType: /<\s*!doctype|<\s*html|<\s*body/i.test(content) ? 'text/html' : 'text/plain',
+      retrievedAt: new Date().toISOString(),
+      provenance,
+      verified: true as const,
+    });
   }
 
   /**

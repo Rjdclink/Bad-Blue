@@ -570,13 +570,32 @@ export interface PantheonExecutableWorkUnit {
   taskId: string;
   capabilityId: PantheonCapabilityId;
   categoryLabel: PantheonReportCategoryLabel;
-  sourceUrl: string;
-  transport: PantheonTransport;
+  applicable: boolean;
+  sourceUrl?: string;
+  transport?: PantheonTransport;
   implementationPath: string;
   executableFunction: string;
   taskKind: PantheonTaskKind;
   skill: string;
   reportEvidenceEligible: boolean;
+  state: 'pending' | 'running' | 'retryable' | 'completed' | 'failed' | 'timed_out' | 'unavailable' | 'not_applicable';
+  attempts: number;
+  attemptedSourceUrls: string[];
+  outcome?: string;
+  reason?: string;
+  executionMode: 'native' | 'credential-free-equivalent';
+  replacementDisclosure?: string;
+}
+
+export interface PantheonExecutableSource {
+  sourceUrl: string;
+  transport: PantheonTransport;
+}
+
+export function isPantheonExecutableWorkSchedulable(
+  unit: Pick<PantheonExecutableWorkUnit, 'state'>,
+): boolean {
+  return unit.state === 'pending' || unit.state === 'retryable';
 }
 
 export function isPantheonReportCategoryLabel(value: string): value is PantheonReportCategoryLabel {
@@ -623,6 +642,7 @@ export function buildPantheonExecutableWorkUnits(input: {
       ].join(':'),
       capabilityId: descriptor.id,
       categoryLabel,
+      applicable: true,
       sourceUrl: input.sourceUrl,
       transport: input.transport,
       implementationPath: descriptor.implementationPath,
@@ -630,7 +650,121 @@ export function buildPantheonExecutableWorkUnits(input: {
       taskKind: descriptor.taskKind,
       skill: descriptor.skill,
       reportEvidenceEligible: descriptor.reportEvidenceEligible,
+      state: 'pending' as const,
+      attempts: 0,
+      attemptedSourceUrls: [],
+      executionMode: descriptor.executionMode || 'native',
+      replacementDisclosure: descriptor.replacementDisclosure,
     }));
+}
+
+/**
+ * Builds one persisted logical work unit for every configured capability.
+ *
+ * Applicable capabilities are bound to a transport-compatible live source.
+ * Capabilities outside the category are explicitly persisted as
+ * `not_applicable`; a missing compatible source is explicit `unavailable`.
+ * Previous terminal work remains terminal on resume, while interrupted or
+ * retryable work can only return as `retryable` and receive an eligible source.
+ */
+export function buildPantheonCapabilityWorkLedger(input: {
+  investigationId: string;
+  categoryLabel: string;
+  sources: readonly PantheonExecutableSource[];
+  unavailableReasons?: Partial<Record<PantheonCapabilityId, string>>;
+  previous?: readonly PantheonExecutableWorkUnit[];
+}): PantheonExecutableWorkUnit[] {
+  if (!isPantheonReportCategoryLabel(input.categoryLabel)) {
+    throw new Error('Pantheon capability matrix rejected unknown report category: ' + input.categoryLabel);
+  }
+  const categoryLabel = input.categoryLabel;
+  const permitted = new Set(categoryCapabilities(categoryLabel));
+  const previousByCapability = new Map((input.previous || []).map(unit => [unit.capabilityId, unit]));
+  const uniqueSources = [...new Map(input.sources.map(source => [
+    `${source.transport}:${source.sourceUrl}`,
+    source,
+  ])).values()];
+  const executableByCapability = new Map<PantheonCapabilityId, PantheonExecutableWorkUnit[]>();
+
+  for (const source of uniqueSources) {
+    for (const unit of buildPantheonExecutableWorkUnits({
+      investigationId: input.investigationId,
+      categoryLabel,
+      sourceUrl: source.sourceUrl,
+      transport: source.transport,
+    })) {
+      const current = executableByCapability.get(unit.capabilityId) || [];
+      current.push(unit);
+      executableByCapability.set(unit.capabilityId, current);
+    }
+  }
+
+  let assignmentIndex = 0;
+  return (Object.keys(PANTHEON_CRAWLER_CAPABILITY_MATRIX) as PantheonCapabilityId[]).map(capabilityId => {
+    const descriptor = PANTHEON_CRAWLER_CAPABILITY_MATRIX[capabilityId];
+    const previous = previousByCapability.get(capabilityId);
+    const base = {
+      taskId: `${input.investigationId}:${categoryLabel}:${capabilityId}`,
+      capabilityId,
+      categoryLabel,
+      implementationPath: descriptor.implementationPath,
+      executableFunction: descriptor.executableFunction,
+      taskKind: descriptor.taskKind,
+      skill: descriptor.skill,
+      reportEvidenceEligible: descriptor.reportEvidenceEligible,
+      attempts: Number(previous?.attempts || 0),
+      attemptedSourceUrls: [...(previous?.attemptedSourceUrls || [])],
+      executionMode: descriptor.executionMode || 'native' as const,
+      replacementDisclosure: descriptor.replacementDisclosure,
+    };
+
+    if (!permitted.has(capabilityId)) {
+      return {
+        ...base,
+        applicable: false,
+        state: 'not_applicable' as const,
+        reason: 'Capability is not permitted for this report category by the capability matrix',
+      };
+    }
+
+    if (previous?.state === 'completed') {
+      return { ...previous, attemptedSourceUrls: [...previous.attemptedSourceUrls] };
+    }
+
+    const unavailableReason = input.unavailableReasons?.[capabilityId];
+    if (unavailableReason) {
+      return {
+        ...base,
+        applicable: true,
+        state: 'unavailable' as const,
+        reason: unavailableReason,
+      };
+    }
+
+    const compatible = executableByCapability.get(capabilityId) || [];
+    if (!compatible.length) {
+      return {
+        ...base,
+        applicable: true,
+        state: 'unavailable' as const,
+        reason: 'No transport-compatible live source is available for this capability',
+      };
+    }
+
+    const previousCompatible = previous?.sourceUrl
+      ? compatible.find(unit => unit.sourceUrl === previous.sourceUrl && unit.transport === previous.transport)
+      : undefined;
+    const candidate = previousCompatible || compatible[assignmentIndex++ % compatible.length];
+    const resumed = previous && ['running', 'retryable', 'failed', 'timed_out'].includes(previous.state);
+    return {
+      ...base,
+      applicable: true,
+      sourceUrl: candidate.sourceUrl,
+      transport: candidate.transport,
+      state: resumed ? 'retryable' as const : 'pending' as const,
+      ...(resumed ? { reason: previous.reason || 'Interrupted capability work is eligible for controlled retry' } : {}),
+    };
+  });
 }
 
 export function validatePantheonCrawlerCapabilityMatrix(): {

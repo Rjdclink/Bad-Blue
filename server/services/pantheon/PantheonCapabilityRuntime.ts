@@ -6,6 +6,7 @@ import {
   getPantheonCategoryCapabilities,
   getPantheonPrimaryCrawlerCapabilitiesForCategory,
   type PantheonCapabilityId,
+  type PantheonExecutableWorkUnit,
   type PantheonPrimaryCrawlerId,
   type PantheonReportCategoryLabel,
 } from './PantheonCrawlerCapabilityMatrix';
@@ -85,6 +86,8 @@ interface AuditLike {
   error?: string;
   durationMs?: number;
   sourceOutcomes?: PantheonCapabilitySourceOutcome[];
+  route?: 'primary' | 'fallback';
+  fallbackFor?: string;
 }
 
 const telemetry = new Map<PantheonCapabilityId, PantheonCapabilityTelemetry>();
@@ -320,6 +323,7 @@ export function finalizePantheonCategoryCapabilityOutcomes(input: {
   categoryLabel: string;
   health: readonly PantheonCapabilityHealth[];
   crawlerAudit: readonly AuditLike[];
+  workLedger?: readonly PantheonExecutableWorkUnit[];
 }): PantheonCapabilityOutcome[] {
   if (!(PANTHEON_REPORT_CATEGORY_LABELS as readonly string[]).includes(input.categoryLabel)) {
     throw new Error('Cannot finalize capability outcomes for unknown Pantheon category: ' + input.categoryLabel);
@@ -327,7 +331,9 @@ export function finalizePantheonCategoryCapabilityOutcomes(input: {
   const categoryLabel = input.categoryLabel as PantheonReportCategoryLabel;
   const applicable = new Set(getPantheonCategoryCapabilities(categoryLabel));
   const healthById = new Map(input.health.map(item => [item.capabilityId, item]));
+  const workById = new Map((input.workLedger || []).map(item => [item.capabilityId, item]));
   const outcomes = (Object.keys(PANTHEON_CRAWLER_CAPABILITY_MATRIX) as PantheonCapabilityId[]).map(capabilityId => {
+    const work = workById.get(capabilityId);
     if (!applicable.has(capabilityId)) {
       return {
         capabilityId,
@@ -338,7 +344,7 @@ export function finalizePantheonCategoryCapabilityOutcomes(input: {
         evidenceCount: 0,
         durationMs: 0,
         sourceOutcomes: [],
-        reason: 'Capability is not permitted for this report category by the capability matrix',
+        reason: work?.reason || 'Capability is not permitted for this report category by the capability matrix',
         executionMode: PANTHEON_CRAWLER_CAPABILITY_MATRIX[capabilityId].executionMode || 'native',
         replacementDisclosure: PANTHEON_CRAWLER_CAPABILITY_MATRIX[capabilityId].replacementDisclosure,
       };
@@ -346,20 +352,28 @@ export function finalizePantheonCategoryCapabilityOutcomes(input: {
 
     const health = healthById.get(capabilityId);
     const matching = input.crawlerAudit.filter(item => item.crawler === capabilityId);
-    const attempts = matching.reduce((sum, item) => sum + Number(item.attempts || 0), 0);
+    const auditAttempts = matching.reduce((sum, item) => sum + Number(item.attempts || 0), 0);
+    const attempts = Math.max(auditAttempts, Number(work?.attempts || 0));
     const evidenceCount = matching.reduce((sum, item) => sum + Number(item.evidenceCount || 0), 0);
     const durationMs = matching.reduce((sum, item) => sum + Number(item.durationMs || 0), 0);
     const sourceOutcomes = matching.flatMap(item => item.sourceOutcomes || []);
     const fallbackCapabilityId = health?.fallbackCapabilityId || fallbackFor(capabilityId, input.health, categoryLabel);
     const fallbackExecuted = Boolean(fallbackCapabilityId && input.crawlerAudit.some(item =>
-      item.crawler === fallbackCapabilityId && Number(item.attempts || 0) > 0
+      item.crawler === fallbackCapabilityId
+        && item.route === 'fallback'
+        && item.fallbackFor === capabilityId
+        && Number(item.attempts || 0) > 0
     ));
 
     let status: PantheonCapabilityOutcomeStatus;
     let reason: string | undefined;
-    if (health?.status === 'unavailable') {
+    if (work?.state === 'completed' && work.outcome === 'completed_with_evidence') {
+      status = 'completed_with_evidence';
+    } else if (work?.state === 'completed' && work.outcome === 'completed_no_evidence') {
+      status = 'completed_no_evidence';
+    } else if (health?.status === 'unavailable' || work?.state === 'unavailable') {
       status = 'unavailable';
-      reason = health.reason;
+      reason = work?.reason || health?.reason;
     } else if (evidenceCount > 0) {
       status = 'completed_with_evidence';
     } else if (matching.some(item => item.status === 'completed_no_evidence')) {
@@ -370,9 +384,15 @@ export function finalizePantheonCategoryCapabilityOutcomes(input: {
     } else if (matching.some(item => item.status === 'failed')) {
       status = 'failed';
       reason = matching.find(item => item.status === 'failed')?.error;
+    } else if (work?.state === 'timed_out') {
+      status = 'timed_out';
+      reason = work.reason;
+    } else if (work?.state === 'failed') {
+      status = 'failed';
+      reason = work.reason;
     } else {
       status = 'not_executed';
-      reason = 'Applicable capability received no attributable execution outcome';
+      reason = work?.reason || 'Applicable capability received no attributable execution outcome';
     }
 
     return {

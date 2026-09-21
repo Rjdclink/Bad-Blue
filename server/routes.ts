@@ -3772,13 +3772,59 @@ Contact: ${foiaRequest.userEmail || userEmail}
     }
 
     try {
-      const { pantheonReportFilename, verifyPantheonPdfBuffer } = await import('./services/pantheon/PantheonBackgroundReportPdf');
-      const { readPantheonPdfArtifact } = await import('./services/pantheon/PantheonReportStore');
+      const {
+        generatePantheonBackgroundReportPdf,
+        pantheonReportFilename,
+        verifyPantheonPdfBuffer,
+      } = await import('./services/pantheon/PantheonBackgroundReportPdf');
+      const {
+        persistPantheonPdfArtifact,
+        readPantheonPdfArtifact,
+        updatePantheonReportRecord,
+      } = await import('./services/pantheon/PantheonReportStore');
       const expectedHash = envelope.pdfArtifact?.sha256 || envelope.pdfVerification?.sha256;
-      const pdf = await readPantheonPdfArtifact(report.id, expectedHash);
-      if (!pdf) throw new Error('Persisted Pantheon PDF artifact is unavailable');
-      const verified = verifyPantheonPdfBuffer(pdf, 2);
-      if (expectedHash && verified.sha256 !== expectedHash) throw new Error('Pantheon PDF artifact hash mismatch');
+      let pdf: Buffer | null = null;
+      try {
+        pdf = await readPantheonPdfArtifact(report.id, expectedHash);
+        if (pdf) {
+          const verifiedArtifact = verifyPantheonPdfBuffer(pdf, 2);
+          if (expectedHash && verifiedArtifact.sha256 !== expectedHash) {
+            throw new Error('Pantheon PDF artifact hash mismatch');
+          }
+        }
+      } catch (error) {
+        console.warn('[PANTHEON REPORT DOWNLOAD] Stored PDF rejected; regenerating from authorized report model', {
+          reportId: report.id,
+          error: error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
+        });
+        pdf = null;
+      }
+
+      if (!pdf) {
+        pdf = await generatePantheonBackgroundReportPdf({
+          reportId: report.id,
+          report: envelope.report as any,
+          job: envelope.job || null,
+          createdAt: report.createdAt,
+          completedAt: report.completedAt,
+          categoryOutcomes: Array.isArray(envelope.categoryOutcomes)
+            ? envelope.categoryOutcomes as any
+            : undefined,
+        });
+        const regeneratedVerification = verifyPantheonPdfBuffer(pdf, 2);
+        void persistPantheonPdfArtifact(report.id, pdf)
+          .then(pdfArtifact => updatePantheonReportRecord(report.id, report.status, {
+            ...envelope,
+            pdfVerification: regeneratedVerification,
+            pdfArtifact,
+          }))
+          .catch(error => {
+            console.warn('[PANTHEON REPORT DOWNLOAD] Regenerated PDF could not be repersisted', {
+              reportId: report.id,
+              error: error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
+            });
+          });
+      }
       const filename = pantheonReportFilename(envelope.report as any, report.id);
 
       res.setHeader('Content-Type', 'application/pdf');

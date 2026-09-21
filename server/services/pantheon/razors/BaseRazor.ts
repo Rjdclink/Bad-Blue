@@ -20,12 +20,12 @@ export abstract class BaseRazor {
    */
   async run(html: string, url: string, timeout: number = 2000): Promise<RazorResult> {
     const start = Date.now();
-    
+    let timeoutId: NodeJS.Timeout | undefined;
     try {
       const result = await Promise.race([
         this.extract(html, url),
         new Promise<never>((_, reject) => 
-          setTimeout(() => reject(new Error('timeout')), timeout)
+          { timeoutId = setTimeout(() => reject(new Error('timeout')), timeout); }
         )
       ]);
       
@@ -38,8 +38,10 @@ export abstract class BaseRazor {
         confidence,
         extractionTimeMs: Date.now() - start,
         source: url,
+        outcome: 'completed',
       };
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       // IMMEDIATE SKIP on failure
       return {
         razorType: this.type,
@@ -48,7 +50,11 @@ export abstract class BaseRazor {
         confidence: 0,
         extractionTimeMs: Date.now() - start,
         source: url,
+        outcome: /timeout/i.test(message) ? 'timed_out' : 'failed',
+        error: message.slice(0, 300),
       };
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
     }
   }
 
