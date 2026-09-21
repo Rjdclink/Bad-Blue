@@ -351,7 +351,8 @@ export async function conductPantheonCategoryWorkflow(input: {
     let cursor = 0;
     await input.onCategoryState?.({ index, label: category.label, phase: 'URL_WORK', completedCategories: index });
 
-    while (cursor < prioritizedTargets.length && activeUrls.size < targetLimit) {
+    let productiveWorkUnits = 0;
+    while (cursor < prioritizedTargets.length && productiveWorkUnits < targetLimit) {
       const remainingForWork = Math.min(
         input.deadlineAt - finalizationReserveMs,
         Date.now() + categoryBudgetMs,
@@ -401,6 +402,8 @@ export async function conductPantheonCategoryWorkflow(input: {
         });
         retrievalEvidence.push(...batchRetrieval.evidence);
         retrievalAudit.push(...batchRetrieval.crawlerAudit);
+        const producedEvidence = batchRetrieval.evidence.some(item => item.content.trim() && item.confidence > 0);
+        if (producedEvidence) productiveWorkUnits += 1;
 
         // Crawler-discovered URLs are non-executable candidates. The controller
         // alone may admit them to this category's ledger and priority queue.
