@@ -54,8 +54,23 @@ export class PantheonRetrievalAdapter {
     subject?: string;
     location?: string;
     categoryLabel?: string;
+    authority?: {
+      investigationId: string;
+      categoryId: string;
+      categoryIndex: number;
+      categoryLabel: string;
+      deadlineAt: number;
+      subject: string;
+      location?: string;
+    };
   }): Promise<PantheonRetrievalResponse> {
+    if (request.purpose === 'background_report' && !request.authority) {
+      throw new Error('Pantheon background retrieval rejected: missing canonical workflow authorization');
+    }
     const retrievalStartedAt = Date.now();
+    if (request.authority && request.authority.deadlineAt <= retrievalStartedAt) {
+      throw new Error('Pantheon background retrieval rejected: work authorization deadline expired');
+    }
     const deadlineAt = request.deadlineAt
       ?? (request.budgetMs == null ? undefined : retrievalStartedAt + request.budgetMs);
     const remainingBudgetMs = () => deadlineAt == null
