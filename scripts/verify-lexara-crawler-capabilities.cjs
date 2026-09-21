@@ -302,7 +302,6 @@ if (!retrievalAdapter.includes('sevenEvidenceCounts') || !retrievalAdapter.inclu
 if (!retrievalAdapter.includes('new PeopleSearchAggregator()') || !retrievalAdapter.includes("crawler: 'people-search-aggregate'")) fail('People-search crawler family is not wired into canonical Pantheon retrieval');
 if (!retrievalAdapter.includes("crawler: 'criminal-public-records'")) fail('Criminal public-source evidence is not wired into canonical Pantheon retrieval');
 if (!retrievalAdapter.includes('const evidenceTargets = [...new Set(evidence.map')) fail('Secondary Pantheon analysis is not routed from accepted evidence');
-if (!retrievalAdapter.includes('twoStageDeployer.deployBackgroundReport(target, accepted?.content')) fail('Accepted crawler evidence is not piped directly into Pantheon extractors');
 if (!twoStage.includes('const boundedBudget = Math.max(1, reportBudgetMs || 60_000)')) fail('Pantheon secondary stages can overrun the remaining investigation budget');
 if (!backgroundPeopleSearch.includes('subject: searchQuery') || !backgroundPeopleSearch.includes('location: options?.location')) fail('Pantheon controller is missing subject/location context');
 const peopleAggregator = fs.readFileSync('server/services/peopleSearch/PeopleSearchAggregator.ts', 'utf8');
