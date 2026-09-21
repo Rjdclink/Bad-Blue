@@ -286,6 +286,7 @@ export async function conductPantheonCategoryWorkflow(input: {
     throw new Error(`Pantheon canonical workflow already active for ${activeCanonicalInvestigation}`);
   }
   activeCanonicalInvestigation = input.investigationId;
+  try {
   const evidence: PantheonRetrievalResponse['evidence'] = [];
   const audits: PantheonRetrievalResponse['crawlerAudit'] = [];
   const categoryOutcomes: PantheonCategoryOutcome[] = [];
@@ -495,6 +496,8 @@ export async function conductPantheonCategoryWorkflow(input: {
     await input.onCategoryState?.({ index, label: category.label, phase: 'COMPLETE', completedCategories: index + 1 });
   }
 
-  activeCanonicalInvestigation = null;
   return { report, categoryOutcomes };
+  } finally {
+    if (activeCanonicalInvestigation === input.investigationId) activeCanonicalInvestigation = null;
+  }
 }
