@@ -42,12 +42,15 @@ export const PANTHEON_BACKGROUND_CATEGORIES = [
 ] as const;
 export type PantheonBackgroundCategory = typeof PANTHEON_BACKGROUND_CATEGORIES[number];
 
+export type PantheonTransport = 'direct-http'|'browser'|'search-provider'|'specialized-adapter'|'archive';
+
 export interface PantheonSourceTarget {
   category: PantheonBackgroundCategory;
   url: string;
   authority: 'primary'|'secondary'|'discovery'|'archive';
   jurisdiction: string;
   query: string;
+  transport: PantheonTransport;
 }
 
 export const PANTHEON_VERIFIED_SOURCE_INVENTORY = [
@@ -109,6 +112,15 @@ const facets = [
  'publication','sanction','procurement','contract','grant','corrections','inmate','warrant','case','appeal',
 ] as const;
 
+function transportForSource(url: string, authority: PantheonSourceTarget['authority']): PantheonTransport {
+ const value=url.toLowerCase();
+ if(authority==='discovery'||/google\.com\/search|bing\.com\/search|search\.brave\.com/.test(value)) return 'search-provider';
+ if(authority==='archive'||/archive\.org|commoncrawl/.test(value)) return 'archive';
+ if(/pacer\.uscourts\.gov|brokercheck\.finra\.org|nmlsconsumeraccess/.test(value)) return 'browser';
+ if(/data\.|api\.|\/api\/|\.json(?:$|\?)/.test(value)) return 'specialized-adapter';
+ return 'direct-http';
+}
+
 function searchUrl(prefix:string, query:string) { return prefix + encodeURIComponent(query); }
 
 /** At least 300 deterministic retrieval URLs per category, generated on demand. */
@@ -121,7 +133,7 @@ export function buildPantheonCategoryTargets(
  const identity = [subject.trim(), String(location||'').trim()].filter(Boolean).map(v=>`"${v}"`).join(' ');
  if (!identity) return [];
  const out:PantheonSourceTarget[]=[]; const seen=new Set<string>();
- const add=(x:PantheonSourceTarget)=>{ if(!seen.has(x.url)){seen.add(x.url);out.push(x);} };
+ const add=(x:Omit<PantheonSourceTarget,'transport'> & {transport?:PantheonTransport})=>{ if(!seen.has(x.url)){seen.add(x.url);out.push({...x,transport:x.transport||transportForSource(x.url,x.authority)});} };
  // Verified direct authorities are always attempted before generated discovery URLs.
  for (const source of PANTHEON_VERIFIED_SOURCE_INVENTORY) {
    if (!source.categories.includes(category)) continue;
