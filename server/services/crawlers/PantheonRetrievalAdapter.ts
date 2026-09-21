@@ -209,8 +209,6 @@ export class PantheonRetrievalAdapter {
     // provide attributable subject evidence.
 
     if (request.purpose === 'background_report') {
-      const extendedTargets
-    if (request.purpose === 'background_report') {
       const extendedTargets = request.targets.filter(target => {
         try {
           const parsed = new URL(target);
