@@ -98,10 +98,6 @@ const starTrek = fs.readFileSync('server/services/crawlers/StarTrekCrawler.ts', 
 const birdOfPrey = fs.readFileSync('server/services/crawlers/BirdOfPreyCrawler.ts', 'utf8');
 const sixDegrees = fs.readFileSync('server/services/crawlers/SixDegreesCrawler.ts', 'utf8');
 const trinity = fs.readFileSync('server/services/crawlers/TrinityCrawlers.ts', 'utf8');
-const orchestrator = fs.readFileSync('server/services/pantheonCrawlerOrchestrator.ts', 'utf8');
-const starTrek = fs.readFileSync('server/services/crawlers/StarTrekCrawler.ts', 'utf8');
-const birdOfPrey = fs.readFileSync('server/services/crawlers/BirdOfPreyCrawler.ts', 'utf8');
-const sixDegrees = fs.readFileSync('server/services/crawlers/SixDegreesCrawler.ts', 'utf8');
 const cain = fs.readFileSync('server/services/crawlers/CainAndReaper.ts', 'utf8');
 const twoStage = fs.readFileSync('server/services/pantheon/razors/TwoStageDeployer.ts', 'utf8');
 const baseRazor = fs.readFileSync('server/services/pantheon/razors/BaseRazor.ts', 'utf8');
@@ -299,7 +295,7 @@ if (!retrievalAdapter.includes("socialMediaScraper.getTwitterProfile")) fail('So
 if (!retrievalAdapter.includes(".filter(result => Boolean(result.content?.trim())") || !retrievalAdapter.includes("result.confidence > 0")) fail('Pantheon adapter does not enforce evidence truth at its boundary');
 if (!twoStage.includes("crawler: \`razor-\${razor.type}\`")) fail('Razor audit IDs do not match canonical crawler registry IDs');
 if (!retrievalAdapter.includes("crawler: \`razor-\${razor.razorType}\`")) fail('Razor evidence IDs do not match canonical crawler registry IDs');
-if (!orchestrator.includes("result.content?.trim()") || !orchestrator.includes("result.confidence > 0")) fail('Primary orchestrator can promote empty crawler results');
+if (!backgroundOrchestrator.includes("result.content?.trim()") || !backgroundOrchestrator.includes("result.confidence > 0")) fail('Primary orchestrator can promote empty crawler results');
 if (!wraithCrawler.includes('successfulSamples > 0') || !wraithCrawler.includes('async.statusCode > 0')) fail('Wraith can emit signatures without successful retrieval');
 if (!trinity.includes("confidence: content ? 0.8 : 0")) fail('Trinity can assign confidence to empty content');
 if (!process.exitCode) ok('crawler network boundaries, Razor evidence truth, and seven-crawler skill dispatch are realized');
