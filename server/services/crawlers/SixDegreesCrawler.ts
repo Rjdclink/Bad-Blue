@@ -62,7 +62,10 @@ interface RequestOptions {
 async function executeRequest(url: string, options: RequestOptions, _stealth?: StealthInfrastructure): Promise<Response> {
   const method = String(options.method || 'GET').toUpperCase();
   if (method !== 'GET' && method !== 'HEAD') throw new Error(`Pantheon crawler network method rejected: ${method}`);
-  const result = await acquirePublicResource(url, options.timeout || 30_000);
+  const result = await acquirePublicResource(url, options.timeout || 30_000, undefined, undefined, {
+    method: method as 'GET' | 'HEAD',
+    headers: options.headers,
+  });
   if (!result.ok) throw new Error(`Crawler request failed: ${result.errorType || 'network_failure'} ${result.status || ''} ${result.error || ''}`.trim());
   const headers = new Headers({ 'content-type': result.contentType });
   return new Response(method === 'HEAD' ? null : result.content, { status: result.status || 200, headers });

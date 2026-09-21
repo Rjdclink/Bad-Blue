@@ -20,6 +20,7 @@ import './pantheon.css';
 // Constants
 const NETWORK_HEAD_IMAGE = '/images/digital-mind-abstract-representation-human-intelligence-neural-network_191095-87127.jpg';
 const ACTIVE_REPORT_STORAGE_KEY = 'pantheon.activeReportJobId';
+const PENDING_SUBMISSION_STORAGE_KEY = 'pantheon.pendingSubmission';
 const ACTIVE_REPORT_MAX_AGE_MS = 6 * 60 * 60_000;
 
 interface PersistedReportJob {
@@ -88,13 +89,46 @@ interface SearchConfig {
   consent: true;
 }
 
+function submissionFingerprint(config: SearchConfig): string {
+  return JSON.stringify({
+    name: config.name.trim().normalize('NFKC'),
+    location: (config.location || '').trim().normalize('NFKC'),
+    searchDepth: normalizePantheonSearchDepth(config.searchDepth),
+  });
+}
+
+function getOrCreateIdempotencyKey(config: SearchConfig): string {
+  const fingerprint = submissionFingerprint(config);
+  try {
+    const existing = JSON.parse(window.localStorage.getItem(PENDING_SUBMISSION_STORAGE_KEY) || 'null');
+    if (existing?.fingerprint === fingerprint && typeof existing?.key === 'string') return existing.key;
+  } catch {
+    // Create a fresh key below.
+  }
+  const key = crypto.randomUUID();
+  try {
+    window.localStorage.setItem(PENDING_SUBMISSION_STORAGE_KEY, JSON.stringify({ key, fingerprint, createdAt: Date.now() }));
+  } catch {
+    // The in-memory key still protects this request attempt.
+  }
+  return key;
+}
+
+function clearPendingSubmission(): void {
+  try {
+    window.localStorage.removeItem(PENDING_SUBMISSION_STORAGE_KEY);
+  } catch {
+    // Storage can be unavailable.
+  }
+}
+
 
 export default function PantheonPage() {
   const [searching, setSearching] = useState(false);
   const [restoringPersistedJob, setRestoringPersistedJob] = useState(false);
   const [searchConfig, setSearchConfig] = useState<SearchConfig | null>(null);
   const [reportJobId, setReportJobId] = useState<string | null>(null);
-  const [reportState, setReportState] = useState<'idle' | 'processing' | 'completed' | 'failed'>('idle');
+  const [reportState, setReportState] = useState<'idle' | 'processing' | 'completed' | 'partial' | 'failed'>('idle');
   const [reportError, setReportError] = useState<string | null>(null);
   const [downloadReady, setDownloadReady] = useState(false);
   const [reportStartedAt, setReportStartedAt] = useState<string | null>(null);
@@ -207,6 +241,17 @@ export default function PantheonPage() {
           return;
         }
 
+        if (payload.status === 'partial' && payload.downloadReady === true) {
+          setDownloadReady(true);
+          setReportState('partial');
+          setReportError(null);
+          toast({
+            title: 'PANTHEON Partial Report Ready',
+            description: 'The report identifies its exact coverage gaps and completed live-source work.',
+          });
+          return;
+        }
+
         clearPersistedReportJob();
         setReportJobId(null);
         setDownloadReady(false);
@@ -245,7 +290,7 @@ export default function PantheonPage() {
     setTotalCategories(30);
 
     try {
-      const idempotencyKey = crypto.randomUUID();
+      const idempotencyKey = getOrCreateIdempotencyKey(config);
       const response = await fetch('/api/osint/report-jobs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
@@ -266,6 +311,7 @@ export default function PantheonPage() {
 
       const jobId = String(payload.jobId);
       persistReportJob(jobId);
+      clearPendingSubmission();
       setReportJobId(jobId);
     } catch (error) {
       setSearching(false);
@@ -503,7 +549,7 @@ export default function PantheonPage() {
                 startedAt={reportStartedAt}
                 deadlineAt={reportDeadlineAt}
                 phase={reportPhase}
-                completed={reportState === 'completed'}
+                completed={reportState === 'completed' || reportState === 'partial'}
                 categoryNumber={reportCategoryNumber}
                 categoryName={reportCategoryName}
                 completedCategories={completedCategories}
@@ -541,7 +587,18 @@ export default function PantheonPage() {
                 </Card>
               )}
 
-              {reportState === 'completed' && downloadReady && (
+              {reportState === 'partial' && downloadReady && (
+                <Card className="report-delivery-card border-amber-500/50">
+                  <CardHeader>
+                    <CardTitle>Partial Report — Coverage Gaps Disclosed</CardTitle>
+                  </CardHeader>
+                  <CardContent className="text-sm text-muted-foreground">
+                    The PDF contains verified findings plus the exact categories, sources, or crawler capabilities that did not complete.
+                  </CardContent>
+                </Card>
+              )}
+
+              {(reportState === 'completed' || reportState === 'partial') && downloadReady && (
                 <button
                   type="button"
                   className="report-download-button"

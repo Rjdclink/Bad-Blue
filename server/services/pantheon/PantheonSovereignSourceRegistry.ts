@@ -135,10 +135,28 @@ export function buildPantheonCategoryTargets(
  if (!identity) return [];
  const out:PantheonSourceTarget[]=[]; const seen=new Set<string>();
  const add=(x:Omit<PantheonSourceTarget,'transport'> & {transport?:PantheonTransport})=>{ if(!seen.has(x.url)){seen.add(x.url);out.push({...x,transport:x.transport||transportForSource(x.url,x.authority)});} };
- // Verified direct authorities are always attempted before generated discovery URLs.
- for (const source of PANTHEON_VERIFIED_SOURCE_INVENTORY) {
+ // Pair each verified authority with a subject-specific discovery task. A bare
+ // agency home page is useful for source discovery, but is never mistaken for
+ // a person-specific result merely because it is authoritative.
+ const normalizedLocation=String(location||'').toUpperCase();
+ const inventory=PANTHEON_VERIFIED_SOURCE_INVENTORY
+   .filter(source=>source.categories.includes(category))
+   .sort((left,right)=>{
+     const score=(jurisdiction:string)=>normalizedLocation.includes(jurisdiction.replace(/^US-/,''))?3:/^(?:US|FEDERAL|NATIONAL)$/i.test(jurisdiction)?2:1;
+     return score(right.jurisdiction)-score(left.jurisdiction);
+   });
+ for (const source of inventory) {
    if (!source.categories.includes(category)) continue;
    const q=`${identity} ${category}`;
+   const host=new URL(source.url).hostname;
+   add({
+     category,
+     url:searchUrl('https://www.bing.com/search?q=',`site:${host} ${q}`),
+     authority:'discovery',
+     jurisdiction:source.jurisdiction,
+     query:q,
+     transport:'search-provider',
+   });
    add({category,url:source.url,authority:source.authority,jurisdiction:source.jurisdiction,query:q});
    if(out.length>=limit) return out.slice(0,limit);
  }

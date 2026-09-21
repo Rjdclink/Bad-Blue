@@ -1,4 +1,5 @@
 import type { PantheonTransport } from './PantheonSovereignSourceRegistry';
+export type { PantheonTransport } from './PantheonSovereignSourceRegistry';
 
 /**
  * Authoritative PANTHEON background-report capability catalog.
@@ -118,6 +119,13 @@ function capability(
   reportEvidenceEligible: boolean,
   outputFields: readonly string[],
 ): PantheonCapabilityDescriptor {
+  const transports: readonly PantheonTransport[] = capabilityClass === 'evidence-extraction'
+    ? ALL_SOURCE_TRANSPORTS
+    : taskKind === 'discover-related-sources'
+      ? ['direct-http', 'browser', 'search-provider', 'archive']
+      : taskKind === 'observe-source-transport'
+        ? ['direct-http', 'browser', 'archive']
+        : ['direct-http', 'browser', 'specialized-adapter', 'archive'];
   return {
     id,
     capabilityClass,
@@ -125,7 +133,7 @@ function capability(
     implementationPath,
     executableFunction,
     taskKind,
-    transports: ALL_SOURCE_TRANSPORTS,
+    transports,
     outputFields,
     reportEvidenceEligible,
   };
@@ -273,7 +281,7 @@ export const PANTHEON_CRAWLER_CAPABILITY_MATRIX = {
     'server/services/pantheon/razors/implementations.ts',
     'ContactRazor.run',
     'extract-structured-evidence',
-    false,
+    true,
     STRUCTURED_OUTPUT,
   ),
   'razor:address': capability(
@@ -283,7 +291,7 @@ export const PANTHEON_CRAWLER_CAPABILITY_MATRIX = {
     'server/services/pantheon/razors/implementations.ts',
     'AddressRazor.run',
     'extract-structured-evidence',
-    false,
+    true,
     STRUCTURED_OUTPUT,
   ),
   'razor:social': capability(
@@ -343,7 +351,7 @@ export const PANTHEON_CRAWLER_CAPABILITY_MATRIX = {
     'server/services/pantheon/razors/implementations.ts',
     'RelationRazor.run',
     'extract-structured-evidence',
-    false,
+    true,
     STRUCTURED_OUTPUT,
   ),
   'razor:media': capability(
@@ -470,7 +478,9 @@ function categoryCapabilities(label: PantheonReportCategoryLabel): readonly Pant
 }
 
 export function getPantheonCategoryCapabilities(label: string): PantheonCapabilityId[] {
-  if (!isPantheonReportCategoryLabel(label)) return ['startrek', 'blizzard'];
+  if (!isPantheonReportCategoryLabel(label)) {
+    throw new Error('Pantheon capability matrix rejected unknown report category: ' + label);
+  }
   return [...categoryCapabilities(label)];
 }
 
@@ -489,7 +499,8 @@ export function buildPantheonExecutableWorkUnits(input: {
   if (!isPantheonReportCategoryLabel(input.categoryLabel)) {
     throw new Error('Pantheon capability matrix rejected unknown report category: ' + input.categoryLabel);
   }
-  return categoryCapabilities(input.categoryLabel)
+  const categoryLabel: PantheonReportCategoryLabel = input.categoryLabel;
+  return categoryCapabilities(categoryLabel)
     .map(capabilityId => PANTHEON_CRAWLER_CAPABILITY_MATRIX[capabilityId])
     .filter(descriptor => descriptor.transports.includes(input.transport))
     .map(descriptor => ({
@@ -501,7 +512,7 @@ export function buildPantheonExecutableWorkUnits(input: {
         input.sourceUrl,
       ].join(':'),
       capabilityId: descriptor.id,
-      categoryLabel: input.categoryLabel,
+      categoryLabel,
       sourceUrl: input.sourceUrl,
       transport: input.transport,
       implementationPath: descriptor.implementationPath,

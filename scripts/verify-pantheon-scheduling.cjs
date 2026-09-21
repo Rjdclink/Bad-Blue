@@ -38,7 +38,7 @@ if (!acquisition.includes('signal?: AbortSignal') || !acquisition.includes("sign
 for (const token of ['processPantheonEvidence','verified_live_source','subject_mismatch','simulation_or_test_output','dedupePantheonEvidence']) {
   if (!evidence.includes(token)) throw new Error('Retrieval-analysis boundary missing: ' + token);
 }
-if (!workflow.includes('const crawlersUsed = [...new Set(reportable.map(item => item.crawler)')) {
+if (!workflow.includes('...reportable.map(item => item.crawler).filter(Boolean)')) {
   throw new Error('Customer crawler list is not restricted to attributable accepted evidence');
 }
 console.log('Pantheon bounded scheduling, route depth, cancellation, zero-work gating, ledgers, analysis separation, and attributable crawler listing verified.');

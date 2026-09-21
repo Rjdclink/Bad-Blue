@@ -19,13 +19,21 @@ interface CloakingSignature { userAgent: string; createdAt: number; }
 async function executeRequest(url: string, options: RequestOptions, _stealth?: StealthInfrastructure): Promise<Response> {
   const method = String(options.method || 'GET').toUpperCase();
   if (method !== 'GET' && method !== 'HEAD') throw new Error(`Pantheon crawler network method rejected: ${method}`);
-  const result = await acquirePublicResource(url, options.timeout || 30_000);
+  const result = await acquirePublicResource(url, options.timeout || 30_000, undefined, undefined, {
+    method: method as 'GET' | 'HEAD',
+    headers: options.headers,
+  });
   if (!result.ok) throw new Error(`Crawler request failed: ${result.errorType || 'network_failure'} ${result.status || ''} ${result.error || ''}`.trim());
   return new Response(method === 'HEAD' ? null : result.content, { status: result.status || 200, headers: { 'content-type': result.contentType } });
 }
 
 function parseResults(html: string, maxLength = 1000): Data {
-  return { content: html.replace(/<[^>]*>/g, ' ').substring(0, maxLength), confidence: 0.8, timestamp: Date.now(), target: '' };
+  const discoveredCandidates = [...new Set(
+    [...html.matchAll(/href=["']([^"']+)["']/gi)]
+      .map(match => match[1])
+      .filter(value => /^https?:\/\//i.test(value)),
+  )].slice(0, 20);
+  return { content: html.replace(/<[^>]*>/g, ' ').substring(0, maxLength), confidence: 0.8, timestamp: Date.now(), target: '', metadata: { discoveredCandidates } };
 }
 
 export class BirdOfPreyCrawler {
@@ -89,7 +97,7 @@ export class BirdOfPreyCrawler {
     const html = await response.text();
     const data = parseResults(html, 1500);
     data.target = target; data.confidence = 0.8 + (power / 100);
-    data.metadata = { weapon: 'disruptor', power, requestsPerMinute, detectionRisk, cloaked: this.cloaked };
+    data.metadata = { ...data.metadata, weapon: 'disruptor', power, requestsPerMinute, detectionRisk, cloaked: this.cloaked };
     this.killCount++;
     return data;
   }
@@ -107,7 +115,7 @@ export class BirdOfPreyCrawler {
     const html = await response.text();
     const data = parseResults(html, 3000);
     data.target = target; data.confidence = 0.95;
-    data.metadata = { weapon: 'photon-torpedo', power, yield: 'maximum', cloaked: this.cloaked };
+    data.metadata = { ...data.metadata, weapon: 'photon-torpedo', power, yield: 'maximum', cloaked: this.cloaked };
     this.killCount++;
     return data;
   }

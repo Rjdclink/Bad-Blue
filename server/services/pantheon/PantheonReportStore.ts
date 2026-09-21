@@ -1,9 +1,9 @@
 import crypto from 'node:crypto';
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { storage } from '../../storage';
 
-export type PantheonReportStatus = 'processing' | 'completed' | 'failed';
+export type PantheonReportStatus = 'processing' | 'completed' | 'partial' | 'failed';
 
 export interface PantheonReportRecord {
   id: string;
@@ -195,6 +195,13 @@ function serializable(record: PantheonReportRecord) {
   };
 }
 
+function persistenceRevision(record: PantheonReportRecord | null | undefined): number {
+  const value = record?.reportData && typeof record.reportData === 'object'
+    ? Number(record.reportData.persistenceRevision || 0)
+    : 0;
+  return Number.isFinite(value) ? value : 0;
+}
+
 async function journalPath(reportId: string): Promise<string> {
   await mkdir(fallbackDirectory, { recursive: true });
   return path.join(fallbackDirectory, `${safeReportId(reportId)}.json`);
@@ -230,7 +237,7 @@ async function writeJournal(record: PantheonReportRecord): Promise<void> {
   rememberRecord(record);
   try {
     const target = await journalPath(record.id);
-    const temporary = `${target}.tmp-${process.pid}`;
+    const temporary = `${target}.tmp-${process.pid}-${crypto.randomUUID()}`;
     await writeFile(temporary, JSON.stringify(serializable(record)), 'utf8');
     await rename(temporary, target);
   } catch (error) {
@@ -273,7 +280,7 @@ async function mirrorRecord(record: PantheonReportRecord): Promise<void> {
         searchQuery: record.searchQuery,
         subjectName: record.subjectName || undefined,
         reportData: record.reportData,
-        status: record.status,
+        status: record.status as any,
         errorMessage: record.errorMessage || undefined,
         createdAt: record.createdAt,
         completedAt: record.completedAt,
@@ -285,7 +292,7 @@ async function mirrorRecord(record: PantheonReportRecord): Promise<void> {
 
     await storage.updatePeopleSearchReportStatus(
       record.id,
-      record.status,
+      record.status as any,
       record.reportData,
       record.errorMessage || undefined,
       record.completedAt,
@@ -343,7 +350,11 @@ export async function createPantheonReportRecord(input: {
     userId: input.userId,
     searchQuery: input.searchQuery,
     subjectName: input.subjectName || null,
-    reportData: input.reportData,
+    reportData: {
+      ...(input.reportData && typeof input.reportData === 'object' ? input.reportData : { value: input.reportData }),
+      persistenceRevision: 1,
+      persistedAt: now.toISOString(),
+    },
     status: 'processing',
     errorMessage: null,
     createdAt: now,
@@ -400,6 +411,14 @@ function idempotencyDigest(userId: string, key: string): string {
   return crypto.createHash('sha256').update(userId + '\u0000' + key).digest('hex');
 }
 
+function deterministicReportId(userId: string, key: string): string {
+  const bytes = Buffer.from(idempotencyDigest(userId, key).slice(0, 32), 'hex');
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 async function idempotencyIndexPath(userId: string, key: string): Promise<string> {
   await mkdir(fallbackDirectory, { recursive: true });
   return path.join(fallbackDirectory, 'idempotency-' + idempotencyDigest(userId, key) + '.json');
@@ -411,7 +430,7 @@ async function claimIdempotentReportId(userId: string, key: string): Promise<{ r
     const parsed = JSON.parse(await readFile(target, 'utf8'));
     return { reportId: safeReportId(String(parsed.reportId || '')), created: false };
   } catch {
-    const reportId = crypto.randomUUID();
+    const reportId = deterministicReportId(userId, key);
     try {
       await writeFile(
         target,
@@ -459,13 +478,43 @@ export async function updatePantheonReportRecord(
   reportData?: any,
   errorMessage?: string,
 ): Promise<PantheonReportRecord> {
+  return enqueueReportMutation(reportId, async () => updatePantheonReportRecordUnlocked(
+    reportId,
+    status,
+    reportData,
+    errorMessage,
+  ));
+}
+
+const reportMutationTails = new Map<string, Promise<unknown>>();
+
+function enqueueReportMutation<T>(reportId: string, operation: () => Promise<T>): Promise<T> {
+  const previous = reportMutationTails.get(reportId) || Promise.resolve();
+  const current = previous.catch(() => undefined).then(operation);
+  reportMutationTails.set(reportId, current);
+  void current.finally(() => {
+    if (reportMutationTails.get(reportId) === current) reportMutationTails.delete(reportId);
+  }).catch(() => undefined);
+  return current;
+}
+
+async function updatePantheonReportRecordUnlocked(
+  reportId: string,
+  status: PantheonReportStatus,
+  reportData?: any,
+  errorMessage?: string,
+): Promise<PantheonReportRecord> {
   const current = await getPantheonReportRecord(reportId);
   if (!current) throw new Error(`Pantheon report ${reportId} was not found`);
 
   const next: PantheonReportRecord = {
     ...current,
     status,
-    reportData: reportData === undefined ? current.reportData : reportData,
+    reportData: {
+      ...((reportData === undefined ? current.reportData : reportData) || {}),
+      persistenceRevision: persistenceRevision(current) + 1,
+      persistedAt: new Date().toISOString(),
+    },
     errorMessage: errorMessage || null,
     completedAt: status === 'processing' ? null : new Date(),
   };
@@ -478,7 +527,7 @@ export async function updatePantheonReportRecord(
       if (existing) {
         const persisted = await storage.updatePeopleSearchReportStatus(
           reportId,
-          status,
+          status as any,
           next.reportData,
           errorMessage,
           next.completedAt,
@@ -504,6 +553,80 @@ export async function updatePantheonReportRecord(
   }
 
   return next;
+}
+
+export interface PantheonPdfArtifact {
+  bytes: number;
+  sha256: string;
+  storedAt: string;
+}
+
+async function pdfArtifactPath(reportId: string): Promise<string> {
+  await mkdir(fallbackDirectory, { recursive: true });
+  return path.join(fallbackDirectory, `${safeReportId(reportId)}.pdf`);
+}
+
+export async function persistPantheonPdfArtifact(reportId: string, buffer: Buffer): Promise<PantheonPdfArtifact> {
+  const target = await pdfArtifactPath(reportId);
+  const temporary = `${target}.tmp-${process.pid}-${crypto.randomUUID()}`;
+  await writeFile(temporary, buffer);
+  await rename(temporary, target);
+  const artifact = {
+    bytes: buffer.length,
+    sha256: crypto.createHash('sha256').update(buffer).digest('hex'),
+    storedAt: new Date().toISOString(),
+  };
+
+  const localDurable = Boolean(process.env.RAILWAY_VOLUME_MOUNT_PATH);
+  const config = supabaseMirrorConfig();
+  if (config && await ensureSupabaseMirrorBucket(config)) {
+    try {
+      const response = await supabaseMirrorFetch(
+        `${config.url}/storage/v1/object/${SUPABASE_MIRROR_BUCKET}/${safeReportId(reportId)}.pdf`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${config.key}`,
+            apikey: config.key,
+            'Content-Type': 'application/pdf',
+            'x-upsert': 'true',
+          },
+          body: new Uint8Array(buffer),
+        },
+      );
+      if (!response.ok) throw new Error(`Pantheon PDF durable mirror rejected artifact (${response.status})`);
+    } catch (error) {
+      if (!localDurable) throw error;
+      console.warn('[PANTHEON REPORT STORE] Remote PDF mirror unavailable; Railway volume copy remains authoritative', {
+        reportId,
+        error: errorText(error).slice(0, 300),
+      });
+    }
+  } else if (process.env.NODE_ENV === 'production' && !localDurable) {
+    throw new Error('Pantheon PDF has no durable production storage target');
+  }
+  return artifact;
+}
+
+export async function readPantheonPdfArtifact(reportId: string, expectedSha256?: string): Promise<Buffer | null> {
+  let buffer: Buffer | null = null;
+  try {
+    buffer = await readFile(await pdfArtifactPath(reportId));
+  } catch {
+    const config = supabaseMirrorConfig();
+    if (config && await ensureSupabaseMirrorBucket(config)) {
+      const response = await supabaseMirrorFetch(
+        `${config.url}/storage/v1/object/authenticated/${SUPABASE_MIRROR_BUCKET}/${safeReportId(reportId)}.pdf`,
+        { headers: { Authorization: `Bearer ${config.key}`, apikey: config.key } },
+      );
+      if (response.ok) buffer = Buffer.from(await response.arrayBuffer());
+    }
+  }
+  if (!buffer) return null;
+  if (expectedSha256 && crypto.createHash('sha256').update(buffer).digest('hex') !== expectedSha256) {
+    throw new Error('Pantheon PDF artifact failed integrity verification');
+  }
+  return buffer;
 }
 
 export async function lookupPantheonReportRecord(reportId: string): Promise<PantheonReportLookupResult> {
@@ -534,6 +657,10 @@ export async function lookupPantheonReportRecord(reportId: string): Promise<Pant
       const persisted = await storage.getPeopleSearchReport(reportId);
       if (persisted) {
         const normalized = normalizeRecord(persisted);
+        if (localFirst && persistenceRevision(localFirst) >= persistenceRevision(normalized)) {
+          if (canMirrorIdentity(localFirst.userId)) scheduleMirror(reportId);
+          return { state: 'found', record: localFirst };
+        }
         await writeJournal(normalized);
         if (normalized.status !== 'processing') scheduleTerminalCleanup(normalized);
         return { state: 'found', record: normalized };
@@ -564,4 +691,46 @@ export async function lookupPantheonReportRecord(reportId: string): Promise<Pant
 export async function getPantheonReportRecord(reportId: string): Promise<PantheonReportRecord | null> {
   const lookup = await lookupPantheonReportRecord(reportId);
   return lookup.state === 'found' ? lookup.record : null;
+}
+
+export async function listRecoverablePantheonReportRecords(): Promise<PantheonReportRecord[]> {
+  const ids = new Set<string>();
+  try {
+    await mkdir(fallbackDirectory, { recursive: true });
+    for (const name of await readdir(fallbackDirectory)) {
+      const match = /^([0-9a-f-]{36})\.json$/i.exec(name);
+      if (match) ids.add(match[1]);
+    }
+  } catch {
+    // Remote mirror discovery remains available.
+  }
+
+  const config = supabaseMirrorConfig();
+  if (config && await ensureSupabaseMirrorBucket(config)) {
+    try {
+      const response = await supabaseMirrorFetch(
+        `${config.url}/storage/v1/object/list/${SUPABASE_MIRROR_BUCKET}`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${config.key}`,
+            apikey: config.key,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ prefix: '', limit: 1000, offset: 0, sortBy: { column: 'updated_at', order: 'desc' } }),
+        },
+      );
+      if (response.ok) {
+        for (const item of await response.json() as Array<{ name?: string }>) {
+          const match = /^([0-9a-f-]{36})\.json$/i.exec(String(item.name || ''));
+          if (match) ids.add(match[1]);
+        }
+      }
+    } catch {
+      // Local recovery records are still usable.
+    }
+  }
+
+  const records = await Promise.all([...ids].map(id => getPantheonReportRecord(id)));
+  return records.filter((record): record is PantheonReportRecord => Boolean(record && record.status === 'processing'));
 }
