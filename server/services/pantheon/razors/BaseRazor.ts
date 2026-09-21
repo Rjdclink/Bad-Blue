@@ -66,8 +66,8 @@ export abstract class BaseRazor {
         if (Array.isArray(val) && val.length > 0) filled++;
         else if (typeof val === 'object' && Object.keys(val).length > 0) filled++;
         else if (typeof val === 'string' && val.length > 0) filled++;
-        else if (typeof val === 'number') filled++;
-        else if (typeof val === 'boolean') filled++;
+        else if (typeof val === 'number' && Number.isFinite(val) && val !== 0) filled++;
+        else if (typeof val === 'boolean' && val === true) filled++;
       }
     }
     
