@@ -155,7 +155,7 @@ export default function PantheonPage() {
     setDownloadReady(false);
     setReportState('processing');
     setReportError(null);
-    setReportStartedAt(new Date().toISOString());
+    setReportStartedAt(null);
     setReportDeadlineAt(null);
     setReportPhase('collecting');
     setReportCategoryNumber(null);
