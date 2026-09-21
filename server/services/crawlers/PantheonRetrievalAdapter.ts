@@ -256,6 +256,16 @@ export class PantheonRetrievalAdapter {
       // same evidence state rather than existing only as an unused registry entry.
       const previousInitiativeAuth = process.env.SIX_CRAWLER_AUTHORIZED;
       process.env.SIX_CRAWLER_AUTHORIZED = 'true';
+      const sevenBudgetMs = Number.isFinite(remainingBudgetMs()) ? remainingBudgetMs() : 120_000;
+      if (sevenBudgetMs <= 0) {
+        return {
+          available: true,
+          plan,
+          evidence,
+          crawlerAudit,
+          supervision: await cainReaperSupervisor.supervise(plan, evidence),
+        };
+      }
       const initiative = new SixCrawlerInitiative({
         authorizedMode: true,
         enableDualState: true,
@@ -273,20 +283,23 @@ export class PantheonRetrievalAdapter {
         // The initiative's production gate is for its historical security mode.
         // PANTHEON supplies only already-retrieved public-source evidence here.
         await initiative.start();
-        const operation = await initiative.executeOperation({
-          environmentId: `pantheon-background-${Date.now()}`,
-          principals: [...new Set(evidence.map(item => item.target))].slice(0, 12),
-          dataFeeds: [{
-            source: 'pantheon-public-evidence',
-            data: evidence.map(item => ({
-              crawler: item.crawler,
-              target: item.target,
-              content: item.content,
-              confidence: item.confidence,
-              retrievedAt: item.retrievedAt,
-            })),
-          }],
-        });
+        const operation = await Promise.race([
+          initiative.executeOperation({
+            environmentId: `pantheon-background-${Date.now()}`,
+            principals: [...new Set(evidence.map(item => item.target))].slice(0, 12),
+            dataFeeds: [{
+              source: 'pantheon-public-evidence',
+              data: evidence.map(item => ({
+                crawler: item.crawler,
+                target: item.target,
+                content: item.content,
+                confidence: item.confidence,
+                retrievedAt: item.retrievedAt,
+              })),
+            }],
+          }),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('seven_crawler_deadline')), Math.max(1, sevenBudgetMs))),
+        ]);
         evidence.push({
           crawler: 'seven-crawler-initiative',
           target: request.targets[0] || 'pantheon-background-report',
