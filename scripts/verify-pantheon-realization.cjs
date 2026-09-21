@@ -99,6 +99,8 @@ const checks = [
   ['global governor records 404 and 429 host health', acquisition.includes('notFoundCount') && acquisition.includes('rateLimitedCount')],
   ['global governor exposes shared source health', acquisition.includes('getPublicAcquisitionHostHealth') && acquisition.includes('circuitOpenUntil') && acquisition.includes('latencyEwmaMs')],
   ['Trinity crawler-local retry sleep removed', !read('server/services/crawlers/TrinityCrawlers.ts').includes('setTimeout(resolve, 1000 * (i + 1))')],
+  ['Trinity crawler-local network retry loop removed', read('server/services/crawlers/TrinityCrawlers.ts').includes('return this.attack(target);') && !read('server/services/crawlers/TrinityCrawlers.ts').includes('for (let i = 0; i < maxRetries; i++)')],
+  ['canonical acquisition exclusively owns bounded retries and backoff', acquisition.includes('MAX_RETRIES = 2') && acquisition.includes('retryAfterMs') && acquisition.includes('500 * 2 ** attempt') && acquisition.includes('Math.random() * 350')],
   ['legacy people search cannot issue background-report retrieval', peopleSearch.includes('const fullRosterPromise = null')],
   ['legacy route cannot issue background-report retrieval', routes.includes('Canonical Pantheon background-report execution is owned by PantheonCategoryWorkflow')],
   ['background job persists partial evidence before category advancement', jobs.includes('completedCategories') && jobs.includes('categoryName') && jobs.includes('partialReport')],
