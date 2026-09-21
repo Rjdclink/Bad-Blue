@@ -74,6 +74,7 @@ export function PantheonProgressTracker({
     ? Math.max(0, parsedDeadlineAt - Date.now())
     : Math.max(0, totalDuration - elapsedTime);
   const finalizing = !completed && phase === 'finalizing';
+  const awaitingServerClock = isSearching && (!startedAt || !deadlineAt);
   const authoritativeTotalCategories = Math.max(1, totalCategories || PANTHEON_CATEGORIES.length);
   const authoritativeCompletedCategories = Math.max(0, Math.min(authoritativeTotalCategories, completedCategories || 0));
   const authoritativeCategoryNumber = Math.max(
@@ -88,9 +89,10 @@ export function PantheonProgressTracker({
   const displayedProgress = Number.isFinite(categoryNumber as number) || Number.isFinite(completedCategories as number)
     ? authoritativeProgress
     : progress;
-  const minutes = Math.floor(remainingMs / 60000);
-  const seconds = Math.floor((remainingMs % 60000) / 1000);
-  const milliseconds = Math.floor((remainingMs % 1000) / 10);
+  const displayRemainingMs = awaitingServerClock ? totalDuration : remainingMs;
+  const minutes = Math.floor(displayRemainingMs / 60000);
+  const seconds = Math.floor((displayRemainingMs % 60000) / 1000);
+  const milliseconds = Math.floor((displayRemainingMs % 1000) / 10);
 
   const formatDigit = (num: number, digits: number = 2) => {
     return num.toString().padStart(digits, '0');
