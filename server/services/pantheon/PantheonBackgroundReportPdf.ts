@@ -27,6 +27,9 @@ interface PantheonCategoryOutcomeForPdf {
   urlsSuccessful?: number;
   urlsFailed?: number;
   crawlersUsed?: string[];
+  expectedCapabilities?: string[];
+  completionState?: string;
+  completionReason?: string;
   evidenceRejected?: number;
   crawlerAudit?: CrawlerAuditEntry[];
   categoryOutcomes?: PantheonCategoryOutcomeForPdf[];
@@ -169,6 +172,7 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
     const searchDepth = report.searchDepthUsed ?? (cleanText(input.job?.searchDepth) || 'N/A');
     addLabelValue(doc, 'SEARCH DEPTH', searchDepth);
     addLabelValue(doc, 'OVERALL CONFIDENCE', percent(report.confidenceScore));
+    addLabelValue(doc, 'REPORT COVERAGE', cleanText(input.job?.investigationStatus) || cleanText((report as Record<string, unknown>).investigationStatus) || 'Not recorded');
     doc.moveDown(0.7);
     doc.roundedRect(48, doc.y, 516, 46, 5).fillAndStroke('#F4F7FA', '#D5DEE8');
     const noticeY = doc.y + 9;
@@ -203,6 +207,7 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
       if (!outcome) {
         doc.text('No persisted category outcome was available. This category is not represented as completed.');
       } else {
+        doc.text(`Coverage status: ${cleanText(outcome.completionState) || 'not recorded'}${outcome.completionReason ? ` — ${cleanText(outcome.completionReason)}` : ''}`);
         doc.text(`URLs attempted: ${Number(outcome.urlsAttempted || 0)} | Successful retrieval/evidence paths: ${Number(outcome.urlsSuccessful || 0)} | Failed paths: ${Number(outcome.urlsFailed || 0)}`);
         const crawlers = (outcome.crawlersUsed || []).map(cleanText).filter(Boolean);
         if (crawlers.length) doc.text(`Crawler capabilities used: ${crawlers.join(', ')}`);
@@ -251,10 +256,10 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
     const pageRange = doc.bufferedPageRange();
     for (let index = pageRange.start; index < pageRange.start + pageRange.count; index++) {
       doc.switchToPage(index);
-      doc.moveTo(48, 742).lineTo(564, 742).lineWidth(0.5).strokeColor('#D5DEE8').stroke();
+      doc.moveTo(48, 724).lineTo(564, 724).lineWidth(0.5).strokeColor('#D5DEE8').stroke();
       doc.font('Helvetica').fontSize(7).fillColor('#6B7280').text(
         `LEGAL WHAT? • PANTHEON   |   Report ${input.reportId.slice(0, 8)}   |   Page ${index + 1} of ${pageRange.count}`,
-        48, 750, { width: 516, align: 'center' },
+        48, 730, { width: 516, align: 'center', lineBreak: false },
       );
     }
 

@@ -2,6 +2,12 @@ import type { PeopleSearchReport } from '../../peopleSearch';
 import { pantheonRetrievalAdapter, type PantheonRetrievalResponse } from '../crawlers/PantheonRetrievalAdapter';
 import { admitPantheonUrl } from '../crawlers/PublicAcquisitionInfrastructure';
 import {
+  assessPantheonCategoryOutcome,
+  isLivePantheonCrawlerAudit,
+  plannedPantheonCrawlerCapabilitiesForCategory,
+  type PantheonCategoryCompletionState,
+} from './PantheonInvestigationController';
+import {
   buildPantheonCategoryTargets,
   type PantheonBackgroundCategory,
 } from './PantheonSovereignSourceRegistry';
@@ -76,6 +82,7 @@ export interface PantheonUrlLedgerEntry {
   };
   capability?: string;
   capabilityReason?: string;
+  requiredCapabilities?: string[];
   transport?: 'direct-http'|'browser'|'search-provider'|'specialized-adapter'|'archive';
   transportAttempts?: Array<{ transport: NonNullable<PantheonUrlLedgerEntry['transport']>; outcome: 'pending'|'succeeded'|'failed'; reason?: string }>;
   startedAt?: string;
@@ -101,6 +108,9 @@ export interface PantheonCategoryOutcome {
   ledgerVersion: 1;
   totalLedgerUrls: number;
   pendingUrls: number;
+  expectedCapabilities: string[];
+  completionState: PantheonCategoryCompletionState;
+  completionReason: string;
 }
 
 function mergeAudit(entries: PantheonRetrievalResponse['crawlerAudit']) {
@@ -259,7 +269,11 @@ function buildCategoryLedger(
         evidenceIds: [],
         ...(() => {
           const routed = capabilityFor(group.registryCategory, { url, priority: sourcePriority(candidate.authority), authority: candidate.authority, registryCategory: group.registryCategory, workType: 'authoritative-source', state: 'pending', attempts: 0, evidenceIds: [] });
-          return { capability: routed.capability, capabilityReason: routed.reason };
+          return {
+            capability: routed.capability,
+            capabilityReason: routed.reason,
+            requiredCapabilities: plannedPantheonCrawlerCapabilitiesForCategory(categoryLabel),
+          };
         })(),
         transport: selectedTransport,
       });
@@ -351,13 +365,18 @@ export async function conductPantheonCategoryWorkflow(input: {
   for (let index = startCategoryIndex; index < PANTHEON_REPORT_CATEGORIES.length; index += 1) {
     const category = PANTHEON_REPORT_CATEGORIES[index];
     const startedAt = new Date().toISOString();
-    await input.onCategoryState?.({ index, label: category.label, phase: 'ACTIVE', completedCategories: index });
-    await input.onCategoryStart?.({ index, label: category.label, completedCategories: index });
+    const completedBeforeCategory = categoryOutcomes.filter(item => item.completionState === 'completed').length;
+    await input.onCategoryState?.({ index, label: category.label, phase: 'ACTIVE', completedCategories: completedBeforeCategory });
+    await input.onCategoryStart?.({ index, label: category.label, completedCategories: completedBeforeCategory });
 
     const remainingCategories = PANTHEON_REPORT_CATEGORIES.length - index;
     const remainingMs = Math.max(1, input.deadlineAt - Date.now());
     const finalizationReserveMs = Math.min(15_000, Math.max(2_000, Math.floor(remainingMs * 0.08)));
     const categoryBudgetMs = Math.max(1_500, Math.floor(Math.max(1, remainingMs - finalizationReserveMs) / remainingCategories));
+    // This is a hard category share, not a fresh budget for every URL. It keeps
+    // early categories from consuming the entire report deadline.
+    const categoryDeadlineAt = Math.min(input.deadlineAt - finalizationReserveMs, Date.now() + categoryBudgetMs);
+    const expectedCapabilities = plannedPantheonCrawlerCapabilitiesForCategory(category.label);
 
     const ledgerGroups = category.registry.map(registryCategory => ({
       registryCategory,
@@ -375,14 +394,11 @@ export async function conductPantheonCategoryWorkflow(input: {
     const retrievalEvidence: PantheonRetrievalResponse['evidence'] = [];
     const retrievalAudit: PantheonRetrievalResponse['crawlerAudit'] = [];
     let cursor = 0;
-    await input.onCategoryState?.({ index, label: category.label, phase: 'URL_WORK', completedCategories: index });
+    await input.onCategoryState?.({ index, label: category.label, phase: 'URL_WORK', completedCategories: completedBeforeCategory });
 
     let productiveWorkUnits = 0;
     while (cursor < prioritizedTargets.length && productiveWorkUnits < productiveWorkTarget) {
-      const remainingForWork = Math.min(
-        input.deadlineAt - finalizationReserveMs,
-        Date.now() + categoryBudgetMs,
-      ) - Date.now();
+      const remainingForWork = categoryDeadlineAt - Date.now();
       if (remainingForWork <= 750) break;
 
       // A work authorization is URL-scoped. Controlled parallelism may be
@@ -412,7 +428,12 @@ export async function conductPantheonCategoryWorkflow(input: {
           subject: input.name,
           location: input.location,
           categoryLabel: category.label,
-          capabilityHint: batch.map(url => urlLedger.find(item => item.url === url)?.capability).filter(Boolean) as string[],
+          capabilityHint: batch.flatMap(url => {
+            const entry = urlLedger.find(item => item.url === url);
+            return entry?.requiredCapabilities?.length
+              ? entry.requiredCapabilities
+              : entry?.capability ? [entry.capability] : [];
+          }),
           transportHint: batch.map(url => urlLedger.find(item => item.url === url)?.transport).filter(Boolean) as string[],
           authority: {
             investigationId: input.investigationId,
@@ -458,6 +479,7 @@ export async function conductPantheonCategoryWorkflow(input: {
             const routedCandidate = capabilityFor(category.label, candidate);
             candidate.capability = routedCandidate.capability;
             candidate.capabilityReason = routedCandidate.reason;
+            candidate.requiredCapabilities = plannedPantheonCrawlerCapabilitiesForCategory(category.label);
             candidate.transport = transportFor(candidate);
             urlLedger.push(candidate);
             prioritizedTargets.push(candidate.url);
@@ -494,7 +516,7 @@ export async function conductPantheonCategoryWorkflow(input: {
       crawlerAudit: retrievalAudit,
     };
 
-    await input.onCategoryState?.({ index, label: category.label, phase: 'EVIDENCE_VALIDATION', completedCategories: index });
+    await input.onCategoryState?.({ index, label: category.label, phase: 'EVIDENCE_VALIDATION', completedCategories: completedBeforeCategory });
     const reportable = dedupeEvidence(
       retrieval.evidence.filter(item => isReportableEvidence(item, input.name, input.location))
     );
@@ -508,7 +530,9 @@ export async function conductPantheonCategoryWorkflow(input: {
 
     const urlsAttempted = retrieval.crawlerAudit.reduce((sum, item) => sum + Number(item.targets || 0), 0);
     const urlsSuccessful = retrieval.crawlerAudit.reduce((sum, item) => sum + Number(item.evidenceCount || 0), 0);
-    const crawlersUsed = [...new Set(retrieval.crawlerAudit.filter(item => Number(item.attempts || 0) > 0).map(item => item.crawler))];
+    const crawlersUsed = [...new Set(retrieval.crawlerAudit
+      .filter(isLivePantheonCrawlerAudit)
+      .map(item => item.crawler))];
     const evidenceByUrl = new Map(reportable.map((item, evidenceIndex) => [canonicalUrl(item.target), `${index}:${evidenceIndex}`]));
     const auditFailures = retrieval.crawlerAudit.filter(item => item.status === 'failed' || item.status === 'timed_out');
     for (const entry of urlLedger) {
@@ -543,6 +567,13 @@ export async function conductPantheonCategoryWorkflow(input: {
         entry.state = 'no_evidence';
       }
     }
+    const assessment = assessPantheonCategoryOutcome({
+      label: category.label,
+      targetCount: activeUrls.size,
+      expectedCapabilities,
+      crawlerAudit: retrieval.crawlerAudit,
+      urlLedger,
+    });
     const outcome: PantheonCategoryOutcome = {
       index,
       label: category.label,
@@ -562,8 +593,12 @@ export async function conductPantheonCategoryWorkflow(input: {
       ledgerVersion: 1,
       totalLedgerUrls: urlLedger.length,
       pendingUrls: urlLedger.filter(entry => entry.state === 'pending').length,
+      expectedCapabilities: assessment.expectedCapabilities,
+      completionState: assessment.state,
+      completionReason: assessment.reason,
     };
     categoryOutcomes.push(outcome);
+    const completedCategoryCount = categoryOutcomes.filter(item => item.completionState === 'completed').length;
 
     const uniqueEvidence = dedupeEvidence(evidence);
     const webCategory = /social|username|photo|news|internet|media/i;
@@ -582,20 +617,23 @@ export async function conductPantheonCategoryWorkflow(input: {
     report.crawlerAudit = mergeAudit(audits);
     const completedWithEvidence = categoryOutcomes.filter(item => item.evidenceCount > 0).length;
     report.confidenceScore = categoryOutcomes.length ? completedWithEvidence / categoryOutcomes.length : 0;
-    report.summary = `PANTHEON completed ${index + 1} of ${PANTHEON_REPORT_CATEGORIES.length} authoritative report categories. Each completed category records its crawler outcomes and provenance before advancement.`;
+    const partialCategoryCount = categoryOutcomes.length - completedCategoryCount;
+    report.summary = partialCategoryCount === 0
+      ? `PANTHEON completed ${completedCategoryCount} of ${PANTHEON_REPORT_CATEGORIES.length} categories with live source work and required crawler coverage.`
+      : `PANTHEON completed ${completedCategoryCount} of ${PANTHEON_REPORT_CATEGORIES.length} categories with live source work; ${partialCategoryCount} ${partialCategoryCount === 1 ? 'category remains' : 'categories remain'} partial or unavailable and are identified in this report.`;
 
-    await input.onCategoryState?.({ index, label: category.label, phase: 'PERSISTING', completedCategories: index });
+    await input.onCategoryState?.({ index, label: category.label, phase: 'PERSISTING', completedCategories: completedBeforeCategory });
     // Persistence is the gate. Category N cannot become COMPLETE and N+1 cannot
     // become ACTIVE until the caller has durably persisted this transaction.
     if (!input.onCategoryComplete) throw new Error('Pantheon category persistence callback is required');
     await input.onCategoryComplete({
       index,
       label: category.label,
-      completedCategories: index + 1,
+      completedCategories: completedCategoryCount,
       outcome,
       partialReport: { ...report },
     });
-    await input.onCategoryState?.({ index, label: category.label, phase: 'COMPLETE', completedCategories: index + 1 });
+    await input.onCategoryState?.({ index, label: category.label, phase: 'COMPLETE', completedCategories: completedCategoryCount });
   }
 
   return { report, categoryOutcomes };

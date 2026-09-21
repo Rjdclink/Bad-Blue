@@ -20,6 +20,7 @@ const people = read('server/peopleSearch.ts');
 const firecrawl = read('server/services/shadowRetrieval/firecrawlAdapter.ts');
 const reportStore = read('server/services/pantheon/PantheonReportStore.ts');
 const registry = read('server/services/pantheon/PantheonSovereignSourceRegistry.ts');
+const investigationController = read('server/services/pantheon/PantheonInvestigationController.ts');
 
 const checks = [
   ['three public scan choices are 10 20 30 minutes', config.includes("1: 10 * 60_000") && config.includes("2: 20 * 60_000") && config.includes("3: 30 * 60_000") && !selector.includes('title: "EYE OF GOD"')],
@@ -33,14 +34,15 @@ const checks = [
   ['PDF includes provenance/crawler audit', pdf.includes('crawlerAudit') && pdf.includes('Source Provenance')],
   ['all primary crawler execution isolated', adapter.includes('searchAllIsolatedWithAudit')],
   ['razor extraction participates', adapter.includes('deployBackgroundReport')],
-  ['Cain/Reaper supervision participates', adapter.includes('cainReaperSupervisor.supervise')],
-  ['seven-crawler evidence analysis participates', adapter.includes('SixCrawlerInitiative') && adapter.includes('seven-crawler-initiative')],
+  ['simulation-only analytical lanes are excluded from production reports', !adapter.includes('SixCrawlerInitiative') && !adapter.includes('cainReaperSupervisor.supervise(plan, evidence)') && adapter.includes('Simulation-only analytical initiatives are deliberately excluded')],
+  ['investigation controller owns truthful completion and release eligibility', investigationController.includes('assessPantheonCategoryOutcome') && investigationController.includes('assessPantheonInvestigation') && investigationController.includes('releaseEligible') && jobs.includes('investigationStatus: investigation.state')],
+  ['controller requires attributable crawler execution for every planned capability', investigationController.includes('plannedPantheonCrawlerCapabilitiesForCategory') && investigationController.includes('isLivePantheonCrawlerAudit') && investigationController.includes('missingCapabilities')],
   ['USC has real executor dispatch', initiative.includes('registerExecutor') && initiative.includes('await executor(task.task)')],
   ['credential-free public acquisition participates', adapter.includes('acquirePublicResources') && acquisition.includes('Private-network acquisition is not permitted')],
   ['external failures are route-local', adapter.includes('Promise.allSettled')],
   ['discovery expressions are separated from URL acquisition', adapter.includes('const parsed = new URL(firstTarget)') && adapter.includes('Discovery expressions are valid planner inputs but never URL hosts') && adapter.includes('request.targets.length !== 1')],
   ['report duration uses one immutable server deadline', jobs.includes('const deadlineAt = new Date(startedAt.getTime() + budgetMs)') && jobs.includes('deadlineAt: deadlineAt.getTime()')],
-  ['collection deadline propagates into retrieval', jobs.includes('deadlineAt: deadlineAt.getTime()') && categoryWorkflow.includes('deadlineAt: Math.min(input.deadlineAt - finalizationReserveMs') && adapter.includes('deadlineAt?: number') && adapter.includes('remainingBudgetMs')],
+  ['collection deadline propagates into retrieval', jobs.includes('deadlineAt: deadlineAt.getTime()') && categoryWorkflow.includes('categoryDeadlineAt') && categoryWorkflow.includes('deadlineAt: Math.min(input.deadlineAt - finalizationReserveMs') && adapter.includes('deadlineAt?: number') && adapter.includes('remainingBudgetMs')],
   ['collection budget preserves aggregation time', peopleSearch.includes('remainingBudgetMs') && peopleSearch.includes('hasCollectionBudget')],
   ['background jobs keep all crawler skills available and route participation by category need', categoryWorkflow.includes("purpose: 'background_report'") && adapter.includes('new Set<string>((request.capabilityHint || []).filter(Boolean))') && adapter.includes('plan.crawlers = [...specialized]') && adapter.includes('Background category capability routing')],
   ['category workflow owns report collection instead of legacy broad lane', jobs.includes('conductPantheonCategoryWorkflow') && !jobs.includes('conductFullOSINT')],
@@ -70,8 +72,8 @@ const checks = [
   ['URL work groups are capability homogeneous', categoryWorkflow.includes('const batch: string[] = [prioritizedTargets[cursor]]') && adapter.includes('request.targets.length !== 1') && adapter.includes('work authorization capability mismatch')],
   ['discovery/search transport is explicitly separated', categoryWorkflow.includes("return 'search-provider'") && categoryWorkflow.includes("return 'direct-http'")],
   ['discovery work is structurally separate from authoritative traversal', categoryWorkflow.includes("PantheonWorkType = 'authoritative-source'|'discovery-search'|'candidate-validation'|'corroboration'") && categoryWorkflow.includes("return 'discovery-search'") && categoryWorkflow.includes("workType: 'candidate-validation'")],
-  ['transport and capability hints reach retrieval adapter', categoryWorkflow.includes('capabilityHint: batch.map') && categoryWorkflow.includes('transportHint: batch.map')],
-  ['customer report filters raw execution diagnostics', !pdf.includes("addSectionTitle(doc, 'Crawler Coverage')") && pdf.includes('Crawler diagnostics remain internal')],
+  ['transport and capability hints reach retrieval adapter', categoryWorkflow.includes('capabilityHint: batch.flatMap') && categoryWorkflow.includes('requiredCapabilities') && categoryWorkflow.includes('transportHint: batch.map')],
+  ['customer report filters raw execution diagnostics and exposes truthful coverage', !pdf.includes("addSectionTitle(doc, 'Crawler Coverage')") && pdf.includes('Crawler diagnostics remain internal') && pdf.includes('Coverage status:') && pdf.includes('REPORT COVERAGE')],
   ['multi-facet categories interleave source families', categoryWorkflow.includes('interleaveCategoryTargets') && categoryWorkflow.includes('targetGroups')],
   ['customer evidence requires subject relevance', categoryWorkflow.includes('subjectMatches') && categoryWorkflow.includes('locationMatch')],
   ['canonical URL dedupe precedes crawler execution', categoryWorkflow.includes('canonicalUrl') && categoryWorkflow.includes('new Set<string>()')],
@@ -136,4 +138,3 @@ if (failed.length) {
   process.exit(1);
 }
 console.log(`Pantheon realization verification passed (${checks.length}/${checks.length}).`);
-

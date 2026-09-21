@@ -1,5 +1,6 @@
 import { updatePantheonReportRecord } from './PantheonReportStore';
 import { conductPantheonCategoryWorkflow, PANTHEON_REPORT_CATEGORIES } from './PantheonCategoryWorkflow';
+import { assessPantheonInvestigation } from './PantheonInvestigationController';
 import { canActivatePantheon } from '../pantheonCrawlerOrchestrator';
 import {
   getPantheonReportDurationMs,
@@ -139,11 +140,21 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       },
     });
 
+    const investigation = assessPantheonInvestigation(categoryOutcomes);
+    Object.assign(report as any, {
+      investigationStatus: investigation.state,
+      investigationCoverage: investigation,
+    });
+
     await updatePantheonReportRecord(input.reportId, 'processing', {
       job: jobEnvelope(input, 'finalizing', {
         startedAt: startedAt.toISOString(),
         deadlineAt: deadlineAt.toISOString(),
         finalizingAt: new Date().toISOString(),
+        investigationStatus: investigation.state,
+        completedCategories: investigation.completedCategoryCount,
+        partialCategories: investigation.partialCategoryCount,
+        missingCrawlerCapabilities: investigation.missingCapabilities,
       }),
       report,
       categoryOutcomes,
@@ -154,6 +165,10 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
         startedAt: startedAt.toISOString(),
         deadlineAt: deadlineAt.toISOString(),
         completedAt: new Date().toISOString(),
+        investigationStatus: investigation.state,
+        completedCategories: investigation.completedCategoryCount,
+        partialCategories: investigation.partialCategoryCount,
+        missingCrawlerCapabilities: investigation.missingCapabilities,
       }),
       report,
       categoryOutcomes,

@@ -10,9 +10,8 @@ import {
   type CrawlerSelectionPlan,
   type CrawlerSelectionPurpose,
 } from './CrawlerSelectionUtility';
-import { cainReaperSupervisor, type CrawlerSupervisionResult } from './CainReaperSupervisor';
+import { type CrawlerSupervisionResult } from './CainReaperSupervisor';
 import { twoStageDeployer } from '../pantheon/razors/TwoStageDeployer';
-import { SixCrawlerInitiative } from './SixCrawlerInitiative';
 import { acquirePublicResources } from './PublicAcquisitionInfrastructure';
 import { defaultFirecrawlAdapter } from '../shadowRetrieval/firecrawlAdapter';
 import { shadowRetrieval } from '../shadowRetrieval';
@@ -205,89 +204,12 @@ export class PantheonRetrievalAdapter {
       });
     }
 
-    if (request.purpose === 'background_report' && evidence.length > 0 && collectionOpen()) {
-      // Feed real retrieved evidence through the Seven-Crawler analytical family.
-      // Retrieval remains the responsibility of the public-source crawler fleet;
-      // these seven preserve their original analytic intent and cooperate over the
-      // same evidence state rather than existing only as an unused registry entry.
-      const previousInitiativeAuth = process.env.SIX_CRAWLER_AUTHORIZED;
-      process.env.SIX_CRAWLER_AUTHORIZED = 'true';
-      const initiative = new SixCrawlerInitiative({
-        authorizedMode: true,
-        enableDualState: true,
-        enableIdentityFlow: true,
-        ingestionThroughput: 100,
-        computationalDepth: 4,
-        coordinationLatency: 50,
-        enableCooperativeEngagement: true,
-        enableNearMissArchive: true,
-        enableBlindSpotDetection: true,
-        enableConsentAmplification: true,
-        enableDetectionProbability: true,
-      });
-      try {
-        // The initiative's production gate is for its historical security mode.
-        // PANTHEON supplies only already-retrieved public-source evidence here.
-        await initiative.start();
-        const operation = await initiative.executeOperation({
-          environmentId: `pantheon-background-${Date.now()}`,
-          principals: [...new Set(evidence.map(item => item.target))].slice(0, 12),
-          dataFeeds: [{
-            source: 'pantheon-public-evidence',
-            data: evidence.map(item => ({
-              crawler: item.crawler,
-              target: item.target,
-              content: item.content,
-              confidence: item.confidence,
-              retrievedAt: item.retrievedAt,
-            })),
-          }],
-        });
-        evidence.push({
-          crawler: 'seven-crawler-initiative',
-          target: request.targets[0] || 'pantheon-background-report',
-          content: JSON.stringify({
-            environmentState: operation.environmentState,
-            identityFlows: operation.identityFlows,
-            dataDigests: operation.dataDigests,
-            analysis: operation.analysis,
-            blindSpots: operation.blindSpots,
-            detectionProbability: operation.detectionProbability,
-            insights: operation.insights,
-          }),
-          confidence: 0.8,
-          retrievedAt: new Date().toISOString(),
-          metadata: { capabilityClass: 'seven-crawler', cooperativeAnalysis: true },
-        });
-        for (const crawler of ['mirror', 'key', 'chewer', 'computational', 'usc', 'woo', 'silence']) {
-          crawlerAudit.push({
-            crawler,
-            capabilityClass: 'pantheon-secondary',
-            status: 'completed_with_evidence',
-            evidenceCount: 1,
-            attempts: 1,
-            targets: request.targets.length,
-          });
-        }
-      } catch (error: any) {
-        for (const crawler of ['mirror', 'key', 'chewer', 'computational', 'usc', 'woo', 'silence']) {
-          crawlerAudit.push({
-            crawler,
-            capabilityClass: 'pantheon-secondary',
-            status: 'failed',
-            evidenceCount: 0,
-            attempts: 1,
-            targets: request.targets.length,
-            error: error?.message || String(error),
-          });
-        }
-      } finally {
-        await initiative.stop().catch(() => undefined);
-        if (previousInitiativeAuth === undefined) delete process.env.SIX_CRAWLER_AUTHORIZED;
-        else process.env.SIX_CRAWLER_AUTHORIZED = previousInitiativeAuth;
-      }
-    }
+    // Simulation-only analytical initiatives are deliberately excluded from
+    // production background reports. They neither retrieve public sources nor
+    // provide attributable subject evidence.
 
+    if (request.purpose === 'background_report') {
+      const extendedTargets
     if (request.purpose === 'background_report') {
       const extendedTargets = request.targets.filter(target => {
         try {
@@ -373,7 +295,9 @@ export class PantheonRetrievalAdapter {
       plan,
       evidence,
       crawlerAudit,
-      supervision: await cainReaperSupervisor.supervise(plan, evidence),
+      // Background reports retain only attributable source evidence. Supervision
+      // telemetry is not a report input and is omitted from this production path.
+      supervision: undefined,
     };
   }
 }
