@@ -100,6 +100,7 @@ const sixDegrees = fs.readFileSync('server/services/crawlers/SixDegreesCrawler.t
 const trinity = fs.readFileSync('server/services/crawlers/TrinityCrawlers.ts', 'utf8');
 const cain = fs.readFileSync('server/services/crawlers/CainAndReaper.ts', 'utf8');
 const twoStage = fs.readFileSync('server/services/pantheon/razors/TwoStageDeployer.ts', 'utf8');
+const baseRazor = fs.readFileSync('server/services/pantheon/razors/BaseRazor.ts', 'utf8');
 const pantheonIce = fs.readFileSync('server/services/pantheon/crawlers/ice.ts', 'utf8');
 const spiderfoot = fs.readFileSync('server/services/spiderfootClient.ts', 'utf8');
 const stealth = fs.readFileSync('server/services/stealth/StealthInfrastructure.ts', 'utf8');
@@ -285,7 +286,8 @@ if (
 for (const crawler of ['woo', 'mirror', 'key', 'chewer', 'computational', 'silence']) {
   if (!initiative.includes(`coordinateTask('${crawler}'`)) fail(`USC does not dispatch ${crawler} skill`);
 }
-if (!process.exitCode) ok('crawler network boundaries and seven-crawler skill dispatch are realized');
+if (!baseRazor.includes("typeof val === 'boolean' && val === true") || !baseRazor.includes("val !== 0")) fail('Razor empty defaults can still be promoted to evidence');
+if (!process.exitCode) ok('crawler network boundaries, Razor evidence truth, and seven-crawler skill dispatch are realized');
 
 if (!process.exitCode) ok('background-report crawler path is real, fail-closed, scope-bounded, and evidence-truthful');
 
