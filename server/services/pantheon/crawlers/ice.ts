@@ -3,6 +3,7 @@ import { EntropySignature, CrawlerType } from '../core';
 import { createHash } from 'crypto';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
+import { acquirePublicResource } from '../../crawlers/PublicAcquisitionInfrastructure';
 
 /**
  * ICE CRAWLER - Precision Extractor
@@ -28,13 +29,9 @@ export class IceCrawler extends BaseCrawler {
     const signatures: EntropySignature[] = [];
     
     try {
-      const response = await axios.get(this.task.target, { 
-        timeout: 5000,
-        headers: { 'User-Agent': 'Mozilla/5.0' },
-        maxRedirects: 3
-      });
-      
-      const $ = cheerio.load(response.data);
+      const response = await acquirePublicResource(this.task.target, 5000);
+      if (!response.ok) throw new Error(response.error || `HTTP ${response.status}`);
+      const $ = cheerio.load(response.content);
       
       // Extract metadata
       const metadata = this.extractMetadata($);
