@@ -349,17 +349,12 @@ export async function conductPantheonCategoryWorkflow(input: {
       ) - Date.now();
       if (remainingForWork <= 750) break;
 
-      const batchSize = Math.min(8, targetLimit - activeUrls.size, prioritizedTargets.length - cursor);
-      const firstUrl = prioritizedTargets[cursor];
+      // A work authorization is URL-scoped. Controlled parallelism may be
+      // layered above this later, but each executable unit has one canonical URL.
+      const batch: string[] = [prioritizedTargets[cursor]];
+      cursor += 1;
+      const firstUrl = batch[0];
       const firstEntry = urlLedger.find(item => item.url === firstUrl);
-      const batch: string[] = [];
-      while (cursor < prioritizedTargets.length && batch.length < batchSize) {
-        const candidateUrl = prioritizedTargets[cursor];
-        const candidateEntry = urlLedger.find(item => item.url === candidateUrl);
-        if (batch.length > 0 && candidateEntry?.capability !== firstEntry?.capability) break;
-        batch.push(candidateUrl);
-        cursor += 1;
-      }
       for (const url of batch) {
         activeUrls.add(url);
         const entry = urlLedger.find(item => item.url === url);
@@ -387,6 +382,9 @@ export async function conductPantheonCategoryWorkflow(input: {
             categoryId: `${input.investigationId}:${index}`,
             categoryIndex: index,
             categoryLabel: category.label,
+            workId: `${input.investigationId}:${index}:${cursor - 1}`,
+            canonicalUrl: firstUrl,
+            capability: firstEntry?.capability || 'startrek',
             deadlineAt: Math.min(input.deadlineAt - finalizationReserveMs, Date.now() + remainingForWork),
             subject: input.name,
             location: input.location,
