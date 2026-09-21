@@ -131,6 +131,8 @@ export class PantheonRetrievalAdapter {
       }
       if (/relationship|timeline|corroboration|contradiction/.test(category)) specialized.add('lich');
       if (specialized.size === 0) specialized.add('startrek');
+      // Search depth/intensity never removes a capability selected by the URL
+      // ledger. It only governs budget and productive-work depth upstream.
       plan.crawlers = [...specialized];
       plan.rationale.unshift(`Background category capability routing: ${request.categoryLabel || 'general'}.`);
     }
