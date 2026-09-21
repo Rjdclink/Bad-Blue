@@ -33,6 +33,9 @@ interface HostState {
   consecutiveFailures: number;
   circuitOpenUntil: number;
   latencyEwmaMs: number;
+  forbiddenUntil: number;
+  notFoundCount: number;
+  rateLimitedCount: number;
 }
 
 const hostStates = new Map<string, HostState>();
@@ -51,7 +54,7 @@ const BLOCKED_HOST_HINTS = /(?:googletagmanager|google-analytics|doubleclick|new
 function stateFor(host: string): HostState {
   let state = hostStates.get(host);
   if (!state) {
-    state = { active: 0, nextAllowedAt: 0, consecutiveFailures: 0, circuitOpenUntil: 0, latencyEwmaMs: 0 };
+    state = { active: 0, nextAllowedAt: 0, consecutiveFailures: 0, circuitOpenUntil: 0, latencyEwmaMs: 0, forbiddenUntil: 0, notFoundCount: 0, rateLimitedCount: 0 };
     hostStates.set(host, state);
   }
   return state;
@@ -148,7 +151,7 @@ function failureResult(url: string, status: number, error: unknown, retryMs?: nu
 async function waitForHost(host: string, deadlineAt: number): Promise<boolean> {
   const state = stateFor(host);
   while (Date.now() < deadlineAt) {
-    if (state.circuitOpenUntil > Date.now()) return false;
+    if (state.circuitOpenUntil > Date.now() || state.forbiddenUntil > Date.now()) return false;
     if (state.active < MAX_PER_HOST && state.nextAllowedAt <= Date.now()) {
       state.active += 1;
       return true;
@@ -173,6 +176,11 @@ function recordHostResult(host: string, status: number, latencyMs: number, retry
     return;
   }
   state.consecutiveFailures += 1;
+  if (status === 403) {
+    state.forbiddenUntil = Math.max(state.forbiddenUntil, Date.now() + CIRCUIT_OPEN_MS);
+  }
+  if (status === 404) state.notFoundCount += 1;
+  if (status === 429) state.rateLimitedCount += 1;
   if (status === 429 || status === 503) {
     state.nextAllowedAt = Math.max(state.nextAllowedAt, Date.now() + (retryMs || Math.min(MAX_BACKOFF_MS, 1000 * 2 ** Math.min(4, state.consecutiveFailures))));
   }
@@ -308,5 +316,8 @@ export function getPublicAcquisitionHostHealth(): Record<string, Omit<HostState,
     consecutiveFailures: state.consecutiveFailures,
     circuitOpenUntil: state.circuitOpenUntil,
     latencyEwmaMs: state.latencyEwmaMs,
+    forbiddenUntil: state.forbiddenUntil,
+    notFoundCount: state.notFoundCount,
+    rateLimitedCount: state.rateLimitedCount,
   }]));
 }
