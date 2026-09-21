@@ -97,6 +97,7 @@ const backgroundOrchestrator = fs.readFileSync('server/services/pantheonCrawlerO
 const starTrek = fs.readFileSync('server/services/crawlers/StarTrekCrawler.ts', 'utf8');
 const birdOfPrey = fs.readFileSync('server/services/crawlers/BirdOfPreyCrawler.ts', 'utf8');
 const sixDegrees = fs.readFileSync('server/services/crawlers/SixDegreesCrawler.ts', 'utf8');
+const publicAcquisition = fs.readFileSync('server/services/crawlers/PublicAcquisitionInfrastructure.ts', 'utf8');
 const trinity = fs.readFileSync('server/services/crawlers/TrinityCrawlers.ts', 'utf8');
 const cain = fs.readFileSync('server/services/crawlers/CainAndReaper.ts', 'utf8');
 const twoStage = fs.readFileSync('server/services/pantheon/razors/TwoStageDeployer.ts', 'utf8');
@@ -108,7 +109,7 @@ if (
   !pantheonReportConfig.includes("1: 10 * 60_000") ||
   !pantheonReportConfig.includes("2: 20 * 60_000") ||
   !pantheonReportConfig.includes("3: 30 * 60_000") ||
-  !pantheonReportConfig.includes("4: 30 * 60_000") ||
+  pantheonReportConfig.includes("4: 30 * 60_000") ||
   !pantheonSelector.includes('PANTHEON_REPORT_DURATION_LABELS') ||
   !pantheonProgress.includes('PANTHEON_REPORT_DURATIONS_MS')
 ) {
@@ -214,19 +215,22 @@ if (
 if (
   birdOfPrey.includes('generateRandomIP') ||
   birdOfPrey.includes('generateQuantumFingerprint') ||
-  !birdOfPrey.includes('await acquirePublicResource(url') ||
-  !birdOfPrey.includes('if (!result.ok) throw new Error') ||
-  !birdOfPrey.includes('Crawler request failed:')
+  !birdOfPrey.includes('await acquirePublicResource(') ||
+  !birdOfPrey.includes('if (!result.ok) throw new Error(')
 ) {
   fail('BirdOfPrey background-report retrieval still fabricates identity metadata or accepts failed HTTP as evidence');
 }
-if (
-  !sixDegrees.includes('await acquirePublicResource(url') ||
-  !sixDegrees.includes('if (!result.ok) throw new Error') ||
-  !sixDegrees.includes('Crawler request failed:') ||
-  !sixDegrees.includes('this.clearGraph()')
-) {
+if (!sixDegrees.includes('await acquirePublicResource(') ||
+  !sixDegrees.includes('if (!result.ok) throw new Error(') ||
+  !sixDegrees.includes('this.clearGraph()')) {
   fail('SixDegrees background-report retrieval accepts non-success HTTP as evidence or leaks graph state between targets');
+}
+// HTTP rejection now belongs to the shared transport. Check its failure guard,
+// not the incidental wording of the error propagated by each crawler.
+if (!publicAcquisition.includes('if (!response.ok) return failureResult(') ||
+  !publicAcquisition.includes('ok: false') ||
+  !publicAcquisition.includes("content: ''")) {
+  fail('shared crawler acquisition must reject failed HTTP without producing evidence');
 }
 if (
   !trinity.includes('firstSuccessful') ||
