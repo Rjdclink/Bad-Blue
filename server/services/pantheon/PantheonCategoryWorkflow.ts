@@ -46,6 +46,7 @@ export interface PantheonCategoryOutcome {
   targetCount: number;
   evidenceCount: number;
   crawlerAudit: PantheonRetrievalResponse['crawlerAudit'];
+  findings: string[];
 }
 
 function mergeAudit(entries: PantheonRetrievalResponse['crawlerAudit']) {
@@ -215,6 +216,7 @@ export async function conductPantheonCategoryWorkflow(input: {
             targets: 0,
             error: 'Investigation deadline reached before category execution',
           }],
+          findings: [],
         };
         categoryOutcomes.push(outcome);
         audits.push(...outcome.crawlerAudit);
@@ -283,6 +285,7 @@ export async function conductPantheonCategoryWorkflow(input: {
       targetCount: uniqueTargets.length,
       evidenceCount: reportable.length,
       crawlerAudit: retrieval.crawlerAudit,
+      findings: reportable.map(item => cleanEvidenceContent(item.content).slice(0, 1800)),
     };
     categoryOutcomes.push(outcome);
 
