@@ -125,14 +125,12 @@ export class RecordRazor extends BaseRazor {
   ];
 
   async extract(html: string, _url: string) {
-    const records = this.matchPatterns(html);
-    const caseNumbers = records.filter(r => /case/i.test(r));
-    const licenses = records.filter(r => /license|permit/i.test(r));
-    
+    const caseNumbers = [...new Set(Array.from(html.matchAll(/case\s*(?:#|no\.?|number)[:\s]*([A-Z0-9-]+)/gi), match => match[1]))];
+    const licenses = [...new Set(Array.from(html.matchAll(/(?:license|permit)\s*(?:#|no\.?|number)[:\s]*([A-Z0-9-]+)/gi), match => match[1]))];
     return {
       caseNumbers: caseNumbers.slice(0, 10),
       licenses: licenses.slice(0, 10),
-      recordCount: records.length,
+      recordCount: caseNumbers.length + licenses.length,
     };
   }
 }
@@ -172,13 +170,14 @@ export class CourtRazor extends BaseRazor {
   ];
 
   async extract(html: string, _url: string) {
-    const matches = this.matchPatterns(html);
+    const caseNumbers = [...new Set(Array.from(html.matchAll(/(?:case|docket)\s*(?:#|no\.?)[:\s]*([A-Z0-9:-]+)/gi), match => match[1]))];
+    const parties = [...new Set(Array.from(html.matchAll(/(?:plaintiff|defendant)[:\s]*([A-Z][a-z]+ [A-Z][a-z]+)/gi), match => match[1]))];
     const courtMatch = html.match(/(?:circuit|district|superior|municipal)\s*court/gi);
     const statusMatch = html.match(/(?:status|disposition)[:\s]*([A-Za-z\s]+)/i);
     
     return {
-      caseNumbers: matches.filter(m => /case|docket/i.test(m)).slice(0, 5),
-      parties: matches.filter(m => /plaintiff|defendant/i.test(m)).slice(0, 5),
+      caseNumbers: caseNumbers.slice(0, 5),
+      parties: parties.slice(0, 5),
       courts: courtMatch?.slice(0, 3) || [],
       status: statusMatch?.[1]?.trim() || null,
     };
