@@ -24,8 +24,11 @@ const registry = read('server/services/pantheon/PantheonSovereignSourceRegistry.
 const checks = [
   ['three public scan choices are 10 20 30 minutes', config.includes("1: 10 * 60_000") && config.includes("2: 20 * 60_000") && config.includes("3: 30 * 60_000") && !selector.includes('title: "EYE OF GOD"')],
   ['scan intensity tracks selected duration', people.includes('1: 1200') && people.includes('2: 2800') && people.includes('3: 4500')],
-  ['durable report status is retryable', routes.includes('report_store_converging') && routes.includes("Retry-After")],
-  ['client retries transient report-store status', client.includes('[404, 429, 502, 503, 504]')],
+  ['durable report status distinguishes missing jobs from temporary store outages', routes.includes('report_store_converging') && routes.includes("'report_job_gone'") && routes.includes('res.status(gone ? 410 : 404)') && reportStore.includes("state: 'temporarily_unavailable'") && reportStore.includes("state: 'not_found'")],
+  ['client retries only transient report-store status without unlocking an unresolved job', client.includes('[429, 502, 503, 504]') && client.includes('response.status === 404 || response.status === 410') && client.includes('consecutivePollFailures = Math.min(8, consecutivePollFailures + 1)')],
+  ['persisted report recovery does not impersonate an active search', client.includes('restoringPersistedJob') && client.includes('setRestoringPersistedJob(true)') && !client.includes("setReportJobId(persistedJobId);\n      setSearching(true)")],
+  ['persisted report recovery is bounded by server retention', client.includes('ACTIVE_REPORT_MAX_AGE_MS = 6 * 60 * 60_000') && client.includes('JSON.stringify({ jobId, savedAt: normalizedSavedAt })')],
+  ['restoration keeps form fields editable while duplicate submission stays blocked', selector.includes('disabled={isSearching}') && selector.includes('disabled={isSearching || isRestoring || !name.trim()}') && selector.includes('isSearching || isRestoring || !name.trim()')],
   ['downloadable PDF route exists', routes.includes('/api/osint/report-jobs/:reportId/download')],
   ['PDF includes provenance/crawler audit', pdf.includes('crawlerAudit') && pdf.includes('Source Provenance')],
   ['all primary crawler execution isolated', adapter.includes('searchAllIsolatedWithAudit')],

@@ -10,6 +10,7 @@ import { PANTHEON_REPORT_DURATION_LABELS } from "@shared/pantheonReportConfig";
 interface DoomsdayClockSelectorProps {
   onSearchStart: (config: SearchConfig) => void;
   isSearching?: boolean;
+  isRestoring?: boolean;
 }
 
 interface SearchConfig {
@@ -18,7 +19,11 @@ interface SearchConfig {
   searchDepth: number;
 }
 
-export function DoomsdayClockSelector({ onSearchStart, isSearching = false }: DoomsdayClockSelectorProps) {
+export function DoomsdayClockSelector({
+  onSearchStart,
+  isSearching = false,
+  isRestoring = false,
+}: DoomsdayClockSelectorProps) {
   const [selectedDepth, setSelectedDepth] = useState<number>(1);
   const [name, setName] = useState("");
   const [location, setLocation] = useState("");
@@ -64,7 +69,7 @@ export function DoomsdayClockSelector({ onSearchStart, isSearching = false }: Do
   ];
 
   const handleSearch = () => {
-    if (!name.trim()) {
+    if (isSearching || isRestoring || !name.trim()) {
       return;
     }
     
@@ -76,7 +81,7 @@ export function DoomsdayClockSelector({ onSearchStart, isSearching = false }: Do
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !isSearching) {
+    if (e.key === 'Enter' && !isSearching && !isRestoring) {
       handleSearch();
     }
   };
@@ -215,9 +220,9 @@ export function DoomsdayClockSelector({ onSearchStart, isSearching = false }: Do
       {/* Search Button with Enhanced Styling */}
       <Button
         onClick={handleSearch}
-        disabled={isSearching || !name.trim()}
+        disabled={isSearching || isRestoring || !name.trim()}
         className={`w-full h-14 text-lg font-bold transition-all duration-300
-          ${!isSearching && name.trim() 
+          ${!isSearching && !isRestoring && name.trim() 
             ? 'bg-gradient-to-r from-red-600 to-pink-600 hover:from-red-700 hover:to-pink-700 shadow-xl hover:shadow-2xl hover:scale-[1.02]' 
             : ''
           }
@@ -228,6 +233,11 @@ export function DoomsdayClockSelector({ onSearchStart, isSearching = false }: Do
           <>
             <Loader2 className="w-5 h-5 mr-2 animate-spin" />
             <span className="animate-pulse">Searching Intelligence Sources...</span>
+          </>
+        ) : isRestoring ? (
+          <>
+            <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+            <span role="status">Checking Previous Report…</span>
           </>
         ) : (
           <>

@@ -8,6 +8,7 @@ interface PantheonReportTokenPayload {
   v: number;
   reportId: string;
   userId: string;
+  iat: number;
   exp: number;
 }
 
@@ -51,11 +52,13 @@ function readCookie(req: any, name: string): string | null {
 }
 
 export function issuePantheonReportAccess(res: any, reportId: string, userId: string): void {
+  const nowSeconds = Math.floor(Date.now() / 1000);
   const payload: PantheonReportTokenPayload = {
     v: TOKEN_VERSION,
     reportId,
     userId,
-    exp: Math.floor(Date.now() / 1000) + TOKEN_TTL_SECONDS,
+    iat: nowSeconds,
+    exp: nowSeconds + TOKEN_TTL_SECONDS,
   };
   const encodedPayload = encode(JSON.stringify(payload));
   const token = `${encodedPayload}.${signature(encodedPayload)}`;
@@ -92,7 +95,11 @@ export function verifyPantheonReportAccess(req: any, reportId: string): Pantheon
     ) {
       return null;
     }
-    return payload;
+    const issuedAt = Number.isFinite(payload.iat)
+      ? Number(payload.iat)
+      : Number(payload.exp) - TOKEN_TTL_SECONDS;
+    if (!Number.isFinite(issuedAt) || issuedAt > Number(payload.exp)) return null;
+    return { ...payload, iat: issuedAt };
   } catch {
     return null;
   }

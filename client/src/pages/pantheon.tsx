@@ -19,6 +19,67 @@ import './pantheon.css';
 
 // Constants
 const NETWORK_HEAD_IMAGE = '/images/digital-mind-abstract-representation-human-intelligence-neural-network_191095-87127.jpg';
+const ACTIVE_REPORT_STORAGE_KEY = 'pantheon.activeReportJobId';
+const ACTIVE_REPORT_MAX_AGE_MS = 6 * 60 * 60_000;
+
+interface PersistedReportJob {
+  jobId: string;
+  savedAt: number | null;
+}
+
+function clearPersistedReportJob(): void {
+  try {
+    window.localStorage.removeItem(ACTIVE_REPORT_STORAGE_KEY);
+  } catch {
+    // Storage can be unavailable in privacy-restricted browser contexts.
+  }
+}
+
+function readPersistedReportJob(): PersistedReportJob | null {
+  try {
+    const raw = window.localStorage.getItem(ACTIVE_REPORT_STORAGE_KEY);
+    if (!raw) return null;
+
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && typeof parsed.jobId === 'string') {
+        const savedAt = Number(parsed.savedAt);
+        const now = Date.now();
+        if (
+          !parsed.jobId.trim()
+          || !Number.isFinite(savedAt)
+          || now - savedAt > ACTIVE_REPORT_MAX_AGE_MS
+          || savedAt - now > 60_000
+        ) {
+          clearPersistedReportJob();
+          return null;
+        }
+        return { jobId: parsed.jobId.trim(), savedAt };
+      }
+    } catch {
+      // Legacy versions stored the bare job id. Verify it with the server once.
+      const jobId = raw.trim();
+      return jobId ? { jobId, savedAt: null } : null;
+    }
+
+    clearPersistedReportJob();
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function persistReportJob(jobId: string, savedAt = Date.now()): void {
+  const normalizedSavedAt = Number.isFinite(savedAt) ? savedAt : Date.now();
+  try {
+    window.localStorage.setItem(
+      ACTIVE_REPORT_STORAGE_KEY,
+      JSON.stringify({ jobId, savedAt: normalizedSavedAt }),
+    );
+  } catch {
+    // Recovery is optional; the active in-memory job remains authoritative.
+  }
+}
 
 interface SearchConfig {
   name: string;
@@ -29,6 +90,7 @@ interface SearchConfig {
 
 export default function PantheonPage() {
   const [searching, setSearching] = useState(false);
+  const [restoringPersistedJob, setRestoringPersistedJob] = useState(false);
   const [searchConfig, setSearchConfig] = useState<SearchConfig | null>(null);
   const [reportJobId, setReportJobId] = useState<string | null>(null);
   const [reportState, setReportState] = useState<'idle' | 'processing' | 'completed' | 'failed'>('idle');
@@ -45,11 +107,10 @@ export default function PantheonPage() {
   const { toast } = useToast();
   
   useEffect(() => {
-    const persistedJobId = window.localStorage.getItem('pantheon.activeReportJobId');
-    if (persistedJobId) {
-      setReportJobId(persistedJobId);
-      setSearching(true);
-      setReportState('processing');
+    const persistedJob = readPersistedReportJob();
+    if (persistedJob) {
+      setRestoringPersistedJob(true);
+      setReportJobId(persistedJob.jobId);
     }
   }, []);
 
@@ -67,21 +128,43 @@ export default function PantheonPage() {
           cache: 'no-store',
         });
         const payload = await response.json().catch(() => ({}));
+        if (cancelled) return;
+
+        if (response.status === 404 || response.status === 410) {
+          clearPersistedReportJob();
+          setReportJobId(null);
+          setRestoringPersistedJob(false);
+          setSearching(false);
+          setDownloadReady(false);
+          setReportState('idle');
+          setReportError(null);
+          return;
+        }
 
         if (!response.ok) {
-          // A freshly-created durable job can briefly be invisible while the report
-          // journal/database mirror converges across production instances. Treat that
-          // bounded 404 exactly like other transient report-store conditions.
-          if ([404, 429, 502, 503, 504].includes(response.status) && consecutivePollFailures < 8) {
-            consecutivePollFailures += 1;
+          // Explicitly temporary outcomes retain the existing recovery/search state.
+          if ([429, 502, 503, 504].includes(response.status)) {
+            consecutivePollFailures = Math.min(8, consecutivePollFailures + 1);
             const retrySeconds = Number(response.headers.get('Retry-After')) || Math.min(10, consecutivePollFailures * 2);
             pollTimer = setTimeout(poll, retrySeconds * 1000);
             return;
           }
-          throw new Error(payload?.message || `Report status failed: ${response.status}`);
+
+          clearPersistedReportJob();
+          setReportJobId(null);
+          setRestoringPersistedJob(false);
+          setSearching(false);
+          setDownloadReady(false);
+          setReportState('failed');
+          setReportError(payload?.message || `Report status failed: ${response.status}`);
+          return;
         }
-        if (cancelled) return;
+
+        setRestoringPersistedJob(false);
         consecutivePollFailures = 0;
+        if (typeof payload?.createdAt === 'string') {
+          persistReportJob(reportJobId, Date.parse(payload.createdAt));
+        }
 
         const job = payload?.job && typeof payload.job === 'object' ? payload.job : null;
         if (job?.name) {
@@ -122,23 +205,17 @@ export default function PantheonPage() {
           return;
         }
 
-        window.localStorage.removeItem('pantheon.activeReportJobId');
+        clearPersistedReportJob();
+        setReportJobId(null);
         setDownloadReady(false);
         setReportState('failed');
         setReportError(payload.error || 'The background report failed.');
-      } catch (error) {
+      } catch {
         if (cancelled) return;
-        // A mobile network transition or transient proxy interruption must not
-        // convert a still-running durable report into a terminal UI failure.
-        if (consecutivePollFailures < 8) {
-          consecutivePollFailures += 1;
-          pollTimer = setTimeout(poll, Math.min(10_000, consecutivePollFailures * 1_500));
-          return;
-        }
-        setSearching(false);
-        setDownloadReady(false);
-        setReportState('failed');
-        setReportError(error instanceof Error ? error.message : 'Unable to retrieve the background report.');
+        // Mobile transitions and proxy interruptions retain the active job and
+        // retry with capped backoff instead of enabling a duplicate submission.
+        consecutivePollFailures = Math.min(8, consecutivePollFailures + 1);
+        pollTimer = setTimeout(poll, Math.min(10_000, consecutivePollFailures * 1_500));
       }
     };
 
@@ -150,6 +227,8 @@ export default function PantheonPage() {
   }, [reportJobId, toast]);
 
   const handleSearchStart = async (config: SearchConfig) => {
+    if (searching || restoringPersistedJob) return;
+    setRestoringPersistedJob(false);
     setSearching(true);
     setSearchConfig(config);
     setDownloadReady(false);
@@ -181,7 +260,7 @@ export default function PantheonPage() {
       }
 
       const jobId = String(payload.jobId);
-      window.localStorage.setItem('pantheon.activeReportJobId', jobId);
+      persistReportJob(jobId);
       setReportJobId(jobId);
     } catch (error) {
       setSearching(false);
@@ -406,6 +485,7 @@ export default function PantheonPage() {
             <DoomsdayClockSelector 
               onSearchStart={handleSearchStart}
               isSearching={searching}
+              isRestoring={restoringPersistedJob}
             />
           </section>
           

@@ -17,6 +17,11 @@ export interface PantheonReportRecord {
   completedAt: Date | null;
 }
 
+export type PantheonReportLookupResult =
+  | { state: 'found'; record: PantheonReportRecord }
+  | { state: 'not_found' }
+  | { state: 'temporarily_unavailable' };
+
 const fallbackDirectory = process.env.PANTHEON_REPORT_FALLBACK_DIR
   || (process.env.RAILWAY_VOLUME_MOUNT_PATH
     ? path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'pantheon-reports')
@@ -102,18 +107,21 @@ async function writeSupabaseMirror(record: PantheonReportRecord): Promise<void> 
   }
 }
 
-async function readSupabaseMirror(reportId: string): Promise<PantheonReportRecord | null> {
+async function readSupabaseMirror(reportId: string): Promise<PantheonReportLookupResult> {
   const config = supabaseMirrorConfig();
-  if (!config || !(await ensureSupabaseMirrorBucket(config))) return null;
+  if (!config || !(await ensureSupabaseMirrorBucket(config))) {
+    return { state: 'temporarily_unavailable' };
+  }
   try {
     const response = await supabaseMirrorFetch(
       `${config.url}/storage/v1/object/authenticated/${SUPABASE_MIRROR_BUCKET}/${safeReportId(reportId)}.json`,
       { headers: { Authorization: `Bearer ${config.key}`, apikey: config.key } },
     );
-    if (!response.ok) return null;
-    return normalizeRecord(await response.json());
+    if (response.status === 404) return { state: 'not_found' };
+    if (!response.ok) return { state: 'temporarily_unavailable' };
+    return { state: 'found', record: normalizeRecord(await response.json()) };
   } catch {
-    return null;
+    return { state: 'temporarily_unavailable' };
   }
 }
 
@@ -430,23 +438,27 @@ export async function updatePantheonReportRecord(
   return next;
 }
 
-export async function getPantheonReportRecord(reportId: string): Promise<PantheonReportRecord | null> {
+export async function lookupPantheonReportRecord(reportId: string): Promise<PantheonReportLookupResult> {
   try {
     reportId = safeReportId(reportId);
   } catch {
-    return null;
+    return { state: 'not_found' };
   }
 
   const localFirst = await readJournal(reportId);
-  if (localFirst && !canMirrorIdentity(localFirst.userId)) return localFirst;
+  if (localFirst && !canMirrorIdentity(localFirst.userId)) {
+    return { state: 'found', record: localFirst };
+  }
 
+  let confirmedMissing = false;
   if (!localFirst) {
     const mirrored = await readSupabaseMirror(reportId);
-    if (mirrored) {
-      await writeJournal(mirrored);
-      if (mirrored.status !== 'processing') scheduleTerminalCleanup(mirrored);
+    if (mirrored.state === 'found') {
+      await writeJournal(mirrored.record);
+      if (mirrored.record.status !== 'processing') scheduleTerminalCleanup(mirrored.record);
       return mirrored;
     }
+    confirmedMissing = mirrored.state === 'not_found';
   }
 
   if (canTryDatabase()) {
@@ -456,8 +468,9 @@ export async function getPantheonReportRecord(reportId: string): Promise<Pantheo
         const normalized = normalizeRecord(persisted);
         await writeJournal(normalized);
         if (normalized.status !== 'processing') scheduleTerminalCleanup(normalized);
-        return normalized;
+        return { state: 'found', record: normalized };
       }
+      confirmedMissing = true;
     } catch (error) {
       if (isTransientDatabaseFailure(error)) {
         openDatabaseCircuit(error);
@@ -471,6 +484,16 @@ export async function getPantheonReportRecord(reportId: string): Promise<Pantheo
   }
 
   const local = await readJournal(reportId);
-  if (local && canMirrorIdentity(local.userId)) scheduleMirror(reportId);
-  return local;
+  if (local) {
+    if (canMirrorIdentity(local.userId)) scheduleMirror(reportId);
+    return { state: 'found', record: local };
+  }
+  return confirmedMissing
+    ? { state: 'not_found' }
+    : { state: 'temporarily_unavailable' };
+}
+
+export async function getPantheonReportRecord(reportId: string): Promise<PantheonReportRecord | null> {
+  const lookup = await lookupPantheonReportRecord(reportId);
+  return lookup.state === 'found' ? lookup.record : null;
 }

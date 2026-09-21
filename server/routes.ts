@@ -3496,10 +3496,14 @@ Contact: ${foiaRequest.userEmail || userEmail}
     }
   });
 
+  const PANTHEON_REPORT_CONVERGENCE_GRACE_MS = 10_000;
+
   async function resolvePantheonReportRouteAccess(req: any, res: any, reportId: string): Promise<{
     authorized: boolean;
     userId: string;
     privileged: boolean;
+    reportCapability: boolean;
+    capabilityIssuedAtMs?: number;
     status?: number;
     code?: string;
     message?: string;
@@ -3511,6 +3515,8 @@ Contact: ${foiaRequest.userEmail || userEmail}
         authorized: true,
         userId: capability.userId,
         privileged: false,
+        reportCapability: true,
+        capabilityIssuedAtMs: capability.iat * 1000,
       };
     }
 
@@ -3520,6 +3526,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
         authorized: false,
         userId: '',
         privileged: false,
+        reportCapability: false,
         status: 401,
         code: 'unauthenticated',
         message: 'Authentication required.',
@@ -3531,6 +3538,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
         authorized: false,
         userId: '',
         privileged: false,
+        reportCapability: false,
         status: unavailable ? 503 : 402,
         code: unavailable ? 'auth_state_unavailable' : 'subscription_required',
         message: unavailable
@@ -3543,6 +3551,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
       authorized: true,
       userId: String(access.user?.id || access.user?.claims?.sub || req.user?.id || req.user?.claims?.sub || '').trim(),
       privileged: Boolean(access.user?.isMasterBypass || access.user?.isAdminBypass || access.user?.isAdmin),
+      reportCapability: false,
     };
   }
 
@@ -3643,19 +3652,34 @@ Contact: ${foiaRequest.userEmail || userEmail}
       });
     }
 
-    const { getPantheonReportRecord } = await import('./services/pantheon/PantheonReportStore');
-    const report = await getPantheonReportRecord(reportId);
-    if (!report) {
-      // Report creation is journal-first and the database mirror can converge a
-      // moment later on another production instance. A syntactically valid,
-      // authorized report id is therefore retryable before it is declared gone.
-      res.setHeader('Retry-After', '2');
-      return res.status(503).json({
+    const { lookupPantheonReportRecord } = await import('./services/pantheon/PantheonReportStore');
+    const reportLookup = await lookupPantheonReportRecord(reportId);
+    if (reportLookup.state !== 'found') {
+      res.setHeader('Cache-Control', 'private, no-store');
+      const capabilityAgeMs = routeAccess.capabilityIssuedAtMs == null
+        ? Number.POSITIVE_INFINITY
+        : Math.max(0, Date.now() - routeAccess.capabilityIssuedAtMs);
+      const stillConverging = reportLookup.state === 'temporarily_unavailable'
+        || (routeAccess.reportCapability && capabilityAgeMs < PANTHEON_REPORT_CONVERGENCE_GRACE_MS);
+      if (stillConverging) {
+        res.setHeader('Retry-After', '2');
+        return res.status(503).json({
+          success: false,
+          code: 'report_store_converging',
+          message: 'The background report job is still becoming available. Retry shortly.',
+        });
+      }
+
+      const gone = routeAccess.reportCapability;
+      return res.status(gone ? 410 : 404).json({
         success: false,
-        code: 'report_store_converging',
-        message: 'The background report job is still becoming available. Retry shortly.',
+        code: gone ? 'report_job_gone' : 'not_found',
+        message: gone
+          ? 'The saved background report is no longer available.'
+          : 'Report job not found.',
       });
     }
+    const report = reportLookup.record;
     if (!routeAccess.privileged && report.userId !== routeAccess.userId) {
       return res.status(403).json({ success: false, code: 'forbidden', message: 'Report job does not belong to this account.' });
     }
