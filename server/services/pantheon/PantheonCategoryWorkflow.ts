@@ -124,15 +124,20 @@ function isReportableEvidence(
     : subjectMatches >= Math.min(2, subjectTokens.length) || (subjectMatches >= 1 && locationMatch);
 }
 
+function sourcePriority(authority: 'primary'|'secondary'|'discovery'|'archive'): number {
+  return ({ primary: 400, secondary: 300, archive: 200, discovery: 100 })[authority];
+}
+
 function interleaveCategoryTargets(
   groups: Array<ReturnType<typeof buildPantheonCategoryTargets>>,
   limit: number,
 ): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
+  const prioritized = groups.map(group => [...group].sort((a, b) => sourcePriority(b.authority) - sourcePriority(a.authority)));
   for (let row = 0; out.length < limit; row += 1) {
     let added = false;
-    for (const group of groups) {
+    for (const group of prioritized) {
       const candidate = group[row];
       if (!candidate) continue;
       added = true;
@@ -204,7 +209,10 @@ export async function conductPantheonCategoryWorkflow(input: {
       buildPantheonCategoryTargets(registryCategory, input.name, input.location, targetLimit)
     );
     // Interleave registry facets so a multi-facet category cannot be monopolized
-    // by the first tag. Source inventory remains priority ordered within each facet.
+    // by the first tag. Within each facet, direct primary authorities run first,
+    // followed by secondary sources, archives, and broad discovery URLs.
+    // The established 10/20/30-minute intensity levels expand URL breadth
+    // through the existing 40/94/150 per-category budgets.
     const uniqueTargets = interleaveCategoryTargets(targetGroups, targetLimit);
 
     let retrieval: PantheonRetrievalResponse;
