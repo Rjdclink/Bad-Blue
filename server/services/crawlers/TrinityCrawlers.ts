@@ -20,10 +20,9 @@ async function executeRequest(url: string, options: RequestOptions, stealth?: St
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), options.timeout || 30000);
   try {
-    // Route through StealthInfrastructure if available
-    if (stealth) {
-      await stealth.connect(url, 'medium');
-    }
+    // Public acquisition is the transport authority here. Stealth metadata must
+    // never trigger a second network request before the evidence fetch.
+    void stealth;
     const resource = await acquirePublicResource(url, options.timeout || 30000);
     if (!resource.ok) throw new Error(resource.error || `Crawler request failed: HTTP ${resource.status}`);
     return new Response(resource.content, {
