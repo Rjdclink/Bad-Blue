@@ -250,7 +250,7 @@ function buildCategoryLedger(
           const routed = capabilityFor(group.registryCategory, { url, priority: sourcePriority(candidate.authority), authority: candidate.authority, registryCategory: group.registryCategory, state: 'pending', attempts: 0, evidenceIds: [] });
           return { capability: routed.capability, capabilityReason: routed.reason };
         })(),
-        transport: transportFor({ url, priority: sourcePriority(candidate.authority), authority: candidate.authority, registryCategory: group.registryCategory, state: 'pending', attempts: 0, evidenceIds: [] }),
+        transport: candidate.transport || transportFor({ url, priority: sourcePriority(candidate.authority), authority: candidate.authority, registryCategory: group.registryCategory, state: 'pending', attempts: 0, evidenceIds: [] }),
       });
     }
   }
