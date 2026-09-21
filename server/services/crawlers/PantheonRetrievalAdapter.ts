@@ -329,6 +329,8 @@ export class PantheonRetrievalAdapter {
 
         for (const secondary of run.value.secondaryResults) {
           for (const signature of secondary.signatures) {
+            const confidence = Number.isFinite(signature.probability) ? signature.probability : 0;
+            if (confidence <= 0 || !signature.hash) continue;
             evidence.push({
               crawler: secondary.crawler,
               target,
@@ -338,7 +340,7 @@ export class PantheonRetrievalAdapter {
                 structuralDensity: signature.structuralDensity,
                 constraintCount: signature.constraints.length,
               }),
-              confidence: Number.isFinite(signature.probability) ? signature.probability : 0,
+              confidence,
               retrievedAt: signature.timestamp.toISOString(),
               metadata: {
                 capabilityClass: 'pantheon-secondary',
