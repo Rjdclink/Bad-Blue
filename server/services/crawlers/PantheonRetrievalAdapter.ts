@@ -270,6 +270,31 @@ export class PantheonRetrievalAdapter {
     }
 
     if (request.purpose === 'background_report' && collectionOpen()) {
+      const subject = String(request.subject || '').trim();
+      if (subject) {
+        const criminalTargets = request.targets.filter(target => {
+          try {
+            const host = new URL(target).hostname.toLowerCase();
+            return host.includes('uscourts.gov') || host.includes('courtlistener.com') ||
+              host.includes('nsopw.gov') || host.includes('bop.gov') ||
+              host.includes('usmarshals.gov') || host.includes('justice.gov');
+          } catch {
+            return false;
+          }
+        });
+        const criminalEvidence = evidence.filter(item => criminalTargets.includes(item.target));
+        crawlerAudit.push({
+          crawler: 'criminal-public-records',
+          capabilityClass: 'pantheon-secondary',
+          status: criminalEvidence.length > 0 ? 'completed_with_evidence' : 'completed_no_evidence',
+          evidenceCount: criminalEvidence.length,
+          attempts: criminalTargets.length > 0 ? 1 : 0,
+          targets: criminalTargets.length,
+        });
+      }
+    }
+
+    if (request.purpose === 'background_report' && collectionOpen()) {
       const socialHandles = [...new Set(request.targets.flatMap(target => {
         try {
           const parsed = new URL(target);
