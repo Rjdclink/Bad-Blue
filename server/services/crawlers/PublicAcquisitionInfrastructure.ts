@@ -38,7 +38,7 @@ const CIRCUIT_FAILURE_THRESHOLD = 4;
 const CIRCUIT_OPEN_MS = 30_000;
 
 const BLOCKED_EXTENSIONS = /\.(?:css|js|mjs|map|woff2?|ttf|otf|eot|png|jpe?g|gif|webp|svg|ico|mp[34]|m4[av]|avi|mov|webm|zip|gz|rar|7z|exe|dmg|apk)(?:$|[?#])/i;
-const BLOCKED_HOST_HINTS = /(?:googletagmanager|google-analytics|doubleclick|newrelic|addthis|fonts\.googleapis|fonts\.gstatic)/i;
+const BLOCKED_HOST_HINTS = /(?:googletagmanager|google-analytics|doubleclick|newrelic|addthis|chartbeat|optimizely|tinypass|fonts\.googleapis|fonts\.gstatic|static\.files\.bbci|m\.files\.bbci|assets\.guim|static\.guim|i\.guim|j\.ophan)/i;
 
 function stateFor(host: string): HostState {
   let state = hostStates.get(host);
@@ -94,6 +94,11 @@ function canonicalPublicUrl(raw: string): URL {
     throw new Error('Non-investigative resource is not eligible for acquisition');
   }
   return url;
+}
+
+function blockedResponseBody(value: string): boolean {
+  const lowered = value.toLowerCase();
+  return ['our systems have detected unusual traffic','captcha','verify you are human','access denied','enable javascript on your web browser'].some(marker => lowered.includes(marker));
 }
 
 function supportedContentType(value: string): boolean {
@@ -214,6 +219,9 @@ async function acquireOnce(url: URL, timeoutMs: number): Promise<PublicAcquisiti
     if (!response.ok) return failureResult(current.toString(), response.status, new Error(`HTTP ${response.status}`), retryMs);
 
     const text = (await response.text()).slice(0, 2_000_000);
+    if (blockedResponseBody(text)) {
+      return { ...failureResult(current.toString(), response.status, new Error('Blocked/challenge response is not investigative evidence')), errorType: 'http_error' };
+    }
     return {
       url: current.toString(), ok: true, status: response.status, kind: kindFor(contentType, current.toString()),
       contentType, content: text, etag: response.headers.get('etag') || undefined,
