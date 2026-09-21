@@ -92,17 +92,36 @@ export class FirecrawlAdapter {
         firecrawlOptions.headers = options.headers;
       }
 
-      // Execute scrape
-      const response = await this.client!.scrapeUrl(url, firecrawlOptions);
+      // Execute with bounded retry/backoff for transient throttling and 5xx
+      // failures. Never retry permanent authorization/validation failures.
+      const maxAttempts = Math.max(1, Math.min(3, this.config.maxRetries || 1));
+      let response: any;
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        try {
+          response = await this.client!.scrapeUrl(url, firecrawlOptions);
+        } catch (error: any) {
+          const message = String(error?.message || error);
+          const retryable = /429|too many|rate.?limit|timeout|timed out|5\d\d|temporar/i.test(message);
+          if (!retryable || attempt === maxAttempts - 1) throw error;
+          const delayMs = Math.min(2_000, 250 * (2 ** attempt)) + Math.floor(Math.random() * 200);
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+          continue;
+        }
+        if (response?.success) break;
+        const message = String(response?.error || '');
+        const retryable = /429|too many|rate.?limit|timeout|timed out|5\d\d|temporar/i.test(message);
+        if (!retryable || attempt === maxAttempts - 1) break;
+        const delayMs = Math.min(2_000, 250 * (2 ** attempt)) + Math.floor(Math.random() * 200);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
 
       const processingTime = Date.now() - startTime;
 
-      // Check if successful
-      if (!response.success) {
-        log.error('Firecrawl scrape failed', { url, error: response.error });
+      if (!response?.success) {
+        log.error('Firecrawl scrape failed', { url, error: response?.error });
         return {
           success: false,
-          error: response.error || 'Unknown Firecrawl error',
+          error: response?.error || 'Unknown Firecrawl error',
         };
       }
 
