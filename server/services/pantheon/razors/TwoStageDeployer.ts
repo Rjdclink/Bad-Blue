@@ -117,6 +117,8 @@ export class TwoStageDeployer {
     if (withheldTypes.has(result.razorType)) {
       return {
         ...result,
+        success: false,
+        confidence: 0,
         data: {
           withheld: true,
           category: result.razorType,
