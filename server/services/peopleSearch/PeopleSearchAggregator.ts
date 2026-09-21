@@ -420,29 +420,33 @@ export class PeopleSearchAggregator {
       });
     }
     
-    // Build basic PersonRecord from extracted data
-    // NOTE: This is a simplified extraction. Full implementation would parse
-    // HTML structures specific to each source (addresses, phones, etc.)
-    const basicRecord: PersonRecord = {
+    if (extractions.length === 0) {
+      throw new Error('No people-search evidence returned from HTTP extraction');
+    }
+
+    const evidenceText = extractions
+      .map(e => String(e.mainText || ''))
+      .filter(Boolean)
+      .join('\n');
+    const phoneMatches = [...new Set((evidenceText.match(/(?:\\+?1[\\s.-]?)?\\(?\\d{3}\\)?[\\s.-]\\d{3}[\\s.-]\\d{4}/g) || [])
+      .map(value => this.normalizePhone(value))
+      .filter(value => value.length === 10))];
+    const emailMatches = [...new Set(evidenceText.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/gi) || [])];
+    const ageMatch = evidenceText.match(/\\bAge\\s*[:,-]?\\s*(\\d{1,3})\\b/i);
+
+    const record: PersonRecord = {
       fullName: `${query.firstName} ${query.lastName}`,
-      age: query.age,
+      age: ageMatch ? Number(ageMatch[1]) : query.age,
       addresses: [],
-      phones: [],
-      emails: [],
+      phones: phoneMatches.map(number => ({ number })),
+      emails: emailMatches,
       relatives: [],
       aliases: [],
-      source: extractions.map(e => `${e.provider}:${e.tier}`).join(', ') || 'http-extraction',
+      source: extractions.map(e => `${e.provider}:${e.tier}`).join(', '),
       scrapedAt: new Date(),
-      confidence: extractions.length > 0 ? 0.6 : 0.3,
+      confidence: 0.6,
     };
-    
-    // TODO: Parse extracted HTML to populate addresses, phones, etc.
-    // For now, just attach metadata as a reference
-    if (extractions.length > 0 && extractions[0].metadata) {
-      console.log('[PeopleSearch] Sample metadata:', extractions[0].metadata);
-    }
-    
-    return basicRecord;
+    return record;
   }
 
   /**
