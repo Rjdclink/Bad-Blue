@@ -243,28 +243,24 @@ export class PantheonRetrievalAdapter {
               retrievedAt: person.scrapedAt.toISOString(),
               metadata: { capabilityClass: 'people-search' },
             });
-            for (const crawler of ['fast-people-search', 'true-people-search', 'whitepages']) {
-              crawlerAudit.push({
-                crawler,
-                capabilityClass: 'pantheon-secondary',
-                status: 'completed_with_evidence',
-                evidenceCount: 1,
-                attempts: 1,
-                targets: 1,
-              });
-            }
+            crawlerAudit.push({
+              crawler: 'people-search-aggregate',
+              capabilityClass: 'pantheon-secondary',
+              status: 'completed_with_evidence',
+              evidenceCount: 1,
+              attempts: 1,
+              targets: 3,
+            });
           } catch (error) {
-            for (const crawler of ['fast-people-search', 'true-people-search', 'whitepages']) {
-              crawlerAudit.push({
-                crawler,
-                capabilityClass: 'pantheon-secondary',
-                status: 'completed_no_evidence',
-                evidenceCount: 0,
-                attempts: 1,
-                targets: 1,
-                error: error instanceof Error ? error.message : String(error),
-              });
-            }
+            crawlerAudit.push({
+              crawler: 'people-search-aggregate',
+              capabilityClass: 'pantheon-secondary',
+              status: 'completed_no_evidence',
+              evidenceCount: 0,
+              attempts: 1,
+              targets: 3,
+              error: error instanceof Error ? error.message : String(error),
+            });
           } finally {
             await peopleSearch.cleanup().catch(() => undefined);
           }
