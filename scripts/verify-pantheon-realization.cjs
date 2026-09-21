@@ -19,6 +19,8 @@ const checks = [
   ['client retries transient report-store status', client.includes('[404, 429, 502, 503, 504]')],
   ['downloadable PDF route exists', routes.includes('/api/osint/report-jobs/:reportId/download')],
   ['PDF includes provenance/crawler audit', pdf.includes('crawlerAudit') && pdf.includes('Source Provenance')],
+  ['completed report envelope feeds PDF generator', routes.includes('report: envelope.report as any') && routes.includes('generatePantheonBackgroundReportPdf')],
+  ['category evidence feeds persisted report', categoryWorkflow.includes('report.sources = uniqueEvidence.map') && jobs.includes('report,') && jobs.includes('categoryOutcomes')],
   ['all primary crawler execution isolated', adapter.includes('searchAllIsolatedWithAudit')],
   ['razor extraction participates', adapter.includes('deployBackgroundReport')],
   ['Cain/Reaper supervision participates', adapter.includes('cainReaperSupervisor.supervise')],
