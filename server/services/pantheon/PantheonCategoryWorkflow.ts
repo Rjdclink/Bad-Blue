@@ -87,6 +87,9 @@ export interface PantheonCategoryOutcome {
   evidenceRejected: number;
   urlLedger: PantheonUrlLedgerEntry[];
   cursor: number;
+  ledgerVersion: 1;
+  totalLedgerUrls: number;
+  pendingUrls: number;
 }
 
 function mergeAudit(entries: PantheonRetrievalResponse['crawlerAudit']) {
@@ -492,6 +495,9 @@ export async function conductPantheonCategoryWorkflow(input: {
       evidenceRejected: Math.max(0, retrieval.evidence.length - reportable.length),
       urlLedger,
       cursor,
+      ledgerVersion: 1,
+      totalLedgerUrls: urlLedger.length,
+      pendingUrls: urlLedger.filter(entry => entry.state === 'pending').length,
     };
     categoryOutcomes.push(outcome);
 
