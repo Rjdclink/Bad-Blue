@@ -20,7 +20,7 @@ async function main() {
     if (url.includes('unreachable.invalid')) return htmlResponse('unavailable', 503);
     if (init?.method === 'HEAD') return htmlResponse('', 200);
     if (url.includes('graph.test')) {
-      return htmlResponse('<html><body>verified crawler evidence <a href="https://alpha.test/profile">Alpha</a><a href="https://beta.test/about">Beta</a></body></html>');
+      return htmlResponse('<html><body>verified crawler evidence <a href="https://alpha.test/profile">Alpha</a><a href="//relative.test/path">Relative</a><a href="https://beta.test/about">Beta</a></body></html>');
     }
     if (url.includes('alpha.test')) return htmlResponse('<html><body>Alpha profile <a href="https://graph.test/">Home</a></body></html>');
     if (url.includes('beta.test')) return htmlResponse('<html><body>Beta profile</body></html>');
@@ -54,6 +54,7 @@ async function main() {
   const graph = await six.mapConnections('graph.test', 1);
   assert(graph.nodes.length === 1, 'SixDegrees must admit successfully fetched seed');
   assert(graph.edges.some(edge => edge.to === 'alpha.test') && graph.edges.some(edge => edge.to === 'beta.test'), 'SixDegrees relationship discovery failed');
+  assert(graph.edges.some(edge => edge.to === 'relative.test'), 'SixDegrees relative-link resolution failed');
   const failedGraph = await six.mapConnections('unreachable.invalid', 1);
   assert(failedGraph.nodes.length === 0 && failedGraph.edges.length === 0, 'SixDegrees unreachable target must not become evidence');
   console.log('PASS sixdegrees: live graph acquisition, relationship extraction, state isolation, failure semantics');
