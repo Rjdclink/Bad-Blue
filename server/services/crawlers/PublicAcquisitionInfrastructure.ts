@@ -26,14 +26,21 @@ function kindFor(contentType: string, url: string): PublicAcquisitionKind {
 }
 
 function isPrivateHost(host: string): boolean {
-  return host === 'localhost' ||
-    host === '0.0.0.0' ||
-    host === '::1' ||
-    /^127\./.test(host) ||
-    /^10\./.test(host) ||
-    /^192\.168\./.test(host) ||
-    /^169\.254\./.test(host) ||
-    /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+  const normalized = host.toLowerCase().replace(/^\[|\]$/g, '');
+  return normalized === 'localhost' ||
+    normalized.endsWith('.localhost') ||
+    normalized === '0.0.0.0' ||
+    normalized === '::1' ||
+    normalized === '::' ||
+    normalized.startsWith('fc') ||
+    normalized.startsWith('fd') ||
+    normalized.startsWith('fe8') || normalized.startsWith('fe9') ||
+    normalized.startsWith('fea') || normalized.startsWith('feb') ||
+    /^127\./.test(normalized) ||
+    /^10\./.test(normalized) ||
+    /^192\.168\./.test(normalized) ||
+    /^169\.254\./.test(normalized) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(normalized);
 }
 
 function allowedPublicUrl(raw: string): URL {
