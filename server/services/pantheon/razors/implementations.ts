@@ -83,7 +83,7 @@ export class SocialRazor extends BaseRazor {
   readonly type = RazorType.SOCIAL;
   readonly patterns = [
     /(?:facebook\.com|fb\.com)\/[\w.-]+/gi,
-    /twitter\.com\/[\w]+/gi,
+    /(?:twitter\.com|x\.com)\/[\w]+/gi,
     /(?:linkedin\.com\/in|linkedin\.com\/pub)\/[\w-]+/gi,
     /instagram\.com\/[\w.]+/gi,
     /tiktok\.com\/@[\w.]+/gi,
@@ -102,7 +102,7 @@ export class SocialRazor extends BaseRazor {
     
     for (const p of profiles) {
       if (p.includes('facebook') || p.includes('fb.com')) categorized.facebook.push(p);
-      else if (p.includes('twitter')) categorized.twitter.push(p);
+      else if (p.includes('twitter') || p.includes('x.com')) categorized.twitter.push(p);
       else if (p.includes('linkedin')) categorized.linkedin.push(p);
       else if (p.includes('instagram')) categorized.instagram.push(p);
       else if (p.includes('tiktok')) categorized.tiktok.push(p);
