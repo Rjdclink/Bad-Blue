@@ -141,9 +141,8 @@ export class SixDegreesCrawler {
             queue.push({ domain: edge.to, degree: current.degree + 1 });
           }
         }
-      } catch (error) {
-        // Continue on error
-        console.error(`Failed to discover connections for ${current.domain}:`, error);
+      } catch {
+        this.edges.set(current.domain, []);
       }
     }
   }
