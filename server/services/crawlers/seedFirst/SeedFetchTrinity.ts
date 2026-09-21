@@ -1,6 +1,7 @@
 import type { SeedFirstCrawler } from '../seedFirstCrawlerSet';
 import { sanitizeUrlStrict } from '../../../lib/seedFirstOsint.ts';
 import { getSeedSignal, getSeedFingerprint } from './seedAbortBus.ts';
+import { acquirePublicResource } from '../PublicAcquisitionInfrastructure';
 
 function uniq<T>(arr: T[]): T[] {
   return Array.from(new Set(arr));
@@ -16,24 +17,11 @@ export const SeedFetchTrinity: SeedFirstCrawler = {
       const signal = seedSignal
         ? AbortSignal.any([controller.signal, seedSignal])
         : controller.signal;
-      const res = await fetch(seedUrl, {
-        redirect: 'manual',
-        signal,
-        headers: {
-          'User-Agent': getSeedFingerprint(seedUrl)?.userAgent || 'SeedFirst/1.0',
-          'Accept': getSeedFingerprint(seedUrl)?.accept || 'text/html,application/xhtml+xml;q=0.9,text/plain;q=0.8,*/*;q=0.1',
-          'Accept-Language': getSeedFingerprint(seedUrl)?.acceptLanguage || 'en-US,en;q=0.9',
-        },
-      });
-
-      if (res.status >= 300 && res.status < 400) {
+      const resource = await acquirePublicResource(seedUrl, timeoutMs);
+      if (!resource.ok) {
         return { emails: [], phones: [], links: [], coordinates: [], itemsFound: 0, timedOut: false };
       }
-      if (!res.ok) {
-        return { emails: [], phones: [], links: [], coordinates: [], itemsFound: 0, timedOut: false };
-      }
-
-      const raw = await res.text();
+      const raw = resource.content;
       const linksRaw = (raw.match(/href\s*=\s*["']([^"']+)["']/gi) || []).slice(0, 200);
       const seedHost = new URL(seedUrl).host;
 
