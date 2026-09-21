@@ -337,8 +337,16 @@ export async function conductPantheonCategoryWorkflow(input: {
       if (remainingForWork <= 750) break;
 
       const batchSize = Math.min(8, targetLimit - activeUrls.size, prioritizedTargets.length - cursor);
-      const batch = prioritizedTargets.slice(cursor, cursor + batchSize);
-      cursor += batch.length;
+      const firstUrl = prioritizedTargets[cursor];
+      const firstEntry = urlLedger.find(item => item.url === firstUrl);
+      const batch: string[] = [];
+      while (cursor < prioritizedTargets.length && batch.length < batchSize) {
+        const candidateUrl = prioritizedTargets[cursor];
+        const candidateEntry = urlLedger.find(item => item.url === candidateUrl);
+        if (batch.length > 0 && candidateEntry?.capability !== firstEntry?.capability) break;
+        batch.push(candidateUrl);
+        cursor += 1;
+      }
       for (const url of batch) {
         activeUrls.add(url);
         const entry = urlLedger.find(item => item.url === url);
