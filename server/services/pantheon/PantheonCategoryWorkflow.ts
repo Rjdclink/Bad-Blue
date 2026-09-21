@@ -196,7 +196,33 @@ export async function conductPantheonCategoryWorkflow(input: {
     await input.onCategoryStart?.({ index, label: category.label, completedCategories: index });
 
     const remainingCategories = PANTHEON_REPORT_CATEGORIES.length - index;
-    const remainingMs = Math.max(1, input.deadlineAt - Date.now());
+    const remainingMs = input.deadlineAt - Date.now();
+    if (remainingMs <= 2_000) {
+      const completedAt = new Date().toISOString();
+      for (let skipped = index; skipped < PANTHEON_REPORT_CATEGORIES.length; skipped += 1) {
+        const skippedCategory = PANTHEON_REPORT_CATEGORIES[skipped];
+        const outcome: PantheonCategoryOutcome = {
+          index: skipped,
+          label: skippedCategory.label,
+          startedAt: completedAt,
+          completedAt,
+          targetCount: 0,
+          evidenceCount: 0,
+          crawlerAudit: [{
+            crawler: 'category-orchestrator',
+            capabilityClass: 'pantheon-secondary',
+            status: 'timed_out',
+            evidenceCount: 0,
+            attempts: 0,
+            targets: 0,
+            error: 'Investigation deadline reached before category execution',
+          }],
+        };
+        categoryOutcomes.push(outcome);
+        audits.push(...outcome.crawlerAudit);
+      }
+      break;
+    }
     const finalizationReserveMs = Math.min(15_000, Math.max(2_000, Math.floor(remainingMs * 0.08)));
     const categoryBudgetMs = Math.max(1_500, Math.floor(Math.max(1, remainingMs - finalizationReserveMs) / remainingCategories));
 
