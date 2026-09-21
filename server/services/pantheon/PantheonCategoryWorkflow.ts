@@ -215,6 +215,8 @@ export async function conductPantheonCategoryWorkflow(input: {
         depth: input.searchDepth,
         budgetMs: categoryBudgetMs,
         deadlineAt: Math.min(input.deadlineAt - finalizationReserveMs, Date.now() + categoryBudgetMs),
+        subject: input.name,
+        location: input.location,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
