@@ -65,6 +65,7 @@ const checks = [
   ['URL capability routing is explicit and auditable per URL', categoryWorkflow.includes('capabilityReason?: string') && categoryWorkflow.includes("capability: 'sixdegrees'") && categoryWorkflow.includes("capability: 'cerberus'") && categoryWorkflow.includes("capability: 'blizzard'") && categoryWorkflow.includes("capability: 'lich'") && categoryWorkflow.includes("capability: 'startrek'")],
   ['URL work groups are capability homogeneous', categoryWorkflow.includes("candidateEntry?.capability !== firstEntry?.capability")],
   ['discovery/search transport is explicitly separated', categoryWorkflow.includes("return 'search-provider'") && categoryWorkflow.includes("return 'direct-http'")],
+  ['discovery work is structurally separate from authoritative traversal', categoryWorkflow.includes("PantheonWorkType = 'authoritative-source'|'discovery-search'|'candidate-validation'|'corroboration'") && categoryWorkflow.includes("return 'discovery-search'") && categoryWorkflow.includes("workType: 'candidate-validation'")],
   ['transport and capability hints reach retrieval adapter', categoryWorkflow.includes('capabilityHint: batch.map') && categoryWorkflow.includes('transportHint: batch.map')],
   ['customer report filters raw execution diagnostics', !pdf.includes("addSectionTitle(doc, 'Crawler Coverage')") && pdf.includes('Crawler diagnostics remain internal')],
   ['multi-facet categories interleave source families', categoryWorkflow.includes('interleaveCategoryTargets') && categoryWorkflow.includes('targetGroups')],
