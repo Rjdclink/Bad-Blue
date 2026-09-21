@@ -17,7 +17,7 @@ import { acquirePublicResources } from './PublicAcquisitionInfrastructure';
 import { socialMediaScraper } from '../socialMediaScraper';
 import { LEXARA_CRAWLER_CAPABILITY_POOL } from '../../lexara/LexaraCrawlerCapabilityRegistry';
 import { crawlSeedOnceWithCrawlers } from '../../lib/seedFirstOsint';
-import { criminalRecordsAggregator } from '../criminalRecords';
+import { discoverCriminalRecordSources } from '../criminalRecords';
 
 export interface RetrievalEvidence {
   crawler: string;
@@ -413,8 +413,7 @@ export class PantheonRetrievalAdapter {
         .trim();
       if (subject && subject.length >= 2 && subject.length <= 160) {
         try {
-          const criminal = await criminalRecordsAggregator.search({ fullName: subject });
-          const discoveries = Array.isArray((criminal as any).sourceDiscovery) ? (criminal as any).sourceDiscovery : [];
+          const discoveries = await discoverCriminalRecordSources({ fullName: subject });
           for (const id of ['state-court', 'county-court', 'warrant-database', 'sex-offender-registry']) {
             crawlerAudit.push({
               crawler: id,
