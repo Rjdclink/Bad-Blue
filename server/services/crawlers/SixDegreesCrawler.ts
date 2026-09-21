@@ -196,16 +196,19 @@ export class SixDegreesCrawler {
 
       const html = await response.text();
 
-      // Extract links with proper validation
-      const linkMatches = html.match(/https?:\/\/[^\s<>"']+/g) || [];
-      const uniqueLinks = [...new Set(linkMatches)];
+      // Extract both absolute and relative hrefs, resolve them against the
+      // successfully fetched page, and keep only public HTTP(S) relationships.
+      const baseUrl = this.constructUrl(domain);
+      const hrefMatches = Array.from(html.matchAll(/href\\s*=\\s*["']([^"'#]+)["']/gi), match => match[1]);
+      const absoluteMatches = html.match(/https?:\\/\\/[^\\s<>"']+/g) || [];
+      const uniqueLinks = [...new Set([...hrefMatches, ...absoluteMatches])];
 
       // Create edges for discovered links with validation
       for (const link of uniqueLinks.slice(0, 20)) {
         try {
-          // Validate URL before processing
-          new URL(link);
-          const linkDomain = this.extractDomain(link);
+          const resolved = new URL(link, baseUrl);
+          if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') continue;
+          const linkDomain = this.extractDomain(resolved.toString());
           if (linkDomain && linkDomain !== domain) {
             edges.push({
               from: domain,
