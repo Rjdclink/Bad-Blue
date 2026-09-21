@@ -32,6 +32,11 @@ function isPrivateHost(host: string): boolean {
     normalized === '0.0.0.0' ||
     normalized === '::1' ||
     normalized === '::' ||
+    normalized.startsWith('::ffff:127.') ||
+    normalized.startsWith('::ffff:10.') ||
+    normalized.startsWith('::ffff:192.168.') ||
+    /^::ffff:172\.(1[6-9]|2\d|3[01])\./.test(normalized) ||
+    normalized.startsWith('::ffff:169.254.') ||
     normalized.startsWith('fc') ||
     normalized.startsWith('fd') ||
     normalized.startsWith('fe8') || normalized.startsWith('fe9') ||
