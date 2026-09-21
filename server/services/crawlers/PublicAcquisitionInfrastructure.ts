@@ -92,6 +92,14 @@ async function assertPublicResolution(url: URL): Promise<void> {
   if (records.some(record => isPrivateHost(record.address))) throw new Error('Public acquisition hostname resolves to a private network');
 }
 
+export function admitPantheonUrl(raw: string): { ok: true; url: string } | { ok: false; reason: string } {
+  try {
+    return { ok: true, url: canonicalPublicUrl(raw).toString() };
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 function canonicalPublicUrl(raw: string): URL {
   const cleaned = String(raw || '').trim().replace(/[),.;]+$/, '');
   const url = new URL(cleaned);
