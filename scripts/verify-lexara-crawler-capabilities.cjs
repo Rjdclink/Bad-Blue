@@ -98,6 +98,9 @@ const starTrek = fs.readFileSync('server/services/crawlers/StarTrekCrawler.ts', 
 const birdOfPrey = fs.readFileSync('server/services/crawlers/BirdOfPreyCrawler.ts', 'utf8');
 const sixDegrees = fs.readFileSync('server/services/crawlers/SixDegreesCrawler.ts', 'utf8');
 const trinity = fs.readFileSync('server/services/crawlers/TrinityCrawlers.ts', 'utf8');
+const starTrek = fs.readFileSync('server/services/crawlers/StarTrekCrawler.ts', 'utf8');
+const birdOfPrey = fs.readFileSync('server/services/crawlers/BirdOfPreyCrawler.ts', 'utf8');
+const sixDegrees = fs.readFileSync('server/services/crawlers/SixDegreesCrawler.ts', 'utf8');
 const cain = fs.readFileSync('server/services/crawlers/CainAndReaper.ts', 'utf8');
 const twoStage = fs.readFileSync('server/services/pantheon/razors/TwoStageDeployer.ts', 'utf8');
 const baseRazor = fs.readFileSync('server/services/pantheon/razors/BaseRazor.ts', 'utf8');
@@ -279,7 +282,10 @@ if (
   !wraithCrawler.includes('acquirePublicResource') ||
   !pantheonIce.includes('acquirePublicResource') ||
   !twoStage.includes('acquirePublicResource') ||
-  !trinity.includes('acquirePublicResource')
+  !trinity.includes('acquirePublicResource') ||
+  !starTrek.includes('acquirePublicResource') ||
+  !birdOfPrey.includes('acquirePublicResource') ||
+  !sixDegrees.includes('acquirePublicResource')
 ) {
   fail('Pantheon crawler network lanes do not consistently enforce the public acquisition boundary');
 }
