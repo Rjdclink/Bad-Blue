@@ -235,6 +235,9 @@ export class PantheonRetrievalAdapter {
               aliases: person.aliases,
               source: person.source,
             };
+            if (!Number.isFinite(person.confidence) || person.confidence <= 0) {
+              throw new Error('People-search aggregation returned no accepted evidence');
+            }
             evidence.push({
               crawler: 'people-search-aggregate',
               target: subject,
