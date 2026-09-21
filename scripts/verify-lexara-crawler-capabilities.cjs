@@ -174,7 +174,8 @@ if (!pantheonReportJobs.includes('conductPantheonCategoryWorkflow') ||
     !pantheonCategoryWorkflow.includes('PANTHEON_REPORT_CATEGORIES') ||
     !pantheonCategoryWorkflow.includes('for (let index = startCategoryIndex; index < PANTHEON_REPORT_CATEGORIES.length; index += 1)') ||
     !pantheonCategoryWorkflow.includes('subject: input.name') ||
-    !pantheonCategoryWorkflow.includes('onCategoryComplete')) {
+    !pantheonCategoryWorkflow.includes('onCategoryComplete') ||
+    !pantheonCategoryWorkflow.includes('remaining categories are explicitly marked timed out')) {
   fail('Canonical sequential Pantheon category controller is not fully wired');
 }
 if (
