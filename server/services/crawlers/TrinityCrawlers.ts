@@ -1,5 +1,6 @@
 import { PhylacterySystem } from '../storage/PhylacterySystem';
 import { StealthInfrastructure } from '../stealth/StealthInfrastructure';
+import { acquirePublicResource } from './PublicAcquisitionInfrastructure';
 
 // Types
 interface RequestProfile {
@@ -23,11 +24,12 @@ async function executeRequest(url: string, options: RequestOptions, stealth?: St
     if (stealth) {
       await stealth.connect(url, 'medium');
     }
-    const response = await fetch(url, { ...options, signal: controller.signal });
-    if (!response.ok) {
-      throw new Error(`Crawler request failed: HTTP ${response.status}`);
-    }
-    return response;
+    const resource = await acquirePublicResource(url, options.timeout || 30000);
+    if (!resource.ok) throw new Error(resource.error || `Crawler request failed: HTTP ${resource.status}`);
+    return new Response(resource.content, {
+      status: resource.status,
+      headers: { 'content-type': resource.contentType },
+    });
   } finally {
     clearTimeout(timeoutId);
   }
