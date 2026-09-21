@@ -71,6 +71,11 @@ const checks = [
   ['PDF is rendered from exactly 30 persisted category outcomes', pdf.includes('30-Category Investigation Results') && pdf.includes('canonicalCategories.length') && routes.includes('categoryOutcomes: Array.isArray(envelope.categoryOutcomes)')],
   ['Lich exhaustion is a clean no-evidence result', read('server/services/crawlers/TrinityCrawlers.ts').includes("outcome: 'completed_no_evidence'")],
   ['category UI progression is backed by category-scoped audited execution', categoryWorkflow.includes('buildPantheonCategoryTargets') && categoryWorkflow.includes("purpose: 'background_report'") && categoryWorkflow.includes('crawlerAudit')],
+  ['workflow is explicit sequence authority', categoryWorkflow.includes("PantheonCategoryPhase = 'PENDING' | 'ACTIVE' | 'URL_WORK' | 'EVIDENCE_VALIDATION' | 'PERSISTING' | 'COMPLETE'") && jobs.includes('onCategoryState')],
+  ['background retrieval fails closed without workflow authorization', adapter.includes('missing canonical workflow authorization') && adapter.includes('work authorization deadline expired')],
+  ['investigation identity propagates from report job into workflow', jobs.includes('investigationId: input.reportId') && categoryWorkflow.includes('investigationId: string')],
+  ['category authority propagates into retrieval', categoryWorkflow.includes('authority: {') && categoryWorkflow.includes('categoryId:') && categoryWorkflow.includes('deadlineAt:')],
+  ['workflow state is persisted by report lifecycle infrastructure', jobs.includes('categoryPhase: phase') && jobs.includes('completedCategories')],
   ['background job persists partial evidence before category advancement', jobs.includes('completedCategories') && jobs.includes('categoryName') && jobs.includes('partialReport')],
   ['report state has cross-restart Supabase mirror', reportStore.includes('writeSupabaseMirror') && reportStore.includes('readSupabaseMirror') && reportStore.includes('pantheon-report-state')],
 ];
