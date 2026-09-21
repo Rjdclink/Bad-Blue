@@ -267,6 +267,8 @@ function dedupeEvidence(items: PantheonRetrievalResponse['evidence']) {
   });
 }
 
+let activeCanonicalInvestigation: string | null = null;
+
 export async function conductPantheonCategoryWorkflow(input: {
   investigationId: string;
   name: string;
@@ -279,6 +281,11 @@ export async function conductPantheonCategoryWorkflow(input: {
   onCategoryStart?: (state: { index: number; label: string; completedCategories: number }) => Promise<void>;
   onCategoryComplete?: (state: { index: number; label: string; completedCategories: number; outcome: PantheonCategoryOutcome; partialReport: PeopleSearchReport }) => Promise<void>;
 }): Promise<{ report: PeopleSearchReport; categoryOutcomes: PantheonCategoryOutcome[] }> {
+  if (!input.investigationId) throw new Error('Pantheon canonical workflow requires investigationId');
+  if (activeCanonicalInvestigation && activeCanonicalInvestigation !== input.investigationId) {
+    throw new Error(`Pantheon canonical workflow already active for ${activeCanonicalInvestigation}`);
+  }
+  activeCanonicalInvestigation = input.investigationId;
   const evidence: PantheonRetrievalResponse['evidence'] = [];
   const audits: PantheonRetrievalResponse['crawlerAudit'] = [];
   const categoryOutcomes: PantheonCategoryOutcome[] = [];
@@ -488,5 +495,6 @@ export async function conductPantheonCategoryWorkflow(input: {
     await input.onCategoryState?.({ index, label: category.label, phase: 'COMPLETE', completedCategories: index + 1 });
   }
 
+  activeCanonicalInvestigation = null;
   return { report, categoryOutcomes };
 }
