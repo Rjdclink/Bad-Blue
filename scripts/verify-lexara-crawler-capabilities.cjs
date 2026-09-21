@@ -214,12 +214,18 @@ if (
 if (
   birdOfPrey.includes('generateRandomIP') ||
   birdOfPrey.includes('generateQuantumFingerprint') ||
-  !birdOfPrey.includes('Crawler request failed: HTTP')
+  !birdOfPrey.includes('await acquirePublicResource(url') ||
+  !birdOfPrey.includes('if (!result.ok) throw new Error') ||
+  !birdOfPrey.includes('Crawler request failed:')
 ) {
   fail('BirdOfPrey background-report retrieval still fabricates identity metadata or accepts failed HTTP as evidence');
 }
-if (!sixDegrees.includes('Crawler request failed: HTTP') ||
-  !sixDegrees.includes('this.clearGraph()')) {
+if (
+  !sixDegrees.includes('await acquirePublicResource(url') ||
+  !sixDegrees.includes('if (!result.ok) throw new Error') ||
+  !sixDegrees.includes('Crawler request failed:') ||
+  !sixDegrees.includes('this.clearGraph()')
+) {
   fail('SixDegrees background-report retrieval accepts non-success HTTP as evidence or leaks graph state between targets');
 }
 if (
