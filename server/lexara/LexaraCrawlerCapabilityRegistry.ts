@@ -121,7 +121,7 @@ export const LEXARA_CRAWLER_CAPABILITY_POOL: readonly LexaraCrawlerDescriptor[] 
   c('razor-media', 'MediaRazor', 'razor', 'server/services/pantheon/razors/implementations.ts', ['media', 'structured-extraction'], 'extractor', 'instant'),
 
   c('seed-startrek', 'SeedFetchStarTrek', 'seed-first', 'server/services/crawlers/seedFirst/SeedFetchStarTrek.ts', ['web-discovery', 'legal-authority'], 'retrieval', 'fast', hasFirecrawl),
-  c('seed-birdofprey', 'SeedFetchBirdOfPrey', 'seed-first', 'server/services/crawlers/seedFirst/SeedFetchBirdOfPrey.ts', ['web-discovery', 'deep-crawl'], 'retrieval', 'fast', hasBrowser),
+  c('seed-birdofprey', 'SeedFetchBirdOfPrey', 'seed-first', 'server/services/crawlers/seedFirst/SeedFetchBirdOfPrey.ts', ['web-discovery', 'deep-crawl'], 'retrieval', 'fast', always),
   c('seed-trinity', 'SeedFetchTrinity', 'seed-first', 'server/services/crawlers/seedFirst/SeedFetchTrinity.ts', ['web-discovery', 'verification'], 'retrieval', 'fast'),
   c('seed-sixdegrees', 'SeedFetchSixDegrees', 'seed-first', 'server/services/crawlers/seedFirst/SeedFetchSixDegrees.ts', ['social-graph', 'relationships'], 'retrieval', 'deep'),
 
@@ -145,7 +145,7 @@ export const LEXARA_CRAWLER_CAPABILITY_POOL: readonly LexaraCrawlerDescriptor[] 
   c('firecrawl', 'Firecrawl', 'external', 'server/lexara/LexaraAuthorityResearch.ts', ['web-discovery', 'legal-authority', 'deep-crawl'], 'external', 'fast', hasFirecrawl),
   c('openrouter-web-search', 'OpenRouter Web Search', 'external', 'server/openRouterWebSearch.ts', ['web-discovery', 'legal-authority', 'verification'], 'external', 'fast', hasOpenRouter),
   c('spiderfoot', 'SpiderFoot', 'external', 'server/services/spiderfootClient.ts', ['people-search', 'identity', 'social-media', 'verification'], 'external', 'deep', hasSpiderFoot),
-  c('puppeteer', 'Puppeteer', 'external', 'server/services/crawlers/seedFirst/SeedFetchBirdOfPrey.ts', ['web-discovery', 'deep-crawl'], 'external', 'deep', hasBrowser),
+  c('puppeteer', 'Puppeteer', 'external', 'server/services/crawlers/seedFirst/SeedFetchBirdOfPrey.ts', ['web-discovery', 'deep-crawl'], 'external', 'deep', always),
   c('apify', 'Apify', 'external', 'server/services/volumeEngine/stealth/ApifyIntegration.ts', ['web-discovery', 'deep-crawl'], 'external', 'deep'),
   c('crawl4ai-pattern', 'Crawl4AI Adaptive Pattern', 'external', 'server/services/legalIntelligence/adaptiveCrawler.ts', ['semantic-extraction', 'deep-crawl'], 'external', 'deep'),
 
