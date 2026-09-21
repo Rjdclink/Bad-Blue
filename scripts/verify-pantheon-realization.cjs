@@ -105,6 +105,8 @@ const checks = [
   ['hard deadline propagates into each network attempt', acquisition.includes('hardDeadlineAt?: number') && acquisition.includes('Math.min(hardDeadlineAt') && acquisition.includes('acquireOnce(url, remaining, deadlineAt)')],
   ['every category registry URL passes canonical admission before scheduling', categoryWorkflow.includes('admitPantheonUrl(candidate.url)')],
   ['every redirect is re-admitted before following', acquisition.includes('Redirect rejected by Pantheon URL admission') && acquisition.includes('admitPantheonUrl(new URL(location, current).toString())')],
+  ['crawler-discovered URLs are candidates not executable work', read('server/services/crawlers/TrinityCrawlers.ts').includes('discoveredCandidates') && read('server/services/crawlers/TrinityCrawlers.ts').includes("discoveryExecutionAuthority: 'PantheonCategoryWorkflow'")],
+  ['controller admits and schedules discovered candidates', categoryWorkflow.includes('item.metadata?.discoveredCandidates') && categoryWorkflow.includes("authority: 'discovery'") && categoryWorkflow.includes('prioritizedTargets.push(candidate.url)')],
   ['URL admission rejects junk resources and private network targets', acquisition.includes('BLOCKED_EXTENSIONS') && acquisition.includes('BLOCKED_HOST_HINTS') && acquisition.includes('Private-network acquisition is not permitted')],
   ['legacy people search cannot issue background-report retrieval', peopleSearch.includes('const fullRosterPromise = null')],
   ['legacy route cannot issue background-report retrieval', routes.includes('Canonical Pantheon background-report execution is owned by PantheonCategoryWorkflow')],
