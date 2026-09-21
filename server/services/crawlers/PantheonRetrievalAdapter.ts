@@ -118,7 +118,9 @@ export class PantheonRetrievalAdapter {
     }
     recordCrawlerOutcomes(results);
 
-    const evidence = results.map(normalizeResult);
+    const evidence = results
+      .filter(result => Boolean(result.content?.trim()) && Number.isFinite(result.confidence) && result.confidence > 0)
+      .map(normalizeResult);
 
     if (request.purpose === 'background_report' && collectionOpen()) {
       const urlTargets = request.targets.filter(target => {
