@@ -243,6 +243,13 @@ async function acquireOnce(url: URL, timeoutMs: number): Promise<PublicAcquisiti
   }
 }
 
+export async function acquirePantheonResource(rawUrl: string, timeoutMs: number, authority: PantheonAcquisitionAuthority): Promise<PublicAcquisitionResult> {
+  if (!authority?.investigationId || !authority.categoryId || !authority.workId || !authority.capability) {
+    return failureResult(String(rawUrl || ''), 0, new Error('Pantheon acquisition rejected: incomplete work authorization'));
+  }
+  return acquirePublicResource(rawUrl, timeoutMs, authority);
+}
+
 export async function acquirePublicResource(rawUrl: string, timeoutMs = 12_000, authority?: PantheonAcquisitionAuthority): Promise<PublicAcquisitionResult> {
   if (authority && authority.deadlineAt <= Date.now()) {
     return failureResult(String(rawUrl || ''), 0, new Error('Pantheon acquisition authorization expired'));
