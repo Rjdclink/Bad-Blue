@@ -1,4 +1,6 @@
 import { URL } from 'url';
+import { promises as dns } from 'dns';
+import { isIP } from 'net';
 
 export type PublicAcquisitionKind = 'html' | 'json' | 'xml' | 'rss' | 'csv' | 'text';
 
@@ -48,6 +50,22 @@ function isPrivateHost(host: string): boolean {
     /^172\.(1[6-9]|2\d|3[01])\./.test(normalized);
 }
 
+function isPrivateIp(address: string): boolean {
+  return isPrivateHost(address);
+}
+
+async function assertPublicResolution(url: URL): Promise<void> {
+  if (isIP(url.hostname)) {
+    if (isPrivateIp(url.hostname)) throw new Error('Private-network acquisition is not permitted');
+    return;
+  }
+  const records = await dns.lookup(url.hostname, { all: true, verbatim: true });
+  if (records.length === 0) throw new Error('Public acquisition hostname did not resolve');
+  if (records.some(record => isPrivateIp(record.address))) {
+    throw new Error('Public acquisition hostname resolves to a private network');
+  }
+}
+
 function allowedPublicUrl(raw: string): URL {
   const url = new URL(raw);
   if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Unsupported acquisition protocol');
@@ -68,6 +86,7 @@ export async function acquirePublicResource(rawUrl: string, timeoutMs = 12_000):
     let current = url;
     let response: Response | undefined;
     for (let redirects = 0; redirects <= 5; redirects++) {
+      await assertPublicResolution(current);
       response = await fetch(current, {
       signal: controller.signal,
       redirect: 'manual',
