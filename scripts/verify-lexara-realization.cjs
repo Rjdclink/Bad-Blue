@@ -778,5 +778,33 @@ must(
     orchestrator.indexOf('independent gateway recovered live legal turn') < orchestrator.lastIndexOf('degradedLegalResponse(jurisdiction)'),
   'LEXARA exhausts an orchestration-independent live reasoning lane before degraded legal mode',
 );
+
+
+// CPU-only Lexara continuity guard: one reply uses one progressive session and
+// the visual layer remains a read-only lip overlay above the unchanged portrait.
+must(
+  avatar.includes('cy: 0.357') &&
+    avatar.includes('rx: 0.044') &&
+    avatar.includes('LEGACY_PORTRAIT_NON_MOUTH_OVERLAYS_ENABLED') &&
+    avatar.includes('drawMouth(ctx, image, layout, frame, 0, 0)'),
+  'mouth-only renderer is anchored to the attorney portrait lips while facial/body patches remain disabled',
+);
+must(
+  synthesis.includes('One reply owns one progressive media stream') &&
+    synthesis.includes('createStreamingAudioSession(text, stableTurnId)') &&
+    !synthesis.includes('splitLexaraSpeechChunks') &&
+    !synthesis.includes('fetchPreparedSessionAudio') &&
+    !synthesis.includes('preparedCurrent'),
+  'one Lexara response streams continuously instead of waiting between buffered speech pieces',
+);
+must(
+  speechClient.includes('LexaraPlaybackOptions') &&
+    speechClient.includes('currentTurnId') &&
+    speechClient.includes("this.stop('superseded')") &&
+    voiceRoutes.includes("'tts-session-ready'") &&
+    voiceRoutes.includes('X-Lexara-Turn-Id') &&
+    voiceRoutes.includes('res.flushHeaders()'),
+  'playback telemetry carries one turn identity and the server flushes progressive audio headers immediately',
+);
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA independent recovery verification passed.');
