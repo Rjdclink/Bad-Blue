@@ -791,10 +791,18 @@ must(
 must(
   synthesis.includes('One reply owns one progressive media stream') &&
     synthesis.includes('createStreamingAudioSession(text, stableTurnId)') &&
+    synthesis.includes('MAX_PLAYBACK_WATCHDOG_MS = 600_000') &&
+    synthesis.includes('remainingSpeechText') &&
+    synthesis.includes('playbackOffsetFromError') &&
     !synthesis.includes('splitLexaraSpeechChunks') &&
     !synthesis.includes('fetchPreparedSessionAudio') &&
-    !synthesis.includes('preparedCurrent'),
-  'one Lexara response streams continuously instead of waiting between buffered speech pieces',
+    !synthesis.includes('preparedCurrent') &&
+    speechClient.includes('lexaraPlaybackOffsetMs') &&
+    voiceRoutes.includes('LEXARA_TTS_SESSION_MAX_CHARS = 50_000') &&
+    voiceRoutes.includes('splitLexaraTTSInput') &&
+    voiceRoutes.includes('openLexaraSpeechSequence') &&
+    voiceRoutes.includes('synthesizeLexaraSpeechSequence'),
+  'one Lexara response streams continuously, preserves long replies, and recovers only the unspoken portion after a transport fault',
 );
 must(
   speechClient.includes('LexaraPlaybackOptions') &&
