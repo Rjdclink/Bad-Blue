@@ -29,7 +29,7 @@ import {
 // Constants for crawler messages
 const CRAWLER_MESSAGES = {
   LEVEL_3_SUMMARY: '\n\n🔬 Advanced Analysis: extended PANTHEON retrieval completed with provenance-bearing evidence from the crawler capabilities that returned verified results.',
-  LEVEL_4_SUMMARY: '\n\n👁️ EYE OF GOD: bounded PANTHEON avalanche traversal completed; report contents reflect only evidence actually returned by responsive public sources.',
+  FULL_REPORT_SUMMARY: '\n\n👁️ Full Report: bounded PANTHEON avalanche traversal completed; report contents reflect only evidence actually returned by responsive public sources.',
 };
 
 /**
@@ -102,13 +102,12 @@ function buildPantheonSearchTargets(name: string): string[] {
 
 const PANTHEON_DEPTH_SOURCE_BUDGET: Record<number, number> = {
   1: 1200,  // 10 minutes: focused complete-crawler investigation
-  2: 2800,  // 20 minutes: broader/deeper registry traversal and corroboration
+  2: 2820,  // 20 minutes: broader/deeper registry traversal and corroboration
   3: 4500,  // 30 minutes: maximum standard registry intensity
-  4: 4500,  // legacy maximum mode retains the 30-minute maximum budget
 };
 
 function buildPantheonBackgroundTargets(name: string, location: string | undefined, depth: number): string[] {
-  const normalizedDepth = Math.max(1, Math.min(4, Math.floor(depth || 1)));
+  const normalizedDepth = Math.max(1, Math.min(3, Math.floor(depth || 1)));
   const sourceBudget = PANTHEON_DEPTH_SOURCE_BUDGET[normalizedDepth];
   // Ask for enough candidates to expose the full verified registry at the
   // highest intensity. Registry ordering is authoritative/direct first.
@@ -1022,10 +1021,9 @@ export function formatReportForPDF(report: PeopleSearchReport): string {
  * Now supports tiered search depths based on Doomsday Clock selection
  * 
  * Search Depth Tiers:
- * - Level 1 (30s): ICE (public records) + STAR TREK (fast warp)
- * - Level 2 (60s): ICE + WRAITH (social intelligence) + STAR TREK
- * - Level 3 (120s): ICE + WRAITH + HYDRA + LICH + CERBERUS + BLIZZARD DRAGON + STAR TREK
- * - Level 4 (180s): ALL crawlers + GENESIS orchestrator (Eye of God)
+ * - Level 1 (10m): ICE (public records) + STAR TREK (fast warp)
+ * - Level 2 (20m): ICE + WRAITH (social intelligence) + STAR TREK
+ * - Level 3 (30m): all available crawler capabilities + GENESIS orchestration
  */
 export async function conductFullOSINT(
   searchQuery: string,
@@ -1035,7 +1033,7 @@ export async function conductFullOSINT(
     location?: string;
     phone?: string;
     domain?: string;
-    searchDepth?: number; // 1-4, default 2
+    searchDepth?: number; // 1-3, default 2
     forceAllCrawlers?: boolean;
     reportBudgetMs?: number;
     reportDeadlineAt?: number;
@@ -1047,7 +1045,7 @@ export async function conductFullOSINT(
   searchDepthUsed?: number;
   crawlersActivated?: string[];
 }> {
-  const searchDepth = options?.searchDepth || 2;
+  const searchDepth = Math.max(1, Math.min(3, Math.floor(options?.searchDepth || 2)));
   const forceAllCrawlers = options?.forceAllCrawlers === true;
   const reportBudgetMs = options?.reportBudgetMs;
   const crawlersActivated: string[] = [];
@@ -1093,7 +1091,7 @@ export async function conductFullOSINT(
   }
 
   // Background reports always include GENESIS orchestration.
-  if (forceAllCrawlers || searchDepth >= 4) {
+  if (forceAllCrawlers || searchDepth >= 3) {
     crawlersActivated.push('GENESIS');
   }
 
@@ -1249,8 +1247,8 @@ export async function conductFullOSINT(
       }
     }
 
-    // Level 4: GENESIS orchestrator (EYE OF GOD)
-    if ((forceAllCrawlers || searchDepth >= 4) && (forceAllCrawlers || hasCollectionBudget(45_000))) {
+    // Level 3: GENESIS orchestration
+    if ((forceAllCrawlers || searchDepth >= 3) && (forceAllCrawlers || hasCollectionBudget(45_000))) {
       console.log('[PANTHEON OSINT] 👁️ GENESIS: activating bounded avalanche traversal');
       
       // Check PANTHEON availability again
@@ -1265,7 +1263,7 @@ export async function conductFullOSINT(
           
           if (avalancheResults.length > 0) {
             enhancedReport.sources.push({
-              name: 'GENESIS Orchestrator (Eye of God)',
+              name: 'GENESIS Orchestrator',
               data: { 
                 mode: 'avalanche',
                 resultsCount: avalancheResults.length,
@@ -1276,7 +1274,7 @@ export async function conductFullOSINT(
             });
             
             console.log(`[PANTHEON OSINT] GENESIS avalanche completed: ${avalancheResults.length} results`);
-            enhancedReport.summary += CRAWLER_MESSAGES.LEVEL_4_SUMMARY;
+            enhancedReport.summary += CRAWLER_MESSAGES.FULL_REPORT_SUMMARY;
           }
         } catch (genesisError: any) {
           console.error('[PANTHEON OSINT] GENESIS orchestration failed:', genesisError.message);

@@ -188,7 +188,7 @@ export async function runPantheonCapabilityHealthChecks(input: {
       () => pantheonOrchestrator.searchAllIsolatedWithAudit(
         [acquisition.url],
         {
-          depth: 4,
+          depth: 3,
           crawlers: [...PANTHEON_PRIMARY_CRAWLER_IDS],
           timeout: perFamilyBudgetMs,
           stormIntensity: 'flurry',

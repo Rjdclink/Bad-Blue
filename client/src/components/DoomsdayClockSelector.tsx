@@ -37,7 +37,7 @@ export function DoomsdayClockSelector({
     {
       level: 1,
       icon: "⚡",
-      title: "Quick Search",
+      title: "Basic Search",
       duration: PANTHEON_REPORT_DURATION_LABELS[1],
       description: "All crawlers, focused first-pass investigation",
       color: "from-blue-500 to-blue-600",
@@ -49,9 +49,9 @@ export function DoomsdayClockSelector({
     {
       level: 2,
       icon: "🔎",
-      title: "Basic Search",
+      title: "Enhanced",
       duration: PANTHEON_REPORT_DURATION_LABELS[2],
-      description: "All crawlers with focused evidence collection",
+      description: "All crawlers with a broader investigation budget",
       color: "from-purple-500 to-purple-600",
       borderColor: "border-purple-500/50",
       hoverColor: "hover:border-purple-400",
@@ -61,26 +61,14 @@ export function DoomsdayClockSelector({
     {
       level: 3,
       icon: "📊",
-      title: "Enhanced",
+      title: "Full Report",
       duration: PANTHEON_REPORT_DURATION_LABELS[3],
-      description: "All crawlers with a broader investigation budget",
+      description: "All crawlers with maximum evidence depth and retries",
       color: "from-orange-500 to-orange-600",
       borderColor: "border-orange-500/50",
       hoverColor: "hover:border-orange-400",
       glowColor: "shadow-orange-500/50",
       badgeColor: "bg-orange-500/20 text-orange-300",
-    },
-    {
-      level: 4,
-      icon: "📚",
-      title: "Full Report",
-      duration: PANTHEON_REPORT_DURATION_LABELS[4],
-      description: "All crawlers with maximum evidence depth and retries",
-      color: "from-emerald-500 to-emerald-600",
-      borderColor: "border-emerald-500/50",
-      hoverColor: "hover:border-emerald-400",
-      glowColor: "shadow-emerald-500/50",
-      badgeColor: "bg-emerald-500/20 text-emerald-300",
     },
   ];
 
@@ -173,7 +161,7 @@ export function DoomsdayClockSelector({
       </div>
 
       {/* Doomsday Clock Selector */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {depthLevels.map((depth) => {
           const isSelected = selectedDepth === depth.level;
           const isHovered = hoveredDepth === depth.level;

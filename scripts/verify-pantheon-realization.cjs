@@ -33,8 +33,8 @@ const trinity = read('server/services/crawlers/TrinityCrawlers.ts');
 const capabilityMatrix = read('server/services/pantheon/PantheonCrawlerCapabilityMatrix.ts');
 
 const checks = [
-  ['four public scan choices are 5 10 20 30 minutes', config.includes("1: 5 * 60_000") && config.includes("2: 10 * 60_000") && config.includes("3: 20 * 60_000") && config.includes("4: 30 * 60_000") && !selector.includes('EYE OF GOD') && !progressTracker.includes('EYE OF GOD')],
-  ['scan intensity tracks selected duration', people.includes('1: 600') && people.includes('2: 1200') && people.includes('3: 2820') && people.includes('4: 4500')],
+  ['three public scan choices are 10 20 30 minutes', config.includes("1: 10 * 60_000") && config.includes("2: 20 * 60_000") && config.includes("3: 30 * 60_000") && !config.includes("4: 30 * 60_000") && !selector.includes('PANTHEON_REPORT_DURATION_LABELS[4]') && !progressTracker.includes('EYE OF GOD')],
+  ['scan intensity tracks selected duration', people.includes('1: 1200') && people.includes('2: 2820') && people.includes('3: 4500')],
   ['durable report status distinguishes missing jobs from temporary store outages', routes.includes('report_store_converging') && routes.includes("'report_job_gone'") && routes.includes('res.status(gone ? 410 : 404)') && reportStore.includes("state: 'temporarily_unavailable'") && reportStore.includes("state: 'not_found'")],
   ['client retries only transient report-store status without unlocking an unresolved job', client.includes('[429, 502, 503, 504]') && client.includes('response.status === 404 || response.status === 410') && client.includes('consecutivePollFailures = Math.min(8, consecutivePollFailures + 1)')],
   ['persisted report recovery does not impersonate an active search', client.includes('restoringPersistedJob') && client.includes('setRestoringPersistedJob(true)') && !client.includes("setReportJobId(persistedJobId);\n      setSearching(true)")],

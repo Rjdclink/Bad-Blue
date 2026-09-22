@@ -3869,9 +3869,9 @@ Contact: ${foiaRequest.userEmail || userEmail}
     const phone = String(body.phone || '').trim();
     const { department, badge, domain, profileUrl } = body;
     const requestedDepth = Number(body.searchDepth);
-    const searchDepth: 1 | 2 | 3 | 4 = requestedDepth >= 1 && requestedDepth <= 4
-      ? requestedDepth as 1 | 2 | 3 | 4
-      : 4;
+    const searchDepth: 1 | 2 | 3 = requestedDepth >= 1 && requestedDepth <= 3
+      ? requestedDepth as 1 | 2 | 3
+      : 3;
 
     // Preserve the seed-first controlled-200 contract while enforcing the same
     // fresh paid-access authority as the rest of the private LegalWhat services.
