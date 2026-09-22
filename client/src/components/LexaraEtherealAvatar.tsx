@@ -39,6 +39,14 @@ const SIZE_CONFIG = {
 };
 
 const LIVE_AVATAR_ENABLED = String(import.meta.env.VITE_LEXARA_LIVE_AVATAR_ENABLED ?? '1') !== '0';
+// The audio player is authoritative. This read-only canvas may use its PCM features
+// for mouth timing, but it never changes the voice stream or audio controls.
+const LEGACY_PORTRAIT_MOUTH_OVERLAY_ENABLED =
+  String(import.meta.env.VITE_LEXARA_LEGACY_PORTRAIT_MOUTH_OVERLAY_ENABLED ?? '1') !== '0';
+// All other local portrait patches are off by default: they create artifacts when
+// a small still image is independently re-composited around the face and body.
+const LEGACY_PORTRAIT_NON_MOUTH_OVERLAYS_ENABLED =
+  String(import.meta.env.VITE_LEXARA_LEGACY_PORTRAIT_NON_MOUTH_OVERLAYS_ENABLED ?? '0') === '1';
 const TARGET_FPS = 30;
 
 interface LatestAvatarInput {
@@ -321,96 +329,110 @@ function renderEmbodiedFrame(
   const headDy = frame.headY * height * 0.0042 * motionScale;
   const headRotation = frame.headRollDeg * 0.68 * motionScale;
 
-  // Breathing and shoulder/torso movement. These are deliberately visible at
-  // conversational viewing sizes but remain bounded so desk/background geometry
-  // does not visibly shear.
-  drawImageWithLocalTransform(
-    ctx,
-    image,
-    layout,
-    { cx: 0.515, cy: 0.675, rx: 0.285, ry: 0.30 },
-    {
-      dx: torsoDx,
-      dy: torsoDy,
-      rotationDeg: frame.torsoX * 0.22 * motionScale,
-      scaleX: reducedMotion ? 1 : frame.torsoScaleX,
-      scaleY: reducedMotion ? 1 + (frame.torsoScaleY - 1) * 0.35 : frame.torsoScaleY,
-      alpha: 0.985,
-    },
-  );
-
-  // Hand/forearm regions move only when the behavior planner has speaking or
-  // backchannel energy. This is not a canned gesture clip; it is continuous
-  // motion coupled to the current behavioral state.
-  if (!reducedMotion && frame.gestureEnergy > 0.08) {
-    const handMotion = frame.gestureEnergy;
+  // Keep all non-mouth motion disabled by default. These independent image patches
+  // are the source of the intermittent face seams and blink artifact.
+  if (LEGACY_PORTRAIT_NON_MOUTH_OVERLAYS_ENABLED) {
+    // Breathing and shoulder/torso movement. These are deliberately visible at
+    // conversational viewing sizes but remain bounded so desk/background geometry
+    // does not visibly shear.
     drawImageWithLocalTransform(
       ctx,
       image,
       layout,
-      { cx: 0.455, cy: 0.858, rx: 0.115, ry: 0.135 },
+      { cx: 0.515, cy: 0.675, rx: 0.285, ry: 0.30 },
       {
-        dx: Math.sin(frame.mouthOpen * 7.2 + frame.nod) * width * 0.0024 * handMotion,
-        dy: -height * 0.0020 * handMotion,
-        rotationDeg: -0.55 * handMotion,
-        alpha: 0.98,
+        dx: torsoDx,
+        dy: torsoDy,
+        rotationDeg: frame.torsoX * 0.22 * motionScale,
+        scaleX: reducedMotion ? 1 : frame.torsoScaleX,
+        scaleY: reducedMotion ? 1 + (frame.torsoScaleY - 1) * 0.35 : frame.torsoScaleY,
+        alpha: 0.985,
       },
     );
+
+    // Hand/forearm regions move only when the behavior planner has speaking or
+    // backchannel energy. This is not a canned gesture clip; it is continuous
+    // motion coupled to the current behavioral state.
+    if (!reducedMotion && frame.gestureEnergy > 0.08) {
+      const handMotion = frame.gestureEnergy;
+      drawImageWithLocalTransform(
+        ctx,
+        image,
+        layout,
+        { cx: 0.455, cy: 0.858, rx: 0.115, ry: 0.135 },
+        {
+          dx: Math.sin(frame.mouthOpen * 7.2 + frame.nod) * width * 0.0024 * handMotion,
+          dy: -height * 0.0020 * handMotion,
+          rotationDeg: -0.55 * handMotion,
+          alpha: 0.98,
+        },
+      );
+      drawImageWithLocalTransform(
+        ctx,
+        image,
+        layout,
+        { cx: 0.615, cy: 0.87, rx: 0.11, ry: 0.13 },
+        {
+          dx: width * 0.0014 * handMotion,
+          dy: height * 0.0012 * handMotion,
+          rotationDeg: 0.38 * handMotion,
+          alpha: 0.98,
+        },
+      );
+    }
+
+
+  }
+
+  // Keep the old head, eye, brow, and blink patches available only for a controlled
+  // experiment. They are never part of the normal mouth-only renderer.
+  if (LEGACY_PORTRAIT_NON_MOUTH_OVERLAYS_ENABLED) {
+    // Head/hair moves as one coherent region. The soft scale change is large
+    // enough to read as real head motion instead of a sub-pixel CSS shimmer.
     drawImageWithLocalTransform(
       ctx,
       image,
       layout,
-      { cx: 0.615, cy: 0.87, rx: 0.11, ry: 0.13 },
+      { cx: 0.515, cy: 0.322, rx: 0.125, ry: 0.235 },
       {
-        dx: width * 0.0014 * handMotion,
-        dy: height * 0.0012 * handMotion,
-        rotationDeg: 0.38 * handMotion,
-        alpha: 0.98,
+        dx: headDx,
+        dy: headDy,
+        rotationDeg: headRotation,
+        scaleX: 1 + Math.abs(frame.headX) * 0.0018 * motionScale,
+        scaleY: 1 + frame.headPitch * 0.0024 * motionScale,
+        alpha: 0.992,
       },
     );
+
+    const gazeDx = frame.gazeX * width * 0.00165 * motionScale;
+    const gazeDy = frame.gazeY * height * 0.00115 * motionScale;
+    const leftEye: Region = { cx: 0.489, cy: 0.298, rx: 0.018, ry: 0.0105 };
+    const rightEye: Region = { cx: 0.543, cy: 0.298, rx: 0.018, ry: 0.0105 };
+
+    if (frame.blink < 0.82) {
+      drawPatchShift(ctx, image, layout, leftEye, headDx - gazeDx, headDy - gazeDy);
+      drawPatchShift(ctx, image, layout, rightEye, headDx - gazeDx, headDy - gazeDy);
+    }
+
+    // Eyebrow response gives thinking/emphasis a visible facial component.
+    if (!reducedMotion && Math.abs(frame.browLift) > 0.035) {
+      const browDy = -frame.browLift * height * 0.0028;
+      drawPatchShift(ctx, image, layout, { cx: 0.489, cy: 0.276, rx: 0.025, ry: 0.010 }, headDx, headDy + browDy);
+      drawPatchShift(ctx, image, layout, { cx: 0.543, cy: 0.276, rx: 0.025, ry: 0.010 }, headDx, headDy + browDy);
+    }
+
+    drawBlink(ctx, layout, leftEye, frame.blink, skinColor, headDx, headDy);
+    drawBlink(ctx, layout, rightEye, frame.blink, skinColor, headDx, headDy);
+
+
   }
 
-  // Head/hair moves as one coherent region. The soft scale change is large
-  // enough to read as real head motion instead of a sub-pixel CSS shimmer.
-  drawImageWithLocalTransform(
-    ctx,
-    image,
-    layout,
-    { cx: 0.515, cy: 0.322, rx: 0.125, ry: 0.235 },
-    {
-      dx: headDx,
-      dy: headDy,
-      rotationDeg: headRotation,
-      scaleX: 1 + Math.abs(frame.headX) * 0.0018 * motionScale,
-      scaleY: 1 + frame.headPitch * 0.0024 * motionScale,
-      alpha: 0.992,
-    },
-  );
-
-  const gazeDx = frame.gazeX * width * 0.00165 * motionScale;
-  const gazeDy = frame.gazeY * height * 0.00115 * motionScale;
-  const leftEye: Region = { cx: 0.489, cy: 0.298, rx: 0.018, ry: 0.0105 };
-  const rightEye: Region = { cx: 0.543, cy: 0.298, rx: 0.018, ry: 0.0105 };
-
-  if (frame.blink < 0.82) {
-    drawPatchShift(ctx, image, layout, leftEye, headDx - gazeDx, headDy - gazeDy);
-    drawPatchShift(ctx, image, layout, rightEye, headDx - gazeDx, headDy - gazeDy);
+  // The only normal visual animation: the lip region follows the existing,
+  // already-playing TTS PCM signal. No voice data, requests, or playback state
+  // are written by this renderer.
+  if (LEGACY_PORTRAIT_MOUTH_OVERLAY_ENABLED) {
+    drawMouth(ctx, image, layout, frame, 0, 0);
   }
-
-  // Eyebrow response gives thinking/emphasis a visible facial component.
-  if (!reducedMotion && Math.abs(frame.browLift) > 0.035) {
-    const browDy = -frame.browLift * height * 0.0028;
-    drawPatchShift(ctx, image, layout, { cx: 0.489, cy: 0.276, rx: 0.025, ry: 0.010 }, headDx, headDy + browDy);
-    drawPatchShift(ctx, image, layout, { cx: 0.543, cy: 0.276, rx: 0.025, ry: 0.010 }, headDx, headDy + browDy);
-  }
-
-  drawBlink(ctx, layout, leftEye, frame.blink, skinColor, headDx, headDy);
-  drawBlink(ctx, layout, rightEye, frame.blink, skinColor, headDx, headDy);
-
-  // Mouth geometry is driven from already-rendered TTS PCM features, not the
-  // microphone. It remains active even when prefers-reduced-motion is enabled
-  // because lip motion is communicative, not decorative.
-  drawMouth(ctx, image, layout, frame, headDx, headDy);
 }
 
 /**
