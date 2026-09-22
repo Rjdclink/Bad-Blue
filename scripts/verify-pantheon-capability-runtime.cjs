@@ -31,7 +31,10 @@ if (!workflow.includes('capabilityOutcomes') || !workflow.includes('resolveHealt
 if (!controller.includes('assessPantheonCapabilityCoverage') || !controller.includes('capabilityCoverage')) {
   throw new Error('Investigation release gate does not require real capability coverage');
 }
-if (!adapter.includes('getPantheonCategoryCapabilities') || !adapter.includes('results.find(result => result.target === target') && adapter.includes('applicableCapabilities') && adapter.includes('request.signal')) {
+if (!adapter.includes('getPantheonCategoryCapabilities')
+  || !adapter.includes('permittedCapabilities.has(capability as PantheonCapabilityId)')
+  || !adapter.includes('capabilityIds: applicableCapabilities')
+  || !adapter.includes('runPantheonSupplementalCapabilities')) {
   throw new Error('Extended crawler execution is not restricted by the capability matrix');
 }
 for (const token of ['durationMs?: number','queueWaitMs?: number','sourceOutcomes?: CrawlerSourceOutcome[]','executionStartedAt','getPantheonCrawlerPoolActivity']) {

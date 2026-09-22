@@ -3737,13 +3737,9 @@ Contact: ${foiaRequest.userEmail || userEmail}
     res.setHeader('Cache-Control', 'private, no-store');
     const release = job?.reportRelease;
     const releaseBlocker = job?.releaseBlocker || release?.blocker;
-    const partialMessage = releaseBlocker === 'no_accepted_evidence'
-      ? 'No verified, attributable public-source evidence was accepted, so no PDF was released.'
-      : releaseBlocker === 'no_attributable_source'
-        ? 'Evidence lacked attributable public-source URLs, so no PDF was released.'
-        : releaseBlocker === 'investigation_contract_incomplete'
-          ? `The investigation completed ${Number(job?.completedCategories || 0)} of ${Number(job?.totalCategories || 30)} required categories, so no PDF was released.`
-          : 'The investigation did not meet the evidence and coverage requirements for a releasable report.';
+    const partialMessage = releaseBlocker === 'investigation_contract_incomplete'
+      ? `The investigation produced ${Number(job?.completedCategories || 0)} of ${Number(job?.totalCategories || 30)} required category outcomes, so report generation could not finish.`
+      : 'Background report generation did not finish.';
 
     return res.json({
       success: true,
@@ -3802,7 +3798,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
         message: report.status === 'failed'
           ? report.errorMessage || 'Background report failed.'
           : report.status === 'partial'
-            ? 'The investigation did not meet the evidence and coverage requirements for a releasable report.'
+            ? 'Background report generation did not finish.'
             : envelope.pdfVerification?.verified !== true
             ? 'Background report PDF verification has not completed.'
             : 'Background report is still being generated.',
