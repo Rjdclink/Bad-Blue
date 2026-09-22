@@ -53,7 +53,7 @@ interface StreamingAudioSession {
 
 const SERVER_TTS_FETCH_TIMEOUT_MS = 20_000;
 const MIN_PLAYBACK_WATCHDOG_MS = 10_000;
-const MAX_PLAYBACK_WATCHDOG_MS = 240_000;
+const MAX_PLAYBACK_WATCHDOG_MS = 600_000;
 
 function requiresMediaElementSpeechOutput(): boolean {
   if (typeof navigator === 'undefined') return false;
@@ -61,6 +61,26 @@ function requiresMediaElementSpeechOutput(): boolean {
   // route reaches playing/ended while the AudioWorklet realtime route can render
   // PCM frames without producing audible speaker output. Keep realtime connected
   // for low-latency STT/barge-in, but use the proven media output sink on Android.
+
+function remainingSpeechText(text: string, playbackOffsetMs: number, expectedDurationMs: number): string {
+  const clean = text.replace(/\s+/g, ' ').trim();
+  if (playbackOffsetMs <= 0 || !clean) return clean;
+
+  // The media element reports time, not word timings. A proportional word boundary
+  // is therefore the safest CPU-only recovery point: it avoids replaying the
+  // already spoken portion without introducing a second live synthesis channel.
+  const words = clean.split(' ').filter(Boolean);
+  if (words.length < 2) return '';
+  const progress = Math.max(0, Math.min(0.999, playbackOffsetMs / Math.max(1, expectedDurationMs)));
+  const consumedWords = Math.min(words.length - 1, Math.max(1, Math.floor(words.length * progress)));
+  return words.slice(consumedWords).join(' ');
+}
+
+function playbackOffsetFromError(error: unknown): number {
+  if (!error || typeof error !== 'object') return 0;
+  const offset = Number((error as { lexaraPlaybackOffsetMs?: unknown }).lexaraPlaybackOffsetMs);
+  return Number.isFinite(offset) && offset > 0 ? offset : 0;
+}
   return /Android/i.test(navigator.userAgent);
 }
 
@@ -210,30 +230,15 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
   ): Promise<void> => {
     // One reply owns one progressive media stream. Do not split a response into
     // separately downloaded blobs: that was the source of the audible gaps.
-    const stableTurnId = `lexara-turn-${turnId}`;
+    const stableTurnId = \`lexara-turn-\${turnId}\`;
     const interruption = makeInterruptionPromise();
     let selectedProvider: string | null = null;
     let expectedDuration = Math.max(10_000, text.length * 70);
+    let playbackStarted = false;
 
-    try {
-      const sessionStartedAt = performance.now();
-      const session = await createStreamingAudioSession(text, stableTurnId);
-      if (turnId !== activeTurnRef.current) return;
-
-      selectedProvider = session.provider;
-      void fetch('/api/lexara/voice/playback-event', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          event: 'tts-session-ready',
-          source: 'streaming',
-          provider: session.provider,
-          turnId: stableTurnId,
-          startupMs: Math.round(performance.now() - sessionStartedAt),
-        }),
-        keepalive: true,
-      }).catch(() => undefined);
-
+    const markPlaybackStarted = () => {
+      if (playbackStarted) return;
+      playbackStarted = true;
       if (voiceFailureToastIdRef.current) {
         dismiss(voiceFailureToastIdRef.current);
         voiceFailureToastIdRef.current = null;
@@ -242,18 +247,93 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
       setIsLoading(false);
       setIsSpeaking(true);
       options.onStart?.();
+    };
 
-      let playback = LexaraServerTTS.play(
-        { audioUrl: session.audioUrl },
-        { turnId: stableTurnId },
-      ).then<PlaybackOutcome>(() => 'ended').catch<PlaybackOutcome>(() => 'failed');
-
-      let outcome = await Promise.race([
-        playback,
+    const waitForPlayback = async (
+      playback: Promise<void>,
+      captureFailure: (error: unknown) => void,
+      durationMs: number,
+    ): Promise<PlaybackOutcome> => {
+      const outcome = await Promise.race([
+        playback.then<PlaybackOutcome>(() => 'ended').catch<PlaybackOutcome>(error => {
+          captureFailure(error);
+          return 'failed';
+        }),
         interruption,
-        makePlaybackWatchdog(expectedDuration + 8_000),
+        makePlaybackWatchdog(durationMs + 8_000),
       ]);
       clearPlaybackWatchdog();
+      return outcome;
+    };
+
+    const playBufferedRecovery = async (recoveryText: string): Promise<PlaybackOutcome> => {
+      const recovery = await fetchServerAudio(recoveryText);
+      if (turnId !== activeTurnRef.current) return 'interrupted';
+      selectedProvider = recovery.provider || selectedProvider;
+      expectedDuration = recovery.durationMs || Math.max(10_000, recoveryText.length * 70);
+      markPlaybackStarted();
+
+      let recoveryFailure: unknown = null;
+      return waitForPlayback(
+        LexaraServerTTS.play(recovery.blob, { turnId: stableTurnId }),
+        error => { recoveryFailure = error; },
+        expectedDuration,
+      ).then(outcome => {
+        // Keep the captured failure in scope for debugger inspection without
+        // changing the public PlaybackOutcome contract.
+        void recoveryFailure;
+        return outcome;
+      });
+    };
+
+    try {
+      let session: StreamingAudioSession;
+      try {
+        const sessionStartedAt = performance.now();
+        session = await createStreamingAudioSession(text, stableTurnId);
+        if (turnId !== activeTurnRef.current) return;
+
+        selectedProvider = session.provider;
+        void fetch('/api/lexara/voice/playback-event', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            event: 'tts-session-ready',
+            source: 'streaming',
+            provider: session.provider,
+            turnId: stableTurnId,
+            startupMs: Math.round(performance.now() - sessionStartedAt),
+          }),
+          keepalive: true,
+        }).catch(() => undefined);
+      } catch {
+        // A readiness/session POST failure occurs before any media reaches the
+        // user. Preserve the established buffered mesh as the immediate fallback.
+        const outcome = await playBufferedRecovery(text);
+        if (turnId !== activeTurnRef.current || outcome === 'interrupted') {
+          LexaraServerTTS.stop('interrupted');
+          return;
+        }
+        if (outcome === 'failed' || outcome === 'timeout') {
+          LexaraServerTTS.stop(outcome === 'timeout' ? 'timeout' : 'failed');
+          throw new Error('LEXARA voice playback failed after route-local recovery');
+        }
+        interruptionResolverRef.current = null;
+        setIsSpeaking(false);
+        options.onEnd?.();
+        return;
+      }
+
+      markPlaybackStarted();
+      let streamFailure: unknown = null;
+      let outcome = await waitForPlayback(
+        LexaraServerTTS.play(
+          { audioUrl: session.audioUrl },
+          { turnId: stableTurnId },
+        ),
+        error => { streamFailure = error; },
+        expectedDuration,
+      );
 
       if (turnId !== activeTurnRef.current || outcome === 'interrupted') {
         LexaraServerTTS.stop('interrupted');
@@ -261,22 +341,20 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
       }
 
       if (outcome === 'failed') {
-        // Keep the existing buffered mesh only as a route-local recovery. It is
-        // never the normal multi-piece playback path.
+        // A late transport error must never replay the answer from the beginning.
+        // The media element supplies the spoken offset; recover only the estimated
+        // unspoken word boundary through the existing buffered route.
+        const playbackOffsetMs = playbackOffsetFromError(streamFailure);
+        const recoveryText = remainingSpeechText(text, playbackOffsetMs, expectedDuration);
+        if (!recoveryText) {
+          interruptionResolverRef.current = null;
+          setIsSpeaking(false);
+          options.onEnd?.();
+          return;
+        }
+
         LexaraServerTTS.stop('recovery');
-        const recovery = await fetchServerAudio(text);
-        if (turnId !== activeTurnRef.current) return;
-        selectedProvider = recovery.provider || selectedProvider;
-        expectedDuration = recovery.durationMs || expectedDuration;
-        playback = LexaraServerTTS.play(recovery.blob, { turnId: stableTurnId })
-          .then<PlaybackOutcome>(() => 'ended')
-          .catch<PlaybackOutcome>(() => 'failed');
-        outcome = await Promise.race([
-          playback,
-          interruption,
-          makePlaybackWatchdog(expectedDuration + 8_000),
-        ]);
-        clearPlaybackWatchdog();
+        outcome = await playBufferedRecovery(recoveryText);
       }
 
       if (turnId !== activeTurnRef.current || outcome === 'interrupted') {
