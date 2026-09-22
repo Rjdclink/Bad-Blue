@@ -55,13 +55,6 @@ const SERVER_TTS_FETCH_TIMEOUT_MS = 20_000;
 const MIN_PLAYBACK_WATCHDOG_MS = 10_000;
 const MAX_PLAYBACK_WATCHDOG_MS = 600_000;
 
-function requiresMediaElementSpeechOutput(): boolean {
-  if (typeof navigator === 'undefined') return false;
-  // Production telemetry on Android Chrome proved the progressive HTMLMediaElement
-  // route reaches playing/ended while the AudioWorklet realtime route can render
-  // PCM frames without producing audible speaker output. Keep realtime connected
-  // for low-latency STT/barge-in, but use the proven media output sink on Android.
-
 function remainingSpeechText(text: string, playbackOffsetMs: number, expectedDurationMs: number): string {
   const clean = text.replace(/\s+/g, ' ').trim();
   if (playbackOffsetMs <= 0 || !clean) return clean;
@@ -80,8 +73,6 @@ function playbackOffsetFromError(error: unknown): number {
   if (!error || typeof error !== 'object') return 0;
   const offset = Number((error as { lexaraPlaybackOffsetMs?: unknown }).lexaraPlaybackOffsetMs);
   return Number.isFinite(offset) && offset > 0 ? offset : 0;
-}
-  return /Android/i.test(navigator.userAgent);
 }
 
 export function useVoiceSynthesis(): VoiceSynthesisResult {
@@ -271,11 +262,13 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
       if (turnId !== activeTurnRef.current) return 'interrupted';
       selectedProvider = recovery.provider || selectedProvider;
       expectedDuration = recovery.durationMs || Math.max(10_000, recoveryText.length * 70);
-      markPlaybackStarted();
 
       let recoveryFailure: unknown = null;
       return waitForPlayback(
-        LexaraServerTTS.play(recovery.blob, { turnId: stableTurnId }),
+        LexaraServerTTS.play(recovery.blob, {
+          turnId: stableTurnId,
+          onStart: markPlaybackStarted,
+        }),
         error => { recoveryFailure = error; },
         expectedDuration,
       ).then(outcome => {
@@ -324,12 +317,14 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
         return;
       }
 
-      markPlaybackStarted();
       let streamFailure: unknown = null;
       let outcome = await waitForPlayback(
         LexaraServerTTS.play(
           { audioUrl: session.audioUrl },
-          { turnId: stableTurnId },
+          {
+            turnId: stableTurnId,
+            onStart: markPlaybackStarted,
+          },
         ),
         error => { streamFailure = error; },
         expectedDuration,
@@ -396,7 +391,11 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
 
     try {
       let realtimeStarted = false;
-      if (lexaraRealtimeVoiceClient.isReady() && !requiresMediaElementSpeechOutput()) {
+      const realtimeOutputReady = lexaraRealtimeVoiceClient.isReady()
+        ? await lexaraRealtimeVoiceClient.ensureSpeechOutputReady()
+        : false;
+      if (turnId !== activeTurnRef.current) return;
+      if (realtimeOutputReady) {
         try {
           setProvider('deepgram-flux');
           await lexaraRealtimeVoiceClient.speak(
