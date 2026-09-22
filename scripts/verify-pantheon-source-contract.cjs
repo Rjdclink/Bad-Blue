@@ -17,7 +17,7 @@ for (const token of [
   'contentHash',
   'evidenceId',
   'provenance',
-  "status: 'completed_with_evidence'",
+  "status: 'completed_with_content'",
 ]) {
   if (!sourceResult.includes(token)) throw new Error('Structured source-result contract missing: ' + token);
 }
@@ -44,6 +44,7 @@ for (const token of [
   "'conflicting_evidence'",
   "'weak_evidence'",
   'verified_live_source',
+  "status: 'completed_with_evidence'",
   'analysisEligible',
 ]) {
   if (!evidence.includes(token)) throw new Error('Evidence normalization/filtering gate missing: ' + token);

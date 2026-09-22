@@ -399,7 +399,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       crawlersActivated: [...new Set((report.crawlerAudit || [])
         .filter((entry: any) => Number(entry.attempts || 0) > 0
           && Number(entry.targets || 0) > 0
-          && ['completed_with_evidence', 'completed_no_evidence'].includes(String(entry.status || '')))
+          && ['completed_with_content', 'completed_with_evidence', 'completed_no_evidence'].includes(String(entry.status || '')))
         .map((entry: any) => String(entry.crawler || ''))
         .filter(Boolean))],
       investigationIntelligence,

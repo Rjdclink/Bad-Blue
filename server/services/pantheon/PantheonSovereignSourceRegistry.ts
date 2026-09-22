@@ -90,49 +90,6 @@ export const PANTHEON_EXECUTABLE_SOURCE_INVENTORY = PANTHEON_COMPILED_SOURCE_REG
 export const PANTHEON_SOURCE_EXCLUSION_LEDGER = PANTHEON_COMPILED_SOURCE_REGISTRY.exclusions;
 export const PANTHEON_SOURCE_REGISTRY_DIAGNOSTICS = PANTHEON_COMPILED_SOURCE_REGISTRY.diagnostics;
 
-const AUTHORITIES = [
-  ['https://www.usa.gov/','primary'],['https://www.uscourts.gov/','primary'],
-  ['https://www.supremecourt.gov/','primary'],
-  ['https://www.justice.gov/','primary'],['https://www.fbi.gov/','primary'],
-  ['https://www.bop.gov/','primary'],['https://www.usmarshals.gov/','primary'],
-  ['https://www.nsopw.gov/','primary'],['https://www.archives.gov/','primary'],
-  ['https://catalog.archives.gov/','primary'],['https://www.govinfo.gov/','primary'],
-  ['https://www.congress.gov/','primary'],['https://www.fec.gov/','primary'],
-  ['https://www.sec.gov/search-filings','primary'],['https://adviserinfo.sec.gov/','primary'],
-  ['https://brokercheck.finra.org/','primary'],['https://www.nmlsconsumeraccess.org/','primary'],
-  ['https://www.fdic.gov/','primary'],['https://www.occ.gov/','primary'],
-  ['https://www.federalreserve.gov/','primary'],['https://ncua.gov/','primary'],
-  ['https://www.cftc.gov/','primary'],['https://www.nfa.futures.org/basicnet/','primary'],
-  ['https://www.ftc.gov/','primary'],['https://www.consumerfinance.gov/','primary'],
-  ['https://www.usaspending.gov/','primary'],['https://sam.gov/','primary'],
-  ['https://www.uspto.gov/','primary'],['https://www.copyright.gov/','primary'],
-  ['https://www.dol.gov/','primary'],['https://www.osha.gov/','primary'],
-  ['https://www.nlrb.gov/','primary'],['https://www.eeoc.gov/','primary'],
-  ['https://data.cms.gov/','primary'],['https://npiregistry.cms.hhs.gov/','primary'],
-  ['https://openpaymentsdata.cms.gov/','primary'],['https://www.fda.gov/','primary'],
-  ['https://www.fmcsa.dot.gov/','primary'],['https://safer.fmcsa.dot.gov/','primary'],
-  ['https://www.faa.gov/','primary'],['https://www.epa.gov/','primary'],
-  ['https://echo.epa.gov/','primary'],['https://ofac.treasury.gov/','primary'],
-  ['https://sanctionssearch.ofac.treas.gov/','primary'],['https://www.bis.gov/','primary'],
-  ['https://www.interpol.int/','primary'],['https://www.irs.gov/charities-non-profits','primary'],
-  ['https://www.loc.gov/','primary'],['https://chroniclingamerica.loc.gov/','archive'],
-  ['https://www.courtlistener.com/','secondary'],['https://archive.org/','archive'],
-  ['https://web.archive.org/','archive'],['https://index.commoncrawl.org/','archive'],
-] as const;
-
-const DISCOVERY_HOSTS = [
- 'https://www.bing.com/search?q=',
- 'https://html.duckduckgo.com/html/?q=',
-] as const;
-
-const facets = [
- 'official record','historical record','current record','archive','filing','register','registry','database',
- 'court','county','state','federal','municipal','license','discipline','enforcement','property','business',
- 'professional','employment','education','address','contact','associate','news','document','report','index',
- 'directory','docket','assessment','deed','lien','judgment','disclosure','ownership','officer','biography',
- 'publication','sanction','procurement','contract','grant','corrections','inmate','warrant','case','appeal',
-] as const;
-
 function transportForSource(url: string, authority: PantheonSourceTarget['authority']): PantheonTransport {
  const value=url.toLowerCase();
  if(authority==='discovery'||/google\.com\/search|bing\.com\/search|search\.brave\.com|duckduckgo\.com\/html/.test(value)) return 'search-provider';
@@ -178,8 +135,9 @@ export function buildPantheonCategoryTargets(
  if (!identity) return [];
  const out:PantheonSourceTarget[]=[]; const seen=new Set<string>();
  const add=(x:Omit<PantheonSourceTarget,'transport'|'subjectScoped'|'sourceKind'|'freshnessWeight'|'expectedValue'> & {transport?:PantheonTransport;subjectScoped?:boolean;sourceKind?:PantheonSourceTarget['sourceKind'];freshnessWeight?:number;expectedValue?:number})=>{ if(!seen.has(x.url)){const sourceKind=x.sourceKind||sourceKindFor(x.url,x.authority);const weights=sourceWeights(sourceKind,x.authority);seen.add(x.url);out.push({...x,transport:x.transport||transportForSource(x.url,x.authority),sourceKind,freshnessWeight:x.freshnessWeight??weights.freshnessWeight,expectedValue:x.expectedValue??weights.expectedValue,subjectScoped:x.subjectScoped===true});} };
- // Pair each verified authority with its direct public entry point and a
- // subject-specific discovery task. The direct entry point is intentionally
+ // Pair each category-verified authority with its direct public entry point,
+ // same-origin sitemap, subject-specific site search, and public archive index.
+ // The direct entry point is intentionally
  // not credited as person evidence by itself; it gives the appropriately
  // routed crawler a policy-compliant source page from which it can discover
  // lawful public search/result routes. Discovery remains a fallback, never
@@ -194,7 +152,9 @@ export function buildPantheonCategoryTargets(
  for (const source of inventory) {
    if (!source.categories.includes(category)) continue;
    const q=`${identity} ${category}`;
-   const host=new URL(source.url).hostname;
+   const parsedSource=new URL(source.url);
+   const host=parsedSource.hostname;
+   const sourceRoot=`${parsedSource.protocol}//${parsedSource.host}`;
    add({
      category,
      url:source.url,
@@ -210,7 +170,22 @@ export function buildPantheonCategoryTargets(
    if(out.length>=limit) return out.slice(0,limit);
    add({
      category,
-     url:searchUrl('https://www.bing.com/search?q=',`site:${host} ${q}`),
+     url:`${sourceRoot}/sitemap.xml`,
+     authority:source.authority,
+     jurisdiction:source.jurisdiction,
+     query:q,
+     transport:'direct-http',
+     sourceKind:'sitemap',
+     subjectScoped:false,
+     sourceIds:[...source.sourceIds],
+     originalUrls:[...source.originalUrls],
+     accessMode:source.accessMode,
+     accessReason:source.accessReason,
+   });
+   if(out.length>=limit) return out.slice(0,limit);
+   add({
+     category,
+     url:searchUrl('https://html.duckduckgo.com/html/?q=',`site:${host} ${q}`),
      authority:'discovery',
      jurisdiction:source.jurisdiction,
      query:q,
@@ -222,17 +197,21 @@ export function buildPantheonCategoryTargets(
      accessReason:source.accessReason,
    });
    if(out.length>=limit) return out.slice(0,limit);
- }
- for(const [root,authority] of AUTHORITIES){
-   const q=`${identity} ${category}`;
-   add({category,url:searchUrl('https://html.duckduckgo.com/html/?q=',`site:${new URL(root).hostname} ${q}`),authority:'discovery',jurisdiction:'US',query:q,subjectScoped:true});
- }
- for(const facet of facets){
-   for(const host of DISCOVERY_HOSTS){
-     const q=`${identity} ${category} ${facet}`;
-     add({category,url:searchUrl(host,q),authority:'discovery',jurisdiction:location||'US',query:q,subjectScoped:true});
-     if(out.length>=limit) return out.slice(0,limit);
-   }
+   add({
+     category,
+     url:`https://web.archive.org/cdx/search/cdx?url=${encodeURIComponent(`${host}/*`)}&output=json&filter=statuscode%3A200&filter=mimetype%3Atext%2Fhtml&collapse=urlkey&fl=timestamp%2Coriginal%2Cstatuscode%2Cmimetype&limit=100`,
+     authority:'archive',
+     jurisdiction:source.jurisdiction,
+     query:q,
+     transport:'archive',
+     sourceKind:'archive',
+     subjectScoped:false,
+     sourceIds:[...source.sourceIds],
+     originalUrls:[...source.originalUrls],
+     accessMode:source.accessMode,
+     accessReason:source.accessReason,
+   });
+   if(out.length>=limit) return out.slice(0,limit);
  }
  return out.slice(0,limit);
 }

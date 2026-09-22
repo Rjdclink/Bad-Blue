@@ -65,6 +65,7 @@ export interface PantheonRetrievalResponse {
     capabilityClass: 'razor' | 'pantheon-secondary';
     status: string;
     evidenceCount: number;
+    contentCount?: number;
     attempts: number;
     targets: number;
     error?: string;
@@ -72,7 +73,7 @@ export interface PantheonRetrievalResponse {
     queueWaitMs?: number;
     sourceOutcomes?: Array<{
       sourceUrl: string;
-      status: 'completed_with_evidence' | 'completed_no_evidence' | 'failed' | 'timed_out';
+      status: 'completed_with_content' | 'completed_with_evidence' | 'completed_no_evidence' | 'failed' | 'timed_out';
       retrievedAt: string;
       durationMs: number;
       error?: string;
@@ -545,7 +546,7 @@ export class PantheonRetrievalAdapter {
       const capabilityOutcomes = applicableCapabilities.map(capabilityId => {
         const audits = crawlerAudit.filter(audit => audit.crawler === capabilityId);
         const clean = audits.find(audit =>
-          ['completed_with_evidence', 'completed_no_evidence'].includes(String(audit.status || ''))
+          ['completed_with_content', 'completed_with_evidence', 'completed_no_evidence'].includes(String(audit.status || ''))
         );
         const timedOut = audits.find(audit => audit.status === 'timed_out');
         return {

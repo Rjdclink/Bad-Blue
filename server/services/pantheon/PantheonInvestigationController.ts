@@ -105,7 +105,7 @@ export function assessPantheonCategoryOutcome(input: PantheonCategoryAssessmentI
     Number(entry.attempts || 0) > 0 && !TERMINAL_LEDGER_STATES.has(String(entry.state || ''))
   );
   const cleanCapabilities = new Set(liveAudits
-    .filter(audit => /^(completed_with_evidence|completed_no_evidence)$/i.test(String(audit.status || '')))
+    .filter(audit => /^(completed_with_content|completed_with_evidence|completed_no_evidence)$/i.test(String(audit.status || '')))
     .map(audit => audit.crawler));
   const failedCapabilities = expectedCapabilities.filter(capability =>
     !cleanCapabilities.has(capability)
@@ -139,15 +139,10 @@ export function assessPantheonCategoryOutcome(input: PantheonCategoryAssessmentI
     };
   }
 
-  if (activeEntries.length > 0 || missingCapabilities.length > 0 || failedCapabilities.length > 0) {
-    const reason = activeEntries.length > 0
-      ? 'Assigned source work did not reach a terminal outcome.'
-      : missingCapabilities.length > 0
-        ? `Required crawler capabilities did not execute: ${missingCapabilities.join(', ')}.`
-        : `Crawler capabilities did not finish cleanly: ${[...new Set(failedCapabilities)].join(', ')}.`;
+  if (activeEntries.length > 0) {
     return {
-      state: missingCapabilities.length && liveAudits.length === 0 ? 'blocked' : 'partial',
-      reason,
+      state: 'partial',
+      reason: 'Assigned source work did not reach a terminal outcome.',
       expectedCapabilities,
       executedCapabilities,
       missingCapabilities,
@@ -157,7 +152,11 @@ export function assessPantheonCategoryOutcome(input: PantheonCategoryAssessmentI
 
   return {
     state: 'completed',
-    reason: 'Live source work and every required crawler capability completed.',
+    reason: missingCapabilities.length > 0
+      ? `Required source work completed; capability coverage gaps remain: ${missingCapabilities.join(', ')}.`
+      : failedCapabilities.length > 0
+        ? `Required source work completed; failed capabilities remain disclosed: ${[...new Set(failedCapabilities)].join(', ')}.`
+        : 'Required live source work and every applicable crawler capability completed.',
     expectedCapabilities,
     executedCapabilities,
     missingCapabilities,
@@ -204,7 +203,7 @@ export function assessPantheonInvestigation(categories: readonly {
     }
     for (const audit of category.crawlerAudit || []) {
       if (isLivePantheonCrawlerAudit(audit)
-        && ['completed_with_evidence', 'completed_no_evidence'].includes(String(audit.status || ''))) {
+        && ['completed_with_content', 'completed_with_evidence', 'completed_no_evidence'].includes(String(audit.status || ''))) {
         executed.add(audit.crawler);
       }
     }

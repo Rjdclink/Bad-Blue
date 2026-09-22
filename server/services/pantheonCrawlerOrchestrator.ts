@@ -223,7 +223,7 @@ export interface CrawlerResult {
 
 export interface CrawlerSourceOutcome {
   sourceUrl: string;
-  status: 'completed_with_evidence' | 'completed_no_evidence' | 'failed' | 'timed_out';
+  status: 'completed_with_content' | 'completed_with_evidence' | 'completed_no_evidence' | 'failed' | 'timed_out';
   retrievedAt: string;
   durationMs: number;
   error?: string;
@@ -234,8 +234,9 @@ export interface CrawlerSourceOutcome {
 export interface CrawlerExecutionAudit {
   crawler: string;
   capabilityClass: 'primary';
-  status: 'completed_with_evidence' | 'completed_no_evidence' | 'failed' | 'timed_out';
+  status: 'completed_with_content' | 'completed_with_evidence' | 'completed_no_evidence' | 'failed' | 'timed_out';
   evidenceCount: number;
+  contentCount?: number;
   attempts: number;
   targets: number;
   durationMs?: number;
@@ -808,7 +809,7 @@ export class PantheonCrawlerOrchestrator {
           return {
             sourceUrl: target,
             status: result && result.content && result.confidence > 0
-              ? 'completed_with_evidence'
+              ? 'completed_with_content'
               : isPantheonCrawlerTimeout(lastError)
                 ? 'timed_out'
                 : lastError
@@ -831,9 +832,7 @@ export class PantheonCrawlerOrchestrator {
         })));
         const rejectedSourceUrls = new Set(rejectedTargets.map(item => item.sourceUrl));
         for (const outcome of sourceOutcomes.filter(item => !rejectedSourceUrls.has(item.sourceUrl))) {
-          const retrievalStatus = outcome.status === 'completed_with_evidence'
-            ? 'completed_with_content'
-            : outcome.status;
+          const retrievalStatus = outcome.status;
           console.log(`[PANTHEON][CRAWLER-URL] ${JSON.stringify({
             event: 'outcome',
             investigationId: inheritedAcquisition?.authority.investigationId,
@@ -844,7 +843,7 @@ export class PantheonCrawlerOrchestrator {
             ...(executionFallbackFor ? { fallbackFor: executionFallbackFor } : {}),
             url: pantheonTelemetryUrl(outcome.sourceUrl),
             status: retrievalStatus,
-            evidenceStatus: outcome.status === 'completed_with_evidence' ? 'pending_validation' : 'not_applicable',
+            evidenceStatus: outcome.status === 'completed_with_content' ? 'pending_validation' : 'not_applicable',
             durationMs: outcome.durationMs,
             ...(outcome.error ? { error: outcome.error } : {}),
           })}`);
@@ -853,13 +852,14 @@ export class PantheonCrawlerOrchestrator {
           crawler,
           capabilityClass: 'primary',
           status: evidenceCount > 0
-            ? 'completed_with_evidence'
+            ? 'completed_with_content'
             : isPantheonCrawlerTimeout(lastError)
               ? 'timed_out'
               : lastError
                 ? 'failed'
                 : 'completed_no_evidence',
-          evidenceCount,
+          evidenceCount: 0,
+          contentCount: evidenceCount,
           attempts,
           targets: validTargets.length,
           durationMs,

@@ -95,8 +95,6 @@ const COMMERCIAL_VERIFICATION_HOSTS = new Set([
   'zoominfo.com',
 ]);
 
-const CONTACT_REGISTRATION_FIELDS = ['firstName', 'lastName', 'email', 'phone'] as const;
-
 function normalizedHost(url: URL): string {
   return url.hostname.toLowerCase().replace(/^www\./, '');
 }
@@ -123,7 +121,7 @@ function classifyAccess(url: URL): { mode: PantheonSourceAccessMode; reason: str
     return { mode: 'excluded-unsupported-verification', reason: 'Source requires unsupported commercial registration or verification.' };
   }
   if (configuredContactOnlyHosts().has(host)) {
-    return { mode: 'contact-registration', reason: 'Operator-approved contact-only registration source.' };
+    return { mode: 'excluded-extra-registration', reason: 'Source requires registration; Pantheon executes only anonymous public access.' };
   }
   return { mode: 'public', reason: 'Public source; runtime preflight still enforces access barriers.' };
 }
@@ -165,7 +163,7 @@ export function compilePantheonSourceRegistry(
 
     const canonicalUrl = admission.url;
     const policy = classifyAccess(new URL(canonicalUrl));
-    if (policy.mode !== 'public' && policy.mode !== 'contact-registration') {
+    if (policy.mode !== 'public') {
       const key = `${policy.mode}:${canonicalUrl}`;
       const existing = rejectedGroups.get(key);
       if (existing) existing.sources.push(source);
@@ -203,7 +201,6 @@ export function compilePantheonSourceRegistry(
       verifiedAt: newestVerification(sources),
       accessMode,
       accessReason: access.reason,
-      ...(accessMode === 'contact-registration' ? { registrationFields: CONTACT_REGISTRATION_FIELDS } : {}),
     } satisfies PantheonCompiledRegistrySource;
   }).sort((left, right) => left.url.localeCompare(right.url));
 

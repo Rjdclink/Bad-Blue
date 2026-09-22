@@ -493,7 +493,7 @@ export function processPantheonEvidence(
     const categoryClaim = deriveCategoryClaim(item, cleanedContent, subject);
     const excerptHash = createHash('sha256').update(excerpt).digest('hex');
     const citationId = stableCitationId(item, categoryClaim, excerptHash);
-    const normalized = createPantheonSourceResult({
+    const normalizedContent = createPantheonSourceResult({
       crawler: item.crawler,
       capabilityId: item.capabilityId,
       categoryLabel: item.categoryLabel,
@@ -528,6 +528,10 @@ export function processPantheonEvidence(
         analysisEligible: true,
       },
     });
+    const normalized: RetrievalEvidence = {
+      ...normalizedContent,
+      status: 'completed_with_evidence',
+    };
     candidates.push({ original: item, normalized });
   }
 

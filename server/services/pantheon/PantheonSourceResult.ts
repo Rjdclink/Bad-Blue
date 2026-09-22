@@ -15,7 +15,7 @@ export interface PantheonStructuredSourceResult {
   contentHash: string;
   confidence: number;
   retrievedAt: string;
-  status: 'completed_with_evidence';
+  status: 'completed_with_content' | 'completed_with_evidence';
   provenance: {
     sourceUrl: string;
     transport: PantheonTransport;
@@ -86,7 +86,7 @@ export function createPantheonSourceResult(input: {
     contentHash,
     confidence: Math.max(0, Math.min(1, Number(input.confidence) || 0)),
     retrievedAt: input.retrievedAt,
-    status: 'completed_with_evidence',
+    status: 'completed_with_content',
     provenance: {
       sourceUrl,
       transport: input.transport || 'direct-http',
@@ -121,8 +121,12 @@ export function validatePantheonSourceResult(value: PantheonStructuredSourceResu
     throw new Error('Pantheon source result is missing provenance or capability attribution');
   }
   const parsedSourceUrl = new URL(value.sourceUrl);
-  if (!['http:', 'https:'].includes(parsedSourceUrl.protocol) || value.status !== 'completed_with_evidence') {
+  if (!['http:', 'https:'].includes(parsedSourceUrl.protocol)
+      || !['completed_with_content', 'completed_with_evidence'].includes(value.status)) {
     throw new Error('Pantheon source result has an invalid source or status');
+  }
+  if (value.status === 'completed_with_evidence' && value.metadata?.evidenceState !== 'verified_live_source') {
+    throw new Error('Pantheon source result cannot claim evidence before validation');
   }
   const expectedContentHash = createHash('sha256').update(value.content).digest('hex');
   if (value.contentHash !== expectedContentHash) throw new Error('Pantheon source result content hash mismatch');

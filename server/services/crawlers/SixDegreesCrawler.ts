@@ -145,7 +145,14 @@ export class SixDegreesCrawler {
         this.edges.set(current.domain, connections);
 
         // Update node connections and add to queue
-        const node = this.graph.get(current.domain)!;
+        const node = this.graph.get(current.domain) || {
+          domain: current.domain,
+          connections: [],
+          type: 'website',
+          authority: this.calculateAuthority(current.domain),
+        };
+        if (!Array.isArray(node.connections)) node.connections = [];
+        this.graph.set(current.domain, node);
         for (const edge of connections) {
           if (!node.connections.includes(edge.to)) {
             node.connections.push(edge.to);
@@ -258,7 +265,10 @@ export class SixDegreesCrawler {
     await this.buildGraph(target, maxDegrees);
     
     return {
-      nodes: Array.from(this.graph.values()),
+      nodes: Array.from(this.graph.values()).map(node => ({
+        ...node,
+        connections: Array.isArray(node.connections) ? node.connections : [],
+      })),
       edges: Array.from(this.edges.values()).flat()
     };
   }
@@ -465,7 +475,7 @@ export class SixDegreesCrawler {
     const nodes = Array.from(this.graph.values());
     
     // Sort by connection count
-    nodes.sort((a, b) => b.connections.length - a.connections.length);
+    nodes.sort((a, b) => (b.connections?.length || 0) - (a.connections?.length || 0));
     
     return nodes.slice(0, limit);
   }
@@ -495,7 +505,7 @@ export class SixDegreesCrawler {
         }
 
         // Add connections to queue
-        for (const connection of node.connections) {
+        for (const connection of node.connections || []) {
           if (!visited.has(connection)) {
             queue.push({ domain: connection, degree: current.degree + 1 });
           }
@@ -558,7 +568,7 @@ export class SixDegreesCrawler {
     }
 
     // Hub gives access to all connections
-    for (const neighbor of node.connections) {
+    for (const neighbor of node.connections || []) {
       try {
         const result = await this.scrape(neighbor);
         data.push(result);
@@ -608,7 +618,7 @@ export class SixDegreesCrawler {
       nodeCount: this.graph.size,
       edgeCount: Array.from(this.edges.values()).reduce((sum, edges) => sum + edges.length, 0),
       avgConnections: this.graph.size > 0 
-        ? Array.from(this.graph.values()).reduce((sum, node) => sum + node.connections.length, 0) / this.graph.size 
+        ? Array.from(this.graph.values()).reduce((sum, node) => sum + (node.connections?.length || 0), 0) / this.graph.size 
         : 0
     };
   }

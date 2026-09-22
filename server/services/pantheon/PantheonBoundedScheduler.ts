@@ -1,12 +1,10 @@
 import { throwIfPantheonAborted } from './PantheonDeadline';
 import type { PantheonTransport } from './PantheonCrawlerCapabilityMatrix';
 
-// The report contract is deliberately sequential: a category must finish and
-// persist before the next category is allowed to become active. URL/crawler
-// capability work inside one URL may remain concurrent. A bounded URL window is
-// dispatched in frontier order and returned in that same order, so slow sources
-// do not force the entire report into serial network execution.
-export const PANTHEON_CATEGORY_CONCURRENCY_LIMIT = 1;
+// Categories execute in bounded parallel waves. Durable category persistence is
+// still serialized by PantheonCategoryWorkflow, while the shared URL and
+// transport governors below prevent parallel categories from multiplying load.
+export const PANTHEON_CATEGORY_CONCURRENCY_LIMIT = 4;
 export const PANTHEON_URL_CONCURRENCY_PER_CATEGORY = 8;
 export const PANTHEON_GLOBAL_URL_CONCURRENCY_LIMIT = 8;
 

@@ -22,7 +22,7 @@ import {
 import { getPantheonReportDurationMs } from '../shared/pantheonReportConfig';
 
 assert.equal(PANTHEON_REPORT_CATEGORIES.length, 30);
-assert.equal(PANTHEON_CATEGORY_CONCURRENCY_LIMIT, 1, 'categories must execute and persist strictly one at a time');
+assert.equal(PANTHEON_CATEGORY_CONCURRENCY_LIMIT, 4, 'categories must execute in bounded parallel waves');
 assert.equal(PANTHEON_URL_CONCURRENCY_PER_CATEGORY, 8, 'URL work must use the bounded global throughput window');
 const expectedTotals = new Map<number, number>([[1, 1_200], [2, 2_820], [3, 4_500]]);
 for (const depth of [1, 2, 3] as const) {

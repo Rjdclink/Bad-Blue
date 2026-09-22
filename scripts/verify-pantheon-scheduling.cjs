@@ -10,8 +10,8 @@ const acquisition = read('server/services/crawlers/PublicAcquisitionInfrastructu
 const deployer = read('server/services/pantheon/razors/TwoStageDeployer.ts');
 const evidence = read('server/services/pantheon/PantheonEvidencePipeline.ts');
 
-if (!scheduler.includes('PANTHEON_CATEGORY_CONCURRENCY_LIMIT = 1')) {
-  throw new Error('Pantheon categories are not constrained to strict sequential execution');
+if (!scheduler.includes('PANTHEON_CATEGORY_CONCURRENCY_LIMIT = 4')) {
+  throw new Error('Pantheon categories are not using bounded parallel waves');
 }
 if (!scheduler.includes('PANTHEON_URL_CONCURRENCY_PER_CATEGORY = 8')) {
   throw new Error('Pantheon URL frontier does not use the bounded throughput window');
@@ -23,6 +23,7 @@ for (const token of [
   'runPantheonUrlBounded(waveUrls',
   'deadline.signal, true',
   'categoriesRemaining',
+  'wavesRemaining',
   'dynamicCategoryBudgetMs',
   "phase: execution.outcome.completionState === 'completed' ? 'COMPLETE' : 'PARTIAL'",
   'urlLedger',
@@ -30,6 +31,7 @@ for (const token of [
   'insertPantheonDiscoveredUrls(prioritizedTargets, cursor, newlyAdmittedUrls)',
   'pantheonUrlWindowBudgetMs',
   'source_skill_dispatch',
+  'processedWorkUnits < requiredWorkCount',
   'entry.state === \'accepted\' || (entry.state === \'no_evidence\' && entry.subjectScoped)',
 ]) {
   if (!workflow.includes(token)) throw new Error('Bounded category workflow invariant missing: ' + token);
