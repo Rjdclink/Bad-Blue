@@ -377,6 +377,8 @@ export function pantheonTelemetryUrl(raw: string): string {
   }
 }
 
+const acquisitionTelemetrySampleCounts = new Map<string, number>();
+
 function logAcquisitionEvent(
   authority: PantheonAcquisitionAuthority | undefined,
   event: 'dispatch' | 'outcome' | 'rejected',
@@ -384,6 +386,17 @@ function logAcquisitionEvent(
   details: Record<string, unknown> = {},
 ): void {
   if (!authority) return;
+  const key = [
+    authority.investigationId,
+    authority.categoryId,
+    event,
+    String(details.errorType || details.outcome || details.status || 'none'),
+  ].join(':');
+  const count = (acquisitionTelemetrySampleCounts.get(key) || 0) + 1;
+  acquisitionTelemetrySampleCounts.set(key, count);
+  // Per-URL provenance is retained in the durable frontier. Runtime logs are
+  // sampled so a blocked provider cannot exhaust the deployment log stream.
+  if (count !== 1 && count % 25 !== 0) return;
   console.log(`[PANTHEON][URL] ${JSON.stringify({
     event,
     investigationId: authority.investigationId,
@@ -394,6 +407,7 @@ function logAcquisitionEvent(
     ...(authority.fallbackFor ? { fallbackFor: authority.fallbackFor } : {}),
     url: pantheonTelemetryUrl(url),
     ...details,
+    sampleCount: count,
   })}`);
 }
 

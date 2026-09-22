@@ -317,16 +317,15 @@ function intensityPolicy(depth: number) {
     1: { corroborationTarget: 1, discoveryExpansion: 1, fallbackDepth: 1 },
     2: { corroborationTarget: 1, discoveryExpansion: 2, fallbackDepth: 2 },
     3: { corroborationTarget: 2, discoveryExpansion: 3, fallbackDepth: 3 },
-    4: { corroborationTarget: 3, discoveryExpansion: 4, fallbackDepth: 4 },
   } as Record<number, { corroborationTarget: number; discoveryExpansion: number; fallbackDepth: number }>)[depth] ||
     { corroborationTarget: 1, discoveryExpansion: 1, fallbackDepth: 1 };
 }
 
 export function sourcePriority(authority: 'primary'|'secondary'|'discovery'|'archive'): number {
-  // Subject-specific discovery is the frontier for a background report. Bare
-  // authority roots remain available for source health/discovery, but cannot
-  // monopolize the selected depth before any subject result is found.
-  return ({ discovery: 500, primary: 400, secondary: 300, archive: 200 })[authority];
+  // Direct registry sources are the primary frontier. Discovery providers are
+  // useful for breadth, but may be unavailable or robots-disallowed and must
+  // never be the only viable path to evidence.
+  return ({ primary: 600, secondary: 500, discovery: 300, archive: 200 })[authority];
 }
 
 function targetPriority(target: PantheonSourceTarget): { priority: number; factors: PantheonUrlLedgerEntry['priorityFactors'] } {
@@ -470,7 +469,7 @@ export function interleaveCategoryTargets(
 ): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
-  const authorityOrder: PantheonSourceTarget['authority'][] = ['discovery', 'primary', 'secondary', 'archive'];
+  const authorityOrder: PantheonSourceTarget['authority'][] = ['primary', 'secondary', 'archive', 'discovery'];
   const authorityGroups = new Map(authorityOrder.map(authority => [
     authority,
     groups.map(group => group.filter(candidate => candidate.authority === authority)),
@@ -677,19 +676,37 @@ function reassignRetryableCapabilityWork(
   }
 }
 
+const categoryTelemetrySampleCounts = new Map<string, number>();
+
+function logPantheonCategoryTelemetry(channel: string, payload: Record<string, unknown>): void {
+  const event = String(payload.event || 'event');
+  const key = [
+    String(payload.investigationId || 'unknown'),
+    String(payload.categoryIndex ?? 'unknown'),
+    channel,
+    event,
+    String(payload.status || payload.result || 'none'),
+  ].join(':');
+  const count = (categoryTelemetrySampleCounts.get(key) || 0) + 1;
+  categoryTelemetrySampleCounts.set(key, count);
+  const lifecycleEvent = /category_started|category_persisted|recursive_candidates_admitted|standby_registry_frontier_admitted/.test(event);
+  if (!lifecycleEvent && count !== 1 && count % 25 !== 0) return;
+  console.log(`[PANTHEON][${channel}] ${JSON.stringify({ ...payload, sampleCount: count })}`);
+}
+
 async function executePantheonCategory(input: PantheonCategoryExecutionInput): Promise<PantheonCategoryExecution> {
   const index = input.index;
     const category = PANTHEON_REPORT_CATEGORIES[index];
     const startedAt = new Date().toISOString();
     const completedBeforeCategory = input.completedCount();
-    console.log(`[PANTHEON][CATEGORY-TRACE] ${JSON.stringify({
+    logPantheonCategoryTelemetry('CATEGORY-TRACE', {
       event: 'category_started',
       investigationId: input.investigationId,
       categoryIndex: index,
       category: category.label,
       phase: 'ACTIVE',
       completedCategories: completedBeforeCategory,
-    })}`);
+    });
     await input.onCategoryState?.({ index, label: category.label, phase: 'ACTIVE', completedCategories: completedBeforeCategory });
     await input.onCategoryStart?.({ index, label: category.label, completedCategories: completedBeforeCategory });
 
@@ -757,6 +774,28 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
         .sort((left, right) =>
           Number(plannedUrlOrder.get(left.url) ?? Number.MAX_SAFE_INTEGER)
             - Number(plannedUrlOrder.get(right.url) ?? Number.MAX_SAFE_INTEGER));
+    // Keep the unselected, policy-admitted registry targets as an ordered
+    // standby frontier. A failed initial batch must not exhaust collection
+    // simply because discovery returned no candidates; the controller extends
+    // the same URL ledger in cursor order with independent direct sources.
+    const existingLedgerUrls = new Set(urlLedger.map(entry => entry.url));
+    const standbyEntries = freshLedger
+      .filter(entry => !existingLedgerUrls.has(entry.url))
+      .sort((left, right) =>
+        sourcePriority(right.authority) - sourcePriority(left.authority)
+          || left.frontierOrder - right.frontierOrder)
+      .map(entry => ({
+        ...entry,
+        evidenceIds: [...entry.evidenceIds],
+        requiredCapabilities: [...(entry.requiredCapabilities || [])],
+        transportAttempts: [...(entry.transportAttempts || [])],
+        state: 'pending' as const,
+        attempts: 0,
+        failureReason: undefined,
+        result: undefined,
+        startedAt: undefined,
+        completedAt: undefined,
+      }));
     urlLedger.forEach((entry, frontierIndex) => {
       if (!initialOutcome?.urlLedger?.length || !Number.isFinite(entry.frontierOrder)) {
         entry.frontierOrder = frontierIndex;
@@ -858,12 +897,47 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
       completedCapabilities().has(capability)
     );
     const hasSchedulableCapabilityWork = () => capabilityWorkLedger.some(isPantheonExecutableWorkSchedulable);
-    while (cursor < prioritizedTargets.length
-      && (productiveWorkUnits < requiredWorkCount
-        || (!hasExecutableCapabilityCoverage() && hasSchedulableCapabilityWork()))) {
+    const admitStandbyFrontier = async (): Promise<boolean> => {
+      if (!standbyEntries.length) return false;
+      const batchSize = Math.max(
+        PANTHEON_URL_CONCURRENCY_PER_CATEGORY,
+        input.policy.fallbackDepth * PANTHEON_URL_CONCURRENCY_PER_CATEGORY,
+      );
+      const entries = standbyEntries.splice(0, batchSize);
+      const additions: string[] = [];
+      for (const entry of entries) {
+        if (urlLedger.some(candidate => candidate.url === entry.url)) continue;
+        entry.frontierOrder = prioritizedTargets.length + additions.length;
+        urlLedger.push(entry);
+        additions.push(entry.url);
+      }
+      const admitted = insertPantheonDiscoveredUrls(prioritizedTargets, cursor, additions);
+      if (!admitted.length) return false;
+      resequencePantheonFrontier(urlLedger, prioritizedTargets);
+      refreshCapabilityAssignments();
+      await preparePantheonFrontier(admitted.flatMap(url => {
+        const entry = urlLedger.find(candidate => candidate.url === url);
+        return entry ? [frontierSeedFor(entry)] : [];
+      }));
+      logPantheonCategoryTelemetry('FRONTIER', {
+        event: 'standby_registry_frontier_admitted',
+        investigationId: input.investigationId,
+        categoryIndex: index,
+        category: category.label,
+        insertedAt: cursor,
+        directSources: admitted.map(pantheonTelemetrySource),
+      });
+      return true;
+    };
+    while (productiveWorkUnits < requiredWorkCount
+      || (!hasExecutableCapabilityCoverage() && hasSchedulableCapabilityWork())) {
       throwIfPantheonAborted(input.signal);
       const remainingForWork = categoryDeadlineAt - Date.now();
       if (remainingForWork <= 750) break;
+      if (cursor >= prioritizedTargets.length) {
+        if (!(await admitStandbyFrontier())) break;
+        continue;
+      }
 
       const remainingProductiveWork = Math.max(0, requiredWorkCount - productiveWorkUnits);
       const waveSize = Math.min(
@@ -937,7 +1011,7 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
         const requestBudgetMs = Math.max(500, requestDeadlineAt - Date.now());
         let frontierClaim: PantheonFrontierClaim | undefined;
         try {
-          console.log(`[PANTHEON][CAPABILITY-ROUTE] ${JSON.stringify({
+          logPantheonCategoryTelemetry('CAPABILITY-ROUTE', {
             event: 'source_skill_dispatch',
             investigationId: input.investigationId,
             categoryIndex: index,
@@ -947,7 +1021,7 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
             registryCategory: work.entry?.registryCategory,
             capabilityIds: work.entry?.requiredCapabilities || [work.authorityCapability],
             ...sourceTelemetry,
-          })}`);
+          });
           frontierClaim = await claimPantheonFrontierItem(
             frontierSeedFor(work.entry || {
               url,
@@ -1029,7 +1103,7 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
               crawlerAudit: retrieval.crawlerAudit,
             },
           });
-          console.log(`[PANTHEON][CAPABILITY-ROUTE] ${JSON.stringify({
+          logPantheonCategoryTelemetry('CAPABILITY-ROUTE', {
             event: 'source_skill_outcome',
             investigationId: input.investigationId,
             categoryIndex: index,
@@ -1039,7 +1113,7 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
             durationMs: Date.now() - sourceStartedAt,
             evidenceCount: retrieval.evidence.length,
             ...sourceTelemetry,
-          })}`);
+          });
           return { url, retrieval };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
@@ -1055,7 +1129,7 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
               provenance: { sourceUrl: url, failedAt: new Date().toISOString() },
             });
           }
-          console.log(`[PANTHEON][CAPABILITY-ROUTE] ${JSON.stringify({
+          logPantheonCategoryTelemetry('CAPABILITY-ROUTE', {
             event: 'source_skill_outcome',
             investigationId: input.investigationId,
             categoryIndex: index,
@@ -1064,7 +1138,7 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
             status: /timeout|deadline/i.test(message) ? 'timed_out' : 'failed',
             durationMs: Date.now() - sourceStartedAt,
             ...sourceTelemetry,
-          })}`);
+          });
           return { url, error: message };
         }
       });
@@ -1131,7 +1205,7 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
             );
           const completedNoEvidence = cleanPrimaryOutcome
             && (explicitCleanNoEvidence || cleanSubjectMiss);
-          console.log(`[PANTHEON][EVIDENCE] ${JSON.stringify({
+          logPantheonCategoryTelemetry('EVIDENCE', {
             event: 'validation_outcome',
             investigationId: input.investigationId,
             categoryIndex: index,
@@ -1145,7 +1219,7 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
             result: acceptedLiveWork ? 'accepted_evidence'
               : completedNoEvidence ? 'completed_no_evidence'
               : 'not_productive',
-          })}`);
+          });
         // Rejected/challenge/discovery-only material is not productive work.
         // The quota advances only for evidence that already passes the subject
         // and production gates, or a clean attributable no-evidence outcome.
@@ -1250,14 +1324,14 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
           return entry ? [entry] : [];
         });
         await preparePantheonFrontier(newEntries.map(frontierSeedFor));
-        console.log(`[PANTHEON][FRONTIER] ${JSON.stringify({
+        logPantheonCategoryTelemetry('FRONTIER', {
           event: 'recursive_candidates_admitted',
           investigationId: input.investigationId,
           categoryIndex: index,
           category: category.label,
           insertedAt: cursor,
           sources: newlyAdmittedUrls.map(pantheonTelemetrySource),
-        })}`);
+        });
       }
       reassignRetryableCapabilityWork(capabilityWorkLedger, urlLedger);
       resequencePantheonFrontier(urlLedger, prioritizedTargets);
@@ -1763,7 +1837,7 @@ export async function conductPantheonCategoryWorkflow(
           outcome: execution.outcome,
           partialReport: { ...report },
         });
-        console.log(`[PANTHEON][CATEGORY-TRACE] ${JSON.stringify({
+        logPantheonCategoryTelemetry('CATEGORY-TRACE', {
           event: 'category_persisted',
           investigationId: input.investigationId,
           categoryIndex: index,
@@ -1773,7 +1847,7 @@ export async function conductPantheonCategoryWorkflow(
           acceptedEvidenceCount: execution.outcome.evidenceCount,
           successfulWorkCount: execution.outcome.successfulWorkCount,
           requiredWorkCount: execution.outcome.requiredWorkCount,
-        })}`);
+        });
         await input.onCategoryState?.({
           index,
           label: execution.outcome.label,

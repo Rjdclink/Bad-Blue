@@ -15,7 +15,10 @@ import {
   generatePantheonBackgroundReportPdf,
   verifyPantheonPdfBuffer,
 } from './PantheonBackgroundReportPdf';
-import { assessPantheonInvestigation } from './PantheonInvestigationController';
+import {
+  assessPantheonInvestigation,
+  assessPantheonReportRelease,
+} from './PantheonInvestigationController';
 import { canActivatePantheon } from '../pantheonCrawlerOrchestrator';
 import {
   getPantheonCapabilityTelemetry,
@@ -110,6 +113,16 @@ async function withStageDeadline<T>(label: string, timeoutMs: number, operation:
     ]);
   } finally {
     if (timer) clearTimeout(timer);
+  }
+}
+
+async function waitForPantheonCollectionWindow(deadlineAt: number): Promise<void> {
+  // The selected 10/20/30-minute collection window is a server contract. If
+  // every currently admissible source settles early, retain the durable job in
+  // processing/finalization until the authoritative countdown reaches zero;
+  // no report state or download may be released before that moment.
+  while (Date.now() < deadlineAt) {
+    await new Promise(resolve => setTimeout(resolve, Math.min(5_000, deadlineAt - Date.now())));
   }
 }
 
@@ -337,7 +350,34 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       processedCategories: categoryOutcomes.length,
     });
 
+    if (Date.now() < deadlineAt.getTime()) {
+      await updatePantheonReportRecord(input.reportId, 'processing', {
+        job: jobEnvelope(input, 'finalizing', {
+          queuedAt: queuedAt.toISOString(),
+          startedAt: startedAt.toISOString(),
+          deadlineAt: deadlineAt.toISOString(),
+          collectionClosedAt: new Date().toISOString(),
+          releaseNotBefore: deadlineAt.toISOString(),
+          completedCategories: categoryOutcomes.filter(outcome => outcome.completionState === 'completed').length,
+          processedCategories: categoryOutcomes.length,
+          totalCategories: PANTHEON_REPORT_CATEGORIES.length,
+        }),
+        categoryStates,
+        categoryOutcomes,
+        report: latestPartialReport,
+      });
+      console.log('[PANTHEON REPORT JOB] holding terminal release until collection deadline', {
+        reportId: input.reportId,
+        releaseNotBefore: deadlineAt.toISOString(),
+      });
+      await waitForPantheonCollectionWindow(deadlineAt.getTime());
+    }
+
     const investigation = assessPantheonInvestigation(categoryOutcomes);
+    const releaseAssessment = assessPantheonReportRelease({
+      investigation,
+      categories: categoryOutcomes,
+    });
     const previousIntelligence = await loadPantheonSavedSearchSnapshot(input.userId, input.queryPlan.planId);
     const investigationIntelligence = buildPantheonInvestigationIntelligence({
       report,
@@ -354,6 +394,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
     Object.assign(report as any, {
       investigationStatus: investigation.state,
       investigationCoverage: investigation,
+      reportRelease: releaseAssessment,
       searchDepthUsed: input.searchDepth,
       crawlersActivated: [...new Set((report.crawlerAudit || [])
         .filter((entry: any) => Number(entry.attempts || 0) > 0
@@ -382,11 +423,41 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
         missingCrawlerCapabilities: investigation.missingCapabilities,
         capabilityCoverage: investigation.capabilityCoverage,
         capabilityTelemetry: getPantheonCapabilityTelemetry(),
+        reportRelease: releaseAssessment,
       }),
       categoryStates,
       report,
       categoryOutcomes,
     });
+    if (!releaseAssessment.eligible) {
+      await updatePantheonReportRecord(input.reportId, 'partial', {
+        job: jobEnvelope(input, 'partial', {
+          startedAt: startedAt.toISOString(),
+          deadlineAt: deadlineAt.toISOString(),
+          completedAt: new Date().toISOString(),
+          investigationStatus: investigation.state,
+          completedCategories: investigation.completedCategoryCount,
+          processedCategories: categoryOutcomes.length,
+          partialCategories: investigation.partialCategoryCount,
+          missingCrawlerCapabilities: investigation.missingCapabilities,
+          capabilityCoverage: investigation.capabilityCoverage,
+          capabilityTelemetry: getPantheonCapabilityTelemetry(),
+          reportRelease: releaseAssessment,
+          releaseBlocker: releaseAssessment.blocker,
+          downloadReady: false,
+        }),
+        categoryStates,
+        report,
+        categoryOutcomes,
+      });
+      console.warn('[PANTHEON REPORT JOB] report release blocked', {
+        reportId: input.reportId,
+        blocker: releaseAssessment.blocker,
+        acceptedEvidenceCount: releaseAssessment.acceptedEvidenceCount,
+        distinctAcceptedSourceCount: releaseAssessment.distinctAcceptedSourceCount,
+      });
+      return;
+    }
     console.log('[PANTHEON REPORT JOB] PDF rendering started', { reportId: input.reportId });
     const pdfBuffer = await withStageDeadline('PDF rendering', 30_000, generatePantheonBackgroundReportPdf({
       reportId: input.reportId,
@@ -452,6 +523,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
         missingCrawlerCapabilities: investigation.missingCapabilities,
         capabilityCoverage: investigation.capabilityCoverage,
         capabilityTelemetry: getPantheonCapabilityTelemetry(),
+        reportRelease: releaseAssessment,
         pdfVerification,
       }),
       categoryStates,
@@ -463,7 +535,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
 
     // COMPLETE means the full investigation contract and its downloadable PDF
     // are both durably available. A verified-but-regenerable buffer is partial.
-    const finalStatus = investigation.releaseEligible && durablePdfReady ? 'completed' as const : 'partial' as const;
+    const finalStatus = releaseAssessment.eligible && durablePdfReady ? 'completed' as const : 'partial' as const;
     await updatePantheonReportRecord(input.reportId, finalStatus, {
       job: jobEnvelope(input, finalStatus, {
         startedAt: startedAt.toISOString(),
@@ -476,9 +548,10 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
         missingCrawlerCapabilities: investigation.missingCapabilities,
         capabilityCoverage: investigation.capabilityCoverage,
         capabilityTelemetry: getPantheonCapabilityTelemetry(),
+        reportRelease: releaseAssessment,
         pdfVerification,
         durablePdfReady,
-        ...(!durablePdfReady ? { releaseBlocker: 'durable_pdf_unavailable' } : {}),
+        ...(!durablePdfReady ? { releaseBlocker: 'durable_pdf_unavailable', downloadReady: false } : { downloadReady: true }),
       }),
       categoryStates,
       report,

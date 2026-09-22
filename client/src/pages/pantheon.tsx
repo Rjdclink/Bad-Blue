@@ -246,13 +246,15 @@ export default function PantheonPage() {
           return;
         }
 
-        if (payload.status === 'partial' && payload.downloadReady === true) {
-          setDownloadReady(true);
+        if (payload.status === 'partial') {
+          clearPersistedReportJob();
+          setReportJobId(null);
+          setDownloadReady(false);
           setReportState('partial');
-          setReportError(null);
+          setReportError(payload.error || 'The investigation did not meet the evidence and coverage requirements for a releasable report.');
           toast({
-            title: 'PANTHEON Partial Report Ready',
-            description: 'The report identifies its exact coverage gaps and completed live-source work.',
+            title: 'PANTHEON Report Not Released',
+            description: 'No PDF was released because the evidence and coverage requirements were not met.',
           });
           return;
         }
@@ -549,7 +551,7 @@ export default function PantheonPage() {
           </section>
           
           {/* Progress Tracker */}
-          {searchConfig && reportState !== 'idle' && (
+          {searchConfig && (reportState === 'processing' || reportState === 'completed') && (
             <section className="search-progress">
               <PantheonProgressTracker
                 searchDepth={searchConfig.searchDepth}
@@ -557,7 +559,7 @@ export default function PantheonPage() {
                 startedAt={reportStartedAt}
                 deadlineAt={reportDeadlineAt}
                 phase={reportPhase}
-                completed={reportState === 'completed' || reportState === 'partial'}
+                completed={reportState === 'completed'}
                 categoryNumber={reportCategoryNumber}
                 categoryName={reportCategoryName}
                 completedCategories={completedCategories}
@@ -596,18 +598,18 @@ export default function PantheonPage() {
                 </Card>
               )}
 
-              {reportState === 'partial' && downloadReady && (
+              {reportState === 'partial' && (
                 <Card className="report-delivery-card border-amber-500/50">
                   <CardHeader>
-                    <CardTitle>Partial Report — Coverage Gaps Disclosed</CardTitle>
+                    <CardTitle>Report Not Released</CardTitle>
                   </CardHeader>
                   <CardContent className="text-sm text-muted-foreground">
-                    The PDF contains verified findings plus the exact categories, sources, or crawler capabilities that did not complete.
+                    {reportError || 'The investigation did not meet the evidence and coverage requirements for a releasable report.'}
                   </CardContent>
                 </Card>
               )}
 
-              {(reportState === 'completed' || reportState === 'partial') && downloadReady && (
+              {reportState === 'completed' && downloadReady && (
                 <button
                   type="button"
                   className="report-download-button"

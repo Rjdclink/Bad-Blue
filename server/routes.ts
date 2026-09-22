@@ -3713,8 +3713,15 @@ Contact: ${foiaRequest.userEmail || userEmail}
     if (report.status === 'processing') res.setHeader('Retry-After', '2');
 
     const envelope = report.reportData && typeof report.reportData === 'object'
-      ? report.reportData as { job?: unknown; report?: unknown; pdfVerification?: { verified?: boolean } }
+      ? report.reportData as { job?: { downloadReady?: boolean; releaseBlocker?: string } | unknown; report?: unknown; pdfVerification?: { verified?: boolean } }
       : {};
+    const job = envelope.job && typeof envelope.job === 'object'
+      ? envelope.job as { downloadReady?: boolean; releaseBlocker?: string }
+      : null;
+    const downloadReady = report.status === 'completed'
+      && job?.downloadReady === true
+      && Boolean(envelope.report)
+      && envelope.pdfVerification?.verified === true;
 
     res.setHeader('Cache-Control', 'private, no-store');
     return res.json({
@@ -3723,11 +3730,15 @@ Contact: ${foiaRequest.userEmail || userEmail}
       status: report.status,
       job: envelope.job || null,
       subjectName: report.subjectName || report.searchQuery,
-      downloadReady: ['completed', 'partial'].includes(report.status) && Boolean(envelope.report) && envelope.pdfVerification?.verified === true,
-      downloadUrl: ['completed', 'partial'].includes(report.status) && envelope.report && envelope.pdfVerification?.verified === true
+      downloadReady,
+      downloadUrl: downloadReady
         ? `/api/osint/report-jobs/${report.id}/download`
         : null,
-      error: report.status === 'failed' ? report.errorMessage || 'Background report failed.' : null,
+      error: report.status === 'failed'
+        ? report.errorMessage || 'Background report failed.'
+        : report.status === 'partial'
+          ? 'The investigation did not meet the evidence and coverage requirements for a releasable report.'
+          : null,
       createdAt: report.createdAt,
       completedAt: report.completedAt,
     });
@@ -3756,20 +3767,22 @@ Contact: ${foiaRequest.userEmail || userEmail}
 
     const envelope = report.reportData && typeof report.reportData === 'object'
       ? report.reportData as {
-        job?: Record<string, unknown>;
+        job?: { downloadReady?: boolean; releaseBlocker?: string };
         report?: unknown;
         categoryOutcomes?: unknown[];
         pdfVerification?: { verified?: boolean; sha256?: string };
         pdfArtifact?: { sha256?: string; bytes?: number };
       }
       : {};
-    if (!['completed', 'partial'].includes(report.status) || !envelope.report || envelope.pdfVerification?.verified !== true) {
+    if (report.status !== 'completed' || envelope.job?.downloadReady !== true || !envelope.report || envelope.pdfVerification?.verified !== true) {
       return res.status(409).json({
         success: false,
         code: 'report_not_ready',
         message: report.status === 'failed'
           ? report.errorMessage || 'Background report failed.'
-          : envelope.pdfVerification?.verified !== true
+          : report.status === 'partial'
+            ? 'The investigation did not meet the evidence and coverage requirements for a releasable report.'
+            : envelope.pdfVerification?.verified !== true
             ? 'Background report PDF verification has not completed.'
             : 'Background report is still being generated.',
       });

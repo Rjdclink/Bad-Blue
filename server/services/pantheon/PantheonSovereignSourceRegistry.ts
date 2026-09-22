@@ -161,7 +161,13 @@ function sourceWeights(kind: NonNullable<PantheonSourceTarget['sourceKind']>, au
 
 function searchUrl(prefix:string, query:string) { return prefix + encodeURIComponent(query); }
 
-/** At least 300 deterministic retrieval URLs per category, generated on demand. */
+/**
+ * Deterministic, policy-admitted targets for a category.  A registry source is
+ * always scheduled directly before any third-party discovery query that refers
+ * to it.  This keeps the public-source registry usable when a search provider
+ * is unavailable or disallows automated retrieval, and preserves the source
+ * provenance needed by the category frontier.
+ */
 export function buildPantheonCategoryTargets(
  category: PantheonBackgroundCategory,
  subject: string,
@@ -172,9 +178,12 @@ export function buildPantheonCategoryTargets(
  if (!identity) return [];
  const out:PantheonSourceTarget[]=[]; const seen=new Set<string>();
  const add=(x:Omit<PantheonSourceTarget,'transport'|'subjectScoped'|'sourceKind'|'freshnessWeight'|'expectedValue'> & {transport?:PantheonTransport;subjectScoped?:boolean;sourceKind?:PantheonSourceTarget['sourceKind'];freshnessWeight?:number;expectedValue?:number})=>{ if(!seen.has(x.url)){const sourceKind=x.sourceKind||sourceKindFor(x.url,x.authority);const weights=sourceWeights(sourceKind,x.authority);seen.add(x.url);out.push({...x,transport:x.transport||transportForSource(x.url,x.authority),sourceKind,freshnessWeight:x.freshnessWeight??weights.freshnessWeight,expectedValue:x.expectedValue??weights.expectedValue,subjectScoped:x.subjectScoped===true});} };
- // Pair each verified authority with a subject-specific discovery task. Bare
- // agency roots are registry metadata, not person-specific work items. Search
- // results can recursively add subject-relevant public pages to the frontier.
+ // Pair each verified authority with its direct public entry point and a
+ // subject-specific discovery task. The direct entry point is intentionally
+ // not credited as person evidence by itself; it gives the appropriately
+ // routed crawler a policy-compliant source page from which it can discover
+ // lawful public search/result routes. Discovery remains a fallback, never
+ // the sole source plan.
  const normalizedLocation=String(location||'').toUpperCase();
  const inventory=PANTHEON_EXECUTABLE_SOURCE_INVENTORY
    .filter(source=>source.categories.includes(category))
@@ -186,6 +195,19 @@ export function buildPantheonCategoryTargets(
    if (!source.categories.includes(category)) continue;
    const q=`${identity} ${category}`;
    const host=new URL(source.url).hostname;
+   add({
+     category,
+     url:source.url,
+     authority:source.authority,
+     jurisdiction:source.jurisdiction,
+     query:q,
+     subjectScoped:false,
+     sourceIds:[...source.sourceIds],
+     originalUrls:[...source.originalUrls],
+     accessMode:source.accessMode,
+     accessReason:source.accessReason,
+   });
+   if(out.length>=limit) return out.slice(0,limit);
    add({
      category,
      url:searchUrl('https://www.bing.com/search?q=',`site:${host} ${q}`),
@@ -253,28 +275,10 @@ export function preflightPantheonSourceTargets(
       continue;
     }
 
-    const query = [subject, location, category, 'official public record'].filter(Boolean).join(' ');
-    const replacement = 'https://www.bing.com/search?q=' + encodeURIComponent(query);
-    const replacementAdmission = admitPantheonUrl(replacement);
-    if (!replacementAdmission.ok || seen.has(replacementAdmission.url)) continue;
-    seen.add(replacementAdmission.url);
-    accepted.push({
-      category,
-      url: replacementAdmission.url,
-      authority: 'discovery',
-      jurisdiction: location || 'US',
-      query,
-      transport: 'search-provider',
-      sourceKind: 'search',
-      freshnessWeight: 70,
-      expectedValue: 69,
-      subjectScoped: true,
-    });
     issues.push({
       originalUrl: target.url,
       reason: admission.reason,
-      replacementUrl: replacementAdmission.url,
-      disposition: 'replaced',
+      disposition: 'excluded',
       accessRequirement: 'excluded-invalid',
       sourceIds: target.sourceIds ? [...target.sourceIds] : undefined,
     });

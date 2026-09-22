@@ -19,6 +19,7 @@ import { validatePantheonJobSubmission } from '../server/services/pantheon/Panth
 import {
   assessPantheonCategoryOutcome,
   assessPantheonInvestigation,
+  assessPantheonReportRelease,
   isLivePantheonCrawlerAudit,
 } from '../server/services/pantheon/PantheonInvestigationController';
 
@@ -111,6 +112,21 @@ async function main() {
   })));
   if (incompleteInvestigation.releaseEligible || incompleteInvestigation.state !== 'partial') {
     throw new Error('investigation missing one of 30 categories was incorrectly release eligible');
+  }
+  const completeInvestigation = { ...incompleteInvestigation, releaseEligible: true, state: 'completed' as const };
+  const emptyRelease = assessPantheonReportRelease({
+    investigation: completeInvestigation,
+    categories: [{ evidenceCount: 0, urlLedger: [{ url: 'https://example.gov/empty', state: 'no_evidence' }] }],
+  });
+  if (emptyRelease.eligible || emptyRelease.blocker !== 'no_accepted_evidence') {
+    throw new Error('zero-evidence investigation was incorrectly made downloadable');
+  }
+  const releasable = assessPantheonReportRelease({
+    investigation: completeInvestigation,
+    categories: [{ evidenceCount: 1, urlLedger: [{ url: 'https://example.gov/public-record/123', state: 'accepted' }] }],
+  });
+  if (!releasable.eligible || releasable.distinctAcceptedSourceCount !== 1) {
+    throw new Error('accepted evidence and source provenance did not satisfy the report release gate');
   }
 
   const processed = processPantheonEvidence([

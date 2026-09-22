@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
 import {
+  buildPantheonCategoryTargets,
+  type PantheonBackgroundCategory,
+} from '../server/services/pantheon/PantheonSovereignSourceRegistry';
+import {
   categoryProductiveWorkTarget,
   initializePantheonCategoryPlans,
   insertPantheonDiscoveredUrls,
@@ -38,9 +42,20 @@ for (const depth of [1, 2, 3] as const) {
   }
 }
 
-assert.ok(sourcePriority('discovery') > sourcePriority('primary'));
 assert.ok(sourcePriority('primary') > sourcePriority('secondary'));
+assert.ok(sourcePriority('secondary') > sourcePriority('discovery'));
 assert.ok(sourcePriority('secondary') > sourcePriority('archive'));
+
+const directRegistryTargets = buildPantheonCategoryTargets(
+  'courts' as PantheonBackgroundCategory,
+  'Jane Example',
+  'New York, NY',
+  24,
+);
+assert.ok(directRegistryTargets.some(target => target.authority === 'primary' && target.transport !== 'search-provider'),
+  'each category must include direct, policy-admitted registry sources');
+assert.ok(directRegistryTargets.some(target => target.authority === 'discovery' && target.subjectScoped),
+  'discovery must remain a subject-scoped fallback rather than the only frontier');
 
 const subjectFirstPlan = initializePantheonCategoryPlans({
   name: 'Jane Example',
@@ -48,10 +63,11 @@ const subjectFirstPlan = initializePantheonCategoryPlans({
   searchDepth: 1,
   budgetMs: getPantheonReportDurationMs(1),
 })[0];
-assert.ok(subjectFirstPlan.sourcePlan.urls[0]?.includes('/search?'), 'subject-scoped discovery must lead the category frontier');
+assert.ok(!/bing\.com\/search|duckduckgo\.com\/html/.test(subjectFirstPlan.sourcePlan.urls[0] || ''),
+  'a direct registry source must lead the category frontier');
 assert.ok(
-  subjectFirstPlan.sourcePlan.urls.every(url => /bing\.com\/search|duckduckgo\.com\/html/.test(url)),
-  'bare generic authority roots must not be scheduled as person-specific work',
+  subjectFirstPlan.sourcePlan.urls.some(url => !/bing\.com\/search|duckduckgo\.com\/html/.test(url)),
+  'the persisted frontier must contain an independent direct-source path',
 );
 
 const frontier = ['seed-a', 'seed-b', 'seed-c'];

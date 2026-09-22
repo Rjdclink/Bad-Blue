@@ -317,10 +317,6 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
     addLabelValue(doc, 'OVERALL CONFIDENCE', percent(report.confidenceScore));
     const reportCompleteness = cleanText(report.reportCompleteness) || cleanText(input.job?.investigationStatus) || cleanText((report as Record<string, unknown>).investigationStatus) || 'partial';
     addLabelValue(doc, 'REPORT COVERAGE', reportCompleteness);
-    if (reportCompleteness !== 'complete') {
-      doc.fillColor('#B42318').font('Helvetica-Bold').fontSize(10).text('PARTIAL REPORT — exact omissions are listed below.');
-      doc.fillColor('#111827');
-    }
     doc.moveDown(0.7);
     doc.roundedRect(48, doc.y, 516, 46, 5).fillAndStroke('#F4F7FA', '#D5DEE8');
     const noticeY = doc.y + 9;
@@ -342,22 +338,6 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
     addSectionTitle(doc, 'Executive Summary');
     doc.font('Helvetica').fontSize(9).text(compactEvidence(report.summary || 'No synthesis was produced.', 1_500), { align: 'justify', lineGap: 2 });
 
-    if (report.reportCompleteness !== 'complete') {
-      addSectionTitle(doc, 'Coverage Gaps & Exact Omissions');
-      const gaps = report.coverageGaps || [];
-      if (!gaps.length) {
-        doc.font('Helvetica-Oblique').fontSize(8).text('One or more category outcomes were not persisted; those categories are omitted.');
-      } else {
-        for (const gap of gaps) {
-          if (doc.y > 700) doc.addPage();
-          doc.font('Helvetica').fontSize(8).text(
-            `• ${cleanText(gap.category) || 'Unknown category'}: ${cleanText(gap.state) || 'partial'} — ${cleanText(gap.reason) || 'coverage incomplete'}; pending URLs: ${Number(gap.pendingUrls || 0)}; missing capabilities: ${(gap.missingCapabilities || []).map(cleanText).filter(Boolean).join(', ') || 'none recorded'}`,
-            { indent: 8, lineGap: 1 },
-          );
-        }
-      }
-    }
-
     addSectionTitle(doc, '30-Category Investigation Results');
     const categoryOutcomes = input.categoryOutcomes || report.categoryOutcomes || [];
     const canonicalCategories = [
@@ -371,11 +351,6 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
       if (!outcome) {
         doc.text('No persisted category outcome was available. This category is not represented as completed.');
       } else {
-        doc.text(`Coverage status: ${cleanText(outcome.completionState) || 'not recorded'}${outcome.completionReason ? ` — ${cleanText(outcome.completionReason)}` : ''}`);
-        doc.text(`URLs attempted: ${Number(outcome.urlsAttempted || 0)} | Successful retrieval/evidence paths: ${Number(outcome.urlsSuccessful || 0)} | Failed paths: ${Number(outcome.urlsFailed || 0)}`);
-        doc.text(`Required live work: ${Number(outcome.requiredWorkCount || 0)} | Completed live work: ${Number(outcome.successfulWorkCount || 0)}`);
-        const crawlers = (outcome.crawlersUsed || []).map(cleanText).filter(Boolean);
-        if (crawlers.length) doc.text(`Crawler capabilities used: ${crawlers.join(', ')}`);
         const findings = (outcome.findings || []).map(cleanText).filter(Boolean);
         if (!findings.length) {
           doc.font('Helvetica-Oblique').text('No verified subject-specific finding returned by the completed category investigation.');
@@ -416,30 +391,11 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
       doc.font('Helvetica-Bold').fontSize(8).text('HISTORICAL');
       addList(doc, (intelligence.factIndexes?.historical || []).map(item => `${cleanText(item.value)}${item.effectiveAt ? ` (effective/retrieved ${formatDate(item.effectiveAt)})` : ''} [${cleanText(item.citationId)}]`));
 
-      addSectionTitle(doc, 'Contradictions, Manual Review, and Investigative Leads');
+      addSectionTitle(doc, 'Evidence Conflicts Requiring Verification');
       const reviewLines = [
         ...(intelligence.contradictions || []).map(item => `CONTRADICTION — ${cleanText(item.claimKey)}: ${(item.values || []).map(cleanText).join(' versus ')}; citations ${(item.citationIds || []).map(cleanText).join(', ')}`),
-        ...(intelligence.manualReview || []).map(item => `MANUAL REVIEW — ${cleanText(item.category)}: ${cleanText(item.reason)}${item.citationId ? ` [${cleanText(item.citationId)}]` : ''}${item.sourceUrl ? ` — ${cleanText(item.sourceUrl)}` : ''}`),
-        ...(intelligence.investigativeLeads || []).map(item => `UNVERIFIED LEAD — ${cleanText(item.category)}: ${cleanText(item.value)} (${cleanText(item.reason)})${item.citationId ? ` [${cleanText(item.citationId)}]` : ''}`),
       ];
-      const printableReviewLines = reviewLines.slice(0, 60);
-      if (reviewLines.length > printableReviewLines.length) {
-        printableReviewLines.push(`${reviewLines.length - printableReviewLines.length} additional internal review items were omitted from this customer report.`);
-      }
-      addList(doc, printableReviewLines);
-
-      addSectionTitle(doc, 'Per-Source Data Quality');
-      const quality = (intelligence.sourceQuality || [])
-        .sort((left, right) => Number(right.acceptedEvidence || 0) - Number(left.acceptedEvidence || 0))
-        .slice(0, 100);
-      if (!quality.length) {
-        doc.font('Helvetica-Oblique').fontSize(8).text('No per-source quality measurements were available.');
-      } else {
-        for (const item of quality) {
-          if (doc.y > 705) doc.addPage();
-          doc.font('Helvetica').fontSize(7).text(`• ${cleanText(item.host)} — attempts ${Number(item.attempts || 0)}, succeeded ${Number(item.succeeded || 0)}, failed ${Number(item.failed || 0)}, accepted evidence ${Number(item.acceptedEvidence || 0)}, success ${percent(item.successRate)}, failure ${percent(item.failureRate)}, completeness ${percent(item.completenessRate)}, accuracy ${percent(item.accuracyScore)}, freshness ${item.freshnessHours == null ? 'unknown' : `${Math.round(Number(item.freshnessHours))}h`}`, { indent: 8, lineGap: 1 });
-        }
-      }
+      addList(doc, reviewLines.length ? reviewLines.slice(0, 60) : ['No materially conflicting accepted evidence was identified.']);
 
       addSectionTitle(doc, 'Search Scope, Jurisdictions, and Negative Results');
       doc.font('Helvetica-Oblique').fontSize(8).text(cleanText(intelligence.negativeResultQualification));
@@ -447,11 +403,11 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
         if (doc.y > 685) doc.addPage();
         doc.moveDown(0.4);
         doc.font('Helvetica-Bold').fontSize(8).fillColor('#183B63').text(cleanText(scope.category) || 'Category');
-        doc.font('Helvetica').fillColor('#111827').fontSize(7).text(`Jurisdictions checked: ${(scope.jurisdictions || []).map(cleanText).join(', ') || 'none recorded'} | URLs attempted: ${(scope.attemptedUrls || []).length} | successful paths: ${(scope.successfulUrls || []).length} | failed paths: ${(scope.failedUrls || []).length}`);
+        doc.font('Helvetica').fillColor('#111827').fontSize(7).text(`Jurisdictions checked: ${(scope.jurisdictions || []).map(cleanText).join(', ') || 'none recorded'}`);
         if (scope.negativeResult) doc.font('Helvetica-Oblique').text(cleanText(scope.negativeResult));
       }
       doc.moveDown(0.5);
-      doc.font('Helvetica-Oblique').fontSize(7).text('Raw attempted URLs, failed routes, and crawler diagnostics are retained in the internal provenance ledger and are not printed as customer findings.');
+      doc.font('Helvetica-Oblique').fontSize(7).text('Operational retrieval diagnostics are retained in the internal provenance ledger and are not represented as customer findings.');
 
       const changes = intelligence.incrementalChanges;
       if (changes && ((changes.added || []).length || (changes.modified || []).length || (changes.deleted || []).length)) {
@@ -501,10 +457,10 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
     const pageRange = doc.bufferedPageRange();
     for (let index = pageRange.start; index < pageRange.start + pageRange.count; index++) {
       doc.switchToPage(index);
-      doc.moveTo(48, 694).lineTo(564, 694).lineWidth(0.5).strokeColor('#D5DEE8').stroke();
+      doc.moveTo(48, 678).lineTo(564, 678).lineWidth(0.5).strokeColor('#D5DEE8').stroke();
       doc.font('Helvetica').fontSize(7).fillColor('#6B7280').text(
         `LEGAL WHAT? • PANTHEON   |   Report ${input.reportId.slice(0, 8)}   |   Page ${index + 1} of ${pageRange.count}`,
-        48, 700, { width: 516, align: 'center', lineBreak: false },
+        48, 684, { width: 516, align: 'center', lineBreak: false },
       );
     }
 

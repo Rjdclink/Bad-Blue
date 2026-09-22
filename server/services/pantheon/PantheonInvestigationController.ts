@@ -32,6 +32,7 @@ interface CrawlerAuditLike {
 }
 
 interface LedgerEntryLike {
+  url?: string;
   state?: string;
   attempts?: number;
   startedAt?: string;
@@ -168,6 +169,14 @@ export interface PantheonInvestigationAssessment {
   releaseEligible: boolean;
 }
 
+export interface PantheonReportReleaseAssessment {
+  eligible: boolean;
+  reportable: boolean;
+  acceptedEvidenceCount: number;
+  distinctAcceptedSourceCount: number;
+  blocker?: 'investigation_contract_incomplete' | 'no_accepted_evidence' | 'no_attributable_source';
+}
+
 export function assessPantheonInvestigation(categories: readonly {
   index?: number;
   label?: string;
@@ -188,7 +197,8 @@ export function assessPantheonInvestigation(categories: readonly {
       }
     }
     for (const audit of category.crawlerAudit || []) {
-      if (isLivePantheonCrawlerAudit(audit) && !/^(failed|timed_out)$/i.test(String(audit.status || ''))) {
+      if (isLivePantheonCrawlerAudit(audit)
+        && ['completed_with_evidence', 'completed_no_evidence'].includes(String(audit.status || ''))) {
         executed.add(audit.crawler);
       }
     }
@@ -212,5 +222,61 @@ export function assessPantheonInvestigation(categories: readonly {
     missingCapabilities,
     capabilityCoverage,
     releaseEligible,
+  };
+}
+
+/**
+ * A rendered document is releasable only after the full investigation
+ * contract passes and the result contains attributable, accepted evidence.
+ * Empty partial operational diagnostics remain in the internal ledger rather
+ * than becoming a customer-facing background report.
+ */
+export function assessPantheonReportRelease(input: {
+  investigation: PantheonInvestigationAssessment;
+  categories: readonly {
+    evidenceCount?: number;
+    urlLedger?: readonly LedgerEntryLike[];
+  }[];
+}): PantheonReportReleaseAssessment {
+  const acceptedEvidenceCount = input.categories.reduce((total, category) =>
+    total + Math.max(0, Number(category.evidenceCount || 0)), 0);
+  const acceptedSources = new Set(input.categories.flatMap(category =>
+    (category.urlLedger || [])
+      .filter(entry => entry.state === 'accepted' && /^https?:\/\//i.test(String(entry.url || '')))
+      .map(entry => String(entry.url)),
+  ));
+  const reportable = acceptedEvidenceCount > 0 && acceptedSources.size > 0;
+  if (!input.investigation.releaseEligible) {
+    return {
+      eligible: false,
+      reportable,
+      acceptedEvidenceCount,
+      distinctAcceptedSourceCount: acceptedSources.size,
+      blocker: 'investigation_contract_incomplete',
+    };
+  }
+  if (acceptedEvidenceCount === 0) {
+    return {
+      eligible: false,
+      reportable: false,
+      acceptedEvidenceCount,
+      distinctAcceptedSourceCount: acceptedSources.size,
+      blocker: 'no_accepted_evidence',
+    };
+  }
+  if (acceptedSources.size === 0) {
+    return {
+      eligible: false,
+      reportable: false,
+      acceptedEvidenceCount,
+      distinctAcceptedSourceCount: 0,
+      blocker: 'no_attributable_source',
+    };
+  }
+  return {
+    eligible: true,
+    reportable: true,
+    acceptedEvidenceCount,
+    distinctAcceptedSourceCount: acceptedSources.size,
   };
 }

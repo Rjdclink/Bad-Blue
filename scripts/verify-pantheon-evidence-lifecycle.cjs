@@ -19,8 +19,9 @@ for (const token of ['simulation_or_test_output','verified_live_source','require
   if (!evidence.includes(token)) throw new Error('Verified evidence invariant missing: ' + token);
 }
 if (!workflow.includes('coverageGaps') || !workflow.includes("reportCompleteness = unresolved.length === 0") ||
-    !pdf.includes('PARTIAL REPORT') || !pdf.includes('Coverage Gaps & Exact Omissions')) {
-  throw new Error('Partial report does not disclose exact omissions');
+    !job.includes('assessPantheonReportRelease') || !job.includes('if (!releaseAssessment.eligible)') ||
+    pdf.includes('PARTIAL REPORT') || pdf.includes('Coverage Gaps & Exact Omissions')) {
+  throw new Error('Incomplete or zero-evidence work can still become a customer-facing report');
 }
 for (const token of ['consent_required','invalid_search_depth','invalid_idempotency_key','normalize(\'NFKC\')']) {
   if (!submission.includes(token)) throw new Error('Submission validation invariant missing: ' + token);
@@ -36,8 +37,8 @@ if (!workflow.includes('initializePantheonCategoryPlans') || !job.includes('cate
     !job.includes('initializePantheonCategoryPlans')) {
   throw new Error('All category source plans are not initialized and persisted before retrieval');
 }
-if (!registry.includes('preflightPantheonSourceTargets') || !registry.includes('replacementUrl') ||
-    !workflow.includes('sourcePreflightIssues')) {
-  throw new Error('Source registry preflight and lawful replacement invariant missing');
+if (!registry.includes('preflightPantheonSourceTargets') || !registry.includes("disposition: 'excluded'") ||
+    registry.includes("const replacement = 'https://www.bing.com/search") || !workflow.includes('sourcePreflightIssues')) {
+  throw new Error('Source registry preflight and direct-source fallback invariant missing');
 }
-console.log('Pantheon entity matching, partial disclosure, submission persistence, idempotency, source planning, and preflight verified.');
+console.log('Pantheon entity matching, release gating, submission persistence, idempotency, source planning, and preflight verified.');

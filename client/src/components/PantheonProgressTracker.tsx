@@ -67,13 +67,15 @@ export function PantheonProgressTracker({
       const boundedElapsed = Math.min(elapsed, effectiveDuration);
       setElapsedTime(boundedElapsed);
       setNowMs(Date.now());
-      const authoritativeProgress = totalCategories > 0 ? (processedCategories / totalCategories) * 100 : 0;
+      // Completion percentage represents categories that have passed their
+      // evidence/capability contract, not categories that merely terminated.
+      const authoritativeProgress = totalCategories > 0 ? (completedCategories / totalCategories) * 100 : 0;
       setProgress(Math.min(authoritativeProgress, 99));
     };
     tick();
     const interval = setInterval(tick, 50);
     return () => clearInterval(interval);
-  }, [completed, deadlineAt, isSearching, onComplete, processedCategories, startedAt, totalCategories, totalDuration]);
+  }, [completed, completedCategories, deadlineAt, isSearching, onComplete, startedAt, totalCategories, totalDuration]);
 
   const parsedDeadlineAt = deadlineAt ? Date.parse(deadlineAt) : NaN;
   const remainingMs = Number.isFinite(parsedDeadlineAt)
