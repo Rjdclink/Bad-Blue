@@ -36,6 +36,7 @@ interface PlaybackState {
   currentAudio: HTMLAudioElement | null;
   currentObjectUrl: string | null;
   currentResolve: (() => void) | null;
+  currentTurnId: string | null;
   queue: Array<{ text: string; audio?: Blob }>;
   audioUnlocked: boolean;
 }
@@ -45,6 +46,7 @@ const playbackState: PlaybackState = {
   currentAudio: null,
   currentObjectUrl: null,
   currentResolve: null,
+  currentTurnId: null,
   queue: [],
   audioUnlocked: false,
 };
@@ -68,6 +70,7 @@ export function getLexaraServerPlaybackClock(): {
   active: boolean;
   currentTimeSec: number;
   durationSec: number | null;
+  turnId: string | null;
 } {
   const audio = playbackState.currentAudio;
   const currentTimeSec = audio && Number.isFinite(audio.currentTime)
@@ -81,15 +84,22 @@ export function getLexaraServerPlaybackClock(): {
     active: Boolean(playbackState.isPlaying && audio && !audio.paused && !audio.ended),
     currentTimeSec,
     durationSec,
+    turnId: playbackState.currentTurnId,
   };
 }
 
 const SILENT_AUDIO_BASE64 = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
 
-function reportLexaraPlaybackEvent(event: string, audio?: HTMLAudioElement | null): void {
+function reportLexaraPlaybackEvent(
+  event: string,
+  audio?: HTMLAudioElement | null,
+  details: { turnId?: string | null; reason?: string } = {},
+): void {
   if (typeof window === 'undefined') return;
   const payload = JSON.stringify({
     event,
+    turnId: details.turnId ?? playbackState.currentTurnId,
+    reason: details.reason ?? null,
     currentTime: audio && Number.isFinite(audio.currentTime) ? Number(audio.currentTime.toFixed(3)) : null,
     readyState: audio?.readyState ?? null,
     networkState: audio?.networkState ?? null,
@@ -216,6 +226,10 @@ function clearCurrentAudioHandlers(): void {
   audio.onstalled = null;
 }
 
+export interface LexaraPlaybackOptions {
+  turnId?: string;
+}
+
 export const LexaraServerTTS = {
   async play(
     audioOrResponse:
@@ -224,10 +238,11 @@ export const LexaraServerTTS = {
       | { audio: Blob }
       | { audioBase64: string; mimeType: string }
       | { audioUrl: string },
+    options: LexaraPlaybackOptions = {},
   ): Promise<void> {
     // New playback always owns the channel. Resolve any previous play promise so
     // callers do not remain suspended after an intentional interruption.
-    this.stop();
+    this.stop('superseded');
 
     if (!playbackState.audioUnlocked) {
       const unlocked = await unlockAudio();
@@ -268,6 +283,7 @@ export const LexaraServerTTS = {
     // Do not call load() here: on Android it resets the element and can discard
     // already-arriving streamed bytes before playback begins.
     playbackState.currentAudio = audio;
+    playbackState.currentTurnId = options.turnId || null;
     playbackState.currentObjectUrl = shouldRevokeUrl ? audioUrl : null;
     playbackState.isPlaying = false;
 
@@ -282,6 +298,7 @@ export const LexaraServerTTS = {
           clearCurrentAudioHandlers();
           playbackState.currentAudio = null;
           playbackState.currentResolve = null;
+          playbackState.currentTurnId = null;
           playbackState.isPlaying = false;
           revokeCurrentObjectUrl();
         } else if (shouldRevokeUrl) {
@@ -353,7 +370,7 @@ export const LexaraServerTTS = {
     await audio.play();
   },
 
-  stop(): void {
+  stop(reason = 'manual'): void {
     const audio = playbackState.currentAudio;
     const resolveCurrent = playbackState.currentResolve;
 
@@ -363,7 +380,7 @@ export const LexaraServerTTS = {
 
     if (audio) {
       try {
-        if (!audio.paused) reportLexaraPlaybackEvent('interrupted', audio);
+        if (!audio.paused) reportLexaraPlaybackEvent('interrupted', audio, { reason });
         audio.pause();
         audio.currentTime = 0;
       } catch {
@@ -373,6 +390,7 @@ export const LexaraServerTTS = {
 
     playbackState.currentAudio = null;
     playbackState.currentResolve = null;
+    playbackState.currentTurnId = null;
     playbackState.isPlaying = false;
     playbackState.queue = [];
     revokeCurrentObjectUrl();
