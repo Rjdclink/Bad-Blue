@@ -39,6 +39,10 @@ const SIZE_CONFIG = {
 };
 
 const LIVE_AVATAR_ENABLED = String(import.meta.env.VITE_LEXARA_LIVE_AVATAR_ENABLED ?? '1') !== '0';
+// The old canvas cannot safely synthesize facial features from one small portrait.
+// Keep face pixels untouched unless an explicit controlled experiment enables this.
+const LEGACY_PORTRAIT_FACE_OVERLAY_ENABLED =
+  String(import.meta.env.VITE_LEXARA_LEGACY_PORTRAIT_FACE_OVERLAY_ENABLED ?? '0') === '1';
 const TARGET_FPS = 30;
 
 interface LatestAvatarInput {
@@ -370,47 +374,55 @@ function renderEmbodiedFrame(
     );
   }
 
-  // Head/hair moves as one coherent region. The soft scale change is large
-  // enough to read as real head motion instead of a sub-pixel CSS shimmer.
-  drawImageWithLocalTransform(
-    ctx,
-    image,
-    layout,
-    { cx: 0.515, cy: 0.322, rx: 0.125, ry: 0.235 },
-    {
-      dx: headDx,
-      dy: headDy,
-      rotationDeg: headRotation,
-      scaleX: 1 + Math.abs(frame.headX) * 0.0018 * motionScale,
-      scaleY: 1 + frame.headPitch * 0.0024 * motionScale,
-      alpha: 0.992,
-    },
-  );
+  // Do not composite independent head, eye, brow, blink, or mouth patches over the
+  // photograph by default. At this source resolution, those layers create the
+  // yellow/orange oval-and-line blink artifact and intermittent facial seams.
+  // The permitted torso/shoulder layer above remains available as a non-facial
+  // speaking cue and does not participate in audio generation or playback.
+  if (LEGACY_PORTRAIT_FACE_OVERLAY_ENABLED) {
+    // Head/hair moves as one coherent region. The soft scale change is large
+    // enough to read as real head motion instead of a sub-pixel CSS shimmer.
+    drawImageWithLocalTransform(
+      ctx,
+      image,
+      layout,
+      { cx: 0.515, cy: 0.322, rx: 0.125, ry: 0.235 },
+      {
+        dx: headDx,
+        dy: headDy,
+        rotationDeg: headRotation,
+        scaleX: 1 + Math.abs(frame.headX) * 0.0018 * motionScale,
+        scaleY: 1 + frame.headPitch * 0.0024 * motionScale,
+        alpha: 0.992,
+      },
+    );
 
-  const gazeDx = frame.gazeX * width * 0.00165 * motionScale;
-  const gazeDy = frame.gazeY * height * 0.00115 * motionScale;
-  const leftEye: Region = { cx: 0.489, cy: 0.298, rx: 0.018, ry: 0.0105 };
-  const rightEye: Region = { cx: 0.543, cy: 0.298, rx: 0.018, ry: 0.0105 };
+    const gazeDx = frame.gazeX * width * 0.00165 * motionScale;
+    const gazeDy = frame.gazeY * height * 0.00115 * motionScale;
+    const leftEye: Region = { cx: 0.489, cy: 0.298, rx: 0.018, ry: 0.0105 };
+    const rightEye: Region = { cx: 0.543, cy: 0.298, rx: 0.018, ry: 0.0105 };
 
-  if (frame.blink < 0.82) {
-    drawPatchShift(ctx, image, layout, leftEye, headDx - gazeDx, headDy - gazeDy);
-    drawPatchShift(ctx, image, layout, rightEye, headDx - gazeDx, headDy - gazeDy);
+    if (frame.blink < 0.82) {
+      drawPatchShift(ctx, image, layout, leftEye, headDx - gazeDx, headDy - gazeDy);
+      drawPatchShift(ctx, image, layout, rightEye, headDx - gazeDx, headDy - gazeDy);
+    }
+
+    // Eyebrow response gives thinking/emphasis a visible facial component.
+    if (!reducedMotion && Math.abs(frame.browLift) > 0.035) {
+      const browDy = -frame.browLift * height * 0.0028;
+      drawPatchShift(ctx, image, layout, { cx: 0.489, cy: 0.276, rx: 0.025, ry: 0.010 }, headDx, headDy + browDy);
+      drawPatchShift(ctx, image, layout, { cx: 0.543, cy: 0.276, rx: 0.025, ry: 0.010 }, headDx, headDy + browDy);
+    }
+
+    drawBlink(ctx, layout, leftEye, frame.blink, skinColor, headDx, headDy);
+    drawBlink(ctx, layout, rightEye, frame.blink, skinColor, headDx, headDy);
+
+    // Mouth geometry is driven from already-rendered TTS PCM features, not the
+    // microphone. It remains active even when prefers-reduced-motion is enabled
+    // because lip motion is communicative, not decorative.
+    drawMouth(ctx, image, layout, frame, headDx, headDy);
+
   }
-
-  // Eyebrow response gives thinking/emphasis a visible facial component.
-  if (!reducedMotion && Math.abs(frame.browLift) > 0.035) {
-    const browDy = -frame.browLift * height * 0.0028;
-    drawPatchShift(ctx, image, layout, { cx: 0.489, cy: 0.276, rx: 0.025, ry: 0.010 }, headDx, headDy + browDy);
-    drawPatchShift(ctx, image, layout, { cx: 0.543, cy: 0.276, rx: 0.025, ry: 0.010 }, headDx, headDy + browDy);
-  }
-
-  drawBlink(ctx, layout, leftEye, frame.blink, skinColor, headDx, headDy);
-  drawBlink(ctx, layout, rightEye, frame.blink, skinColor, headDx, headDy);
-
-  // Mouth geometry is driven from already-rendered TTS PCM features, not the
-  // microphone. It remains active even when prefers-reduced-motion is enabled
-  // because lip motion is communicative, not decorative.
-  drawMouth(ctx, image, layout, frame, headDx, headDy);
 }
 
 /**
