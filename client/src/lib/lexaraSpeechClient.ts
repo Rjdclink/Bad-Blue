@@ -226,6 +226,20 @@ function clearCurrentAudioHandlers(): void {
   audio.onstalled = null;
 }
 
+
+function playbackFailure(error: unknown, audio: HTMLAudioElement): Error {
+  const message = error instanceof Error ? error.message : 'Audio playback failed';
+  const failure = new Error(message) as Error & {
+    lexaraPlaybackOffsetMs?: number;
+    lexaraPlaybackStarted?: boolean;
+  };
+  failure.lexaraPlaybackOffsetMs = Number.isFinite(audio.currentTime)
+    ? Math.max(0, Math.round(audio.currentTime * 1_000))
+    : 0;
+  failure.lexaraPlaybackStarted = playbackState.isPlaying;
+  return failure;
+}
+
 export interface LexaraPlaybackOptions {
   turnId?: string;
 }
@@ -347,10 +361,10 @@ export const LexaraServerTTS = {
       };
       audio.onerror = error => {
         reportLexaraPlaybackEvent('error', audio);
-        finish('reject', error);
+        finish('reject', playbackFailure(error, audio));
       };
 
-      audio.play().catch(error => finish('reject', error));
+      audio.play().catch(error => finish('reject', playbackFailure(error, audio)));
     });
   },
 
