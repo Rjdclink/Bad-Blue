@@ -22,7 +22,7 @@ export interface LexaraPreparedFacePose {
   index: number;
   visemeIndex: number;
   viseme: LexaraVisemeName;
-  strengthLevel: 1 | 2 | 3 | 4;
+  strengthLevel: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
   strength: number;
   mouthOpen: number;
   mouthWide: number;
@@ -41,9 +41,9 @@ interface VisemeBase {
   brow: number;
 }
 
-// Fifteen established speech shapes. Four controlled strengths are prepared for
-// each shape below, producing sixty deterministic states without generating a
-// new face during conversation.
+// Fifteen established speech shapes. Eight tightly spaced strengths are prepared for
+// each shape, producing 120 deterministic reference states. Runtime interpolation
+// remains continuous: these references constrain the rig rather than acting as frames.
 const VISEME_BASES: readonly VisemeBase[] = [
   { open: 0.00, wide: 0.42, round: 0.08, jaw: 0.00, cheek: 0.02, brow: 0.00 }, // silence
   { open: 0.01, wide: 0.38, round: 0.06, jaw: 0.03, cheek: 0.05, brow: 0.01 }, // M/B/P
@@ -62,13 +62,13 @@ const VISEME_BASES: readonly VisemeBase[] = [
   { open: 0.30, wide: 0.32, round: 0.96, jaw: 0.25, cheek: 0.08, brow: 0.05 }, // U/OO
 ] as const;
 
-const STRENGTHS = [0.34, 0.56, 0.78, 1] as const;
+const STRENGTHS = [0.16, 0.28, 0.40, 0.52, 0.64, 0.76, 0.88, 1] as const;
 
 export const LEXARA_PREPARED_FACE_POSES: readonly LexaraPreparedFacePose[] =
   LEXARA_VISEME_NAMES.flatMap((viseme, visemeIndex) =>
     STRENGTHS.map((strength, strengthIndex) => {
       const base = VISEME_BASES[visemeIndex];
-      const strengthLevel = (strengthIndex + 1) as 1 | 2 | 3 | 4;
+      const strengthLevel = (strengthIndex + 1) as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
       return {
         index: visemeIndex * STRENGTHS.length + strengthIndex,
         visemeIndex,
@@ -85,8 +85,8 @@ export const LEXARA_PREPARED_FACE_POSES: readonly LexaraPreparedFacePose[] =
     }),
   );
 
-if (LEXARA_PREPARED_FACE_POSES.length !== 60) {
-  throw new Error('LEXARA prepared facial library must contain exactly 60 states');
+if (LEXARA_PREPARED_FACE_POSES.length !== 120) {
+  throw new Error('LEXARA prepared facial library must contain exactly 120 reference states');
 }
 
 export function getLexaraPreparedFacePose(index: number): LexaraPreparedFacePose {
