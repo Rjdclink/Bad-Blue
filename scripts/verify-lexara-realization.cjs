@@ -798,13 +798,16 @@ must(
     avatar.includes("fallback: 'portrait-plus-throat'") &&
     avatar.includes('LEGACY_PORTRAIT_NON_MOUTH_OVERLAYS_ENABLED') &&
     avatar.includes('const TARGET_FPS = 60') &&
+    avatar.includes("VITE_LEXARA_CLIP_MOTION_ENABLED ?? '1'") &&
+    avatar.includes("if (frame.mode !== 'speaking') return;") &&
+    avatar.includes('preparedPoseCount: 120') &&
     avatar.includes('blendPreparedFacePose') &&
     avatar.includes('frame.mouthPreviousPoseIndex') &&
     embodimentEngine.includes('mouthPoseIndex') &&
     embodimentEngine.includes('mouthPoseBlend') &&
     embodimentEngine.includes('dtSec / 0.085') &&
     embodimentEngine.includes('selectAudioViseme') &&
-    preparedFacePoses.includes('LEXARA_PREPARED_FACE_POSES.length !== 60') &&
+    preparedFacePoses.includes('LEXARA_PREPARED_FACE_POSES.length !== 120') &&
     preparedFacePoses.includes('visemeIndex * STRENGTHS.length + strengthIndex') &&
     fs.existsSync('public/images/lexara-mouth-atlas.webp'),
   'sixty prepared facial states animate the calibrated lips and original face while preserving throat motion and voice isolation',
