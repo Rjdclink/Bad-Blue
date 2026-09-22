@@ -39,6 +39,14 @@ for (const token of [
 }
 
 for (const token of [
+  'INSERT INTO public.pantheon_frontier_outcomes',
+  'provenance?: Record<string, unknown>',
+  'final\\n${entry.state}',
+]) {
+  if (!store.includes(token)) throw new Error(`Pantheon frontier provenance invariant missing: ${token}`);
+}
+
+for (const token of [
   'await preparePantheonFrontier',
   'await claimPantheonFrontierItem',
   'await completePantheonFrontierItem',
