@@ -347,7 +347,7 @@ export class LexaraEmbodimentEngine {
     const audio = input.audio;
     const speechClockSec = audio.currentTimeSec > 0 ? audio.currentTimeSec : timeSec;
     const fallbackSpeech =
-      input.mode === 'speaking'
+      input.mode === 'speaking' && audio.active
         ? clamp(
             0.38
               + Math.sin(speechClockSec * 24.7) * 0.23
