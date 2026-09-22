@@ -43,7 +43,7 @@ export interface LexaraEmbodimentFrame {
   mouthWide: number;
   mouthRound: number;
   mouthVisemeIndex: number;
-  mouthStrengthLevel: 1 | 2 | 3 | 4;
+  mouthStrengthLevel: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
   mouthPoseIndex: number;
   mouthPreviousPoseIndex: number;
   mouthPoseBlend: number;
@@ -404,12 +404,19 @@ export class LexaraEmbodimentEngine {
     }
 
     const visualStrength = clamp(this.smoothedMouthOpen * 0.78 + rawLevel * 0.22);
-    const mouthStrengthLevel: 1 | 2 | 3 | 4 =
-      visualStrength < 0.20 ? 1
-        : visualStrength < 0.43 ? 2
-          : visualStrength < 0.68 ? 3
-            : 4;
-    const requestedMouthPoseIndex = this.currentVisemeIndex * 4 + (mouthStrengthLevel - 1);
+    const mouthStrengthLevel: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 =
+      visualStrength < 0.125 ? 1
+        : visualStrength < 0.25 ? 2
+          : visualStrength < 0.375 ? 3
+            : visualStrength < 0.50 ? 4
+              : visualStrength < 0.625 ? 5
+                : visualStrength < 0.75 ? 6
+                  : visualStrength < 0.875 ? 7
+                    : 8;
+    // Eight reference strengths per viseme match the 120-state facial manifold.
+    // The 60 FPS blend below makes these control points continuous rather than
+    // exposing discrete stills to the viewer.
+    const requestedMouthPoseIndex = this.currentVisemeIndex * 8 + (mouthStrengthLevel - 1);
     if (requestedMouthPoseIndex !== this.currentMouthPoseIndex) {
       this.previousMouthPoseIndex = this.currentMouthPoseIndex;
       this.currentMouthPoseIndex = requestedMouthPoseIndex;
