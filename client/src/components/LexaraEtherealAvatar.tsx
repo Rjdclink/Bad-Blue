@@ -881,7 +881,7 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
       if (rendererFailed) return;
 
       const input = latestInputRef.current;
-      const mode = getMode(input);
+      const requestedMode = getMode(input);
       const realtimeClock = lexaraRealtimeVoiceClient.getPlaybackClock();
       const serverClock = getLexaraServerPlaybackClock();
       const audioActive = realtimeClock.active || serverClock.active;
@@ -891,6 +891,11 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
           ? serverClock.currentTimeSec
           : 0;
       const audioTurnId = realtimeClock.active ? realtimeClock.turnId : serverClock.turnId;
+      // Visible speech must follow rendered audio, not merely the React speaking flag.
+      // This prevents the resting portrait from being hidden before audio starts or
+      // after playback ends, while keeping animation completely off the audio path.
+      const mode: LexaraEmbodimentMode =
+        audioActive ? 'speaking' : requestedMode === 'speaking' ? 'idle' : requestedMode;
 
       const frame = engine.update({
         nowMs,
