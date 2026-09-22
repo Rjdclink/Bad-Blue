@@ -82,7 +82,10 @@ interface FeatheredPatchSurface {
   ctx: CanvasRenderingContext2D;
 }
 
-const LEXARA_MOUTH_REGION: Region = { cx: 0.520, cy: 0.318, rx: 0.040, ry: 0.0115 };
+// Production phone captures show the animated lip center fractionally below the
+// photographed lip line. Keep the correction portrait-relative so it remains
+// identical across device sizes and pixel densities.
+const LEXARA_MOUTH_REGION: Region = { cx: 0.520, cy: 0.308, rx: 0.040, ry: 0.0115 };
 
 function getMode(input: LatestAvatarInput): LexaraEmbodimentMode {
   if (input.isSpeaking) return 'speaking';
@@ -338,8 +341,9 @@ function drawMouth(
   headDy: number,
 ): void {
   // Coordinates are calibrated against the original 239x239 production image.
-  // The previous y=0.357 target was below the real lips and visibly animated the
-  // chin/throat instead. This boundary contains only Lexara's actual mouth.
+  // The original y=0.357 target was below the real lips and visibly animated the
+  // chin/throat instead; production capture calibration raised the later 0.318
+  // target slightly to 0.308. This boundary contains only Lexara's moving lips.
   const r = ellipseRegion(layout, LEXARA_MOUTH_REGION);
   const pose = getLexaraPreparedFacePose(frame.mouthPoseIndex);
   const open = Math.min(0.96, Math.max(frame.mouthOpen * 0.82, pose.mouthOpen));
