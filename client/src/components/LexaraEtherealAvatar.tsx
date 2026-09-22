@@ -2,7 +2,10 @@ import { memo, useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { getLexaraServerPlaybackClock } from '@/lib/lexaraSpeechClient';
 import { lexaraRealtimeVoiceClient } from '@/lib/lexaraRealtimeVoiceClient';
-import { getLexaraPreparedFacePose } from '@/lib/lexaraPreparedFacePoses';
+import {
+  getLexaraPreparedFacePose,
+  type LexaraPreparedFacePose,
+} from '@/lib/lexaraPreparedFacePoses';
 import {
   LexaraEmbodimentEngine,
   type LexaraEmbodimentFrame,
@@ -53,7 +56,7 @@ const PORTRAIT_BREATHING_ENABLED =
 const PREPARED_PORTRAIT_FACE_ENABLED =
   String(import.meta.env.VITE_LEXARA_PREPARED_FACE_ENABLED ?? '1') !== '0';
 const LEXARA_MOUTH_ATLAS_SRC = '/images/lexara-mouth-atlas.webp?v=20260922-prepared60';
-const TARGET_FPS = 30;
+const TARGET_FPS = 60;
 
 interface LatestAvatarInput {
   isSpeaking: boolean;
@@ -82,10 +85,26 @@ interface FeatheredPatchSurface {
   ctx: CanvasRenderingContext2D;
 }
 
-// Production phone captures show the animated lip center fractionally below the
-// photographed lip line. Keep the correction portrait-relative so it remains
-// identical across device sizes and pixel densities.
-const LEXARA_MOUTH_REGION: Region = { cx: 0.520, cy: 0.308, rx: 0.040, ry: 0.0115 };
+// 0.318 was visibly low and 0.308 was visibly high in production captures.
+// Their exact midpoint keeps the correction portrait-relative across devices.
+const LEXARA_MOUTH_REGION: Region = { cx: 0.520, cy: 0.313, rx: 0.040, ry: 0.0115 };
+
+function blendPreparedFacePose(frame: LexaraEmbodimentFrame): LexaraPreparedFacePose {
+  const previous = getLexaraPreparedFacePose(frame.mouthPreviousPoseIndex);
+  const current = getLexaraPreparedFacePose(frame.mouthPoseIndex);
+  const rawBlend = Math.max(0, Math.min(1, frame.mouthPoseBlend));
+  const blend = rawBlend * rawBlend * (3 - 2 * rawBlend);
+  const mix = (from: number, to: number) => from + (to - from) * blend;
+  return {
+    ...current,
+    mouthOpen: mix(previous.mouthOpen, current.mouthOpen),
+    mouthWide: mix(previous.mouthWide, current.mouthWide),
+    mouthRound: mix(previous.mouthRound, current.mouthRound),
+    jawDrop: mix(previous.jawDrop, current.jawDrop),
+    cheekLift: mix(previous.cheekLift, current.cheekLift),
+    browLift: mix(previous.browLift, current.browLift),
+  };
+}
 
 function getMode(input: LatestAvatarInput): LexaraEmbodimentMode {
   if (input.isSpeaking) return 'speaking';
@@ -342,11 +361,11 @@ function drawMouth(
 ): void {
   // Coordinates are calibrated against the original 239x239 production image.
   // The original y=0.357 target was below the real lips and visibly animated the
-  // chin/throat instead; production capture calibration raised the later 0.318
-  // target slightly to 0.308. This boundary contains only Lexara's moving lips.
+  // chin/throat instead; production capture calibration now centers the lip-only
+  // layer halfway between the rejected low and high positions.
   const r = ellipseRegion(layout, LEXARA_MOUTH_REGION);
-  const pose = getLexaraPreparedFacePose(frame.mouthPoseIndex);
-  const open = Math.min(0.96, Math.max(frame.mouthOpen * 0.82, pose.mouthOpen));
+  const pose = blendPreparedFacePose(frame);
+  const open = Math.min(0.60, Math.max(frame.mouthOpen * 0.95, pose.mouthOpen * 0.68));
   const wide = Math.min(1, Math.max(frame.mouthWide * 0.52, pose.mouthWide));
   const round = Math.min(1, Math.max(frame.mouthRound * 0.48, pose.mouthRound));
   const gap = open * r.ry * 2.35;
@@ -412,26 +431,37 @@ function drawMouth(
     if (mouthAtlas?.complete && mouthAtlas.naturalWidth >= 512 && mouthAtlas.naturalHeight >= 288) {
       const cellWidth = 128;
       const cellHeight = 72;
-      const cellIndex = Math.max(0, Math.min(14, pose.visemeIndex));
-      const sourceX = (cellIndex % 4) * cellWidth;
-      const sourceY = Math.floor(cellIndex / 4) * cellHeight;
       const destinationWidth = lipHalfWidth * 3.25;
       const destinationHeight = destinationWidth * (cellHeight / cellWidth);
       ctx.save();
       ctx.beginPath();
       ctx.ellipse(innerCx, innerCy, innerRx, innerRy, 0, 0, Math.PI * 2);
       ctx.clip();
-      ctx.drawImage(
-        mouthAtlas,
-        sourceX,
-        sourceY,
-        cellWidth,
-        cellHeight,
-        innerCx - destinationWidth / 2,
-        innerCy - destinationHeight * 0.69,
-        destinationWidth,
-        destinationHeight,
-      );
+      const drawAtlasPose = (poseIndex: number, alpha: number) => {
+        if (alpha <= 0.001) return;
+        const atlasPose = getLexaraPreparedFacePose(poseIndex);
+        const cellIndex = Math.max(0, Math.min(14, atlasPose.visemeIndex));
+        const sourceX = (cellIndex % 4) * cellWidth;
+        const sourceY = Math.floor(cellIndex / 4) * cellHeight;
+        ctx.globalAlpha = alpha;
+        ctx.drawImage(
+          mouthAtlas,
+          sourceX,
+          sourceY,
+          cellWidth,
+          cellHeight,
+          innerCx - destinationWidth / 2,
+          innerCy - destinationHeight * 0.69,
+          destinationWidth,
+          destinationHeight,
+        );
+      };
+      const rawBlend = Math.max(0, Math.min(1, frame.mouthPoseBlend));
+      const poseBlend = rawBlend * rawBlend * (3 - 2 * rawBlend);
+      if (frame.mouthPreviousPoseIndex !== frame.mouthPoseIndex && poseBlend < 0.999) {
+        drawAtlasPose(frame.mouthPreviousPoseIndex, 1 - poseBlend);
+      }
+      drawAtlasPose(frame.mouthPoseIndex, poseBlend);
       ctx.restore();
     } else {
       const showsTeeth = [2, 3, 4, 7, 8, 11, 12].includes(pose.visemeIndex) || open > 0.52;
@@ -487,7 +517,7 @@ function drawPreparedSpeechFace(
 ): void {
   if (frame.mode !== 'speaking' || frame.mouthOpen < 0.018) return;
 
-  const pose = getLexaraPreparedFacePose(frame.mouthPoseIndex);
+  const pose = blendPreparedFacePose(frame);
   const motionScale = reducedMotion ? 0.32 : 1;
   const activity = Math.min(1, frame.mouthOpen * 0.72 + frame.gestureEnergy * 0.28);
   const jawAmount = Math.min(1, pose.jawDrop * 0.78 + activity * 0.32);
@@ -823,8 +853,9 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
       if (disposed) return;
       frameHandle = window.requestAnimationFrame(paint);
       if (!image.complete || !image.naturalWidth || !image.naturalHeight) return;
-      if (nowMs - lastPaintMs < 1000 / TARGET_FPS) return;
-      lastPaintMs = nowMs;
+      const frameIntervalMs = 1000 / TARGET_FPS;
+      if (nowMs - lastPaintMs + 0.5 < frameIntervalMs) return;
+      lastPaintMs = nowMs - ((nowMs - lastPaintMs) % frameIntervalMs);
 
       if (rendererFailed) return;
 

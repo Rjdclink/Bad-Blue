@@ -160,6 +160,10 @@ function handleRealtimeClient(client: WebSocket, ticket: RealtimeTicket): void {
   let configured = false;
   let activeTurnId: string | null = null;
   let activeTurnFlushed = false;
+  let sttRequestId: string | null = null;
+  let ttsRequestId: string | null = null;
+  let sttReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let sttReconnectAttempt = 0;
   const recentTurnIds: string[] = [];
   const queuedInputFrames: Buffer[] = [];
   const keepalive = setInterval(() => {
@@ -181,6 +185,8 @@ function handleRealtimeClient(client: WebSocket, ticket: RealtimeTicket): void {
 
   const closeUpstreams = () => {
     clearInterval(keepalive);
+    if (sttReconnectTimer) clearTimeout(sttReconnectTimer);
+    sttReconnectTimer = null;
     for (const socket of [stt, tts]) {
       if (!socket) continue;
       try {
@@ -222,23 +228,9 @@ function handleRealtimeClient(client: WebSocket, ticket: RealtimeTicket): void {
     );
     const keyterms = normalizedKeyterms(message.keyterms);
 
-    stt = openDeepgramSocket(deepgramListenUrl(inputSampleRate), apiKey);
     tts = openDeepgramSocket(deepgramSpeakUrl(outputSampleRate), apiKey);
 
-    stt.on('open', () => {
-      if (keyterms.length && stt?.readyState === WebSocket.OPEN) {
-        stt.send(JSON.stringify({ type: 'Configure', keyterms }));
-      }
-      maybeReady();
-    });
     tts.on('open', maybeReady);
-
-    stt.on('message', (data, isBinary) => {
-      if (isBinary) return;
-      const payload = parseJson(data);
-      if (!payload) return;
-      safeSendJson(client, { type: 'stt', payload });
-    });
 
     tts.on('message', (data, isBinary) => {
       if (isBinary) {
@@ -248,6 +240,9 @@ function handleRealtimeClient(client: WebSocket, ticket: RealtimeTicket): void {
       }
       const payload = parseJson(data);
       if (!payload) return;
+      if (payload.type === 'Connected' && typeof payload.request_id === 'string') {
+        ttsRequestId = payload.request_id;
+      }
       if (payload.type === 'SpeechMetadata') {
         rememberTurn(activeTurnId);
         activeTurnId = null;
@@ -260,24 +255,104 @@ function handleRealtimeClient(client: WebSocket, ticket: RealtimeTicket): void {
       safeSendJson(client, { type: 'tts_control', payload });
     });
 
-    const handleUpstreamFailure = (channel: 'stt' | 'tts', error?: unknown) => {
+    const handleUpstreamFailure = (
+      channel: 'stt' | 'tts',
+      error?: unknown,
+      close?: { code?: number; reason?: string },
+    ) => {
+      const failureReason = error instanceof Error
+        ? error.message
+        : close?.reason || String(error || 'closed');
       log.warn('[LEXARA Realtime] Deepgram realtime channel failed', {
         channel,
         subject: ticket.subject,
-        error: error instanceof Error ? error.message : String(error || 'closed'),
+        error: failureReason,
+        closeCode: close?.code ?? null,
+        closeReason: close?.reason || null,
+        requestId: channel === 'tts' ? ttsRequestId : sttRequestId,
+        activeTurnId,
+        activeTurnFlushed,
       });
-      safeSendJson(client, { type: 'fatal', code: `${channel}_unavailable` });
+      safeSendJson(client, {
+        type: 'fatal',
+        code: `${channel}_unavailable`,
+        channel,
+        reason: failureReason.slice(0, 160),
+        requestId: channel === 'tts' ? ttsRequestId : sttRequestId,
+      });
       try { client.close(1011, 'Realtime voice route unavailable'); } catch { /* noop */ }
     };
 
-    stt.on('error', error => handleUpstreamFailure('stt', error));
     tts.on('error', error => handleUpstreamFailure('tts', error));
-    stt.on('close', (code) => {
-      if (client.readyState === WebSocket.OPEN && code !== 1000) handleUpstreamFailure('stt');
+    tts.on('close', (code, reason) => {
+      if (client.readyState === WebSocket.OPEN && code !== 1000) {
+        handleUpstreamFailure('tts', undefined, { code, reason: reason.toString('utf8') });
+      }
     });
-    tts.on('close', (code) => {
-      if (client.readyState === WebSocket.OPEN && code !== 1000) handleUpstreamFailure('tts');
-    });
+
+    const openSttChannel = () => {
+      if (client.readyState !== WebSocket.OPEN) return;
+      const channel = openDeepgramSocket(deepgramListenUrl(inputSampleRate), apiKey);
+      stt = channel;
+      let recoveryScheduled = false;
+
+      const recoverStt = (error?: unknown, close?: { code?: number; reason?: string }) => {
+        if (recoveryScheduled || client.readyState !== WebSocket.OPEN) return;
+        recoveryScheduled = true;
+        if (stt === channel) stt = null;
+        const failureReason = error instanceof Error
+          ? error.message
+          : close?.reason || String(error || 'closed');
+        log.warn('[LEXARA Realtime] STT channel reconnecting without interrupting speech', {
+          subject: ticket.subject,
+          error: failureReason,
+          closeCode: close?.code ?? null,
+          closeReason: close?.reason || null,
+          requestId: sttRequestId,
+          activeTurnId,
+          retry: sttReconnectAttempt + 1,
+        });
+        safeSendJson(client, {
+          type: 'channel_status',
+          channel: 'stt',
+          status: 'reconnecting',
+          reason: failureReason.slice(0, 160),
+        });
+        const delayMs = Math.min(2_000, 250 * (2 ** sttReconnectAttempt));
+        sttReconnectAttempt = Math.min(4, sttReconnectAttempt + 1);
+        sttReconnectTimer = setTimeout(() => {
+          sttReconnectTimer = null;
+          openSttChannel();
+        }, delayMs);
+        sttReconnectTimer.unref?.();
+      };
+
+      channel.on('open', () => {
+        if (stt !== channel) return;
+        sttReconnectAttempt = 0;
+        if (keyterms.length) channel.send(JSON.stringify({ type: 'Configure', keyterms }));
+        safeSendJson(client, { type: 'channel_status', channel: 'stt', status: 'ready' });
+        maybeReady();
+        while (queuedInputFrames.length && channel.readyState === WebSocket.OPEN) {
+          channel.send(queuedInputFrames.shift()!);
+        }
+      });
+      channel.on('message', (data, isBinary) => {
+        if (isBinary || stt !== channel) return;
+        const payload = parseJson(data);
+        if (!payload) return;
+        if (payload.type === 'Connected' && typeof payload.request_id === 'string') {
+          sttRequestId = payload.request_id;
+        }
+        safeSendJson(client, { type: 'stt', payload });
+      });
+      channel.on('error', error => recoverStt(error));
+      channel.on('close', (code, reason) => {
+        recoverStt(undefined, { code, reason: reason.toString('utf8') });
+      });
+    };
+
+    openSttChannel();
 
     safeSendJson(client, {
       type: 'config_ack',
@@ -360,8 +435,28 @@ function handleRealtimeClient(client: WebSocket, ticket: RealtimeTicket): void {
     }
   });
 
-  client.once('close', closeUpstreams);
-  client.once('error', closeUpstreams);
+  client.once('close', (code, reason) => {
+    log.info('[LEXARA Realtime] Browser voice socket closed', {
+      subject: ticket.subject,
+      closeCode: code,
+      closeReason: reason.toString('utf8') || null,
+      activeTurnId,
+      activeTurnFlushed,
+      sttRequestId,
+      ttsRequestId,
+    });
+    closeUpstreams();
+  });
+  client.once('error', error => {
+    log.warn('[LEXARA Realtime] Browser voice socket error', {
+      subject: ticket.subject,
+      error: error.message,
+      activeTurnId,
+      sttRequestId,
+      ttsRequestId,
+    });
+    closeUpstreams();
+  });
 
   safeSendJson(client, { type: 'connected', ticketExpiresAt: ticket.expiresAt });
 }
