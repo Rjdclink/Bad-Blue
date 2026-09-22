@@ -45,6 +45,8 @@ export interface LexaraEmbodimentFrame {
   mouthVisemeIndex: number;
   mouthStrengthLevel: 1 | 2 | 3 | 4;
   mouthPoseIndex: number;
+  mouthPreviousPoseIndex: number;
+  mouthPoseBlend: number;
   gestureEnergy: number;
   attention: number;
 }
@@ -154,6 +156,9 @@ export class LexaraEmbodimentEngine {
   private smoothedMouthOpen = 0;
   private currentVisemeIndex = 0;
   private nextVisemeDecisionMs = 0;
+  private currentMouthPoseIndex = 0;
+  private previousMouthPoseIndex = 0;
+  private mouthPoseBlend = 1;
   private smoothedGestureEnergy = 0;
   private nextFidgetMs = 0;
   private fidgetUntilMs = 0;
@@ -200,6 +205,9 @@ export class LexaraEmbodimentEngine {
     this.smoothedMouthOpen = 0;
     this.currentVisemeIndex = 0;
     this.nextVisemeDecisionMs = nowMs;
+    this.currentMouthPoseIndex = 0;
+    this.previousMouthPoseIndex = 0;
+    this.mouthPoseBlend = 1;
     this.smoothedGestureEnergy = 0;
     this.nextFidgetMs = nowMs + 3500 + this.random() * 6500;
     this.fidgetUntilMs = 0;
@@ -350,12 +358,16 @@ export class LexaraEmbodimentEngine {
         : 0;
 
     const measuredLevelAvailable = Number.isFinite(audio.level);
+    const measuredLevel = measuredLevelAvailable ? clamp(audio.level) : 0;
+    const visibleMeasuredLevel = measuredLevel > 0.012
+      ? clamp(0.10 + Math.pow(measuredLevel, 0.78) * 0.62, 0, 0.72)
+      : 0;
     const rawLevel = audio.active
       ? measuredLevelAvailable
-        ? clamp(audio.level * 1.45, 0, 1)
-        : fallbackSpeech
+        ? visibleMeasuredLevel
+        : clamp(0.10 + fallbackSpeech * 0.62, 0, 0.72)
       : 0;
-    const attack = rawLevel > this.smoothedMouthOpen ? 18 : 10;
+    const attack = rawLevel > this.smoothedMouthOpen ? 20 : 12;
     this.smoothedMouthOpen = exponentialSmoothing(this.smoothedMouthOpen, rawLevel, dtSec, attack);
 
     const brightness = clamp(Number.isFinite(audio.brightness) ? Number(audio.brightness) : 0.35);
@@ -388,7 +400,7 @@ export class LexaraEmbodimentEngine {
       this.currentVisemeIndex = requestedVisemeIndex;
       // Brief holds prevent rapid atlas flicker while remaining well below a
       // spoken syllable. This affects visuals only and never buffers playback.
-      this.nextVisemeDecisionMs = nowMs + 52 + (1 - rawLevel) * 32;
+      this.nextVisemeDecisionMs = nowMs + 78 + (1 - rawLevel) * 34;
     }
 
     const visualStrength = clamp(this.smoothedMouthOpen * 0.78 + rawLevel * 0.22);
@@ -397,7 +409,13 @@ export class LexaraEmbodimentEngine {
         : visualStrength < 0.43 ? 2
           : visualStrength < 0.68 ? 3
             : 4;
-    const mouthPoseIndex = this.currentVisemeIndex * 4 + (mouthStrengthLevel - 1);
+    const requestedMouthPoseIndex = this.currentVisemeIndex * 4 + (mouthStrengthLevel - 1);
+    if (requestedMouthPoseIndex !== this.currentMouthPoseIndex) {
+      this.previousMouthPoseIndex = this.currentMouthPoseIndex;
+      this.currentMouthPoseIndex = requestedMouthPoseIndex;
+      this.mouthPoseBlend = 0;
+    }
+    this.mouthPoseBlend = clamp(this.mouthPoseBlend + dtSec / 0.085);
 
     const gestureTarget = input.mode === 'speaking'
       ? clamp(this.smoothedMouthOpen * 0.72 + onset * 0.55)
@@ -469,7 +487,9 @@ export class LexaraEmbodimentEngine {
       mouthRound: clamp(mouthRoundTarget),
       mouthVisemeIndex: this.currentVisemeIndex,
       mouthStrengthLevel,
-      mouthPoseIndex,
+      mouthPoseIndex: this.currentMouthPoseIndex,
+      mouthPreviousPoseIndex: this.previousMouthPoseIndex,
+      mouthPoseBlend: this.mouthPoseBlend,
       gestureEnergy: clamp(this.smoothedGestureEnergy),
       attention,
     };

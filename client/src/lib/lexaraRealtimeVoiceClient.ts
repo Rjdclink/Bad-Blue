@@ -40,6 +40,13 @@ interface ActiveSpeech {
   renderReported: boolean;
 }
 
+export interface LexaraRealtimeSpeechFailure extends Error {
+  lexaraPlaybackOffsetMs?: number;
+  lexaraPlaybackStarted?: boolean;
+  lexaraTurnId?: string;
+  lexaraFailureReason?: string;
+}
+
 const CONNECT_TIMEOUT_MS = 9_000;
 const SPEECH_TIMEOUT_MS = 180_000;
 const CAPTURE_FRAME_MS = 80;
@@ -105,26 +112,40 @@ class LexaraPlaybackProcessor extends AudioWorkletProcessor {
     this.started = false;
     this.renderedFrames = 0;
     this.hadAudio = false;
+    this.upstreamComplete = false;
+    this.drainReported = false;
     this.port.onmessage = event => {
       if (event.data?.type === 'audio' && event.data.buffer) {
         const chunk = new Int16Array(event.data.buffer);
         this.queue.push(chunk);
         this.queuedSamples += chunk.length;
         this.hadAudio = true;
+        this.drainReported = false;
+      } else if (event.data?.type === 'upstream_complete') {
+        this.upstreamComplete = true;
+        if (this.hadAudio && this.queue.length === 0 && !this.drainReported) {
+          this.drainReported = true;
+          this.hadAudio = false;
+          this.started = false;
+          this.port.postMessage({
+            type: 'drained',
+            epoch: this.epoch,
+            renderedFrames: this.renderedFrames,
+          });
+        }
       } else if (event.data?.type === 'clear') {
         this.queue = [];
         this.queueOffset = 0;
         this.queuedSamples = 0;
         this.started = false;
         this.hadAudio = false;
-        this.port.postMessage({
-          type: 'drained',
-          epoch: this.epoch,
-          renderedFrames: this.renderedFrames,
-        });
+        this.upstreamComplete = false;
+        this.drainReported = false;
       } else if (event.data?.type === 'reset_counter') {
         this.renderedFrames = 0;
         this.nextMetricFrame = 0;
+        this.upstreamComplete = false;
+        this.drainReported = false;
         this.epoch = Number.isFinite(event.data.epoch) ? event.data.epoch : this.epoch + 1;
       }
     };
@@ -185,7 +206,8 @@ class LexaraPlaybackProcessor extends AudioWorkletProcessor {
       ? Math.min(1, zeroCrossings / (writeOffset - 1))
       : 0;
 
-    if (this.hadAudio && this.queue.length === 0) {
+    if (this.hadAudio && this.upstreamComplete && this.queue.length === 0 && !this.drainReported) {
+      this.drainReported = true;
       this.hadAudio = false;
       this.started = false;
       this.port.postMessage({
@@ -494,6 +516,7 @@ class LexaraRealtimeVoiceClient {
     this.outputAudio = outputAudio;
     this.speechOutputReady = speechOutputReady;
     this.renderedFrames = 0;
+    this.cumulativeRenderedFrames = 0;
 
     const socket = new WebSocket(websocketUrl(
       typeof ticketPayload.endpoint === 'string' ? ticketPayload.endpoint : '/api/lexara/realtime',
@@ -598,17 +621,34 @@ class LexaraRealtimeVoiceClient {
         }
       };
 
-      socket.onerror = () => fail(new Error('LEXARA realtime voice socket failed'));
+      socket.onerror = () => {
+        reportRealtimeVoiceEvent('realtime-socket-error', {
+          turnId: this.activeSpeech?.turnId || null,
+          playbackOffsetMs: this.currentTurnPlaybackOffsetMs(),
+        });
+        fail(new Error('LEXARA realtime voice socket failed'));
+      };
       socket.onclose = event => {
         const wasReady = this.ready;
         this.ready = false;
+        reportRealtimeVoiceEvent('realtime-socket-close', {
+          closeCode: event.code,
+          closeReason: event.reason || null,
+          wasClean: event.wasClean,
+          turnId: this.activeSpeech?.turnId || null,
+          playbackOffsetMs: this.currentTurnPlaybackOffsetMs(),
+        });
         if (!settled) {
           fail(new Error(`LEXARA realtime voice closed before ready (${event.code})`));
           return;
         }
         if (wasReady && event.code !== 1000) {
-          this.failActiveSpeech(new Error('LEXARA realtime voice connection closed'));
-          this.onFatal?.(new Error('LEXARA realtime voice connection closed'));
+          const error = this.realtimeSpeechFailure(
+            `LEXARA realtime voice connection closed (${event.code})`,
+            event.reason || (event.wasClean ? 'clean-close' : 'unclean-close'),
+          );
+          this.failActiveSpeech(error);
+          this.onFatal?.(error);
         }
       };
     }).catch(error => {
@@ -656,7 +696,6 @@ class LexaraRealtimeVoiceClient {
 
     this.clearPlayback();
     this.playbackEpoch += 1;
-    this.cumulativeRenderedFrames = 0;
     this.playback?.port.postMessage({
       type: 'reset_counter',
       epoch: this.playbackEpoch,
@@ -669,8 +708,12 @@ class LexaraRealtimeVoiceClient {
     const promise = new Promise<void>((resolve, reject) => {
       const timeout = window.setTimeout(() => {
         if (this.activeSpeech?.turnId !== cleanTurnId) return;
+        const error = this.realtimeSpeechFailure(
+          'LEXARA realtime speech timed out',
+          'speech-timeout',
+        );
         this.activeSpeech = null;
-        reject(new Error('LEXARA realtime speech timed out'));
+        reject(error);
       }, SPEECH_TIMEOUT_MS);
 
       this.activeSpeech = {
@@ -769,6 +812,7 @@ class LexaraRealtimeVoiceClient {
     this.outputAudio = null;
     this.speechOutputReady = false;
     this.context = null;
+    this.cumulativeRenderedFrames = 0;
     this.onSttEvent = null;
     this.onFatal = null;
   }
@@ -797,13 +841,33 @@ class LexaraRealtimeVoiceClient {
   }
 
   private handleControlMessage(message: any): void {
+    if (message.type === 'channel_status') {
+      reportRealtimeVoiceEvent('realtime-channel-status', {
+        channel: String(message.channel || 'unknown'),
+        status: String(message.status || 'unknown'),
+        reason: typeof message.reason === 'string' ? message.reason.slice(0, 160) : null,
+        turnId: this.activeSpeech?.turnId || null,
+      });
+      return;
+    }
+
     if (message.type === 'stt' && message.payload && typeof message.payload === 'object') {
       this.onSttEvent?.(message.payload as LexaraRealtimeSttEvent);
       return;
     }
 
     if (message.type === 'fatal') {
-      const error = new Error(`LEXARA realtime voice failed: ${String(message.code || 'unknown')}`);
+      const failureReason = String(message.reason || message.code || 'unknown');
+      const error = this.realtimeSpeechFailure(
+        `LEXARA realtime voice failed: ${String(message.code || 'unknown')}`,
+        failureReason,
+      );
+      reportRealtimeVoiceEvent('realtime-fatal', {
+        code: String(message.code || 'unknown'),
+        reason: failureReason,
+        turnId: this.activeSpeech?.turnId || null,
+        playbackOffsetMs: error.lexaraPlaybackOffsetMs || 0,
+      });
       this.failActiveSpeech(error);
       this.ready = false;
       this.onFatal?.(error);
@@ -823,6 +887,9 @@ class LexaraRealtimeVoiceClient {
       const active = this.activeSpeech;
       if (!active) return;
       active.metadataComplete = true;
+      // SpeechMetadata means the provider has sent every audio frame. Only now
+      // may an empty worklet queue be treated as the true end of the reply.
+      this.playback?.port.postMessage({ type: 'upstream_complete' });
       this.maybeResolveSpeech(active);
       return;
     }
@@ -861,7 +928,26 @@ class LexaraRealtimeVoiceClient {
     if (!active) return;
     window.clearTimeout(active.timeout);
     this.activeSpeech = null;
-    active.reject(error);
+    const failure = error as LexaraRealtimeSpeechFailure;
+    failure.lexaraPlaybackOffsetMs ??= this.currentTurnPlaybackOffsetMs();
+    failure.lexaraPlaybackStarted ??= active.started;
+    failure.lexaraTurnId ??= active.turnId;
+    active.reject(failure);
+  }
+
+  private currentTurnPlaybackOffsetMs(): number {
+    const sampleRate = this.context?.sampleRate || 0;
+    if (!sampleRate) return 0;
+    return Math.max(0, Math.round((this.renderedFrames / sampleRate) * 1_000));
+  }
+
+  private realtimeSpeechFailure(message: string, reason: string): LexaraRealtimeSpeechFailure {
+    const failure = new Error(message) as LexaraRealtimeSpeechFailure;
+    failure.lexaraPlaybackOffsetMs = this.currentTurnPlaybackOffsetMs();
+    failure.lexaraPlaybackStarted = Boolean(this.activeSpeech?.started);
+    failure.lexaraTurnId = this.activeSpeech?.turnId;
+    failure.lexaraFailureReason = reason;
+    return failure;
   }
 
   private clearPlayback(): void {

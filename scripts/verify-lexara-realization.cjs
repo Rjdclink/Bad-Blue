@@ -787,7 +787,7 @@ must(
 // CPU-only Lexara continuity guard: one reply uses one progressive session and
 // the visual layer selects prepared states without becoming part of playback.
 must(
-  avatar.includes('cy: 0.308') &&
+  avatar.includes('cy: 0.313') &&
     avatar.includes('rx: 0.040') &&
     avatar.includes('ry: 0.0115') &&
     avatar.includes('traceLipBoundary') &&
@@ -797,7 +797,12 @@ must(
     avatar.includes('drawPreparedSpeechFace') &&
     avatar.includes("fallback: 'portrait-plus-throat'") &&
     avatar.includes('LEGACY_PORTRAIT_NON_MOUTH_OVERLAYS_ENABLED') &&
+    avatar.includes('const TARGET_FPS = 60') &&
+    avatar.includes('blendPreparedFacePose') &&
+    avatar.includes('frame.mouthPreviousPoseIndex') &&
     embodimentEngine.includes('mouthPoseIndex') &&
+    embodimentEngine.includes('mouthPoseBlend') &&
+    embodimentEngine.includes('dtSec / 0.085') &&
     embodimentEngine.includes('selectAudioViseme') &&
     preparedFacePoses.includes('LEXARA_PREPARED_FACE_POSES.length !== 60') &&
     preparedFacePoses.includes('visemeIndex * STRENGTHS.length + strengthIndex') &&
@@ -810,6 +815,15 @@ must(
     synthesis.includes('MAX_PLAYBACK_WATCHDOG_MS = 600_000') &&
     synthesis.includes('remainingSpeechText') &&
     synthesis.includes('playbackOffsetFromError') &&
+    synthesis.includes('fallbackText = remainingSpeechText') &&
+    synthesis.includes("event: 'realtime-fallback'") &&
+    realtimeVoiceClient.includes("type: 'upstream_complete'") &&
+    realtimeVoiceClient.includes('currentTurnPlaybackOffsetMs') &&
+    realtimeVoiceClient.includes("'realtime-socket-close'") &&
+    realtimeVoiceGateway.includes('closeCode: close?.code') &&
+    realtimeVoiceGateway.includes('STT channel reconnecting without interrupting speech') &&
+    realtimeVoiceGateway.includes('openSttChannel') &&
+    voiceRoutes.includes("'realtime-fallback'") &&
     !synthesis.includes('splitLexaraSpeechChunks') &&
     !synthesis.includes('fetchPreparedSessionAudio') &&
     !synthesis.includes('preparedCurrent') &&

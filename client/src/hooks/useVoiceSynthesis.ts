@@ -55,17 +55,27 @@ const SERVER_TTS_FETCH_TIMEOUT_MS = 20_000;
 const MIN_PLAYBACK_WATCHDOG_MS = 10_000;
 const MAX_PLAYBACK_WATCHDOG_MS = 600_000;
 
-function remainingSpeechText(text: string, playbackOffsetMs: number, expectedDurationMs: number): string {
+function remainingSpeechText(
+  text: string,
+  playbackOffsetMs: number,
+  expectedDurationMs: number,
+  overlapWords = 1,
+): string {
   const clean = text.replace(/\s+/g, ' ').trim();
   if (playbackOffsetMs <= 0 || !clean) return clean;
 
-  // The media element reports time, not word timings. A proportional word boundary
-  // is therefore the safest CPU-only recovery point: it avoids replaying the
-  // already spoken portion without introducing a second live synthesis channel.
+  // The player reports time, not word timings. A proportional word boundary is
+  // the safest CPU-only recovery point without adding another live voice channel.
   const words = clean.split(' ').filter(Boolean);
-  if (words.length < 2) return '';
+  if (words.length < 2) return clean;
   const progress = Math.max(0, Math.min(0.999, playbackOffsetMs / Math.max(1, expectedDurationMs)));
-  const consumedWords = Math.min(words.length - 1, Math.max(1, Math.floor(words.length * progress)));
+  // Repeat a very small boundary overlap rather than risking a missing word
+  // when a transport failure lands between rendered audio frames.
+  const estimatedConsumedWords = Math.floor(words.length * progress);
+  const consumedWords = Math.min(
+    words.length - 1,
+    Math.max(0, estimatedConsumedWords - Math.max(0, Math.round(overlapWords))),
+  );
   return words.slice(consumedWords).join(' ');
 }
 
@@ -391,6 +401,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
 
     try {
       let realtimeStarted = false;
+      let fallbackText = cleanText;
       const realtimeOutputReady = lexaraRealtimeVoiceClient.isReady()
         ? await lexaraRealtimeVoiceClient.ensureSpeechOutputReady()
         : false;
@@ -415,12 +426,38 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
           setIsLoading(false);
           options.onEnd?.();
           return;
-        } catch {
+        } catch (realtimeError) {
           // Persistent realtime speech is the latency-first route, not a new
           // mandatory dependency. A socket/provider failure stays local and the
-          // already-proven adaptive HTTP mesh immediately recovers the turn.
+          // already-proven adaptive HTTP mesh immediately recovers only the
+          // unfinished portion of the turn.
+          const playbackOffsetMs = playbackOffsetFromError(realtimeError);
+          if (realtimeStarted && playbackOffsetMs > 0) {
+            fallbackText = remainingSpeechText(
+              cleanText,
+              playbackOffsetMs,
+              Math.max(10_000, cleanText.length * 70),
+              2,
+            );
+          }
           lexaraRealtimeVoiceClient.interrupt();
           if (turnId !== activeTurnRef.current) return;
+          void fetch('/api/lexara/voice/playback-event', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              event: 'realtime-fallback',
+              source: 'realtime',
+              provider: 'adaptive-tts-mesh',
+              turnId: `lexara-turn-${turnId}`,
+              playbackOffsetMs,
+              remainingCharacters: fallbackText.length,
+              reason: realtimeError instanceof Error
+                ? realtimeError.message.slice(0, 120)
+                : 'unknown',
+            }),
+            keepalive: true,
+          }).catch(() => undefined);
         }
       }
 
@@ -429,7 +466,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
         : options;
       // One persona, multiple provider routes. The server mesh keeps failures
       // route-local and only surfaces an error after compatible TTS routes fail.
-      await speakWithServer(cleanText, fallbackOptions, turnId);
+      await speakWithServer(fallbackText, fallbackOptions, turnId);
     } catch (err) {
       clearPlaybackWatchdog();
       interruptionResolverRef.current = null;
