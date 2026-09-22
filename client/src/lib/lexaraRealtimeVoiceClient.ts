@@ -1,4 +1,7 @@
-import { getLexaraSharedAudioContext } from '@/lib/lexaraSpeechClient';
+import {
+  getLexaraRealtimePlaybackAudioElement,
+  getLexaraSharedAudioContext,
+} from '@/lib/lexaraSpeechClient';
 
 export interface LexaraRealtimeSttEvent {
   event?: string;
@@ -24,6 +27,7 @@ interface SpeakOptions {
 
 interface ActiveSpeech {
   turnId: string;
+  epoch: number;
   resolve: () => void;
   reject: (error: Error) => void;
   metadataComplete: boolean;
@@ -32,6 +36,7 @@ interface ActiveSpeech {
   onStart?: () => void;
   timeout: number;
   requestedAt: number;
+  firstAudioReceived: boolean;
   renderReported: boolean;
 }
 
@@ -91,7 +96,12 @@ class LexaraPlaybackProcessor extends AudioWorkletProcessor {
     this.queue = [];
     this.queueOffset = 0;
     this.queuedSamples = 0;
-    this.startThresholdFrames = Math.max(128, Math.round(sampleRate * 0.024));
+    // A short jitter cushion prevents mobile radio/chunk variance from creating
+    // mid-sentence gaps while remaining far below the old multi-second MP3 wait.
+    this.startThresholdFrames = Math.max(128, Math.round(sampleRate * 0.072));
+    this.metricIntervalFrames = Math.max(128, Math.round(sampleRate / 30));
+    this.nextMetricFrame = 0;
+    this.epoch = 0;
     this.started = false;
     this.renderedFrames = 0;
     this.hadAudio = false;
@@ -107,9 +117,15 @@ class LexaraPlaybackProcessor extends AudioWorkletProcessor {
         this.queuedSamples = 0;
         this.started = false;
         this.hadAudio = false;
-        this.port.postMessage({ type: 'drained', renderedFrames: this.renderedFrames });
+        this.port.postMessage({
+          type: 'drained',
+          epoch: this.epoch,
+          renderedFrames: this.renderedFrames,
+        });
       } else if (event.data?.type === 'reset_counter') {
         this.renderedFrames = 0;
+        this.nextMetricFrame = 0;
+        this.epoch = Number.isFinite(event.data.epoch) ? event.data.epoch : this.epoch + 1;
       }
     };
   }
@@ -174,14 +190,17 @@ class LexaraPlaybackProcessor extends AudioWorkletProcessor {
       this.started = false;
       this.port.postMessage({
         type: 'drained',
+        epoch: this.epoch,
         renderedFrames: this.renderedFrames,
         level,
         brightness,
         zeroCrossingRate,
       });
-    } else if (writeOffset > 0) {
+    } else if (writeOffset > 0 && this.renderedFrames >= this.nextMetricFrame) {
+      this.nextMetricFrame = this.renderedFrames + this.metricIntervalFrames;
       this.port.postMessage({
         type: 'rendered',
+        epoch: this.epoch,
         renderedFrames: this.renderedFrames,
         level,
         brightness,
@@ -253,6 +272,10 @@ function websocketUrl(endpoint: string, ticket: string): string {
   return `${protocol}//${window.location.host}${path}?ticket=${encodeURIComponent(ticket)}`;
 }
 
+function needsMediaStreamOutputSink(): boolean {
+  return typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+}
+
 class LexaraRealtimeVoiceClient {
   private socket: WebSocket | null = null;
   private context: AudioContext | null = null;
@@ -260,6 +283,9 @@ class LexaraRealtimeVoiceClient {
   private capture: AudioWorkletNode | null = null;
   private captureSink: GainNode | null = null;
   private playback: AudioWorkletNode | null = null;
+  private outputDestination: MediaStreamAudioDestinationNode | null = null;
+  private outputAudio: HTMLAudioElement | null = null;
+  private speechOutputReady = false;
   private activeSpeech: ActiveSpeech | null = null;
   private ready = false;
   private renderedFrames = 0;
@@ -267,11 +293,77 @@ class LexaraRealtimeVoiceClient {
   private playbackBrightness = 0;
   private playbackZeroCrossingRate = 0;
   private cumulativeRenderedFrames = 0;
+  private playbackEpoch = 0;
   private onSttEvent: ((event: LexaraRealtimeSttEvent) => void) | null = null;
   private onFatal: ((error: Error) => void) | null = null;
 
   isReady(): boolean {
     return this.ready && this.socket?.readyState === WebSocket.OPEN;
+  }
+
+  isSpeechOutputReady(): boolean {
+    return this.isReady()
+      && this.speechOutputReady
+      && this.context?.state === 'running';
+  }
+
+  async ensureSpeechOutputReady(): Promise<boolean> {
+    if (!this.isReady() || !this.context || !this.playback) return false;
+    if (!needsMediaStreamOutputSink()) return this.isSpeechOutputReady();
+    if (this.isSpeechOutputReady() && this.outputAudio && !this.outputAudio.paused) return true;
+
+    const context = this.context;
+    const playback = this.playback;
+    let destination: MediaStreamAudioDestinationNode | null = null;
+    let audio: HTMLAudioElement | null = null;
+    try {
+      try { playback.disconnect(); } catch { /* not connected */ }
+      try { this.outputDestination?.disconnect(); } catch { /* noop */ }
+      if (this.outputAudio) {
+        try { this.outputAudio.pause(); } catch { /* noop */ }
+        this.outputAudio.srcObject = null;
+      }
+
+      const candidateDestination = context.createMediaStreamDestination();
+      const candidateAudio = getLexaraRealtimePlaybackAudioElement();
+      destination = candidateDestination;
+      audio = candidateAudio;
+      candidateAudio.pause();
+      candidateAudio.removeAttribute('src');
+      candidateAudio.srcObject = candidateDestination.stream;
+      candidateAudio.volume = 1;
+      playback.connect(candidateDestination);
+      await candidateAudio.play();
+      if (this.context !== context || this.playback !== playback || !this.isReady()) {
+        throw new Error('Realtime voice connection changed during output preparation');
+      }
+
+      this.outputDestination = candidateDestination;
+      this.outputAudio = candidateAudio;
+      this.speechOutputReady = !candidateAudio.paused;
+      reportRealtimeVoiceEvent('realtime-output-ready', {
+        sink: 'media-stream-retry',
+      });
+      return this.isSpeechOutputReady();
+    } catch (error) {
+      try { playback.disconnect(); } catch { /* not connected */ }
+      try { destination?.disconnect(); } catch { /* noop */ }
+      if (audio) {
+        try { audio.pause(); } catch { /* noop */ }
+        audio.srcObject = null;
+      }
+      if (this.context === context && this.playback === playback && context.state !== 'closed') {
+        playback.connect(context.destination);
+      }
+      this.outputDestination = null;
+      this.outputAudio = null;
+      this.speechOutputReady = false;
+      reportRealtimeVoiceEvent('realtime-output-unavailable', {
+        sink: 'media-stream-retry',
+        error: error instanceof Error ? error.message.slice(0, 120) : 'unknown',
+      });
+      return false;
+    }
   }
 
   getPlaybackClock(): {
@@ -349,13 +441,58 @@ class LexaraRealtimeVoiceClient {
     source.connect(capture);
     capture.connect(captureSink);
     captureSink.connect(context.destination);
-    playback.connect(context.destination);
+
+    let outputDestination: MediaStreamAudioDestinationNode | null = null;
+    let outputAudio: HTMLAudioElement | null = null;
+    let speechOutputReady = false;
+    if (needsMediaStreamOutputSink()) {
+      let candidateDestination: MediaStreamAudioDestinationNode | null = null;
+      let candidateAudio: HTMLAudioElement | null = null;
+      try {
+        const destination = context.createMediaStreamDestination();
+        const audio = getLexaraRealtimePlaybackAudioElement();
+        candidateDestination = destination;
+        candidateAudio = audio;
+        audio.pause();
+        audio.removeAttribute('src');
+        audio.srcObject = destination.stream;
+        audio.volume = 1;
+        playback.connect(destination);
+        await audio.play();
+        outputDestination = destination;
+        outputAudio = audio;
+        speechOutputReady = !audio.paused;
+        reportRealtimeVoiceEvent('realtime-output-ready', { sink: 'media-stream' });
+      } catch (error) {
+        try { playback.disconnect(); } catch { /* not connected */ }
+        if (candidateAudio) {
+          try { candidateAudio.pause(); } catch { /* noop */ }
+          candidateAudio.srcObject = null;
+        }
+        try { candidateDestination?.disconnect(); } catch { /* noop */ }
+        outputDestination = null;
+        outputAudio = null;
+        // Keep the worklet alive for feature/STT continuity, but mark it as an
+        // unsafe speech sink so the verified progressive route handles TTS.
+        playback.connect(context.destination);
+        reportRealtimeVoiceEvent('realtime-output-unavailable', {
+          sink: 'media-stream',
+          error: error instanceof Error ? error.message.slice(0, 120) : 'unknown',
+        });
+      }
+    } else {
+      playback.connect(context.destination);
+      speechOutputReady = true;
+    }
 
     this.context = context;
     this.source = source;
     this.capture = capture;
     this.captureSink = captureSink;
     this.playback = playback;
+    this.outputDestination = outputDestination;
+    this.outputAudio = outputAudio;
+    this.speechOutputReady = speechOutputReady;
     this.renderedFrames = 0;
 
     const socket = new WebSocket(websocketUrl(
@@ -373,6 +510,8 @@ class LexaraRealtimeVoiceClient {
     };
 
     playback.port.onmessage = event => {
+      const eventEpoch = Number(event.data?.epoch);
+      if (Number.isFinite(eventEpoch) && eventEpoch !== this.playbackEpoch) return;
       const renderedFrames = Number(event.data?.renderedFrames);
       if (Number.isFinite(renderedFrames)) {
         this.renderedFrames = Math.max(this.renderedFrames, renderedFrames);
@@ -396,6 +535,7 @@ class LexaraRealtimeVoiceClient {
         && Number.isFinite(renderedFrames)
         && renderedFrames > 0
       ) {
+        this.markPlaybackStarted(active);
         active.renderReported = true;
         reportRealtimeVoiceEvent('realtime-playing', {
           turnId: active.turnId,
@@ -403,9 +543,14 @@ class LexaraRealtimeVoiceClient {
           renderedFrames,
         });
       }
-      if (event.data?.type === 'drained' && active?.started) {
-        active.playbackDrained = true;
-        this.maybeResolveSpeech(active);
+      if (event.data?.type === 'drained' && active) {
+        if (Number.isFinite(renderedFrames) && renderedFrames > 0) {
+          this.markPlaybackStarted(active);
+        }
+        if (active.started) {
+          active.playbackDrained = true;
+          this.maybeResolveSpeech(active);
+        }
       }
     };
 
@@ -505,12 +650,17 @@ class LexaraRealtimeVoiceClient {
     const cleanText = text.replace(/\s+/g, ' ').trim();
     const cleanTurnId = turnId.trim();
     if (!cleanText || !cleanTurnId) return;
-    if (!this.isReady()) throw new Error('LEXARA realtime voice is not connected');
+    if (!this.isSpeechOutputReady()) throw new Error('LEXARA realtime voice output is not ready');
 
     if (this.activeSpeech) this.interrupt();
 
     this.clearPlayback();
-    this.playback?.port.postMessage({ type: 'reset_counter' });
+    this.playbackEpoch += 1;
+    this.cumulativeRenderedFrames = 0;
+    this.playback?.port.postMessage({
+      type: 'reset_counter',
+      epoch: this.playbackEpoch,
+    });
     this.renderedFrames = 0;
     this.playbackLevel = 0;
     this.playbackBrightness = 0;
@@ -525,6 +675,7 @@ class LexaraRealtimeVoiceClient {
 
       this.activeSpeech = {
         turnId: cleanTurnId,
+        epoch: this.playbackEpoch,
         resolve,
         reject,
         metadataComplete: false,
@@ -533,6 +684,7 @@ class LexaraRealtimeVoiceClient {
         onStart: options.onStart,
         timeout,
         requestedAt: performance.now(),
+        firstAudioReceived: false,
         renderReported: false,
       };
     });
@@ -592,8 +744,13 @@ class LexaraRealtimeVoiceClient {
       try { socket.close(1000, 'LEXARA client closed'); } catch { /* noop */ }
     }
 
-    for (const node of [this.source, this.capture, this.captureSink, this.playback]) {
+    for (const node of [this.source, this.capture, this.captureSink, this.playback, this.outputDestination]) {
       try { node?.disconnect(); } catch { /* already detached */ }
+    }
+
+    if (this.outputAudio) {
+      try { this.outputAudio.pause(); } catch { /* noop */ }
+      this.outputAudio.srcObject = null;
     }
 
     if (stopTracks) {
@@ -608,6 +765,9 @@ class LexaraRealtimeVoiceClient {
     this.capture = null;
     this.captureSink = null;
     this.playback = null;
+    this.outputDestination = null;
+    this.outputAudio = null;
+    this.speechOutputReady = false;
     this.context = null;
     this.onSttEvent = null;
     this.onFatal = null;
@@ -625,13 +785,12 @@ class LexaraRealtimeVoiceClient {
     const active = this.activeSpeech;
     if (!active || !this.playback) return;
 
-    if (!active.started) {
-      active.started = true;
+    if (!active.firstAudioReceived) {
+      active.firstAudioReceived = true;
       reportRealtimeVoiceEvent('realtime-first-audio', {
         turnId: active.turnId,
         startupMs: Math.round(performance.now() - active.requestedAt),
       });
-      active.onStart?.();
     }
     active.playbackDrained = false;
     this.playback.port.postMessage({ type: 'audio', buffer }, [buffer]);
@@ -655,11 +814,8 @@ class LexaraRealtimeVoiceClient {
     const payload = message.payload;
 
     if (payload.type === 'SpeechStarted') {
-      const active = this.activeSpeech;
-      if (active && !active.started) {
-        active.started = true;
-        active.onStart?.();
-      }
+      // Provider start describes synthesis, not audible output. The worklet's
+      // first rendered sample is the only event allowed to start UI/lip motion.
       return;
     }
 
@@ -692,6 +848,12 @@ class LexaraRealtimeVoiceClient {
       totalMs: Math.round(performance.now() - active.requestedAt),
     });
     active.resolve();
+  }
+
+  private markPlaybackStarted(active: ActiveSpeech): void {
+    if (this.activeSpeech !== active || active.started) return;
+    active.started = true;
+    active.onStart?.();
   }
 
   private failActiveSpeech(error: Error): void {

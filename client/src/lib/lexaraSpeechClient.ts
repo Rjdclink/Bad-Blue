@@ -53,6 +53,7 @@ const playbackState: PlaybackState = {
 
 let audioContext: AudioContext | null = null;
 let playbackAudioElement: HTMLAudioElement | null = null;
+let realtimePlaybackAudioElement: HTMLAudioElement | null = null;
 
 function getLexaraPlaybackAudioElement(): HTMLAudioElement {
   if (!playbackAudioElement) {
@@ -60,6 +61,20 @@ function getLexaraPlaybackAudioElement(): HTMLAudioElement {
     playbackAudioElement.preload = 'auto';
   }
   return playbackAudioElement;
+}
+
+/**
+ * Dedicated audible sink for raw realtime PCM. Keeping this separate from the
+ * progressive HTTP player means either route can fail over without stealing or
+ * resetting the other route's media element.
+ */
+export function getLexaraRealtimePlaybackAudioElement(): HTMLAudioElement {
+  if (!realtimePlaybackAudioElement) {
+    realtimePlaybackAudioElement = new Audio();
+    realtimePlaybackAudioElement.preload = 'none';
+    realtimePlaybackAudioElement.autoplay = true;
+  }
+  return realtimePlaybackAudioElement;
 }
 
 /**
@@ -164,6 +179,21 @@ export async function unlockAudio(): Promise<boolean> {
     playbackAudio.currentTime = 0;
     playbackAudio.volume = 1;
 
+    // Prime the separate realtime sink during the same user gesture. Failure to
+    // prime it must not disable the established progressive HTTP voice route.
+    try {
+      const realtimeAudio = getLexaraRealtimePlaybackAudioElement();
+      realtimeAudio.srcObject = null;
+      realtimeAudio.src = SILENT_AUDIO_BASE64;
+      realtimeAudio.volume = 0.001;
+      await realtimeAudio.play();
+      realtimeAudio.pause();
+      realtimeAudio.currentTime = 0;
+      realtimeAudio.volume = 1;
+    } catch {
+      // The realtime client verifies this sink independently before using it.
+    }
+
     playbackState.audioUnlocked = true;
     return true;
   } catch (error) {
@@ -242,6 +272,7 @@ function playbackFailure(error: unknown, audio: HTMLAudioElement): Error {
 
 export interface LexaraPlaybackOptions {
   turnId?: string;
+  onStart?: () => void;
 }
 
 export const LexaraServerTTS = {
@@ -303,6 +334,7 @@ export const LexaraServerTTS = {
 
     return new Promise<void>((resolve, reject) => {
       let settled = false;
+      let startNotified = false;
 
       const finish = (outcome: 'resolve' | 'reject', error?: unknown) => {
         if (settled) return;
@@ -333,12 +365,16 @@ export const LexaraServerTTS = {
       const playbackStartedAt = performance.now();
       audio.onplay = () => {
         if (playbackState.currentAudio !== audio) return;
-        playbackState.isPlaying = true;
         reportLexaraPlaybackEvent('play', audio);
-        Lexara.notify(Lexara.events.SPEAKING_START);
       };
       audio.onplaying = () => {
         if (playbackState.currentAudio !== audio) return;
+        playbackState.isPlaying = true;
+        if (!startNotified) {
+          startNotified = true;
+          options.onStart?.();
+          Lexara.notify(Lexara.events.SPEAKING_START);
+        }
         reportLexaraPlaybackEvent('playing', audio);
         console.debug('[LEXARA Audio] playing', {
           startupMs: Math.round(performance.now() - playbackStartedAt),

@@ -46,7 +46,9 @@ const LEGACY_PORTRAIT_MOUTH_OVERLAY_ENABLED =
 // All other local portrait patches are off by default: they create artifacts when
 // a small still image is independently re-composited around the face and body.
 const LEGACY_PORTRAIT_NON_MOUTH_OVERLAYS_ENABLED =
-  String(import.meta.env.VITE_LEXARA_LEGACY_PORTRAIT_NON_MOUTH_OVERLAYS_ENABLED ?? '0') === '1';
+  String(import.meta.env.VITE_LEXARA_LEGACY_PORTRAIT_NON_MOUTH_OVERLAYS_ENABLED ?? '0') === 'unsafe-experiment';
+const PORTRAIT_BREATHING_ENABLED =
+  String(import.meta.env.VITE_LEXARA_PORTRAIT_BREATHING_ENABLED ?? '1') !== '0';
 const TARGET_FPS = 30;
 
 interface LatestAvatarInput {
@@ -258,54 +260,98 @@ function drawMouth(
   headDx: number,
   headDy: number,
 ): void {
-  // Tuned once for the canonical LEXARA attorney portrait. Values are normalized
-  // to the actual image content and therefore survive responsive object-contain.
-  // Calibrated to the lips in the canonical 239×239 attorney portrait.
-  // This is deliberately the only pixel region the live layer may alter.
-  const mouth: Region = { cx: 0.516, cy: 0.357, rx: 0.044, ry: 0.018 };
+  // This mask ends at the lips. It must never include or translate the jaw/chin.
+  const mouth: Region = { cx: 0.516, cy: 0.357, rx: 0.040, ry: 0.0115 };
   const r = ellipseRegion(layout, mouth);
-  const open = frame.mouthOpen;
+  const open = Math.min(0.82, frame.mouthOpen);
   const wide = frame.mouthWide;
   const round = frame.mouthRound;
-  const gap = open * r.ry * 1.18;
-  const scaleX = 1 + wide * 0.10 - round * 0.055;
-  const scaleY = 1 + round * 0.05;
+  const gap = open * r.ry * 1.46;
+  const scaleX = 1 + wide * 0.045 - round * 0.028;
+
+  const traceLipBoundary = () => {
+    ctx.beginPath();
+    ctx.moveTo(r.cx - r.rx, r.cy);
+    ctx.bezierCurveTo(
+      r.cx - r.rx * 0.56,
+      r.cy - r.ry * 0.96,
+      r.cx - r.rx * 0.18,
+      r.cy - r.ry * 0.82,
+      r.cx,
+      r.cy - r.ry * 0.46,
+    );
+    ctx.bezierCurveTo(
+      r.cx + r.rx * 0.18,
+      r.cy - r.ry * 0.82,
+      r.cx + r.rx * 0.56,
+      r.cy - r.ry * 0.96,
+      r.cx + r.rx,
+      r.cy,
+    );
+    ctx.bezierCurveTo(
+      r.cx + r.rx * 0.58,
+      r.cy + r.ry * 0.88,
+      r.cx + r.rx * 0.18,
+      r.cy + r.ry,
+      r.cx,
+      r.cy + r.ry * 0.74,
+    );
+    ctx.bezierCurveTo(
+      r.cx - r.rx * 0.18,
+      r.cy + r.ry,
+      r.cx - r.rx * 0.58,
+      r.cy + r.ry * 0.88,
+      r.cx - r.rx,
+      r.cy,
+    );
+    ctx.closePath();
+  };
 
   ctx.save();
   ctx.translate(headDx, headDy);
+  traceLipBoundary();
+  ctx.clip();
 
   if (open > 0.035) {
     ctx.fillStyle = 'rgba(39, 10, 14, 0.94)';
     ctx.beginPath();
-    ctx.ellipse(r.cx, r.cy + gap * 0.12, r.rx * (0.72 + wide * 0.16), Math.max(0.8, gap * 0.82), 0, 0, Math.PI * 2);
+    ctx.ellipse(
+      r.cx,
+      r.cy + gap * 0.08,
+      r.rx * (0.64 + wide * 0.14),
+      Math.max(0.45, gap * 0.48),
+      0,
+      0,
+      Math.PI * 2,
+    );
     ctx.fill();
 
-    if (open > 0.32 && wide > 0.34) {
+    if (open > 0.42 && wide > 0.42) {
       ctx.fillStyle = 'rgba(239, 228, 216, 0.90)';
       ctx.beginPath();
-      ctx.ellipse(r.cx, r.cy - gap * 0.16, r.rx * 0.52, Math.max(0.45, gap * 0.16), 0, Math.PI, Math.PI * 2);
+      ctx.ellipse(r.cx, r.cy - gap * 0.10, r.rx * 0.46, Math.max(0.3, gap * 0.10), 0, Math.PI, Math.PI * 2);
       ctx.fill();
     }
   }
 
-  // Upper lip / philtrum half.
+  // Translate only pixels inside the lip boundary. Scaling or clipping a
+  // rectangular lower-face patch is what previously bent the jaw.
   ctx.save();
   ctx.beginPath();
-  ctx.rect(r.cx - r.rx * 1.2, r.cy - r.ry * 1.65, r.rx * 2.4, r.ry * 1.72);
+  ctx.rect(r.cx - r.rx, r.cy - r.ry, r.rx * 2, r.ry);
   ctx.clip();
-  ctx.translate(r.cx, r.cy - gap * 0.48);
-  ctx.scale(scaleX, scaleY);
+  ctx.translate(r.cx, r.cy - gap * 0.34);
+  ctx.scale(scaleX, 1);
   ctx.translate(-r.cx, -r.cy);
   ctx.drawImage(image, layout.x, layout.y, layout.width, layout.height);
   ctx.restore();
 
-  // Lower lip / chin half.
   ctx.save();
   ctx.beginPath();
-  ctx.rect(r.cx - r.rx * 1.2, r.cy, r.rx * 2.4, r.ry * 2.05);
+  ctx.rect(r.cx - r.rx, r.cy, r.rx * 2, r.ry);
   ctx.clip();
-  ctx.translate(r.cx, r.cy + gap * 0.64);
-  ctx.scale(scaleX, scaleY);
+  ctx.translate(r.cx, r.cy + gap * 0.52);
+  ctx.scale(scaleX, 1);
   ctx.translate(-r.cx, -r.cy);
   ctx.drawImage(image, layout.x, layout.y, layout.width, layout.height);
   ctx.restore();
@@ -330,6 +376,25 @@ function renderEmbodiedFrame(
   const headDx = frame.headX * width * 0.0052 * motionScale;
   const headDy = frame.headY * height * 0.0042 * motionScale;
   const headRotation = frame.headRollDeg * 0.68 * motionScale;
+
+  // A small, low-opacity blouse/neck patch supplies visible breathing and vocal
+  // energy without touching the face, jaw, hands, desk, or background.
+  if (PORTRAIT_BREATHING_ENABLED) {
+    const speechLift = frame.mode === 'speaking' ? frame.gestureEnergy : 0;
+    drawImageWithLocalTransform(
+      ctx,
+      image,
+      layout,
+      { cx: 0.516, cy: 0.535, rx: 0.072, ry: 0.105 },
+      {
+        dy: (frame.breath * 0.46 + speechLift * 0.38) * height * 0.0018 * motionScale,
+        scaleX: 1 + frame.breath * 0.0007 * motionScale,
+        scaleY: 1 + (frame.breath * 0.0018 + speechLift * 0.0012) * motionScale,
+        alpha: reducedMotion ? 0.24 : 0.46,
+        blurPx: 0.18,
+      },
+    );
+  }
 
   // Keep all non-mouth motion disabled by default. These independent image patches
   // are the source of the intermittent face seams and blink artifact.

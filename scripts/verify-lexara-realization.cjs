@@ -196,9 +196,9 @@ must(
     realtimeVoiceClient.includes('energySum += sample * sample') &&
     realtimeVoiceClient.includes('diffEnergySum += diff * diff') &&
     realtimeVoiceClient.includes('zeroCrossings += 1') &&
-    realtimeVoiceClient.includes('startThresholdFrames = Math.max(128, Math.round(sampleRate * 0.024))') &&
+    realtimeVoiceClient.includes('startThresholdFrames = Math.max(128, Math.round(sampleRate * 0.072))') &&
     speechClient.includes('getLexaraServerPlaybackClock'),
-  'avatar synchronization derives mouth cues from the already-rendered realtime PCM clock without changing the proven 24ms speech-start buffer or becoming playback authority',
+  'avatar synchronization derives mouth cues from the already-rendered realtime PCM clock and a bounded mobile jitter cushion without becoming playback authority',
 );
 must(
   voiceRoutes.includes("'avatar-renderer-ready'") &&
@@ -283,6 +283,9 @@ must(
     realtimeVoiceClient.includes('playbackOffsetMs') &&
     realtimeVoiceClient.includes('cumulativeRenderedFrames') &&
     synthesis.includes('lexaraRealtimeVoiceClient.isReady()') &&
+    synthesis.includes('lexaraRealtimeVoiceClient.ensureSpeechOutputReady()') &&
+    realtimeVoiceClient.includes('createMediaStreamDestination()') &&
+    realtimeVoiceClient.includes('candidateAudio.srcObject = candidateDestination.stream') &&
     synthesis.includes("setProvider('deepgram-flux')") &&
     synthesis.includes('await speakWithServer') &&
     synthesis.includes('/api/lexara/tts/session'),
@@ -294,7 +297,7 @@ must(
     realtimeVoiceClient.includes("reportRealtimeVoiceEvent('realtime-interrupted'") &&
     realtimeVoiceClient.includes("reportRealtimeVoiceEvent('realtime-ended'") &&
     realtimeVoiceClient.includes('startThresholdFrames') &&
-    realtimeVoiceClient.includes('0.024') &&
+    realtimeVoiceClient.includes('0.072') &&
     voiceRoutes.includes("'realtime-first-audio'") &&
     voiceRoutes.includes("'realtime-playing'") &&
     voiceRoutes.includes("'realtime-interrupted'") &&
@@ -602,6 +605,7 @@ must(
   speechClient.includes("audio.onwaiting") &&
     speechClient.includes("audio.onstalled") &&
     speechClient.includes("audio.onplaying") &&
+    speechClient.includes('options.onStart?.()') &&
     speechClient.includes("reportLexaraPlaybackEvent") &&
     voiceRoutes.includes("/api/lexara/voice/playback-event"),
   'mobile audio playback exposes waiting/stalled/playing telemetry to production',
@@ -783,10 +787,14 @@ must(
 // the visual layer remains a read-only lip overlay above the unchanged portrait.
 must(
   avatar.includes('cy: 0.357') &&
-    avatar.includes('rx: 0.044') &&
+    avatar.includes('rx: 0.040') &&
+    avatar.includes('ry: 0.0115') &&
+    avatar.includes('traceLipBoundary') &&
+    !avatar.includes('r.ry * 2.05') &&
+    avatar.includes('PORTRAIT_BREATHING_ENABLED') &&
     avatar.includes('LEGACY_PORTRAIT_NON_MOUTH_OVERLAYS_ENABLED') &&
     avatar.includes('drawMouth(ctx, image, layout, frame, 0, 0)'),
-  'mouth-only renderer is anchored to the attorney portrait lips while facial/body patches remain disabled',
+  'lip renderer cannot move the jaw while a separate bounded neck/blouse patch supplies safe breathing motion',
 );
 must(
   synthesis.includes('One reply owns one progressive media stream') &&
