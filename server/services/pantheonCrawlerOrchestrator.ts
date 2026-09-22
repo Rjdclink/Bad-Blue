@@ -250,8 +250,8 @@ export interface CrawlerExecutionAudit {
  * PANTHEON search options
  */
 export interface PantheonSearchOptions {
-  /** Search depth level (1-4) */
-  depth: 1 | 2 | 3 | 4;
+  /** Search depth level (1-3) */
+  depth: 1 | 2 | 3;
   /** Specific crawlers to use (default: all applicable) */
   crawlers?: PantheonPrimaryCrawlerId[];
   /** Maximum results per crawler */
@@ -626,13 +626,13 @@ export class PantheonCrawlerOrchestrator {
       }
     }
     
-    // Level 4: Lich (necromancer with army)
+    // Level 3: Lich (necromancer with army)
     if (crawlersToUse.includes('lich') && this.lich) {
       try {
         console.log('[PANTHEON] Activating LICH crawler (forbidden magic)...');
         for (const target of targets) {
           throwIfPantheonAborted(options.signal);
-          const spellType = options.depth >= 4 ? 'forbidden' : options.depth >= 3 ? 'complex' : 'simple';
+          const spellType = options.depth >= 3 ? 'forbidden' : 'simple';
           const result = await this.lich.castSpell(target, spellType);
           if (result) {
             results.push({
@@ -933,15 +933,13 @@ export class PantheonCrawlerOrchestrator {
   /**
    * Get appropriate crawlers based on search depth
    */
-  private getCrawlersForDepth(depth: 1 | 2 | 3 | 4): PantheonPrimaryCrawlerId[] {
+  private getCrawlersForDepth(depth: 1 | 2 | 3): PantheonPrimaryCrawlerId[] {
     switch (depth) {
       case 1:
         return ['startrek'];
       case 2:
         return ['startrek', 'birdofprey', 'sixdegrees'];
       case 3:
-        return ['startrek', 'birdofprey', 'sixdegrees', 'cerberus', 'blizzard'];
-      case 4:
         return ['startrek', 'birdofprey', 'sixdegrees', 'cerberus', 'blizzard', 'lich'];
       default:
         return ['startrek'];
@@ -1009,7 +1007,7 @@ export const pantheonOrchestrator = new PantheonCrawlerOrchestrator();
  */
 export async function pantheonSearch(
   targets: string[],
-  depth: 1 | 2 | 3 | 4 = 2
+  depth: 1 | 2 | 3 = 2
 ): Promise<CrawlerResult[]> {
   return pantheonOrchestrator.search(targets, { depth });
 }

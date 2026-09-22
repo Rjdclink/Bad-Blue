@@ -208,7 +208,7 @@ export function initializePantheonCategoryPlans(input: {
   location?: string;
   startingIdentifier?: PantheonStartingIdentifier;
   queryPlan?: PantheonControlledQueryPlan;
-  searchDepth: 1 | 2 | 3 | 4;
+  searchDepth: 1 | 2 | 3;
   budgetMs: number;
   concurrency?: number;
 }): PantheonPersistedCategoryState[] {
@@ -291,7 +291,7 @@ function mergeAudit(entries: PantheonRetrievalResponse['crawlerAudit']) {
 export function categoryProductiveWorkTarget(depth: number): number {
   // Intensity is a productive-work target, not an initial URL batch size.
   // Failed/blocked/dead URLs are substituted and do not consume this target.
-  return ({ 1: 20, 2: 40, 3: 94, 4: 150 } as Record<number, number>)[depth] || 20;
+  return ({ 1: 40, 2: 94, 3: 150 } as Record<number, number>)[depth] || 40;
 }
 
 /**
@@ -504,7 +504,7 @@ export interface PantheonCategoryWorkflowInput {
   location?: string;
   startingIdentifier?: PantheonStartingIdentifier;
   queryPlan?: PantheonControlledQueryPlan;
-  searchDepth: 1 | 2 | 3 | 4;
+  searchDepth: 1 | 2 | 3;
   deadlineAt: number;
   startCategoryIndex?: number;
   categoryIndexes?: readonly number[];
@@ -731,7 +731,7 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
     // Interleave registry facets so a multi-facet category cannot be monopolized
     // by the first tag. Subject-scoped discovery URLs may append separately
     // admitted result candidates to the controller-owned ledger.
-    // The 5/10/20/30-minute intensity levels expand productive URL work depth.
+    // The 10/20/30-minute intensity levels expand productive URL work depth.
     const freshPrioritizedTargets = interleaveCategoryTargets(
       targetGroups,
       Math.min(300, input.productiveWorkTarget * 2),

@@ -79,7 +79,7 @@ export class PantheonRetrievalAdapter {
   async retrieve(request: {
     purpose: Exclude<CrawlerSelectionPurpose, 'map_evidence_render'>;
     targets: string[];
-    depth?: 1 | 2 | 3 | 4;
+    depth?: 1 | 2 | 3;
     budgetMs?: number;
     deadlineAt?: number;
     subject?: string;
@@ -166,7 +166,10 @@ export class PantheonRetrievalAdapter {
     }
     const plan = selectCrawlerPlan({
       purpose: request.purpose,
-      depth: request.depth || 4,
+      // The public PANTHEON contract has exactly three duration levels:
+      // 10, 20, and 30 minutes. Keep an omitted internal depth on the
+      // complete, 30-minute roster rather than reintroducing a fourth level.
+      depth: request.depth || 3,
       targetCount: request.targets.length,
       host,
     });
@@ -231,7 +234,7 @@ export class PantheonRetrievalAdapter {
     const searchOptions = {
       depth: plan.depth,
       crawlers: plan.crawlers,
-      stormIntensity: plan.depth === 4 ? 'storm' as const : 'snow' as const,
+      stormIntensity: plan.depth === 3 ? 'storm' as const : 'snow' as const,
       timeout: primaryBudgetMs,
       signal: operationSignal,
     };
