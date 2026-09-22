@@ -372,18 +372,17 @@ must(
     conversation.includes("'Voice reconnecting'") &&
     conversation.includes("'Voice degraded'") &&
     conversation.includes("voiceStatus === 'live'") &&
-    synthesis.includes('splitLexaraSpeechChunks') &&
-    synthesis.includes('FIRST_SPEECH_CHUNK_MAX_CHARS') &&
-    synthesis.includes('Prepare exactly one chunk ahead') &&
-    synthesis.includes('fetchPreparedSessionAudio') &&
-    synthesis.includes("FIRST_SPEECH_CHUNK_MAX_CHARS = 72") &&
+    synthesis.includes('One reply owns one progressive media stream') &&
+    synthesis.includes('createStreamingAudioSession(text, stableTurnId)') &&
+    !synthesis.includes('splitLexaraSpeechChunks') &&
+    !synthesis.includes('fetchPreparedSessionAudio') &&
+    !synthesis.includes('preparedCurrent') &&
     synthesis.includes("PlaybackOutcome = 'ended' | 'interrupted' | 'timeout' | 'failed'") &&
     synthesis.includes('voice playback failed after route-local recovery') &&
-    synthesis.includes('voice playback timed out') &&
     synthesis.includes('voiceFailureToastIdRef') &&
     !synthesis.includes('shouldBufferLexaraPlaybackOnThisDevice') &&
     !synthesis.includes('bufferStreamingSessionForMobile'),
-  'LEXARA voice readiness stays truthful while short first-chunk playback and one-ahead synthesis remove full-answer mobile buffering latency',
+  'LEXARA voice readiness stays truthful while one continuous progressive stream removes inter-piece mobile playback gaps',
 );
 must(
   voiceRoutes.includes('/api/lexara/voice/profile') &&
