@@ -260,7 +260,9 @@ function drawMouth(
 ): void {
   // Tuned once for the canonical LEXARA attorney portrait. Values are normalized
   // to the actual image content and therefore survive responsive object-contain.
-  const mouth: Region = { cx: 0.516, cy: 0.432, rx: 0.038, ry: 0.022 };
+  // Calibrated to the lips in the canonical 239×239 attorney portrait.
+  // This is deliberately the only pixel region the live layer may alter.
+  const mouth: Region = { cx: 0.516, cy: 0.357, rx: 0.044, ry: 0.018 };
   const r = ellipseRegion(layout, mouth);
   const open = frame.mouthOpen;
   const wide = frame.mouthWide;
@@ -551,6 +553,7 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
         : serverClock.active
           ? serverClock.currentTimeSec
           : 0;
+      const audioTurnId = realtimeClock.active ? realtimeClock.turnId : serverClock.turnId;
 
       const frame = engine.update({
         nowMs,
@@ -563,7 +566,7 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
           level: realtimeClock.active ? realtimeClock.level : Number.NaN,
           brightness: realtimeClock.active ? realtimeClock.brightness : undefined,
           zeroCrossingRate: realtimeClock.active ? realtimeClock.zeroCrossingRate : undefined,
-          turnId: realtimeClock.turnId,
+          turnId: audioTurnId,
         },
       });
 
@@ -592,13 +595,13 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
         }
 
         if (mode === 'speaking' && frame.mouthOpen > 0.08) {
-          const turnKey = realtimeClock.turnId || `server-${Math.floor(audioTime * 2)}`;
+          const turnKey = audioTurnId || `server-${Math.floor(audioTime * 2)}`;
           if (turnKey && turnKey !== lastMotionTurnKey) {
             lastMotionTurnKey = turnKey;
             reportAvatarEvent('avatar-motion-started', {
               reducedMotion,
               mode,
-              turnId: realtimeClock.turnId,
+              turnId: audioTurnId,
               mouthOpen: Number(frame.mouthOpen.toFixed(3)),
             });
           }

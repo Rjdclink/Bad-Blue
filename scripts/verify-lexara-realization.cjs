@@ -372,18 +372,17 @@ must(
     conversation.includes("'Voice reconnecting'") &&
     conversation.includes("'Voice degraded'") &&
     conversation.includes("voiceStatus === 'live'") &&
-    synthesis.includes('splitLexaraSpeechChunks') &&
-    synthesis.includes('FIRST_SPEECH_CHUNK_MAX_CHARS') &&
-    synthesis.includes('Prepare exactly one chunk ahead') &&
-    synthesis.includes('fetchPreparedSessionAudio') &&
-    synthesis.includes("FIRST_SPEECH_CHUNK_MAX_CHARS = 72") &&
+    synthesis.includes('One reply owns one progressive media stream') &&
+    synthesis.includes('createStreamingAudioSession(text, stableTurnId)') &&
+    !synthesis.includes('splitLexaraSpeechChunks') &&
+    !synthesis.includes('fetchPreparedSessionAudio') &&
+    !synthesis.includes('preparedCurrent') &&
     synthesis.includes("PlaybackOutcome = 'ended' | 'interrupted' | 'timeout' | 'failed'") &&
     synthesis.includes('voice playback failed after route-local recovery') &&
-    synthesis.includes('voice playback timed out') &&
     synthesis.includes('voiceFailureToastIdRef') &&
     !synthesis.includes('shouldBufferLexaraPlaybackOnThisDevice') &&
     !synthesis.includes('bufferStreamingSessionForMobile'),
-  'LEXARA voice readiness stays truthful while short first-chunk playback and one-ahead synthesis remove full-answer mobile buffering latency',
+  'LEXARA voice readiness stays truthful while one continuous progressive stream removes inter-piece mobile playback gaps',
 );
 must(
   voiceRoutes.includes('/api/lexara/voice/profile') &&
@@ -777,6 +776,42 @@ must(
     orchestrator.includes('model: CURRENT_AI_MODELS.openRouterAuto') &&
     orchestrator.indexOf('independent gateway recovered live legal turn') < orchestrator.lastIndexOf('degradedLegalResponse(jurisdiction)'),
   'LEXARA exhausts an orchestration-independent live reasoning lane before degraded legal mode',
+);
+
+
+// CPU-only Lexara continuity guard: one reply uses one progressive session and
+// the visual layer remains a read-only lip overlay above the unchanged portrait.
+must(
+  avatar.includes('cy: 0.357') &&
+    avatar.includes('rx: 0.044') &&
+    avatar.includes('LEGACY_PORTRAIT_NON_MOUTH_OVERLAYS_ENABLED') &&
+    avatar.includes('drawMouth(ctx, image, layout, frame, 0, 0)'),
+  'mouth-only renderer is anchored to the attorney portrait lips while facial/body patches remain disabled',
+);
+must(
+  synthesis.includes('One reply owns one progressive media stream') &&
+    synthesis.includes('createStreamingAudioSession(text, stableTurnId)') &&
+    synthesis.includes('MAX_PLAYBACK_WATCHDOG_MS = 600_000') &&
+    synthesis.includes('remainingSpeechText') &&
+    synthesis.includes('playbackOffsetFromError') &&
+    !synthesis.includes('splitLexaraSpeechChunks') &&
+    !synthesis.includes('fetchPreparedSessionAudio') &&
+    !synthesis.includes('preparedCurrent') &&
+    speechClient.includes('lexaraPlaybackOffsetMs') &&
+    voiceRoutes.includes('LEXARA_TTS_SESSION_MAX_CHARS = 50_000') &&
+    voiceRoutes.includes('splitLexaraTTSInput') &&
+    voiceRoutes.includes('openLexaraSpeechSequence') &&
+    voiceRoutes.includes('synthesizeLexaraSpeechSequence'),
+  'one Lexara response streams continuously, preserves long replies, and recovers only the unspoken portion after a transport fault',
+);
+must(
+  speechClient.includes('LexaraPlaybackOptions') &&
+    speechClient.includes('currentTurnId') &&
+    speechClient.includes("this.stop('superseded')") &&
+    voiceRoutes.includes("'tts-session-ready'") &&
+    voiceRoutes.includes('X-Lexara-Turn-Id') &&
+    voiceRoutes.includes('res.flushHeaders()'),
+  'playback telemetry carries one turn identity and the server flushes progressive audio headers immediately',
 );
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA independent recovery verification passed.');
