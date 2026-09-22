@@ -10,22 +10,35 @@ const acquisition = read('server/services/crawlers/PublicAcquisitionInfrastructu
 const deployer = read('server/services/pantheon/razors/TwoStageDeployer.ts');
 const evidence = read('server/services/pantheon/PantheonEvidencePipeline.ts');
 
+if (!scheduler.includes('PANTHEON_CATEGORY_CONCURRENCY_LIMIT = 1')) {
+  throw new Error('Pantheon categories are not constrained to strict sequential execution');
+}
+if (!scheduler.includes('PANTHEON_URL_CONCURRENCY_PER_CATEGORY = 8')) {
+  throw new Error('Pantheon URL frontier does not use the bounded throughput window');
+}
+
 for (const token of [
   'runPantheonBounded(indexes, concurrency',
   'PANTHEON_CATEGORY_CONCURRENCY_LIMIT',
   'runPantheonUrlBounded(waveUrls',
   'deadline.signal, true',
-  'waveCount',
-  'categoryBudgetMs',
+  'categoriesRemaining',
+  'dynamicCategoryBudgetMs',
   "phase: execution.outcome.completionState === 'completed' ? 'COMPLETE' : 'PARTIAL'",
   'urlLedger',
   'transportAttempts',
+  'insertPantheonDiscoveredUrls(prioritizedTargets, cursor, newlyAdmittedUrls)',
+  'pantheonUrlWindowBudgetMs',
+  'source_skill_dispatch',
   'entry.state === \'accepted\' || (entry.state === \'no_evidence\' && entry.subjectScoped)',
 ]) {
   if (!workflow.includes(token)) throw new Error('Bounded category workflow invariant missing: ' + token);
 }
 for (const token of ['completeAllItemsOnAbort', 'results[index] = await worker','Promise.all(Array.from','PANTHEON_GLOBAL_URL_CONCURRENCY_LIMIT = 8']) {
   if (!scheduler.includes(token)) throw new Error('Bounded scheduler invariant missing: ' + token);
+}
+for (const token of ['PANTHEON_CRAWLER_POOL_LIMITS','PANTHEON_CRAWLER_POOL_QUEUE_LIMIT','runPantheonCrawlerPooled','Promise.allSettled(routePromises)','queueWaitMs','normalizePantheonCrawlerSelection','isPantheonCrawlerTimeout']) {
+  if (!orchestrator.includes(token)) throw new Error('Crawler orchestrator bulkhead/failure-isolation invariant missing: ' + token);
 }
 for (const token of ['createPantheonDeadline','racePantheonAbort','pantheonAbortableDelay','removeEventListener']) {
   if (!deadline.includes(token)) throw new Error('Cancellable deadline invariant missing: ' + token);

@@ -97,7 +97,8 @@ report.investigationIntelligence = intelligence;
 const pdf = await generatePantheonBackgroundReportPdf({ reportId: '11111111-1111-4111-8111-111111111111', report, categoryOutcomes, completedAt: new Date() });
 const verified = verifyPantheonPdfBuffer(pdf, 2);
 assert.equal(verified.metadataVerified, true);
-assert.ok(verified.textObjectCount >= verified.pageCount);
+assert.ok(verified.streamCount >= verified.pageCount);
+assert.match(pdf.toString('latin1'), /\/Filter\s*\/FlateDecode/);
 assert.ok(verified.linkAnnotationCount >= 1);
 
 const dockerfile = await readFile(new URL('../Dockerfile', import.meta.url), 'utf8');

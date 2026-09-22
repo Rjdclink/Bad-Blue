@@ -34,7 +34,7 @@ if (!controller.includes('assessPantheonCapabilityCoverage') || !controller.incl
 if (!adapter.includes('getPantheonCategoryCapabilities') || !adapter.includes('results.find(result => result.target === target') && adapter.includes('applicableCapabilities') && adapter.includes('request.signal')) {
   throw new Error('Extended crawler execution is not restricted by the capability matrix');
 }
-for (const token of ['durationMs?: number','sourceOutcomes?: CrawlerSourceOutcome[]','executionStartedAt']) {
+for (const token of ['durationMs?: number','queueWaitMs?: number','sourceOutcomes?: CrawlerSourceOutcome[]','executionStartedAt','getPantheonCrawlerPoolActivity']) {
   if (!orchestrator.includes(token)) throw new Error('Primary crawler result contract missing: ' + token);
 }
 for (const token of ['healthCheckAllCapabilities','capabilityIds?: readonly PantheonCapabilityId[]','durationMs','sourceOutcomes']) {

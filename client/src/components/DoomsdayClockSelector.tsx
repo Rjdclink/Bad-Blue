@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Clock, Zap, Eye } from "lucide-react";
+import { Loader2, Clock, Zap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { PANTHEON_REPORT_DURATION_LABELS } from "@shared/pantheonReportConfig";
 
@@ -37,7 +37,7 @@ export function DoomsdayClockSelector({
     {
       level: 1,
       icon: "⚡",
-      title: "Basic Search",
+      title: "Quick Search",
       duration: PANTHEON_REPORT_DURATION_LABELS[1],
       description: "All crawlers, focused first-pass investigation",
       color: "from-blue-500 to-blue-600",
@@ -49,9 +49,9 @@ export function DoomsdayClockSelector({
     {
       level: 2,
       icon: "🔎",
-      title: "Enhanced",
+      title: "Basic Search",
       duration: PANTHEON_REPORT_DURATION_LABELS[2],
-      description: "All crawlers with a broader investigation budget",
+      description: "All crawlers with focused evidence collection",
       color: "from-purple-500 to-purple-600",
       borderColor: "border-purple-500/50",
       hoverColor: "hover:border-purple-400",
@@ -61,14 +61,26 @@ export function DoomsdayClockSelector({
     {
       level: 3,
       icon: "📊",
-      title: "Full Report",
+      title: "Enhanced",
       duration: PANTHEON_REPORT_DURATION_LABELS[3],
-      description: "All crawlers with deeper evidence collection and retries",
+      description: "All crawlers with a broader investigation budget",
       color: "from-orange-500 to-orange-600",
       borderColor: "border-orange-500/50",
       hoverColor: "hover:border-orange-400",
       glowColor: "shadow-orange-500/50",
       badgeColor: "bg-orange-500/20 text-orange-300",
+    },
+    {
+      level: 4,
+      icon: "📚",
+      title: "Full Report",
+      duration: PANTHEON_REPORT_DURATION_LABELS[4],
+      description: "All crawlers with maximum evidence depth and retries",
+      color: "from-emerald-500 to-emerald-600",
+      borderColor: "border-emerald-500/50",
+      hoverColor: "hover:border-emerald-400",
+      glowColor: "shadow-emerald-500/50",
+      badgeColor: "bg-emerald-500/20 text-emerald-300",
     },
   ];
 
@@ -161,21 +173,19 @@ export function DoomsdayClockSelector({
       </div>
 
       {/* Doomsday Clock Selector */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         {depthLevels.map((depth) => {
           const isSelected = selectedDepth === depth.level;
           const isHovered = hoveredDepth === depth.level;
-          const isEyeOfGod = depth.level === 4;
-          
+
           return (
             <Card
               key={depth.level}
               className={`cursor-pointer transition-all duration-300 ease-in-out relative overflow-hidden
                 ${isSelected 
-                  ? `ring-4 ring-offset-2 ${isEyeOfGod ? 'ring-red-500' : 'ring-primary'} scale-105 shadow-2xl ${depth.glowColor}` 
+                  ? `ring-4 ring-offset-2 ring-primary scale-105 shadow-2xl ${depth.glowColor}`
                   : `hover:scale-[1.03] hover:shadow-xl ${depth.hoverColor} border-2`
                 }
-                ${isEyeOfGod ? depth.borderColor : ''}
                 ${isHovered && !isSelected ? 'border-2' : ''}
                 ${isSearching ? 'opacity-70' : ''}
               `}
@@ -209,7 +219,6 @@ export function DoomsdayClockSelector({
                 </div>
                 
                 <h3 className={`text-center font-bold mb-2 text-lg leading-tight
-                  ${isEyeOfGod ? 'text-red-600 animate-pulse' : ''}
                   ${isSelected ? 'scale-105' : ''}
                   transition-all duration-300
                 `}>
@@ -282,11 +291,7 @@ export function DoomsdayClockSelector({
           </>
         ) : (
           <>
-            {selectedDepth === 4 ? (
-              <Eye className="w-5 h-5 mr-2 animate-pulse" />
-            ) : (
-              <Zap className="w-5 h-5 mr-2" />
-            )}
+            <Zap className="w-5 h-5 mr-2" />
             Initiate PANTHEON Search
           </>
         )}

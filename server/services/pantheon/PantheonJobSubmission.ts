@@ -42,7 +42,7 @@ export function validatePantheonJobSubmission(
   const location = normalizeText(input.location, 160);
 
   const rawDepth = Number(input.searchDepth);
-  if (![1, 2, 3].includes(rawDepth)) throw new Error('invalid_search_depth');
+  if (![1, 2, 3, 4].includes(rawDepth)) throw new Error('invalid_search_depth');
   if (input.consent !== true) throw new Error('consent_required');
 
   const idempotencyKey = String(idempotencyHeader || input.idempotencyKey || '').trim();

@@ -31,7 +31,10 @@
 
 import { PhylacterySystem } from './storage/PhylacterySystem';
 import { StealthInfrastructure } from './stealth/StealthInfrastructure';
-import type { PantheonPrimaryCrawlerId } from './pantheon/PantheonCrawlerCapabilityMatrix';
+import {
+  PANTHEON_PRIMARY_CRAWLER_IDS,
+  type PantheonPrimaryCrawlerId,
+} from './pantheon/PantheonCrawlerCapabilityMatrix';
 import {
   createPantheonDeadline,
   racePantheonAbort,
@@ -40,6 +43,7 @@ import {
 import {
   admitPantheonUrl,
   getPantheonAcquisitionContext,
+  pantheonTelemetryUrl,
   runWithPantheonAcquisitionContext,
 } from './crawlers/PublicAcquisitionInfrastructure';
 
@@ -235,6 +239,7 @@ export interface CrawlerExecutionAudit {
   attempts: number;
   targets: number;
   durationMs?: number;
+  queueWaitMs?: number;
   sourceOutcomes?: CrawlerSourceOutcome[];
   error?: string;
   route?: 'primary' | 'fallback';
@@ -260,6 +265,122 @@ export interface PantheonSearchOptions {
   signal?: AbortSignal;
   /** Preserve crawler failures for attributable per-capability audits. */
   strictErrors?: boolean;
+}
+
+const PANTHEON_CRAWLER_POOL_LIMITS: Readonly<Record<PantheonPrimaryCrawlerId, number>> = {
+  startrek: 4,
+  birdofprey: 2,
+  sixdegrees: 2,
+  cerberus: 2,
+  blizzard: 1,
+  lich: 1,
+};
+const PANTHEON_CRAWLER_POOL_QUEUE_LIMIT = 64;
+
+interface PantheonCrawlerPoolWaiter {
+  resolve: () => void;
+  reject: (error: Error) => void;
+  signal?: AbortSignal;
+  onAbort?: () => void;
+}
+
+const activeCrawlerRoutes = new Map<PantheonPrimaryCrawlerId, number>();
+const crawlerRouteWaiters = new Map<PantheonPrimaryCrawlerId, PantheonCrawlerPoolWaiter[]>();
+
+function drainPantheonCrawlerPool(crawler: PantheonPrimaryCrawlerId): void {
+  const waiters = crawlerRouteWaiters.get(crawler) || [];
+  const limit = PANTHEON_CRAWLER_POOL_LIMITS[crawler];
+  while ((activeCrawlerRoutes.get(crawler) || 0) < limit && waiters.length > 0) {
+    const waiter = waiters.shift()!;
+    if (waiter.signal?.aborted) continue;
+    if (waiter.onAbort) waiter.signal?.removeEventListener('abort', waiter.onAbort);
+    activeCrawlerRoutes.set(crawler, (activeCrawlerRoutes.get(crawler) || 0) + 1);
+    waiter.resolve();
+  }
+}
+
+async function acquirePantheonCrawlerSlot(crawler: PantheonPrimaryCrawlerId, signal?: AbortSignal): Promise<void> {
+  throwIfPantheonAborted(signal);
+  const active = activeCrawlerRoutes.get(crawler) || 0;
+  if (active < PANTHEON_CRAWLER_POOL_LIMITS[crawler]) {
+    activeCrawlerRoutes.set(crawler, active + 1);
+    return;
+  }
+  await new Promise<void>((resolve, reject) => {
+    const waiters = crawlerRouteWaiters.get(crawler) || [];
+    if (waiters.length >= PANTHEON_CRAWLER_POOL_QUEUE_LIMIT) {
+      reject(new Error(`Pantheon crawler route pool saturated: ${crawler}`));
+      return;
+    }
+    const waiter: PantheonCrawlerPoolWaiter = { resolve, reject, signal };
+    waiter.onAbort = () => {
+      const index = waiters.indexOf(waiter);
+      if (index >= 0) waiters.splice(index, 1);
+      reject(new Error('Pantheon crawler route aborted while queued'));
+    };
+    signal?.addEventListener('abort', waiter.onAbort, { once: true });
+    waiters.push(waiter);
+    crawlerRouteWaiters.set(crawler, waiters);
+    // Abort may race between the initial check and listener registration.
+    if (signal?.aborted) waiter.onAbort();
+  });
+}
+
+function releasePantheonCrawlerSlot(crawler: PantheonPrimaryCrawlerId): void {
+  activeCrawlerRoutes.set(crawler, Math.max(0, (activeCrawlerRoutes.get(crawler) || 0) - 1));
+  drainPantheonCrawlerPool(crawler);
+}
+
+export async function runPantheonCrawlerPooled<T>(
+  crawler: PantheonPrimaryCrawlerId,
+  worker: () => Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  await acquirePantheonCrawlerSlot(crawler, signal);
+  try {
+    return await worker();
+  } finally {
+    releasePantheonCrawlerSlot(crawler);
+  }
+}
+
+export function getPantheonCrawlerPoolActivity(): Record<PantheonPrimaryCrawlerId, {
+  active: number;
+  queued: number;
+  limit: number;
+}> {
+  return Object.fromEntries((Object.keys(PANTHEON_CRAWLER_POOL_LIMITS) as PantheonPrimaryCrawlerId[]).map(crawler => [
+    crawler,
+    {
+      active: activeCrawlerRoutes.get(crawler) || 0,
+      queued: (crawlerRouteWaiters.get(crawler) || []).length,
+      limit: PANTHEON_CRAWLER_POOL_LIMITS[crawler],
+    },
+  ])) as Record<PantheonPrimaryCrawlerId, { active: number; queued: number; limit: number }>;
+}
+
+export function normalizePantheonCrawlerSelection(
+  crawlers: readonly string[],
+): PantheonPrimaryCrawlerId[] {
+  const allowed = new Set<string>(PANTHEON_PRIMARY_CRAWLER_IDS);
+  const unknown = crawlers.filter(crawler => !allowed.has(crawler));
+  if (unknown.length > 0) {
+    throw new Error(`Pantheon orchestrator rejected unknown crawler capability: ${[...new Set(unknown)].join(', ')}`);
+  }
+  const normalized = [...new Set(crawlers)] as PantheonPrimaryCrawlerId[];
+  if (normalized.length === 0) throw new Error('Pantheon orchestrator requires at least one crawler capability');
+  return normalized;
+}
+
+export function isPantheonCrawlerTimeout(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error || '');
+  return /timeout|timed out|deadline|abort/i.test(message);
+}
+
+export function normalizePantheonResultLimit(limit?: number): number {
+  if (limit == null) return Number.POSITIVE_INFINITY;
+  if (!Number.isFinite(limit)) return 1_000;
+  return Math.max(1, Math.min(1_000, Math.trunc(limit)));
 }
 
 /**
@@ -362,7 +483,9 @@ export class PantheonCrawlerOrchestrator {
     }
     
     const results: CrawlerResult[] = [];
-    const crawlersToUse = options.crawlers || this.getCrawlersForDepth(options.depth);
+    const crawlersToUse = normalizePantheonCrawlerSelection(
+      options.crawlers || this.getCrawlersForDepth(options.depth),
+    );
     
     console.log(`[PANTHEON] Executing search with depth ${options.depth}`);
     console.log(`[PANTHEON] Targets: ${targets.length}, Crawlers: ${crawlersToUse.join(', ')}`);
@@ -532,9 +655,17 @@ export class PantheonCrawlerOrchestrator {
       }
     }
     
-    console.log(`[PANTHEON] Search complete: ${results.length} results from ${new Set(results.map(r => r.crawler)).size} crawlers`);
-    
-    return results;
+    const maxResultsPerCrawler = normalizePantheonResultLimit(options.maxResultsPerCrawler);
+    const retainedByCrawler = new Map<string, number>();
+    const boundedResults = results.filter(result => {
+      const retained = retainedByCrawler.get(result.crawler) || 0;
+      if (retained >= maxResultsPerCrawler) return false;
+      retainedByCrawler.set(result.crawler, retained + 1);
+      return true;
+    });
+    console.log(`[PANTHEON] Search complete: ${boundedResults.length} results from ${new Set(boundedResults.map(r => r.crawler)).size} crawlers`);
+
+    return boundedResults;
   }
   
   /**
@@ -575,10 +706,21 @@ export class PantheonCrawlerOrchestrator {
     const rejectedTargets: Array<{ sourceUrl: string; reason: string }> = targetAdmissions.flatMap(item => 'reason' in item
       ? [{ sourceUrl: item.target, reason: item.reason }]
       : []);
-    const crawlersToUse = options.crawlers || this.getCrawlersForDepth(options.depth);
+    const crawlersToUse = normalizePantheonCrawlerSelection(
+      options.crawlers || this.getCrawlersForDepth(options.depth),
+    );
     const inheritedAcquisition = getPantheonAcquisitionContext();
-    const executions = await Promise.all(
-      crawlersToUse.map(async crawler => {
+    const orchestrationDeadlineAt = Math.min(
+      inheritedAcquisition?.authority.deadlineAt ?? Number.MAX_SAFE_INTEGER,
+      Date.now() + requestedBudgetMs,
+    );
+    const orchestrationDeadline = createPantheonDeadline(orchestrationDeadlineAt, options.signal);
+    const executionRoute = inheritedAcquisition?.authority.route || 'primary';
+    const executionFallbackFor = inheritedAcquisition?.authority.fallbackFor;
+    const routePromises = crawlersToUse.map(crawler => {
+      const queuedAt = Date.now();
+      return runPantheonCrawlerPooled(crawler, async () => {
+        const queueWaitMs = Date.now() - queuedAt;
         const executionStartedAt = Date.now();
         let attempts = 0;
         let results: CrawlerResult[] = [];
@@ -593,9 +735,10 @@ export class PantheonCrawlerOrchestrator {
             categoryId: inheritedAcquisition?.authority.categoryId,
             workId: inheritedAcquisition?.authority.workId,
             capability: crawler,
-            route: inheritedAcquisition?.authority.route || 'primary',
-            ...(inheritedAcquisition?.authority.fallbackFor ? { fallbackFor: inheritedAcquisition.authority.fallbackFor } : {}),
-            url: target,
+            route: executionRoute,
+            ...(executionFallbackFor ? { fallbackFor: executionFallbackFor } : {}),
+            url: pantheonTelemetryUrl(target),
+            queueWaitMs,
           })}`);
         }
         for (const rejected of rejectedTargets) {
@@ -605,22 +748,25 @@ export class PantheonCrawlerOrchestrator {
             categoryId: inheritedAcquisition?.authority.categoryId,
             workId: inheritedAcquisition?.authority.workId,
             capability: crawler,
-            route: inheritedAcquisition?.authority.route || 'primary',
-            ...(inheritedAcquisition?.authority.fallbackFor ? { fallbackFor: inheritedAcquisition.authority.fallbackFor } : {}),
-            url: rejected.sourceUrl,
+            route: executionRoute,
+            ...(executionFallbackFor ? { fallbackFor: executionFallbackFor } : {}),
+            url: pantheonTelemetryUrl(rejected.sourceUrl),
             status: 'skipped',
             durationMs: 0,
             reason: rejected.reason,
           })}`);
         }
 
-        const routeBudgetMs = Math.max(1_000, requestedBudgetMs);
+        const routeBudgetMs = Math.max(1, Math.min(requestedBudgetMs, orchestrationDeadlineAt - Date.now()));
         // The canonical gateway is the sole retry authority. An outer retry
         // loop multiplied attempts and could never improve a cached failure.
         for (let attempt = 0; attempt < 1 && validTargets.length > 0; attempt++) {
           attempts += 1;
           try {
-            const routeDeadline = createPantheonDeadline(Date.now() + routeBudgetMs, options.signal);
+            const routeDeadline = createPantheonDeadline(
+              Math.min(orchestrationDeadlineAt, Date.now() + routeBudgetMs),
+              orchestrationDeadline.signal,
+            );
             try {
               const executeSearch = () => this.search(validTargets, {
                   ...options,
@@ -663,13 +809,15 @@ export class PantheonCrawlerOrchestrator {
             sourceUrl: target,
             status: result && result.content && result.confidence > 0
               ? 'completed_with_evidence'
-              : /timed out/i.test(lastError)
+              : isPantheonCrawlerTimeout(lastError)
                 ? 'timed_out'
                 : lastError
                   ? 'failed'
                   : 'completed_no_evidence',
             retrievedAt: new Date().toISOString(),
             durationMs,
+            route: executionRoute,
+            ...(executionFallbackFor ? { fallbackFor: executionFallbackFor } : {}),
             ...(lastError ? { error: lastError.slice(0, 300) } : {}),
           };
         }).concat(rejectedTargets.map(rejected => ({
@@ -677,20 +825,26 @@ export class PantheonCrawlerOrchestrator {
           status: 'failed' as const,
           retrievedAt: new Date().toISOString(),
           durationMs: 0,
+          route: executionRoute,
+          ...(executionFallbackFor ? { fallbackFor: executionFallbackFor } : {}),
           error: `Skipped before dispatch: ${rejected.reason}`.slice(0, 300),
         })));
         const rejectedSourceUrls = new Set(rejectedTargets.map(item => item.sourceUrl));
         for (const outcome of sourceOutcomes.filter(item => !rejectedSourceUrls.has(item.sourceUrl))) {
+          const retrievalStatus = outcome.status === 'completed_with_evidence'
+            ? 'completed_with_content'
+            : outcome.status;
           console.log(`[PANTHEON][CRAWLER-URL] ${JSON.stringify({
             event: 'outcome',
             investigationId: inheritedAcquisition?.authority.investigationId,
             categoryId: inheritedAcquisition?.authority.categoryId,
             workId: inheritedAcquisition?.authority.workId,
             capability: crawler,
-            route: inheritedAcquisition?.authority.route || 'primary',
-            ...(inheritedAcquisition?.authority.fallbackFor ? { fallbackFor: inheritedAcquisition.authority.fallbackFor } : {}),
-            url: outcome.sourceUrl,
-            status: outcome.status,
+            route: executionRoute,
+            ...(executionFallbackFor ? { fallbackFor: executionFallbackFor } : {}),
+            url: pantheonTelemetryUrl(outcome.sourceUrl),
+            status: retrievalStatus,
+            evidenceStatus: outcome.status === 'completed_with_evidence' ? 'pending_validation' : 'not_applicable',
             durationMs: outcome.durationMs,
             ...(outcome.error ? { error: outcome.error } : {}),
           })}`);
@@ -700,7 +854,7 @@ export class PantheonCrawlerOrchestrator {
           capabilityClass: 'primary',
           status: evidenceCount > 0
             ? 'completed_with_evidence'
-            : /timed out/i.test(lastError)
+            : isPantheonCrawlerTimeout(lastError)
               ? 'timed_out'
               : lastError
                 ? 'failed'
@@ -709,14 +863,62 @@ export class PantheonCrawlerOrchestrator {
           attempts,
           targets: validTargets.length,
           durationMs,
+          queueWaitMs,
           sourceOutcomes,
-          route: 'primary',
+          route: executionRoute,
+          ...(executionFallbackFor ? { fallbackFor: executionFallbackFor } : {}),
           ...(lastError ? { error: lastError.slice(0, 300) } : {}),
         };
 
         return { results, audit };
-      })
-    );
+      }, orchestrationDeadline.signal);
+    });
+    const settledExecutions = await Promise.allSettled(routePromises);
+    orchestrationDeadline.dispose();
+    const executions = settledExecutions.map((execution, routeIndex) => {
+      if (execution.status === 'fulfilled') return execution.value;
+      const crawler = crawlersToUse[routeIndex];
+      const message = execution.reason instanceof Error ? execution.reason.message : String(execution.reason);
+      const status = isPantheonCrawlerTimeout(execution.reason) ? 'timed_out' as const : 'failed' as const;
+      const retrievedAt = new Date().toISOString();
+      const sourceOutcomes: CrawlerSourceOutcome[] = [
+        ...validTargets.map(sourceUrl => ({
+          sourceUrl,
+          status,
+          retrievedAt,
+          durationMs: 0,
+          error: message.slice(0, 300),
+          route: executionRoute,
+          ...(executionFallbackFor ? { fallbackFor: executionFallbackFor } : {}),
+        })),
+        ...rejectedTargets.map(rejected => ({
+          sourceUrl: rejected.sourceUrl,
+          status: 'failed' as const,
+          retrievedAt,
+          durationMs: 0,
+          error: `Skipped before dispatch: ${rejected.reason}`.slice(0, 300),
+          route: executionRoute,
+          ...(executionFallbackFor ? { fallbackFor: executionFallbackFor } : {}),
+        })),
+      ];
+      return {
+        results: [] as CrawlerResult[],
+        audit: {
+          crawler,
+          capabilityClass: 'primary' as const,
+          status,
+          evidenceCount: 0,
+          attempts: 0,
+          targets: validTargets.length,
+          durationMs: 0,
+          queueWaitMs: 0,
+          sourceOutcomes,
+          route: executionRoute,
+          ...(executionFallbackFor ? { fallbackFor: executionFallbackFor } : {}),
+          error: message.slice(0, 300),
+        },
+      };
+    });
 
     return {
       results: executions.flatMap(execution => execution.results),
@@ -777,11 +979,13 @@ export class PantheonCrawlerOrchestrator {
   getStatus(): {
     initialized: boolean;
     systemStatus: ReturnType<typeof getSystemStatus>;
+    crawlerPool: ReturnType<typeof getPantheonCrawlerPoolActivity>;
     crawlers: Record<string, { available: boolean; status?: any }>;
   } {
     return {
       initialized: this.initialized,
       systemStatus: getSystemStatus(),
+      crawlerPool: getPantheonCrawlerPoolActivity(),
       crawlers: {
         blizzard: { available: !!this.blizzard },
         cerberus: { available: !!this.cerberus, status: this.cerberus?.getMetrics() },

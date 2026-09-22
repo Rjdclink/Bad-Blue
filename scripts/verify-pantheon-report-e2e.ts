@@ -174,6 +174,27 @@ async function main() {
     throw new Error('raw diagnostic/block-page content crossed the evidence gate');
   }
 
+  const guardedFuzzyIdentity = createPantheonSourceResult({
+    crawler: 'startrek',
+    capabilityId: 'startrek',
+    categoryLabel: 'Identity & Identity Verification',
+    sourceUrl: 'https://records.example.gov/person/jane-exampel',
+    content: 'Jane Exampel is a resident of Sioux Falls, South Dakota. This public resident record includes an address.',
+    confidence: 0.9,
+    retrievedAt,
+    durationMs: 80,
+    transport: 'direct-http',
+    httpStatus: 200,
+  });
+  const guardedFuzzyResult = processPantheonEvidence([guardedFuzzyIdentity], submission.name, submission.location);
+  if (guardedFuzzyResult.accepted.length !== 1 || !guardedFuzzyResult.accepted[0].metadata?.entityMatch) {
+    throw new Error('guarded fuzzy identity match with an independent location correlate was rejected');
+  }
+  const uncorroboratedFuzzyResult = processPantheonEvidence([guardedFuzzyIdentity], submission.name, 'Portland, Oregon');
+  if (uncorroboratedFuzzyResult.accepted.length !== 0) {
+    throw new Error('fuzzy name similarity without an independent correlate crossed the evidence gate');
+  }
+
   const phoneContent = 'Jane Example is a resident of Sioux Falls, South Dakota. Phone: (605) 555-1212. This directory entry identifies the listed resident.';
   const phoneEvidence = createPantheonSourceResult({
     crawler: 'startrek',
@@ -303,11 +324,32 @@ async function main() {
         confidence: processed.accepted[0].confidence,
         timestamp: new Date(processed.accepted[0].retrievedAt),
       }],
+      investigationIntelligence: {
+        manualReview: Array.from({ length: 500 }, (_, index) => ({
+          category: 'fixture',
+          reason: `Internal diagnostic ${index}`,
+          sourceUrl: `https://diagnostic.example.org/${index}`,
+        })),
+        searchScope: [{
+          category: 'fixture',
+          jurisdictions: ['US-SD'],
+          attemptedUrls: Array.from({ length: 2_000 }, (_, index) => `https://attempt.example.org/${index}`),
+          successfulUrls: [],
+          failedUrls: Array.from({ length: 2_000 }, (_, index) => ({
+            url: `https://failed.example.org/${index}`,
+            reason: 'fixture failure',
+          })),
+          negativeResult: 'No verified subject-specific record was accepted.',
+        }],
+      },
     },
   });
   const verification = verifyPantheonPdfBuffer(pdf, 2);
   if (!verification.verified || verification.pageCount < 2 || verification.sha256.length !== 64) {
     throw new Error('PDF render/layout verification failed');
+  }
+  if (verification.pageCount > 25 || pdf.length > 750_000) {
+    throw new Error('internal URL/audit volume leaked into the printable customer PDF');
   }
 
   const reportId = '11111111-1111-4111-8111-111111111111';

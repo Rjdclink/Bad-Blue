@@ -79,7 +79,7 @@ for (const fn of executableFunctions) {
   if (!matrix.includes("'" + fn + "'")) throw new Error('Capability matrix missing executable function: ' + fn);
 }
 
-const categoryEntries = [...matrix.matchAll(/^  '(?:[^']+)': (?:IDENTITY|CONTACT|ADDRESS|RELATIONSHIP|SOCIAL|BUSINESS|ASSET|LEGAL|MEDIA|\[)/gm)];
+const categoryEntries = [...matrix.matchAll(/^  '(?:[^']+)': (?:IDENTITY|CONTACT|ADDRESS|RELATIONSHIP|SOCIAL|BUSINESS|ASSET|LEGAL|COURT|REGIONAL_LEGAL|WARRANT|SEX_OFFENDER|MEDIA|\[)/gm)];
 if (categoryEntries.length !== 30) throw new Error('Capability matrix must declare exactly 30 category routes; found ' + categoryEntries.length);
 
 if (!controller.includes('getPantheonCategoryCapabilities')) {

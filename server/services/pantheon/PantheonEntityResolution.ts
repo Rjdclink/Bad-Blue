@@ -1,4 +1,5 @@
 import type { RetrievalEvidence } from '../crawlers/PantheonRetrievalAdapter';
+import natural from 'natural';
 
 export type PantheonSubjectCorrelate =
   | 'location_phrase'
@@ -78,6 +79,19 @@ function tokensShareWindow(contentWords: readonly string[], required: readonly s
     if (uniqueRequired.every(token => window.has(token))) return true;
   }
   return false;
+}
+
+function fuzzyNameWindow(contentWords: readonly string[], nameTokens: readonly string[]): number {
+  if (nameTokens.length < 2 || contentWords.length < nameTokens.length) return 0;
+  const expected = nameTokens.join(' ');
+  let best = 0;
+  for (let start = 0; start <= contentWords.length - nameTokens.length; start += 1) {
+    const candidateTokens = contentWords.slice(start, start + nameTokens.length);
+    if (candidateTokens[0]?.[0] !== nameTokens[0]?.[0]
+      || candidateTokens[candidateTokens.length - 1]?.[0] !== nameTokens[nameTokens.length - 1]?.[0]) continue;
+    best = Math.max(best, natural.JaroWinklerDistance(expected, candidateTokens.join(' '), { ignoreCase: true }));
+  }
+  return best;
 }
 
 function locationCorrelates(
@@ -179,6 +193,10 @@ export function matchPantheonSubject(
     [tokens[0], tokens[tokens.length - 1]],
     8,
   );
+  const fuzzyNameSimilarity = !fullNameMatch && !allNameTokensNearby
+    ? fuzzyNameWindow(contentWords, tokens)
+    : 0;
+  const fuzzyNameMatch = fuzzyNameSimilarity >= 0.94;
 
   if (fullNameMatch) {
     score += 0.67;
@@ -189,6 +207,9 @@ export function matchPantheonSubject(
   } else if (firstLastNearby) {
     score += 0.52;
     factors.push('first_last_name');
+  } else if (fuzzyNameMatch) {
+    score += 0.6;
+    factors.push('fuzzy_normalized_name');
   } else if (tokens.length === 1 && matchedTokens.length === 1) {
     // Retain the diagnostic factor for observability, but a one-token subject
     // is never specific enough to be accepted automatically.
@@ -255,7 +276,7 @@ export function matchPantheonSubject(
 
   const uniqueCorrelates = [...new Set(independentCorrelates)];
   const boundedScore = Math.min(1, score);
-  const reliableNameMatch = fullNameMatch || allNameTokensNearby || exactIdentifierMatch;
+  const reliableNameMatch = fullNameMatch || allNameTokensNearby || fuzzyNameMatch || exactIdentifierMatch;
   return {
     matched: reliableNameMatch && uniqueCorrelates.length > 0 && boundedScore >= 0.82 && conflicts.length === 0,
     score: boundedScore,

@@ -438,6 +438,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
     if (pdfArtifact.sha256 !== pdfVerification.sha256 || pdfArtifact.bytes !== pdfVerification.bytes) {
       throw new Error('Persisted Pantheon PDF does not match the verified report artifact');
     }
+    const durablePdfReady = pdfArtifact.persistence.durable && Boolean(pdfArtifact.storedAt);
 
     await updatePantheonReportRecord(input.reportId, 'processing', {
       job: jobEnvelope(input, 'finalizing', {
@@ -460,7 +461,9 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       pdfArtifact,
     });
 
-    const finalStatus = investigation.releaseEligible ? 'completed' as const : 'partial' as const;
+    // COMPLETE means the full investigation contract and its downloadable PDF
+    // are both durably available. A verified-but-regenerable buffer is partial.
+    const finalStatus = investigation.releaseEligible && durablePdfReady ? 'completed' as const : 'partial' as const;
     await updatePantheonReportRecord(input.reportId, finalStatus, {
       job: jobEnvelope(input, finalStatus, {
         startedAt: startedAt.toISOString(),
@@ -474,6 +477,8 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
         capabilityCoverage: investigation.capabilityCoverage,
         capabilityTelemetry: getPantheonCapabilityTelemetry(),
         pdfVerification,
+        durablePdfReady,
+        ...(!durablePdfReady ? { releaseBlocker: 'durable_pdf_unavailable' } : {}),
       }),
       categoryStates,
       report,

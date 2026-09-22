@@ -3,7 +3,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { PANTHEON_REPORT_DURATIONS_MS } from '@shared/pantheonReportConfig';
-import { Search, Eye } from 'lucide-react';
+import { Search } from 'lucide-react';
 
 interface PantheonProgressTrackerProps {
   searchDepth: number;
@@ -89,86 +89,58 @@ export function PantheonProgressTracker({
   };
 
   return (
-    <Card className={`border-2 ${searchDepth === 4 ? 'border-red-500/50 shadow-red-500/20 shadow-2xl' : 'border-primary/50 shadow-xl'} relative overflow-hidden`}>
+    <Card className="border-2 border-primary/50 shadow-xl relative overflow-hidden">
       {/* Animated Background Glow */}
-      <div className={`absolute inset-0 ${searchDepth === 4 ? 'bg-red-900/5' : 'bg-primary/5'} animate-pulse`} />
+      <div className="absolute inset-0 bg-primary/5 animate-pulse" />
       
       <CardContent className="p-6 space-y-5 relative z-10">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            {searchDepth === 4 ? (
-              <Eye className="w-6 h-6 text-red-500 animate-pulse" />
-            ) : (
-              <Search className="w-6 h-6 text-primary animate-pulse" />
-            )}
+            <Search className="w-6 h-6 text-primary animate-pulse" />
             <h3 className="font-bold text-xl">
-              {searchDepth === 4 ? 'EYE OF GOD' : 'PANTHEON'} Intelligence Scan
+              PANTHEON Intelligence Scan
             </h3>
           </div>
-          <Badge variant="secondary" className={`text-base px-3 py-1 ${searchDepth === 4 ? 'bg-red-500/20 text-red-400 border-red-500/50' : ''}`}>
+          <Badge variant="secondary" className="text-base px-3 py-1">
             {Math.round(progress)}%
           </Badge>
         </div>
 
         {/* Digital Countdown Timer */}
-        <div className={`relative p-6 rounded-xl bg-gradient-to-br ${
-          searchDepth === 4 
-            ? 'from-red-950 via-red-900 to-black' 
-            : 'from-slate-900 via-slate-800 to-black'
-        } border-2 ${
-          searchDepth === 4 ? 'border-red-500/50' : 'border-cyan-500/50'
-        } shadow-inner`}>
+        <div className="relative p-6 rounded-xl bg-gradient-to-br from-slate-900 via-slate-800 to-black border-2 border-cyan-500/50 shadow-inner">
           {/* LED-style glow effect */}
-          <div className={`absolute inset-0 ${
-            searchDepth === 4 ? 'bg-red-500/5' : 'bg-cyan-500/5'
-          } rounded-xl animate-pulse`} />
+          <div className="absolute inset-0 bg-cyan-500/5 rounded-xl animate-pulse" />
           
           <div className="relative z-10 flex items-center justify-center gap-1 min-w-0 overflow-hidden">
             {/* Minutes */}
             <div className="flex flex-col items-center">
               <div className="flex gap-1">
-                <DigitDisplay digit={Math.floor(minutes / 10)} color={searchDepth === 4 ? 'red' : 'cyan'} />
-                <DigitDisplay digit={minutes % 10} color={searchDepth === 4 ? 'red' : 'cyan'} />
+                <DigitDisplay digit={Math.floor(minutes / 10)} color="cyan" />
+                <DigitDisplay digit={minutes % 10} color="cyan" />
               </div>
               <span className="text-xs text-muted-foreground mt-1 font-mono">MIN</span>
             </div>
 
             {/* Separator */}
             <div className="flex flex-col gap-2 px-2">
-              <div className={`w-2 h-2 rounded-full ${
-                searchDepth === 4 ? 'bg-red-500' : 'bg-cyan-500'
-              } animate-pulse shadow-lg ${
-                searchDepth === 4 ? 'shadow-red-500/50' : 'shadow-cyan-500/50'
-              }`} />
-              <div className={`w-2 h-2 rounded-full ${
-                searchDepth === 4 ? 'bg-red-500' : 'bg-cyan-500'
-              } animate-pulse shadow-lg ${
-                searchDepth === 4 ? 'shadow-red-500/50' : 'shadow-cyan-500/50'
-              }`} />
+              <div className="w-2 h-2 rounded-full bg-cyan-500 animate-pulse shadow-lg shadow-cyan-500/50" />
+              <div className="w-2 h-2 rounded-full bg-cyan-500 animate-pulse shadow-lg shadow-cyan-500/50" />
             </div>
 
             {/* Seconds */}
             <div className="flex flex-col items-center">
               <div className="flex gap-1">
-                <DigitDisplay digit={Math.floor(seconds / 10)} color={searchDepth === 4 ? 'red' : 'cyan'} />
-                <DigitDisplay digit={seconds % 10} color={searchDepth === 4 ? 'red' : 'cyan'} />
+                <DigitDisplay digit={Math.floor(seconds / 10)} color="cyan" />
+                <DigitDisplay digit={seconds % 10} color="cyan" />
               </div>
               <span className="text-xs text-muted-foreground mt-1 font-mono">SEC</span>
             </div>
 
             {/* Separator */}
             <div className="flex flex-col gap-2 px-2">
-              <div className={`w-2 h-2 rounded-full ${
-                searchDepth === 4 ? 'bg-red-500' : 'bg-cyan-500'
-              } animate-pulse shadow-lg ${
-                searchDepth === 4 ? 'shadow-red-500/50' : 'shadow-cyan-500/50'
-              }`} />
-              <div className={`w-2 h-2 rounded-full ${
-                searchDepth === 4 ? 'bg-red-500' : 'bg-cyan-500'
-              } animate-pulse shadow-lg ${
-                searchDepth === 4 ? 'shadow-red-500/50' : 'shadow-cyan-500/50'
-              }`} />
+              <div className="w-2 h-2 rounded-full bg-cyan-500 animate-pulse shadow-lg shadow-cyan-500/50" />
+              <div className="w-2 h-2 rounded-full bg-cyan-500 animate-pulse shadow-lg shadow-cyan-500/50" />
             </div>
 
             {/* Milliseconds */}
@@ -179,18 +151,14 @@ export function PantheonProgressTracker({
           </div>
 
           {/* Scanline effect */}
-          <div className={`absolute inset-0 bg-gradient-to-b ${
-            searchDepth === 4 
-              ? 'from-red-500/10 via-transparent to-transparent' 
-              : 'from-cyan-500/10 via-transparent to-transparent'
-          } animate-scan pointer-events-none rounded-xl`} />
+          <div className="absolute inset-0 bg-gradient-to-b from-cyan-500/10 via-transparent to-transparent animate-scan pointer-events-none rounded-xl" />
         </div>
 
         {/* Progress Bar */}
         <div className="space-y-2">
           <Progress 
             value={progress} 
-            className={`h-3 ${searchDepth === 4 ? 'bg-red-950' : 'bg-slate-900'}`}
+            className="h-3 bg-slate-900"
           />
         </div>
 

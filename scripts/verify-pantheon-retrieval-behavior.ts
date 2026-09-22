@@ -3,6 +3,7 @@ import {
   acquirePantheonResource,
   admitPantheonUrl,
   detectPublicAccessBarrier,
+  isPantheonRobotsAllowed,
 } from '../server/services/crawlers/PublicAcquisitionInfrastructure';
 import { canonicalizeSixDegreesTarget } from '../server/services/crawlers/SixDegreesCrawler';
 import { extractPantheonDiscoveredCandidates } from '../server/services/crawlers/PantheonRetrievalAdapter';
@@ -28,6 +29,37 @@ assert.deepEqual(
     'https://news.example.org/jane-example',
   ],
   'subject discovery must preserve absolute results and resolve relative result URLs before ledger admission',
+);
+
+assert.deepEqual(
+  extractPantheonDiscoveredCandidates(
+    '<nav><a href="https://www.hhs.gov/">Health</a></nav>'
+      + '<article><a href="https://news.example.org/people/sarah-loretta-graves">Sarah Loretta Graves of Hartley</a></article>',
+    'https://www.bing.com/search?q=sarah+loretta+graves',
+    [],
+    'Sarah Loretta Graves',
+    'Hartley, Iowa',
+  ),
+  ['https://news.example.org/people/sarah-loretta-graves'],
+  'search discovery must reject generic navigation and admit only subject-relevant result pages',
+);
+
+assert.equal(
+  isPantheonRobotsAllowed(
+    'https://records.example.gov/private/person',
+    'https://records.example.gov/robots.txt',
+    'User-agent: *\nDisallow: /private/',
+  ),
+  false,
+  'robots exclusions must be enforced before public-page acquisition',
+);
+assert.equal(
+  isPantheonRobotsAllowed(
+    'https://records.example.gov/public/person',
+    'https://records.example.gov/robots.txt',
+    'User-agent: *\nDisallow: /private/',
+  ),
+  true,
 );
 
 for (const rejected of [
