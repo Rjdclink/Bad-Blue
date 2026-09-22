@@ -6,7 +6,10 @@ import {
   isPantheonRobotsAllowed,
 } from '../server/services/crawlers/PublicAcquisitionInfrastructure';
 import { canonicalizeSixDegreesTarget } from '../server/services/crawlers/SixDegreesCrawler';
-import { extractPantheonDiscoveredCandidates } from '../server/services/crawlers/PantheonRetrievalAdapter';
+import {
+  extractPantheonDiscoveredCandidates,
+  extractPantheonSourceNavigationCandidates,
+} from '../server/services/crawlers/PantheonRetrievalAdapter';
 
 const publicUrl = admitPantheonUrl('https://example.com/public-record?q=smith&utm_source=test#section');
 assert.equal(publicUrl.ok, true, 'a normal public evidence URL must be admitted');
@@ -42,6 +45,62 @@ assert.deepEqual(
   ),
   ['https://news.example.org/people/sarah-loretta-graves'],
   'search discovery must reject generic navigation and admit only subject-relevant result pages',
+);
+
+const publicLookupTargets = extractPantheonDiscoveredCandidates(
+  '<form method="get" action="/records/search"><input name="name"><input name="location"></form>',
+  'https://records.example.gov/',
+  [],
+  'Sarah Loretta Graves',
+  'Hartley, Iowa',
+);
+assert.equal(publicLookupTargets.length, 1, 'a public same-source GET lookup form must become one controlled candidate');
+assert.equal(
+  publicLookupTargets[0],
+  'https://records.example.gov/records/search?name=Sarah+Loretta+Graves&location=Hartley%2C+Iowa',
+  'the public lookup candidate must carry the submitted subject and locality',
+);
+assert.deepEqual(
+  extractPantheonDiscoveredCandidates(
+    '<form method="post" action="/records/search"><input name="name"></form><form method="get" action="https://other.example.org/search"><input name="name"></form>',
+    'https://records.example.gov/',
+    [],
+    'Sarah Loretta Graves',
+  ),
+  [],
+  'POST and cross-source forms must never become Pantheon acquisition requests',
+);
+assert.deepEqual(
+  extractPantheonDiscoveredCandidates(
+    '<form method="get" action="/records/lookup"><input name="phone"><input name="county"></form>',
+    'https://records.example.gov/',
+    [],
+    '(605) 555-1212',
+    'Minnehaha County, SD',
+    'phone',
+  ),
+  ['https://records.example.gov/records/lookup?phone=%28605%29+555-1212&county=Minnehaha+County%2C+SD'],
+  'a phone investigation must fill the source phone field rather than a name field',
+);
+assert.deepEqual(
+  extractPantheonDiscoveredCandidates(
+    '<form method="get" action="/records/lookup"><input name="name"></form>',
+    'https://records.example.gov/',
+    [],
+    '(605) 555-1212',
+    undefined,
+    'phone',
+  ),
+  [],
+  'a typed non-name investigation must not inject its value into a name-only public form',
+);
+assert.deepEqual(
+  extractPantheonSourceNavigationCandidates(
+    '<nav><a href="/records/search">Public record search</a><a href="/about">About</a><a href="https://other.example.org/search">Search</a></nav>',
+    'https://records.example.gov/',
+  ),
+  ['https://records.example.gov/records/search'],
+  'only bounded same-source record-search navigation may precede subject lookup',
 );
 
 assert.equal(

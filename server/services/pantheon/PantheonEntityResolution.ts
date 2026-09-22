@@ -1,4 +1,5 @@
 import type { RetrievalEvidence } from '../crawlers/PantheonRetrievalAdapter';
+import type { PantheonIdentifierKind } from './PantheonQueryPlan';
 import natural from 'natural';
 
 export type PantheonSubjectCorrelate =
@@ -7,7 +8,8 @@ export type PantheonSubjectCorrelate =
   | 'structured_location'
   | 'source_identity_attribute'
   | 'source_record_identifier'
-  | 'exact_unique_identifier';
+  | 'exact_unique_identifier'
+  | 'exact_starting_identifier';
 
 export interface PantheonEntityMatch {
   matched: boolean;
@@ -40,6 +42,15 @@ function uniqueIdentifierKind(value: string): 'email' | 'phone' | 'username' | '
   return undefined;
 }
 
+function declaredIdentifierKind(value: unknown): PantheonIdentifierKind | undefined {
+  const candidate = String(value || '').trim().toLowerCase();
+  return [
+    'name', 'phone', 'email', 'username', 'address', 'business', 'property', 'vin',
+  ].includes(candidate)
+    ? candidate as PantheonIdentifierKind
+    : undefined;
+}
+
 function exactUniqueIdentifierMatch(content: string, rawSubject: string, kind: ReturnType<typeof uniqueIdentifierKind>): boolean {
   if (!kind) return false;
   if (kind === 'phone') {
@@ -47,6 +58,18 @@ function exactUniqueIdentifierMatch(content: string, rawSubject: string, kind: R
     return needle.length >= 7 && content.replace(/\D/g, '').includes(needle);
   }
   return normalize(content).includes(normalize(rawSubject));
+}
+
+function exactStartingIdentifierMatch(
+  content: string,
+  rawSubject: string,
+  kind: Exclude<PantheonIdentifierKind, 'name'>,
+): boolean {
+  if (kind === 'phone' || kind === 'email' || kind === 'username' || kind === 'vin') {
+    return exactUniqueIdentifierMatch(content, rawSubject, kind);
+  }
+  const needle = normalize(rawSubject);
+  return needle.length >= 4 && normalize(content).includes(needle);
 }
 
 function clean(value: unknown): string {
@@ -179,8 +202,35 @@ export function matchPantheonSubject(
   const conflicts: string[] = [];
   const independentCorrelates: PantheonSubjectCorrelate[] = [];
   let score = 0;
-  const identifierKind = uniqueIdentifierKind(subject);
-  const exactIdentifierMatch = exactUniqueIdentifierMatch(clean(item.content), subject, identifierKind);
+  const explicitlyDeclaredKind = declaredIdentifierKind(item.metadata?.startingIdentifierKind);
+  const inferredIdentifierKind = uniqueIdentifierKind(subject);
+  const exactIdentifierMatch = exactUniqueIdentifierMatch(clean(item.content), subject, inferredIdentifierKind);
+
+  // Typed starting identifiers must not be treated as names.  In particular,
+  // an address, business name, or property identifier must never be accepted
+  // because one of its words happens to appear in another person's record.
+  if (explicitlyDeclaredKind && explicitlyDeclaredKind !== 'name') {
+    const exactStartingIdentifier = exactStartingIdentifierMatch(
+      clean(item.content),
+      subject,
+      explicitlyDeclaredKind,
+    );
+    if (exactStartingIdentifier) {
+      score = 0.92;
+      factors.push(`exact_${explicitlyDeclaredKind}_starting_identifier`);
+      independentCorrelates.push('exact_starting_identifier');
+    } else {
+      conflicts.push('starting_identifier_not_found');
+    }
+    return {
+      matched: exactStartingIdentifier && conflicts.length === 0,
+      score,
+      factors,
+      conflicts,
+      independentCorrelates,
+      normalizedSubject,
+    };
+  }
 
   const tokens = words(normalizedSubject)
     .filter(token => token.length >= 2 && !HONORIFICS.has(token));
@@ -220,7 +270,7 @@ export function matchPantheonSubject(
 
   if (exactIdentifierMatch) {
     score = Math.max(score, 0.92);
-    factors.push(`exact_${identifierKind}_identifier`);
+    factors.push(`exact_${inferredIdentifierKind}_identifier`);
     independentCorrelates.push('exact_unique_identifier');
   }
 

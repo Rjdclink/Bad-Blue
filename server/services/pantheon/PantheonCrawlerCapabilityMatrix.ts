@@ -605,7 +605,7 @@ export interface PantheonExecutableSource {
   sourceKind?: NonNullable<PantheonSourceTarget['sourceKind']>;
   authority?: PantheonSourceTarget['authority'];
   jurisdiction?: string;
-  workType?: 'authoritative-source' | 'discovery-search' | 'candidate-validation' | 'corroboration';
+  workType?: 'authoritative-source' | 'discovery-search' | 'source-navigation' | 'candidate-validation' | 'corroboration';
   subjectScoped?: boolean;
   priority?: number;
 }

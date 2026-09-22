@@ -3712,11 +3712,22 @@ Contact: ${foiaRequest.userEmail || userEmail}
 
     if (report.status === 'processing') res.setHeader('Retry-After', '2');
 
+    type PantheonStatusJob = {
+      downloadReady?: boolean;
+      releaseBlocker?: string;
+      completedCategories?: number;
+      totalCategories?: number;
+      reportRelease?: {
+        blocker?: string;
+        acceptedEvidenceCount?: number;
+        distinctAcceptedSourceCount?: number;
+      };
+    };
     const envelope = report.reportData && typeof report.reportData === 'object'
-      ? report.reportData as { job?: { downloadReady?: boolean; releaseBlocker?: string } | unknown; report?: unknown; pdfVerification?: { verified?: boolean } }
+      ? report.reportData as { job?: PantheonStatusJob; report?: unknown; pdfVerification?: { verified?: boolean } }
       : {};
     const job = envelope.job && typeof envelope.job === 'object'
-      ? envelope.job as { downloadReady?: boolean; releaseBlocker?: string }
+      ? envelope.job
       : null;
     const downloadReady = report.status === 'completed'
       && job?.downloadReady === true
@@ -3724,6 +3735,16 @@ Contact: ${foiaRequest.userEmail || userEmail}
       && envelope.pdfVerification?.verified === true;
 
     res.setHeader('Cache-Control', 'private, no-store');
+    const release = job?.reportRelease;
+    const releaseBlocker = job?.releaseBlocker || release?.blocker;
+    const partialMessage = releaseBlocker === 'no_accepted_evidence'
+      ? 'No verified, attributable public-source evidence was accepted, so no PDF was released.'
+      : releaseBlocker === 'no_attributable_source'
+        ? 'Evidence lacked attributable public-source URLs, so no PDF was released.'
+        : releaseBlocker === 'investigation_contract_incomplete'
+          ? `The investigation completed ${Number(job?.completedCategories || 0)} of ${Number(job?.totalCategories || 30)} required categories, so no PDF was released.`
+          : 'The investigation did not meet the evidence and coverage requirements for a releasable report.';
+
     return res.json({
       success: true,
       jobId: report.id,
@@ -3737,7 +3758,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
       error: report.status === 'failed'
         ? report.errorMessage || 'Background report failed.'
         : report.status === 'partial'
-          ? 'The investigation did not meet the evidence and coverage requirements for a releasable report.'
+          ? partialMessage
           : null,
       createdAt: report.createdAt,
       completedAt: report.completedAt,
