@@ -31,6 +31,7 @@ import {
 import { createPantheonDeadline, throwIfPantheonAborted } from '../pantheon/PantheonDeadline';
 import {
   acquirePantheonResource,
+  admitPantheonUrl,
   runWithPantheonAcquisitionContext,
   type PublicAcquisitionResult,
 } from './PublicAcquisitionInfrastructure';
@@ -40,6 +41,7 @@ import type {
   PantheonBackgroundCategory,
   PantheonSourceTarget,
 } from '../pantheon/PantheonSovereignSourceRegistry';
+import type { PantheonIdentifierKind } from '../pantheon/PantheonQueryPlan';
 
 export type RetrievalEvidence = PantheonStructuredSourceResult;
 
@@ -48,6 +50,15 @@ export interface PantheonRetrievalResponse {
   reason?: string;
   plan: CrawlerSelectionPlan;
   evidence: RetrievalEvidence[];
+  /**
+   * Controller-owned candidates parsed from the canonical source snapshot.
+   * These are traversal hints only: they never become evidence or satisfy a
+   * category's evidence quota until a separately authorized URL is acquired.
+   */
+  frontierCandidates?: {
+    discoveredCandidates: string[];
+    sourceNavigationCandidates: string[];
+  };
   crawlerAudit: Array<CrawlerExecutionAudit | {
     crawler: string;
     capabilityClass: 'razor' | 'pantheon-secondary';
@@ -83,13 +94,14 @@ export class PantheonRetrievalAdapter {
     budgetMs?: number;
     deadlineAt?: number;
     subject?: string;
+    startingIdentifierKind?: PantheonIdentifierKind;
     location?: string;
     categoryLabel?: string;
     registryCategory?: PantheonBackgroundCategory;
     sourceKind?: NonNullable<PantheonSourceTarget['sourceKind']>;
     sourceAuthority?: PantheonSourceTarget['authority'];
     sourceJurisdiction?: string;
-    workType?: 'authoritative-source' | 'discovery-search' | 'candidate-validation' | 'corroboration';
+    workType?: 'authoritative-source' | 'discovery-search' | 'source-navigation' | 'candidate-validation' | 'corroboration';
     subjectScoped?: boolean;
     capabilityHint?: string[];
     transportHint?: string[];
@@ -231,10 +243,13 @@ export class PantheonRetrievalAdapter {
       ? Math.max(1_000, remainingBudgetMs())
       : Math.max(1_000, request.budgetMs || 60_000);
     const primaryBudgetMs = Math.max(1_000, Math.floor(totalBudgetMs * 0.35));
+    // The shared crawler selector also serves legacy four-level consumers.
+    // Pantheon's public contract has only the three 10/20/30-minute levels.
+    const crawlerDepth: 1 | 2 | 3 = plan.depth === 4 ? 3 : plan.depth;
     const searchOptions = {
-      depth: plan.depth,
+      depth: crawlerDepth,
       crawlers: plan.crawlers,
-      stormIntensity: plan.depth === 3 ? 'storm' as const : 'snow' as const,
+      stormIntensity: crawlerDepth === 3 ? 'storm' as const : 'snow' as const,
       timeout: primaryBudgetMs,
       signal: operationSignal,
     };
@@ -279,6 +294,23 @@ export class PantheonRetrievalAdapter {
     throwIfPantheonAborted(operationSignal);
     recordCrawlerOutcomes(results);
 
+    const canonicalFrontierCandidates = canonicalAcquisition?.ok && canonicalAcquisition.content.trim()
+      ? {
+          discoveredCandidates: extractPantheonDiscoveredCandidates(
+            canonicalAcquisition.content,
+            canonicalAcquisition.url || request.targets[0],
+            [],
+            request.subject,
+            request.location,
+            request.startingIdentifierKind,
+          ).slice(0, 100),
+          sourceNavigationCandidates: extractPantheonSourceNavigationCandidates(
+            canonicalAcquisition.content,
+            canonicalAcquisition.url || request.targets[0],
+          ),
+        }
+      : undefined;
+
     const evidence = results
       .filter(result => result.content.trim() && result.confidence > 0)
       .map(result => {
@@ -300,6 +332,7 @@ export class PantheonRetrievalAdapter {
           lastModified: canonicalAcquisition?.lastModified,
           subject: request.subject,
           location: request.location,
+          startingIdentifierKind: request.startingIdentifierKind,
         });
       });
 
@@ -463,10 +496,24 @@ export class PantheonRetrievalAdapter {
       }
     }
 
+    // Every evidence lane, including local extraction/analysis lanes, carries
+    // the originating identifier type.  The entity resolver uses this to
+    // forbid a phone, address, business, property, or VIN investigation from
+    // falling back to fuzzy name-style matching.
+    if (request.startingIdentifierKind) {
+      for (const item of evidence) {
+        item.metadata = {
+          ...(item.metadata || {}),
+          startingIdentifierKind: request.startingIdentifierKind,
+        };
+      }
+    }
+
     return {
       available: true,
       plan,
       evidence,
+      ...(canonicalFrontierCandidates ? { frontierCandidates: canonicalFrontierCandidates } : {}),
       crawlerAudit,
       // Background reports retain only attributable source evidence. Supervision
       // telemetry is not a report input and is omitted from this production path.
@@ -484,6 +531,7 @@ export function extractPantheonDiscoveredCandidates(
   inherited: readonly unknown[] = [],
   subject = '',
   location = '',
+  startingIdentifierKind: PantheonIdentifierKind = 'name',
 ): string[] {
   const normalized = (value: unknown) => String(value || '')
     .normalize('NFKD')
@@ -535,6 +583,79 @@ export function extractPantheonDiscoveredCandidates(
       const context = `${$(element).text()} ${$(element).parent().text()}`.slice(0, 2_000);
       linkedCandidates.push({ url, context });
     });
+    // A registry landing page commonly exposes its public lookup through a
+    // GET form rather than a record URL.  Build only same-source GET requests
+    // from submitted identity fields; POST, credential, and cross-origin
+    // forms remain outside Pantheon's public acquisition contract.
+    if (subject.trim()) {
+      let base: URL | undefined;
+      try {
+        base = new URL(baseUrl);
+      } catch {
+        base = undefined;
+      }
+      if (base) {
+        const subjectParts = subject.trim().split(/\s+/).filter(Boolean);
+        $('form').each((_, form) => {
+          const $form = $(form);
+          const method = String($form.attr('method') || 'get').trim().toLowerCase();
+          if (method !== 'get') return;
+          let action: URL;
+          try {
+            action = new URL($form.attr('action') || base!.toString(), base);
+          } catch {
+            return;
+          }
+          if (!/^https?:$/.test(action.protocol) || action.origin !== base.origin) return;
+
+          const fields: Array<{ name: string; type: string }> = [];
+          $form.find('input[name], textarea[name], select[name]').each((__, field) => {
+            const $field = $(field);
+            if ($field.is('[disabled]')) return;
+            const type = String($field.attr('type') || '').toLowerCase();
+            if (['button', 'checkbox', 'file', 'hidden', 'image', 'password', 'radio', 'reset', 'submit'].includes(type)) return;
+            const name = String($field.attr('name') || '').trim();
+            if (name) fields.push({ name, type });
+          });
+          const fieldFor = (pattern: RegExp) => fields.find(field => pattern.test(field.name));
+          const firstName = fieldFor(/(?:^|[_-])(first|given)(?:[_-]?name)?(?:$|[_-])/i);
+          const lastName = fieldFor(/(?:^|[_-])(last|family|sur)(?:[_-]?name)?(?:$|[_-])/i);
+          const genericQuery = fieldFor(/^(?:q|query|search|searchterm|search_term|keyword|keywords|term|terms)$/i);
+          const nameSubject = fieldFor(/^(?:name|full_?name|party|person|defendant|respondent|offender|inmate|licensee|registrant|owner)$/i);
+          const identifierFieldPatterns: Record<Exclude<PantheonIdentifierKind, 'name'>, RegExp> = {
+            phone: /(?:^|[_-])(?:phone|telephone|tel)(?:[_-]?number)?(?:$|[_-])/i,
+            email: /(?:^|[_-])e?mail(?:[_-]?address)?(?:$|[_-])/i,
+            username: /(?:^|[_-])(?:user(?:name|_?id)?|handle|screen_?name)(?:$|[_-])/i,
+            address: /(?:^|[_-])(?:address|street|location)(?:$|[_-])/i,
+            business: /(?:^|[_-])(?:business|company|entity|organization|organisation)(?:[_-]?name)?(?:$|[_-])/i,
+            property: /(?:^|[_-])(?:property|parcel|apn|assessor)(?:[_-]?(?:id|number|search))?(?:$|[_-])/i,
+            vin: /(?:^|[_-])(?:vin|vehicle_?identification)(?:[_-]?(?:number|id))?(?:$|[_-])/i,
+          };
+          const locationField = fieldFor(/(?:city|county|jurisdiction|location|state|region|locality)/i);
+
+          const explicitIdentifierField = startingIdentifierKind === 'name'
+            ? undefined
+            : fieldFor(identifierFieldPatterns[startingIdentifierKind]);
+          if (startingIdentifierKind !== 'name' && (explicitIdentifierField || genericQuery)) {
+            action.searchParams.set((explicitIdentifierField || genericQuery)!.name, subject.trim());
+          } else if (startingIdentifierKind === 'name' && nameSubject) {
+            action.searchParams.set(nameSubject.name, subject.trim());
+          } else if (startingIdentifierKind === 'name' && firstName && lastName && subjectParts.length >= 2) {
+            action.searchParams.set(firstName.name, subjectParts[0]);
+            action.searchParams.set(lastName.name, subjectParts.at(-1)!);
+          } else if (genericQuery) {
+            // A generic query input is deliberately safe for every accepted
+            // starting-identifier type.  A name-labelled field is not.
+            action.searchParams.set(genericQuery.name, subject.trim());
+          } else {
+            return;
+          }
+          if (locationField && location.trim()) action.searchParams.set(locationField.name, location.trim());
+          const url = unwrapSearchRedirect(action.toString());
+          if (url) linkedCandidates.push({ url, context: `${$form.attr('aria-label') || ''} ${$form.attr('id') || ''} ${subject}` });
+        });
+      }
+    }
   } catch {
     for (const match of content.matchAll(/href=["']([^"']+)["']/gi)) {
       const url = unwrapSearchRedirect(String(match[1] || ''));
@@ -552,6 +673,51 @@ export function extractPantheonDiscoveredCandidates(
   ]
     .filter(candidate => candidate.url && relevant(candidate.url, `${candidate.context} ${locationContext}`))
     .map(candidate => candidate.url))];
+}
+
+/**
+ * Finds bounded, same-source public navigation routes that may lead from an
+ * authority landing page to its own search or records interface.  These are
+ * deliberately separate from subject-result candidates: a navigation page is
+ * never evidence and is allowed only one recursive hop before it must yield a
+ * subject-scoped URL.
+ */
+export function extractPantheonSourceNavigationCandidates(
+  content: string,
+  baseUrl: string,
+): string[] {
+  let base: URL;
+  try {
+    base = new URL(baseUrl);
+  } catch {
+    return [];
+  }
+  if (/(?:^|\.)(?:bing\.com|google\.com|duckduckgo\.com|search\.brave\.com)$/i.test(base.hostname)) return [];
+
+  const navigationHint = /(?:\bsearch\b|\blookup\b|\bfind\b|\bdirectory\b|\brecords?\b|\bcases?\b|\bdockets?\b|\boffenders?\b|\binmates?\b|\bwarrants?\b|\blicen[cs](?:e|es|ing)?\b|\bregistry\b|\bpublic[ -]?record)/i;
+  const candidates = new Set<string>();
+  try {
+    const $ = load(content);
+    $('a[href]').each((_, element) => {
+      const $link = $(element);
+      const href = String($link.attr('href') || '').trim();
+      if (!href || href.startsWith('#')) return;
+      let target: URL;
+      try {
+        target = new URL(href, base);
+      } catch {
+        return;
+      }
+      if (!/^https?:$/.test(target.protocol) || target.origin !== base.origin || target.toString() === base.toString()) return;
+      const context = `${$link.text()} ${$link.attr('aria-label') || ''} ${$link.attr('title') || ''} ${target.pathname}`;
+      if (!navigationHint.test(context)) return;
+      const admission = admitPantheonUrl(target.toString());
+      if (admission.ok) candidates.add(admission.url);
+    });
+  } catch {
+    return [];
+  }
+  return [...candidates].slice(0, 12);
 }
 
 function normalizeResult(
@@ -572,6 +738,7 @@ function normalizeResult(
     lastModified?: string;
     subject?: string;
     location?: string;
+    startingIdentifierKind?: PantheonIdentifierKind;
   },
 ): RetrievalEvidence {
   const discoveryOnly = context.transport === 'search-provider';
@@ -590,7 +757,12 @@ function normalizeResult(
     Array.isArray(result.metadata?.discoveredCandidates) ? result.metadata.discoveredCandidates : [],
     context.subject,
     context.location,
+    context.startingIdentifierKind,
   ).slice(0, 100);
+  const sourceNavigationCandidates = extractPantheonSourceNavigationCandidates(
+    canonicalContent,
+    context.finalUrl || result.target,
+  );
   return createPantheonSourceResult({
     crawler: result.crawler,
     capabilityId: result.crawler,
@@ -617,6 +789,8 @@ function normalizeResult(
       ...(pageTitle ? { pageTitle } : {}),
       ...(discoveryOnly ? { discoveryOnly: true } : {}),
       ...(discoveredCandidates.length ? { discoveredCandidates } : {}),
+      ...(sourceNavigationCandidates.length ? { sourceNavigationCandidates } : {}),
+      ...(context.startingIdentifierKind ? { startingIdentifierKind: context.startingIdentifierKind } : {}),
     },
   });
 }

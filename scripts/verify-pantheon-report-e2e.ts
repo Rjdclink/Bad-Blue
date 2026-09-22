@@ -231,6 +231,51 @@ async function main() {
     throw new Error('typed category claim, stable citation, or deterministic rank metadata is missing');
   }
 
+  const phoneStartingIdentifierEvidence = createPantheonSourceResult({
+    crawler: 'startrek',
+    capabilityId: 'startrek',
+    categoryLabel: 'Phone Numbers',
+    sourceUrl: 'https://directory.example.org/phone/605-555-1212',
+    content: 'Public directory record. Phone: (605) 555-1212. Address: Sioux Falls, South Dakota.',
+    confidence: 0.86,
+    retrievedAt,
+    durationMs: 80,
+    transport: 'direct-http',
+    httpStatus: 200,
+    metadata: { startingIdentifierKind: 'phone' },
+  });
+  const phoneStartingIdentifierResult = processPantheonEvidence(
+    [phoneStartingIdentifierEvidence],
+    '(605) 555-1212',
+    submission.location,
+  );
+  if (phoneStartingIdentifierResult.accepted.length !== 1 ||
+      phoneStartingIdentifierResult.accepted[0].metadata?.entityMatch?.independentCorrelates?.[0] !== 'exact_starting_identifier') {
+    throw new Error('typed phone starting identifier was not matched exactly');
+  }
+  const typedIdentifierFalsePositiveEvidence = createPantheonSourceResult({
+    crawler: 'startrek',
+    capabilityId: 'startrek',
+    categoryLabel: 'Phone Numbers',
+    sourceUrl: 'https://directory.example.org/phone/605-555-9999',
+    content: 'Public directory record. Phone: (605) 555-9999. Address: Sioux Falls, South Dakota.',
+    confidence: 0.86,
+    retrievedAt,
+    durationMs: 80,
+    transport: 'direct-http',
+    httpStatus: 200,
+    metadata: { startingIdentifierKind: 'phone' },
+  });
+  const typedIdentifierFalsePositive = processPantheonEvidence(
+    [typedIdentifierFalsePositiveEvidence],
+    '(605) 555-1212',
+    submission.location,
+  );
+  if (typedIdentifierFalsePositive.accepted.length ||
+      typedIdentifierFalsePositive.rejected[0]?.reason !== 'subject_mismatch') {
+    throw new Error('typed starting identifier accepted a non-exact false positive');
+  }
+
   const sameEvidenceLater = createPantheonSourceResult({
     crawler: 'birdofprey',
     capabilityId: 'birdofprey',

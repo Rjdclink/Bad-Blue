@@ -107,7 +107,7 @@ export interface PantheonWorkAuthorization {
   location?: string;
 }
 
-export type PantheonWorkType = 'authoritative-source'|'discovery-search'|'candidate-validation'|'corroboration';
+export type PantheonWorkType = 'authoritative-source'|'discovery-search'|'source-navigation'|'candidate-validation'|'corroboration';
 
 export type PantheonUrlState = 'pending'|'retryable'|'assigned'|'retrieving'|'retrieved'|'accepted'|'rejected'|'blocked'|'rate_limited'|'dead'|'timed_out'|'no_evidence'|'not_applicable';
 
@@ -378,6 +378,24 @@ function admittedDiscoveryCandidate(raw: unknown): ReturnType<typeof admitPanthe
     return { ok: false, reason: 'Discovered candidate is not an absolute public URL' };
   }
   return admitPantheonUrl(candidate);
+}
+
+function admittedSourceNavigationCandidate(
+  raw: unknown,
+  parentUrl: string,
+): ReturnType<typeof admitPantheonUrl> {
+  const admission = admittedDiscoveryCandidate(raw);
+  if (!admission.ok) return admission;
+  try {
+    const parent = new URL(parentUrl);
+    const candidate = new URL(admission.url);
+    if (candidate.origin !== parent.origin) {
+      return { ok: false, reason: 'Source-navigation candidate must remain on the acquired public source origin' };
+    }
+  } catch {
+    return { ok: false, reason: 'Source-navigation candidate has no valid acquired-source origin' };
+  }
+  return admission;
 }
 
 function buildCategoryLedger(
@@ -734,7 +752,13 @@ function logPantheonCategoryTelemetry(channel: string, payload: Record<string, u
   const count = (categoryTelemetrySampleCounts.get(key) || 0) + 1;
   categoryTelemetrySampleCounts.set(key, count);
   const lifecycleEvent = /category_started|category_persisted|recursive_candidates_admitted|standby_registry_frontier_admitted/.test(event);
-  if (!lifecycleEvent && count !== 1 && count % 25 !== 0) return;
+  // Sampling successful high-volume work protects deployment logging limits.
+  // It must never hide a failed, blocked, throttled, or timed-out source from
+  // the live diagnostic trail.
+  const terminalProblem = /failed|timed_out|blocked|rate_limited|dead|not_productive/i.test(
+    `${payload.status || ''} ${payload.result || ''} ${payload.error || ''}`,
+  );
+  if (!lifecycleEvent && !terminalProblem && count !== 1 && count % 25 !== 0) return;
   console.log(`[PANTHEON][${channel}] ${JSON.stringify({ ...payload, sampleCount: count })}`);
 }
 
@@ -759,6 +783,9 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
     const capabilityRoute = resolveHealthyPantheonPrimaryCapabilities(category.label, input.capabilityHealth);
     const expectedCapabilities = getPantheonCategoryCapabilities(category.label);
     const executableCapabilities = capabilityRoute.selected;
+    const navigationCapability = executableCapabilities.find(capability =>
+      PANTHEON_CRAWLER_CAPABILITY_MATRIX[capability].taskKind === 'retrieve-source'
+    ) || executableCapabilities[0] || 'startrek';
     const healthByCapability = new Map(input.capabilityHealth.map(item => [item.capabilityId, item.status]));
     const runnableCapabilities = expectedCapabilities.filter(capability =>
       healthByCapability.get(capability) !== 'unavailable'
@@ -1106,6 +1133,7 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
               budgetMs: requestBudgetMs,
               deadlineAt: requestDeadlineAt,
               subject: input.name,
+              startingIdentifierKind: input.startingIdentifier?.kind,
               location: input.location,
               categoryLabel: category.label,
               registryCategory: work.entry?.registryCategory,
@@ -1195,6 +1223,78 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
       });
 
       const newlyAdmittedUrls: string[] = [];
+      const admitRetrievedFrontierCandidates = (
+        parent: PantheonUrlLedgerEntry | undefined,
+        discoveredCandidates: readonly unknown[],
+        sourceNavigationCandidates: readonly unknown[],
+      ) => {
+        // Subject-scoped result URLs and same-source lookup routes are
+        // separate work types.  The former may be validated as evidence only
+        // after a new authorized acquisition; the latter is navigation only.
+        for (const rawCandidate of discoveredCandidates) {
+          const admission = admittedDiscoveryCandidate(rawCandidate);
+          if (!admission.ok || urlLedger.some(entry => entry.url === admission.url)) continue;
+          const candidate: PantheonUrlLedgerEntry = {
+            url: admission.url,
+            frontierOrder: prioritizedTargets.length + newlyAdmittedUrls.length,
+            priority: sourcePriority('discovery') + 1_000,
+            authority: 'secondary',
+            registryCategory: parent?.registryCategory || category.registry[0],
+            jurisdiction: parent?.jurisdiction || input.location || 'unspecified',
+            sourceKind: 'public-page',
+            priorityFactors: { relevance: 100, authority: 78, freshness: 75, expectedValue: 90 },
+            workType: 'candidate-validation',
+            subjectScoped: true,
+            state: 'pending',
+            attempts: 0,
+            evidenceIds: [],
+            sourceIds: parent?.sourceIds ? [...parent.sourceIds] : undefined,
+            originalUrls: parent?.originalUrls ? [...parent.originalUrls] : undefined,
+            accessMode: parent?.accessMode || 'public',
+            accessReason: parent?.accessReason,
+          };
+          const routedCandidate = capabilityFor(category.label, candidate);
+          candidate.capability = routedCandidate.capability;
+          candidate.capabilityReason = routedCandidate.reason;
+          candidate.requiredCapabilities = [candidate.capability];
+          candidate.transport = transportFor(candidate);
+          urlLedger.push(candidate);
+          newlyAdmittedUrls.push(candidate.url);
+        }
+
+        // A public authority page may yield its own public lookup route.  It
+        // receives exactly one same-origin hop and is never report evidence.
+        if (!parent || parent.workType === 'source-navigation') return;
+        for (const rawCandidate of sourceNavigationCandidates) {
+          const admission = admittedSourceNavigationCandidate(rawCandidate, parent.url);
+          if (!admission.ok || urlLedger.some(entry => entry.url === admission.url)) continue;
+          const candidate: PantheonUrlLedgerEntry = {
+            url: admission.url,
+            frontierOrder: prioritizedTargets.length + newlyAdmittedUrls.length,
+            priority: parent.priority + 250,
+            authority: parent.authority,
+            registryCategory: parent.registryCategory,
+            jurisdiction: parent.jurisdiction,
+            sourceKind: 'public-page',
+            priorityFactors: { relevance: 70, authority: parent.priorityFactors.authority, freshness: parent.priorityFactors.freshness, expectedValue: 88 },
+            workType: 'source-navigation',
+            subjectScoped: false,
+            state: 'pending',
+            attempts: 0,
+            evidenceIds: [],
+            sourceIds: parent.sourceIds ? [...parent.sourceIds] : undefined,
+            originalUrls: parent.originalUrls ? [...parent.originalUrls] : undefined,
+            accessMode: parent.accessMode || 'public',
+            accessReason: parent.accessReason,
+            capability: navigationCapability,
+            capabilityReason: 'same-source public navigation to subject lookup interface',
+            requiredCapabilities: [navigationCapability],
+            transport: 'direct-http',
+          };
+          urlLedger.push(candidate);
+          newlyAdmittedUrls.push(candidate.url);
+        }
+      };
       for (const waveResult of waveResults) {
         const sourceUrl = waveResult.url;
         const work = workByUrl.get(sourceUrl)!;
@@ -1276,43 +1376,30 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
         // and production gates, or a clean attributable no-evidence outcome.
         if (acceptedLiveWork || (completedNoEvidence && work.entry?.subjectScoped)) productiveWorkUnits += 1;
 
+        // The authoritative gateway parses the full canonical snapshot before
+        // crawler-specific truncation.  This preserves source-local lookup
+        // discovery even when a crawler route returns no analyzable excerpt.
+        const canonicalParent = work.entry || urlLedger.find(entry => entry.url === canonicalPantheonEvidenceUrl(sourceUrl));
+        const canonicalFrontier = batchRetrieval.frontierCandidates;
+        if (canonicalFrontier) {
+          admitRetrievedFrontierCandidates(
+            canonicalParent,
+            canonicalFrontier.discoveredCandidates,
+            canonicalFrontier.sourceNavigationCandidates,
+          );
+        }
+
         // Crawler-discovered URLs are non-executable candidates. The controller
         // alone may admit them to this category's ledger and priority queue.
         for (const item of batchRetrieval.evidence) {
+          const parent = urlLedger.find(entry => entry.url === canonicalPantheonEvidenceUrl(item.target));
           const candidates = Array.isArray(item.metadata?.discoveredCandidates)
             ? item.metadata.discoveredCandidates as unknown[]
             : [];
-          for (const rawCandidate of candidates) {
-            const admission = admittedDiscoveryCandidate(rawCandidate);
-            if (!admission.ok || urlLedger.some(entry => entry.url === admission.url)) continue;
-            const parent = urlLedger.find(entry => entry.url === canonicalPantheonEvidenceUrl(item.target));
-            const candidate: PantheonUrlLedgerEntry = {
-              url: admission.url,
-              frontierOrder: prioritizedTargets.length + newlyAdmittedUrls.length,
-              priority: sourcePriority('discovery') + 1_000,
-              authority: 'secondary',
-              registryCategory: parent?.registryCategory || category.registry[0],
-              jurisdiction: parent?.jurisdiction || input.location || 'unspecified',
-              sourceKind: 'public-page',
-              priorityFactors: { relevance: 100, authority: 78, freshness: 75, expectedValue: 90 },
-              workType: 'candidate-validation',
-              subjectScoped: true,
-              state: 'pending',
-              attempts: 0,
-              evidenceIds: [],
-              sourceIds: parent?.sourceIds ? [...parent.sourceIds] : undefined,
-              originalUrls: parent?.originalUrls ? [...parent.originalUrls] : undefined,
-              accessMode: parent?.accessMode || 'public',
-              accessReason: parent?.accessReason,
-            };
-            const routedCandidate = capabilityFor(category.label, candidate);
-            candidate.capability = routedCandidate.capability;
-            candidate.capabilityReason = routedCandidate.reason;
-            candidate.requiredCapabilities = [candidate.capability];
-            candidate.transport = transportFor(candidate);
-            urlLedger.push(candidate);
-            newlyAdmittedUrls.push(candidate.url);
-          }
+          const navigationCandidates = Array.isArray(item.metadata?.sourceNavigationCandidates)
+            ? item.metadata.sourceNavigationCandidates as unknown[]
+            : [];
+          admitRetrievedFrontierCandidates(parent || canonicalParent, candidates, navigationCandidates);
         }
         } else {
         const message = String(('error' in waveResult && waveResult.error) || 'Pantheon URL retrieval failed without an error message');
