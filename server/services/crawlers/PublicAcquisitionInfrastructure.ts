@@ -174,6 +174,12 @@ function canonicalPublicUrl(raw: string): URL {
   }
   const url = new URL(cleaned);
   if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Unsupported acquisition protocol');
+  if (/[\s*{}<>]/.test(url.hostname)
+    || url.hostname.startsWith('.')
+    || url.hostname.endsWith('.')
+    || (!isIP(url.hostname) && !url.hostname.includes('.'))) {
+    throw new Error('Invalid or wildcard acquisition hostname');
+  }
   if (isPrivateHost(url.hostname)) throw new Error('Private-network acquisition is not permitted');
   if (url.username || url.password) throw new Error('Credential-gated URL skipped: embedded credentials are not permitted');
   if (AUTH_ROUTE_HINT.test(url.pathname)) throw new Error('Credential-gated URL skipped: sign-in route');

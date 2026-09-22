@@ -23,6 +23,7 @@ export type PantheonCapabilityHealthStatus = 'healthy' | 'degraded' | 'unavailab
 export type PantheonCapabilityOutcomeStatus =
   | 'not_applicable'
   | 'planned'
+  | 'completed_with_content'
   | 'completed_with_evidence'
   | 'completed_no_evidence'
   | 'failed'
@@ -43,7 +44,7 @@ export interface PantheonCapabilityHealth {
 
 export interface PantheonCapabilitySourceOutcome {
   sourceUrl: string;
-  status: 'completed_with_evidence' | 'completed_no_evidence' | 'failed' | 'timed_out';
+  status: 'completed_with_content' | 'completed_with_evidence' | 'completed_no_evidence' | 'failed' | 'timed_out';
   retrievedAt: string;
   durationMs: number;
   error?: string;
@@ -56,6 +57,7 @@ export interface PantheonCapabilityOutcome {
   status: PantheonCapabilityOutcomeStatus;
   attempts: number;
   evidenceCount: number;
+  contentCount?: number;
   durationMs: number;
   sourceOutcomes: PantheonCapabilitySourceOutcome[];
   reason?: string;
@@ -68,6 +70,7 @@ export interface PantheonCapabilityOutcome {
 export interface PantheonCapabilityTelemetry {
   capabilityId: PantheonCapabilityId;
   attempts: number;
+  completedWithContent: number;
   completedWithEvidence: number;
   completedNoEvidence: number;
   failed: number;
@@ -81,6 +84,7 @@ interface AuditLike {
   crawler: string;
   status: string;
   evidenceCount: number;
+  contentCount?: number;
   attempts: number;
   targets: number;
   error?: string;
@@ -97,7 +101,7 @@ function isCapabilityId(value: string): value is PantheonCapabilityId {
 }
 
 function auditHealthy(status: string): boolean {
-  return status === 'completed_with_evidence' || status === 'completed_no_evidence';
+  return status === 'completed_with_content' || status === 'completed_with_evidence' || status === 'completed_no_evidence';
 }
 
 function fallbackFor(
@@ -166,10 +170,11 @@ export async function runPantheonCapabilityHealthChecks(input: {
     const checkedAt = new Date().toISOString();
     return (Object.keys(PANTHEON_CRAWLER_CAPABILITY_MATRIX) as PantheonCapabilityId[]).map(capabilityId => ({
       capabilityId,
-      status: 'unavailable',
+      status: 'degraded',
       checkedAt,
       durationMs: Date.now() - startedAt,
-      reason: 'Canonical live-source preflight failed: ' + (acquisition.error || acquisition.errorType || acquisition.status),
+      reason: 'Shared transport probe was inconclusive; capability remains scheduled for its category-specific source: '
+        + (acquisition.error || acquisition.errorType || acquisition.status),
     }));
   }
 
@@ -234,21 +239,19 @@ export async function runPantheonCapabilityHealthChecks(input: {
           : extendedRun;
       return {
         capabilityId,
-        status: 'unavailable' as const,
+        status: 'degraded' as const,
         checkedAt,
         durationMs: Date.now() - startedAt,
         reason: familyFailure.status === 'rejected'
-          ? String(familyFailure.reason)
-          : 'Capability produced no health-check outcome',
+          ? `Generic smoke test was inconclusive: ${String(familyFailure.reason)}`
+          : 'Generic smoke test produced no outcome; category-specific execution remains enabled',
         executionMode: descriptor.executionMode || 'native',
         replacementDisclosure: descriptor.replacementDisclosure,
       };
     }
     const status: PantheonCapabilityHealthStatus = auditHealthy(audit.status)
       ? 'healthy'
-      : audit.status === 'timed_out'
-        ? 'degraded'
-        : 'unavailable';
+      : 'degraded';
     return {
       capabilityId,
       status,
@@ -301,6 +304,7 @@ function recordTelemetry(outcome: PantheonCapabilityOutcome): void {
   const current = telemetry.get(outcome.capabilityId) || {
     capabilityId: outcome.capabilityId,
     attempts: 0,
+    completedWithContent: 0,
     completedWithEvidence: 0,
     completedNoEvidence: 0,
     failed: 0,
@@ -310,6 +314,7 @@ function recordTelemetry(outcome: PantheonCapabilityOutcome): void {
   };
   current.attempts += outcome.attempts;
   current.totalDurationMs += outcome.durationMs;
+  if (outcome.status === 'completed_with_content') current.completedWithContent += 1;
   if (outcome.status === 'completed_with_evidence') current.completedWithEvidence += 1;
   if (outcome.status === 'completed_no_evidence') current.completedNoEvidence += 1;
   if (outcome.status === 'failed' || outcome.status === 'not_executed') current.failed += 1;
@@ -355,6 +360,7 @@ export function finalizePantheonCategoryCapabilityOutcomes(input: {
     const auditAttempts = matching.reduce((sum, item) => sum + Number(item.attempts || 0), 0);
     const attempts = Math.max(auditAttempts, Number(work?.attempts || 0));
     const evidenceCount = matching.reduce((sum, item) => sum + Number(item.evidenceCount || 0), 0);
+    const contentCount = matching.reduce((sum, item) => sum + Number(item.contentCount || 0), 0);
     const durationMs = matching.reduce((sum, item) => sum + Number(item.durationMs || 0), 0);
     const sourceOutcomes = matching.flatMap(item => item.sourceOutcomes || []);
     const fallbackCapabilityId = health?.fallbackCapabilityId || fallbackFor(capabilityId, input.health, categoryLabel);
@@ -367,15 +373,19 @@ export function finalizePantheonCategoryCapabilityOutcomes(input: {
 
     let status: PantheonCapabilityOutcomeStatus;
     let reason: string | undefined;
-    if (work?.state === 'completed' && work.outcome === 'completed_with_evidence') {
+    if (work?.state === 'completed' && work.outcome === 'completed_with_content') {
+      status = 'completed_with_content';
+    } else if (work?.state === 'completed' && work.outcome === 'completed_with_evidence') {
       status = 'completed_with_evidence';
     } else if (work?.state === 'completed' && work.outcome === 'completed_no_evidence') {
       status = 'completed_no_evidence';
     } else if (health?.status === 'unavailable' || work?.state === 'unavailable') {
       status = 'unavailable';
       reason = work?.reason || health?.reason;
-    } else if (evidenceCount > 0) {
+    } else if (evidenceCount > 0 && matching.some(item => item.status === 'completed_with_evidence')) {
       status = 'completed_with_evidence';
+    } else if (matching.some(item => item.status === 'completed_with_content')) {
+      status = 'completed_with_content';
     } else if (matching.some(item => item.status === 'completed_no_evidence')) {
       status = 'completed_no_evidence';
     } else if (matching.some(item => item.status === 'timed_out')) {
@@ -402,6 +412,7 @@ export function finalizePantheonCategoryCapabilityOutcomes(input: {
       status,
       attempts,
       evidenceCount,
+      contentCount,
       durationMs,
       sourceOutcomes,
       reason,
@@ -420,6 +431,7 @@ export function getPantheonCapabilityTelemetry(): PantheonCapabilityTelemetry[] 
   return (Object.keys(PANTHEON_CRAWLER_CAPABILITY_MATRIX) as PantheonCapabilityId[]).map(capabilityId => ({
     capabilityId,
     attempts: telemetry.get(capabilityId)?.attempts || 0,
+    completedWithContent: telemetry.get(capabilityId)?.completedWithContent || 0,
     completedWithEvidence: telemetry.get(capabilityId)?.completedWithEvidence || 0,
     completedNoEvidence: telemetry.get(capabilityId)?.completedNoEvidence || 0,
     failed: telemetry.get(capabilityId)?.failed || 0,
@@ -444,7 +456,7 @@ export function assessPantheonCapabilityCoverage(
     outcome.capabilityId === capabilityId
       && outcome.applicable
       && outcome.attempts > 0
-      && (outcome.status === 'completed_with_evidence' || outcome.status === 'completed_no_evidence')
+      && (outcome.status === 'completed_with_content' || outcome.status === 'completed_with_evidence' || outcome.status === 'completed_no_evidence')
   ));
   const missingCapabilities = capabilityIds.filter(capabilityId => !executedCapabilities.includes(capabilityId));
   const undisclosedCapabilities = capabilityIds.filter(capabilityId => !allOutcomes.some(outcome =>

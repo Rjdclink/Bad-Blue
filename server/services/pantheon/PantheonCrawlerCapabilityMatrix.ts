@@ -598,6 +598,8 @@ export interface PantheonExecutableWorkUnit {
   replacementDisclosure?: string;
 }
 
+export const PANTHEON_CAPABILITY_MAX_ATTEMPTS = 3;
+
 export interface PantheonExecutableSource {
   sourceUrl: string;
   transport: PantheonTransport;
@@ -865,7 +867,7 @@ export function buildPantheonCapabilityWorkLedger(input: {
         if (descriptor.taskKind === 'extract-structured-evidence' || descriptor.taskKind === 'observe-source-transport') {
           return transport === 'search-provider' ? 2 : 0;
         }
-        return transport === 'search-provider' ? 0 : 1;
+        return transport === 'search-provider' ? 2 : 0;
       };
       return preference(left.transport) - preference(right.transport);
     });
@@ -887,6 +889,15 @@ export function buildPantheonCapabilityWorkLedger(input: {
       : Boolean(previousCompatible);
     if (previous?.state === 'completed' && previousCompletedSourceCompatible) {
       return { ...previous, attemptedSourceUrls: [...previous.attemptedSourceUrls] };
+    }
+    if (previous && ['failed', 'timed_out'].includes(previous.state)
+      && previous.attempts >= PANTHEON_CAPABILITY_MAX_ATTEMPTS) {
+      return {
+        ...previous,
+        state: previous.state,
+        attemptedSourceUrls: [...previous.attemptedSourceUrls],
+        reason: previous.reason || 'Capability retry budget exhausted',
+      };
     }
     if (!compatible.length) {
       return {

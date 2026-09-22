@@ -6,6 +6,7 @@ import {
   buildPantheonCapabilityWorkLedger,
   isPantheonCapabilitySourceCompatible,
   isPantheonExecutableWorkSchedulable,
+  PANTHEON_CAPABILITY_MAX_ATTEMPTS,
   PANTHEON_CRAWLER_CAPABILITY_MATRIX,
   type PantheonCapabilityId,
   type PantheonExecutableWorkUnit,
@@ -271,12 +272,14 @@ function mergeAudit(entries: PantheonRetrievalResponse['crawlerAudit']) {
     merged.set(key, {
       ...current,
       evidenceCount,
+      contentCount: Number(current.contentCount || 0) + Number(entry.contentCount || 0),
       attempts: current.attempts + entry.attempts,
       targets: current.targets + entry.targets,
       durationMs: Number(current.durationMs || 0) + Number(entry.durationMs || 0),
       queueWaitMs: Number(current.queueWaitMs || 0) + Number(entry.queueWaitMs || 0),
       sourceOutcomes: [...(current.sourceOutcomes || []), ...(entry.sourceOutcomes || [])],
-      status: evidenceCount > 0 ? 'completed_with_evidence'
+      status: evidenceCount > 0 && [current.status, entry.status].includes('completed_with_evidence') ? 'completed_with_evidence'
+        : [current.status, entry.status].includes('completed_with_content') ? 'completed_with_content'
         : [current.status, entry.status].includes('timed_out') ? 'timed_out'
         : [current.status, entry.status].includes('failed') ? 'failed'
         : [current.status, entry.status].includes('unavailable_no_content') ? 'unavailable_no_content'
@@ -369,7 +372,7 @@ function admittedDiscoveryCandidate(raw: unknown): ReturnType<typeof admitPanthe
   let candidate = value;
   try {
     const parsed = new URL(value);
-    if (/(?:^|\.)(?:google\.com|bing\.com|search\.brave\.com)$/i.test(parsed.hostname)) {
+    if (/(?:^|\.)(?:google\.com|bing\.com|search\.brave\.com|duckduckgo\.com)$/i.test(parsed.hostname)) {
       const embedded = ['url', 'q', 'target', 'uddg'].map(key => parsed.searchParams.get(key)).find(item => /^https?:\/\//i.test(String(item || '')));
       if (!embedded) return { ok: false, reason: 'Search-provider navigation URL is not an attributable source result' };
       candidate = String(embedded);
@@ -396,6 +399,30 @@ function admittedSourceNavigationCandidate(
     return { ok: false, reason: 'Source-navigation candidate has no valid acquired-source origin' };
   }
   return admission;
+}
+
+function candidateMatchesRegisteredSource(
+  candidateUrl: string,
+  parent: PantheonUrlLedgerEntry | undefined,
+): boolean {
+  if (!parent) return false;
+  try {
+    const candidateHost = new URL(candidateUrl).hostname.toLowerCase().replace(/^www\./, '');
+    const sourceUrls = [
+      ...(parent.originalUrls || []),
+      ...(parent.authority === 'primary' || parent.authority === 'secondary' ? [parent.url] : []),
+    ];
+    return sourceUrls.some(value => {
+      try {
+        const sourceHost = new URL(value).hostname.toLowerCase().replace(/^www\./, '');
+        return candidateHost === sourceHost || candidateHost.endsWith(`.${sourceHost}`);
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return false;
+  }
 }
 
 function buildCategoryLedger(
@@ -554,8 +581,6 @@ interface PantheonCategoryExecutionInput extends PantheonCategoryWorkflowInput {
   completedCount: () => number;
 }
 
-const PANTHEON_CAPABILITY_MAX_ATTEMPTS = 2;
-
 function capabilityWorkForSource(
   workLedger: PantheonExecutableWorkUnit[],
   sourceUrl: string,
@@ -626,6 +651,7 @@ export function resequencePantheonFrontier(
 }
 
 export type PantheonSourceExecutionStatus =
+  | 'completed_with_content'
   | 'completed_with_evidence'
   | 'completed_no_evidence'
   | 'failed'
@@ -648,6 +674,9 @@ export function assessPantheonSourceExecution(
       canonicalPantheonEvidenceUrl(outcome.sourceUrl) === canonicalSource
     );
   });
+  if (matchingPrimaryAudits.some(audit => audit.status === 'completed_with_content')) {
+    return { status: 'completed_with_content', httpStatus: 200 };
+  }
   if (matchingPrimaryAudits.some(audit => audit.status === 'completed_with_evidence')) {
     return { status: 'completed_with_evidence', httpStatus: 200 };
   }
@@ -686,14 +715,17 @@ function settleCapabilityWorkForSource(
         canonicalPantheonEvidenceUrl(outcome.sourceUrl) === canonicalSource
       );
     });
+    const completedWithContent = matching.some(audit => audit.status === 'completed_with_content');
     const completedWithEvidence = matching.some(audit => audit.status === 'completed_with_evidence');
     const completedNoEvidence = matching.some(audit => audit.status === 'completed_no_evidence');
     const timedOut = matching.some(audit => audit.status === 'timed_out');
     const matchingError = matching.find(audit => audit.error)?.error;
 
-    if (completedWithEvidence || completedNoEvidence) {
+    if (completedWithContent || completedWithEvidence || completedNoEvidence) {
       unit.state = 'completed';
-      unit.outcome = completedWithEvidence ? 'completed_with_evidence' : 'completed_no_evidence';
+      unit.outcome = completedWithContent
+        ? 'completed_with_content'
+        : completedWithEvidence ? 'completed_with_evidence' : 'completed_no_evidence';
       unit.reason = undefined;
     } else if (timedOut || /timeout|deadline|abort/i.test(forcedError || '')) {
       unit.state = 'timed_out';
@@ -946,7 +978,10 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
     await preparePantheonFrontier(schedulableEntries.map(frontierSeedFor));
     const prioritizedTargets = urlLedger
       .filter(entry => entry.state === 'pending' || entry.state === 'retryable')
-      .sort((left, right) => left.frontierOrder - right.frontierOrder)
+      .sort((left, right) =>
+        capabilityWorkForSource(capabilityWorkLedger, right.url).length
+          - capabilityWorkForSource(capabilityWorkLedger, left.url).length
+          || left.frontierOrder - right.frontierOrder)
       .map(entry => entry.url);
     const activeUrls = new Set<string>(urlLedger.filter(entry => Number(entry.attempts || 0) > 0).map(entry => entry.url));
     const attemptedThisRun = new Set<string>();
@@ -960,7 +995,11 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
     const requiredWorkCount = Math.min(input.productiveWorkTarget, urlLedger.length);
     const isProductiveLedgerOutcome = (entry: PantheonUrlLedgerEntry) =>
       entry.state === 'accepted' || (entry.state === 'no_evidence' && entry.subjectScoped);
+    const isProcessedLedgerOutcome = (entry: PantheonUrlLedgerEntry) =>
+      Number(entry.attempts || 0) > 0
+        && ['accepted', 'rejected', 'no_evidence', 'blocked', 'rate_limited', 'dead', 'timed_out'].includes(entry.state);
     let productiveWorkUnits = urlLedger.filter(isProductiveLedgerOutcome).length;
+    let processedWorkUnits = urlLedger.filter(isProcessedLedgerOutcome).length;
     const completedCapabilities = () => new Set(capabilityWorkLedger
       .filter(unit => unit.state === 'completed')
       .map(unit => unit.capabilityId));
@@ -1000,7 +1039,7 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
       });
       return true;
     };
-    while (productiveWorkUnits < requiredWorkCount
+    while (processedWorkUnits < requiredWorkCount
       || (!hasExecutableCapabilityCoverage() && hasSchedulableCapabilityWork())) {
       throwIfPantheonAborted(input.signal);
       const remainingForWork = categoryDeadlineAt - Date.now();
@@ -1010,17 +1049,17 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
         continue;
       }
 
-      const remainingProductiveWork = Math.max(0, requiredWorkCount - productiveWorkUnits);
+      const remainingRequiredWork = Math.max(0, requiredWorkCount - processedWorkUnits);
       const waveSize = Math.min(
         PANTHEON_URL_CONCURRENCY_PER_CATEGORY,
         prioritizedTargets.length - cursor,
-        Math.max(1, remainingProductiveWork || PANTHEON_URL_CONCURRENCY_PER_CATEGORY),
+        Math.max(1, remainingRequiredWork || PANTHEON_URL_CONCURRENCY_PER_CATEGORY),
       );
       const waveUrls = prioritizedTargets.slice(cursor, cursor + waveSize);
       cursor += waveUrls.length;
       const urlWindowBudgetMs = pantheonUrlWindowBudgetMs({
         categoryDeadlineAt,
-        remainingProductiveWork: Math.max(1, remainingProductiveWork),
+        remainingProductiveWork: Math.max(1, remainingRequiredWork),
       });
       const workByUrl = new Map<string, {
         entry?: PantheonUrlLedgerEntry;
@@ -1233,7 +1272,9 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
         // after a new authorized acquisition; the latter is navigation only.
         for (const rawCandidate of discoveredCandidates) {
           const admission = admittedDiscoveryCandidate(rawCandidate);
-          if (!admission.ok || urlLedger.some(entry => entry.url === admission.url)) continue;
+          if (!admission.ok
+            || !candidateMatchesRegisteredSource(admission.url, parent)
+            || urlLedger.some(entry => entry.url === admission.url)) continue;
           const candidate: PantheonUrlLedgerEntry = {
             url: admission.url,
             frontierOrder: prioritizedTargets.length + newlyAdmittedUrls.length,
@@ -1244,7 +1285,7 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
             sourceKind: 'public-page',
             priorityFactors: { relevance: 100, authority: 78, freshness: 75, expectedValue: 90 },
             workType: 'candidate-validation',
-            subjectScoped: true,
+            subjectScoped: parent?.subjectScoped === true,
             state: 'pending',
             attempts: 0,
             evidenceIds: [],
@@ -1313,6 +1354,10 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
           }
           continue;
         }
+        // A source consumes the bounded work budget once its authorized attempt
+        // reaches an attributable terminal result. Evidence productivity is
+        // tracked separately and never inflated by generic landing pages.
+        processedWorkUnits += 1;
         if ('retrieval' in waveResult && waveResult.retrieval) {
           const batchRetrieval = waveResult.retrieval;
           retrievalEvidence.push(...batchRetrieval.evidence);
@@ -1333,11 +1378,21 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
         const acceptedLiveWork = provisionalReportable.some(item =>
             canonicalPantheonEvidenceUrl(item.sourceUrl) === canonicalSourceUrl
         );
+          const acceptedCapabilityIds = new Set(provisionalReportable
+            .filter(item => canonicalPantheonEvidenceUrl(item.sourceUrl) === canonicalSourceUrl)
+            .map(item => item.capabilityId));
+          for (const unit of capabilityWorkLedger) {
+            if (unit.sourceUrl === sourceUrl
+              && unit.state === 'completed'
+              && acceptedCapabilityIds.has(unit.capabilityId)) {
+              unit.outcome = 'completed_with_evidence';
+            }
+          }
           const cleanPrimaryOutcome = batchRetrieval.crawlerAudit.some(item =>
           item.capabilityClass === 'primary'
           && Number(item.attempts || 0) > 0
           && Number(item.targets || 0) > 0
-            && ['completed_with_evidence', 'completed_no_evidence'].includes(item.status)
+            && ['completed_with_content', 'completed_with_evidence', 'completed_no_evidence'].includes(item.status)
         );
           const reportEligibleForSource = rawReportEligible.filter(item =>
             canonicalPantheonEvidenceUrl(item.sourceUrl) === canonicalSourceUrl
@@ -1518,7 +1573,7 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
       const auditFailures = matchingAudits.filter(item => item.status === 'failed' || item.status === 'timed_out');
       const liveWorkSucceeded = matchingAudits.some(item =>
         item.capabilityClass === 'primary'
-          && ['completed_with_evidence', 'completed_no_evidence'].includes(item.status)
+          && ['completed_with_content', 'completed_with_evidence', 'completed_no_evidence'].includes(item.status)
       );
       entry.result = {
         status: liveWorkSucceeded ? 200 : 0,
@@ -1582,9 +1637,21 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
           },
         })),
     });
-    const successfulWorkCount = urlLedger.filter(isProductiveLedgerOutcome).length;
+    const processedWorkCount = urlLedger.filter(isProcessedLedgerOutcome).length;
+    productiveWorkUnits = urlLedger.filter(isProductiveLedgerOutcome).length;
+    logPantheonCategoryTelemetry('CATEGORY-TRACE', {
+      event: 'category_work_accounting',
+      investigationId: input.investigationId,
+      categoryIndex: index,
+      category: category.label,
+      processedWorkUnits: processedWorkCount,
+      productiveEvidenceWorkUnits: productiveWorkUnits,
+      requiredWorkCount,
+    });
     const urlsAttempted = urlLedger.filter(entry => Number(entry.attempts || 0) > 0).length;
-    const urlsSuccessful = successfulWorkCount;
+    const urlsSuccessful = urlLedger.filter(entry =>
+      Number(entry.attempts || 0) > 0 && ['accepted', 'rejected', 'no_evidence'].includes(entry.state)
+    ).length;
     const capabilityOutcomes = finalizePantheonCategoryCapabilityOutcomes({
       categoryLabel: category.label,
       health: input.capabilityHealth,
@@ -1598,7 +1665,7 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
       crawlerAudit: retrieval.crawlerAudit,
       urlLedger,
       requiredWorkCount,
-      successfulWorkCount: urlsSuccessful,
+      successfulWorkCount: processedWorkCount,
     });
     const outcome: PantheonCategoryOutcome = {
       index,
@@ -1625,7 +1692,7 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
       totalLedgerUrls: urlLedger.length,
       pendingUrls: urlLedger.filter(entry => entry.state === 'pending' || entry.state === 'retryable').length,
       requiredWorkCount,
-      successfulWorkCount: urlsSuccessful,
+      successfulWorkCount: processedWorkCount,
       expectedCapabilities: assessment.expectedCapabilities,
       completionState: assessment.state,
       completionReason: assessment.reason,
@@ -1748,6 +1815,11 @@ function applyPantheonCategoryExecutions(
     : 0;
   report.confidenceScore = Math.max(0, Math.min(1, coverageRatio * evidenceQuality));
   const unresolved = categoryOutcomes.filter(item => item.completionState !== 'completed');
+  const unresolvedIndexes = new Set(unresolved.map(item => item.index));
+  const coverageLimited = categoryOutcomes.filter(item => item.capabilityOutcomes.some(capability =>
+    capability.applicable
+      && !['completed_with_content', 'completed_with_evidence', 'completed_no_evidence'].includes(capability.status)
+  ));
   const missing = PANTHEON_REPORT_CATEGORIES
     .filter((_, index) => !categoryOutcomes.some(outcome => outcome.index === index))
     .map(category => ({
@@ -1764,15 +1836,28 @@ function applyPantheonCategoryExecutions(
       reason: item.completionReason,
       pendingUrls: item.pendingUrls,
       missingCapabilities: item.capabilityOutcomes
-        .filter(capability => capability.applicable && !['completed_with_evidence', 'completed_no_evidence'].includes(capability.status))
+        .filter(capability => capability.applicable && !['completed_with_content', 'completed_with_evidence', 'completed_no_evidence'].includes(capability.status))
         .map(capability => capability.capabilityId),
     })),
+    ...coverageLimited
+      .filter(item => !unresolvedIndexes.has(item.index))
+      .map(item => ({
+        category: item.label,
+        state: 'coverage_limited',
+        reason: item.completionReason,
+        pendingUrls: item.pendingUrls,
+        missingCapabilities: item.capabilityOutcomes
+          .filter(capability => capability.applicable && !['completed_with_content', 'completed_with_evidence', 'completed_no_evidence'].includes(capability.status))
+          .map(capability => capability.capabilityId),
+      })),
     ...missing,
   ];
   (report as any).reportCompleteness = unresolved.length === 0 && categoryOutcomes.length === PANTHEON_REPORT_CATEGORIES.length ? 'complete' : 'partial';
   (report as any).categoryOutcomes = categoryOutcomes;
   report.summary = unresolved.length === 0 && categoryOutcomes.length === PANTHEON_REPORT_CATEGORIES.length
-    ? `PANTHEON completed all ${PANTHEON_REPORT_CATEGORIES.length} categories with verified live-source work and required crawler coverage.`
+    ? coverageLimited.length === 0
+      ? `PANTHEON completed all ${PANTHEON_REPORT_CATEGORIES.length} categories with live-source work and all applicable crawler capabilities executed.`
+      : `PANTHEON completed source collection for all ${PANTHEON_REPORT_CATEGORIES.length} categories; ${coverageLimited.length} categories retain disclosed crawler-capability coverage gaps.`
     : `PANTHEON completed ${completedCategoryCount} of ${PANTHEON_REPORT_CATEGORIES.length} categories with verified live-source work; unresolved categories: ${[...unresolved.map(item => `${item.label} (${item.completionReason})`), ...missing.map(item => `${item.category} (${item.reason})`)].join('; ') || 'none'}.`;
 }
 
@@ -1852,7 +1937,8 @@ export async function conductPantheonCategoryWorkflow(
         throwIfPantheonAborted(deadline.signal);
         const dynamicRemainingMs = Math.max(1, input.deadlineAt - Date.now() - finalizationReserveMs);
         const categoriesRemaining = Math.max(1, indexes.length - executionOrdinal);
-        const dynamicCategoryBudgetMs = Math.max(1_500, Math.floor(dynamicRemainingMs / categoriesRemaining));
+        const wavesRemaining = Math.max(1, Math.ceil(categoriesRemaining / concurrency));
+        const dynamicCategoryBudgetMs = Math.max(1_500, Math.floor(dynamicRemainingMs / wavesRemaining));
         execution = await executePantheonCategory({
           ...input,
           index,
