@@ -118,6 +118,26 @@ function sourceWeights(kind: NonNullable<PantheonSourceTarget['sourceKind']>, au
 
 function searchUrl(prefix:string, query:string) { return prefix + encodeURIComponent(query); }
 
+const KEYLESS_CATEGORY_SOURCES: Partial<Record<PantheonBackgroundCategory, readonly {
+  url: string;
+  name: string;
+  authority: 'primary'|'secondary';
+  jurisdiction: string;
+}[]>> = {
+  'domain-web': [
+    { url: 'https://lookup.icann.org/en', name: 'ICANN Registration Data Lookup', authority: 'primary', jurisdiction: 'global' },
+    { url: 'https://data.iana.org/rdap/dns.json', name: 'IANA RDAP DNS Bootstrap Registry', authority: 'primary', jurisdiction: 'global' },
+  ],
+  'breach-notices': [
+    { url: 'https://haveibeenpwned.com/PwnedWebsites', name: 'Have I Been Pwned Public Breach Directory', authority: 'secondary', jurisdiction: 'global' },
+    { url: 'https://www.cisa.gov/news-events/cybersecurity-advisories', name: 'CISA Cybersecurity Advisories', authority: 'primary', jurisdiction: 'US' },
+  ],
+  'relationship-graph': [
+    { url: 'https://www.wikidata.org/', name: 'Wikidata Public Knowledge Graph', authority: 'secondary', jurisdiction: 'global' },
+    { url: 'https://query.wikidata.org/', name: 'Wikidata Public Query Service', authority: 'secondary', jurisdiction: 'global' },
+  ],
+};
+
 /**
  * Deterministic, policy-admitted targets for a category.  A registry source is
  * always scheduled directly before any third-party discovery query that refers
@@ -143,12 +163,26 @@ export function buildPantheonCategoryTargets(
  // lawful public search/result routes. Discovery remains a fallback, never
  // the sole source plan.
  const normalizedLocation=String(location||'').toUpperCase();
- const inventory=PANTHEON_EXECUTABLE_SOURCE_INVENTORY
+ const compiledInventory=PANTHEON_EXECUTABLE_SOURCE_INVENTORY
    .filter(source=>source.categories.includes(category))
    .sort((left,right)=>{
      const score=(jurisdiction:string)=>normalizedLocation.includes(jurisdiction.replace(/^US-/,''))?3:/^(?:US|FEDERAL|NATIONAL)$/i.test(jurisdiction)?2:1;
      return score(right.jurisdiction)-score(left.jurisdiction);
    });
+ const inventory=compiledInventory.length > 0 ? compiledInventory : (KEYLESS_CATEGORY_SOURCES[category] || []).map((source,index)=>({
+   id:`keyless-${category}-${index+1}`,
+   sourceIds:[`keyless-${category}-${index+1}`],
+   names:[source.name],
+   url:source.url,
+   originalUrls:[source.url],
+   jurisdiction:source.jurisdiction,
+   jurisdictions:[source.jurisdiction],
+   categories:[category],
+   authority:source.authority,
+   verifiedAt:'2026-09-22',
+   accessMode:'public' as const,
+   accessReason:'Public source requiring neither an API key nor registration.',
+ }));
  for (const source of inventory) {
    if (!source.categories.includes(category)) continue;
    const q=`${identity} ${category}`;

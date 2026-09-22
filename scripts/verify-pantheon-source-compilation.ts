@@ -39,9 +39,16 @@ for (const exclusion of PANTHEON_SOURCE_EXCLUSION_LEDGER) {
 const blockedUrls = new Set(PANTHEON_SOURCE_EXCLUSION_LEDGER
   .map(exclusion => exclusion.canonicalUrl)
   .filter((value): value is string => Boolean(value)));
+const analysisOnlyCategories = new Set([
+  'contradictions', 'provenance', 'confidence', 'false-positive', 'crawler-audit',
+]);
 for (const category of PANTHEON_BACKGROUND_CATEGORIES) {
   const targets = buildPantheonCategoryTargets(category, 'Taylor Example', 'Iowa', 300);
   const preflight = preflightPantheonSourceTargets(targets, category, 'Taylor Example', 'Iowa');
+  if (analysisOnlyCategories.has(category)) {
+    assert.equal(preflight.targets.length, 0, `${category} must operate on collected evidence without injecting generic sources.`);
+    continue;
+  }
   assert(preflight.targets.length > 0, `${category} has no executable targets after compilation.`);
   for (const target of preflight.targets) {
     assert(!blockedUrls.has(target.url), `${category} reintroduced excluded URL ${target.url}.`);
