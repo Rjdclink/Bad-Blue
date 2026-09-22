@@ -17,6 +17,7 @@ const conversation = read('client/src/components/LexaraConversation.tsx');
 const avatar = read('client/src/components/LexaraEtherealAvatar.tsx');
 const viewport = read('client/src/components/LexaraViewport.tsx');
 const embodimentEngine = read('client/src/lib/lexaraEmbodimentEngine.ts');
+const preparedFacePoses = read('client/src/lib/lexaraPreparedFacePoses.ts');
 const synthesis = read('client/src/hooks/useVoiceSynthesis.ts');
 const speechClient = read('client/src/lib/lexaraSpeechClient.ts');
 const realtimeVoiceClient = read('client/src/lib/lexaraRealtimeVoiceClient.ts');
@@ -784,17 +785,24 @@ must(
 
 
 // CPU-only Lexara continuity guard: one reply uses one progressive session and
-// the visual layer remains a read-only lip overlay above the unchanged portrait.
+// the visual layer selects prepared states without becoming part of playback.
 must(
-  avatar.includes('cy: 0.357') &&
+  avatar.includes('cy: 0.318') &&
     avatar.includes('rx: 0.040') &&
     avatar.includes('ry: 0.0115') &&
     avatar.includes('traceLipBoundary') &&
-    !avatar.includes('r.ry * 2.05') &&
     avatar.includes('PORTRAIT_BREATHING_ENABLED') &&
+    avatar.includes('PREPARED_PORTRAIT_FACE_ENABLED') &&
+    avatar.includes('LEXARA_MOUTH_ATLAS_SRC') &&
+    avatar.includes('drawPreparedSpeechFace') &&
+    avatar.includes("fallback: 'portrait-plus-throat'") &&
     avatar.includes('LEGACY_PORTRAIT_NON_MOUTH_OVERLAYS_ENABLED') &&
-    avatar.includes('drawMouth(ctx, image, layout, frame, 0, 0)'),
-  'lip renderer cannot move the jaw while a separate bounded neck/blouse patch supplies safe breathing motion',
+    embodimentEngine.includes('mouthPoseIndex') &&
+    embodimentEngine.includes('selectAudioViseme') &&
+    preparedFacePoses.includes('LEXARA_PREPARED_FACE_POSES.length !== 60') &&
+    preparedFacePoses.includes('visemeIndex * STRENGTHS.length + strengthIndex') &&
+    fs.existsSync('public/images/lexara-mouth-atlas.webp'),
+  'sixty prepared facial states animate the calibrated lips and original face while preserving throat motion and voice isolation',
 );
 must(
   synthesis.includes('One reply owns one progressive media stream') &&
