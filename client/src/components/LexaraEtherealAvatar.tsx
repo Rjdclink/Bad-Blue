@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { getLexaraServerPlaybackClock } from '@/lib/lexaraSpeechClient';
 import { lexaraRealtimeVoiceClient } from '@/lib/lexaraRealtimeVoiceClient';
+import { sampleLexaraClipMotion } from '@/lib/lexaraClipMotion';
 import {
   getLexaraPreparedFacePose,
   type LexaraPreparedFacePose,
@@ -43,6 +44,7 @@ const SIZE_CONFIG = {
 };
 
 const LIVE_AVATAR_ENABLED = String(import.meta.env.VITE_LEXARA_LIVE_AVATAR_ENABLED ?? '1') !== '0';
+const CLIP_MOTION_ENABLED = String(import.meta.env.VITE_LEXARA_CLIP_MOTION_ENABLED ?? '1') !== '0';
 // The audio player is authoritative. This read-only canvas may use its PCM features
 // for mouth timing, but it never changes the voice stream or audio controls.
 const LEGACY_PORTRAIT_MOUTH_OVERLAY_ENABLED =
@@ -886,6 +888,18 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
         },
       });
 
+      if (CLIP_MOTION_ENABLED && mode === 'speaking' && audioActive) {
+        // The four clips provide motion geometry only. Keep the existing audio
+        // playback clock authoritative, so a missed visual frame is simply skipped.
+        const motion = sampleLexaraClipMotion(
+          audioTime, audioTurnId, frame.mouthOpen, frame.mouthWide,
+        );
+        frame.mouthOpen = Math.min(1, frame.mouthOpen * (0.92 + motion.jaw * 0.12));
+        frame.mouthWide = Math.min(1, Math.max(0, frame.mouthWide * 0.88 + motion.width * 0.12));
+        frame.browLift = Math.max(-1, Math.min(1, frame.browLift - motion.headY * 0.08));
+        frame.gestureEnergy = Math.min(1, frame.gestureEnergy + Math.abs(motion.headX) * 0.04);
+      }
+
       const rect = canvas.getBoundingClientRect();
       const dprX = canvas.width / Math.max(1, rect.width);
       const dprY = canvas.height / Math.max(1, rect.height);
@@ -982,6 +996,7 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
       aria-label="LEXARA professional legal assistant"
       data-live-avatar={LIVE_AVATAR_ENABLED ? 'embodied-canvas' : 'static'}
       data-prepared-face={PREPARED_PORTRAIT_FACE_ENABLED ? 'sixty-state' : 'legacy'}
+      data-clip-motion={CLIP_MOTION_ENABLED ? 'four-clips' : 'off'}
       data-reduced-motion={reducedMotion ? 'true' : 'false'}
     >
       <img
