@@ -16,6 +16,7 @@ import {
   getPantheonCategoryCapabilities,
   isPantheonCapabilitySourceCompatible,
   PANTHEON_CRAWLER_CAPABILITY_MATRIX,
+  PANTHEON_PORTABLE_CAPABILITY_IDS,
   PANTHEON_PRIMARY_CRAWLER_IDS,
   PANTHEON_RAZOR_SKILL_IDS,
   PANTHEON_SECONDARY_CRAWLER_IDS,
@@ -83,6 +84,174 @@ export interface PantheonRetrievalResponse {
     capabilityOutput?: Record<string, unknown>;
   }>;
   supervision?: CrawlerSupervisionResult;
+}
+
+interface PantheonSupplementalCapabilityRun {
+  evidence: RetrievalEvidence[];
+  crawlerAudit: PantheonRetrievalResponse['crawlerAudit'];
+}
+
+async function runPantheonSupplementalCapabilities(input: {
+  target: string;
+  canonicalContent: string;
+  capabilityIds: readonly PantheonCapabilityId[];
+  budgetMs: number;
+  deadlineAt: number;
+  signal?: AbortSignal;
+  investigationId: string;
+  categoryId: string;
+  workId: string;
+  requestHeaders?: Record<string, string>;
+  subject: string;
+  location?: string;
+  categoryLabel?: string;
+  transport: PantheonTransport;
+  sourceContext: Omit<PantheonExecutableSource, 'sourceUrl'>;
+}): Promise<PantheonSupplementalCapabilityRun> {
+  const evidence: RetrievalEvidence[] = [];
+  const crawlerAudit: PantheonRetrievalResponse['crawlerAudit'] = [];
+  const extendedCapabilityIds = input.capabilityIds.filter(capability =>
+    (PANTHEON_RAZOR_SKILL_IDS as readonly string[]).includes(capability)
+      || (PANTHEON_SECONDARY_CRAWLER_IDS as readonly string[]).includes(capability)
+  );
+  const portableCapabilityIds = input.capabilityIds.filter(capability =>
+    (PANTHEON_PORTABLE_CAPABILITY_IDS as readonly string[]).includes(capability)
+  );
+  const extendedLaneBudget = Math.max(1_000, Math.floor(input.budgetMs * 0.20));
+  const extendedPromise = extendedCapabilityIds.length > 0
+    ? runWithPantheonAcquisitionContext(
+        {
+          investigationId: input.investigationId,
+          categoryId: input.categoryId,
+          workId: `${input.workId}:extended`,
+          capability: 'extended-pantheon',
+          deadlineAt: input.deadlineAt,
+          canonicalUrl: input.target,
+          requestHeaders: input.requestHeaders,
+        },
+        input.signal,
+        () => twoStageDeployer.deployBackgroundReport(
+          input.target,
+          input.canonicalContent,
+          extendedLaneBudget,
+          extendedCapabilityIds,
+          input.signal,
+        ),
+      )
+    : Promise.resolve(null);
+  const portablePromise = runPortablePantheonCapabilities({
+    capabilityIds: portableCapabilityIds,
+    sourceUrl: input.target,
+    content: input.canonicalContent,
+    subject: input.subject,
+    location: input.location,
+    discoveredCandidates: input.canonicalContent
+      ? extractPantheonDiscoveredCandidates(input.canonicalContent, input.target, [], input.subject)
+      : [],
+    sourceContext: input.sourceContext,
+    signal: input.signal,
+  });
+  const [extendedRun, portableRun] = await Promise.allSettled([extendedPromise, portablePromise] as const);
+
+  if (extendedRun.status === 'rejected') {
+    const message = extendedRun.reason instanceof Error ? extendedRun.reason.message : String(extendedRun.reason);
+    const status = /timeout|deadline|abort/i.test(message) ? 'timed_out' as const : 'failed' as const;
+    const retrievedAt = new Date().toISOString();
+    crawlerAudit.push(...extendedCapabilityIds.map(capabilityId => ({
+      crawler: capabilityId,
+      capabilityClass: (PANTHEON_RAZOR_SKILL_IDS as readonly string[]).includes(capabilityId)
+        ? 'razor' as const
+        : 'pantheon-secondary' as const,
+      status,
+      evidenceCount: 0,
+      attempts: 1,
+      targets: 1,
+      error: message,
+      durationMs: 0,
+      sourceOutcomes: [{
+        sourceUrl: input.target,
+        status,
+        retrievedAt,
+        durationMs: 0,
+        error: message,
+      }],
+    })));
+  } else if (extendedRun.value) {
+    crawlerAudit.push(...extendedRun.value.audit);
+    for (const razor of extendedRun.value.razorResults) {
+      if (!razor.success) continue;
+      evidence.push(createPantheonSourceResult({
+        crawler: `razor:${razor.razorType}`,
+        capabilityId: `razor:${razor.razorType}`,
+        categoryLabel: input.categoryLabel,
+        sourceUrl: input.target,
+        content: JSON.stringify(razor.data),
+        confidence: Number.isFinite(razor.confidence) ? razor.confidence : 0,
+        retrievedAt: new Date().toISOString(),
+        durationMs: razor.extractionTimeMs,
+        transport: input.transport,
+        metadata: {
+          capabilityClass: 'razor',
+          source: razor.source,
+          extractionTimeMs: razor.extractionTimeMs,
+        },
+      }));
+    }
+    for (const secondary of extendedRun.value.secondaryResults) {
+      for (const signature of secondary.signatures) {
+        evidence.push(createPantheonSourceResult({
+          crawler: secondary.crawler,
+          capabilityId: secondary.crawler,
+          categoryLabel: input.categoryLabel,
+          sourceUrl: input.target,
+          content: JSON.stringify({
+            evidenceHash: signature.hash,
+            probability: signature.probability,
+            structuralDensity: signature.structuralDensity,
+            constraintCount: signature.constraints.length,
+          }),
+          confidence: Number.isFinite(signature.probability) ? signature.probability : 0,
+          retrievedAt: signature.timestamp.toISOString(),
+          durationMs: secondary.durationMs,
+          transport: input.transport,
+          metadata: {
+            capabilityClass: 'pantheon-secondary',
+            entropySignature: true,
+          },
+        }));
+      }
+    }
+  }
+
+  if (portableRun.status === 'fulfilled') {
+    crawlerAudit.push(...portableRun.value);
+  } else {
+    const message = portableRun.reason instanceof Error ? portableRun.reason.message : String(portableRun.reason);
+    const status = /timeout|deadline|abort/i.test(message) ? 'timed_out' as const : 'failed' as const;
+    const retrievedAt = new Date().toISOString();
+    crawlerAudit.push(...portableCapabilityIds.map(capabilityId => ({
+      crawler: capabilityId,
+      capabilityClass: 'pantheon-secondary' as const,
+      status,
+      evidenceCount: 0,
+      attempts: 1,
+      targets: 1,
+      error: message,
+      durationMs: 0,
+      sourceOutcomes: [{
+        sourceUrl: input.target,
+        status,
+        retrievedAt,
+        durationMs: 0,
+        error: message,
+      }],
+      executionMode: 'credential-free-equivalent' as const,
+      replacementDisclosure: PANTHEON_CRAWLER_CAPABILITY_MATRIX[capabilityId].replacementDisclosure
+        || 'Credential-free local equivalent.',
+    })));
+  }
+
+  return { evidence, crawlerAudit };
 }
 
 /** Normalizes results from every executable PANTHEON crawler into provenance-bearing evidence. */
@@ -165,7 +334,6 @@ export class PantheonRetrievalAdapter {
     const operationDeadline = deadlineAt == null ? undefined : createPantheonDeadline(deadlineAt, request.signal);
     const operationSignal = operationDeadline?.signal || request.signal;
     try {
-    const collectionOpen = () => remainingBudgetMs() > 0 && !operationSignal?.aborted;
     const firstTarget = request.targets[0];
     let host: string | undefined;
     if (firstTarget) {
@@ -256,6 +424,8 @@ export class PantheonRetrievalAdapter {
     let results: CrawlerResult[];
     let canonicalAcquisition: PublicAcquisitionResult | undefined;
     let crawlerAudit: PantheonRetrievalResponse['crawlerAudit'] = [];
+    let applicableCapabilities: PantheonCapabilityId[] = [];
+    let supplementalRunPromise: Promise<PantheonSupplementalCapabilityRun> | undefined;
     if (request.purpose === 'background_report') {
       const acquisitionAuthority = {
         investigationId: request.authority!.investigationId,
@@ -276,6 +446,38 @@ export class PantheonRetrievalAdapter {
         acquisitionAuthority,
         operationSignal,
       );
+      const permittedCapabilities = new Set(getPantheonCategoryCapabilities(request.categoryLabel || ''));
+      applicableCapabilities = [...new Set(request.capabilityHint || [])]
+        .filter((capability): capability is PantheonCapabilityId =>
+          permittedCapabilities.has(capability as PantheonCapabilityId));
+      // Start every assigned extraction/analysis skill as soon as the one
+      // canonical source snapshot exists. These lanes run alongside the
+      // primary crawler instead of waiting behind its network timeout.
+      supplementalRunPromise = runPantheonSupplementalCapabilities({
+        target: request.authority!.canonicalUrl!,
+        canonicalContent: canonicalAcquisition.ok ? canonicalAcquisition.content : '',
+        capabilityIds: applicableCapabilities,
+        budgetMs: totalBudgetMs,
+        deadlineAt: deadlineAt!,
+        signal: operationSignal,
+        investigationId: request.authority!.investigationId,
+        categoryId: request.authority!.categoryId,
+        workId: request.authority!.workId!,
+        requestHeaders: request.authority!.requestHeaders,
+        subject: request.subject || '',
+        location: request.location,
+        categoryLabel: request.categoryLabel,
+        transport: (request.transportHint?.[0] || 'direct-http') as PantheonTransport,
+        sourceContext: {
+          transport: (request.transportHint?.[0] || 'direct-http') as PantheonTransport,
+          registryCategory: request.registryCategory,
+          sourceKind: request.sourceKind,
+          authority: request.sourceAuthority,
+          jurisdiction: request.sourceJurisdiction,
+          workType: request.workType,
+          subjectScoped: request.subjectScoped,
+        },
+      });
       const isolated = await runWithPantheonAcquisitionContext(
         acquisitionAuthority,
         operationSignal,
@@ -336,164 +538,30 @@ export class PantheonRetrievalAdapter {
         });
       });
 
-    if (request.purpose === 'background_report') {
-      const permittedCapabilities = new Set(getPantheonCategoryCapabilities(request.categoryLabel || ''));
-      const applicableCapabilities = [...new Set(request.capabilityHint || [])]
-        .filter((capability): capability is PantheonCapabilityId =>
-          permittedCapabilities.has(capability as PantheonCapabilityId));
-      const extendedCapabilityIds = applicableCapabilities.filter(capability =>
-        (PANTHEON_RAZOR_SKILL_IDS as readonly string[]).includes(capability)
-          || (PANTHEON_SECONDARY_CRAWLER_IDS as readonly string[]).includes(capability)
-      );
-      const extendedTargets = request.targets.filter(target => {
-        try {
-          const parsed = new URL(target);
-          return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-        } catch {
-          return false;
-        }
+    if (supplementalRunPromise) {
+      const supplemental = await supplementalRunPromise;
+      evidence.push(...supplemental.evidence);
+      crawlerAudit.push(...supplemental.crawlerAudit);
+      const capabilityOutcomes = applicableCapabilities.map(capabilityId => {
+        const audits = crawlerAudit.filter(audit => audit.crawler === capabilityId);
+        const clean = audits.find(audit =>
+          ['completed_with_evidence', 'completed_no_evidence'].includes(String(audit.status || ''))
+        );
+        const timedOut = audits.find(audit => audit.status === 'timed_out');
+        return {
+          capabilityId,
+          status: clean?.status || timedOut?.status || audits[0]?.status || 'not_observed',
+          attempts: audits.reduce((sum, audit) => sum + Math.max(0, Number(audit.attempts || 0)), 0),
+        };
       });
-      const EXTENDED_CONCURRENCY = 8;
-      const extendedRuns: Array<{ target: string; run: PromiseSettledResult<Awaited<ReturnType<typeof twoStageDeployer.deployBackgroundReport>>> }> = [];
-      for (let offset = 0; extendedCapabilityIds.length > 0 && offset < extendedTargets.length && collectionOpen(); offset += EXTENDED_CONCURRENCY) {
-        const batch = extendedTargets.slice(offset, offset + EXTENDED_CONCURRENCY);
-        const extendedLaneBudget = Math.max(1_000, Math.floor(totalBudgetMs * 0.20));
-        const perBatchBudget = Math.min(
-          extendedLaneBudget,
-          Number.isFinite(remainingBudgetMs()) ? Math.max(1, remainingBudgetMs()) : extendedLaneBudget,
-        );
-        const settled = await Promise.allSettled(
-          batch.map((target, batchIndex) => runWithPantheonAcquisitionContext(
-            {
-              investigationId: request.authority!.investigationId,
-              categoryId: request.authority!.categoryId,
-              workId: `${request.authority!.workId}:extended:${offset + batchIndex}`,
-              capability: 'extended-pantheon',
-              deadlineAt: deadlineAt!,
-              canonicalUrl: target,
-              requestHeaders: request.authority!.requestHeaders,
-            },
-            operationSignal,
-            () => twoStageDeployer.deployBackgroundReport(
-              target,
-              canonicalAcquisition?.ok && canonicalAcquisition.content.trim()
-                ? canonicalAcquisition.content
-                : results.find(result => result.target === target && result.content.trim())?.content,
-              perBatchBudget,
-              extendedCapabilityIds,
-              operationSignal,
-            ),
-          ))
-        );
-        settled.forEach((run, index) => extendedRuns.push({ target: batch[index], run }));
-      }
-
-      for (const entry of extendedRuns) {
-        const { run, target } = entry;
-        if (run.status !== 'fulfilled') {
-          const message = run.reason instanceof Error ? run.reason.message : String(run.reason);
-          const status = /timeout|deadline|abort/i.test(message) ? 'timed_out' as const : 'failed' as const;
-          const retrievedAt = new Date().toISOString();
-          crawlerAudit.push(...extendedCapabilityIds.map(capabilityId => ({
-            crawler: capabilityId,
-            capabilityClass: (PANTHEON_RAZOR_SKILL_IDS as readonly string[]).includes(capabilityId)
-              ? 'razor' as const
-              : 'pantheon-secondary' as const,
-            status,
-            evidenceCount: 0,
-            attempts: 1,
-            targets: 1,
-            error: message,
-            durationMs: 0,
-            sourceOutcomes: [{
-              sourceUrl: target,
-              status,
-              retrievedAt,
-              durationMs: 0,
-              error: message,
-            }],
-          })));
-          continue;
-        }
-
-        for (const razor of run.value.razorResults) {
-          if (!razor.success) continue;
-          evidence.push(createPantheonSourceResult({
-            crawler: `razor:${razor.razorType}`,
-            capabilityId: `razor:${razor.razorType}`,
-            categoryLabel: request.categoryLabel,
-            sourceUrl: target,
-            content: JSON.stringify(razor.data),
-            confidence: Number.isFinite(razor.confidence) ? razor.confidence : 0,
-            retrievedAt: new Date().toISOString(),
-            durationMs: razor.extractionTimeMs,
-            transport: (request.transportHint?.[0] || 'direct-http') as PantheonTransport,
-            metadata: {
-              capabilityClass: 'razor',
-              source: razor.source,
-              extractionTimeMs: razor.extractionTimeMs,
-            },
-          }));
-        }
-
-        crawlerAudit.push(...run.value.audit);
-
-        for (const secondary of run.value.secondaryResults) {
-          for (const signature of secondary.signatures) {
-            evidence.push(createPantheonSourceResult({
-              crawler: secondary.crawler,
-              capabilityId: secondary.crawler,
-              categoryLabel: request.categoryLabel,
-              sourceUrl: target,
-              content: JSON.stringify({
-                evidenceHash: signature.hash,
-                probability: signature.probability,
-                structuralDensity: signature.structuralDensity,
-                constraintCount: signature.constraints.length,
-              }),
-              confidence: Number.isFinite(signature.probability) ? signature.probability : 0,
-              retrievedAt: signature.timestamp.toISOString(),
-              durationMs: secondary.durationMs,
-              transport: (request.transportHint?.[0] || 'direct-http') as PantheonTransport,
-              metadata: {
-                capabilityClass: 'pantheon-secondary',
-                entropySignature: true,
-              },
-            }));
-          }
-        }
-      }
-
-      // Paid-key, account-bound, and separately hosted capabilities execute as
-      // disclosed local/public-source equivalents over the same verified live
-      // source content. This preserves their actual function without claiming
-      // access to a vendor service or generating substitute evidence.
-      for (const target of extendedTargets) {
-        const liveResult = results.find(result => result.target === target && result.content.trim());
-        const content = canonicalAcquisition?.ok && canonicalAcquisition.content.trim()
-          ? canonicalAcquisition.content
-          : liveResult?.content || '';
-        crawlerAudit.push(...await runPortablePantheonCapabilities({
-          capabilityIds: applicableCapabilities,
-          sourceUrl: target,
-          content,
-          subject: request.subject || '',
-          location: request.location,
-          discoveredCandidates: Array.isArray(liveResult?.metadata?.discoveredCandidates)
-            ? liveResult.metadata.discoveredCandidates
-            : [],
-          sourceContext: {
-            transport: (request.transportHint?.[0] || 'direct-http') as PantheonTransport,
-            registryCategory: request.registryCategory,
-            sourceKind: request.sourceKind,
-            authority: request.sourceAuthority,
-            jurisdiction: request.sourceJurisdiction,
-            workType: request.workType,
-            subjectScoped: request.subjectScoped,
-          },
-          signal: operationSignal,
-        }));
-      }
+      console.log('[PANTHEON][CAPABILITY-BATCH]', JSON.stringify({
+        event: 'authorized_work_outcome',
+        investigationId: request.authority!.investigationId,
+        categoryIndex: request.authority!.categoryIndex,
+        category: request.categoryLabel,
+        workId: request.authority!.workId,
+        capabilityOutcomes,
+      }));
     }
 
     // Every evidence lane, including local extraction/analysis lanes, carries

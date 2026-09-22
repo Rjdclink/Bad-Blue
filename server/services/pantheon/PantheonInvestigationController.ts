@@ -104,9 +104,14 @@ export function assessPantheonCategoryOutcome(input: PantheonCategoryAssessmentI
   const activeEntries = input.urlLedger.filter(entry =>
     Number(entry.attempts || 0) > 0 && !TERMINAL_LEDGER_STATES.has(String(entry.state || ''))
   );
-  const failedCapabilities = liveAudits
-    .filter(audit => /^(failed|timed_out)$/i.test(String(audit.status || '')))
-    .map(audit => audit.crawler);
+  const cleanCapabilities = new Set(liveAudits
+    .filter(audit => /^(completed_with_evidence|completed_no_evidence)$/i.test(String(audit.status || '')))
+    .map(audit => audit.crawler));
+  const failedCapabilities = expectedCapabilities.filter(capability =>
+    !cleanCapabilities.has(capability)
+      && liveAudits.some(audit => audit.crawler === capability
+        && /^(failed|timed_out)$/i.test(String(audit.status || '')))
+  );
   const requiredWorkCount = Math.max(1, Number(input.requiredWorkCount || input.targetCount || 0));
   const successfulWorkCount = Math.max(0, Number(input.successfulWorkCount ?? attemptedEntries.filter(entry =>
     ['accepted', 'rejected', 'no_evidence'].includes(String(entry.state || ''))
@@ -172,9 +177,10 @@ export interface PantheonInvestigationAssessment {
 export interface PantheonReportReleaseAssessment {
   eligible: boolean;
   reportable: boolean;
+  resultType: 'verified_findings' | 'no_verified_findings' | 'coverage_limited';
   acceptedEvidenceCount: number;
   distinctAcceptedSourceCount: number;
-  blocker?: 'investigation_contract_incomplete' | 'no_accepted_evidence' | 'no_attributable_source';
+  blocker?: 'investigation_contract_incomplete';
 }
 
 export function assessPantheonInvestigation(categories: readonly {
@@ -226,14 +232,16 @@ export function assessPantheonInvestigation(categories: readonly {
 }
 
 /**
- * A rendered document is releasable only after the full investigation
- * contract passes and the result contains attributable, accepted evidence.
- * Empty partial operational diagnostics remain in the internal ledger rather
- * than becoming a customer-facing background report.
+ * A completed 30-category collection always produces a report. Accepted
+ * evidence controls whether the report contains findings, not whether a
+ * truthful no-findings or coverage-limited document may be downloaded.
  */
 export function assessPantheonReportRelease(input: {
   investigation: PantheonInvestigationAssessment;
   categories: readonly {
+    index?: number;
+    label?: string;
+    completionState?: PantheonCategoryCompletionState;
     evidenceCount?: number;
     urlLedger?: readonly LedgerEntryLike[];
   }[];
@@ -246,36 +254,32 @@ export function assessPantheonReportRelease(input: {
       .map(entry => String(entry.url)),
   ));
   const reportable = acceptedEvidenceCount > 0 && acceptedSources.size > 0;
-  if (!input.investigation.releaseEligible) {
+  const categoriesByIndex = new Map(input.categories.map(category => [category.index, category]));
+  const allCategoryOutcomesPresent = input.categories.length === PANTHEON_REPORT_CATEGORY_LABELS.length
+    && categoriesByIndex.size === PANTHEON_REPORT_CATEGORY_LABELS.length
+    && PANTHEON_REPORT_CATEGORY_LABELS.every((label, index) => {
+      const category = categoriesByIndex.get(index);
+      return category?.label === label
+        && ['completed', 'partial', 'blocked', 'not_started'].includes(String(category.completionState || ''));
+    });
+  if (!allCategoryOutcomesPresent) {
     return {
       eligible: false,
       reportable,
+      resultType: 'coverage_limited',
       acceptedEvidenceCount,
       distinctAcceptedSourceCount: acceptedSources.size,
       blocker: 'investigation_contract_incomplete',
     };
   }
-  if (acceptedEvidenceCount === 0) {
-    return {
-      eligible: false,
-      reportable: false,
-      acceptedEvidenceCount,
-      distinctAcceptedSourceCount: acceptedSources.size,
-      blocker: 'no_accepted_evidence',
-    };
-  }
-  if (acceptedSources.size === 0) {
-    return {
-      eligible: false,
-      reportable: false,
-      acceptedEvidenceCount,
-      distinctAcceptedSourceCount: 0,
-      blocker: 'no_attributable_source',
-    };
-  }
   return {
     eligible: true,
-    reportable: true,
+    reportable,
+    resultType: input.investigation.state === 'partial'
+      ? 'coverage_limited'
+      : reportable
+        ? 'verified_findings'
+        : 'no_verified_findings',
     acceptedEvidenceCount,
     distinctAcceptedSourceCount: acceptedSources.size,
   };

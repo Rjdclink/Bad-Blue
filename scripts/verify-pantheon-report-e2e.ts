@@ -105,6 +105,27 @@ async function main() {
     successfulWorkCount: 1,
   });
   if (incompleteQuota.state !== 'partial') throw new Error('incomplete live-work quota was incorrectly completed');
+  const recoveredCapability = assessPantheonCategoryOutcome({
+    label: 'Identity & Identity Verification',
+    targetCount: 1,
+    expectedCapabilities: ['startrek'],
+    crawlerAudit: [{
+      ...attributableAudit,
+      status: 'failed',
+      error: 'first source failed',
+      sourceOutcomes: [{
+        ...attributableAudit.sourceOutcomes[0],
+        status: 'failed',
+        error: 'first source failed',
+      }],
+    }, attributableAudit],
+    urlLedger: [{ state: 'no_evidence', attempts: 1, startedAt: retrievedAt, completedAt: retrievedAt, result: { status: 200 } }],
+    requiredWorkCount: 1,
+    successfulWorkCount: 1,
+  });
+  if (recoveredCapability.state !== 'completed') {
+    throw new Error('an earlier route-local failure poisoned a later clean capability retry');
+  }
   const incompleteInvestigation = assessPantheonInvestigation(PANTHEON_REPORT_CATEGORIES.slice(0, 29).map((category, index) => ({
     index,
     label: category.label,
@@ -114,18 +135,34 @@ async function main() {
     throw new Error('investigation missing one of 30 categories was incorrectly release eligible');
   }
   const completeInvestigation = { ...incompleteInvestigation, releaseEligible: true, state: 'completed' as const };
+  const releaseCategories = PANTHEON_REPORT_CATEGORIES.map((category, index) => ({
+    index,
+    label: category.label,
+    completionState: 'completed' as const,
+    evidenceCount: 0,
+    urlLedger: [{ url: `https://example.gov/empty/${index}`, state: 'no_evidence' }],
+  }));
+  const incompleteRelease = assessPantheonReportRelease({
+    investigation: incompleteInvestigation,
+    categories: releaseCategories.slice(0, 29),
+  });
+  if (incompleteRelease.eligible || incompleteRelease.blocker !== 'investigation_contract_incomplete') {
+    throw new Error('incomplete 30-category contract was incorrectly made downloadable');
+  }
   const emptyRelease = assessPantheonReportRelease({
     investigation: completeInvestigation,
-    categories: [{ evidenceCount: 0, urlLedger: [{ url: 'https://example.gov/empty', state: 'no_evidence' }] }],
+    categories: releaseCategories,
   });
-  if (emptyRelease.eligible || emptyRelease.blocker !== 'no_accepted_evidence') {
-    throw new Error('zero-evidence investigation was incorrectly made downloadable');
+  if (!emptyRelease.eligible || emptyRelease.reportable || emptyRelease.resultType !== 'no_verified_findings') {
+    throw new Error('completed zero-evidence investigation did not produce a truthful downloadable result');
   }
   const releasable = assessPantheonReportRelease({
     investigation: completeInvestigation,
-    categories: [{ evidenceCount: 1, urlLedger: [{ url: 'https://example.gov/public-record/123', state: 'accepted' }] }],
+    categories: releaseCategories.map((category, index) => index === 0
+      ? { ...category, evidenceCount: 1, urlLedger: [{ url: 'https://example.gov/public-record/123', state: 'accepted' }] }
+      : category),
   });
-  if (!releasable.eligible || releasable.distinctAcceptedSourceCount !== 1) {
+  if (!releasable.eligible || !releasable.reportable || releasable.distinctAcceptedSourceCount !== 1) {
     throw new Error('accepted evidence and source provenance did not satisfy the report release gate');
   }
 
