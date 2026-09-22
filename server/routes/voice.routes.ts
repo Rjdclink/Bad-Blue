@@ -24,6 +24,7 @@ interface LexaraTTSStreamSession {
   text: string;
   createdAt: number;
   attempts: number;
+  turnId: string | null;
 }
 
 const lexaraTTSStreamSessions = new Map<string, LexaraTTSStreamSession>();
@@ -93,11 +94,13 @@ export function setupVoiceRoutes(app: Express): void {
       'avatar-renderer-ready',
       'avatar-motion-started',
       'avatar-renderer-error',
+      'tts-session-ready',
     ]);
     if (!allowed.has(event)) return res.status(204).end();
 
     log.info('[LEXARA Audio] playback event', {
       event,
+      reason: typeof req.body?.reason === 'string' ? req.body.reason.slice(0, 32) : null,
       currentTime: Number.isFinite(Number(req.body?.currentTime)) ? Number(req.body.currentTime) : null,
       readyState: Number.isFinite(Number(req.body?.readyState)) ? Number(req.body.readyState) : null,
       networkState: Number.isFinite(Number(req.body?.networkState)) ? Number(req.body.networkState) : null,
@@ -133,6 +136,9 @@ export function setupVoiceRoutes(app: Express): void {
     isAuthenticated,
     asyncHandler(async (req: Request, res: Response) => {
       const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+      const turnId = typeof req.body?.turnId === 'string'
+        ? req.body.turnId.trim().slice(0, 120) || null
+        : null;
       if (!text) return res.status(400).json({ error: 'Text is required for TTS synthesis' });
       if (text.length > 5000) return res.status(400).json({ error: 'Text too long. Maximum 5000 characters.' });
 
@@ -150,7 +156,7 @@ export function setupVoiceRoutes(app: Express): void {
 
       pruneLexaraTTSSessions();
       const id = crypto.randomUUID();
-      lexaraTTSStreamSessions.set(id, { text, createdAt: Date.now(), attempts: 0 });
+      lexaraTTSStreamSessions.set(id, { text, createdAt: Date.now(), attempts: 0, turnId });
       return res.json({
         success: true,
         audioUrl: `/api/lexara/tts/session/${id}`,
@@ -162,6 +168,7 @@ export function setupVoiceRoutes(app: Express): void {
         voiceStatus: readiness.voiceStatus,
         voiceId: null,
         model: 'adaptive',
+        turnId,
       });
     }),
   );
@@ -195,6 +202,11 @@ export function setupVoiceRoutes(app: Express): void {
           res.setHeader('X-Voice-Id', progressive.voiceId || 'adaptive');
           res.setHeader('X-TTS-Model', progressive.model);
           res.setHeader('X-TTS-First-Byte-Ms', String(progressive.firstByteLatencyMs));
+          if (session.turnId) res.setHeader('X-Lexara-Turn-Id', session.turnId);
+          // Make the progressive response visible before provider bytes arrive.
+          // This preserves the direct pipe and gives the mobile media element
+          // its earliest possible chance to begin buffering.
+          res.flushHeaders();
 
           const nodeStream = Readable.fromWeb(progressive.body as any);
           const close = () => {
@@ -232,6 +244,7 @@ export function setupVoiceRoutes(app: Express): void {
         res.setHeader('X-Voice-Id', result.voiceId || 'adaptive');
         res.setHeader('X-TTS-Model', result.model);
         res.setHeader('X-TTS-Latency-Ms', String(result.latencyMs));
+        if (session.turnId) res.setHeader('X-Lexara-Turn-Id', session.turnId);
         return res.send(result.audioData);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
