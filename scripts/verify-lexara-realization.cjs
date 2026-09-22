@@ -800,6 +800,8 @@ must(
     avatar.includes('const TARGET_FPS = 60') &&
     avatar.includes("VITE_LEXARA_CLIP_MOTION_ENABLED ?? '1'") &&
     avatar.includes("if (frame.mode !== 'speaking') return;") &&
+    avatar.includes("audioActive ? 'speaking' : requestedMode === 'speaking' ? 'idle' : requestedMode") &&
+    embodimentEngine.includes("input.mode === 'speaking' && audio.active") &&
     avatar.includes('preparedPoseCount: 120') &&
     avatar.includes('blendPreparedFacePose') &&
     avatar.includes('frame.mouthPreviousPoseIndex') &&
