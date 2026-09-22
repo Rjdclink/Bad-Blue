@@ -73,7 +73,6 @@ const PAID_OR_SUBSCRIPTION_HOSTS = new Set([
   'genealogybank.com',
   'myheritage.com',
   'newspapers.com',
-  'pacer.uscourts.gov',
 ]);
 
 const ACCOUNT_AND_PASSWORD_HOSTS = new Set([
@@ -120,8 +119,11 @@ function classifyAccess(url: URL): { mode: PantheonSourceAccessMode; reason: str
   if (COMMERCIAL_VERIFICATION_HOSTS.has(host)) {
     return { mode: 'excluded-unsupported-verification', reason: 'Source requires unsupported commercial registration or verification.' };
   }
+  if (host === 'pacer.uscourts.gov') {
+    return { mode: 'contact-registration', reason: 'PACER requires a registered account; registration itself is free, while some record access can incur fees.' };
+  }
   if (configuredContactOnlyHosts().has(host)) {
-    return { mode: 'excluded-extra-registration', reason: 'Source requires registration; Pantheon executes only anonymous public access.' };
+    return { mode: 'excluded-extra-registration', reason: 'Source requires registration beyond anonymous public access.' };
   }
   return { mode: 'public', reason: 'Public source; runtime preflight still enforces access barriers.' };
 }
@@ -163,7 +165,7 @@ export function compilePantheonSourceRegistry(
 
     const canonicalUrl = admission.url;
     const policy = classifyAccess(new URL(canonicalUrl));
-    if (policy.mode !== 'public') {
+    if (policy.mode !== 'public' && policy.mode !== 'contact-registration') {
       const key = `${policy.mode}:${canonicalUrl}`;
       const existing = rejectedGroups.get(key);
       if (existing) existing.sources.push(source);
