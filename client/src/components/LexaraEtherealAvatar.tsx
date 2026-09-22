@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { getLexaraServerPlaybackClock } from '@/lib/lexaraSpeechClient';
 import { lexaraRealtimeVoiceClient } from '@/lib/lexaraRealtimeVoiceClient';
+import { getLexaraPreparedFacePose } from '@/lib/lexaraPreparedFacePoses';
 import {
   LexaraEmbodimentEngine,
   type LexaraEmbodimentFrame,
@@ -49,6 +50,9 @@ const LEGACY_PORTRAIT_NON_MOUTH_OVERLAYS_ENABLED =
   String(import.meta.env.VITE_LEXARA_LEGACY_PORTRAIT_NON_MOUTH_OVERLAYS_ENABLED ?? '0') === 'unsafe-experiment';
 const PORTRAIT_BREATHING_ENABLED =
   String(import.meta.env.VITE_LEXARA_PORTRAIT_BREATHING_ENABLED ?? '1') !== '0';
+const PREPARED_PORTRAIT_FACE_ENABLED =
+  String(import.meta.env.VITE_LEXARA_PREPARED_FACE_ENABLED ?? '1') !== '0';
+const LEXARA_MOUTH_ATLAS_SRC = '/images/lexara-mouth-atlas.webp?v=20260922-prepared60';
 const TARGET_FPS = 30;
 
 interface LatestAvatarInput {
@@ -72,6 +76,13 @@ interface Region {
   rx: number;
   ry: number;
 }
+
+interface FeatheredPatchSurface {
+  canvas: HTMLCanvasElement;
+  ctx: CanvasRenderingContext2D;
+}
+
+const LEXARA_MOUTH_REGION: Region = { cx: 0.520, cy: 0.318, rx: 0.040, ry: 0.0115 };
 
 function getMode(input: LatestAvatarInput): LexaraEmbodimentMode {
   if (input.isSpeaking) return 'speaking';
@@ -180,6 +191,71 @@ function drawImageWithLocalTransform(
   ctx.restore();
 }
 
+function drawFeatheredImageTransform(
+  ctx: CanvasRenderingContext2D,
+  image: HTMLImageElement,
+  layout: ImageLayout,
+  region: Region,
+  transform: {
+    dx?: number;
+    dy?: number;
+    scaleX?: number;
+    scaleY?: number;
+    alpha?: number;
+  },
+  surface: FeatheredPatchSurface,
+): void {
+  const r = ellipseRegion(layout, region);
+  const padding = Math.max(2, Math.min(r.rx, r.ry) * 0.18);
+  const left = r.cx - r.rx - padding;
+  const top = r.cy - r.ry - padding;
+  const cssWidth = Math.max(2, (r.rx + padding) * 2);
+  const cssHeight = Math.max(2, (r.ry + padding) * 2);
+  const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+  const pixelWidth = Math.max(2, Math.ceil(cssWidth * dpr));
+  const pixelHeight = Math.max(2, Math.ceil(cssHeight * dpr));
+  if (surface.canvas.width !== pixelWidth || surface.canvas.height !== pixelHeight) {
+    surface.canvas.width = pixelWidth;
+    surface.canvas.height = pixelHeight;
+  }
+
+  const patchCtx = surface.ctx;
+  patchCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  patchCtx.clearRect(0, 0, cssWidth, cssHeight);
+  patchCtx.globalCompositeOperation = 'source-over';
+  patchCtx.globalAlpha = transform.alpha ?? 1;
+
+  const localCx = r.cx - left;
+  const localCy = r.cy - top;
+  patchCtx.save();
+  patchCtx.translate(localCx + (transform.dx ?? 0), localCy + (transform.dy ?? 0));
+  patchCtx.scale(transform.scaleX ?? 1, transform.scaleY ?? 1);
+  patchCtx.translate(-localCx, -localCy);
+  patchCtx.drawImage(image, layout.x - left, layout.y - top, layout.width, layout.height);
+  patchCtx.restore();
+
+  // Feathering keeps every moving patch attached to the unchanged portrait.
+  // Hard-edged face patches caused the earlier intermittent oval/seam artifact.
+  patchCtx.globalCompositeOperation = 'destination-in';
+  patchCtx.globalAlpha = 1;
+  patchCtx.save();
+  patchCtx.translate(localCx, localCy);
+  patchCtx.scale(1, r.ry / Math.max(0.001, r.rx));
+  const mask = patchCtx.createRadialGradient(0, 0, r.rx * 0.48, 0, 0, r.rx);
+  mask.addColorStop(0, 'rgba(0, 0, 0, 1)');
+  mask.addColorStop(0.72, 'rgba(0, 0, 0, 0.98)');
+  mask.addColorStop(0.90, 'rgba(0, 0, 0, 0.42)');
+  mask.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  patchCtx.fillStyle = mask;
+  patchCtx.beginPath();
+  patchCtx.arc(0, 0, r.rx, 0, Math.PI * 2);
+  patchCtx.fill();
+  patchCtx.restore();
+  patchCtx.globalCompositeOperation = 'source-over';
+
+  ctx.drawImage(surface.canvas, 0, 0, pixelWidth, pixelHeight, left, top, cssWidth, cssHeight);
+}
+
 function drawPatchShift(
   ctx: CanvasRenderingContext2D,
   image: HTMLImageElement,
@@ -255,53 +331,59 @@ function drawBlink(
 function drawMouth(
   ctx: CanvasRenderingContext2D,
   image: HTMLImageElement,
+  mouthAtlas: HTMLImageElement | null,
   layout: ImageLayout,
   frame: LexaraEmbodimentFrame,
   headDx: number,
   headDy: number,
 ): void {
-  // This mask ends at the lips. It must never include or translate the jaw/chin.
-  const mouth: Region = { cx: 0.516, cy: 0.357, rx: 0.040, ry: 0.0115 };
-  const r = ellipseRegion(layout, mouth);
-  const open = Math.min(0.82, frame.mouthOpen);
-  const wide = frame.mouthWide;
-  const round = frame.mouthRound;
-  const gap = open * r.ry * 1.46;
-  const scaleX = 1 + wide * 0.045 - round * 0.028;
+  // Coordinates are calibrated against the original 239x239 production image.
+  // The previous y=0.357 target was below the real lips and visibly animated the
+  // chin/throat instead. This boundary contains only Lexara's actual mouth.
+  const r = ellipseRegion(layout, LEXARA_MOUTH_REGION);
+  const pose = getLexaraPreparedFacePose(frame.mouthPoseIndex);
+  const open = Math.min(0.96, Math.max(frame.mouthOpen * 0.82, pose.mouthOpen));
+  const wide = Math.min(1, Math.max(frame.mouthWide * 0.52, pose.mouthWide));
+  const round = Math.min(1, Math.max(frame.mouthRound * 0.48, pose.mouthRound));
+  const gap = open * r.ry * 2.35;
+  const lipHalfWidth = r.rx * (1 + wide * 0.12 - round * 0.08);
+  const upperExtent = r.ry * (0.90 + open * 0.55);
+  const lowerExtent = r.ry * (0.76 + open * 2.30);
+  const scaleX = 1 + wide * 0.065 - round * 0.048;
 
   const traceLipBoundary = () => {
     ctx.beginPath();
-    ctx.moveTo(r.cx - r.rx, r.cy);
+    ctx.moveTo(r.cx - lipHalfWidth, r.cy);
     ctx.bezierCurveTo(
-      r.cx - r.rx * 0.56,
-      r.cy - r.ry * 0.96,
-      r.cx - r.rx * 0.18,
-      r.cy - r.ry * 0.82,
+      r.cx - lipHalfWidth * 0.56,
+      r.cy - upperExtent,
+      r.cx - lipHalfWidth * 0.18,
+      r.cy - upperExtent * 0.86,
       r.cx,
-      r.cy - r.ry * 0.46,
+      r.cy - upperExtent * 0.48,
     );
     ctx.bezierCurveTo(
-      r.cx + r.rx * 0.18,
-      r.cy - r.ry * 0.82,
-      r.cx + r.rx * 0.56,
-      r.cy - r.ry * 0.96,
-      r.cx + r.rx,
+      r.cx + lipHalfWidth * 0.18,
+      r.cy - upperExtent * 0.86,
+      r.cx + lipHalfWidth * 0.56,
+      r.cy - upperExtent,
+      r.cx + lipHalfWidth,
       r.cy,
     );
     ctx.bezierCurveTo(
-      r.cx + r.rx * 0.58,
-      r.cy + r.ry * 0.88,
-      r.cx + r.rx * 0.18,
-      r.cy + r.ry,
+      r.cx + lipHalfWidth * 0.58,
+      r.cy + lowerExtent * 0.88,
+      r.cx + lipHalfWidth * 0.18,
+      r.cy + lowerExtent,
       r.cx,
-      r.cy + r.ry * 0.74,
+      r.cy + lowerExtent * 0.78,
     );
     ctx.bezierCurveTo(
-      r.cx - r.rx * 0.18,
-      r.cy + r.ry,
-      r.cx - r.rx * 0.58,
-      r.cy + r.ry * 0.88,
-      r.cx - r.rx,
+      r.cx - lipHalfWidth * 0.18,
+      r.cy + lowerExtent,
+      r.cx - lipHalfWidth * 0.58,
+      r.cy + lowerExtent * 0.88,
+      r.cx - lipHalfWidth,
       r.cy,
     );
     ctx.closePath();
@@ -312,25 +394,56 @@ function drawMouth(
   traceLipBoundary();
   ctx.clip();
 
-  if (open > 0.035) {
+  if (open > 0.025) {
+    const innerCx = r.cx;
+    const innerCy = r.cy + gap * 0.22;
+    const innerRx = lipHalfWidth * (0.60 + open * 0.16);
+    const innerRy = Math.max(0.32, gap * 0.52);
+
     ctx.fillStyle = 'rgba(39, 10, 14, 0.94)';
     ctx.beginPath();
-    ctx.ellipse(
-      r.cx,
-      r.cy + gap * 0.08,
-      r.rx * (0.64 + wide * 0.14),
-      Math.max(0.45, gap * 0.48),
-      0,
-      0,
-      Math.PI * 2,
-    );
+    ctx.ellipse(innerCx, innerCy, innerRx, innerRy, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    if (open > 0.42 && wide > 0.42) {
-      ctx.fillStyle = 'rgba(239, 228, 216, 0.90)';
+    if (mouthAtlas?.complete && mouthAtlas.naturalWidth >= 512 && mouthAtlas.naturalHeight >= 288) {
+      const cellWidth = 128;
+      const cellHeight = 72;
+      const cellIndex = Math.max(0, Math.min(14, pose.visemeIndex));
+      const sourceX = (cellIndex % 4) * cellWidth;
+      const sourceY = Math.floor(cellIndex / 4) * cellHeight;
+      const destinationWidth = lipHalfWidth * 3.25;
+      const destinationHeight = destinationWidth * (cellHeight / cellWidth);
+      ctx.save();
       ctx.beginPath();
-      ctx.ellipse(r.cx, r.cy - gap * 0.10, r.rx * 0.46, Math.max(0.3, gap * 0.10), 0, Math.PI, Math.PI * 2);
-      ctx.fill();
+      ctx.ellipse(innerCx, innerCy, innerRx, innerRy, 0, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.drawImage(
+        mouthAtlas,
+        sourceX,
+        sourceY,
+        cellWidth,
+        cellHeight,
+        innerCx - destinationWidth / 2,
+        innerCy - destinationHeight * 0.69,
+        destinationWidth,
+        destinationHeight,
+      );
+      ctx.restore();
+    } else {
+      const showsTeeth = [2, 3, 4, 7, 8, 11, 12].includes(pose.visemeIndex) || open > 0.52;
+      const showsTongue = [3, 4, 8, 10, 11].includes(pose.visemeIndex) && open > 0.20;
+      if (showsTeeth) {
+        ctx.fillStyle = 'rgba(239, 228, 216, 0.92)';
+        ctx.beginPath();
+        ctx.ellipse(innerCx, innerCy - innerRy * 0.40, innerRx * 0.72, Math.max(0.28, innerRy * 0.25), 0, Math.PI, Math.PI * 2);
+        ctx.fill();
+      }
+      if (showsTongue) {
+        ctx.fillStyle = 'rgba(151, 68, 76, 0.82)';
+        ctx.beginPath();
+        ctx.ellipse(innerCx, innerCy + innerRy * 0.52, innerRx * 0.56, Math.max(0.25, innerRy * 0.28), 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
   }
 
@@ -338,9 +451,9 @@ function drawMouth(
   // rectangular lower-face patch is what previously bent the jaw.
   ctx.save();
   ctx.beginPath();
-  ctx.rect(r.cx - r.rx, r.cy - r.ry, r.rx * 2, r.ry);
+  ctx.rect(r.cx - lipHalfWidth, r.cy - upperExtent, lipHalfWidth * 2, upperExtent);
   ctx.clip();
-  ctx.translate(r.cx, r.cy - gap * 0.34);
+  ctx.translate(r.cx, r.cy - gap * 0.24);
   ctx.scale(scaleX, 1);
   ctx.translate(-r.cx, -r.cy);
   ctx.drawImage(image, layout.x, layout.y, layout.width, layout.height);
@@ -348,9 +461,9 @@ function drawMouth(
 
   ctx.save();
   ctx.beginPath();
-  ctx.rect(r.cx - r.rx, r.cy, r.rx * 2, r.ry);
+  ctx.rect(r.cx - lipHalfWidth, r.cy, lipHalfWidth * 2, lowerExtent);
   ctx.clip();
-  ctx.translate(r.cx, r.cy + gap * 0.52);
+  ctx.translate(r.cx, r.cy + gap * 0.70);
   ctx.scale(scaleX, 1);
   ctx.translate(-r.cx, -r.cy);
   ctx.drawImage(image, layout.x, layout.y, layout.width, layout.height);
@@ -359,13 +472,102 @@ function drawMouth(
   ctx.restore();
 }
 
+function drawPreparedSpeechFace(
+  ctx: CanvasRenderingContext2D,
+  image: HTMLImageElement,
+  mouthAtlas: HTMLImageElement | null,
+  layout: ImageLayout,
+  frame: LexaraEmbodimentFrame,
+  reducedMotion: boolean,
+  surface: FeatheredPatchSurface,
+): void {
+  if (frame.mode !== 'speaking' || frame.mouthOpen < 0.018) return;
+
+  const pose = getLexaraPreparedFacePose(frame.mouthPoseIndex);
+  const motionScale = reducedMotion ? 0.32 : 1;
+  const activity = Math.min(1, frame.mouthOpen * 0.72 + frame.gestureEnergy * 0.28);
+  const jawAmount = Math.min(1, pose.jawDrop * 0.78 + activity * 0.32);
+
+  // Original portrait pixels are deformed in four independently feathered
+  // regions. No generated skin, jaw, cheek, brow, or forehead replaces Lexara.
+  drawFeatheredImageTransform(
+    ctx,
+    image,
+    layout,
+    { cx: 0.520, cy: 0.354, rx: 0.073, ry: 0.069 },
+    {
+      dy: jawAmount * layout.height * 0.0068 * motionScale,
+      scaleX: 1 + pose.mouthWide * 0.0035 * motionScale,
+      scaleY: 1 + jawAmount * 0.016 * motionScale,
+    },
+    surface,
+  );
+
+  const cheekAmount = Math.min(1, pose.cheekLift + frame.mouthWide * 0.16 + activity * 0.12);
+  const cheekDy = -cheekAmount * layout.height * 0.0036 * motionScale;
+  const cheekDx = cheekAmount * layout.width * 0.0022 * motionScale;
+  drawFeatheredImageTransform(
+    ctx,
+    image,
+    layout,
+    { cx: 0.474, cy: 0.302, rx: 0.036, ry: 0.046 },
+    { dx: -cheekDx, dy: cheekDy, scaleX: 1 + cheekAmount * 0.008 * motionScale },
+    surface,
+  );
+  drawFeatheredImageTransform(
+    ctx,
+    image,
+    layout,
+    { cx: 0.562, cy: 0.302, rx: 0.036, ry: 0.046 },
+    { dx: cheekDx, dy: cheekDy, scaleX: 1 + cheekAmount * 0.008 * motionScale },
+    surface,
+  );
+
+  const emphasis = Math.max(-1, Math.min(1, frame.browLift * 0.52 + pose.browLift + frame.gestureEnergy * 0.18));
+  const browDy = -emphasis * layout.height * 0.0052 * motionScale;
+  drawFeatheredImageTransform(
+    ctx,
+    image,
+    layout,
+    { cx: 0.481, cy: 0.226, rx: 0.033, ry: 0.014 },
+    { dy: browDy },
+    surface,
+  );
+  drawFeatheredImageTransform(
+    ctx,
+    image,
+    layout,
+    { cx: 0.551, cy: 0.226, rx: 0.033, ry: 0.014 },
+    { dy: browDy },
+    surface,
+  );
+  drawFeatheredImageTransform(
+    ctx,
+    image,
+    layout,
+    { cx: 0.518, cy: 0.196, rx: 0.078, ry: 0.047 },
+    {
+      dy: browDy * 0.28,
+      scaleY: 1 + Math.abs(emphasis) * 0.006 * motionScale,
+      alpha: 0.96,
+    },
+    surface,
+  );
+
+  drawMouth(ctx, image, mouthAtlas, layout, frame, 0, 0);
+}
+
 function renderEmbodiedFrame(
   ctx: CanvasRenderingContext2D,
   image: HTMLImageElement,
+  mouthAtlas: HTMLImageElement | null,
   layout: ImageLayout,
   frame: LexaraEmbodimentFrame,
   reducedMotion: boolean,
   skinColor: string,
+  patchSurface: FeatheredPatchSurface,
+  preparedFaceEnabled: boolean,
+  onPreparedFaceError: (error: unknown) => void,
 ): void {
   const width = layout.width;
   const height = layout.height;
@@ -494,11 +696,16 @@ function renderEmbodiedFrame(
 
   }
 
-  // The only normal visual animation: the lip region follows the existing,
-  // already-playing TTS PCM signal. No voice data, requests, or playback state
-  // are written by this renderer.
-  if (LEGACY_PORTRAIT_MOUTH_OVERLAY_ENABLED) {
-    drawMouth(ctx, image, layout, frame, 0, 0);
+  // This prepared visual layer reads the existing playback clock. It performs no
+  // network request, buffering, speech recognition, or change to the voice path.
+  if (PREPARED_PORTRAIT_FACE_ENABLED && preparedFaceEnabled) {
+    try {
+      drawPreparedSpeechFace(ctx, image, mouthAtlas, layout, frame, reducedMotion, patchSurface);
+    } catch (error) {
+      onPreparedFaceError(error);
+    }
+  } else if (LEGACY_PORTRAIT_MOUTH_OVERLAY_ENABLED) {
+    drawMouth(ctx, image, null, layout, frame, 0, 0);
   }
 }
 
@@ -565,12 +772,21 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
     let lastPaintMs = 0;
     let rendererReported = false;
     let rendererFailed = false;
+    let preparedFaceFailed = false;
+    let preparedFaceFailureReported = false;
     let lastMotionTurnKey = '';
     let skinColor = 'rgb(177, 132, 108)';
     const engine = new LexaraEmbodimentEngine(0x4c455841);
     const image = new Image();
     image.decoding = 'async';
     image.src = imageSrc;
+    const mouthAtlas = new Image();
+    mouthAtlas.decoding = 'async';
+    mouthAtlas.src = LEXARA_MOUTH_ATLAS_SRC;
+    const patchCanvas = document.createElement('canvas');
+    const patchContext = patchCanvas.getContext('2d', { alpha: true });
+    if (!patchContext) return undefined;
+    const patchSurface: FeatheredPatchSurface = { canvas: patchCanvas, ctx: patchContext };
 
     const resizeCanvas = () => {
       const rect = container.getBoundingClientRect();
@@ -649,13 +865,38 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
       );
 
       try {
-        renderEmbodiedFrame(ctx, image, layout, frame, reducedMotion, skinColor);
+        renderEmbodiedFrame(
+          ctx,
+          image,
+          mouthAtlas,
+          layout,
+          frame,
+          reducedMotion,
+          skinColor,
+          patchSurface,
+          !preparedFaceFailed,
+          error => {
+            preparedFaceFailed = true;
+            if (!preparedFaceFailureReported) {
+              preparedFaceFailureReported = true;
+              reportAvatarEvent('avatar-renderer-error', {
+                reducedMotion,
+                mode,
+                layer: 'prepared-face',
+                fallback: 'portrait-plus-throat',
+                error: error instanceof Error ? error.message.slice(0, 160) : 'unknown',
+              });
+            }
+          },
+        );
 
         if (!rendererReported) {
           rendererReported = true;
           reportAvatarEvent('avatar-renderer-ready', {
             reducedMotion,
             mode,
+            preparedPoseCount: 60,
+            mouthAtlasReady: mouthAtlas.complete && mouthAtlas.naturalWidth > 0,
           });
         }
 
@@ -668,6 +909,7 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
               mode,
               turnId: audioTurnId,
               mouthOpen: Number(frame.mouthOpen.toFixed(3)),
+              mouthPoseIndex: frame.mouthPoseIndex,
             });
           }
         }
@@ -704,6 +946,7 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
       style={{ contain: 'layout paint' }}
       aria-label="LEXARA professional legal assistant"
       data-live-avatar={LIVE_AVATAR_ENABLED ? 'embodied-canvas' : 'static'}
+      data-prepared-face={PREPARED_PORTRAIT_FACE_ENABLED ? 'sixty-state' : 'legacy'}
       data-reduced-motion={reducedMotion ? 'true' : 'false'}
     >
       <img
