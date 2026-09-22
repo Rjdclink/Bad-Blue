@@ -607,6 +607,50 @@ export function resequencePantheonFrontier(
   }
 }
 
+export type PantheonSourceExecutionStatus =
+  | 'completed_with_evidence'
+  | 'completed_no_evidence'
+  | 'failed'
+  | 'timed_out';
+
+/**
+ * Resolves the outcome for one canonical URL from attributable primary-crawler
+ * audits. A transport adapter may return a structured response even when every
+ * crawler failed; that response is not a successful retrieval.
+ */
+export function assessPantheonSourceExecution(
+  sourceUrl: string,
+  crawlerAudit: PantheonRetrievalResponse['crawlerAudit'],
+): { status: PantheonSourceExecutionStatus; httpStatus: 0 | 200; failureReason?: string } {
+  const canonicalSource = canonicalPantheonEvidenceUrl(sourceUrl);
+  const matchingPrimaryAudits = crawlerAudit.filter(audit => {
+    if (audit.capabilityClass !== 'primary') return false;
+    if (!(audit.sourceOutcomes || []).length) return Number(audit.targets || 0) === 1;
+    return (audit.sourceOutcomes || []).some(outcome =>
+      canonicalPantheonEvidenceUrl(outcome.sourceUrl) === canonicalSource
+    );
+  });
+  if (matchingPrimaryAudits.some(audit => audit.status === 'completed_with_evidence')) {
+    return { status: 'completed_with_evidence', httpStatus: 200 };
+  }
+  if (matchingPrimaryAudits.some(audit => audit.status === 'completed_no_evidence')) {
+    return { status: 'completed_no_evidence', httpStatus: 200 };
+  }
+  if (matchingPrimaryAudits.some(audit => audit.status === 'timed_out')) {
+    return {
+      status: 'timed_out',
+      httpStatus: 0,
+      failureReason: matchingPrimaryAudits.find(audit => audit.error)?.error || 'Primary retrieval timed out.',
+    };
+  }
+  return {
+    status: 'failed',
+    httpStatus: 0,
+    failureReason: matchingPrimaryAudits.find(audit => audit.error)?.error
+      || 'No attributable primary retrieval outcome was recorded.',
+  };
+}
+
 function settleCapabilityWorkForSource(
   workLedger: PantheonExecutableWorkUnit[],
   sourceUrl: string,
@@ -1091,15 +1135,22 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
             }),
             input.signal,
           );
+          const sourceExecution = assessPantheonSourceExecution(url, retrieval.crawlerAudit);
           await completePantheonFrontierItem({
             claim: frontierClaim,
-            state: 'retrieved',
-            status: retrieval.crawlerAudit.some(item => ['completed_with_evidence', 'completed_no_evidence'].includes(item.status)) ? 200 : 0,
+            state: sourceExecution.status === 'timed_out'
+              ? 'timed_out'
+              : sourceExecution.status === 'failed'
+                ? 'dead'
+                : 'retrieved',
+            status: sourceExecution.httpStatus,
             evidenceCount: retrieval.evidence.length,
             crawler: retrieval.evidence[0]?.crawler || retrieval.crawlerAudit[0]?.crawler,
+            failureReason: sourceExecution.failureReason,
             provenance: {
               sourceUrl: url,
               retrievedAt: new Date().toISOString(),
+              sourceExecution,
               crawlerAudit: retrieval.crawlerAudit,
             },
           });
@@ -1109,7 +1160,7 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
             categoryIndex: index,
             category: category.label,
             frontierOrder: work.entry?.frontierOrder,
-            status: 'retrieved',
+            status: sourceExecution.status,
             durationMs: Date.now() - sourceStartedAt,
             evidenceCount: retrieval.evidence.length,
             ...sourceTelemetry,
@@ -1434,6 +1485,14 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
           evidenceCount: entry.result?.evidenceCount,
           crawler: entry.result?.crawler,
           failureReason: entry.failureReason,
+          provenance: {
+            sourceUrl: entry.url,
+            finalState: entry.state,
+            evidenceIds: entry.evidenceIds,
+            transport: entry.transport,
+            transportAttempts: entry.transportAttempts,
+            result: entry.result,
+          },
         })),
     });
     const successfulWorkCount = urlLedger.filter(isProductiveLedgerOutcome).length;

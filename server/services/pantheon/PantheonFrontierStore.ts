@@ -317,30 +317,52 @@ export async function syncPantheonFrontierStates(input: {
     evidenceCount?: number;
     crawler?: string;
     failureReason?: string;
+    provenance?: Record<string, unknown>;
   }>;
 }): Promise<void> {
   if (!input.entries.length) return;
   await frontierQuery({
     text: `
-      UPDATE public.pantheon_frontier_items AS frontier
-      SET state = item.state,
-          http_status = item.http_status,
-          evidence_count = item.evidence_count,
-          crawler = item.crawler,
-          failure_reason = item.failure_reason,
-          completed_at = CASE WHEN item.state IN ('pending', 'retryable') THEN frontier.completed_at ELSE now() END,
-          updated_at = now()
-      FROM jsonb_to_recordset($3::jsonb) AS item(
-        canonical_url text,
-        state text,
-        http_status integer,
-        evidence_count integer,
-        crawler text,
-        failure_reason text
+      WITH input AS (
+        SELECT *
+        FROM jsonb_to_recordset($3::jsonb) AS item(
+          canonical_url text,
+          state text,
+          http_status integer,
+          evidence_count integer,
+          crawler text,
+          failure_reason text,
+          outcome_id text,
+          provenance jsonb
+        )
+      ), updated AS (
+        UPDATE public.pantheon_frontier_items AS frontier
+        SET state = item.state,
+            http_status = item.http_status,
+            evidence_count = item.evidence_count,
+            crawler = item.crawler,
+            failure_reason = item.failure_reason,
+            completed_at = CASE WHEN item.state IN ('pending', 'retryable') THEN frontier.completed_at ELSE now() END,
+            updated_at = now()
+        FROM input AS item
+        WHERE frontier.report_id = $1::uuid
+          AND frontier.category_index = $2
+          AND frontier.canonical_url = item.canonical_url
+        RETURNING frontier.work_key, frontier.report_id, frontier.category_index,
+          frontier.canonical_url, frontier.capability, item.state, item.http_status,
+          item.evidence_count, item.crawler, item.failure_reason, item.outcome_id,
+          item.provenance
       )
-      WHERE frontier.report_id = $1::uuid
-        AND frontier.category_index = $2
-        AND frontier.canonical_url = item.canonical_url`,
+      INSERT INTO public.pantheon_frontier_outcomes (
+        outcome_id, work_key, report_id, category_index, canonical_url,
+        capability, outcome_state, http_status, evidence_count, duration_ms,
+        crawler, failure_reason, provenance
+      )
+      SELECT outcome_id, work_key, report_id, category_index, canonical_url,
+        capability, state, http_status, evidence_count, 0,
+        crawler, failure_reason, provenance
+      FROM updated
+      ON CONFLICT (outcome_id) DO NOTHING`,
     values: [input.reportId, input.categoryIndex, JSON.stringify(input.entries.map(entry => ({
       canonical_url: entry.canonicalUrl,
       state: entry.state,
@@ -348,6 +370,10 @@ export async function syncPantheonFrontierStates(input: {
       evidence_count: Math.max(0, Number(entry.evidenceCount || 0)),
       crawler: entry.crawler || null,
       failure_reason: entry.failureReason?.slice(0, 1_000) || null,
+      outcome_id: crypto.createHash('sha256')
+        .update(`${workKey({ reportId: input.reportId, categoryIndex: input.categoryIndex, canonicalUrl: entry.canonicalUrl })}\nfinal\n${entry.state}`)
+        .digest('hex'),
+      provenance: entry.provenance || {},
     })))],
   });
 }

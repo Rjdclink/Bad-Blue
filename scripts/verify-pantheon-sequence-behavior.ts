@@ -7,6 +7,7 @@ import {
   categoryProductiveWorkTarget,
   initializePantheonCategoryPlans,
   insertPantheonDiscoveredUrls,
+  assessPantheonSourceExecution,
   pantheonUrlWindowBudgetMs,
   PANTHEON_REPORT_CATEGORIES,
   resequencePantheonFrontier,
@@ -68,6 +69,46 @@ assert.ok(!/bing\.com\/search|duckduckgo\.com\/html/.test(subjectFirstPlan.sourc
 assert.ok(
   subjectFirstPlan.sourcePlan.urls.some(url => !/bing\.com\/search|duckduckgo\.com\/html/.test(url)),
   'the persisted frontier must contain an independent direct-source path',
+);
+
+const sourceOutcomeAt = new Date().toISOString();
+assert.deepEqual(
+  assessPantheonSourceExecution('https://records.example.gov/person/jane-example', [{
+    crawler: 'startrek',
+    capabilityClass: 'primary',
+    status: 'failed',
+    evidenceCount: 0,
+    attempts: 1,
+    targets: 1,
+    error: 'circuit_open',
+    sourceOutcomes: [{
+      sourceUrl: 'https://records.example.gov/person/jane-example',
+      status: 'failed',
+      retrievedAt: sourceOutcomeAt,
+      durationMs: 12,
+      error: 'circuit_open',
+    }],
+  }]),
+  { status: 'failed', httpStatus: 0, failureReason: 'circuit_open' },
+  'a non-throwing crawler failure must remain failed in frontier telemetry',
+);
+assert.deepEqual(
+  assessPantheonSourceExecution('https://records.example.gov/person/jane-example', [{
+    crawler: 'startrek',
+    capabilityClass: 'primary',
+    status: 'completed_no_evidence',
+    evidenceCount: 0,
+    attempts: 1,
+    targets: 1,
+    sourceOutcomes: [{
+      sourceUrl: 'https://records.example.gov/person/jane-example',
+      status: 'completed_no_evidence',
+      retrievedAt: sourceOutcomeAt,
+      durationMs: 12,
+    }],
+  }]),
+  { status: 'completed_no_evidence', httpStatus: 200 },
+  'a clean no-evidence retrieval must remain distinct from failed retrieval work',
 );
 
 const frontier = ['seed-a', 'seed-b', 'seed-c'];
