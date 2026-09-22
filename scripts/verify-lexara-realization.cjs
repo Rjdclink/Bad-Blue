@@ -285,7 +285,7 @@ must(
     synthesis.includes('lexaraRealtimeVoiceClient.isReady()') &&
     synthesis.includes('lexaraRealtimeVoiceClient.ensureSpeechOutputReady()') &&
     realtimeVoiceClient.includes('createMediaStreamDestination()') &&
-    realtimeVoiceClient.includes('outputAudio.srcObject = outputDestination.stream') &&
+    realtimeVoiceClient.includes('candidateAudio.srcObject = candidateDestination.stream') &&
     synthesis.includes("setProvider('deepgram-flux')") &&
     synthesis.includes('await speakWithServer') &&
     synthesis.includes('/api/lexara/tts/session'),
