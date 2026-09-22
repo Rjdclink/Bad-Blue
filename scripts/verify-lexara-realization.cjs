@@ -806,11 +806,13 @@ must(
     embodimentEngine.includes('mouthPoseIndex') &&
     embodimentEngine.includes('mouthPoseBlend') &&
     embodimentEngine.includes('dtSec / 0.085') &&
+    embodimentEngine.includes('this.currentVisemeIndex * 8 + (mouthStrengthLevel - 1)') &&
+    embodimentEngine.includes('mouthStrengthLevel: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8') &&
     embodimentEngine.includes('selectAudioViseme') &&
     preparedFacePoses.includes('LEXARA_PREPARED_FACE_POSES.length !== 120') &&
     preparedFacePoses.includes('visemeIndex * STRENGTHS.length + strengthIndex') &&
     fs.existsSync('public/images/lexara-mouth-atlas.webp'),
-  'sixty prepared facial states animate the calibrated lips and original face while preserving throat motion and voice isolation',
+  '120 facial reference states constrain a continuous audio-driven rig while the resting lips are suppressed during speech and voice playback remains isolated',
 );
 must(
   synthesis.includes('One reply owns one progressive media stream') &&
