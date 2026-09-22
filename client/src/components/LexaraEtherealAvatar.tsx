@@ -44,7 +44,7 @@ const SIZE_CONFIG = {
 };
 
 const LIVE_AVATAR_ENABLED = String(import.meta.env.VITE_LEXARA_LIVE_AVATAR_ENABLED ?? '1') !== '0';
-const CLIP_MOTION_ENABLED = String(import.meta.env.VITE_LEXARA_CLIP_MOTION_ENABLED ?? '1') !== '0';
+const CLIP_MOTION_ENABLED = String(import.meta.env.VITE_LEXARA_CLIP_MOTION_ENABLED ?? '0') === '1';
 // The audio player is authoritative. This read-only canvas may use its PCM features
 // for mouth timing, but it never changes the voice stream or audio controls.
 const LEGACY_PORTRAIT_MOUTH_OVERLAY_ENABLED =
@@ -87,9 +87,9 @@ interface FeatheredPatchSurface {
   ctx: CanvasRenderingContext2D;
 }
 
-// 0.318 was visibly low and 0.308 was visibly high in production captures.
-// Their exact midpoint keeps the correction portrait-relative across devices.
-const LEXARA_MOUTH_REGION: Region = { cx: 0.520, cy: 0.313, rx: 0.040, ry: 0.0115 };
+// Shift the mouth about one source pixel lower than the previous midpoint.
+// Portrait-relative coordinates preserve its position across viewport sizes.
+const LEXARA_MOUTH_REGION: Region = { cx: 0.520, cy: 0.317, rx: 0.040, ry: 0.0115 };
 
 function blendPreparedFacePose(frame: LexaraEmbodimentFrame): LexaraPreparedFacePose {
   const previous = getLexaraPreparedFacePose(frame.mouthPreviousPoseIndex);
@@ -419,6 +419,36 @@ function drawMouth(
   traceLipBoundary();
   ctx.clip();
 
+  // Translate only pixels inside the lip boundary. Scaling or clipping a
+  // rectangular lower-face patch is what previously bent the jaw.
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(r.cx - lipHalfWidth, r.cy - upperExtent, lipHalfWidth * 2, upperExtent);
+  ctx.clip();
+  ctx.translate(r.cx, r.cy - gap * 0.24);
+  ctx.scale(scaleX, 1);
+  ctx.translate(-r.cx, -r.cy);
+  ctx.drawImage(image, layout.x, layout.y, layout.width, layout.height);
+  ctx.restore();
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(r.cx - lipHalfWidth, r.cy, lipHalfWidth * 2, lowerExtent);
+  ctx.clip();
+  ctx.translate(r.cx, r.cy + gap * 0.70);
+  ctx.scale(scaleX, 1);
+  ctx.translate(-r.cx, -r.cy);
+  ctx.drawImage(image, layout.x, layout.y, layout.width, layout.height);
+  ctx.restore();
+
+  // Preserve the portrait's real lip texture, with a restrained color lift.
+  // Paint the aperture last so moving lip pixels cannot hide the voice shape.
+  ctx.fillStyle = 'rgba(142, 79, 83, 0.16)';
+  ctx.beginPath();
+  ctx.ellipse(r.cx, r.cy - upperExtent * 0.34 - gap * 0.22, lipHalfWidth * 0.82, upperExtent * 0.37, 0, 0, Math.PI * 2);
+  ctx.ellipse(r.cx, r.cy + lowerExtent * 0.37 + gap * 0.48, lipHalfWidth * 0.80, lowerExtent * 0.39, 0, 0, Math.PI * 2);
+  ctx.fill();
+
   if (open > 0.025) {
     const innerCx = r.cx;
     const innerCy = r.cy + gap * 0.22;
@@ -483,27 +513,6 @@ function drawMouth(
     }
   }
 
-  // Translate only pixels inside the lip boundary. Scaling or clipping a
-  // rectangular lower-face patch is what previously bent the jaw.
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(r.cx - lipHalfWidth, r.cy - upperExtent, lipHalfWidth * 2, upperExtent);
-  ctx.clip();
-  ctx.translate(r.cx, r.cy - gap * 0.24);
-  ctx.scale(scaleX, 1);
-  ctx.translate(-r.cx, -r.cy);
-  ctx.drawImage(image, layout.x, layout.y, layout.width, layout.height);
-  ctx.restore();
-
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(r.cx - lipHalfWidth, r.cy, lipHalfWidth * 2, lowerExtent);
-  ctx.clip();
-  ctx.translate(r.cx, r.cy + gap * 0.70);
-  ctx.scale(scaleX, 1);
-  ctx.translate(-r.cx, -r.cy);
-  ctx.drawImage(image, layout.x, layout.y, layout.width, layout.height);
-  ctx.restore();
 
   ctx.restore();
 }
@@ -590,6 +599,16 @@ function drawPreparedSpeechFace(
     surface,
   );
 
+  // Cover the photographed resting lips with nearby skin before drawing the
+  // moving lips. The feathered patch is confined to the original mouth region.
+  drawFeatheredImageTransform(
+    ctx,
+    image,
+    layout,
+    { cx: 0.520, cy: 0.317, rx: 0.047, ry: 0.019 },
+    { dy: layout.height * 0.020 },
+    surface,
+  );
   drawMouth(ctx, image, mouthAtlas, layout, frame, 0, 0);
 }
 
