@@ -44,7 +44,7 @@ const SIZE_CONFIG = {
 };
 
 const LIVE_AVATAR_ENABLED = String(import.meta.env.VITE_LEXARA_LIVE_AVATAR_ENABLED ?? '1') !== '0';
-const CLIP_MOTION_ENABLED = String(import.meta.env.VITE_LEXARA_CLIP_MOTION_ENABLED ?? '0') === '1';
+const CLIP_MOTION_ENABLED = String(import.meta.env.VITE_LEXARA_CLIP_MOTION_ENABLED ?? '1') !== '0';
 // The audio player is authoritative. This read-only canvas may use its PCM features
 // for mouth timing, but it never changes the voice stream or audio controls.
 const LEGACY_PORTRAIT_MOUTH_OVERLAY_ENABLED =
@@ -57,7 +57,7 @@ const PORTRAIT_BREATHING_ENABLED =
   String(import.meta.env.VITE_LEXARA_PORTRAIT_BREATHING_ENABLED ?? '1') !== '0';
 const PREPARED_PORTRAIT_FACE_ENABLED =
   String(import.meta.env.VITE_LEXARA_PREPARED_FACE_ENABLED ?? '1') !== '0';
-const LEXARA_MOUTH_ATLAS_SRC = '/images/lexara-mouth-atlas.webp?v=20260922-prepared60';
+const LEXARA_MOUTH_ATLAS_SRC = '/images/lexara-mouth-atlas.webp?v=20260922-continuous120';
 const TARGET_FPS = 60;
 
 interface LatestAvatarInput {
@@ -526,7 +526,7 @@ function drawPreparedSpeechFace(
   reducedMotion: boolean,
   surface: FeatheredPatchSurface,
 ): void {
-  if (frame.mode !== 'speaking' || frame.mouthOpen < 0.018) return;
+  if (frame.mode !== 'speaking') return;
 
   const pose = blendPreparedFacePose(frame);
   const motionScale = reducedMotion ? 0.32 : 1;
@@ -908,8 +908,9 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
       });
 
       if (CLIP_MOTION_ENABLED && mode === 'speaking' && audioActive) {
-        // The four clips provide motion geometry only. Keep the existing audio
-        // playback clock authoritative, so a missed visual frame is simply skipped.
+        // Reference clips provide natural motion geometry only. The live playback
+        // clock and PCM features remain authoritative; references constrain a
+        // continuous rig and never become a frame-by-frame canned animation.
         const motion = sampleLexaraClipMotion(
           audioTime, audioTurnId, frame.mouthOpen, frame.mouthWide,
         );
@@ -963,7 +964,7 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
           reportAvatarEvent('avatar-renderer-ready', {
             reducedMotion,
             mode,
-            preparedPoseCount: 60,
+            preparedPoseCount: 120,
             mouthAtlasReady: mouthAtlas.complete && mouthAtlas.naturalWidth > 0,
           });
         }
@@ -1014,8 +1015,8 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
       style={{ contain: 'layout paint' }}
       aria-label="LEXARA professional legal assistant"
       data-live-avatar={LIVE_AVATAR_ENABLED ? 'embodied-canvas' : 'static'}
-      data-prepared-face={PREPARED_PORTRAIT_FACE_ENABLED ? 'sixty-state' : 'legacy'}
-      data-clip-motion={CLIP_MOTION_ENABLED ? 'four-clips' : 'off'}
+      data-prepared-face={PREPARED_PORTRAIT_FACE_ENABLED ? 'continuous-120-reference-rig' : 'legacy'}
+      data-clip-motion={CLIP_MOTION_ENABLED ? 'reference-guided-continuous' : 'off'}
       data-reduced-motion={reducedMotion ? 'true' : 'false'}
     >
       <img
