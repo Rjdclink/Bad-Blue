@@ -15,7 +15,7 @@ import { Readable } from 'stream';
 import { asyncHandler } from '../errorHandler';
 import { createLogger } from '../logger';
 import { isAuthenticated } from '../auth';
-import { getLexaraTTSReadiness, getLexaraVoiceProfileBindings, openLexaraSpeechStream, refreshLexaraTTSReadiness, synthesizeLexaraSpeechWithFailover, warmLexaraTTSMesh } from '../lexara/LexaraTTSMesh';
+import { getLexaraTTSReadiness, getLexaraVoiceProfileBindings, openLexaraSpeechStream, refreshLexaraTTSReadiness, synthesizeLexaraSpeechWithFailover, warmLexaraTTSMesh, type LexaraTTSAudio, type LexaraTTSStream } from '../lexara/LexaraTTSMesh';
 import { issueLexaraRealtimeVoiceTicket } from '../lexara/LexaraRealtimeVoiceGateway';
 
 const log = createLogger('VoiceRoutes');
@@ -29,6 +29,154 @@ interface LexaraTTSStreamSession {
 
 const lexaraTTSStreamSessions = new Map<string, LexaraTTSStreamSession>();
 const LEXARA_TTS_STREAM_SESSION_TTL_MS = 60_000;
+
+
+// Provider calls stay at the proven 5,000-character ceiling. Larger answers are
+// split on safe linguistic boundaries *inside one media session*, with the next
+// MP3 stream already opening while the current audio is playing.
+const LEXARA_TTS_PROVIDER_TEXT_MAX_CHARS = 5_000;
+const LEXARA_TTS_SESSION_MAX_CHARS = 50_000;
+
+function splitLexaraTTSInput(text: string, maxChars = LEXARA_TTS_PROVIDER_TEXT_MAX_CHARS): string[] {
+  const clean = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!clean) return [];
+
+  const parts: string[] = [];
+  let remaining = clean;
+  while (remaining.length > maxChars) {
+    const candidate = remaining.slice(0, maxChars + 1);
+    const safeSearchStart = Math.max(0, maxChars - 900);
+    const breakAt = Math.max(
+      candidate.lastIndexOf('. '),
+      candidate.lastIndexOf('! '),
+      candidate.lastIndexOf('? '),
+      candidate.lastIndexOf('; '),
+      candidate.lastIndexOf(', '),
+      candidate.lastIndexOf(' '),
+    );
+
+    const end = breakAt >= safeSearchStart ? breakAt + 1 : maxChars;
+    const part = remaining.slice(0, end).trim();
+    if (!part) break;
+    parts.push(part);
+    remaining = remaining.slice(end).trim();
+  }
+  if (remaining) parts.push(remaining);
+  return parts;
+}
+
+function isMpegAudio(mimeType: string): boolean {
+  return /^audio\/(?:mpeg|mp3)(?:;|$)/i.test(mimeType.trim());
+}
+
+async function openLexaraSpeechSequence(text: string): Promise<LexaraTTSStream | null> {
+  const parts = splitLexaraTTSInput(text);
+  if (!parts.length) return null;
+  if (parts.length === 1) return openLexaraSpeechStream(parts[0]);
+
+  // Keep one future stream warming while the current part is consumed. This
+  // preserves the media element's single URL/playback channel without asking
+  // Railway's CPU to transcode, buffer, or render audio.
+  const opening = new Map<number, Promise<LexaraTTSStream | null>>();
+  const openPart = (index: number): Promise<LexaraTTSStream | null> => {
+    if (index >= parts.length) return Promise.resolve(null);
+    const existing = opening.get(index);
+    if (existing) return existing;
+    const next = openLexaraSpeechStream(parts[index]).catch(() => null);
+    opening.set(index, next);
+    return next;
+  };
+
+  const firstPromise = openPart(0);
+  void openPart(1);
+  const first = await firstPromise;
+  if (!first || !isMpegAudio(first.mimeType)) {
+    if (first) await first.body.cancel('non-mp3-long-session').catch(() => undefined);
+    return null;
+  }
+
+  let index = 0;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        while (true) {
+          if (!reader) {
+            const current = await openPart(index);
+            if (!current || !isMpegAudio(current.mimeType)) {
+              throw new Error('LEXARA long-session stream was unavailable or changed MIME type');
+            }
+            reader = current.body.getReader();
+            index += 1;
+          }
+
+          const { done, value } = await reader.read();
+          if (done) {
+            reader.releaseLock();
+            reader = null;
+            if (index >= parts.length) {
+              controller.close();
+              return;
+            }
+            void openPart(index + 1);
+            continue;
+          }
+          if (value) controller.enqueue(value);
+          return;
+        }
+      } catch (error) {
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      if (reader) {
+        await reader.cancel(reason).catch(() => undefined);
+        reader.releaseLock();
+        reader = null;
+      }
+      await Promise.allSettled(
+        [...opening.values()].map(streamPromise =>
+          streamPromise.then(stream => stream?.body.cancel(reason)).catch(() => undefined),
+        ),
+      );
+    },
+  });
+
+  return {
+    ...first,
+    body,
+  };
+}
+
+async function synthesizeLexaraSpeechSequence(text: string): Promise<LexaraTTSAudio> {
+  const parts = splitLexaraTTSInput(text);
+  if (!parts.length) throw new Error('LEXARA speech text was empty');
+  if (parts.length === 1) return synthesizeLexaraSpeechWithFailover(parts[0]);
+
+  // Buffered recovery is intentionally exceptional. Build it server-side so a
+  // large response never falls back to client blob-by-blob playback.
+  const first = await synthesizeLexaraSpeechWithFailover(parts[0]);
+  if (!isMpegAudio(first.mimeType)) {
+    throw new Error('LEXARA buffered long-answer recovery requires an MP3 route');
+  }
+
+  const audioParts = [first.audioData];
+  let latencyMs = first.latencyMs;
+  for (const part of parts.slice(1)) {
+    const next = await synthesizeLexaraSpeechWithFailover(part);
+    if (!isMpegAudio(next.mimeType)) {
+      throw new Error('LEXARA buffered long-answer recovery changed MIME type');
+    }
+    audioParts.push(next.audioData);
+    latencyMs += next.latencyMs;
+  }
+
+  return {
+    ...first,
+    audioData: Buffer.concat(audioParts),
+    latencyMs,
+  };
+}
 
 function pruneLexaraTTSSessions(): void {
   const cutoff = Date.now() - LEXARA_TTS_STREAM_SESSION_TTL_MS;
@@ -140,7 +288,7 @@ export function setupVoiceRoutes(app: Express): void {
         ? req.body.turnId.trim().slice(0, 120) || null
         : null;
       if (!text) return res.status(400).json({ error: 'Text is required for TTS synthesis' });
-      if (text.length > 5000) return res.status(400).json({ error: 'Text too long. Maximum 5000 characters.' });
+      if (text.length > LEXARA_TTS_SESSION_MAX_CHARS) return res.status(400).json({ error: `Text too long. Maximum ${LEXARA_TTS_SESSION_MAX_CHARS} characters.` });
 
       let readiness = getLexaraTTSReadiness();
       if (!readiness.available) {
@@ -191,7 +339,7 @@ export function setupVoiceRoutes(app: Express): void {
       session.attempts += 1;
 
       try {
-        const progressive = await openLexaraSpeechStream(session.text);
+        const progressive = await openLexaraSpeechSequence(session.text);
         if (progressive) {
           lexaraTTSStreamSessions.delete(id);
           res.status(200);
@@ -234,7 +382,7 @@ export function setupVoiceRoutes(app: Express): void {
 
         // No verified progressive route was available. Fall back locally to the
         // canonical buffered mesh rather than surfacing an outage to the user.
-        const result = await synthesizeLexaraSpeechWithFailover(session.text);
+        const result = await synthesizeLexaraSpeechSequence(session.text);
         lexaraTTSStreamSessions.delete(id);
         res.status(200);
         res.setHeader('Content-Type', result.mimeType);
@@ -275,10 +423,10 @@ export function setupVoiceRoutes(app: Express): void {
     asyncHandler(async (req: Request, res: Response) => {
       const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
       if (!text) return res.status(400).json({ error: 'Text is required for speech synthesis' });
-      if (text.length > 5000) return res.status(400).json({ error: 'Text too long. Maximum 5000 characters.' });
+      if (text.length > LEXARA_TTS_SESSION_MAX_CHARS) return res.status(400).json({ error: `Text too long. Maximum ${LEXARA_TTS_SESSION_MAX_CHARS} characters.` });
 
       try {
-        const result = await synthesizeLexaraSpeechWithFailover(text);
+        const result = await synthesizeLexaraSpeechSequence(text);
         res.setHeader('Content-Type', result.mimeType);
         res.setHeader('Content-Length', result.audioData.length);
         res.setHeader('X-Provider', result.provider);
@@ -308,10 +456,10 @@ export function setupVoiceRoutes(app: Express): void {
     asyncHandler(async (req: Request, res: Response) => {
       const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
       if (!text) return res.status(400).json({ error: 'Text is required for TTS synthesis' });
-      if (text.length > 5000) return res.status(400).json({ error: 'Text too long. Maximum 5000 characters.' });
+      if (text.length > LEXARA_TTS_SESSION_MAX_CHARS) return res.status(400).json({ error: `Text too long. Maximum ${LEXARA_TTS_SESSION_MAX_CHARS} characters.` });
 
       try {
-        const result = await synthesizeLexaraSpeechWithFailover(text);
+        const result = await synthesizeLexaraSpeechSequence(text);
         res.setHeader('Content-Type', result.mimeType);
         res.setHeader('Content-Length', result.audioData.length);
         res.setHeader('X-Provider', result.provider);
