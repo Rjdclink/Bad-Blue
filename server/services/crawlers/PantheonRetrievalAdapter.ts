@@ -14,11 +14,14 @@ import { type CrawlerSupervisionResult } from './CainReaperSupervisor';
 import { twoStageDeployer } from '../pantheon/razors/TwoStageDeployer';
 import {
   getPantheonCategoryCapabilities,
+  isPantheonCapabilitySourceCompatible,
+  PANTHEON_CRAWLER_CAPABILITY_MATRIX,
   PANTHEON_PRIMARY_CRAWLER_IDS,
   PANTHEON_RAZOR_SKILL_IDS,
   PANTHEON_SECONDARY_CRAWLER_IDS,
   type PantheonCapabilityId,
   type PantheonPrimaryCrawlerId,
+  type PantheonExecutableSource,
   type PantheonTransport,
 } from '../pantheon/PantheonCrawlerCapabilityMatrix';
 import {
@@ -32,6 +35,11 @@ import {
   type PublicAcquisitionResult,
 } from './PublicAcquisitionInfrastructure';
 import { runPortablePantheonCapabilities } from '../pantheon/PantheonPortableCapabilityExecutor';
+import { load } from 'cheerio';
+import type {
+  PantheonBackgroundCategory,
+  PantheonSourceTarget,
+} from '../pantheon/PantheonSovereignSourceRegistry';
 
 export type RetrievalEvidence = PantheonStructuredSourceResult;
 
@@ -49,6 +57,7 @@ export interface PantheonRetrievalResponse {
     targets: number;
     error?: string;
     durationMs?: number;
+    queueWaitMs?: number;
     sourceOutcomes?: Array<{
       sourceUrl: string;
       status: 'completed_with_evidence' | 'completed_no_evidence' | 'failed' | 'timed_out';
@@ -76,6 +85,12 @@ export class PantheonRetrievalAdapter {
     subject?: string;
     location?: string;
     categoryLabel?: string;
+    registryCategory?: PantheonBackgroundCategory;
+    sourceKind?: NonNullable<PantheonSourceTarget['sourceKind']>;
+    sourceAuthority?: PantheonSourceTarget['authority'];
+    sourceJurisdiction?: string;
+    workType?: 'authoritative-source' | 'discovery-search' | 'candidate-validation' | 'corroboration';
+    subjectScoped?: boolean;
     capabilityHint?: string[];
     transportHint?: string[];
     signal?: AbortSignal;
@@ -104,6 +119,23 @@ export class PantheonRetrievalAdapter {
       }
       if (!(request.capabilityHint || []).includes(authority.capability)) {
         throw new Error('Pantheon background retrieval rejected: work authorization capability mismatch');
+      }
+      const sourceContext: PantheonExecutableSource = {
+        sourceUrl: request.targets[0],
+        transport: (request.transportHint?.[0] || 'direct-http') as PantheonTransport,
+        registryCategory: request.registryCategory,
+        sourceKind: request.sourceKind,
+        authority: request.sourceAuthority,
+        jurisdiction: request.sourceJurisdiction,
+        workType: request.workType,
+        subjectScoped: request.subjectScoped,
+      };
+      const incompatibleCapabilities = (request.capabilityHint || [])
+        .filter((capability): capability is PantheonCapabilityId =>
+          Object.prototype.hasOwnProperty.call(PANTHEON_CRAWLER_CAPABILITY_MATRIX, capability))
+        .filter(capability => !isPantheonCapabilitySourceCompatible(capability, sourceContext));
+      if (incompatibleCapabilities.length > 0) {
+        throw new Error(`Pantheon background retrieval rejected: source-skill authorization mismatch (${incompatibleCapabilities.join(',')})`);
       }
     }
     const retrievalStartedAt = Date.now();
@@ -263,6 +295,8 @@ export class PantheonRetrievalAdapter {
           ocrApplied: canonicalAcquisition?.ocrApplied,
           rawSnapshot: canonicalAcquisition?.snapshot,
           lastModified: canonicalAcquisition?.lastModified,
+          subject: request.subject,
+          location: request.location,
         });
       });
 
@@ -412,6 +446,15 @@ export class PantheonRetrievalAdapter {
           discoveredCandidates: Array.isArray(liveResult?.metadata?.discoveredCandidates)
             ? liveResult.metadata.discoveredCandidates
             : [],
+          sourceContext: {
+            transport: (request.transportHint?.[0] || 'direct-http') as PantheonTransport,
+            registryCategory: request.registryCategory,
+            sourceKind: request.sourceKind,
+            authority: request.sourceAuthority,
+            jurisdiction: request.sourceJurisdiction,
+            workType: request.workType,
+            subjectScoped: request.subjectScoped,
+          },
           signal: operationSignal,
         }));
       }
@@ -436,21 +479,76 @@ export function extractPantheonDiscoveredCandidates(
   content: string,
   baseUrl: string,
   inherited: readonly unknown[] = [],
+  subject = '',
+  location = '',
 ): string[] {
-  const linkedCandidates = [...content.matchAll(/href=["']([^"']+)["']/gi)]
-    .flatMap(match => {
-      try {
-        const url = new URL(String(match[1] || ''), baseUrl);
-        return url.protocol === 'http:' || url.protocol === 'https:' ? [url.toString()] : [];
-      } catch {
-        return [];
+  const normalized = (value: unknown) => String(value || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}@.+-]+/gu, ' ')
+    .trim();
+  const subjectTokens = normalized(subject).split(/\s+/).filter(token => token.length >= 2);
+  const searchProviderHost = (host: string) => /(?:^|\.)(?:bing\.com|google\.com|duckduckgo\.com|search\.brave\.com)$/i.test(host);
+  const unwrapSearchRedirect = (raw: string): string => {
+    try {
+      const parsed = new URL(raw, baseUrl);
+      if (!searchProviderHost(parsed.hostname)) return parsed.toString();
+      for (const key of ['uddg', 'url', 'target', 'q']) {
+        const candidate = parsed.searchParams.get(key);
+        if (candidate && /^https?:\/\//i.test(candidate)) return new URL(candidate).toString();
       }
+      const bingValue = parsed.searchParams.get('u');
+      if (bingValue?.startsWith('a1')) {
+        const decoded = Buffer.from(bingValue.slice(2), 'base64url').toString('utf8');
+        if (/^https?:\/\//i.test(decoded)) return new URL(decoded).toString();
+      }
+      return parsed.toString();
+    } catch {
+      return '';
+    }
+  };
+  const relevant = (url: string, context: string): boolean => {
+    if (!subjectTokens.length) return true;
+    let target: URL;
+    try {
+      target = new URL(url);
+    } catch {
+      return false;
+    }
+    if (searchProviderHost(target.hostname)) return false;
+    const haystack = normalized(`${decodeURIComponent(target.pathname)} ${target.search} ${context}`);
+    if (subjectTokens.length === 1) return haystack.split(/\s+/).includes(subjectTokens[0]);
+    return haystack.includes(subjectTokens.join(' '))
+      || (haystack.includes(subjectTokens[0]) && haystack.includes(subjectTokens[subjectTokens.length - 1]));
+  };
+  const linkedCandidates: Array<{ url: string; context: string }> = [];
+  try {
+    const $ = load(content);
+    $('a[href]').each((_, element) => {
+      const href = $(element).attr('href') || '';
+      const url = unwrapSearchRedirect(href);
+      if (!url) return;
+      const context = `${$(element).text()} ${$(element).parent().text()}`.slice(0, 2_000);
+      linkedCandidates.push({ url, context });
     });
+  } catch {
+    for (const match of content.matchAll(/href=["']([^"']+)["']/gi)) {
+      const url = unwrapSearchRedirect(String(match[1] || ''));
+      if (url) linkedCandidates.push({ url, context: '' });
+    }
+  }
+  const inheritedCandidates = inherited.map(value => ({ url: unwrapSearchRedirect(String(value || '')), context: '' }));
+  const inlineCandidates = (content.match(/https?:\/\/[^\s<>"')\]]+/g) || [])
+    .map(value => ({ url: unwrapSearchRedirect(value), context: '' }));
+  const locationContext = normalized(location);
   return [...new Set([
-    ...inherited.map(value => String(value || '')).filter(Boolean),
+    ...inheritedCandidates,
     ...linkedCandidates,
-    ...(content.match(/https?:\/\/[^\s<>"')\]]+/g) || []),
-  ])].slice(0, 100);
+    ...inlineCandidates,
+  ]
+    .filter(candidate => candidate.url && relevant(candidate.url, `${candidate.context} ${locationContext}`))
+    .map(candidate => candidate.url))];
 }
 
 function normalizeResult(
@@ -469,6 +567,8 @@ function normalizeResult(
     ocrApplied?: boolean;
     rawSnapshot?: PublicAcquisitionResult['snapshot'];
     lastModified?: string;
+    subject?: string;
+    location?: string;
   },
 ): RetrievalEvidence {
   const discoveryOnly = context.transport === 'search-provider';
@@ -478,13 +578,16 @@ function normalizeResult(
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 500);
-  const discoveredCandidates = discoveryOnly
-    ? extractPantheonDiscoveredCandidates(
-        canonicalContent,
-        context.finalUrl || result.target,
-        Array.isArray(result.metadata?.discoveredCandidates) ? result.metadata.discoveredCandidates : [],
-      )
-    : [];
+  // Every successfully acquired page may broaden the controller-owned crawl
+  // frontier. Search pages remain discovery-only evidence, while attributable
+  // public pages can both contribute evidence and yield subject-relevant links.
+  const discoveredCandidates = extractPantheonDiscoveredCandidates(
+    canonicalContent,
+    context.finalUrl || result.target,
+    Array.isArray(result.metadata?.discoveredCandidates) ? result.metadata.discoveredCandidates : [],
+    context.subject,
+    context.location,
+  ).slice(0, 100);
   return createPantheonSourceResult({
     crawler: result.crawler,
     capabilityId: result.crawler,
@@ -509,7 +612,8 @@ function normalizeResult(
       requestedUrl: context.requestedUrl || result.target,
       finalUrl: context.finalUrl || result.target,
       ...(pageTitle ? { pageTitle } : {}),
-      ...(discoveryOnly ? { discoveryOnly: true, discoveredCandidates } : {}),
+      ...(discoveryOnly ? { discoveryOnly: true } : {}),
+      ...(discoveredCandidates.length ? { discoveredCandidates } : {}),
     },
   });
 }

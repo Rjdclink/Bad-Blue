@@ -12,7 +12,7 @@ const registry = read('server/services/pantheon/PantheonSovereignSourceRegistry.
 const pdf = read('server/services/pantheon/PantheonBackgroundReportPdf.ts');
 const client = read('client/src/components/DoomsdayClockSelector.tsx');
 
-for (const token of ['exact_normalized_name','all_name_tokens','first_last_name','location_correlates','metadata_subject_conflict','score']) {
+for (const token of ['exact_normalized_name','all_name_tokens','first_last_name','fuzzy_normalized_name','location_correlates','metadata_subject_conflict','score']) {
   if (!entity.includes(token)) throw new Error('Entity-resolution invariant missing: ' + token);
 }
 for (const token of ['simulation_or_test_output','verified_live_source','requireVerifiedPantheonEvidence','provenance','subject_mismatch']) {

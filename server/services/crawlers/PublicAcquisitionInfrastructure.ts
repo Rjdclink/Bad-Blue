@@ -2,6 +2,7 @@ import { URL } from 'url';
 import { promises as dns } from 'dns';
 import { isIP } from 'net';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { createHash } from 'node:crypto';
 import { pantheonAbortableDelay, throwIfPantheonAborted } from '../pantheon/PantheonDeadline';
 import { parsePantheonDocument, type PantheonParsedDocument } from '../pantheon/PantheonDocumentIntelligence';
 import { persistPantheonRawSnapshot, type PantheonRawSnapshotDescriptor } from '../pantheon/PantheonRawSnapshotStore';
@@ -69,7 +70,7 @@ export interface PublicAcquisitionResult {
   lastModified?: string;
   retrievedAt: string;
   error?: string;
-  errorType?: 'rate_limited'|'auth_required'|'forbidden'|'not_found'|'dns_failure'|'tls_failure'|'timeout'|'invalid_url'|'unsupported_content'|'circuit_open'|'network_failure'|'http_error';
+  errorType?: 'rate_limited'|'auth_required'|'forbidden'|'robots_disallowed'|'not_found'|'dns_failure'|'tls_failure'|'timeout'|'invalid_url'|'unsupported_content'|'circuit_open'|'network_failure'|'http_error';
   retryAfterMs?: number;
 }
 
@@ -94,13 +95,19 @@ const MAX_RETRIES = 2;
 const MAX_BACKOFF_MS = 12_000;
 const CIRCUIT_FAILURE_THRESHOLD = 4;
 const CIRCUIT_OPEN_MS = 30_000;
+const PANTHEON_USER_AGENT = 'LegalWhat-Pantheon/1.0';
+const ROBOTS_CACHE_TTL_MS = 30 * 60_000;
+interface PantheonRobotsPolicy {
+  isAllowed(url: string, userAgent?: string): boolean | undefined;
+}
+const robotsPolicies = new Map<string, { expiresAt: number; policy: PantheonRobotsPolicy }>();
+const robotsInflight = new Map<string, Promise<PantheonRobotsPolicy>>();
 
 const BLOCKED_EXTENSIONS = /\.(?:css|js|mjs|map|woff2?|ttf|otf|eot|gif|webp|svg|ico|mp[34]|m4[av]|avi|mov|webm|zip|gz|rar|7z|exe|dmg|apk)(?:$|[?#])/i;
 const BLOCKED_HOST_HINTS = /(?:googletagmanager|google-analytics|doubleclick|newrelic|addthis|chartbeat|optimizely|tinypass|fonts\.googleapis|fonts\.gstatic|static\.files\.bbci|m\.files\.bbci|assets\.guim|static\.guim|i\.guim|j\.ophan)/i;
 const MALFORMED_RECURSIVE_SCHEME = /^https?:\/\/https?(?::?\/\/|%3a%2f%2f)/i;
 const AUTH_ROUTE_HINT = /(?:^|\/)(?:login|log-in|log_in|signin|sign-in|sign_in|users\/sign_in|account\/login|oauth\/authorize)(?:\/|$)/i;
 const CREDENTIAL_QUERY_KEY = /^(?:api[_-]?key|apikey|access[_-]?token|auth[_-]?token|client[_-]?secret|session[_-]?token|signature)$/i;
-const TELEMETRY_SECRET_QUERY_KEY = /(?:key|token|secret|password|signature|authorization|credential)/i;
 
 function stateFor(host: string): HostState {
   let state = hostStates.get(host);
@@ -188,6 +195,121 @@ function blockedResponseBody(value: string): boolean {
   return ['our systems have detected unusual traffic','captcha','verify you are human','access denied','enable javascript on your web browser'].some(marker => lowered.includes(marker));
 }
 
+export function isPantheonRobotsAllowed(targetUrl: string, robotsUrl: string, robotsText: string): boolean {
+  const allowed = parsePantheonRobotsPolicy(robotsUrl, robotsText).isAllowed(targetUrl, PANTHEON_USER_AGENT);
+  return allowed !== false;
+}
+
+function parsePantheonRobotsPolicy(robotsUrl: string, robotsText: string): PantheonRobotsPolicy {
+  const groups: Array<{ agents: string[]; rules: Array<{ allow: boolean; path: string }> }> = [];
+  let agents: string[] = [];
+  let rules: Array<{ allow: boolean; path: string }> = [];
+  const flush = () => {
+    if (agents.length) groups.push({ agents, rules });
+    agents = [];
+    rules = [];
+  };
+  for (const sourceLine of String(robotsText || '').split(/\r?\n/)) {
+    const line = sourceLine.replace(/#.*$/, '').trim();
+    if (!line) continue;
+    const separator = line.indexOf(':');
+    if (separator < 0) continue;
+    const field = line.slice(0, separator).trim().toLowerCase();
+    const value = line.slice(separator + 1).trim();
+    if (field === 'user-agent') {
+      if (rules.length) flush();
+      agents.push(value.toLowerCase());
+    } else if ((field === 'allow' || field === 'disallow') && agents.length && value) {
+      rules.push({ allow: field === 'allow', path: value });
+    }
+  }
+  flush();
+
+  return {
+    isAllowed(rawUrl: string, rawUserAgent = '*'): boolean {
+      let path: string;
+      try {
+        const parsed = new URL(rawUrl, robotsUrl);
+        path = `${parsed.pathname}${parsed.search}`;
+      } catch {
+        return false;
+      }
+      const userAgent = rawUserAgent.toLowerCase();
+      const candidates = groups.flatMap(group => group.agents
+        .filter(agent => agent === '*' || userAgent.includes(agent))
+        .map(agent => ({ specificity: agent === '*' ? 0 : agent.length, rules: group.rules })));
+      if (!candidates.length) return true;
+      const highestSpecificity = Math.max(...candidates.map(candidate => candidate.specificity));
+      const applicableRules = candidates
+        .filter(candidate => candidate.specificity === highestSpecificity)
+        .flatMap(candidate => candidate.rules)
+        .flatMap(rule => {
+          const anchored = rule.path.endsWith('$');
+          const pattern = anchored ? rule.path.slice(0, -1) : rule.path;
+          const expression = pattern
+            .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+            .replace(/\*/g, '.*');
+          const matches = new RegExp(`^${expression}${anchored ? '$' : ''}`).test(path);
+          return matches ? [{ ...rule, specificity: pattern.replace(/\*/g, '').length }] : [];
+        })
+        .sort((left, right) => right.specificity - left.specificity || Number(right.allow) - Number(left.allow));
+      return applicableRules[0]?.allow ?? true;
+    },
+  };
+}
+
+async function robotsPolicyFor(target: URL, deadlineAt: number, signal?: AbortSignal): Promise<PantheonRobotsPolicy> {
+  const origin = target.origin;
+  const cached = robotsPolicies.get(origin);
+  if (cached && cached.expiresAt > Date.now()) return cached.policy;
+  const existing = robotsInflight.get(origin);
+  if (existing) return existing;
+
+  const task = (async () => {
+    const robotsUrl = new URL('/robots.txt', origin);
+    await assertPublicResolution(robotsUrl);
+    const controller = new AbortController();
+    const abortFromParent = () => controller.abort(signal?.reason);
+    signal?.addEventListener('abort', abortFromParent, { once: true });
+    const remaining = Math.max(1, Math.min(3_000, deadlineAt - Date.now()));
+    const timer = setTimeout(() => controller.abort(new Error('robots.txt acquisition deadline exceeded')), remaining);
+    let policy: PantheonRobotsPolicy;
+    let ttl = ROBOTS_CACHE_TTL_MS;
+    try {
+      const response = await fetch(robotsUrl, {
+        signal: controller.signal,
+        redirect: 'manual',
+        headers: { 'user-agent': `${PANTHEON_USER_AGENT} public-record research`, accept: 'text/plain' },
+      });
+      if (response.ok) {
+        const text = (await response.text()).slice(0, 500_000);
+        policy = parsePantheonRobotsPolicy(robotsUrl.toString(), text);
+      } else if (response.status >= 500) {
+        // RFC 9309 treats an unreachable robots service as complete disallow.
+        policy = parsePantheonRobotsPolicy(robotsUrl.toString(), 'User-agent: *\nDisallow: /');
+        ttl = 5 * 60_000;
+      } else {
+        // 4xx means the robots file is unavailable, so crawling is permitted.
+        policy = parsePantheonRobotsPolicy(robotsUrl.toString(), '');
+      }
+    } catch {
+      policy = parsePantheonRobotsPolicy(robotsUrl.toString(), 'User-agent: *\nDisallow: /');
+      ttl = 60_000;
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', abortFromParent);
+    }
+    robotsPolicies.set(origin, { expiresAt: Date.now() + ttl, policy });
+    return policy;
+  })();
+  robotsInflight.set(origin, task);
+  try {
+    return await task;
+  } finally {
+    robotsInflight.delete(origin);
+  }
+}
+
 /**
  * Detects credential walls after a public GET without attempting to evade them.
  * A normal public page that merely links to a sign-in page is not rejected.
@@ -237,6 +359,7 @@ function classify(status: number, error?: unknown): PublicAcquisitionResult['err
   if (status === 404) return 'not_found';
   const message = error instanceof Error ? error.message : String(error || '');
   if (/credential-gated|sign[ -]?in required|api[ _-]?key.*required|access token.*required|subscription required/i.test(message)) return 'auth_required';
+  if (/robots\.txt policy/i.test(message)) return 'robots_disallowed';
   if (/ENOTFOUND|EAI_AGAIN|hostname did not resolve/i.test(message)) return 'dns_failure';
   if (/TLS|SSL|secure.*connection|ECONNRESET/i.test(message)) return 'tls_failure';
   if (/abort|timed out|timeout/i.test(message)) return 'timeout';
@@ -244,17 +367,13 @@ function classify(status: number, error?: unknown): PublicAcquisitionResult['err
   return status > 0 ? 'http_error' : 'network_failure';
 }
 
-function telemetryUrl(raw: string): string {
+export function pantheonTelemetryUrl(raw: string): string {
+  const sourceRef = createHash('sha256').update(String(raw || '')).digest('hex').slice(0, 16);
   try {
     const url = new URL(String(raw || ''));
-    for (const key of [...url.searchParams.keys()]) {
-      if (TELEMETRY_SECRET_QUERY_KEY.test(key)) url.searchParams.set(key, '[REDACTED]');
-    }
-    url.username = '';
-    url.password = '';
-    return url.toString().slice(0, 2_000);
+    return `${url.protocol}//${url.host}/[REDACTED]#source=${sourceRef}`;
   } catch {
-    return String(raw || '').replace(/[\r\n\t]/g, ' ').slice(0, 2_000);
+    return `[INVALID]#source=${sourceRef}`;
   }
 }
 
@@ -273,7 +392,7 @@ function logAcquisitionEvent(
     capability: authority.capability,
     route: authority.route || 'primary',
     ...(authority.fallbackFor ? { fallbackFor: authority.fallbackFor } : {}),
-    url: telemetryUrl(url),
+    url: pantheonTelemetryUrl(url),
     ...details,
   })}`);
 }
@@ -387,6 +506,10 @@ async function acquireOnce(
     for (let redirects = 0; redirects <= 5; redirects++) {
       throwIfPantheonAborted(signal);
       await assertPublicResolution(current);
+      const robotsPolicy = await robotsPolicyFor(current, deadlineAt, signal);
+      if (robotsPolicy.isAllowed(current.toString(), PANTHEON_USER_AGENT) === false) {
+        return { ...failureResult(current.toString(), 0, new Error('Blocked by the source robots.txt policy')), errorType: 'robots_disallowed' };
+      }
       const remaining = Math.max(1, deadlineAt - Date.now());
       const controller = new AbortController();
       const abortFromParent = () => controller.abort(signal?.reason);
@@ -399,7 +522,7 @@ async function acquireOnce(
           signal: controller.signal,
           redirect: 'manual',
           headers: {
-            'user-agent': 'LegalWhat-Pantheon/1.0 public-record research',
+            'user-agent': `${PANTHEON_USER_AGENT} public-record research`,
             accept: 'text/html,application/xhtml+xml,application/json,application/xml,text/xml,text/csv,text/plain,application/pdf;q=0.8',
             ...(authority?.requestHeaders || {}),
             ...(requestOptions.headers || {}),
@@ -607,7 +730,7 @@ export async function acquirePublicResource(
     logAcquisitionEvent(authority, 'outcome', result.url, {
       method, status: result.status, outcome: result.ok ? 'completed' : 'skipped_or_failed',
       errorType: result.errorType, durationMs: Date.now() - telemetryStartedAt,
-      finalUrl: telemetryUrl(result.url),
+      finalUrl: pantheonTelemetryUrl(result.url),
       redirectCount: Math.max(0, Number(result.redirectChain?.length || 1) - 1),
       contentType: result.contentType || undefined,
       parser: result.parser,

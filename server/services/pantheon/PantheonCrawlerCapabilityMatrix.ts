@@ -1,4 +1,8 @@
-import type { PantheonTransport } from './PantheonSovereignSourceRegistry';
+import type {
+  PantheonBackgroundCategory,
+  PantheonSourceTarget,
+  PantheonTransport,
+} from './PantheonSovereignSourceRegistry';
 export type { PantheonTransport } from './PantheonSovereignSourceRegistry';
 
 /**
@@ -515,11 +519,8 @@ const UNIVERSAL_PORTABLE = [
   'seed-startrek', 'seed-birdofprey', 'seed-trinity', 'seed-sixdegrees',
   'firecrawl', 'openrouter-web-search', 'spiderfoot', 'puppeteer', 'apify', 'crawl4ai-pattern',
 ] as const;
-const PEOPLE_PORTABLE = ['fast-people-search', 'true-people-search', 'whitepages', 'social-media-scraper'] as const;
-const LEGAL_PORTABLE = [
-  'instant-legal', 'adaptive-legal', 'legal-crawler', 'public-record', 'pacer',
-  'state-court', 'county-court', 'warrant-database', 'sex-offender-registry',
-] as const;
+const PEOPLE_PORTABLE = ['fast-people-search', 'true-people-search', 'whitepages'] as const;
+const LEGAL_PORTABLE = ['instant-legal', 'adaptive-legal', 'legal-crawler', 'public-record'] as const;
 const BUSINESS_PORTABLE = ['beneficial', 'public-record'] as const;
 
 const BASE_PUBLIC = ['startrek', 'blizzard', 'ice', 'farm', 'phantom', 'nova', ...UNIVERSAL_PORTABLE] as const;
@@ -527,10 +528,14 @@ const IDENTITY = [...BASE_PUBLIC, ...PEOPLE_PORTABLE, 'birdofprey', 'razor:ident
 const CONTACT = [...BASE_PUBLIC, ...PEOPLE_PORTABLE, 'birdofprey', 'razor:contact'] as const;
 const ADDRESS = [...BASE_PUBLIC, ...PEOPLE_PORTABLE, 'birdofprey', 'razor:address', 'razor:record'] as const;
 const RELATIONSHIP = [...BASE_PUBLIC, 'sixdegrees', 'lich', 'hydra', 'razor:relation'] as const;
-const SOCIAL = [...BASE_PUBLIC, 'birdofprey', 'sixdegrees', 'hydra', 'razor:social', 'razor:media'] as const;
+const SOCIAL = [...BASE_PUBLIC, 'social-media-scraper', 'birdofprey', 'sixdegrees', 'hydra', 'razor:social', 'razor:media'] as const;
 const BUSINESS = [...BASE_PUBLIC, ...BUSINESS_PORTABLE, 'birdofprey', 'razor:business', 'razor:record'] as const;
-const ASSET = [...BASE_PUBLIC, ...BUSINESS_PORTABLE, 'cerberus', 'razor:asset', 'razor:record'] as const;
+const ASSET = [...BASE_PUBLIC, 'public-record', 'cerberus', 'razor:asset', 'razor:record'] as const;
 const LEGAL = [...BASE_PUBLIC, ...LEGAL_PORTABLE, 'cerberus', 'birdofprey', 'razor:court', 'razor:record'] as const;
+const COURT = [...LEGAL, 'pacer', 'state-court', 'county-court'] as const;
+const REGIONAL_LEGAL = [...LEGAL, 'state-court', 'county-court'] as const;
+const WARRANT = [...LEGAL, 'warrant-database'] as const;
+const SEX_OFFENDER = [...LEGAL, 'sex-offender-registry'] as const;
 const MEDIA = [...BASE_PUBLIC, 'birdofprey', 'hydra', 'razor:media'] as const;
 
 export const PANTHEON_CATEGORY_CAPABILITY_MATRIX = {
@@ -550,15 +555,15 @@ export const PANTHEON_CATEGORY_CAPABILITY_MATRIX = {
   'Business Ownership & Affiliations': BUSINESS,
   'Property & Real Estate': ASSET,
   'Vehicles & Transportation Records': ASSET,
-  'Court Records': LEGAL,
-  'Criminal Records': LEGAL,
-  'Arrest & Police Records': LEGAL,
+  'Court Records': COURT,
+  'Criminal Records': COURT,
+  'Arrest & Police Records': REGIONAL_LEGAL,
   'Incarceration & Corrections': LEGAL,
   'Probation & Parole Information': LEGAL,
-  'Warrants & Wanted-Person Records': LEGAL,
-  'Sex-Offender Registries': LEGAL,
-  'Civil Litigation & Judgments': LEGAL,
-  'Bankruptcies, Liens & Financial Public Records': [...LEGAL, 'razor:asset'],
+  'Warrants & Wanted-Person Records': WARRANT,
+  'Sex-Offender Registries': SEX_OFFENDER,
+  'Civil Litigation & Judgments': COURT,
+  'Bankruptcies, Liens & Financial Public Records': [...COURT, 'razor:asset'],
   'Marriage, Divorce & Vital-Record Information': [...RELATIONSHIP, 'cerberus', 'razor:record'],
   'News & Media Mentions': MEDIA,
   'Internet & Web Footprint': [...SOCIAL, 'wraith'],
@@ -573,6 +578,12 @@ export interface PantheonExecutableWorkUnit {
   applicable: boolean;
   sourceUrl?: string;
   transport?: PantheonTransport;
+  sourceRegistryCategory?: PantheonBackgroundCategory;
+  sourceKind?: NonNullable<PantheonSourceTarget['sourceKind']>;
+  sourceAuthority?: PantheonSourceTarget['authority'];
+  sourceJurisdiction?: string;
+  workType?: PantheonExecutableSource['workType'];
+  subjectScoped?: boolean;
   implementationPath: string;
   executableFunction: string;
   taskKind: PantheonTaskKind;
@@ -590,6 +601,104 @@ export interface PantheonExecutableWorkUnit {
 export interface PantheonExecutableSource {
   sourceUrl: string;
   transport: PantheonTransport;
+  registryCategory?: PantheonBackgroundCategory;
+  sourceKind?: NonNullable<PantheonSourceTarget['sourceKind']>;
+  authority?: PantheonSourceTarget['authority'];
+  jurisdiction?: string;
+  workType?: 'authoritative-source' | 'discovery-search' | 'candidate-validation' | 'corroboration';
+  subjectScoped?: boolean;
+  priority?: number;
+}
+
+const SEARCH_PAGE_CAPABILITIES = new Set<PantheonCapabilityId>([
+  ...PANTHEON_PRIMARY_CRAWLER_IDS.filter(id => id !== 'sixdegrees'),
+  'seed-startrek',
+  'seed-birdofprey',
+  'seed-trinity',
+  'seed-sixdegrees',
+  'openrouter-web-search',
+]);
+
+const PEOPLE_SOURCE_CATEGORIES = new Set<PantheonBackgroundCategory>([
+  'identity', 'residence', 'contacts', 'relatives', 'associates', 'social',
+  'usernames', 'professional-web', 'identity-resolution', 'historical',
+]);
+const SOCIAL_SOURCE_CATEGORIES = new Set<PantheonBackgroundCategory>([
+  'social', 'usernames', 'internet', 'professional-web', 'domain-web',
+]);
+const BUSINESS_SOURCE_CATEGORIES = new Set<PantheonBackgroundCategory>([
+  'employment', 'education', 'credentials', 'business', 'corporate',
+  'organizations', 'nonprofits', 'professional-discipline',
+]);
+const LEGAL_SOURCE_CATEGORIES = new Set<PantheonBackgroundCategory>([
+  'courts', 'civil-litigation', 'criminal', 'arrests', 'corrections',
+  'probation-parole', 'warrants', 'sex-offender', 'bankruptcy',
+  'financial-public', 'family-probate', 'vital-records', 'regulatory',
+  'sanctions', 'government-employment', 'campaign-finance', 'lobbying',
+  'government-contracting',
+]);
+
+function sourceHostAndPath(sourceUrl: string): string {
+  try {
+    const parsed = new URL(sourceUrl);
+    return `${parsed.hostname}${parsed.pathname}`.toLowerCase();
+  } catch {
+    return sourceUrl.toLowerCase();
+  }
+}
+
+/**
+ * Source-skill admission gate.
+ *
+ * Pantheon follows the same separation used by mature crawler frontiers:
+ * discovery pages discover URLs, while record-specific extractors execute only
+ * on admitted authoritative candidates that fit their declared skill. A
+ * transport match alone is deliberately insufficient.
+ */
+export function isPantheonCapabilitySourceCompatible(
+  capabilityId: PantheonCapabilityId,
+  source: PantheonExecutableSource,
+): boolean {
+  const descriptor = PANTHEON_CRAWLER_CAPABILITY_MATRIX[capabilityId];
+  if (!descriptor.transports.includes(source.transport)) return false;
+
+  const category = source.registryCategory;
+  const sourceKind = source.sourceKind || (source.transport === 'search-provider' ? 'search' : 'public-page');
+  const discoveryPage = source.transport === 'search-provider'
+    || sourceKind === 'search'
+    || source.workType === 'discovery-search';
+  if (discoveryPage) return SEARCH_PAGE_CAPABILITIES.has(capabilityId);
+
+  if (capabilityId === 'openrouter-web-search') return false;
+  if (capabilityId === 'social-media-scraper') return Boolean(category && SOCIAL_SOURCE_CATEGORIES.has(category));
+  if (['fast-people-search', 'true-people-search', 'whitepages'].includes(capabilityId)) {
+    return Boolean(category && PEOPLE_SOURCE_CATEGORIES.has(category));
+  }
+  if (capabilityId === 'beneficial') return Boolean(category && BUSINESS_SOURCE_CATEGORIES.has(category));
+  if (['instant-legal', 'adaptive-legal', 'legal-crawler'].includes(capabilityId)) {
+    return Boolean(category && LEGAL_SOURCE_CATEGORIES.has(category));
+  }
+  if (capabilityId === 'warrant-database') return category === 'warrants';
+  if (capabilityId === 'sex-offender-registry') return category === 'sex-offender';
+
+  const hostAndPath = sourceHostAndPath(source.sourceUrl);
+  if (capabilityId === 'pacer') {
+    return Boolean(category && ['courts', 'civil-litigation', 'bankruptcy'].includes(category))
+      && /(?:courtlistener|recap|uscourts|pacer|bankruptcy|district-court|govinfo)/.test(hostAndPath);
+  }
+  if (capabilityId === 'state-court') {
+    return Boolean(category && LEGAL_SOURCE_CATEGORIES.has(category))
+      && (/^US-[A-Z]{2}$/i.test(source.jurisdiction || '')
+        || /(?:state\.[a-z]{2}\.us|judicial|judiciary|courts?\.)/.test(hostAndPath));
+  }
+  if (capabilityId === 'county-court') {
+    return Boolean(category && LEGAL_SOURCE_CATEGORIES.has(category))
+      && /(?:county|clerk|circuitcourt|districtcourt|municipalcourt)/.test(hostAndPath);
+  }
+
+  // Every remaining capability is already category allow-listed. Non-search
+  // sources may therefore be routed by that declared category skill.
+  return true;
 }
 
 export function isPantheonExecutableWorkSchedulable(
@@ -624,14 +733,22 @@ export function buildPantheonExecutableWorkUnits(input: {
   categoryLabel: string;
   sourceUrl: string;
   transport: PantheonTransport;
+  registryCategory?: PantheonBackgroundCategory;
+  sourceKind?: NonNullable<PantheonSourceTarget['sourceKind']>;
+  authority?: PantheonSourceTarget['authority'];
+  jurisdiction?: string;
+  workType?: PantheonExecutableSource['workType'];
+  subjectScoped?: boolean;
+  priority?: number;
 }): PantheonExecutableWorkUnit[] {
   if (!isPantheonReportCategoryLabel(input.categoryLabel)) {
     throw new Error('Pantheon capability matrix rejected unknown report category: ' + input.categoryLabel);
   }
   const categoryLabel: PantheonReportCategoryLabel = input.categoryLabel;
+  const source: PantheonExecutableSource = input;
   return categoryCapabilities(categoryLabel)
     .map(capabilityId => PANTHEON_CRAWLER_CAPABILITY_MATRIX[capabilityId])
-    .filter(descriptor => descriptor.transports.includes(input.transport))
+    .filter(descriptor => isPantheonCapabilitySourceCompatible(descriptor.id, source))
     .map(descriptor => ({
       taskId: [
         input.investigationId,
@@ -645,6 +762,12 @@ export function buildPantheonExecutableWorkUnits(input: {
       applicable: true,
       sourceUrl: input.sourceUrl,
       transport: input.transport,
+      sourceRegistryCategory: input.registryCategory,
+      sourceKind: input.sourceKind,
+      sourceAuthority: input.authority,
+      sourceJurisdiction: input.jurisdiction,
+      workType: input.workType,
+      subjectScoped: input.subjectScoped,
       implementationPath: descriptor.implementationPath,
       executableFunction: descriptor.executableFunction,
       taskKind: descriptor.taskKind,
@@ -690,8 +813,7 @@ export function buildPantheonCapabilityWorkLedger(input: {
     for (const unit of buildPantheonExecutableWorkUnits({
       investigationId: input.investigationId,
       categoryLabel,
-      sourceUrl: source.sourceUrl,
-      transport: source.transport,
+      ...source,
     })) {
       const current = executableByCapability.get(unit.capabilityId) || [];
       current.push(unit);
@@ -727,10 +849,6 @@ export function buildPantheonCapabilityWorkLedger(input: {
       };
     }
 
-    if (previous?.state === 'completed') {
-      return { ...previous, attemptedSourceUrls: [...previous.attemptedSourceUrls] };
-    }
-
     const unavailableReason = input.unavailableReasons?.[capabilityId];
     if (unavailableReason) {
       return {
@@ -751,18 +869,34 @@ export function buildPantheonCapabilityWorkLedger(input: {
       };
       return preference(left.transport) - preference(right.transport);
     });
+    const previousCompatible = previous?.sourceUrl
+      ? compatible.find(unit => unit.sourceUrl === previous.sourceUrl && unit.transport === previous.transport)
+      : undefined;
+    const previousCompletedSourceCompatible = previous?.sourceUrl && previous.transport
+      && previous.sourceRegistryCategory
+      ? isPantheonCapabilitySourceCompatible(capabilityId, {
+          sourceUrl: previous.sourceUrl,
+          transport: previous.transport,
+          registryCategory: previous.sourceRegistryCategory,
+          sourceKind: previous.sourceKind,
+          authority: previous.sourceAuthority,
+          jurisdiction: previous.sourceJurisdiction,
+          workType: previous.workType,
+          subjectScoped: previous.subjectScoped,
+        })
+      : Boolean(previousCompatible);
+    if (previous?.state === 'completed' && previousCompletedSourceCompatible) {
+      return { ...previous, attemptedSourceUrls: [...previous.attemptedSourceUrls] };
+    }
     if (!compatible.length) {
       return {
         ...base,
         applicable: true,
         state: 'unavailable' as const,
-        reason: 'No transport-compatible live source is available for this capability',
+        reason: 'No admitted live source matches this capability\'s declared skill, category, and transport requirements',
       };
     }
 
-    const previousCompatible = previous?.sourceUrl
-      ? compatible.find(unit => unit.sourceUrl === previous.sourceUrl && unit.transport === previous.transport)
-      : undefined;
     const candidate = previousCompatible || compatible[assignmentIndex++ % compatible.length];
     const resumed = previous && ['running', 'retryable', 'failed', 'timed_out'].includes(previous.state);
     return {
@@ -770,6 +904,12 @@ export function buildPantheonCapabilityWorkLedger(input: {
       applicable: true,
       sourceUrl: candidate.sourceUrl,
       transport: candidate.transport,
+      sourceRegistryCategory: candidate.sourceRegistryCategory,
+      sourceKind: candidate.sourceKind,
+      sourceAuthority: candidate.sourceAuthority,
+      sourceJurisdiction: candidate.sourceJurisdiction,
+      workType: candidate.workType,
+      subjectScoped: candidate.subjectScoped,
       state: resumed ? 'retryable' as const : 'pending' as const,
       ...(resumed ? { reason: previous.reason || 'Interrupted capability work is eligible for controlled retry' } : {}),
     };

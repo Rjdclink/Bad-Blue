@@ -121,9 +121,8 @@ const AUTHORITIES = [
 ] as const;
 
 const DISCOVERY_HOSTS = [
- 'https://www.google.com/search?q=','https://www.bing.com/search?q=',
- 'https://search.brave.com/search?q=','https://www.google.com/search?q=site%3A.gov+',
- 'https://www.google.com/search?q=site%3A.us+','https://www.google.com/search?q=site%3Acourts.',
+ 'https://www.bing.com/search?q=',
+ 'https://html.duckduckgo.com/html/?q=',
 ] as const;
 
 const facets = [
@@ -136,7 +135,7 @@ const facets = [
 
 function transportForSource(url: string, authority: PantheonSourceTarget['authority']): PantheonTransport {
  const value=url.toLowerCase();
- if(authority==='discovery'||/google\.com\/search|bing\.com\/search|search\.brave\.com/.test(value)) return 'search-provider';
+ if(authority==='discovery'||/google\.com\/search|bing\.com\/search|search\.brave\.com|duckduckgo\.com\/html/.test(value)) return 'search-provider';
  if(authority==='archive'||/archive\.org|commoncrawl/.test(value)) return 'archive';
  if(/pacer\.uscourts\.gov|brokercheck\.finra\.org|nmlsconsumeraccess/.test(value)) return 'browser';
  if(/data\.|api\.|\/api\/|\.json(?:$|\?)/.test(value)) return 'specialized-adapter';
@@ -145,7 +144,7 @@ function transportForSource(url: string, authority: PantheonSourceTarget['author
 
 function sourceKindFor(url: string, authority: PantheonSourceTarget['authority']): NonNullable<PantheonSourceTarget['sourceKind']> {
  const value=url.toLowerCase();
- if(authority==='discovery'||/google\.com\/search|bing\.com\/search|search\.brave\.com/.test(value)) return 'search';
+ if(authority==='discovery'||/google\.com\/search|bing\.com\/search|search\.brave\.com|duckduckgo\.com\/html/.test(value)) return 'search';
  if(authority==='archive'||/archive\.org|arquivo\.pt|mementoweb/.test(value)) return 'archive';
  if(/(?:^|\/)sitemap(?:[_-]|\.|\/)|sitemap\.xml/.test(value)) return 'sitemap';
  if(/(?:rss|atom|feed)(?:\.|\/|$)/.test(value)) return 'rss';
@@ -173,9 +172,9 @@ export function buildPantheonCategoryTargets(
  if (!identity) return [];
  const out:PantheonSourceTarget[]=[]; const seen=new Set<string>();
  const add=(x:Omit<PantheonSourceTarget,'transport'|'subjectScoped'|'sourceKind'|'freshnessWeight'|'expectedValue'> & {transport?:PantheonTransport;subjectScoped?:boolean;sourceKind?:PantheonSourceTarget['sourceKind'];freshnessWeight?:number;expectedValue?:number})=>{ if(!seen.has(x.url)){const sourceKind=x.sourceKind||sourceKindFor(x.url,x.authority);const weights=sourceWeights(sourceKind,x.authority);seen.add(x.url);out.push({...x,transport:x.transport||transportForSource(x.url,x.authority),sourceKind,freshnessWeight:x.freshnessWeight??weights.freshnessWeight,expectedValue:x.expectedValue??weights.expectedValue,subjectScoped:x.subjectScoped===true});} };
- // Pair each verified authority with a subject-specific discovery task. A bare
- // agency home page is useful for source discovery, but is never mistaken for
- // a person-specific result merely because it is authoritative.
+ // Pair each verified authority with a subject-specific discovery task. Bare
+ // agency roots are registry metadata, not person-specific work items. Search
+ // results can recursively add subject-relevant public pages to the frontier.
  const normalizedLocation=String(location||'').toUpperCase();
  const inventory=PANTHEON_EXECUTABLE_SOURCE_INVENTORY
    .filter(source=>source.categories.includes(category))
@@ -200,23 +199,11 @@ export function buildPantheonCategoryTargets(
      accessMode:source.accessMode,
      accessReason:source.accessReason,
    });
-   add({
-     category,
-     url:source.url,
-     authority:source.authority,
-     jurisdiction:source.jurisdiction,
-     query:q,
-     subjectScoped:false,
-     sourceIds:[...source.sourceIds],
-     originalUrls:[...source.originalUrls],
-     accessMode:source.accessMode,
-     accessReason:source.accessReason,
-   });
    if(out.length>=limit) return out.slice(0,limit);
  }
  for(const [root,authority] of AUTHORITIES){
    const q=`${identity} ${category}`;
-   add({category,url:searchUrl('https://www.google.com/search?q=',`site:${new URL(root).hostname} ${q}`),authority:'discovery',jurisdiction:'US',query:q,subjectScoped:true});
+   add({category,url:searchUrl('https://html.duckduckgo.com/html/?q=',`site:${new URL(root).hostname} ${q}`),authority:'discovery',jurisdiction:'US',query:q,subjectScoped:true});
  }
  for(const facet of facets){
    for(const host of DISCOVERY_HOSTS){

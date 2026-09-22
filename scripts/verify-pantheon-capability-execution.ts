@@ -2,36 +2,63 @@ import assert from 'node:assert/strict';
 import {
   PANTHEON_CRAWLER_CAPABILITY_MATRIX,
   PANTHEON_PORTABLE_CAPABILITY_IDS,
-  PANTHEON_REPORT_CATEGORY_LABELS,
   buildPantheonCapabilityWorkLedger,
   getPantheonCategoryCapabilities,
+  isPantheonCapabilitySourceCompatible,
   isPantheonExecutableWorkSchedulable,
   type PantheonCapabilityId,
   type PantheonExecutableWorkUnit,
-  type PantheonTransport,
 } from '../server/services/pantheon/PantheonCrawlerCapabilityMatrix';
-import {
-  assessPantheonCapabilityCoverage,
-  finalizePantheonCategoryCapabilityOutcomes,
-  type PantheonCapabilityHealth,
-} from '../server/services/pantheon/PantheonCapabilityRuntime';
+import { finalizePantheonCategoryCapabilityOutcomes, type PantheonCapabilityHealth } from '../server/services/pantheon/PantheonCapabilityRuntime';
+import { runPortablePantheonCapabilities } from '../server/services/pantheon/PantheonPortableCapabilityExecutor';
 import { BaseRazor } from '../server/services/pantheon/razors/BaseRazor';
 import { RazorType } from '../server/services/pantheon/razors/types';
 
 const capabilityIds = Object.keys(PANTHEON_CRAWLER_CAPABILITY_MATRIX) as PantheonCapabilityId[];
 assert.equal(capabilityIds.length, 53, 'the production capability union must contain all 53 functions');
 
-const transports: PantheonTransport[] = [
-  'direct-http',
-  'browser',
-  'search-provider',
-  'specialized-adapter',
-  'archive',
+const sources = [
+  {
+    sourceUrl: 'https://www.bing.com/search?q=Jane+Example+court',
+    transport: 'search-provider' as const,
+    registryCategory: 'courts' as const,
+    sourceKind: 'search' as const,
+    authority: 'discovery' as const,
+    jurisdiction: 'US',
+    workType: 'discovery-search' as const,
+    subjectScoped: true,
+  },
+  {
+    sourceUrl: 'https://www.courtlistener.com/docket/123/jane-example/',
+    transport: 'direct-http' as const,
+    registryCategory: 'courts' as const,
+    sourceKind: 'public-page' as const,
+    authority: 'secondary' as const,
+    jurisdiction: 'US',
+    workType: 'candidate-validation' as const,
+    subjectScoped: true,
+  },
+  {
+    sourceUrl: 'https://judiciary.example.gov/case-search/jane-example',
+    transport: 'direct-http' as const,
+    registryCategory: 'courts' as const,
+    sourceKind: 'public-page' as const,
+    authority: 'primary' as const,
+    jurisdiction: 'US-OH',
+    workType: 'candidate-validation' as const,
+    subjectScoped: true,
+  },
+  {
+    sourceUrl: 'https://examplecounty.gov/clerk/case/jane-example',
+    transport: 'direct-http' as const,
+    registryCategory: 'courts' as const,
+    sourceKind: 'public-page' as const,
+    authority: 'primary' as const,
+    jurisdiction: 'US-OH',
+    workType: 'candidate-validation' as const,
+    subjectScoped: true,
+  },
 ];
-const sources = transports.map((transport, index) => ({
-  sourceUrl: `https://public.example.test/source-${index}`,
-  transport,
-}));
 
 const courtWork = buildPantheonCapabilityWorkLedger({
   investigationId: 'behavioral-check',
@@ -58,6 +85,40 @@ for (const unit of courtWork) {
     `${unit.capabilityId} must receive a compatible transport`,
   );
 }
+assert.equal(courtCapabilities.has('warrant-database'), false, 'warrant extraction must be restricted to warrant categories');
+assert.equal(courtCapabilities.has('sex-offender-registry'), false, 'registry extraction must be restricted to its declared category');
+assert.equal(
+  getPantheonCategoryCapabilities('Social-Media Profiles').includes('social-media-scraper'),
+  true,
+  'social extraction must be routed to social source categories',
+);
+assert.equal(
+  getPantheonCategoryCapabilities('Identity & Identity Verification').includes('social-media-scraper'),
+  false,
+  'social extraction must not be assigned to identity-only sources',
+);
+assert.equal(
+  getPantheonCategoryCapabilities('Property & Real Estate').includes('beneficial'),
+  false,
+  'business ownership extraction must not be assigned to property-only sources',
+);
+assert.equal(
+  getPantheonCategoryCapabilities('Incarceration & Corrections').includes('pacer'),
+  false,
+  'federal docket extraction must not be assigned to corrections-only sources',
+);
+assert.equal(
+  getPantheonCategoryCapabilities('Warrants & Wanted-Person Records').includes('warrant-database'),
+  true,
+);
+assert.equal(
+  getPantheonCategoryCapabilities('Sex-Offender Registries').includes('sex-offender-registry'),
+  true,
+);
+assert.equal(isPantheonCapabilitySourceCompatible('pacer', sources[0]), false);
+assert.equal(isPantheonCapabilitySourceCompatible('pacer', sources[1]), true);
+assert.equal(isPantheonCapabilitySourceCompatible('state-court', sources[2]), true);
+assert.equal(isPantheonCapabilitySourceCompatible('county-court', sources[3]), true);
 
 for (const capabilityId of PANTHEON_PORTABLE_CAPABILITY_IDS) {
   const descriptor = PANTHEON_CRAWLER_CAPABILITY_MATRIX[capabilityId];
@@ -92,6 +153,42 @@ const resumed = buildPantheonCapabilityWorkLedger({
 assert.equal(resumed.find(unit => unit.capabilityId === completed.capabilityId)?.state, 'completed');
 assert.equal(resumed.find(unit => unit.capabilityId === interrupted.capabilityId)?.state, 'retryable');
 assert.equal(resumed.find(unit => unit.capabilityId === failed.capabilityId)?.state, 'retryable');
+const resumedAfterConsumedSource = buildPantheonCapabilityWorkLedger({
+  investigationId: 'behavioral-check',
+  categoryLabel: 'Court Records',
+  sources: sources.filter(source => source.sourceUrl !== completed.sourceUrl),
+  previous,
+});
+assert.equal(
+  resumedAfterConsumedSource.find(unit => unit.capabilityId === completed.capabilityId)?.state,
+  'completed',
+  'a source-compatible completed unit must remain terminal after its URL leaves the pending frontier',
+);
+
+const invalidLegacyCompletion = previous.map(unit => ({ ...unit, attemptedSourceUrls: [...unit.attemptedSourceUrls] }));
+const invalidPacer = invalidLegacyCompletion.find(unit => unit.capabilityId === 'pacer')!;
+Object.assign(invalidPacer, {
+  state: 'completed',
+  sourceUrl: sources[0].sourceUrl,
+  transport: sources[0].transport,
+  sourceRegistryCategory: sources[0].registryCategory,
+  sourceKind: sources[0].sourceKind,
+  sourceAuthority: sources[0].authority,
+  sourceJurisdiction: sources[0].jurisdiction,
+  workType: sources[0].workType,
+  subjectScoped: true,
+});
+const repairedLegacyCompletion = buildPantheonCapabilityWorkLedger({
+  investigationId: 'behavioral-check',
+  categoryLabel: 'Court Records',
+  sources,
+  previous: invalidLegacyCompletion,
+});
+assert.equal(
+  repairedLegacyCompletion.find(unit => unit.capabilityId === 'pacer')?.state,
+  'pending',
+  'a completed unit from a source-skill mismatch must be invalidated and reassigned',
+);
 assert.deepEqual(
   ['pending', 'retryable'].filter(state => isPantheonExecutableWorkSchedulable({ state } as PantheonExecutableWorkUnit)),
   ['pending', 'retryable'],
@@ -99,6 +196,35 @@ assert.deepEqual(
 for (const state of ['running', 'completed', 'failed', 'timed_out', 'unavailable', 'not_applicable'] as const) {
   assert.equal(isPantheonExecutableWorkSchedulable({ state }), false, `${state} must not be assigned on resume`);
 }
+
+const rejectedRoute = await runPortablePantheonCapabilities({
+  capabilityIds: ['pacer'],
+  sourceUrl: sources[0].sourceUrl,
+  content: '<main>Jane Example federal court docket</main>',
+  subject: 'Jane Example',
+  sourceContext: sources[0],
+});
+assert.equal(rejectedRoute[0].status, 'failed');
+assert.match(rejectedRoute[0].error || '', /source-skill admission/i);
+
+const acceptedRoute = await runPortablePantheonCapabilities({
+  capabilityIds: ['pacer'],
+  sourceUrl: sources[1].sourceUrl,
+  content: '<main>Jane Example federal district court docket 123</main>',
+  subject: 'Jane Example',
+  sourceContext: sources[1],
+});
+assert.equal(acceptedRoute[0].status, 'completed_with_evidence');
+assert.equal(acceptedRoute[0].capabilityOutput?.sourceCompatible, true);
+
+const weakIdentityMatch = await runPortablePantheonCapabilities({
+  capabilityIds: ['pacer'],
+  sourceUrl: sources[1].sourceUrl,
+  content: '<main>Jane Roe federal district court docket 987</main>',
+  subject: 'Jane Example',
+  sourceContext: sources[1],
+});
+assert.equal(weakIdentityMatch[0].status, 'completed_no_evidence');
 
 const healthy: PantheonCapabilityHealth[] = capabilityIds.map(capabilityId => ({
   capabilityId,
@@ -132,31 +258,17 @@ const withLinkedFallback = finalizePantheonCategoryCapabilityOutcomes({
 });
 assert.equal(withLinkedFallback.find(item => item.capabilityId === 'startrek')?.fallbackExecuted, true);
 
-const categoryOutcomes = PANTHEON_REPORT_CATEGORY_LABELS.map(categoryLabel => {
-  const permitted = getPantheonCategoryCapabilities(categoryLabel);
-  const crawlerAudit = permitted.map(crawler => ({
-    crawler,
-    status: 'completed_no_evidence',
-    evidenceCount: 0,
-    attempts: 1,
-    targets: 1,
-  }));
-  const capabilityOutcomes = finalizePantheonCategoryCapabilityOutcomes({
-    categoryLabel,
-    health: healthy,
-    crawlerAudit,
-  });
-  for (const outcome of capabilityOutcomes.filter(item => !item.applicable)) {
-    assert.equal(outcome.status, 'not_applicable');
-    assert.ok(outcome.reason, `${outcome.capabilityId} requires a persisted not_applicable reason`);
-  }
-  return { capabilityOutcomes };
+const truthfulCourtOutcomes = finalizePantheonCategoryCapabilityOutcomes({
+  categoryLabel: 'Court Records',
+  health: healthy,
+  crawlerAudit: acceptedRoute,
 });
-const coverage = assessPantheonCapabilityCoverage(categoryOutcomes);
-assert.equal(coverage.eligible, true);
-assert.equal(coverage.executedCapabilities.length, 53);
-assert.deepEqual(coverage.missingCapabilities, []);
-assert.deepEqual(coverage.undisclosedCapabilities, []);
+assert.equal(truthfulCourtOutcomes.find(item => item.capabilityId === 'pacer')?.status, 'completed_with_evidence');
+assert.equal(truthfulCourtOutcomes.find(item => item.capabilityId === 'warrant-database')?.status, 'not_applicable');
+assert.ok(
+  truthfulCourtOutcomes.some(item => item.applicable && item.status === 'not_executed'),
+  'unexecuted applicable capability work must stay visibly missing',
+);
 
 class TimeoutRazor extends BaseRazor {
   readonly type = RazorType.IDENTITY;

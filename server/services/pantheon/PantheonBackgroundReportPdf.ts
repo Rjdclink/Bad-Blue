@@ -261,7 +261,8 @@ export function verifyPantheonPdfBuffer(buffer: Buffer, expectedMinimumPages = 1
   if (pageCount < minimumPages || streamCount < pageCount) {
     throw new Error(`Pantheon PDF verification failed: expected at least ${minimumPages} rendered pages`);
   }
-  if (textObjectCount < pageCount || !/\/Title\s/.test(raw) || !/\/Author\s/.test(raw) || !/\/Subject\s/.test(raw)) {
+  const hasRenderedTextStreams = textObjectCount >= pageCount || /\/Filter\s*\/FlateDecode/.test(raw);
+  if (!hasRenderedTextStreams || !/\/Title\s/.test(raw) || !/\/Author\s/.test(raw) || !/\/Subject\s/.test(raw)) {
     throw new Error('Pantheon PDF verification failed: text or required document metadata is missing');
   }
   return {
@@ -282,14 +283,16 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
       size: 'LETTER',
-      margins: { top: 46, bottom: 46, left: 48, right: 48 },
+      // Reserve the footer area so automatically flowed content cannot collide
+      // with page numbering or compliance text.
+      margins: { top: 46, bottom: 86, left: 48, right: 48 },
       info: {
         Title: 'PANTHEON Comprehensive Public-Source Background Report',
         Author: 'Legal What? PANTHEON',
         Subject: cleanText(input.report.identitySummary?.name) || 'Background Report',
       },
       bufferPages: true,
-      compress: false,
+      compress: true,
     });
 
     const chunks: Buffer[] = [];
@@ -337,7 +340,7 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
     addLabelValue(doc, 'Verification status', cleanText(report.identitySummary?.verificationStatus) || 'Not recorded');
 
     addSectionTitle(doc, 'Executive Summary');
-    doc.font('Helvetica').fontSize(9).text(cleanText(report.summary) || 'No synthesis was produced.', { align: 'justify', lineGap: 2 });
+    doc.font('Helvetica').fontSize(9).text(compactEvidence(report.summary || 'No synthesis was produced.', 1_500), { align: 'justify', lineGap: 2 });
 
     if (report.reportCompleteness !== 'complete') {
       addSectionTitle(doc, 'Coverage Gaps & Exact Omissions');
@@ -419,10 +422,16 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
         ...(intelligence.manualReview || []).map(item => `MANUAL REVIEW — ${cleanText(item.category)}: ${cleanText(item.reason)}${item.citationId ? ` [${cleanText(item.citationId)}]` : ''}${item.sourceUrl ? ` — ${cleanText(item.sourceUrl)}` : ''}`),
         ...(intelligence.investigativeLeads || []).map(item => `UNVERIFIED LEAD — ${cleanText(item.category)}: ${cleanText(item.value)} (${cleanText(item.reason)})${item.citationId ? ` [${cleanText(item.citationId)}]` : ''}`),
       ];
-      addList(doc, reviewLines);
+      const printableReviewLines = reviewLines.slice(0, 60);
+      if (reviewLines.length > printableReviewLines.length) {
+        printableReviewLines.push(`${reviewLines.length - printableReviewLines.length} additional internal review items were omitted from this customer report.`);
+      }
+      addList(doc, printableReviewLines);
 
       addSectionTitle(doc, 'Per-Source Data Quality');
-      const quality = intelligence.sourceQuality || [];
+      const quality = (intelligence.sourceQuality || [])
+        .sort((left, right) => Number(right.acceptedEvidence || 0) - Number(left.acceptedEvidence || 0))
+        .slice(0, 100);
       if (!quality.length) {
         doc.font('Helvetica-Oblique').fontSize(8).text('No per-source quality measurements were available.');
       } else {
@@ -432,7 +441,7 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
         }
       }
 
-      addSectionTitle(doc, 'Exact Search Scope, Jurisdictions, and Negative Results');
+      addSectionTitle(doc, 'Search Scope, Jurisdictions, and Negative Results');
       doc.font('Helvetica-Oblique').fontSize(8).text(cleanText(intelligence.negativeResultQualification));
       for (const scope of intelligence.searchScope || []) {
         if (doc.y > 685) doc.addPage();
@@ -440,13 +449,9 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
         doc.font('Helvetica-Bold').fontSize(8).fillColor('#183B63').text(cleanText(scope.category) || 'Category');
         doc.font('Helvetica').fillColor('#111827').fontSize(7).text(`Jurisdictions checked: ${(scope.jurisdictions || []).map(cleanText).join(', ') || 'none recorded'} | URLs attempted: ${(scope.attemptedUrls || []).length} | successful paths: ${(scope.successfulUrls || []).length} | failed paths: ${(scope.failedUrls || []).length}`);
         if (scope.negativeResult) doc.font('Helvetica-Oblique').text(cleanText(scope.negativeResult));
-        for (const url of scope.attemptedUrls || []) addLinkedUrl(doc, url);
-        for (const failure of scope.failedUrls || []) {
-          if (doc.y > 710) doc.addPage();
-          doc.font('Helvetica').fontSize(6.5).fillColor('#7F1D1D').text(`  Failed: ${cleanText(failure.url)} — ${cleanText(failure.reason)}`, { indent: 8, lineGap: 0.5 });
-          doc.fillColor('#111827');
-        }
       }
+      doc.moveDown(0.5);
+      doc.font('Helvetica-Oblique').fontSize(7).text('Raw attempted URLs, failed routes, and crawler diagnostics are retained in the internal provenance ledger and are not printed as customer findings.');
 
       const changes = intelligence.incrementalChanges;
       if (changes && ((changes.added || []).length || (changes.modified || []).length || (changes.deleted || []).length)) {
@@ -489,7 +494,7 @@ export async function generatePantheonBackgroundReportPdf(input: PantheonPdfInpu
 
     addSectionTitle(doc, 'Methodology & Verification');
     doc.font('Helvetica').fontSize(8).text(
-      'PANTHEON performs parallel, failure-isolated public-source retrieval, cross-source aggregation, entity correlation, and evidence-aware synthesis. Empty or failed crawler paths are recorded as such rather than converted into positive findings. Important facts should be verified against the cited originating source before consequential use.',
+      'PANTHEON executes all 30 categories sequentially, persisting each category before the next begins. Within the active category it performs bounded, failure-isolated public-source retrieval, subject-aware discovery, cross-source correlation, and evidence-gated synthesis. Empty, blocked, irrelevant, or failed paths remain internal audit outcomes and are never converted into positive findings. Important facts should be verified against the cited originating source before consequential use.',
       { align: 'justify', lineGap: 2 },
     );
 

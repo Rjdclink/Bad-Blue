@@ -1,7 +1,9 @@
 import crypto from 'node:crypto';
 import {
+  isPantheonCapabilitySourceCompatible,
   PANTHEON_CRAWLER_CAPABILITY_MATRIX,
   PANTHEON_PORTABLE_CAPABILITY_IDS,
+  type PantheonExecutableSource,
   type PantheonPortableCapabilityId,
 } from './PantheonCrawlerCapabilityMatrix';
 
@@ -29,6 +31,7 @@ export interface PantheonPortableCapabilityAudit {
     capabilitySignalMatches: number;
     discoveredLinkCount: number;
     extractedFieldCount: number;
+    sourceCompatible: boolean;
   };
   error?: string;
 }
@@ -119,6 +122,7 @@ export async function runPortablePantheonCapabilities(input: {
   subject: string;
   location?: string;
   discoveredCandidates?: readonly unknown[];
+  sourceContext?: Omit<PantheonExecutableSource, 'sourceUrl'>;
   signal?: AbortSignal;
 }): Promise<PantheonPortableCapabilityAudit[]> {
   const requested = [...new Set(input.capabilityIds)]
@@ -138,7 +142,8 @@ export async function runPortablePantheonCapabilities(input: {
       }
     }),
   ])].slice(0, 100);
-  const subjectTokens = `${input.subject} ${input.location || ''}`
+  const normalizedSubject = String(input.subject || '').toLowerCase().replace(/[^a-z0-9@.+-]+/g, ' ').trim();
+  const subjectTokens = normalizedSubject
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter(token => token.length >= 2);
@@ -146,6 +151,33 @@ export async function runPortablePantheonCapabilities(input: {
   return requested.map(capabilityId => {
     const startedAt = Date.now();
     const descriptor = PANTHEON_CRAWLER_CAPABILITY_MATRIX[capabilityId];
+    const sourceCompatible = !input.sourceContext || isPantheonCapabilitySourceCompatible(capabilityId, {
+      sourceUrl: input.sourceUrl,
+      ...input.sourceContext,
+    });
+    if (!sourceCompatible) {
+      const durationMs = Date.now() - startedAt;
+      const error = 'Source-skill admission rejected this capability for the supplied URL';
+      return {
+        crawler: capabilityId,
+        capabilityClass: 'pantheon-secondary' as const,
+        status: 'failed' as const,
+        evidenceCount: 0,
+        attempts: 1,
+        targets: 1,
+        durationMs,
+        sourceOutcomes: [{
+          sourceUrl: input.sourceUrl,
+          status: 'failed' as const,
+          retrievedAt: new Date().toISOString(),
+          durationMs,
+          error,
+        }],
+        executionMode: 'credential-free-equivalent' as const,
+        replacementDisclosure: descriptor.replacementDisclosure || 'Credential-free local equivalent.',
+        error,
+      };
+    }
     if (input.signal?.aborted) {
       const durationMs = Date.now() - startedAt;
       return {
@@ -194,14 +226,25 @@ export async function runPortablePantheonCapabilities(input: {
 
     const lowered = text.toLowerCase();
     const subjectTokenMatches = subjectTokens.filter(token => lowered.includes(token)).length;
+    const subjectDigits = normalizedSubject.replace(/\D/g, '');
+    const exactIdentifier = normalizedSubject.includes('@')
+      ? lowered.includes(normalizedSubject)
+      : subjectDigits.length >= 7
+        ? lowered.replace(/\D/g, '').includes(subjectDigits)
+        : false;
+    const subjectMatched = exactIdentifier || (subjectTokens.length >= 2
+      ? lowered.includes(subjectTokens.join(' '))
+        || (lowered.includes(subjectTokens[0]) && lowered.includes(subjectTokens[subjectTokens.length - 1]))
+      : subjectTokens.length === 1 && new RegExp(`\\b${subjectTokens[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(text));
     const capabilitySignalMatches = countMatches(text, CAPABILITY_PATTERNS[capabilityId]);
     const extractedFieldCount = new Set(
       (text.match(/\b(?:case|docket|license|record|filing|address|phone|email|date|name|status|agency|court)\b/gi) || [])
         .map(value => value.toLowerCase()),
     ).size;
-    const hasAttributableOutput = subjectTokenMatches > 0 && (
+    const kind = capabilityKind(capabilityId);
+    const hasAttributableOutput = subjectMatched && (
       capabilitySignalMatches > 0
-      || discovered.length > 0
+      || (kind === 'link-discovery' && discovered.length > 0)
       || ['mirror', 'usc', 'silence'].includes(capabilityId)
     );
     const durationMs = Date.now() - startedAt;
@@ -223,12 +266,13 @@ export async function runPortablePantheonCapabilities(input: {
       executionMode: 'credential-free-equivalent' as const,
       replacementDisclosure: descriptor.replacementDisclosure || 'Credential-free local equivalent.',
       capabilityOutput: {
-        kind: capabilityKind(capabilityId),
+        kind,
         contentHash: crypto.createHash('sha256').update(text).digest('hex'),
         subjectTokenMatches,
         capabilitySignalMatches,
         discoveredLinkCount: discovered.length,
         extractedFieldCount,
+        sourceCompatible,
       },
     };
   });
