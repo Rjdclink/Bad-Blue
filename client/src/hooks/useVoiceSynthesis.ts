@@ -230,7 +230,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
   ): Promise<void> => {
     // One reply owns one progressive media stream. Do not split a response into
     // separately downloaded blobs: that was the source of the audible gaps.
-    const stableTurnId = \`lexara-turn-\${turnId}\`;
+    const stableTurnId = `lexara-turn-${turnId}`;
     const interruption = makeInterruptionPromise();
     let selectedProvider: string | null = null;
     let expectedDuration = Math.max(10_000, text.length * 70);
