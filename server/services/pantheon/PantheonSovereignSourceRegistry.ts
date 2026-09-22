@@ -204,7 +204,7 @@ export function buildPantheonCategoryTargets(
    if(out.length>=limit) return out.slice(0,limit);
    add({
      category,
-     url:`${sourceRoot}/sitemap.xml`,
+     url:`${sourceRoot}/robots.txt`,
      authority:source.authority,
      jurisdiction:source.jurisdiction,
      query:q,
@@ -219,18 +219,36 @@ export function buildPantheonCategoryTargets(
    if(out.length>=limit) return out.slice(0,limit);
    add({
      category,
-     url:searchUrl('https://html.duckduckgo.com/html/?q=',`site:${host} ${q}`),
-     authority:'discovery',
+     url:`${sourceRoot}/sitemap.xml`,
+     authority:source.authority,
      jurisdiction:source.jurisdiction,
      query:q,
-     transport:'search-provider',
-     subjectScoped:true,
+     transport:'direct-http',
+     sourceKind:'sitemap',
+     subjectScoped:false,
      sourceIds:[...source.sourceIds],
      originalUrls:[...source.originalUrls],
      accessMode:source.accessMode,
      accessReason:source.accessReason,
    });
    if(out.length>=limit) return out.slice(0,limit);
+   for (const facet of ['', 'record', 'registry', 'filing', 'archive']) {
+     const scopedQuery=[`site:${host}`,q,facet].filter(Boolean).join(' ');
+     add({
+       category,
+       url:searchUrl('https://html.duckduckgo.com/html/?q=',scopedQuery),
+       authority:'discovery',
+       jurisdiction:source.jurisdiction,
+       query:scopedQuery,
+       transport:'search-provider',
+       subjectScoped:true,
+       sourceIds:[...source.sourceIds],
+       originalUrls:[...source.originalUrls],
+       accessMode:source.accessMode,
+       accessReason:source.accessReason,
+     });
+     if(out.length>=limit) return out.slice(0,limit);
+   }
    add({
      category,
      url:`https://web.archive.org/cdx/search/cdx?url=${encodeURIComponent(`${host}/*`)}&output=json&filter=statuscode%3A200&filter=mimetype%3Atext%2Fhtml&collapse=urlkey&fl=timestamp%2Coriginal%2Cstatuscode%2Cmimetype&limit=100`,
