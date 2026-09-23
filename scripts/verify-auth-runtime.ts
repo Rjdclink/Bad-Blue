@@ -88,7 +88,9 @@ assert.match(statelessLocalAuthSource, /Paid access requires a verified active S
 assert.match(authSource, /app\.post\("\/api\/local-register"[\s\S]{0,900}setLocalCookie\(res, createLocalSessionToken\(user\)\)/, 'signup must establish the pending authenticated checkout session');
 assert.match(authSource, /isIdentityAuthenticated[\s\S]{0,1000}SUBSCRIPTION_REQUIRED/, 'ordinary authenticated services must require verified paid access');
 assert.match(subscriptionFlowSource, /isIdentityAuthenticated/, 'pending users must retain access to subscription activation routes');
-assert.match(subscriptionFlowSource, /subscriptionPlanId:\s*planVariationId\(\)/, 'Square hosted checkout must use the configured subscription plan variation');
+assert.match(subscriptionFlowSource, /subscriptionPlanId:\s*await resolvePlanVariationId\(square\)/, 'Square hosted checkout must use the catalog-validated $9.99 monthly plan variation');
+assert.match(subscriptionFlowSource, /types:\s*"SUBSCRIPTION_PLAN"/, 'Square plan resolver must discover subscription plans through Catalog');
+assert.match(subscriptionFlowSource, /uniqueIds\.length !== 1/, 'Square plan resolver must fail closed unless exactly one $9.99 monthly variation is found');
 assert.match(subscriptionFlowSource, /paymentNote:\s*noteForUser\(id\)/, 'Square checkout must carry an application-user reconciliation key');
 assert.doesNotMatch(subscriptionFlowSource, /square\.fetch\(/, 'Square v43 integration must not call a nonexistent generic client fetch method');
 assert.match(subscriptionFlowSource, /square\.subscriptions\.search\(/, 'subscription reconciliation must use the Square subscriptions resource client');
