@@ -787,7 +787,7 @@ must(
 // CPU-only Lexara continuity guard: one reply uses one progressive session and
 // the visual layer selects prepared states without becoming part of playback.
 must(
-  avatar.includes('cy: 0.313') &&
+  avatar.includes('cy: 0.317') &&
     avatar.includes('rx: 0.040') &&
     avatar.includes('ry: 0.0115') &&
     avatar.includes('traceLipBoundary') &&
