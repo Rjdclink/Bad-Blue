@@ -296,6 +296,10 @@ must(
     realtimeVoiceClient.includes('createMediaStreamDestination()') &&
     realtimeVoiceClient.includes('candidateAudio.srcObject = candidateDestination.stream') &&
     realtimeVoiceClient.includes('outputSampleRate: context.sampleRate') &&
+    realtimeVoiceClient.includes('sessionRenderedFrames') &&
+    realtimeVoiceClient.includes('interruptInFlight') &&
+    realtimeVoiceClient.includes('SpeechInterrupted') &&
+    synthesis.includes('never switch acoustic') &&
     realtimeVoiceClient.includes('sampleRate * 0.120') &&
     realtimeVoiceClient.includes('mobile-network jitter gap occurs') &&
     orchestrator.includes('LIVE_RESEARCH_BUDGET_MS = 2_400') &&
