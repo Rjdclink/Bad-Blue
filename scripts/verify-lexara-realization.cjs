@@ -810,11 +810,15 @@ must(
     avatar.includes("rightCorner: { x: 0.560, y: 0.317 }") &&
     avatar.includes("upperCenter: { x: 0.520, y: 0.3055 }") &&
     avatar.includes("lowerCenter: { x: 0.520, y: 0.3285 }") &&
-    avatar.includes("const cornerScale = Math.max(0.91, Math.min(1.11") &&
+    avatar.includes("const cornerScale = Math.max(0.94, Math.min(1.06") &&
     avatar.includes("const baseHalfWidth = layout.width") &&
+    avatar.includes("const upperDy = -gap * 0.20") &&
+    avatar.includes("const lowerDy = gap * 0.62") &&
+    !avatar.includes("ctx.fillStyle = 'rgba(142, 79, 83, 0.16)'") &&
+    !avatar.includes("ctx.scale(scaleX, 1)") &&
     !avatar.includes("{ cx: LEXARA_MOUTH_ANCHOR.cx, cy: LEXARA_MOUTH_ANCHOR.cy, rx: 0.034, ry: 0.0125 }") &&
-    avatar.includes("const destinationWidth = innerRx * 2.06") &&
-    avatar.includes("const destinationHeight = innerRy * 2.10") &&
+    avatar.includes("const destinationWidth = innerRx * 2.00") &&
+    avatar.includes("const destinationHeight = innerRy * 2.00") &&
     avatar.includes("ctx.imageSmoothingQuality = 'high'") &&
     avatar.includes("const teethY = r.cy + Math.min(gap * 0.06, r.ry * 0.20)") &&
     !avatar.includes("drawAtlasPose(frame.mouthPreviousPoseIndex") &&
