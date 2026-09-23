@@ -115,9 +115,44 @@ class LexaraPlaybackProcessor extends AudioWorkletProcessor {
     this.hadAudio = false;
     this.upstreamComplete = false;
     this.drainReported = false;
+    this.sourceSampleRate = sampleRate;
+    this.resamplePhase = 0;
+    this.resamplePrevious = 0;
     this.port.onmessage = event => {
       if (event.data?.type === 'audio' && event.data.buffer) {
-        const chunk = new Int16Array(event.data.buffer);
+        const input = new Int16Array(event.data.buffer);
+        const sourceRate = Number(event.data.sourceSampleRate) || this.sourceSampleRate || sampleRate;
+        this.sourceSampleRate = sourceRate;
+        let chunk = input;
+
+        // Device-adaptive clock bridge. The common case (provider clock equals
+        // AudioContext clock) is zero-copy and adds no blocking work. If a
+        // browser/device negotiates a different clock, resample each arriving
+        // PCM chunk incrementally so pitch and duration remain stable.
+        if (input.length && sourceRate !== sampleRate) {
+          const ratio = sourceRate / sampleRate;
+          const outputLength = Math.max(1, Math.round(input.length / ratio));
+          const output = new Int16Array(outputLength);
+          for (let i = 0; i < outputLength; i += 1) {
+            const sourcePosition = this.resamplePhase + (i * ratio);
+            const index = Math.floor(sourcePosition);
+            const fraction = sourcePosition - index;
+            const left = index >= 0 && index < input.length
+              ? input[index]
+              : this.resamplePrevious;
+            const right = index + 1 < input.length ? input[index + 1] : left;
+            output[i] = Math.max(-32768, Math.min(32767, Math.round(left + ((right - left) * fraction))));
+          }
+          this.resamplePhase = (this.resamplePhase + (outputLength * ratio)) - input.length;
+          while (this.resamplePhase >= 1) this.resamplePhase -= 1;
+          while (this.resamplePhase < 0) this.resamplePhase += 1;
+          this.resamplePrevious = input[input.length - 1];
+          chunk = output;
+        } else if (input.length) {
+          this.resamplePhase = 0;
+          this.resamplePrevious = input[input.length - 1];
+        }
+
         this.queue.push(chunk);
         this.queuedSamples += chunk.length;
         this.hadAudio = true;
@@ -142,6 +177,8 @@ class LexaraPlaybackProcessor extends AudioWorkletProcessor {
         this.hadAudio = false;
         this.upstreamComplete = false;
         this.drainReported = false;
+        this.resamplePhase = 0;
+        this.resamplePrevious = 0;
       } else if (event.data?.type === 'reset_counter') {
         this.renderedFrames = 0;
         this.nextMetricFrame = 0;
@@ -323,6 +360,7 @@ class LexaraRealtimeVoiceClient {
   private playbackZeroCrossingRate = 0;
   private cumulativeRenderedFrames = 0;
   private playbackEpoch = 0;
+  private realtimeOutputSampleRate: number | null = null;
   private onSttEvent: ((event: LexaraRealtimeSttEvent) => void) | null = null;
   private onFatal: ((error: Error) => void) | null = null;
 
@@ -815,6 +853,7 @@ class LexaraRealtimeVoiceClient {
     this.outputAudio = null;
     this.speechOutputReady = false;
     this.context = null;
+    this.realtimeOutputSampleRate = null;
     this.sessionRenderedFrames = 0;
     this.onSttEvent = null;
     this.onFatal = null;
@@ -840,10 +879,31 @@ class LexaraRealtimeVoiceClient {
       });
     }
     active.playbackDrained = false;
-    this.playback.port.postMessage({ type: 'audio', buffer }, [buffer]);
+    this.playback.port.postMessage({
+      type: 'audio',
+      buffer,
+      sourceSampleRate: this.realtimeOutputSampleRate || this.context?.sampleRate || null,
+    }, [buffer]);
   }
 
   private handleControlMessage(message: any): void {
+    if (message.type === 'config_ack') {
+      const outputSampleRate = Number(message.outputSampleRate);
+      this.realtimeOutputSampleRate = Number.isFinite(outputSampleRate) && outputSampleRate > 0
+        ? outputSampleRate
+        : this.context?.sampleRate || null;
+      reportRealtimeVoiceEvent('realtime-clock-negotiated', {
+        providerSampleRate: this.realtimeOutputSampleRate,
+        deviceSampleRate: this.context?.sampleRate || null,
+        adaptiveResampling: Boolean(
+          this.realtimeOutputSampleRate
+          && this.context?.sampleRate
+          && this.realtimeOutputSampleRate !== this.context.sampleRate
+        ),
+      });
+      return;
+    }
+
     if (message.type === 'channel_status') {
       reportRealtimeVoiceEvent('realtime-channel-status', {
         channel: String(message.channel || 'unknown'),
