@@ -414,7 +414,11 @@ function drawMouth(
   const gap = Math.max(0, Math.min(r.ry * 1.32, open * r.ry * 2.20));
   const upperExtent = Math.max(r.ry * 0.72, Math.min(r.ry * 1.28, baseUpper * (0.92 + open * 0.34)));
   const lowerExtent = Math.max(r.ry * 0.68, Math.min(r.ry * 1.78, baseLower * (0.80 + open * 1.22)));
-  const scaleX = cornerScale;
+  // Preserve the photographed lip texture as one coherent surface. Width is
+  // expressed by the boundary itself; independently scaling upper/lower copies
+  // created the layered, flat-looking mouth seen in production captures.
+  const upperDy = -gap * 0.20;
+  const lowerDy = gap * 0.62;
 
   const traceLipBoundary = () => {
     ctx.beginPath();
@@ -459,15 +463,14 @@ function drawMouth(
   traceLipBoundary();
   ctx.clip();
 
-  // Translate only pixels inside the lip boundary. Scaling or clipping a
-  // rectangular lower-face patch is what previously bent the jaw.
+  // One source texture, one registration. Both halves come from the unchanged
+  // portrait and move only vertically around the same seam; there is no second
+  // horizontal transform or synthetic lip-color layer to fight the photograph.
   ctx.save();
   ctx.beginPath();
   ctx.rect(mouthCx - lipHalfWidth, r.cy - upperExtent, lipHalfWidth * 2, upperExtent);
   ctx.clip();
-  ctx.translate(mouthCx, r.cy - gap * 0.24);
-  ctx.scale(scaleX, 1);
-  ctx.translate(-mouthCx, -r.cy);
+  ctx.translate(0, upperDy);
   ctx.drawImage(image, layout.x, layout.y, layout.width, layout.height);
   ctx.restore();
 
@@ -475,19 +478,9 @@ function drawMouth(
   ctx.beginPath();
   ctx.rect(mouthCx - lipHalfWidth, r.cy, lipHalfWidth * 2, lowerExtent);
   ctx.clip();
-  ctx.translate(mouthCx, r.cy + gap * 0.70);
-  ctx.scale(scaleX, 1);
-  ctx.translate(-mouthCx, -r.cy);
+  ctx.translate(0, lowerDy);
   ctx.drawImage(image, layout.x, layout.y, layout.width, layout.height);
   ctx.restore();
-
-  // Preserve the portrait's real lip texture, with a restrained color lift.
-  // Paint the aperture last so moving lip pixels cannot hide the voice shape.
-  ctx.fillStyle = 'rgba(142, 79, 83, 0.16)';
-  ctx.beginPath();
-  ctx.ellipse(mouthCx, r.cy - upperExtent * 0.34 - gap * 0.22, lipHalfWidth * 0.82, upperExtent * 0.37, 0, 0, Math.PI * 2);
-  ctx.ellipse(mouthCx, r.cy + lowerExtent * 0.37 + gap * 0.48, lipHalfWidth * 0.80, lowerExtent * 0.39, 0, 0, Math.PI * 2);
-  ctx.fill();
 
   if (open > 0.025) {
     const innerCx = mouthCx;
@@ -507,8 +500,8 @@ function drawMouth(
       // Draw exactly one selected interior texture per frame into the canonical
       // aperture. Cross-fading two photographed cells was the visible "layer"
       // doubling in production captures.
-      const destinationWidth = innerRx * 2.06;
-      const destinationHeight = innerRy * 2.10;
+      const destinationWidth = innerRx * 2.00;
+      const destinationHeight = innerRy * 2.00;
       ctx.save();
       ctx.beginPath();
       ctx.ellipse(innerCx, innerCy, innerRx, innerRy, 0, 0, Math.PI * 2);
@@ -519,7 +512,8 @@ function drawMouth(
       const cellIndex = Math.max(0, Math.min(14, atlasPose.visemeIndex));
       const sourceX = (cellIndex % 4) * cellWidth;
       const sourceY = Math.floor(cellIndex / 4) * cellHeight;
-      ctx.globalAlpha = 1;
+      // Interior detail is subordinate to the real photographed lips.
+      ctx.globalAlpha = Math.min(0.78, 0.42 + open * 0.52);
       ctx.drawImage(
         mouthAtlas,
         sourceX,
