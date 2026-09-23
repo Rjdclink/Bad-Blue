@@ -105,7 +105,8 @@ class LexaraPlaybackProcessor extends AudioWorkletProcessor {
     this.queuedSamples = 0;
     // A short jitter cushion prevents mobile radio/chunk variance from creating
     // mid-sentence gaps while remaining far below the old multi-second MP3 wait.
-    this.startThresholdFrames = Math.max(128, Math.round(sampleRate * 0.072));
+    this.startThresholdFrames = Math.max(128, Math.round(sampleRate * 0.120));
+    this.resumeThresholdFrames = Math.max(this.startThresholdFrames, Math.round(sampleRate * 0.060));
     this.metricIntervalFrames = Math.max(128, Math.round(sampleRate / 30));
     this.nextMetricFrame = 0;
     this.epoch = 0;
@@ -157,8 +158,14 @@ class LexaraPlaybackProcessor extends AudioWorkletProcessor {
     output.fill(0);
 
     if (!this.started) {
-      if (this.queuedSamples < this.startThresholdFrames) return true;
+      if (this.queuedSamples < this.startThresholdFrames && !this.upstreamComplete) return true;
+      if (this.queuedSamples === 0) return true;
       this.started = true;
+    } else if (this.queuedSamples === 0 && !this.upstreamComplete) {
+      // Do not repeatedly toggle playback state or attempt catch-up when a
+      // mobile-network jitter gap occurs. Output silence and resume in-order
+      // when the next PCM chunk arrives.
+      return true;
     }
 
     let writeOffset = 0;
