@@ -301,7 +301,7 @@ must(
     realtimeVoiceClient.includes('audio.playbackRate = 1') &&
     realtimeVoiceGateway.includes("url.searchParams.set('speed', '1.0')") &&
     realtimeVoiceGateway.includes("url.searchParams.set('expressivity', '0')") &&
-    realtimeVoiceGateway.includes('const DEFAULT_OUTPUT_SAMPLE_RATE = 24_000') &&
+    realtimeVoiceGateway.includes('const DEFAULT_OUTPUT_SAMPLE_RATE = 48_000') &&
     synthesis.includes("setProvider('deepgram-flux')") &&
     synthesis.includes('await speakWithServer') &&
     synthesis.includes('/api/lexara/tts/session'),
@@ -596,7 +596,7 @@ must(
     conversation.includes('ACKNOWLEDGEMENT_SOFT_TIMEOUT_MS') &&
     conversation.includes('controlAcknowledgementSpeechRef') &&
     !liveTurnHandler.includes('if (pendingUserTurnRef.current) return;') &&
-    orchestrator.includes('Default to 2-5 concise spoken sentences') &&
+    orchestrator.includes('Default to 1-3 concise sentences') &&
     orchestrator.includes('Do not say "thank you," "goodbye,"') &&
     orchestrator.includes('LIVE_RESEARCH_BUDGET_MS = 3_200') &&
     authorityResearch.includes('const RESEARCH_TIMEOUT_MS = 2_400') &&
