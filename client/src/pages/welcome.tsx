@@ -7,7 +7,7 @@
  * - TEMPORARY SOLUTION X: PANTHEON, SPECTRA, and Inmate Locator remain visible but are intentionally non-interactive.
  */
 
-import { useCallback, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, type CSSProperties } from "react";
 import { useLocation } from "wouter";
 import {
   ArrowRight,
@@ -158,8 +158,43 @@ const BookSpine = ({
   </button>
 );
 
+const FIELD_ANTHEM_URL =
+  "https://commons.wikimedia.org/wiki/Special:Redirect/file/The_United_States_Army_Old_Guard_Fife_and_Drum_Corps_-_02_-_United_States_National_Anthem_The_Star_Spangled_Banner.ogg";
+
 export default function WelcomePage() {
   const [, setLocation] = useLocation();
+  const anthemRef = useRef<HTMLAudioElement>(null);
+
+  useEffect(() => {
+    const audio = anthemRef.current;
+    if (!audio) return;
+
+    audio.volume = 0.12;
+
+    const beginPlayback = () => {
+      void audio.play().catch(() => {
+        // Audible autoplay may be blocked until the visitor interacts.
+      });
+    };
+
+    beginPlayback();
+
+    const resumeAfterInteraction = () => {
+      beginPlayback();
+      document.removeEventListener("pointerdown", resumeAfterInteraction);
+      document.removeEventListener("keydown", resumeAfterInteraction);
+    };
+
+    document.addEventListener("pointerdown", resumeAfterInteraction, { once: true });
+    document.addEventListener("keydown", resumeAfterInteraction, { once: true });
+
+    return () => {
+      document.removeEventListener("pointerdown", resumeAfterInteraction);
+      document.removeEventListener("keydown", resumeAfterInteraction);
+      audio.pause();
+      audio.currentTime = 0;
+    };
+  }, []);
 
   const sortedLawTypes = [...LAW_TYPE_DATA].sort((a, b) =>
     a.name.localeCompare(b.name)
@@ -180,6 +215,14 @@ export default function WelcomePage() {
 
   return (
     <div className="legal-library-page min-h-screen">
+      <audio
+        ref={anthemRef}
+        src={FIELD_ANTHEM_URL}
+        autoPlay
+        loop
+        preload="auto"
+        aria-hidden="true"
+      />
       <div
         className="fixed inset-0 bg-cover bg-center bg-no-repeat -z-20"
         style={{ backgroundImage: "url(/images/premium_photo-.jpg)" }}
