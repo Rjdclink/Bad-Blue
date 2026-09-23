@@ -400,7 +400,10 @@ function drawMouth(
   const gap = Math.max(0, Math.min(r.ry * 1.32, open * r.ry * 2.20));
   const upperExtent = Math.max(r.ry * 0.72, Math.min(r.ry * 1.28, baseUpper * (0.92 + open * 0.34)));
   const lowerExtent = Math.max(r.ry * 0.68, Math.min(r.ry * 1.78, baseLower * (0.80 + open * 1.22)));
-  const scaleX = cornerScale;
+  // Keep the source-mouth centroid and both commissures fixed. Speech may change
+  // aperture/curvature, but ordinary visemes cannot translate or horizontally
+  // rescale the photographed lips.
+  const scaleX = 1;
 
   const traceLipBoundary = () => {
     ctx.beginPath();
@@ -445,27 +448,35 @@ function drawMouth(
   traceLipBoundary();
   ctx.clip();
 
-  // Translate only pixels inside the lip boundary. Scaling or clipping a
-  // rectangular lower-face patch is what previously bent the jaw.
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(r.cx - lipHalfWidth, r.cy - upperExtent, lipHalfWidth * 2, upperExtent);
-  ctx.clip();
-  ctx.translate(r.cx, r.cy - gap * 0.24);
-  ctx.scale(scaleX, 1);
-  ctx.translate(-r.cx, -r.cy);
-  ctx.drawImage(image, layout.x, layout.y, layout.width, layout.height);
-  ctx.restore();
+  // Warp the photographed lips around fixed corners instead of translating two
+  // rectangular halves. Each narrow strip moves most at the center and reaches
+  // zero displacement at both commissures, preserving registration and symmetry.
+  const stripCount = 24;
+  const stripWidth = (lipHalfWidth * 2) / stripCount;
+  for (let index = 0; index < stripCount; index += 1) {
+    const stripLeft = r.cx - lipHalfWidth + index * stripWidth;
+    const stripCenter = stripLeft + stripWidth / 2;
+    const normalizedX = Math.max(-1, Math.min(1, (stripCenter - r.cx) / Math.max(0.001, lipHalfWidth)));
+    const centerWeight = Math.pow(Math.max(0, 1 - normalizedX * normalizedX), 1.35);
+    const upperDy = -gap * 0.20 * centerWeight;
+    const lowerDy = gap * 0.58 * centerWeight;
 
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(r.cx - lipHalfWidth, r.cy, lipHalfWidth * 2, lowerExtent);
-  ctx.clip();
-  ctx.translate(r.cx, r.cy + gap * 0.70);
-  ctx.scale(scaleX, 1);
-  ctx.translate(-r.cx, -r.cy);
-  ctx.drawImage(image, layout.x, layout.y, layout.width, layout.height);
-  ctx.restore();
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(stripLeft - 0.35, r.cy - upperExtent, stripWidth + 0.7, upperExtent);
+    ctx.clip();
+    ctx.translate(0, upperDy);
+    ctx.drawImage(image, layout.x, layout.y, layout.width, layout.height);
+    ctx.restore();
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(stripLeft - 0.35, r.cy, stripWidth + 0.7, lowerExtent);
+    ctx.clip();
+    ctx.translate(0, lowerDy);
+    ctx.drawImage(image, layout.x, layout.y, layout.width, layout.height);
+    ctx.restore();
+  }
 
   // Preserve the portrait's real lip texture, with a restrained color lift.
   // Paint the aperture last so moving lip pixels cannot hide the voice shape.
