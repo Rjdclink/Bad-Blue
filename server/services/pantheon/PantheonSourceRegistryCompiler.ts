@@ -155,6 +155,9 @@ export function compilePantheonSourceRegistry(
     const admission = admitPantheonUrl(source.url);
     if (!admission.ok) {
       const key = `invalid:${source.id}`;
+      // Invalid entries still require complete provenance. Preserve the authored
+      // URL on the exclusion record instead of dropping it when canonicalization
+      // fails; this keeps every raw registry entry auditable and accounted for.
       rejectedGroups.set(key, {
         sources: [source],
         mode: 'excluded-invalid',
@@ -210,7 +213,7 @@ export function compilePantheonSourceRegistry(
   const exclusions = [...rejectedGroups.values()].map(group => ({
     sourceIds: unique(group.sources.map(source => source.id)),
     names: unique(group.sources.map(source => source.name)),
-    originalUrls: unique(group.sources.map(source => source.url)),
+    originalUrls: unique(group.sources.map(source => source.url)).length ? unique(group.sources.map(source => source.url)) : group.sources.map(source => `registry-entry:${source.id}`),
     ...(group.canonicalUrl ? { canonicalUrl: group.canonicalUrl } : {}),
     jurisdictions: unique(group.sources.map(source => source.jurisdiction)),
     categories: unique(group.sources.flatMap(source => [...source.categories])),
