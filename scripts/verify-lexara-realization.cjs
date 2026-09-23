@@ -295,8 +295,8 @@ must(
     synthesis.includes('lexaraRealtimeVoiceClient.ensureSpeechOutputReady()') &&
     realtimeVoiceClient.includes('createMediaStreamDestination()') &&
     realtimeVoiceClient.includes('candidateAudio.srcObject = candidateDestination.stream') &&
-    realtimeVoiceClient.includes('LEXARA_REALTIME_OUTPUT_SAMPLE_RATE = 24_000') &&
-    realtimeVoiceClient.includes('outputSampleRate: LEXARA_REALTIME_OUTPUT_SAMPLE_RATE') &&
+    realtimeVoiceClient.includes('outputSampleRate: context.sampleRate') &&
+    !realtimeVoiceClient.includes('LEXARA_REALTIME_OUTPUT_SAMPLE_RATE = 24_000') &&
     realtimeVoiceClient.includes('audio.defaultPlaybackRate = 1') &&
     realtimeVoiceClient.includes('audio.playbackRate = 1') &&
     realtimeVoiceGateway.includes("url.searchParams.set('speed', '1.0')") &&
