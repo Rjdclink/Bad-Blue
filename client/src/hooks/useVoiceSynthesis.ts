@@ -400,78 +400,11 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     setError(null);
 
     try {
-      let realtimeStarted = false;
-      let fallbackText = cleanText;
-      const realtimeOutputReady = lexaraRealtimeVoiceClient.isReady()
-        ? await lexaraRealtimeVoiceClient.ensureSpeechOutputReady()
-        : false;
-      if (turnId !== activeTurnRef.current) return;
-      if (realtimeOutputReady) {
-        try {
-          setProvider('deepgram-flux');
-          await lexaraRealtimeVoiceClient.speak(
-            cleanText,
-            `lexara-turn-${turnId}`,
-            {
-              onStart: () => {
-                realtimeStarted = true;
-                setIsLoading(false);
-                setIsSpeaking(true);
-                options.onStart?.();
-              },
-            },
-          );
-          if (turnId !== activeTurnRef.current) return;
-          setIsSpeaking(false);
-          setIsLoading(false);
-          options.onEnd?.();
-          return;
-        } catch (realtimeError) {
-          // Once realtime speech has become audible, never switch acoustic
-          // providers inside that reply. Mid-turn provider changes are perceived
-          // as a different speaker. Recovery is deferred to the next turn.
-          const playbackOffsetMs = playbackOffsetFromError(realtimeError);
-          if (realtimeStarted && playbackOffsetMs > 0) {
-            fallbackText = remainingSpeechText(
-              cleanText,
-              playbackOffsetMs,
-              Math.max(10_000, cleanText.length * 70),
-              2,
-            );
-          }
-          lexaraRealtimeVoiceClient.interrupt();
-          if (turnId !== activeTurnRef.current) return;
-          if (realtimeStarted) {
-            setIsSpeaking(false);
-            setIsLoading(false);
-            options.onEnd?.();
-            return;
-          }
-          void fetch('/api/lexara/voice/playback-event', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              event: 'realtime-fallback',
-              source: 'realtime',
-              provider: 'adaptive-tts-mesh',
-              turnId: `lexara-turn-${turnId}`,
-              playbackOffsetMs,
-              remainingCharacters: fallbackText.length,
-              reason: realtimeError instanceof Error
-                ? realtimeError.message.slice(0, 120)
-                : 'unknown',
-            }),
-            keepalive: true,
-          }).catch(() => undefined);
-        }
-      }
-
-      const fallbackOptions = realtimeStarted
-        ? { ...options, onStart: undefined }
-        : options;
-      // One persona, multiple provider routes. The server mesh keeps failures
-      // route-local and only surfaces an error after compatible TTS routes fail.
-      await speakWithServer(fallbackText, fallbackOptions, turnId);
+      // Restore the proven single progressive media-stream voice path.
+      // Realtime remains connected for STT/barge-in, but it is not allowed to
+      // synthesize speech; this prevents two acoustic clocks/providers from
+      // competing inside one consultation session.
+      await speakWithServer(cleanText, options, turnId);
     } catch (err) {
       clearPlaybackWatchdog();
       interruptionResolverRef.current = null;
