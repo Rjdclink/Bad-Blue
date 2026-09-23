@@ -296,6 +296,11 @@ must(
     realtimeVoiceClient.includes('createMediaStreamDestination()') &&
     realtimeVoiceClient.includes('candidateAudio.srcObject = candidateDestination.stream') &&
     realtimeVoiceClient.includes('outputSampleRate: context.sampleRate') &&
+    realtimeVoiceClient.includes('sampleRate * 0.120') &&
+    realtimeVoiceClient.includes('mobile-network jitter gap occurs') &&
+    orchestrator.includes('LIVE_RESEARCH_BUDGET_MS = 2_400') &&
+    orchestrator.includes('LIVE_REASONING_PROVIDER_ATTEMPT_MS = 2_800') &&
+    orchestrator.includes('LIVE_REASONING_MAX_FALLBACKS = 2') &&
     !realtimeVoiceClient.includes('LEXARA_REALTIME_OUTPUT_SAMPLE_RATE = 24_000') &&
     realtimeVoiceClient.includes('audio.defaultPlaybackRate = 1') &&
     realtimeVoiceClient.includes('audio.playbackRate = 1') &&
