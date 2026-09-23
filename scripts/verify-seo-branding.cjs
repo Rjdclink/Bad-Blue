@@ -33,6 +33,7 @@ mustNot(index, 'BadBlue', 'root metadata must not use BadBlue');
 mustNot(index, 'Bad Blue', 'root metadata must not use Bad Blue');
 mustNot(index, '<meta name="keywords"', 'root must not emit meta-keywords');
 mustNot(index, '"aggregateRating"', 'root must not emit unverified aggregate rating markup');
+must(index.includes('"email": "contact.badblue@gmail.com"'), 'organization schema must expose the support email');
 
 must(seoHead.includes('const BASE_URL = "https://legalwhat.com"'), 'SEOHead base URL must be legalwhat.com');
 must(seoHead.includes('const SITE_NAME = "Legal What?"'), 'SEOHead site name must be Legal What?');
@@ -77,6 +78,7 @@ mustNot(sitemap, 'https://legalwhat.com/landing', 'duplicate /landing URL must s
 mustNot(sitemap, 'example.com', 'sitemap must not use example.com');
 mustNot(sitemap, 'BadBlue', 'sitemap must not use legacy brand');
 mustNot(sitemap, 'Bad Blue', 'sitemap must not use legacy brand');
+mustNot(sitemap, '<lastmod>', 'static sitemap must not emit synthetic freshness dates');
 
 must(serverIndex.includes('.map((config) => config.canonicalPath)'), 'dynamic sitemap must emit canonical paths');
 must(serverIndex.includes('Do not emit synthetic freshness'), 'dynamic sitemap must not fabricate lastmod freshness');
@@ -125,4 +127,13 @@ for (const path of [
   mustNot(page, 'https://example.com', `${path} must not use example.com metadata`);
 }
 
-console.log('[seo-branding] PASS: Legal What SEO, crawl, canonical, schema, and brand invariants verified');
+for (const section of ['areas', 'services']) {
+  for (const entry of fs.readdirSync(`public/${section}`, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const publicPage = read(`public/${section}/${entry.name}/index.html`);
+    must(publicPage.includes('contact.badblue@gmail.com'), `${section}/${entry.name} must expose support contact information`);
+    if (section === 'areas') must(publicPage.includes('<h2>Common topics</h2>'), `areas/${entry.name} must contain substantive topic content`);
+  }
+}
+
+console.log('[seo-branding] PASS: Legal What SEO, crawl, canonical, schema, content-depth, contact, and brand invariants verified');
