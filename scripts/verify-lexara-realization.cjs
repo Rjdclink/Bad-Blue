@@ -307,6 +307,11 @@ must(
     !realtimeVoiceClient.includes('LEXARA_REALTIME_OUTPUT_SAMPLE_RATE = 24_000') &&
     realtimeVoiceClient.includes('audio.defaultPlaybackRate = 1') &&
     realtimeVoiceClient.includes('audio.playbackRate = 1') &&
+    realtimeVoiceClient.includes("message.type === 'config_ack'") &&
+    realtimeVoiceClient.includes('realtimeOutputSampleRate') &&
+    realtimeVoiceClient.includes('sourceSampleRate: this.realtimeOutputSampleRate') &&
+    realtimeVoiceClient.includes('sourceRate !== sampleRate') &&
+    realtimeVoiceClient.includes("reportRealtimeVoiceEvent('realtime-clock-negotiated'") &&
     realtimeVoiceGateway.includes("url.searchParams.set('speed', '1.0')") &&
     realtimeVoiceGateway.includes("url.searchParams.set('expressivity', '0')") &&
     realtimeVoiceGateway.includes('const DEFAULT_OUTPUT_SAMPLE_RATE = 48_000') &&
