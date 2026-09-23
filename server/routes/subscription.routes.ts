@@ -15,8 +15,10 @@ import {
 } from "../statelessLocalAuth";
 
 const SUBSCRIPTION_NAME = "LegalWhat Subscription";
-const SUBSCRIPTION_PRICE_CENTS = 2599;
+const SUBSCRIPTION_PRICE_CENTS = 999;
 const PAYMENT_NOTE_PREFIX = "legalwhat-subscription:";
+const PLAN_CACHE_TTL_MS = 5 * 60_000;
+let resolvedPlanCache: { id: string; expiresAt: number } | null = null;
 
 async function persistSubscriptionState(
   update: Parameters<typeof updateLocalUserSubscriptionHttp>[0],
@@ -26,12 +28,60 @@ async function persistSubscriptionState(
   return user;
 }
 
-function planVariationId(): string {
+function configuredPlanVariationId(): string {
   const value = String(getConfig().SQUARE_SUBSCRIPTION_PLAN_VARIATION_ID || "").trim();
   if (!value || /placeholder/i.test(value)) {
     throw new Error("Square subscription plan variation is not configured");
   }
   return value;
+}
+
+function phaseIsMonthly999(phase: any): boolean {
+  const cadence = String(phase?.cadence || "").toUpperCase();
+  const pricingType = String(phase?.pricing?.type || "").toUpperCase();
+  const amount = Number(phase?.pricing?.price?.amount ?? NaN);
+  const currency = String(phase?.pricing?.price?.currency || "").toUpperCase();
+  return cadence === "MONTHLY" && pricingType === "STATIC" && amount === SUBSCRIPTION_PRICE_CENTS && currency === "USD";
+}
+
+function variationIsMonthly999(variation: any): boolean {
+  if (!variation || String(variation?.type || "").toUpperCase() !== "SUBSCRIPTION_PLAN_VARIATION") return false;
+  if (variation?.isDeleted === true || variation?.is_deleted === true) return false;
+  if (variation?.presentAtAllLocations === false || variation?.present_at_all_locations === false) return false;
+  const data = variation?.subscriptionPlanVariationData || variation?.subscription_plan_variation_data || {};
+  const phases = Array.isArray(data?.phases) ? data.phases : [];
+  return phases.length === 1 && phaseIsMonthly999(phases[0]);
+}
+
+async function resolvePlanVariationId(square: ReturnType<typeof getSquareClient>): Promise<string> {
+  if (resolvedPlanCache && resolvedPlanCache.expiresAt > Date.now()) return resolvedPlanCache.id;
+
+  const configured = configuredPlanVariationId();
+  const configuredResponse = await square.catalog.object.get({ objectId: configured }, SQUARE_REQUEST_OPTIONS);
+  const configuredObject = configuredResponse?.object;
+  if (variationIsMonthly999(configuredObject)) {
+    resolvedPlanCache = { id: configured, expiresAt: Date.now() + PLAN_CACHE_TTL_MS };
+    return configured;
+  }
+
+  const matches: any[] = [];
+  for await (const object of await square.catalog.list({ types: "SUBSCRIPTION_PLAN" }, SQUARE_REQUEST_OPTIONS) as any) {
+    const data = object?.subscriptionPlanData || object?.subscription_plan_data || {};
+    const variations = data?.subscriptionPlanVariations || data?.subscription_plan_variations || [];
+    for (const variation of Array.isArray(variations) ? variations : []) {
+      if (variationIsMonthly999(variation)) matches.push(variation);
+    }
+  }
+
+  const uniqueIds = [...new Set(matches.map((variation) => String(variation?.id || "").trim()).filter(Boolean))];
+  if (uniqueIds.length !== 1) {
+    throw new Error(`Expected exactly one active $9.99/month Square plan variation; found ${uniqueIds.length}`);
+  }
+
+  const id = uniqueIds[0];
+  resolvedPlanCache = { id, expiresAt: Date.now() + PLAN_CACHE_TTL_MS };
+  console.log("[SUBSCRIPTION] Resolved canonical $9.99/month Square plan variation from Catalog");
+  return id;
 }
 
 function isSuspended(user: Pick<StatelessLocalUser, "status"> | null | undefined): boolean {
@@ -100,7 +150,7 @@ async function bindAndReconcile(id: string, customerId: string): Promise<{ activ
   });
 
   const square = getSquareClient();
-  const variationId = planVariationId();
+  const variationId = await resolvePlanVariationId(square);
   const items = await subscriptionsForCustomer(square, customerId, getSquareLocationId());
   const subscription = activeMatchingSubscription(items, variationId);
   if (!subscription) return { active: false, user: pendingUser };
@@ -186,7 +236,7 @@ export async function handleLegalWhatSubscriptionWebhook(event: any): Promise<bo
 
   if (eventType === "subscription.created" || eventType === "subscription.updated") {
     const subscription = object?.subscription;
-    const variationId = planVariationId();
+    const variationId = await resolvePlanVariationId(getSquareClient());
     if (!subscription || String(subscription.plan_variation_id || "") !== variationId) return false;
     const customerId = String(subscription.customer_id || "").trim();
     const subscriptionId = String(subscription.id || "").trim();
@@ -276,7 +326,7 @@ export function setupSubscriptionRoutes(app: Express): void {
         },
         checkoutOptions: {
           allowTipping: false,
-          subscriptionPlanId: planVariationId(),
+          subscriptionPlanId: await resolvePlanVariationId(square),
           redirectUrl: `${getBaseUrl().replace(/\/$/, "")}/subscription-success`,
         },
         prePopulatedData: { buyerEmail: email },
