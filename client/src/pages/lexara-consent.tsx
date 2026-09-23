@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useRoute } from 'wouter';
 import { ArrowLeft, Check, Loader2, Mic, Volume2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -121,6 +121,12 @@ export default function LexaraConsentPage() {
     setLexaraLiveEnabled('true');
     setLocation(`/legal-consultation/${domainId}?live=true`);
   }, [accepted, domainId, micReady, setLocation, speakerReady, voiceServiceReady]);
+
+  useEffect(() => {
+    if (!domainId || !accepted || !micReady || !speakerReady || voiceServiceReady !== true || preparing) return;
+    setLexaraLiveEnabled('true');
+    setLocation(`/legal-consultation/${domainId}?live=true`, { replace: true });
+  }, [accepted, domainId, micReady, preparing, setLocation, speakerReady, voiceServiceReady]);
 
   const continueTextOnly = useCallback(() => {
     if (!domainId) return;

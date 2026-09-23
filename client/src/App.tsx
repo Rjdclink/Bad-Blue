@@ -295,20 +295,22 @@ function Router() {
           <Route path="/faq" component={FAQPage} />
           {/* TEMPORARY: direct library access while signup/Square checkout is bypassed. */}
           <Route path="/welcome" component={WelcomePage} />
+          {/* Canonical temporary bypass flow: library -> consent -> Lexara. Keep
+              these routes public while signup/subscription gating is disabled. */}
+          <Route path="/lexara-consent/:domainId" component={LexaraConsentPage} />
+          <Route path="/legal-consultation/:domainId" component={ConsultationPage} />
           <Route path="/petition/:slug" component={PetitionDetail} />
 
           {isAuthenticated && hasPaidAccess ? (
             <>
               <Route path="/administrator" component={AdminConsole} />
               <Route path="/admin" component={AdminConsole} />
-              <Route path="/lexara-consent/:domainId" component={LexaraConsentPage} />
               <Route path="/legal-tools" component={LegalToolsPage} />
               <Route path="/people-finder" component={SpectraPage} />
               <Route path="/pantheon" component={PantheonPage} />
               {/* LEXARA Viewport intentionally remains retired; /legal-consultation is canonical. */}
               <Route path="/spectra" component={SpectraPage} />
               <Route path="/geo-console" component={GeoConsoleRedirect} />
-              <Route path="/legal-consultation/:domainId" component={ConsultationPage} />
               {isMasterSession && <Route path="/geoconsole" component={SpectraPage} />}
               {isMasterSession && <Route path="/geoconsole-command" component={SpectraPage} />}
               {isMasterSession && <Route path="/geoconsole-process" component={SpectraPage} />}

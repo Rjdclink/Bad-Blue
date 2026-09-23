@@ -125,6 +125,8 @@ test('Temporary landing bypass goes directly to the library while signup/Square 
   app.includes('<Route path="/welcome" component={WelcomePage} />') &&
   app.includes('<Route path="/lexara-consent/:domainId" component={LexaraConsentPage} />') &&
   app.includes('<Route path="/legal-consultation/:domainId" component={ConsultationPage} />') &&
+  app.indexOf('<Route path="/lexara-consent/:domainId" component={LexaraConsentPage} />') < app.indexOf('{isAuthenticated && hasPaidAccess ? (') &&
+  app.indexOf('<Route path="/legal-consultation/:domainId" component={ConsultationPage} />') < app.indexOf('{isAuthenticated && hasPaidAccess ? (') &&
   !app.includes('<Route path="/welcome"><Redirect to="/login" /></Route>'));
 
 test('People Finder route converges on SPECTRA',
