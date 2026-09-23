@@ -29,19 +29,7 @@ import { getConfiguredHarmonyParticipants } from '../aiHarmonyModelRegistry';
 import { getHarmonyWarmStatus } from '../aiHarmonyWarmup';
 
 const router = express.Router();
-
-// TEMPORARY signup/subscription bypass: keep only the endpoints required by the
-// public Bookshelf -> Consent -> Lexara flow reachable without a session.
-// All other Lexara routes retain their existing authentication boundary.
-const TEMPORARY_PUBLIC_LEXARA_PATHS = new Set([
-  '/voice/live-readiness',
-]);
-router.use((req, res, next) => {
-  if (req.method === 'GET' && TEMPORARY_PUBLIC_LEXARA_PATHS.has(req.path)) {
-    return next();
-  }
-  return isAuthenticated(req, res, next);
-});
+router.use(isAuthenticated);
 
 const lexaraVoiceUpload = multer({
   storage: multer.memoryStorage(),

@@ -191,17 +191,13 @@ function boundedVoiceSetting(name: string, fallback: number): number {
   return Math.max(0, Math.min(1, parsed));
 }
 
-function temporaryLexaraBypass(_req: Request, _res: Response, next: any): void {
-  next();
-}
-
 export function setupVoiceRoutes(app: Express): void {
   /**
    * POST /api/lexara/realtime-ticket
    * Mint a short-lived, one-use ticket for the same-origin duplex WebSocket.
    * Browser code never receives the Deepgram credential.
    */
-  app.post('/api/lexara/realtime-ticket', temporaryLexaraBypass, (req: Request, res: Response) => {
+  app.post('/api/lexara/realtime-ticket', isAuthenticated, (req: Request, res: Response) => {
     const deepgramConfigured = !!(process.env.DEEPGRAM_API_KEY?.trim() || process.env.DEEPGRAM?.trim());
     if (!deepgramConfigured) {
       return res.status(503).json({
@@ -296,7 +292,7 @@ export function setupVoiceRoutes(app: Express): void {
    */
   app.post(
     '/api/lexara/tts/session',
-    temporaryLexaraBypass,
+    isAuthenticated,
     asyncHandler(async (req: Request, res: Response) => {
       const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
       const turnId = typeof req.body?.turnId === 'string'

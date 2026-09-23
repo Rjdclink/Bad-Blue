@@ -293,18 +293,15 @@ function Router() {
           <Route path="/terms" component={Terms} />
           <Route path="/legal-consultation" component={LegalConsultationPage} />
           <Route path="/faq" component={FAQPage} />
-          {/* TEMPORARY: direct library access while signup/Square checkout is bypassed. */}
-          <Route path="/welcome" component={WelcomePage} />
-          {/* Canonical temporary bypass flow: library -> consent -> Lexara. Keep
-              these routes public while signup/subscription gating is disabled. */}
-          <Route path="/lexara-consent/:domainId" component={LexaraConsentPage} />
-          <Route path="/legal-consultation/:domainId" component={ConsultationPage} />
           <Route path="/petition/:slug" component={PetitionDetail} />
 
           {isAuthenticated && hasPaidAccess ? (
             <>
               <Route path="/administrator" component={AdminConsole} />
               <Route path="/admin" component={AdminConsole} />
+              <Route path="/welcome" component={WelcomePage} />
+              <Route path="/lexara-consent/:domainId" component={LexaraConsentPage} />
+              <Route path="/legal-consultation/:domainId" component={ConsultationPage} />
               <Route path="/legal-tools" component={LegalToolsPage} />
               <Route path="/people-finder" component={SpectraPage} />
               <Route path="/pantheon" component={PantheonPage} />
