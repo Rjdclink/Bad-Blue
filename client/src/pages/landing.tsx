@@ -345,7 +345,7 @@ export default function Landing() {
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-10">
             <h2 id="legal-practice-areas" className="text-3xl md:text-4xl font-bold mb-4">
-              31 Legal Practice Areas
+              40 Legal Practice Areas
             </h2>
             <p className="text-muted-foreground max-w-3xl mx-auto leading-relaxed">
               Legal What? supports AI-assisted legal information, research, issue spotting, and document workflows across the following 40 practice areas.
