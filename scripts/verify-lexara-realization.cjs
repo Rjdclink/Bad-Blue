@@ -738,7 +738,7 @@ const legalAuthorityResearch = read('server/lexara/LexaraAuthorityResearch.ts');
 const lawTypesBlock = lawTypesSource.split('export const LAW_TYPES = [')[1]?.split('] as const;')[0] || '';
 const productLawTypes = [...lawTypesBlock.matchAll(/'([^']+)'/g)].map(match => match[1]);
 
-must(productLawTypes.length === 31, 'LegalWhat exposes exactly 31 bookshelf practice areas');
+must(productLawTypes.length === 40, 'LegalWhat exposes exactly 40 bookshelf practice areas');
 must(productLawTypes.includes('post-conviction-law'), 'Post Conviction is a first-class product law type');
 must(
   lawTypesSource.includes("name: 'Post Conviction'") &&
