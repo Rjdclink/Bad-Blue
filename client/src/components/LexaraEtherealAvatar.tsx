@@ -233,7 +233,7 @@ function drawImageWithLocalTransform(
   ctx.translate(r.cx + (transform.dx ?? 0), r.cy + (transform.dy ?? 0));
   ctx.rotate(((transform.rotationDeg ?? 0) * Math.PI) / 180);
   ctx.scale(transform.scaleX ?? 1, transform.scaleY ?? 1);
-  ctx.translate(-mouthCx, -r.cy);
+  ctx.translate(-r.cx, -r.cy);
   ctx.drawImage(image, layout.x, layout.y, layout.width, layout.height);
   ctx.restore();
 }
