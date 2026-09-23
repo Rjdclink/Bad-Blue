@@ -819,8 +819,10 @@ must(
     avatar.includes("lowerCenter: { x: 0.520, y: 0.3285 }") &&
     avatar.includes("const cornerScale = Math.max(0.94, Math.min(1.06") &&
     avatar.includes("const baseHalfWidth = layout.width") &&
-    avatar.includes("const upperDy = -gap * 0.20") &&
-    avatar.includes("const lowerDy = gap * 0.62") &&
+    avatar.includes("const shapedOpen = open * open * (3 - 2 * open)") &&
+    avatar.includes("const upperDy = -gap * 0.13") &&
+    avatar.includes("const lowerDy = gap * 0.72") &&
+    avatar.includes("const traceAperture = () =>") &&
     !avatar.includes("ctx.fillStyle = 'rgba(142, 79, 83, 0.16)'") &&
     !avatar.includes("ctx.scale(scaleX, 1)") &&
     !avatar.includes("{ cx: LEXARA_MOUTH_ANCHOR.cx, cy: LEXARA_MOUTH_ANCHOR.cy, rx: 0.034, ry: 0.0125 }") &&
