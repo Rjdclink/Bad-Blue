@@ -339,7 +339,8 @@ function websocketUrl(endpoint: string, ticket: string): string {
 }
 
 function needsMediaStreamOutputSink(): boolean {
-  return typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+  // Recovery-only compatibility bridge; normal realtime speech uses Web Audio output.
+  return false;
 }
 
 class LexaraRealtimeVoiceClient {
