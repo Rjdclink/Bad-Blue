@@ -28,7 +28,16 @@ assert.equal(executableUrls.size, PANTHEON_EXECUTABLE_SOURCE_INVENTORY.length, '
 for (const source of PANTHEON_EXECUTABLE_SOURCE_INVENTORY) {
   assert(source.sourceIds.length > 0 && source.originalUrls.length > 0, 'Executable source lost provenance.');
   assert(source.categories.length > 0, 'Executable source lost category routing.');
-  assert.equal(source.accessMode, 'public', 'Executable sources must require neither API credentials nor registration.');
+  assert(
+    source.accessMode === 'public' || source.accessMode === 'contact-registration',
+    'Executable sources may be public or explicitly contact-registration only.',
+  );
+  if (source.accessMode === 'contact-registration') {
+    assert(
+      new URL(source.url).hostname.replace(/^www\./, '') === 'pacer.uscourts.gov',
+      'Only the explicitly classified PACER registration lane may be contact-registration.',
+    );
+  }
 }
 for (const exclusion of PANTHEON_SOURCE_EXCLUSION_LEDGER) {
   assert(exclusion.sourceIds.length > 0 && exclusion.originalUrls.length > 0, 'Excluded source lost provenance.');
