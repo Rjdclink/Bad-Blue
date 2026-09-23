@@ -69,46 +69,9 @@ export default function Login() {
     window.location.assign(checkoutUrl.toString());
   }, [setLocation]);
 
-  useEffect(() => {
-    if (!isAuthenticated || !user) {
-      subscriptionResumeStarted.current = false;
-      return;
-    }
+  // Checkout is initiated only by an explicit login/signup completion.
+  // Merely rendering this page must never hijack navigation into Square.
 
-    const authenticatedUser = user as any;
-    if (authenticatedUser.isMasterBypass) {
-      setLocation(authenticatedUser.redirectRoute || "/welcome", { replace: true });
-      return;
-    }
-
-    const status = String(authenticatedUser.status || "").toLowerCase();
-    const hasPaidAccess =
-      authenticatedUser.hasPaidForAccess === true &&
-      !["suspended", "past_due", "canceled", "expired"].includes(status);
-    if (hasPaidAccess) {
-      setLocation("/welcome", { replace: true });
-      return;
-    }
-    if (status === "suspended") {
-      toast({
-        title: "Account suspended",
-        description: "Subscription checkout is unavailable for this account.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    if (subscriptionResumeStarted.current) return;
-    subscriptionResumeStarted.current = true;
-    beginSubscriptionCheckout().catch((error: any) => {
-      subscriptionResumeStarted.current = false;
-      toast({
-        title: "Subscription checkout unavailable",
-        description: error?.message || "Please try again.",
-        variant: "destructive",
-      });
-    });
-  }, [isAuthenticated, user, beginSubscriptionCheckout, setLocation, toast]);
 
   const completeLogin = async (response: Response) => {
     if (!response.ok) {
