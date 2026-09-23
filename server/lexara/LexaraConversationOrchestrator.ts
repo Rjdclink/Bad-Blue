@@ -40,11 +40,11 @@ export interface LexaraConversationResult {
 const MAX_HISTORY_MESSAGES = 16;
 const MAX_HISTORY_CHARACTERS = 14000;
 const MAX_PROMPT_CHARACTERS = 7000;
-const LIVE_RESEARCH_BUDGET_MS = 3_200;
+const LIVE_RESEARCH_BUDGET_MS = 2_400;
 // Provider attempts stay bounded, but the conversation has no independent master
 // kill-switch. Only the caller may cancel a superseded/disconnected turn.
-const LIVE_REASONING_PROVIDER_ATTEMPT_MS = 4_500;
-const LIVE_REASONING_MAX_FALLBACKS = 3;
+const LIVE_REASONING_PROVIDER_ATTEMPT_MS = 2_800;
+const LIVE_REASONING_MAX_FALLBACKS = 2;
 
 export type LexaraAcknowledgementKind =
   | 'presence'
