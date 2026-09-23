@@ -243,12 +243,10 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     options: VoiceSynthesisOptions,
     turnId: number,
   ): Promise<void> => {
-    // Restore the proven low-latency first-audible sequence: start a short
-    // first speech unit immediately instead of asking Android's media element to
-    // buffer the entire answer before it becomes audible. The remainder stays
-    // on the same canonical TTS mesh and is prepared while the first unit plays.
+    // One successful Lexara turn owns one progressive media stream. Android
+    // must begin consuming the response as soon as the provider emits audio;
+    // the buffered route is failure recovery only, never normal continuation.
     const stableTurnId = `lexara-turn-${turnId}`;
-    const { first: firstUnit, rest: remainingUnit } = firstSpeechChunk(text);
     const interruption = makeInterruptionPromise();
     let selectedProvider: string | null = null;
     let expectedDuration = Math.max(10_000, text.length * 70);
@@ -310,7 +308,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
       let session: StreamingAudioSession;
       try {
         const sessionStartedAt = performance.now();
-        session = await createStreamingAudioSession(firstUnit, stableTurnId);
+        session = await createStreamingAudioSession(text, stableTurnId);
         if (turnId !== activeTurnRef.current) return;
 
         selectedProvider = session.provider;
@@ -360,27 +358,6 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
       if (turnId !== activeTurnRef.current || outcome === 'interrupted') {
         LexaraServerTTS.stop('interrupted');
         return;
-      }
-
-      if (outcome === 'ended' && remainingUnit) {
-        // The long remainder is allowed to buffer only after the user has
-        // already heard Lexara begin speaking. This preserves current voice,
-        // interruption, animation, and provider-mesh behavior while removing
-        // the multi-second first-audible stall.
-        const remainder = await fetchServerAudio(remainingUnit);
-        if (turnId !== activeTurnRef.current) return;
-        selectedProvider = remainder.provider || selectedProvider;
-        expectedDuration = remainder.durationMs || Math.max(10_000, remainingUnit.length * 70);
-        let remainderFailure: unknown = null;
-        outcome = await waitForPlayback(
-          LexaraServerTTS.play(remainder.blob, {
-            turnId: stableTurnId,
-            onStart: markPlaybackStarted,
-          }),
-          error => { remainderFailure = error; },
-          expectedDuration,
-        );
-        void remainderFailure;
       }
 
       if (outcome === 'failed') {
