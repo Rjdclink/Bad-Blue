@@ -400,10 +400,9 @@ must(
     conversation.includes("'Voice reconnecting'") &&
     conversation.includes("'Voice degraded'") &&
     conversation.includes("voiceStatus === 'live'") &&
-    synthesis.includes('FIRST_SPEECH_CHUNK_MAX_CHARS = 140') &&
-    synthesis.includes('firstSpeechChunk(text)') &&
-    synthesis.includes('createStreamingAudioSession(firstUnit, stableTurnId)') &&
-    synthesis.includes('remainingUnit') &&
+    synthesis.includes('One successful Lexara turn owns one progressive media stream') &&
+    synthesis.includes('createStreamingAudioSession(text, stableTurnId)') &&
+    !synthesis.includes("if (outcome === 'ended' && remainingUnit)") &&
     !synthesis.includes('splitLexaraSpeechChunks') &&
     !synthesis.includes('fetchPreparedSessionAudio') &&
     !synthesis.includes('preparedCurrent') &&
@@ -412,7 +411,7 @@ must(
     synthesis.includes('voiceFailureToastIdRef') &&
     !synthesis.includes('shouldBufferLexaraPlaybackOnThisDevice') &&
     !synthesis.includes('bufferStreamingSessionForMobile'),
-  'LEXARA voice readiness stays truthful while bounded first-audible playback removes the Android startup stall without restoring legacy multi-piece chunk machinery',
+  'LEXARA voice readiness stays truthful while one progressive stream owns successful playback and buffered synthesis remains recovery-only',
 );
 must(
   voiceRoutes.includes('/api/lexara/voice/profile') &&
@@ -889,7 +888,7 @@ must(
     voiceRoutes.includes('openLexaraSpeechSequence') &&
     voiceRoutes.includes('synthesizeLexaraSpeechSequence') &&
     voiceRoutes.includes("res.setHeader('Content-Encoding', 'identity')"),
-  'Lexara starts bounded first-audible speech without intermediary compression buffering, preserves long replies through the canonical mesh, and retains transport-fault recovery',
+  'Lexara streams each successful response continuously without intermediary compression buffering and retains transport-fault recovery',
 );
 must(
   speechClient.includes('LexaraPlaybackOptions') &&
