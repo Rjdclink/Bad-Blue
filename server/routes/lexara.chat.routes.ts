@@ -32,23 +32,32 @@ function cleanOptionalString(value: unknown, maxLength = MAX_CONTEXT_FIELD_CHARA
   return trimmed.slice(0, maxLength);
 }
 
-function detectDocumentIntent(prompt: string): { requested: boolean; documentType: string } {
+function detectDocumentIntent(prompt: string, previousMessages: LexaraConversationMessage[] = []): {
+  requested: boolean;
+  explicit: boolean;
+  documentType: string;
+} {
   const p = prompt.toLowerCase();
-  const requested = /\b(draft|prepare|create|generate|write|download|downloadable|export|pdf|docx|word document|motion|brief|memorandum|affidavit|declaration|complaint|answer|petition|letter|agreement|subpoena|discovery)\b/.test(p);
-  let documentType = 'Custom Document';
-  if (/motion to suppress/.test(p)) documentType = 'Motion to Suppress';
-  else if (/motion to dismiss/.test(p)) documentType = 'Motion to Dismiss';
-  else if (/motion to compel/.test(p)) documentType = 'Motion to Compel';
-  else if (/sentencing memorandum/.test(p)) documentType = 'Sentencing Memorandum';
-  else if (/memorandum|memo/.test(p)) documentType = 'Memorandum of Law';
-  else if (/brief/.test(p)) documentType = 'Supporting Brief';
-  else if (/affidavit/.test(p)) documentType = 'Affidavit';
-  else if (/declaration/.test(p)) documentType = 'Declaration';
-  else if (/complaint/.test(p)) documentType = 'Complaint';
-  else if (/petition/.test(p)) documentType = 'Habeas Petition';
-  else if (/demand letter/.test(p)) documentType = 'Demand Letter';
-  else if (/motion/.test(p)) documentType = 'Motion';
-  return { requested, documentType };
+  const context = [...previousMessages.slice(-4).map(message => message.content), prompt].join(' ').toLowerCase();
+  const explicit = /\b(draft|prepare|create|generate|write|download|downloadable|export|pdf|docx|word document)\b/.test(p);
+  const legalInstrument = /\b(motion|brief|memorandum|affidavit|declaration|complaint|answer|petition|letter|agreement|subpoena|discovery|notice|objection|appeal|application)\b/.test(context);
+  const actionNeed = /\b(file|filing|submit|serve|send|give|provide|ask the court|request the court|respond to|oppose|challenge|suppress|dismiss|compel|appeal|notify|demand)\b/.test(context);
+  const requested = explicit || (legalInstrument && actionNeed);
+  let documentType = 'Custom Legal Document';
+  if (/motion to suppress/.test(context) || /suppress.+evidence/.test(context)) documentType = 'Motion to Suppress';
+  else if (/motion to dismiss/.test(context) || /dismiss.+case/.test(context)) documentType = 'Motion to Dismiss';
+  else if (/motion to compel/.test(context) || /compel.+discovery/.test(context)) documentType = 'Motion to Compel';
+  else if (/sentencing memorandum/.test(context)) documentType = 'Sentencing Memorandum';
+  else if (/memorandum|memo/.test(context)) documentType = 'Memorandum of Law';
+  else if (/brief/.test(context)) documentType = 'Supporting Brief';
+  else if (/affidavit/.test(context)) documentType = 'Affidavit';
+  else if (/declaration/.test(context)) documentType = 'Declaration';
+  else if (/complaint/.test(context)) documentType = 'Complaint';
+  else if (/petition/.test(context)) documentType = 'Petition';
+  else if (/demand letter/.test(context)) documentType = 'Demand Letter';
+  else if (/notice/.test(context)) documentType = 'Legal Notice';
+  else if (/motion/.test(context)) documentType = 'Motion';
+  return { requested, explicit, documentType };
 }
 
 function sanitizePreviousMessages(value: unknown): LexaraConversationMessage[] {
@@ -131,7 +140,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
     const jurisdiction = cleanOptionalString((rawContext as any).jurisdiction, 80);
     const behaviorMode = (rawContext as any).behaviorMode === 'personable' ? 'personable' : 'professional';
     const sessionId = cleanOptionalString((rawContext as any).sessionId, 128);
-    const documentIntent = detectDocumentIntent(prompt);
+    const documentIntent = detectDocumentIntent(prompt, previousMessages);
 
     log.info('[LEXARA] Conversational legal turn received', {
       promptLength: prompt.length,
