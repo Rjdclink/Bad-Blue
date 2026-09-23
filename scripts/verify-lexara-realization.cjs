@@ -869,7 +869,8 @@ must(
 );
 must(
   synthesis.includes('One reply owns one progressive media stream') &&
-    synthesis.includes('createStreamingAudioSession(text, stableTurnId)') &&
+    synthesis.includes('createStreamingAudioSession(firstUnit, stableTurnId)') &&
+    synthesis.includes('remainingUnit') &&
     synthesis.includes('MAX_PLAYBACK_WATCHDOG_MS = 600_000') &&
     realtimeVoiceClient.includes("type: 'upstream_complete'") &&
     realtimeVoiceClient.includes('currentTurnPlaybackOffsetMs') &&
@@ -887,7 +888,7 @@ must(
     voiceRoutes.includes('openLexaraSpeechSequence') &&
     voiceRoutes.includes('synthesizeLexaraSpeechSequence') &&
     voiceRoutes.includes("res.setHeader('Content-Encoding', 'identity')"),
-  'one Lexara response streams continuously, bypasses intermediary compression buffering, preserves long replies, and recovers only the unspoken portion after a transport fault',
+  'Lexara starts bounded first-audible speech without intermediary compression buffering, preserves long replies through the canonical mesh, and retains transport-fault recovery',
 );
 must(
   speechClient.includes('LexaraPlaybackOptions') &&
