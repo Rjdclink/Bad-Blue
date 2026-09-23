@@ -116,15 +116,16 @@ test('SPECTRA remains visible but disabled while normal LegalWhat access is rest
   welcome.includes('aria-disabled="true"') &&
   welcome.includes('Temporarily out of order. Contact contact.badblue@gmail.com for assistance.') &&
   !welcome.includes("setLocation('/spectra')"));
-test('Normal signup, Square subscription, master bypass, and authenticated LEXARA routing are restored',
-  landing.includes("onClick={() => setLocation('/login')}") &&
+test('Temporary landing bypass goes directly to the library while signup/Square infrastructure remains intact',
+  landing.includes("onClick={() => setLocation('/welcome')}") &&
+  !landing.includes("onClick={() => setLocation('/login')}") &&
   login.includes('/api/local-register') &&
   login.includes('/api/subscription/checkout') &&
   login.includes('/api/master-login') &&
   app.includes('<Route path="/welcome" component={WelcomePage} />') &&
   app.includes('<Route path="/lexara-consent/:domainId" component={LexaraConsentPage} />') &&
   app.includes('<Route path="/legal-consultation/:domainId" component={ConsultationPage} />') &&
-  app.includes('<Route path="/welcome"><Redirect to="/login" /></Route>'));
+  !app.includes('<Route path="/welcome"><Redirect to="/login" /></Route>'));
 
 test('People Finder route converges on SPECTRA',
   app.includes('<Route path="/people-finder" component={SpectraPage} />'));
