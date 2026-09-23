@@ -6,7 +6,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Shield, Loader2 } from "lucide-react";
-import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { SEOHead } from "@/components/SEOHead";
@@ -19,7 +18,6 @@ import { BackButton } from "@/components/BackButton";
  */
 export default function Login() {
   const [, setLocation] = useLocation();
-  useAuth();
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
   const subscriptionResumeStarted = useRef(false);
