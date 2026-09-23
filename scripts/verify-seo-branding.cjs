@@ -34,6 +34,13 @@ mustNot(index, 'Bad Blue', 'root metadata must not use Bad Blue');
 mustNot(index, '<meta name="keywords"', 'root must not emit meta-keywords');
 mustNot(index, '"aggregateRating"', 'root must not emit unverified aggregate rating markup');
 must(index.includes('"email": "contact.badblue@gmail.com"'), 'organization schema must expose the support email');
+for (const capability of ['Visible animated AI', 'DOCX and PDF', 'Uploaded document, evidence, image, and media analysis']) {
+  must(index.includes(capability), `root metadata/schema must expose Lexara capability: ${capability}`);
+}
+const lexaraSeoPage = read('public/services/ai-legal-consultation/index.html');
+for (const capability of ['visible, conversational legal AI', '31 areas of law', 'DOCX or PDF', 'Upload documents, evidence, images, and other media']) {
+  must(lexaraSeoPage.includes(capability), `Lexara crawlable page must expose capability: ${capability}`);
+}
 
 must(seoHead.includes('const BASE_URL = "https://legalwhat.com"'), 'SEOHead base URL must be legalwhat.com');
 must(seoHead.includes('const SITE_NAME = "Legal What?"'), 'SEOHead site name must be Legal What?');
