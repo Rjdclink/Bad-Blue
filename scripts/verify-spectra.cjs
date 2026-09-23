@@ -108,9 +108,12 @@ test('Regional candidates remain separate from timed observations',
 test('One-hour previous/future timeline remains available',
   dashboard.includes('min={-60}') && dashboard.includes('max={60}'));
 
-test('Welcome card opens SPECTRA',
-  welcome.includes("setLocation('/spectra')") &&
-  welcome.includes('SPECTRA'));
+test('Temporary Solution X keeps SPECTRA visible but disables the welcome card',
+  welcome.includes('SPECTRA') &&
+  welcome.includes('disabled') &&
+  welcome.includes('aria-disabled="true"') &&
+  welcome.includes('Temporarily out of order. Contact contact.badblue@gmail.com for assistance.') &&
+  !welcome.includes("setLocation('/spectra')"));
 test('People Finder route converges on SPECTRA',
   app.includes('<Route path="/people-finder" component={SpectraPage} />'));
 test('Location Intelligence route converges on SPECTRA',
