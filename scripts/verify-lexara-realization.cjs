@@ -868,7 +868,8 @@ must(
   '120 facial reference states constrain a continuous audio-driven rig while the resting lips are suppressed during speech and voice playback remains isolated',
 );
 must(
-  synthesis.includes('One reply owns one progressive media stream') &&
+  synthesis.includes('Restore the proven low-latency first-audible sequence') &&
+    synthesis.includes('firstSpeechChunk(text)') &&
     synthesis.includes('createStreamingAudioSession(firstUnit, stableTurnId)') &&
     synthesis.includes('remainingUnit') &&
     synthesis.includes('MAX_PLAYBACK_WATCHDOG_MS = 600_000') &&
