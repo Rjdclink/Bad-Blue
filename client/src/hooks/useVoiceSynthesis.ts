@@ -452,20 +452,40 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
       // remains the route-local recovery path.
       if (lexaraRealtimeVoiceClient.isSpeechOutputReady()) {
         let started = false;
-        await lexaraRealtimeVoiceClient.speak(cleanText, `lexara-turn-${turnId}`, {
-          onStart: () => {
-            if (turnId !== activeTurnRef.current || started) return;
-            started = true;
-            setProvider('deepgram-flux');
+        try {
+          await lexaraRealtimeVoiceClient.speak(cleanText, `lexara-turn-${turnId}`, {
+            onStart: () => {
+              if (turnId !== activeTurnRef.current || started) return;
+              started = true;
+              setProvider('deepgram-flux');
+              setIsLoading(false);
+              setIsSpeaking(true);
+              options.onStart?.();
+            },
+          });
+          if (turnId !== activeTurnRef.current) return;
+          setIsLoading(false);
+          setIsSpeaking(false);
+          options.onEnd?.();
+        } catch (realtimeError) {
+          if (turnId !== activeTurnRef.current) return;
+          const recoveryText = remainingSpeechText(
+            cleanText,
+            playbackOffsetFromError(realtimeError),
+            Math.max(10_000, cleanText.length * 70),
+          );
+          if (!recoveryText) {
             setIsLoading(false);
-            setIsSpeaking(true);
-            options.onStart?.();
-          },
-        });
-        if (turnId !== activeTurnRef.current) return;
-        setIsLoading(false);
-        setIsSpeaking(false);
-        options.onEnd?.();
+            setIsSpeaking(false);
+            options.onEnd?.();
+            return;
+          }
+          await speakWithServer(
+            recoveryText,
+            { ...options, onStart: started ? undefined : options.onStart },
+            turnId,
+          );
+        }
       } else {
         await speakWithServer(cleanText, options, turnId);
       }
