@@ -22,7 +22,7 @@ const roots=[
 'https://www.epa.gov/enviro','https://enviro.epa.gov/','https://echo.epa.gov/','https://echo.epa.gov/facilities/facility-search','https://echo.epa.gov/trends/comparative-maps-dashboards/state-comparative-maps','https://echo.epa.gov/tools/data-downloads','https://www.epa.gov/ejscreen','https://www.epa.gov/frs','https://www.epa.gov/toxics-release-inventory-tri-program','https://www.epa.gov/ghgreporting',
 'https://safer.fmcsa.dot.gov/','https://safer.fmcsa.dot.gov/CompanySnapshot.aspx','https://li-public.fmcsa.dot.gov/LIVIEW/pkg_carrquery.prc_carrlist','https://ai.fmcsa.dot.gov/SMS/','https://www.fmcsa.dot.gov/registration','https://www.fmcsa.dot.gov/safety/company-safety-records','https://data.transportation.gov/','https://www.transportation.gov/data','https://www.faa.gov/licenses_certificates/airmen_certification','https://amsrvs.registry.faa.gov/airmeninquiry/',
 'https://registry.faa.gov/aircraftinquiry/','https://www.faa.gov/licenses_certificates/aircraft_certification/aircraft_registry','https://www.faa.gov/data_research','https://www.faa.gov/data_research/accident_incident','https://www.ntsb.gov/safety/data/Pages/Data_Stats.aspx','https://data.ntsb.gov/carol-main-public/','https://www.ntsb.gov/investigations/Pages/aviation.aspx','https://www.ntsb.gov/investigations/Pages/highway.aspx','https://www.ntsb.gov/investigations/Pages/marine.aspx','https://www.ntsb.gov/investigations/Pages/railroad.aspx',
-'https://www.osha.gov/data/commonstats'
+'https://www.osha.gov/data/commonstats','https://www.osha.gov/data/sic-manual'
 ];
 const urls=[...new Set(roots)].slice(0,200);
 if(urls.length!==200) throw new Error(`Pantheon batch 09 expected 200 distinct URLs, got ${urls.length}`);
