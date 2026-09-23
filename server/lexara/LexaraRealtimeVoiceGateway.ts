@@ -37,7 +37,7 @@ const DEEPGRAM_CONNECT_TIMEOUT_MS = 8_000;
 const KEEPALIVE_MS = 25_000;
 const MAX_RECENT_TURNS = 48;
 const DEFAULT_INPUT_SAMPLE_RATE = 16_000;
-const DEFAULT_OUTPUT_SAMPLE_RATE = 24_000;
+const DEFAULT_OUTPUT_SAMPLE_RATE = 48_000;
 const SUPPORTED_INPUT_SAMPLE_RATES = new Set([8_000, 16_000, 24_000, 44_100, 48_000]);
 const SUPPORTED_OUTPUT_SAMPLE_RATES = new Set([8_000, 16_000, 24_000, 32_000, 44_100, 48_000]);
 
@@ -225,10 +225,13 @@ function handleRealtimeClient(client: WebSocket, ticket: RealtimeTicket): void {
       DEFAULT_INPUT_SAMPLE_RATE,
       SUPPORTED_INPUT_SAMPLE_RATES,
     );
-    // The realtime playback worklet consumes raw linear16 PCM. Keep one
-    // authoritative 24 kHz clock end-to-end rather than asking Flux to emit
-    // device-dependent 44.1/48 kHz audio and then interpreting it elsewhere.
-    const outputSampleRate = DEFAULT_OUTPUT_SAMPLE_RATE;
+    // Raw linear16 must be synthesized at the exact clock used by the browser
+    // playback worklet. A mismatched PCM clock changes both duration and pitch.
+    const outputSampleRate = boundedSampleRate(
+      message.outputSampleRate,
+      DEFAULT_OUTPUT_SAMPLE_RATE,
+      SUPPORTED_OUTPUT_SAMPLE_RATES,
+    );
     const keyterms = normalizedKeyterms(message.keyterms);
 
     tts = openDeepgramSocket(deepgramSpeakUrl(outputSampleRate), apiKey);

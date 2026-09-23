@@ -25,8 +25,6 @@ interface SpeakOptions {
   onStart?: () => void;
 }
 
-const LEXARA_REALTIME_OUTPUT_SAMPLE_RATE = 24_000;
-
 interface ActiveSpeech {
   turnId: string;
   epoch: number;
@@ -600,7 +598,7 @@ class LexaraRealtimeVoiceClient {
         socket.send(JSON.stringify({
           type: 'client_config',
           inputSampleRate: context.sampleRate,
-          outputSampleRate: LEXARA_REALTIME_OUTPUT_SAMPLE_RATE,
+          outputSampleRate: context.sampleRate,
           keyterms: sanitizeKeyterms(options.keyterms),
         }));
       };
