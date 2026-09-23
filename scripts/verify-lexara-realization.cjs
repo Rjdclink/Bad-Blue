@@ -812,6 +812,12 @@ must(
     avatar.includes("lowerCenter: { x: 0.520, y: 0.3285 }") &&
     avatar.includes("const cornerScale = Math.max(0.91, Math.min(1.11") &&
     avatar.includes("const baseHalfWidth = layout.width") &&
+    avatar.includes("const stripCount = 24") &&
+    avatar.includes("const centerWeight = Math.pow(Math.max(0, 1 - normalizedX * normalizedX), 1.35)") &&
+    avatar.includes("const upperDy = -gap * 0.20 * centerWeight") &&
+    avatar.includes("const lowerDy = gap * 0.58 * centerWeight") &&
+    avatar.includes("const scaleX = 1") &&
+    !avatar.includes("ctx.scale(scaleX, 1)") &&
     !avatar.includes("{ cx: LEXARA_MOUTH_ANCHOR.cx, cy: LEXARA_MOUTH_ANCHOR.cy, rx: 0.034, ry: 0.0125 }") &&
     avatar.includes("const destinationWidth = innerRx * 2.06") &&
     avatar.includes("const destinationHeight = innerRy * 2.10") &&
