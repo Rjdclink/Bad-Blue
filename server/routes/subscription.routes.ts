@@ -36,46 +36,101 @@ function configuredPlanVariationId(): string {
   return value;
 }
 
-function phaseIsMonthly999(phase: any): boolean {
-  const cadence = String(phase?.cadence || "").toUpperCase();
-  const pricingType = String(phase?.pricing?.type || "").toUpperCase();
-  const amount = Number(phase?.pricing?.price?.amount ?? NaN);
-  const currency = String(phase?.pricing?.price?.currency || "").toUpperCase();
-  return cadence === "MONTHLY" && pricingType === "STATIC" && amount === SUBSCRIPTION_PRICE_CENTS && currency === "USD";
+function phaseIsMonthly(phase: any): boolean {
+  return String(phase?.cadence || "").toUpperCase() === "MONTHLY";
 }
 
-function variationIsMonthly999(variation: any): boolean {
-  if (!variation || String(variation?.type || "").toUpperCase() !== "SUBSCRIPTION_PLAN_VARIATION") return false;
-  if (variation?.isDeleted === true || variation?.is_deleted === true) return false;
-  if (variation?.presentAtAllLocations === false || variation?.present_at_all_locations === false) return false;
-  const data = variation?.subscriptionPlanVariationData || variation?.subscription_plan_variation_data || {};
-  const phases = Array.isArray(data?.phases) ? data.phases : [];
-  return phases.length === 1 && phaseIsMonthly999(phases[0]);
+function staticPhaseIs999(phase: any): boolean {
+  const pricing = phase?.pricing || {};
+  const amount = Number(pricing?.price?.amount ?? pricing?.priceMoney?.amount ?? NaN);
+  const currency = String(pricing?.price?.currency || pricing?.priceMoney?.currency || "").toUpperCase();
+  return phaseIsMonthly(phase) && String(pricing?.type || "").toUpperCase() === "STATIC" && amount === SUBSCRIPTION_PRICE_CENTS && currency === "USD";
+}
+
+function relativePhaseIsMonthly(phase: any): boolean {
+  return phaseIsMonthly(phase) && String(phase?.pricing?.type || "").toUpperCase() === "RELATIVE";
+}
+
+function activeCatalogObject(object: any): boolean {
+  if (!object) return false;
+  if (object?.isDeleted === true || object?.is_deleted === true) return false;
+  if (object?.presentAtAllLocations === false || object?.present_at_all_locations === false) return false;
+  return true;
+}
+
+function itemHas999UsdVariation(item: any): boolean {
+  if (!activeCatalogObject(item) || String(item?.type || "").toUpperCase() !== "ITEM") return false;
+  const data = item?.itemData || item?.item_data || {};
+  const variations = Array.isArray(data?.variations) ? data.variations : [];
+  return variations.some((variation: any) => {
+    if (!activeCatalogObject(variation)) return false;
+    const variationData = variation?.itemVariationData || variation?.item_variation_data || {};
+    const money = variationData?.priceMoney || variationData?.price_money || {};
+    return Number(money?.amount ?? NaN) === SUBSCRIPTION_PRICE_CENTS && String(money?.currency || "").toUpperCase() === "USD";
+  });
+}
+
+function planVariationData(variation: any): any {
+  return variation?.subscriptionPlanVariationData || variation?.subscription_plan_variation_data || {};
+}
+
+function planData(plan: any): any {
+  return plan?.subscriptionPlanData || plan?.subscription_plan_data || {};
+}
+
+function variationIsStaticMonthly999(variation: any): boolean {
+  if (!activeCatalogObject(variation) || String(variation?.type || "").toUpperCase() !== "SUBSCRIPTION_PLAN_VARIATION") return false;
+  const phases = Array.isArray(planVariationData(variation)?.phases) ? planVariationData(variation).phases : [];
+  return phases.length === 1 && staticPhaseIs999(phases[0]);
+}
+
+function variationIsRelativeMonthlyFor999Item(variation: any, parentPlan: any, itemIds999: Set<string>): boolean {
+  if (!activeCatalogObject(variation) || String(variation?.type || "").toUpperCase() !== "SUBSCRIPTION_PLAN_VARIATION") return false;
+  const phases = Array.isArray(planVariationData(variation)?.phases) ? planVariationData(variation).phases : [];
+  if (phases.length !== 1 || !relativePhaseIsMonthly(phases[0])) return false;
+  const data = planData(parentPlan);
+  const eligibleIds = (data?.eligibleItemIds || data?.eligible_item_ids || []).map((id: unknown) => String(id));
+  if (eligibleIds.some((id: string) => itemIds999.has(id))) return true;
+  return Boolean(data?.allItems || data?.all_items) && itemIds999.size === 1;
+}
+
+async function squareCatalogSnapshot(square: ReturnType<typeof getSquareClient>): Promise<{ plans: any[]; itemIds999: Set<string> }> {
+  const plans: any[] = [];
+  const itemIds999 = new Set<string>();
+  for await (const object of await square.catalog.list({ types: "ITEM,SUBSCRIPTION_PLAN" }, SQUARE_REQUEST_OPTIONS) as any) {
+    const type = String(object?.type || "").toUpperCase();
+    if (type === "ITEM" && itemHas999UsdVariation(object)) itemIds999.add(String(object.id || ""));
+    if (type === "SUBSCRIPTION_PLAN" && activeCatalogObject(object)) plans.push(object);
+  }
+  return { plans, itemIds999 };
+}
+
+function matchingVariations(plans: any[], itemIds999: Set<string>): any[] {
+  const matches: any[] = [];
+  for (const plan of plans) {
+    const data = planData(plan);
+    const variations = data?.subscriptionPlanVariations || data?.subscription_plan_variations || [];
+    for (const variation of Array.isArray(variations) ? variations : []) {
+      if (variationIsStaticMonthly999(variation) || variationIsRelativeMonthlyFor999Item(variation, plan, itemIds999)) matches.push(variation);
+    }
+  }
+  return matches;
 }
 
 async function resolvePlanVariationId(square: ReturnType<typeof getSquareClient>): Promise<string> {
   if (resolvedPlanCache && resolvedPlanCache.expiresAt > Date.now()) return resolvedPlanCache.id;
 
   const configured = configuredPlanVariationId();
-  const configuredResponse = await square.catalog.object.get({ objectId: configured }, SQUARE_REQUEST_OPTIONS);
-  const configuredObject = configuredResponse?.object;
-  if (variationIsMonthly999(configuredObject)) {
+  const snapshot = await squareCatalogSnapshot(square);
+  const matches = matchingVariations(snapshot.plans, snapshot.itemIds999);
+  const uniqueIds = [...new Set(matches.map((variation) => String(variation?.id || "").trim()).filter(Boolean))];
+
+  if (uniqueIds.includes(configured)) {
     resolvedPlanCache = { id: configured, expiresAt: Date.now() + PLAN_CACHE_TTL_MS };
     return configured;
   }
-
-  const matches: any[] = [];
-  for await (const object of await square.catalog.list({ types: "SUBSCRIPTION_PLAN" }, SQUARE_REQUEST_OPTIONS) as any) {
-    const data = object?.subscriptionPlanData || object?.subscription_plan_data || {};
-    const variations = data?.subscriptionPlanVariations || data?.subscription_plan_variations || [];
-    for (const variation of Array.isArray(variations) ? variations : []) {
-      if (variationIsMonthly999(variation)) matches.push(variation);
-    }
-  }
-
-  const uniqueIds = [...new Set(matches.map((variation) => String(variation?.id || "").trim()).filter(Boolean))];
   if (uniqueIds.length !== 1) {
-    throw new Error(`Expected exactly one active $9.99/month Square plan variation; found ${uniqueIds.length}`);
+    throw new Error(`Expected exactly one Square MONTHLY variation resolving to $9.99; found ${uniqueIds.length}`);
   }
 
   const id = uniqueIds[0];
