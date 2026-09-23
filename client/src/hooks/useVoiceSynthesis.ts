@@ -243,8 +243,9 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     options: VoiceSynthesisOptions,
     turnId: number,
   ): Promise<void> => {
-    // One successful Lexara turn owns sequential progressive media streams on the
-    // same canonical TTS path. Start a bounded first unit so audible playback is
+    // Restore the proven low-latency first-audible sequence on the same canonical
+    // TTS path. One successful Lexara turn owns sequential progressive media streams.
+    // Start a bounded first unit so audible playback is
     // not held behind synthesis of a long answer; then preserve the remainder.
     const stableTurnId = `lexara-turn-${turnId}`;
     const { first: firstUnit, rest: remainingUnit } = firstSpeechChunk(text);
