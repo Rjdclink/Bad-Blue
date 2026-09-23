@@ -116,6 +116,11 @@ test('SPECTRA remains visible but disabled while normal LegalWhat access is rest
   welcome.includes('aria-disabled="true"') &&
   welcome.includes('Temporarily out of order. Contact contact.badblue@gmail.com for assistance.') &&
   !welcome.includes("setLocation('/spectra')"));
+test('Landing remains the public root and ordinary scrolling cannot jump application routes',
+  app.includes('<Route path="/" component={Landing} />') &&
+  landing.includes("onClick={() => setLocation('/login')}") &&
+  app.includes('enabled: false,'));
+
 test('Normal signup, Square subscription, master bypass, and authenticated LEXARA routing are restored',
   landing.includes("onClick={() => setLocation('/login')}") &&
   login.includes('/api/local-register') &&
