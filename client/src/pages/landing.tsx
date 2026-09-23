@@ -211,7 +211,11 @@ export default function Landing() {
               <Checkbox
                 id="disclaimer"
                 checked={disclaimerAccepted}
-                onCheckedChange={(checked) => setDisclaimerAccepted(checked as boolean)}
+                onCheckedChange={(checked) => {
+                  const accepted = checked === true;
+                  setDisclaimerAccepted(accepted);
+                  if (accepted) setLocation('/welcome');
+                }}
                 className="mt-0.5 border-2 border-yellow-400 bg-white data-[state=checked]:bg-yellow-400 data-[state=checked]:text-black shrink-0 w-5 h-5 min-w-[1.25rem]"
                 data-testid="checkbox-disclaimer"
               />
