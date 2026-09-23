@@ -32,6 +32,8 @@ const exifTool = read('server/services/locationIntelligence/ExifToolExtractor.ts
 const spectraSources = read('server/services/spectra/SpectraSourceRegistry.ts');
 const pantheonSources = read('server/services/pantheon/PantheonSovereignSourceRegistry.ts');
 const geocoder = read('server/services/geoconsole/city-state-geocoder.ts');
+const landing = read('client/src/pages/landing.tsx');
+const login = read('client/src/pages/login.tsx');
 
 console.log('\nSPECTRA UNIFIED EXPERIENCE\n');
 
@@ -108,12 +110,22 @@ test('Regional candidates remain separate from timed observations',
 test('One-hour previous/future timeline remains available',
   dashboard.includes('min={-60}') && dashboard.includes('max={60}'));
 
-test('Temporary Solution X keeps SPECTRA visible but disables the welcome card',
+test('SPECTRA remains visible but disabled while normal LegalWhat access is restored',
   welcome.includes('SPECTRA') &&
   welcome.includes('disabled') &&
   welcome.includes('aria-disabled="true"') &&
   welcome.includes('Temporarily out of order. Contact contact.badblue@gmail.com for assistance.') &&
   !welcome.includes("setLocation('/spectra')"));
+test('Normal signup, Square subscription, master bypass, and authenticated LEXARA routing are restored',
+  landing.includes("onClick={() => setLocation('/login')}") &&
+  login.includes('/api/local-register') &&
+  login.includes('/api/subscription/checkout') &&
+  login.includes('/api/master-login') &&
+  app.includes('<Route path="/welcome" component={WelcomePage} />') &&
+  app.includes('<Route path="/lexara-consent/:domainId" component={LexaraConsentPage} />') &&
+  app.includes('<Route path="/legal-consultation/:domainId" component={ConsultationPage} />') &&
+  app.includes('<Route path="/welcome"><Redirect to="/login" /></Route>'));
+
 test('People Finder route converges on SPECTRA',
   app.includes('<Route path="/people-finder" component={SpectraPage} />'));
 test('Location Intelligence route converges on SPECTRA',
