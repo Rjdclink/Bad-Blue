@@ -4,7 +4,7 @@
  * Universal logout button for all authenticated app views
  * - Positioned in upper right corner
  * - Small and unobtrusive but clearly visible
- * - Redirects to login page after logout
+ * - Redirects to the public landing page after logout
  * - Note: Autosave should be handled by individual pages/components before calling logout
  */
 
@@ -66,8 +66,9 @@ export function LogoutButton({ className, onBeforeLogout }: LogoutButtonProps) {
         description: "See you next time!",
       });
 
-      // Step 5: Redirect to login page
-      setLocation("/login");
+      // Step 5: Return to the public landing page. The temporary access flow
+      // enters the bookshelf only after the landing-page acknowledgement.
+      setLocation("/");
     } catch (error) {
       console.error("Logout error:", error);
       toast({
