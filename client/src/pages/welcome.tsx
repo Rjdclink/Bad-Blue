@@ -379,7 +379,7 @@ export default function WelcomePage() {
       </main>
 
       <footer className="legal-library-footer">
-        <p>© 2026 LegalWhat · AI-powered legal platform · 31 legal areas</p>
+        <p>© 2026 LegalWhat · AI-powered legal platform · 40 legal areas</p>
       </footer>
     </div>
   );

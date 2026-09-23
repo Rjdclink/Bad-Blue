@@ -446,11 +446,49 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     setError(null);
 
     try {
-      // Restore the proven single progressive media-stream voice path.
-      // Realtime remains connected for STT/barge-in, but it is not allowed to
-      // synthesize speech; this prevents two acoustic clocks/providers from
-      // competing inside one consultation session.
-      await speakWithServer(cleanText, options, turnId);
+      // The already-open realtime Flux channel feeds PCM directly into the
+      // AudioWorklet, avoiding Android HTMLMediaElement buffering. It is the
+      // only active acoustic clock when healthy; the adaptive server TTS mesh
+      // remains the route-local recovery path.
+      if (lexaraRealtimeVoiceClient.isSpeechOutputReady()) {
+        let started = false;
+        try {
+          await lexaraRealtimeVoiceClient.speak(cleanText, `lexara-turn-${turnId}`, {
+            onStart: () => {
+              if (turnId !== activeTurnRef.current || started) return;
+              started = true;
+              setProvider('deepgram-flux');
+              setIsLoading(false);
+              setIsSpeaking(true);
+              options.onStart?.();
+            },
+          });
+          if (turnId !== activeTurnRef.current) return;
+          setIsLoading(false);
+          setIsSpeaking(false);
+          options.onEnd?.();
+        } catch (realtimeError) {
+          if (turnId !== activeTurnRef.current) return;
+          const recoveryText = remainingSpeechText(
+            cleanText,
+            playbackOffsetFromError(realtimeError),
+            Math.max(10_000, cleanText.length * 70),
+          );
+          if (!recoveryText) {
+            setIsLoading(false);
+            setIsSpeaking(false);
+            options.onEnd?.();
+            return;
+          }
+          await speakWithServer(
+            recoveryText,
+            { ...options, onStart: started ? undefined : options.onStart },
+            turnId,
+          );
+        }
+      } else {
+        await speakWithServer(cleanText, options, turnId);
+      }
     } catch (err) {
       clearPlaybackWatchdog();
       interruptionResolverRef.current = null;

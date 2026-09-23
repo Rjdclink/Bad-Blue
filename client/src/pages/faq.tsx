@@ -239,7 +239,7 @@ export default function FAQPage() {
           answer: (
             <div>
               <p className="mb-4">
-                Legal What? provides AI-powered legal assistance across 31 comprehensive areas of law:
+                Legal What? provides AI-powered legal assistance across 40 comprehensive areas of law:
               </p>
               <div className="grid sm:grid-cols-2 gap-3">
                 {LAW_TYPE_DATA.map((lawType, index) => (

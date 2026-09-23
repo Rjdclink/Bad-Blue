@@ -707,13 +707,18 @@ export class AICollaborationOrchestrator {
     // parallel. The full 17-participant pool remains available for other tasks.
     for (const provider of providers) {
       const capabilities = getHarmonyCapabilities(provider);
-      const role = capabilities.includes('legal-analysis')
+      // Live legal turns are a first-valid-answer race. Every selected participant
+      // must therefore be capable of returning a complete user-ready answer; a
+      // verifier-only winner would force a second synthesis call onto the latency path.
+      const role = attrs.needsFastResponse
         ? 'legal-analyst'
-        : capabilities.includes('verification')
-          ? 'verifier'
-          : capabilities.includes('research')
-            ? 'rapid-searcher'
-            : 'pattern-analyst';
+        : capabilities.includes('legal-analysis')
+          ? 'legal-analyst'
+          : capabilities.includes('verification')
+            ? 'verifier'
+            : capabilities.includes('research')
+              ? 'rapid-searcher'
+              : 'pattern-analyst';
       const focus = role === 'legal-analyst'
         ? (attrs.needsFastResponse
             ? 'Produce a direct, user-ready legal answer to the current turn. Lead with the answer, preserve material uncertainty, and keep it concise unless detail is necessary.'
@@ -731,7 +736,7 @@ export class AICollaborationOrchestrator {
         role,
         prompt: `${focus} Use only authority actually supplied in the prompt and never fabricate citations.\n\n${query}`,
         priority: 1,
-        timeout: attrs.needsFastResponse ? 2_500 : undefined,
+        timeout: attrs.needsFastResponse ? 1_400 : undefined,
         attributes: { ...attrs, needsLegalAnalysis: true, needsVerification: true, needsReasoning: true },
       });
     }
@@ -750,7 +755,7 @@ export class AICollaborationOrchestrator {
         prompt: 'Synthesize the successful specialist analyses into one direct, natural spoken answer to the user. Answer the current question or statement first. Default to 2-5 concise sentences unless additional detail is materially necessary or explicitly requested. Remove repetition, preserve uncertainty, never invent authority, and do not mention internal providers.\n\n[Results will be provided]',
         priority: 2,
         dependencies,
-        timeout: attrs.needsFastResponse ? 2_000 : undefined,
+        timeout: attrs.needsFastResponse ? 1_400 : undefined,
         attributes: { ...attrs, needsLegalAnalysis: true, needsVerification: true, needsReasoning: true },
       });
     }

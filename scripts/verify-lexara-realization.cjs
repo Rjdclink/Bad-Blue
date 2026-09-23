@@ -302,19 +302,19 @@ must(
     realtimeVoiceClient.includes('sampleRate * 0.120') &&
     realtimeVoiceClient.includes('mobile-network jitter gap occurs') &&
     orchestrator.includes('LIVE_RESEARCH_BUDGET_MS = 2_400') &&
-    orchestrator.includes('LIVE_REASONING_PROVIDER_ATTEMPT_MS = 2_800') &&
-    orchestrator.includes('LIVE_REASONING_MAX_FALLBACKS = 2') &&
+    orchestrator.includes('LIVE_REASONING_PROVIDER_ATTEMPT_MS = 1_400') &&
+    orchestrator.includes('LIVE_REASONING_MAX_FALLBACKS = 1') &&
     !realtimeVoiceClient.includes('LEXARA_REALTIME_OUTPUT_SAMPLE_RATE = 24_000') &&
     realtimeVoiceClient.includes('audio.defaultPlaybackRate = 1') &&
     realtimeVoiceClient.includes('audio.playbackRate = 1') &&
     realtimeVoiceGateway.includes("url.searchParams.set('speed', '1.0')") &&
     realtimeVoiceGateway.includes("url.searchParams.set('expressivity', '0')") &&
     realtimeVoiceGateway.includes('const DEFAULT_OUTPUT_SAMPLE_RATE = 48_000') &&
-    synthesis.includes('Restore the proven single progressive media-stream voice path') &&
+    synthesis.includes('lexaraRealtimeVoiceClient.isSpeechOutputReady()') &&
+    synthesis.includes('await lexaraRealtimeVoiceClient.speak(cleanText') &&
     synthesis.includes('await speakWithServer(cleanText, options, turnId)') &&
-    synthesis.includes('/api/lexara/tts/session') &&
-    !synthesis.includes('await lexaraRealtimeVoiceClient.speak('),
-  'Lexara speech uses the proven single progressive media-stream path while realtime remains available for STT/barge-in only',
+    synthesis.includes('/api/lexara/tts/session'),
+  'Lexara speech uses realtime PCM when healthy and preserves the adaptive TTS mesh as route-local recovery',
 );
 must(
   realtimeVoiceClient.includes("reportRealtimeVoiceEvent('realtime-first-audio'") &&
@@ -463,8 +463,8 @@ must(
     orchestrator.includes('estimatedTokens: 450') &&
     !orchestrator.includes('LIVE_REASONING_DEADLINE_MS') &&
     !orchestrator.includes('harmonyDeadline') &&
-    orchestrator.includes('LIVE_REASONING_PROVIDER_ATTEMPT_MS = 2_800') &&
-    orchestrator.includes('LIVE_REASONING_MAX_FALLBACKS = 2') &&
+    orchestrator.includes('LIVE_REASONING_PROVIDER_ATTEMPT_MS = 1_400') &&
+    orchestrator.includes('LIVE_REASONING_MAX_FALLBACKS = 1') &&
     orchestrator.includes('requestTimeoutMs: LIVE_REASONING_PROVIDER_ATTEMPT_MS') &&
     orchestrator.includes('maxFallbacks: LIVE_REASONING_MAX_FALLBACKS') &&
     harmony.includes('fastSynthesisTask') &&
@@ -729,7 +729,7 @@ const embodiedConversationSourceLines = embodiedConversationSourceSection.split(
 must(embodiedConversationSourceLines.length === 50, 'literal 50-source LEXARA embodied-conversation implementation blueprint is present');
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA realization verification passed.');
-// Practice-area specialization gate (31-book LegalWhat library).
+// Practice-area specialization gate (40-book LegalWhat library).
 const lawTypesSource = read('shared/lawTypes.ts');
 const legalDomainProfiles = read('server/lexara/LexaraLegalDomainProfiles.ts');
 const welcomePage = read('client/src/pages/welcome.tsx');
@@ -797,7 +797,7 @@ const domainImplementationSourceLines = domainImplementationSources.split('\n').
 must(domainExpertiseSourceLines.length === 40, 'literal 40-source LEXARA practice-area legal review is present');
 must(domainImplementationSourceLines.length === 10, 'literal 10-source LEXARA specialization implementation review is present');
 if (process.exitCode) process.exit(process.exitCode);
-console.log('LEXARA 31-domain specialization verification passed.');
+console.log('LEXARA 40-domain specialization verification passed.');
 
 // Independent live-reasoning recovery invariant.
 must(

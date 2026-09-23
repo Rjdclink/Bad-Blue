@@ -91,7 +91,7 @@ must(serverIndex.includes('.map((config) => config.canonicalPath)'), 'dynamic si
 must(serverIndex.includes('Do not emit synthetic freshness'), 'dynamic sitemap must not fabricate lastmod freshness');
 
 for (const phrase of [
-  'Legal What? — AI Legal Tools for 31 Practice Areas',
+  'Legal What? — AI Legal Tools for 40 Practice Areas',
   'two-way voice or text consultation',
   'background report generation',
   'People Finder',
@@ -100,7 +100,7 @@ for (const phrase of [
   must(landing.includes(phrase), `landing must describe capability: ${phrase}`);
 }
 must(landing.includes('/images/Legal%20What%20Icon.png'), 'landing must use Legal What icon');
-must(landing.includes('LAW_TYPE_DATA.map((area)'), 'landing must expose the 31 legal practice areas as crawlable content');
+must(landing.includes('LAW_TYPE_DATA.map((area)'), 'landing must expose the 40 legal practice areas as crawlable content');
 mustNot(landing, 'facebook.com/badblue', 'landing must not link legacy social profiles');
 mustNot(landing, 'twitter.com/badblue', 'landing must not link legacy social profiles');
 mustNot(landing, 'linkedin.com/company/badblue', 'landing must not link legacy social profiles');
