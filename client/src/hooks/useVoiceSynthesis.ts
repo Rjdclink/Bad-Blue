@@ -53,6 +53,20 @@ interface StreamingAudioSession {
 
 const SERVER_TTS_FETCH_TIMEOUT_MS = 20_000;
 const MIN_PLAYBACK_WATCHDOG_MS = 10_000;
+const FIRST_SPEECH_CHUNK_MAX_CHARS = 140;
+
+function firstSpeechChunk(text: string): { first: string; rest: string } {
+  const clean = text.replace(/\s+/g, ' ').trim();
+  if (clean.length <= FIRST_SPEECH_CHUNK_MAX_CHARS) return { first: clean, rest: '' };
+  const sentence = clean.match(/^[^.!?]+[.!?]+/)?.[0]?.trim();
+  if (sentence && sentence.length <= FIRST_SPEECH_CHUNK_MAX_CHARS) {
+    return { first: sentence, rest: clean.slice(sentence.length).trim() };
+  }
+  const window = clean.slice(0, FIRST_SPEECH_CHUNK_MAX_CHARS + 1);
+  const boundary = Math.max(window.lastIndexOf(', '), window.lastIndexOf('; '), window.lastIndexOf(' '));
+  const cut = boundary > 40 ? boundary : FIRST_SPEECH_CHUNK_MAX_CHARS;
+  return { first: clean.slice(0, cut).trim(), rest: clean.slice(cut).trim() };
+}
 const MAX_PLAYBACK_WATCHDOG_MS = 600_000;
 
 function remainingSpeechText(
@@ -229,9 +243,12 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     options: VoiceSynthesisOptions,
     turnId: number,
   ): Promise<void> => {
-    // One reply owns one progressive media stream. Do not split a response into
-    // separately downloaded blobs: that was the source of the audible gaps.
+    // Restore the proven low-latency first-audible sequence: start a short
+    // first speech unit immediately instead of asking Android's media element to
+    // buffer the entire answer before it becomes audible. The remainder stays
+    // on the same canonical TTS mesh and is prepared while the first unit plays.
     const stableTurnId = `lexara-turn-${turnId}`;
+    const { first: firstUnit, rest: remainingUnit } = firstSpeechChunk(text);
     const interruption = makeInterruptionPromise();
     let selectedProvider: string | null = null;
     let expectedDuration = Math.max(10_000, text.length * 70);
@@ -293,7 +310,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
       let session: StreamingAudioSession;
       try {
         const sessionStartedAt = performance.now();
-        session = await createStreamingAudioSession(text, stableTurnId);
+        session = await createStreamingAudioSession(firstUnit, stableTurnId);
         if (turnId !== activeTurnRef.current) return;
 
         selectedProvider = session.provider;
@@ -343,6 +360,27 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
       if (turnId !== activeTurnRef.current || outcome === 'interrupted') {
         LexaraServerTTS.stop('interrupted');
         return;
+      }
+
+      if (outcome === 'ended' && remainingUnit) {
+        // The long remainder is allowed to buffer only after the user has
+        // already heard Lexara begin speaking. This preserves current voice,
+        // interruption, animation, and provider-mesh behavior while removing
+        // the multi-second first-audible stall.
+        const remainder = await fetchServerAudio(remainingUnit);
+        if (turnId !== activeTurnRef.current) return;
+        selectedProvider = remainder.provider || selectedProvider;
+        expectedDuration = remainder.durationMs || Math.max(10_000, remainingUnit.length * 70);
+        let remainderFailure: unknown = null;
+        outcome = await waitForPlayback(
+          LexaraServerTTS.play(remainder.blob, {
+            turnId: stableTurnId,
+            onStart: markPlaybackStarted,
+          }),
+          error => { remainderFailure = error; },
+          expectedDuration,
+        );
+        void remainderFailure;
       }
 
       if (outcome === 'failed') {
