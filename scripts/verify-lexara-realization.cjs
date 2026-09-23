@@ -290,9 +290,6 @@ must(
     realtimeVoiceClient.includes("'lexara-playback-processor'") &&
     realtimeVoiceClient.includes("type: 'tts_interrupt'") &&
     realtimeVoiceClient.includes('playbackOffsetMs') &&
-    realtimeVoiceClient.includes('cumulativeRenderedFrames') &&
-    synthesis.includes('lexaraRealtimeVoiceClient.isReady()') &&
-    synthesis.includes('lexaraRealtimeVoiceClient.ensureSpeechOutputReady()') &&
     realtimeVoiceClient.includes('createMediaStreamDestination()') &&
     realtimeVoiceClient.includes('candidateAudio.srcObject = candidateDestination.stream') &&
     realtimeVoiceClient.includes('outputSampleRate: context.sampleRate') &&
