@@ -400,9 +400,9 @@ must(
     conversation.includes("'Voice reconnecting'") &&
     conversation.includes("'Voice degraded'") &&
     conversation.includes("voiceStatus === 'live'") &&
-    synthesis.includes('One successful Lexara turn owns one progressive media stream') &&
-    synthesis.includes('createStreamingAudioSession(text, stableTurnId)') &&
-    !synthesis.includes("if (outcome === 'ended' && remainingUnit)") &&
+    synthesis.includes('One successful Lexara turn owns sequential progressive media streams') &&
+    synthesis.includes('createStreamingAudioSession(firstUnit, stableTurnId)') &&
+    synthesis.includes('remainingUnit') &&
     !synthesis.includes('splitLexaraSpeechChunks') &&
     !synthesis.includes('fetchPreparedSessionAudio') &&
     !synthesis.includes('preparedCurrent') &&
@@ -411,7 +411,7 @@ must(
     synthesis.includes('voiceFailureToastIdRef') &&
     !synthesis.includes('shouldBufferLexaraPlaybackOnThisDevice') &&
     !synthesis.includes('bufferStreamingSessionForMobile'),
-  'LEXARA voice readiness stays truthful while one progressive stream owns successful playback and buffered synthesis remains recovery-only',
+  'LEXARA voice readiness stays truthful while bounded sequential progressive streams own successful playback and buffered synthesis remains recovery-only',
 );
 must(
   voiceRoutes.includes('/api/lexara/voice/profile') &&
