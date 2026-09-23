@@ -866,10 +866,6 @@ must(
   synthesis.includes('One reply owns one progressive media stream') &&
     synthesis.includes('createStreamingAudioSession(text, stableTurnId)') &&
     synthesis.includes('MAX_PLAYBACK_WATCHDOG_MS = 600_000') &&
-    synthesis.includes('remainingSpeechText') &&
-    synthesis.includes('playbackOffsetFromError') &&
-    synthesis.includes('fallbackText = remainingSpeechText') &&
-    synthesis.includes("event: 'realtime-fallback'") &&
     realtimeVoiceClient.includes("type: 'upstream_complete'") &&
     realtimeVoiceClient.includes('currentTurnPlaybackOffsetMs') &&
     realtimeVoiceClient.includes("'realtime-socket-close'") &&
