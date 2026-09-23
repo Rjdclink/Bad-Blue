@@ -227,7 +227,10 @@ function Router() {
     left: "/orchestrator-console",
     right: "/cryptocrawler-v2",
     down: "/control-room",
-    enabled: isAuthenticated && !isMasterSession,
+    // Ordinary page scrolling must never trigger cross-page navigation. The
+    // legacy global swipe router caused normal vertical scrolling to jump users
+    // several application surfaces ahead. Keep route changes button/link driven.
+    enabled: false,
   });
 
   // Master navigation is button-driven only. Preserve native vertical scrolling
