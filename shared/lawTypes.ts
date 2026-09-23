@@ -1,7 +1,7 @@
 /**
  * Law Types Constants - LegalWhat Platform
  * 
- * STAGE 1A: Created with 31 law types
+ * STAGE 1A: Created with 40 law types
  * STAGE 1B: Will be imported by WelcomePage component
  * STAGE 2: Will be used for media upload tagging
  * STAGE 3-4: Will be mapped to AI expertise
@@ -10,7 +10,7 @@
  * DO NOT MODIFY without updating dependent stages
  */
 
-// Array of all law type IDs (31 total)
+// Array of all law type IDs (40 total)
 export const LAW_TYPES = [
   'law-enforcement-accountability',
   'criminal-law',
@@ -43,6 +43,15 @@ export const LAW_TYPES = [
   'tax-law',
   'environmental-law',
   'municipal-government-law',
+  'agricultural-law',
+  'banking-consumer-credit-debt-law',
+  'bankruptcy-law',
+  'business-corporate-law',
+  'disability-law',
+  'education-law',
+  'health-medical-law',
+  'landlord-tenant-law',
+  'personal-injury-medical-malpractice-law',
 ] as const;
 
 // TypeScript type for law types
@@ -308,6 +317,78 @@ export const LAW_TYPE_DATA: LawTypeInfo[] = [
     description: 'Local government, zoning, permits, municipal codes',
     icon: 'Landmark',
     route: '/legal-tools?type=municipal-government-law',
+    color: 'blue',
+  },
+  {
+    id: 'agricultural-law',
+    name: 'Agricultural Law',
+    description: 'Farming, agricultural contracts, USDA programs, land use, and agricultural regulation',
+    icon: 'Wheat',
+    route: '/legal-tools?type=agricultural-law',
+    color: 'blue',
+  },
+  {
+    id: 'banking-consumer-credit-debt-law',
+    name: 'Banking/Consumer Credit and Debt Law',
+    description: 'Consumer lending, credit reporting, debt collection, banking disputes, and debtor rights',
+    icon: 'CreditCard',
+    route: '/legal-tools?type=banking-consumer-credit-debt-law',
+    color: 'blue',
+  },
+  {
+    id: 'bankruptcy-law',
+    name: 'Bankruptcy Law',
+    description: 'Chapter 7, 11, and 13 cases, automatic stay, discharge, exemptions, and creditor issues',
+    icon: 'Landmark',
+    route: '/legal-tools?type=bankruptcy-law',
+    color: 'blue',
+  },
+  {
+    id: 'business-corporate-law',
+    name: 'Business/Corporate Law',
+    description: 'Business formation, corporations, LLCs, governance, fiduciary duties, and ownership disputes',
+    icon: 'Building2',
+    route: '/legal-tools?type=business-corporate-law',
+    color: 'blue',
+  },
+  {
+    id: 'disability-law',
+    name: 'Disability Law',
+    description: 'ADA rights, accessibility, accommodations, disability discrimination, and benefits-related issues',
+    icon: 'Accessibility',
+    route: '/legal-tools?type=disability-law',
+    color: 'blue',
+  },
+  {
+    id: 'education-law',
+    name: 'Education Law',
+    description: 'Student rights, school discipline, special education, Title IX, and education disputes',
+    icon: 'GraduationCap',
+    route: '/legal-tools?type=education-law',
+    color: 'blue',
+  },
+  {
+    id: 'health-medical-law',
+    name: 'Health/Medical Law',
+    description: 'Patient rights, healthcare regulation, privacy, billing, provider disputes, and medical legal issues',
+    icon: 'HeartPulse',
+    route: '/legal-tools?type=health-medical-law',
+    color: 'blue',
+  },
+  {
+    id: 'landlord-tenant-law',
+    name: 'Landlord-Tenant Law',
+    description: 'Leases, eviction, deposits, habitability, rent disputes, and landlord-tenant rights',
+    icon: 'KeyRound',
+    route: '/legal-tools?type=landlord-tenant-law',
+    color: 'blue',
+  },
+  {
+    id: 'personal-injury-medical-malpractice-law',
+    name: 'Personal Injury/Medical Malpractice Law',
+    description: 'Injury claims, negligence, medical malpractice, causation, damages, and liability',
+    icon: 'Stethoscope',
+    route: '/legal-tools?type=personal-injury-medical-malpractice-law',
     color: 'blue',
   },
 ];
