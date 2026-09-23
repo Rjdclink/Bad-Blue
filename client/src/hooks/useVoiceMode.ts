@@ -1110,12 +1110,19 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
         engineRef.current = 'server';
         setEngine('server');
       } else if (isSpeechRecognitionSupported()) {
-        stream.getTracks().forEach(track => track.stop());
+        // Desktop still uses native recognition for STT, but keep the shared
+        // realtime voice channel warm so every LEXARA utterance has one primary
+        // speech-output route across device classes.
+        const realtimeReady = await initializeRealtimeRecognition(stream);
+        if (!realtimeReady) {
+          stream.getTracks().forEach(track => track.stop());
+        }
         initializeSpeechRecognition();
         engineRef.current = 'browser';
         setEngine('browser');
       } else if (isServerRecognitionSupported()) {
-        await initializeServerRecognition(stream);
+        const realtimeReady = await initializeRealtimeRecognition(stream);
+        if (!realtimeReady) await initializeServerRecognition(stream);
         engineRef.current = 'server';
         setEngine('server');
       } else {
