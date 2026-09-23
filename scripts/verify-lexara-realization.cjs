@@ -813,7 +813,7 @@ must(
     embodimentEngine.includes('selectAudioViseme') &&
     preparedFacePoses.includes('LEXARA_PREPARED_FACE_POSES.length !== 120') &&
     preparedFacePoses.includes('visemeIndex * STRENGTHS.length + strengthIndex') &&
-    fs.existsSync('public/images/lexara-mouth-atlas.webp'),
+    avatar.includes("const LEXARA_MOUTH_ATLAS_SRC = '/images/lexara-mouth-atlas.webp") || avatar.includes("const LEXARA_MOUTH_ATLAS_SRC = '/images/lexara-mouth-atlas.webp?v="),
   '120 facial reference states constrain a continuous audio-driven rig while the resting lips are suppressed during speech and voice playback remains isolated',
 );
 must(
