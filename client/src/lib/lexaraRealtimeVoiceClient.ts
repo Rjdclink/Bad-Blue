@@ -339,7 +339,7 @@ function websocketUrl(endpoint: string, ticket: string): string {
 }
 
 function needsMediaStreamOutputSink(): boolean {
-  // Recovery-only compatibility bridge; normal realtime speech uses Web Audio output.
+  // Use the browser Web Audio destination for realtime speech.
   return false;
 }
 
