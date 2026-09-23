@@ -291,9 +291,9 @@ must(
     realtimeVoiceClient.includes('outputSampleRate: LEXARA_REALTIME_OUTPUT_SAMPLE_RATE') &&
     realtimeVoiceClient.includes('audio.defaultPlaybackRate = 1') &&
     realtimeVoiceClient.includes('audio.playbackRate = 1') &&
-    realtimeGateway.includes("url.searchParams.set('speed', '1.0')") &&
-    realtimeGateway.includes("url.searchParams.set('expressivity', '0')") &&
-    realtimeGateway.includes('const DEFAULT_OUTPUT_SAMPLE_RATE = 24_000') &&
+    realtimeVoiceGateway.includes("url.searchParams.set('speed', '1.0')") &&
+    realtimeVoiceGateway.includes("url.searchParams.set('expressivity', '0')") &&
+    realtimeVoiceGateway.includes('const DEFAULT_OUTPUT_SAMPLE_RATE = 24_000') &&
     synthesis.includes("setProvider('deepgram-flux')") &&
     synthesis.includes('await speakWithServer') &&
     synthesis.includes('/api/lexara/tts/session'),
