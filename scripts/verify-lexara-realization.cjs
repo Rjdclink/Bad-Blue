@@ -787,7 +787,7 @@ must(
 // CPU-only Lexara continuity guard: one reply uses one progressive session and
 // the visual layer selects prepared states without becoming part of playback.
 must(
-  avatar.includes('cy: 0.313') &&
+  avatar.includes('cy: 0.317') &&
     avatar.includes('rx: 0.040') &&
     avatar.includes('ry: 0.0115') &&
     avatar.includes('traceLipBoundary') &&
@@ -798,16 +798,23 @@ must(
     avatar.includes("fallback: 'portrait-plus-throat'") &&
     avatar.includes('LEGACY_PORTRAIT_NON_MOUTH_OVERLAYS_ENABLED') &&
     avatar.includes('const TARGET_FPS = 60') &&
+    avatar.includes("VITE_LEXARA_CLIP_MOTION_ENABLED ?? '1'") &&
+    avatar.includes("if (frame.mode !== 'speaking') return;") &&
+    avatar.includes("audioActive ? 'speaking' : requestedMode === 'speaking' ? 'idle' : requestedMode") &&
+    embodimentEngine.includes("input.mode === 'speaking' && audio.active") &&
+    avatar.includes('preparedPoseCount: 120') &&
     avatar.includes('blendPreparedFacePose') &&
     avatar.includes('frame.mouthPreviousPoseIndex') &&
     embodimentEngine.includes('mouthPoseIndex') &&
     embodimentEngine.includes('mouthPoseBlend') &&
     embodimentEngine.includes('dtSec / 0.085') &&
+    embodimentEngine.includes('this.currentVisemeIndex * 8 + (mouthStrengthLevel - 1)') &&
+    embodimentEngine.includes('mouthStrengthLevel: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8') &&
     embodimentEngine.includes('selectAudioViseme') &&
-    preparedFacePoses.includes('LEXARA_PREPARED_FACE_POSES.length !== 60') &&
+    preparedFacePoses.includes('LEXARA_PREPARED_FACE_POSES.length !== 120') &&
     preparedFacePoses.includes('visemeIndex * STRENGTHS.length + strengthIndex') &&
-    fs.existsSync('public/images/lexara-mouth-atlas.webp'),
-  'sixty prepared facial states animate the calibrated lips and original face while preserving throat motion and voice isolation',
+    avatar.includes("const LEXARA_MOUTH_ATLAS_SRC = '/images/lexara-mouth-atlas.webp") || avatar.includes("const LEXARA_MOUTH_ATLAS_SRC = '/images/lexara-mouth-atlas.webp?v="),
+  '120 facial reference states constrain a continuous audio-driven rig while the resting lips are suppressed during speech and voice playback remains isolated',
 );
 must(
   synthesis.includes('One reply owns one progressive media stream') &&
