@@ -97,7 +97,7 @@ export default function AdminWorkerLogs() {
   const handleLogout = async () => {
     try {
       await fetch("/api/auth/logout", { method: "POST" });
-      window.location.href = "/login";
+      window.location.href = "/";
     } catch (error) {
       toast({
         title: "Error",

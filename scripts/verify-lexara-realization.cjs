@@ -880,8 +880,9 @@ must(
     voiceRoutes.includes('LEXARA_TTS_SESSION_MAX_CHARS = 50_000') &&
     voiceRoutes.includes('splitLexaraTTSInput') &&
     voiceRoutes.includes('openLexaraSpeechSequence') &&
-    voiceRoutes.includes('synthesizeLexaraSpeechSequence'),
-  'one Lexara response streams continuously, preserves long replies, and recovers only the unspoken portion after a transport fault',
+    voiceRoutes.includes('synthesizeLexaraSpeechSequence') &&
+    voiceRoutes.includes("res.setHeader('Content-Encoding', 'identity')"),
+  'one Lexara response streams continuously, bypasses intermediary compression buffering, preserves long replies, and recovers only the unspoken portion after a transport fault',
 );
 must(
   speechClient.includes('LexaraPlaybackOptions') &&
