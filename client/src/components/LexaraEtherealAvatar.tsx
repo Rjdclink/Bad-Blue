@@ -411,14 +411,17 @@ function drawMouth(
   const centroidCorrection = Math.max(-maxCentroidError, Math.min(maxCentroidError, centroidError));
   const mouthCx = visualCentroidX - centroidCorrection;
   const lipHalfWidth = (rightCornerX - leftCornerX) / 2;
-  const gap = Math.max(0, Math.min(r.ry * 1.32, open * r.ry * 2.20));
-  const upperExtent = Math.max(r.ry * 0.72, Math.min(r.ry * 1.28, baseUpper * (0.92 + open * 0.34)));
-  const lowerExtent = Math.max(r.ry * 0.68, Math.min(r.ry * 1.78, baseLower * (0.80 + open * 1.22)));
+  // Anatomical opening: the jaw/lower lip carries most large openings while
+  // the upper lip remains comparatively stable. Corners stay attached.
+  const shapedOpen = open * open * (3 - 2 * open);
+  const gap = Math.max(0, Math.min(r.ry * 1.18, shapedOpen * r.ry * 1.92));
+  const upperExtent = Math.max(r.ry * 0.72, Math.min(r.ry * 1.20, baseUpper * (0.94 + shapedOpen * 0.20)));
+  const lowerExtent = Math.max(r.ry * 0.68, Math.min(r.ry * 1.62, baseLower * (0.82 + shapedOpen * 0.96)));
   // Preserve the photographed lip texture as one coherent surface. Width is
   // expressed by the boundary itself; independently scaling upper/lower copies
   // created the layered, flat-looking mouth seen in production captures.
-  const upperDy = -gap * 0.20;
-  const lowerDy = gap * 0.62;
+  const upperDy = -gap * 0.13;
+  const lowerDy = gap * 0.72;
 
   const traceLipBoundary = () => {
     ctx.beginPath();
@@ -484,13 +487,39 @@ function drawMouth(
 
   if (open > 0.025) {
     const innerCx = mouthCx;
-    const innerCy = r.cy + gap * 0.16;
-    const innerRx = Math.max(baseHalfWidth * 0.48, Math.min(lipHalfWidth * 0.72, lipHalfWidth * (0.58 + open * 0.12)));
-    const innerRy = Math.max(0.32, Math.min(r.ry * 0.72, gap * 0.46));
+    const innerCy = r.cy + gap * 0.20;
+    const innerRx = Math.max(baseHalfWidth * 0.42, Math.min(lipHalfWidth * 0.70, lipHalfWidth * (0.54 + wide * 0.08 - round * 0.10)));
+    const innerRy = Math.max(0.28, Math.min(r.ry * 0.66, gap * 0.43));
+    const cornerInset = innerRx * (0.10 + round * 0.08);
+
+    const traceAperture = () => {
+      ctx.beginPath();
+      ctx.moveTo(innerCx - innerRx + cornerInset, innerCy);
+      ctx.bezierCurveTo(
+        innerCx - innerRx * 0.56, innerCy - innerRy * 0.78,
+        innerCx - innerRx * 0.20, innerCy - innerRy,
+        innerCx, innerCy - innerRy,
+      );
+      ctx.bezierCurveTo(
+        innerCx + innerRx * 0.20, innerCy - innerRy,
+        innerCx + innerRx * 0.56, innerCy - innerRy * 0.78,
+        innerCx + innerRx - cornerInset, innerCy,
+      );
+      ctx.bezierCurveTo(
+        innerCx + innerRx * 0.54, innerCy + innerRy * 0.78,
+        innerCx + innerRx * 0.20, innerCy + innerRy,
+        innerCx, innerCy + innerRy,
+      );
+      ctx.bezierCurveTo(
+        innerCx - innerRx * 0.20, innerCy + innerRy,
+        innerCx - innerRx * 0.54, innerCy + innerRy * 0.78,
+        innerCx - innerRx + cornerInset, innerCy,
+      );
+      ctx.closePath();
+    };
 
     ctx.fillStyle = 'rgba(39, 10, 14, 0.94)';
-    ctx.beginPath();
-    ctx.ellipse(innerCx, innerCy, innerRx, innerRy, 0, 0, Math.PI * 2);
+    traceAperture();
     ctx.fill();
 
     if (mouthAtlas?.complete && mouthAtlas.naturalWidth >= 512 && mouthAtlas.naturalHeight >= 288) {
@@ -504,7 +533,7 @@ function drawMouth(
       const destinationHeight = innerRy * 2.00;
       ctx.save();
       ctx.beginPath();
-      ctx.ellipse(innerCx, innerCy, innerRx, innerRy, 0, 0, Math.PI * 2);
+      traceAperture();
       ctx.clip();
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
@@ -534,7 +563,7 @@ function drawMouth(
       const showsTongue = [3, 4, 8, 10, 11].includes(pose.visemeIndex) && open > 0.20;
       ctx.save();
       ctx.beginPath();
-      ctx.ellipse(innerCx, innerCy, innerRx, innerRy, 0, 0, Math.PI * 2);
+      traceAperture();
       ctx.clip();
       if (showsTongue) {
         ctx.fillStyle = 'rgba(154, 66, 76, 0.94)';
