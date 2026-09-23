@@ -211,11 +211,7 @@ export default function Landing() {
               <Checkbox
                 id="disclaimer"
                 checked={disclaimerAccepted}
-                onCheckedChange={(checked) => {
-                  const accepted = checked === true;
-                  setDisclaimerAccepted(accepted);
-                  if (accepted) setLocation('/welcome');
-                }}
+                onCheckedChange={(checked) => setDisclaimerAccepted(checked as boolean)}
                 className="mt-0.5 border-2 border-yellow-400 bg-white data-[state=checked]:bg-yellow-400 data-[state=checked]:text-black shrink-0 w-5 h-5 min-w-[1.25rem]"
                 data-testid="checkbox-disclaimer"
               />
@@ -229,7 +225,7 @@ export default function Landing() {
               <Button
                 size="default"
                 className="text-base px-6 bg-primary hover:bg-primary/90 backdrop-blur-sm border border-white/50 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-500"
-                onClick={() => setLocation('/welcome')}
+                onClick={() => setLocation('/login')}
                 disabled={!disclaimerAccepted}
                 data-testid="button-get-started"
               >
