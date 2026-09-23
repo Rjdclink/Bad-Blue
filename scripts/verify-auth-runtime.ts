@@ -129,11 +129,12 @@ assert.match(evidenceRoutesSource, /router\.post\('\/analyze', isAuthenticated/,
 assert.match(evidenceRoutesSource, /router\.post\('\/comprehensive-report', isAuthenticated/, 'evidence reports must require verified paid access');
 assert.match(socialRoutesSource, /router\.post\('\/search-username', isAuthenticated/, 'social intelligence search must require verified paid access');
 assert.match(locationRoutesSource, /router\.post\('\/api\/location-intel\/analyze', isAuthenticated/, 'location intelligence analysis must require verified paid access');
-assert.match(lexaraRoutesSource, /router\.use\(isAuthenticated\)/, 'LEXARA streaming/ASR services must require verified paid access');
+assert.match(lexaraRoutesSource, /TEMPORARY_PUBLIC_LEXARA_PATHS[\s\S]{0,300}'\/voice\/live-readiness'[\s\S]{0,500}return isAuthenticated\(req, res, next\)/, 'temporary Lexara bypass must expose only live readiness while retaining authentication for every other streaming/ASR route');
 assert.match(lexaraChatRoutesSource, /router\.use\(isAuthenticated\)/, 'LEXARA conversational services must require verified paid access');
-assert.match(voiceRoutesSource, /'\/api\/lexara\/tts\/session',[\s\S]{0,80}isAuthenticated/, 'LEXARA TTS session creation must require verified paid access');
-assert.match(voiceRoutesSource, /'\/api\/lexara\/speak',[\s\S]{0,80}isAuthenticated/, 'LEXARA speech synthesis must require verified paid access');
-assert.match(voiceRoutesSource, /'\/api\/lexara\/tts\/stream',[\s\S]{0,80}isAuthenticated/, 'LEXARA TTS streaming must require verified paid access');
+assert.match(voiceRoutesSource, /'\/api\/lexara\/tts\/session',[\s\S]{0,80}temporaryLexaraBypass/, 'temporary Lexara bypass must explicitly expose TTS session creation');
+assert.match(voiceRoutesSource, /'\/api\/lexara\/speak',[\s\S]{0,80}isAuthenticated/, 'LEXARA direct speech synthesis must remain protected outside the temporary consultation path');
+assert.match(voiceRoutesSource, /'\/api\/lexara\/tts\/stream',[\s\S]{0,80}isAuthenticated/, 'LEXARA buffered TTS streaming must remain protected outside the temporary consultation path');
+assert.match(voiceRoutesSource, /'\/api\/lexara\/realtime-ticket',[\s\S]{0,80}temporaryLexaraBypass/, 'temporary Lexara bypass must explicitly expose realtime ticket minting');
 assert.match(verificationRoutesSource, /router\.get\('\/people-search\/:reportId', isAuthenticated/, 'persisted people-search reports must require verified paid access');
 assert.match(verificationRoutesSource, /router\.get\('\/lexara\/session\/:sessionId', isAuthenticated/, 'persisted LEXARA history must require verified paid access');
 assert.match(verificationRoutesSource, /router\.get\('\/health', async/, 'verification health must remain independently observable');
