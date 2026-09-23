@@ -291,21 +291,24 @@ function Router() {
           <Route path="/terms" component={Terms} />
           <Route path="/legal-consultation" component={LegalConsultationPage} />
           <Route path="/faq" component={FAQPage} />
+          {/* TEMPORARY SOLUTION X: public bookshelf access while signup is bypassed. */}
+          <Route path="/welcome" component={WelcomePage} />
+          <Route path="/lexara-consent/:domainId" component={LexaraConsentPage} />
+          <Route path="/legal-consultation/:domainId" component={ConsultationPage} />
           <Route path="/petition/:slug" component={PetitionDetail} />
 
           {isAuthenticated && hasPaidAccess ? (
             <>
               <Route path="/administrator" component={AdminConsole} />
               <Route path="/admin" component={AdminConsole} />
-              <Route path="/welcome" component={WelcomePage} />
-              <Route path="/lexara-consent/:domainId" component={LexaraConsentPage} />
+
               <Route path="/legal-tools" component={LegalToolsPage} />
               <Route path="/people-finder" component={SpectraPage} />
               <Route path="/pantheon" component={PantheonPage} />
               {/* LEXARA Viewport intentionally remains retired; /legal-consultation is canonical. */}
               <Route path="/spectra" component={SpectraPage} />
               <Route path="/geo-console" component={GeoConsoleRedirect} />
-              <Route path="/legal-consultation/:domainId" component={ConsultationPage} />
+
               {isMasterSession && <Route path="/geoconsole" component={SpectraPage} />}
               {isMasterSession && <Route path="/geoconsole-command" component={SpectraPage} />}
               {isMasterSession && <Route path="/geoconsole-process" component={SpectraPage} />}
@@ -355,9 +358,7 @@ function Router() {
               <Route path="/history" component={History} />
               <Route path="/evidence-hub" component={EvidenceHub} />
             </>
-          ) : (
-            <Route path="/welcome"><Redirect to="/login" /></Route>
-          )}
+          ) : null}
 
           <Route component={NotFound} />
         </Switch>
