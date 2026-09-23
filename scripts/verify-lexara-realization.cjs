@@ -802,13 +802,16 @@ must(
     avatar.includes("if (frame.mode !== 'speaking') return;") &&
     avatar.includes("audioActive ? 'speaking' : requestedMode === 'speaking' ? 'idle' : requestedMode") &&
     avatar.includes("const LEXARA_MOUTH_ANCHOR = Object.freeze({ cx: 0.520, cy: 0.317 })") &&
-    avatar.includes("{ cx: LEXARA_MOUTH_ANCHOR.cx, cy: LEXARA_MOUTH_ANCHOR.cy, rx: 0.034, ry: 0.0125 }") &&
+    avatar.includes("cx: LEXARA_MOUTH_ANCHOR.cx") &&
+    avatar.includes("cy: LEXARA_MOUTH_ANCHOR.cy") &&
+    avatar.includes("const anchor = point(layout, LEXARA_MOUTH_ANCHOR.cx, LEXARA_MOUTH_ANCHOR.cy)") &&
+    !avatar.includes("{ cx: LEXARA_MOUTH_ANCHOR.cx, cy: LEXARA_MOUTH_ANCHOR.cy, rx: 0.034, ry: 0.0125 }") &&
     avatar.includes("const destinationWidth = innerRx * 2.06") &&
     avatar.includes("const destinationHeight = innerRy * 2.10") &&
     avatar.includes("ctx.imageSmoothingQuality = 'high'") &&
     avatar.includes("const teethY = r.cy + Math.min(gap * 0.06, r.ry * 0.20)") &&
     !avatar.includes("drawAtlasPose(frame.mouthPreviousPoseIndex") &&
-    avatar.includes("{ dy: layout.height * 0.0065, alpha: 0.92 }") &&
+    !avatar.includes("{ dy: layout.height * 0.0065, alpha: 0.92 }") &&
     !avatar.includes("{ cx: 0.520, cy: 0.317, rx: 0.047, ry: 0.019 }") &&
     embodimentEngine.includes("input.mode === 'speaking' && audio.active") &&
     avatar.includes('preparedPoseCount: 120') &&
@@ -861,3 +864,4 @@ must(
 );
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA independent recovery verification passed.');
+

@@ -89,11 +89,16 @@ interface FeatheredPatchSurface {
 
 // Shift the mouth about one source pixel lower than the previous midpoint.
 // Portrait-relative coordinates preserve its position across viewport sizes.
-const LEXARA_MOUTH_REGION: Region = { cx: 0.520, cy: 0.317, rx: 0.040, ry: 0.0115 };
-// One immutable portrait-space registration owns lips, aperture, atlas, teeth,
-// tongue and transition masking. Individual visemes may deform around this
-// anchor but may never introduce their own x/y origin.
+// Single immutable registration point: the closed-lip seam midpoint in the
+// canonical portrait. Every mouth child is derived from this point; no child
+// layer owns an independent x/y origin.
 const LEXARA_MOUTH_ANCHOR = Object.freeze({ cx: 0.520, cy: 0.317 });
+const LEXARA_MOUTH_REGION: Region = Object.freeze({
+  cx: LEXARA_MOUTH_ANCHOR.cx,
+  cy: LEXARA_MOUTH_ANCHOR.cy,
+  rx: 0.040,
+  ry: 0.0115,
+});
 
 function blendPreparedFacePose(frame: LexaraEmbodimentFrame): LexaraPreparedFacePose {
   const previous = getLexaraPreparedFacePose(frame.mouthPreviousPoseIndex);
@@ -369,7 +374,13 @@ function drawMouth(
   // The original y=0.357 target was below the real lips and visibly animated the
   // chin/throat instead; production capture calibration now centers the lip-only
   // layer halfway between the rejected low and high positions.
-  const r = ellipseRegion(layout, LEXARA_MOUTH_REGION);
+  const anchor = point(layout, LEXARA_MOUTH_ANCHOR.cx, LEXARA_MOUTH_ANCHOR.cy);
+  const r = {
+    cx: anchor.x,
+    cy: anchor.y,
+    rx: layout.width * LEXARA_MOUTH_REGION.rx,
+    ry: layout.height * LEXARA_MOUTH_REGION.ry,
+  };
   const pose = blendPreparedFacePose(frame);
   const open = Math.min(0.60, Math.max(frame.mouthOpen * 0.95, pose.mouthOpen * 0.68));
   const wide = Math.min(1, Math.max(frame.mouthWide * 0.52, pose.mouthWide));
@@ -633,19 +644,9 @@ function drawPreparedSpeechFace(
     surface,
   );
 
-  // Keep the transition patch anatomically tight. The previous 0.047 x 0.019
-  // ellipse sampled skin from well below the lips (dy=0.020) and exposed that
-  // differently lit skin as a tan/khaki halo. A much smaller, near-local shift
-  // preserves the purpose of the patch (hide the photographed resting lip seam)
-  // while leaving the surrounding philtrum, cheeks and chin untouched.
-  drawFeatheredImageTransform(
-    ctx,
-    image,
-    layout,
-    { cx: LEXARA_MOUTH_ANCHOR.cx, cy: LEXARA_MOUTH_ANCHOR.cy, rx: 0.034, ry: 0.0125 },
-    { dy: layout.height * 0.0065, alpha: 0.92 },
-    surface,
-  );
+  // Do not pre-shift a second copy of the photographed lips. That transition
+  // patch had its own transform and could visibly separate from the live mouth.
+  // The canonical mouth renderer now owns the complete lip registration.
   drawMouth(ctx, image, mouthAtlas, layout, frame, 0, 0);
 }
 
