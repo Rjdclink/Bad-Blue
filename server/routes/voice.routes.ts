@@ -356,6 +356,10 @@ export function setupVoiceRoutes(app: Express): void {
           res.status(200);
           res.setHeader('Content-Type', progressive.mimeType);
           res.setHeader('Cache-Control', 'no-store, no-transform');
+          // Streaming media must not be content-encoded by intermediary middleware.
+          // Compression can buffer MP3 chunks before Chrome receives a decodable
+          // media segment, defeating the provider's sub-second first-byte latency.
+          res.setHeader('Content-Encoding', 'identity');
           res.setHeader('X-Accel-Buffering', 'no');
           res.setHeader('X-Provider', progressive.provider);
           res.setHeader('X-Voice-Id', progressive.voiceId || 'adaptive');
