@@ -103,8 +103,8 @@ must(
     conversation.includes('URL.createObjectURL(blob)') &&
     lexaraChatRoutes.includes('const explicit =') &&
     lexaraChatRoutes.includes('legalInstrument && actionNeed') &&
-    conversationOrchestrator.includes('Default to 1-3 concise sentences') &&
-    conversationOrchestrator.includes('Never invent, print, or suggest a document URL') &&
+    orchestrator.includes('Default to 1-3 concise sentences') &&
+    orchestrator.includes('Never invent, print, or suggest a document URL') &&
     conversation.includes('const SERVER_VOICE_TURN_SETTLE_MS = 300') &&
     conversation.includes('const FLUX_FINAL_SETTLE_MS = 40') &&
     conversation.includes('const VOICE_END_GRACE_MS = 850') &&
