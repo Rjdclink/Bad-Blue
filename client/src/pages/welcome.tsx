@@ -4,7 +4,7 @@
  * Scope invariant:
  * - Presentation only: preserve all existing destinations and law-domain routing.
  * - Every law book still enters /lexara-consent/:domainId.
- * - PANTHEON, SPECTRA, and Inmate Locator keep their existing routes.
+ * - TEMPORARY SOLUTION X: PANTHEON, SPECTRA, and Inmate Locator remain visible but are intentionally non-interactive.
  */
 
 import { useCallback, type CSSProperties } from "react";
@@ -288,7 +288,9 @@ export default function WelcomePage() {
                     key={service.route}
                     type="button"
                     className="library-service-panel"
-                    onClick={() => service.route === "/spectra" ? setLocation('/spectra') : setLocation(service.route)}
+                    disabled
+                    aria-disabled="true"
+                    title="Temporarily out of order. Contact contact.badblue@gmail.com for assistance."
                   >
                     <span className="service-icon-wrap" aria-hidden="true">
                       <Icon />
@@ -297,6 +299,7 @@ export default function WelcomePage() {
                       <strong>{service.name}</strong>
                       <span>{service.subtitle}</span>
                       <small>{service.description}</small>
+                      <small className="block mt-1 text-xs opacity-80">Temporarily out of order. Contact contact.badblue@gmail.com for assistance.</small>
                     </span>
                     <ArrowRight className="service-arrow" aria-hidden="true" />
                   </button>
