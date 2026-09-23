@@ -1332,6 +1332,44 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     return 'Text consultation';
   }, [phase]);
 
+  const generateAndDownloadPendingDocument = async (format: 'docx' | 'pdf') => {
+    if (!pendingDocument || documentBusy) return;
+    setDocumentBusy(true);
+    try {
+      const generated = await fetch('/api/lexara/documents/generate', {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          state: pendingDocument.state,
+          facts: pendingDocument.facts,
+          lawType: lawTypeId,
+          documentType: pendingDocument.title,
+          instructions: 'Create the requested document from the conversation facts. Preserve unknown required facts as bracketed placeholders.',
+        }),
+      });
+      const data = await generated.json().catch(() => ({}));
+      if (!generated.ok || !data?.document) throw new Error(data?.error || 'Document generation failed');
+      const title = String(data?.title || pendingDocument.title);
+      const content = String(data.document);
+      setConversationDocument({ title, content });
+      const exported = await fetch('/api/lexara/documents/export', {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, content, format }),
+      });
+      if (!exported.ok) throw new Error('Document export failed');
+      const blob = await exported.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${title.replace(/[^a-z0-9._-]+/gi, '-') }.${format}`;
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      setPendingDocument(null);
+    } catch (error) {
+      setErrorMessage(friendlyError(error));
+    } finally {
+      setDocumentBusy(false);
+    }
+  };
+
   const downloadConversationDocument = async (format: 'docx' | 'pdf') => {
     if (!conversationDocument?.content) return;
     const response = await fetch('/api/lexara/documents/export', {
@@ -1435,6 +1473,19 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
               </div>
             </div>
           ))}
+
+          {pendingDocument && !conversationDocument && (
+            <div className="flex justify-start">
+              <div className="max-w-[92%] rounded-2xl border bg-card p-4 text-sm shadow-sm">
+                <div className="mb-2 font-medium">{pendingDocument.title}</div>
+                <div className="mb-3">Would you like your document as a DOCX or PDF?</div>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" disabled={documentBusy} onClick={() => void generateAndDownloadPendingDocument('docx')}><Download className="mr-1 h-4 w-4" />DOCX</Button>
+                  <Button size="sm" variant="outline" disabled={documentBusy} onClick={() => void generateAndDownloadPendingDocument('pdf')}><Download className="mr-1 h-4 w-4" />PDF</Button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {(conversationDocument || documentBusy) && (
             <div className="flex justify-start">
