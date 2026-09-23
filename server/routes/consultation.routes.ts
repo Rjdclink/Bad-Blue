@@ -82,10 +82,32 @@ export function setupConsultationRoutes(app: Express): void {
       `CASE FACTS:\n${facts}`,
     ].filter(Boolean).join('\n\n');
 
-    const document = await analyzeLegalIssue(draftingPrompt, state, undefined, req.body?.lawType);
+    let document = await analyzeLegalIssue(draftingPrompt, state, undefined, req.body?.lawType);
+    const normalizedDocument = String(document || '').trim();
+    const filingLike = /motion|brief|memorandum|affidavit|declaration|complaint|answer|petition|notice|objection|appeal|application/i.test(requestedType);
+    const hasDocumentAnatomy = !filingLike || (
+      normalizedDocument.length >= 700
+      && /(?:court|caption|plaintiff|defendant|petitioner|respondent|movant|case\s*(?:no\.?|number)|wherefore|respectfully|signature|relief)/i.test(normalizedDocument)
+      && !/^(?:this is|here is|here's|the following is|a useful|i can|you should|before filing)/i.test(normalizedDocument)
+    );
+    if (!hasDocumentAnatomy) {
+      const repairPrompt = [
+        draftingPrompt,
+        'CRITICAL REPAIR: The prior draft was commentary rather than the requested legal instrument.',
+        'Return ONLY the complete legal-document draft itself. Begin with the conventional caption/title/body structure for this instrument.',
+        'Do not preface or conclude with advice, explanation, disclaimers, filing instructions, or commentary.',
+        'Use bracketed placeholders for every unknown required filing fact.',
+        `REJECTED PRIOR OUTPUT:\n${normalizedDocument.slice(0, 6000)}`,
+      ].join('\n\n');
+      document = await analyzeLegalIssue(repairPrompt, state, undefined, req.body?.lawType);
+    }
+    const finalDocument = String(document || '').trim();
+    if (!finalDocument || (filingLike && finalDocument.length < 700)) {
+      return res.status(422).json({ error: 'LEXARA could not produce a complete legal-document draft from the supplied facts. The incomplete output was not exported.' });
+    }
     return res.json({
       title: requestedType,
-      document,
+      document: finalDocument,
       jurisdiction: state,
       reviewRequired: true,
       notice: 'Draft generated from supplied facts. Verify facts, authorities, local rules, deadlines, signatures, service, and filing requirements before use.',
