@@ -467,7 +467,7 @@ function drawMouth(
   ctx.clip();
   ctx.translate(mouthCx, r.cy - gap * 0.24);
   ctx.scale(scaleX, 1);
-  ctx.translate(-r.cx, -r.cy);
+  ctx.translate(-mouthCx, -r.cy);
   ctx.drawImage(image, layout.x, layout.y, layout.width, layout.height);
   ctx.restore();
 
@@ -477,7 +477,7 @@ function drawMouth(
   ctx.clip();
   ctx.translate(mouthCx, r.cy + gap * 0.70);
   ctx.scale(scaleX, 1);
-  ctx.translate(-r.cx, -r.cy);
+  ctx.translate(-mouthCx, -r.cy);
   ctx.drawImage(image, layout.x, layout.y, layout.width, layout.height);
   ctx.restore();
 
