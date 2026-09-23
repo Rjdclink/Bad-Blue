@@ -106,6 +106,13 @@ const LEXARA_MOUTH_LANDMARKS = Object.freeze({
   upperCenter: { x: 0.520, y: 0.3055 },
   lowerCenter: { x: 0.520, y: 0.3285 },
 });
+// Registration and deformation are deliberately separate. Every speech layer
+// shares this centroid; ordinary audio is never allowed to create lateral drift.
+const LEXARA_MOUTH_CENTROID = Object.freeze({
+  x: (LEXARA_MOUTH_LANDMARKS.leftCorner.x + LEXARA_MOUTH_LANDMARKS.rightCorner.x) / 2,
+  y: LEXARA_MOUTH_LANDMARKS.seam.cy,
+});
+const LEXARA_MOUTH_MAX_LATERAL_ERROR = 0.0015;
 
 function blendPreparedFacePose(frame: LexaraEmbodimentFrame): LexaraPreparedFacePose {
   const previous = getLexaraPreparedFacePose(frame.mouthPreviousPoseIndex);
@@ -381,7 +388,7 @@ function drawMouth(
   // The original y=0.357 target was below the real lips and visibly animated the
   // chin/throat instead; production capture calibration now centers the lip-only
   // layer halfway between the rejected low and high positions.
-  const anchor = point(layout, LEXARA_MOUTH_ANCHOR.cx, LEXARA_MOUTH_ANCHOR.cy);
+  const anchor = point(layout, LEXARA_MOUTH_CENTROID.x, LEXARA_MOUTH_CENTROID.y);
   const r = {
     cx: anchor.x,
     cy: anchor.y,
@@ -395,8 +402,15 @@ function drawMouth(
   const baseHalfWidth = layout.width * ((LEXARA_MOUTH_LANDMARKS.rightCorner.x - LEXARA_MOUTH_LANDMARKS.leftCorner.x) / 2);
   const baseUpper = layout.height * (LEXARA_MOUTH_LANDMARKS.seam.cy - LEXARA_MOUTH_LANDMARKS.upperCenter.y);
   const baseLower = layout.height * (LEXARA_MOUTH_LANDMARKS.lowerCenter.y - LEXARA_MOUTH_LANDMARKS.seam.cy);
-  const cornerScale = Math.max(0.91, Math.min(1.11, 1 + wide * 0.10 - round * 0.075));
-  const lipHalfWidth = baseHalfWidth * cornerScale;
+  const cornerScale = Math.max(0.94, Math.min(1.06, 1 + wide * 0.055 - round * 0.045));
+  const leftCornerX = r.cx - baseHalfWidth * cornerScale;
+  const rightCornerX = r.cx + baseHalfWidth * cornerScale;
+  const visualCentroidX = (leftCornerX + rightCornerX) / 2;
+  const centroidError = visualCentroidX - r.cx;
+  const maxCentroidError = layout.width * LEXARA_MOUTH_MAX_LATERAL_ERROR;
+  const centroidCorrection = Math.max(-maxCentroidError, Math.min(maxCentroidError, centroidError));
+  const mouthCx = visualCentroidX - centroidCorrection;
+  const lipHalfWidth = (rightCornerX - leftCornerX) / 2;
   const gap = Math.max(0, Math.min(r.ry * 1.32, open * r.ry * 2.20));
   const upperExtent = Math.max(r.ry * 0.72, Math.min(r.ry * 1.28, baseUpper * (0.92 + open * 0.34)));
   const lowerExtent = Math.max(r.ry * 0.68, Math.min(r.ry * 1.78, baseLower * (0.80 + open * 1.22)));
@@ -404,37 +418,37 @@ function drawMouth(
 
   const traceLipBoundary = () => {
     ctx.beginPath();
-    ctx.moveTo(r.cx - lipHalfWidth, r.cy);
+    ctx.moveTo(mouthCx - lipHalfWidth, r.cy);
     ctx.bezierCurveTo(
-      r.cx - lipHalfWidth * 0.56,
+      mouthCx - lipHalfWidth * 0.56,
       r.cy - upperExtent,
-      r.cx - lipHalfWidth * 0.18,
+      mouthCx - lipHalfWidth * 0.18,
       r.cy - upperExtent * 0.86,
-      r.cx,
+      mouthCx,
       r.cy - upperExtent * 0.48,
     );
     ctx.bezierCurveTo(
-      r.cx + lipHalfWidth * 0.18,
+      mouthCx + lipHalfWidth * 0.18,
       r.cy - upperExtent * 0.86,
-      r.cx + lipHalfWidth * 0.56,
+      mouthCx + lipHalfWidth * 0.56,
       r.cy - upperExtent,
-      r.cx + lipHalfWidth,
+      mouthCx + lipHalfWidth,
       r.cy,
     );
     ctx.bezierCurveTo(
-      r.cx + lipHalfWidth * 0.58,
+      mouthCx + lipHalfWidth * 0.58,
       r.cy + lowerExtent * 0.88,
-      r.cx + lipHalfWidth * 0.18,
+      mouthCx + lipHalfWidth * 0.18,
       r.cy + lowerExtent,
-      r.cx,
+      mouthCx,
       r.cy + lowerExtent * 0.78,
     );
     ctx.bezierCurveTo(
-      r.cx - lipHalfWidth * 0.18,
+      mouthCx - lipHalfWidth * 0.18,
       r.cy + lowerExtent,
-      r.cx - lipHalfWidth * 0.58,
+      mouthCx - lipHalfWidth * 0.58,
       r.cy + lowerExtent * 0.88,
-      r.cx - lipHalfWidth,
+      mouthCx - lipHalfWidth,
       r.cy,
     );
     ctx.closePath();
@@ -449,21 +463,21 @@ function drawMouth(
   // rectangular lower-face patch is what previously bent the jaw.
   ctx.save();
   ctx.beginPath();
-  ctx.rect(r.cx - lipHalfWidth, r.cy - upperExtent, lipHalfWidth * 2, upperExtent);
+  ctx.rect(mouthCx - lipHalfWidth, r.cy - upperExtent, lipHalfWidth * 2, upperExtent);
   ctx.clip();
-  ctx.translate(r.cx, r.cy - gap * 0.24);
+  ctx.translate(mouthCx, r.cy - gap * 0.24);
   ctx.scale(scaleX, 1);
-  ctx.translate(-r.cx, -r.cy);
+  ctx.translate(-mouthCx, -r.cy);
   ctx.drawImage(image, layout.x, layout.y, layout.width, layout.height);
   ctx.restore();
 
   ctx.save();
   ctx.beginPath();
-  ctx.rect(r.cx - lipHalfWidth, r.cy, lipHalfWidth * 2, lowerExtent);
+  ctx.rect(mouthCx - lipHalfWidth, r.cy, lipHalfWidth * 2, lowerExtent);
   ctx.clip();
-  ctx.translate(r.cx, r.cy + gap * 0.70);
+  ctx.translate(mouthCx, r.cy + gap * 0.70);
   ctx.scale(scaleX, 1);
-  ctx.translate(-r.cx, -r.cy);
+  ctx.translate(-mouthCx, -r.cy);
   ctx.drawImage(image, layout.x, layout.y, layout.width, layout.height);
   ctx.restore();
 
@@ -471,12 +485,12 @@ function drawMouth(
   // Paint the aperture last so moving lip pixels cannot hide the voice shape.
   ctx.fillStyle = 'rgba(142, 79, 83, 0.16)';
   ctx.beginPath();
-  ctx.ellipse(r.cx, r.cy - upperExtent * 0.34 - gap * 0.22, lipHalfWidth * 0.82, upperExtent * 0.37, 0, 0, Math.PI * 2);
-  ctx.ellipse(r.cx, r.cy + lowerExtent * 0.37 + gap * 0.48, lipHalfWidth * 0.80, lowerExtent * 0.39, 0, 0, Math.PI * 2);
+  ctx.ellipse(mouthCx, r.cy - upperExtent * 0.34 - gap * 0.22, lipHalfWidth * 0.82, upperExtent * 0.37, 0, 0, Math.PI * 2);
+  ctx.ellipse(mouthCx, r.cy + lowerExtent * 0.37 + gap * 0.48, lipHalfWidth * 0.80, lowerExtent * 0.39, 0, 0, Math.PI * 2);
   ctx.fill();
 
   if (open > 0.025) {
-    const innerCx = r.cx;
+    const innerCx = mouthCx;
     const innerCy = r.cy + gap * 0.16;
     const innerRx = Math.max(baseHalfWidth * 0.48, Math.min(lipHalfWidth * 0.72, lipHalfWidth * (0.58 + open * 0.12)));
     const innerRy = Math.max(0.32, Math.min(r.ry * 0.72, gap * 0.46));
