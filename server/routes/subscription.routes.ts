@@ -26,7 +26,7 @@ async function persistSubscriptionState(
   return user;
 }
 
-function planVariationId(): string {
+function configuredPlanVariationId(): string {
   const value = String(getConfig().SQUARE_SUBSCRIPTION_PLAN_VARIATION_ID || "").trim();
   if (!value || /placeholder/i.test(value)) {
     throw new Error("Square subscription plan variation is not configured");
@@ -100,7 +100,7 @@ async function bindAndReconcile(id: string, customerId: string): Promise<{ activ
   });
 
   const square = getSquareClient();
-  const variationId = planVariationId();
+  const variationId = configuredPlanVariationId();
   const items = await subscriptionsForCustomer(square, customerId, getSquareLocationId());
   const subscription = activeMatchingSubscription(items, variationId);
   if (!subscription) return { active: false, user: pendingUser };
@@ -186,7 +186,7 @@ export async function handleLegalWhatSubscriptionWebhook(event: any): Promise<bo
 
   if (eventType === "subscription.created" || eventType === "subscription.updated") {
     const subscription = object?.subscription;
-    const variationId = planVariationId();
+    const variationId = configuredPlanVariationId();
     if (!subscription || String(subscription.plan_variation_id || "") !== variationId) return false;
     const customerId = String(subscription.customer_id || "").trim();
     const subscriptionId = String(subscription.id || "").trim();
@@ -276,7 +276,7 @@ export function setupSubscriptionRoutes(app: Express): void {
         },
         checkoutOptions: {
           allowTipping: false,
-          subscriptionPlanId: planVariationId(),
+          subscriptionPlanId: configuredPlanVariationId(),
           redirectUrl: `${getBaseUrl().replace(/\/$/, "")}/subscription-success`,
         },
         prePopulatedData: { buyerEmail: email },
