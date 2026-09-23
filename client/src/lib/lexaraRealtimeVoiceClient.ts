@@ -525,7 +525,7 @@ class LexaraRealtimeVoiceClient {
     this.outputAudio = outputAudio;
     this.speechOutputReady = speechOutputReady;
     this.renderedFrames = 0;
-    this.cumulativeRenderedFrames = 0;
+    this.sessionRenderedFrames = 0;
 
     const socket = new WebSocket(websocketUrl(
       typeof ticketPayload.endpoint === 'string' ? ticketPayload.endpoint : '/api/lexara/realtime',
@@ -757,17 +757,13 @@ class LexaraRealtimeVoiceClient {
   interrupt(): void {
     const context = this.context;
     const active = this.activeSpeech;
-    const renderedThisTurn = active ? this.renderedFrames : 0;
-    if (active) {
-      this.cumulativeRenderedFrames += renderedThisTurn;
-      this.renderedFrames = 0;
-    }
     const playbackOffsetMs = context
-      ? Math.round((this.cumulativeRenderedFrames / context.sampleRate) * 1000)
+      ? Math.round(((this.sessionRenderedFrames + (active ? this.renderedFrames : 0)) / context.sampleRate) * 1000)
       : 0;
 
     this.clearPlayback();
-    if (active && this.socket?.readyState === WebSocket.OPEN) {
+    if (active && !this.interruptInFlight && this.socket?.readyState === WebSocket.OPEN) {
+      this.interruptInFlight = true;
       this.socket.send(JSON.stringify({
         type: 'tts_interrupt',
         turnId: active.turnId,
@@ -779,11 +775,9 @@ class LexaraRealtimeVoiceClient {
       });
     }
 
-    if (active) {
-      window.clearTimeout(active.timeout);
-      this.activeSpeech = null;
-      active.resolve();
-    }
+    // Keep the active turn authoritative until Deepgram confirms
+    // SpeechInterrupted. This prevents a new Speak from racing in-flight PCM.
+    if (active) window.clearTimeout(active.timeout);
   }
 
   close(stopTracks = false): void {
@@ -821,7 +815,7 @@ class LexaraRealtimeVoiceClient {
     this.outputAudio = null;
     this.speechOutputReady = false;
     this.context = null;
-    this.cumulativeRenderedFrames = 0;
+    this.sessionRenderedFrames = 0;
     this.onSttEvent = null;
     this.onFatal = null;
   }
@@ -904,8 +898,14 @@ class LexaraRealtimeVoiceClient {
     }
 
     if (payload.type === 'SpeechInterrupted') {
+      this.interruptInFlight = false;
       const active = this.activeSpeech;
       if (!active) return;
+      this.sessionRenderedFrames = Math.max(
+        this.sessionRenderedFrames,
+        Math.round((Number(payload.audio_played_ms || 0) / 1000) * (this.context?.sampleRate || 0)),
+      );
+      this.renderedFrames = 0;
       window.clearTimeout(active.timeout);
       this.activeSpeech = null;
       active.resolve();
@@ -916,7 +916,7 @@ class LexaraRealtimeVoiceClient {
     if (this.activeSpeech !== active) return;
     if (!active.metadataComplete || !active.playbackDrained) return;
     window.clearTimeout(active.timeout);
-    this.cumulativeRenderedFrames += this.renderedFrames;
+    this.sessionRenderedFrames += this.renderedFrames;
     this.renderedFrames = 0;
     this.activeSpeech = null;
     reportRealtimeVoiceEvent('realtime-ended', {
