@@ -427,10 +427,9 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
           options.onEnd?.();
           return;
         } catch (realtimeError) {
-          // Persistent realtime speech is the latency-first route, not a new
-          // mandatory dependency. A socket/provider failure stays local and the
-          // already-proven adaptive HTTP mesh immediately recovers only the
-          // unfinished portion of the turn.
+          // Once realtime speech has become audible, never switch acoustic
+          // providers inside that reply. Mid-turn provider changes are perceived
+          // as a different speaker. Recovery is deferred to the next turn.
           const playbackOffsetMs = playbackOffsetFromError(realtimeError);
           if (realtimeStarted && playbackOffsetMs > 0) {
             fallbackText = remainingSpeechText(
@@ -442,6 +441,12 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
           }
           lexaraRealtimeVoiceClient.interrupt();
           if (turnId !== activeTurnRef.current) return;
+          if (realtimeStarted) {
+            setIsSpeaking(false);
+            setIsLoading(false);
+            options.onEnd?.();
+            return;
+          }
           void fetch('/api/lexara/voice/playback-event', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
