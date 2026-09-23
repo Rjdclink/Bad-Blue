@@ -90,6 +90,10 @@ interface FeatheredPatchSurface {
 // Shift the mouth about one source pixel lower than the previous midpoint.
 // Portrait-relative coordinates preserve its position across viewport sizes.
 const LEXARA_MOUTH_REGION: Region = { cx: 0.520, cy: 0.317, rx: 0.040, ry: 0.0115 };
+// One immutable portrait-space registration owns lips, aperture, atlas, teeth,
+// tongue and transition masking. Individual visemes may deform around this
+// anchor but may never introduce their own x/y origin.
+const LEXARA_MOUTH_ANCHOR = Object.freeze({ cx: 0.520, cy: 0.317 });
 
 function blendPreparedFacePose(frame: LexaraEmbodimentFrame): LexaraPreparedFacePose {
   const previous = getLexaraPreparedFacePose(frame.mouthPreviousPoseIndex);
@@ -463,37 +467,67 @@ function drawMouth(
     if (mouthAtlas?.complete && mouthAtlas.naturalWidth >= 512 && mouthAtlas.naturalHeight >= 288) {
       const cellWidth = 128;
       const cellHeight = 72;
-      const destinationWidth = lipHalfWidth * 3.25;
-      const destinationHeight = destinationWidth * (cellHeight / cellWidth);
+      // Atlas cells contain useful interior detail but must not own placement.
+      // Draw exactly one selected interior texture per frame into the canonical
+      // aperture. Cross-fading two photographed cells was the visible "layer"
+      // doubling in production captures.
+      const destinationWidth = innerRx * 2.06;
+      const destinationHeight = innerRy * 2.10;
       ctx.save();
       ctx.beginPath();
       ctx.ellipse(innerCx, innerCy, innerRx, innerRy, 0, 0, Math.PI * 2);
       ctx.clip();
-      const drawAtlasPose = (poseIndex: number, alpha: number) => {
-        if (alpha <= 0.001) return;
-        const atlasPose = getLexaraPreparedFacePose(poseIndex);
-        const cellIndex = Math.max(0, Math.min(14, atlasPose.visemeIndex));
-        const sourceX = (cellIndex % 4) * cellWidth;
-        const sourceY = Math.floor(cellIndex / 4) * cellHeight;
-        ctx.globalAlpha = alpha;
-        ctx.drawImage(
-          mouthAtlas,
-          sourceX,
-          sourceY,
-          cellWidth,
-          cellHeight,
-          innerCx - destinationWidth / 2,
-          innerCy - destinationHeight * 0.69,
-          destinationWidth,
-          destinationHeight,
-        );
-      };
-      const rawBlend = Math.max(0, Math.min(1, frame.mouthPoseBlend));
-      const poseBlend = rawBlend * rawBlend * (3 - 2 * rawBlend);
-      if (frame.mouthPreviousPoseIndex !== frame.mouthPoseIndex && poseBlend < 0.999) {
-        drawAtlasPose(frame.mouthPreviousPoseIndex, 1 - poseBlend);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      const atlasPose = getLexaraPreparedFacePose(frame.mouthPoseIndex);
+      const cellIndex = Math.max(0, Math.min(14, atlasPose.visemeIndex));
+      const sourceX = (cellIndex % 4) * cellWidth;
+      const sourceY = Math.floor(cellIndex / 4) * cellHeight;
+      ctx.globalAlpha = 1;
+      ctx.drawImage(
+        mouthAtlas,
+        sourceX,
+        sourceY,
+        cellWidth,
+        cellHeight,
+        innerCx - destinationWidth / 2,
+        innerCy - destinationHeight / 2,
+        destinationWidth,
+        destinationHeight,
+      );
+      ctx.restore();
+
+      // Re-establish rigid, high-contrast oral structures after texture
+      // resampling. Upper teeth stay tied to the upper-face anchor; the tongue
+      // follows the aperture/jaw and remains behind the teeth.
+      const showsTeeth = [2, 3, 4, 7, 8, 11, 12].includes(pose.visemeIndex) || open > 0.52;
+      const showsTongue = [3, 4, 8, 10, 11].includes(pose.visemeIndex) && open > 0.20;
+      ctx.save();
+      ctx.beginPath();
+      ctx.ellipse(innerCx, innerCy, innerRx, innerRy, 0, 0, Math.PI * 2);
+      ctx.clip();
+      if (showsTongue) {
+        ctx.fillStyle = 'rgba(154, 66, 76, 0.94)';
+        ctx.beginPath();
+        ctx.ellipse(innerCx, innerCy + innerRy * 0.54, innerRx * 0.54, Math.max(0.34, innerRy * 0.30), 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(104, 43, 53, 0.42)';
+        ctx.lineWidth = Math.max(0.45, layout.width * 0.00075);
+        ctx.beginPath();
+        ctx.moveTo(innerCx, innerCy + innerRy * 0.38);
+        ctx.lineTo(innerCx, innerCy + innerRy * 0.72);
+        ctx.stroke();
       }
-      drawAtlasPose(frame.mouthPoseIndex, poseBlend);
+      if (showsTeeth) {
+        const teethY = r.cy + Math.min(gap * 0.06, r.ry * 0.20);
+        ctx.fillStyle = 'rgba(244, 236, 226, 0.98)';
+        ctx.beginPath();
+        ctx.ellipse(innerCx, teethY, innerRx * 0.72, Math.max(0.38, innerRy * 0.27), 0, Math.PI, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(112, 92, 86, 0.28)';
+        ctx.lineWidth = Math.max(0.35, layout.width * 0.00055);
+        ctx.stroke();
+      }
       ctx.restore();
     } else {
       const showsTeeth = [2, 3, 4, 7, 8, 11, 12].includes(pose.visemeIndex) || open > 0.52;
@@ -608,7 +642,7 @@ function drawPreparedSpeechFace(
     ctx,
     image,
     layout,
-    { cx: 0.520, cy: 0.317, rx: 0.034, ry: 0.0125 },
+    { cx: LEXARA_MOUTH_ANCHOR.cx, cy: LEXARA_MOUTH_ANCHOR.cy, rx: 0.034, ry: 0.0125 },
     { dy: layout.height * 0.0065, alpha: 0.92 },
     surface,
   );
