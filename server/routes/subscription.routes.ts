@@ -15,7 +15,7 @@ import {
 } from "../statelessLocalAuth";
 
 const SUBSCRIPTION_NAME = "LegalWhat Subscription";
-const SUBSCRIPTION_PRICE_CENTS = 2599;
+const SUBSCRIPTION_PRICE_CENTS = 999;
 const PAYMENT_NOTE_PREFIX = "legalwhat-subscription:";
 
 async function persistSubscriptionState(

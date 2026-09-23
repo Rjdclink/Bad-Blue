@@ -140,7 +140,9 @@ assert.match(railwayEnvSource, /SQUARE_SUBSCRIPTION_PLAN_VARIATION_ID=/, 'Railwa
 assert.match(deployPrepSource, /"SQUARE_SUBSCRIPTION_PLAN_VARIATION_ID"/, 'deployment preflight must validate the Square subscription plan variation');
 assert.match(deployPrepSource, /"SQUARE_WEBHOOK_SIGNATURE_KEY"/, 'deployment preflight must validate the Square webhook verification key');
 assert.match(configSource, /SQUARE_WEBHOOK_SIGNATURE_KEY is required in production/, 'production must require the Square webhook verification key');
-assert.match(sampleConsultationSource, /\$25\.99\/month/, 'public subscription disclosure must match the $25.99 Square checkout price');
+assert.match(subscriptionFlowSource, /SUBSCRIPTION_PRICE_CENTS\s*=\s*999/, 'canonical Square checkout and verification amount must remain $9.99');
+assert.match(sampleConsultationSource, /\$9\.99\/month/, 'public subscription disclosure must match the $9.99 Square checkout price');
+assert.doesNotMatch(sampleConsultationSource, /\$25\.99\/month/, 'stale $25.99 public subscription pricing must not remain');
 assert.doesNotMatch(sampleConsultationSource, /\$19\.98/, 'stale public subscription pricing must not remain');
 assert.doesNotMatch(migrationReconcilerSource, /runFreeAccessMigration|Free Access for All Users/, 'startup schema reconciliation must never re-grant universal paid access');
 assert.doesNotMatch(retiredFreeAccessSource, /\.update\(users\)|hasPaidForAccess:\s*true/, 'retired free-access migration must remain non-mutating');

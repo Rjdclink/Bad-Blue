@@ -62,7 +62,7 @@ for (const foldedRoute of [
   assert(!panelSet.has(foldedRoute), `Folded geospatial surface must not remain a separate master panel: ${foldedRoute}`);
 }
 
-assert(app.includes("enabled: isAuthenticated && !isMasterSession"), "Master session must disable custom swipe navigation");
+assert(app.includes("enabled: false"), "Custom swipe navigation must remain globally disabled so ordinary scrolling cannot navigate routes");
 assert(app.includes('body.style.touchAction = "pan-y pinch-zoom"'), "Master mobile shell must preserve vertical scrolling and pinch zoom");
 assert(app.includes('body.style.overscrollBehaviorX = "none"'), "Master shell must suppress horizontal browser overscroll navigation");
 
