@@ -599,14 +599,17 @@ function drawPreparedSpeechFace(
     surface,
   );
 
-  // Cover the photographed resting lips with nearby skin before drawing the
-  // moving lips. The feathered patch is confined to the original mouth region.
+  // Keep the transition patch anatomically tight. The previous 0.047 x 0.019
+  // ellipse sampled skin from well below the lips (dy=0.020) and exposed that
+  // differently lit skin as a tan/khaki halo. A much smaller, near-local shift
+  // preserves the purpose of the patch (hide the photographed resting lip seam)
+  // while leaving the surrounding philtrum, cheeks and chin untouched.
   drawFeatheredImageTransform(
     ctx,
     image,
     layout,
-    { cx: 0.520, cy: 0.317, rx: 0.047, ry: 0.019 },
-    { dy: layout.height * 0.020 },
+    { cx: 0.520, cy: 0.317, rx: 0.034, ry: 0.0125 },
+    { dy: layout.height * 0.0065, alpha: 0.92 },
     surface,
   );
   drawMouth(ctx, image, mouthAtlas, layout, frame, 0, 0);
