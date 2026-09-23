@@ -311,10 +311,11 @@ must(
     realtimeVoiceGateway.includes("url.searchParams.set('speed', '1.0')") &&
     realtimeVoiceGateway.includes("url.searchParams.set('expressivity', '0')") &&
     realtimeVoiceGateway.includes('const DEFAULT_OUTPUT_SAMPLE_RATE = 48_000') &&
-    synthesis.includes("setProvider('deepgram-flux')") &&
-    synthesis.includes('await speakWithServer') &&
-    synthesis.includes('/api/lexara/tts/session'),
-  'realtime PCM/AudioWorklet speech is latency-first while the verified HTTP TTS mesh remains route-local recovery',
+    synthesis.includes('Restore the proven single progressive media-stream voice path') &&
+    synthesis.includes('await speakWithServer(cleanText, options, turnId)') &&
+    synthesis.includes('/api/lexara/tts/session') &&
+    !synthesis.includes('await lexaraRealtimeVoiceClient.speak('),
+  'Lexara speech uses the proven single progressive media-stream path while realtime remains available for STT/barge-in only',
 );
 must(
   realtimeVoiceClient.includes("reportRealtimeVoiceEvent('realtime-first-audio'") &&
