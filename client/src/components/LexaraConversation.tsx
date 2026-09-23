@@ -435,6 +435,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const [gaze, setGaze] = useState<LEXARAGazeHint>('camera');
   const [conversationDocument, setConversationDocument] = useState<{ title: string; content: string } | null>(null);
   const [documentBusy, setDocumentBusy] = useState(false);
+  const [pendingDocument, setPendingDocument] = useState<{ title: string; facts: string; state: string } | null>(null);
 
   const conversationRef = useRef<ConversationMessage[]>(initialStateRef.current.messages);
   const phaseRef = useRef<ConversationPhase>('initializing');
@@ -1077,31 +1078,15 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       if (data?.documentIntent?.requested === true) {
         const resolvedJurisdiction = String(data?.jurisdiction || jurisdiction || '').trim();
         if (resolvedJurisdiction) {
-          setDocumentBusy(true);
           const facts = [...previousMessages, { role: 'user', content: message }]
             .map(item => `${item.role === 'user' ? 'USER' : 'LEXARA'}: ${item.content}`)
             .join('\n\n')
             .slice(-30000);
-          void fetch('/api/lexara/documents/generate', {
-            method: 'POST',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              state: resolvedJurisdiction,
-              facts,
-              lawType: lawTypeId,
-              documentType: String(data.documentIntent.documentType || 'Custom Document'),
-              instructions: 'Create the requested document from the conversation facts. Preserve unknown required facts as bracketed placeholders.',
-            }),
-          }).then(async documentResponse => {
-            const documentData = await documentResponse.json().catch(() => ({}));
-            if (!documentResponse.ok) throw new Error(documentData?.error || 'Document generation failed');
-            setConversationDocument({
-              title: String(documentData?.title || data.documentIntent.documentType || 'Legal Document'),
-              content: String(documentData?.document || ''),
-            });
-          }).catch(error => setErrorMessage(friendlyError(error)))
-            .finally(() => setDocumentBusy(false));
+          setPendingDocument({
+            title: String(data.documentIntent.documentType || 'Legal Document'),
+            facts,
+            state: resolvedJurisdiction,
+          });
         }
       }
       // Model/research work is complete before TTS begins. A barge-in during
