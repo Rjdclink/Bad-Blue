@@ -205,7 +205,7 @@ must(
     realtimeVoiceClient.includes('energySum += sample * sample') &&
     realtimeVoiceClient.includes('diffEnergySum += diff * diff') &&
     realtimeVoiceClient.includes('zeroCrossings += 1') &&
-    realtimeVoiceClient.includes('startThresholdFrames = Math.max(128, Math.round(sampleRate * 0.072))') &&
+    realtimeVoiceClient.includes('startThresholdFrames = Math.max(128, Math.round(sampleRate * 0.120))') &&
     speechClient.includes('getLexaraServerPlaybackClock'),
   'avatar synchronization derives mouth cues from the already-rendered realtime PCM clock and a bounded mobile jitter cushion without becoming playback authority',
 );
@@ -318,7 +318,7 @@ must(
     realtimeVoiceClient.includes("reportRealtimeVoiceEvent('realtime-interrupted'") &&
     realtimeVoiceClient.includes("reportRealtimeVoiceEvent('realtime-ended'") &&
     realtimeVoiceClient.includes('startThresholdFrames') &&
-    realtimeVoiceClient.includes('0.072') &&
+    realtimeVoiceClient.includes('0.120') &&
     voiceRoutes.includes("'realtime-first-audio'") &&
     voiceRoutes.includes("'realtime-playing'") &&
     voiceRoutes.includes("'realtime-interrupted'") &&
@@ -458,8 +458,8 @@ must(
     orchestrator.includes('estimatedTokens: 450') &&
     !orchestrator.includes('LIVE_REASONING_DEADLINE_MS') &&
     !orchestrator.includes('harmonyDeadline') &&
-    orchestrator.includes('LIVE_REASONING_PROVIDER_ATTEMPT_MS = 4_500') &&
-    orchestrator.includes('LIVE_REASONING_MAX_FALLBACKS = 3') &&
+    orchestrator.includes('LIVE_REASONING_PROVIDER_ATTEMPT_MS = 2_800') &&
+    orchestrator.includes('LIVE_REASONING_MAX_FALLBACKS = 2') &&
     orchestrator.includes('requestTimeoutMs: LIVE_REASONING_PROVIDER_ATTEMPT_MS') &&
     orchestrator.includes('maxFallbacks: LIVE_REASONING_MAX_FALLBACKS') &&
     harmony.includes('fastSynthesisTask') &&
@@ -603,7 +603,7 @@ must(
     !liveTurnHandler.includes('if (pendingUserTurnRef.current) return;') &&
     orchestrator.includes('Default to 1-3 concise sentences') &&
     orchestrator.includes('Do not say "thank you," "goodbye,"') &&
-    orchestrator.includes('LIVE_RESEARCH_BUDGET_MS = 3_200') &&
+    orchestrator.includes('LIVE_RESEARCH_BUDGET_MS = 2_400') &&
     authorityResearch.includes('const RESEARCH_TIMEOUT_MS = 2_400') &&
     conversation.includes("acknowledgement = String(acknowledgementData?.acknowledgement || '').trim()"),
   'active-analysis turns are cancellable, acknowledgements remain non-semantic but conversational, answers are concise/direct, and authority research is bounded off the live latency tail',
