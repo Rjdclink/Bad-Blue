@@ -222,12 +222,14 @@ function Router() {
   // Swipe routing remains available to ordinary authenticated sessions, but is
   // deliberately disabled for the master shell. On mobile, vertical scrolling
   // must never act like master Back/Forward navigation.
+  // Global swipe routing is disabled. Ordinary page scrolling must never
+  // navigate between application routes.
   useGlobalGestureNavigation({
     up: "/welcome",
     left: "/orchestrator-console",
     right: "/cryptocrawler-v2",
     down: "/control-room",
-    enabled: isAuthenticated && !isMasterSession,
+    enabled: false,
   });
 
   // Master navigation is button-driven only. Preserve native vertical scrolling
