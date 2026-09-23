@@ -899,3 +899,222 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
     const observer = typeof ResizeObserver !== 'undefined'
       ? new ResizeObserver(resizeCanvas)
       : null;
+    observer?.observe(container);
+    window.addEventListener('resize', resizeCanvas, { passive: true });
+    resizeCanvas();
+
+    image.onload = () => {
+      skinColor = sampleImageColor(image, 0.515, 0.258, skinColor);
+      engine.reset(performance.now());
+    };
+
+    const paint = (nowMs: number) => {
+      if (disposed) return;
+      frameHandle = window.requestAnimationFrame(paint);
+      if (!image.complete || !image.naturalWidth || !image.naturalHeight) return;
+      const frameIntervalMs = 1000 / TARGET_FPS;
+      if (nowMs - lastPaintMs + 0.5 < frameIntervalMs) return;
+      lastPaintMs = nowMs - ((nowMs - lastPaintMs) % frameIntervalMs);
+
+      if (rendererFailed) return;
+
+      const input = latestInputRef.current;
+      const requestedMode = getMode(input);
+      const realtimeClock = lexaraRealtimeVoiceClient.getPlaybackClock();
+      const serverClock = getLexaraServerPlaybackClock();
+      const audioActive = realtimeClock.active || serverClock.active;
+      const audioTime = realtimeClock.active
+        ? realtimeClock.currentTimeSec
+        : serverClock.active
+          ? serverClock.currentTimeSec
+          : 0;
+      const audioTurnId = realtimeClock.active ? realtimeClock.turnId : serverClock.turnId;
+      // Visible speech must follow rendered audio, not merely the React speaking flag.
+      // This prevents the resting portrait from being hidden before audio starts or
+      // after playback ends, while keeping animation completely off the audio path.
+      const mode: LexaraEmbodimentMode =
+        audioActive ? 'speaking' : requestedMode === 'speaking' ? 'idle' : requestedMode;
+
+      const frame = engine.update({
+        nowMs,
+        mode,
+        emotionHint: input.emotionHint,
+        gazeHint: input.gazeHint,
+        audio: {
+          active: audioActive,
+          currentTimeSec: audioTime,
+          level: realtimeClock.active ? realtimeClock.level : Number.NaN,
+          brightness: realtimeClock.active ? realtimeClock.brightness : undefined,
+          zeroCrossingRate: realtimeClock.active ? realtimeClock.zeroCrossingRate : undefined,
+          turnId: audioTurnId,
+        },
+      });
+
+      if (CLIP_MOTION_ENABLED && mode === 'speaking' && audioActive) {
+        // Reference clips provide natural motion geometry only. The live playback
+        // clock and PCM features remain authoritative; references constrain a
+        // continuous rig and never become a frame-by-frame canned animation.
+        const motion = sampleLexaraClipMotion(
+          audioTime, audioTurnId, frame.mouthOpen, frame.mouthWide,
+        );
+        frame.mouthOpen = Math.min(1, frame.mouthOpen * (0.92 + motion.jaw * 0.12));
+        frame.mouthWide = Math.min(1, Math.max(0, frame.mouthWide * 0.88 + motion.width * 0.12));
+        frame.browLift = Math.max(-1, Math.min(1, frame.browLift - motion.headY * 0.08));
+        frame.gestureEnergy = Math.min(1, frame.gestureEnergy + Math.abs(motion.headX) * 0.04);
+      }
+
+      const rect = canvas.getBoundingClientRect();
+      const dprX = canvas.width / Math.max(1, rect.width);
+      const dprY = canvas.height / Math.max(1, rect.height);
+      ctx.setTransform(dprX, 0, 0, dprY, 0, 0);
+      ctx.clearRect(0, 0, rect.width, rect.height);
+
+      const layout = containLayout(
+        rect.width,
+        rect.height,
+        image.naturalWidth,
+        image.naturalHeight,
+      );
+
+      try {
+        renderEmbodiedFrame(
+          ctx,
+          image,
+          mouthAtlas,
+          layout,
+          frame,
+          reducedMotion,
+          skinColor,
+          patchSurface,
+          !preparedFaceFailed,
+          error => {
+            preparedFaceFailed = true;
+            if (!preparedFaceFailureReported) {
+              preparedFaceFailureReported = true;
+              reportAvatarEvent('avatar-renderer-error', {
+                reducedMotion,
+                mode,
+                layer: 'prepared-face',
+                fallback: 'portrait-plus-throat',
+                error: error instanceof Error ? error.message.slice(0, 160) : 'unknown',
+              });
+            }
+          },
+        );
+
+        if (!rendererReported) {
+          rendererReported = true;
+          reportAvatarEvent('avatar-renderer-ready', {
+            reducedMotion,
+            mode,
+            preparedPoseCount: 120,
+            mouthAtlasReady: mouthAtlas.complete && mouthAtlas.naturalWidth > 0,
+          });
+        }
+
+        if (mode === 'speaking' && frame.mouthOpen > 0.08) {
+          const turnKey = audioTurnId || `server-${Math.floor(audioTime * 2)}`;
+          if (turnKey && turnKey !== lastMotionTurnKey) {
+            lastMotionTurnKey = turnKey;
+            reportAvatarEvent('avatar-motion-started', {
+              reducedMotion,
+              mode,
+              turnId: audioTurnId,
+              mouthOpen: Number(frame.mouthOpen.toFixed(3)),
+              mouthPoseIndex: frame.mouthPoseIndex,
+            });
+          }
+        }
+      } catch (error) {
+        rendererFailed = true;
+        ctx.clearRect(0, 0, rect.width, rect.height);
+        reportAvatarEvent('avatar-renderer-error', {
+          reducedMotion,
+          mode,
+          error: error instanceof Error ? error.message.slice(0, 160) : 'unknown',
+        });
+      }
+    };
+
+    frameHandle = window.requestAnimationFrame(paint);
+    return () => {
+      disposed = true;
+      window.cancelAnimationFrame(frameHandle);
+      observer?.disconnect();
+      window.removeEventListener('resize', resizeCanvas);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    };
+  }, [imageSrc, reducedMotion]);
+
+  return (
+    <div
+      ref={containerRef}
+      className={cn(
+        'relative overflow-hidden rounded-2xl border border-white/10 bg-slate-950 shadow-2xl',
+        SIZE_CONFIG[size],
+        className,
+      )}
+      style={{ contain: 'layout paint' }}
+      aria-label="LEXARA professional legal assistant"
+      data-live-avatar={LIVE_AVATAR_ENABLED ? 'embodied-canvas' : 'static'}
+      data-prepared-face={PREPARED_PORTRAIT_FACE_ENABLED ? 'continuous-120-reference-rig' : 'legacy'}
+      data-clip-motion={CLIP_MOTION_ENABLED ? 'reference-guided-continuous' : 'off'}
+      data-reduced-motion={reducedMotion ? 'true' : 'false'}
+    >
+      <img
+        src={imageSrc}
+        alt="LEXARA professional attorney seated behind her desk"
+        className="h-full w-full bg-slate-950 object-contain object-center"
+        draggable={false}
+        decoding="async"
+        fetchPriority="high"
+        onError={() => {
+          setImageIndex(current => Math.min(current + 1, LEXARA_ATTORNEY_IMAGE_SOURCES.length - 1));
+        }}
+      />
+
+      {LIVE_AVATAR_ENABLED && (
+        <canvas
+          ref={canvasRef}
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 h-full w-full select-none"
+        />
+      )}
+
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-slate-950/70 via-slate-950/20 to-transparent" />
+
+      <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-white/15 bg-slate-950/72 px-3 py-1.5 text-xs font-medium text-white backdrop-blur">
+        {isSpeaking ? 'Speaking' : isThinking ? 'Analyzing' : isListening ? 'Listening' : 'LEXARA'}
+      </div>
+    </div>
+  );
+});
+
+export function LEXARAStatusIndicator({
+  isSpeaking = false,
+  isListening = false,
+  isThinking = false,
+  className,
+}: {
+  isSpeaking?: boolean;
+  isListening?: boolean;
+  isThinking?: boolean;
+  className?: string;
+}) {
+  const state = isSpeaking ? 'speaking' : isThinking ? 'thinking' : isListening ? 'listening' : 'idle';
+  return (
+    <span
+      className={cn(
+        'inline-block h-2.5 w-2.5 rounded-full',
+        state === 'idle' ? 'bg-slate-400' : 'bg-emerald-400 animate-pulse',
+        className,
+      )}
+      aria-label={`LEXARA ${state}`}
+    />
+  );
+}
+
+export const LEXARAEtherealAvatar = LEXARAAttorneyPortrait;
+
+export default LEXARAAttorneyPortrait;
