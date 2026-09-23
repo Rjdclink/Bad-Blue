@@ -805,6 +805,13 @@ must(
     avatar.includes("cx: LEXARA_MOUTH_ANCHOR.cx") &&
     avatar.includes("cy: LEXARA_MOUTH_ANCHOR.cy") &&
     avatar.includes("const anchor = point(layout, LEXARA_MOUTH_ANCHOR.cx, LEXARA_MOUTH_ANCHOR.cy)") &&
+    avatar.includes("const LEXARA_MOUTH_LANDMARKS = Object.freeze({") &&
+    avatar.includes("leftCorner: { x: 0.480, y: 0.317 }") &&
+    avatar.includes("rightCorner: { x: 0.560, y: 0.317 }") &&
+    avatar.includes("upperCenter: { x: 0.520, y: 0.3055 }") &&
+    avatar.includes("lowerCenter: { x: 0.520, y: 0.3285 }") &&
+    avatar.includes("const cornerScale = Math.max(0.91, Math.min(1.11") &&
+    avatar.includes("const baseHalfWidth = layout.width") &&
     !avatar.includes("{ cx: LEXARA_MOUTH_ANCHOR.cx, cy: LEXARA_MOUTH_ANCHOR.cy, rx: 0.034, ry: 0.0125 }") &&
     avatar.includes("const destinationWidth = innerRx * 2.06") &&
     avatar.includes("const destinationHeight = innerRy * 2.10") &&
