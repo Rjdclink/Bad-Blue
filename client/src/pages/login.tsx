@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, type FormEvent } from "react";
+import { useState, useCallback, useRef, type FormEvent } from "react";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -19,7 +19,7 @@ import { BackButton } from "@/components/BackButton";
  */
 export default function Login() {
   const [, setLocation] = useLocation();
-  const { isAuthenticated, user } = useAuth();
+  useAuth();
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
   const subscriptionResumeStarted = useRef(false);
