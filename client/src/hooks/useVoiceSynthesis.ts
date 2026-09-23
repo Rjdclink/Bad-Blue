@@ -243,10 +243,11 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     options: VoiceSynthesisOptions,
     turnId: number,
   ): Promise<void> => {
-    // One successful Lexara turn owns one progressive media stream. Android
-    // must begin consuming the response as soon as the provider emits audio;
-    // the buffered route is failure recovery only, never normal continuation.
+    // One successful Lexara turn owns sequential progressive media streams on the
+    // same canonical TTS path. Start a bounded first unit so audible playback is
+    // not held behind synthesis of a long answer; then preserve the remainder.
     const stableTurnId = `lexara-turn-${turnId}`;
+    const { first: firstUnit, rest: remainingUnit } = firstSpeechChunk(text);
     const interruption = makeInterruptionPromise();
     let selectedProvider: string | null = null;
     let expectedDuration = Math.max(10_000, text.length * 70);
@@ -308,7 +309,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
       let session: StreamingAudioSession;
       try {
         const sessionStartedAt = performance.now();
-        session = await createStreamingAudioSession(text, stableTurnId);
+        session = await createStreamingAudioSession(firstUnit, stableTurnId);
         if (turnId !== activeTurnRef.current) return;
 
         selectedProvider = session.provider;
@@ -365,7 +366,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
         // The media element supplies the spoken offset; recover only the estimated
         // unspoken word boundary through the existing buffered route.
         const playbackOffsetMs = playbackOffsetFromError(streamFailure);
-        const recoveryText = remainingSpeechText(text, playbackOffsetMs, expectedDuration);
+        const recoveryText = remainingSpeechText(firstUnit, playbackOffsetMs, expectedDuration);
         if (!recoveryText) {
           interruptionResolverRef.current = null;
           setIsSpeaking(false);
@@ -384,6 +385,35 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
       if (outcome === 'failed' || outcome === 'timeout') {
         LexaraServerTTS.stop(outcome === 'timeout' ? 'timeout' : 'failed');
         throw new Error('LEXARA voice playback failed after route-local recovery');
+      }
+
+      if (remainingUnit && turnId === activeTurnRef.current) {
+        let continuation: StreamingAudioSession;
+        try {
+          continuation = await createStreamingAudioSession(remainingUnit, `${stableTurnId}-continuation`);
+          selectedProvider = continuation.provider || selectedProvider;
+          let continuationFailure: unknown = null;
+          outcome = await waitForPlayback(
+            LexaraServerTTS.play({ audioUrl: continuation.audioUrl }, { turnId: stableTurnId, onStart: markPlaybackStarted }),
+            error => { continuationFailure = error; },
+            Math.max(10_000, remainingUnit.length * 70),
+          );
+          if (outcome === 'failed') {
+            const offset = playbackOffsetFromError(continuationFailure);
+            const remainderRecovery = remainingSpeechText(remainingUnit, offset, Math.max(10_000, remainingUnit.length * 70));
+            if (remainderRecovery) outcome = await playBufferedRecovery(remainderRecovery);
+          }
+        } catch {
+          outcome = await playBufferedRecovery(remainingUnit);
+        }
+        if (turnId !== activeTurnRef.current || outcome === 'interrupted') {
+          LexaraServerTTS.stop('interrupted');
+          return;
+        }
+        if (outcome === 'failed' || outcome === 'timeout') {
+          LexaraServerTTS.stop(outcome === 'timeout' ? 'timeout' : 'failed');
+          throw new Error('LEXARA voice continuation failed after route-local recovery');
+        }
       }
 
       interruptionResolverRef.current = null;
