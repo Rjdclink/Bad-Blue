@@ -99,6 +99,13 @@ const LEXARA_MOUTH_REGION: Region = Object.freeze({
   rx: 0.040,
   ry: 0.0115,
 });
+const LEXARA_MOUTH_LANDMARKS = Object.freeze({
+  seam: LEXARA_MOUTH_ANCHOR,
+  leftCorner: { x: 0.480, y: 0.317 },
+  rightCorner: { x: 0.560, y: 0.317 },
+  upperCenter: { x: 0.520, y: 0.3055 },
+  lowerCenter: { x: 0.520, y: 0.3285 },
+});
 
 function blendPreparedFacePose(frame: LexaraEmbodimentFrame): LexaraPreparedFacePose {
   const previous = getLexaraPreparedFacePose(frame.mouthPreviousPoseIndex);
@@ -385,11 +392,15 @@ function drawMouth(
   const open = Math.min(0.60, Math.max(frame.mouthOpen * 0.95, pose.mouthOpen * 0.68));
   const wide = Math.min(1, Math.max(frame.mouthWide * 0.52, pose.mouthWide));
   const round = Math.min(1, Math.max(frame.mouthRound * 0.48, pose.mouthRound));
-  const gap = open * r.ry * 2.35;
-  const lipHalfWidth = r.rx * (1 + wide * 0.12 - round * 0.08);
-  const upperExtent = r.ry * (0.90 + open * 0.55);
-  const lowerExtent = r.ry * (0.76 + open * 2.30);
-  const scaleX = 1 + wide * 0.065 - round * 0.048;
+  const baseHalfWidth = layout.width * ((LEXARA_MOUTH_LANDMARKS.rightCorner.x - LEXARA_MOUTH_LANDMARKS.leftCorner.x) / 2);
+  const baseUpper = layout.height * (LEXARA_MOUTH_LANDMARKS.seam.cy - LEXARA_MOUTH_LANDMARKS.upperCenter.y);
+  const baseLower = layout.height * (LEXARA_MOUTH_LANDMARKS.lowerCenter.y - LEXARA_MOUTH_LANDMARKS.seam.cy);
+  const cornerScale = Math.max(0.91, Math.min(1.11, 1 + wide * 0.10 - round * 0.075));
+  const lipHalfWidth = baseHalfWidth * cornerScale;
+  const gap = Math.max(0, Math.min(r.ry * 1.32, open * r.ry * 2.20));
+  const upperExtent = Math.max(r.ry * 0.72, Math.min(r.ry * 1.28, baseUpper * (0.92 + open * 0.34)));
+  const lowerExtent = Math.max(r.ry * 0.68, Math.min(r.ry * 1.78, baseLower * (0.80 + open * 1.22)));
+  const scaleX = cornerScale;
 
   const traceLipBoundary = () => {
     ctx.beginPath();
@@ -466,9 +477,9 @@ function drawMouth(
 
   if (open > 0.025) {
     const innerCx = r.cx;
-    const innerCy = r.cy + gap * 0.22;
-    const innerRx = lipHalfWidth * (0.60 + open * 0.16);
-    const innerRy = Math.max(0.32, gap * 0.52);
+    const innerCy = r.cy + gap * 0.16;
+    const innerRx = Math.max(baseHalfWidth * 0.48, Math.min(lipHalfWidth * 0.72, lipHalfWidth * (0.58 + open * 0.12)));
+    const innerRy = Math.max(0.32, Math.min(r.ry * 0.72, gap * 0.46));
 
     ctx.fillStyle = 'rgba(39, 10, 14, 0.94)';
     ctx.beginPath();
