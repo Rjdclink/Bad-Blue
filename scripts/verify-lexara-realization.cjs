@@ -400,8 +400,10 @@ must(
     conversation.includes("'Voice reconnecting'") &&
     conversation.includes("'Voice degraded'") &&
     conversation.includes("voiceStatus === 'live'") &&
-    synthesis.includes('One reply owns one progressive media stream') &&
-    synthesis.includes('createStreamingAudioSession(text, stableTurnId)') &&
+    synthesis.includes('FIRST_SPEECH_CHUNK_MAX_CHARS = 140') &&
+    synthesis.includes('firstSpeechChunk(text)') &&
+    synthesis.includes('createStreamingAudioSession(firstUnit, stableTurnId)') &&
+    synthesis.includes('remainingUnit') &&
     !synthesis.includes('splitLexaraSpeechChunks') &&
     !synthesis.includes('fetchPreparedSessionAudio') &&
     !synthesis.includes('preparedCurrent') &&
@@ -410,7 +412,7 @@ must(
     synthesis.includes('voiceFailureToastIdRef') &&
     !synthesis.includes('shouldBufferLexaraPlaybackOnThisDevice') &&
     !synthesis.includes('bufferStreamingSessionForMobile'),
-  'LEXARA voice readiness stays truthful while one continuous progressive stream removes inter-piece mobile playback gaps',
+  'LEXARA voice readiness stays truthful while bounded first-audible playback removes the Android startup stall without restoring legacy multi-piece chunk machinery',
 );
 must(
   voiceRoutes.includes('/api/lexara/voice/profile') &&
