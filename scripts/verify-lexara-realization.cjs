@@ -756,12 +756,13 @@ must(
   'LEXARA visible and spoken opening greeting is exactly How can I help you?',
 );
 must(
-  !welcomePage.includes("setLocation('/badblue')") &&
+  welcomePage.includes("selectedType.id === 'law-enforcement-accountability'") &&
+    welcomePage.includes("setLocation('/badblue')") &&
     (
       welcomePage.includes('setLocation(`/lexara-consent/${selectedType.id}`)') ||
       welcomePage.includes('setLocation("/lexara-consent/" + selectedType.id)')
     ),
-  'every bookshelf law area enters the same LEXARA consent/specialization flow',
+  'Law Enforcement Accountability enters BadBlue while the other bookshelf areas retain LEXARA consent',
 );
 for (const lawType of productLawTypes) {
   must(
