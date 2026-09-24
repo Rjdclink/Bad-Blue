@@ -264,17 +264,14 @@ export default function LexaraConsultation({ onBack, lawType, onDataChange }: Le
   }, [lawTypeName, voiceSynthesis]);
 
   useEffect(() => {
-    if (greetingPlayed || !autoInitialized) return;
+    if (greetingPlayed) return;
 
-    // Voice initialization pre-warms the shared realtime channel. Only speak
-    // after that initialization completes so the greeting uses the same primary
-    // realtime output route as every later LEXARA response.
     const greetingTimer = setTimeout(() => {
       playGreeting();
-    }, 0);
+    }, 3000); // 3-second delay
 
     return () => clearTimeout(greetingTimer);
-  }, [autoInitialized, greetingPlayed, playGreeting]);
+  }, [greetingPlayed, playGreeting]);
 
   // AUTOMATIC - Voice mode always enabled
   useEffect(() => {
