@@ -870,7 +870,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const body = req.body && typeof req.body === "object" ? req.body : {};
     const title = String(body.title || "").trim();
     const slug = blogSlug(String(body.slug || title));
-    const articleContent = String(body.contentHtml || body.html || body.content || "").trim();
+    const articleContent = String(body.contentHtml || body.content_html || body.contentMarkdown || body.content_markdown || body.html || body.content || "").trim();
     const description = String(body.description || body.metaDescription || title).trim().slice(0, 180);
     if (!title || !slug || !articleContent) return res.status(400).json({ error: "missing_article_fields" });
     fs.mkdirSync(blogDir, { recursive: true });
