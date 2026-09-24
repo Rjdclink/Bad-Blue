@@ -530,6 +530,13 @@ app.use(express.json({
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 
+// robots.txt must be available from the instant the HTTP listener opens.
+// Keep this isolated from database/application initialization so crawlers never
+// observe a transient startup 404 for the crawler-control file.
+app.get("/robots.txt", (_req, res) => {
+  res.type("text/plain").sendFile("robots.txt", { root: "public" });
+});
+
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
