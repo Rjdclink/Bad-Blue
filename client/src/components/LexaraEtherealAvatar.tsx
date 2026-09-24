@@ -635,7 +635,7 @@ function drawPreparedSpeechFace(
     ? sampleLexaraPreparedFacialLibrary(
         frame.mouthVisemeIndex,
         frame.mouthStrengthLevel,
-        performance.now() / 1000,
+        frame.speechClockSec,
       )
     : null;
   const libraryState = librarySample?.state;
