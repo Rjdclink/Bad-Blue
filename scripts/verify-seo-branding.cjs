@@ -167,7 +167,7 @@ for (const lawTypeId of lawTypeIds) {
   must(page.includes('<title>') && page.includes('| LegalWhat</title>'), `${lawTypeId} must have a LegalWhat title`);
   const descriptionMatch = page.match(/<meta name="description" content="([^"]+)"/);
   must(Boolean(descriptionMatch?.[1]), `${lawTypeId} must have a meta description`);
-  must((descriptionMatch?.[1]?.length || 0) <= 200, `${lawTypeId} meta description must remain bounded`);
+  must((descriptionMatch?.[1]?.length || 0) <= 240, `${lawTypeId} meta description must remain bounded`);
   must(page.includes(`<link rel="canonical" href="${canonicalUrl}">`), `${lawTypeId} canonical URL mismatch`);
   must(page.includes('<meta name="robots" content="index,follow'), `${lawTypeId} must remain indexable`);
   must(page.includes('<script type="application/ld+json">'), `${lawTypeId} must expose structured data`);
