@@ -15,6 +15,7 @@ import {
 import { MASTER_USER_ID } from '../masterPassword';
 import { isAuthenticated } from '../auth';
 import { getConfiguredHarmonyParticipants } from '../aiHarmonyModelRegistry';
+import { isBlankLegalDocumentRequest, resolveLegalDocumentType } from '../lexara/legalDocumentRegistry';
 
 const router = express.Router();
 router.use(isAuthenticated);
@@ -36,33 +37,34 @@ function detectDocumentIntent(prompt: string, previousMessages: LexaraConversati
   requested: boolean;
   explicit: boolean;
   documentType: string;
+  templateMode: boolean;
 } {
   const p = prompt.toLowerCase();
-  const context = [...previousMessages.slice(-4).map(message => message.content), prompt].join(' ').toLowerCase();
   const explicit = /\b(draft|prepare|create|generate|write|download|downloadable|export|pdf|docx|word document)\b/.test(p);
-  const legalInstrument = /\b(motion|brief|memorandum|affidavit|declaration|complaint|answer|petition|letter|agreement|subpoena|discovery|notice|objection|appeal|application)\b/.test(context);
-  const actionNeed = /\b(file|filing|submit|serve|send|give|provide|ask the court|request the court|respond to|oppose|challenge|suppress|dismiss|compel|appeal|notify|demand)\b/.test(context);
-  const requested = explicit || (legalInstrument && actionNeed);
-  let documentType = 'Custom Legal Document';
-  if (/motion to suppress/.test(context) || /suppress.+evidence/.test(context)) documentType = 'Motion to Suppress';
-  else if (/motion to dismiss/.test(context) || /dismiss.+case/.test(context)) documentType = 'Motion to Dismiss';
-  else if (/motion to compel/.test(context) || /compel.+discovery/.test(context)) documentType = 'Motion to Compel';
-  else if (/sentencing memorandum/.test(context)) documentType = 'Sentencing Memorandum';
-  else if (/memorandum|memo/.test(context)) documentType = 'Memorandum of Law';
-  else if (/brief/.test(context)) documentType = 'Supporting Brief';
-  else if (/affidavit/.test(context)) documentType = 'Affidavit';
-  else if (/declaration/.test(context)) documentType = 'Declaration';
-  else if (/complaint/.test(context)) documentType = 'Complaint';
-  else if (/petition/.test(context)) documentType = 'Petition';
-  else if (/demand letter/.test(context)) documentType = 'Demand Letter';
-  else if (/lease/.test(context)) documentType = 'Lease Agreement';
-  else if (/settlement/.test(context)) documentType = 'Settlement Agreement';
-  else if (/release/.test(context)) documentType = 'Release Agreement';
-  else if (/waiver/.test(context)) documentType = 'Waiver';
-  else if (/contract|agreement/.test(context)) documentType = 'Contract / Agreement';
-  else if (/notice/.test(context)) documentType = 'Legal Notice';
-  else if (/motion/.test(context)) documentType = 'Motion';
-  return { requested, explicit, documentType };
+  const currentType = resolveLegalDocumentType(prompt);
+  const currentAction = /\b(need|want|make|give|provide|prepare|draft|create|generate|write|download|export|file|filing|submit|serve|send)\b/.test(p);
+  const referentialFollowup = /\b(it|that|one|document|form|template|blank|pdf|docx)\b/.test(p);
+
+  // Current-turn document language is authoritative. History is consulted only
+  // when the latest turn does not itself identify a document type.
+  let historyType = null as ReturnType<typeof resolveLegalDocumentType>;
+  if (!currentType) {
+    for (const message of [...previousMessages].reverse()) {
+      historyType = resolveLegalDocumentType(message.content);
+      if (historyType) break;
+    }
+  }
+
+  const requested = explicit
+    || Boolean(currentType && currentAction)
+    || Boolean(!currentType && historyType && referentialFollowup);
+
+  return {
+    requested,
+    explicit,
+    documentType: currentType || historyType || 'Custom Document',
+    templateMode: isBlankLegalDocumentRequest(prompt),
+  };
 }
 
 function sanitizePreviousMessages(value: unknown): LexaraConversationMessage[] {
@@ -191,7 +193,9 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
     ]);
     if (!documentIntent.requested && reasoningDocumentIntent.requested) {
       documentIntent.requested = true;
-      documentIntent.documentType = reasoningDocumentIntent.documentType;
+      if (documentIntent.documentType === 'Custom Document') {
+        documentIntent.documentType = reasoningDocumentIntent.documentType;
+      }
     }
 
     log.info('[LEXARA] Conversational legal response generated', {
