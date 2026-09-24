@@ -1,6 +1,8 @@
 const fs = require('fs');
 const source = fs.readFileSync('client/src/lib/lexaraPreparedFacialLibrary.ts', 'utf8');
 const runtime = fs.readFileSync('client/src/lib/lexaraPreparedFacialRuntime.ts', 'utf8');
+const avatar = fs.readFileSync('client/src/components/LexaraEtherealAvatar.tsx', 'utf8');
+const engine = fs.readFileSync('client/src/lib/lexaraEmbodimentEngine.ts', 'utf8');
 function must(condition, message) { if (!condition) { console.error('FAIL:', message); process.exitCode = 1; } }
 must(source.includes('length !== 1000'), 'facial library is gated at exactly 1000 states');
 must(source.includes('length: 750'), 'facial library defines exactly 750 prepared sequences');
@@ -9,5 +11,10 @@ must(source.includes('sourcePoseIndex'), 'new states preserve provenance to the 
 must(!source.includes('.filter((sequence)'), 'runtime sequence selection is constant-time and allocation-free');
 must(runtime.includes('already-authoritative audio clock'), 'runtime adapter is explicitly subordinate to playback');
 must(!/fetch\\(|WebSocket|AudioContext|play\\(|pause\\(/.test(runtime), 'facial runtime cannot perform network or playback operations');
+must(avatar.includes('sampleLexaraPreparedFacialLibrary') && avatar.includes('frame.speechClockSec'), 'facial library reads the existing rendered speech clock');
+must(engine.includes('speechClockSec: number') && engine.includes('speechClockSec,'), 'embodiment frame exposes speech clock read-only');
+must(avatar.includes("VITE_LEXARA_PREPARED_FACIAL_LIBRARY_ENABLED ?? '1'"), 'facial enhancement has an independent kill switch');
+must(avatar.includes('drawMouth(ctx, image, mouthAtlas, layout, frame, 0, 0)'), 'canonical mouth renderer remains unchanged and authoritative');
+must(avatar.includes("VITE_LEXARA_LEGACY_PORTRAIT_NON_MOUTH_OVERLAYS_ENABLED ?? '0'"), 'artifact-prone legacy non-mouth overlays remain disabled');
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA prepared facial library verification passed.');
