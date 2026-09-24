@@ -756,6 +756,13 @@ must(
   'LEXARA visible and spoken opening greeting is exactly How can I help you?',
 );
 must(
+  conversation.includes('await speakLexara(greeting, greetingGeneration);') &&
+    conversation.includes('await new Promise(resolve => window.setTimeout(resolve, 180));') &&
+    conversation.includes('greetingGeneration === generationRef.current') &&
+    conversation.includes('!userSpeechObservedRef.current'),
+  'LEXARA opening greeting retries once on a transient first-playback failure without changing later voice turns',
+);
+must(
   !welcomePage.includes("setLocation('/badblue')") &&
     (
       welcomePage.includes('setLocation(`/lexara-consent/${selectedType.id}`)') ||
