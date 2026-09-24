@@ -152,4 +152,40 @@ for (const section of ['areas', 'services']) {
   }
 }
 
+
+const lawTypesSource = read('shared/lawTypes.ts');
+const lawTypeIds = [...lawTypesSource.matchAll(/^\s+'([a-z0-9-]+)',\s*$/gm)].map((match) => match[1]);
+must(lawTypeIds.length === 40, `expected exactly 40 canonical law-type IDs, found ${lawTypeIds.length}`);
+must(new Set(lawTypeIds).size === 40, 'canonical law-type IDs must be unique');
+
+const sitemapUrls = new Set(sitemapLocs);
+for (const lawTypeId of lawTypeIds) {
+  const relativePath = `public/areas/${lawTypeId}/index.html`;
+  must(fs.existsSync(relativePath), `missing crawlable practice-area page: ${lawTypeId}`);
+  const page = read(relativePath);
+  const canonicalUrl = `https://legalwhat.com/areas/${lawTypeId}/`;
+  must(page.includes('<title>') && page.includes('| LegalWhat</title>'), `${lawTypeId} must have a LegalWhat title`);
+  const descriptionMatch = page.match(/<meta name="description" content="([^"]+)"/);
+  must(Boolean(descriptionMatch?.[1]), `${lawTypeId} must have a meta description`);
+  must((descriptionMatch?.[1]?.length || 0) <= 200, `${lawTypeId} meta description must remain bounded`);
+  must(page.includes(`<link rel="canonical" href="${canonicalUrl}">`), `${lawTypeId} canonical URL mismatch`);
+  must(page.includes('<meta name="robots" content="index,follow'), `${lawTypeId} must remain indexable`);
+  must(page.includes('<script type="application/ld+json">'), `${lawTypeId} must expose structured data`);
+  must(page.includes('<h1>'), `${lawTypeId} must contain an H1`);
+  must(page.includes('<h2>Common topics</h2>'), `${lawTypeId} must contain substantive topic content`);
+  must(page.includes('/legal-consultation'), `${lawTypeId} must internally link to legal consultation`);
+  must(sitemapUrls.has(canonicalUrl), `sitemap missing practice-area canonical: ${canonicalUrl}`);
+}
+
+for (const requiredCrawlerFile of ['public/robots.txt', 'public/sitemap.xml', 'public/llms.txt']) {
+  must(fs.existsSync(requiredCrawlerFile), `missing crawler file: ${requiredCrawlerFile}`);
+}
+must(robots.includes('User-agent: *') && robots.includes('Allow: /'), 'robots must keep public crawl access');
+mustNot(robots, 'Disallow: /areas', 'robots must not block practice-area content');
+mustNot(robots, 'Disallow: /services', 'robots must not block public service content');
+must(llms.includes('[Practice areas](https://legalwhat.com/areas/)'), 'llms.txt must expose the practice-area hub');
+must(llms.includes('[Services](https://legalwhat.com/services/)'), 'llms.txt must expose the services hub');
+must(sitemapUrls.has('https://legalwhat.com/areas/'), 'sitemap must include practice-area hub');
+must(sitemapUrls.has('https://legalwhat.com/services/'), 'sitemap must include services hub');
+
 console.log('[seo-branding] PASS: Legal What SEO, crawl, canonical, schema, content-depth, contact, and brand invariants verified');
