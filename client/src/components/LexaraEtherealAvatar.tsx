@@ -423,6 +423,49 @@ function drawMouth(
   const upperDy = -gap * 0.13;
   const lowerDy = gap * 0.72;
 
+  // Speaking-only cleanup for Lexara's anatomical left corner (viewer-right).
+  // The resting portrait is untouched. During articulation the original still
+  // contains a small upper/lower shadow at this corner; moving the lip texture
+  // can expose both the resting shadow and the articulated edge. Cover only
+  // that tiny residual strip with mirrored clean-side portrait pixels before
+  // drawing the canonical animated mouth. No audio/timing state is involved.
+  if (frame.mode === 'speaking' && open > 0.025) {
+    const cornerCleanupWidth = Math.max(1, lipHalfWidth * 0.22);
+    const cornerCleanupHeight = Math.max(1, (upperExtent + lowerExtent) * 0.58);
+    const cleanSourceX = mouthCx - lipHalfWidth + cornerCleanupWidth * 0.15;
+    const targetX = mouthCx + lipHalfWidth - cornerCleanupWidth * 1.05;
+    const targetY = r.cy - cornerCleanupHeight * 0.50;
+    ctx.save();
+    ctx.translate(headDx, headDy);
+    ctx.beginPath();
+    ctx.ellipse(
+      targetX + cornerCleanupWidth * 0.50,
+      r.cy,
+      cornerCleanupWidth * 0.62,
+      cornerCleanupHeight * 0.58,
+      0,
+      0,
+      Math.PI * 2,
+    );
+    ctx.clip();
+    // Mirror only the corresponding clean corner texture. This removes the
+    // doubled resting shadow while preserving the live lip boundary drawn next.
+    ctx.translate(targetX + cornerCleanupWidth, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(
+      image,
+      cleanSourceX,
+      targetY,
+      cornerCleanupWidth,
+      cornerCleanupHeight,
+      0,
+      targetY,
+      cornerCleanupWidth,
+      cornerCleanupHeight,
+    );
+    ctx.restore();
+  }
+
   const traceLipBoundary = () => {
     ctx.beginPath();
     ctx.moveTo(mouthCx - lipHalfWidth, r.cy);
