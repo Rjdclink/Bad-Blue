@@ -1,0 +1,68 @@
+# Legal What?
+
+> Legal What? is an AI-assisted legal information and research platform covering 40 legal practice areas, with voice and text consultation, legal document tools, public-record research, background reports, people finding, and nationwide inmate search.
+
+Legal What? provides legal information and AI-assisted tools. It does not constitute legal advice.
+
+## Core pages
+- [Homepage](https://legalwhat.com/): Overview of Legal What? and its legal research tools.
+- [Legal consultation](https://legalwhat.com/legal-consultation): AI-assisted legal consultation.
+- [Practice areas](https://legalwhat.com/areas/): Legal information and research coverage across 40 practice areas.
+- [Services](https://legalwhat.com/services/): Legal What? service overview.
+- [FAQ](https://legalwhat.com/faq): Frequently asked questions.
+- [Contact](https://legalwhat.com/contact): Support and contact information.
+- [Privacy](https://legalwhat.com/privacy): Privacy information.
+- [Terms](https://legalwhat.com/terms): Terms of use.
+
+## Legal practice areas
+- Law Enforcement Accountability
+- Criminal Law
+- Civil Law
+- Family Law
+- Juvenile Law
+- Appellate Law
+- Constitutional Law
+- Property Law
+- Real Estate Law
+- Contract Law
+- Civil Rights Law
+- Tort Law
+- Probate and Estate Law
+- Administrative Law
+- Trusts Law
+- Immigration Law
+- Banking and Financing Law
+- Insurance Law
+- Employment and Labor Law
+- Military/Veterans Law
+- FOIA/Open Records Law
+- Cyber Technology Law
+- Intellectual Property Law
+- Public Housing Law
+- Procedural Law
+- Post Conviction
+- Securities Law
+- International Law
+- Tax Law
+- Environmental Law
+- Municipal/Government Law
+- Agricultural Law
+- Banking/Consumer Credit and Debt Law
+- Bankruptcy Law
+- Business/Corporate Law
+- Disability Law
+- Education Law
+- Health/Medical Law
+- Landlord-Tenant Law
+- Personal Injury/Medical Malpractice Law
+
+## Services
+- [AI legal consultation](https://legalwhat.com/services/ai-legal-consultation/): Two-way voice and text AI-assisted legal consultation across 40 practice areas.
+- [Legal document creator](https://legalwhat.com/services/legal-document-creator/): AI-assisted legal document workflows.
+- [Background reports](https://legalwhat.com/services/background-report/): Research-oriented public-record background reports.
+- [People finder](https://legalwhat.com/services/people-finder/): People-finding and geolocation research using available data.
+- [Inmate locator](https://legalwhat.com/services/inmate-locator/): Federal and state correctional-source search for inmate and facility information.
+
+## Crawling
+- [Sitemap](https://legalwhat.com/sitemap.xml): Canonical crawlable URL inventory.
+- [Robots](https://legalwhat.com/robots.txt): Search crawler directives.
