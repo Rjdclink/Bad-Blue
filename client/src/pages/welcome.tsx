@@ -210,6 +210,10 @@ export default function WelcomePage() {
   const handleBookClick = useCallback((lawTypeId: string) => {
     const selectedType = LAW_TYPE_DATA.find((type) => type.id === lawTypeId);
     if (!selectedType) return;
+    if (selectedType.id === 'law-enforcement-accountability') {
+      setLocation('/badblue');
+      return;
+    }
     setLocation("/lexara-consent/" + selectedType.id);
   }, [setLocation]);
 
