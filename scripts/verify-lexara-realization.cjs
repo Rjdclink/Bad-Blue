@@ -30,6 +30,8 @@ const realtimeVoiceGateway = read('server/lexara/LexaraRealtimeVoiceGateway.ts')
 const serverIndex = read('server/index.ts');
 const lexaraRoutes = read('server/routes/lexara.routes.ts');
 const lexaraChatRoutes = read('server/routes/lexara.chat.routes.ts');
+const legalDocumentRegistry = read('server/lexara/legalDocumentRegistry.ts');
+const consultationRoutes = read('server/routes/consultation.routes.ts');
 const voiceRoutes = read('server/routes/voice.routes.ts');
 const orchestrator = read('server/lexara/LexaraConversationOrchestrator.ts');
 const openRouter = read('server/openRouterService.ts');
@@ -105,7 +107,8 @@ must(
     conversation.includes("fetch('/api/lexara/documents/export'") &&
     conversation.includes('URL.createObjectURL(blob)') &&
     lexaraChatRoutes.includes('const explicit =') &&
-    lexaraChatRoutes.includes('legalInstrument && actionNeed') &&
+    lexaraChatRoutes.includes('const currentType = resolveLegalDocumentType(prompt)') &&
+    lexaraChatRoutes.includes('Current-turn document language is authoritative') &&
     orchestrator.includes('Default to 1-3 concise sentences') &&
     orchestrator.includes('Never invent, print, or suggest a document URL') &&
     conversation.includes('const SERVER_VOICE_TURN_SETTLE_MS = 300') &&
@@ -403,8 +406,8 @@ must(
     conversation.includes('checkVoiceBackendReadiness') &&
     conversation.includes("data?.speechOutputVerified === true") &&
     conversation.includes("'Voice reconnecting'") &&
-    conversation.includes("'Voice degraded'") &&
-    conversation.includes("voiceStatus === 'live'") &&
+    conversation.includes("setVoiceStatus(ready ? 'live' : 'reconnecting')") &&
+    !conversation.includes("? 'Voice degraded'") &&
     synthesis.includes('One successful Lexara turn owns sequential progressive media streams') &&
     synthesis.includes('createStreamingAudioSession(firstUnit, stableTurnId)') &&
     synthesis.includes('remainingUnit') &&
@@ -745,6 +748,20 @@ const productLawTypes = [...lawTypesBlock.matchAll(/'([^']+)'/g)].map(match => m
 
 must(productLawTypes.length === 40, 'LegalWhat exposes exactly 40 bookshelf practice areas');
 must(productLawTypes.includes('post-conviction-law'), 'Post Conviction is a first-class product law type');
+
+must(
+  legalDocumentRegistry.includes('export const LEGAL_DOCUMENT_TYPES = [') &&
+    legalDocumentRegistry.includes('resolveLegalDocumentType') &&
+    legalDocumentRegistry.includes('isBlankLegalDocumentRequest') &&
+    legalDocumentRegistry.includes('validateLegalDocumentDraft') &&
+    consultationRoutes.includes("res.json({ types: LEGAL_DOCUMENT_TYPES })") &&
+    consultationRoutes.includes('validated: true') &&
+    consultationRoutes.includes('templateMode') &&
+    lexaraChatRoutes.includes("documentType: currentType || historyType || 'Custom Document'") &&
+    conversation.includes("data?.validated !== true") &&
+    conversation.includes("String(data?.documentType || '') !== pendingDocument.title"),
+  'LEXARA uses one canonical legal-document registry, current-turn precedence, template mode, and validated same-type export handoff',
+);
 must(
   lawTypesSource.includes("name: 'Post Conviction'") &&
     lawTypesSource.includes("route: '/legal-tools?type=post-conviction-law'"),
@@ -752,8 +769,10 @@ must(
 );
 must(
   conversation.includes("const greeting = 'How can I help you?';") &&
+    conversation.includes('if (liveEnabled && !voiceReady) return;') &&
+    conversation.includes('void sendGreeting();') &&
     !conversation.includes('Hello. Tell me what happened'),
-  'LEXARA visible and spoken opening greeting is exactly How can I help you?',
+  'LEXARA queues the exact How can I help you? greeting until live voice is ready',
 );
 must(
   welcomePage.includes("selectedType.id === 'law-enforcement-accountability'") &&
