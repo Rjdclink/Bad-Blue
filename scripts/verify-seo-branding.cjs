@@ -22,6 +22,7 @@ const landing = read('client/src/pages/landing.tsx');
 const manifest = read('public/manifest.json');
 const robots = read('public/robots.txt');
 const sitemap = read('public/sitemap.xml');
+const llms = read('public/llms.txt');
 const serverIndex = read('server/index.ts');
 
 must(fs.existsSync('public/images/Legal What Icon.png'), 'Legal What brand icon must exist');
@@ -86,6 +87,14 @@ mustNot(sitemap, 'example.com', 'sitemap must not use example.com');
 mustNot(sitemap, 'BadBlue', 'sitemap must not use legacy brand');
 mustNot(sitemap, 'Bad Blue', 'sitemap must not use legacy brand');
 mustNot(sitemap, '<lastmod>', 'static sitemap must not emit synthetic freshness dates');
+const sitemapLocs = [...sitemap.matchAll(/<loc>([^<]+)<\\/loc>/g)].map((match) => match[1]);
+must(new Set(sitemapLocs).size === sitemapLocs.length, 'static sitemap must not contain duplicate URLs');
+
+must(llms.includes('# Legal What?'), 'llms.txt must identify Legal What?');
+must(llms.includes('40 legal practice areas'), 'llms.txt must accurately state 40 practice areas');
+must(llms.includes('https://legalwhat.com/sitemap.xml'), 'llms.txt must reference the canonical sitemap');
+mustNot(llms, '31 practice areas', 'llms.txt must not restore the obsolete 31-area count');
+mustNot(llms, 'API Access for Developers', 'llms.txt must not advertise unverified developer API access');
 
 must(serverIndex.includes('.map((config) => config.canonicalPath)'), 'dynamic sitemap must emit canonical paths');
 must(serverIndex.includes('Do not emit synthetic freshness'), 'dynamic sitemap must not fabricate lastmod freshness');

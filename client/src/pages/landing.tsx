@@ -82,7 +82,7 @@ export default function Landing() {
     <div className="min-h-screen">
       <SEOHead
         title="Legal What? | AI Legal Tools, People Finder & Inmate Locator"
-        description="Explore 40 legal practice areas with two-way voice and text AI consultation, legal document tools, background reports, people-finding tools, and nationwide inmate search."
+        description="Explore 40 legal practice areas with AI voice and text consultation, legal document tools, background reports, people finder, and nationwide inmate search."
         ogTitle="Legal What? | AI Legal Tools, People Finder & Inmate Locator"
         ogDescription="Voice and text AI legal consultation across 40 practice areas, public-record background reports, people-finding tools, inmate search, and legal document tools."
         canonicalUrl="https://legalwhat.com/"
