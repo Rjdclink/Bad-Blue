@@ -463,26 +463,7 @@ function drawMouth(
     ctx.closePath();
   };
 
-  // Speaking-only corner cleanup. Mirror a tiny clean skin sample from the
-  // opposite corner so the photographed left-corner shadow cannot split into
-  // a static and moving duplicate. This uses portrait pixels only: no sampled
-  // flat color, synthetic blue patch, network/model work, or audio dependency.
-  ctx.save();
-  ctx.translate(headDx, headDy);
-  const cleanupWidth = Math.max(2, lipHalfWidth * 0.34);
-  const cleanupHeight = Math.max(2, r.ry * 1.28);
-  const cleanupX = mouthCx + lipHalfWidth * 0.76;
-  const cleanupY = r.cy - cleanupHeight * 0.50;
-  ctx.beginPath();
-  ctx.ellipse(cleanupX, r.cy, cleanupWidth * 0.58, cleanupHeight * 0.58, 0, 0, Math.PI * 2);
-  ctx.clip();
-  ctx.globalAlpha = assisted.cornerCleanup;
-  // Reflect across the canonical mouth center: the clean opposite-corner
-  // skin becomes the source for the shadowed side while preserving lighting.
-  ctx.translate(mouthCx * 2, 0);
-  ctx.scale(-1, 1);
-  ctx.drawImage(image, layout.x, layout.y, layout.width, layout.height);
-  ctx.restore();
+  // Preserve surrounding cheek pixels from the original portrait during speech.
 
   ctx.save();
   ctx.translate(headDx, headDy);
