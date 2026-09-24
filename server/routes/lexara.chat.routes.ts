@@ -50,6 +50,7 @@ function detectDocumentIntent(prompt: string, previousMessages: LexaraConversati
   let historyType = null as ReturnType<typeof resolveLegalDocumentType>;
   if (!currentType) {
     for (const message of [...previousMessages].reverse()) {
+      if (message.role !== 'user') continue;
       historyType = resolveLegalDocumentType(message.content);
       if (historyType) break;
     }
