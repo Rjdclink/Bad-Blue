@@ -140,8 +140,8 @@ export function AISystemShowcase({ variant = "full" }: AISystemShowcaseProps) {
           {/* Background Image */}
           <img 
             src={model.backgroundImage}
-            alt=""
-            aria-hidden="true"
+            alt={`${model.name} AI model visual`}
+            aria-hidden="false"
             className="absolute inset-0 w-full h-full object-cover"
           />
           
