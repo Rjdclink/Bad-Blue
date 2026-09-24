@@ -861,6 +861,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const blogSlug = (value: string) => value.toLowerCase().replace(/[^a-z0-9 -]/g, "").trim().replace(/ +/g, "-").slice(0, 120);
 
   app.post("/api/blog-webhook", (req, res) => {
+    const expectedToken = String(process.env.BABYLOVEGROWTH_WEBHOOK_SECRET || "");
+    const authorization = String(req.get("authorization") || "");
+    const suppliedToken = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
+    if (!expectedToken) return res.status(503).json({ error: "webhook_not_configured" });
+    if (!suppliedToken || suppliedToken !== expectedToken) return res.status(401).json({ error: "unauthorized" });
+
     const body = req.body && typeof req.body === "object" ? req.body : {};
     const title = String(body.title || "").trim();
     const slug = blogSlug(String(body.slug || title));
