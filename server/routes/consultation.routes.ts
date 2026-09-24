@@ -55,7 +55,7 @@ export function setupConsultationRoutes(app: Express): void {
     const facts = typeof req.body?.facts === 'string' ? req.body.facts.trim() : '';
     const rawRequestedType = typeof req.body?.documentType === 'string' ? req.body.documentType.trim() : '';
     const requestedType = (LEGAL_DOCUMENT_TYPES as readonly string[]).includes(rawRequestedType)
-      ? rawRequestedType
+      ? rawRequestedType as (typeof LEGAL_DOCUMENT_TYPES)[number]
       : resolveLegalDocumentType(rawRequestedType);
     const templateMode = req.body?.templateMode === true;
     const customInstructions = typeof req.body?.instructions === 'string' ? req.body.instructions.trim() : '';
