@@ -477,7 +477,9 @@ function drawMouth(
   ctx.ellipse(cleanupX, r.cy, cleanupWidth * 0.58, cleanupHeight * 0.58, 0, 0, Math.PI * 2);
   ctx.clip();
   ctx.globalAlpha = assisted.cornerCleanup;
-  ctx.translate(cleanupX * 2, 0);
+  // Reflect across the canonical mouth center: the clean opposite-corner
+  // skin becomes the source for the shadowed side while preserving lighting.
+  ctx.translate(mouthCx * 2, 0);
   ctx.scale(-1, 1);
   ctx.drawImage(image, layout.x, layout.y, layout.width, layout.height);
   ctx.restore();
