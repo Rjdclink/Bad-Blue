@@ -3,6 +3,7 @@ import { cn } from '@/lib/utils';
 import { getLexaraServerPlaybackClock } from '@/lib/lexaraSpeechClient';
 import { lexaraRealtimeVoiceClient } from '@/lib/lexaraRealtimeVoiceClient';
 import { sampleLexaraClipMotion } from '@/lib/lexaraClipMotion';
+import { sampleLexaraPreparedFacialLibrary } from '@/lib/lexaraPreparedFacialRuntime';
 import {
   getLexaraPreparedFacePose,
   type LexaraPreparedFacePose,
@@ -57,6 +58,8 @@ const PORTRAIT_BREATHING_ENABLED =
   String(import.meta.env.VITE_LEXARA_PORTRAIT_BREATHING_ENABLED ?? '1') !== '0';
 const PREPARED_PORTRAIT_FACE_ENABLED =
   String(import.meta.env.VITE_LEXARA_PREPARED_FACE_ENABLED ?? '1') !== '0';
+const PREPARED_FACIAL_LIBRARY_ENABLED =
+  String(import.meta.env.VITE_LEXARA_PREPARED_FACIAL_LIBRARY_ENABLED ?? '1') !== '0';
 const LEXARA_MOUTH_ATLAS_SRC = '/images/lexara-mouth-atlas.webp?v=20260922-continuous120';
 const TARGET_FPS = 60;
 
@@ -624,7 +627,26 @@ function drawPreparedSpeechFace(
   const pose = blendPreparedFacePose(frame);
   const motionScale = reducedMotion ? 0.32 : 1;
   const activity = Math.min(1, frame.mouthOpen * 0.72 + frame.gestureEnergy * 0.28);
-  const jawAmount = Math.min(1, pose.jawDrop * 0.78 + activity * 0.32);
+
+  // Additive-only facial library enhancement. The canonical 120-state mouth pose
+  // and audio-driven renderer remain authoritative. This sample is deterministic,
+  // local, allocation-bounded and may only contribute small non-mouth deltas.
+  const librarySample = PREPARED_FACIAL_LIBRARY_ENABLED
+    ? sampleLexaraPreparedFacialLibrary(
+        frame.mouthVisemeIndex,
+        frame.mouthStrengthLevel,
+        performance.now() / 1000,
+      )
+    : null;
+  const libraryState = librarySample?.state;
+  const jawDelta = libraryState ? (libraryState.jawDrop - pose.jawDrop) * 0.18 : 0;
+  const cheekDelta = libraryState ? (libraryState.cheekLift - pose.cheekLift) * 0.16 : 0;
+  const browDelta = libraryState ? (libraryState.browLift - pose.browLift) * 0.14 : 0;
+  const headMicroX = libraryState ? libraryState.headXBias : 0;
+  const headMicroY = libraryState ? libraryState.headYBias : 0;
+  const headMicroRoll = libraryState ? libraryState.headRollBias : 0;
+
+  const jawAmount = Math.min(1, Math.max(0, pose.jawDrop * 0.78 + activity * 0.32 + jawDelta));
 
   // Original portrait pixels are deformed in four independently feathered
   // regions. No generated skin, jaw, cheek, brow, or forehead replaces Lexara.
@@ -641,7 +663,7 @@ function drawPreparedSpeechFace(
     surface,
   );
 
-  const cheekAmount = Math.min(1, pose.cheekLift + frame.mouthWide * 0.16 + activity * 0.12);
+  const cheekAmount = Math.min(1, Math.max(0, pose.cheekLift + frame.mouthWide * 0.16 + activity * 0.12 + cheekDelta));
   const cheekDy = -cheekAmount * layout.height * 0.0036 * motionScale;
   const cheekDx = cheekAmount * layout.width * 0.0022 * motionScale;
   drawFeatheredImageTransform(
@@ -661,7 +683,7 @@ function drawPreparedSpeechFace(
     surface,
   );
 
-  const emphasis = Math.max(-1, Math.min(1, frame.browLift * 0.52 + pose.browLift + frame.gestureEnergy * 0.18));
+  const emphasis = Math.max(-1, Math.min(1, frame.browLift * 0.52 + pose.browLift + frame.gestureEnergy * 0.18 + browDelta));
   const browDy = -emphasis * layout.height * 0.0052 * motionScale;
   drawFeatheredImageTransform(
     ctx,
@@ -691,6 +713,26 @@ function drawPreparedSpeechFace(
     },
     surface,
   );
+
+  // A single broad, very-low-amplitude feathered head patch adds the prepared
+  // library's neutral micro-motion without re-enabling the artifact-prone legacy
+  // eye/head patch system. It is visual-only and fails with the prepared face.
+  if (libraryState && !reducedMotion) {
+    drawFeatheredImageTransform(
+      ctx,
+      image,
+      layout,
+      { cx: 0.518, cy: 0.282, rx: 0.118, ry: 0.205 },
+      {
+        dx: headMicroX * layout.width * 0.10,
+        dy: headMicroY * layout.height * 0.08,
+        scaleX: 1 + Math.abs(headMicroRoll) * 0.0008,
+        scaleY: 1 + Math.abs(headMicroY) * 0.0012,
+        alpha: 0.34,
+      },
+      surface,
+    );
+  }
 
   // Do not pre-shift a second copy of the photographed lips. That transition
   // patch had its own transform and could visibly separate from the live mouth.
@@ -1056,6 +1098,8 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
             reducedMotion,
             mode,
             preparedPoseCount: 120,
+            preparedFacialStateCount: PREPARED_FACIAL_LIBRARY_ENABLED ? 1000 : 0,
+            preparedFacialSequenceCount: PREPARED_FACIAL_LIBRARY_ENABLED ? 750 : 0,
             mouthAtlasReady: mouthAtlas.complete && mouthAtlas.naturalWidth > 0,
           });
         }
@@ -1107,6 +1151,7 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
       aria-label="LEXARA professional legal assistant"
       data-live-avatar={LIVE_AVATAR_ENABLED ? 'embodied-canvas' : 'static'}
       data-prepared-face={PREPARED_PORTRAIT_FACE_ENABLED ? 'continuous-120-reference-rig' : 'legacy'}
+      data-prepared-facial-library={PREPARED_FACIAL_LIBRARY_ENABLED ? '1000-state-750-sequence-additive' : 'off'}
       data-clip-motion={CLIP_MOTION_ENABLED ? 'reference-guided-continuous' : 'off'}
       data-reduced-motion={reducedMotion ? 'true' : 'false'}
     >
