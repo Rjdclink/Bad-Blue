@@ -1187,8 +1187,18 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     const greeting = 'How can I help you?';
     appendMessage('lexara', greeting);
 
+    // The greeting is the first live-voice acceptance gate. Do not silently
+    // swallow a failed first attempt: readiness can race the first page effect
+    // on mobile even when the backend is already healthy.
     if (liveEnabled && voiceReady) {
-      await speakLexara(greeting, greetingGeneration).catch(() => undefined);
+      try {
+        await speakLexara(greeting, greetingGeneration);
+      } catch {
+        if (greetingGeneration === generationRef.current && !userSpeechObservedRef.current) {
+          await new Promise(resolve => window.setTimeout(resolve, 180));
+          await speakLexara(greeting, greetingGeneration);
+        }
+      }
     }
   }, [appendMessage, liveEnabled, speakLexara, voiceReady]);
 
