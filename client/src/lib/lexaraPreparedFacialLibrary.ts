@@ -2,6 +2,7 @@ import {
   LEXARA_PREPARED_FACE_POSES as CORE_POSES,
   type LexaraPreparedFacePose,
   type LexaraVisemeName,
+  LEXARA_VISEME_NAMES,
 } from './lexaraPreparedFacePoses';
 
 export interface LexaraPreparedFacialState extends LexaraPreparedFacePose {
