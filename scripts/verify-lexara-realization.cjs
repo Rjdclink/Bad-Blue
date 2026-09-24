@@ -769,7 +769,8 @@ must(
 );
 must(
   conversation.includes("const greeting = 'How can I help you?';") &&
-    conversation.includes('if (liveEnabled && !voiceReady) return;') &&
+    conversation.includes('if (liveEnabled && voiceReady) {') &&
+    conversation.includes('await speakLexara(greeting, greetingGeneration);') &&
     conversation.includes('void sendGreeting();') &&
     !conversation.includes('Hello. Tell me what happened'),
   'LEXARA queues the exact How can I help you? greeting until live voice is ready',
