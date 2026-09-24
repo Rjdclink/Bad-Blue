@@ -827,7 +827,11 @@ must(
     avatar.includes('drawPreparedSpeechFace') &&
     avatar.includes("fallback: 'portrait-plus-throat'") &&
     avatar.includes('LEGACY_PORTRAIT_NON_MOUTH_OVERLAYS_ENABLED') &&
-    avatar.includes('const TARGET_FPS = 60') &&
+    avatar.includes("frame.mode === 'speaking' && open > 0.025") &&
+    avatar.includes('Speaking-only cleanup for Lexara') &&
+    avatar.includes('cornerCleanupWidth') &&
+    avatar.includes('ctx.scale(-1, 1)') &&
+        avatar.includes('const TARGET_FPS = 60') &&
     avatar.includes("VITE_LEXARA_CLIP_MOTION_ENABLED ?? '1'") &&
     avatar.includes("if (frame.mode !== 'speaking') return;") &&
     avatar.includes("audioActive ? 'speaking' : requestedMode === 'speaking' ? 'idle' : requestedMode") &&
