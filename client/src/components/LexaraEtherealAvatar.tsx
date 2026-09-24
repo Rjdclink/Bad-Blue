@@ -3,6 +3,7 @@ import { cn } from '@/lib/utils';
 import { getLexaraServerPlaybackClock } from '@/lib/lexaraSpeechClient';
 import { lexaraRealtimeVoiceClient } from '@/lib/lexaraRealtimeVoiceClient';
 import { sampleLexaraClipMotion } from '@/lib/lexaraClipMotion';
+import { getLexaraVideoAssistedMouthState } from '@/lib/lexaraVideoAssistedMouthStates';
 import {
   getLexaraPreparedFacePose,
   type LexaraPreparedFacePose,
@@ -396,6 +397,7 @@ function drawMouth(
     ry: layout.height * LEXARA_MOUTH_REGION.ry,
   };
   const pose = blendPreparedFacePose(frame);
+  const assisted = getLexaraVideoAssistedMouthState(pose.visemeIndex, frame.mouthPoseBlend);
   const open = Math.min(0.60, Math.max(frame.mouthOpen * 0.95, pose.mouthOpen * 0.68));
   const wide = Math.min(1, Math.max(frame.mouthWide * 0.52, pose.mouthWide));
   const round = Math.min(1, Math.max(frame.mouthRound * 0.48, pose.mouthRound));
@@ -410,7 +412,7 @@ function drawMouth(
   const maxCentroidError = layout.width * LEXARA_MOUTH_MAX_LATERAL_ERROR;
   const centroidCorrection = Math.max(-maxCentroidError, Math.min(maxCentroidError, centroidError));
   const mouthCx = visualCentroidX - centroidCorrection;
-  const lipHalfWidth = (rightCornerX - leftCornerX) / 2;
+  const lipHalfWidth = ((rightCornerX - leftCornerX) / 2) * assisted.lipFullness;
   // Anatomical opening: the jaw/lower lip carries most large openings while
   // the upper lip remains comparatively stable. Corners stay attached.
   const shapedOpen = open * open * (3 - 2 * open);
@@ -461,6 +463,27 @@ function drawMouth(
     ctx.closePath();
   };
 
+  // Speaking-only corner cleanup. Mirror a tiny clean skin sample from the
+  // opposite corner so the photographed left-corner shadow cannot split into
+  // a static and moving duplicate. This uses portrait pixels only: no sampled
+  // flat color, synthetic blue patch, network/model work, or audio dependency.
+  ctx.save();
+  ctx.translate(headDx, headDy);
+  const cleanupWidth = Math.max(2, lipHalfWidth * 0.34);
+  const cleanupHeight = Math.max(2, r.ry * 1.28);
+  const cleanupX = mouthCx + lipHalfWidth * 0.76;
+  const cleanupY = r.cy - cleanupHeight * 0.50;
+  ctx.beginPath();
+  ctx.ellipse(cleanupX, r.cy, cleanupWidth * 0.58, cleanupHeight * 0.58, 0, 0, Math.PI * 2);
+  ctx.clip();
+  ctx.globalAlpha = assisted.cornerCleanup;
+  // Reflect across the canonical mouth center: the clean opposite-corner
+  // skin becomes the source for the shadowed side while preserving lighting.
+  ctx.translate(mouthCx * 2, 0);
+  ctx.scale(-1, 1);
+  ctx.drawImage(image, layout.x, layout.y, layout.width, layout.height);
+  ctx.restore();
+
   ctx.save();
   ctx.translate(headDx, headDy);
   traceLipBoundary();
@@ -483,6 +506,17 @@ function drawMouth(
   ctx.clip();
   ctx.translate(0, lowerDy);
   ctx.drawImage(image, layout.x, layout.y, layout.width, layout.height);
+  ctx.restore();
+
+  // Preserve visible lip anatomy throughout speech. Multiply a restrained,
+  // video-derived pigment through the photographed lip texture rather than
+  // painting over it, so pores/highlights remain intact and no flat smudge forms.
+  ctx.save();
+  ctx.globalCompositeOperation = 'multiply';
+  ctx.globalAlpha = 0.24;
+  ctx.fillStyle = `rgb(${assisted.lipRgb[0]}, ${assisted.lipRgb[1]}, ${assisted.lipRgb[2]})`;
+  traceLipBoundary();
+  ctx.fill();
   ctx.restore();
 
   if (open > 0.025) {
@@ -570,7 +604,7 @@ function drawMouth(
         ctx.beginPath();
         ctx.ellipse(innerCx, innerCy + innerRy * 0.54, innerRx * 0.54, Math.max(0.34, innerRy * 0.30), 0, 0, Math.PI * 2);
         ctx.fill();
-        ctx.strokeStyle = 'rgba(104, 43, 53, 0.42)';
+        ctx.strokeStyle = `rgba(104, 43, 53, ${Math.max(0.28, assisted.tongueDefinition)})`;
         ctx.lineWidth = Math.max(0.45, layout.width * 0.00075);
         ctx.beginPath();
         ctx.moveTo(innerCx, innerCy + innerRy * 0.38);
@@ -586,6 +620,18 @@ function drawMouth(
         ctx.strokeStyle = 'rgba(112, 92, 86, 0.28)';
         ctx.lineWidth = Math.max(0.35, layout.width * 0.00055);
         ctx.stroke();
+        // Restrained interdental definition: short low-contrast separators,
+        // never full dark outlines, so the teeth read individually at close
+        // range but remain one natural dental row at normal viewing distance.
+        ctx.strokeStyle = `rgba(112, 92, 86, ${assisted.teethDefinition})`;
+        ctx.lineWidth = Math.max(0.22, layout.width * 0.00034);
+        for (const fraction of [-0.44, -0.22, 0, 0.22, 0.44]) {
+          const x = innerCx + innerRx * fraction;
+          ctx.beginPath();
+          ctx.moveTo(x, teethY - innerRy * 0.24);
+          ctx.lineTo(x, teethY - innerRy * 0.06);
+          ctx.stroke();
+        }
       }
       ctx.restore();
     } else {
