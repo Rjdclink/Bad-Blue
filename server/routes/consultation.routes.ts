@@ -14,6 +14,7 @@ import { createLogger } from '../logger';
 import type { LawType } from '../../shared/legalCounselTypes';
 import PDFDocument from 'pdfkit';
 import archiver from 'archiver';
+import { LEGAL_DOCUMENT_TYPES, resolveLegalDocumentType, validateLegalDocumentDraft } from '../lexara/legalDocumentRegistry';
 
 const log = createLogger('ConsultationRoutes');
 const MAX_FMI_CONTEXT_CHARACTERS = 8_000;
@@ -38,21 +39,6 @@ function withFmiEvidenceContext(situation: string, fmiContext: unknown): string 
   return `${situation}\n\nF.M.I. EVIDENCE ANALYSIS PROVIDED BY THE PLATFORM:\n${serialized}\n\nTreat the F.M.I. material as extracted/advisory evidence context only. Do not treat it as controlling legal authority, do not assume an extraction is correct merely because F.M.I. produced it, and distinguish it from facts independently supplied by the user.`;
 }
 
-const LEGAL_DOCUMENT_TYPES = [
-  'Motion', 'Supporting Brief', 'Memorandum of Law', 'Complaint', 'Answer', 'Counterclaim',
-  'Interrogatories', 'Request for Production', 'Request for Admission', 'Discovery Response',
-  'Affidavit', 'Declaration', 'Demand Letter', 'Cease and Desist Letter', 'Settlement Proposal',
-  'Settlement Agreement', 'Motion to Suppress', 'Motion to Dismiss', 'Motion to Compel',
-  'Motion for Continuance', 'Bond or Bail Motion', 'Sentencing Memorandum',
-  'Post-Conviction Motion', 'Notice of Appeal', 'Appellate Brief', 'Habeas Petition',
-  'FOIA or Public Records Request', 'Contract or Agreement', 'Release or Waiver',
-  'Legal Research Memorandum', 'Case Chronology', 'Witness Summary', 'Deposition Outline',
-  'Witness List', 'Exhibit List', 'Proposed Jury Instructions', 'Motion in Limine',
-  'Trial Brief', 'Proposed Order', 'Client Letter', 'Administrative Appeal',
-  'Landlord-Tenant Notice', 'Family-Law Pleading', 'Probate or Estate Document',
-  'Business Governance Document', 'Immigration Support Letter', 'Custom Document',
-] as const;
-
 function escapeXml(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
@@ -67,15 +53,20 @@ export function setupConsultationRoutes(app: Express): void {
   app.post('/api/lexara/documents/generate', isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const state = typeof req.body?.state === 'string' ? req.body.state.trim() : '';
     const facts = typeof req.body?.facts === 'string' ? req.body.facts.trim() : '';
-    const requestedType = typeof req.body?.documentType === 'string' ? req.body.documentType.trim() : '';
+    const rawRequestedType = typeof req.body?.documentType === 'string' ? req.body.documentType.trim() : '';
+    const requestedType = (LEGAL_DOCUMENT_TYPES as readonly string[]).includes(rawRequestedType)
+      ? rawRequestedType
+      : resolveLegalDocumentType(rawRequestedType);
+    const templateMode = req.body?.templateMode === true;
     const customInstructions = typeof req.body?.instructions === 'string' ? req.body.instructions.trim() : '';
-    if (!state || !facts || !requestedType) return res.status(400).json({ error: 'Jurisdiction, case facts, and document type are required' });
+    if (!state || !facts || !requestedType) return res.status(400).json({ error: 'Jurisdiction, case facts, and a supported document type are required' });
     if (facts.length > 30_000 || customInstructions.length > 8_000) return res.status(413).json({ error: 'Document request is too large' });
 
     const draftingPrompt = [
       `Prepare a professional ${requestedType} for a matter in ${state}.`,
       'Use ONLY facts supplied below. Never invent names, dates, courts, case numbers, quotations, authorities, procedural posture, or requested relief.',
       'Where a required fact is unknown, insert a conspicuous bracketed placeholder such as [COURT NAME NEEDED].',
+      templateMode ? 'The user explicitly requested a blank/template document. Preserve unknown facts as bracketed placeholders and do not turn the draft into a questionnaire.' : '',
       'Use conventional legal-document structure appropriate to the requested document, with a caption placeholder when court filing format is applicable.',
       'Do not claim the document is ready to file; local court rules, citations, deadlines, signatures, service, and filing requirements require human verification.',
       customInstructions ? `Additional user instructions: ${customInstructions}` : '',
@@ -85,11 +76,11 @@ export function setupConsultationRoutes(app: Express): void {
     let document = await analyzeLegalIssue(draftingPrompt, state, undefined, req.body?.lawType);
     const normalizedDocument = String(document || '').trim();
     const filingLike = /motion|brief|memorandum|affidavit|declaration|complaint|answer|petition|notice|objection|appeal|application/i.test(requestedType);
-    const hasDocumentAnatomy = !filingLike || (
-      normalizedDocument.length >= 700
-      && /(?:court|caption|plaintiff|defendant|petitioner|respondent|movant|case\s*(?:no\.?|number)|wherefore|respectfully|signature|relief)/i.test(normalizedDocument)
-      && !/^(?:this is|here is|here's|the following is|a useful|i can|you should|before filing)/i.test(normalizedDocument)
-    );
+    const initialValidation = validateLegalDocumentDraft(requestedType, normalizedDocument, templateMode);
+    const hasDocumentAnatomy = initialValidation.valid && (!filingLike || (
+      normalizedDocument.length >= (templateMode ? 400 : 700)
+      && /(?:court|caption|plaintiff|defendant|petitioner|respondent|movant|case\s*(?:no\.?|number)|wherefore|respectfully|signature|relief|\[[A-Z0-9 _/.-]{3,}\])/i.test(normalizedDocument)
+    ));
     if (!hasDocumentAnatomy) {
       const repairPrompt = [
         draftingPrompt,
@@ -102,12 +93,16 @@ export function setupConsultationRoutes(app: Express): void {
       document = await analyzeLegalIssue(repairPrompt, state, undefined, req.body?.lawType);
     }
     const finalDocument = String(document || '').trim();
-    if (!finalDocument || (filingLike && finalDocument.length < 700)) {
-      return res.status(422).json({ error: 'LEXARA could not produce a complete legal-document draft from the supplied facts. The incomplete output was not exported.' });
+    const finalValidation = validateLegalDocumentDraft(requestedType, finalDocument, templateMode);
+    if (!finalValidation.valid || (filingLike && finalDocument.length < (templateMode ? 400 : 700))) {
+      return res.status(422).json({ error: 'LEXARA could not produce a validated legal-document draft of the requested type. The incomplete output was not exported.' });
     }
     return res.json({
       title: requestedType,
+      documentType: requestedType,
       document: finalDocument,
+      validated: true,
+      templateMode,
       jurisdiction: state,
       reviewRequired: true,
       notice: 'Draft generated from supplied facts. Verify facts, authorities, local rules, deadlines, signatures, service, and filing requirements before use.',
