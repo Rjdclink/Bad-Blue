@@ -13,6 +13,7 @@ import { createServer, type Server } from "http";
 import type { AccessZone, AccessRole } from "./masterPassword";
 import crypto from 'crypto';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 // ES Module __dirname polyfill
@@ -854,6 +855,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const { startPantheonRecoveryWorker } = await import('./services/pantheon/PantheonBackgroundReportJob');
   startPantheonRecoveryWorker();
   
+  // Public LegalWhat article publishing endpoint for BabyLoveGrowth.
+  // Articles are stored as JSON and rendered as crawlable server-side HTML.
+  const blogDir = path.resolve(process.cwd(), "data", "blog-articles");
+  const blogSlug = (value: string) => value.toLowerCase().replace(/[^a-z0-9 -]/g, "").trim().replace(/ +/g, "-").slice(0, 120);
+
+  app.post("/api/blog-webhook", (req, res) => {
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const title = String(body.title || "").trim();
+    const slug = blogSlug(String(body.slug || title));
+    const articleContent = String(body.contentHtml || body.html || body.content || "").trim();
+    const description = String(body.description || body.metaDescription || title).trim().slice(0, 180);
+    if (!title || !slug || !articleContent) return res.status(400).json({ error: "missing_article_fields" });
+    fs.mkdirSync(blogDir, { recursive: true });
+    fs.writeFileSync(path.join(blogDir, slug + ".json"), JSON.stringify({ title, slug, content: articleContent, description, publishedAt: new Date().toISOString() }), "utf8");
+    return res.status(200).json({ ok: true, url: "https://legalwhat.com/blog/" + slug });
+  });
+
+  app.get("/blog", (_req, res) => {
+    const articles = fs.existsSync(blogDir) ? fs.readdirSync(blogDir).filter((name) => name.endsWith(".json")).map((name) => JSON.parse(fs.readFileSync(path.join(blogDir, name), "utf8"))) : [];
+    const links = articles.map((article) => '<li><a href="/blog/' + article.slug + '">' + article.title + '</a></li>').join("");
+    return res.type("html").send('<!doctype html><html lang="en"><head><title>Legal Articles | LegalWhat</title><meta name="description" content="LegalWhat legal information and research articles."><meta name="robots" content="index,follow"><link rel="canonical" href="https://legalwhat.com/blog"></head><body><main><h1>Legal Articles</h1><ul>' + links + '</ul></main></body></html>');
+  });
+
+  app.get("/blog/:slug", (req, res) => {
+    const slug = blogSlug(String(req.params.slug || ""));
+    const file = path.join(blogDir, slug + ".json");
+    if (!slug || !fs.existsSync(file)) return res.status(404).send("Article not found");
+    const article = JSON.parse(fs.readFileSync(file, "utf8"));
+    return res.type("html").send('<!doctype html><html lang="en"><head><title>' + article.title + ' | LegalWhat</title><meta name="description" content="' + article.description + '"><meta name="robots" content="index,follow"><link rel="canonical" href="https://legalwhat.com/blog/' + article.slug + '"></head><body><main><article><h1>' + article.title + '</h1>' + article.content + '</article></main></body></html>');
+  });
+
   // Auth middleware setup
   await setupAuth(app);
 
