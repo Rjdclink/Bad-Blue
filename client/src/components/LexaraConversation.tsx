@@ -1187,10 +1187,10 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     const greeting = 'How can I help you?';
     appendMessage('lexara', greeting);
 
-    if (liveEnabled && voiceReady) {
+    if (liveEnabled) {
       await speakLexara(greeting, greetingGeneration).catch(() => undefined);
     }
-  }, [appendMessage, liveEnabled, speakLexara, voiceReady]);
+  }, [appendMessage, liveEnabled, speakLexara]);
 
   useEffect(() => {
     if (initializedRef.current) return;
