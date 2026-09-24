@@ -47,6 +47,7 @@ export interface LexaraEmbodimentFrame {
   mouthPoseIndex: number;
   mouthPreviousPoseIndex: number;
   mouthPoseBlend: number;
+  speechClockSec: number;
   gestureEnergy: number;
   attention: number;
 }
@@ -497,6 +498,7 @@ export class LexaraEmbodimentEngine {
       mouthPoseIndex: this.currentMouthPoseIndex,
       mouthPreviousPoseIndex: this.previousMouthPoseIndex,
       mouthPoseBlend: this.mouthPoseBlend,
+      speechClockSec,
       gestureEnergy: clamp(this.smoothedGestureEnergy),
       attention,
     };
