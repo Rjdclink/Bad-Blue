@@ -435,7 +435,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const [gaze, setGaze] = useState<LEXARAGazeHint>('camera');
   const [conversationDocument, setConversationDocument] = useState<{ title: string; content: string } | null>(null);
   const [documentBusy, setDocumentBusy] = useState(false);
-  const [pendingDocument, setPendingDocument] = useState<{ title: string; facts: string; state: string } | null>(null);
+  const [pendingDocument, setPendingDocument] = useState<{ title: string; facts: string; state: string; templateMode: boolean } | null>(null);
 
   const conversationRef = useRef<ConversationMessage[]>(initialStateRef.current.messages);
   const phaseRef = useRef<ConversationPhase>('initializing');
@@ -746,13 +746,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         && data?.speechOutputVerified === true
         && Array.isArray(data?.outputProviders)
         && data.outputProviders.length > 0;
-      setVoiceStatus(
-        data?.voiceStatus === 'live'
-          ? 'live'
-          : ready
-            ? 'degraded'
-            : 'reconnecting',
-      );
+      setVoiceStatus(ready ? 'live' : 'reconnecting');
       return ready;
     } catch {
       setVoiceStatus('reconnecting');
@@ -1086,6 +1080,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             title: String(data.documentIntent.documentType || 'Legal Document'),
             facts,
             state: resolvedJurisdiction,
+            templateMode: data.documentIntent.templateMode === true,
           });
         }
       }
@@ -1179,7 +1174,8 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   };
 
   const sendGreeting = useCallback(async () => {
-    if (greetingRef.current || userSpeechObservedRef.current) return;
+    if (greetingRef.current) return;
+    if (liveEnabled && !voiceReady) return;
     greetingRef.current = true;
     const greetingGeneration = generationRef.current;
     responseEmotionRef.current = 'calm';
@@ -1190,7 +1186,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     if (liveEnabled) {
       await speakLexara(greeting, greetingGeneration).catch(() => undefined);
     }
-  }, [appendMessage, liveEnabled, speakLexara]);
+  }, [appendMessage, liveEnabled, speakLexara, voiceReady]);
 
   useEffect(() => {
     if (initializedRef.current) return;
@@ -1215,15 +1211,17 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   }, [enableVoice, setConversationPhase]);
 
   useEffect(() => {
-    if (!liveEnabled || voiceReady) return;
+    if (!liveEnabled) return;
 
     let cancelled = false;
     const recover = async () => {
       const ready = await checkVoiceBackendReadiness();
       if (cancelled || !ready) return;
-      setVoiceReady(true);
-      setErrorMessage(null);
-      startListening();
+      if (!voiceReady) {
+        setVoiceReady(true);
+        setErrorMessage(null);
+        startListening();
+      }
       if (phaseRef.current === 'text-only' || phaseRef.current === 'initializing') {
         setConversationPhase('listening');
       }
@@ -1232,7 +1230,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     void recover();
     const interval = window.setInterval(() => {
       void recover();
-    }, 5_000);
+    }, 15_000);
 
     return () => {
       cancelled = true;
@@ -1296,12 +1294,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
   useEffect(() => {
     if (phase === 'initializing' || greetingRef.current) return;
-
-    const timer = window.setTimeout(() => {
-      sendGreeting().catch(() => undefined);
-    }, 250);
-
-    return () => window.clearTimeout(timer);
+    void sendGreeting();
   }, [phase, sendGreeting]);
 
   useEffect(() => {
@@ -1343,11 +1336,17 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
           facts: pendingDocument.facts,
           lawType: lawTypeId,
           documentType: pendingDocument.title,
-          instructions: 'Create the requested document from the conversation facts. Preserve unknown required facts as bracketed placeholders.',
+          templateMode: pendingDocument.templateMode,
+          instructions: pendingDocument.templateMode
+            ? 'Create the requested blank/template legal document. Preserve unknown required facts as bracketed placeholders.'
+            : 'Create the requested document from the conversation facts. Preserve unknown required facts as bracketed placeholders.',
         }),
       });
       const data = await generated.json().catch(() => ({}));
       if (!generated.ok || !data?.document) throw new Error(data?.error || 'Document generation failed');
+      if (data?.validated !== true || String(data?.documentType || '') !== pendingDocument.title) {
+        throw new Error('LEXARA rejected a document that did not match the requested legal-document type');
+      }
       const title = String(data?.title || pendingDocument.title);
       const content = String(data.document);
       setConversationDocument({ title, content });
@@ -1435,21 +1434,17 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             </div>
             <div className={cn(
               'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs',
-              liveEnabled && voiceReady && voiceStatus === 'live'
+              liveEnabled && voiceReady
                 ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                : liveEnabled && voiceReady
-                  ? 'bg-amber-500/10 text-amber-700 dark:text-amber-300'
-                  : 'bg-muted text-muted-foreground',
+                : 'bg-muted text-muted-foreground',
             )}>
               {liveEnabled && voiceReady ? <Mic className="h-3.5 w-3.5" /> : <MicOff className="h-3.5 w-3.5" />}
               {
-                liveEnabled && voiceReady && voiceStatus === 'live'
+                liveEnabled && voiceReady
                   ? 'Voice live'
-                  : liveEnabled && voiceReady
-                    ? 'Voice degraded'
-                    : liveEnabled
-                      ? 'Voice reconnecting'
-                      : 'Text mode'
+                  : liveEnabled
+                    ? 'Voice reconnecting'
+                    : 'Text mode'
               }
             </div>
           </div>
