@@ -55,6 +55,11 @@ function detectDocumentIntent(prompt: string, previousMessages: LexaraConversati
   else if (/complaint/.test(context)) documentType = 'Complaint';
   else if (/petition/.test(context)) documentType = 'Petition';
   else if (/demand letter/.test(context)) documentType = 'Demand Letter';
+  else if (/lease/.test(context)) documentType = 'Lease Agreement';
+  else if (/settlement/.test(context)) documentType = 'Settlement Agreement';
+  else if (/release/.test(context)) documentType = 'Release Agreement';
+  else if (/waiver/.test(context)) documentType = 'Waiver';
+  else if (/contract|agreement/.test(context)) documentType = 'Contract / Agreement';
   else if (/notice/.test(context)) documentType = 'Legal Notice';
   else if (/motion/.test(context)) documentType = 'Motion';
   return { requested, explicit, documentType };
@@ -176,6 +181,18 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
 
     const responseText = conversationResult.text;
     const model = 'lexara-legal-orchestrator';
+
+    // Preserve the deterministic explicit-request fast path, but let LEXARA's
+    // completed legal reasoning bridge an implicit document need into the
+    // existing document workflow. This does not add another model call.
+    const reasoningDocumentIntent = detectDocumentIntent(responseText, [
+      ...previousMessages,
+      { role: 'user', content: prompt },
+    ]);
+    if (!documentIntent.requested && reasoningDocumentIntent.requested) {
+      documentIntent.requested = true;
+      documentIntent.documentType = reasoningDocumentIntent.documentType;
+    }
 
     log.info('[LEXARA] Conversational legal response generated', {
       responseLength: responseText.length,
