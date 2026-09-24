@@ -87,7 +87,7 @@ mustNot(sitemap, 'example.com', 'sitemap must not use example.com');
 mustNot(sitemap, 'BadBlue', 'sitemap must not use legacy brand');
 mustNot(sitemap, 'Bad Blue', 'sitemap must not use legacy brand');
 mustNot(sitemap, '<lastmod>', 'static sitemap must not emit synthetic freshness dates');
-const sitemapLocs = [...sitemap.matchAll(/<loc>([^<]+)<\\/loc>/g)].map((match) => match[1]);
+const sitemapLocs = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) => match[1]);
 must(new Set(sitemapLocs).size === sitemapLocs.length, 'static sitemap must not contain duplicate URLs');
 
 must(llms.includes('# Legal What?'), 'llms.txt must identify Legal What?');
