@@ -15,7 +15,8 @@ export const LEGAL_DOCUMENT_TYPES = [
   'Witness List', 'Exhibit List', 'Proposed Jury Instructions', 'Motion in Limine',
   'Trial Brief', 'Proposed Order', 'Client Letter', 'Administrative Appeal',
   'Landlord-Tenant Notice', 'Family-Law Pleading', 'Probate or Estate Document',
-  'Business Governance Document', 'Immigration Support Letter', 'Custom Document',
+  'Business Governance Document', 'Immigration Support Letter', 'Petition', 'Lease Agreement',
+  'Release Agreement', 'Waiver', 'Legal Notice', 'Subpoena', 'Custom Document',
 ] as const;
 
 export type LegalDocumentType = typeof LEGAL_DOCUMENT_TYPES[number];
@@ -40,8 +41,14 @@ const TYPE_ALIASES: ReadonlyArray<readonly [LegalDocumentType, readonly string[]
   ['Habeas Petition', ['habeas petition', 'habeas corpus petition']],
   ['Notice of Appeal', ['notice of appeal', 'appeal notice']],
   ['FOIA or Public Records Request', ['foia request', 'public records request', 'open records request']],
-  ['Contract or Agreement', ['contract', 'agreement', 'lease', 'lease agreement']],
-  ['Release or Waiver', ['release', 'waiver', 'release agreement']],
+  ['Lease Agreement', ['lease', 'lease agreement']],
+  ['Release Agreement', ['release agreement']],
+  ['Waiver', ['waiver']],
+  ['Legal Notice', ['legal notice', 'notice']],
+  ['Subpoena', ['subpoena']],
+  ['Petition', ['petition']],
+  ['Contract or Agreement', ['contract', 'agreement']],
+  ['Release or Waiver', ['release or waiver']],
   ['Cease and Desist Letter', ['cease and desist', 'cease and desist letter']],
   ['Demand Letter', ['demand letter']],
   ['Settlement Proposal', ['settlement proposal']],
