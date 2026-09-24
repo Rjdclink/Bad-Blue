@@ -111,7 +111,8 @@ export function selectLexaraPreparedFacialSequence(
 ): LexaraPreparedFacialSequence {
   const safeViseme = Math.max(0, Math.min(14, Math.round(visemeIndex)));
   const family = CORE_POSES[safeViseme * 8]?.viseme ?? 'sil';
-  const candidates = LEXARA_PREPARED_FACIAL_SEQUENCES.filter((sequence) => sequence.family === family);
+  const familyIndex = LEXARA_VISEME_NAMES.indexOf(family);
+  const first = Math.max(0, familyIndex) * 50;
   const phase = Math.abs(Math.floor(speechClockSec * 7.5 + strengthLevel * 13));
-  return candidates[phase % Math.max(1, candidates.length)] ?? LEXARA_PREPARED_FACIAL_SEQUENCES[0];
+  return LEXARA_PREPARED_FACIAL_SEQUENCES[first + (phase % 50)] ?? LEXARA_PREPARED_FACIAL_SEQUENCES[0];
 }
