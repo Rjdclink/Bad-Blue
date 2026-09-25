@@ -28,7 +28,7 @@ const FULL_REPORT_PATTERN = /\b(?:full|complete|comprehensive|entire)\s+(?:backg
 const IDENTIFIER_PATTERN = /\b(?:born|dob|date\s+of\s+birth|age\s+\d{1,3}|\d{1,2}[\/-]\d{1,2}[\/-](?:19|20)\d{2}|(?:19|20)\d{2}|lives?\s+in|from\s+[A-Z][a-z]+|address|street|avenue|road|drive|lane|city|county|state|phone|email|employer|works?\s+(?:at|for)|middle\s+name)\b/i;
 
 const CATEGORY_RULES: Array<[RegExp, PantheonBackgroundCategory[]]> = [
-  [/identity|date\s+of\s+birth|\bdob\b|\bage\b/i, ['identity','identity-resolution','false-positive']],
+  [/identity|date\s+of\s+birth|\bdob\b|\bage\b|\bborn\b|birthday/i, ['identity','identity-resolution','false-positive','vital-records','credentials','professional-discipline','courts','criminal','corrections','historical','chronology','news']],
   [/phone/i, ['contacts','identity-resolution']],
   [/email/i, ['contacts','breach-notices','identity-resolution']],
   [/address|residen|lives?\s+in|lived\s+in/i, ['residence','geography','historical','chronology']],
@@ -84,7 +84,8 @@ function categoryDiscoveryTerms(categories: readonly PantheonBackgroundCategory[
   if (categories.includes('criminal') || categories.includes('arrests')) ['criminal court records','case search','arrest records'].forEach(value => terms.add(value));
   if (categories.includes('courts')) ['court docket','case search'].forEach(value => terms.add(value));
   if (categories.includes('property') || categories.includes('financial-public')) ['county recorder','register of deeds','mortgage record','property records'].forEach(value => terms.add(value));
-  if (categories.includes('vital-records')) ['marriage record','divorce record','death record','vital records'].forEach(value => terms.add(value));
+  if (categories.includes('vital-records')) ['birth record','date of birth','marriage record','divorce record','death record','vital records'].forEach(value => terms.add(value));
+  if (categories.includes('credentials') || categories.includes('professional-discipline')) ['professional license lookup','license verification','disciplinary order','reinstatement order'].forEach(value => terms.add(value));
   if (categories.includes('family-probate')) ['probate court','estate record','obituary'].forEach(value => terms.add(value));
   return [...terms].join(' ');
 }

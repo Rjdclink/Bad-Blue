@@ -870,6 +870,11 @@ must(
     lexaraPantheonInvestigation.includes('matchPantheonSubject(item, resolvedName, context.jurisdiction).matched'),
   'Lexara accepts Pantheon person-record evidence only after subject matching',
 );
+must(
+  lexaraPantheonInvestigation.includes("'vital-records','credentials','professional-discipline','courts','criminal','corrections','historical','chronology','news'") &&
+    lexaraPantheonInvestigation.includes("'professional license lookup','license verification','disciplinary order','reinstatement order'"),
+  'person fact research broadens across record families rather than using a fact-specific single source',
+);
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA realization verification passed.');
 // Practice-area specialization gate (40-book LegalWhat library).
