@@ -2,6 +2,7 @@ const fs = require('fs');
 
 const investigation = fs.readFileSync('server/lexara/LexaraPantheonInvestigation.ts', 'utf8');
 const adapter = fs.readFileSync('server/services/crawlers/PantheonRetrievalAdapter.ts', 'utf8');
+const supplemental = fs.readFileSync('server/services/pantheon/PantheonSupplementalDiscovery.ts', 'utf8');
 
 for (const token of [
   'PERSON_RECURSIVE_MAX_PASSES = 3',
@@ -27,3 +28,14 @@ for (const token of [
   if (!adapter.includes(token)) throw new Error('Retrieval adapter missing capability-routing invariant: ' + token);
 }
 console.log('Lexara/Pantheon bounded recursive capability routing verification passed.');
+
+for (const token of ['SERPAPI_KEY','SCRAPINGBEE_API_KEY','learnedDiscoveryHosts','rememberPantheonDiscoverySuccess']) {
+  if (!supplemental.includes(token)) throw new Error('Supplemental discovery missing invariant: ' + token);
+}
+if (!investigation.includes("if (!frontier.length && !discovered.length && acceptedEvidence.size === 0)")) {
+  throw new Error('Paid discovery must remain last-resort after internal discovery is exhausted');
+}
+if (!investigation.includes('supplementalPantheonDiscovery(') || !investigation.includes('rememberPantheonDiscoverySuccess(')) {
+  throw new Error('Supplemental discovery is not piped through Pantheon retrieval/learning');
+}
+console.log('Credit-aware supplemental discovery verification passed.');
