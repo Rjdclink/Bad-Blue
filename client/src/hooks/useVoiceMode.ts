@@ -1329,14 +1329,32 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [finishServerUtterance, shouldBeListening, startServerVad, stopServerVad]);
 
+  // Unmount cleanup must run only when the hook instance actually leaves the
+  // consultation. Callback identities can change across renders; putting them in
+  // this effect's dependency list caused React to execute cleanup mid-session,
+  // closing the healthy realtime socket with code 1001 and recreating it.
+  const unmountCleanupRef = useRef({
+    cleanupServerRecognition,
+    clearRestartTimer,
+    resetTransientRecovery,
+  });
+  useEffect(() => {
+    unmountCleanupRef.current = {
+      cleanupServerRecognition,
+      clearRestartTimer,
+      resetTransientRecovery,
+    };
+  }, [cleanupServerRecognition, clearRestartTimer, resetTransientRecovery]);
+
   useEffect(() => {
     return () => {
       enabledRef.current = false;
       desiredListeningRef.current = false;
       suspendedRef.current = true;
-      clearRestartTimer();
-      resetTransientRecovery();
-      cleanupServerRecognition(true);
+      const cleanup = unmountCleanupRef.current;
+      cleanup.clearRestartTimer();
+      cleanup.resetTransientRecovery();
+      cleanup.cleanupServerRecognition(true);
 
       if (recognitionRef.current) {
         try {
@@ -1347,7 +1365,7 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
       }
       recognitionRef.current = null;
     };
-  }, [cleanupServerRecognition, clearRestartTimer, resetTransientRecovery]);
+  }, []);
 
   useEffect(() => {
     if (!serverRealtimeActiveRef.current) return;

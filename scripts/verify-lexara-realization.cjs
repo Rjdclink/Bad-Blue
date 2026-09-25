@@ -31,6 +31,8 @@ must(
   'LEXARA must verify and use the prewarmed realtime acoustic path before progressive media fallback',
 );
 const realtimeVoiceClient = read('client/src/lib/lexaraRealtimeVoiceClient.ts');
+const lexaraConversationOrchestrator = read('server/lexara/LexaraConversationOrchestrator.ts');
+const lexaraPantheonInvestigation = read('server/lexara/LexaraPantheonInvestigation.ts');
 const liveAvatarReview = read('docs/LEXARA_LIVE_AVATAR_100_SOURCE_REVIEW_20260920.md');
 const embodiedConversationReview = read('docs/LEXARA_EMBODIED_CONVERSATION_50_SOURCE_BLUEPRINT_20260920.md');
 const realtimeVoiceGateway = read('server/lexara/LexaraRealtimeVoiceGateway.ts');
@@ -746,6 +748,22 @@ must(liveAvatarSourceLines.length === 100, 'literal 100-source LEXARA live-avata
 const embodiedConversationSourceSection = embodiedConversationReview.split('## Sources — exactly 50')[1]?.split('## Acceptance criteria')[0] || '';
 const embodiedConversationSourceLines = embodiedConversationSourceSection.split('\n').filter(line => /^\d+\.\s/.test(line));
 must(embodiedConversationSourceLines.length === 50, 'literal 50-source LEXARA embodied-conversation implementation blueprint is present');
+must(
+  voiceMode.includes('unmountCleanupRef') &&
+    voiceMode.includes('cleanup.cleanupServerRecognition(true)') &&
+    voiceMode.includes('  }, []);'),
+  'realtime voice consultation socket cleanup is unmount-scoped rather than render-callback-scoped',
+);
+must(
+  lexaraConversationOrchestrator.includes('new Promise<null>(resolve => setTimeout(() => resolve(null), 0))') &&
+    lexaraConversationOrchestrator.includes('Never name or infer a county from a city'),
+  'person-record lookup cannot block before the live research budget or invent county jurisdiction',
+);
+must(
+  lexaraPantheonInvestigation.includes('budgetMs: 1_250') &&
+    lexaraPantheonInvestigation.includes('NEVER name, infer, recommend, or substitute a county'),
+  'targeted Pantheon research is bounded for live conversation and county claims require evidence',
+);
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA realization verification passed.');
 // Practice-area specialization gate (40-book LegalWhat library).
