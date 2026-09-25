@@ -41,7 +41,7 @@ export function BackButton({ fallbackRoute, className, onBeforeNavigate }: BackB
     }
 
     // Direct-entry/new-tab fallback when there is no previous history entry.
-    const defaultFallback = isAuthenticated ? "/welcome" : "/login";
+    const defaultFallback = isAuthenticated ? "/lexara-consent" : "/login";
     setLocation(fallbackRoute || defaultFallback, { replace: true });
   };
 
