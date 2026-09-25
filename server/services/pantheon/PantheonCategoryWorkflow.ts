@@ -978,19 +978,21 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
       state: entry.state,
     });
     await preparePantheonFrontier(schedulableEntries.map(frontierSeedFor));
+    const priorQualityByHost = new Map(
+      (input.previousSourceQuality || []).map(item => [item.host.toLowerCase().replace(/^www\./, ''), item]),
+    );
+    const learnedSourceScore = (item?: { successRate: number; acceptedEvidence: number; averageConfidence: number; failureRate: number }) =>
+      item ? (item.successRate * 120) + (Math.min(20, item.acceptedEvidence) * 4) + (item.averageConfidence * 80) - (item.failureRate * 100) : 0;
     const prioritizedTargets = urlLedger
       .filter(entry => entry.state === 'pending' || entry.state === 'retryable')
       .sort((left, right) => {
-        const priorByHost = new Map((input.previousSourceQuality || []).map(item => [item.host.toLowerCase().replace(/^www\./, ''), item]));
-        const leftPrior = priorByHost.get(pantheonTelemetrySource(left.url).sourceHost.replace(/^www\./, ''));
-        const rightPrior = priorByHost.get(pantheonTelemetrySource(right.url).sourceHost.replace(/^www\./, ''));
-        const learnedScore = (item?: { successRate: number; acceptedEvidence: number; averageConfidence: number; failureRate: number }) =>
-          item ? (item.successRate * 120) + (Math.min(20, item.acceptedEvidence) * 4) + (item.averageConfidence * 80) - (item.failureRate * 100) : 0;
+        const leftPrior = priorQualityByHost.get(pantheonTelemetrySource(left.url).sourceHost.replace(/^www\./, ''));
+        const rightPrior = priorQualityByHost.get(pantheonTelemetrySource(right.url).sourceHost.replace(/^www\./, ''));
         return capabilityWorkForSource(capabilityWorkLedger, right.url).length
           - capabilityWorkForSource(capabilityWorkLedger, left.url).length
           || sourcePriority(right.authority) - sourcePriority(left.authority)
           || Number(right.subjectScoped === true) - Number(left.subjectScoped === true)
-          || learnedScore(rightPrior) - learnedScore(leftPrior)
+          || learnedSourceScore(rightPrior) - learnedSourceScore(leftPrior)
           || left.frontierOrder - right.frontierOrder;
       })
       .map(entry => entry.url);
