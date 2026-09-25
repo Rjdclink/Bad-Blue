@@ -399,7 +399,7 @@ export function setupSubscriptionRoutes(app: Express): void {
 
   app.post("/api/subscription/confirm", isIdentityAuthenticated, async (req: Request, res: Response) => {
     try {
-      if ((req.user as any)?.isMasterBypass) return res.json({ active: true, redirectTo: "/welcome" });
+      if ((req.user as any)?.isMasterBypass) return res.json({ active: true, redirectTo: "/lexara-consent" });
 
       const id = userId(req);
       const orderId = typeof req.body?.orderId === "string" ? req.body.orderId.trim() : "";
@@ -424,7 +424,7 @@ export function setupSubscriptionRoutes(app: Express): void {
       }
 
       issueLocalSessionCookie(res, result.user);
-      return res.json({ active: true, redirectTo: "/welcome" });
+      return res.json({ active: true, redirectTo: "/lexara-consent" });
     } catch (error) {
       console.error("[SUBSCRIPTION] Checkout verification failed:", error instanceof Error ? error.message : String(error));
       return res.status(503).json({ message: "Subscription verification is temporarily unavailable" });
