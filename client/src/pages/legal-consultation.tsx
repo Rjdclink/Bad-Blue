@@ -63,7 +63,7 @@ export default function LegalConsultationPage() {
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => setLocation('/')
+              onClick={() => setLocation('/')}
               data-testid="button-back"
               aria-label="Go back"
               className="h-11 w-11 touch-manipulation"
