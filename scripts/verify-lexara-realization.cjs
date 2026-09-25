@@ -785,6 +785,12 @@ must(
   lexaraConversationOrchestrator.includes('initialPantheon.fullBackgroundReportRequested'),
   'full background-report requests are explicitly handed back to Pantheon workflow instead of silently falling through ordinary chat',
 );
+must(
+  lexaraConversationOrchestrator.includes('pantheonCategories:') &&
+    lexaraConversationOrchestrator.includes('pantheonSourceCount:') &&
+    lexaraConversationOrchestrator.includes('pantheonCoverageLimited:'),
+  'Lexara production telemetry proves Pantheon category/source/coverage handoff per live turn',
+);
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA realization verification passed.');
 // Practice-area specialization gate (40-book LegalWhat library).
