@@ -36,7 +36,7 @@ try {
   assert.equal(checkMasterPassword('test-master-password'), 'admin');
   assert.equal(checkMasterPassword('test-master-password', 'anything@example.com'), 'admin');
   assert.equal(checkMasterPassword('definitely-wrong'), null);
-  assert.equal(ACCESS_ZONES.admin.route, '/welcome');
+  assert.equal(ACCESS_ZONES.admin.route, '/lexara-consent');
   assert.equal(ACCESS_ZONES.admin.role, 'ADMIN_ROOT');
 
   // Stateless master recovery tokens are signed, expire, and reject tampering.
