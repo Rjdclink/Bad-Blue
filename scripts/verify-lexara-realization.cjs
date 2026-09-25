@@ -33,6 +33,7 @@ must(
 const realtimeVoiceClient = read('client/src/lib/lexaraRealtimeVoiceClient.ts');
 const lexaraConversationOrchestrator = read('server/lexara/LexaraConversationOrchestrator.ts');
 const lexaraPantheonInvestigation = read('server/lexara/LexaraPantheonInvestigation.ts');
+const inmateSearchAggregator = read('server/services/inmateSearch/InmateSearchAggregator.ts');
 const liveAvatarReview = read('docs/LEXARA_LIVE_AVATAR_100_SOURCE_REVIEW_20260920.md');
 const embodiedConversationReview = read('docs/LEXARA_EMBODIED_CONVERSATION_50_SOURCE_BLUEPRINT_20260920.md');
 const realtimeVoiceGateway = read('server/lexara/LexaraRealtimeVoiceGateway.ts');
@@ -819,6 +820,12 @@ must(
     pantheonInvestigation.includes("where\\s+(?:does|did)\\s+.+?\\s+live") &&
     pantheonInvestigation.includes("wife|die|died|death|deceased|obituary"),
   'natural incarceration residence and death wording routes to Pantheon',
+);
+must(
+  inmateSearchAggregator.includes("INMATE_ENABLE_STATE_DOC', true") &&
+    inmateSearchAggregator.includes("purpose: 'state_doc_inmate_search'") &&
+    inmateSearchAggregator.includes("return [];"),
+  'official state corrections discovery participates by default while person-level custody results fail closed without structured proof',
 );
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA realization verification passed.');
