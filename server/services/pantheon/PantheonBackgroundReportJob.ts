@@ -238,6 +238,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
     });
 
     const previousIntelligence = await loadPantheonSavedSearchSnapshot(input.userId, input.queryPlan.planId);
+    const previousIntelligenceForPriority = await loadPantheonSavedSearchSnapshot(input.userId, input.queryPlan.planId);
     console.log('[PANTHEON REPORT JOB] category collection started', { reportId: input.reportId, categories: PANTHEON_REPORT_CATEGORIES.length });
     const { report, categoryOutcomes } = await conductPantheonCategoryWorkflow({
       investigationId: input.reportId,
