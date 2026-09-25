@@ -63,7 +63,7 @@ export default function LegalConsultationPage() {
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => setLocation(domainId ? '/welcome' : '/')}
+              onClick={() => setLocation('/')
               data-testid="button-back"
               aria-label="Go back"
               className="h-11 w-11 touch-manipulation"
@@ -113,13 +113,13 @@ export default function LegalConsultationPage() {
       {toolsMode ? (
         <LexaraCaseTools
           lawTypeId={domainInfo?.id || domainId}
-          lawTypeName={domainInfo?.name}
+          lawTypeName={domainInfo?.name || 'Consultation'}
         />
       ) : (
         <LexaraConversation
           key={conversationMount}
           lawTypeId={domainInfo?.id || domainId}
-          lawTypeName={domainInfo?.name}
+          lawTypeName={domainInfo?.name || 'Consultation'}
         />
       )}
 
