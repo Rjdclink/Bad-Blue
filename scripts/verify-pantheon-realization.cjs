@@ -36,6 +36,8 @@ const investigationIntelligence = read('server/services/pantheon/PantheonInvesti
 const evidence = evidencePipeline;
 
 const checks = [
+  ['saved-search intelligence carries source-quality learning forward', investigationIntelligence.includes('input.previous?.sourceQuality') && investigationIntelligence.includes('previousQuality.get(host)') && investigationIntelligence.includes('acceptedEvidence + Math.max(0, Number(prior?.acceptedEvidence || 0))')],
+
   ['entity promotion requires independent source hosts and graph edges preserve relationship/timeline semantics', investigationIntelligence.includes("mapping.sourceHosts.size > 1 ? 'verified-same-entity'") && investigationIntelligence.includes("'evidence-backed-relationship'") && investigationIntelligence.includes("'evidence-backed-timeline'")],
 
   ['live frontier prioritizes capable authoritative subject-scoped sources', categoryWorkflow.includes('sourcePriority(right.authority) - sourcePriority(left.authority)') && categoryWorkflow.includes('Number(right.subjectScoped === true) - Number(left.subjectScoped === true)')],
