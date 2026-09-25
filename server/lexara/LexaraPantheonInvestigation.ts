@@ -19,7 +19,7 @@ export interface LexaraPersonInvestigation {
   coverageNote?: string;
 }
 
-const PERSON_RECORD_PATTERN = /\b(?:identity|date\s+of\s+birth|dob|age|phone|email|address|residen|relative|family|associate|household|social\s+media|username|online\s+account|photo|image|employ(?:ed|ment)|work(?:ed|s)?\s+(?:at|for)|education|school|college|university|degree|professional\s+license|credential|business|company|corporat|property|house|home|real\s+estate|vehicle|car|truck|title|registration|court|case|docket|lawsuit|judgment|arrest(?:ed|s)?|criminal\s+record|conviction|warrant|inmate|incarcerat|prison|parole|probation|sex\s+offender|bankrupt|mortgage|loan\s+on|lien|married|marriage|divorc|spouse|husband|wife|news|media|government\s+(?:job|employment|service)|public\s+service|campaign|contribution|donation|political|patent|trademark|copyright|timeline|history|relationship|background\s+(?:check|report)|investigat(?:e|ion)\s+(?:him|her|them|this\s+person))\b/i;
+const PERSON_RECORD_PATTERN = /\b(?:identity|date\s+of\s+birth|dob|age|phone|email|address|residen|relative|family|associate|household|social\s+media|username|online\s+account|photo|image|employ(?:ed|ment)|work(?:ed|s)?\s+(?:at|for)|education|school|college|university|degree|professional\s+license|credential|business|company|corporat|property|house|home|real\s+estate|vehicle|car|truck|title|registration|court|case|docket|lawsuit|judgment|arrest(?:ed|s)?|criminal\s+record|conviction|warrant|inmate|incarcerat|prison|parole|probation|sex\s+offender|bankrupt|mortgage|loan\s+on|lien|married|marriage|divorc|spouse|husband|wife|died|death|deceased|obituary|news|media|government\s+(?:job|employment|service)|public\s+service|campaign|contribution|donation|political|patent|trademark|copyright|timeline|history|relationship|background\s+(?:check|report)|investigat(?:e|ion)\s+(?:him|her|them|this\s+person))\b/i;
 const FULL_REPORT_PATTERN = /\b(?:full|complete|comprehensive|entire)\s+(?:background\s+)?(?:report|check|investigation)|\b(?:run|do|generate|prepare)\s+(?:a\s+)?background\s+(?:report|check)\b/i;
 const IDENTIFIER_PATTERN = /\b(?:born|dob|date\s+of\s+birth|age\s+\d{1,3}|\d{1,2}[\/-]\d{1,2}[\/-](?:19|20)\d{2}|(?:19|20)\d{2}|lives?\s+in|from\s+[A-Z][a-z]+|address|street|avenue|road|drive|lane|city|county|state|phone|email|employer|works?\s+(?:at|for)|middle\s+name)\b/i;
 
@@ -49,6 +49,7 @@ const CATEGORY_RULES: Array<[RegExp, PantheonBackgroundCategory[]]> = [
   [/judgment|civil\s+case|civil\s+litigation/i, ['civil-litigation','financial-public']],
   [/bankrupt|mortgage|loan\s+on|lien|financial\s+public/i, ['bankruptcy','financial-public','property']],
   [/married|marriage|spouse|husband|wife|divorc/i, ['vital-records','family-probate','relatives']],
+  [/died|death|deceased|date\s+of\s+death|obituary|funeral/i, ['vital-records','historical','chronology','news','family-probate']],
   [/news|media|newspaper|press\s+release/i, ['news','adverse-media']],
   [/internet|web\s+footprint|website|domain/i, ['internet','domain-web','professional-web']],
   [/government\s+(?:job|employment|service)|public\s+service|campaign|contribution|donation|political|lobby/i, ['government-employment','campaign-finance','lobbying','government-contracting']],
