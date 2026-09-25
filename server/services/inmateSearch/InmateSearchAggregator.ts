@@ -418,7 +418,8 @@ function createStateDOCAdapter(stateCode: string): DataSourceAdapter {
         const retrieval = await pantheonRetrievalAdapter.retrieve({
           purpose: 'state_doc_inmate_search',
           targets: [info.searchUrl],
-          depth: 3,
+          depth: 1,
+          budgetMs: 900,
         });
         const first = (query.firstName || '').trim().toLowerCase();
         const last = (query.lastName || '').trim().toLowerCase();
@@ -587,8 +588,12 @@ export async function searchInmates(query: InmateSearchQuery): Promise<InmateSea
     return [];
   };
 
-  const searchPromises = adapters.map((adapter, index) => 
-    executeWithRetry(adapter, sources[index])
+  const searchPromises = adapters.map((adapter, index) =>
+    executeWithRetry(
+      adapter,
+      sources[index],
+      adapter.name === 'BOP' ? 1 : 0,
+    )
   );
   
   // Wait for all searches with overall timeout
