@@ -23,6 +23,13 @@ const speechClient = read('client/src/lib/lexaraSpeechClient.ts');
 must(synthesis.includes('FIRST_SPEECH_CHUNK_MAX_CHARS = 140'), 'LEXARA must preserve bounded first-audible speech unit');
 must(synthesis.includes('firstSpeechChunk(text)'), 'LEXARA must start a bounded first speech unit before long-answer buffering');
 must(synthesis.includes('remainingUnit'), 'LEXARA must preserve the remainder of the answer after first-audible playback');
+must(
+  synthesis.includes('lexaraRealtimeVoiceClient.ensureSpeechOutputReady()') &&
+    synthesis.includes('if (realtimeOutputReady)') &&
+    synthesis.includes('await lexaraRealtimeVoiceClient.speak(') &&
+    synthesis.indexOf('lexaraRealtimeVoiceClient.ensureSpeechOutputReady()') < synthesis.indexOf('await speakWithServer(cleanText, options, turnId)'),
+  'LEXARA must verify and use the prewarmed realtime acoustic path before progressive media fallback',
+);
 const realtimeVoiceClient = read('client/src/lib/lexaraRealtimeVoiceClient.ts');
 const liveAvatarReview = read('docs/LEXARA_LIVE_AVATAR_100_SOURCE_REVIEW_20260920.md');
 const embodiedConversationReview = read('docs/LEXARA_EMBODIED_CONVERSATION_50_SOURCE_BLUEPRINT_20260920.md');
