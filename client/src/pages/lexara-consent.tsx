@@ -22,9 +22,9 @@ function consentMicrophoneConstraints(): MediaTrackConstraints {
 export default function LexaraConsentPage() {
   const [, setLocation] = useLocation();
   const [, params] = useRoute('/lexara-consent/:domainId');
-  const domainId = params?.domainId;
+  const domainId = params?.domainId || 'general';
   const domainInfo = useMemo(
-    () => LAW_TYPE_DATA.find(type => type.id === domainId),
+    () => domainId === 'general' ? { id: 'general', name: 'Consultation' } : LAW_TYPE_DATA.find(type => type.id === domainId),
     [domainId],
   );
 
@@ -119,19 +119,19 @@ export default function LexaraConsentPage() {
   const continueLive = useCallback(() => {
     if (!domainId || !accepted || !micReady || !speakerReady || voiceServiceReady !== true) return;
     setLexaraLiveEnabled('true');
-    setLocation(`/legal-consultation/${domainId}?live=true`);
+    setLocation(domainId === 'general' ? '/legal-consultation?live=true' : `/legal-consultation/${domainId}?live=true`);
   }, [accepted, domainId, micReady, setLocation, speakerReady, voiceServiceReady]);
 
   useEffect(() => {
     if (!domainId || !accepted || !micReady || !speakerReady || voiceServiceReady !== true || preparing) return;
     setLexaraLiveEnabled('true');
-    setLocation(`/legal-consultation/${domainId}?live=true`, { replace: true });
+    setLocation(domainId === 'general' ? '/legal-consultation?live=true' : `/legal-consultation/${domainId}?live=true`, { replace: true });
   }, [accepted, domainId, micReady, preparing, setLocation, speakerReady, voiceServiceReady]);
 
   const continueTextOnly = useCallback(() => {
     if (!domainId) return;
     setLexaraLiveEnabled('false');
-    setLocation(`/legal-consultation/${domainId}?live=false`);
+    setLocation(domainId === 'general' ? '/legal-consultation?live=false' : `/legal-consultation/${domainId}?live=false`);
   }, [domainId, setLocation]);
 
   if (!domainInfo || !domainId) {
@@ -139,7 +139,7 @@ export default function LexaraConsentPage() {
       <div className="flex min-h-screen items-center justify-center bg-slate-950 p-6 text-white">
         <div className="max-w-md text-center">
           <p className="mb-4">That legal area could not be loaded.</p>
-          <Button onClick={() => setLocation('/welcome')}>Return to the law library</Button>
+          <Button onClick={() => setLocation('/login')}>Return to sign in</Button>
         </div>
       </div>
     );
@@ -148,9 +148,9 @@ export default function LexaraConsentPage() {
   return (
     <div className="min-h-[100dvh] bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] text-white">
       <SEOHead
-        title={`LEXARA Live Consent - ${domainInfo.name} | LegalWhat`}
+        title={`LEXARA Live Consent | LegalWhat`}
         description="Prepare microphone and audio playback before entering a LEXARA live legal consultation."
-        canonicalUrl={`https://legalwhat.com/lexara-consent/${domainId}`}
+        canonicalUrl="https://legalwhat.com/lexara-consent"
       />
 
       <div className="mx-auto grid min-h-[100dvh] max-w-6xl grid-cols-1 lg:grid-cols-[1.05fr_0.95fr]">
@@ -172,11 +172,11 @@ export default function LexaraConsentPage() {
           <div className="w-full rounded-3xl border border-white/10 bg-slate-900/80 p-6 shadow-2xl backdrop-blur sm:p-8">
             <Button
               variant="ghost"
-              onClick={() => setLocation('/welcome')}
+              onClick={() => setLocation('/login')}
               className="mb-5 -ml-3 gap-2 text-slate-300 hover:text-white"
             >
               <ArrowLeft className="h-4 w-4" />
-              Back to law library
+              Back to sign in
             </Button>
 
             <h2 className="text-2xl font-bold">Ready to talk?</h2>
