@@ -2,6 +2,7 @@ import { pantheonRetrievalAdapter } from '../services/crawlers/PantheonRetrieval
 import { orchestratedWebSearch } from '../openRouterWebSearch';
 import { buildPantheonCategoryTargets, type PantheonBackgroundCategory } from '../services/pantheon/PantheonSovereignSourceRegistry';
 import { searchInmates } from '../services/inmateSearch/InmateSearchAggregator';
+import { matchPantheonSubject } from '../services/pantheon/PantheonEntityResolution';
 
 export interface LexaraPersonInvestigationContext {
   previousMessages?: Array<{ role?: string; content?: string }>;
@@ -234,8 +235,11 @@ export async function investigatePersonQuestion(
       location: context.jurisdiction,
       signal: context.signal,
     });
+    const resolvedPerson = extractPersonName(combined);
+    const resolvedName = [resolvedPerson.firstName, resolvedPerson.middleName, resolvedPerson.lastName].filter(Boolean).join(' ');
     const evidence = retrieval.evidence
       .filter(item => item.content?.trim())
+      .filter(item => resolvedName && matchPantheonSubject(item, resolvedName, context.jurisdiction).matched)
       .slice(0, 12);
     const sources = [...new Set([...structuredSources, ...evidence.map(item => item.sourceUrl).filter(Boolean)])].slice(0, 12);
     const webEvidence = evidence.map((item, index) =>

@@ -865,6 +865,11 @@ must(
     lexaraPantheonInvestigation.includes('1_200'),
   'structured custody lookup is bounded so slow inmate providers cannot stall Lexara',
 );
+must(
+  lexaraPantheonInvestigation.includes("from '../services/pantheon/PantheonEntityResolution'") &&
+    lexaraPantheonInvestigation.includes('matchPantheonSubject(item, resolvedName, context.jurisdiction).matched'),
+  'Lexara accepts Pantheon person-record evidence only after subject matching',
+);
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA realization verification passed.');
 // Practice-area specialization gate (40-book LegalWhat library).
