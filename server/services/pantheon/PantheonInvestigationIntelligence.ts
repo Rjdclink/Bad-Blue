@@ -120,6 +120,10 @@ export function buildPantheonInvestigationIntelligence(input: {
     const mapped = mappings.get(nodeId) || new Set<string>();
     mapped.add(String(data.evidenceId || citationId));
     mappings.set(nodeId, mapped);
+    // Corroborated entity nodes are retained as one stable node while every
+    // supporting evidence ID remains attached. This mirrors mature OSINT
+    // entity-resolution systems without collapsing single-source leads.
+
   }
 
   const contradictions = [...claimGroups.entries()].flatMap(([claimKey, items]) => {
