@@ -128,7 +128,10 @@ export async function investigatePersonQuestion(
     const retrieval = await pantheonRetrievalAdapter.retrieve({
       purpose: 'lexara_legal_research',
       targets,
-      depth: 2,
+      // Keep targeted conversational research fast: depth 1 selects the
+      // single primary crawler rather than launching the three-crawler depth-2
+      // roster on every live Lexara turn.
+      depth: 1,
       budgetMs: 2_200,
       subject: combined,
       location: context.jurisdiction,
