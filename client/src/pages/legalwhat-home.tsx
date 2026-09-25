@@ -119,7 +119,7 @@ export default function LegalWhatHome() {
               </div>
               <Button 
                 variant="outline" 
-                onClick={() => setLocation('/welcome')}
+                onClick={() => setLocation('/lexara-consent')}
                 className="border-white/20 text-white hover:bg-white/10"
               >
                 Dashboard
