@@ -844,6 +844,22 @@ must(
     lexaraPantheonInvestigation.includes("'death record'"),
   'person-record discovery uses record-type-specific official-source terms for custody criminal property and vital records',
 );
+
+for (const question of [
+  'Where is Jordan Michael Carter incarcerated?',
+  'Is Sarah Loretta Graves married?',
+  "How much is William Rodney Lawrence's mortgage?",
+  'Where does Tessa Gracie Bendland live?',
+  'When did Brian Kenneth Lee Clinkenbeard die?',
+  'Has Jeremy Scott Rose ever been arrested and what were the charged crimes?',
+]) {
+  must(
+    lexaraPantheonInvestigation.includes('PERSON_RECORD_PATTERN') &&
+      lexaraPantheonInvestigation.includes('CATEGORY_RULES') &&
+      lexaraPantheonInvestigation.includes('requestedCategories(prompt)'),
+    'natural-language person-record examples route through Pantheon: ' + question,
+  );
+}
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA realization verification passed.');
 // Practice-area specialization gate (40-book LegalWhat library).
