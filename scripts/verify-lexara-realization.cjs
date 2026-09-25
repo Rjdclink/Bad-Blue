@@ -803,6 +803,12 @@ must(
     pantheonInvestigation.includes("['vital-records','historical','chronology','news','family-probate']"),
   'Lexara death questions route through Pantheon vital historical chronology news and probate evidence',
 );
+must(
+  pantheonInvestigation.includes('incarcerat(?:e|ed|ion)?') &&
+    pantheonInvestigation.includes('wife|die|died|death|deceased|obituary') &&
+    pantheonInvestigation.includes('where\\s+(?:does|did)\\s+.+?\\s+live'),
+  'Lexara recognizes natural incarceration residence and death question wording',
+);
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA realization verification passed.');
 // Practice-area specialization gate (40-book LegalWhat library).
