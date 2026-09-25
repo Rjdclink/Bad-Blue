@@ -990,9 +990,9 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
         const rightPrior = priorQualityByHost.get(pantheonTelemetrySource(right.url).sourceHost.replace(/^www\./, ''));
         return capabilityWorkForSource(capabilityWorkLedger, right.url).length
           - capabilityWorkForSource(capabilityWorkLedger, left.url).length
+          || learnedSourceScore(rightPrior) - learnedSourceScore(leftPrior)
           || sourcePriority(right.authority) - sourcePriority(left.authority)
           || Number(right.subjectScoped === true) - Number(left.subjectScoped === true)
-          || learnedSourceScore(rightPrior) - learnedSourceScore(leftPrior)
           || left.frontierOrder - right.frontierOrder;
       })
       .map(entry => entry.url);
