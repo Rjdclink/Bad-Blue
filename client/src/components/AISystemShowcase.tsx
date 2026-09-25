@@ -1,90 +1,24 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
-interface AIModel {
-  name: string;
-  provider: string;
-  description: string;
-  backgroundImage: string;
-}
-
-const AI_MODELS: AIModel[] = [
-  // Row 1
-  {
-    name: "Gemini 3.7 Flash",
-    provider: "Google",
-    description: "Deepest reasoning with 2M token context for complex legal analysis",
-    backgroundImage: "/images/what.comp3.jpg"
-  },
-  {
-    name: "Gemini 2.5 Flash",
-    provider: "Google",
-    description: "Lightning-fast multimodal processing for evidence and documents",
-    backgroundImage: "/images/OIP.comp4.webp"
-  },
-  {
-    name: "Gemini 2.5 Flash Lite",
-    provider: "Google",
-    description: "High-throughput engine handling 1000 requests daily",
-    backgroundImage: "/images/OIP.comp5.webp"
-  },
-  // Row 2
-  {
-    name: "Claude Sonnet 5",
-    provider: "Anthropic",
-    description: "Premium legal reasoning with nuanced constitutional interpretation",
-    backgroundImage: "/images/OIP.comp6.webp"
-  },
-  {
-    name: "Claude Opus 5",
-    provider: "Anthropic",
-    description: "Rapid verification specialist for real-time fact-checking",
-    backgroundImage: "/images/imag.comp7.webp"
-  },
-  {
-    name: "GPT-OSS 120B",
-    provider: "Groq",
-    description: "Versatile workhorse balancing speed and comprehensive analysis",
-    backgroundImage: "/images/OIP.comp8.webp"
-  },
-  // Row 3
-  {
-    name: "GPT-OSS 20B",
-    provider: "Groq",
-    description: "Instant-response engine for lightweight task execution",
-    backgroundImage: "/images/OIP.comp9.webp"
-  },
-  {
-    name: "Mistral Small 4",
-    provider: "Mistral",
-    description: "EU-compliant processing with balanced verification protocols",
-    backgroundImage: "/images/iStock-.comp10.jpg"
-  },
-  {
-    name: "Kimi K3",
-    provider: "Moonshot AI",
-    description: "Trillion-parameter extraction engine for structured legal data",
-    backgroundImage: "/images/OIP.comp11.webp"
-  },
-  // Row 4
-  {
-    name: "DeepSeek V4.1 Flash",
-    provider: "TNG",
-    description: "671B parameter deep pattern recognition across case law",
-    backgroundImage: "/images/OIP.comp12.webp"
-  },
-  {
-    name: "Grok 4.6",
-    provider: "xAI",
-    description: "Massive 2M context window for entire case file processing",
-    backgroundImage: "/images/superc.comp13.jpg"
-  },
-  {
-    name: "Qwen 3.8 Max",
-    provider: "Alibaba",
-    description: "Precision instruction-following for procedural compliance",
-    backgroundImage: "/images/OIP.comp14.webp"
-  }
+const HARMONY_MODELS = [
+  "Gemini 3.7 Flash",
+  "Claude Sonnet 5",
+  "Claude Opus 5",
+  "GPT-OSS 120B (Groq)",
+  "Mistral Small 4",
+  "DeepSeek V4.1 Flash",
+  "Grok 4.6",
+  "Kimi K3",
+  "Qwen 3.8 Max",
+  "GPT-5.6 Luna",
+  "GPT-OSS 120B",
+  "OpenRouter Auto",
+  "Grok 4.6 (xAI)",
+  "GPT-OSS 120B (Cerebras)",
+  "GPT-OSS 120B (Fireworks)",
+  "Command A+ (Cohere)",
+  "GPT-OSS 120B (Together)"
 ];
 
 interface AISystemShowcaseProps {
@@ -93,81 +27,29 @@ interface AISystemShowcaseProps {
 
 export function AISystemShowcase({ variant = "full" }: AISystemShowcaseProps) {
   if (variant === "minimal") {
-    return (
-      <Badge variant="secondary" className="text-xs sm:text-sm">
-        🤖 Powered by 12 AI Models
-      </Badge>
-    );
+    return <Badge variant="secondary" className="text-xs sm:text-sm">🤖 Powered by 17 Harmony AI Participants</Badge>;
   }
 
-  if (variant === "brief") {
-    return (
-      <Card className="border-primary/20 bg-primary/5">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-lg flex items-center gap-2">
-            <span className="text-2xl">🤖</span>
-            12-Model AI Orchestration Network
-          </CardTitle>
-          <CardDescription>
-            Twelve specialized AI engines working in synchronized coordination
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-            {AI_MODELS.map((model) => (
-              <div
-                key={model.name}
-                className="flex flex-col gap-1 p-2 rounded-md bg-background border border-border/50"
-              >
-                <p className="text-xs font-medium truncate">{model.name}</p>
-                <p className="text-[10px] text-muted-foreground truncate">{model.provider}</p>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  // Full variant - 12 Models in 4×3 Grid
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-      {AI_MODELS.map((model) => (
-        <div 
-          key={model.name}
-          className="relative overflow-hidden rounded-2xl shadow-xl group hover:scale-[1.02] transition-transform duration-300"
-        >
-          {/* Background Image */}
-          <img 
-            src={model.backgroundImage}
-            alt={`${model.name} AI model visual`}
-            aria-hidden="false"
-            className="absolute inset-0 w-full h-full object-cover"
-          />
-          
-          {/* Dark Overlay */}
-          <div className="absolute inset-0 bg-black/50" />
-          
-          {/* Content */}
-          <div className="relative z-10 p-6 flex flex-col h-full min-h-[200px]">
-            {/* Model Name */}
-            <h3 className="text-xl font-bold text-white mb-1">{model.name}</h3>
-            
-            {/* Provider */}
-            <p className="text-sm text-white/70 mb-3">{model.provider}</p>
-            
-            {/* Description - Bright soft white with shadowed edges */}
-            <p 
-              className="text-sm text-white/95 mt-auto"
-              style={{ 
-                textShadow: '1px 1px 2px rgba(0,0,0,0.8), -1px -1px 2px rgba(0,0,0,0.8), 1px -1px 2px rgba(0,0,0,0.8), -1px 1px 2px rgba(0,0,0,0.8), 0 0 8px rgba(0,0,0,0.5)' 
-              }}
-            >
-              {model.description}
-            </p>
-          </div>
+    <Card className={variant === "brief" ? "border-primary/20 bg-primary/5" : "max-w-5xl mx-auto border-primary/20 bg-card shadow-xl"}>
+      <CardHeader className="text-center">
+        <CardTitle className="text-xl md:text-2xl flex items-center justify-center gap-2">
+          <span aria-hidden="true">🤖</span>
+          17-Model Harmony AI Network
+        </CardTitle>
+        <CardDescription>
+          Specialized AI participants coordinated through one orchestration network.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="flex flex-wrap justify-center gap-2">
+          {HARMONY_MODELS.map((model, index) => (
+            <Badge key={`${model}-${index}`} variant="secondary" className="px-3 py-1.5 text-xs sm:text-sm">
+              {model}
+            </Badge>
+          ))}
         </div>
-      ))}
-    </div>
+      </CardContent>
+    </Card>
   );
 }
