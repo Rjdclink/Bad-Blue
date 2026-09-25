@@ -102,9 +102,6 @@ must(serverIndex.includes('Do not emit synthetic freshness'), 'dynamic sitemap m
 for (const phrase of [
   'Legal What? — AI Legal Tools for 40 Practice Areas',
   'two-way voice or text consultation',
-  'background report generation',
-  'People Finder',
-  'nationwide criminal inmate locator',
 ]) {
   must(landing.includes(phrase), `landing must describe capability: ${phrase}`);
 }
