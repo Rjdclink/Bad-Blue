@@ -887,6 +887,11 @@ must(
     lexaraPantheonInvestigation.includes('label it as an inference'),
   'Lexara preserves current-versus-historical truth and labels derived person facts',
 );
+must(
+  orchestrator.includes('Do not refuse person-record research merely because the subject is a private individual') &&
+    orchestrator.includes('application supplies verified evidence from a source it is authorized to access'),
+  'Lexara has no blanket private-individual refusal when verified authorized evidence is supplied',
+);
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA realization verification passed.');
 // Practice-area specialization gate (40-book LegalWhat library).
