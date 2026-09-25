@@ -3,7 +3,7 @@ name: Node.js CI
 on:
   workflow_dispatch:
   push:
-    branches: [main, develop, verification-pantheon-e2e-20260925]
+    branches: [main, develop]
   pull_request:
     branches: [main, develop]
 
