@@ -300,7 +300,7 @@ function Router() {
               <Route path="/administrator" component={AdminConsole} />
               <Route path="/admin" component={AdminConsole} />
               <Route path="/welcome" component={WelcomePage} />
-              <Route path="/lexara-consent/:domainId" component={LexaraConsentPage} />
+              <Route path="/lexara-consent" component={LexaraConsentPage} />\n              <Route path="/lexara-consent/:domainId" component={LexaraConsentPage} />
               <Route path="/legal-consultation/:domainId" component={ConsultationPage} />
               <Route path="/legal-tools" component={LegalToolsPage} />
               <Route path="/people-finder" component={SpectraPage} />
