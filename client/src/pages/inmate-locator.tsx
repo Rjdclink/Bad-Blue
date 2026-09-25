@@ -18,7 +18,7 @@ export default function InmateLocatorPage() {
         <AppHeader 
           title="Inmate Locator"
           subtitle="Nationwide Correctional Search"
-          fallbackRoute="/welcome"
+          fallbackRoute="/lexara-consent"
         />
         
         <div className="container max-w-7xl mx-auto px-4 py-4">
