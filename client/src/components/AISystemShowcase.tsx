@@ -31,8 +31,8 @@ export function AISystemShowcase({ variant = "full" }: AISystemShowcaseProps) {
   }
 
   return (
-    <Card className={variant === "brief" ? "border-primary/20 bg-primary/5" : "max-w-5xl mx-auto border-primary/20 bg-card shadow-xl"}>
-      <CardHeader className="text-center">
+    <Card className={variant === "brief" ? "border-primary/20 bg-primary/5" : "relative max-w-5xl mx-auto overflow-hidden border-white/20 bg-slate-950 text-white shadow-xl"}>
+      {variant === "full" && <><img src="/images/superc.comp13.jpg" alt="" aria-hidden="true" className="absolute inset-0 h-full w-full object-cover" /><div className="absolute inset-0 bg-black/65" /></>}\n      <CardHeader className="relative z-10 text-center">
         <CardTitle className="text-xl md:text-2xl flex items-center justify-center gap-2">
           <span aria-hidden="true">🤖</span>
           17-Model Harmony AI Network
@@ -41,10 +41,10 @@ export function AISystemShowcase({ variant = "full" }: AISystemShowcaseProps) {
           Specialized AI participants coordinated through one orchestration network.
         </CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="relative z-10">
         <div className="flex flex-wrap justify-center gap-2">
           {HARMONY_MODELS.map((model, index) => (
-            <Badge key={`${model}-${index}`} variant="secondary" className="px-3 py-1.5 text-xs sm:text-sm">
+            <Badge key={`${model}-${index}`} variant="secondary" className="px-3 py-1.5 text-xs sm:text-sm bg-white/90 text-slate-900">
               {model}
             </Badge>
           ))}
