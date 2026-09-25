@@ -31,7 +31,7 @@ export default function InmateLocatorV2Page() {
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => setLocation('/welcome')}
+                onClick={() => setLocation('/lexara-consent')}
               >
                 <ArrowLeft className="w-5 h-5" />
               </Button>

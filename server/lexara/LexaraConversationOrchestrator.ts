@@ -12,6 +12,10 @@ import {
   researchLegalAuthority,
 } from './LexaraAuthorityResearch';
 import {
+  formatPantheonInvestigationForSystem,
+  investigatePersonQuestion,
+} from './LexaraPantheonInvestigation';
+import {
   formatLexaraDomainSpecialization,
   getLexaraLegalDomainProfile,
 } from './LexaraLegalDomainProfiles';
@@ -327,6 +331,23 @@ export async function generateLexaraConversationResponse(
     };
   }
 
+  const pantheonInvestigationPromise = investigatePersonQuestion(cleanPrompt, {
+    previousMessages: context.previousMessages,
+    jurisdiction,
+    signal: context.signal,
+  }).catch(() => null);
+  // Identity clarification is deterministic and completes before any network
+  // retrieval starts. Awaiting it here avoids racing a 60 ms timer against the
+  // very clarification that prevents Pantheon from searching the wrong person.
+  const initialPantheon = await pantheonInvestigationPromise;
+  if (initialPantheon?.needsIdentityClarification && initialPantheon.clarification) {
+    return {
+      text: initialPantheon.clarification,
+      jurisdiction,
+      mappedLawType,
+    };
+  }
+
   // Source research is route-local and fail-open for ordinary conversation.
   // It uses the platform retrieval stack and never makes Google/Gemini a LEXARA
   // dependency. A search outage must not kill the dialogue.
@@ -342,16 +363,23 @@ export async function generateLexaraConversationResponse(
     preferredOfficialDomains: domainProfile?.preferredOfficialDomains,
     signal: researchController.signal,
   }).catch(() => null);
-  const authorityResearch = await Promise.race([
-    authorityResearchPromise,
-    new Promise<null>(resolve => setTimeout(() => resolve(null), LIVE_RESEARCH_BUDGET_MS)),
+  const [authorityResearch, pantheonInvestigation] = await Promise.all([
+    Promise.race([
+      authorityResearchPromise,
+      new Promise<null>(resolve => setTimeout(() => resolve(null), LIVE_RESEARCH_BUDGET_MS)),
+    ]),
+    Promise.race([
+      pantheonInvestigationPromise,
+      new Promise<null>(resolve => setTimeout(() => resolve(null), LIVE_RESEARCH_BUDGET_MS)),
+    ]),
   ]);
   if (!authorityResearch) researchController.abort();
   context.signal?.removeEventListener('abort', relayResearchAbort);
   const researchWaitMs = Date.now() - researchStartedAt;
 
   const systemPrompt = buildLegalSystemPrompt(context, mappedLawType, jurisdiction)
-    + formatAuthorityResearchForSystem(authorityResearch);
+    + formatAuthorityResearchForSystem(authorityResearch)
+    + formatPantheonInvestigationForSystem(pantheonInvestigation);
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
 
   // Capability-first Harmony route. No model is globally preferred. The shared
@@ -436,7 +464,8 @@ export async function generateLexaraConversationResponse(
     researchWaitMs,
     harmonyMs: Date.now() - harmonyStartedAt,
     totalMs: Date.now() - turnStartedAt,
-    grounded: !!authorityResearch,
+    grounded: !!authorityResearch || !!pantheonInvestigation?.evidenceSummary,
+    pantheonTargeted: !!pantheonInvestigation?.evidenceSummary,
     providersConfigured: harmonyProviders.length,
     initialHedgeParticipants: Math.min(3, harmonyProviders.length),
     reserveParticipants: Math.max(0, harmonyProviders.length - 3),

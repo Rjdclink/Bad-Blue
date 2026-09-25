@@ -16,7 +16,7 @@ export interface MasterPanelDefinition {
  * administrative/advanced surface before wrapping back to LegalWhat.
  */
 export const MASTER_PANELS: MasterPanelDefinition[] = [
-  { label: 'LegalWhat', path: '/welcome' },
+  { label: 'LegalWhat', path: '/lexara-consent' },
   { label: 'Administrator', path: '/administrator', aliases: ['/admin'] },
   { label: 'Platform Dashboard', path: '/dashboard', aliases: ['/home', '/badblue'] },
   { label: 'CryptoCrawler V2', path: '/cryptocrawler-v2', aliases: ['/cryptocrawler'] },

@@ -84,7 +84,7 @@ export default function LegalToolsPage() {
   
   // Redirect if invalid law type or Law Enforcement Accountability
   if (!lawTypeInfo || lawTypeParam === 'law-enforcement-accountability') {
-    setLocation('/welcome');
+    setLocation('/lexara-consent');
     return null;
   }
   
@@ -175,7 +175,7 @@ export default function LegalToolsPage() {
         <AppHeader 
           title={lawTypeInfo.name}
           subtitle="AI-Powered Legal Tools"
-          fallbackRoute="/welcome"
+          fallbackRoute="/lexara-consent"
         />
         
         <div className="container max-w-7xl mx-auto px-4 py-8">

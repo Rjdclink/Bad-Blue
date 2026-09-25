@@ -126,7 +126,7 @@ export default function TSHPELocatorPage() {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setLocation('/welcome')}
+                onClick={() => setLocation('/lexara-consent')}
                 className="text-slate-400 hover:text-slate-100 hover:bg-slate-800"
               >
                 <ArrowLeft className="h-4 w-4 mr-1" />

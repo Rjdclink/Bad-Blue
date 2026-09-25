@@ -23,6 +23,13 @@ const speechClient = read('client/src/lib/lexaraSpeechClient.ts');
 must(synthesis.includes('FIRST_SPEECH_CHUNK_MAX_CHARS = 140'), 'LEXARA must preserve bounded first-audible speech unit');
 must(synthesis.includes('firstSpeechChunk(text)'), 'LEXARA must start a bounded first speech unit before long-answer buffering');
 must(synthesis.includes('remainingUnit'), 'LEXARA must preserve the remainder of the answer after first-audible playback');
+must(
+  synthesis.includes('lexaraRealtimeVoiceClient.ensureSpeechOutputReady()') &&
+    synthesis.includes('if (realtimeOutputReady)') &&
+    synthesis.includes('await lexaraRealtimeVoiceClient.speak(') &&
+    synthesis.indexOf('lexaraRealtimeVoiceClient.ensureSpeechOutputReady()') < synthesis.indexOf('await speakWithServer(cleanText, options, turnId)'),
+  'LEXARA must verify and use the prewarmed realtime acoustic path before progressive media fallback',
+);
 const realtimeVoiceClient = read('client/src/lib/lexaraRealtimeVoiceClient.ts');
 const liveAvatarReview = read('docs/LEXARA_LIVE_AVATAR_100_SOURCE_REVIEW_20260920.md');
 const embodiedConversationReview = read('docs/LEXARA_EMBODIED_CONVERSATION_50_SOURCE_BLUEPRINT_20260920.md');
@@ -38,6 +45,7 @@ const voiceRoutes = read('server/routes/voice.routes.ts');
 const orchestrator = read('server/lexara/LexaraConversationOrchestrator.ts');
 const openRouter = read('server/openRouterService.ts');
 const authorityResearch = read('server/lexara/LexaraAuthorityResearch.ts');
+const pantheonInvestigation = read('server/lexara/LexaraPantheonInvestigation.ts');
 const webSearch = read('server/webSearchService.ts');
 const modernWebSearch = read('server/openRouterWebSearch.ts');
 const viteConfig = read('vite.config.ts');
@@ -778,7 +786,8 @@ must(
   'LEXARA queues the exact How can I help you? greeting until live voice is ready',
 );
 must(
-  appSource.includes('<Route path="/lexara-consent" component={LexaraConsentPage} />') &&
+  appSource.includes('<Route path="/welcome"><Redirect to="/lexara-consent" /></Route>') &&
+    appSource.includes('<Route path="/lexara-consent" component={LexaraConsentPage} />') &&
     loginPage.includes('"/lexara-consent"'),
   'Authenticated LegalWhat entry routes directly to general LEXARA consent without bookshelf selection',
 );
@@ -822,6 +831,26 @@ must(domainExpertiseSourceLines.length === 40, 'literal 40-source LEXARA practic
 must(domainImplementationSourceLines.length === 10, 'literal 10-source LEXARA specialization implementation review is present');
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA 40-domain specialization verification passed.');
+
+must(
+  pantheonInvestigation.includes('shouldUsePantheonForPersonQuestion') &&
+    pantheonInvestigation.includes('PERSON_RECORD_PATTERN.test(recentUserTurns) && IDENTIFIER_PATTERN.test(prompt)') &&
+    pantheonInvestigation.includes('export function hasEnoughIdentityContext') &&
+    pantheonInvestigation.includes('buildPantheonCategoryTargets') &&
+    pantheonInvestigation.includes('orchestratedWebSearch') &&
+    pantheonInvestigation.includes("target.subjectScoped || target.sourceKind === 'api' || target.sourceKind === 'search'") &&
+    pantheonInvestigation.includes("purpose: 'lexara_legal_research'") &&
+    pantheonInvestigation.includes('depth: 1') &&
+    pantheonInvestigation.includes('budgetMs: 2_200') &&
+    pantheonInvestigation.includes('fullBackgroundReportRequested') &&
+    pantheonInvestigation.includes('needsIdentityClarification?: boolean') &&
+    orchestrator.includes('initialPantheon?.needsIdentityClarification && initialPantheon.clarification') &&
+    orchestrator.includes('investigatePersonQuestion(cleanPrompt') &&
+    orchestrator.includes('const initialPantheon = await pantheonInvestigationPromise;') &&
+    !orchestrator.includes('new Promise<null>(resolve => setTimeout(() => resolve(null), 60))') &&
+    orchestrator.includes('formatPantheonInvestigationForSystem(pantheonInvestigation)'),
+  'LEXARA identifies the subject before targeted Pantheon research, scopes the requested record categories, and permits dynamic source discovery without silently running a full report',
+);
 
 // Independent live-reasoning recovery invariant.
 must(

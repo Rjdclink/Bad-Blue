@@ -385,7 +385,7 @@ export default function PantheonPage() {
         <AppHeader 
           title="PANTHEON"
           subtitle="Intelligence Platform"
-          fallbackRoute="/welcome"
+          fallbackRoute="/lexara-consent"
         />
         
         <div className="pantheon-container">

@@ -24,7 +24,7 @@ export default function NotFound() {
 
           <div className="space-y-2 pt-4">
             <BackButton 
-              fallbackRoute={isAuthenticated ? "/welcome" : "/login"}
+              fallbackRoute={isAuthenticated ? "/lexara-consent" : "/login"}
               className="w-full justify-center"
             />
             
@@ -32,7 +32,7 @@ export default function NotFound() {
               <Button 
                 variant="default" 
                 className="w-full"
-                onClick={() => setLocation("/welcome")}
+                onClick={() => setLocation("/lexara-consent")}
                 data-testid="button-home"
               >
                 <Home className="w-4 h-4 mr-2" />

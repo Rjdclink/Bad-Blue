@@ -51,7 +51,7 @@ export interface AccessZoneConfig {
 export const ACCESS_ZONES: Record<AccessZone, AccessZoneConfig> = {
   admin: {
     role: 'ADMIN_ROOT',
-    route: '/welcome',
+    route: '/lexara-consent',
     mode: 'admin',
   },
 };

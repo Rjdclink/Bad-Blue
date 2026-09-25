@@ -583,7 +583,7 @@ export default function SpectraPage() {
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => setLocation('/welcome')}
+          onClick={() => setLocation('/lexara-consent')}
           className="text-slate-300 hover:text-white"
         >
           <ArrowLeft className="h-4 w-4 mr-1" />
