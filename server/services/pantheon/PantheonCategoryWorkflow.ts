@@ -560,6 +560,7 @@ export interface PantheonCategoryWorkflowInput {
   signal?: AbortSignal;
   categoryConcurrency?: number;
   registrationAuthority?: PantheonRegistrationAuthority;
+  previousSourceQuality?: readonly Array<{ host: string; successRate: number; acceptedEvidence: number; averageConfidence: number; failureRate: number }>;
   onCategoryState?: (state: { index: number; label: string; phase: PantheonCategoryPhase; completedCategories: number }) => Promise<void>;
   onCategoryStart?: (state: { index: number; label: string; completedCategories: number }) => Promise<void>;
   onCategoryComplete?: (state: { index: number; label: string; completedCategories: number; outcome: PantheonCategoryOutcome; partialReport: PeopleSearchReport }) => Promise<void>;
@@ -979,12 +980,19 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
     await preparePantheonFrontier(schedulableEntries.map(frontierSeedFor));
     const prioritizedTargets = urlLedger
       .filter(entry => entry.state === 'pending' || entry.state === 'retryable')
-      .sort((left, right) =>
-        capabilityWorkForSource(capabilityWorkLedger, right.url).length
+      .sort((left, right) => {
+        const priorByHost = new Map((input.previousSourceQuality || []).map(item => [item.host.toLowerCase().replace(/^www\./, ''), item]));
+        const leftPrior = priorByHost.get(pantheonTelemetrySource(left.url).sourceHost.replace(/^www\./, ''));
+        const rightPrior = priorByHost.get(pantheonTelemetrySource(right.url).sourceHost.replace(/^www\./, ''));
+        const learnedScore = (item?: { successRate: number; acceptedEvidence: number; averageConfidence: number; failureRate: number }) =>
+          item ? (item.successRate * 120) + (Math.min(20, item.acceptedEvidence) * 4) + (item.averageConfidence * 80) - (item.failureRate * 100) : 0;
+        return capabilityWorkForSource(capabilityWorkLedger, right.url).length
           - capabilityWorkForSource(capabilityWorkLedger, left.url).length
+          || learnedScore(rightPrior) - learnedScore(leftPrior)
           || sourcePriority(right.authority) - sourcePriority(left.authority)
           || Number(right.subjectScoped === true) - Number(left.subjectScoped === true)
-          || left.frontierOrder - right.frontierOrder)
+          || left.frontierOrder - right.frontierOrder;
+      })
       .map(entry => entry.url);
     const activeUrls = new Set<string>(urlLedger.filter(entry => Number(entry.attempts || 0) > 0).map(entry => entry.url));
     const attemptedThisRun = new Set<string>();
