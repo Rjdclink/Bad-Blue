@@ -860,6 +860,11 @@ for (const question of [
     'natural-language person-record examples route through Pantheon: ' + question,
   );
 }
+must(
+  lexaraPantheonInvestigation.includes("structured_custody_budget_exhausted") &&
+    lexaraPantheonInvestigation.includes('1_200'),
+  'structured custody lookup is bounded so slow inmate providers cannot stall Lexara',
+);
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA realization verification passed.');
 // Practice-area specialization gate (40-book LegalWhat library).

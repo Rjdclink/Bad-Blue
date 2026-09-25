@@ -165,11 +165,14 @@ export async function investigatePersonQuestion(
     const person = extractPersonName(combined);
     if (person.firstName && person.lastName) {
       try {
-        const inmateResult = await searchInmates({
-          ...person,
-          state: extractStateCode(combined),
-          searchScope: 'all',
-        });
+        const inmateResult = await Promise.race([
+          searchInmates({
+            ...person,
+            state: extractStateCode(combined),
+            searchScope: 'all',
+          }),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('structured_custody_budget_exhausted')), 1_200)),
+        ]);
         for (const inmate of inmateResult.inmates.slice(0, 5)) {
           structuredEvidence.push(
             `STRUCTURED CUSTODY SOURCE: ${inmate.sourceUrl || inmate.source}\n` +
