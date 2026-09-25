@@ -832,6 +832,11 @@ must(
     lexaraPantheonInvestigation.includes('NEVER name, infer, recommend, or substitute a county'),
   'Lexara person-record handoff preserves identity and county truth boundaries',
 );
+must(
+  lexaraPantheonInvestigation.includes('specificFullName') &&
+    lexaraPantheonInvestigation.includes('split(/\\s+/).length >= 3'),
+  'specific three-or-more-part names can enter bounded identity research without forcing a redundant identifier prompt',
+);
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA realization verification passed.');
 // Practice-area specialization gate (40-book LegalWhat library).
