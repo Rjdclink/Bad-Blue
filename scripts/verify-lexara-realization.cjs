@@ -572,7 +572,7 @@ must(
 must(
   harmonyRegistry.includes("'claude-sonnet-5'") &&
     harmonyRegistry.includes("'claude-opus-5'") &&
-    harmonyRegistry.includes("'gemini-3.8-flash'") &&
+    harmonyRegistry.includes("'gemini-3.7-flash'") &&
     harmonyRegistry.includes("'deepseek/deepseek-v4.1-flash'") &&
     harmonyRegistry.includes("'x-ai/grok-4.6'") &&
     harmonyRegistry.includes("'moonshotai/kimi-k3'") &&
