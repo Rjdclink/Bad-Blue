@@ -353,7 +353,7 @@ export async function handleLegalWhatSubscriptionWebhook(event: any): Promise<bo
 export function setupSubscriptionRoutes(app: Express): void {
   app.post("/api/subscription/checkout", isIdentityAuthenticated, async (req: Request, res: Response) => {
     try {
-      if ((req.user as any)?.isMasterBypass) return res.json({ alreadyActive: true, redirectUrl: "/welcome" });
+      if ((req.user as any)?.isMasterBypass) return res.json({ alreadyActive: true, redirectUrl: "/lexara-consent" });
 
       const id = userId(req);
       const email = userEmail(req);
@@ -368,7 +368,7 @@ export function setupSubscriptionRoutes(app: Express): void {
         });
       }
       if (hasPaidServiceAccess(current)) {
-        return res.json({ alreadyActive: true, redirectUrl: "/welcome" });
+        return res.json({ alreadyActive: true, redirectUrl: "/lexara-consent" });
       }
 
       const square = getSquareClient();
