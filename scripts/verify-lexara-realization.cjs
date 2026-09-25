@@ -832,6 +832,8 @@ must(
     pantheonInvestigation.includes('orchestratedWebSearch') &&
     pantheonInvestigation.includes("target.subjectScoped || target.sourceKind === 'api' || target.sourceKind === 'search'") &&
     pantheonInvestigation.includes("purpose: 'lexara_legal_research'") &&
+    pantheonInvestigation.includes('depth: 1') &&
+    pantheonInvestigation.includes('budgetMs: 2_200') &&
     pantheonInvestigation.includes('fullBackgroundReportRequested') &&
     orchestrator.includes('investigatePersonQuestion(cleanPrompt') &&
     orchestrator.includes('const initialPantheon = await pantheonInvestigationPromise;') &&
