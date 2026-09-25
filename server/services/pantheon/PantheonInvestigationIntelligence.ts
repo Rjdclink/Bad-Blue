@@ -168,20 +168,34 @@ export function buildPantheonInvestigationIntelligence(input: {
     quality.confidences.push(Math.max(0, Math.min(1, Number(source.confidence) || 0)));
     sourceQualityMap.set(host, quality);
   }
-  const sourceQuality = [...sourceQualityMap.entries()].map(([host, quality]) => ({
-    host,
-    attempts: quality.attempts,
-    succeeded: quality.succeeded,
-    failed: quality.failed,
-    acceptedEvidence: quality.acceptedEvidence,
-    successRate: quality.attempts ? quality.succeeded / quality.attempts : 0,
-    failureRate: quality.attempts ? quality.failed / quality.attempts : 0,
-    completenessRate: quality.attempts ? Math.min(1, quality.acceptedEvidence / quality.attempts) : 0,
-    averageConfidence: quality.confidences.length ? quality.confidences.reduce((sum, value) => sum + value, 0) / quality.confidences.length : 0,
-    accuracyScore: quality.confidences.length ? quality.confidences.reduce((sum, value) => sum + value, 0) / quality.confidences.length : 0,
-    ...(quality.latest ? { freshnessHours: Math.max(0, (Date.now() - new Date(quality.latest).getTime()) / 3_600_000) } : {}),
-    ...(quality.latest ? { latestRetrieval: quality.latest } : {}),
-  })).sort((left, right) => right.acceptedEvidence - left.acceptedEvidence || left.host.localeCompare(right.host));
+  const previousQuality = new Map((input.previous?.sourceQuality || []).map(item => [item.host, item]));
+  const sourceQuality = [...sourceQualityMap.entries()].map(([host, quality]) => {
+    const prior = previousQuality.get(host);
+    const attempts = quality.attempts + Math.max(0, Number(prior?.attempts || 0));
+    const succeeded = quality.succeeded + Math.max(0, Number(prior?.succeeded || 0));
+    const failed = quality.failed + Math.max(0, Number(prior?.failed || 0));
+    const acceptedEvidence = quality.acceptedEvidence + Math.max(0, Number(prior?.acceptedEvidence || 0));
+    const currentConfidence = quality.confidences.length
+      ? quality.confidences.reduce((sum, value) => sum + value, 0) / quality.confidences.length
+      : undefined;
+    return {
+      host,
+      attempts,
+      succeeded,
+      failed,
+      acceptedEvidence,
+      successRate: attempts ? succeeded / attempts : 0,
+      failureRate: attempts ? failed / attempts : 0,
+      completenessRate: attempts ? Math.min(1, acceptedEvidence / attempts) : 0,
+      averageConfidence: currentConfidence ?? Math.max(0, Math.min(1, Number(prior?.averageConfidence || 0))),
+      accuracyScore: currentConfidence ?? Math.max(0, Math.min(1, Number(prior?.accuracyScore || 0))),
+      ...(quality.latest
+        ? { freshnessHours: Math.max(0, (Date.now() - new Date(quality.latest).getTime()) / 3_600_000), latestRetrieval: quality.latest }
+        : prior?.latestRetrieval
+          ? { latestRetrieval: prior.latestRetrieval }
+          : {}),
+    };
+  }).sort((left, right) => right.acceptedEvidence - left.acceptedEvidence || left.host.localeCompare(right.host));
 
   const searchScope = input.categoryOutcomes.map(outcome => {
     const attempted = outcome.urlLedger.filter(entry => entry.attempts > 0);
