@@ -26,6 +26,7 @@ import {
 import { STATE_CORRECTIONS, getStateCorrectionsInfo } from './stateData';
 import { validateInmateSearchConfig } from './config';
 import crypto from 'crypto';
+import { pantheonRetrievalAdapter } from '../crawlers/PantheonRetrievalAdapter';
 
 // PRODUCTION VALIDATION: Validate configuration on module load
 // This ensures the service fails immediately on startup if misconfigured
@@ -403,9 +404,50 @@ const BOPAdapter: DataSourceAdapter = {
 function createStateDOCAdapter(stateCode: string): DataSourceAdapter {
   return {
     name: 'STATE_DOC',
-    async search(_query: InmateSearchQuery): Promise<InmateRecord[]> {
-      // Not yet implemented - immediate skip
-      return [];
+    async search(query: InmateSearchQuery): Promise<InmateRecord[]> {
+      const info = getStateCorrectionsInfo(stateCode);
+      if (!info?.searchUrl) return [];
+
+      // State systems are fragmented and frequently do not expose stable APIs.
+      // Route the official DOC locator through Pantheon's canonical acquisition
+      // layer so this provider shares the same crawler supervision, admission,
+      // provenance, and failure semantics as the background-report pipeline.
+      try {
+        const retrieval = await pantheonRetrievalAdapter.retrieve({
+          purpose: 'state_doc_inmate_search',
+          targets: [info.searchUrl],
+          depth: 3,
+        });
+        const first = (query.firstName || '').trim().toLowerCase();
+        const last = (query.lastName || '').trim().toLowerCase();
+        const inmateId = (query.inmateId || '').trim().toLowerCase();
+        const evidence = retrieval.evidence.filter(item => {
+          const text = String(item.content || '').toLowerCase();
+          if (!text) return false;
+          if (inmateId && text.includes(inmateId)) return true;
+          return Boolean(first && last && text.includes(first) && text.includes(last));
+        });
+
+        // A locator/landing page is discovery evidence, not proof that the
+        // named person is incarcerated. Do not manufacture an InmateRecord.
+        // Person-level records are emitted only by a verified structured
+        // adapter; meanwhile the canonical retrieval still participates in
+        // Pantheon's source/provenance ledger.
+        if (!evidence.length) return [];
+        logger.info('[InmateSearch] State DOC official-source evidence discovered', {
+          state: stateCode.toUpperCase(),
+          sourceUrl: info.searchUrl,
+          evidenceCount: evidence.length,
+        });
+        return [];
+      } catch (error) {
+        logger.warn('[InmateSearch] State DOC canonical retrieval unavailable', {
+          state: stateCode.toUpperCase(),
+          sourceUrl: info.searchUrl,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return [];
+      }
     }
   };
 }

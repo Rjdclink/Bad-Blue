@@ -29,10 +29,23 @@ export interface CriminalSourceDiscovery {
 }
 
 const STATE_COURT_PORTALS: Record<string, string> = {
-  CA: 'https://courts.ca.gov/',
-  FL: 'https://www.flcourts.gov/',
-  NY: 'https://ww2.nycourts.gov/',
-  TX: 'https://www.txcourts.gov/',
+  AL:'https://judicial.alabama.gov/', AK:'https://courts.alaska.gov/', AZ:'https://www.azcourts.gov/',
+  AR:'https://arcourts.gov/', CA:'https://courts.ca.gov/', CO:'https://www.coloradojudicial.gov/',
+  CT:'https://jud.ct.gov/', DE:'https://courts.delaware.gov/', FL:'https://www.flcourts.gov/',
+  GA:'https://georgiacourts.gov/', HI:'https://www.courts.state.hi.us/', ID:'https://isc.idaho.gov/',
+  IL:'https://www.illinoiscourts.gov/', IN:'https://www.in.gov/courts/', IA:'https://www.iowacourts.gov/',
+  KS:'https://www.kscourts.org/', KY:'https://www.kycourts.gov/', LA:'https://www.lasc.org/',
+  ME:'https://www.courts.maine.gov/', MD:'https://www.mdcourts.gov/', MA:'https://www.mass.gov/orgs/massachusetts-court-system',
+  MI:'https://www.courts.michigan.gov/', MN:'https://www.mncourts.gov/', MS:'https://courts.ms.gov/',
+  MO:'https://www.courts.mo.gov/', MT:'https://courts.mt.gov/', NE:'https://supremecourt.nebraska.gov/',
+  NV:'https://nvcourts.gov/', NH:'https://www.courts.nh.gov/', NJ:'https://www.njcourts.gov/',
+  NM:'https://www.nmcourts.gov/', NY:'https://ww2.nycourts.gov/', NC:'https://www.nccourts.gov/',
+  ND:'https://www.ndcourts.gov/', OH:'https://www.supremecourt.ohio.gov/', OK:'https://www.oscn.net/',
+  OR:'https://www.courts.oregon.gov/', PA:'https://www.pacourts.us/', RI:'https://www.courts.ri.gov/',
+  SC:'https://www.sccourts.org/', SD:'https://ujs.sd.gov/', TN:'https://www.tncourts.gov/',
+  TX:'https://www.txcourts.gov/', UT:'https://www.utcourts.gov/', VT:'https://www.vermontjudiciary.org/',
+  VA:'https://www.vacourts.gov/', WA:'https://www.courts.wa.gov/', WV:'https://www.courtswv.gov/',
+  WI:'https://www.wicourts.gov/', WY:'https://www.courts.state.wy.us/', DC:'https://www.dccourts.gov/',
 };
 
 function buildOfficialSourceSeeds(query: CriminalSearchQuery): Array<{ kind: CriminalSourceKind; url: string }> {
