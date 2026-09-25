@@ -778,7 +778,8 @@ must(
   'LEXARA queues the exact How can I help you? greeting until live voice is ready',
 );
 must(
-  appSource.includes('<Route path="/lexara-consent" component={LexaraConsentPage} />') &&
+  appSource.includes('<Route path="/welcome"><Redirect to="/lexara-consent" /></Route>') &&
+    appSource.includes('<Route path="/lexara-consent" component={LexaraConsentPage} />') &&
     loginPage.includes('"/lexara-consent"'),
   'Authenticated LegalWhat entry routes directly to general LEXARA consent without bookshelf selection',
 );
