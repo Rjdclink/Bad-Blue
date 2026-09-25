@@ -34,7 +34,7 @@ const PROVIDER = {
  * not a hard priority order; environment overrides remain authoritative.
  */
 export const CURRENT_AI_MODELS = {
-  gemini: process.env.GEMINI_MODEL?.trim() || 'gemini-3.8-flash',
+  gemini: process.env.GEMINI_MODEL?.trim() || 'gemini-3.7-flash',
   claudeFast: process.env.CLAUDE_FAST_MODEL?.trim() || 'claude-haiku-4-5-20251001',
   claudeBalanced: process.env.CLAUDE_MODEL?.trim() || 'claude-sonnet-5',
   claudeDeep: process.env.CLAUDE_OPUS_MODEL?.trim() || 'claude-opus-5',
