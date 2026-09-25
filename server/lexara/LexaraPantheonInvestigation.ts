@@ -142,7 +142,7 @@ export async function investigatePersonQuestion(
   try {
     const discovery = await orchestratedWebSearch(
       `${combined} public records ${categories.join(' ')} official government database search`,
-      { useOnlinePlugin: true, timeout: 900, signal: context.signal },
+      { useOnlinePlugin: true, timeout: 500, signal: context.signal },
     );
     discoveredUrls = discovery.sources
       .filter(url => /^https?:\/\//i.test(url))
@@ -169,7 +169,7 @@ export async function investigatePersonQuestion(
       // single primary crawler rather than launching the three-crawler depth-2
       // roster on every live Lexara turn.
       depth: 1,
-      budgetMs: 1_250,
+      budgetMs: 1_600,
       subject: combined,
       location: context.jurisdiction,
       signal: context.signal,

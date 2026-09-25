@@ -760,7 +760,7 @@ must(
   'person-record lookup cannot block before the live research budget or invent county jurisdiction',
 );
 must(
-  lexaraPantheonInvestigation.includes('budgetMs: 1_250') &&
+  lexaraPantheonInvestigation.includes('budgetMs: 1_600') &&
     lexaraPantheonInvestigation.includes('NEVER name, infer, recommend, or substitute a county'),
   'targeted Pantheon research is bounded for live conversation and county claims require evidence',
 );
