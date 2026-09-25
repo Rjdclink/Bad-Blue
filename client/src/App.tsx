@@ -98,7 +98,6 @@ const EvidenceHub = lazyWithRetry(() => import("@/pages/evidence-hub"), 'Evidenc
 const PetitionEdit = lazyWithRetry(() => import("@/pages/petition-edit"), 'PetitionEdit');
 const LegalConsultationPage = lazyWithRetry(() => import("@/pages/legal-consultation"), 'LegalConsultation');
 const LegalDocumentCreator = lazyWithRetry(() => import("@/pages/legal-document-creator"), 'LegalDocumentCreator');
-const WelcomePage = lazyWithRetry(() => import("@/pages/welcome"), 'WelcomePage');
 const LexaraConsentPage = lazyWithRetry(() => import("@/pages/lexara-consent"), 'LexaraConsent');
 const LegalToolsPage = lazyWithRetry(() => import("@/pages/legal-tools"), 'LegalTools');
 const PantheonPage = lazyWithRetry(() => import("@/pages/pantheon"), 'Pantheon');
@@ -225,7 +224,7 @@ function Router() {
   // Global swipe routing is disabled. Ordinary page scrolling must never
   // navigate between application routes.
   useGlobalGestureNavigation({
-    up: "/welcome",
+    up: "/lexara-consent",
     left: "/orchestrator-console",
     right: "/cryptocrawler-v2",
     down: "/control-room",
@@ -300,7 +299,8 @@ function Router() {
               <Route path="/administrator" component={AdminConsole} />
               <Route path="/admin" component={AdminConsole} />
               <Route path="/welcome"><Redirect to="/lexara-consent" /></Route>
-              <Route path="/lexara-consent" component={LexaraConsentPage} />\n              <Route path="/lexara-consent/:domainId" component={LexaraConsentPage} />
+              <Route path="/lexara-consent" component={LexaraConsentPage} />
+              <Route path="/lexara-consent/:domainId" component={LexaraConsentPage} />
               <Route path="/legal-consultation/:domainId" component={ConsultationPage} />
               <Route path="/legal-tools" component={LegalToolsPage} />
               <Route path="/people-finder" component={SpectraPage} />
