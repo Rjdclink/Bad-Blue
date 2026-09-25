@@ -827,9 +827,10 @@ console.log('LEXARA 40-domain specialization verification passed.');
 
 must(
   pantheonInvestigation.includes('shouldUsePantheonForPersonQuestion') &&
-    pantheonInvestigation.includes('hasEnoughIdentityContext') &&
+    pantheonInvestigation.includes('export function hasEnoughIdentityContext') &&
     pantheonInvestigation.includes('buildPantheonCategoryTargets') &&
     pantheonInvestigation.includes('orchestratedWebSearch') &&
+    pantheonInvestigation.includes("target.subjectScoped || target.sourceKind === 'api' || target.sourceKind === 'search'") &&
     pantheonInvestigation.includes("purpose: 'lexara_legal_research'") &&
     pantheonInvestigation.includes('fullBackgroundReportRequested') &&
     orchestrator.includes('investigatePersonQuestion(cleanPrompt') &&
