@@ -15,7 +15,7 @@ import {
 } from "../statelessLocalAuth";
 
 const SUBSCRIPTION_NAME = "LegalWhat Subscription";
-const SUBSCRIPTION_PRICE_CENTS = 999;
+const SUBSCRIPTION_PRICE_CENTS = 1999;
 const PAYMENT_NOTE_PREFIX = "legalwhat-subscription:";
 const PLAN_CACHE_TTL_MS = 5 * 60_000;
 let resolvedPlanCache: { id: string; expiresAt: number } | null = null;
@@ -40,7 +40,7 @@ function phaseIsMonthly(phase: any): boolean {
   return String(phase?.cadence || "").toUpperCase() === "MONTHLY";
 }
 
-function staticPhaseIs999(phase: any): boolean {
+function staticPhaseIs1999(phase: any): boolean {
   const pricing = phase?.pricing || {};
   const amount = Number(pricing?.price?.amount ?? pricing?.priceMoney?.amount ?? NaN);
   const currency = String(pricing?.price?.currency || pricing?.priceMoney?.currency || "").toUpperCase();
@@ -58,7 +58,7 @@ function activeCatalogObject(object: any): boolean {
   return true;
 }
 
-function itemHas999UsdVariation(item: any): boolean {
+function itemHas1999UsdVariation(item: any): boolean {
   if (!activeCatalogObject(item) || String(item?.type || "").toUpperCase() !== "ITEM") return false;
   const data = item?.itemData || item?.item_data || {};
   const variations = Array.isArray(data?.variations) ? data.variations : [];
@@ -78,40 +78,40 @@ function planData(plan: any): any {
   return plan?.subscriptionPlanData || plan?.subscription_plan_data || {};
 }
 
-function variationIsStaticMonthly999(variation: any): boolean {
+function variationIsStaticMonthly1999(variation: any): boolean {
   if (!activeCatalogObject(variation) || String(variation?.type || "").toUpperCase() !== "SUBSCRIPTION_PLAN_VARIATION") return false;
   const phases = Array.isArray(planVariationData(variation)?.phases) ? planVariationData(variation).phases : [];
-  return phases.length === 1 && staticPhaseIs999(phases[0]);
+  return phases.length === 1 && staticPhaseIs1999(phases[0]);
 }
 
-function variationIsRelativeMonthlyFor999Item(variation: any, parentPlan: any, itemIds999: Set<string>): boolean {
+function variationIsRelativeMonthlyFor1999Item(variation: any, parentPlan: any, itemIds1999: Set<string>): boolean {
   if (!activeCatalogObject(variation) || String(variation?.type || "").toUpperCase() !== "SUBSCRIPTION_PLAN_VARIATION") return false;
   const phases = Array.isArray(planVariationData(variation)?.phases) ? planVariationData(variation).phases : [];
   if (phases.length !== 1 || !relativePhaseIsMonthly(phases[0])) return false;
   const data = planData(parentPlan);
   const eligibleIds = (data?.eligibleItemIds || data?.eligible_item_ids || []).map((id: unknown) => String(id));
-  if (eligibleIds.some((id: string) => itemIds999.has(id))) return true;
-  return Boolean(data?.allItems || data?.all_items) && itemIds999.size === 1;
+  if (eligibleIds.some((id: string) => itemIds1999.has(id))) return true;
+  return Boolean(data?.allItems || data?.all_items) && itemIds1999.size === 1;
 }
 
-async function squareCatalogSnapshot(square: ReturnType<typeof getSquareClient>): Promise<{ plans: any[]; itemIds999: Set<string> }> {
+async function squareCatalogSnapshot(square: ReturnType<typeof getSquareClient>): Promise<{ plans: any[]; itemIds1999: Set<string> }> {
   const plans: any[] = [];
-  const itemIds999 = new Set<string>();
+  const itemIds1999 = new Set<string>();
   for await (const object of await square.catalog.list({ types: "ITEM,SUBSCRIPTION_PLAN" }, SQUARE_REQUEST_OPTIONS) as any) {
     const type = String(object?.type || "").toUpperCase();
-    if (type === "ITEM" && itemHas999UsdVariation(object)) itemIds999.add(String(object.id || ""));
+    if (type === "ITEM" && itemHas1999UsdVariation(object)) itemIds1999.add(String(object.id || ""));
     if (type === "SUBSCRIPTION_PLAN" && activeCatalogObject(object)) plans.push(object);
   }
-  return { plans, itemIds999 };
+  return { plans, itemIds1999 };
 }
 
-function matchingVariations(plans: any[], itemIds999: Set<string>): any[] {
+function matchingVariations(plans: any[], itemIds1999: Set<string>): any[] {
   const matches: any[] = [];
   for (const plan of plans) {
     const data = planData(plan);
     const variations = data?.subscriptionPlanVariations || data?.subscription_plan_variations || [];
     for (const variation of Array.isArray(variations) ? variations : []) {
-      if (variationIsStaticMonthly999(variation) || variationIsRelativeMonthlyFor999Item(variation, plan, itemIds999)) matches.push(variation);
+      if (variationIsStaticMonthly1999(variation) || variationIsRelativeMonthlyFor1999Item(variation, plan, itemIds1999)) matches.push(variation);
     }
   }
   return matches;
@@ -122,7 +122,7 @@ async function resolvePlanVariationId(square: ReturnType<typeof getSquareClient>
 
   const configured = configuredPlanVariationId();
   const snapshot = await squareCatalogSnapshot(square);
-  const matches = matchingVariations(snapshot.plans, snapshot.itemIds999);
+  const matches = matchingVariations(snapshot.plans, snapshot.itemIds1999);
   const uniqueIds = [...new Set(matches.map((variation) => String(variation?.id || "").trim()).filter(Boolean))];
 
   if (uniqueIds.includes(configured)) {
@@ -130,12 +130,12 @@ async function resolvePlanVariationId(square: ReturnType<typeof getSquareClient>
     return configured;
   }
   if (uniqueIds.length !== 1) {
-    throw new Error(`Expected exactly one Square MONTHLY variation resolving to $9.99; found ${uniqueIds.length}`);
+    throw new Error(`Expected exactly one Square MONTHLY variation resolving to $19.99; found ${uniqueIds.length}`);
   }
 
   const id = uniqueIds[0];
   resolvedPlanCache = { id, expiresAt: Date.now() + PLAN_CACHE_TTL_MS };
-  console.log("[SUBSCRIPTION] Resolved canonical $9.99/month Square plan variation from Catalog");
+  console.log("[SUBSCRIPTION] Resolved canonical $19.99/month Square plan variation from Catalog");
   return id;
 }
 
