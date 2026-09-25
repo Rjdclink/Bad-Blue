@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Shield, Search, FileText, TrendingUp, Upload, Database, Bell, Check, Scale, ArrowRight, Users } from "lucide-react";
 import { LanguageSelectorLight } from "@/components/LanguageSelectorLight";
 // Use Constitution.webp from public/images as background
@@ -19,7 +18,6 @@ import { HiddenFAQ } from "@/components/HiddenFAQ";
 
 export default function Landing() {
   const [, setLocation] = useLocation();
-  const [disclaimerAccepted, setDisclaimerAccepted] = useState(false);
   const [iconError, setIconError] = useState(false);
   const [lexaraImageError, setLexaraImageError] = useState(false);
   
@@ -117,7 +115,7 @@ export default function Landing() {
           {/* AI Badge */}
           <div className="mb-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
             <Badge className="bg-primary/90 text-white border-white/20 px-6 py-2.5 text-sm font-medium backdrop-blur-md shadow-lg">
-              🤖 Powered by 12 AI Models Working in Parallel
+              🤖 Powered by a Multi-Model AI Orchestration Network
             </Badge>
           </div>
 
@@ -151,17 +149,14 @@ export default function Landing() {
             Legal What? — AI Legal Tools for 40 Practice Areas
           </h1>
           <p className="text-white/95 text-base md:text-lg mb-8 leading-relaxed max-w-3xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-700 delay-500 drop-shadow-lg">
-            Explore legal information and AI-assisted tools across 40 practice areas, from Law Enforcement Accountability to Family Law, Immigration, Civil Rights, and beyond. Use two-way voice or text consultation, legal document tools, public-record research, and specialized search services.
-          </p>
-          <p className="text-white/90 text-sm md:text-base mb-8 leading-relaxed max-w-3xl mx-auto drop-shadow-lg">
-            Legal What? also includes public-record background report generation, an AI-assisted People Finder with geolocation intelligence, and a nationwide criminal inmate locator alongside its legal research and document workflows.
+            Explore legal information and AI-assisted tools across 40 practice areas. Use two-way voice or text consultation, legal research, intuitive document generation, and uploaded document, image, evidence, and media analysis.
           </p>
 
           {/* Trust Signals */}
           <div className="flex flex-wrap items-center justify-center gap-4 mb-10 text-sm text-white/95 animate-in fade-in slide-in-from-bottom-4 duration-700 delay-700">
             <div className="flex items-center gap-2">
               <span className="text-green-400">✓</span>
-              <span>12 AI Models Analyze Every Search</span>
+              <span>Multiple AI Models Coordinate Each Analysis</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-green-400">✓</span>
@@ -172,61 +167,12 @@ export default function Landing() {
 
           {/* Login/Get Started Card - Overlays background with glassmorphism */}
           <div className="max-w-5xl mx-auto bg-white/10 backdrop-blur-md rounded-2xl p-8 border border-white/20 shadow-2xl">
-            {/* Three-Tier Pricing - Simplified */}
-            <div className="mb-10">
-              <div className="grid md:grid-cols-3 gap-6">
-                {/* Tier 1: LEXARA & Officer Search */}
-                <div className="bg-black/40 backdrop-blur-md rounded-lg p-4 border border-white/30">
-                  <div className="text-white mb-3">
-                    <div className="text-lg font-semibold mb-2">Core Services</div>
-                    <div className="text-xs text-white/70">Legal consultation & officer search</div>
-                  </div>
-                  <div className="space-x-1">
-                    <Badge className="bg-white/15 text-white border-white/20 text-xs">FREE with signup</Badge>
-                  </div>
-                </div>
-
-                {/* Tier 2: Additional Services */}
-                <div className="bg-black/40 backdrop-blur-md rounded-lg p-4 border border-white/30">
-                  <div className="text-white mb-3">
-                    <div className="text-lg font-semibold mb-2">Documents</div>
-                    <div className="text-xs text-white/70">FOIA, complaints & petitions</div>
-                  </div>
-                  <Badge className="bg-white/15 text-white border-white/20 text-xs">Per document pricing</Badge>
-                </div>
-
-                {/* Tier 3: Civil Lawsuits */}
-                <div className="bg-black/40 backdrop-blur-md rounded-lg p-4 border border-white/30">
-                  <div className="text-white mb-3">
-                    <div className="text-lg font-semibold mb-2">Lawsuits</div>
-                    <div className="text-xs text-white/70">State-specific civil suits</div>
-                  </div>
-                  <Badge className="bg-white/15 text-white border-white/20 text-xs">DIY or full service</Badge>
-                </div>
-              </div>
-            </div>
-
-            {/* Legal Disclaimer Checkbox */}
-            <div className="flex items-start gap-3 max-w-xl mx-auto text-left px-4 relative z-10 bg-black/30 backdrop-blur-sm rounded-lg p-4 border border-yellow-400/50">
-              <Checkbox
-                id="disclaimer"
-                checked={disclaimerAccepted}
-                onCheckedChange={(checked) => setDisclaimerAccepted(checked as boolean)}
-                className="mt-0.5 border-2 border-yellow-400 bg-white data-[state=checked]:bg-yellow-400 data-[state=checked]:text-black shrink-0 w-5 h-5 min-w-[1.25rem]"
-                data-testid="checkbox-disclaimer"
-              />
-              <label htmlFor="disclaimer" className="text-sm text-white/90 leading-relaxed cursor-pointer block">
-                I understand that Legal What? provides legal tools and AI assistance but does not constitute legal advice. I will use this platform responsibly.
-              </label>
-            </div>
-
             {/* CTA Button */}
             <div className="mt-6 flex justify-center px-4 relative z-10">
               <Button
                 size="default"
-                className="text-base px-6 bg-primary hover:bg-primary/90 backdrop-blur-sm border border-white/50 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-500"
+                className="text-base px-6 bg-primary hover:bg-primary/90 backdrop-blur-sm border border-white/50 shadow-lg"
                 onClick={() => setLocation('/login')}
-                disabled={!disclaimerAccepted}
                 data-testid="button-get-started"
               >
                 Get Started
@@ -257,10 +203,10 @@ export default function Landing() {
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-10">
             <h2 id="legalwhat-services" className="text-3xl md:text-4xl font-bold mb-4">
-              AI Legal Help, Public-Record Research, People Finding & Inmate Search
+              AI Legal Consultation, Document Creation & Media Analysis
             </h2>
             <p className="text-muted-foreground max-w-3xl mx-auto leading-relaxed">
-              Legal What? combines legal information and document tools with specialized public-record research services so users can move from a legal question to relevant records, people, facilities, and documents in one platform.
+              Legal What? combines two-way AI legal consultation across 40 practice areas with legal research, intuitive document generation, and analysis of uploaded documents, images, evidence, and other media.
             </p>
           </div>
 
@@ -285,54 +231,6 @@ export default function Landing() {
               <CardContent>
                 <p className="text-sm text-muted-foreground leading-relaxed">
                   Build and organize legal documents and public-record requests with AI-assisted drafting workflows, including police-accountability complaints, Section 1983 materials, FOIA requests, petitions, and broader legal-document support.
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <Database className="w-8 h-8 text-primary mb-2" aria-hidden="true" />
-                <CardTitle>Background Report Generator</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground leading-relaxed">
-                  Generate research-oriented background reports from available public-record and identity sources to organize information about a person, record trail, or related legal research target.
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <Search className="w-8 h-8 text-primary mb-2" aria-hidden="true" />
-                <CardTitle>People Finder & Geolocation Research</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground leading-relaxed">
-                  Use Legal What?'s People Finder and SPECTRA workflows to search across multiple sources and assemble location-relevant information about a target from lawful, available data.
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <Users className="w-8 h-8 text-primary mb-2" aria-hidden="true" />
-                <CardTitle>Nationwide Inmate Locator</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground leading-relaxed">
-                  Search federal and state correctional sources for inmate and facility information, including available custody, location, release-date, and correctional-facility details.
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <Shield className="w-8 h-8 text-primary mb-2" aria-hidden="true" />
-                <CardTitle>Police & Public-Record Research</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground leading-relaxed">
-                  Research officers and public records, prepare misconduct-related materials, organize evidence, and use dedicated accountability workflows alongside the platform's broader legal tools.
                 </p>
               </CardContent>
             </Card>
