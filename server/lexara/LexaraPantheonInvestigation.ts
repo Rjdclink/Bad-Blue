@@ -1,4 +1,4 @@
-import { pantheonRetrievalAdapter } from '../services/crawlers/PantheonRetrievalAdapter';
+import { pantheonRetrievalAdapter, type RetrievalEvidence } from '../services/crawlers/PantheonRetrievalAdapter';
 import { orchestratedWebSearch } from '../openRouterWebSearch';
 import { buildPantheonCategoryTargets, type PantheonBackgroundCategory } from '../services/pantheon/PantheonSovereignSourceRegistry';
 import { searchInmates } from '../services/inmateSearch/InmateSearchAggregator';
@@ -255,7 +255,7 @@ export async function investigatePersonQuestion(
     let pendingTargets = targets.slice(0, PERSON_RECURSIVE_MAX_TARGETS_PER_PASS);
     let retrievalAvailable = true;
     let retrievalReason: string | undefined;
-    const acceptedEvidence = new Map<string, typeof targets extends never ? never : any>();
+    const acceptedEvidence = new Map<string, RetrievalEvidence>();
 
     for (let pass = 0; pass < PERSON_RECURSIVE_MAX_PASSES; pass++) {
       if (context.signal?.aborted || !pendingTargets.length) break;
