@@ -32,6 +32,7 @@ const MAX_RESEARCH_SUMMARY_CHARACTERS = 7_000;
 const MAX_AUTHORITY_SOURCES = 12;
 const RESEARCH_TIMEOUT_MS = 2_400;
 const CRAWLER_ENRICHMENT_TIMEOUT_MS = 1_800;
+const COURTLISTENER_TIMEOUT_MS = 1_800;
 
 const AUTHORITY_SENSITIVE_PATTERN = /\b(?:cite|citation|source|authority|case\s*law|precedent|holding|statute|statutory|code\s+section|regulation|c\.f\.r\.|u\.s\.c\.|court\s+rule|rule\s+\d|legal\s+standard|elements?\s+of|controlling\s+law|current\s+law|recent\s+law|supreme\s+court|circuit\s+court|appellate\s+court|judge|judges|court|sentenc(?:e|ed|es|ing)|statistics?|data|rates?|average|compare|comparison|lenien(?:t|cy)|harsh(?:er|ness)?|outcomes?|disposition|statute\s+of\s+limitations|limitations\s+period|filing\s+deadline|appeal\s+deadline|notice\s+deadline|deadline|jurisdiction|venue|preemption)\b/i;
 
@@ -76,6 +77,38 @@ function classifySource(rawUrl: string): LexaraAuthoritySourceKind {
 function cleanUrl(value: unknown): string | null {
   const url = typeof value === 'string' ? value.trim().replace(/[),.;]+$/, '') : '';
   return /^https?:\/\//i.test(url) ? url : null;
+}
+
+async function searchCourtListener(query: string, signal?: AbortSignal): Promise<LexaraAuthoritySource[]> {
+  const token = process.env.COURTLISTENER_API_TOKEN?.trim();
+  if (!token) return [];
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), COURTLISTENER_TIMEOUT_MS);
+  const relayAbort = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener('abort', relayAbort, { once: true });
+  try {
+    const url = new URL('https://www.courtlistener.com/api/rest/v4/search/');
+    url.searchParams.set('q', query.slice(0, 1500));
+    url.searchParams.set('type', 'o');
+    const response = await fetch(url, {
+      headers: { Authorization: `Token ${token}`, Accept: 'application/json' },
+      signal: controller.signal,
+    });
+    if (!response.ok) return [];
+    const payload = await response.json() as { results?: Array<{ caseName?: string; absolute_url?: string; snippet?: string }> };
+    return (payload.results || []).slice(0, 6).flatMap(item => {
+      const raw = item.absolute_url || '';
+      const url = raw.startsWith('http') ? raw : raw ? `https://www.courtlistener.com${raw}` : '';
+      if (!url) return [];
+      return [{ title: item.caseName || 'CourtListener case law', url, kind: 'secondary' as const, excerpt: item.snippet?.replace(/<[^>]+>/g, ' ').trim().slice(0, 900) }];
+    });
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', relayAbort);
+  }
 }
 
 async function discoverAuthoritySources(query: string, signal?: AbortSignal): Promise<LexaraAuthoritySource[]> {
@@ -162,9 +195,10 @@ async function discoverAuthoritySources(query: string, signal?: AbortSignal): Pr
   // Run independent discovery paths in parallel under a conversational latency
   // budget. Authority discovery is valuable evidence, but a slow crawler must
   // never hold the live spoken answer hostage.
-  const [firecrawlResult, openRouterResult] = await Promise.all([
+  const [firecrawlResult, openRouterResult, courtListenerResult] = await Promise.all([
     firecrawlDiscovery(),
     openRouterDiscovery(),
+    searchCourtListener(query, signal),
   ]);
 
   const seen = new Set<string>();
@@ -184,6 +218,7 @@ async function discoverAuthoritySources(query: string, signal?: AbortSignal): Pr
   // Prefer official-source-rich Firecrawl discovery when both return quickly,
   // then fill remaining capacity from OpenRouter's current web-search tool.
   for (const item of firecrawlResult) add(item);
+  for (const item of courtListenerResult) add(item);
   for (const item of openRouterResult) add(item);
   return sources;
 }
