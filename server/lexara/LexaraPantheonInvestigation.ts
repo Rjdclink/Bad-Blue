@@ -5,6 +5,7 @@ import { searchInmates } from '../services/inmateSearch/InmateSearchAggregator';
 import { matchPantheonSubject } from '../services/pantheon/PantheonEntityResolution';
 import { selectLexaraCrawlerPlan } from './LexaraCrawlerCapabilityRegistry';
 import { PANTHEON_PRIMARY_CRAWLER_IDS, type PantheonPrimaryCrawlerId } from '../services/pantheon/PantheonCrawlerCapabilityMatrix';
+import { rememberPantheonDiscoverySuccess, supplementalPantheonDiscovery } from '../services/pantheon/PantheonSupplementalDiscovery';
 
 export interface LexaraPersonInvestigationContext {
   previousMessages?: Array<{ role?: string; content?: string }>;
@@ -284,6 +285,7 @@ export async function investigatePersonQuestion(
         .filter(item => item.content?.trim())
         .filter(item => resolvedName && matchPantheonSubject(item, resolvedName, context.jurisdiction).matched)) {
         acceptedEvidence.set(`${item.sourceUrl}:${item.crawler}:${item.content.slice(0, 120)}`, item);
+        rememberPantheonDiscoverySuccess(item.sourceUrl);
       }
 
       // Explicit successful endpoint: enough independent verified evidence.
@@ -309,6 +311,17 @@ export async function investigatePersonQuestion(
         discovered = broadened.sources.filter(url => /^https?:\/\//i.test(url));
       } catch {
         // Frontier-derived candidates remain usable when a discovery provider fails.
+      }
+      // Paid supplemental discovery is a last resort only. Pantheon first uses
+      // its own frontier plus the existing web-discovery lane. Returned URLs
+      // are candidates, never evidence; Pantheon must retrieve/verify them.
+      if (!frontier.length && !discovered.length && acceptedEvidence.size === 0) {
+        const supplemental = await supplementalPantheonDiscovery(
+          `${resolvedName || combined} ${categoryDiscoveryTerms(categories)} ${context.jurisdiction || ''}`,
+          [...seenTargets],
+          { limit: PERSON_RECURSIVE_MAX_TARGETS_PER_PASS, timeoutMs: Math.min(900, remainingMs), signal: context.signal },
+        );
+        discovered.push(...supplemental.urls);
       }
       pendingTargets = [...new Set([...frontier, ...discovered])]
         .filter(url => !seenTargets.has(url))
