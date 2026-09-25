@@ -834,6 +834,7 @@ console.log('LEXARA 40-domain specialization verification passed.');
 
 must(
   pantheonInvestigation.includes('shouldUsePantheonForPersonQuestion') &&
+    pantheonInvestigation.includes('PERSON_RECORD_PATTERN.test(recentUserTurns) && IDENTIFIER_PATTERN.test(prompt)') &&
     pantheonInvestigation.includes('export function hasEnoughIdentityContext') &&
     pantheonInvestigation.includes('buildPantheonCategoryTargets') &&
     pantheonInvestigation.includes('orchestratedWebSearch') &&
