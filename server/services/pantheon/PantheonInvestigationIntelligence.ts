@@ -208,7 +208,7 @@ export function buildPantheonInvestigationIntelligence(input: {
       hopLimit: input.queryPlan.relationshipHopLimit,
       nodes: [...new Map(nodes.map(node => [node.id, node])).values()],
       edges: edges.filter(edge => edge.hop <= input.queryPlan.relationshipHopLimit),
-      entityMappings: [...mappings.entries()].map(([id, evidenceIds]) => ({ stableId: id, evidenceIds: [...evidenceIds], mergeState: 'separate-until-reviewed' as const })),
+      entityMappings: [...mappings.entries()].map(([id, evidenceIds]) => ({ stableId: id, evidenceIds: [...evidenceIds], mergeState: evidenceIds.size > 1 ? 'verified-same-entity' as const : 'separate-until-reviewed' as const })),
     },
     factIndexes: { current, historical },
     timeline: timeline.sort((left, right) => left.at.localeCompare(right.at)),
