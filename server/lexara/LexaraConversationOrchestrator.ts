@@ -336,10 +336,10 @@ export async function generateLexaraConversationResponse(
     jurisdiction,
     signal: context.signal,
   }).catch(() => null);
-  const initialPantheon = await Promise.race([
-    pantheonInvestigationPromise,
-    new Promise<null>(resolve => setTimeout(() => resolve(null), 60)),
-  ]);
+  // Identity clarification is deterministic and completes before any network
+  // retrieval starts. Awaiting it here avoids racing a 60 ms timer against the
+  // very clarification that prevents Pantheon from searching the wrong person.
+  const initialPantheon = await pantheonInvestigationPromise;
   if (initialPantheon?.clarification) {
     return {
       text: initialPantheon.clarification,
