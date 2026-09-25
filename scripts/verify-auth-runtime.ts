@@ -88,11 +88,11 @@ assert.match(statelessLocalAuthSource, /Paid access requires a verified active S
 assert.match(authSource, /app\.post\("\/api\/local-register"[\s\S]{0,900}setLocalCookie\(res, createLocalSessionToken\(user\)\)/, 'signup must establish the pending authenticated checkout session');
 assert.match(authSource, /isIdentityAuthenticated[\s\S]{0,1000}SUBSCRIPTION_REQUIRED/, 'ordinary authenticated services must require verified paid access');
 assert.match(subscriptionFlowSource, /isIdentityAuthenticated/, 'pending users must retain access to subscription activation routes');
-assert.match(subscriptionFlowSource, /subscriptionPlanId:\s*await resolvePlanVariationId\(square\)/, 'Square hosted checkout must use the catalog-validated $9.99 monthly plan variation');
+assert.match(subscriptionFlowSource, /subscriptionPlanId:\s*await resolvePlanVariationId\(square\)/, 'Square hosted checkout must use the catalog-validated $19.99 monthly plan variation');
 assert.match(subscriptionFlowSource, /types:\s*"ITEM,SUBSCRIPTION_PLAN"/, 'Square plan resolver must inspect both item prices and subscription plans through Catalog');
 assert.match(subscriptionFlowSource, /pricing\?\.type[\s\S]{0,80}RELATIVE/, 'Square plan resolver must support item-relative monthly pricing');
-assert.match(subscriptionFlowSource, /itemHas999UsdVariation/, 'relative subscription resolution must prove the eligible catalog item is $9.99 USD');
-assert.match(subscriptionFlowSource, /uniqueIds\.length !== 1/, 'Square plan resolver must fail closed unless exactly one $9.99 monthly variation is found');
+assert.match(subscriptionFlowSource, /itemHas1999UsdVariation/, 'relative subscription resolution must prove the eligible catalog item is $19.99 USD');
+assert.match(subscriptionFlowSource, /uniqueIds\.length !== 1/, 'Square plan resolver must fail closed unless exactly one $19.99 monthly variation is found');
 assert.match(subscriptionFlowSource, /paymentNote:\s*noteForUser\(id\)/, 'Square checkout must carry an application-user reconciliation key');
 assert.doesNotMatch(subscriptionFlowSource, /square\.fetch\(/, 'Square v43 integration must not call a nonexistent generic client fetch method');
 assert.match(subscriptionFlowSource, /square\.subscriptions\.search\(/, 'subscription reconciliation must use the Square subscriptions resource client');
@@ -144,8 +144,8 @@ assert.match(railwayEnvSource, /SQUARE_SUBSCRIPTION_PLAN_VARIATION_ID=/, 'Railwa
 assert.match(deployPrepSource, /"SQUARE_SUBSCRIPTION_PLAN_VARIATION_ID"/, 'deployment preflight must validate the Square subscription plan variation');
 assert.match(deployPrepSource, /"SQUARE_WEBHOOK_SIGNATURE_KEY"/, 'deployment preflight must validate the Square webhook verification key');
 assert.match(configSource, /SQUARE_WEBHOOK_SIGNATURE_KEY is required in production/, 'production must require the Square webhook verification key');
-assert.match(subscriptionFlowSource, /SUBSCRIPTION_PRICE_CENTS\s*=\s*999/, 'canonical Square checkout and verification amount must remain $9.99');
-assert.match(sampleConsultationSource, /\$9\.99\/month/, 'public subscription disclosure must match the $9.99 Square checkout price');
+assert.match(subscriptionFlowSource, /SUBSCRIPTION_PRICE_CENTS\s*=\s*1999/, 'canonical Square checkout and verification amount must remain $19.99');
+assert.match(sampleConsultationSource, /\$19\.99\/month/, 'public subscription disclosure must match the $19.99 Square checkout price');
 assert.doesNotMatch(sampleConsultationSource, /\$25\.99\/month/, 'stale $25.99 public subscription pricing must not remain');
 assert.doesNotMatch(sampleConsultationSource, /\$19\.98/, 'stale public subscription pricing must not remain');
 assert.doesNotMatch(migrationReconcilerSource, /runFreeAccessMigration|Free Access for All Users/, 'startup schema reconciliation must never re-grant universal paid access');
