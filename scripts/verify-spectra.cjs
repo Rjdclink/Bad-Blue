@@ -123,7 +123,7 @@ test('Landing acknowledgement restores signup/Square flow while master access st
   login.includes('/api/subscription/checkout') &&
   login.includes('/api/master-login') &&
   app.includes('isAuthenticated && hasPaidAccess') &&
-  app.includes('<Route path="/welcome" component={WelcomePage} />') &&
+  app.includes('<Route path="/welcome"><Redirect to="/lexara-consent" /></Route>') &&
   app.includes('<Route path="/lexara-consent" component={LexaraConsentPage} />') &&
   app.includes('<Route path="/lexara-consent/:domainId" component={LexaraConsentPage} />') &&
   app.includes('<Route path="/legal-consultation/:domainId" component={ConsultationPage} />'));
