@@ -340,7 +340,7 @@ export async function generateLexaraConversationResponse(
   // retrieval starts. Awaiting it here avoids racing a 60 ms timer against the
   // very clarification that prevents Pantheon from searching the wrong person.
   const initialPantheon = await pantheonInvestigationPromise;
-  if (initialPantheon?.clarification) {
+  if (initialPantheon?.needsIdentityClarification && initialPantheon.clarification) {
     return {
       text: initialPantheon.clarification,
       jurisdiction,
