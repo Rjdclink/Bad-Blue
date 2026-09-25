@@ -450,7 +450,14 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
       // AudioWorklet, avoiding Android HTMLMediaElement buffering. It is the
       // only active acoustic clock when healthy; the adaptive server TTS mesh
       // remains the route-local recovery path.
-      if (lexaraRealtimeVoiceClient.isSpeechOutputReady()) {
+      // Re-establish the proven fast path before falling back to progressive
+      // HTMLMediaElement playback. On Android the progressive MP3 route can
+      // buffer for seconds even when provider first-byte latency is sub-second.
+      const realtimeOutputReady = lexaraRealtimeVoiceClient.isReady()
+        ? await lexaraRealtimeVoiceClient.ensureSpeechOutputReady()
+        : false;
+      if (turnId !== activeTurnRef.current) return;
+      if (realtimeOutputReady) {
         let started = false;
         try {
           await lexaraRealtimeVoiceClient.speak(cleanText, `lexara-turn-${turnId}`, {
