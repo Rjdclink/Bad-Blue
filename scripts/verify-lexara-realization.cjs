@@ -837,6 +837,13 @@ must(
     lexaraPantheonInvestigation.includes('split(/\\s+/).length >= 3'),
   'specific three-or-more-part names can enter bounded identity research without forcing a redundant identifier prompt',
 );
+must(
+  lexaraPantheonInvestigation.includes("'sheriff jail roster'") &&
+    lexaraPantheonInvestigation.includes("'criminal court records'") &&
+    lexaraPantheonInvestigation.includes("'mortgage record'") &&
+    lexaraPantheonInvestigation.includes("'death record'"),
+  'person-record discovery uses record-type-specific official-source terms for custody criminal property and vital records',
+);
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA realization verification passed.');
 // Practice-area specialization gate (40-book LegalWhat library).
