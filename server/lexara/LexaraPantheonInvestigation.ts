@@ -10,6 +10,7 @@ export interface LexaraPersonInvestigationContext {
 
 export interface LexaraPersonInvestigation {
   clarification?: string;
+  needsIdentityClarification?: boolean;
   evidenceSummary?: string;
   sources: string[];
   categories: PantheonBackgroundCategory[];
@@ -98,7 +99,7 @@ export async function investigatePersonQuestion(
   const identityContext = hasEnoughIdentityContext(combined);
 
   if (!identityContext) {
-    return { clarification: clarificationFor(prompt), sources: [], categories, fullBackgroundReportRequested };
+    return { clarification: clarificationFor(prompt), needsIdentityClarification: true, sources: [], categories, fullBackgroundReportRequested };
   }
 
   // Full reports remain Pantheon's durable 30-category job workflow. The live
@@ -106,6 +107,7 @@ export async function investigatePersonQuestion(
   if (fullBackgroundReportRequested) {
     return {
       clarification: 'I have enough to identify the subject. A complete background report uses Pantheon’s full 30-category report workflow rather than a quick conversational lookup.',
+      needsIdentityClarification: false,
       sources: [],
       categories,
       fullBackgroundReportRequested: true,
