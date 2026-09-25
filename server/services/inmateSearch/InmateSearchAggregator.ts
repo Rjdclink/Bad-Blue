@@ -224,7 +224,7 @@ function getEnvFlag(name: string, defaultValue: boolean): boolean {
   return defaultValue;
 }
 
-const INMATE_ENABLE_STATE_DOC = getEnvFlag('INMATE_ENABLE_STATE_DOC', false);
+const INMATE_ENABLE_STATE_DOC = getEnvFlag('INMATE_ENABLE_STATE_DOC', true);
 const INMATE_ENABLE_VINE = getEnvFlag('INMATE_ENABLE_VINE', false);
 
 function normalizeSex(value: unknown): 'Male' | 'Female' | 'Unknown' | undefined {
@@ -399,7 +399,9 @@ const BOPAdapter: DataSourceAdapter = {
 
 /**
  * State Department of Corrections Adapter
- * TODO: Implement real scraper per state jurisdiction
+ * Official state locators participate through Pantheon's canonical public
+ * retrieval layer. Structured person records are emitted only when a state
+ * exposes verifiable record-level data; locator pages remain discovery-only.
  */
 function createStateDOCAdapter(stateCode: string): DataSourceAdapter {
   return {
@@ -453,13 +455,14 @@ function createStateDOCAdapter(stateCode: string): DataSourceAdapter {
 }
 
 /**
- * VINE (Victim Information Notification Everyday) Adapter
- * TODO: Implement real VINELink integration
+ * VINE (Victim Information Notification Everyday) Adapter.
+ * Kept disabled unless explicitly configured because no sanctioned structured
+ * API contract is present in this repository.
  */
 const VINEAdapter: DataSourceAdapter = {
   name: 'VINE',
   async search(_query: InmateSearchQuery): Promise<InmateRecord[]> {
-    // Not yet implemented - immediate skip
+    // Fail closed rather than presenting a locator/discovery page as custody proof.
     return [];
   }
 };
