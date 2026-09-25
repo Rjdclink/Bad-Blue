@@ -776,13 +776,9 @@ must(
   'LEXARA queues the exact How can I help you? greeting until live voice is ready',
 );
 must(
-  welcomePage.includes("selectedType.id === 'law-enforcement-accountability'") &&
-    welcomePage.includes("setLocation('/badblue')") &&
-    (
-      welcomePage.includes('setLocation(`/lexara-consent/${selectedType.id}`)') ||
-      welcomePage.includes('setLocation("/lexara-consent/" + selectedType.id)')
-    ),
-  'Law Enforcement Accountability enters BadBlue while the other bookshelf areas retain LEXARA consent',
+  appSource.includes('<Route path="/lexara-consent" component={LexaraConsentPage} />') &&
+    loginPage.includes('"/lexara-consent"'),
+  'Authenticated LegalWhat entry routes directly to general LEXARA consent without bookshelf selection',
 );
 for (const lawType of productLawTypes) {
   must(
