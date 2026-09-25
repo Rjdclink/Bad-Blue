@@ -764,6 +764,27 @@ must(
     lexaraPantheonInvestigation.includes('NEVER name, infer, recommend, or substitute a county'),
   'targeted Pantheon research is bounded for live conversation and county claims require evidence',
 );
+must(
+  lexaraPantheonInvestigation.includes("['transportation']") &&
+    lexaraPantheonInvestigation.includes("['education','credentials']") &&
+    lexaraPantheonInvestigation.includes("['sex-offender']") &&
+    lexaraPantheonInvestigation.includes("['bankruptcy','financial-public','property']") &&
+    lexaraPantheonInvestigation.includes("['news','adverse-media']") &&
+    lexaraPantheonInvestigation.includes("['government-employment','campaign-finance','lobbying','government-contracting']") &&
+    lexaraPantheonInvestigation.includes("['relationship-graph','chronology','corroboration','contradictions','provenance']"),
+  'Lexara routes person-record questions across the complete Pantheon report-domain surface rather than a narrow subset',
+);
+must(
+  lexaraPantheonInvestigation.includes('coverageLimited?: boolean') &&
+    lexaraPantheonInvestigation.includes('COVERAGE STATUS:') &&
+    lexaraPantheonInvestigation.includes('This is not proof that no record exists') &&
+    lexaraPantheonInvestigation.includes('Do not infer that the person has no record'),
+  'Pantheon retrieval gaps are communicated to Lexara as coverage limits rather than false negative records',
+);
+must(
+  lexaraConversationOrchestrator.includes('initialPantheon.fullBackgroundReportRequested'),
+  'full background-report requests are explicitly handed back to Pantheon workflow instead of silently falling through ordinary chat',
+);
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA realization verification passed.');
 // Practice-area specialization gate (40-book LegalWhat library).

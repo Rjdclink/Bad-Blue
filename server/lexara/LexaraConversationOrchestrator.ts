@@ -345,7 +345,7 @@ export async function generateLexaraConversationResponse(
     pantheonInvestigationPromise,
     new Promise<null>(resolve => setTimeout(() => resolve(null), 0)),
   ]);
-  if (initialPantheon?.needsIdentityClarification && initialPantheon.clarification) {
+  if (initialPantheon?.clarification && (initialPantheon.needsIdentityClarification || initialPantheon.fullBackgroundReportRequested)) {
     return {
       text: initialPantheon.clarification,
       jurisdiction,
