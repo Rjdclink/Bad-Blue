@@ -36,6 +36,8 @@ const investigationIntelligence = read('server/services/pantheon/PantheonInvesti
 const evidence = evidencePipeline;
 
 const checks = [
+  ['live frontier prioritizes capable authoritative subject-scoped sources', categoryWorkflow.includes('sourcePriority(right.authority) - sourcePriority(left.authority)') && categoryWorkflow.includes('Number(right.subjectScoped === true) - Number(left.subjectScoped === true)')],
+
   ['corroborated entity mappings promote only after multiple evidence IDs', investigationIntelligence.includes("evidenceIds.size > 1 ? 'verified-same-entity'") && investigationIntelligence.includes("'separate-until-reviewed'")],
 
   ['cross-source correlation is persisted with accepted evidence', evidencePipeline.includes('summarizePantheonCorrelations') && evidencePipeline.includes('corroboratedClaimCount') && categoryWorkflow.includes('const correlationSummary = summarizePantheonCorrelations(reportable)') && categoryWorkflow.includes('correlationSummary,')],
