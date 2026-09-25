@@ -55,7 +55,7 @@ must(
 );
 
 for (const model of [
-  'gemini-3.8-flash',
+  'gemini-3.7-flash',
   'claude-sonnet-5',
   'claude-opus-5',
   'openai/gpt-oss-120b',
