@@ -38,6 +38,7 @@ const voiceRoutes = read('server/routes/voice.routes.ts');
 const orchestrator = read('server/lexara/LexaraConversationOrchestrator.ts');
 const openRouter = read('server/openRouterService.ts');
 const authorityResearch = read('server/lexara/LexaraAuthorityResearch.ts');
+const pantheonInvestigation = read('server/lexara/LexaraPantheonInvestigation.ts');
 const webSearch = read('server/webSearchService.ts');
 const modernWebSearch = read('server/openRouterWebSearch.ts');
 const viteConfig = read('vite.config.ts');
@@ -823,6 +824,18 @@ must(domainExpertiseSourceLines.length === 40, 'literal 40-source LEXARA practic
 must(domainImplementationSourceLines.length === 10, 'literal 10-source LEXARA specialization implementation review is present');
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA 40-domain specialization verification passed.');
+
+must(
+  pantheonInvestigation.includes('shouldUsePantheonForPersonQuestion') &&
+    pantheonInvestigation.includes('hasEnoughIdentityContext') &&
+    pantheonInvestigation.includes('buildPantheonCategoryTargets') &&
+    pantheonInvestigation.includes('orchestratedWebSearch') &&
+    pantheonInvestigation.includes("purpose: 'lexara_legal_research'") &&
+    pantheonInvestigation.includes('fullBackgroundReportRequested') &&
+    orchestrator.includes('investigatePersonQuestion(cleanPrompt') &&
+    orchestrator.includes('formatPantheonInvestigationForSystem(pantheonInvestigation)'),
+  'LEXARA identifies the subject before targeted Pantheon research, scopes the requested record categories, and permits dynamic source discovery without silently running a full report',
+);
 
 // Independent live-reasoning recovery invariant.
 must(
