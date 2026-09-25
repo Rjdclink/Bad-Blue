@@ -240,7 +240,7 @@ export default function ControlRoomPage() {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setLocation("/welcome")}
+                onClick={() => setLocation("/lexara-consent")}
                 className="text-slate-300 hover:text-white hover:bg-white/10"
               >
                 <ArrowLeft className="w-4 h-4 mr-1" />
