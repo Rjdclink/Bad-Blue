@@ -532,7 +532,7 @@ async function ensurePostgresSubscriptionPlan(dbClient: any, squarePlanVariation
 
   const inserted = await dbClient.query(
     `INSERT INTO plans (name,price,currency,interval,square_plan_id,is_active,created_at)
-     VALUES ('LegalWhat Subscription',2599,'USD','monthly',$1,true,NOW())
+     VALUES ('LegalWhat Subscription',1999,'USD','monthly',$1,true,NOW())
      RETURNING id`,
     [squarePlanVariationId],
   );
@@ -665,7 +665,7 @@ async function ensureSupabaseSubscriptionPlan(
     .from("plans")
     .insert({
       name: "LegalWhat Subscription",
-      price: 2599,
+      price: 1999,
       currency: "USD",
       interval: "monthly",
       square_plan_id: squarePlanVariationId,
