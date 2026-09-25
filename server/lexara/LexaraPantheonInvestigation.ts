@@ -1,4 +1,5 @@
 import { pantheonRetrievalAdapter } from '../services/crawlers/PantheonRetrievalAdapter';
+import { orchestratedWebSearch } from '../openRouterWebSearch';
 import { buildPantheonCategoryTargets, type PantheonBackgroundCategory } from '../services/pantheon/PantheonSovereignSourceRegistry';
 
 export interface LexaraPersonInvestigationContext {
@@ -36,6 +37,8 @@ const CATEGORY_RULES: Array<[RegExp, PantheonBackgroundCategory[]]> = [
   [/relative|family/i, ['relatives','family-probate']],
   [/associate/i, ['associates','relationship-graph']],
   [/social\s+media|username|online\s+account/i, ['social','usernames','internet']],
+  [/campaign|contribution|donation|political/i, ['campaign-finance','government-employment']],
+  [/patent|trademark|copyright/i, ['intellectual-property','business']],
 ];
 
 function conversationText(prompt: string, context: LexaraPersonInvestigationContext): string {
@@ -96,16 +99,31 @@ export async function investigatePersonQuestion(
     };
   }
 
-  const targets = categories
+  const registryTargets = categories
     .flatMap(category => buildPantheonCategoryTargets(category, combined, context.jurisdiction, 8))
     .filter((target, index, all) => all.findIndex(candidate => candidate.url === target.url) === index)
-    .slice(0, 12);
+    .slice(0, 10);
+
+  let discoveredUrls: string[] = [];
+  try {
+    const discovery = await orchestratedWebSearch(
+      `${combined} public records ${categories.join(' ')} official government database search`,
+      { useOnlinePlugin: true, timeout: 1_500, signal: context.signal },
+    );
+    discoveredUrls = discovery.sources
+      .filter(url => /^https?:\/\//i.test(url))
+      .slice(0, 6);
+  } catch {
+    // Dynamic discovery is supplemental. Trusted registry sources remain usable.
+  }
+
+  const targets = [...new Set([...registryTargets.map(target => target.url), ...discoveredUrls])].slice(0, 12);
   if (!targets.length) return { sources: [], categories, fullBackgroundReportRequested: false };
 
   try {
     const retrieval = await pantheonRetrievalAdapter.retrieve({
       purpose: 'lexara_legal_research',
-      targets: targets.map(target => target.url),
+      targets,
       depth: 2,
       budgetMs: 2_200,
       subject: combined,
