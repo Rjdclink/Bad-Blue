@@ -809,6 +809,17 @@ must(
     pantheonInvestigation.includes('where\\s+(?:does|did)\\s+.+?\\s+live'),
   'Lexara recognizes natural incarceration residence and death question wording',
 );
+must(
+  pantheonInvestigation.includes("STRUCTURED CUSTODY SOURCE:") &&
+    pantheonInvestigation.includes("searchInmates({"),
+  'Lexara consumes structured custody records for incarceration questions',
+);
+must(
+  pantheonInvestigation.includes("incarcerat(?:e|ed|ion)?") &&
+    pantheonInvestigation.includes("where\\s+(?:does|did)\\s+.+?\\s+live") &&
+    pantheonInvestigation.includes("wife|die|died|death|deceased|obituary"),
+  'natural incarceration residence and death wording routes to Pantheon',
+);
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA realization verification passed.');
 // Practice-area specialization gate (40-book LegalWhat library).
