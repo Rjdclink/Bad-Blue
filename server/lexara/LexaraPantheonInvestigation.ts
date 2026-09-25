@@ -1,6 +1,7 @@
 import { pantheonRetrievalAdapter } from '../services/crawlers/PantheonRetrievalAdapter';
 import { orchestratedWebSearch } from '../openRouterWebSearch';
 import { buildPantheonCategoryTargets, type PantheonBackgroundCategory } from '../services/pantheon/PantheonSovereignSourceRegistry';
+import { searchInmates } from '../services/inmateSearch/InmateSearchAggregator';
 
 export interface LexaraPersonInvestigationContext {
   previousMessages?: Array<{ role?: string; content?: string }>;
@@ -86,6 +87,19 @@ function clarificationFor(prompt: string): string {
     ? `I can check that. To make sure I investigate the right ${name}, give me one or two identifying details such as approximate age or date of birth and the city/state where the person lives or has lived.`
     : 'I can check that. Give me the person’s full name and one or two identifying details such as approximate age or date of birth and the city/state where the person lives or has lived.';
 }
+function extractPersonName(text: string): { firstName?: string; middleName?: string; lastName?: string } {
+  const names = text.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2}\b/g) || [];
+  const candidate = names.find(value => !/^(Where|When|Has|Does|Is|How|What|Pantheon|Lexara)\b/.test(value));
+  if (!candidate) return {};
+  const parts = candidate.trim().split(/\s+/);
+  if (parts.length === 2) return { firstName: parts[0], lastName: parts[1] };
+  return { firstName: parts[0], middleName: parts.slice(1, -1).join(' '), lastName: parts[parts.length - 1] };
+}
+
+function extractStateCode(text: string): string | undefined {
+  const match = text.match(/\b(?:state\s+of\s+)?([A-Z]{2})\b/);
+  return match?.[1];
+}
 
 export function shouldUsePantheonForPersonQuestion(
   prompt: string,
@@ -127,6 +141,35 @@ export async function investigatePersonQuestion(
       categories,
       fullBackgroundReportRequested: true,
     };
+  }
+
+  // Custody questions have a verified structured federal adapter. Use it
+  // before generic web retrieval so Lexara can return an actual facility when
+  // BOP has a subject match; Pantheon still performs the broader corroboration.
+  let structuredEvidence: string[] = [];
+  let structuredSources: string[] = [];
+  if (categories.includes('corrections')) {
+    const person = extractPersonName(combined);
+    if (person.firstName && person.lastName) {
+      try {
+        const inmateResult = await searchInmates({
+          ...person,
+          state: extractStateCode(combined),
+          searchScope: 'all',
+        });
+        for (const inmate of inmateResult.inmates.slice(0, 5)) {
+          structuredEvidence.push(
+            `STRUCTURED CUSTODY SOURCE: ${inmate.sourceUrl || inmate.source}\n` +
+            `SUBJECT: ${[inmate.firstName, inmate.middleName, inmate.lastName].filter(Boolean).join(' ')}\n` +
+            `FACILITY: ${inmate.facilityName || 'Unknown'}\nSTATUS: ${inmate.custodyStatus || 'Unknown'}\n` +
+            `INMATE NUMBER: ${inmate.inmateNumber || 'Unknown'}\nRELEASE DATE: ${inmate.releaseDate || 'Unknown'}`
+          );
+          if (inmate.sourceUrl) structuredSources.push(inmate.sourceUrl);
+        }
+      } catch {
+        // Structured custody lookup is additive; canonical Pantheon retrieval continues.
+      }
+    }
   }
 
   // Network work begins only after identity clarification has completed.
@@ -178,19 +221,20 @@ export async function investigatePersonQuestion(
     const evidence = retrieval.evidence
       .filter(item => item.content?.trim())
       .slice(0, 12);
-    const sources = [...new Set(evidence.map(item => item.sourceUrl).filter(Boolean))].slice(0, 12);
-    const evidenceSummary = evidence.map((item, index) =>
+    const sources = [...new Set([...structuredSources, ...evidence.map(item => item.sourceUrl).filter(Boolean)])].slice(0, 12);
+    const webEvidence = evidence.map((item, index) =>
       `${index + 1}. SOURCE: ${item.sourceUrl}\nEVIDENCE: ${item.content.trim().slice(0, 1200)}`
-    ).join('\n\n').slice(0, 10_000);
+    );
+    const evidenceSummary = [...structuredEvidence, ...webEvidence].join('\n\n').slice(0, 10_000);
     return {
       evidenceSummary,
       sources,
       categories,
       fullBackgroundReportRequested: false,
-      coverageLimited: !retrieval.available || evidence.length === 0,
+      coverageLimited: !retrieval.available || (evidence.length === 0 && structuredEvidence.length === 0),
       coverageNote: !retrieval.available
         ? retrieval.reason || 'Pantheon retrieval was unavailable for one or more requested sources.'
-        : evidence.length === 0
+        : evidence.length === 0 && structuredEvidence.length === 0
           ? 'Pantheon completed the bounded live lookup but accepted no verified subject-specific evidence. This is not proof that no record exists.'
           : undefined,
     };
