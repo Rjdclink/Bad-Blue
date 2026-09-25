@@ -843,6 +843,8 @@ must(
     pantheonInvestigation.includes('depth: 1') &&
     pantheonInvestigation.includes('budgetMs: 2_200') &&
     pantheonInvestigation.includes('fullBackgroundReportRequested') &&
+    pantheonInvestigation.includes('needsIdentityClarification?: boolean') &&
+    orchestrator.includes('initialPantheon?.needsIdentityClarification && initialPantheon.clarification') &&
     orchestrator.includes('investigatePersonQuestion(cleanPrompt') &&
     orchestrator.includes('const initialPantheon = await pantheonInvestigationPromise;') &&
     !orchestrator.includes('new Promise<null>(resolve => setTimeout(() => resolve(null), 60))') &&
