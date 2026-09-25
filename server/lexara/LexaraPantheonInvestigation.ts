@@ -59,7 +59,7 @@ function requestedCategories(prompt: string): PantheonBackgroundCategory[] {
   return [...categories];
 }
 
-function hasEnoughIdentityContext(text: string): boolean {
+export function hasEnoughIdentityContext(text: string): boolean {
   const properNames = text.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2}\b/g) || [];
   return properNames.length > 0 && IDENTIFIER_PATTERN.test(text);
 }
@@ -83,8 +83,9 @@ export async function investigatePersonQuestion(
   const fullBackgroundReportRequested = FULL_REPORT_PATTERN.test(prompt);
   const combined = conversationText(prompt, context);
   const categories = requestedCategories(prompt);
+  const identityContext = hasEnoughIdentityContext(combined);
 
-  if (!hasEnoughIdentityContext(combined)) {
+  if (!identityContext) {
     return { clarification: clarificationFor(prompt), sources: [], categories, fullBackgroundReportRequested };
   }
 
@@ -101,6 +102,7 @@ export async function investigatePersonQuestion(
 
   const registryTargets = categories
     .flatMap(category => buildPantheonCategoryTargets(category, combined, context.jurisdiction, 8))
+    .filter(target => target.subjectScoped || target.sourceKind === 'api' || target.sourceKind === 'search')
     .filter((target, index, all) => all.findIndex(candidate => candidate.url === target.url) === index)
     .slice(0, 10);
 
@@ -112,6 +114,7 @@ export async function investigatePersonQuestion(
     );
     discoveredUrls = discovery.sources
       .filter(url => /^https?:\/\//i.test(url))
+      .filter(url => !/\/(?:terms|privacy|disclaimer)(?:[/?#]|$)/i.test(url))
       .slice(0, 6);
   } catch {
     // Dynamic discovery is supplemental. Trusted registry sources remain usable.
