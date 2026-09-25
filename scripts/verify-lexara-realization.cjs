@@ -834,6 +834,8 @@ must(
     pantheonInvestigation.includes("purpose: 'lexara_legal_research'") &&
     pantheonInvestigation.includes('fullBackgroundReportRequested') &&
     orchestrator.includes('investigatePersonQuestion(cleanPrompt') &&
+    orchestrator.includes('const initialPantheon = await pantheonInvestigationPromise;') &&
+    !orchestrator.includes('new Promise<null>(resolve => setTimeout(() => resolve(null), 60))') &&
     orchestrator.includes('formatPantheonInvestigationForSystem(pantheonInvestigation)'),
   'LEXARA identifies the subject before targeted Pantheon research, scopes the requested record categories, and permits dynamic source discovery without silently running a full report',
 );
