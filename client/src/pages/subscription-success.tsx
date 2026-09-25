@@ -38,11 +38,11 @@ export default function SubscriptionSuccess() {
     const blocked = ["suspended", "past_due", "canceled", "expired"].includes(status);
     if (user.isMasterBypass === true || (user.hasPaidForAccess === true && !blocked)) {
       setState("active");
-      setMessage("Subscription verified. Opening your LegalWhat law library...");
+      setMessage("Subscription verified. Opening your LEXARA consultation...");
       window.sessionStorage.removeItem("legalwhat_pending_square_order_id");
       await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
       await queryClient.refetchQueries({ queryKey: ["/api/auth/user"] });
-      setLocation(user.redirectRoute || "/welcome", { replace: true });
+      setLocation("/lexara-consent", { replace: true });
       return true;
     }
 
@@ -77,11 +77,11 @@ export default function SubscriptionSuccess() {
 
         if (data.active === true) {
           setState("active");
-          setMessage("Subscription verified. Opening your LegalWhat law library...");
+          setMessage("Subscription verified. Opening your LEXARA consultation...");
           window.sessionStorage.removeItem("legalwhat_pending_square_order_id");
           await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
           await queryClient.refetchQueries({ queryKey: ["/api/auth/user"] });
-          setLocation(data.redirectTo || "/welcome", { replace: true });
+          setLocation("/lexara-consent", { replace: true });
           return;
         }
 
