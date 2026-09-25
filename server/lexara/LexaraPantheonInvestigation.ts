@@ -71,15 +71,27 @@ function clarificationFor(prompt: string): string {
     : 'I can check that. Give me the person’s full name and one or two identifying details such as approximate age or date of birth and the city/state where the person lives or has lived.';
 }
 
-export function shouldUsePantheonForPersonQuestion(prompt: string): boolean {
-  return PERSON_RECORD_PATTERN.test(prompt);
+export function shouldUsePantheonForPersonQuestion(
+  prompt: string,
+  context: LexaraPersonInvestigationContext = {},
+): boolean {
+  if (PERSON_RECORD_PATTERN.test(prompt)) return true;
+  // Follow-up identifiers such as "he is 42 and lives in Iowa" must continue a
+  // person-record investigation, but ordinary legal conversation must not be
+  // diverted merely because an older turn happened to mention a person record.
+  const recentUserTurns = (context.previousMessages || [])
+    .filter(message => message.role === 'user')
+    .slice(-2)
+    .map(message => message.content || '')
+    .join(' ');
+  return PERSON_RECORD_PATTERN.test(recentUserTurns) && IDENTIFIER_PATTERN.test(prompt);
 }
 
 export async function investigatePersonQuestion(
   prompt: string,
   context: LexaraPersonInvestigationContext = {},
 ): Promise<LexaraPersonInvestigation | null> {
-  if (!shouldUsePantheonForPersonQuestion(prompt)) return null;
+  if (!shouldUsePantheonForPersonQuestion(prompt, context)) return null;
   const fullBackgroundReportRequested = FULL_REPORT_PATTERN.test(prompt);
   const combined = conversationText(prompt, context);
   const categories = requestedCategories(prompt);
