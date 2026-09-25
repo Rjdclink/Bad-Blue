@@ -89,19 +89,19 @@ function categoryDiscoveryTerms(categories: readonly PantheonBackgroundCategory[
 }
 
 export function hasEnoughIdentityContext(text: string): boolean {
-  const properNames = text.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}\b/g) || [];
+  const properNames = text.match(new RegExp(PERSON_NAME_ONLY_PATTERN.source, 'g')) || [];
   const specificFullName = properNames.some(name => name.trim().split(/\s+/).length >= 3);
   return properNames.length > 0 && (IDENTIFIER_PATTERN.test(text) || specificFullName);
 }
 
 function clarificationFor(prompt: string): string {
-  const name = (prompt.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2}\b/) || [])[0];
+  const name = (prompt.match(PERSON_NAME_ONLY_PATTERN) || [])[0];
   return name
     ? `I can check that. To make sure I investigate the right ${name}, give me one or two identifying details such as approximate age or date of birth and the city/state where the person lives or has lived.`
     : 'I can check that. Give me the person’s full name and one or two identifying details such as approximate age or date of birth and the city/state where the person lives or has lived.';
 }
 function extractPersonName(text: string): { firstName?: string; middleName?: string; lastName?: string } {
-  const names = text.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2}\b/g) || [];
+  const names = text.match(new RegExp(PERSON_NAME_ONLY_PATTERN.source, 'g')) || [];
   const candidate = names.find(value => !/^(Where|When|Has|Does|Is|How|What|Pantheon|Lexara)\b/.test(value));
   if (!candidate) return {};
   const parts = candidate.trim().split(/\s+/);
