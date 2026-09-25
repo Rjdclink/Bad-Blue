@@ -79,8 +79,9 @@ function requestedCategories(prompt: string): PantheonBackgroundCategory[] {
 }
 
 export function hasEnoughIdentityContext(text: string): boolean {
-  const properNames = text.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2}\b/g) || [];
-  return properNames.length > 0 && IDENTIFIER_PATTERN.test(text);
+  const properNames = text.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}\b/g) || [];
+  const specificFullName = properNames.some(name => name.trim().split(/\s+/).length >= 3);
+  return properNames.length > 0 && (IDENTIFIER_PATTERN.test(text) || specificFullName);
 }
 
 function clarificationFor(prompt: string): string {
