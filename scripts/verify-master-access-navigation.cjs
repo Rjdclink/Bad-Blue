@@ -21,7 +21,7 @@ const panelPaths = [...navigator.matchAll(/\{\s*label:\s*'[^']+',\s*path:\s*'([^
 const panelSet = new Set(panelPaths);
 
 assert(panelPaths.length === panelSet.size, "Master panel navigator contains duplicate canonical paths");
-assert(panelPaths[0] === "/welcome", "Master traversal must start on LegalWhat /welcome");
+assert(panelPaths[0] === "/lexara-consent", "Master traversal must start on LegalWhat LEXARA consent");
 assert(navigator.includes("% MASTER_PANELS.length"), "Master panel Back/Forward traversal must wrap around");
 assert(navigator.includes("aria-label=\"Previous master panel\""), "Master Back button is missing");
 assert(navigator.includes("aria-label=\"Next master panel\""), "Master Forward button is missing");
