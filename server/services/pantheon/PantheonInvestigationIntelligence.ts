@@ -91,7 +91,7 @@ export function buildPantheonInvestigationIntelligence(input: {
     confidence: 1,
   }];
   const edges: PantheonInvestigationIntelligence['identityGraph']['edges'] = [];
-  const mappings = new Map<string, Set<string>>();
+  const mappings = new Map<string, { evidenceIds: Set<string>; sourceHosts: Set<string> }>();
   const current: PantheonInvestigationIntelligence['factIndexes']['current'] = [];
   const historical: PantheonInvestigationIntelligence['factIndexes']['historical'] = [];
   const timeline: PantheonInvestigationIntelligence['timeline'] = [];
@@ -109,7 +109,12 @@ export function buildPantheonInvestigationIntelligence(input: {
     const nodeId = stableId('entity', claimType, String(claim.normalizedValue || value).toLowerCase());
     const isHistorical = /historical|former|previous|timeline/i.test(`${category} ${claimType}`);
     nodes.push({ id: nodeId, type: claimType, value: value.slice(0, 300), current: !isHistorical, ...(effectiveAt ? { effectiveAt } : {}), confidence: Math.max(0, Math.min(1, Number(source.confidence) || 0)) });
-    edges.push({ id: stableId('edge', subjectNodeId, nodeId, citationId), from: subjectNodeId, to: nodeId, type: 'evidence-backed-claim', hop: 1, citationId });
+    const edgeType = /relative|family|associate|relationship|household/i.test(`${category} ${claimType}`)
+      ? 'evidence-backed-relationship'
+      : /historical|timeline|date|vital/i.test(`${category} ${claimType}`)
+        ? 'evidence-backed-timeline'
+        : 'evidence-backed-claim';
+    edges.push({ id: stableId('edge', subjectNodeId, nodeId, citationId), from: subjectNodeId, to: nodeId, type: edgeType, hop: 1, citationId });
     const indexItem = { claimKey, value: value.slice(0, 500), ...(effectiveAt ? { effectiveAt } : {}), citationId };
     (isHistorical ? historical : current).push(indexItem);
     if (effectiveAt) timeline.push({ at: effectiveAt, label: value.slice(0, 300), category, citationId });
@@ -117,9 +122,12 @@ export function buildPantheonInvestigationIntelligence(input: {
     const group = claimGroups.get(claimKey) || [];
     group.push({ value: String(claim.normalizedValue || value).toLowerCase(), citationId });
     claimGroups.set(claimKey, group);
-    const mapped = mappings.get(nodeId) || new Set<string>();
-    mapped.add(String(data.evidenceId || citationId));
+    const mapped = mappings.get(nodeId) || { evidenceIds: new Set<string>(), sourceHosts: new Set<string>() };
+    mapped.evidenceIds.add(String(data.evidenceId || citationId));
+    const mappedHost = hostFor(data.url || source.url);
+    if (mappedHost && mappedHost !== 'unknown') mapped.sourceHosts.add(mappedHost);
     mappings.set(nodeId, mapped);
+
   }
 
   const contradictions = [...claimGroups.entries()].flatMap(([claimKey, items]) => {
@@ -160,20 +168,34 @@ export function buildPantheonInvestigationIntelligence(input: {
     quality.confidences.push(Math.max(0, Math.min(1, Number(source.confidence) || 0)));
     sourceQualityMap.set(host, quality);
   }
-  const sourceQuality = [...sourceQualityMap.entries()].map(([host, quality]) => ({
-    host,
-    attempts: quality.attempts,
-    succeeded: quality.succeeded,
-    failed: quality.failed,
-    acceptedEvidence: quality.acceptedEvidence,
-    successRate: quality.attempts ? quality.succeeded / quality.attempts : 0,
-    failureRate: quality.attempts ? quality.failed / quality.attempts : 0,
-    completenessRate: quality.attempts ? Math.min(1, quality.acceptedEvidence / quality.attempts) : 0,
-    averageConfidence: quality.confidences.length ? quality.confidences.reduce((sum, value) => sum + value, 0) / quality.confidences.length : 0,
-    accuracyScore: quality.confidences.length ? quality.confidences.reduce((sum, value) => sum + value, 0) / quality.confidences.length : 0,
-    ...(quality.latest ? { freshnessHours: Math.max(0, (Date.now() - new Date(quality.latest).getTime()) / 3_600_000) } : {}),
-    ...(quality.latest ? { latestRetrieval: quality.latest } : {}),
-  })).sort((left, right) => right.acceptedEvidence - left.acceptedEvidence || left.host.localeCompare(right.host));
+  const previousQuality = new Map((input.previous?.sourceQuality || []).map(item => [item.host, item]));
+  const sourceQuality = [...sourceQualityMap.entries()].map(([host, quality]) => {
+    const prior = previousQuality.get(host);
+    const attempts = quality.attempts + Math.max(0, Number(prior?.attempts || 0));
+    const succeeded = quality.succeeded + Math.max(0, Number(prior?.succeeded || 0));
+    const failed = quality.failed + Math.max(0, Number(prior?.failed || 0));
+    const acceptedEvidence = quality.acceptedEvidence + Math.max(0, Number(prior?.acceptedEvidence || 0));
+    const currentConfidence = quality.confidences.length
+      ? quality.confidences.reduce((sum, value) => sum + value, 0) / quality.confidences.length
+      : undefined;
+    return {
+      host,
+      attempts,
+      succeeded,
+      failed,
+      acceptedEvidence,
+      successRate: attempts ? succeeded / attempts : 0,
+      failureRate: attempts ? failed / attempts : 0,
+      completenessRate: attempts ? Math.min(1, acceptedEvidence / attempts) : 0,
+      averageConfidence: currentConfidence ?? Math.max(0, Math.min(1, Number(prior?.averageConfidence || 0))),
+      accuracyScore: currentConfidence ?? Math.max(0, Math.min(1, Number(prior?.accuracyScore || 0))),
+      ...(quality.latest
+        ? { freshnessHours: Math.max(0, (Date.now() - new Date(quality.latest).getTime()) / 3_600_000), latestRetrieval: quality.latest }
+        : prior?.latestRetrieval
+          ? { latestRetrieval: prior.latestRetrieval }
+          : {}),
+    };
+  }).sort((left, right) => right.acceptedEvidence - left.acceptedEvidence || left.host.localeCompare(right.host));
 
   const searchScope = input.categoryOutcomes.map(outcome => {
     const attempted = outcome.urlLedger.filter(entry => entry.attempts > 0);
@@ -208,7 +230,11 @@ export function buildPantheonInvestigationIntelligence(input: {
       hopLimit: input.queryPlan.relationshipHopLimit,
       nodes: [...new Map(nodes.map(node => [node.id, node])).values()],
       edges: edges.filter(edge => edge.hop <= input.queryPlan.relationshipHopLimit),
-      entityMappings: [...mappings.entries()].map(([id, evidenceIds]) => ({ stableId: id, evidenceIds: [...evidenceIds], mergeState: 'separate-until-reviewed' as const })),
+      entityMappings: [...mappings.entries()].map(([id, mapping]) => ({
+        stableId: id,
+        evidenceIds: [...mapping.evidenceIds],
+        mergeState: mapping.sourceHosts.size > 1 ? 'verified-same-entity' as const : 'separate-until-reviewed' as const,
+      })),
     },
     factIndexes: { current, historical },
     timeline: timeline.sort((left, right) => left.at.localeCompare(right.at)),

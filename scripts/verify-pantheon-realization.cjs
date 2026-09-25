@@ -31,8 +31,27 @@ const birdOfPrey = read('server/services/crawlers/BirdOfPreyCrawler.ts');
 const starTrek = read('server/services/crawlers/StarTrekCrawler.ts');
 const trinity = read('server/services/crawlers/TrinityCrawlers.ts');
 const capabilityMatrix = read('server/services/pantheon/PantheonCrawlerCapabilityMatrix.ts');
+const frontierStore = read('server/services/pantheon/PantheonFrontierStore.ts');
+const investigationIntelligence = read('server/services/pantheon/PantheonInvestigationIntelligence.ts');
+const evidence = evidencePipeline;
 
 const checks = [
+  ['customer report contract remains exactly 30 categories with investigation intelligence projected into the PDF', categoryWorkflow.includes('PANTHEON_REPORT_CATEGORIES') && pdf.includes('canonicalCategories') && pdf.includes("'Relationship & Timeline Intelligence'") && pdf.includes('Evidence-Backed Relationship Diagram') && pdf.includes('Chronological Timeline') && pdf.includes('Evidence Conflicts Requiring Verification') && pdf.includes('Source Provenance')],
+
+  ['historical source quality actively feeds the next investigation scheduler', jobs.includes('previousSourceQuality: previousIntelligence?.sourceQuality') && categoryWorkflow.includes('priorQualityByHost') && categoryWorkflow.indexOf('learnedSourceScore(rightPrior) - learnedSourceScore(leftPrior)') < categoryWorkflow.indexOf('sourcePriority(right.authority) - sourcePriority(left.authority)')],
+
+  ['saved source-performance history influences later retrieval order without overriding capability routing', jobs.includes('previousSourceQuality: previousIntelligence?.sourceQuality') && categoryWorkflow.includes('previousSourceQuality?: readonly Array') && categoryWorkflow.includes('learnedSourceScore(rightPrior) - learnedSourceScore(leftPrior)') && categoryWorkflow.indexOf('learnedSourceScore(rightPrior) - learnedSourceScore(leftPrior)') < categoryWorkflow.indexOf('sourcePriority(right.authority) - sourcePriority(left.authority)')],
+
+  ['saved-search intelligence carries source-quality learning forward', investigationIntelligence.includes('input.previous?.sourceQuality') && investigationIntelligence.includes('previousQuality.get(host)') && investigationIntelligence.includes('acceptedEvidence + Math.max(0, Number(prior?.acceptedEvidence || 0))')],
+
+  ['entity promotion requires independent source hosts and graph edges preserve relationship/timeline semantics', investigationIntelligence.includes("mapping.sourceHosts.size > 1 ? 'verified-same-entity'") && investigationIntelligence.includes("'evidence-backed-relationship'") && investigationIntelligence.includes("'evidence-backed-timeline'")],
+
+  ['live frontier prioritizes capable historically productive authoritative subject-scoped sources', categoryWorkflow.includes('learnedSourceScore(rightPrior) - learnedSourceScore(leftPrior)') && categoryWorkflow.includes('sourcePriority(right.authority) - sourcePriority(left.authority)') && categoryWorkflow.includes('Number(right.subjectScoped === true) - Number(left.subjectScoped === true)')],
+
+  ['corroborated entity mappings promote only after independent source hosts agree', investigationIntelligence.includes("mapping.sourceHosts.size > 1 ? 'verified-same-entity'") && investigationIntelligence.includes("'separate-until-reviewed'")],
+
+  ['cross-source correlation is persisted with accepted evidence', evidencePipeline.includes('summarizePantheonCorrelations') && evidencePipeline.includes('corroboratedClaimCount') && categoryWorkflow.includes('const correlationSummary = summarizePantheonCorrelations(reportable)') && categoryWorkflow.includes('correlationSummary,')],
+
   ['three public scan choices are 10 20 30 minutes', config.includes("1: 10 * 60_000") && config.includes("2: 20 * 60_000") && config.includes("3: 30 * 60_000") && !config.includes("4: 30 * 60_000") && !selector.includes('PANTHEON_REPORT_DURATION_LABELS[4]') && !progressTracker.includes('EYE OF GOD')],
   ['scan intensity tracks selected duration', people.includes('1: 1200') && people.includes('2: 2820') && people.includes('3: 4500')],
   ['durable report status distinguishes missing jobs from temporary store outages', routes.includes('report_store_converging') && routes.includes("'report_job_gone'") && routes.includes('res.status(gone ? 410 : 404)') && reportStore.includes("state: 'temporarily_unavailable'") && reportStore.includes("state: 'not_found'")],

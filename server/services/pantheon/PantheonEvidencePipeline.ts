@@ -441,6 +441,47 @@ function rejectionReason(
   return resolvedEntity.matched ? undefined : 'subject_mismatch';
 }
 
+export interface PantheonCorrelationSummary {
+  corroboratedClaimCount: number;
+  crossCategoryClaimCount: number;
+  relationshipClaimCount: number;
+  timelineClaimCount: number;
+  independentDomainCount: number;
+}
+
+export function summarizePantheonCorrelations(items: readonly RetrievalEvidence[]): PantheonCorrelationSummary {
+  const claims = new Map<string, { domains: Set<string>; categories: Set<string> }>();
+  const allDomains = new Set<string>();
+  for (const item of items) {
+    const claim = claimFrom(item);
+    const host = sourceHost(item.sourceUrl);
+    if (host) allDomains.add(host);
+    if (!claim || claim.claimType === 'source_mention') continue;
+    const key = [claim.claimType, claim.normalizedValue].join('|');
+    const current = claims.get(key) || { domains: new Set<string>(), categories: new Set<string>() };
+    if (host) current.domains.add(host);
+    current.categories.add(claim.categoryLabel);
+    claims.set(key, current);
+  }
+  let corroboratedClaimCount = 0;
+  let crossCategoryClaimCount = 0;
+  let relationshipClaimCount = 0;
+  let timelineClaimCount = 0;
+  for (const [key, value] of claims) {
+    if (value.domains.size > 1) corroboratedClaimCount += 1;
+    if (value.categories.size > 1) crossCategoryClaimCount += 1;
+    if (/relative|associate|relationship/i.test(key)) relationshipClaimCount += 1;
+    if (/date|historical|timeline|vital/i.test(key)) timelineClaimCount += 1;
+  }
+  return {
+    corroboratedClaimCount,
+    crossCategoryClaimCount,
+    relationshipClaimCount,
+    timelineClaimCount,
+    independentDomainCount: allDomains.size,
+  };
+}
+
 export function requireVerifiedPantheonEvidence(items: readonly RetrievalEvidence[]): RetrievalEvidence[] {
   items.forEach(validatePantheonSourceResult);
   const rejected = items.filter(item =>

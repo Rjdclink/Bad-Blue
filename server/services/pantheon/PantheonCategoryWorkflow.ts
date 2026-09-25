@@ -26,6 +26,7 @@ import {
   processPantheonEvidence,
   dedupePantheonEvidence,
   requireVerifiedPantheonEvidence,
+  summarizePantheonCorrelations,
 } from './PantheonEvidencePipeline';
 import {
   finalizePantheonCategoryCapabilityOutcomes,
@@ -559,6 +560,7 @@ export interface PantheonCategoryWorkflowInput {
   signal?: AbortSignal;
   categoryConcurrency?: number;
   registrationAuthority?: PantheonRegistrationAuthority;
+  previousSourceQuality?: readonly Array<{ host: string; successRate: number; acceptedEvidence: number; averageConfidence: number; failureRate: number }>;
   onCategoryState?: (state: { index: number; label: string; phase: PantheonCategoryPhase; completedCategories: number }) => Promise<void>;
   onCategoryStart?: (state: { index: number; label: string; completedCategories: number }) => Promise<void>;
   onCategoryComplete?: (state: { index: number; label: string; completedCategories: number; outcome: PantheonCategoryOutcome; partialReport: PeopleSearchReport }) => Promise<void>;
@@ -976,12 +978,23 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
       state: entry.state,
     });
     await preparePantheonFrontier(schedulableEntries.map(frontierSeedFor));
+    const priorQualityByHost = new Map(
+      (input.previousSourceQuality || []).map(item => [item.host.toLowerCase().replace(/^www\./, ''), item]),
+    );
+    const learnedSourceScore = (item?: { successRate: number; acceptedEvidence: number; averageConfidence: number; failureRate: number }) =>
+      item ? (item.successRate * 120) + (Math.min(20, item.acceptedEvidence) * 4) + (item.averageConfidence * 80) - (item.failureRate * 100) : 0;
     const prioritizedTargets = urlLedger
       .filter(entry => entry.state === 'pending' || entry.state === 'retryable')
-      .sort((left, right) =>
-        capabilityWorkForSource(capabilityWorkLedger, right.url).length
+      .sort((left, right) => {
+        const leftPrior = priorQualityByHost.get(pantheonTelemetrySource(left.url).sourceHost.replace(/^www\./, ''));
+        const rightPrior = priorQualityByHost.get(pantheonTelemetrySource(right.url).sourceHost.replace(/^www\./, ''));
+        return capabilityWorkForSource(capabilityWorkLedger, right.url).length
           - capabilityWorkForSource(capabilityWorkLedger, left.url).length
-          || left.frontierOrder - right.frontierOrder)
+          || learnedSourceScore(rightPrior) - learnedSourceScore(leftPrior)
+          || sourcePriority(right.authority) - sourcePriority(left.authority)
+          || Number(right.subjectScoped === true) - Number(left.subjectScoped === true)
+          || left.frontierOrder - right.frontierOrder;
+      })
       .map(entry => entry.url);
     const activeUrls = new Set<string>(urlLedger.filter(entry => Number(entry.attempts || 0) > 0).map(entry => entry.url));
     const attemptedThisRun = new Set<string>();
@@ -1542,9 +1555,15 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
     const reportable = validation.accepted.filter(item =>
       PANTHEON_CRAWLER_CAPABILITY_MATRIX[item.capabilityId as PantheonCapabilityId]?.reportEvidenceEligible === true
     );
+    const correlationSummary = summarizePantheonCorrelations(reportable);
     const acceptedEvidence = reportable.map(item => ({
       ...item,
-      metadata: { ...(item.metadata || {}), reportCategory: category.label, categoryIndex: index },
+      metadata: {
+        ...(item.metadata || {}),
+        reportCategory: category.label,
+        categoryIndex: index,
+        correlationSummary,
+      },
     }));
 
     const crawlersUsed = [...new Set([

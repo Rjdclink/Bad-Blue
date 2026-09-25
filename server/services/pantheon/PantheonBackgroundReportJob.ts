@@ -237,6 +237,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       ...(registrationAuthority.enabled ? {} : { reason: registrationAuthority.unavailableReason }),
     });
 
+    const previousIntelligence = await loadPantheonSavedSearchSnapshot(input.userId, input.queryPlan.planId);
     console.log('[PANTHEON REPORT JOB] category collection started', { reportId: input.reportId, categories: PANTHEON_REPORT_CATEGORIES.length });
     const { report, categoryOutcomes } = await conductPantheonCategoryWorkflow({
       investigationId: input.reportId,
@@ -253,6 +254,7 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       initialCategoryStates: categoryStates,
       capabilityHealth,
       registrationAuthority,
+      previousSourceQuality: previousIntelligence?.sourceQuality,
       onCategoryState: async ({ index, label, phase }) => {
         const categoryState = categoryStates[index];
         if (categoryState) {
@@ -378,7 +380,6 @@ async function runPantheonReportJob(input: PantheonReportJobInput): Promise<void
       investigation,
       categories: categoryOutcomes,
     });
-    const previousIntelligence = await loadPantheonSavedSearchSnapshot(input.userId, input.queryPlan.planId);
     const investigationIntelligence = buildPantheonInvestigationIntelligence({
       report,
       categoryOutcomes,

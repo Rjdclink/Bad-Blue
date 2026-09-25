@@ -110,4 +110,11 @@ assert.match(jobSource, /recoveryAttempt/);
 assert.match(jobSource, /persistPantheonSavedSearchSnapshot/);
 
 await rm(snapshotDirectory, { recursive: true, force: true });
+
+assert.ok(intelligence.identityGraph.entityMappings.every(mapping =>
+  mapping.mergeState !== 'verified-same-entity' || mapping.evidenceIds.length > 1
+), 'verified entity merges retain multiple evidence IDs');
+assert.ok(intelligence.identityGraph.edges.every(edge =>
+  ['evidence-backed-claim','evidence-backed-relationship','evidence-backed-timeline'].includes(edge.type)
+), 'identity graph preserves claim, relationship, and timeline edge semantics');
 console.log('Pantheon retained blueprint items 1-66 behavioral verification passed.');

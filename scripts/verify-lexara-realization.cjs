@@ -33,6 +33,7 @@ must(
 const realtimeVoiceClient = read('client/src/lib/lexaraRealtimeVoiceClient.ts');
 const lexaraConversationOrchestrator = read('server/lexara/LexaraConversationOrchestrator.ts');
 const lexaraPantheonInvestigation = read('server/lexara/LexaraPantheonInvestigation.ts');
+const inmateSearchAggregator = read('server/services/inmateSearch/InmateSearchAggregator.ts');
 const liveAvatarReview = read('docs/LEXARA_LIVE_AVATAR_100_SOURCE_REVIEW_20260920.md');
 const embodiedConversationReview = read('docs/LEXARA_EMBODIED_CONVERSATION_50_SOURCE_BLUEPRINT_20260920.md');
 const realtimeVoiceGateway = read('server/lexara/LexaraRealtimeVoiceGateway.ts');
@@ -790,6 +791,106 @@ must(
     lexaraConversationOrchestrator.includes('pantheonSourceCount:') &&
     lexaraConversationOrchestrator.includes('pantheonCoverageLimited:'),
   'Lexara production telemetry proves Pantheon category/source/coverage handoff per live turn',
+);
+must(
+  pantheonInvestigation.includes("import { searchInmates }") &&
+    pantheonInvestigation.includes("STRUCTURED CUSTODY SOURCE:") &&
+    pantheonInvestigation.includes("inmate.facilityName") &&
+    pantheonInvestigation.includes("inmate.custodyStatus"),
+  'Lexara custody questions consume verified structured inmate results before generic Pantheon corroboration',
+);
+must(
+  pantheonInvestigation.includes("date\\s+of\\s+death") &&
+    pantheonInvestigation.includes("['vital-records','historical','chronology','news','family-probate']"),
+  'Lexara death questions route through Pantheon vital historical chronology news and probate evidence',
+);
+must(
+  pantheonInvestigation.includes('incarcerat(?:e|ed|ion)?') &&
+    pantheonInvestigation.includes('wife|die|died|death|deceased|obituary') &&
+    pantheonInvestigation.includes('where\\s+(?:does|did)\\s+.+?\\s+live'),
+  'Lexara recognizes natural incarceration residence and death question wording',
+);
+must(
+  pantheonInvestigation.includes("STRUCTURED CUSTODY SOURCE:") &&
+    pantheonInvestigation.includes("searchInmates({"),
+  'Lexara consumes structured custody records for incarceration questions',
+);
+must(
+  pantheonInvestigation.includes("incarcerat(?:e|ed|ion)?") &&
+    pantheonInvestigation.includes("where\\s+(?:does|did)\\s+.+?\\s+live") &&
+    pantheonInvestigation.includes("wife|die|died|death|deceased|obituary"),
+  'natural incarceration residence and death wording routes to Pantheon',
+);
+must(
+  inmateSearchAggregator.includes("INMATE_ENABLE_STATE_DOC', true") &&
+    inmateSearchAggregator.includes("purpose: 'state_doc_inmate_search'") &&
+    inmateSearchAggregator.includes("return [];"),
+  'official state corrections discovery participates by default while person-level custody results fail closed without structured proof',
+);
+must(
+  lexaraPantheonInvestigation.includes('Do not state that a record belongs to the subject unless the identifiers support that match.') &&
+    lexaraPantheonInvestigation.includes('NEVER name, infer, recommend, or substitute a county'),
+  'Lexara person-record handoff preserves identity and county truth boundaries',
+);
+must(
+  lexaraPantheonInvestigation.includes('specificFullName') &&
+    lexaraPantheonInvestigation.includes('split(/\\s+/).length >= 3'),
+  'specific three-or-more-part names can enter bounded identity research without forcing a redundant identifier prompt',
+);
+must(
+  lexaraPantheonInvestigation.includes("'sheriff jail roster'") &&
+    lexaraPantheonInvestigation.includes("'criminal court records'") &&
+    lexaraPantheonInvestigation.includes("'mortgage record'") &&
+    lexaraPantheonInvestigation.includes("'death record'"),
+  'person-record discovery uses record-type-specific official-source terms for custody criminal property and vital records',
+);
+
+for (const question of [
+  'Where is Jordan Michael Carter incarcerated?',
+  'Is Sarah Loretta Graves married?',
+  "How much is William Rodney Lawrence's mortgage?",
+  'Where does Tessa Gracie Bendland live?',
+  'When did Brian Kenneth Lee Clinkenbeard die?',
+  'Has Jeremy Scott Rose ever been arrested and what were the charged crimes?',
+]) {
+  must(
+    lexaraPantheonInvestigation.includes('PERSON_RECORD_PATTERN') &&
+      lexaraPantheonInvestigation.includes('CATEGORY_RULES') &&
+      lexaraPantheonInvestigation.includes('requestedCategories(prompt)'),
+    'natural-language person-record examples route through Pantheon: ' + question,
+  );
+}
+must(
+  lexaraPantheonInvestigation.includes("structured_custody_budget_exhausted") &&
+    lexaraPantheonInvestigation.includes('1_200'),
+  'structured custody lookup is bounded so slow inmate providers cannot stall Lexara',
+);
+must(
+  lexaraPantheonInvestigation.includes("from '../services/pantheon/PantheonEntityResolution'") &&
+    lexaraPantheonInvestigation.includes('matchPantheonSubject(item, resolvedName, context.jurisdiction).matched'),
+  'Lexara accepts Pantheon person-record evidence only after subject matching',
+);
+must(
+  lexaraPantheonInvestigation.includes("'vital-records','credentials','professional-discipline','courts','criminal','corrections','historical','chronology','news'") &&
+    lexaraPantheonInvestigation.includes("'professional license lookup','license verification','disciplinary order','reinstatement order'"),
+  'person fact research broadens across record families rather than using a fact-specific single source',
+);
+must(
+  lexaraPantheonInvestigation.includes('Fast path first. Only unresolved person facts') &&
+    lexaraPantheonInvestigation.includes('timeout: 450') &&
+    lexaraPantheonInvestigation.includes('budgetMs: 700') &&
+    lexaraPantheonInvestigation.includes('evidence.length === 0 && structuredEvidence.length === 0'),
+  'recursive person research broadens only when unresolved and stays on a bounded low-latency second stage',
+);
+must(
+  lexaraPantheonInvestigation.includes('Separate historical status from current status') &&
+    lexaraPantheonInvestigation.includes('label it as an inference'),
+  'Lexara preserves current-versus-historical truth and labels derived person facts',
+);
+must(
+  orchestrator.includes('Do not refuse person-record research merely because the subject is a private individual') &&
+    orchestrator.includes('application supplies verified evidence from a source it is authorized to access'),
+  'Lexara has no blanket private-individual refusal when verified authorized evidence is supplied',
 );
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA realization verification passed.');
