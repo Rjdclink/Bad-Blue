@@ -988,9 +988,9 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
           item ? (item.successRate * 120) + (Math.min(20, item.acceptedEvidence) * 4) + (item.averageConfidence * 80) - (item.failureRate * 100) : 0;
         return capabilityWorkForSource(capabilityWorkLedger, right.url).length
           - capabilityWorkForSource(capabilityWorkLedger, left.url).length
-          || learnedScore(rightPrior) - learnedScore(leftPrior)
           || sourcePriority(right.authority) - sourcePriority(left.authority)
           || Number(right.subjectScoped === true) - Number(left.subjectScoped === true)
+          || learnedScore(rightPrior) - learnedScore(leftPrior)
           || left.frontierOrder - right.frontierOrder;
       })
       .map(entry => entry.url);
