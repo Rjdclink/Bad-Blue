@@ -40,7 +40,7 @@ export default function Login() {
     const data = await response.json();
 
     if (data.alreadyActive) {
-      setLocation(data.redirectUrl || "/welcome", { replace: true });
+      setLocation(data.redirectUrl || "/lexara-consent", { replace: true });
       return;
     }
 
@@ -86,7 +86,7 @@ export default function Login() {
     }
     await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
 
-    const redirectPath = data.accessZone ? (data.redirectRoute || "/welcome") : "/welcome";
+    const redirectPath = data.accessZone ? (data.redirectRoute || "/lexara-consent") : "/lexara-consent";
     toast({
       title: "Login successful",
       description: data.accessZone ? "Master access enabled." : "Welcome back!",
