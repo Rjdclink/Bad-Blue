@@ -875,6 +875,13 @@ must(
     lexaraPantheonInvestigation.includes("'professional license lookup','license verification','disciplinary order','reinstatement order'"),
   'person fact research broadens across record families rather than using a fact-specific single source',
 );
+must(
+  lexaraPantheonInvestigation.includes('Fast path first. Only unresolved person facts') &&
+    lexaraPantheonInvestigation.includes('timeout: 450') &&
+    lexaraPantheonInvestigation.includes('budgetMs: 700') &&
+    lexaraPantheonInvestigation.includes('evidence.length === 0 && structuredEvidence.length === 0'),
+  'recursive person research broadens only when unresolved and stays on a bounded low-latency second stage',
+);
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA realization verification passed.');
 // Practice-area specialization gate (40-book LegalWhat library).

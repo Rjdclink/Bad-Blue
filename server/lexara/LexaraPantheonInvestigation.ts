@@ -238,10 +238,42 @@ export async function investigatePersonQuestion(
     });
     const resolvedPerson = extractPersonName(combined);
     const resolvedName = [resolvedPerson.firstName, resolvedPerson.middleName, resolvedPerson.lastName].filter(Boolean).join(' ');
-    const evidence = retrieval.evidence
+    let evidence = retrieval.evidence
       .filter(item => item.content?.trim())
       .filter(item => resolvedName && matchPantheonSubject(item, resolvedName, context.jurisdiction).matched)
       .slice(0, 12);
+
+    // Fast path first. Only unresolved person facts spend a small second-stage
+    // discovery budget, so recursive breadth does not tax ordinary successful turns.
+    if (evidence.length === 0 && structuredEvidence.length === 0 && !context.signal?.aborted) {
+      try {
+        const broadened = await orchestratedWebSearch(
+          `${resolvedName || combined} ${categoryDiscoveryTerms(categories)} ${context.jurisdiction || ''} official record archive database`,
+          { useOnlinePlugin: true, timeout: 450, signal: context.signal },
+        );
+        const broadenedTargets = broadened.sources
+          .filter(url => /^https?:\/\//i.test(url))
+          .filter(url => !targets.includes(url))
+          .slice(0, 4);
+        if (broadenedTargets.length) {
+          const secondPass = await pantheonRetrievalAdapter.retrieve({
+            purpose: 'lexara_legal_research',
+            targets: broadenedTargets,
+            depth: 1,
+            budgetMs: 700,
+            subject: combined,
+            location: context.jurisdiction,
+            signal: context.signal,
+          });
+          evidence = secondPass.evidence
+            .filter(item => item.content?.trim())
+            .filter(item => resolvedName && matchPantheonSubject(item, resolvedName, context.jurisdiction).matched)
+            .slice(0, 12);
+        }
+      } catch {
+        // Recursive broadening is opportunistic and never blocks the normal answer path.
+      }
+    }
     const sources = [...new Set([...structuredSources, ...evidence.map(item => item.sourceUrl).filter(Boolean)])].slice(0, 12);
     const webEvidence = evidence.map((item, index) =>
       `${index + 1}. SOURCE: ${item.sourceUrl}\nEVIDENCE: ${item.content.trim().slice(0, 1200)}`
