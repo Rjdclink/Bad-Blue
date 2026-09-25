@@ -26,6 +26,7 @@ import {
   processPantheonEvidence,
   dedupePantheonEvidence,
   requireVerifiedPantheonEvidence,
+  summarizePantheonCorrelations,
 } from './PantheonEvidencePipeline';
 import {
   finalizePantheonCategoryCapabilityOutcomes,
@@ -1542,9 +1543,15 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
     const reportable = validation.accepted.filter(item =>
       PANTHEON_CRAWLER_CAPABILITY_MATRIX[item.capabilityId as PantheonCapabilityId]?.reportEvidenceEligible === true
     );
+    const correlationSummary = summarizePantheonCorrelations(reportable);
     const acceptedEvidence = reportable.map(item => ({
       ...item,
-      metadata: { ...(item.metadata || {}), reportCategory: category.label, categoryIndex: index },
+      metadata: {
+        ...(item.metadata || {}),
+        reportCategory: category.label,
+        categoryIndex: index,
+        correlationSummary,
+      },
     }));
 
     const crawlersUsed = [...new Set([
