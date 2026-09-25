@@ -104,7 +104,7 @@ export default function PeopleFinderPage() {
         <AppHeader 
           title="People Finder"
           subtitle="Global Identity Intelligence"
-          fallbackRoute="/welcome"
+          fallbackRoute="/lexara-consent"
         />
         
         <div className="container max-w-7xl mx-auto px-4 py-4">
@@ -211,7 +211,7 @@ export default function PeopleFinderPage() {
         
         {/* Main Search Component */}
         <PeopleFinderSearch 
-          onBack={() => setLocation("/welcome")} 
+          onBack={() => setLocation("/lexara-consent")} 
           onResults={handleSearchResults}
         />
 
