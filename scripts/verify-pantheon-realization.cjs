@@ -36,6 +36,8 @@ const investigationIntelligence = read('server/services/pantheon/PantheonInvesti
 const evidence = evidencePipeline;
 
 const checks = [
+  ['historical source quality actively feeds the next investigation scheduler', jobs.includes('previousIntelligenceForPriority') && jobs.includes('previousSourceQuality: previousIntelligenceForPriority?.sourceQuality') && categoryWorkflow.includes('priorQualityByHost') && categoryWorkflow.indexOf('learnedSourceScore(rightPrior) - learnedSourceScore(leftPrior)') < categoryWorkflow.indexOf('sourcePriority(right.authority) - sourcePriority(left.authority)')],
+
   ['saved source-performance history influences later retrieval order without overriding capability or authority gates', jobs.includes('previousSourceQuality: previousIntelligence?.sourceQuality') && categoryWorkflow.includes('previousSourceQuality?: readonly Array') && categoryWorkflow.includes('learnedSourceScore(rightPrior) - learnedSourceScore(leftPrior)') && categoryWorkflow.indexOf('sourcePriority(right.authority) - sourcePriority(left.authority)') < categoryWorkflow.indexOf('learnedSourceScore(rightPrior) - learnedSourceScore(leftPrior)')],
 
   ['saved-search intelligence carries source-quality learning forward', investigationIntelligence.includes('input.previous?.sourceQuality') && investigationIntelligence.includes('previousQuality.get(host)') && investigationIntelligence.includes('acceptedEvidence + Math.max(0, Number(prior?.acceptedEvidence || 0))')],
