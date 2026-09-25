@@ -328,7 +328,8 @@ must(
     realtimeVoiceGateway.includes("url.searchParams.set('speed', '1.0')") &&
     realtimeVoiceGateway.includes("url.searchParams.set('expressivity', '0')") &&
     realtimeVoiceGateway.includes('const DEFAULT_OUTPUT_SAMPLE_RATE = 48_000') &&
-    synthesis.includes('lexaraRealtimeVoiceClient.isSpeechOutputReady()') &&
+    synthesis.includes('lexaraRealtimeVoiceClient.ensureSpeechOutputReady()') &&
+    synthesis.includes('if (realtimeOutputReady)') &&
     synthesis.includes('await lexaraRealtimeVoiceClient.speak(cleanText') &&
     synthesis.includes('await speakWithServer(cleanText, options, turnId)') &&
     synthesis.includes('/api/lexara/tts/session'),
