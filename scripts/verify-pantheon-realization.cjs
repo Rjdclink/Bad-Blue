@@ -32,9 +32,12 @@ const starTrek = read('server/services/crawlers/StarTrekCrawler.ts');
 const trinity = read('server/services/crawlers/TrinityCrawlers.ts');
 const capabilityMatrix = read('server/services/pantheon/PantheonCrawlerCapabilityMatrix.ts');
 const frontierStore = read('server/services/pantheon/PantheonFrontierStore.ts');
+const investigationIntelligence = read('server/services/pantheon/PantheonInvestigationIntelligence.ts');
 const evidence = evidencePipeline;
 
 const checks = [
+  ['corroborated entity mappings promote only after multiple evidence IDs', investigationIntelligence.includes("evidenceIds.size > 1 ? 'verified-same-entity'") && investigationIntelligence.includes("'separate-until-reviewed'")],
+
   ['cross-source correlation is persisted with accepted evidence', evidencePipeline.includes('summarizePantheonCorrelations') && evidencePipeline.includes('corroboratedClaimCount') && categoryWorkflow.includes('const correlationSummary = summarizePantheonCorrelations(reportable)') && categoryWorkflow.includes('correlationSummary,')],
 
   ['three public scan choices are 10 20 30 minutes', config.includes("1: 10 * 60_000") && config.includes("2: 20 * 60_000") && config.includes("3: 30 * 60_000") && !config.includes("4: 30 * 60_000") && !selector.includes('PANTHEON_REPORT_DURATION_LABELS[4]') && !progressTracker.includes('EYE OF GOD')],
