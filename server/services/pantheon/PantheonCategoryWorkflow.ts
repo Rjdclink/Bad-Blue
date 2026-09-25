@@ -982,6 +982,8 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
       .sort((left, right) =>
         capabilityWorkForSource(capabilityWorkLedger, right.url).length
           - capabilityWorkForSource(capabilityWorkLedger, left.url).length
+          || sourcePriority(right.authority) - sourcePriority(left.authority)
+          || Number(right.subjectScoped === true) - Number(left.subjectScoped === true)
           || left.frontierOrder - right.frontierOrder)
       .map(entry => entry.url);
     const activeUrls = new Set<string>(urlLedger.filter(entry => Number(entry.attempts || 0) > 0).map(entry => entry.url));
