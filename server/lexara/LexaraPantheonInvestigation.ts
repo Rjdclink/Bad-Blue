@@ -77,6 +77,16 @@ function requestedCategories(prompt: string): PantheonBackgroundCategory[] {
   categories.add('identity-resolution');
   return [...categories];
 }
+function categoryDiscoveryTerms(categories: readonly PantheonBackgroundCategory[]): string {
+  const terms = new Set<string>();
+  if (categories.includes('corrections')) ['inmate locator','offender search','sheriff jail roster','detention center inmate search'].forEach(value => terms.add(value));
+  if (categories.includes('criminal') || categories.includes('arrests')) ['criminal court records','case search','arrest records'].forEach(value => terms.add(value));
+  if (categories.includes('courts')) ['court docket','case search'].forEach(value => terms.add(value));
+  if (categories.includes('property') || categories.includes('financial-public')) ['county recorder','register of deeds','mortgage record','property records'].forEach(value => terms.add(value));
+  if (categories.includes('vital-records')) ['marriage record','divorce record','death record','vital records'].forEach(value => terms.add(value));
+  if (categories.includes('family-probate')) ['probate court','estate record','obituary'].forEach(value => terms.add(value));
+  return [...terms].join(' ');
+}
 
 export function hasEnoughIdentityContext(text: string): boolean {
   const properNames = text.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}\b/g) || [];
@@ -188,7 +198,7 @@ export async function investigatePersonQuestion(
   let discoveredUrls: string[] = [];
   try {
     const discovery = await orchestratedWebSearch(
-      `${combined} public records ${categories.join(' ')} official government database search`,
+      `${combined} public records ${categories.join(' ')} ${categoryDiscoveryTerms(categories)} official government database search`,
       { useOnlinePlugin: true, timeout: 500, signal: context.signal },
     );
     discoveredUrls = discovery.sources
