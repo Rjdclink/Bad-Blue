@@ -249,12 +249,11 @@ export default function Landing() {
               Legal What? supports AI-assisted legal information, research, issue spotting, and document workflows across the following 40 practice areas.
             </p>
           </div>
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="flex flex-wrap justify-center gap-2 max-w-6xl mx-auto">
             {LAW_TYPE_DATA.map((area) => (
-              <article key={area.id} className="rounded-xl border bg-background p-5">
-                <h3 className="font-semibold text-lg mb-2">{area.name}</h3>
-                <p className="text-sm text-muted-foreground leading-relaxed">{area.description}</p>
-              </article>
+              <span key={area.id} className="rounded-full border bg-background px-3 py-1.5 text-sm font-medium shadow-sm">
+                {area.name}
+              </span>
             ))}
           </div>
         </div>
@@ -462,9 +461,9 @@ export default function Landing() {
       <section className="py-20 px-4 bg-gradient-to-b from-background to-card">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-12">
-            <h2 className="text-3xl font-bold mb-4">Revolutionary 12-Model AI Orchestration Network</h2>
+            <h2 className="text-3xl font-bold mb-4">Revolutionary 17-Model Harmony AI Network</h2>
             <p className="text-muted-foreground max-w-2xl mx-auto">
-              Twelve specialized AI engines working in synchronized coordination to deliver unmatched legal intelligence.
+              Seventeen specialized AI participants working in synchronized coordination to deliver unmatched legal intelligence.
             </p>
           </div>
           <AISystemShowcase variant="full" />
