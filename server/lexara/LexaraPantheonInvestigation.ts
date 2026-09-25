@@ -39,7 +39,7 @@ const CATEGORY_RULES: Array<[RegExp, PantheonBackgroundCategory[]]> = [
   [/photo|image|picture/i, ['internet','social']],
   [/employ|work(?:ed|s)?\s+(?:at|for)|job\s+history/i, ['employment','professional-web']],
   [/education|school|college|university|degree|diploma/i, ['education','credentials']],
-  [/professional\s+license|credential|certification/i, ['credentials','professional-discipline']],
+  [/professional\s+license|credential|certification|license\s+(?:status|suspend|reinstate|revok|active|inactive)/i, ['credentials','professional-discipline','historical','chronology','corroboration']],
   [/business|company|corporat|llc|partnership/i, ['business','corporate','organizations']],
   [/property|house|home|real\s+estate|deed|parcel|assessor/i, ['property','residence','tax-public']],
   [/vehicle|car|truck|motorcycle|title|registration/i, ['transportation']],
