@@ -791,6 +791,18 @@ must(
     lexaraConversationOrchestrator.includes('pantheonCoverageLimited:'),
   'Lexara production telemetry proves Pantheon category/source/coverage handoff per live turn',
 );
+must(
+  pantheonInvestigation.includes("import { searchInmates }") &&
+    pantheonInvestigation.includes("STRUCTURED CUSTODY SOURCE:") &&
+    pantheonInvestigation.includes("inmate.facilityName") &&
+    pantheonInvestigation.includes("inmate.custodyStatus"),
+  'Lexara custody questions consume verified structured inmate results before generic Pantheon corroboration',
+);
+must(
+  pantheonInvestigation.includes("date\\s+of\\s+death") &&
+    pantheonInvestigation.includes("['vital-records','historical','chronology','news','family-probate']"),
+  'Lexara death questions route through Pantheon vital historical chronology news and probate evidence',
+);
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA realization verification passed.');
 // Practice-area specialization gate (40-book LegalWhat library).
