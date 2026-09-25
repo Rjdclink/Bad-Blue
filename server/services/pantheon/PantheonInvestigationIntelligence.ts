@@ -91,7 +91,7 @@ export function buildPantheonInvestigationIntelligence(input: {
     confidence: 1,
   }];
   const edges: PantheonInvestigationIntelligence['identityGraph']['edges'] = [];
-  const mappings = new Map<string, Set<string>>();
+  const mappings = new Map<string, { evidenceIds: Set<string>; sourceHosts: Set<string> }>();
   const current: PantheonInvestigationIntelligence['factIndexes']['current'] = [];
   const historical: PantheonInvestigationIntelligence['factIndexes']['historical'] = [];
   const timeline: PantheonInvestigationIntelligence['timeline'] = [];
@@ -109,7 +109,12 @@ export function buildPantheonInvestigationIntelligence(input: {
     const nodeId = stableId('entity', claimType, String(claim.normalizedValue || value).toLowerCase());
     const isHistorical = /historical|former|previous|timeline/i.test(`${category} ${claimType}`);
     nodes.push({ id: nodeId, type: claimType, value: value.slice(0, 300), current: !isHistorical, ...(effectiveAt ? { effectiveAt } : {}), confidence: Math.max(0, Math.min(1, Number(source.confidence) || 0)) });
-    edges.push({ id: stableId('edge', subjectNodeId, nodeId, citationId), from: subjectNodeId, to: nodeId, type: 'evidence-backed-claim', hop: 1, citationId });
+    const edgeType = /relative|family|associate|relationship|household/i.test(`${category} ${claimType}`)
+      ? 'evidence-backed-relationship'
+      : /historical|timeline|date|vital/i.test(`${category} ${claimType}`)
+        ? 'evidence-backed-timeline'
+        : 'evidence-backed-claim';
+    edges.push({ id: stableId('edge', subjectNodeId, nodeId, citationId), from: subjectNodeId, to: nodeId, type: edgeType, hop: 1, citationId });
     const indexItem = { claimKey, value: value.slice(0, 500), ...(effectiveAt ? { effectiveAt } : {}), citationId };
     (isHistorical ? historical : current).push(indexItem);
     if (effectiveAt) timeline.push({ at: effectiveAt, label: value.slice(0, 300), category, citationId });
@@ -117,12 +122,11 @@ export function buildPantheonInvestigationIntelligence(input: {
     const group = claimGroups.get(claimKey) || [];
     group.push({ value: String(claim.normalizedValue || value).toLowerCase(), citationId });
     claimGroups.set(claimKey, group);
-    const mapped = mappings.get(nodeId) || new Set<string>();
-    mapped.add(String(data.evidenceId || citationId));
+    const mapped = mappings.get(nodeId) || { evidenceIds: new Set<string>(), sourceHosts: new Set<string>() };
+    mapped.evidenceIds.add(String(data.evidenceId || citationId));
+    const mappedHost = hostFor(data.url || source.url);
+    if (mappedHost && mappedHost !== 'unknown') mapped.sourceHosts.add(mappedHost);
     mappings.set(nodeId, mapped);
-    // Corroborated entity nodes are retained as one stable node while every
-    // supporting evidence ID remains attached. This mirrors mature OSINT
-    // entity-resolution systems without collapsing single-source leads.
 
   }
 
@@ -212,7 +216,11 @@ export function buildPantheonInvestigationIntelligence(input: {
       hopLimit: input.queryPlan.relationshipHopLimit,
       nodes: [...new Map(nodes.map(node => [node.id, node])).values()],
       edges: edges.filter(edge => edge.hop <= input.queryPlan.relationshipHopLimit),
-      entityMappings: [...mappings.entries()].map(([id, evidenceIds]) => ({ stableId: id, evidenceIds: [...evidenceIds], mergeState: evidenceIds.size > 1 ? 'verified-same-entity' as const : 'separate-until-reviewed' as const })),
+      entityMappings: [...mappings.entries()].map(([id, mapping]) => ({
+        stableId: id,
+        evidenceIds: [...mapping.evidenceIds],
+        mergeState: mapping.sourceHosts.size > 1 ? 'verified-same-entity' as const : 'separate-until-reviewed' as const,
+      })),
     },
     factIndexes: { current, historical },
     timeline: timeline.sort((left, right) => left.at.localeCompare(right.at)),
