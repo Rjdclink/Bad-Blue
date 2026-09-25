@@ -35,6 +35,8 @@ const frontierStore = read('server/services/pantheon/PantheonFrontierStore.ts');
 const evidence = evidencePipeline;
 
 const checks = [
+  ['cross-source correlation is persisted with accepted evidence', evidencePipeline.includes('summarizePantheonCorrelations') && evidencePipeline.includes('corroboratedClaimCount') && categoryWorkflow.includes('const correlationSummary = summarizePantheonCorrelations(reportable)') && categoryWorkflow.includes('correlationSummary,')],
+
   ['three public scan choices are 10 20 30 minutes', config.includes("1: 10 * 60_000") && config.includes("2: 20 * 60_000") && config.includes("3: 30 * 60_000") && !config.includes("4: 30 * 60_000") && !selector.includes('PANTHEON_REPORT_DURATION_LABELS[4]') && !progressTracker.includes('EYE OF GOD')],
   ['scan intensity tracks selected duration', people.includes('1: 1200') && people.includes('2: 2820') && people.includes('3: 4500')],
   ['durable report status distinguishes missing jobs from temporary store outages', routes.includes('report_store_converging') && routes.includes("'report_job_gone'") && routes.includes('res.status(gone ? 410 : 404)') && reportStore.includes("state: 'temporarily_unavailable'") && reportStore.includes("state: 'not_found'")],
