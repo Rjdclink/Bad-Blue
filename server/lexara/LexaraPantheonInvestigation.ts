@@ -100,6 +100,7 @@ export async function investigatePersonQuestion(
     };
   }
 
+  // Network work begins only after identity clarification has completed.
   const registryTargets = categories
     .flatMap(category => buildPantheonCategoryTargets(category, combined, context.jurisdiction, 8))
     .filter(target => target.subjectScoped || target.sourceKind === 'api' || target.sourceKind === 'search')
