@@ -107,7 +107,7 @@ export async function investigatePersonQuestion(
       purpose: 'lexara_legal_research',
       targets: targets.map(target => target.url),
       depth: 2,
-      budgetMs: 4_000,
+      budgetMs: 2_200,
       subject: combined,
       location: context.jurisdiction,
       signal: context.signal,
