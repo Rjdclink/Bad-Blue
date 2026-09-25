@@ -11,7 +11,7 @@ interface AIModel {
 const AI_MODELS: AIModel[] = [
   // Row 1
   {
-    name: "Gemini 2.5 Pro",
+    name: "Gemini 3.7 Flash",
     provider: "Google",
     description: "Deepest reasoning with 2M token context for complex legal analysis",
     backgroundImage: "/images/what.comp3.jpg"
@@ -30,57 +30,57 @@ const AI_MODELS: AIModel[] = [
   },
   // Row 2
   {
-    name: "Claude 3.5 Sonnet",
+    name: "Claude Sonnet 5",
     provider: "Anthropic",
     description: "Premium legal reasoning with nuanced constitutional interpretation",
     backgroundImage: "/images/OIP.comp6.webp"
   },
   {
-    name: "Claude 3.5 Haiku",
+    name: "Claude Opus 5",
     provider: "Anthropic",
     description: "Rapid verification specialist for real-time fact-checking",
     backgroundImage: "/images/imag.comp7.webp"
   },
   {
-    name: "Llama 3.3 70B",
+    name: "GPT-OSS 120B",
     provider: "Groq",
     description: "Versatile workhorse balancing speed and comprehensive analysis",
     backgroundImage: "/images/OIP.comp8.webp"
   },
   // Row 3
   {
-    name: "Llama 3.1 8B",
+    name: "GPT-OSS 20B",
     provider: "Groq",
     description: "Instant-response engine for lightweight task execution",
     backgroundImage: "/images/OIP.comp9.webp"
   },
   {
-    name: "Mistral Small",
+    name: "Mistral Small 4",
     provider: "Mistral",
     description: "EU-compliant processing with balanced verification protocols",
     backgroundImage: "/images/iStock-.comp10.jpg"
   },
   {
-    name: "Kimi K2",
+    name: "Kimi K3",
     provider: "Moonshot AI",
     description: "Trillion-parameter extraction engine for structured legal data",
     backgroundImage: "/images/OIP.comp11.webp"
   },
   // Row 4
   {
-    name: "DeepSeek R1T2 Chimera",
+    name: "DeepSeek V4.1 Flash",
     provider: "TNG",
     description: "671B parameter deep pattern recognition across case law",
     backgroundImage: "/images/OIP.comp12.webp"
   },
   {
-    name: "Grok 4.1 Fast",
+    name: "Grok 4.6",
     provider: "xAI",
     description: "Massive 2M context window for entire case file processing",
     backgroundImage: "/images/superc.comp13.jpg"
   },
   {
-    name: "Qwen 2.5 72B",
+    name: "Qwen 3.8 Max",
     provider: "Alibaba",
     description: "Precision instruction-following for procedural compliance",
     backgroundImage: "/images/OIP.comp14.webp"
