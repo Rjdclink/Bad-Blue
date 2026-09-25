@@ -3,6 +3,8 @@ import { orchestratedWebSearch } from '../openRouterWebSearch';
 import { buildPantheonCategoryTargets, type PantheonBackgroundCategory } from '../services/pantheon/PantheonSovereignSourceRegistry';
 import { searchInmates } from '../services/inmateSearch/InmateSearchAggregator';
 import { matchPantheonSubject } from '../services/pantheon/PantheonEntityResolution';
+import { selectLexaraCrawlerPlan } from './LexaraCrawlerCapabilityRegistry';
+import { PANTHEON_PRIMARY_CRAWLER_IDS, type PantheonPrimaryCrawlerId } from '../services/pantheon/PantheonCrawlerCapabilityMatrix';
 
 export interface LexaraPersonInvestigationContext {
   previousMessages?: Array<{ role?: string; content?: string }>;
@@ -25,6 +27,12 @@ const PERSON_NAME_ONLY_PATTERN = /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}\b/;
 
 const PERSON_RECORD_PATTERN = /\b(?:identity|date\s+of\s+birth|dob|age|phone|email|address|where\s+(?:does|did)\s+.+?\s+live|residen|relative|family|associate|household|social\s+media|username|online\s+account|photo|image|employ(?:ed|ment)|work(?:ed|s)?\s+(?:at|for)|education|school|college|university|degree|professional\s+license|credential|business|company|corporat|property|house|home|real\s+estate|vehicle|car|truck|title|registration|court|case|docket|lawsuit|judgment|arrest(?:ed|s)?|criminal\s+record|conviction|warrant|inmate|incarcerat(?:e|ed|ion)?|prison|parole|probation|sex\s+offender|bankrupt|mortgage|loan\s+on|lien|married|marriage|divorc|spouse|husband|wife|die|died|death|deceased|obituary|news|media|government\s+(?:job|employment|service)|public\s+service|campaign|contribution|donation|political|patent|trademark|copyright|timeline|history|relationship|background\s+(?:check|report)|investigat(?:e|ion)\s+(?:him|her|them|this\s+person))\b/i;
 const FULL_REPORT_PATTERN = /\b(?:full|complete|comprehensive|entire)\s+(?:background\s+)?(?:report|check|investigation)|\b(?:run|do|generate|prepare)\s+(?:a\s+)?background\s+(?:report|check)\b/i;
+const PERSON_RECURSIVE_MAX_PASSES = 3;
+const PERSON_RECURSIVE_MAX_TARGETS_PER_PASS = 6;
+const PERSON_RECURSIVE_MAX_TOTAL_TARGETS = 18;
+const PERSON_RECURSIVE_TOTAL_BUDGET_MS = 4_500;
+const PERSON_RECURSIVE_SUFFICIENT_EVIDENCE = 2;
+
 const IDENTIFIER_PATTERN = /\b(?:born|dob|date\s+of\s+birth|age\s+\d{1,3}|\d{1,2}[\/-]\d{1,2}[\/-](?:19|20)\d{2}|(?:19|20)\d{2}|lives?\s+in|from\s+[A-Z][a-z]+|address|street|avenue|road|drive|lane|city|county|state|phone|email|employer|works?\s+(?:at|for)|middle\s+name)\b/i;
 
 const CATEGORY_RULES: Array<[RegExp, PantheonBackgroundCategory[]]> = [
@@ -224,56 +232,90 @@ export async function investigatePersonQuestion(
   };
 
   try {
-    const retrieval = await pantheonRetrievalAdapter.retrieve({
-      purpose: 'lexara_legal_research',
-      targets,
-      // Keep targeted conversational research fast: depth 1 selects the
-      // single primary crawler rather than launching the three-crawler depth-2
-      // roster on every live Lexara turn.
-      depth: 1,
-      budgetMs: 1_600,
-      subject: combined,
-      location: context.jurisdiction,
-      signal: context.signal,
-    });
     const resolvedPerson = extractPersonName(combined);
     const resolvedName = [resolvedPerson.firstName, resolvedPerson.middleName, resolvedPerson.lastName].filter(Boolean).join(' ');
-    let evidence = retrieval.evidence
-      .filter(item => item.content?.trim())
-      .filter(item => resolvedName && matchPantheonSubject(item, resolvedName, context.jurisdiction).matched)
-      .slice(0, 12);
+    const primaryCrawlerSet = new Set<string>(PANTHEON_PRIMARY_CRAWLER_IDS);
+    const selectedPrimaryCrawlers = selectLexaraCrawlerPlan({
+      prompt: combined,
+      jurisdiction: context.jurisdiction,
+      hasDiscoveredUrls: true,
+      maxCrawlers: 16,
+    })
+      .map(crawler => crawler.id)
+      .filter((id): id is PantheonPrimaryCrawlerId => primaryCrawlerSet.has(id));
+    // Never collapse a person-record lookup to one generic crawler. If the
+    // capability scorer found no primary route, retain the complete primary
+    // inventory and let the bounded pools govern concurrency.
+    const primaryCrawlers = selectedPrimaryCrawlers.length
+      ? [...new Set(selectedPrimaryCrawlers)]
+      : [...PANTHEON_PRIMARY_CRAWLER_IDS];
 
-    // Fast path first. Only unresolved person facts spend a small second-stage
-    // discovery budget, so recursive breadth does not tax ordinary successful turns.
-    if (evidence.length === 0 && structuredEvidence.length === 0 && !context.signal?.aborted) {
-      try {
-        const broadened = await orchestratedWebSearch(
-          `${resolvedName || combined} ${categoryDiscoveryTerms(categories)} ${context.jurisdiction || ''} official record archive database`,
-          { useOnlinePlugin: true, timeout: 450, signal: context.signal },
-        );
-        const broadenedTargets = broadened.sources
-          .filter(url => /^https?:\/\//i.test(url))
-          .filter(url => !targets.includes(url))
-          .slice(0, 4);
-        if (broadenedTargets.length) {
-          const secondPass = await pantheonRetrievalAdapter.retrieve({
-            purpose: 'lexara_legal_research',
-            targets: broadenedTargets,
-            depth: 1,
-            budgetMs: 700,
-            subject: combined,
-            location: context.jurisdiction,
-            signal: context.signal,
-          });
-          evidence = secondPass.evidence
-            .filter(item => item.content?.trim())
-            .filter(item => resolvedName && matchPantheonSubject(item, resolvedName, context.jurisdiction).matched)
-            .slice(0, 12);
-        }
-      } catch {
-        // Recursive broadening is opportunistic and never blocks the normal answer path.
+    const recursiveStartedAt = Date.now();
+    const seenTargets = new Set<string>();
+    let pendingTargets = targets.slice(0, PERSON_RECURSIVE_MAX_TARGETS_PER_PASS);
+    let retrievalAvailable = true;
+    let retrievalReason: string | undefined;
+    const acceptedEvidence = new Map<string, typeof targets extends never ? never : any>();
+
+    for (let pass = 0; pass < PERSON_RECURSIVE_MAX_PASSES; pass++) {
+      if (context.signal?.aborted || !pendingTargets.length) break;
+      if (Date.now() - recursiveStartedAt >= PERSON_RECURSIVE_TOTAL_BUDGET_MS) break;
+      const passTargets = pendingTargets
+        .filter(url => !seenTargets.has(url))
+        .slice(0, PERSON_RECURSIVE_MAX_TARGETS_PER_PASS);
+      if (!passTargets.length) break;
+      passTargets.forEach(url => seenTargets.add(url));
+
+      const remainingMs = Math.max(500, PERSON_RECURSIVE_TOTAL_BUDGET_MS - (Date.now() - recursiveStartedAt));
+      const retrieval = await pantheonRetrievalAdapter.retrieve({
+        purpose: 'lexara_legal_research',
+        targets: passTargets,
+        depth: 3,
+        budgetMs: Math.min(1_600, remainingMs),
+        subject: combined,
+        location: context.jurisdiction,
+        primaryCrawlers,
+        signal: context.signal,
+      });
+      retrievalAvailable = retrievalAvailable && retrieval.available;
+      retrievalReason ||= retrieval.reason;
+
+      for (const item of retrieval.evidence
+        .filter(item => item.content?.trim())
+        .filter(item => resolvedName && matchPantheonSubject(item, resolvedName, context.jurisdiction).matched)) {
+        acceptedEvidence.set(`${item.sourceUrl}:${item.crawler}:${item.content.slice(0, 120)}`, item);
       }
+
+      // Explicit successful endpoint: enough independent verified evidence.
+      if (acceptedEvidence.size + structuredEvidence.length >= PERSON_RECURSIVE_SUFFICIENT_EVIDENCE) break;
+      // Explicit exhaustion endpoints: pass count, wall-clock budget, target
+      // budget, caller abort, or no new URLs. This prevents unbounded recursion.
+      if (pass + 1 >= PERSON_RECURSIVE_MAX_PASSES || seenTargets.size >= PERSON_RECURSIVE_MAX_TOTAL_TARGETS) break;
+
+      const frontier = [
+        ...(retrieval.frontierCandidates?.discoveredCandidates || []),
+        ...(retrieval.frontierCandidates?.sourceNavigationCandidates || []),
+      ].filter(url => /^https?:\/\//i.test(url) && !seenTargets.has(url));
+
+      let discovered: string[] = [];
+      try {
+        const broadeningTerms = pass === 0
+          ? 'official record database archive'
+          : 'official government database historical archive alternate source';
+        const broadened = await orchestratedWebSearch(
+          `${resolvedName || combined} ${categoryDiscoveryTerms(categories)} ${context.jurisdiction || ''} ${broadeningTerms}`,
+          { useOnlinePlugin: true, timeout: Math.min(650, remainingMs), signal: context.signal },
+        );
+        discovered = broadened.sources.filter(url => /^https?:\/\//i.test(url));
+      } catch {
+        // Frontier-derived candidates remain usable when a discovery provider fails.
+      }
+      pendingTargets = [...new Set([...frontier, ...discovered])]
+        .filter(url => !seenTargets.has(url))
+        .slice(0, Math.min(PERSON_RECURSIVE_MAX_TARGETS_PER_PASS, PERSON_RECURSIVE_MAX_TOTAL_TARGETS - seenTargets.size));
     }
+
+    const evidence = [...acceptedEvidence.values()].slice(0, 12);
     const sources = [...new Set([...structuredSources, ...evidence.map(item => item.sourceUrl).filter(Boolean)])].slice(0, 12);
     const webEvidence = evidence.map((item, index) =>
       `${index + 1}. SOURCE: ${item.sourceUrl}\nEVIDENCE: ${item.content.trim().slice(0, 1200)}`
@@ -284,9 +326,9 @@ export async function investigatePersonQuestion(
       sources,
       categories,
       fullBackgroundReportRequested: false,
-      coverageLimited: !retrieval.available || (evidence.length === 0 && structuredEvidence.length === 0),
-      coverageNote: !retrieval.available
-        ? retrieval.reason || 'Pantheon retrieval was unavailable for one or more requested sources.'
+      coverageLimited: !retrievalAvailable || (evidence.length === 0 && structuredEvidence.length === 0),
+      coverageNote: !retrievalAvailable
+        ? retrievalReason || 'Pantheon retrieval was unavailable for one or more requested sources.'
         : evidence.length === 0 && structuredEvidence.length === 0
           ? 'Pantheon completed the bounded live lookup but accepted no verified subject-specific evidence. This is not proof that no record exists.'
           : undefined,
