@@ -79,6 +79,36 @@ function cleanUrl(value: unknown): string | null {
   return /^https?:\/\//i.test(url) ? url : null;
 }
 
+async function searchGovInfo(query: string, signal?: AbortSignal): Promise<LexaraAuthoritySource[]> {
+  const apiKey = process.env.GOVINFO_API_KEY?.trim();
+  if (!apiKey) return [];
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), RESEARCH_TIMEOUT_MS);
+  const relayAbort = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener('abort', relayAbort, { once: true });
+  try {
+    const response = await fetch(`https://api.govinfo.gov/search?api_key=${encodeURIComponent(apiKey)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ query: query.slice(0, 1800), pageSize: 6, offsetMark: '*' }),
+      signal: controller.signal,
+    });
+    if (!response.ok) return [];
+    const payload = await response.json() as { results?: Array<{ title?: string; packageId?: string; packageLink?: string; dateIssued?: string }> };
+    return (payload.results || []).slice(0, 6).flatMap(item => {
+      const url = item.packageLink?.startsWith('http') ? item.packageLink : item.packageId ? `https://www.govinfo.gov/app/details/${item.packageId}` : '';
+      if (!url) return [];
+      return [{ title: item.title || 'GovInfo official federal material', url, kind: 'primary' as const, excerpt: item.dateIssued ? `Issued: ${item.dateIssued}` : undefined }];
+    });
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', relayAbort);
+  }
+}
+
 async function searchCourtListener(query: string, signal?: AbortSignal): Promise<LexaraAuthoritySource[]> {
   const token = process.env.COURTLISTENER_API_TOKEN?.trim();
   if (!token) return [];
@@ -195,10 +225,11 @@ async function discoverAuthoritySources(query: string, signal?: AbortSignal): Pr
   // Run independent discovery paths in parallel under a conversational latency
   // budget. Authority discovery is valuable evidence, but a slow crawler must
   // never hold the live spoken answer hostage.
-  const [firecrawlResult, openRouterResult, courtListenerResult] = await Promise.all([
+  const [firecrawlResult, openRouterResult, courtListenerResult, govInfoResult] = await Promise.all([
     firecrawlDiscovery(),
     openRouterDiscovery(),
     searchCourtListener(query, signal),
+    searchGovInfo(query, signal),
   ]);
 
   const seen = new Set<string>();
@@ -218,6 +249,7 @@ async function discoverAuthoritySources(query: string, signal?: AbortSignal): Pr
   // Prefer official-source-rich Firecrawl discovery when both return quickly,
   // then fill remaining capacity from OpenRouter's current web-search tool.
   for (const item of firecrawlResult) add(item);
+  for (const item of govInfoResult) add(item);
   for (const item of courtListenerResult) add(item);
   for (const item of openRouterResult) add(item);
   return sources;
