@@ -6,6 +6,7 @@ import { selectLexaraCrawlerPlan } from './LexaraCrawlerCapabilityRegistry';
 import { PANTHEON_PRIMARY_CRAWLER_IDS, type PantheonPrimaryCrawlerId } from '../services/pantheon/PantheonCrawlerCapabilityMatrix';
 import { discoverPantheonSourcesParallel } from '../services/pantheon/PantheonDiscoveryCoordinator';
 import { rememberPantheonDiscoveryOutcome } from '../services/pantheon/PantheonDiscoveryLearning';
+import { decideLexaraResearchNeed } from './LexaraResearchIntentRouter';
 
 export interface LexaraPersonInvestigationContext {
   previousMessages?: Array<{ role?: string; content?: string }>;
@@ -130,15 +131,18 @@ export function shouldUsePantheonForPersonQuestion(
   context: LexaraPersonInvestigationContext = {},
 ): boolean {
   if (PERSON_RECORD_PATTERN.test(prompt)) return true;
-  // Follow-up identifiers such as "he is 42 and lives in Iowa" must continue a
-  // person-record investigation, but ordinary legal conversation must not be
-  // diverted merely because an older turn happened to mention a person record.
   const recentUserTurns = (context.previousMessages || [])
     .filter(message => message.role === 'user')
-    .slice(-2)
-    .map(message => message.content || '')
-    .join(' ');
-  return PERSON_RECORD_PATTERN.test(recentUserTurns) && IDENTIFIER_PATTERN.test(prompt);
+    .slice(-8)
+    .map(message => message.content || '');
+  const combined = conversationText(prompt, context);
+  // A grounded-research decision plus identifiable human subject is sufficient
+  // to enter Pantheon even when the requested attribute is new to our vocabulary.
+  // Category rules refine the search after routing; they do not own the handoff.
+  if (decideLexaraResearchNeed(prompt, recentUserTurns).needed && hasEnoughIdentityContext(combined)) return true;
+  // Follow-up identifiers continue a prior person-record investigation.
+  const recentText = recentUserTurns.slice(-2).join(' ');
+  return PERSON_RECORD_PATTERN.test(recentText) && IDENTIFIER_PATTERN.test(prompt);
 }
 
 export async function investigatePersonQuestion(
