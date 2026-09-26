@@ -35,11 +35,11 @@ mustNot(index, 'Bad Blue', 'root metadata must not use Bad Blue');
 mustNot(index, '<meta name="keywords"', 'root must not emit meta-keywords');
 mustNot(index, '"aggregateRating"', 'root must not emit unverified aggregate rating markup');
 must(index.includes('"email": "contact.badblue@gmail.com"'), 'organization schema must expose the support email');
-for (const capability of ['Visible animated AI', 'DOCX and PDF', 'Uploaded document, evidence, image, and media analysis']) {
+for (const capability of ['Visible animated AI', 'DOCX and PDF', 'Uploaded document, evidence, image, and media analysis', 'Intuitive legal-document recognition and preparation']) {
   must(index.includes(capability), `root metadata/schema must expose Lexara capability: ${capability}`);
 }
 const lexaraSeoPage = read('public/services/ai-legal-consultation/index.html');
-for (const capability of ['visible, conversational legal AI', '40 areas of law', 'DOCX or PDF', 'Upload documents, evidence, images, and other media']) {
+for (const capability of ['animated conversational legal AI', '40+ areas of law', 'PDF or DOCX', 'Upload documents, evidence, images, and other media']) {
   must(lexaraSeoPage.includes(capability), `Lexara crawlable page must expose capability: ${capability}`);
 }
 
@@ -91,17 +91,21 @@ const sitemapLocs = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) =>
 must(new Set(sitemapLocs).size === sitemapLocs.length, 'static sitemap must not contain duplicate URLs');
 
 must(llms.includes('# Legal What?'), 'llms.txt must identify Legal What?');
-must(llms.includes('40 legal practice areas'), 'llms.txt must accurately state 40 practice areas');
+must(llms.includes('40+ areas of law'), 'llms.txt must accurately describe Lexara legal-area coverage');
 must(llms.includes('https://legalwhat.com/sitemap.xml'), 'llms.txt must reference the canonical sitemap');
 mustNot(llms, '31 practice areas', 'llms.txt must not restore the obsolete 31-area count');
 mustNot(llms, 'API Access for Developers', 'llms.txt must not advertise unverified developer API access');
+mustNot(index, 'People finder and geolocation intelligence tools', 'root schema must not advertise inactive people finder');
+mustNot(index, 'Nationwide inmate locator', 'root schema must not advertise inactive inmate search');
+mustNot(llms, '[People finder]', 'llms.txt must not advertise inactive people finder');
+mustNot(llms, '[Inmate locator]', 'llms.txt must not advertise inactive inmate search');
 
 must(serverIndex.includes('.map((config) => config.canonicalPath)'), 'dynamic sitemap must emit canonical paths');
 must(serverIndex.includes('Do not emit synthetic freshness'), 'dynamic sitemap must not fabricate lastmod freshness');
 
 for (const phrase of [
   'Legal What? — AI Legal Tools for 40 Practice Areas',
-  'two-way voice or text consultation',
+  'natural, real-time, two-way voice or text conversation across 40+ areas of law',
 ]) {
   must(landing.includes(phrase), `landing must describe capability: ${phrase}`);
 }
