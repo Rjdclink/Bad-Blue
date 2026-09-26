@@ -870,7 +870,7 @@ must(
   lexaraPantheonInvestigation.includes("from '../services/pantheon/PantheonEntityResolution'") &&
     lexaraPantheonInvestigation.includes("const identityMatch = resolvedEntityType === 'person'") &&
     lexaraPantheonInvestigation.includes('matchPantheonSubject(item, resolvedSubject, context.jurisdiction)') &&
-    lexaraPantheonInvestigation.includes('if (!identityMatch.matched) continue;'),
+    lexaraPantheonInvestigation.includes('if (!identityMatch.matched) {'),
   'Lexara accepts Pantheon person-record evidence only after subject matching',
 );
 must(
@@ -883,7 +883,7 @@ must(
     lexaraPantheonInvestigation.includes('PERSON_RECURSIVE_MAX_TARGETS_PER_PASS = 10') &&
     lexaraPantheonInvestigation.includes('PERSON_RECURSIVE_MAX_TOTAL_TARGETS = 30') &&
     lexaraPantheonInvestigation.includes('discoverPantheonSourcesParallel(') &&
-    lexaraPantheonInvestigation.includes('corroboratedHighConfidence || bestConfidence >= PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD'),
+    lexaraPantheonInvestigation.includes('bestConfidence >= PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD'),
   'recursive person research broadens dynamically with explicit bounded low-latency endpoints',
 );
 must(
@@ -931,7 +931,7 @@ must(
 );
 must(
   conversation.includes("const greeting = 'How can I help you?';") &&
-    conversation.includes('if (liveEnabled && voiceReady) {') &&
+    conversation.includes('if (liveEnabled && !voiceReady) return;') &&
     conversation.includes('await speakLexara(greeting, greetingGeneration);') &&
     conversation.includes('void sendGreeting();') &&
     !conversation.includes('Hello. Tell me what happened'),
