@@ -762,7 +762,7 @@ must(
 );
 must(
   lexaraPantheonInvestigation.includes('PERSON_RECURSIVE_TOTAL_BUDGET_MS = 10 * 60_000') &&
-    lexaraPantheonInvestigation.includes('perPassBudgetMs = Math.min(20_000, remainingMs)') &&
+    lexaraPantheonInvestigation.includes('perPassBudgetMs = Math.min(pass === 0 ? 25_000 : 60_000, remainingMs)') &&
     lexaraPantheonInvestigation.includes('NEVER name, infer, recommend, or substitute a county'),
   'targeted Pantheon research is bounded for live conversation and county claims require evidence',
 );
@@ -868,7 +868,8 @@ must(
 );
 must(
   lexaraPantheonInvestigation.includes("from '../services/pantheon/PantheonEntityResolution'") &&
-    lexaraPantheonInvestigation.includes('const identityMatch = matchPantheonSubject(item, resolvedName, context.jurisdiction)') &&
+    lexaraPantheonInvestigation.includes("const identityMatch = resolvedEntityType === 'person'") &&
+    lexaraPantheonInvestigation.includes('matchPantheonSubject(item, resolvedSubject, context.jurisdiction)') &&
     lexaraPantheonInvestigation.includes('if (!identityMatch.matched) continue;'),
   'Lexara accepts Pantheon person-record evidence only after subject matching',
 );
@@ -994,7 +995,7 @@ must(
     pantheonInvestigation.includes("purpose: 'lexara_legal_research'") &&
     pantheonInvestigation.includes('depth: 3') &&
     pantheonInvestigation.includes('budgetMs: perPassBudgetMs') &&
-    pantheonInvestigation.includes('perPassBudgetMs = Math.min(20_000, remainingMs)') &&
+    pantheonInvestigation.includes('perPassBudgetMs = Math.min(pass === 0 ? 25_000 : 60_000, remainingMs)') &&
     pantheonInvestigation.includes('fullBackgroundReportRequested') &&
     pantheonInvestigation.includes('needsIdentityClarification?: boolean') &&
     orchestrator.includes('initialPantheon?.clarification && (initialPantheon.needsIdentityClarification || initialPantheon.fullBackgroundReportRequested)') &&
