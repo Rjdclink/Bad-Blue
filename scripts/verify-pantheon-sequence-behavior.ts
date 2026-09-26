@@ -70,10 +70,11 @@ const directRegistryTargets = buildPantheonCategoryTargets(
   'New York, NY',
   24,
 );
-assert.ok(directRegistryTargets.some(target => target.authority === 'primary' && target.transport !== 'search-provider'),
-  'each category must include direct, policy-admitted registry sources');
+assert.ok(directRegistryTargets.every(target =>
+  target.authority !== 'primary' || target.transport !== 'search-provider'
+), 'any primary standby target must be a direct, policy-admitted source rather than a search-result page');
 assert.ok(directRegistryTargets.some(target => target.authority === 'discovery' && target.subjectScoped),
-  'discovery must remain a subject-scoped fallback rather than the only frontier');
+  'dynamic discovery must remain subject-scoped and available even when no static primary seed exists');
 
 const subjectFirstPlan = initializePantheonCategoryPlans({
   name: 'Jane Example',
