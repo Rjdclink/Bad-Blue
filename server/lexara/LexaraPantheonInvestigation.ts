@@ -218,6 +218,28 @@ function categoryDiscoveryTerms(categories: readonly PantheonBackgroundCategory[
   if (categories.includes('employment')) ['occupation','profession','employer','employment history','works at','works as','professional profile','staff directory','professional license'].forEach(value => terms.add(value));
   if (categories.includes('credentials') || categories.includes('professional-discipline')) ['professional license lookup','license verification','disciplinary order','reinstatement order'].forEach(value => terms.add(value));
   if (categories.includes('family-probate')) ['probate court','estate record','obituary'].forEach(value => terms.add(value));
+  if (categories.includes('residence')) ['current address','address history','property assessor','resident'].forEach(value => terms.add(value));
+  if (categories.includes('relatives') || categories.includes('relationship-graph')) ['relative','family','spouse','associate','household'].forEach(value => terms.add(value));
+  if (categories.includes('banking-affiliations')) ['bank affiliation','financial institution','bank relationship'].forEach(value => terms.add(value));
+  if (categories.includes('securities')) ['FINRA','broker','investment adviser','securities registration'].forEach(value => terms.add(value));
+  if (categories.includes('business') || categories.includes('corporate')) ['business registration','corporation filing','LLC','officer','registered agent'].forEach(value => terms.add(value));
+  if (categories.includes('education')) ['school','college','university','degree','alumni'].forEach(value => terms.add(value));
+  if (categories.includes('transportation')) ['vehicle','registration','title','VIN'].forEach(value => terms.add(value));
+  if (categories.includes('probation-parole')) ['probation','parole','supervision'].forEach(value => terms.add(value));
+  if (categories.includes('warrants')) ['warrant','wanted person'].forEach(value => terms.add(value));
+  if (categories.includes('sex-offender')) ['sex offender registry','offender search'].forEach(value => terms.add(value));
+  if (categories.includes('government-employment')) ['government employee','public service','agency staff'].forEach(value => terms.add(value));
+  if (categories.includes('military')) ['military service','veteran','service record'].forEach(value => terms.add(value));
+  if (categories.includes('government-contracting')) ['government contract','procurement','award'].forEach(value => terms.add(value));
+  if (categories.includes('campaign-finance')) ['campaign contribution','donor','committee'].forEach(value => terms.add(value));
+  if (categories.includes('lobbying')) ['lobbyist','lobbying registration'].forEach(value => terms.add(value));
+  if (categories.includes('regulatory') || categories.includes('sanctions')) ['regulatory action','sanctions','OFAC','debarment'].forEach(value => terms.add(value));
+  if (categories.includes('foreign-connections') || categories.includes('foreign-residence') || categories.includes('immigration')) ['foreign residence','international connection','immigration','visa','naturalization'].forEach(value => terms.add(value));
+  if (categories.includes('organizations') || categories.includes('nonprofits')) ['organization affiliation','nonprofit','charity','foundation'].forEach(value => terms.add(value));
+  if (categories.includes('intellectual-property')) ['patent','trademark','copyright'].forEach(value => terms.add(value));
+  if (categories.includes('publications')) ['publication','author','article','paper'].forEach(value => terms.add(value));
+  if (categories.includes('social') || categories.includes('usernames') || categories.includes('internet')) ['social media','username','profile','web footprint'].forEach(value => terms.add(value));
+  if (categories.includes('news') || categories.includes('adverse-media')) ['news','newspaper','press release','adverse media'].forEach(value => terms.add(value));
   return [...terms].join(' ');
 }
 
