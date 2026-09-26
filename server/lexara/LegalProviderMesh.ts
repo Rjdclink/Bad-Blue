@@ -29,7 +29,17 @@ export async function discoverLegalMeshTier3(query: string, signal?: AbortSignal
     discoverPantheonSourcesParallel(query, [], { limit: 16, timeoutMs: 2200, signal, includePaidFallback: false }),
     tavily(query, signal),
   ]);
-  const mapped: LegalMeshCandidate[] = existing.urls.map(url => ({ url, title: 'Independent legal discovery result', tier: 3, provider: 'independent-discovery' }));
+  const evidenceByUrl = new Map(existing.evidence.map(item => [item.url, item]));
+  const mapped: LegalMeshCandidate[] = existing.urls.map(url => {
+    const evidence = evidenceByUrl.get(url);
+    return {
+      url,
+      title: evidence?.title || 'Independent legal discovery result',
+      excerpt: evidence?.snippet,
+      tier: 3 as const,
+      provider: evidence?.lane === 'gemini-google' ? 'gemini-google-grounding' : `independent-discovery:${evidence?.lane || 'unknown'}`,
+    };
+  });
   const seen=new Set<string>(); return [...tavilyResults,...mapped].filter(x => !seen.has(x.url) && seen.add(x.url));
 }
 
