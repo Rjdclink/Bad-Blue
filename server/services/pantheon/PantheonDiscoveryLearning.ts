@@ -28,7 +28,7 @@ async function ensureLearningTable(): Promise<void> {
   if (!readyPromise) {
     readyPromise = (async () => {
       await db.execute(sql`
-        CREATE TABLE IF NOT EXISTS pantheon_discovery_learning (
+        CREATE TABLE IF NOT EXISTS public.pantheon_discovery_learning (
           url TEXT NOT NULL,
           host TEXT NOT NULL,
           category TEXT NOT NULL DEFAULT 'general',
@@ -44,8 +44,8 @@ async function ensureLearningTable(): Promise<void> {
         )
       `);
       await db.execute(sql`
-        CREATE INDEX IF NOT EXISTS pantheon_discovery_learning_rank_idx
-        ON pantheon_discovery_learning (category, jurisdiction, successes DESC, failures ASC, updated_at DESC)
+        CREATE INDEX IF NOT EXISTS public.pantheon_discovery_learning_rank_idx
+        ON public.pantheon_discovery_learning (category, jurisdiction, successes DESC, failures ASC, updated_at DESC)
       `);
     })().catch(error => {
       readyPromise = null;
@@ -72,7 +72,7 @@ export async function rememberPantheonDiscoveryOutcome(
   try {
     await ensureLearningTable();
     await db.execute(sql`
-      INSERT INTO pantheon_discovery_learning
+      INSERT INTO public.pantheon_discovery_learning
         (url, host, category, jurisdiction, crawler, query_pattern, successes, failures, avg_latency_ms, last_success_at, updated_at)
       VALUES
         (${url}, ${host}, ${category}, ${jurisdiction}, ${crawler}, ${queryPattern},
@@ -80,15 +80,15 @@ export async function rememberPantheonDiscoveryOutcome(
          ${success ? new Date() : null}, NOW())
       ON CONFLICT (url, category, jurisdiction, crawler)
       DO UPDATE SET
-        successes = pantheon_discovery_learning.successes + ${success ? 1 : 0},
-        failures = pantheon_discovery_learning.failures + ${success ? 0 : 1},
+        successes = public.pantheon_discovery_learning.successes + ${success ? 1 : 0},
+        failures = public.pantheon_discovery_learning.failures + ${success ? 0 : 1},
         avg_latency_ms = CASE
-          WHEN ${latencyMs} <= 0 THEN pantheon_discovery_learning.avg_latency_ms
-          WHEN pantheon_discovery_learning.avg_latency_ms <= 0 THEN ${latencyMs}
-          ELSE ROUND((pantheon_discovery_learning.avg_latency_ms * 3 + ${latencyMs}) / 4.0)::INTEGER
+          WHEN ${latencyMs} <= 0 THEN public.pantheon_discovery_learning.avg_latency_ms
+          WHEN public.pantheon_discovery_learning.avg_latency_ms <= 0 THEN ${latencyMs}
+          ELSE ROUND((public.pantheon_discovery_learning.avg_latency_ms * 3 + ${latencyMs}) / 4.0)::INTEGER
         END,
-        query_pattern = CASE WHEN ${queryPattern} = '' THEN pantheon_discovery_learning.query_pattern ELSE ${queryPattern} END,
-        last_success_at = CASE WHEN ${success} THEN NOW() ELSE pantheon_discovery_learning.last_success_at END,
+        query_pattern = CASE WHEN ${queryPattern} = '' THEN public.pantheon_discovery_learning.query_pattern ELSE ${queryPattern} END,
+        last_success_at = CASE WHEN ${success} THEN NOW() ELSE public.pantheon_discovery_learning.last_success_at END,
         updated_at = NOW()
     `);
   } catch {
@@ -107,7 +107,7 @@ export async function getPantheonLearnedSources(
     await ensureLearningTable();
     const result: any = await db.execute(sql`
       SELECT url
-      FROM pantheon_discovery_learning
+      FROM public.pantheon_discovery_learning
       WHERE category = ${category}
         AND (jurisdiction = ${normalizedLocation} OR jurisdiction = '' OR ${normalizedLocation} = '')
         AND successes > 0
@@ -143,7 +143,7 @@ export async function getPantheonLearnedQueryPatterns(
     await ensureLearningTable();
     const result: any = await db.execute(sql`
       SELECT query_pattern
-      FROM pantheon_discovery_learning
+      FROM public.pantheon_discovery_learning
       WHERE category = ${category}
         AND (jurisdiction = ${normalizedLocation} OR jurisdiction = '' OR ${normalizedLocation} = '')
         AND successes > 0
