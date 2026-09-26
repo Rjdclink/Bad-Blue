@@ -2,7 +2,7 @@ import { orchestratedWebSearch } from '../openRouterWebSearch';
 import { pantheonRetrievalAdapter } from '../services/crawlers/PantheonRetrievalAdapter';
 import { selectLexaraCrawlerPlan } from './LexaraCrawlerCapabilityRegistry';
 import { decideLexaraResearchNeed } from './LexaraResearchIntentRouter';
-import { discoverLegalMeshTier3, legalMeshSufficient } from './LegalProviderMesh';
+import { discoverLegalMeshTier3, discoverLegalMeshSupplemental, legalMeshSufficient } from './LegalProviderMesh';
 
 export type LexaraAuthoritySourceKind = 'primary' | 'secondary' | 'web';
 
@@ -168,6 +168,12 @@ async function discoverAuthoritySources(query: string, signal?: AbortSignal): Pr
   const mesh = await discoverLegalMeshTier3(query, signal);
   mesh.forEach(item => add(item));
   if (legalMeshSufficient(mesh) || sources.length >= MAX_AUTHORITY_SOURCES) return sources;
+
+  // Tier 5: configured supplemental discovery (SerpApi/ScrapingBee and archive
+  // fallbacks) is attempted only after the free/self-hosted mesh is insufficient.
+  const supplemental = await discoverLegalMeshSupplemental(query, signal);
+  supplemental.forEach(item => add(item));
+  if (legalMeshSufficient(supplemental) || sources.length >= MAX_AUTHORITY_SOURCES) return sources;
 
   // Tier 6: Firecrawl and OpenRouter are emergency redundancy only. They are
   // never attempted while the independent mesh has sufficient evidence.
