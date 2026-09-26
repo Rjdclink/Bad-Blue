@@ -43,6 +43,8 @@ for (const token of [
   'SEARXNG_URL',
   'DDGS_URL',
   'OPENSERP_URL',
+  "new URL('/mega/search'",
+  "endpoint.searchParams.set('mode', 'any')",
   "'commoncrawl'",
   'Promise.all([',
   'Credit-bearing providers remain a true fallback',
