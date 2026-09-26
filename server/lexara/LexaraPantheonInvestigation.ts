@@ -38,6 +38,7 @@ export interface LexaraPersonInvestigation {
 }
 
 const PERSON_NAME_ONLY_PATTERN = /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}\b/;
+const ORGANIZATION_NAME_PATTERN = /\b[A-Z][A-Za-z0-9&.'-]*(?:\s+[A-Z][A-Za-z0-9&.'-]*){0,5}\s+(?:LLC|L\.L\.C\.|Inc\.?|Corporation|Corp\.?|Company|Co\.?|LP|LLP|PLLC|Foundation|Association|University|Bank)\b/;
 
 const PERSON_RECORD_PATTERN = /\b(?:identity|date\s+of\s+birth|dob|age|phone|email|address|where\s+(?:does|did)\s+.+?\s+live|residen|relative|family|associate|household|social\s+media|username|online\s+account|photo|image|employ(?:ed|ment)|work(?:ed|s)?\s+(?:at|for)|education|school|college|university|degree|professional\s+license|credential|business|company|corporat|property|house|home|real\s+estate|vehicle|car|truck|title|registration|court|case|docket|lawsuit|judgment|arrest(?:ed|s)?|criminal\s+record|conviction|warrant|inmate|incarcerat(?:e|ed|ion)?|prison|parole|probation|sex\s+offender|bankrupt|mortgage|loan\s+on|lien|married|marriage|divorc|spouse|husband|wife|die|died|death|deceased|obituary|news|media|government\s+(?:job|employment|service)|public\s+service|campaign|contribution|donation|political|patent|trademark|copyright|timeline|history|relationship|background\s+(?:check|report)|investigat(?:e|ion)\s+(?:him|her|them|this\s+person))\b/i;
 const FULL_REPORT_PATTERN = /\b(?:full|complete|comprehensive|entire)\s+(?:background\s+)?(?:report|check|investigation)|\b(?:run|do|generate|prepare)\s+(?:a\s+)?background\s+(?:report|check)\b/i;
@@ -119,7 +120,8 @@ function categoryDiscoveryTerms(categories: readonly PantheonBackgroundCategory[
 export function hasEnoughIdentityContext(text: string): boolean {
   const properNames = text.match(new RegExp(PERSON_NAME_ONLY_PATTERN.source, 'g')) || [];
   const specificFullName = properNames.some(name => name.trim().split(/\s+/).length >= 3);
-  return properNames.length > 0 && (IDENTIFIER_PATTERN.test(text) || specificFullName);
+  const organization = ORGANIZATION_NAME_PATTERN.test(text);
+  return organization || (properNames.length > 0 && (IDENTIFIER_PATTERN.test(text) || specificFullName));
 }
 
 function clarificationFor(prompt: string): string {
@@ -135,6 +137,19 @@ function extractPersonName(text: string): { firstName?: string; middleName?: str
   const parts = candidate.trim().split(/\s+/);
   if (parts.length === 2) return { firstName: parts[0], lastName: parts[1] };
   return { firstName: parts[0], middleName: parts.slice(1, -1).join(' '), lastName: parts[parts.length - 1] };
+}
+
+function extractOrganizationName(text: string): string | undefined {
+  return text.match(ORGANIZATION_NAME_PATTERN)?.[0]?.trim();
+}
+
+function genericEntityMatch(item: RetrievalEvidence, subject: string): { matched: boolean; score: number; conflicts: string[]; independentCorrelates: string[] } {
+  const normalizedSubject = subject.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const content = String(item.content || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ');
+  const tokens = normalizedSubject.split(/\s+/).filter(token => token.length > 1 && !['llc','inc','corp','corporation','company','co'].includes(token));
+  const matchedTokens = tokens.filter(token => content.includes(token));
+  const ratio = tokens.length ? matchedTokens.length / tokens.length : 0;
+  return { matched: ratio >= 0.75, score: Math.min(0.95, 0.55 + ratio * 0.40), conflicts: [], independentCorrelates: matchedTokens };
 }
 
 function extractStateCode(text: string): string | undefined {
@@ -278,6 +293,9 @@ export async function investigatePersonQuestion(
   try {
     const resolvedPerson = extractPersonName(combined);
     const resolvedName = [resolvedPerson.firstName, resolvedPerson.middleName, resolvedPerson.lastName].filter(Boolean).join(' ');
+    const resolvedOrganization = extractOrganizationName(combined);
+    const resolvedSubject = resolvedName || resolvedOrganization || '';
+    const resolvedEntityType = resolvedOrganization && !resolvedName ? 'organization' : 'person';
     const primaryCrawlerSet = new Set<string>(PANTHEON_PRIMARY_CRAWLER_IDS);
     const selectedPrimaryCrawlers = selectLexaraCrawlerPlan({
       prompt: combined,
@@ -352,7 +370,7 @@ export async function investigatePersonQuestion(
             query: categoryDiscoveryTerms(categories),
             latencyMs: retrievalLatencyMs,
             objective: combined,
-            entityType: 'person',
+            entityType: resolvedEntityType,
           });
         }
         emitDueCheckpoints();
@@ -387,8 +405,10 @@ export async function investigatePersonQuestion(
       }
 
       for (const item of retrieval.evidence.filter(item => item.content?.trim())) {
-        if (!resolvedName) continue;
-        const identityMatch = matchPantheonSubject(item, resolvedName, context.jurisdiction);
+        if (!resolvedSubject) continue;
+        const identityMatch = resolvedEntityType === 'person'
+          ? matchPantheonSubject(item, resolvedSubject, context.jurisdiction)
+          : genericEntityMatch(item, resolvedSubject);
         if (!identityMatch.matched) continue;
         const evidenceKey = `${item.sourceUrl}:${item.crawler}:${item.content.slice(0, 120)}`;
         let authorityBonus = 0;
@@ -425,7 +445,7 @@ export async function investigatePersonQuestion(
           query: categoryDiscoveryTerms(categories),
           latencyMs: retrievalLatencyMs,
           objective: combined,
-          entityType: 'person',
+          entityType: resolvedEntityType,
           evidenceConfidence: Math.max(0, Math.min(1, dynamicScore)),
           evidenceYield: 1,
         });
@@ -435,8 +455,8 @@ export async function investigatePersonQuestion(
       const bestConfidence = Math.max(rankedScores[0] || 0, structuredEvidenceConfidence);
       const corroboratedHighConfidence = rankedScores.filter(score => score >= PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD).length >= PERSON_RECURSIVE_SUFFICIENT_EVIDENCE;
       const hasMaterialIdentityConflict = [...acceptedEvidence.values()].some(item => {
-        if (!resolvedName) return false;
-        return matchPantheonSubject(item, resolvedName, context.jurisdiction).conflicts.length > 0;
+        if (!resolvedSubject) return false;
+        return (resolvedEntityType === 'person' ? matchPantheonSubject(item, resolvedSubject, context.jurisdiction) : genericEntityMatch(item, resolvedSubject)).conflicts.length > 0;
       });
       console.info('[LEXARA PantheonRoute]', {
         stage: 'evidence-progress',
@@ -496,7 +516,7 @@ export async function investigatePersonQuestion(
     const evidenceSummary = [...structuredEvidence, ...webEvidence].join('\n\n').slice(0, 10_000);
     const bestConfidence = Math.max(evidenceEntries.length ? (acceptedEvidenceScores.get(evidenceEntries[0][0]) || 0) : 0, structuredEvidenceConfidence);
     const publishableEvidenceCount = evidenceEntries.filter(([key]) => (acceptedEvidenceScores.get(key) || 0) >= PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD).length;
-    const finalHasMaterialIdentityConflict = evidenceEntries.some(([, item]) => resolvedName ? matchPantheonSubject(item, resolvedName, context.jurisdiction).conflicts.length > 0 : false);
+    const finalHasMaterialIdentityConflict = evidenceEntries.some(([, item]) => resolvedSubject ? (resolvedEntityType === 'person' ? matchPantheonSubject(item, resolvedSubject, context.jurisdiction) : genericEntityMatch(item, resolvedSubject)).conflicts.length > 0 : false);
     const evidenceSufficient = (publishableEvidenceCount >= PERSON_RECURSIVE_SUFFICIENT_EVIDENCE || bestConfidence >= PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD) && !finalHasMaterialIdentityConflict;
     const endpoint: LexaraPersonInvestigation['endpoint'] = evidenceSufficient
       ? 'evidence-sufficient'
