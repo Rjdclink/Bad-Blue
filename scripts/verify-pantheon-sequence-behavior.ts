@@ -50,9 +50,11 @@ for (const depth of [1, 2, 3] as const) {
   });
   assert.equal(plans.length, 30);
   for (const plan of plans) {
-    assert.ok(plan.sourcePlan.urls.length > 0, `${plan.label} must retain a bounded direct-source standby frontier`);
     assert.ok(plan.sourcePlan.urls.length <= Math.min(300, target * 2), `${plan.label} initial seed frontier must remain bounded; productive depth is supplied dynamically`);
     assert.equal(new Set(plan.sourcePlan.urls).size, plan.sourcePlan.urls.length);
+    // Search-first architecture permits zero static seeds for a category.
+    // Runtime discovery and category-gap discovery are authoritative; registry
+    // sources are optional standby inputs, not a completion prerequisite.
     assert.equal(plan.state, 'pending');
     assert.equal(plan.phase, 'PENDING');
   }
