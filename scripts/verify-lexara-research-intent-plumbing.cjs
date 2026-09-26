@@ -8,7 +8,7 @@ for(const token of [
   "'current-external-fact'",
   "'legal-authority'",
   "'research-follow-up'",
-  'previousUserTurns.some',
+  'previousUserTurns].reverse().find',
 ]) if(!router.includes(token)) throw new Error('Research intent router missing '+token);
 for(const token of [
   'researchDecision = decideLexaraResearchNeed',
