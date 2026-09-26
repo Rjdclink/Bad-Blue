@@ -41,7 +41,7 @@ for(const token of [
   "'current-information'",
 ]) if(!router.includes(token)) throw new Error('Structured research objective invariant missing: '+token);
 for(const token of [
-  "endpoint?: 'evidence-sufficient' | 'budget-exhausted' | 'sources-exhausted' | 'clarification-required'",
+  "endpoint?: 'evidence-sufficient' | 'partial-evidence' | 'budget-exhausted' | 'sources-exhausted' | 'clarification-required'",
   "'[LEXARA PantheonRoute]'",
   "stage: 'recursion-pass'",
   "stage: 'endpoint'",
@@ -49,7 +49,6 @@ for(const token of [
   'discoverPantheonSourcesParallel(',
   'buildLexaraDynamicCrawlerAssignments({',
   'primaryCrawlers:',
-  'PERSON_RECURSIVE_SUFFICIENT_EVIDENCE',
   'pendingTargets = [...new Set([...frontier, ...discovered])]',
 ]) if(!investigation.includes(token)) throw new Error('Pantheon endpoint/telemetry invariant missing: '+token);
 for(const token of [
