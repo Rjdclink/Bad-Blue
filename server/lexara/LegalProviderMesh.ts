@@ -33,6 +33,11 @@ export async function discoverLegalMeshTier3(query: string, signal?: AbortSignal
   const seen=new Set<string>(); return [...tavilyResults,...mapped].filter(x => !seen.has(x.url) && seen.add(x.url));
 }
 
+export async function discoverLegalMeshSupplemental(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
+  const result = await discoverPantheonSourcesParallel(query, [], { limit: 12, timeoutMs: 2500, signal, includePaidFallback: true });
+  return result.urls.map(url => ({ url, title: 'Supplemental legal discovery result', tier: 5 as const, provider: 'supplemental-discovery' }));
+}
+
 export function legalMeshSufficient(items: LegalMeshCandidate[]): boolean {
   if (!items.length) return false;
   const authoritative = items.some(x => {
