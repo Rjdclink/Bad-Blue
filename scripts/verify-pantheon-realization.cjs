@@ -12,7 +12,7 @@ const client = read('client/src/pages/pantheon.tsx');
 const acquisition = read('server/services/crawlers/PublicAcquisitionInfrastructure.ts');
 const jobs = read('server/services/pantheon/PantheonBackgroundReportJob.ts');
 const peopleSearch = read('server/peopleSearch.ts');
-const categoryWorkflow = read('server/services/pantheon/PantheonCategoryWorkflow.ts');
+const categoryWorkflow = read('server/services/pantheon/PantheonCategoryWorkflow.ts');\nconst searchFirstDiscovery = read('server/services/pantheon/PantheonSearchFirstDiscovery.ts');
 const progressTracker = read('client/src/components/PantheonProgressTracker.tsx');
 const selector = read('client/src/components/DoomsdayClockSelector.tsx');
 const config = read('shared/pantheonReportConfig.ts');
@@ -98,7 +98,7 @@ const checks = [
   ['Firecrawl capability has a disclosed local equivalent and no independent network authority', adapter.includes('runPortablePantheonCapabilities') && !adapter.includes('defaultFirecrawlAdapter.scrape(target')],
   ['Puppeteer capability has a disclosed local equivalent and no independent network authority', adapter.includes('runPortablePantheonCapabilities') && !adapter.includes("method: 'puppeteer'")],
   ['investigation intensity scales processed source work while evidence productivity remains strict', categoryWorkflow.includes('categoryProductiveWorkTarget') && categoryWorkflow.includes('const requiredWorkCount = Math.min(input.productiveWorkTarget, urlLedger.length)') && categoryWorkflow.includes('processedWorkUnits < requiredWorkCount') && categoryWorkflow.includes('productiveWorkUnits') && categoryWorkflow.includes('intensityPolicy') && categoryWorkflow.includes('corroborationTarget') && categoryWorkflow.includes('discoveryExpansion') && categoryWorkflow.includes('fallbackDepth')],
-  ['direct registry sources and a persisted standby frontier survive discovery-provider failure', registry.includes('url:source.url') && categoryWorkflow.includes('const standbyEntries = freshLedger') && categoryWorkflow.includes('admitStandbyFrontier') && categoryWorkflow.includes("event: 'standby_registry_frontier_admitted'") && !categoryWorkflow.includes('4: { corroborationTarget')],
+  ['search-first discovery remains authoritative while optional registry standby survives provider failure', searchFirstDiscovery.includes('discoverPantheonSearchFirstCandidates') && searchFirstDiscovery.includes('discoverPantheonCategoryGapCandidates') && categoryWorkflow.includes('const standbyEntries = combinedFreshLedger') && categoryWorkflow.includes('admitStandbyFrontier') && categoryWorkflow.includes("event: 'standby_registry_frontier_admitted'") && !categoryWorkflow.includes('4: { corroborationTarget')],
   ['category source plans exclude blocked Bing and generic cross-category authority injection', !registry.includes('bing.com/search') && !registry.includes('const AUTHORITIES') && registry.includes('/sitemap.xml') && registry.includes('web.archive.org/cdx/search/cdx')],
   ['each category owns a URL ledger', categoryWorkflow.includes('PantheonUrlLedgerEntry') && categoryWorkflow.includes('urlLedger')],
   ['each category ledger is an explicit persistent transaction', categoryWorkflow.includes('ledgerVersion: 1') && categoryWorkflow.includes('totalLedgerUrls') && categoryWorkflow.includes('pendingUrls') && jobs.includes('categoryLedgerVersion: outcome.ledgerVersion') && jobs.includes('categoryUrlLedger: outcome.urlLedger')],
