@@ -45,12 +45,12 @@ function detectDocumentIntent(prompt: string, previousMessages: LexaraConversati
   const currentAction = /\b(need|want|make|give|provide|prepare|draft|create|generate|write|download|export|file|filing|submit|serve|send)\b/.test(p);
   const referentialFollowup = /\b(it|that|one|document|form|template|blank|pdf|docx)\b/.test(p);
 
-  // Current-turn document language is authoritative. History is consulted only
-  // when the latest turn does not itself identify a document type.
+  // Current-turn document language is authoritative. If the user refers back
+  // to "that demand/document/one", resolve the referent from the complete
+  // conversational history, including a document LEXARA itself just offered.
   let historyType = null as ReturnType<typeof resolveLegalDocumentType>;
   if (!currentType) {
     for (const message of [...previousMessages].reverse()) {
-      if (message.role !== 'user') continue;
       historyType = resolveLegalDocumentType(message.content);
       if (historyType) break;
     }
