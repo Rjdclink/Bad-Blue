@@ -2,7 +2,7 @@ import { pantheonRetrievalAdapter, type RetrievalEvidence } from '../services/cr
 import { buildPantheonCategoryTargets, type PantheonBackgroundCategory } from '../services/pantheon/PantheonSovereignSourceRegistry';
 import { searchInmates } from '../services/inmateSearch/InmateSearchAggregator';
 import { matchPantheonSubject } from '../services/pantheon/PantheonEntityResolution';
-import { buildLexaraDynamicCrawlerAssignments, selectLexaraCrawlerPlan } from './LexaraCrawlerCapabilityRegistry';
+import { buildLexaraDynamicCrawlerAssignments } from './LexaraCrawlerCapabilityRegistry';
 import { PANTHEON_PRIMARY_CRAWLER_IDS, type PantheonPrimaryCrawlerId } from '../services/pantheon/PantheonCrawlerCapabilityMatrix';
 import { discoverPantheonSourcesParallel } from '../services/pantheon/PantheonDiscoveryCoordinator';
 import { rememberPantheonDiscoveryOutcome } from '../services/pantheon/PantheonDiscoveryLearning';
@@ -388,13 +388,9 @@ export async function investigatePersonQuestion(
       })),
     });
     const primaryCrawlerSet = new Set<string>(PANTHEON_PRIMARY_CRAWLER_IDS);
-    const selectedPrimaryCrawlers = selectLexaraCrawlerPlan({
-      prompt: combined,
-      jurisdiction: context.jurisdiction,
-      hasDiscoveredUrls: true,
-      maxCrawlers: 16,
-    })
-      .map(crawler => crawler.id)
+    const selectedPrimaryCrawlers = dynamicAssignments
+      .filter(assignment => assignment.roles.includes('primary'))
+      .map(assignment => assignment.crawler.id)
       .filter((id): id is PantheonPrimaryCrawlerId => primaryCrawlerSet.has(id));
     // Never collapse a person-record lookup to one generic crawler. If the
     // capability scorer found no primary route, retain the complete primary
