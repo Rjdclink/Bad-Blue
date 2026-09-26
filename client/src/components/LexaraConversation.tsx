@@ -548,32 +548,10 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     keyterms: voiceKeyterms,
     shouldProbeBargeIn: () => phaseRef.current === 'speaking',
     onEagerTurn: (text) => {
+      // EagerEndOfTurn is transcript/preparation-only. It never owns the user's
+      // turn boundary and never starts conversational work before confirmed EOT.
       const eager = text.trim();
-      if (!eager || phaseRef.current === 'speaking' || currentRequestRef.current) return;
-      speculativeRequestRef.current?.controller.abort();
-      const controller = new AbortController();
-      const previousMessages = conversationRef.current
-        .filter(item => !nonSemanticLexaraMessageIdsRef.current.has(item.id))
-        .map(item => ({ role: item.role, content: item.content }));
-      const promise = fetch('/api/lexara/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
-          prompt: eager,
-          includeAudio: false,
-          speculative: true,
-          context: {
-            previousMessages,
-            lawType: lawTypeId,
-            lawTypeName,
-            jurisdiction,
-            sessionId: sessionIdRef.current,
-            behaviorMode: 'professional',
-          },
-        }),
-      });
-      speculativeRequestRef.current = { text: eager, controller, promise };
+      if (eager) voiceTurnBufferRef.current = mergeSpeechSegments(voiceTurnBufferRef.current, eager);
     },
     onTurnResumed: () => {
       speculativeRequestRef.current?.controller.abort();
