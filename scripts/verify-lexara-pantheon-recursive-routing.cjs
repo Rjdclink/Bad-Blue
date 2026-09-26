@@ -46,7 +46,7 @@ for (const token of [
   "'commoncrawl'",
   'Promise.all([',
   'Credit-bearing providers remain a true fallback',
-  'supplementalPantheonDiscovery(query',
+  'supplementalPantheonDiscovery(effectiveQuery',
 ]) {
   if (!coordinator.includes(token)) throw new Error('Parallel discovery coordinator missing invariant: ' + token);
 }
