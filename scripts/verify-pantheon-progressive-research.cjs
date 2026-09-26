@@ -80,3 +80,12 @@ for(const token of [
  'deadlineAt: Math.min(globalDeadlineAt, retrievalStartedAt + perPassBudgetMs)',
  'const surfacedEvidenceKeys = new Set<string>()',
 ]) if(!pantheon.includes(token)) throw new Error('Deadline/deduplication invariant missing '+token);
+
+for(const token of [
+ 'const researchLikely =',
+ 'const canReuseSpeculative = speculative?.text === message && !researchLikely',
+]) if(!client.includes(token)) throw new Error('Research SSE authority invariant missing '+token);
+for(const token of [
+ 'const bestEvidence = rankedEntries[0] ? acceptedEvidence.get(rankedEntries[0][0])',
+ 'const finalBestEvidence = evidenceEntries[0]?.[1]',
+]) if(!pantheon.includes(token)) throw new Error('Fact-specific contradiction stop invariant missing '+token);
