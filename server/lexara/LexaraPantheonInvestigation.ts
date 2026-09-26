@@ -236,6 +236,9 @@ export function shouldUsePantheonForPersonQuestion(
   context: LexaraPersonInvestigationContext = {},
 ): boolean {
   if (PERSON_RECORD_PATTERN.test(prompt)) return true;
+  // An identifiable subject plus an explicit external-fact research objective is
+  // enough to enter Pantheon even when the requested attribute is not enumerated.
+  if (/\bResearch objective:\s*/i.test(prompt) && hasEnoughIdentityContext(conversationText(prompt, context))) return true;
   const recentUserTurns = (context.previousMessages || [])
     .filter(message => message.role === 'user')
     .slice(-8)

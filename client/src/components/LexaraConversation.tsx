@@ -49,7 +49,7 @@ type ConversationPhase =
 const CONVERSATION_STORAGE_SCHEMA_VERSION = 2;
 const BROWSER_FINAL_FALLBACK_SETTLE_MS = 1_200;
 const SERVER_VOICE_TURN_SETTLE_MS = 300;
-const FLUX_FINAL_SETTLE_MS = 40;
+const FLUX_FINAL_SETTLE_MS = 1_200;
 const VOICE_END_GRACE_MS = 850;
 const INCOMPLETE_TURN_GRACE_MS = 2_200;
 const CHAT_TURN_TIMEOUT_MS = 10 * 60_000;
@@ -722,7 +722,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       clearVoiceTurnTimer();
       const bufferedTurn = voiceTurnBufferRef.current.trim();
       const settleMs = meta.provider === 'deepgram-flux'
-        ? FLUX_FINAL_SETTLE_MS
+        ? (isLikelyIncompleteUtterance(bufferedTurn) ? INCOMPLETE_TURN_GRACE_MS : FLUX_FINAL_SETTLE_MS)
         : isLikelyIncompleteUtterance(bufferedTurn)
           ? INCOMPLETE_TURN_GRACE_MS
           : meta.engine === 'server'
@@ -1258,30 +1258,18 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
   const sendGreeting = useCallback(async () => {
     if (greetingRef.current || userSpeechObservedRef.current) return;
-
-    // In live mode, do not consume the one-shot greeting while output readiness
-    // is still racing startup. The established spoken greeting must remain
-    // pending until the voice path is actually ready.
     if (liveEnabled && !voiceReady) return;
 
-    greetingRef.current = true;
     const greetingGeneration = generationRef.current;
     responseEmotionRef.current = 'calm';
-
     const greeting = 'How can I help you?';
-    appendMessage('lexara', greeting);
 
-    if (liveEnabled) {
-      try {
-        await speakLexara(greeting, greetingGeneration);
-      } catch {
-        if (greetingGeneration === generationRef.current && !userSpeechObservedRef.current) {
-          // Restore the proven retry behavior without changing normal turn TTS.
-          await new Promise(resolve => window.setTimeout(resolve, 180));
-          await speakLexara(greeting, greetingGeneration);
-        }
-      }
-    }
+    // Do not consume the one-shot greeting until the voice path is ready.
+    // Once ready, reserve it before the await so overlapping readiness effects
+    // cannot speak the greeting twice.
+    greetingRef.current = true;
+    appendMessage('lexara', greeting);
+    await speakLexara(greeting, greetingGeneration).catch(() => undefined);
   }, [appendMessage, liveEnabled, speakLexara, voiceReady]);
 
   useEffect(() => {
