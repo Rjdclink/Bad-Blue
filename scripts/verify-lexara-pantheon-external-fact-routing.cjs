@@ -5,7 +5,7 @@ const conversation=fs.readFileSync('server/lexara/LexaraConversationOrchestrator
 
 for(const token of [
   "'external-fact-question'",
-  "if (question) {",
+  "if (question || factualRequest) {",
   "needed: true, reason: 'external-fact-question'",
 ]) if(!router.includes(token)) throw new Error('External fact routing invariant missing: '+token);
 
