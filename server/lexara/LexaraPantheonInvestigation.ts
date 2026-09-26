@@ -31,11 +31,14 @@ const PERSON_NAME_ONLY_PATTERN = /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}\b/;
 
 const PERSON_RECORD_PATTERN = /\b(?:identity|date\s+of\s+birth|dob|age|phone|email|address|where\s+(?:does|did)\s+.+?\s+live|residen|relative|family|associate|household|social\s+media|username|online\s+account|photo|image|employ(?:ed|ment)|work(?:ed|s)?\s+(?:at|for)|education|school|college|university|degree|professional\s+license|credential|business|company|corporat|property|house|home|real\s+estate|vehicle|car|truck|title|registration|court|case|docket|lawsuit|judgment|arrest(?:ed|s)?|criminal\s+record|conviction|warrant|inmate|incarcerat(?:e|ed|ion)?|prison|parole|probation|sex\s+offender|bankrupt|mortgage|loan\s+on|lien|married|marriage|divorc|spouse|husband|wife|die|died|death|deceased|obituary|news|media|government\s+(?:job|employment|service)|public\s+service|campaign|contribution|donation|political|patent|trademark|copyright|timeline|history|relationship|background\s+(?:check|report)|investigat(?:e|ion)\s+(?:him|her|them|this\s+person))\b/i;
 const FULL_REPORT_PATTERN = /\b(?:full|complete|comprehensive|entire)\s+(?:background\s+)?(?:report|check|investigation)|\b(?:run|do|generate|prepare)\s+(?:a\s+)?background\s+(?:report|check)\b/i;
-const PERSON_RECURSIVE_MAX_PASSES = 3;
-const PERSON_RECURSIVE_MAX_TARGETS_PER_PASS = 6;
-const PERSON_RECURSIVE_MAX_TOTAL_TARGETS = 18;
-const PERSON_RECURSIVE_TOTAL_BUDGET_MS = 4_500;
+const PERSON_RECURSIVE_MAX_PASSES = 30;
+const PERSON_RECURSIVE_MAX_TARGETS_PER_PASS = 10;
+const PERSON_RECURSIVE_MAX_TOTAL_TARGETS = 30;
+const PERSON_RECURSIVE_TOTAL_BUDGET_MS = 10 * 60_000;
+const STRUCTURED_CUSTODY_BUDGET_MS = 5 * 60_000;
 const PERSON_RECURSIVE_SUFFICIENT_EVIDENCE = 2;
+const PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD = 0.80;
+const PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD = 0.93;
 
 const IDENTIFIER_PATTERN = /\b(?:born|dob|date\s+of\s+birth|age\s+\d{1,3}|\d{1,2}[\/-]\d{1,2}[\/-](?:19|20)\d{2}|(?:19|20)\d{2}|lives?\s+in|from\s+[A-Z][a-z]+|address|street|avenue|road|drive|lane|city|county|state|phone|email|employer|works?\s+(?:at|for)|middle\s+name)\b/i;
 
@@ -179,7 +182,7 @@ export async function investigatePersonQuestion(
     .flatMap(category => buildPantheonCategoryTargets(category, combined, context.jurisdiction, 5))
     .filter(target => target.subjectScoped || target.sourceKind === 'api' || target.sourceKind === 'search')
     .filter((target, index, all) => all.findIndex(candidate => candidate.url === target.url) === index)
-    .slice(0, 6);
+    .slice(0, PERSON_RECURSIVE_MAX_TARGETS_PER_PASS);
   const registryUrls = registryTargets.map(target => target.url);
   const discoveryPromise = discoverPantheonSourcesParallel(
     `${combined} public records ${categories.join(' ')} ${categoryDiscoveryTerms(categories)} official government database search`,
@@ -207,7 +210,7 @@ export async function investigatePersonQuestion(
             state: extractStateCode(combined),
             searchScope: 'all',
           }),
-          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('structured_custody_budget_exhausted')), 1_200)),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('structured_custody_budget_exhausted')), STRUCTURED_CUSTODY_BUDGET_MS)),
         ]);
         for (const inmate of inmateResult.inmates.slice(0, 5)) {
           structuredEvidence.push(
@@ -283,11 +286,12 @@ export async function investigatePersonQuestion(
 
       const remainingMs = Math.max(500, PERSON_RECURSIVE_TOTAL_BUDGET_MS - (Date.now() - recursiveStartedAt));
       const retrievalStartedAt = Date.now();
+      const perPassBudgetMs = Math.min(20_000, remainingMs);
       const retrieval = await pantheonRetrievalAdapter.retrieve({
         purpose: 'lexara_legal_research',
         targets: passTargets,
         depth: 3,
-        budgetMs: Math.min(1_600, remainingMs),
+        budgetMs: perPassBudgetMs,
         subject: combined,
         location: context.jurisdiction,
         primaryCrawlers,
@@ -341,8 +345,20 @@ export async function investigatePersonQuestion(
         });
       }
 
-      // Explicit successful endpoint: enough independent verified evidence.
-      if (acceptedEvidence.size + structuredEvidence.length >= PERSON_RECURSIVE_SUFFICIENT_EVIDENCE) break;
+      const rankedScores = [...acceptedEvidenceScores.values()].sort((left, right) => right - left);
+      const bestConfidence = rankedScores[0] || 0;
+      const corroboratedHighConfidence = rankedScores.filter(score => score >= PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD).length >= PERSON_RECURSIVE_SUFFICIENT_EVIDENCE;
+      console.info('[LEXARA PantheonRoute]', {
+        stage: 'evidence-progress',
+        pass: recursionPasses,
+        bestConfidence,
+        publishableEvidence: rankedScores.filter(score => score >= PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD).length,
+        acceptedEvidence: acceptedEvidence.size + structuredEvidence.length,
+      });
+      // Adaptive successful endpoint: do not burn the ten-minute ceiling when
+      // multiple independent findings already clear the publishable threshold,
+      // or one exceptionally strong finding is independently corroborated.
+      if (corroboratedHighConfidence || bestConfidence >= PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD) break;
       // Explicit exhaustion endpoints: pass count, wall-clock budget, target
       // budget, caller abort, or no new URLs. This prevents unbounded recursion.
       if (pass + 1 >= PERSON_RECURSIVE_MAX_PASSES || seenTargets.size >= PERSON_RECURSIVE_MAX_TOTAL_TARGETS) break;
@@ -377,8 +393,9 @@ export async function investigatePersonQuestion(
         .slice(0, Math.min(PERSON_RECURSIVE_MAX_TARGETS_PER_PASS, PERSON_RECURSIVE_MAX_TOTAL_TARGETS - seenTargets.size));
     }
 
-    const evidence = [...acceptedEvidence.entries()]
-      .sort((left, right) => (acceptedEvidenceScores.get(right[0]) || 0) - (acceptedEvidenceScores.get(left[0]) || 0))
+    const evidenceEntries = [...acceptedEvidence.entries()]
+      .sort((left, right) => (acceptedEvidenceScores.get(right[0]) || 0) - (acceptedEvidenceScores.get(left[0]) || 0));
+    const evidence = evidenceEntries
       .map(([, item]) => item)
       .slice(0, 12);
     const sources = [...new Set([...structuredSources, ...evidence.map(item => item.sourceUrl).filter(Boolean)])].slice(0, 12);
@@ -386,7 +403,9 @@ export async function investigatePersonQuestion(
       `${index + 1}. SOURCE: ${item.sourceUrl}\nEVIDENCE: ${item.content.trim().slice(0, 1200)}`
     );
     const evidenceSummary = [...structuredEvidence, ...webEvidence].join('\n\n').slice(0, 10_000);
-    const evidenceSufficient = evidence.length + structuredEvidence.length >= PERSON_RECURSIVE_SUFFICIENT_EVIDENCE;
+    const bestConfidence = evidenceEntries.length ? (acceptedEvidenceScores.get(evidenceEntries[0][0]) || 0) : 0;
+    const publishableEvidenceCount = evidenceEntries.filter(([key]) => (acceptedEvidenceScores.get(key) || 0) >= PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD).length;
+    const evidenceSufficient = publishableEvidenceCount >= PERSON_RECURSIVE_SUFFICIENT_EVIDENCE || bestConfidence >= PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD;
     const endpoint: LexaraPersonInvestigation['endpoint'] = evidenceSufficient
       ? 'evidence-sufficient'
       : Date.now() - recursiveStartedAt >= PERSON_RECURSIVE_TOTAL_BUDGET_MS
