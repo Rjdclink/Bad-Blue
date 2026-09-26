@@ -1,5 +1,5 @@
 import {
-  PANTHEON_VERIFIED_SOURCE_INVENTORY,
+  buildPantheonBackgroundRegistryTargets,
   type PantheonBackgroundCategory,
   type PantheonSourceTarget,
 } from '../pantheon/PantheonSovereignSourceRegistry';
@@ -43,27 +43,8 @@ function authorityScore(authority: string) {
   return authority === 'primary' ? 4 : authority === 'archive' ? 3 : authority === 'secondary' ? 2 : 1;
 }
 
-export const SPECTRA_SOURCE_CATALOG = PANTHEON_VERIFIED_SOURCE_INVENTORY
-  .map(source => ({ ...source, priority: rank(source.categories) }));
-export const SPECTRA_SOURCE_CATALOG_BY_ID = new Map(
-  SPECTRA_SOURCE_CATALOG.map(source => [source.id, source] as const)
-);
-
-export function getSpectraSources(
-  categories: readonly PantheonBackgroundCategory[] = [],
-  jurisdiction?: string,
-) {
-  const wanted = new Set<string>(categories);
-  return SPECTRA_SOURCE_CATALOG
-    .filter(source => !wanted.size || source.categories.some(category => wanted.has(category)))
-    .filter(source => !jurisdiction || source.jurisdiction === jurisdiction || source.jurisdiction === 'US' || source.jurisdiction === 'US/global')
-    .sort((a, b) => {
-      const priority = { critical: 3, high: 2, supporting: 1 };
-      return priority[b.priority] - priority[a.priority]
-        || authorityScore(b.authority) - authorityScore(a.authority)
-        || a.id.localeCompare(b.id);
-    });
-}
+export const SPECTRA_SOURCE_CATALOG: Array<never> = [];
+export const SPECTRA_SOURCE_CATALOG_BY_ID = new Map();
 
 function safeText(value: string): string {
   // Replace isolated UTF-16 surrogates before URL/query construction.
@@ -73,51 +54,25 @@ function safeText(value: string): string {
 export function buildSpectraPriorityTargets(
   subject: string,
   clues?: string,
-  limit = SPECTRA_SOURCE_CATALOG.length,
+  limit = 300,
 ): SpectraSourceTarget[] {
-  const identity = [safeText(subject), safeText(String(clues || ''))]
-    .filter(Boolean)
-    .map(value => `"${value}"`)
-    .join(' ');
+  const identity = [safeText(subject), safeText(String(clues || ''))].filter(Boolean).join(' ');
   if (!identity) return [];
-
-  const seen = new Set<string>();
-  const targets: SpectraSourceTarget[] = [];
-  for (const source of getSpectraSources()) {
-    const key = source.url.trim().toLowerCase();
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-
-    const category = (source.categories.find(category => DIRECT.has(category) || CONTEXT.has(category) || SPECIALIZED.has(category))
-      || source.categories[0]
-      || 'identity') as PantheonBackgroundCategory;
-    let host = '';
-    try { host = new URL(source.url).hostname; } catch { host = ''; }
-    const sourceScopedQuery = [
-      host ? `site:${host}` : '',
-      identity,
-      source.name,
-      category,
-    ].filter(Boolean).join(' ');
-
-    targets.push({
-      sourceId: source.id,
-      sourceName: source.name,
-      category,
-      url: source.url,
-      authority: source.authority,
-      jurisdiction: source.jurisdiction,
-      query: sourceScopedQuery,
-      priority: source.priority,
-      reason: source.priority === 'critical'
-        ? 'direct identity/location/corroboration evidence'
-        : source.priority === 'high'
-          ? 'records, social, web, or contextual pivot'
-          : 'specialized or supporting corroboration source',
-    });
-    if (targets.length >= Math.max(1, limit)) break;
-  }
-  return targets;
+  const seeds = buildPantheonBackgroundRegistryTargets(subject, clues, 10);
+  return seeds.slice(0, Math.max(1, limit)).map((source, index) => {
+    const priority = rank([source.category]);
+    return {
+      ...source,
+      sourceId: source.sourceIds?.[0] || `dynamic-seed-${index + 1}`,
+      sourceName: new URL(source.url).hostname,
+      priority,
+      reason: priority === 'critical'
+        ? 'direct identity/location/corroboration seed'
+        : priority === 'high'
+          ? 'records, web, or contextual discovery seed'
+          : 'specialized or supporting discovery seed',
+    };
+  });
 }
 
 function diversify(targets: SpectraSourceTarget[]): SpectraSourceTarget[] {
