@@ -50,8 +50,11 @@ async function main() {
     searchDepth: submission.searchDepth,
     budgetMs: 20 * 60_000,
   });
-  if (plans.length !== 30 || plans.some(plan => plan.state !== 'pending' || !plan.sourcePlan.urls.length)) {
-    throw new Error('all 30 pending source plans were not initialized');
+  if (plans.length !== 30 || plans.some(plan => plan.state !== 'pending')) {
+    throw new Error('all 30 pending category plans were not initialized');
+  }
+  if (plans.some(plan => plan.sourcePlan.urls.length > 300)) {
+    throw new Error('optional static standby frontiers must remain bounded under search-first execution');
   }
 
   const retrievedAt = new Date().toISOString();
