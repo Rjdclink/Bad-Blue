@@ -268,7 +268,7 @@ export async function discoverPantheonSourcesParallel(
           useOnlinePlugin: true,
           timeout: Math.min(timeoutMs, 650),
           signal: options.signal,
-        });
+        }).catch(() => ({ sources: [] as string[] }));
         return result.sources
           .map(url => canonicalCandidate(url))
           .filter((url: string | null): url is string => Boolean(url));
