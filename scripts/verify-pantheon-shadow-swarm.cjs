@@ -1,0 +1,10 @@
+const fs=require('fs');
+const s=fs.readFileSync('server/services/pantheonCrawlerOrchestrator.ts','utf8');
+const must=(v,m)=>{if(!v)throw new Error(m)};
+must(s.includes('PANTHEON_SWARM_ROUTE_LIMIT = 6'),'bounded swarm cap');
+must(s.includes('runPantheonCrawlerPooled(crawler'),'existing crawler pools remain authority');
+must(s.includes('Math.min(PANTHEON_SWARM_ROUTE_LIMIT, crawlersToUse.length)'),'swarm bounded by selected capabilities');
+must(s.includes('throwIfPantheonAborted(orchestrationDeadline.signal)'),'swarm honors canonical deadline/abort');
+must(s.includes('crawlersToUse[routeIndex]'),'swarm only executes controller-selected crawlers');
+must(s.includes('Promise.allSettled(swarmWorkers)'),'worker failures remain isolated');
+console.log('Pantheon bounded capability swarm verification passed.');
