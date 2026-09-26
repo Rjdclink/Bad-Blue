@@ -105,6 +105,48 @@ function requestedCategories(prompt: string): PantheonBackgroundCategory[] {
   categories.add('identity-resolution');
   return [...categories];
 }
+const REPORT_LABEL_BY_BACKGROUND_CATEGORY: Partial<Record<PantheonBackgroundCategory, string>> = {
+  identity: 'Identity & Identity Verification',
+  'identity-resolution': 'Identity & Identity Verification',
+  contacts: 'Phone Numbers',
+  residence: 'Current Address',
+  relatives: 'Relatives & Family',
+  associates: 'Associates & Household Connections',
+  social: 'Social-Media Profiles',
+  usernames: 'Usernames & Online Accounts',
+  internet: 'Internet & Web Footprint',
+  news: 'News & Media Mentions',
+  employment: 'Employment History',
+  education: 'Education',
+  credentials: 'Professional Licenses & Credentials',
+  business: 'Business Ownership & Affiliations',
+  corporate: 'Business Ownership & Affiliations',
+  property: 'Property & Real Estate',
+  transportation: 'Vehicles & Transportation Records',
+  courts: 'Court Records',
+  criminal: 'Criminal Records',
+  arrests: 'Arrest & Police Records',
+  corrections: 'Incarceration & Corrections',
+  'probation-parole': 'Probation & Parole Information',
+  warrants: 'Warrants & Wanted-Person Records',
+  'sex-offender': 'Sex-Offender Registries',
+  'civil-litigation': 'Civil Litigation & Judgments',
+  bankruptcy: 'Bankruptcies, Liens & Financial Public Records',
+  'financial-public': 'Bankruptcies, Liens & Financial Public Records',
+  'vital-records': 'Marriage, Divorce & Vital-Record Information',
+  'government-employment': 'Government, Political & Public-Service Records',
+  'relationship-graph': 'Relationship & Timeline Intelligence',
+  chronology: 'Relationship & Timeline Intelligence',
+};
+
+function conversationalReportCategoryLabel(categories: readonly PantheonBackgroundCategory[]): string {
+  for (const category of categories) {
+    const label = REPORT_LABEL_BY_BACKGROUND_CATEGORY[category];
+    if (label) return label;
+  }
+  return 'Identity & Identity Verification';
+}
+
 function categoryDiscoveryTerms(categories: readonly PantheonBackgroundCategory[]): string {
   const terms = new Set<string>();
   if (categories.includes('corrections')) ['inmate locator','offender search','sheriff jail roster','detention center inmate search'].forEach(value => terms.add(value));
@@ -363,6 +405,7 @@ export async function investigatePersonQuestion(
           deadlineAt: Math.min(globalDeadlineAt, retrievalStartedAt + perPassBudgetMs),
           subject: combined,
           location: context.jurisdiction,
+          categoryLabel: conversationalReportCategoryLabel(categories),
           primaryCrawlers: pass === 0 ? primaryCrawlers : escalationPrimaryCrawlers,
           signal: context.signal,
         });
