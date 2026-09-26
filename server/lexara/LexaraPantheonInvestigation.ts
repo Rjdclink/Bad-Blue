@@ -313,6 +313,7 @@ export async function investigatePersonQuestion(
       : [...PANTHEON_PRIMARY_CRAWLER_IDS];
 
     const recursiveStartedAt = Date.now();
+    const globalDeadlineAt = recursiveStartedAt + PERSON_RECURSIVE_TOTAL_BUDGET_MS;
     const seenTargets = new Set<string>();
     let pendingTargets = targets.slice(0, PERSON_RECURSIVE_MAX_TARGETS_PER_PASS);
     let retrievalAvailable = true;
@@ -354,6 +355,7 @@ export async function investigatePersonQuestion(
           targets: passTargets,
           depth: 3,
           budgetMs: perPassBudgetMs,
+          deadlineAt: Math.min(globalDeadlineAt, retrievalStartedAt + perPassBudgetMs),
           subject: combined,
           location: context.jurisdiction,
           primaryCrawlers,
@@ -375,6 +377,7 @@ export async function investigatePersonQuestion(
         }
         emitDueCheckpoints();
         if (context.signal?.aborted) break;
+        if (Date.now() >= globalDeadlineAt) break;
         // A source/pass deadline is route-local. It must never become the
         // conversational research job's hard deadline.
         pendingTargets = [];
@@ -472,7 +475,7 @@ export async function investigatePersonQuestion(
       if ((corroboratedHighConfidence || bestConfidence >= PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD) && !hasMaterialIdentityConflict) break;
       // Explicit exhaustion endpoints: pass count, wall-clock budget, target
       // budget, caller abort, or no new URLs. This prevents unbounded recursion.
-      if (pass + 1 >= PERSON_RECURSIVE_MAX_PASSES || seenTargets.size >= PERSON_RECURSIVE_MAX_TOTAL_TARGETS) break;
+      if (Date.now() >= globalDeadlineAt || pass + 1 >= PERSON_RECURSIVE_MAX_PASSES || seenTargets.size >= PERSON_RECURSIVE_MAX_TOTAL_TARGETS) break;
 
       const frontier = [
         ...(retrieval.frontierCandidates?.discoveredCandidates || []),
