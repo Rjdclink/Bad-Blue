@@ -25,7 +25,10 @@ export type LexaraCrawlerCapability =
   | 'blind-spot-analysis'
   | 'structured-extraction'
   | 'market-observation'
-  | 'crypto-observation';
+  | 'crypto-observation'
+  | 'occupation'
+  | 'incarceration'
+  | 'vital-records';
 
 export type LexaraCrawlerFamily =
   | 'pantheon-core'
@@ -180,11 +183,17 @@ function desiredCapabilities(input: LexaraCrawlerSelectionInput): Set<LexaraCraw
   if (/case|precedent|holding|opinion|docket/.test(text)) desired.add('case-law');
   if (/statute|code section|u\.s\.c|law says|legislation/.test(text)) desired.add('statutes');
   if (/regulation|c\.f\.r|agency rule/.test(text)) desired.add('regulations');
-  if (/person|people|phone|address|relative|associate|locate/.test(text)) desired.add('people-search');
+  if (/person|people|phone|address|relative|associate|locate|born|birthday|date of birth|dob|employ|occupation|job|works? at|works? for|inmate|incarcerat|prison|jail|custody/.test(text)) desired.add('people-search');
+  if (/born|birthday|date of birth|dob|marriage|divorc|death|deceased/.test(text)) desired.add('vital-records');
+  if (/employ|occupation|job|works? at|works? for|profession/.test(text)) desired.add('occupation');
+  if (/inmate|incarcerat|prison|jail|custody|corrections/.test(text)) desired.add('incarceration');
   if (/social media|facebook|instagram|linkedin|twitter|x\.com|tiktok/.test(text)) desired.add('social-media');
   if (/property|asset|parcel|vehicle|business|company|corporation|llc/.test(text)) desired.add('public-records');
   if (/crypto|blockchain|token|exchange|arbitrage|wallet|defi/.test(text)) desired.add('crypto-observation');
-  if (input.hasDiscoveredUrls) desired.add('semantic-extraction');
+  if (input.hasDiscoveredUrls) {
+    desired.add('semantic-extraction');
+    desired.add('structured-extraction');
+  }
   return desired;
 }
 
