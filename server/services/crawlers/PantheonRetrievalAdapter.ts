@@ -274,6 +274,8 @@ export class PantheonRetrievalAdapter {
     workType?: 'authoritative-source' | 'discovery-search' | 'source-navigation' | 'candidate-validation' | 'corroboration';
     subjectScoped?: boolean;
     capabilityHint?: string[];
+    /** Explicit need-driven primary crawler roster for conversational retrieval. */
+    primaryCrawlers?: PantheonPrimaryCrawlerId[];
     transportHint?: string[];
     signal?: AbortSignal;
     authority?: {
@@ -354,9 +356,12 @@ export class PantheonRetrievalAdapter {
       targetCount: request.targets.length,
       host,
     });
-    // Every crawler remains available. Category/URL context determines which
-    // specialized skills are necessary; broad categories retain the complete
-    // primary roster while targeted categories avoid redundant transports.
+    // Every crawler remains available. Callers may supply a capability-derived
+    // primary roster; background-report URL-ledger routing remains authoritative.
+    if (request.purpose !== 'background_report' && request.primaryCrawlers?.length) {
+      plan.crawlers = [...new Set(request.primaryCrawlers)];
+      plan.rationale.unshift('Conversational capability routing selected the primary crawler roster.');
+    }
     if (request.purpose === 'background_report') {
       const category = String(request.categoryLabel || '').toLowerCase();
       // URL ledger capability hints are authoritative. Category inference is a
