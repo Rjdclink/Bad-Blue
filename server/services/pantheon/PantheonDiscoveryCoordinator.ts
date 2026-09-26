@@ -33,6 +33,13 @@ function canonicalCandidate(raw: string): string | null {
   }
 }
 
+function softTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  return Promise.race([
+    promise.catch(() => fallback),
+    new Promise<T>(resolve => setTimeout(() => resolve(fallback), timeoutMs)),
+  ]);
+}
+
 async function withTimeout<T>(
   timeoutMs: number,
   parentSignal: AbortSignal | undefined,
@@ -188,8 +195,11 @@ export async function discoverPantheonSourcesParallel(
   const seen = new Set(existingUrls.map(url => canonicalCandidate(url)).filter(Boolean) as string[]);
   // Persisted query learning is loaded concurrently and only used if the first
   // free fan-out produces nothing, so database latency never delays a normal hit.
-  const learnedPatternPromise = getPantheonLearnedQueryPatterns(options.categories || [], options.jurisdiction, 1)
-    .catch(() => [] as string[]);
+  const learnedPatternPromise = softTimeout(
+    getPantheonLearnedQueryPatterns(options.categories || [], options.jurisdiction, 1),
+    75,
+    [] as string[],
+  );
   const effectiveQuery = query;
   const lanesAttempted: PantheonDiscoveryLane[] = [];
   const lanesWithResults: PantheonDiscoveryLane[] = [];
@@ -205,7 +215,11 @@ export async function discoverPantheonSourcesParallel(
   // All free/applicable lanes launch together. Learned sources are queried in
   // the same fan-out so database latency never serializes network discovery.
   const settled = await Promise.all([
-    lane('learned', true, () => getPantheonLearnedSources(options.categories || [], options.jurisdiction, limit)),
+    lane('learned', true, () => softTimeout(
+      getPantheonLearnedSources(options.categories || [], options.jurisdiction, limit),
+      75,
+      [] as string[],
+    )),
     lane('first-party', true, async () => {
       const result = await orchestratedWebSearch(effectiveQuery, {
         useOnlinePlugin: true,
