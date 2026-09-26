@@ -349,7 +349,10 @@ export async function investigatePersonQuestion(
 
       const remainingMs = Math.max(500, PERSON_RECURSIVE_TOTAL_BUDGET_MS - (Date.now() - recursiveStartedAt));
       const retrievalStartedAt = Date.now();
-      const perPassBudgetMs = Math.min(20_000, remainingMs);
+      // 20s is a soft escalation checkpoint, not a job-killing ceiling. Give
+      // productive crawler work a larger bounded slice while preserving the
+      // ten-minute absolute investigation deadline.
+      const perPassBudgetMs = Math.min(pass === 0 ? 25_000 : 60_000, remainingMs);
       let retrieval;
       try {
         retrieval = await pantheonRetrievalAdapter.retrieve({
@@ -380,7 +383,8 @@ export async function investigatePersonQuestion(
         emitDueCheckpoints();
         if (context.signal?.aborted) break;
         if (Date.now() >= globalDeadlineAt) break;
-        // A source/pass deadline is route-local. It must never become the
+        // A source/pass deadline is route-local and acts as an escalation
+        // checkpoint. It must never become the
         // conversational research job's hard deadline.
         pendingTargets = [];
         try {
