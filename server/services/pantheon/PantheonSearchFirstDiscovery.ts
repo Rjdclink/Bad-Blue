@@ -21,12 +21,47 @@ function tokens(value: string): string[] {
     .filter(token => token.length >= 4);
 }
 
+const CATEGORY_DISCOVERY_HINTS: Record<string, readonly string[]> = {
+  'Phone Numbers': ['phone', 'telephone', 'mobile', 'contact'],
+  'Email Addresses': ['email', 'e-mail', 'contact'],
+  'Current Address': ['address', 'residence', 'resident', 'property'],
+  'Address History': ['address', 'residence', 'former', 'previous'],
+  'Relatives & Family': ['relative', 'family', 'spouse', 'parent', 'sibling', 'probate'],
+  'Associates & Household Connections': ['associate', 'household', 'connection', 'relationship'],
+  'Social-Media Profiles': ['social', 'profile', 'facebook', 'linkedin', 'instagram', 'twitter'],
+  'Usernames & Online Accounts': ['username', 'handle', 'account', 'profile'],
+  'Photos & Public Images': ['photo', 'image', 'picture', 'gallery'],
+  'Employment History': ['employment', 'employee', 'employer', 'work', 'career', 'salary'],
+  'Education': ['education', 'school', 'college', 'university', 'graduate'],
+  'Professional Licenses & Credentials': ['license', 'licensure', 'credential', 'certification', 'board'],
+  'Business Ownership & Affiliations': ['business', 'company', 'corporation', 'llc', 'officer', 'director'],
+  'Property & Real Estate': ['property', 'parcel', 'real estate', 'assessor', 'deed'],
+  'Vehicles & Transportation Records': ['vehicle', 'transportation', 'motor', 'driver'],
+  'Court Records': ['court', 'case', 'docket', 'lawsuit', 'litigation'],
+  'Criminal Records': ['criminal', 'charge', 'conviction', 'offense', 'court'],
+  'Arrest & Police Records': ['arrest', 'police', 'sheriff', 'booking'],
+  'Incarceration & Corrections': ['inmate', 'prison', 'correction', 'custody'],
+  'Probation & Parole Information': ['probation', 'parole', 'supervision'],
+  'Warrants & Wanted-Person Records': ['warrant', 'wanted', 'fugitive'],
+  'Sex-Offender Registries': ['sex offender', 'offender registry', 'registry'],
+  'Civil Litigation & Judgments': ['civil', 'lawsuit', 'judgment', 'litigation'],
+  'Bankruptcies, Liens & Financial Public Records': ['bankruptcy', 'lien', 'judgment', 'ucc'],
+  'Marriage, Divorce & Vital-Record Information': ['marriage', 'divorce', 'vital', 'spouse', 'probate'],
+  'News & Media Mentions': ['news', 'media', 'press', 'article'],
+  'Internet & Web Footprint': ['website', 'web', 'profile', 'domain', 'internet'],
+  'Government, Political & Public-Service Records': ['government', 'campaign', 'lobby', 'public service', 'contract'],
+  'Relationship & Timeline Intelligence': ['timeline', 'relationship', 'associate', 'chronology'],
+};
+
 function categoryScore(
   candidate: PantheonDiscoveryEvidence,
   category: PantheonSearchFirstCategory,
 ): number {
   const haystack = `${candidate.title || ''} ${candidate.snippet || ''} ${candidate.url}`.toLowerCase();
-  const categoryTokens = [...new Set(tokens(`${category.label} ${category.registry.join(' ')}`))];
+  const categoryTokens = [...new Set([
+    ...tokens(`${category.label} ${category.registry.join(' ')}`),
+    ...tokens((CATEGORY_DISCOVERY_HINTS[category.label] || []).join(' ')),
+  ])];
   return categoryTokens.reduce((score, token) => score + (haystack.includes(token) ? 1 : 0), 0);
 }
 
