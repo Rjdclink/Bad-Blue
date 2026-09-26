@@ -1,11 +1,11 @@
 import { pantheonRetrievalAdapter, type RetrievalEvidence } from '../services/crawlers/PantheonRetrievalAdapter';
-import { orchestratedWebSearch } from '../openRouterWebSearch';
 import { buildPantheonCategoryTargets, type PantheonBackgroundCategory } from '../services/pantheon/PantheonSovereignSourceRegistry';
 import { searchInmates } from '../services/inmateSearch/InmateSearchAggregator';
 import { matchPantheonSubject } from '../services/pantheon/PantheonEntityResolution';
 import { selectLexaraCrawlerPlan } from './LexaraCrawlerCapabilityRegistry';
 import { PANTHEON_PRIMARY_CRAWLER_IDS, type PantheonPrimaryCrawlerId } from '../services/pantheon/PantheonCrawlerCapabilityMatrix';
-import { rememberPantheonDiscoverySuccess, supplementalPantheonDiscovery } from '../services/pantheon/PantheonSupplementalDiscovery';
+import { discoverPantheonSourcesParallel } from '../services/pantheon/PantheonDiscoveryCoordinator';
+import { rememberPantheonDiscoveryOutcome } from '../services/pantheon/PantheonDiscoveryLearning';
 
 export interface LexaraPersonInvestigationContext {
   previousMessages?: Array<{ role?: string; content?: string }>;
@@ -209,21 +209,28 @@ export async function investigatePersonQuestion(
     .filter((target, index, all) => all.findIndex(candidate => candidate.url === target.url) === index)
     .slice(0, 6);
 
+  const registryUrls = registryTargets.map(target => target.url);
   let discoveredUrls: string[] = [];
   try {
-    const discovery = await orchestratedWebSearch(
+    const discovery = await discoverPantheonSourcesParallel(
       `${combined} public records ${categories.join(' ')} ${categoryDiscoveryTerms(categories)} official government database search`,
-      { useOnlinePlugin: true, timeout: 500, signal: context.signal },
+      registryUrls,
+      {
+        categories,
+        jurisdiction: context.jurisdiction,
+        limit: 8,
+        timeoutMs: 650,
+        signal: context.signal,
+      },
     );
-    discoveredUrls = discovery.sources
-      .filter(url => /^https?:\/\//i.test(url))
-      .filter(url => !/\/(?:terms|privacy|disclaimer)(?:[/?#]|$)/i.test(url))
-      .slice(0, 4);
+    discoveredUrls = discovery.urls;
   } catch {
-    // Dynamic discovery is supplemental. Trusted registry sources remain usable.
+    // Parallel discovery is supplemental. Trusted registry sources remain usable.
   }
 
-  const targets = [...new Set([...registryTargets.map(target => target.url), ...discoveredUrls])].slice(0, 8);
+  // Known authorities and learned/free discovery enter the same bounded frontier.
+  // Registry URLs remain first so established direct sources are never displaced.
+  const targets = [...new Set([...registryUrls, ...discoveredUrls])].slice(0, 12);
   if (!targets.length) return {
     sources: [],
     categories,
@@ -268,6 +275,7 @@ export async function investigatePersonQuestion(
       passTargets.forEach(url => seenTargets.add(url));
 
       const remainingMs = Math.max(500, PERSON_RECURSIVE_TOTAL_BUDGET_MS - (Date.now() - recursiveStartedAt));
+      const retrievalStartedAt = Date.now();
       const retrieval = await pantheonRetrievalAdapter.retrieve({
         purpose: 'lexara_legal_research',
         targets: passTargets,
@@ -278,14 +286,32 @@ export async function investigatePersonQuestion(
         primaryCrawlers,
         signal: context.signal,
       });
+      const retrievalLatencyMs = Date.now() - retrievalStartedAt;
       retrievalAvailable = retrievalAvailable && retrieval.available;
       retrievalReason ||= retrieval.reason;
+
+      if (!retrieval.available) {
+        for (const target of passTargets) {
+          void rememberPantheonDiscoveryOutcome(target, false, {
+            categories,
+            jurisdiction: context.jurisdiction,
+            query: combined,
+            latencyMs: retrievalLatencyMs,
+          });
+        }
+      }
 
       for (const item of retrieval.evidence
         .filter(item => item.content?.trim())
         .filter(item => resolvedName && matchPantheonSubject(item, resolvedName, context.jurisdiction).matched)) {
         acceptedEvidence.set(`${item.sourceUrl}:${item.crawler}:${item.content.slice(0, 120)}`, item);
-        rememberPantheonDiscoverySuccess(item.sourceUrl);
+        void rememberPantheonDiscoveryOutcome(item.sourceUrl, true, {
+          categories,
+          jurisdiction: context.jurisdiction,
+          crawler: item.crawler,
+          query: combined,
+          latencyMs: retrievalLatencyMs,
+        });
       }
 
       // Explicit successful endpoint: enough independent verified evidence.
@@ -304,24 +330,20 @@ export async function investigatePersonQuestion(
         const broadeningTerms = pass === 0
           ? 'official record database archive'
           : 'official government database historical archive alternate source';
-        const broadened = await orchestratedWebSearch(
+        const broadened = await discoverPantheonSourcesParallel(
           `${resolvedName || combined} ${categoryDiscoveryTerms(categories)} ${context.jurisdiction || ''} ${broadeningTerms}`,
-          { useOnlinePlugin: true, timeout: Math.min(650, remainingMs), signal: context.signal },
+          [...seenTargets, ...frontier],
+          {
+            categories,
+            jurisdiction: context.jurisdiction,
+            limit: PERSON_RECURSIVE_MAX_TARGETS_PER_PASS,
+            timeoutMs: Math.min(900, remainingMs),
+            signal: context.signal,
+          },
         );
-        discovered = broadened.sources.filter(url => /^https?:\/\//i.test(url));
+        discovered = broadened.urls;
       } catch {
-        // Frontier-derived candidates remain usable when a discovery provider fails.
-      }
-      // Paid supplemental discovery is a last resort only. Pantheon first uses
-      // its own frontier plus the existing web-discovery lane. Returned URLs
-      // are candidates, never evidence; Pantheon must retrieve/verify them.
-      if (!frontier.length && !discovered.length && acceptedEvidence.size === 0) {
-        const supplemental = await supplementalPantheonDiscovery(
-          `${resolvedName || combined} ${categoryDiscoveryTerms(categories)} ${context.jurisdiction || ''}`,
-          [...seenTargets],
-          { limit: PERSON_RECURSIVE_MAX_TARGETS_PER_PASS, timeoutMs: Math.min(900, remainingMs), signal: context.signal },
-        );
-        discovered.push(...supplemental.urls);
+        // Frontier-derived candidates remain usable when every discovery lane fails.
       }
       pendingTargets = [...new Set([...frontier, ...discovered])]
         .filter(url => !seenTargets.has(url))
