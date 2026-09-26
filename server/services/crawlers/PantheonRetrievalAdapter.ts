@@ -498,6 +498,36 @@ export class PantheonRetrievalAdapter {
       // different compatible URL while preserving the failed source outcome.
     } else {
       results = await pantheonOrchestrator.search(request.targets, searchOptions);
+      // Conversational research also gets the full extraction/analysis skill
+      // inventory over material actually retrieved. These skills do not create
+      // extra network fetches; they help decide whether a page contains the
+      // requested fact instead of discarding useful occupation/DOB/custody/etc.
+      const conversationalCapabilityIds = [
+        ...PANTHEON_RAZOR_SKILL_IDS,
+        ...PANTHEON_SECONDARY_CRAWLER_IDS,
+        ...PANTHEON_PORTABLE_CAPABILITY_IDS,
+      ].filter(capabilityId => capabilityId !== 'firecrawl');
+      for (const result of results.filter(result => result.content?.trim())) {
+        const supplemental = await runPantheonSupplementalCapabilities({
+          target: result.target,
+          canonicalContent: result.content,
+          capabilityIds: conversationalCapabilityIds,
+          budgetMs: Math.max(1_000, Math.min(5_000, remainingBudgetMs())),
+          deadlineAt: deadlineAt || (Date.now() + 5_000),
+          signal: operationSignal,
+          investigationId: `lexara:${Date.now()}`,
+          categoryId: request.categoryLabel || 'conversational',
+          workId: `lexara:${result.crawler}:${result.timestamp}`,
+          subject: request.subject || '',
+          location: request.location,
+          categoryLabel: request.categoryLabel,
+          transport: 'direct-http',
+          sourceContext: { transport: 'direct-http', workType: request.workType, subjectScoped: request.subjectScoped },
+        });
+        supplementalRunPromise = supplementalRunPromise
+          ? Promise.all([supplementalRunPromise, Promise.resolve(supplemental)]).then(([left, right]) => ({ evidence: [...left.evidence, ...right.evidence], crawlerAudit: [...left.crawlerAudit, ...right.crawlerAudit] }))
+          : Promise.resolve(supplemental);
+      }
     }
     throwIfPantheonAborted(operationSignal);
     recordCrawlerOutcomes(results);
