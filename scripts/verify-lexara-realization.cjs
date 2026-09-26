@@ -761,7 +761,8 @@ must(
   'person-record lookup cannot block before the live research budget or invent county jurisdiction',
 );
 must(
-  lexaraPantheonInvestigation.includes('budgetMs: 1_600') &&
+  lexaraPantheonInvestigation.includes('PERSON_RECURSIVE_TOTAL_BUDGET_MS = 4_500') &&
+    lexaraPantheonInvestigation.includes('budgetMs: Math.min(1_600, remainingMs)') &&
     lexaraPantheonInvestigation.includes('NEVER name, infer, recommend, or substitute a county'),
   'targeted Pantheon research is bounded for live conversation and county claims require evidence',
 );
@@ -876,11 +877,11 @@ must(
   'person fact research broadens across record families rather than using a fact-specific single source',
 );
 must(
-  lexaraPantheonInvestigation.includes('Fast path first. Only unresolved person facts') &&
-    lexaraPantheonInvestigation.includes('timeout: 450') &&
-    lexaraPantheonInvestigation.includes('budgetMs: 700') &&
-    lexaraPantheonInvestigation.includes('evidence.length === 0 && structuredEvidence.length === 0'),
-  'recursive person research broadens only when unresolved and stays on a bounded low-latency second stage',
+  lexaraPantheonInvestigation.includes('PERSON_RECURSIVE_MAX_PASSES = 3') &&
+    lexaraPantheonInvestigation.includes('PERSON_RECURSIVE_MAX_TOTAL_TARGETS = 18') &&
+    lexaraPantheonInvestigation.includes('discoverPantheonSourcesParallel(') &&
+    lexaraPantheonInvestigation.includes('acceptedEvidence.size + structuredEvidence.length >= PERSON_RECURSIVE_SUFFICIENT_EVIDENCE'),
+  'recursive person research broadens dynamically with explicit bounded low-latency endpoints',
 );
 must(
   lexaraPantheonInvestigation.includes('Separate historical status from current status') &&
@@ -888,9 +889,10 @@ must(
   'Lexara preserves current-versus-historical truth and labels derived person facts',
 );
 must(
-  orchestrator.includes('Do not refuse person-record research merely because the subject is a private individual') &&
-    orchestrator.includes('application supplies verified evidence from a source it is authorized to access'),
-  'Lexara has no blanket private-individual refusal when verified authorized evidence is supplied',
+  orchestrator.includes('private individual, or the requested fact being personal, is NEVER by itself a reason') &&
+    orchestrator.includes('pantheonInvestigation && isPersonPermissionRefusal(text)') &&
+    orchestrator.includes('I could not verify the requested fact from the sources Pantheon completed.'),
+  'Lexara has no blanket private-individual permission refusal after Pantheon targeting',
 );
 if (process.exitCode) process.exit(process.exitCode);
 console.log('LEXARA realization verification passed.');
