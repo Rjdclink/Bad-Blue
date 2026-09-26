@@ -74,3 +74,9 @@ for(const token of [
  "resolvedEntityType = resolvedOrganization && !resolvedName ? 'organization' : 'person'",
 ]) if(!pantheon.includes(token)) throw new Error('Progressive research blueprint invariant missing '+token);
 console.log('Pantheon full progressive-learning blueprint verification passed.');
+
+for(const token of [
+ 'const globalDeadlineAt = recursiveStartedAt + PERSON_RECURSIVE_TOTAL_BUDGET_MS',
+ 'deadlineAt: Math.min(globalDeadlineAt, retrievalStartedAt + perPassBudgetMs)',
+ 'const surfacedEvidenceKeys = new Set<string>()',
+]) if(!pantheon.includes(token)) throw new Error('Deadline/deduplication invariant missing '+token);
