@@ -631,7 +631,7 @@ must(
     orchestrator.includes('Default to 1-3 concise sentences') &&
     orchestrator.includes('Do not say "thank you," "goodbye,"') &&
     orchestrator.includes('LIVE_RESEARCH_BUDGET_MS = 2_400') &&
-    authorityResearch.includes('const RESEARCH_TIMEOUT_MS = 2_400') &&
+    authorityResearch.includes('const RESEARCH_TIMEOUT_MS = 3 * 60_000') &&
     conversation.includes("acknowledgement = String(acknowledgementData?.acknowledgement || '').trim()"),
   'active-analysis turns are cancellable, acknowledgements remain non-semantic but conversational, answers are concise/direct, and authority research is bounded off the live latency tail',
 );
