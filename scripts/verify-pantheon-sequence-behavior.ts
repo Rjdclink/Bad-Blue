@@ -3,17 +3,6 @@ import {
   buildPantheonCategoryTargets,
   type PantheonBackgroundCategory,
 } from '../server/services/pantheon/PantheonSovereignSourceRegistry';
-import {
-  categoryProductiveWorkTarget,
-  initializePantheonCategoryPlans,
-  insertPantheonDiscoveredUrls,
-  assessPantheonSourceExecution,
-  pantheonUrlWindowBudgetMs,
-  PANTHEON_REPORT_CATEGORIES,
-  resequencePantheonFrontier,
-  sourcePriority,
-  type PantheonUrlLedgerEntry,
-} from '../server/services/pantheon/PantheonCategoryWorkflow';
 import { runPantheonBounded } from '../server/services/pantheon/PantheonBoundedScheduler';
 import {
   PANTHEON_CATEGORY_CONCURRENCY_LIMIT,
@@ -32,6 +21,18 @@ const ORIGINAL_DATABASE_ENV = {
 delete process.env.SUPABASE_DATABASE_URL;
 delete process.env.SUPABASE_DB_URL;
 delete process.env.DATABASE_URL;
+
+const {
+  categoryProductiveWorkTarget,
+  initializePantheonCategoryPlans,
+  insertPantheonDiscoveredUrls,
+  assessPantheonSourceExecution,
+  pantheonUrlWindowBudgetMs,
+  PANTHEON_REPORT_CATEGORIES,
+  resequencePantheonFrontier,
+  sourcePriority,
+} = await import('../server/services/pantheon/PantheonCategoryWorkflow');
+type PantheonUrlLedgerEntry = import('../server/services/pantheon/PantheonCategoryWorkflow').PantheonUrlLedgerEntry;
 
 assert.equal(PANTHEON_REPORT_CATEGORIES.length, 30);
 assert.equal(PANTHEON_CATEGORY_CONCURRENCY_LIMIT, 4, 'categories must execute in bounded parallel waves');
