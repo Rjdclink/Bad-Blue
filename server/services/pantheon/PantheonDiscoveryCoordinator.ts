@@ -107,7 +107,11 @@ async function openSerpSearch(query: string, limit: number, timeoutMs: number, s
     const endpoint = new URL('/mega/search', base.endsWith('/') ? base : base + '/');
     endpoint.searchParams.set('text', query);
     endpoint.searchParams.set('limit', String(limit));
-    endpoint.searchParams.set('mode', 'fast');
+    endpoint.searchParams.set('mode', 'any');
+    // Railway's restricted container cannot reliably launch OpenSERP's browser
+    // engines. Raw Baidu is verified here; the remaining raw engines are bounded
+    // fallbacks inside OpenSERP itself.
+    endpoint.searchParams.set('engines', 'baidu,ecosia,yandex,google');
     const response = await fetch(endpoint, { signal: requestSignal, headers: { accept: 'application/json' } });
     if (!response.ok) return [];
     const payload: any = await response.json();
