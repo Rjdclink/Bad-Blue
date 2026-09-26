@@ -139,13 +139,6 @@ export default function Landing() {
 
         {/* Hero Content */}
         <div className="relative z-10 max-w-4xl mx-auto px-4 text-center">
-          {/* AI Badge */}
-          <div className="mb-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
-            <Badge className="bg-primary/90 text-white border-white/20 px-6 py-2.5 text-sm font-medium backdrop-blur-md shadow-lg">
-              🤖 Powered by a Multi-Model AI Orchestration Network
-            </Badge>
-          </div>
-
           {/* LegalWhat Icon - Medium-sized Prominent Display */}
           <div className="mb-8 flex justify-center animate-in fade-in slide-in-from-bottom-4 duration-700 delay-150">
             <div className="relative">
@@ -157,14 +150,14 @@ export default function Landing() {
                   <img 
                     src="/images/Legal%20What%20Icon.png" 
                     alt="Legal What? - AI Legal Platform" 
-                    className="w-20 h-20 md:w-24 md:h-24 object-contain filter drop-shadow-[0_0_15px_rgba(255,255,255,0.4)]"
+                    className="w-28 h-28 md:w-32 md:h-32 object-contain filter drop-shadow-[0_0_15px_rgba(255,255,255,0.4)]"
                     onError={(e) => {
                       handleImageError(e, 'Legal What? Icon');
                       setIconError(true);
                     }}
                   />
                 ) : (
-                  <div className="w-20 h-20 md:w-24 md:h-24 flex items-center justify-center text-white text-3xl font-bold">
+                  <div className="w-28 h-28 md:w-32 md:h-32 flex items-center justify-center text-white text-4xl font-bold">
                     LW
                   </div>
                 )}
@@ -421,7 +414,7 @@ export default function Landing() {
                   6. Orchestrated Expert Modules
                 </h3>
                 <p className="text-sm md:text-base text-white/90 mb-2" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
-                  — thirteen specialized engines work in synchronized, orchestrated coordination.
+                  — seventeen specialized engines work in synchronized, orchestrated coordination.
                 </p>
                 <p className="text-sm text-white/80 italic" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
                   Benefit: Produces unified legal insight that draws from multiple areas of expertise without contradiction.
