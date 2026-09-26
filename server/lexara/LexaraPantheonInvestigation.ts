@@ -302,9 +302,10 @@ export function shouldUsePantheonForPersonQuestion(
   // Category rules refine the search after routing; they do not own the handoff.
   const researchDecision = decideLexaraResearchNeed(prompt, recentUserTurns);
   if (researchDecision.needed && researchDecision.objectiveKind !== 'legal-authority' && hasEnoughIdentityContext(combined)) return true;
-  // Follow-up identifiers continue a prior person-record investigation.
+  // Follow-up identifiers continue a prior person-record investigation, unless
+  // the new turn has explicitly switched back to legal-authority analysis.
   const recentText = recentUserTurns.slice(-2).join(' ');
-  return PERSON_RECORD_PATTERN.test(recentText) && IDENTIFIER_PATTERN.test(prompt);
+  return !isLexaraLegalAuthorityIntent(prompt) && PERSON_RECORD_PATTERN.test(recentText) && IDENTIFIER_PATTERN.test(prompt);
 }
 
 export async function investigatePersonQuestion(
