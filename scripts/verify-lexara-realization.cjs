@@ -953,7 +953,7 @@ must(
 must(
   conversation.includes("const greeting = 'How can I help you?';") &&
     conversation.includes('if (liveEnabled && !voiceReady) return;') &&
-    conversation.includes('await speakLexara(greeting, greetingGeneration);') &&
+    conversation.includes('await speakLexara(greeting, greetingGeneration).catch(() => undefined);') &&
     conversation.includes('if (!greetingRef.current && !userSpeechObservedRef.current) {') &&
     conversation.includes('void sendGreeting();') &&
     !conversation.includes('Hello. Tell me what happened'),
