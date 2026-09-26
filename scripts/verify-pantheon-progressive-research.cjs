@@ -11,7 +11,7 @@ for(const token of [
  'PERSON_RECURSIVE_TOTAL_BUDGET_MS = 10 * 60_000',
  'STRUCTURED_CUSTODY_BUDGET_MS = 5 * 60_000',
  'PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD = 0.80',
- 'PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD = 0.93',
+ 'PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD = 0.80',
  "stage: 'evidence-progress'",
  'publishableEvidence:',
  'perPassBudgetMs = Math.min(20_000, remainingMs)',
@@ -39,7 +39,7 @@ for(const token of [
  'onProgress: context.onResearchProgress',
 ]) if(!orchestrator.includes(token)) throw new Error('Pantheon progress pipe missing '+token);
 for(const token of [
- "type: 'searching' | 'evidence' | 'endpoint'",
+ "type: 'searching' | 'checkpoint' | 'evidence' | 'endpoint'",
  "context.onProgress?.({ type: 'searching'",
  "context.onProgress?.({ type: 'evidence'",
  "context.onProgress?.({ type: 'endpoint'",
@@ -52,6 +52,25 @@ for(const token of [
  "Accept: 'text/event-stream'",
  "event !== 'research'",
  "payload?.type === 'evidence'",
- "Number(payload?.confidence) >= 0.80",
+ "payload?.type === 'evidence' || payload?.type === 'checkpoint'",
+ "I'm continuing to verify this.",
 ]) if(!client.includes(token)) throw new Error('Client SSE consumer invariant missing '+token);
 console.log('Pantheon progressive server-to-browser evidence pipe verification passed.');
+
+const learning=fs.readFileSync('server/services/pantheon/PantheonDiscoveryLearning.ts','utf8');
+const migration=fs.readFileSync('server/migrations/063_pantheon_generalized_source_learning.sql','utf8');
+for(const token of [
+ 'objective_pattern',
+ 'entity_type',
+ 'evidence_confidence',
+ 'evidence_yield',
+ 'CASE WHEN category =',
+]) if(!learning.includes(token)) throw new Error('Generalized source-learning invariant missing '+token);
+for(const token of ['objective_pattern','entity_type','evidence_confidence','evidence_yield']) if(!migration.includes(token)) throw new Error('Generalized source-learning migration missing '+token);
+for(const token of [
+ 'PERSON_SOFT_CHECKPOINTS_MS = [25_000, 60_000, 120_000, 300_000]',
+ 'A source/pass deadline is route-local',
+ 'contradictionPenalty = identityMatch.conflicts.length > 0',
+ "resolvedEntityType = resolvedOrganization && !resolvedName ? 'organization' : 'person'",
+]) if(!pantheon.includes(token)) throw new Error('Progressive research blueprint invariant missing '+token);
+console.log('Pantheon full progressive-learning blueprint verification passed.');
