@@ -10,6 +10,7 @@ import {
 } from '../server/services/pantheon/PantheonBoundedScheduler';
 import { getPantheonReportDurationMs } from '../shared/pantheonReportConfig';
 
+process.env.PANTHEON_FRONTIER_LOCAL_ONLY = '1';
 const ORIGINAL_DATABASE_ENV = {
   SUPABASE_DATABASE_URL: process.env.SUPABASE_DATABASE_URL,
   SUPABASE_DB_URL: process.env.SUPABASE_DB_URL,
@@ -175,4 +176,5 @@ assert.equal(pantheonUrlWindowBudgetMs({
 if (ORIGINAL_DATABASE_ENV.SUPABASE_DATABASE_URL !== undefined) process.env.SUPABASE_DATABASE_URL = ORIGINAL_DATABASE_ENV.SUPABASE_DATABASE_URL;
 if (ORIGINAL_DATABASE_ENV.SUPABASE_DB_URL !== undefined) process.env.SUPABASE_DB_URL = ORIGINAL_DATABASE_ENV.SUPABASE_DB_URL;
 if (ORIGINAL_DATABASE_ENV.DATABASE_URL !== undefined) process.env.DATABASE_URL = ORIGINAL_DATABASE_ENV.DATABASE_URL;
+delete process.env.PANTHEON_FRONTIER_LOCAL_ONLY;
 console.log('Pantheon 30-category dynamic depth, bounded standby frontier, priority, and deadline-drain verification passed.');
