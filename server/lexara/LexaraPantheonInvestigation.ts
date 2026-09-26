@@ -295,7 +295,7 @@ export async function investigatePersonQuestion(
           void rememberPantheonDiscoveryOutcome(target, false, {
             categories,
             jurisdiction: context.jurisdiction,
-            query: combined,
+            query: categoryDiscoveryTerms(categories),
             latencyMs: retrievalLatencyMs,
           });
         }
@@ -309,7 +309,7 @@ export async function investigatePersonQuestion(
           categories,
           jurisdiction: context.jurisdiction,
           crawler: item.crawler,
-          query: combined,
+          query: categoryDiscoveryTerms(categories),
           latencyMs: retrievalLatencyMs,
         });
       }
