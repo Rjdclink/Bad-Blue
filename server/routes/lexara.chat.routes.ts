@@ -141,8 +141,10 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
   res.once('close', () => controller.abort());
   try {
     send('started', { status: 'researching' });
+    const previousMessages = sanitizePreviousMessages((rawContext as any).previousMessages);
+    const documentIntent = detectDocumentIntent(prompt, previousMessages);
     const result = await generateLexaraConversationResponse(prompt, {
-      previousMessages: sanitizePreviousMessages((rawContext as any).previousMessages),
+      previousMessages,
       lawType: cleanOptionalString((rawContext as any).lawType),
       lawTypeName: cleanOptionalString((rawContext as any).lawTypeName, 160),
       jurisdiction: cleanOptionalString((rawContext as any).jurisdiction, 80),
@@ -151,7 +153,23 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       signal: controller.signal,
       onResearchProgress: event => send('research', event),
     });
-    send('complete', { success: true, response: result.text, jurisdiction: result.jurisdiction, mappedLawType: result.mappedLawType });
+    const reasoningDocumentIntent = detectDocumentIntent(result.text, [
+      ...previousMessages,
+      { role: 'user', content: prompt },
+    ]);
+    if (!documentIntent.requested && reasoningDocumentIntent.requested) {
+      documentIntent.requested = true;
+      if (documentIntent.documentType === 'Custom Document') {
+        documentIntent.documentType = reasoningDocumentIntent.documentType;
+      }
+    }
+    send('complete', {
+      success: true,
+      response: result.text,
+      jurisdiction: result.jurisdiction,
+      mappedLawType: result.mappedLawType,
+      documentIntent,
+    });
   } catch (error) {
     if (!controller.signal.aborted) send('error', { error: error instanceof Error ? error.message : 'LEXARA research failed' });
   } finally {
