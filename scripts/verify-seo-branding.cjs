@@ -35,6 +35,8 @@ mustNot(index, 'Bad Blue', 'root metadata must not use Bad Blue');
 mustNot(index, '<meta name="keywords"', 'root must not emit meta-keywords');
 mustNot(index, '"aggregateRating"', 'root must not emit unverified aggregate rating markup');
 must(index.includes('"email": "contact.badblue@gmail.com"'), 'organization schema must expose the support email');
+must(index.includes('flat $19.99 monthly subscription'), 'root metadata must expose canonical $19.99 monthly subscription positioning');
+must(index.includes('"price": "19.99"') && index.includes('"priceCurrency": "USD"'), 'root application schema must expose the canonical monthly offer price');
 for (const capability of ['Visible animated AI', 'DOCX and PDF', 'Uploaded document, evidence, image, and media analysis', 'Intuitive legal-document recognition and preparation']) {
   must(index.includes(capability), `root metadata/schema must expose Lexara capability: ${capability}`);
 }
@@ -202,7 +204,12 @@ for (const phrase of [
   'legal media analysis AI',
   'OSINT AI',
   'AI public records search',
-  'AI legal document generator'
+  'AI legal document generator',
+  'convenient legal AI',
+  'affordable legal AI',
+  'user-friendly legal AI',
+  'flat-rate legal AI',
+  '$19.99 legal AI subscription'
 ]) {
   must(searchArchitecture.includes(phrase), `search-intent architecture missing: ${phrase}`);
 }
