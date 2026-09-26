@@ -1,6 +1,7 @@
 export type LexaraResearchReason =
   | 'explicit-research'
   | 'current-external-fact'
+  | 'external-fact-question'
   | 'legal-authority'
   | 'research-follow-up'
   | 'none';
@@ -27,6 +28,13 @@ export function decideLexaraResearchNeed(
   }
 
   const question = /\?|^(?:what|when|where|who|which|how|is|are|was|were|does|do|did|has|have)\b/i.test(text);
+  // Substantive fact-seeking questions default to grounded research. Conversational
+  // control turns are handled before this router by the immediate-acknowledgement lane.
+  // This prevents unknown phrasings from silently falling through to model recollection.
+  if (question) {
+    return { needed: true, reason: 'external-fact-question', objective: text };
+  }
+
   const externallyVariable = /\b(?:current|currently|latest|today|now|recent|status|record|filing|docket|case|court|license|rule|regulation|statute|deadline|statistics|rate|government|agency)\b/i.test(text);
   if (question && externallyVariable) {
     return { needed: true, reason: 'current-external-fact', objective: text };
