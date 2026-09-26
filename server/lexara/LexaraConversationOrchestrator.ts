@@ -19,6 +19,7 @@ import {
   formatLexaraDomainSpecialization,
   getLexaraLegalDomainProfile,
 } from './LexaraLegalDomainProfiles';
+import { decideLexaraResearchNeed } from './LexaraResearchIntentRouter';
 
 export interface LexaraConversationMessage {
   role: 'user' | 'lexara' | 'assistant';
@@ -328,6 +329,16 @@ export async function generateLexaraConversationResponse(
     || inferPriorUserJurisdiction(context.previousMessages);
   const domainName = trustedDomainName(context.lawType);
   const domainProfile = getLexaraLegalDomainProfile(context.lawType);
+  const previousUserTurns = (context.previousMessages || [])
+    .filter(message => message.role === 'user')
+    .slice(-8)
+    .map(message => message.content || '');
+  const researchDecision = decideLexaraResearchNeed(cleanPrompt, previousUserTurns);
+  console.log('[LEXARA ResearchRoute]', {
+    researchNeeded: researchDecision.needed,
+    reason: researchDecision.reason,
+    objectivePresent: Boolean(researchDecision.objective),
+  });
 
   // Pure presence checks are conversational control turns, not legal-analysis
   // jobs. Returning here prevents "Are you still there?" from launching a
@@ -369,7 +380,7 @@ export async function generateLexaraConversationResponse(
   const relayResearchAbort = () => researchController.abort();
   if (context.signal?.aborted) researchController.abort();
   else context.signal?.addEventListener('abort', relayResearchAbort, { once: true });
-  const authorityResearchPromise = researchLegalAuthority(cleanPrompt, {
+  const authorityResearchPromise = researchLegalAuthority(researchDecision.needed ? researchDecision.objective : cleanPrompt, {
     jurisdiction,
     domainName,
     researchHints: domainProfile?.researchHints,

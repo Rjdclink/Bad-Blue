@@ -10,6 +10,8 @@ export type PantheonEscalationLane =
   | 'direct-http'
   | 'browser-render'
   | 'structured-extraction'
+  | 'advanced-browser'
+  | 'authorized-challenge-workflow'
   | 'stop';
 
 export interface PantheonEscalationDecision {
@@ -46,7 +48,7 @@ export function planPantheonRetrievalEscalation(
     case 'javascript_required':
       return {
         obstacle,
-        lanes: ['browser-render', 'structured-extraction'],
+        lanes: ['browser-render', 'advanced-browser', 'structured-extraction'],
         reason: 'JavaScript rendering is required before extraction.',
       };
     case 'rate_limited':
@@ -56,12 +58,17 @@ export function planPantheonRetrievalEscalation(
         reason: 'Use the canonical governor/backoff path rather than adding browser load.',
       };
     case 'captcha_challenge':
+      return {
+        obstacle,
+        lanes: ['authorized-challenge-workflow', 'stop'],
+        reason: 'An explicitly authorized challenge workflow may handle the challenge; otherwise preserve the barrier and broaden to accessible sources.',
+      };
     case 'access_denied':
     case 'credential_required':
       return {
         obstacle,
         lanes: ['stop'],
-        reason: 'Record the retrieval barrier and do not treat the challenge page as evidence.',
+        reason: 'Preserve the access boundary and broaden to another accessible source.',
       };
     default:
       return {
