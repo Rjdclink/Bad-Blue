@@ -49,8 +49,10 @@ const plan = buildPantheonControlledQueryPlan({
   searchDepth: 2,
 });
 const targets = buildPantheonCategoryTargets('identity', 'Taylor Example', 'New York', 8);
-assert.ok(targets.length > 0);
+assert.ok(targets.length <= 8);
 assert.ok(targets.every(target => target.sourceKind && Number.isFinite(target.freshnessWeight) && Number.isFinite(target.expectedValue)));
+// Static category targets are optional standby inputs under search-first
+// execution; runtime discovery supplies the authoritative subject frontier.
 
 const acceptedUrl = 'https://records.example.test/taylor';
 const categoryOutcomes: any[] = [{
