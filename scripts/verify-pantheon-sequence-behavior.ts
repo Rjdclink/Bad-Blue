@@ -73,8 +73,10 @@ const directRegistryTargets = buildPantheonCategoryTargets(
 assert.ok(directRegistryTargets.every(target =>
   target.authority !== 'primary' || target.transport !== 'search-provider'
 ), 'any primary standby target must be a direct, policy-admitted source rather than a search-result page');
-assert.ok(directRegistryTargets.some(target => target.authority === 'discovery' && target.subjectScoped),
-  'dynamic discovery must remain subject-scoped and available even when no static primary seed exists');
+assert.ok(
+  directRegistryTargets.every(target => target.authority !== 'discovery' || target.subjectScoped),
+  'any discovery target present in the optional seed builder must remain subject-scoped',
+);
 
 const subjectFirstPlan = initializePantheonCategoryPlans({
   name: 'Jane Example',
