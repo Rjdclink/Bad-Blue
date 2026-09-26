@@ -14,7 +14,7 @@ for(const token of [
  'PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD = 0.80',
  "stage: 'evidence-progress'",
  'publishableEvidence:',
- 'perPassBudgetMs = Math.min(20_000, remainingMs)',
+ 'perPassBudgetMs = Math.min(pass === 0 ? 25_000 : 60_000, remainingMs)',
 ]) if(!pantheon.includes(token)) throw new Error('Progressive Pantheon invariant missing '+token);
 if(!authority.includes('RESEARCH_TIMEOUT_MS = 3 * 60_000')) throw new Error('Authority research is not capped at three minutes');
 for(const token of [
@@ -89,3 +89,27 @@ for(const token of [
  'const bestEvidence = rankedEntries[0] ? acceptedEvidence.get(rankedEntries[0][0])',
  'const finalBestEvidence = evidenceEntries[0]?.[1]',
 ]) if(!pantheon.includes(token)) throw new Error('Fact-specific contradiction stop invariant missing '+token);
+
+const registry=fs.readFileSync('server/lexara/LexaraCrawlerCapabilityRegistry.ts','utf8');
+const adapter=fs.readFileSync('server/services/crawlers/PantheonRetrievalAdapter.ts','utf8');
+const razors=fs.readFileSync('server/services/pantheon/razors/implementations.ts','utf8');
+for(const token of [
+ "desired.add('vital-records')",
+ "desired.add('occupation')",
+ "desired.add('incarceration')",
+ "desired.add('structured-extraction')",
+]) if(!registry.includes(token)) throw new Error('Fact-specific crawler selection invariant missing '+token);
+for(const token of [
+ 'const escalationPrimaryCrawlers = [...PANTHEON_PRIMARY_CRAWLER_IDS]',
+ "pass === 0 ? primaryCrawlers : escalationPrimaryCrawlers",
+ "crawlerMode: pass === 0 ? 'selected' : 'escalated-full-primary'",
+]) if(!pantheon.includes(token)) throw new Error('Crawler escalation invariant missing '+token);
+for(const token of [
+ 'Conversational research also gets the full extraction/analysis skill',
+ 'PANTHEON_RAZOR_SKILL_IDS',
+ 'PANTHEON_SECONDARY_CRAWLER_IDS',
+ 'PANTHEON_PORTABLE_CAPABILITY_IDS',
+ "'[PANTHEON][CONVERSATIONAL-CAPABILITY-BATCH]'",
+]) if(!adapter.includes(token)) throw new Error('Conversational crawler-skill execution invariant missing '+token);
+for(const token of ['occupationMatch','employerMatch','custodyMatch','facilityMatch','inmateNumberMatch']) if(!razors.includes(token)) throw new Error('Fact extraction invariant missing '+token);
+console.log('Pantheon crawler capability escalation and fact extraction verification passed.');
