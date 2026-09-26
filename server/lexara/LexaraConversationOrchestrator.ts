@@ -66,6 +66,7 @@ export interface LexaraImmediateAcknowledgement {
 
 export interface LexaraAcknowledgementContext {
   analysisActive?: boolean;
+  pendingAction?: string;
 }
 
 function deterministicVariant(seed: string, options: string[]): string {
@@ -92,11 +93,13 @@ export function getLexaraImmediateAcknowledgement(
   if (presenceOnly) {
     return {
       text: context.analysisActive
-        ? deterministicVariant(normalized, [
-            "Yes, I'm still here. Hold on a minute—I'm still working on this.",
-            "I'm still here. Give me a moment—I'm still working through this.",
-            "Yes. I'm still working on this; hold on a minute.",
-          ])
+        ? context.pendingAction
+          ? `Yes, I'm still here. I'm still working on your ${context.pendingAction}.`
+          : deterministicVariant(normalized, [
+              "Yes, I'm still here. Hold on a minute—I'm still working on this.",
+              "I'm still here. Give me a moment—I'm still working through this.",
+              "Yes. I'm still working on this; hold on a minute.",
+            ])
         : "Yes, I'm still here.",
       terminal: true,
       kind: 'presence',
