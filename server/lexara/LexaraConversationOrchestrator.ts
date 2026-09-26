@@ -530,6 +530,8 @@ export async function generateLexaraConversationResponse(
     pantheonCategories: pantheonInvestigation?.categories || [],
     pantheonSourceCount: pantheonInvestigation?.sources?.length || 0,
     pantheonCoverageLimited: pantheonInvestigation?.coverageLimited === true,
+    pantheonEndpoint: pantheonInvestigation?.endpoint || null,
+    pantheonRecursionPasses: pantheonInvestigation?.recursionPasses || 0,
     researchNeeded: researchDecision.needed,
     researchObjectiveKind: researchDecision.objectiveKind,
     researchEndpointReached: !researchDecision.needed || Boolean(authorityResearch || pantheonInvestigation),
