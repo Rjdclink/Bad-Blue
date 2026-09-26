@@ -10,7 +10,8 @@ for(const token of [
 ]) if(!router.includes(token)) throw new Error('External fact routing invariant missing: '+token);
 
 for(const token of [
-  'decideLexaraResearchNeed(prompt, recentUserTurns).needed',
+  'const researchDecision = decideLexaraResearchNeed(prompt, recentUserTurns)',
+  "researchDecision.needed && researchDecision.objectiveKind !== 'legal-authority'",
   'hasEnoughIdentityContext(combined)',
 ]) if(!investigation.includes(token)) throw new Error('Pantheon intent handoff invariant missing: '+token);
 
