@@ -264,6 +264,7 @@ export async function investigatePersonQuestion(
     let retrievalAvailable = true;
     let retrievalReason: string | undefined;
     const acceptedEvidence = new Map<string, RetrievalEvidence>();
+    const acceptedEvidenceScores = new Map<string, number>();
 
     for (let pass = 0; pass < PERSON_RECURSIVE_MAX_PASSES; pass++) {
       if (context.signal?.aborted || !pendingTargets.length) break;
@@ -301,10 +302,30 @@ export async function investigatePersonQuestion(
         }
       }
 
-      for (const item of retrieval.evidence
-        .filter(item => item.content?.trim())
-        .filter(item => resolvedName && matchPantheonSubject(item, resolvedName, context.jurisdiction).matched)) {
-        acceptedEvidence.set(`${item.sourceUrl}:${item.crawler}:${item.content.slice(0, 120)}`, item);
+      for (const item of retrieval.evidence.filter(item => item.content?.trim())) {
+        if (!resolvedName) continue;
+        const identityMatch = matchPantheonSubject(item, resolvedName, context.jurisdiction);
+        if (!identityMatch.matched) continue;
+        const evidenceKey = `${item.sourceUrl}:${item.crawler}:${item.content.slice(0, 120)}`;
+        let authorityBonus = 0;
+        try {
+          const host = new URL(item.sourceUrl).hostname.toLowerCase();
+          if (host.endsWith('.gov') || host.endsWith('.mil')) authorityBonus = 0.12;
+          else if (host.endsWith('.edu')) authorityBonus = 0.06;
+        } catch {}
+        const retrievedAgeMs = Math.max(0, Date.now() - Date.parse(item.retrievedAt));
+        const freshnessBonus = retrievedAgeMs <= 86_400_000 ? 0.05 : retrievedAgeMs <= 30 * 86_400_000 ? 0.025 : 0;
+        const contradictionPenalty = Math.min(0.2, identityMatch.conflicts.length * 0.05);
+        const correlateBonus = Math.min(0.12, identityMatch.independentCorrelates.length * 0.04);
+        const dynamicScore =
+          identityMatch.score * 0.55 +
+          item.confidence * 0.20 +
+          authorityBonus +
+          freshnessBonus +
+          correlateBonus -
+          contradictionPenalty;
+        acceptedEvidence.set(evidenceKey, item);
+        acceptedEvidenceScores.set(evidenceKey, dynamicScore);
         void rememberPantheonDiscoveryOutcome(item.sourceUrl, true, {
           categories,
           jurisdiction: context.jurisdiction,
@@ -350,7 +371,10 @@ export async function investigatePersonQuestion(
         .slice(0, Math.min(PERSON_RECURSIVE_MAX_TARGETS_PER_PASS, PERSON_RECURSIVE_MAX_TOTAL_TARGETS - seenTargets.size));
     }
 
-    const evidence = [...acceptedEvidence.values()].slice(0, 12);
+    const evidence = [...acceptedEvidence.entries()]
+      .sort((left, right) => (acceptedEvidenceScores.get(right[0]) || 0) - (acceptedEvidenceScores.get(left[0]) || 0))
+      .map(([, item]) => item)
+      .slice(0, 12);
     const sources = [...new Set([...structuredSources, ...evidence.map(item => item.sourceUrl).filter(Boolean)])].slice(0, 12);
     const webEvidence = evidence.map((item, index) =>
       `${index + 1}. SOURCE: ${item.sourceUrl}\nEVIDENCE: ${item.content.trim().slice(0, 1200)}`
