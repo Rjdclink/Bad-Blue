@@ -582,6 +582,14 @@ export class PantheonRetrievalAdapter {
       const supplemental = await supplementalRunPromise;
       evidence.push(...supplemental.evidence);
       crawlerAudit.push(...supplemental.crawlerAudit);
+      if (request.purpose !== 'background_report') {
+        console.log('[PANTHEON][CONVERSATIONAL-CAPABILITY-BATCH]', JSON.stringify({
+          event: 'conversational_skill_outcome',
+          selectedPrimaryCrawlers: plan.crawlers,
+          supplementalSkillsObserved: [...new Set(supplemental.crawlerAudit.map(item => item.crawler))],
+          supplementalEvidence: supplemental.evidence.length,
+        }));
+      }
       const capabilityOutcomes = applicableCapabilities.map(capabilityId => {
         const audits = crawlerAudit.filter(audit => audit.crawler === capabilityId);
         const clean = audits.find(audit =>
