@@ -498,7 +498,12 @@ export class PantheonRetrievalAdapter {
       // controller performs the useful fallback: reassign the capability to a
       // different compatible URL while preserving the failed source outcome.
     } else {
-      results = await pantheonOrchestrator.search(request.targets, searchOptions);
+      // Conversational research uses the same isolated primary-crawler swarm as
+      // background work. One slow crawler cannot consume the shared pass before
+      // the remaining selected crawlers receive execution time.
+      const isolated = await pantheonOrchestrator.searchAllIsolatedWithAudit(request.targets, searchOptions);
+      results = isolated.results;
+      crawlerAudit = isolated.audit;
       // Conversational research also gets the full extraction/analysis skill
       // inventory over material actually retrieved. These skills do not create
       // extra network fetches; they help decide whether a page contains the
