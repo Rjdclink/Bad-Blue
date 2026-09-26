@@ -353,13 +353,27 @@ export async function generateLexaraConversationResponse(
     };
   }
 
+  // LEXARA remains the controlling legal orchestrator. Pantheon is a retrieval
+  // tool she may delegate to when a legal matter itself requires factual research
+  // about an identifiable person or organization.
+  const mixedLegalFactNeed = researchDecision.objectiveKind === 'legal-authority'
+    && /\b(?:who\s+(?:owns|runs)|owner|ownership|registered\s+agent|officer|director|employer|employment|address|residen|property|asset|mortgage|married|spouse|income|business\s+record|corporate\s+record|background|history)\b/i.test(cleanPrompt)
+    && (
+      /\b[A-Z][A-Za-z.'’-]+(?:\s+[A-Z][A-Za-z.'’-]+){1,5}\b/.test(cleanPrompt)
+      || /\b(?:the\s+)?(?:company|corporation|business|employer|defendant|plaintiff|spouse|husband|wife|party)\b/i.test(cleanPrompt)
+    );
+  const pantheonDelegatedByLexara = researchDecision.objectiveKind !== 'legal-authority' || mixedLegalFactNeed;
+
   // Pantheon is the application-owned research backbone for eligible person/external
   // fact turns. Optional web-discovery providers may supplement it but can never
   // prevent or replace this handoff.
-  const pantheonPrompt = researchDecision.needed
-    ? `${cleanPrompt}\n\nResearch objective: ${researchDecision.objective}`
-    : cleanPrompt;
-  const pantheonInvestigationPromise = investigatePersonQuestion(pantheonPrompt, {
+  const pantheonPrompt = mixedLegalFactNeed
+    ? `${cleanPrompt}\n\nLEXARA-DELEGATED FACTUAL OBJECTIVE: Retrieve only the person/company background facts materially relevant to this legal question. Do not perform the legal analysis and do not broaden into a full background report.`
+    : researchDecision.needed
+      ? `${cleanPrompt}\n\nResearch objective: ${researchDecision.objective}`
+      : cleanPrompt;
+  const pantheonInvestigationPromise = pantheonDelegatedByLexara ? investigatePersonQuestion(pantheonPrompt, {
+    delegatedByLexara: mixedLegalFactNeed,
     previousMessages: context.previousMessages,
     jurisdiction,
     signal: context.signal,
@@ -369,7 +383,7 @@ export async function generateLexaraConversationResponse(
       error: error instanceof Error ? error.message : String(error),
     });
     return null;
-  });
+  }) : Promise.resolve(null);
   // Never await network-backed Pantheon work before the live research budget.
   // Identity clarification is returned synchronously by investigatePersonQuestion
   // before its first network await, so a microtask yield is sufficient to capture
@@ -410,7 +424,7 @@ export async function generateLexaraConversationResponse(
     // progressively reporting investigation instead of dropping it after the
     // ordinary 2.4s legal-authority latency budget. Non-research conversation
     // keeps the existing fast budget.
-    researchDecision.needed && researchDecision.objectiveKind !== 'legal-authority'
+    pantheonDelegatedByLexara && researchDecision.objectiveKind !== 'legal-authority'
       ? pantheonInvestigationPromise
       : Promise.race([
           pantheonInvestigationPromise,
