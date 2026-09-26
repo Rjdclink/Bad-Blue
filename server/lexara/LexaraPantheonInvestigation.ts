@@ -167,9 +167,28 @@ export async function investigatePersonQuestion(
     };
   }
 
-  // Custody questions have a verified structured federal adapter. Use it
-  // before generic web retrieval so Lexara can return an actual facility when
-  // BOP has a subject match; Pantheon still performs the broader corroboration.
+  // Launch registry/free discovery before specialized adapters so independent
+  // research sequences overlap instead of creating serial latency.
+  const registryTargets = categories
+    .flatMap(category => buildPantheonCategoryTargets(category, combined, context.jurisdiction, 5))
+    .filter(target => target.subjectScoped || target.sourceKind === 'api' || target.sourceKind === 'search')
+    .filter((target, index, all) => all.findIndex(candidate => candidate.url === target.url) === index)
+    .slice(0, 6);
+  const registryUrls = registryTargets.map(target => target.url);
+  const discoveryPromise = discoverPantheonSourcesParallel(
+    `${combined} public records ${categories.join(' ')} ${categoryDiscoveryTerms(categories)} official government database search`,
+    registryUrls,
+    {
+      categories,
+      jurisdiction: context.jurisdiction,
+      limit: 8,
+      timeoutMs: 650,
+      signal: context.signal,
+    },
+  ).catch(() => null);
+
+  // Custody questions have a verified structured federal adapter. It runs in
+  // parallel with discovery so a slow provider cannot serialize the live turn.
   let structuredEvidence: string[] = [];
   let structuredSources: string[] = [];
   if (categories.includes('corrections')) {
@@ -199,34 +218,12 @@ export async function investigatePersonQuestion(
     }
   }
 
-  // Network work begins only after identity clarification has completed.
-  // Person-record retrieval may use a state supplied by the user, but a county
-  // is never inferred by the language model. County-specific claims must come
-  // from retrieved evidence containing that county or an explicit user fact.
-  const registryTargets = categories
-    .flatMap(category => buildPantheonCategoryTargets(category, combined, context.jurisdiction, 5))
-    .filter(target => target.subjectScoped || target.sourceKind === 'api' || target.sourceKind === 'search')
-    .filter((target, index, all) => all.findIndex(candidate => candidate.url === target.url) === index)
-    .slice(0, 6);
-
-  const registryUrls = registryTargets.map(target => target.url);
+  // Network work began above, after identity clarification. Person-record
+  // retrieval may use a state supplied by the user, but a county is never
+  // inferred by the language model. County claims still require retrieved evidence.
   let discoveredUrls: string[] = [];
-  try {
-    const discovery = await discoverPantheonSourcesParallel(
-      `${combined} public records ${categories.join(' ')} ${categoryDiscoveryTerms(categories)} official government database search`,
-      registryUrls,
-      {
-        categories,
-        jurisdiction: context.jurisdiction,
-        limit: 8,
-        timeoutMs: 650,
-        signal: context.signal,
-      },
-    );
-    discoveredUrls = discovery.urls;
-  } catch {
-    // Parallel discovery is supplemental. Trusted registry sources remain usable.
-  }
+  const discovery = await discoveryPromise;
+  if (discovery) discoveredUrls = discovery.urls;
 
   // Known authorities and learned/free discovery enter the same bounded frontier.
   // Registry URLs remain first so established direct sources are never displaced.
