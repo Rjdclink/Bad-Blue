@@ -1,5 +1,5 @@
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Download, FileText, Loader2, Mic, MicOff, Send } from 'lucide-react';
+import { AlertCircle, Download, FileText, Loader2, Mic, MicOff, Send, Star } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useVoiceMode, type VoiceTranscriptMeta } from '@/hooks/useVoiceMode';
 import { useVoiceSynthesis } from '@/hooks/useVoiceSynthesis';
@@ -471,6 +471,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const [conversationDocument, setConversationDocument] = useState<{ title: string; content: string } | null>(null);
   const [documentBusy, setDocumentBusy] = useState(false);
   const [pendingDocument, setPendingDocument] = useState<{ title: string; facts: string; state: string; templateMode: boolean } | null>(null);
+  const [showReviewPrompt, setShowReviewPrompt] = useState(false);
 
   const conversationRef = useRef<ConversationMessage[]>(initialStateRef.current.messages);
   const phaseRef = useRef<ConversationPhase>('initializing');
@@ -1188,6 +1189,10 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         }
 
         appendMessage('lexara', answer);
+        // Ask for neutral feedback only after a completed substantive answer.
+        // This is not sentiment-gated: positive, negative, and mixed experiences
+        // all reach the same review page.
+        setShowReviewPrompt(true);
         setGaze('camera');
         await speakLexara(answer, generation);
       }
@@ -1585,6 +1590,19 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Continuing the analysis…
               </div>
+            </div>
+          )}
+
+          {showReviewPrompt && !isThinking && (
+            <div className="flex justify-start">
+              <a
+                href="/reviews?source=lexara"
+                className="inline-flex items-center gap-2 rounded-full border bg-card px-3 py-2 text-xs font-medium text-muted-foreground shadow-sm hover:text-foreground"
+                aria-label="Share feedback about Legal What?"
+              >
+                <Star className="h-3.5 w-3.5" />
+                Share feedback
+              </a>
             </div>
           )}
 
