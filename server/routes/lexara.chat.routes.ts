@@ -114,6 +114,52 @@ router.post('/acknowledge', express.json(), (req: Request, res: Response) => {
 });
 
 /**
+ * POST /api/lexara/chat/stream
+ * Server-Sent Events transport for progressive Pantheon research.
+ */
+router.post('/chat/stream', express.json(), async (req: Request, res: Response) => {
+  const body = req.body || {};
+  const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
+  if (!prompt || prompt.length > MAX_CHAT_PROMPT_CHARACTERS) {
+    return res.status(400).json({ success: false, error: 'Valid prompt is required' });
+  }
+  const rawContext = body.context && typeof body.context === 'object' ? body.context : {};
+  res.status(200);
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+  const send = (event: string, data: unknown) => {
+    if (!res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+  const controller = new AbortController();
+  const heartbeat = setInterval(() => {
+    if (!res.writableEnded) res.write(': keepalive\n\n');
+  }, 15_000);
+  req.once('aborted', () => controller.abort());
+  res.once('close', () => controller.abort());
+  try {
+    send('started', { status: 'researching' });
+    const result = await generateLexaraConversationResponse(prompt, {
+      previousMessages: sanitizePreviousMessages((rawContext as any).previousMessages),
+      lawType: cleanOptionalString((rawContext as any).lawType),
+      lawTypeName: cleanOptionalString((rawContext as any).lawTypeName, 160),
+      jurisdiction: cleanOptionalString((rawContext as any).jurisdiction, 80),
+      behaviorMode: (rawContext as any).behaviorMode === 'personable' ? 'personable' : 'professional',
+      sessionId: cleanOptionalString((rawContext as any).sessionId, 128),
+      signal: controller.signal,
+      onResearchProgress: event => send('research', event),
+    });
+    send('complete', { success: true, response: result.text, jurisdiction: result.jurisdiction, mappedLawType: result.mappedLawType });
+  } catch (error) {
+    if (!controller.signal.aborted) send('error', { error: error instanceof Error ? error.message : 'LEXARA research failed' });
+  } finally {
+    clearInterval(heartbeat);
+    if (!res.writableEnded) res.end();
+  }
+});
+
+/**
  * POST /api/lexara/chat
  * Canonical conversational endpoint for LEXARA Live.
  *

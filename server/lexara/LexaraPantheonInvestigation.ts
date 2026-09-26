@@ -12,6 +12,16 @@ export interface LexaraPersonInvestigationContext {
   previousMessages?: Array<{ role?: string; content?: string }>;
   jurisdiction?: string;
   signal?: AbortSignal;
+  onProgress?: (event: LexaraPantheonProgressEvent) => void;
+}
+
+export interface LexaraPantheonProgressEvent {
+  type: 'searching' | 'evidence' | 'endpoint';
+  pass: number;
+  confidence?: number;
+  sourceUrl?: string;
+  evidence?: string;
+  endpoint?: LexaraPersonInvestigation['endpoint'];
 }
 
 export interface LexaraPersonInvestigation {
@@ -276,6 +286,7 @@ export async function investigatePersonQuestion(
     for (let pass = 0; pass < PERSON_RECURSIVE_MAX_PASSES; pass++) {
       recursionPasses = pass + 1;
       console.info('[LEXARA PantheonRoute]', { stage: 'recursion-pass', pass: recursionPasses, pendingTargets: pendingTargets.length, categories });
+      context.onProgress?.({ type: 'searching', pass: recursionPasses });
       if (context.signal?.aborted || !pendingTargets.length) break;
       if (Date.now() - recursiveStartedAt >= PERSON_RECURSIVE_TOTAL_BUDGET_MS) break;
       const passTargets = pendingTargets
@@ -336,6 +347,9 @@ export async function investigatePersonQuestion(
           contradictionPenalty;
         acceptedEvidence.set(evidenceKey, item);
         acceptedEvidenceScores.set(evidenceKey, dynamicScore);
+        if (dynamicScore >= PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD) {
+          context.onProgress?.({ type: 'evidence', pass: recursionPasses, confidence: Math.min(1, dynamicScore), sourceUrl: item.sourceUrl, evidence: item.content.trim().slice(0, 1200) });
+        }
         void rememberPantheonDiscoveryOutcome(item.sourceUrl, true, {
           categories,
           jurisdiction: context.jurisdiction,
@@ -411,6 +425,7 @@ export async function investigatePersonQuestion(
       : Date.now() - recursiveStartedAt >= PERSON_RECURSIVE_TOTAL_BUDGET_MS
         ? 'budget-exhausted'
         : 'sources-exhausted';
+    context.onProgress?.({ type: 'endpoint', pass: recursionPasses, confidence: bestConfidence, endpoint });
     console.info('[LEXARA PantheonRoute]', {
       stage: 'endpoint',
       endpoint,
