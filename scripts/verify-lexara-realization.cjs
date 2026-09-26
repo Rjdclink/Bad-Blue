@@ -987,11 +987,11 @@ must(
     pantheonInvestigation.includes('PERSON_RECORD_PATTERN.test(recentUserTurns) && IDENTIFIER_PATTERN.test(prompt)') &&
     pantheonInvestigation.includes('export function hasEnoughIdentityContext') &&
     pantheonInvestigation.includes('buildPantheonCategoryTargets') &&
-    pantheonInvestigation.includes('orchestratedWebSearch') &&
+    pantheonInvestigation.includes('discoverPantheonSourcesParallel') &&
     pantheonInvestigation.includes("target.subjectScoped || target.sourceKind === 'api' || target.sourceKind === 'search'") &&
     pantheonInvestigation.includes("purpose: 'lexara_legal_research'") &&
-    pantheonInvestigation.includes('depth: 1') &&
-    pantheonInvestigation.includes('budgetMs: 1_600') &&
+    pantheonInvestigation.includes('depth: 3') &&
+    pantheonInvestigation.includes('budgetMs: Math.min(1_600, remainingMs)') &&
     pantheonInvestigation.includes('fullBackgroundReportRequested') &&
     pantheonInvestigation.includes('needsIdentityClarification?: boolean') &&
     orchestrator.includes('initialPantheon?.clarification && (initialPantheon.needsIdentityClarification || initialPantheon.fullBackgroundReportRequested)') &&
