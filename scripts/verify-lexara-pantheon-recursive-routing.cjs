@@ -18,9 +18,9 @@ for (const token of [
   'PERSON_RECURSIVE_TOTAL_BUDGET_MS = 10 * 60_000',
   'PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD = 0.80',
   'PERSON_RECURSIVE_SUFFICIENT_EVIDENCE = 2',
-  'selectLexaraCrawlerPlan',
+  'buildLexaraDynamicCrawlerAssignments',
   'PANTHEON_PRIMARY_CRAWLER_IDS',
-  'primaryCrawlers,',
+  'primaryCrawlers:',
   'retrieval.frontierCandidates?.discoveredCandidates',
   'retrieval.frontierCandidates?.sourceNavigationCandidates',
 ]) {
