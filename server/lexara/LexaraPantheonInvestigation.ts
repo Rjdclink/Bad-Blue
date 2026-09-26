@@ -9,6 +9,7 @@ import { rememberPantheonDiscoveryOutcome } from '../services/pantheon/PantheonD
 import { decideLexaraResearchNeed, isLexaraLegalAuthorityIntent } from './LexaraResearchIntentRouter';
 
 export interface LexaraPersonInvestigationContext {
+  delegatedByLexara?: boolean;
   previousMessages?: Array<{ role?: string; content?: string }>;
   jurisdiction?: string;
   signal?: AbortSignal;
@@ -287,7 +288,7 @@ export function shouldUsePantheonForPersonQuestion(
   prompt: string,
   context: LexaraPersonInvestigationContext = {},
 ): boolean {
-  if (isLexaraLegalAuthorityIntent(prompt)) return false;
+  if (isLexaraLegalAuthorityIntent(prompt) && !context.delegatedByLexara) return false;
   if (PERSON_RECORD_PATTERN.test(prompt)) return true;
   // An identifiable subject plus an explicit external-fact research objective is
   // enough to enter Pantheon even when the requested attribute is not enumerated.
@@ -301,7 +302,7 @@ export function shouldUsePantheonForPersonQuestion(
   // to enter Pantheon even when the requested attribute is new to our vocabulary.
   // Category rules refine the search after routing; they do not own the handoff.
   const researchDecision = decideLexaraResearchNeed(prompt, recentUserTurns);
-  if (researchDecision.needed && researchDecision.objectiveKind !== 'legal-authority' && hasEnoughIdentityContext(combined)) return true;
+  if (researchDecision.needed && (researchDecision.objectiveKind !== 'legal-authority' || context.delegatedByLexara) && hasEnoughIdentityContext(combined)) return true;
   // Follow-up identifiers continue a prior person-record investigation, unless
   // the new turn has explicitly switched back to legal-authority analysis.
   const recentText = recentUserTurns.slice(-2).join(' ');
