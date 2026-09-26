@@ -83,7 +83,7 @@ async function searxngSearch(query: string, limit: number, timeoutMs: number, si
   }).catch(() => []);
 }
 
-async function ddgsSearch(query: string, limit: number, timeoutMs: number, signal?: AbortSignal): Promise<string[]> {
+async function ddgsSearch(query: string, limit: number, timeoutMs: number, signal?: AbortSignal): Promise<PantheonDiscoveryEvidence[]> {
   const base = process.env.DDGS_URL?.trim();
   if (!base) return [];
   return withTimeout(timeoutMs, signal, async requestSignal => {
@@ -96,15 +96,14 @@ async function ddgsSearch(query: string, limit: number, timeoutMs: number, signa
     });
     if (!response.ok) return [];
     const payload: any = await response.json();
-    return (Array.isArray(payload?.results) ? payload.results : [])
-      .flatMap((item: any) => [item?.href, item?.url, item?.link].filter(Boolean))
-      .map((value: unknown) => canonicalCandidate(String(value)))
-      .filter((value: string | null): value is string => Boolean(value))
-      .slice(0, limit);
+    return (Array.isArray(payload?.results) ? payload.results : []).flatMap((item: any) => {
+      const url = canonicalCandidate(String(item?.href || item?.url || item?.link || ''));
+      return url ? [{ url, title: String(item?.title || '').trim().slice(0, 240) || undefined, snippet: String(item?.body || item?.snippet || '').trim().slice(0, 1200) || undefined, lane: 'ddgs' as const }] : [];
+    }).slice(0, limit);
   }).catch(() => []);
 }
 
-async function openSerpSearch(query: string, limit: number, timeoutMs: number, signal?: AbortSignal): Promise<string[]> {
+async function openSerpSearch(query: string, limit: number, timeoutMs: number, signal?: AbortSignal): Promise<PantheonDiscoveryEvidence[]> {
   const base = process.env.OPENSERP_URL?.trim();
   if (!base) return [];
   return withTimeout(timeoutMs, signal, async requestSignal => {
@@ -124,11 +123,10 @@ async function openSerpSearch(query: string, limit: number, timeoutMs: number, s
       : Array.isArray(payload?.data?.results)
         ? payload.data.results
         : [];
-    return resultRows
-      .flatMap((item: any) => [item?.url, item?.link, item?.href].filter(Boolean))
-      .map((value: unknown) => canonicalCandidate(String(value)))
-      .filter((value: string | null): value is string => Boolean(value))
-      .slice(0, limit);
+    return resultRows.flatMap((item: any) => {
+      const url = canonicalCandidate(String(item?.url || item?.link || item?.href || ''));
+      return url ? [{ url, title: String(item?.title || '').trim().slice(0, 240) || undefined, snippet: String(item?.description || item?.snippet || item?.text || '').trim().slice(0, 1200) || undefined, lane: 'openserp' as const }] : [];
+    }).slice(0, limit);
   }).catch(() => []);
 }
 
@@ -249,7 +247,7 @@ export async function discoverPantheonSourcesParallel(
     }),
     lane('searxng', Boolean(process.env.SEARXNG_URL?.trim()), async () => (await Promise.all(queryVariants.map(q => searxngSearch(q, limit, timeoutMs, options.signal)))).flat()),
     lane('ddgs', Boolean(process.env.DDGS_URL?.trim()), async () => (await Promise.all(queryVariants.map(q => ddgsSearch(q, limit, timeoutMs, options.signal)))).flat()),
-    lane('openserp', Boolean(process.env.OPENSERP_URL?.trim()), () => openSerpSearch(effectiveQuery, limit, timeoutMs, options.signal)),
+    lane('openserp', Boolean(process.env.OPENSERP_URL?.trim()), async () => (await Promise.all(queryVariants.map(q => openSerpSearch(q, limit, timeoutMs, options.signal)))).flat()),
     lane('commoncrawl', commonCrawlUseful(query), () => commonCrawlSearch(effectiveQuery, existingUrls, limit, timeoutMs, options.signal)),
   ]);
 

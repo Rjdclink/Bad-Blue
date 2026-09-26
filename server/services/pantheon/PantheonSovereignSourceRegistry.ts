@@ -1,32 +1,4 @@
 import { admitPantheonUrl } from '../crawlers/PublicAcquisitionInfrastructure';
-import { PANTHEON_VERIFIED_SOURCES_BATCH_01 } from './sources/batch01';
-import { PANTHEON_VERIFIED_SOURCES_BATCH_02 } from './sources/batch02';
-import { PANTHEON_VERIFIED_SOURCES_BATCH_03 } from './sources/batch03';
-import { PANTHEON_VERIFIED_SOURCES_BATCH_04 } from './sources/batch04';
-import { PANTHEON_VERIFIED_SOURCES_BATCH_05 } from './sources/batch05';
-import { PANTHEON_VERIFIED_SOURCES_BATCH_06 } from './sources/batch06';
-import { PANTHEON_VERIFIED_SOURCES_BATCH_07 } from './sources/batch07';
-import { PANTHEON_VERIFIED_SOURCES_BATCH_08 } from './sources/batch08';
-import { PANTHEON_VERIFIED_SOURCES_BATCH_09 } from './sources/batch09';
-import { PANTHEON_VERIFIED_SOURCES_BATCH_10 } from './sources/batch10';
-import { PANTHEON_VERIFIED_SOURCES_BATCH_11 } from './sources/batch11';
-import { PANTHEON_VERIFIED_SOURCES_BATCH_12 } from './sources/batch12';
-import { PANTHEON_VERIFIED_SOURCES_BATCH_13 } from './sources/batch13';
-import { PANTHEON_VERIFIED_SOURCES_BATCH_14 } from './sources/batch14';
-import { PANTHEON_VERIFIED_SOURCES_BATCH_15 } from './sources/batch15';
-import { PANTHEON_VERIFIED_SOURCES_BATCH_16 } from './sources/batch16';
-import { PANTHEON_VERIFIED_SOURCES_BATCH_17 } from './sources/batch17';
-import { PANTHEON_VERIFIED_SOURCES_BATCH_18 } from './sources/batch18';
-import { PANTHEON_VERIFIED_SOURCES_BATCH_19 } from './sources/batch19';
-import { PANTHEON_VERIFIED_SOURCES_BATCH_20 } from './sources/batch20';
-import { PANTHEON_VERIFIED_SOURCES_BATCH_21 } from './sources/batch21';
-import { PANTHEON_VERIFIED_SOURCES_BATCH_22 } from './sources/batch22';
-import { PANTHEON_VERIFIED_SOURCES_BATCH_23 } from './sources/batch23';
-import {
-  compilePantheonSourceRegistry,
-  pantheonSourceExclusionsForCategory,
-  type PantheonSourceAccessMode,
-} from './PantheonSourceRegistryCompiler';
 /**
  * PANTHEON sovereign source registry.
  *
@@ -64,31 +36,9 @@ export interface PantheonSourceTarget {
   subjectScoped?: boolean;
   sourceIds?: string[];
   originalUrls?: string[];
-  accessMode?: Extract<PantheonSourceAccessMode, 'public'|'contact-registration'>;
+  accessMode?: 'public'|'contact-registration';
   accessReason?: string;
 }
-
-export const PANTHEON_VERIFIED_SOURCE_INVENTORY = [
-  ...PANTHEON_VERIFIED_SOURCES_BATCH_01, ...PANTHEON_VERIFIED_SOURCES_BATCH_02,
-  ...PANTHEON_VERIFIED_SOURCES_BATCH_03, ...PANTHEON_VERIFIED_SOURCES_BATCH_04,
-  ...PANTHEON_VERIFIED_SOURCES_BATCH_05, ...PANTHEON_VERIFIED_SOURCES_BATCH_06,
-  ...PANTHEON_VERIFIED_SOURCES_BATCH_07, ...PANTHEON_VERIFIED_SOURCES_BATCH_08,
-  ...PANTHEON_VERIFIED_SOURCES_BATCH_09, ...PANTHEON_VERIFIED_SOURCES_BATCH_10,
-  ...PANTHEON_VERIFIED_SOURCES_BATCH_11, ...PANTHEON_VERIFIED_SOURCES_BATCH_12,
-  ...PANTHEON_VERIFIED_SOURCES_BATCH_13, ...PANTHEON_VERIFIED_SOURCES_BATCH_14,
-  ...PANTHEON_VERIFIED_SOURCES_BATCH_15, ...PANTHEON_VERIFIED_SOURCES_BATCH_16,
-  ...PANTHEON_VERIFIED_SOURCES_BATCH_17, ...PANTHEON_VERIFIED_SOURCES_BATCH_18,
-  ...PANTHEON_VERIFIED_SOURCES_BATCH_19, ...PANTHEON_VERIFIED_SOURCES_BATCH_20,
-  ...PANTHEON_VERIFIED_SOURCES_BATCH_21, ...PANTHEON_VERIFIED_SOURCES_BATCH_22,
-  ...PANTHEON_VERIFIED_SOURCES_BATCH_23,
-] as const;
-
-export const PANTHEON_COMPILED_SOURCE_REGISTRY = compilePantheonSourceRegistry(
-  PANTHEON_VERIFIED_SOURCE_INVENTORY,
-);
-export const PANTHEON_EXECUTABLE_SOURCE_INVENTORY = PANTHEON_COMPILED_SOURCE_REGISTRY.executable;
-export const PANTHEON_SOURCE_EXCLUSION_LEDGER = PANTHEON_COMPILED_SOURCE_REGISTRY.exclusions;
-export const PANTHEON_SOURCE_REGISTRY_DIAGNOSTICS = PANTHEON_COMPILED_SOURCE_REGISTRY.diagnostics;
 
 function transportForSource(url: string, authority: PantheonSourceTarget['authority']): PantheonTransport {
  const value=url.toLowerCase();
@@ -162,14 +112,7 @@ export function buildPantheonCategoryTargets(
  // routed crawler a policy-compliant source page from which it can discover
  // lawful public search/result routes. Discovery remains a fallback, never
  // the sole source plan.
- const normalizedLocation=String(location||'').toUpperCase();
- const compiledInventory=PANTHEON_EXECUTABLE_SOURCE_INVENTORY
-   .filter(source=>source.categories.includes(category))
-   .sort((left,right)=>{
-     const score=(jurisdiction:string)=>normalizedLocation.includes(jurisdiction.replace(/^US-/,''))?3:/^(?:US|FEDERAL|NATIONAL)$/i.test(jurisdiction)?2:1;
-     return score(right.jurisdiction)-score(left.jurisdiction);
-   });
- const inventory=compiledInventory.length > 0 ? compiledInventory : (KEYLESS_CATEGORY_SOURCES[category] || []).map((source,index)=>({
+ const inventory=(KEYLESS_CATEGORY_SOURCES[category] || []).map((source,index)=>({
    id:`keyless-${category}-${index+1}`,
    sourceIds:[`keyless-${category}-${index+1}`],
    names:[source.name],
@@ -274,7 +217,7 @@ export interface PantheonSourcePreflightIssue {
   reason: string;
   replacementUrl?: string;
   disposition?: 'replaced'|'excluded';
-  accessRequirement?: PantheonSourceAccessMode;
+  accessRequirement?: 'public'|'contact-registration'|'excluded-invalid';
   sourceIds?: string[];
 }
 
@@ -285,16 +228,7 @@ export function preflightPantheonSourceTargets(
   location?: string,
 ): { targets: PantheonSourceTarget[]; issues: PantheonSourcePreflightIssue[] } {
   const accepted: PantheonSourceTarget[] = [];
-  const issues: PantheonSourcePreflightIssue[] = pantheonSourceExclusionsForCategory(
-    PANTHEON_SOURCE_EXCLUSION_LEDGER,
-    category,
-  ).map(exclusion => ({
-    originalUrl: exclusion.originalUrls[0] || exclusion.canonicalUrl || 'unknown',
-    reason: exclusion.reason,
-    disposition: 'excluded' as const,
-    accessRequirement: exclusion.accessMode,
-    sourceIds: [...exclusion.sourceIds],
-  }));
+  const issues: PantheonSourcePreflightIssue[] = [];
   const seen = new Set<string>();
   for (const target of targets) {
     const admission = admitPantheonUrl(target.url);
@@ -317,6 +251,6 @@ export function preflightPantheonSourceTargets(
   return { targets: accepted, issues };
 }
 
-export function buildPantheonBackgroundRegistryTargets(subject:string, location?:string, perCategory=300) {
+export function buildPantheonBackgroundRegistryTargets(subject:string, location?:string, perCategory=10) {
  return PANTHEON_BACKGROUND_CATEGORIES.flatMap(category=>buildPantheonCategoryTargets(category,subject,location,perCategory));
 }

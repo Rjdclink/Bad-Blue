@@ -491,7 +491,7 @@ export default function PantheonPage() {
             </p>
           </section>
           
-          {/* PANTHEON registry categories — mirrors the real 4,500-source search taxonomy. */}
+          {/* PANTHEON registry categories — mirrors the dynamic source-search taxonomy. */}
           <section className="capabilities">
             <h2>Background Report Categories</h2>
             <Card className="pantheon-category-card capability-card">
@@ -500,7 +500,7 @@ export default function PantheonPage() {
                   <div className="capability-icon"><Search className="w-8 h-8" /></div>
                   <div>
                     <h3>Public-Source Background Intelligence</h3>
-                    <p>30 categories searched across PANTHEON's prioritized 4,500-source registry.</p>
+                    <p>30 categories searched across PANTHEON's prioritized dynamic source discovery.</p>
                   </div>
                 </div>
                 <div className="pantheon-category-list">

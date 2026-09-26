@@ -239,14 +239,11 @@ test('Independent evidence is preserved while duplicate source counting is preve
 test('Regional geocoder uncertainty is preserved',
   read('server/services/geoconsole/city-state-geocoder.ts').includes('accuracyMeters') &&
   read('client/src/components/geoconsole/MapLibreIntelligenceMap.tsx').includes('spectra-candidate-area'));
-test('SPECTRA has the complete canonical verified source inventory available',
-  pantheonSources.includes('PANTHEON_VERIFIED_SOURCE_INVENTORY') &&
-  spectraSources.includes('PANTHEON_VERIFIED_SOURCE_INVENTORY') &&
-  spectraSources.includes('SPECTRA_SOURCE_CATALOG'));
+test('SPECTRA is detached from the removed legacy Pantheon inventory', !pantheonSources.includes('PANTHEON_VERIFIED_SOURCE_INVENTORY') && !spectraSources.includes('PANTHEON_VERIFIED_SOURCE_INVENTORY') && spectraSources.includes('buildPantheonBackgroundRegistryTargets'));
 test('SPECTRA source catalog is priority compiled and directly retrievable',
   spectraSources.includes("'critical' | 'high' | 'supporting'") &&
   spectraSources.includes('SPECTRA_SOURCE_CATALOG_BY_ID') &&
-  spectraSources.includes('getSpectraSources'));
+  spectraSources.includes('buildPantheonBackgroundRegistryTargets'));
 test('SPECTRA acquisition pipes prioritized source waves into discovery',
   routes.includes('buildSpectraDiscoveryWaves') &&
   routes.includes('criticalSourceQueries') &&

@@ -338,17 +338,16 @@ export async function investigatePersonQuestion(
     };
   }
 
-  // Launch registry/free discovery before specialized adapters so independent
-  // research sequences overlap instead of creating serial latency.
-  const registryTargets = categories
-    .flatMap(category => buildPantheonCategoryTargets(category, semanticSubject, context.jurisdiction, 5))
-    .filter(target => target.subjectScoped || target.sourceKind === 'api' || target.sourceKind === 'search')
-    .filter((target, index, all) => all.findIndex(candidate => candidate.url === target.url) === index)
+  // Dynamic search/index discovery is the primary locator. Curated category
+  // seeds are hints for ranking/context only; they are not a URL traversal plan.
+  const categorySeedUrls = categories
+    .flatMap(category => buildPantheonCategoryTargets(category, semanticSubject, context.jurisdiction, 10))
+    .map(target => target.url)
+    .filter((url, index, all) => all.indexOf(url) === index)
     .slice(0, PERSON_RECURSIVE_MAX_TARGETS_PER_PASS);
-  const registryUrls = registryTargets.map(target => target.url);
   const discoveryPromise = discoverPantheonSourcesParallel(
     `${semanticExpressions.join(' | ')} public records ${categories.join(' ')} ${categoryDiscoveryTerms(categories)} official government database search`,
-    registryUrls,
+    categorySeedUrls,
     {
       categories,
       jurisdiction: context.jurisdiction,
