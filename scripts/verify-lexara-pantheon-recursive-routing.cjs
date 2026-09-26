@@ -42,6 +42,8 @@ for (const token of ['SERPAPI_KEY','SCRAPINGBEE_API_KEY','rememberPantheonDiscov
 for (const token of [
   'SEARXNG_URL',
   'DDGS_URL',
+  "method: 'POST'",
+  "body: JSON.stringify({ query, max_results: limit, safesearch: 'off' })",
   'OPENSERP_URL',
   "'commoncrawl'",
   'Promise.all([',
