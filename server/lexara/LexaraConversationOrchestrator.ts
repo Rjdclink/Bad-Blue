@@ -46,7 +46,7 @@ export interface LexaraConversationResult {
 const MAX_HISTORY_MESSAGES = 16;
 const MAX_HISTORY_CHARACTERS = 14000;
 const MAX_PROMPT_CHARACTERS = 7000;
-const LIVE_RESEARCH_BUDGET_MS = 2_400;
+const LIVE_RESEARCH_BUDGET_MS = 10_000;
 // Provider attempts stay bounded, but the conversation has no independent master
 // kill-switch. Only the caller may cancel a superseded/disconnected turn.
 const LIVE_REASONING_PROVIDER_ATTEMPT_MS = 2_500;
@@ -356,8 +356,11 @@ export async function generateLexaraConversationResponse(
   // LEXARA remains the controlling legal orchestrator. Pantheon is a retrieval
   // tool she may delegate to when a legal matter itself requires factual research
   // about an identifiable person or organization.
+  const namedPartyLegalNeed = researchDecision.objectiveKind === 'legal-authority'
+    && /\b[A-Z][A-Za-z.'’-]+(?:\s+[A-Z][A-Za-z.'’-]+){0,4}\s+(?:v\.?|vs\.?|versus)\s+(?:the\s+)?[A-Z][A-Za-z.'’ -]{1,80}\b/i.test(researchDecision.objective);
   const mixedLegalFactNeed = researchDecision.objectiveKind === 'legal-authority'
-    && /\b(?:who\s+(?:owns|runs)|owner|ownership|registered\s+agent|officer|director|employer|employment|address|residen|property|asset|mortgage|married|spouse|income|business\s+record|corporate\s+record|background|history)\b/i.test(cleanPrompt)
+    && (/\b(?:who\s+(?:owns|runs)|owner|ownership|registered\s+agent|officer|director|employer|employment|address|residen|property|asset|mortgage|married|spouse|income|business\s+record|corporate\s+record|background|history)\b/i.test(cleanPrompt)
+      || namedPartyLegalNeed)
     && (
       /\b[A-Z][A-Za-z.'’-]+(?:\s+[A-Z][A-Za-z.'’-]+){1,5}\b/.test(cleanPrompt)
       || /\b(?:the\s+)?(?:company|corporation|business|employer|defendant|plaintiff|spouse|husband|wife|party)\b/i.test(cleanPrompt)
@@ -368,7 +371,7 @@ export async function generateLexaraConversationResponse(
   // fact turns. Optional web-discovery providers may supplement it but can never
   // prevent or replace this handoff.
   const pantheonPrompt = mixedLegalFactNeed
-    ? `${cleanPrompt}\n\nLEXARA-DELEGATED FACTUAL OBJECTIVE: Retrieve only the person/company background facts materially relevant to this legal question. Do not perform the legal analysis and do not broaden into a full background report.`
+    ? `${researchDecision.objective}\n\nLEXARA-DELEGATED FACTUAL OBJECTIVE: Retrieve only background facts and identifiers materially useful for identifying or resolving this legal matter (for example name variants, locations, dates, related proceedings, court references, docket/citation clues, and relevant public records). Do not perform the legal analysis and do not broaden into an unrestricted background report.`
     : researchDecision.needed
       ? `${cleanPrompt}\n\nResearch objective: ${researchDecision.objective}`
       : cleanPrompt;
@@ -424,7 +427,7 @@ export async function generateLexaraConversationResponse(
     // progressively reporting investigation instead of dropping it after the
     // ordinary 2.4s legal-authority latency budget. Non-research conversation
     // keeps the existing fast budget.
-    pantheonDelegatedByLexara && researchDecision.objectiveKind !== 'legal-authority'
+    pantheonDelegatedByLexara
       ? pantheonInvestigationPromise
       : Promise.race([
           pantheonInvestigationPromise,
