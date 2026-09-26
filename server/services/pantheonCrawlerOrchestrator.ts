@@ -277,6 +277,9 @@ const PANTHEON_CRAWLER_POOL_LIMITS: Readonly<Record<PantheonPrimaryCrawlerId, nu
   lich: 1,
 };
 const PANTHEON_CRAWLER_POOL_QUEUE_LIMIT = 64;
+// Shadow-swarm safety cap: existing per-crawler pools remain authoritative;
+// this only prevents one request from flooding every pool at once.
+const PANTHEON_SWARM_ROUTE_LIMIT = 6;
 
 interface PantheonCrawlerPoolWaiter {
   resolve: () => void;
@@ -718,7 +721,8 @@ export class PantheonCrawlerOrchestrator {
     const orchestrationDeadline = createPantheonDeadline(orchestrationDeadlineAt, options.signal);
     const executionRoute = inheritedAcquisition?.authority.route || 'primary';
     const executionFallbackFor = inheritedAcquisition?.authority.fallbackFor;
-    const routePromises = crawlersToUse.map(crawler => {
+    let nextSwarmRoute = 0;
+    const runSwarmRoute = async (crawler: PantheonPrimaryCrawlerId) => {
       const queuedAt = Date.now();
       return runPantheonCrawlerPooled(crawler, async () => {
         const queueWaitMs = Date.now() - queuedAt;
@@ -872,8 +876,30 @@ export class PantheonCrawlerOrchestrator {
 
         return { results, audit };
       }, orchestrationDeadline.signal);
+    };
+    // Bounded capability swarm: the controller still owns admission, deadline,
+    // deduplication and crawler selection. Workers only execute already-selected
+    // crawler routes, preserving all existing per-crawler pool limits.
+    const swarmWorkerCount = Math.max(1, Math.min(PANTHEON_SWARM_ROUTE_LIMIT, crawlersToUse.length));
+    const swarmWorkers = Array.from({ length: swarmWorkerCount }, async () => {
+      const completed: Array<{ routeIndex: number; value: Awaited<ReturnType<typeof runSwarmRoute>> }> = [];
+      while (true) {
+        const routeIndex = nextSwarmRoute++;
+        if (routeIndex >= crawlersToUse.length) break;
+        throwIfPantheonAborted(orchestrationDeadline.signal);
+        completed.push({ routeIndex, value: await runSwarmRoute(crawlersToUse[routeIndex]) });
+      }
+      return completed;
     });
-    const settledExecutions = await Promise.allSettled(routePromises);
+    const settledWorkers = await Promise.allSettled(swarmWorkers);
+    const settledExecutions: PromiseSettledResult<Awaited<ReturnType<typeof runSwarmRoute>>>[] =
+      crawlersToUse.map(() => ({ status: 'rejected', reason: new Error('Pantheon swarm route did not execute') }));
+    for (const worker of settledWorkers) {
+      if (worker.status !== 'fulfilled') continue;
+      for (const execution of worker.value) {
+        settledExecutions[execution.routeIndex] = { status: 'fulfilled', value: execution.value };
+      }
+    }
     orchestrationDeadline.dispose();
     const executions = settledExecutions.map((execution, routeIndex) => {
       if (execution.status === 'fulfilled') return execution.value;
