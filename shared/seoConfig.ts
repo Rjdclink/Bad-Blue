@@ -47,32 +47,32 @@ export const GLOBAL_KEYWORDS: KeywordTaxonomy = {
     "voice and text legal AI", "interactive legal AI", "AI legal conversation",
     "AI legal assistant", "AI legal research assistant", "AI legal document generator",
     "legal media analysis AI", "AI evidence analyzer", "OSINT AI", "legal OSINT AI",
-    "AI public records search", "AI background research", "AI people finder", "AI inmate locator"
+    "jurisdiction-aware legal AI", "AI legal media editor", "AI legal document assistant", "animated legal AI"
   ],
   secondary: [
     "talk to legal AI", "speak with legal AI", "ask AI a legal question", "AI case analysis",
     "legal issue spotting AI", "AI case law research", "AI statute research", "legal drafting AI",
     "conversational document drafting", "AI document review", "video evidence analysis",
     "audio evidence analysis", "AI open-source intelligence", "investigative AI",
-    "public record research AI", "court record research AI", "location intelligence AI",
-    "nationwide inmate search", "40 legal practice areas"
+    "jurisdiction-aware legal research", "AI media critique", "AI media editing",
+    "jurisdiction-specific legal documents", "40 legal practice areas"
   ],
   lsi: [
     "AI I can talk to about my legal problem", "talk to an AI about my case",
     "AI that researches my case", "AI that analyzes legal documents", "AI that analyzes evidence",
-    "AI that creates legal documents", "AI that searches public records",
+    "AI that creates legal documents", "AI that edits uploaded media",/
     "real-time legal AI conversation", "download legal document DOCX", "download legal document PDF"
   ]
 };
 
 export const SEO_CONFIG: Record<string, PageSEO> = {
   "/": {
-    title: "Legal What? | AI Legal Tools, People Finder & Inmate Locator",
-    description: "Explore 40 legal practice areas with two-way voice and text AI consultation, legal document tools, background reports, people-finding tools, and nationwide inmate search.",
-    keywords: "AI legal tools, AI legal consultation, legal document generator, background reports, people finder, inmate locator, public records search",
+    title: "Legal What? | Lexara Conversational Legal AI",
+    description: "LegalWhat features Lexara, an animated conversational legal AI for natural, real-time, two-way voice and text interaction across 40+ areas of law. Upload documents, images and media for analysis, critique, editing or alteration; Lexara can recognize when a legal document is needed, identify the appropriate document and jurisdiction, and generate it as a downloadable PDF or DOCX.",
+    keywords: "Lexara, conversational legal AI, animated legal AI, voice legal AI, text legal AI, 40 legal areas, legal media analysis, legal document generator, PDF legal documents, DOCX legal documents",
     keywordTaxonomy: GLOBAL_KEYWORDS,
-    ogTitle: "Legal What? | AI Legal Tools, People Finder & Inmate Locator",
-    ogDescription: "Voice and text AI legal consultation across 40 practice areas, public-record research, people-finding tools, inmate search, and legal document tools.",
+    ogTitle: "Legal What? | Lexara Conversational Legal AI",
+    ogDescription: "Talk with Lexara, LegalWhat’s animated conversational legal AI, by voice or text across 40+ areas of law. Analyze media and generate jurisdiction-aware PDF or DOCX legal documents.",
     ogType: "website",
     canonicalPath: "/",
     priority: 1.0,
@@ -81,9 +81,9 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
     includeInSitemap: true,
   },
   "/landing": {
-    title: "Legal What? | AI Legal Tools for 40 Practice Areas",
-    description: "Learn about Legal What? voice and text AI consultation, legal document tools, background reports, people-finding tools, inmate search, and public-record workflows.",
-    keywords: "Legal What, AI legal platform, 40 legal practice areas, voice legal consultation, people finder, inmate locator, background reports",
+    title: "Legal What? | Lexara Conversational Legal AI",
+    description: "LegalWhat features Lexara, an animated conversational legal AI for natural, real-time, two-way voice and text interaction across 40+ areas of law. Upload documents, images and media for analysis, critique, editing or alteration; Lexara can recognize when a legal document is needed, identify the appropriate document and jurisdiction, and generate it as a downloadable PDF or DOCX.",
+    keywords: "Lexara, conversational legal AI, animated legal AI, voice and text legal AI, 40 legal practice areas, media analysis, jurisdiction-specific legal documents",
     keywordTaxonomy: GLOBAL_KEYWORDS,
     ogType: "website",
     canonicalPath: "/",
@@ -196,8 +196,8 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
   },
   "/legal-consultation": {
     title: "LEXARA AI Legal Consultation | Legal What?",
-    description: "Have a two-way voice or text conversation with LEXARA for AI-assisted legal issue spotting, research support, follow-up questions, and case-analysis tools.",
-    keywords: "AI legal consultation, voice legal consultation, text legal consultation, LEXARA, legal issue spotting, legal research",
+    description: "Have a natural two-way voice or text conversation with Lexara across 40+ areas of law, analyze uploaded media, and create jurisdiction-aware legal documents as PDF or DOCX.",
+    keywords: "Lexara, conversational legal AI, animated legal AI, voice legal consultation, text legal consultation, legal guidance AI, legal research, legal media analysis, legal document generator",
     keywordTaxonomy: GLOBAL_KEYWORDS,
     ogType: "service",
     canonicalPath: "/legal-consultation",
