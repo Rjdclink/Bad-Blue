@@ -992,6 +992,10 @@ export function validatePantheonCrawlerCapabilityMatrix(): {
     throw new Error('Pantheon capability matrix must contain exactly 30 report categories');
   }
   for (const label of PANTHEON_REPORT_CATEGORY_LABELS) {
+    const extractionSchema = PANTHEON_CATEGORY_EXTRACTION_SCHEMAS[label];
+    if (!extractionSchema || !extractionSchema.objectiveFields.length || !extractionSchema.preferredRazors.length || !extractionSchema.evidenceHints.length) {
+      throw new Error('Pantheon category has no complete extraction schema: ' + label);
+    }
     const assigned = categoryCapabilities(label);
     if (!assigned.length) throw new Error('Pantheon category has no executable capability: ' + label);
     if (!assigned.some(id => PANTHEON_CRAWLER_CAPABILITY_MATRIX[id].capabilityClass === 'primary-retrieval')) {
