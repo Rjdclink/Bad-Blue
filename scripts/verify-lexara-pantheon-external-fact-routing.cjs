@@ -53,7 +53,7 @@ for(const token of [
   'pendingTargets = [...new Set([...frontier, ...discovered])]',
 ]) if(!investigation.includes(token)) throw new Error('Pantheon endpoint/telemetry invariant missing: '+token);
 for(const token of [
-  "pantheonDelegatedByLexara && researchDecision.objectiveKind !== 'legal-authority'\n      ? pantheonInvestigationPromise",
+  "pantheonDelegatedByLexara\n      ? pantheonInvestigationPromise",
   'pantheonEndpoint:',
   'pantheonRecursionPasses:',
   'researchEndpointReached:',

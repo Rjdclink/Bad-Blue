@@ -14,7 +14,7 @@ for(const token of [
  'PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD = 0.80',
  "stage: 'evidence-progress'",
  'publishableEvidence:',
- 'perPassBudgetMs = Math.min(pass === 0 ? 45_000 : 75_000, remainingMs)',
+ 'perPassBudgetMs = Math.min(pass === 0 ? 6_000 : 8_000, remainingMs)',
 ]) if(!pantheon.includes(token)) throw new Error('Progressive Pantheon invariant missing '+token);
 if(!authority.includes('RESEARCH_TIMEOUT_MS = 3 * 60_000')) throw new Error('Authority research is not capped at three minutes');
 for(const token of [

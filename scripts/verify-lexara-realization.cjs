@@ -317,7 +317,7 @@ must(
     realtimeVoiceClient.includes('SpeechInterrupted') &&
     realtimeVoiceClient.includes('sampleRate * 0.120') &&
     realtimeVoiceClient.includes('mobile-network jitter gap occurs') &&
-    orchestrator.includes('LIVE_RESEARCH_BUDGET_MS = 2_400') &&
+    orchestrator.includes('LIVE_RESEARCH_BUDGET_MS = 10_000') &&
     orchestrator.includes('LIVE_REASONING_PROVIDER_ATTEMPT_MS = 2_500') &&
     orchestrator.includes('LIVE_REASONING_MAX_FALLBACKS = 3') &&
     !realtimeVoiceClient.includes('LEXARA_REALTIME_OUTPUT_SAMPLE_RATE = 24_000') &&
@@ -631,7 +631,7 @@ must(
     !liveTurnHandler.includes('if (pendingUserTurnRef.current) return;') &&
     orchestrator.includes('Default to 1-3 concise sentences') &&
     orchestrator.includes('Do not say "thank you," "goodbye,"') &&
-    orchestrator.includes('LIVE_RESEARCH_BUDGET_MS = 2_400') &&
+    orchestrator.includes('LIVE_RESEARCH_BUDGET_MS = 10_000') &&
     authorityResearch.includes('const RESEARCH_TIMEOUT_MS = 3 * 60_000') &&
     conversation.includes("acknowledgement = String(acknowledgementData?.acknowledgement || '').trim()"),
   'active-analysis turns are cancellable, acknowledgements remain non-semantic but conversational, answers are concise/direct, and authority research is bounded off the live latency tail',
