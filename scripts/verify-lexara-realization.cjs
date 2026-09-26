@@ -1025,7 +1025,7 @@ must(
     pantheonInvestigation.includes("purpose: 'lexara_legal_research'") &&
     pantheonInvestigation.includes('depth: 3') &&
     pantheonInvestigation.includes('budgetMs: perPassBudgetMs') &&
-    pantheonInvestigation.includes('perPassBudgetMs = Math.min(pass === 0 ? 45_000 : 75_000, remainingMs)') &&
+    pantheonInvestigation.includes('perPassBudgetMs = Math.min(pass === 0 ? 6_000 : 8_000, remainingMs)') &&
     pantheonInvestigation.includes('fullBackgroundReportRequested') &&
     pantheonInvestigation.includes('needsIdentityClarification?: boolean') &&
     orchestrator.includes('initialPantheon?.clarification && (initialPantheon.needsIdentityClarification || initialPantheon.fullBackgroundReportRequested)') &&
