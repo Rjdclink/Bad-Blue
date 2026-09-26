@@ -617,6 +617,23 @@ must(
   'repeated phantom courtesy/departure fragments are stripped anywhere in contaminated speech while substantive user content is preserved',
 );
 must(
+  lexaraChatRoutes.includes("send('complete'") &&
+    lexaraChatRoutes.includes('documentIntent,') &&
+    lexaraChatRoutes.includes('reasoningDocumentIntent') &&
+    lexaraChatRoutes.includes('for (const message of [...previousMessages].reverse())') &&
+    !lexaraChatRoutes.includes("if (message.role !== 'user') continue;"),
+  'LEXARA live SSE must preserve document intent and resolve referential document follow-ups from the full dialogue'
+);
+must(
+  conversation.includes('pendingActionRef') &&
+    conversation.includes('pendingAction: pendingActionRef.current?.label') &&
+    conversation.includes("pendingActionRef.current = { kind: 'document', label: pendingTitle }") &&
+    lexaraChatRoutes.includes('pendingAction = cleanOptionalString') &&
+    orchestrator.includes("I'm still working on your"),
+  'LEXARA must preserve and name a pending document action across presence/check-in turns'
+);
+
+must(
   lexaraChatRoutes.includes('analysisActive') &&
     orchestrator.includes('Hold on a minute') &&
     conversation.includes('pendingUserTurnQueueRef.current.push({ text: message, messageId: userMessageId })') &&
