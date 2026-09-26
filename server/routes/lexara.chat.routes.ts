@@ -104,7 +104,8 @@ router.post('/acknowledge', express.json(), (req: Request, res: Response) => {
   }
 
   const analysisActive = req.body?.context?.analysisActive === true;
-  const acknowledgement = getLexaraImmediateAcknowledgement(prompt, { analysisActive });
+  const pendingAction = cleanOptionalString(req.body?.context?.pendingAction, 160);
+  const acknowledgement = getLexaraImmediateAcknowledgement(prompt, { analysisActive, pendingAction });
   return res.json({
     success: true,
     acknowledgement: acknowledgement.text,
