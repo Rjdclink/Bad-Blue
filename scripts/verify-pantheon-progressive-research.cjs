@@ -100,9 +100,9 @@ for(const token of [
  "desired.add('structured-extraction')",
 ]) if(!registry.includes(token)) throw new Error('Fact-specific crawler selection invariant missing '+token);
 for(const token of [
- 'const escalationPrimaryCrawlers = [...PANTHEON_PRIMARY_CRAWLER_IDS]',
- "pass === 0 ? primaryCrawlers : escalationPrimaryCrawlers",
- "crawlerMode: pass === 0 ? 'selected' : 'escalated-full-primary'",
+ 'buildLexaraDynamicCrawlerAssignments',
+ 'const explorationPrimaryQueue =',
+ "crawlerMode: pass === 0 ? 'selected' : 'mandatory-capability-exploration'",
 ]) if(!pantheon.includes(token)) throw new Error('Crawler escalation invariant missing '+token);
 for(const token of [
  'Conversational research also gets the full extraction/analysis skill',
@@ -143,3 +143,17 @@ for(const token of [
  "'Relationship & Timeline Intelligence'",
 ]) if(!pantheon.includes(token)) throw new Error('Conversational 30-category schema-routing invariant missing '+token);
 console.log('Pantheon conversational category-to-schema routing verification passed.');
+
+for(const token of [
+ "export type LexaraDynamicCrawlerRole = 'primary' | 'secondary' | 'tertiary'",
+ 'rolesForCrawler',
+ 'buildLexaraDynamicCrawlerAssignments',
+ 'explorationRequired: matchedCapabilities.length > 0',
+]) if(!registry.includes(token)) throw new Error('Dynamic overlapping roster invariant missing '+token);
+for(const token of [
+ "stage: 'dynamic-rosters'",
+ 'matchedCapabilities: assignment.matchedCapabilities',
+ 'explorationRequired: assignment.explorationRequired',
+ 'const explorationPrimaryQueue =',
+]) if(!pantheon.includes(token)) throw new Error('Dynamic roster orchestration invariant missing '+token);
+console.log('Pantheon dynamic overlapping crawler-roster verification passed.');
