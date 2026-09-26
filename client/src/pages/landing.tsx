@@ -521,6 +521,7 @@ export default function Landing() {
               <h4 className="font-medium mb-4">Product</h4>
               <ul className="space-y-2 text-sm text-muted-foreground">
                 <li><a href="/login" className="hover:text-foreground">How It Works</a></li>
+                <li><a href="/reviews" className="hover:text-foreground">Reviews</a></li>
               </ul>
             </div>
             <div>
