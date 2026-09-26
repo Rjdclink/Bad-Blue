@@ -1021,7 +1021,8 @@ must(
     pantheonInvestigation.includes('fullBackgroundReportRequested') &&
     pantheonInvestigation.includes('needsIdentityClarification?: boolean') &&
     orchestrator.includes('initialPantheon?.clarification && (initialPantheon.needsIdentityClarification || initialPantheon.fullBackgroundReportRequested)') &&
-    orchestrator.includes('investigatePersonQuestion(researchDecision.needed ? researchDecision.objective : cleanPrompt') &&
+    orchestrator.includes('const pantheonPrompt = researchDecision.needed') &&
+    orchestrator.includes('investigatePersonQuestion(pantheonPrompt') &&
     orchestrator.includes('new Promise<null>(resolve => setTimeout(() => resolve(null), 0))') &&
     !orchestrator.includes('new Promise<null>(resolve => setTimeout(() => resolve(null), 60))') &&
     orchestrator.includes('formatPantheonInvestigationForSystem(pantheonInvestigation)'),
