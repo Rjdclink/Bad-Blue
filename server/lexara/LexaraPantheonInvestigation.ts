@@ -34,7 +34,7 @@ export interface LexaraPersonInvestigation {
   fullBackgroundReportRequested: boolean;
   coverageLimited?: boolean;
   coverageNote?: string;
-  endpoint?: 'evidence-sufficient' | 'partial-evidence' | 'budget-exhausted' | 'sources-exhausted' | 'clarification-required';
+  endpoint?: 'evidence-sufficient' | 'best-available-evidence' | 'partial-evidence' | 'budget-exhausted' | 'sources-exhausted' | 'clarification-required';
   recursionPasses?: number;
 }
 
@@ -479,6 +479,8 @@ export async function investigatePersonQuestion(
     let rejectedIdentityMismatchCount = 0;
     let rejectedBelowAssessmentCount = 0;
     let contradictionCount = 0;
+    let priorAcceptedEvidenceCount = 0;
+    let stagnantUsefulPasses = 0;
     const emitDueCheckpoints = () => {
       const elapsedMs = Date.now() - recursiveStartedAt;
       while (nextCheckpointIndex < PERSON_SOFT_CHECKPOINTS_MS.length && elapsedMs >= PERSON_SOFT_CHECKPOINTS_MS[nextCheckpointIndex]) {
@@ -642,10 +644,19 @@ export async function investigatePersonQuestion(
       // Adaptive successful endpoint: do not burn the ten-minute ceiling when
       // one sufficiently strong, contradiction-free finding resolves the objective.
       emitDueCheckpoints();
+      const currentAcceptedEvidenceCount = acceptedEvidence.size + structuredEvidence.length;
+      if (currentAcceptedEvidenceCount > priorAcceptedEvidenceCount) stagnantUsefulPasses = 0;
+      else if (bestConfidence >= PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD && !hasMaterialIdentityConflict) stagnantUsefulPasses += 1;
+      priorAcceptedEvidenceCount = currentAcceptedEvidenceCount;
       // One strong source can resolve the objective by itself. Multiple useful
       // findings may strengthen the assessment, but corroboration is never a
       // prerequisite for preserving or reporting a single useful source.
       if (bestConfidence >= PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD && !hasMaterialIdentityConflict) break;
+      // When useful, contradiction-free evidence has stabilized across repeated
+      // broadening passes, stop successfully rather than pretending that perfect
+      // evidence must exist somewhere. The surviving evidence remains available
+      // for a calibrated best assessment.
+      if (stagnantUsefulPasses >= 2 && bestConfidence >= PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD && !hasMaterialIdentityConflict) break;
       // Explicit exhaustion endpoints: pass count, wall-clock budget, target
       // budget, caller abort, or no new URLs. This prevents unbounded recursion.
       if (Date.now() >= globalDeadlineAt || pass + 1 >= PERSON_RECURSIVE_MAX_PASSES || seenTargets.size >= PERSON_RECURSIVE_MAX_TOTAL_TARGETS) break;
@@ -700,10 +711,13 @@ export async function investigatePersonQuestion(
       : false;
     const evidenceSufficient = bestConfidence >= PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD && !finalHasMaterialIdentityConflict;
     const hasUsefulPartialEvidence = publishableEvidenceCount > 0 || structuredEvidence.length > 0;
+    const bestAvailableEvidence = hasUsefulPartialEvidence && stagnantUsefulPasses >= 2 && !finalHasMaterialIdentityConflict;
     const endpoint: LexaraPersonInvestigation['endpoint'] = evidenceSufficient
       ? 'evidence-sufficient'
-      : hasUsefulPartialEvidence
-        ? 'partial-evidence'
+      : bestAvailableEvidence
+        ? 'best-available-evidence'
+        : hasUsefulPartialEvidence
+          ? 'partial-evidence'
         : Date.now() - recursiveStartedAt >= PERSON_RECURSIVE_TOTAL_BUDGET_MS
           ? 'budget-exhausted'
           : 'sources-exhausted';
