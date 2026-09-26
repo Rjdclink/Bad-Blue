@@ -113,3 +113,20 @@ for(const token of [
 ]) if(!adapter.includes(token)) throw new Error('Conversational crawler-skill execution invariant missing '+token);
 for(const token of ['occupationMatch','employerMatch','custodyMatch','facilityMatch','inmateNumberMatch']) if(!razors.includes(token)) throw new Error('Fact extraction invariant missing '+token);
 console.log('Pantheon crawler capability escalation and fact extraction verification passed.');
+
+const matrix=fs.readFileSync('server/services/pantheon/PantheonCrawlerCapabilityMatrix.ts','utf8');
+for(const token of [
+ 'PANTHEON_CATEGORY_EXTRACTION_SCHEMAS',
+ 'getPantheonCategoryExtractionSchema',
+ "Pantheon category has no complete extraction schema",
+ "Employment History': { objectiveFields:",
+ "Incarceration & Corrections': { objectiveFields:",
+ "Bankruptcies, Liens & Financial Public Records': { objectiveFields:",
+ "Relationship & Timeline Intelligence': { objectiveFields:",
+]) if(!matrix.includes(token)) throw new Error('30-category extraction-schema invariant missing '+token);
+for(const token of [
+ 'getPantheonCategoryExtractionSchema',
+ 'extractionSchema?.preferredRazors',
+ 'extractionObjectiveFields:',
+]) if(!adapter.includes(token)) throw new Error('Schema-driven extraction pipe invariant missing '+token);
+console.log('Pantheon 30-category schema-driven extraction verification passed.');
