@@ -243,7 +243,7 @@ test('SPECTRA is detached from the removed legacy Pantheon inventory', !pantheon
 test('SPECTRA source catalog is priority compiled and directly retrievable',
   spectraSources.includes("'critical' | 'high' | 'supporting'") &&
   spectraSources.includes('SPECTRA_SOURCE_CATALOG_BY_ID') &&
-  spectraSources.includes('getSpectraSources'));
+  spectraSources.includes('buildPantheonBackgroundRegistryTargets'));
 test('SPECTRA acquisition pipes prioritized source waves into discovery',
   routes.includes('buildSpectraDiscoveryWaves') &&
   routes.includes('criticalSourceQueries') &&
