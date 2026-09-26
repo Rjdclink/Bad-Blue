@@ -402,7 +402,6 @@ export async function investigatePersonQuestion(
     const primaryCrawlers = selectedPrimaryCrawlers.length
       ? [...new Set(selectedPrimaryCrawlers)]
       : [...PANTHEON_PRIMARY_CRAWLER_IDS];
-    const escalationPrimaryCrawlers = [...PANTHEON_PRIMARY_CRAWLER_IDS];
     const eligiblePrimaryCrawlerIds = dynamicAssignments
       .filter(assignment => assignment.roles.includes('primary') && primaryCrawlerSet.has(assignment.crawler.id))
       .map(assignment => assignment.crawler.id as PantheonPrimaryCrawlerId);
