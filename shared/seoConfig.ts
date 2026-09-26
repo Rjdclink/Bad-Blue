@@ -43,25 +43,25 @@ export interface PageSEO {
 
 export const GLOBAL_KEYWORDS: KeywordTaxonomy = {
   primary: [
-    "AI legal tools",
-    "AI legal consultation",
-    "legal document generator",
-    "people finder",
-    "inmate locator"
+    "conversational legal AI", "two-way conversational legal AI", "voice legal AI",
+    "voice and text legal AI", "interactive legal AI", "AI legal conversation",
+    "AI legal assistant", "AI legal research assistant", "AI legal document generator",
+    "legal media analysis AI", "AI evidence analyzer", "OSINT AI", "legal OSINT AI",
+    "AI public records search", "AI background research", "AI people finder", "AI inmate locator"
   ],
   secondary: [
-    "background report",
-    "public records search",
-    "legal research",
-    "geolocation people finder",
-    "40 legal practice areas"
+    "talk to legal AI", "speak with legal AI", "ask AI a legal question", "AI case analysis",
+    "legal issue spotting AI", "AI case law research", "AI statute research", "legal drafting AI",
+    "conversational document drafting", "AI document review", "video evidence analysis",
+    "audio evidence analysis", "AI open-source intelligence", "investigative AI",
+    "public record research AI", "court record research AI", "location intelligence AI",
+    "nationwide inmate search", "40 legal practice areas"
   ],
   lsi: [
-    "voice legal consultation",
-    "text legal consultation",
-    "legal information platform",
-    "public record research tools",
-    "nationwide inmate search"
+    "AI I can talk to about my legal problem", "talk to an AI about my case",
+    "AI that researches my case", "AI that analyzes legal documents", "AI that analyzes evidence",
+    "AI that creates legal documents", "AI that searches public records",
+    "real-time legal AI conversation", "download legal document DOCX", "download legal document PDF"
   ]
 };
 

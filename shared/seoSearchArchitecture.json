@@ -1,0 +1,116 @@
+{
+  "version": "2026-09-26",
+  "principle": "Search-intent architecture; do not emit meta-keywords or stuff pages. Use these clusters to create genuinely useful public content.",
+  "families": {
+    "conversational_legal_ai": [
+      "conversational legal AI",
+      "two-way conversational legal AI",
+      "voice legal AI",
+      "voice and text legal AI",
+      "talk to legal AI",
+      "speak with legal AI",
+      "interactive legal AI",
+      "real-time legal AI conversation",
+      "AI legal conversation",
+      "ask AI a legal question",
+      "legal AI assistant",
+      "conversational law assistant"
+    ],
+    "legal_research": [
+      "AI legal research",
+      "legal research AI",
+      "AI legal research assistant",
+      "AI case research",
+      "AI statute research",
+      "AI case law research",
+      "AI litigation research",
+      "AI issue spotting",
+      "AI case analysis",
+      "AI case evaluation",
+      "AI legal reasoning assistant"
+    ],
+    "documents": [
+      "AI legal document generator",
+      "legal drafting AI",
+      "conversational document drafting",
+      "AI motion generator",
+      "AI complaint generator",
+      "AI contract drafting",
+      "AI demand letter generator",
+      "AI affidavit drafting",
+      "AI appellate brief",
+      "AI habeas petition",
+      "AI sentencing memorandum",
+      "AI legal memorandum",
+      "DOCX legal document AI",
+      "PDF legal document AI"
+    ],
+    "media_evidence": [
+      "legal media analysis AI",
+      "AI evidence analyzer",
+      "video evidence analysis",
+      "audio evidence analysis",
+      "image evidence analysis",
+      "document evidence analysis",
+      "AI evidence review",
+      "multimedia legal analysis",
+      "legal relevance analyzer",
+      "AI file analysis"
+    ],
+    "osint": [
+      "OSINT AI",
+      "AI OSINT platform",
+      "legal OSINT AI",
+      "AI open-source intelligence",
+      "public-record OSINT",
+      "person OSINT",
+      "investigative AI",
+      "AI investigative research",
+      "OSINT background research",
+      "AI public records research",
+      "source provenance research"
+    ],
+    "background_records": [
+      "AI background search",
+      "AI background report",
+      "AI public records search",
+      "automated public-record research",
+      "court-record research AI",
+      "criminal-record research AI",
+      "government records AI",
+      "AI records investigator"
+    ],
+    "people_location": [
+      "AI people finder",
+      "OSINT people finder",
+      "AI person search",
+      "AI location research",
+      "geolocation research AI",
+      "public-record people search",
+      "investigative people search",
+      "location intelligence AI"
+    ],
+    "corrections": [
+      "AI inmate search",
+      "AI inmate locator",
+      "nationwide inmate locator",
+      "federal inmate search",
+      "state inmate search",
+      "county jail inmate search",
+      "correctional record search",
+      "incarceration record research"
+    ],
+    "natural_language": [
+      "AI I can talk to about my legal problem",
+      "talk to an AI about my case",
+      "AI that researches my case",
+      "AI that analyzes legal documents",
+      "AI that analyzes evidence",
+      "AI that creates legal documents",
+      "AI that searches public records",
+      "AI that can read my court papers",
+      "AI that can talk back to me about law"
+    ]
+  },
+  "combination_rule": "Combine interaction mode + capability + legal subject + user task only when the resulting page has distinct, useful content. Avoid doorway pages and scaled-content abuse."
+}
