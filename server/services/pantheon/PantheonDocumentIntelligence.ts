@@ -58,13 +58,19 @@ async function parsePdf(buffer: Buffer, signal?: AbortSignal): Promise<PantheonP
   try {
     const source = path.join(directory, 'source.pdf');
     await writeFile(source, buffer, { flag: 'wx', mode: 0o600 });
-    const textResult = await execFileAsync('pdftotext', ['-layout', source, '-'], {
-      timeout: 20_000,
-      maxBuffer: 8 * 1024 * 1024,
-      signal,
-    });
-    const text = cleanExtractedText(textResult.stdout);
-    if (text.length >= 40) return { content: text, parser: 'pdf-text', ocrApplied: false };
+    // Native PDF text extraction is preferred, but it is not a single point of
+    // failure. A malformed/unsupported text layer falls through to bounded OCR.
+    try {
+      const textResult = await execFileAsync('pdftotext', ['-layout', source, '-'], {
+        timeout: 20_000,
+        maxBuffer: 8 * 1024 * 1024,
+        signal,
+      });
+      const text = cleanExtractedText(textResult.stdout);
+      if (text.length >= 40) return { content: text, parser: 'pdf-text', ocrApplied: false };
+    } catch (error) {
+      if (signal?.aborted) throw error;
+    }
 
     const prefix = path.join(directory, 'page');
     await execFileAsync('pdftoppm', ['-f', '1', '-l', String(MAX_OCR_PAGES), '-r', '150', '-png', source, prefix], {
