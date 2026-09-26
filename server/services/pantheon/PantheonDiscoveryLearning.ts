@@ -1,5 +1,4 @@
 import { sql } from 'drizzle-orm';
-import { db } from '../../db';
 
 export interface PantheonDiscoveryLearningContext {
   categories?: readonly string[];
@@ -14,6 +13,13 @@ export interface PantheonDiscoveryLearningContext {
 }
 
 let readyPromise: Promise<void> | null = null;
+let databasePromise: Promise<typeof import('../../db')> | null = null;
+
+async function discoveryDatabase() {
+  if (process.env.PANTHEON_FRONTIER_LOCAL_ONLY === '1') return null;
+  databasePromise ||= import('../../db');
+  return databasePromise;
+}
 const memoryScores = new Map<string, number>();
 
 function normalizedJurisdiction(value?: string): string {
@@ -29,6 +35,9 @@ function normalizedHost(rawUrl: string): string {
 }
 
 async function ensureLearningTable(): Promise<void> {
+  const database = await discoveryDatabase();
+  if (!database) return;
+  const { db } = database;
   if (!readyPromise) {
     readyPromise = (async () => {
       await db.execute(sql`
@@ -88,6 +97,9 @@ export async function rememberPantheonDiscoveryOutcome(
   memoryScores.set(host, (memoryScores.get(host) || 0) + (success ? 4 : -1));
 
   try {
+    const database = await discoveryDatabase();
+    if (!database) return;
+    const { db } = database;
     await ensureLearningTable();
     await db.execute(sql`
       INSERT INTO public.pantheon_discovery_learning
@@ -126,6 +138,9 @@ export async function getPantheonLearnedSources(
   const category = normalizedCategory(categories);
   const normalizedLocation = normalizedJurisdiction(jurisdiction);
   try {
+    const database = await discoveryDatabase();
+    if (!database) return [];
+    const { db } = database;
     await ensureLearningTable();
     const result: any = await db.execute(sql`
       SELECT url
@@ -162,6 +177,9 @@ export async function getPantheonLearnedQueryPatterns(
   const category = normalizedCategory(categories);
   const normalizedLocation = normalizedJurisdiction(jurisdiction);
   try {
+    const database = await discoveryDatabase();
+    if (!database) return [];
+    const { db } = database;
     await ensureLearningTable();
     const result: any = await db.execute(sql`
       SELECT query_pattern
