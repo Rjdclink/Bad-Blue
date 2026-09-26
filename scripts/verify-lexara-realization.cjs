@@ -991,11 +991,12 @@ must(
     pantheonInvestigation.includes("target.subjectScoped || target.sourceKind === 'api' || target.sourceKind === 'search'") &&
     pantheonInvestigation.includes("purpose: 'lexara_legal_research'") &&
     pantheonInvestigation.includes('depth: 3') &&
-    pantheonInvestigation.includes('budgetMs: Math.min(1_600, remainingMs)') &&
+    pantheonInvestigation.includes('budgetMs: perPassBudgetMs') &&
+    pantheonInvestigation.includes('perPassBudgetMs = Math.min(20_000, remainingMs)') &&
     pantheonInvestigation.includes('fullBackgroundReportRequested') &&
     pantheonInvestigation.includes('needsIdentityClarification?: boolean') &&
     orchestrator.includes('initialPantheon?.clarification && (initialPantheon.needsIdentityClarification || initialPantheon.fullBackgroundReportRequested)') &&
-    orchestrator.includes('investigatePersonQuestion(cleanPrompt') &&
+    orchestrator.includes('investigatePersonQuestion(researchDecision.needed ? researchDecision.objective : cleanPrompt') &&
     orchestrator.includes('new Promise<null>(resolve => setTimeout(() => resolve(null), 0))') &&
     !orchestrator.includes('new Promise<null>(resolve => setTimeout(() => resolve(null), 60))') &&
     orchestrator.includes('formatPantheonInvestigationForSystem(pantheonInvestigation)'),
