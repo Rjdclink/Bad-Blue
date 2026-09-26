@@ -875,15 +875,18 @@ startupTrace('routes_registration_completed');
       
       res.type("application/xml");
       
-      const canonicalPaths = Array.from(new Set(
-        Object.values(SEO_CONFIG)
-          .filter((config) => config.includeInSitemap && !config.noIndex)
-          .map((config) => config.canonicalPath)
-      ));
-
-      const urls = canonicalPaths.map((path) => `
+      const canonicalPaths = Object.values(SEO_CONFIG)
+        .filter((config) => config.includeInSitemap && !config.noIndex)
+        .map((config) => `${BASE_URL}${config.canonicalPath}`);
+      // The static sitemap owns the expanded crawl inventory (40 practice areas,
+      // Lexara discovery pages, guides, and document pages). Merge it into the
+      // live endpoint so production does not accidentally expose only SPA routes.
+      const { readFile } = await import("node:fs/promises");
+      const staticSitemap = await readFile("public/sitemap.xml", "utf8");
+      const staticUrls = [...staticSitemap.matchAll(/<loc>([^<]+)<\\/loc>/g)].map((match) => match[1]);
+      const urls = Array.from(new Set([...canonicalPaths, ...staticUrls])).map((url) => `
   <url>
-    <loc>${BASE_URL}${path}</loc>
+    <loc>${url}</loc>
   </url>`).join('');
 
       // Do not emit synthetic freshness, priority, or change-frequency signals.
