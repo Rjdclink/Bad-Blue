@@ -39,7 +39,7 @@ for (const token of [
 for (const token of ['completeAllItemsOnAbort', 'results[index] = await worker','Promise.all(Array.from','PANTHEON_GLOBAL_URL_CONCURRENCY_LIMIT = 8']) {
   if (!scheduler.includes(token)) throw new Error('Bounded scheduler invariant missing: ' + token);
 }
-for (const token of ['PANTHEON_CRAWLER_POOL_LIMITS','PANTHEON_CRAWLER_POOL_QUEUE_LIMIT','runPantheonCrawlerPooled','Promise.allSettled(routePromises)','queueWaitMs','normalizePantheonCrawlerSelection','isPantheonCrawlerTimeout']) {
+for (const token of ['PANTHEON_CRAWLER_POOL_LIMITS','PANTHEON_CRAWLER_POOL_QUEUE_LIMIT','runPantheonCrawlerPooled','Promise.allSettled(swarmWorkers)','queueWaitMs','normalizePantheonCrawlerSelection','isPantheonCrawlerTimeout']) {
   if (!orchestrator.includes(token)) throw new Error('Crawler orchestrator bulkhead/failure-isolation invariant missing: ' + token);
 }
 for (const token of ['createPantheonDeadline','racePantheonAbort','pantheonAbortableDelay','removeEventListener']) {
