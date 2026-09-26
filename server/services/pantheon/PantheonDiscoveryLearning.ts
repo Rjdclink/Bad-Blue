@@ -7,6 +7,10 @@ export interface PantheonDiscoveryLearningContext {
   crawler?: string;
   query?: string;
   latencyMs?: number;
+  objective?: string;
+  entityType?: string;
+  evidenceConfidence?: number;
+  evidenceYield?: number;
 }
 
 let readyPromise: Promise<void> | null = null;
@@ -38,11 +42,19 @@ async function ensureLearningTable(): Promise<void> {
           successes INTEGER NOT NULL DEFAULT 0,
           failures INTEGER NOT NULL DEFAULT 0,
           avg_latency_ms INTEGER NOT NULL DEFAULT 0,
+          objective_pattern TEXT NOT NULL DEFAULT '',
+          entity_type TEXT NOT NULL DEFAULT '',
+          evidence_confidence DOUBLE PRECISION NOT NULL DEFAULT 0,
+          evidence_yield INTEGER NOT NULL DEFAULT 0,
           last_success_at TIMESTAMPTZ,
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           PRIMARY KEY (url, category, jurisdiction, crawler)
         )
       `);
+      await db.execute(sql`ALTER TABLE public.pantheon_discovery_learning ADD COLUMN IF NOT EXISTS objective_pattern TEXT NOT NULL DEFAULT ''`);
+      await db.execute(sql`ALTER TABLE public.pantheon_discovery_learning ADD COLUMN IF NOT EXISTS entity_type TEXT NOT NULL DEFAULT ''`);
+      await db.execute(sql`ALTER TABLE public.pantheon_discovery_learning ADD COLUMN IF NOT EXISTS evidence_confidence DOUBLE PRECISION NOT NULL DEFAULT 0`);
+      await db.execute(sql`ALTER TABLE public.pantheon_discovery_learning ADD COLUMN IF NOT EXISTS evidence_yield INTEGER NOT NULL DEFAULT 0`);
       await db.execute(sql`
         CREATE INDEX IF NOT EXISTS pantheon_discovery_learning_rank_idx
         ON public.pantheon_discovery_learning (category, jurisdiction, successes DESC, failures ASC, updated_at DESC)
@@ -69,16 +81,20 @@ export async function rememberPantheonDiscoveryOutcome(
   const crawler = String(context.crawler || '').trim().slice(0, 80);
   const queryPattern = String(context.query || '').trim().toLowerCase().replace(/\s+/g, ' ').slice(0, 240);
   const latencyMs = Math.max(0, Math.min(600_000, Math.round(context.latencyMs || 0)));
+  const objectivePattern = String(context.objective || '').trim().toLowerCase().replace(/\s+/g, ' ').slice(0, 240);
+  const entityType = String(context.entityType || '').trim().toLowerCase().slice(0, 80);
+  const evidenceConfidence = Math.max(0, Math.min(1, Number(context.evidenceConfidence || 0)));
+  const evidenceYield = Math.max(0, Math.min(1000, Math.round(context.evidenceYield || 0)));
   memoryScores.set(host, (memoryScores.get(host) || 0) + (success ? 4 : -1));
 
   try {
     await ensureLearningTable();
     await db.execute(sql`
       INSERT INTO public.pantheon_discovery_learning
-        (url, host, category, jurisdiction, crawler, query_pattern, successes, failures, avg_latency_ms, last_success_at, updated_at)
+        (url, host, category, jurisdiction, crawler, query_pattern, successes, failures, avg_latency_ms, objective_pattern, entity_type, evidence_confidence, evidence_yield, last_success_at, updated_at)
       VALUES
         (${url}, ${host}, ${category}, ${jurisdiction}, ${crawler}, ${queryPattern},
-         ${success ? 1 : 0}, ${success ? 0 : 1}, ${latencyMs},
+         ${success ? 1 : 0}, ${success ? 0 : 1}, ${latencyMs}, ${objectivePattern}, ${entityType}, ${evidenceConfidence}, ${evidenceYield},
          ${success ? new Date() : null}, NOW())
       ON CONFLICT (url, category, jurisdiction, crawler)
       DO UPDATE SET
@@ -90,6 +106,10 @@ export async function rememberPantheonDiscoveryOutcome(
           ELSE ROUND((pantheon_discovery_learning.avg_latency_ms * 3 + ${latencyMs}) / 4.0)::INTEGER
         END,
         query_pattern = CASE WHEN ${queryPattern} = '' THEN pantheon_discovery_learning.query_pattern ELSE ${queryPattern} END,
+        objective_pattern = CASE WHEN ${objectivePattern} = '' THEN pantheon_discovery_learning.objective_pattern ELSE ${objectivePattern} END,
+        entity_type = CASE WHEN ${entityType} = '' THEN pantheon_discovery_learning.entity_type ELSE ${entityType} END,
+        evidence_confidence = GREATEST(pantheon_discovery_learning.evidence_confidence, ${evidenceConfidence}),
+        evidence_yield = pantheon_discovery_learning.evidence_yield + ${evidenceYield},
         last_success_at = CASE WHEN ${success} THEN NOW() ELSE pantheon_discovery_learning.last_success_at END,
         updated_at = NOW()
     `);
@@ -110,11 +130,11 @@ export async function getPantheonLearnedSources(
     const result: any = await db.execute(sql`
       SELECT url
       FROM public.pantheon_discovery_learning
-      WHERE category = ${category}
-        AND (jurisdiction = ${normalizedLocation} OR jurisdiction = '' OR ${normalizedLocation} = '')
+      WHERE (jurisdiction = ${normalizedLocation} OR jurisdiction = '' OR ${normalizedLocation} = '')
         AND successes > 0
       ORDER BY
-        (successes * 4 - failures * 2) DESC,
+        CASE WHEN category = ${category} THEN 1 ELSE 0 END DESC,
+        (successes * 4 - failures * 2 + evidence_yield * 2 + ROUND(evidence_confidence * 8)) DESC,
         CASE WHEN avg_latency_ms > 0 THEN avg_latency_ms ELSE 999999 END ASC,
         updated_at DESC
       LIMIT ${Math.max(1, Math.min(limit, 20))}

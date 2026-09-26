@@ -16,7 +16,7 @@ export interface LexaraPersonInvestigationContext {
 }
 
 export interface LexaraPantheonProgressEvent {
-  type: 'searching' | 'evidence' | 'endpoint';
+  type: 'searching' | 'checkpoint' | 'evidence' | 'endpoint';
   pass: number;
   confidence?: number;
   sourceUrl?: string;
@@ -38,6 +38,7 @@ export interface LexaraPersonInvestigation {
 }
 
 const PERSON_NAME_ONLY_PATTERN = /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}\b/;
+const ORGANIZATION_NAME_PATTERN = /\b[A-Z][A-Za-z0-9&.'-]*(?:\s+[A-Z][A-Za-z0-9&.'-]*){0,5}\s+(?:LLC|L\.L\.C\.|Inc\.?|Corporation|Corp\.?|Company|Co\.?|LP|LLP|PLLC|Foundation|Association|University|Bank)\b/;
 
 const PERSON_RECORD_PATTERN = /\b(?:identity|date\s+of\s+birth|dob|age|phone|email|address|where\s+(?:does|did)\s+.+?\s+live|residen|relative|family|associate|household|social\s+media|username|online\s+account|photo|image|employ(?:ed|ment)|work(?:ed|s)?\s+(?:at|for)|education|school|college|university|degree|professional\s+license|credential|business|company|corporat|property|house|home|real\s+estate|vehicle|car|truck|title|registration|court|case|docket|lawsuit|judgment|arrest(?:ed|s)?|criminal\s+record|conviction|warrant|inmate|incarcerat(?:e|ed|ion)?|prison|parole|probation|sex\s+offender|bankrupt|mortgage|loan\s+on|lien|married|marriage|divorc|spouse|husband|wife|die|died|death|deceased|obituary|news|media|government\s+(?:job|employment|service)|public\s+service|campaign|contribution|donation|political|patent|trademark|copyright|timeline|history|relationship|background\s+(?:check|report)|investigat(?:e|ion)\s+(?:him|her|them|this\s+person))\b/i;
 const FULL_REPORT_PATTERN = /\b(?:full|complete|comprehensive|entire)\s+(?:background\s+)?(?:report|check|investigation)|\b(?:run|do|generate|prepare)\s+(?:a\s+)?background\s+(?:report|check)\b/i;
@@ -48,7 +49,8 @@ const PERSON_RECURSIVE_TOTAL_BUDGET_MS = 10 * 60_000;
 const STRUCTURED_CUSTODY_BUDGET_MS = 5 * 60_000;
 const PERSON_RECURSIVE_SUFFICIENT_EVIDENCE = 2;
 const PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD = 0.80;
-const PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD = 0.93;
+const PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD = 0.80;
+const PERSON_SOFT_CHECKPOINTS_MS = [25_000, 60_000, 120_000, 300_000] as const;
 
 const IDENTIFIER_PATTERN = /\b(?:born|dob|date\s+of\s+birth|age\s+\d{1,3}|\d{1,2}[\/-]\d{1,2}[\/-](?:19|20)\d{2}|(?:19|20)\d{2}|lives?\s+in|from\s+[A-Z][a-z]+|address|street|avenue|road|drive|lane|city|county|state|phone|email|employer|works?\s+(?:at|for)|middle\s+name)\b/i;
 
@@ -118,7 +120,8 @@ function categoryDiscoveryTerms(categories: readonly PantheonBackgroundCategory[
 export function hasEnoughIdentityContext(text: string): boolean {
   const properNames = text.match(new RegExp(PERSON_NAME_ONLY_PATTERN.source, 'g')) || [];
   const specificFullName = properNames.some(name => name.trim().split(/\s+/).length >= 3);
-  return properNames.length > 0 && (IDENTIFIER_PATTERN.test(text) || specificFullName);
+  const organization = ORGANIZATION_NAME_PATTERN.test(text);
+  return organization || (properNames.length > 0 && (IDENTIFIER_PATTERN.test(text) || specificFullName));
 }
 
 function clarificationFor(prompt: string): string {
@@ -134,6 +137,19 @@ function extractPersonName(text: string): { firstName?: string; middleName?: str
   const parts = candidate.trim().split(/\s+/);
   if (parts.length === 2) return { firstName: parts[0], lastName: parts[1] };
   return { firstName: parts[0], middleName: parts.slice(1, -1).join(' '), lastName: parts[parts.length - 1] };
+}
+
+function extractOrganizationName(text: string): string | undefined {
+  return text.match(ORGANIZATION_NAME_PATTERN)?.[0]?.trim();
+}
+
+function genericEntityMatch(item: RetrievalEvidence, subject: string): { matched: boolean; score: number; conflicts: string[]; independentCorrelates: string[] } {
+  const normalizedSubject = subject.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const content = String(item.content || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ');
+  const tokens = normalizedSubject.split(/\s+/).filter(token => token.length > 1 && !['llc','inc','corp','corporation','company','co'].includes(token));
+  const matchedTokens = tokens.filter(token => content.includes(token));
+  const ratio = tokens.length ? matchedTokens.length / tokens.length : 0;
+  return { matched: ratio >= 0.75, score: Math.min(0.95, 0.55 + ratio * 0.40), conflicts: [], independentCorrelates: matchedTokens };
 }
 
 function extractStateCode(text: string): string | undefined {
@@ -210,6 +226,7 @@ export async function investigatePersonQuestion(
   // parallel with discovery so a slow provider cannot serialize the live turn.
   let structuredEvidence: string[] = [];
   let structuredSources: string[] = [];
+  let structuredEvidenceConfidence = 0;
   if (categories.includes('corrections')) {
     const person = extractPersonName(combined);
     if (person.firstName && person.lastName) {
@@ -230,6 +247,8 @@ export async function investigatePersonQuestion(
             `INMATE NUMBER: ${inmate.inmateNumber || 'Unknown'}\nRELEASE DATE: ${inmate.releaseDate || 'Unknown'}`
           );
           if (inmate.sourceUrl) structuredSources.push(inmate.sourceUrl);
+          structuredEvidenceConfidence = Math.max(structuredEvidenceConfidence, 0.90);
+          context.onProgress?.({ type: 'evidence', pass: 0, confidence: 0.90, sourceUrl: inmate.sourceUrl || inmate.source, evidence: structuredEvidence[structuredEvidence.length - 1].slice(0, 1200) });
         }
       } catch {
         // Structured custody lookup is additive; canonical Pantheon retrieval continues.
@@ -243,6 +262,22 @@ export async function investigatePersonQuestion(
   let discoveredUrls: string[] = [];
   const discovery = await discoveryPromise;
   if (discovery) discoveredUrls = discovery.urls;
+
+  // A direct structured result that already clears the fact-specific stop
+  // threshold ends this objective immediately; ten minutes is a ceiling, not a
+  // target. No unrelated crawling continues after the requested fact is strong.
+  if (structuredEvidence.length > 0 && structuredEvidenceConfidence >= PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD) {
+    context.onProgress?.({ type: 'endpoint', pass: 0, confidence: structuredEvidenceConfidence, endpoint: 'evidence-sufficient' });
+    return {
+      evidenceSummary: structuredEvidence.join('\n\n').slice(0, 10_000),
+      sources: [...new Set(structuredSources)].slice(0, 12),
+      categories,
+      fullBackgroundReportRequested: false,
+      coverageLimited: false,
+      endpoint: 'evidence-sufficient',
+      recursionPasses: 0,
+    };
+  }
 
   // Known authorities and learned/free discovery enter the same bounded frontier.
   // Registry URLs remain first so established direct sources are never displaced.
@@ -258,6 +293,9 @@ export async function investigatePersonQuestion(
   try {
     const resolvedPerson = extractPersonName(combined);
     const resolvedName = [resolvedPerson.firstName, resolvedPerson.middleName, resolvedPerson.lastName].filter(Boolean).join(' ');
+    const resolvedOrganization = extractOrganizationName(combined);
+    const resolvedSubject = resolvedName || resolvedOrganization || '';
+    const resolvedEntityType = resolvedOrganization && !resolvedName ? 'organization' : 'person';
     const primaryCrawlerSet = new Set<string>(PANTHEON_PRIMARY_CRAWLER_IDS);
     const selectedPrimaryCrawlers = selectLexaraCrawlerPlan({
       prompt: combined,
@@ -275,6 +313,7 @@ export async function investigatePersonQuestion(
       : [...PANTHEON_PRIMARY_CRAWLER_IDS];
 
     const recursiveStartedAt = Date.now();
+    const globalDeadlineAt = recursiveStartedAt + PERSON_RECURSIVE_TOTAL_BUDGET_MS;
     const seenTargets = new Set<string>();
     let pendingTargets = targets.slice(0, PERSON_RECURSIVE_MAX_TARGETS_PER_PASS);
     let retrievalAvailable = true;
@@ -282,6 +321,18 @@ export async function investigatePersonQuestion(
     const acceptedEvidence = new Map<string, RetrievalEvidence>();
     const acceptedEvidenceScores = new Map<string, number>();
     let recursionPasses = 0;
+    let nextCheckpointIndex = 0;
+    const surfacedEvidenceKeys = new Set<string>();
+    const emitDueCheckpoints = () => {
+      const elapsedMs = Date.now() - recursiveStartedAt;
+      while (nextCheckpointIndex < PERSON_SOFT_CHECKPOINTS_MS.length && elapsedMs >= PERSON_SOFT_CHECKPOINTS_MS[nextCheckpointIndex]) {
+        const checkpointMs = PERSON_SOFT_CHECKPOINTS_MS[nextCheckpointIndex++];
+        const ranked = [...acceptedEvidenceScores.entries()].sort((a, b) => b[1] - a[1]);
+        const best = ranked[0];
+        const item = best ? acceptedEvidence.get(best[0]) : undefined;
+        context.onProgress?.({ type: 'checkpoint', pass: recursionPasses, confidence: best?.[1] || 0, sourceUrl: item?.sourceUrl, evidence: item?.content?.trim().slice(0, 1200) });
+      }
+    };
 
     for (let pass = 0; pass < PERSON_RECURSIVE_MAX_PASSES; pass++) {
       recursionPasses = pass + 1;
@@ -298,16 +349,50 @@ export async function investigatePersonQuestion(
       const remainingMs = Math.max(500, PERSON_RECURSIVE_TOTAL_BUDGET_MS - (Date.now() - recursiveStartedAt));
       const retrievalStartedAt = Date.now();
       const perPassBudgetMs = Math.min(20_000, remainingMs);
-      const retrieval = await pantheonRetrievalAdapter.retrieve({
-        purpose: 'lexara_legal_research',
-        targets: passTargets,
-        depth: 3,
-        budgetMs: perPassBudgetMs,
-        subject: combined,
-        location: context.jurisdiction,
-        primaryCrawlers,
-        signal: context.signal,
-      });
+      let retrieval;
+      try {
+        retrieval = await pantheonRetrievalAdapter.retrieve({
+          purpose: 'lexara_legal_research',
+          targets: passTargets,
+          depth: 3,
+          budgetMs: perPassBudgetMs,
+          deadlineAt: Math.min(globalDeadlineAt, retrievalStartedAt + perPassBudgetMs),
+          subject: combined,
+          location: context.jurisdiction,
+          primaryCrawlers,
+          signal: context.signal,
+        });
+      } catch (error) {
+        const retrievalLatencyMs = Date.now() - retrievalStartedAt;
+        retrievalAvailable = false;
+        retrievalReason ||= error instanceof Error ? error.message : String(error);
+        for (const target of passTargets) {
+          void rememberPantheonDiscoveryOutcome(target, false, {
+            categories,
+            jurisdiction: context.jurisdiction,
+            query: categoryDiscoveryTerms(categories),
+            latencyMs: retrievalLatencyMs,
+            objective: combined,
+            entityType: resolvedEntityType,
+          });
+        }
+        emitDueCheckpoints();
+        if (context.signal?.aborted) break;
+        if (Date.now() >= globalDeadlineAt) break;
+        // A source/pass deadline is route-local. It must never become the
+        // conversational research job's hard deadline.
+        pendingTargets = [];
+        try {
+          const broadened = await discoverPantheonSourcesParallel(
+            `${resolvedName || combined} ${categoryDiscoveryTerms(categories)} ${context.jurisdiction || ''} alternate authoritative source database archive`,
+            [...seenTargets],
+            { categories, jurisdiction: context.jurisdiction, limit: PERSON_RECURSIVE_MAX_TARGETS_PER_PASS, timeoutMs: Math.min(2_500, remainingMs), signal: context.signal },
+          );
+          pendingTargets = broadened.urls.filter(url => !seenTargets.has(url)).slice(0, Math.min(PERSON_RECURSIVE_MAX_TARGETS_PER_PASS, PERSON_RECURSIVE_MAX_TOTAL_TARGETS - seenTargets.size));
+        } catch {}
+        if (!pendingTargets.length) break;
+        continue;
+      }
       const retrievalLatencyMs = Date.now() - retrievalStartedAt;
       retrievalAvailable = retrievalAvailable && retrieval.available;
       retrievalReason ||= retrieval.reason;
@@ -324,8 +409,10 @@ export async function investigatePersonQuestion(
       }
 
       for (const item of retrieval.evidence.filter(item => item.content?.trim())) {
-        if (!resolvedName) continue;
-        const identityMatch = matchPantheonSubject(item, resolvedName, context.jurisdiction);
+        if (!resolvedSubject) continue;
+        const identityMatch = resolvedEntityType === 'person'
+          ? matchPantheonSubject(item, resolvedSubject, context.jurisdiction)
+          : genericEntityMatch(item, resolvedSubject);
         if (!identityMatch.matched) continue;
         const evidenceKey = `${item.sourceUrl}:${item.crawler}:${item.content.slice(0, 120)}`;
         let authorityBonus = 0;
@@ -336,7 +423,11 @@ export async function investigatePersonQuestion(
         } catch {}
         const retrievedAgeMs = Math.max(0, Date.now() - Date.parse(item.retrievedAt));
         const freshnessBonus = retrievedAgeMs <= 86_400_000 ? 0.05 : retrievedAgeMs <= 30 * 86_400_000 ? 0.025 : 0;
-        const contradictionPenalty = Math.min(0.2, identityMatch.conflicts.length * 0.05);
+        // A credible contradiction or identity ambiguity is the strongest
+        // confidence killer. Lack of corroboration alone does not hide a lead.
+        const contradictionPenalty = identityMatch.conflicts.length > 0
+          ? Math.min(0.60, 0.45 + (identityMatch.conflicts.length - 1) * 0.05)
+          : 0;
         const correlateBonus = Math.min(0.12, identityMatch.independentCorrelates.length * 0.04);
         const dynamicScore =
           identityMatch.score * 0.55 +
@@ -347,8 +438,12 @@ export async function investigatePersonQuestion(
           contradictionPenalty;
         acceptedEvidence.set(evidenceKey, item);
         acceptedEvidenceScores.set(evidenceKey, dynamicScore);
-        if (dynamicScore >= PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD) {
-          context.onProgress?.({ type: 'evidence', pass: recursionPasses, confidence: Math.min(1, dynamicScore), sourceUrl: item.sourceUrl, evidence: item.content.trim().slice(0, 1200) });
+        // Surface useful subject-matched evidence immediately. Confidence
+        // controls wording and stopping, not whether a potentially useful lead
+        // is hidden from the user.
+        if (!surfacedEvidenceKeys.has(evidenceKey)) {
+          surfacedEvidenceKeys.add(evidenceKey);
+          context.onProgress?.({ type: 'evidence', pass: recursionPasses, confidence: Math.max(0, Math.min(1, dynamicScore)), sourceUrl: item.sourceUrl, evidence: item.content.trim().slice(0, 1200) });
         }
         void rememberPantheonDiscoveryOutcome(item.sourceUrl, true, {
           categories,
@@ -356,12 +451,21 @@ export async function investigatePersonQuestion(
           crawler: item.crawler,
           query: categoryDiscoveryTerms(categories),
           latencyMs: retrievalLatencyMs,
+          objective: combined,
+          entityType: resolvedEntityType,
+          evidenceConfidence: Math.max(0, Math.min(1, dynamicScore)),
+          evidenceYield: 1,
         });
       }
 
-      const rankedScores = [...acceptedEvidenceScores.values()].sort((left, right) => right - left);
-      const bestConfidence = rankedScores[0] || 0;
+      const rankedEntries = [...acceptedEvidenceScores.entries()].sort((left, right) => right[1] - left[1]);
+      const rankedScores = rankedEntries.map(([, score]) => score);
+      const bestConfidence = Math.max(rankedScores[0] || 0, structuredEvidenceConfidence);
       const corroboratedHighConfidence = rankedScores.filter(score => score >= PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD).length >= PERSON_RECURSIVE_SUFFICIENT_EVIDENCE;
+      const bestEvidence = rankedEntries[0] ? acceptedEvidence.get(rankedEntries[0][0]) : undefined;
+      const hasMaterialIdentityConflict = bestEvidence && resolvedSubject
+        ? (resolvedEntityType === 'person' ? matchPantheonSubject(bestEvidence, resolvedSubject, context.jurisdiction) : genericEntityMatch(bestEvidence, resolvedSubject)).conflicts.length > 0
+        : false;
       console.info('[LEXARA PantheonRoute]', {
         stage: 'evidence-progress',
         pass: recursionPasses,
@@ -372,10 +476,11 @@ export async function investigatePersonQuestion(
       // Adaptive successful endpoint: do not burn the ten-minute ceiling when
       // multiple independent findings already clear the publishable threshold,
       // or one exceptionally strong finding is independently corroborated.
-      if (corroboratedHighConfidence || bestConfidence >= PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD) break;
+      emitDueCheckpoints();
+      if ((corroboratedHighConfidence || bestConfidence >= PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD) && !hasMaterialIdentityConflict) break;
       // Explicit exhaustion endpoints: pass count, wall-clock budget, target
       // budget, caller abort, or no new URLs. This prevents unbounded recursion.
-      if (pass + 1 >= PERSON_RECURSIVE_MAX_PASSES || seenTargets.size >= PERSON_RECURSIVE_MAX_TOTAL_TARGETS) break;
+      if (Date.now() >= globalDeadlineAt || pass + 1 >= PERSON_RECURSIVE_MAX_PASSES || seenTargets.size >= PERSON_RECURSIVE_MAX_TOTAL_TARGETS) break;
 
       const frontier = [
         ...(retrieval.frontierCandidates?.discoveredCandidates || []),
@@ -417,9 +522,13 @@ export async function investigatePersonQuestion(
       `${index + 1}. SOURCE: ${item.sourceUrl}\nEVIDENCE: ${item.content.trim().slice(0, 1200)}`
     );
     const evidenceSummary = [...structuredEvidence, ...webEvidence].join('\n\n').slice(0, 10_000);
-    const bestConfidence = evidenceEntries.length ? (acceptedEvidenceScores.get(evidenceEntries[0][0]) || 0) : 0;
+    const bestConfidence = Math.max(evidenceEntries.length ? (acceptedEvidenceScores.get(evidenceEntries[0][0]) || 0) : 0, structuredEvidenceConfidence);
     const publishableEvidenceCount = evidenceEntries.filter(([key]) => (acceptedEvidenceScores.get(key) || 0) >= PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD).length;
-    const evidenceSufficient = publishableEvidenceCount >= PERSON_RECURSIVE_SUFFICIENT_EVIDENCE || bestConfidence >= PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD;
+    const finalBestEvidence = evidenceEntries[0]?.[1];
+    const finalHasMaterialIdentityConflict = finalBestEvidence && resolvedSubject
+      ? (resolvedEntityType === 'person' ? matchPantheonSubject(finalBestEvidence, resolvedSubject, context.jurisdiction) : genericEntityMatch(finalBestEvidence, resolvedSubject)).conflicts.length > 0
+      : false;
+    const evidenceSufficient = (publishableEvidenceCount >= PERSON_RECURSIVE_SUFFICIENT_EVIDENCE || bestConfidence >= PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD) && !finalHasMaterialIdentityConflict;
     const endpoint: LexaraPersonInvestigation['endpoint'] = evidenceSufficient
       ? 'evidence-sufficient'
       : Date.now() - recursiveStartedAt >= PERSON_RECURSIVE_TOTAL_BUDGET_MS

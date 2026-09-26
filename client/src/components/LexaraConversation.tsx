@@ -1010,7 +1010,10 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       // wait silently for it. The acknowledgement endpoint is deliberately
       // sub-LLM and returns a context-aware conversational response right away.
       const speculative = speculativeRequestRef.current;
-      const canReuseSpeculative = speculative?.text === message;
+      // Speculative /chat responses cannot carry progressive Pantheon SSE
+      // evidence. Reuse them only for turns that do not need grounded research.
+      const researchLikely = /\?|\b(?:look\s+(?:it|this|that)\s+up|search|research|verify|find\s+out|check|investigate|current|currently|latest|today|now|record|filing|docket|license|mortgage|inmate|incarcerat|property)\b/i.test(message);
+      const canReuseSpeculative = speculative?.text === message && !researchLikely;
       const analysisPromise = canReuseSpeculative
         ? speculative!.promise
         : fetch('/api/lexara/chat/stream', {
@@ -1127,11 +1130,13 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       } else {
         data = await readLexaraSseResponse(response, (event, payload) => {
           if (generation !== generationRef.current || event !== 'research') return;
-          if (payload?.type === 'evidence' && Number(payload?.confidence) >= 0.80) {
-            const confidence = Math.round(Number(payload.confidence) * 100);
+          if (payload?.type === 'evidence' || payload?.type === 'checkpoint') {
+            const confidence = Math.max(0, Math.min(100, Math.round(Number(payload?.confidence || 0) * 100)));
             const evidenceText = String(payload?.evidence || '').trim();
             if (!evidenceText) return;
-            const progressiveText = `I found evidence at ${confidence}% confidence: ${evidenceText.slice(0, 500)}`;
+            const progressiveText = confidence >= 80
+              ? `${evidenceText.slice(0, 500)}`
+              : `${evidenceText.slice(0, 500)} I'm continuing to verify this.`;
             const progressiveId = appendMessage('lexara', progressiveText);
             nonSemanticLexaraMessageIdsRef.current.add(progressiveId);
             void speakLexara(progressiveText, generation).catch(() => undefined);
