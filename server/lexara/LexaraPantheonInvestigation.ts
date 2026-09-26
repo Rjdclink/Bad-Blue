@@ -211,6 +211,7 @@ export async function investigatePersonQuestion(
   // parallel with discovery so a slow provider cannot serialize the live turn.
   let structuredEvidence: string[] = [];
   let structuredSources: string[] = [];
+  let structuredEvidenceConfidence = 0;
   if (categories.includes('corrections')) {
     const person = extractPersonName(combined);
     if (person.firstName && person.lastName) {
@@ -231,6 +232,8 @@ export async function investigatePersonQuestion(
             `INMATE NUMBER: ${inmate.inmateNumber || 'Unknown'}\nRELEASE DATE: ${inmate.releaseDate || 'Unknown'}`
           );
           if (inmate.sourceUrl) structuredSources.push(inmate.sourceUrl);
+          structuredEvidenceConfidence = Math.max(structuredEvidenceConfidence, 0.90);
+          context.onProgress?.({ type: 'evidence', pass: 0, confidence: 0.90, sourceUrl: inmate.sourceUrl || inmate.source, evidence: structuredEvidence[structuredEvidence.length - 1].slice(0, 1200) });
         }
       } catch {
         // Structured custody lookup is additive; canonical Pantheon retrieval continues.
@@ -380,7 +383,11 @@ export async function investigatePersonQuestion(
         } catch {}
         const retrievedAgeMs = Math.max(0, Date.now() - Date.parse(item.retrievedAt));
         const freshnessBonus = retrievedAgeMs <= 86_400_000 ? 0.05 : retrievedAgeMs <= 30 * 86_400_000 ? 0.025 : 0;
-        const contradictionPenalty = Math.min(0.2, identityMatch.conflicts.length * 0.05);
+        // A credible contradiction or identity ambiguity is the strongest
+        // confidence killer. Lack of corroboration alone does not hide a lead.
+        const contradictionPenalty = identityMatch.conflicts.length > 0
+          ? Math.min(0.60, 0.45 + (identityMatch.conflicts.length - 1) * 0.05)
+          : 0;
         const correlateBonus = Math.min(0.12, identityMatch.independentCorrelates.length * 0.04);
         const dynamicScore =
           identityMatch.score * 0.55 +
@@ -409,7 +416,7 @@ export async function investigatePersonQuestion(
       }
 
       const rankedScores = [...acceptedEvidenceScores.values()].sort((left, right) => right - left);
-      const bestConfidence = rankedScores[0] || 0;
+      const bestConfidence = Math.max(rankedScores[0] || 0, structuredEvidenceConfidence);
       const corroboratedHighConfidence = rankedScores.filter(score => score >= PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD).length >= PERSON_RECURSIVE_SUFFICIENT_EVIDENCE;
       const hasMaterialIdentityConflict = [...acceptedEvidence.values()].some(item => {
         if (!resolvedName) return false;
@@ -471,7 +478,7 @@ export async function investigatePersonQuestion(
       `${index + 1}. SOURCE: ${item.sourceUrl}\nEVIDENCE: ${item.content.trim().slice(0, 1200)}`
     );
     const evidenceSummary = [...structuredEvidence, ...webEvidence].join('\n\n').slice(0, 10_000);
-    const bestConfidence = evidenceEntries.length ? (acceptedEvidenceScores.get(evidenceEntries[0][0]) || 0) : 0;
+    const bestConfidence = Math.max(evidenceEntries.length ? (acceptedEvidenceScores.get(evidenceEntries[0][0]) || 0) : 0, structuredEvidenceConfidence);
     const publishableEvidenceCount = evidenceEntries.filter(([key]) => (acceptedEvidenceScores.get(key) || 0) >= PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD).length;
     const finalHasMaterialIdentityConflict = evidenceEntries.some(([, item]) => resolvedName ? matchPantheonSubject(item, resolvedName, context.jurisdiction).conflicts.length > 0 : false);
     const evidenceSufficient = (publishableEvidenceCount >= PERSON_RECURSIVE_SUFFICIENT_EVIDENCE || bestConfidence >= PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD) && !finalHasMaterialIdentityConflict;
