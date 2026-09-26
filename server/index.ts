@@ -883,7 +883,7 @@ startupTrace('routes_registration_completed');
       // live endpoint so production does not accidentally expose only SPA routes.
       const { readFile } = await import("node:fs/promises");
       const staticSitemap = await readFile("public/sitemap.xml", "utf8");
-      const staticUrls = [...staticSitemap.matchAll(/<loc>([^<]+)<\\/loc>/g)].map((match) => match[1]);
+      const staticUrls = [...staticSitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) => match[1]);
       const urls = Array.from(new Set([...canonicalPaths, ...staticUrls])).map((url) => `
   <url>
     <loc>${url}</loc>
