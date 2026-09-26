@@ -458,13 +458,14 @@ export async function investigatePersonQuestion(
         });
       }
 
-      const rankedScores = [...acceptedEvidenceScores.values()].sort((left, right) => right - left);
+      const rankedEntries = [...acceptedEvidenceScores.entries()].sort((left, right) => right[1] - left[1]);
+      const rankedScores = rankedEntries.map(([, score]) => score);
       const bestConfidence = Math.max(rankedScores[0] || 0, structuredEvidenceConfidence);
       const corroboratedHighConfidence = rankedScores.filter(score => score >= PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD).length >= PERSON_RECURSIVE_SUFFICIENT_EVIDENCE;
-      const hasMaterialIdentityConflict = [...acceptedEvidence.values()].some(item => {
-        if (!resolvedSubject) return false;
-        return (resolvedEntityType === 'person' ? matchPantheonSubject(item, resolvedSubject, context.jurisdiction) : genericEntityMatch(item, resolvedSubject)).conflicts.length > 0;
-      });
+      const bestEvidence = rankedEntries[0] ? acceptedEvidence.get(rankedEntries[0][0]) : undefined;
+      const hasMaterialIdentityConflict = bestEvidence && resolvedSubject
+        ? (resolvedEntityType === 'person' ? matchPantheonSubject(bestEvidence, resolvedSubject, context.jurisdiction) : genericEntityMatch(bestEvidence, resolvedSubject)).conflicts.length > 0
+        : false;
       console.info('[LEXARA PantheonRoute]', {
         stage: 'evidence-progress',
         pass: recursionPasses,
@@ -523,7 +524,10 @@ export async function investigatePersonQuestion(
     const evidenceSummary = [...structuredEvidence, ...webEvidence].join('\n\n').slice(0, 10_000);
     const bestConfidence = Math.max(evidenceEntries.length ? (acceptedEvidenceScores.get(evidenceEntries[0][0]) || 0) : 0, structuredEvidenceConfidence);
     const publishableEvidenceCount = evidenceEntries.filter(([key]) => (acceptedEvidenceScores.get(key) || 0) >= PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD).length;
-    const finalHasMaterialIdentityConflict = evidenceEntries.some(([, item]) => resolvedSubject ? (resolvedEntityType === 'person' ? matchPantheonSubject(item, resolvedSubject, context.jurisdiction) : genericEntityMatch(item, resolvedSubject)).conflicts.length > 0 : false);
+    const finalBestEvidence = evidenceEntries[0]?.[1];
+    const finalHasMaterialIdentityConflict = finalBestEvidence && resolvedSubject
+      ? (resolvedEntityType === 'person' ? matchPantheonSubject(finalBestEvidence, resolvedSubject, context.jurisdiction) : genericEntityMatch(finalBestEvidence, resolvedSubject)).conflicts.length > 0
+      : false;
     const evidenceSufficient = (publishableEvidenceCount >= PERSON_RECURSIVE_SUFFICIENT_EVIDENCE || bestConfidence >= PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD) && !finalHasMaterialIdentityConflict;
     const endpoint: LexaraPersonInvestigation['endpoint'] = evidenceSufficient
       ? 'evidence-sufficient'
