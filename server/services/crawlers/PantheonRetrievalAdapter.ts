@@ -502,11 +502,11 @@ export class PantheonRetrievalAdapter {
       // inventory over material actually retrieved. These skills do not create
       // extra network fetches; they help decide whether a page contains the
       // requested fact instead of discarding useful occupation/DOB/custody/etc.
-      const conversationalCapabilityIds = [
+      const conversationalCapabilityIds: PantheonCapabilityId[] = [
         ...PANTHEON_RAZOR_SKILL_IDS,
         ...PANTHEON_SECONDARY_CRAWLER_IDS,
         ...PANTHEON_PORTABLE_CAPABILITY_IDS,
-      ].filter(capabilityId => !PANTHEON_PRIMARY_CRAWLER_IDS.includes(capabilityId as PantheonPrimaryCrawlerId));
+      ];
       const conversationalSupplementalPromises = results
         .filter(result => result.content?.trim())
         .slice(0, 4)
