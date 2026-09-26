@@ -112,7 +112,6 @@ export function buildPantheonCategoryTargets(
  // routed crawler a policy-compliant source page from which it can discover
  // lawful public search/result routes. Discovery remains a fallback, never
  // the sole source plan.
- const normalizedLocation=String(location||'').toUpperCase();
  const inventory=(KEYLESS_CATEGORY_SOURCES[category] || []).map((source,index)=>({
    id:`keyless-${category}-${index+1}`,
    sourceIds:[`keyless-${category}-${index+1}`],
