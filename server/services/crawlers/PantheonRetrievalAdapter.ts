@@ -506,7 +506,7 @@ export class PantheonRetrievalAdapter {
         ...PANTHEON_RAZOR_SKILL_IDS,
         ...PANTHEON_SECONDARY_CRAWLER_IDS,
         ...PANTHEON_PORTABLE_CAPABILITY_IDS,
-      ].filter(capabilityId => capabilityId !== 'firecrawl');
+      ].filter(capabilityId => !PANTHEON_PRIMARY_CRAWLER_IDS.includes(capabilityId as PantheonPrimaryCrawlerId));
       const conversationalSupplementalPromises = results
         .filter(result => result.content?.trim())
         .slice(0, 4)
