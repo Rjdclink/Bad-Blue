@@ -492,6 +492,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const nonSemanticLexaraMessageIdsRef = useRef<Set<string>>(new Set());
   const currentTurnTextRef = useRef('');
   const analysisActiveRef = useRef(false);
+  const pendingActionRef = useRef<{ kind: 'document'; label: string } | null>(null);
   const activeAnalysisNeedsReconciliationRef = useRef(false);
   const lastAcknowledgementRef = useRef<{ text: string; at: number }>({ text: '', at: 0 });
   const controlAcknowledgementSpeechRef = useRef<Promise<void> | null>(null);
@@ -886,7 +887,10 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             prompt: message,
-            context: { analysisActive: analysisActiveRef.current },
+            context: {
+              analysisActive: analysisActiveRef.current || pendingActionRef.current !== null,
+              pendingAction: pendingActionRef.current?.label,
+            },
           }),
         });
         const data = response.ok ? await response.json() : null;
@@ -1133,12 +1137,14 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             .map(item => `${item.role === 'user' ? 'USER' : 'LEXARA'}: ${item.content}`)
             .join('\n\n')
             .slice(-30000);
+          const pendingTitle = String(data.documentIntent.documentType || 'Legal Document');
           setPendingDocument({
-            title: String(data.documentIntent.documentType || 'Legal Document'),
+            title: pendingTitle,
             facts,
             state: resolvedJurisdiction,
             templateMode: data.documentIntent.templateMode === true,
           });
+          pendingActionRef.current = { kind: 'document', label: pendingTitle };
         }
       }
       // Model/research work is complete before TTS begins. A barge-in during
@@ -1341,6 +1347,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     nonSemanticLexaraMessageIdsRef.current.clear();
     currentTurnTextRef.current = '';
     analysisActiveRef.current = false;
+    pendingActionRef.current = null;
     activeAnalysisNeedsReconciliationRef.current = false;
     controlAcknowledgementSpeechRef.current = null;
     lastAcknowledgementRef.current = { text: '', at: 0 };
@@ -1439,6 +1446,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       a.download = `${title.replace(/[^a-z0-9._-]+/gi, '-') }.${format}`;
       document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
       setPendingDocument(null);
+      pendingActionRef.current = null;
     } catch (error) {
       setErrorMessage(friendlyError(error));
     } finally {
