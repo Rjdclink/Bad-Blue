@@ -175,7 +175,7 @@ export function PantheonProgressTracker({
         <div className="rounded-lg border border-primary/20 bg-primary/5 p-4">
           <div className="flex items-center justify-between gap-3 mb-3">
             <span className="font-semibold text-sm">30 Background Report Categories</span>
-            <span className="text-xs text-muted-foreground">4,500-source registry</span>
+            <span className="text-xs text-muted-foreground">dynamic source discovery</span>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-1.5">
             {PANTHEON_CATEGORIES.map((category, index) => (
