@@ -157,3 +157,10 @@ for(const token of [
  'const explorationPrimaryQueue =',
 ]) if(!pantheon.includes(token)) throw new Error('Dynamic roster orchestration invariant missing '+token);
 console.log('Pantheon dynamic overlapping crawler-roster verification passed.');
+
+if (pantheon.includes("selectLexaraCrawlerPlan({")) throw new Error('Duplicate crawler selection authority remains in Pantheon investigation');
+for(const token of [
+ 'Dynamic assignment deliberately considers the complete configured pool',
+ 'it must never starve mandatory exploration',
+]) if(!registry.includes(token)) throw new Error('Mandatory exploration eligibility invariant missing '+token);
+console.log('Pantheon single-authority dynamic routing and non-starvation verification passed.');
