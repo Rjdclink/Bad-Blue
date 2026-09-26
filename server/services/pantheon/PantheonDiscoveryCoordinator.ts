@@ -186,11 +186,11 @@ export async function discoverPantheonSourcesParallel(
   const limit = Math.max(1, Math.min(options.limit || 12, 24));
   const timeoutMs = Math.max(250, Math.min(options.timeoutMs || 900, 5_000));
   const seen = new Set(existingUrls.map(url => canonicalCandidate(url)).filter(Boolean) as string[]);
-  const learnedPatterns = await getPantheonLearnedQueryPatterns(options.categories || [], options.jurisdiction, 1);
-  const learnedPattern = learnedPatterns[0] || '';
-  const effectiveQuery = learnedPattern && !query.toLowerCase().includes(learnedPattern.toLowerCase())
-    ? `${query} ${learnedPattern}`
-    : query;
+  // Persisted query learning is loaded concurrently and only used if the first
+  // free fan-out produces nothing, so database latency never delays a normal hit.
+  const learnedPatternPromise = getPantheonLearnedQueryPatterns(options.categories || [], options.jurisdiction, 1)
+    .catch(() => [] as string[]);
+  const effectiveQuery = query;
   const lanesAttempted: PantheonDiscoveryLane[] = [];
   const lanesWithResults: PantheonDiscoveryLane[] = [];
 
@@ -227,12 +227,49 @@ export async function discoverPantheonSourcesParallel(
       .filter(url => !seen.has(url)),
   ).slice(0, limit);
 
-  // Credit-bearing providers remain a true fallback: they never race free
-  // lanes and therefore cannot consume credits when free discovery succeeded.
+  // Normal successful discovery returns immediately. Learned query patterns are
+  // consulted only on a miss, avoiding a serial database dependency.
   if (freeUrls.length || options.includePaidFallback === false) {
-    return { urls: freeUrls, lanesAttempted, lanesWithResults };
+    return {
+      urls: freeUrls,
+      lanesAttempted: [...new Set(lanesAttempted)],
+      lanesWithResults: [...new Set(lanesWithResults)],
+    };
   }
 
+  const learnedPatterns = await learnedPatternPromise;
+  const learnedPattern = learnedPatterns[0] || '';
+  if (learnedPattern && !query.toLowerCase().includes(learnedPattern.toLowerCase())) {
+    const learnedQuery = `${query} ${learnedPattern}`;
+    const retry = await Promise.all([
+      lane('first-party', true, async () => {
+        const result = await orchestratedWebSearch(learnedQuery, {
+          useOnlinePlugin: true,
+          timeout: Math.min(timeoutMs, 650),
+          signal: options.signal,
+        });
+        return result.sources
+          .map(url => canonicalCandidate(url))
+          .filter((url: string | null): url is string => Boolean(url));
+      }),
+      lane('searxng', Boolean(process.env.SEARXNG_URL?.trim()), () => searxngSearch(learnedQuery, limit, Math.min(timeoutMs, 650), options.signal)),
+      lane('ddgs', Boolean(process.env.DDGS_URL?.trim()), () => ddgsSearch(learnedQuery, limit, Math.min(timeoutMs, 650), options.signal)),
+      lane('openserp', Boolean(process.env.OPENSERP_URL?.trim()), () => openSerpSearch(learnedQuery, limit, Math.min(timeoutMs, 650), options.signal)),
+    ]);
+    const learnedUrls = rankPantheonDiscoveryUrls(
+      retry.flatMap(result => result.urls).filter(url => !seen.has(url)),
+    ).slice(0, limit);
+    if (learnedUrls.length) {
+      return {
+        urls: learnedUrls,
+        lanesAttempted: [...new Set(lanesAttempted)],
+        lanesWithResults: [...new Set(lanesWithResults)],
+      };
+    }
+  }
+
+  // Credit-bearing providers remain a true fallback: they never race free
+  // lanes and therefore cannot consume credits when free discovery succeeded.
   const paid = await supplementalPantheonDiscovery(effectiveQuery, existingUrls, {
     limit,
     timeoutMs,
@@ -245,7 +282,7 @@ export async function discoverPantheonSourcesParallel(
   }
   return {
     urls: rankPantheonDiscoveryUrls(paid.urls.filter(url => !seen.has(url))).slice(0, limit),
-    lanesAttempted,
-    lanesWithResults,
+    lanesAttempted: [...new Set(lanesAttempted)],
+    lanesWithResults: [...new Set(lanesWithResults)],
   };
 }
