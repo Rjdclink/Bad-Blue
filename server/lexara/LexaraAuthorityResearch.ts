@@ -171,7 +171,7 @@ async function discoverAuthoritySources(query: string, signal?: AbortSignal): Pr
 
   // Tier 5: configured supplemental discovery (SerpApi/ScrapingBee and archive
   // fallbacks) is attempted only after the free/self-hosted mesh is insufficient.
-  const supplemental = await discoverLegalMeshSupplemental(query, signal);
+  const supplemental = await discoverLegalMeshSupplemental(query, [...seen], signal);
   supplemental.forEach(item => add(item));
   if (legalMeshSufficient(supplemental) || sources.length >= MAX_AUTHORITY_SOURCES) return sources;
 
