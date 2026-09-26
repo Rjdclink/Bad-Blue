@@ -164,3 +164,6 @@ for(const token of [
  'it must never starve mandatory exploration',
 ]) if(!registry.includes(token)) throw new Error('Mandatory exploration eligibility invariant missing '+token);
 console.log('Pantheon single-authority dynamic routing and non-starvation verification passed.');
+
+if(!adapter.includes("if (request.purpose === 'background_report') {\n        const capabilityOutcomes")) throw new Error('Background-only capability telemetry is not guarded from conversational requests');
+console.log('Pantheon conversational supplemental telemetry null-authority guard verification passed.');
