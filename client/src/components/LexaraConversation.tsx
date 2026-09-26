@@ -1258,17 +1258,19 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
   const sendGreeting = useCallback(async () => {
     if (greetingRef.current || userSpeechObservedRef.current) return;
-    greetingRef.current = true;
+    if (liveEnabled && !voiceReady) return;
+
     const greetingGeneration = generationRef.current;
     responseEmotionRef.current = 'calm';
-
     const greeting = 'How can I help you?';
-    appendMessage('lexara', greeting);
 
-    if (liveEnabled) {
-      await speakLexara(greeting, greetingGeneration).catch(() => undefined);
-    }
-  }, [appendMessage, liveEnabled, speakLexara]);
+    // Do not consume the one-shot greeting until the voice path is ready.
+    // Once ready, reserve it before the await so overlapping readiness effects
+    // cannot speak the greeting twice.
+    greetingRef.current = true;
+    appendMessage('lexara', greeting);
+    await speakLexara(greeting, greetingGeneration).catch(() => undefined);
+  }, [appendMessage, liveEnabled, speakLexara, voiceReady]);
 
   useEffect(() => {
     if (initializedRef.current) return;
