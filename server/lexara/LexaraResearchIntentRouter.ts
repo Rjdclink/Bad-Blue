@@ -63,9 +63,23 @@ export function decideLexaraResearchNeed(
   }
 
   const followUp = /\b(?:try\s+again|look\s+harder|search\s+again|keep\s+looking|broaden|verify\s+that|check\s+again)\b/i.test(text);
-  if (followUp && previousUserTurns.some(turn => decideLexaraResearchNeed(turn, []).needed)) {
-    const priorObjective = [...previousUserTurns].reverse().find(turn => decideLexaraResearchNeed(turn, []).needed) || text;
-    return { needed: true, reason: 'research-follow-up', objective: priorObjective + ' FOLLOW-UP: ' + text, objectiveKind: decideLexaraResearchNeed(priorObjective, []).objectiveKind };
+  const priorResearchTurn = [...previousUserTurns].reverse().find(turn => decideLexaraResearchNeed(turn, []).needed);
+  const priorDecision = priorResearchTurn ? decideLexaraResearchNeed(priorResearchTurn, []) : null;
+  // Spoken clarifications often contain only a court/circuit/year/docket/location clue.
+  // Keep that clue attached to the immediately preceding research objective instead
+  // of silently resetting the turn to model recollection.
+  const contextualResearchClue = Boolean(priorDecision?.needed) && (
+    /\b(?:federal|state|district|circuit|court|appeals?|appellate|supreme|docket|case\s*(?:no|number)|citation|reporter|jurisdiction|venue)\b/i.test(text)
+    || /\b(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|d\.?c\.?)\s+circuit\b/i.test(text)
+    || /\b(?:19|20)\d{2}\b/.test(text)
+  );
+  if ((followUp || contextualResearchClue) && priorResearchTurn && priorDecision) {
+    return {
+      needed: true,
+      reason: 'research-follow-up',
+      objective: priorResearchTurn + ' FOLLOW-UP CLUE: ' + text,
+      objectiveKind: priorDecision.objectiveKind,
+    };
   }
 
   return { needed: false, reason: 'none', objective: text, objectiveKind: 'none' };
