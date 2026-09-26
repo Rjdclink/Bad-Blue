@@ -70,7 +70,7 @@ export interface PublicAcquisitionResult {
   lastModified?: string;
   retrievedAt: string;
   error?: string;
-  errorType?: 'rate_limited'|'auth_required'|'forbidden'|'robots_disallowed'|'not_found'|'dns_failure'|'tls_failure'|'timeout'|'invalid_url'|'unsupported_content'|'circuit_open'|'network_failure'|'http_error';
+  errorType?: 'rate_limited'|'auth_required'|'forbidden'|'robots_disallowed'|'not_found'|'dns_failure'|'tls_failure'|'timeout'|'invalid_url'|'unsupported_content'|'circuit_open'|'network_failure'|'http_error'|'challenge_detected';
   retryAfterMs?: number;
 }
 
@@ -364,6 +364,7 @@ function classify(status: number, error?: unknown): PublicAcquisitionResult['err
   if (status === 403) return 'forbidden';
   if (status === 404) return 'not_found';
   const message = error instanceof Error ? error.message : String(error || '');
+  if (/blocked\/challenge response|captcha|verify you are human|unusual traffic/i.test(message)) return 'challenge_detected';
   if (/credential-gated|sign[ -]?in required|api[ _-]?key.*required|access token.*required|subscription required/i.test(message)) return 'auth_required';
   if (/robots\.txt policy/i.test(message)) return 'robots_disallowed';
   if (/ENOTFOUND|EAI_AGAIN|hostname did not resolve/i.test(message)) return 'dns_failure';
@@ -591,7 +592,7 @@ async function acquireOnce(
       : await parsePantheonDocument({ bytes, contentType, url: current.toString(), signal });
     const text = parsed?.content || '';
     if (blockedResponseBody(text)) {
-      return { ...failureResult(current.toString(), response.status, new Error('Blocked/challenge response is not investigative evidence')), errorType: 'http_error' };
+      return { ...failureResult(current.toString(), response.status, new Error('Blocked/challenge response is not investigative evidence')), errorType: 'challenge_detected' };
     }
     const accessBarrier = requestOptions.method === 'HEAD' ? undefined : detectPublicAccessBarrier(text, contentType);
     if (accessBarrier) {
