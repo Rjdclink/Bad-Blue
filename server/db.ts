@@ -45,13 +45,25 @@ if (process.env.PANTHEON_FRONTIER_LOCAL_ONLY !== '1') {
   loadConfig();
 }
 
-// Detect deployment environment using config helpers
-const isRailway = isRailwayHelper();
-const isProduction = isProductionHelper();
+const pantheonVerifierLocalOnly = process.env.PANTHEON_FRONTIER_LOCAL_ONLY === '1';
 
-// Get database URL from config (handles SUPABASE_DATABASE_URL, SUPABASE_DB_URL, DATABASE_URL fallback)
-const databaseUrl = getDatabaseUrl();
-const databaseUrlSource = getDatabaseUrlSource();
+// Detect deployment environment using config helpers only after full runtime
+// configuration has been loaded. Hermetic Pantheon verifiers deliberately do
+// not initialize unrelated application configuration.
+const isRailway = pantheonVerifierLocalOnly ? false : isRailwayHelper();
+const isProduction = pantheonVerifierLocalOnly ? false : isProductionHelper();
+
+// Runtime uses validated config helpers. Hermetic verifier mode may still
+// provide a deliberately unreachable DATABASE_URL to exercise truthful
+// fail-open/local persistence without initializing the full app config graph.
+const databaseUrl = pantheonVerifierLocalOnly
+  ? String(process.env.SUPABASE_DATABASE_URL || process.env.SUPABASE_DB_URL || process.env.DATABASE_URL || '').trim()
+  : getDatabaseUrl();
+const databaseUrlSource = pantheonVerifierLocalOnly
+  ? (process.env.SUPABASE_DATABASE_URL ? 'SUPABASE_DATABASE_URL'
+    : process.env.SUPABASE_DB_URL ? 'SUPABASE_DB_URL'
+      : process.env.DATABASE_URL ? 'DATABASE_URL' : 'none')
+  : getDatabaseUrlSource();
 export const isDatabaseConfigured = !!(databaseUrl && databaseUrl.trim().length > 0);
 
 function boundedPoolInt(raw: unknown, fallback: number, minimum: number, maximum: number): number {
