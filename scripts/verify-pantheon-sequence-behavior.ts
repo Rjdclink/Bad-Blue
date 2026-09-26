@@ -21,6 +21,18 @@ import {
 } from '../server/services/pantheon/PantheonBoundedScheduler';
 import { getPantheonReportDurationMs } from '../shared/pantheonReportConfig';
 
+const ORIGINAL_DATABASE_ENV = {
+  SUPABASE_DATABASE_URL: process.env.SUPABASE_DATABASE_URL,
+  SUPABASE_DB_URL: process.env.SUPABASE_DB_URL,
+  DATABASE_URL: process.env.DATABASE_URL,
+};
+// This verifier exercises pure sequencing/frontier behavior. It must not import
+// runtime database/configuration state merely because Railway exposes a DB URL
+// during image construction.
+delete process.env.SUPABASE_DATABASE_URL;
+delete process.env.SUPABASE_DB_URL;
+delete process.env.DATABASE_URL;
+
 assert.equal(PANTHEON_REPORT_CATEGORIES.length, 30);
 assert.equal(PANTHEON_CATEGORY_CONCURRENCY_LIMIT, 4, 'categories must execute in bounded parallel waves');
 assert.equal(PANTHEON_URL_CONCURRENCY_PER_CATEGORY, 8, 'URL work must use the bounded global throughput window');
@@ -159,4 +171,7 @@ assert.equal(pantheonUrlWindowBudgetMs({
   now: 0,
 }), 5_000, 'remaining category time must be shared across required URL windows');
 
+if (ORIGINAL_DATABASE_ENV.SUPABASE_DATABASE_URL !== undefined) process.env.SUPABASE_DATABASE_URL = ORIGINAL_DATABASE_ENV.SUPABASE_DATABASE_URL;
+if (ORIGINAL_DATABASE_ENV.SUPABASE_DB_URL !== undefined) process.env.SUPABASE_DB_URL = ORIGINAL_DATABASE_ENV.SUPABASE_DB_URL;
+if (ORIGINAL_DATABASE_ENV.DATABASE_URL !== undefined) process.env.DATABASE_URL = ORIGINAL_DATABASE_ENV.DATABASE_URL;
 console.log('Pantheon 30-category dynamic depth, bounded standby frontier, priority, and deadline-drain verification passed.');
