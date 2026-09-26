@@ -396,8 +396,12 @@ export async function investigatePersonQuestion(
   // retrieval may use a state supplied by the user, but a county is never
   // inferred by the language model. County claims still require retrieved evidence.
   let discoveredUrls: string[] = [];
+  let discoveryEvidence: Array<{ url: string; title?: string; snippet?: string; lane: string }> = [];
   const discovery = await discoveryPromise;
-  if (discovery) discoveredUrls = discovery.urls;
+  if (discovery) {
+    discoveredUrls = discovery.urls;
+    discoveryEvidence = discovery.evidence || [];
+  }
 
   // A direct structured result that already clears the fact-specific stop
   // threshold ends this objective immediately; ten minutes is a ceiling, not a
@@ -472,6 +476,27 @@ export async function investigatePersonQuestion(
     let retrievalReason: string | undefined;
     const acceptedEvidence = new Map<string, RetrievalEvidence>();
     const acceptedEvidenceScores = new Map<string, number>();
+    // Search-index snippets are leads with provenance, not verified facts. Preserve
+    // them immediately so a later blocked fetch cannot erase useful information.
+    for (const lead of discoveryEvidence.filter(item => item.snippet?.trim())) {
+      const synthetic: RetrievalEvidence = {
+        target: lead.url,
+        sourceUrl: lead.url,
+        crawler: `search-index:${lead.lane}`,
+        content: [lead.title, lead.snippet].filter(Boolean).join('\n').slice(0, 1200),
+        confidence: 0.55,
+      };
+      const identityMatch = resolvedEntityType === 'person'
+        ? matchPantheonSubject(synthetic, resolvedSubject, context.jurisdiction)
+        : genericEntityMatch(synthetic, resolvedSubject);
+      if (!identityMatch.matched) continue;
+      const key = `${lead.url}:search-index:${lead.snippet!.slice(0, 120)}`;
+      const score = Math.max(0, Math.min(0.72, identityMatch.score * 0.70 + 0.20));
+      if (score < PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD) continue;
+      acceptedEvidence.set(key, synthetic);
+      acceptedEvidenceScores.set(key, score);
+      context.onProgress?.({ type: 'evidence', pass: 0, confidence: score, sourceUrl: lead.url, evidence: synthetic.content.slice(0, 1200) });
+    }
     let recursionPasses = 0;
     let nextCheckpointIndex = 0;
     const surfacedEvidenceKeys = new Set<string>();
@@ -512,7 +537,10 @@ export async function investigatePersonQuestion(
       // Each pass is a bounded parallel swarm. Give every selected route enough
       // useful wall time to acquire/extract without allowing a single pass to
       // consume the ten-minute investigation ceiling.
-      const perPassBudgetMs = Math.min(pass === 0 ? 45_000 : 75_000, remainingMs);
+      // Interactive Lexara acquisition escalates selectively. Discovery/index
+      // evidence is already preserved; crawler acquisition must not hold a live
+      // answer hostage for tens of seconds.
+      const perPassBudgetMs = Math.min(pass === 0 ? 6_000 : 8_000, remainingMs);
       let retrieval;
       try {
         retrieval = await pantheonRetrievalAdapter.retrieve({
@@ -525,8 +553,8 @@ export async function investigatePersonQuestion(
           location: context.jurisdiction,
           categoryLabel: conversationalReportCategoryLabel(prompt, categories),
           primaryCrawlers: pass === 0
-            ? primaryCrawlers
-            : explorationPrimaryQueue.filter((_, index) => index <= Math.min(explorationPrimaryQueue.length - 1, pass + 1)),
+            ? primaryCrawlers.slice(0, 3)
+            : explorationPrimaryQueue.slice(0, Math.min(5, pass + 3)),
           signal: context.signal,
         });
       } catch (error) {
