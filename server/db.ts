@@ -36,8 +36,14 @@ import {
   loadConfig,
 } from './config';
 
-// Load and validate config after dotenv
-loadConfig();
+// Full application configuration is validated by server/index.ts at runtime.
+// Database consumers resolve only database configuration here so importing a
+// data adapter during build-time verification cannot require unrelated runtime
+// secrets such as SESSION_SECRET.
+if (process.env.PANTHEON_FRONTIER_LOCAL_ONLY !== '1') {
+  // Preserve production fail-closed behavior when db.ts is actually used.
+  loadConfig();
+}
 
 // Detect deployment environment using config helpers
 const isRailway = isRailwayHelper();
