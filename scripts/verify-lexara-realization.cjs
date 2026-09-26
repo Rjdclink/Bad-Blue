@@ -372,6 +372,7 @@ must(
   voiceMode.includes("eventType === 'StartOfTurn'") &&
     voiceMode.includes("eventType === 'TurnResumed'") &&
     voiceMode.includes("eventType === 'EagerEndOfTurn'") &&
+    conversation.includes('EagerEndOfTurn is transcript/preparation-only') &&
     voiceMode.includes("eventType !== 'EndOfTurn'") &&
     voiceMode.includes('serverRealtimeFallbackRef') &&
     voiceMode.includes('initializeServerRecognition(stream)') &&
