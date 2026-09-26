@@ -1321,6 +1321,12 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       if (phaseRef.current === 'text-only' || phaseRef.current === 'initializing') {
         setConversationPhase('listening');
       }
+      // Recovery can make voice ready after the one-shot greeting effect already
+      // ran. Re-attempt the pending greeting immediately; sendGreeting will only
+      // consume it once readiness is true.
+      if (!greetingRef.current && !userSpeechObservedRef.current) {
+        void sendGreeting();
+      }
     };
 
     void recover();
@@ -1332,7 +1338,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [checkVoiceBackendReadiness, liveEnabled, setConversationPhase, startListening, voiceReady]);
+  }, [checkVoiceBackendReadiness, liveEnabled, sendGreeting, setConversationPhase, startListening, voiceReady]);
 
   useEffect(() => {
     if (!isMasterSession || typeof window === 'undefined') return;
