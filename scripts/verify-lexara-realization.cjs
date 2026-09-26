@@ -870,7 +870,7 @@ must(
   lexaraPantheonInvestigation.includes("from '../services/pantheon/PantheonEntityResolution'") &&
     lexaraPantheonInvestigation.includes("const identityMatch = resolvedEntityType === 'person'") &&
     lexaraPantheonInvestigation.includes('matchPantheonSubject(item, resolvedSubject, context.jurisdiction)') &&
-    lexaraPantheonInvestigation.includes('if (!identityMatch.matched) continue;'),
+    lexaraPantheonInvestigation.includes('if (!identityMatch.matched) {'),
   'Lexara accepts Pantheon person-record evidence only after subject matching',
 );
 must(
@@ -883,13 +883,34 @@ must(
     lexaraPantheonInvestigation.includes('PERSON_RECURSIVE_MAX_TARGETS_PER_PASS = 10') &&
     lexaraPantheonInvestigation.includes('PERSON_RECURSIVE_MAX_TOTAL_TARGETS = 30') &&
     lexaraPantheonInvestigation.includes('discoverPantheonSourcesParallel(') &&
-    lexaraPantheonInvestigation.includes('corroboratedHighConfidence || bestConfidence >= PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD'),
+    lexaraPantheonInvestigation.includes('bestConfidence >= PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD'),
   'recursive person research broadens dynamically with explicit bounded low-latency endpoints',
 );
 must(
   lexaraPantheonInvestigation.includes('Separate historical status from current status') &&
     lexaraPantheonInvestigation.includes('label it as an inference'),
   'Lexara preserves current-versus-historical truth and labels derived person facts',
+);
+must(
+  lexaraPantheonInvestigation.includes('PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD = 0.50') &&
+    lexaraPantheonInvestigation.includes("'partial-evidence'") &&
+    lexaraPantheonInvestigation.includes('lack of corroboration alone is not a reason to suppress it') &&
+    lexaraPantheonInvestigation.includes('evidenceRetrieved:') &&
+    lexaraPantheonInvestigation.includes('evidenceRejectedIdentityMismatch:') &&
+    lexaraPantheonInvestigation.includes('evidenceRejectedBelowAssessment:') &&
+    lexaraPantheonInvestigation.includes('evidenceContradictions:'),
+  'Lexara preserves 50%+ partial/single-source evidence, distinguishes partial evidence from exhaustion, and exposes rejection telemetry',
+);
+must(
+  !lexaraPantheonInvestigation.includes('authorityBonus') &&
+    !lexaraPantheonInvestigation.includes('freshnessBonus') &&
+    !lexaraPantheonInvestigation.includes('correlateBonus'),
+  'source prestige, freshness, and corroboration do not act as evidence-survival gates',
+);
+must(
+  !conversation.includes('{interimTranscript && !isSpeaking && (') &&
+    conversation.includes('Only a final, echo-screened committed turn can enter'),
+  'interim STT hypotheses cannot render as apparent user messages',
 );
 must(
   orchestrator.includes('private individual, or the requested fact being personal, is NEVER by itself a reason') &&
@@ -931,8 +952,9 @@ must(
 );
 must(
   conversation.includes("const greeting = 'How can I help you?';") &&
-    conversation.includes('if (liveEnabled && voiceReady) {') &&
+    conversation.includes('if (liveEnabled && !voiceReady) return;') &&
     conversation.includes('await speakLexara(greeting, greetingGeneration);') &&
+    conversation.includes('if (!greetingRef.current && !userSpeechObservedRef.current) {') &&
     conversation.includes('void sendGreeting();') &&
     !conversation.includes('Hello. Tell me what happened'),
   'LEXARA queues the exact How can I help you? greeting until live voice is ready',

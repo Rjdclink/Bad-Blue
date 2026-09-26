@@ -1258,6 +1258,12 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
   const sendGreeting = useCallback(async () => {
     if (greetingRef.current || userSpeechObservedRef.current) return;
+
+    // In live mode, do not consume the one-shot greeting while output readiness
+    // is still racing startup. The established spoken greeting must remain
+    // pending until the voice path is actually ready.
+    if (liveEnabled && !voiceReady) return;
+
     greetingRef.current = true;
     const greetingGeneration = generationRef.current;
     responseEmotionRef.current = 'calm';
@@ -1265,14 +1271,12 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     const greeting = 'How can I help you?';
     appendMessage('lexara', greeting);
 
-    // The greeting is the first live-voice acceptance gate. Do not silently
-    // swallow a failed first attempt: readiness can race the first page effect
-    // on mobile even when the backend is already healthy.
-    if (liveEnabled && voiceReady) {
+    if (liveEnabled) {
       try {
         await speakLexara(greeting, greetingGeneration);
       } catch {
         if (greetingGeneration === generationRef.current && !userSpeechObservedRef.current) {
+          // Restore the proven retry behavior without changing normal turn TTS.
           await new Promise(resolve => window.setTimeout(resolve, 180));
           await speakLexara(greeting, greetingGeneration);
         }
@@ -1317,6 +1321,12 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       if (phaseRef.current === 'text-only' || phaseRef.current === 'initializing') {
         setConversationPhase('listening');
       }
+      // Recovery can make voice ready after the one-shot greeting effect already
+      // ran. Re-attempt the pending greeting immediately; sendGreeting will only
+      // consume it once readiness is true.
+      if (!greetingRef.current && !userSpeechObservedRef.current) {
+        void sendGreeting();
+      }
     };
 
     void recover();
@@ -1328,7 +1338,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [checkVoiceBackendReadiness, liveEnabled, setConversationPhase, startListening, voiceReady]);
+  }, [checkVoiceBackendReadiness, liveEnabled, sendGreeting, setConversationPhase, startListening, voiceReady]);
 
   useEffect(() => {
     if (!isMasterSession || typeof window === 'undefined') return;
@@ -1599,13 +1609,9 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             </div>
           )}
 
-          {interimTranscript && !isSpeaking && (
-            <div className="flex justify-end">
-              <div className="max-w-[92%] rounded-2xl bg-muted px-4 py-3 text-sm italic text-muted-foreground">
-                {interimTranscript}…
-              </div>
-            </div>
-          )}
+          {/* Interim STT hypotheses are intentionally not rendered as user
+              messages. Only a final, echo-screened committed turn can enter
+              the visible conversation. */}
 
           {isThinking && (
             <div className="flex justify-start">
