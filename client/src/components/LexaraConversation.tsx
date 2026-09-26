@@ -1127,11 +1127,13 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       } else {
         data = await readLexaraSseResponse(response, (event, payload) => {
           if (generation !== generationRef.current || event !== 'research') return;
-          if (payload?.type === 'evidence' && Number(payload?.confidence) >= 0.80) {
-            const confidence = Math.round(Number(payload.confidence) * 100);
+          if (payload?.type === 'evidence' || payload?.type === 'checkpoint') {
+            const confidence = Math.max(0, Math.min(100, Math.round(Number(payload?.confidence || 0) * 100)));
             const evidenceText = String(payload?.evidence || '').trim();
             if (!evidenceText) return;
-            const progressiveText = `I found evidence at ${confidence}% confidence: ${evidenceText.slice(0, 500)}`;
+            const progressiveText = confidence >= 80
+              ? `${evidenceText.slice(0, 500)}`
+              : `${evidenceText.slice(0, 500)} I'm continuing to verify this.`;
             const progressiveId = appendMessage('lexara', progressiveText);
             nonSemanticLexaraMessageIdsRef.current.add(progressiveId);
             void speakLexara(progressiveText, generation).catch(() => undefined);
