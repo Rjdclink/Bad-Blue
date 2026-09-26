@@ -85,7 +85,8 @@ const conversation = fs.readFileSync('server/lexara/LexaraConversationOrchestrat
 for (const token of [
   'PERSON_PERMISSION_REFUSAL_PATTERN',
   'pantheonInvestigation && isPersonPermissionRefusal(text)',
-  'normal turns gain no extra latency',
+  'answer contains that prohibited refusal pattern, so normal turns gain no',
+  'extra latency.',
   'I could not verify the requested fact from the sources Pantheon completed.'
 ]) {
   if (!conversation.includes(token)) throw new Error('Person-record permission guard missing invariant: ' + token);
