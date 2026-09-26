@@ -87,6 +87,9 @@ mustNot(sitemap, 'example.com', 'sitemap must not use example.com');
 mustNot(sitemap, 'BadBlue', 'sitemap must not use legacy brand');
 mustNot(sitemap, 'Bad Blue', 'sitemap must not use legacy brand');
 mustNot(sitemap, '<lastmod>', 'static sitemap must not emit synthetic freshness dates');
+for (const inactiveUrl of ['https://legalwhat.com/services/background-report/', 'https://legalwhat.com/services/people-finder/', 'https://legalwhat.com/services/inmate-locator/']) {
+  mustNot(sitemap, inactiveUrl, `static sitemap must not promote inactive service: ${inactiveUrl}`);
+}
 const sitemapLocs = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) => match[1]);
 must(new Set(sitemapLocs).size === sitemapLocs.length, 'static sitemap must not contain duplicate URLs');
 
@@ -100,7 +103,7 @@ mustNot(index, 'Nationwide inmate locator', 'root schema must not advertise inac
 mustNot(llms, '[People finder]', 'llms.txt must not advertise inactive people finder');
 mustNot(llms, '[Inmate locator]', 'llms.txt must not advertise inactive inmate search');
 
-must(serverIndex.includes('.map((config) => config.canonicalPath)'), 'dynamic sitemap must emit canonical paths');
+must(serverIndex.includes('staticSitemap.matchAll') && serverIndex.includes('staticUrls') && serverIndex.includes('new Set([...canonicalPaths, ...staticUrls])'), 'live sitemap must merge the expanded static crawl inventory with canonical SPA routes');
 must(serverIndex.includes('Do not emit synthetic freshness'), 'dynamic sitemap must not fabricate lastmod freshness');
 
 for (const phrase of [
