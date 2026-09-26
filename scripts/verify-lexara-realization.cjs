@@ -1005,6 +1005,13 @@ const domainImplementationSourceLines = domainImplementationSources.split('\n').
 must(domainExpertiseSourceLines.length === 40, 'literal 40-source LEXARA practice-area legal review is present');
 must(domainImplementationSourceLines.length === 10, 'literal 10-source LEXARA specialization implementation review is present');
 if (process.exitCode) process.exit(process.exitCode);
+must(
+  lexaraConversationOrchestrator.includes("researchDecision.objectiveKind !== 'legal-authority'") &&
+    lexaraPantheonInvestigation.includes('isLexaraLegalAuthorityIntent(prompt)') &&
+    lexaraPantheonInvestigation.includes("researchDecision.objectiveKind !== 'legal-authority'"),
+  'legal authority questions retain the fast legal route and cannot be hijacked by Pantheon person research',
+);
+
 console.log('LEXARA 40-domain specialization verification passed.');
 
 must(
