@@ -144,14 +144,23 @@ export async function discoverPantheonCategoryGapCandidates(input: {
 }): Promise<PantheonSearchFirstCandidate[]> {
   const locationClause = input.location?.trim() ? ` ${input.location.trim()}` : '';
   const discoveryQuery = `"${input.name.trim()}"${locationClause} ${input.category.label} ${input.category.registry.join(' ')} official records`;
-  const result = await discoverPantheonSourcesParallel(discoveryQuery, [], {
+  const baseOptions = {
     categories: input.category.registry,
     jurisdiction: input.location,
     limit: 16,
     timeoutMs: Math.max(750, Math.min(input.timeoutMs || 1_500, 3_000)),
     signal: input.signal,
+  };
+  const freeResult = await discoverPantheonSourcesParallel(discoveryQuery, [], {
+    ...baseOptions,
     includePaidFallback: false,
   });
+  const result = freeResult.urls.length
+    ? freeResult
+    : await discoverPantheonSourcesParallel(discoveryQuery, [], {
+        ...baseOptions,
+        includePaidFallback: true,
+      });
   return result.evidence.map(candidate => ({
     ...candidate,
     categoryIndexes: [...new Set([0, input.categoryIndex])],
