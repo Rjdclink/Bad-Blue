@@ -894,7 +894,7 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
       seed.capability = executableCapabilities.find(capability =>
         isPantheonCapabilitySourceCompatible(capability, executableSourceForEntry(seed))
       ) || routed.capability;
-      seed.capabilityReason = `search-first discovery via ${candidate.lane}; ${routed.reason}`;
+      seed.capabilityReason = `search-first discovery via ${(candidate.discoveryLanes || [candidate.lane]).join('+')}; ${routed.reason}`;
       seed.requiredCapabilities = [seed.capability];
       return [seed];
     });
