@@ -868,7 +868,8 @@ must(
 );
 must(
   lexaraPantheonInvestigation.includes("from '../services/pantheon/PantheonEntityResolution'") &&
-    lexaraPantheonInvestigation.includes('matchPantheonSubject(item, resolvedName, context.jurisdiction).matched'),
+    lexaraPantheonInvestigation.includes('const identityMatch = matchPantheonSubject(item, resolvedName, context.jurisdiction)') &&
+    lexaraPantheonInvestigation.includes('if (!identityMatch.matched) continue;'),
   'Lexara accepts Pantheon person-record evidence only after subject matching',
 );
 must(
