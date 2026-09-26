@@ -44,16 +44,6 @@ export function decideLexaraResearchNeed(
     return { needed: true, reason: 'external-fact-question', objective: text, objectiveKind: /\b(?:record|filing|docket|license|mortgage|inmate|incarcerat|property)\b/i.test(text) ? 'record-lookup' : /\b(?:current|currently|latest|today|now|recent)\b/i.test(text) ? 'current-information' : 'external-fact' };
   }
 
-  const externallyVariable = /\b(?:current|currently|latest|today|now|recent|status|record|filing|docket|case|court|license|rule|regulation|statute|deadline|statistics|rate|government|agency)\b/i.test(text);
-  if (question && externallyVariable) {
-    return { needed: true, reason: 'current-external-fact', objective: text, objectiveKind: 'current-information' };
-  }
-
-  const legalAuthority = /\b(?:law|legal|case\s*law|precedent|holding|statute|code\s+section|regulation|court\s+rule|jurisdiction|venue|limitations|appeal|sentencing)\b/i.test(text);
-  if (question && legalAuthority) {
-    return { needed: true, reason: 'legal-authority', objective: text, objectiveKind: 'legal-authority' };
-  }
-
   const followUp = /\b(?:try\s+again|look\s+harder|search\s+again|keep\s+looking|broaden|verify\s+that|check\s+again)\b/i.test(text);
   if (followUp && previousUserTurns.some(turn => decideLexaraResearchNeed(turn, []).needed)) {
     const priorObjective = [...previousUserTurns].reverse().find(turn => decideLexaraResearchNeed(turn, []).needed) || text;
