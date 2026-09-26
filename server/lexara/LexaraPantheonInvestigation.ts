@@ -248,6 +248,22 @@ export async function investigatePersonQuestion(
   const discovery = await discoveryPromise;
   if (discovery) discoveredUrls = discovery.urls;
 
+  // A direct structured result that already clears the fact-specific stop
+  // threshold ends this objective immediately; ten minutes is a ceiling, not a
+  // target. No unrelated crawling continues after the requested fact is strong.
+  if (structuredEvidence.length > 0 && structuredEvidenceConfidence >= PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD) {
+    context.onProgress?.({ type: 'endpoint', pass: 0, confidence: structuredEvidenceConfidence, endpoint: 'evidence-sufficient' });
+    return {
+      evidenceSummary: structuredEvidence.join('\n\n').slice(0, 10_000),
+      sources: [...new Set(structuredSources)].slice(0, 12),
+      categories,
+      fullBackgroundReportRequested: false,
+      coverageLimited: false,
+      endpoint: 'evidence-sufficient',
+      recursionPasses: 0,
+    };
+  }
+
   // Known authorities and learned/free discovery enter the same bounded frontier.
   // Registry URLs remain first so established direct sources are never displaced.
   const targets = [...new Set([...registryUrls, ...discoveredUrls])].slice(0, 12);
