@@ -23,6 +23,7 @@ async function main() {
   // This verifier is build-time and must begin in a hermetic non-runtime mode.
   // Individual persistence assertions below explicitly install their own test
   // SESSION_SECRET/database settings before importing the report store.
+  process.env.PANTHEON_FRONTIER_LOCAL_ONLY = '1';
   const buildDatabaseEnvironment = {
     SUPABASE_DATABASE_URL: process.env.SUPABASE_DATABASE_URL,
     SUPABASE_DB_URL: process.env.SUPABASE_DB_URL,
@@ -534,6 +535,7 @@ async function main() {
   if (buildDatabaseEnvironment.SUPABASE_DATABASE_URL !== undefined) process.env.SUPABASE_DATABASE_URL = buildDatabaseEnvironment.SUPABASE_DATABASE_URL;
   if (buildDatabaseEnvironment.SUPABASE_DB_URL !== undefined) process.env.SUPABASE_DB_URL = buildDatabaseEnvironment.SUPABASE_DB_URL;
   if (buildDatabaseEnvironment.DATABASE_URL !== undefined) process.env.DATABASE_URL = buildDatabaseEnvironment.DATABASE_URL;
+  delete process.env.PANTHEON_FRONTIER_LOCAL_ONLY;
   console.log('Pantheon end-to-end coverage, provenance, evidence, and PDF layout verification passed.');
   process.exit(0);
 }
