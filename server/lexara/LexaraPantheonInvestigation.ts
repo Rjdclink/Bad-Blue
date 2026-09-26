@@ -313,7 +313,9 @@ export async function investigatePersonQuestion(
   const fullBackgroundReportRequested = FULL_REPORT_PATTERN.test(prompt);
   const combined = conversationText(prompt, context);
   const categories = requestedCategories(prompt);
-  const semanticExpressions = semanticResearchExpressions(combined, categories, prompt);
+  const subjectSeed = extractPersonName(combined);
+  const semanticSubject = [subjectSeed.firstName, subjectSeed.middleName, subjectSeed.lastName].filter(Boolean).join(' ') || extractOrganizationName(combined) || combined;
+  const semanticExpressions = semanticResearchExpressions(semanticSubject, categories, prompt);
   const identityContext = hasEnoughIdentityContext(combined);
 
   if (!identityContext) {
