@@ -47,8 +47,8 @@ for(const token of [
   "stage: 'endpoint'",
   'evidenceAccepted:',
   'discoverPantheonSourcesParallel(',
-  'selectLexaraCrawlerPlan({',
-  'primaryCrawlers,',
+  'buildLexaraDynamicCrawlerAssignments({',
+  'primaryCrawlers:',
   'PERSON_RECURSIVE_SUFFICIENT_EVIDENCE',
   'pendingTargets = [...new Set([...frontier, ...discovered])]',
 ]) if(!investigation.includes(token)) throw new Error('Pantheon endpoint/telemetry invariant missing: '+token);
