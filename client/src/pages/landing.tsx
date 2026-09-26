@@ -87,7 +87,7 @@ export default function Landing() {
     "@type": "WebApplication",
     "name": "Legal What?",
     "alternateName": ["LegalWhat", "Legal What"],
-    "description": "AI-assisted legal platform spanning 40 legal practice areas with two-way voice and text consultation, legal document tools, public-record background reports, people-finding and geolocation tools, and nationwide inmate search.",
+    "description": "LegalWhat features Lexara, an animated conversational legal AI for natural, real-time, two-way voice and text interaction across 40+ areas of law. Upload documents, images and media for analysis, critique, editing or alteration; Lexara can recognize when a legal document is needed, identify the appropriate document and jurisdiction, and generate it as a downloadable PDF or DOCX.",
     "url": baseUrl,
     "applicationCategory": "LegalApplication",
     "operatingSystem": "Web Browser",
@@ -95,20 +95,21 @@ export default function Landing() {
       "40 legal practice areas",
       "Two-way voice and text AI legal consultation",
       "Legal document generation and drafting",
-      "Public-record background report generation",
-      "People finder and geolocation intelligence",
-      "Nationwide inmate locator",
-      "Police accountability and public-record tools"
+      "Jurisdiction-aware legal guidance and research",
+      "Uploaded document, image, and media analysis",
+      "Media critique, editing, and alteration",
+      "Intuitive jurisdiction-specific legal document generation",
+      "Downloadable PDF and DOCX legal documents"
     ]
   };
 
   return (
     <div className="min-h-screen">
       <SEOHead
-        title="Legal What? | AI Legal Tools, People Finder & Inmate Locator"
-        description="Explore 40 legal practice areas with AI voice and text consultation, legal document tools, background reports, people finder, and nationwide inmate search."
-        ogTitle="Legal What? | AI Legal Tools, People Finder & Inmate Locator"
-        ogDescription="Voice and text AI legal consultation across 40 practice areas, public-record background reports, people-finding tools, inmate search, and legal document tools."
+        title="Legal What? | Lexara Conversational Legal AI"
+        description="LegalWhat features Lexara, an animated conversational legal AI for natural, real-time, two-way voice and text interaction across 40+ areas of law. Upload documents, images and media for analysis, critique, editing or alteration; Lexara can recognize when a legal document is needed, identify the appropriate document and jurisdiction, and generate it as a downloadable PDF or DOCX."
+        ogTitle="Legal What? | Lexara Conversational Legal AI"
+        ogDescription="Talk with Lexara, LegalWhat’s animated conversational legal AI, by voice or text across 40+ areas of law. Analyze media and generate jurisdiction-aware PDF or DOCX legal documents."
         canonicalUrl="https://legalwhat.com/"
         ogImage="https://legalwhat.com/images/Legal%20What%20Icon.png"
         ogImageAlt="Legal What? legal technology platform logo"
@@ -175,7 +176,7 @@ export default function Landing() {
             Legal What? — AI Legal Tools for 40 Practice Areas
           </h1>
           <p className="text-white/95 text-base md:text-lg mb-8 leading-relaxed max-w-3xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-700 delay-500 drop-shadow-lg">
-            Explore legal information and AI-assisted tools across 40 practice areas. Use two-way voice or text consultation, legal research, intuitive document generation, and uploaded document, image, evidence, and media analysis.
+            Meet Lexara, LegalWhat’s animated conversational legal AI. Have a natural, real-time, two-way voice or text conversation across 40+ areas of law, upload documents, images and media for analysis or revision, and generate jurisdiction-aware legal documents as PDF or DOCX.
           </p>
 
           {/* Trust Signals */}
@@ -304,7 +305,7 @@ export default function Landing() {
           {/* Overlay Text - Description of LEXARA */}
           <div className="text-center mb-12 px-4">
             <p className="text-white text-lg md:text-xl lg:text-2xl leading-relaxed max-w-4xl mx-auto font-medium" style={{ textShadow: '2px 2px 4px rgba(0,0,0,0.8)' }}>
-              Meet LEXARA - She's built on an orchestrated network of thirteen specialized AI models that operate in tandem. She provides you with advanced legal reasoning, analysis, in-depth research, cross-verified suggestions, and courtroom ready drafting, tailored to your filing jurisdiction. She can analyze evidence in a wide variety of formats and provide any format of legally compliant documentation.
+              Meet Lexara, an animated conversational legal AI built for natural two-way voice and text interaction. She provides legal guidance, research, analysis and explanations across 40+ areas of law, can analyze and help revise uploaded media, and can recognize when your situation calls for a legal document, identify the appropriate jurisdiction, and prepare downloadable PDF or DOCX output.
             </p>
           </div>
 
