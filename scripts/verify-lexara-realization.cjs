@@ -1021,7 +1021,8 @@ must(
     pantheonInvestigation.includes('export function hasEnoughIdentityContext') &&
     pantheonInvestigation.includes('buildPantheonCategoryTargets') &&
     pantheonInvestigation.includes('discoverPantheonSourcesParallel') &&
-    pantheonInvestigation.includes("target.subjectScoped || target.sourceKind === 'api' || target.sourceKind === 'search'") &&
+    pantheonInvestigation.includes('Dynamic search/index discovery is the primary locator') &&
+    pantheonInvestigation.includes('categorySeedUrls') &&
     pantheonInvestigation.includes("purpose: 'lexara_legal_research'") &&
     pantheonInvestigation.includes('depth: 3') &&
     pantheonInvestigation.includes('budgetMs: perPassBudgetMs') &&
