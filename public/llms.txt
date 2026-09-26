@@ -1,6 +1,6 @@
 # Legal What?
 
-> Legal What? is an AI-assisted legal information and research platform covering 40 legal practice areas, with voice and text consultation, legal document tools, public-record research, background reports, people finding, and nationwide inmate search.
+> LegalWhat features Lexara, an animated conversational legal AI for natural, real-time, two-way voice and text interaction across 40+ areas of law. Upload documents, images and media for analysis, critique, editing or alteration; Lexara can recognize when a legal document is needed, identify the appropriate document and jurisdiction, and generate it as a downloadable PDF or DOCX.
 
 Legal What? provides legal information and AI-assisted tools. It does not constitute legal advice.
 
@@ -57,11 +57,8 @@ Legal What? provides legal information and AI-assisted tools. It does not consti
 - Personal Injury/Medical Malpractice Law
 
 ## Services
-- [AI legal consultation](https://legalwhat.com/services/ai-legal-consultation/): Two-way voice and text AI-assisted legal consultation across 40 practice areas.
+- [AI legal consultation](https://legalwhat.com/services/ai-legal-consultation/): Lexara provides animated, natural two-way voice and text legal interaction across 40+ areas of law, media analysis and revision, and jurisdiction-aware legal document workflows.
 - [Legal document creator](https://legalwhat.com/services/legal-document-creator/): AI-assisted legal document workflows.
-- [Background reports](https://legalwhat.com/services/background-report/): Research-oriented public-record background reports.
-- [People finder](https://legalwhat.com/services/people-finder/): People-finding and geolocation research using available data.
-- [Inmate locator](https://legalwhat.com/services/inmate-locator/): Federal and state correctional-source search for inmate and facility information.
 
 ## Crawling
 - [Sitemap](https://legalwhat.com/sitemap.xml): Canonical crawlable URL inventory.
