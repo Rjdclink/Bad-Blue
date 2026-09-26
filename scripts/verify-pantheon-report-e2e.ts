@@ -11,10 +11,6 @@ import {
   processPantheonEvidence,
   requireVerifiedPantheonEvidence,
 } from '../server/services/pantheon/PantheonEvidencePipeline';
-import {
-  initializePantheonCategoryPlans,
-  PANTHEON_REPORT_CATEGORIES,
-} from '../server/services/pantheon/PantheonCategoryWorkflow';
 import { validatePantheonJobSubmission } from '../server/services/pantheon/PantheonJobSubmission';
 import {
   assessPantheonCategoryOutcome,
@@ -35,6 +31,10 @@ async function main() {
   delete process.env.SUPABASE_DATABASE_URL;
   delete process.env.SUPABASE_DB_URL;
   delete process.env.DATABASE_URL;
+  const {
+    initializePantheonCategoryPlans,
+    PANTHEON_REPORT_CATEGORIES,
+  } = await import('../server/services/pantheon/PantheonCategoryWorkflow');
   const submission = validatePantheonJobSubmission({
     name: 'Jane Example',
     location: 'Sioux Falls, SD',
