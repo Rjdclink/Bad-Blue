@@ -219,6 +219,9 @@ function rolesForCrawler(item: LexaraCrawlerDescriptor, desired: ReadonlySet<Lex
 
 export function buildLexaraDynamicCrawlerAssignments(input: LexaraCrawlerSelectionInput): LexaraDynamicCrawlerAssignment[] {
   const desired = desiredCapabilities(input);
+  // Dynamic assignment deliberately considers the complete configured pool.
+  // maxCrawlers limits the convenience shortlist returned by
+  // selectLexaraCrawlerPlan; it must never starve mandatory exploration.
   return LEXARA_CRAWLER_CAPABILITY_POOL
     .filter(item => item.configured?.() !== false)
     .map(item => {
