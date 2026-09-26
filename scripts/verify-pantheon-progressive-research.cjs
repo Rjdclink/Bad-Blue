@@ -130,3 +130,16 @@ for(const token of [
  'extractionObjectiveFields:',
 ]) if(!adapter.includes(token)) throw new Error('Schema-driven extraction pipe invariant missing '+token);
 console.log('Pantheon 30-category schema-driven extraction verification passed.');
+
+for(const token of [
+ 'REPORT_LABEL_BY_BACKGROUND_CATEGORY',
+ 'function conversationalReportCategoryLabel(prompt: string',
+ "categoryLabel: conversationalReportCategoryLabel(prompt, categories)",
+ "'Phone Numbers'",
+ "'Email Addresses'",
+ "'Address History'",
+ "'Employment History'",
+ "'Incarceration & Corrections'",
+ "'Relationship & Timeline Intelligence'",
+]) if(!pantheon.includes(token)) throw new Error('Conversational 30-category schema-routing invariant missing '+token);
+console.log('Pantheon conversational category-to-schema routing verification passed.');
