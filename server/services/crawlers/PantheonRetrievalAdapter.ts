@@ -595,26 +595,28 @@ export class PantheonRetrievalAdapter {
           extractionObjectiveFields: extractionSchema?.objectiveFields || [],
         }));
       }
-      const capabilityOutcomes = applicableCapabilities.map(capabilityId => {
-        const audits = crawlerAudit.filter(audit => audit.crawler === capabilityId);
-        const clean = audits.find(audit =>
-          ['completed_with_content', 'completed_with_evidence', 'completed_no_evidence'].includes(String(audit.status || ''))
-        );
-        const timedOut = audits.find(audit => audit.status === 'timed_out');
-        return {
-          capabilityId,
-          status: clean?.status || timedOut?.status || audits[0]?.status || 'not_observed',
-          attempts: audits.reduce((sum, audit) => sum + Math.max(0, Number(audit.attempts || 0)), 0),
-        };
-      });
-      console.log('[PANTHEON][CAPABILITY-BATCH]', JSON.stringify({
-        event: 'authorized_work_outcome',
-        investigationId: request.authority!.investigationId,
-        categoryIndex: request.authority!.categoryIndex,
-        category: request.categoryLabel,
-        workId: request.authority!.workId,
-        capabilityOutcomes,
-      }));
+      if (request.purpose === 'background_report') {
+        const capabilityOutcomes = applicableCapabilities.map(capabilityId => {
+          const audits = crawlerAudit.filter(audit => audit.crawler === capabilityId);
+          const clean = audits.find(audit =>
+            ['completed_with_content', 'completed_with_evidence', 'completed_no_evidence'].includes(String(audit.status || ''))
+          );
+          const timedOut = audits.find(audit => audit.status === 'timed_out');
+          return {
+            capabilityId,
+            status: clean?.status || timedOut?.status || audits[0]?.status || 'not_observed',
+            attempts: audits.reduce((sum, audit) => sum + Math.max(0, Number(audit.attempts || 0)), 0),
+          };
+        });
+        console.log('[PANTHEON][CAPABILITY-BATCH]', JSON.stringify({
+          event: 'authorized_work_outcome',
+          investigationId: request.authority!.investigationId,
+          categoryIndex: request.authority!.categoryIndex,
+          category: request.categoryLabel,
+          workId: request.authority!.workId,
+          capabilityOutcomes,
+        }));
+      }
     }
 
     // Every evidence lane, including local extraction/analysis lanes, carries
