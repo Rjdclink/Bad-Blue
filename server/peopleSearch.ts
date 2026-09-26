@@ -100,18 +100,10 @@ function buildPantheonSearchTargets(name: string): string[] {
   ];
 }
 
-const PANTHEON_DEPTH_SOURCE_BUDGET: Record<number, number> = {
-  1: 1200,  // 10 minutes: focused complete-crawler investigation
-  2: 2820,  // 20 minutes: broader/deeper registry traversal and corroboration
-  3: 4500,  // 30 minutes: maximum standard registry intensity
-};
-
 function buildPantheonBackgroundTargets(name: string, location: string | undefined, depth: number): string[] {
-  const normalizedDepth = Math.max(1, Math.min(3, Math.floor(depth || 1)));
-  const sourceBudget = PANTHEON_DEPTH_SOURCE_BUDGET[normalizedDepth];
-  // Ask for enough candidates to expose the full verified registry at the
-  // highest intensity. Registry ordering is authoritative/direct first.
-  const targets = buildPantheonBackgroundRegistryTargets(name, location, 300);
+  // Static discovery is intentionally limited to ten curated seeds per category.
+  // Search depth controls time/recursive discovery, not the size of a legacy URL list.
+  const targets = buildPantheonBackgroundRegistryTargets(name, location, 10);
   const authorityRank: Record<string, number> = { primary: 0, secondary: 1, archive: 2, discovery: 3 };
   const categoryRank = new Map(PANTHEON_BACKGROUND_CATEGORIES.map((category, index) => [category, index]));
   const seen = new Set<string>();
@@ -126,7 +118,6 @@ function buildPantheonBackgroundTargets(name: string, location: string | undefin
       seen.add(target.url);
       return true;
     })
-    .slice(0, sourceBudget)
     .map(target => target.url);
 }
 
