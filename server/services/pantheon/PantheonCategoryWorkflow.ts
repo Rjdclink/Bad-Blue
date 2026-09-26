@@ -49,6 +49,12 @@ import {
 } from './PantheonSovereignSourceRegistry';
 import type { PantheonControlledQueryPlan, PantheonStartingIdentifier } from './PantheonQueryPlan';
 import {
+  candidatesForPantheonCategory,
+  discoverPantheonCategoryGapCandidates,
+  discoverPantheonSearchFirstCandidates,
+  type PantheonSearchFirstCandidate,
+} from './PantheonSearchFirstDiscovery';
+import {
   ensurePantheonContactRegistration,
   type PantheonRegistrationAuthority,
 } from './PantheonContactRegistrationBroker';
@@ -574,6 +580,7 @@ interface PantheonCategoryExecution {
 
 interface PantheonCategoryExecutionInput extends PantheonCategoryWorkflowInput {
   index: number;
+  searchFirstCandidates: readonly PantheonSearchFirstCandidate[];
   capabilityHealth: readonly PantheonCapabilityHealth[];
   categoryDeadlineAt: number;
   finalizationReserveMs: number;
@@ -849,15 +856,66 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
       runnableCapabilities,
       ledgerGroups,
     );
+    const initialCategoryDiscovery = candidatesForPantheonCategory(
+      input.searchFirstCandidates,
+      index,
+    );
+    const categoryDiscoveryCandidates = initialCategoryDiscovery.length
+      ? initialCategoryDiscovery
+      : await discoverPantheonCategoryGapCandidates({
+          name: input.name,
+          location: input.location,
+          category,
+          categoryIndex: index,
+          signal: input.signal,
+          timeoutMs: Math.min(1_500, Math.max(750, categoryDeadlineAt - Date.now() - finalizationReserveMs)),
+        }).catch(() => []);
+    const searchFirstEntries: PantheonUrlLedgerEntry[] = categoryDiscoveryCandidates.flatMap((candidate, discoveryIndex) => {
+      const admission = admitPantheonUrl(candidate.url);
+      if (!admission.ok) return [];
+      const registryCategory = category.registry[0];
+      const seed: PantheonUrlLedgerEntry = {
+        url: admission.url,
+        frontierOrder: discoveryIndex,
+        priority: sourcePriority('discovery') + 2_000 - discoveryIndex,
+        authority: 'discovery',
+        registryCategory,
+        jurisdiction: input.location || 'unspecified',
+        sourceKind: 'public-page',
+        priorityFactors: { relevance: 100, authority: 64, freshness: 90, expectedValue: 95 },
+        workType: 'candidate-validation',
+        subjectScoped: true,
+        state: 'pending',
+        attempts: 0,
+        evidenceIds: [],
+        transport: 'direct-http',
+      };
+      const routed = capabilityFor(category.label, seed);
+      seed.capability = executableCapabilities.find(capability =>
+        isPantheonCapabilitySourceCompatible(capability, executableSourceForEntry(seed))
+      ) || routed.capability;
+      seed.capabilityReason = `search-first discovery via ${(candidate.discoveryLanes || [candidate.lane]).join('+')}; ${routed.reason}`;
+      seed.requiredCapabilities = [seed.capability];
+      return [seed];
+    });
+    const discoveredUrls = new Set(searchFirstEntries.map(entry => entry.url));
+    const combinedFreshLedger = [
+      ...searchFirstEntries,
+      ...freshLedger.filter(entry => !discoveredUrls.has(entry.url)),
+    ];
     const targetGroups = ledgerGroups.map(group => group.targets);
     // Interleave registry facets so a multi-facet category cannot be monopolized
     // by the first tag. Subject-scoped discovery URLs may append separately
     // admitted result candidates to the controller-owned ledger.
     // The 10/20/30-minute intensity levels expand productive URL work depth.
-    const freshPrioritizedTargets = interleaveCategoryTargets(
+    const registryPrioritizedTargets = interleaveCategoryTargets(
       targetGroups,
       Math.min(300, input.productiveWorkTarget * 2),
     );
+    const freshPrioritizedTargets = [
+      ...searchFirstEntries.map(entry => entry.url),
+      ...registryPrioritizedTargets.filter(url => !discoveredUrls.has(url)),
+    ].slice(0, Math.min(300, input.productiveWorkTarget * 2));
     const plannedUrls = initialState?.sourcePlan.urls?.length
       ? initialState.sourcePlan.urls
       : freshPrioritizedTargets;
@@ -874,7 +932,7 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
             ? { state: 'retryable' as const, failureReason: undefined, startedAt: undefined, completedAt: undefined }
             : {}),
         }))
-      : freshLedger
+      : combinedFreshLedger
         .filter(entry => selectedFreshUrls.has(entry.url))
         .sort((left, right) =>
           Number(plannedUrlOrder.get(left.url) ?? Number.MAX_SAFE_INTEGER)
@@ -884,7 +942,7 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
     // simply because discovery returned no candidates; the controller extends
     // the same URL ledger in cursor order with independent direct sources.
     const existingLedgerUrls = new Set(urlLedger.map(entry => entry.url));
-    const standbyEntries = freshLedger
+    const standbyEntries = combinedFreshLedger
       .filter(entry => !existingLedgerUrls.has(entry.url))
       .sort((left, right) =>
         sourcePriority(right.authority) - sourcePriority(left.authority)
@@ -1948,6 +2006,29 @@ export async function conductPantheonCategoryWorkflow(
     const completed = new Map<number, PantheonCategoryExecution>();
     let persistenceTail: Promise<void> = Promise.resolve();
 
+    // Search first across the whole subject before any category owns retrieval.
+    // The 30 categories classify and verify the shared discovery pool afterward;
+    // registry targets remain standby/gap sources rather than the initial locator.
+    const searchFirstCandidates = await discoverPantheonSearchFirstCandidates({
+      name: input.name,
+      location: input.location,
+      categories: PANTHEON_REPORT_CATEGORIES,
+      signal: deadline.signal,
+      timeoutMs: Math.min(3_500, Math.max(1_200, Math.floor(remainingMs * 0.05))),
+    }).catch(error => {
+      console.warn('[PANTHEON][DISCOVERY] search-first pass unavailable; continuing with independent registry/crawler paths', {
+        investigationId: input.investigationId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [] as PantheonSearchFirstCandidate[];
+    });
+    logPantheonCategoryTelemetry('DISCOVERY', {
+      event: 'search_first_candidates_ready',
+      investigationId: input.investigationId,
+      candidateCount: searchFirstCandidates.length,
+      lanes: [...new Set(searchFirstCandidates.map(candidate => candidate.lane))],
+    });
+
     const executions = await runPantheonBounded(indexes, concurrency, async (index, executionOrdinal) => {
       let execution: PantheonCategoryExecution;
       try {
@@ -1961,6 +2042,7 @@ export async function conductPantheonCategoryWorkflow(
         execution = await executePantheonCategory({
           ...input,
           index,
+          searchFirstCandidates,
           capabilityHealth,
           finalizationReserveMs,
           categoryDeadlineAt: Math.min(

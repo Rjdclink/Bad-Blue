@@ -1,3 +1,4 @@
+import { GoogleGenAI } from '@google/genai';
 import { orchestratedWebSearch } from '../../openRouterWebSearch';
 import { supplementalPantheonDiscovery } from './PantheonSupplementalDiscovery';
 import { getPantheonLearnedQueryPatterns, getPantheonLearnedSources, rankPantheonDiscoveryUrls } from './PantheonDiscoveryLearning';
@@ -5,6 +6,7 @@ import { getPantheonLearnedQueryPatterns, getPantheonLearnedSources, rankPantheo
 export type PantheonDiscoveryLane =
   | 'learned'
   | 'first-party'
+  | 'gemini-google'
   | 'searxng'
   | 'ddgs'
   | 'openserp'
@@ -62,6 +64,39 @@ async function withTimeout<T>(
   } finally {
     clearTimeout(timer);
     parentSignal?.removeEventListener('abort', relay);
+  }
+}
+
+async function geminiGoogleSearch(query: string, limit: number, timeoutMs: number, signal?: AbortSignal): Promise<PantheonDiscoveryEvidence[]> {
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
+  if (!apiKey) return [];
+  if (signal?.aborted) return [];
+  try {
+    const client = new GoogleGenAI({ apiKey });
+    const response = await softTimeout(client.models.generateContent({
+      model: process.env.GEMINI_MODEL?.trim() || 'gemini-3.8-flash',
+      contents: [{ role: 'user', parts: [{ text: query }] }],
+      config: {
+        temperature: 0,
+        tools: [{ googleSearch: {} }],
+      },
+    }), timeoutMs, null);
+    if (!response || signal?.aborted) return [];
+    const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    const seen = new Set<string>();
+    return chunks.flatMap((chunk: any) => {
+      const url = canonicalCandidate(String(chunk?.web?.uri || ''));
+      if (!url || seen.has(url)) return [];
+      seen.add(url);
+      return [{
+        url,
+        title: String(chunk?.web?.title || '').trim().slice(0, 240) || undefined,
+        snippet: String(response.text || '').trim().slice(0, 1200) || undefined,
+        lane: 'gemini-google' as const,
+      }];
+    }).slice(0, limit);
+  } catch {
+    return [];
   }
 }
 
@@ -220,9 +255,10 @@ export async function discoverPantheonSourcesParallel(
     const evidence = raw.flatMap(item => typeof item === 'string'
       ? (canonicalCandidate(item) ? [{ url: canonicalCandidate(item)!, lane: name }] : [])
       : [{ ...item, lane: name }]);
-    const urls = evidence.map(item => item.url);
+    const uniqueEvidence = [...new Map(evidence.map(item => [item.url, item])).values()];
+    const urls = uniqueEvidence.map(item => item.url);
     if (urls.length) lanesWithResults.push(name);
-    return { name, urls, evidence };
+    return { name, urls, evidence: uniqueEvidence };
   };
 
   // All free/applicable lanes launch together. Learned sources are queried in
@@ -246,6 +282,9 @@ export async function discoverPantheonSourcesParallel(
         .map(url => canonicalCandidate(url))
         .filter((url: string | null): url is string => Boolean(url));
     }),
+    lane('gemini-google', Boolean(process.env.GEMINI_API_KEY?.trim()), async () => (
+      await Promise.all(queryVariants.map(q => geminiGoogleSearch(q, limit, timeoutMs, options.signal)))
+    ).flat()),
     lane('searxng', Boolean(process.env.SEARXNG_URL?.trim()), async () => (await Promise.all(queryVariants.map(q => searxngSearch(q, limit, timeoutMs, options.signal)))).flat()),
     lane('ddgs', Boolean(process.env.DDGS_URL?.trim()), async () => (await Promise.all(queryVariants.map(q => ddgsSearch(q, limit, timeoutMs, options.signal)))).flat()),
     lane('openserp', Boolean(process.env.OPENSERP_URL?.trim()), async () => (await Promise.all(queryVariants.map(q => openSerpSearch(q, limit, timeoutMs, options.signal)))).flat()),
@@ -314,9 +353,10 @@ export async function discoverPantheonSourcesParallel(
     if (paidLane) lanesAttempted.push(paidLane);
     if (paidLane && paid.urls.length) lanesWithResults.push(paidLane);
   }
+  const paidUrls = rankPantheonDiscoveryUrls(paid.urls.filter(url => !seen.has(url))).slice(0, limit);
   return {
-    urls: rankPantheonDiscoveryUrls(paid.urls.filter(url => !seen.has(url))).slice(0, limit),
-    evidence: [],
+    urls: paidUrls,
+    evidence: paidUrls.map(url => ({ url, lane: (paid.provider || 'serpapi') as PantheonDiscoveryLane })),
     lanesAttempted: [...new Set(lanesAttempted)],
     lanesWithResults: [...new Set(lanesWithResults)],
   };
