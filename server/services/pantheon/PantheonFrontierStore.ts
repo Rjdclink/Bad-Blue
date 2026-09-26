@@ -52,6 +52,9 @@ const preparedWorkKeys = new Set<string>();
 const MAX_PREPARED_KEYS = 100_000;
 
 function hasDatabaseEnvironment(): boolean {
+  // Build-time behavioral verifiers intentionally exercise the bounded local
+  // frontier without importing the runtime database/config graph.
+  if (process.env.PANTHEON_FRONTIER_LOCAL_ONLY === '1') return false;
   return Boolean(
     String(process.env.SUPABASE_DATABASE_URL || '').trim()
     || String(process.env.SUPABASE_DB_URL || '').trim()
