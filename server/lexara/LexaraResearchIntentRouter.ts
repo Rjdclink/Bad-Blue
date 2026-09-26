@@ -52,10 +52,13 @@ export function decideLexaraResearchNeed(
   }
 
   const question = /\?|^(?:what|when|where|who|which|how|is|are|was|were|does|do|did|has|have)\b/i.test(text);
-  // Substantive fact-seeking questions default to grounded research. Conversational
-  // control turns are handled before this router by the immediate-acknowledgement lane.
-  // This prevents unknown phrasings from silently falling through to model recollection.
-  if (question) {
+  // Natural spoken factual requests often arrive as statements/imperatives rather
+  // than grammatical questions (for example, "tell me where X works"). Keep the
+  // existing question default, but also recognize fact-seeking predicates when an
+  // identifiable subject or concrete record/current attribute is present.
+  const factualRequest = /\b(?:tell\s+me|find|locate|identify|determine|show|give\s+me|need\s+to\s+know|want\s+to\s+know)\b/i.test(text)
+    && /\b(?:employ(?:er|ment|ed|s|ing)?|works?\s+(?:at|for)|address|residen(?:ce|tial|t)|license|record|filing|docket|property|mortgage|occupation|job|business|owner|ownership|spouse|married|income|current|currently|where|who|when|what)\b/i.test(text);
+  if (question || factualRequest) {
     return { needed: true, reason: 'external-fact-question', objective: text, objectiveKind: /\b(?:record|filing|docket|license|mortgage|inmate|incarcerat|property)\b/i.test(text) ? 'record-lookup' : /\b(?:current|currently|latest|today|now|recent)\b/i.test(text) ? 'current-information' : 'external-fact' };
   }
 
