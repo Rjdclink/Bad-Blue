@@ -185,4 +185,38 @@ must(llms.includes('[Services](https://legalwhat.com/services/)'), 'llms.txt mus
 must(sitemapUrls.has('https://legalwhat.com/areas/'), 'sitemap must include practice-area hub');
 must(sitemapUrls.has('https://legalwhat.com/services/'), 'sitemap must include services hub');
 
+
+const searchArchitecture = read('shared/seoSearchArchitecture.json');
+for (const phrase of [
+  'conversational legal AI',
+  'two-way conversational legal AI',
+  'voice legal AI',
+  'AI legal research assistant',
+  'legal media analysis AI',
+  'OSINT AI',
+  'AI public records search',
+  'AI legal document generator'
+]) {
+  must(searchArchitecture.includes(phrase), `search-intent architecture missing: ${phrase}`);
+}
+for (const hub of ['public/guides/index.html', 'public/documents/index.html']) {
+  must(fs.existsSync(hub), `missing public discovery hub: ${hub}`);
+}
+for (const url of [
+  'https://legalwhat.com/guides/',
+  'https://legalwhat.com/documents/',
+  'https://legalwhat.com/guides/talk-to-ai-about-legal-problem/',
+  'https://legalwhat.com/guides/ai-legal-research-assistant/',
+  'https://legalwhat.com/guides/ai-evidence-analysis/',
+  'https://legalwhat.com/guides/osint-ai-legal-research/',
+  'https://legalwhat.com/guides/federal-supervised-release-violation/',
+  'https://legalwhat.com/guides/motion-to-suppress-evidence/',
+  'https://legalwhat.com/documents/motion/',
+  'https://legalwhat.com/documents/complaint/',
+  'https://legalwhat.com/documents/contract/',
+  'https://legalwhat.com/documents/habeas-petition/'
+]) {
+  must(sitemapUrls.has(url), `sitemap missing focused discovery URL: ${url}`);
+}
+
 console.log('[seo-branding] PASS: Legal What SEO, crawl, canonical, schema, content-depth, contact, and brand invariants verified');
