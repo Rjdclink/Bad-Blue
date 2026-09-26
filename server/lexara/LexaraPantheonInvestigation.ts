@@ -6,6 +6,7 @@ import { selectLexaraCrawlerPlan } from './LexaraCrawlerCapabilityRegistry';
 import { PANTHEON_PRIMARY_CRAWLER_IDS, type PantheonPrimaryCrawlerId } from '../services/pantheon/PantheonCrawlerCapabilityMatrix';
 import { discoverPantheonSourcesParallel } from '../services/pantheon/PantheonDiscoveryCoordinator';
 import { rememberPantheonDiscoveryOutcome } from '../services/pantheon/PantheonDiscoveryLearning';
+import { decideLexaraResearchNeed } from './LexaraResearchIntentRouter';
 
 export interface LexaraPersonInvestigationContext {
   previousMessages?: Array<{ role?: string; content?: string }>;
@@ -22,6 +23,8 @@ export interface LexaraPersonInvestigation {
   fullBackgroundReportRequested: boolean;
   coverageLimited?: boolean;
   coverageNote?: string;
+  endpoint?: 'evidence-sufficient' | 'budget-exhausted' | 'sources-exhausted' | 'clarification-required';
+  recursionPasses?: number;
 }
 
 const PERSON_NAME_ONLY_PATTERN = /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}\b/;
@@ -130,15 +133,18 @@ export function shouldUsePantheonForPersonQuestion(
   context: LexaraPersonInvestigationContext = {},
 ): boolean {
   if (PERSON_RECORD_PATTERN.test(prompt)) return true;
-  // Follow-up identifiers such as "he is 42 and lives in Iowa" must continue a
-  // person-record investigation, but ordinary legal conversation must not be
-  // diverted merely because an older turn happened to mention a person record.
   const recentUserTurns = (context.previousMessages || [])
     .filter(message => message.role === 'user')
-    .slice(-2)
-    .map(message => message.content || '')
-    .join(' ');
-  return PERSON_RECORD_PATTERN.test(recentUserTurns) && IDENTIFIER_PATTERN.test(prompt);
+    .slice(-8)
+    .map(message => message.content || '');
+  const combined = conversationText(prompt, context);
+  // A grounded-research decision plus identifiable human subject is sufficient
+  // to enter Pantheon even when the requested attribute is new to our vocabulary.
+  // Category rules refine the search after routing; they do not own the handoff.
+  if (decideLexaraResearchNeed(prompt, recentUserTurns).needed && hasEnoughIdentityContext(combined)) return true;
+  // Follow-up identifiers continue a prior person-record investigation.
+  const recentText = recentUserTurns.slice(-2).join(' ');
+  return PERSON_RECORD_PATTERN.test(recentText) && IDENTIFIER_PATTERN.test(prompt);
 }
 
 export async function investigatePersonQuestion(
@@ -152,7 +158,7 @@ export async function investigatePersonQuestion(
   const identityContext = hasEnoughIdentityContext(combined);
 
   if (!identityContext) {
-    return { clarification: clarificationFor(prompt), needsIdentityClarification: true, sources: [], categories, fullBackgroundReportRequested };
+    return { clarification: clarificationFor(prompt), needsIdentityClarification: true, sources: [], categories, fullBackgroundReportRequested, endpoint: 'clarification-required', recursionPasses: 0 };
   }
 
   // Full reports remain Pantheon's durable 30-category job workflow. The live
@@ -262,8 +268,11 @@ export async function investigatePersonQuestion(
     let retrievalReason: string | undefined;
     const acceptedEvidence = new Map<string, RetrievalEvidence>();
     const acceptedEvidenceScores = new Map<string, number>();
+    let recursionPasses = 0;
 
     for (let pass = 0; pass < PERSON_RECURSIVE_MAX_PASSES; pass++) {
+      recursionPasses = pass + 1;
+      console.info('[LEXARA PantheonRoute]', { stage: 'recursion-pass', pass: recursionPasses, pendingTargets: pendingTargets.length, categories });
       if (context.signal?.aborted || !pendingTargets.length) break;
       if (Date.now() - recursiveStartedAt >= PERSON_RECURSIVE_TOTAL_BUDGET_MS) break;
       const passTargets = pendingTargets
@@ -377,12 +386,27 @@ export async function investigatePersonQuestion(
       `${index + 1}. SOURCE: ${item.sourceUrl}\nEVIDENCE: ${item.content.trim().slice(0, 1200)}`
     );
     const evidenceSummary = [...structuredEvidence, ...webEvidence].join('\n\n').slice(0, 10_000);
+    const evidenceSufficient = evidence.length + structuredEvidence.length >= PERSON_RECURSIVE_SUFFICIENT_EVIDENCE;
+    const endpoint: LexaraPersonInvestigation['endpoint'] = evidenceSufficient
+      ? 'evidence-sufficient'
+      : Date.now() - recursiveStartedAt >= PERSON_RECURSIVE_TOTAL_BUDGET_MS
+        ? 'budget-exhausted'
+        : 'sources-exhausted';
+    console.info('[LEXARA PantheonRoute]', {
+      stage: 'endpoint',
+      endpoint,
+      recursionPasses,
+      sourcesAttempted: seenTargets.size,
+      evidenceAccepted: evidence.length + structuredEvidence.length,
+    });
     return {
       evidenceSummary,
       sources,
       categories,
       fullBackgroundReportRequested: false,
       coverageLimited: !retrievalAvailable || (evidence.length === 0 && structuredEvidence.length === 0),
+      endpoint,
+      recursionPasses,
       coverageNote: !retrievalAvailable
         ? retrievalReason || 'Pantheon retrieval was unavailable for one or more requested sources.'
         : evidence.length === 0 && structuredEvidence.length === 0
