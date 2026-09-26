@@ -63,7 +63,7 @@ const checks = [
   ['downloadable PDF route exists', routes.includes('/api/osint/report-jobs/:reportId/download')],
   ['PDF includes public evidence provenance without internal crawler diagnostics', pdf.includes('Source Provenance') && !pdf.includes('Crawler capabilities used') && !pdf.includes('Coverage Gaps & Exact Omissions') && !pdf.includes('Per-Source Data Quality')],
   ['all primary crawler execution isolated', adapter.includes('searchAllIsolatedWithAudit')],
-  ['primary crawler routes use bounded per-skill pools and all-settled failure isolation', crawlerOrchestrator.includes('PANTHEON_CRAWLER_POOL_LIMITS') && crawlerOrchestrator.includes('runPantheonCrawlerPooled') && crawlerOrchestrator.includes('Promise.allSettled(routePromises)')],
+  ['primary crawler routes use bounded per-skill pools and all-settled failure isolation', crawlerOrchestrator.includes('PANTHEON_CRAWLER_POOL_LIMITS') && crawlerOrchestrator.includes('runPantheonCrawlerPooled') && crawlerOrchestrator.includes('Promise.allSettled(swarmWorkers)')],
   ['razor extraction participates', adapter.includes('deployBackgroundReport')],
   ['non-production analytical lanes are excluded from production reports', !adapter.includes('SixCrawlerInitiative') && !adapter.includes('cainReaperSupervisor.supervise(plan, evidence)') && adapter.includes('runPortablePantheonCapabilities')],
   ['investigation controller owns truthful completion and release eligibility', investigationController.includes('assessPantheonCategoryOutcome') && investigationController.includes('assessPantheonInvestigation') && investigationController.includes('releaseEligible') && jobs.includes('investigationStatus: investigation.state')],
