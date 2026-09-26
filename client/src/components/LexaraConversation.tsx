@@ -548,10 +548,10 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     keyterms: voiceKeyterms,
     shouldProbeBargeIn: () => phaseRef.current === 'speaking',
     onEagerTurn: (text) => {
-      // EagerEndOfTurn is transcript/preparation-only. It never owns the user's
-      // turn boundary and never starts conversational work before confirmed EOT.
-      const eager = text.trim();
-      if (eager) voiceTurnBufferRef.current = mergeSpeechSegments(voiceTurnBufferRef.current, eager);
+      // EagerEndOfTurn is display/preparation-only. It never owns the user's
+      // authoritative turn buffer and never starts conversational work before
+      // confirmed EndOfTurn. The final event supplies the committed transcript.
+      void text;
     },
     onTurnResumed: () => {
       speculativeRequestRef.current?.controller.abort();
