@@ -84,11 +84,9 @@ const subjectFirstPlan = initializePantheonCategoryPlans({
   searchDepth: 1,
   budgetMs: getPantheonReportDurationMs(1),
 })[0];
-assert.ok(!/bing\.com\/search|duckduckgo\.com\/html/.test(subjectFirstPlan.sourcePlan.urls[0] || ''),
-  'the persisted standby frontier must retain a direct registry path while runtime search-first discovery leads execution');
 assert.ok(
-  subjectFirstPlan.sourcePlan.urls.some(url => !/bing\.com\/search|duckduckgo\.com\/html/.test(url)),
-  'the persisted frontier must contain an independent direct-source path',
+  subjectFirstPlan.sourcePlan.urls.every(url => !/bing\.com\/search|duckduckgo\.com\/html/.test(url)),
+  'optional persisted standby entries must be direct sources; an empty standby frontier is valid under runtime search-first discovery',
 );
 
 const sourceOutcomeAt = new Date().toISOString();
