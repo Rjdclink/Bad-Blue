@@ -1,6 +1,6 @@
 import { orchestratedWebSearch } from '../../openRouterWebSearch';
 import { supplementalPantheonDiscovery } from './PantheonSupplementalDiscovery';
-import { getPantheonLearnedSources, rankPantheonDiscoveryUrls } from './PantheonDiscoveryLearning';
+import { getPantheonLearnedQueryPatterns, getPantheonLearnedSources, rankPantheonDiscoveryUrls } from './PantheonDiscoveryLearning';
 
 export type PantheonDiscoveryLane =
   | 'learned'
@@ -186,6 +186,11 @@ export async function discoverPantheonSourcesParallel(
   const limit = Math.max(1, Math.min(options.limit || 12, 24));
   const timeoutMs = Math.max(250, Math.min(options.timeoutMs || 900, 5_000));
   const seen = new Set(existingUrls.map(url => canonicalCandidate(url)).filter(Boolean) as string[]);
+  const learnedPatterns = await getPantheonLearnedQueryPatterns(options.categories || [], options.jurisdiction, 1);
+  const learnedPattern = learnedPatterns[0] || '';
+  const effectiveQuery = learnedPattern && !query.toLowerCase().includes(learnedPattern.toLowerCase())
+    ? `${query} ${learnedPattern}`
+    : query;
   const lanesAttempted: PantheonDiscoveryLane[] = [];
   const lanesWithResults: PantheonDiscoveryLane[] = [];
 
@@ -202,7 +207,7 @@ export async function discoverPantheonSourcesParallel(
   const settled = await Promise.all([
     lane('learned', true, () => getPantheonLearnedSources(options.categories || [], options.jurisdiction, limit)),
     lane('first-party', true, async () => {
-      const result = await orchestratedWebSearch(query, {
+      const result = await orchestratedWebSearch(effectiveQuery, {
         useOnlinePlugin: true,
         timeout: timeoutMs,
         signal: options.signal,
@@ -211,10 +216,10 @@ export async function discoverPantheonSourcesParallel(
         .map(url => canonicalCandidate(url))
         .filter((url: string | null): url is string => Boolean(url));
     }),
-    lane('searxng', Boolean(process.env.SEARXNG_URL?.trim()), () => searxngSearch(query, limit, timeoutMs, options.signal)),
-    lane('ddgs', Boolean(process.env.DDGS_URL?.trim()), () => ddgsSearch(query, limit, timeoutMs, options.signal)),
-    lane('openserp', Boolean(process.env.OPENSERP_URL?.trim()), () => openSerpSearch(query, limit, timeoutMs, options.signal)),
-    lane('commoncrawl', commonCrawlUseful(query), () => commonCrawlSearch(query, existingUrls, limit, timeoutMs, options.signal)),
+    lane('searxng', Boolean(process.env.SEARXNG_URL?.trim()), () => searxngSearch(effectiveQuery, limit, timeoutMs, options.signal)),
+    lane('ddgs', Boolean(process.env.DDGS_URL?.trim()), () => ddgsSearch(effectiveQuery, limit, timeoutMs, options.signal)),
+    lane('openserp', Boolean(process.env.OPENSERP_URL?.trim()), () => openSerpSearch(effectiveQuery, limit, timeoutMs, options.signal)),
+    lane('commoncrawl', commonCrawlUseful(query), () => commonCrawlSearch(effectiveQuery, existingUrls, limit, timeoutMs, options.signal)),
   ]);
 
   const freeUrls = rankPantheonDiscoveryUrls(
@@ -228,7 +233,7 @@ export async function discoverPantheonSourcesParallel(
     return { urls: freeUrls, lanesAttempted, lanesWithResults };
   }
 
-  const paid = await supplementalPantheonDiscovery(query, existingUrls, {
+  const paid = await supplementalPantheonDiscovery(effectiveQuery, existingUrls, {
     limit,
     timeoutMs,
     signal: options.signal,
