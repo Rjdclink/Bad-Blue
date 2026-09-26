@@ -208,7 +208,8 @@ export async function discoverPantheonSourcesParallel(
     75,
     [] as string[],
   );
-  const queryVariants = [...new Set([query.trim(), query.replace(/\s*\|\s*/g, ' ').replace(/\s+/g, ' ').trim()])].filter(Boolean).slice(0, 2);\n  const effectiveQuery = queryVariants[0] || query;
+  const queryVariants = [...new Set([query.trim(), query.replace(/\s*\|\s*/g, ' ').replace(/\s+/g, ' ').trim()])].filter(Boolean).slice(0, 2);
+  const effectiveQuery = queryVariants[0] || query;
   const lanesAttempted: PantheonDiscoveryLane[] = [];
   const lanesWithResults: PantheonDiscoveryLane[] = [];
 
