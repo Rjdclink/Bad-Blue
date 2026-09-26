@@ -763,7 +763,7 @@ must(
 );
 must(
   lexaraPantheonInvestigation.includes('PERSON_RECURSIVE_TOTAL_BUDGET_MS = 10 * 60_000') &&
-    lexaraPantheonInvestigation.includes('perPassBudgetMs = Math.min(pass === 0 ? 45_000 : 75_000, remainingMs)') &&
+    lexaraPantheonInvestigation.includes('perPassBudgetMs = Math.min(pass === 0 ? 6_000 : 8_000, remainingMs)') &&
     lexaraPantheonInvestigation.includes('NEVER name, infer, recommend, or substitute a county'),
   'targeted Pantheon research is bounded for live conversation and county claims require evidence',
 );
