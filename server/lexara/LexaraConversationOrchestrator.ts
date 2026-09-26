@@ -34,6 +34,7 @@ export interface LexaraConversationContext {
   behaviorMode?: 'personable' | 'professional';
   sessionId?: string;
   signal?: AbortSignal;
+  onResearchProgress?: (event: import('./LexaraPantheonInvestigation').LexaraPantheonProgressEvent) => void;
 }
 
 export interface LexaraConversationResult {
@@ -356,6 +357,7 @@ export async function generateLexaraConversationResponse(
     previousMessages: context.previousMessages,
     jurisdiction,
     signal: context.signal,
+    onProgress: context.onResearchProgress,
   }).catch(() => null);
   // Never await network-backed Pantheon work before the live research budget.
   // Identity clarification is returned synchronously by investigatePersonQuestion
