@@ -6,7 +6,7 @@ import { buildLexaraDynamicCrawlerAssignments } from './LexaraCrawlerCapabilityR
 import { PANTHEON_PRIMARY_CRAWLER_IDS, type PantheonPrimaryCrawlerId } from '../services/pantheon/PantheonCrawlerCapabilityMatrix';
 import { discoverPantheonSourcesParallel } from '../services/pantheon/PantheonDiscoveryCoordinator';
 import { rememberPantheonDiscoveryOutcome } from '../services/pantheon/PantheonDiscoveryLearning';
-import { decideLexaraResearchNeed } from './LexaraResearchIntentRouter';
+import { decideLexaraResearchNeed, isLexaraLegalAuthorityIntent } from './LexaraResearchIntentRouter';
 
 export interface LexaraPersonInvestigationContext {
   previousMessages?: Array<{ role?: string; content?: string }>;
@@ -287,6 +287,7 @@ export function shouldUsePantheonForPersonQuestion(
   prompt: string,
   context: LexaraPersonInvestigationContext = {},
 ): boolean {
+  if (isLexaraLegalAuthorityIntent(prompt)) return false;
   if (PERSON_RECORD_PATTERN.test(prompt)) return true;
   // An identifiable subject plus an explicit external-fact research objective is
   // enough to enter Pantheon even when the requested attribute is not enumerated.
@@ -299,7 +300,8 @@ export function shouldUsePantheonForPersonQuestion(
   // A grounded-research decision plus identifiable human subject is sufficient
   // to enter Pantheon even when the requested attribute is new to our vocabulary.
   // Category rules refine the search after routing; they do not own the handoff.
-  if (decideLexaraResearchNeed(prompt, recentUserTurns).needed && hasEnoughIdentityContext(combined)) return true;
+  const researchDecision = decideLexaraResearchNeed(prompt, recentUserTurns);
+  if (researchDecision.needed && researchDecision.objectiveKind !== 'legal-authority' && hasEnoughIdentityContext(combined)) return true;
   // Follow-up identifiers continue a prior person-record investigation.
   const recentText = recentUserTurns.slice(-2).join(' ');
   return PERSON_RECORD_PATTERN.test(recentText) && IDENTIFIER_PATTERN.test(prompt);
