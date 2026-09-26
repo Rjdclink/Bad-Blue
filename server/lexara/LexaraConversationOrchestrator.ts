@@ -338,6 +338,7 @@ export async function generateLexaraConversationResponse(
     researchNeeded: researchDecision.needed,
     reason: researchDecision.reason,
     objectivePresent: Boolean(researchDecision.objective),
+    objectiveKind: researchDecision.objectiveKind,
   });
 
   // Pure presence checks are conversational control turns, not legal-analysis
@@ -351,7 +352,7 @@ export async function generateLexaraConversationResponse(
     };
   }
 
-  const pantheonInvestigationPromise = investigatePersonQuestion(cleanPrompt, {
+  const pantheonInvestigationPromise = investigatePersonQuestion(researchDecision.needed ? researchDecision.objective : cleanPrompt, {
     previousMessages: context.previousMessages,
     jurisdiction,
     signal: context.signal,
@@ -392,10 +393,12 @@ export async function generateLexaraConversationResponse(
       authorityResearchPromise,
       new Promise<null>(resolve => setTimeout(() => resolve(null), LIVE_RESEARCH_BUDGET_MS)),
     ]),
-    Promise.race([
-      pantheonInvestigationPromise,
-      new Promise<null>(resolve => setTimeout(() => resolve(null), LIVE_RESEARCH_BUDGET_MS)),
-    ]),
+    researchDecision.needed
+      ? pantheonInvestigationPromise
+      : Promise.race([
+          pantheonInvestigationPromise,
+          new Promise<null>(resolve => setTimeout(() => resolve(null), LIVE_RESEARCH_BUDGET_MS)),
+        ]),
   ]);
   if (!authorityResearch) researchController.abort();
   context.signal?.removeEventListener('abort', relayResearchAbort);
@@ -527,6 +530,9 @@ export async function generateLexaraConversationResponse(
     pantheonCategories: pantheonInvestigation?.categories || [],
     pantheonSourceCount: pantheonInvestigation?.sources?.length || 0,
     pantheonCoverageLimited: pantheonInvestigation?.coverageLimited === true,
+    researchNeeded: researchDecision.needed,
+    researchObjectiveKind: researchDecision.objectiveKind,
+    researchEndpointReached: !researchDecision.needed || Boolean(authorityResearch || pantheonInvestigation),
     providersConfigured: harmonyProviders.length,
     initialHedgeParticipants: Math.min(3, harmonyProviders.length),
     reserveParticipants: Math.max(0, harmonyProviders.length - 3),
