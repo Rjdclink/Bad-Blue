@@ -410,7 +410,7 @@ export async function generateLexaraConversationResponse(
     // progressively reporting investigation instead of dropping it after the
     // ordinary 2.4s legal-authority latency budget. Non-research conversation
     // keeps the existing fast budget.
-    researchDecision.needed
+    researchDecision.needed && researchDecision.objectiveKind !== 'legal-authority'
       ? pantheonInvestigationPromise
       : Promise.race([
           pantheonInvestigationPromise,

@@ -21,6 +21,14 @@ export interface LexaraResearchDecision {
   objectiveKind: LexaraResearchObjectiveKind;
 }
 
+const LEGAL_AUTHORITY_INTENT_PATTERN = /\b(?:versus|case\s+law|court\s+(?:case|decision|opinion|holding)|holding|precedent|statute|u\.?s\.?c\.?|cfr|code\s+section|rule\s+\d|motion|appeal|lawsuit|cause\s+of\s+action|civil\s+(?:issue|case|claim|matter)|criminal\s+(?:issue|case|charge)|constitutional|jurisdiction|legal\s+(?:issue|question|claim|case|matter|right|remedy|defense))\b/i;
+const CASE_CAPTION_PATTERN = /\b[A-Z][A-Za-z.'’-]+(?:\s+[A-Z][A-Za-z.'’-]+){0,4}\s+(?:v\.?|versus)\s+(?:the\s+)?[A-Z][A-Za-z.'’ -]{1,80}\b/i;
+
+export function isLexaraLegalAuthorityIntent(text: string): boolean {
+  const value = String(text || '').trim();
+  return CASE_CAPTION_PATTERN.test(value) || LEGAL_AUTHORITY_INTENT_PATTERN.test(value);
+}
+
 /**
  * Fast local routing decision. This does not answer the question; it decides
  * whether Lexara needs grounded external research instead of model recollection.
@@ -31,6 +39,13 @@ export function decideLexaraResearchNeed(
 ): LexaraResearchDecision {
   const text = String(prompt || '').trim();
   if (!text) return { needed: false, reason: 'none', objective: '', objectiveKind: 'none' };
+
+  // Restore the established legal lane before generic external-fact routing.
+  // A party name inside a case caption is a legal entity in this turn, not a
+  // Pantheon background subject.
+  if (isLexaraLegalAuthorityIntent(text)) {
+    return { needed: true, reason: 'legal-authority', objective: text, objectiveKind: 'legal-authority' };
+  }
 
   if (/\b(?:look\s+(?:it|this|that)\s+up|search|research|verify|find\s+out|check\s+(?:whether|if|the)|investigate)\b/i.test(text)) {
     return { needed: true, reason: 'explicit-research', objective: text, objectiveKind: 'explicit-research' };
