@@ -36,7 +36,8 @@ for (const depth of [1, 2, 3] as const) {
   });
   assert.equal(plans.length, 30);
   for (const plan of plans) {
-    assert.ok(plan.sourcePlan.urls.length >= target, `${plan.label} lacks the selected depth`);
+    assert.ok(plan.sourcePlan.urls.length > 0, `${plan.label} must retain a bounded direct-source standby frontier`);
+    assert.ok(plan.sourcePlan.urls.length <= Math.min(300, target * 2), `${plan.label} initial seed frontier must remain bounded; productive depth is supplied dynamically`);
     assert.equal(new Set(plan.sourcePlan.urls).size, plan.sourcePlan.urls.length);
     assert.equal(plan.state, 'pending');
     assert.equal(plan.phase, 'PENDING');
@@ -65,7 +66,7 @@ const subjectFirstPlan = initializePantheonCategoryPlans({
   budgetMs: getPantheonReportDurationMs(1),
 })[0];
 assert.ok(!/bing\.com\/search|duckduckgo\.com\/html/.test(subjectFirstPlan.sourcePlan.urls[0] || ''),
-  'a direct registry source must lead the category frontier');
+  'the persisted standby frontier must retain a direct registry path while runtime search-first discovery leads execution');
 assert.ok(
   subjectFirstPlan.sourcePlan.urls.some(url => !/bing\.com\/search|duckduckgo\.com\/html/.test(url)),
   'the persisted frontier must contain an independent direct-source path',
@@ -158,4 +159,4 @@ assert.equal(pantheonUrlWindowBudgetMs({
   now: 0,
 }), 5_000, 'remaining category time must be shared across required URL windows');
 
-console.log('Pantheon 30-category depth, substitution-plan, priority, and deadline-drain verification passed.');
+console.log('Pantheon 30-category dynamic depth, bounded standby frontier, priority, and deadline-drain verification passed.');
