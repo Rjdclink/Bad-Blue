@@ -22,7 +22,7 @@ for(const required of ['searchCourtListener','searchGovInfo','discoverLegalMeshT
 if(!legalMesh.includes('tavily') || !legalMesh.includes('discoverPantheonSourcesParallel')) throw new Error('Lexara legal mesh is not connected to Tavily + dynamic discovery');
 const searchFirst=fs.readFileSync('server/services/pantheon/PantheonSearchFirstDiscovery.ts','utf8');
 const categoryWorkflow=fs.readFileSync('server/services/pantheon/PantheonCategoryWorkflow.ts','utf8');
-for(const required of ['discoverPantheonSearchFirstCandidates','discoverPantheonCategoryGapCandidates','categoryIndexes','discoverPantheonSourcesParallel']){
+for(const required of ['discoverPantheonSearchFirstCandidates','discoverPantheonCategoryGapCandidates','categoryIndexes','discoveryLanes','discoverPantheonSourcesParallel']){
   if(!searchFirst.includes(required)) throw new Error('Pantheon search-first discovery missing invariant: '+required);
 }
 for(const required of ['search_first_candidates_ready','searchFirstCandidates','discoverPantheonCategoryGapCandidates','combinedFreshLedger']){
