@@ -52,7 +52,9 @@ const SERVER_VOICE_TURN_SETTLE_MS = 300;
 const FLUX_FINAL_SETTLE_MS = 40;
 const VOICE_END_GRACE_MS = 850;
 const INCOMPLETE_TURN_GRACE_MS = 2_200;
-const CHAT_TURN_TIMEOUT_MS = 10_000;
+const CHAT_TURN_TIMEOUT_MS = 10 * 60_000;
+const RESEARCH_PROGRESS_FIRST_MS = 8_000;
+const RESEARCH_PROGRESS_REPEAT_MS = 30_000;
 const ACKNOWLEDGEMENT_SOFT_TIMEOUT_MS = 450;
 const ACKNOWLEDGEMENT_DEDUPE_MS = 8_000;
 const ACKNOWLEDGEMENT_COOLDOWN_MS = 2_500;
@@ -466,6 +468,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const lastFinalVoiceSegmentRef = useRef<{ text: string; at: number }>({ text: '', at: 0 });
   const validatedBargeInUtterancesRef = useRef<Set<number>>(new Set());
   const speculativeRequestRef = useRef<{ text: string; controller: AbortController; promise: Promise<Response> } | null>(null);
+  const researchProgressTimerRef = useRef<number | null>(null);
 
   const clearVoiceTurnTimer = useCallback(() => {
     if (voiceTurnTimerRef.current !== null) {
@@ -1060,7 +1063,31 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         }
       }
 
+      // Long Pantheon research must never look frozen. Progress messages are
+      // explicitly non-semantic and only appear while the same request is still
+      // running; they never claim a finding or confidence level that the server
+      // has not returned.
+      let progressCount = 0;
+      const scheduleResearchProgress = () => {
+        researchProgressTimerRef.current = window.setTimeout(() => {
+          if (generation !== generationRef.current || !currentRequestRef.current || analysisSettled) return;
+          progressCount += 1;
+          const progressText = progressCount === 1
+            ? "I'm still looking for that information. I haven't found evidence strong enough to give you a reliable answer yet."
+            : "I'm still researching that and checking additional sources.";
+          const progressMessageId = appendMessage('lexara', progressText);
+          nonSemanticLexaraMessageIdsRef.current.add(progressMessageId);
+          void speakLexara(progressText, generation).catch(() => undefined);
+          scheduleResearchProgress();
+        }, progressCount === 0 ? RESEARCH_PROGRESS_FIRST_MS : RESEARCH_PROGRESS_REPEAT_MS);
+      };
+      scheduleResearchProgress();
+
       const response = await trackedAnalysisPromise;
+      if (researchProgressTimerRef.current !== null) {
+        window.clearTimeout(researchProgressTimerRef.current);
+        researchProgressTimerRef.current = null;
+      }
 
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
@@ -1149,6 +1176,10 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       setGaze('camera');
     } finally {
       window.clearTimeout(requestTimeout);
+      if (researchProgressTimerRef.current !== null) {
+        window.clearTimeout(researchProgressTimerRef.current);
+        researchProgressTimerRef.current = null;
+      }
       if (generation === generationRef.current) {
         currentRequestRef.current = null;
         analysisActiveRef.current = false;
