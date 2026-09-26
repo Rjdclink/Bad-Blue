@@ -50,6 +50,9 @@ for (const token of [
   'OPENSERP_URL',
   "'commoncrawl'",
   'Promise.all([',
+  'queryVariants.map(q => searxngSearch',
+  'queryVariants.map(q => ddgsSearch',
+  'queryVariants.map(q => openSerpSearch',
   'Credit-bearing providers remain a true fallback',
   'supplementalPantheonDiscovery(effectiveQuery',
 ]) {
@@ -68,7 +71,7 @@ for (const token of [
 ]) {
   if (!learning.includes(token)) throw new Error('Persistent discovery learning missing invariant: ' + token);
 }
-if (!investigation.includes('discoverPantheonSourcesParallel(') || !investigation.includes('rememberPantheonDiscoveryOutcome(')) {
+if (!investigation.includes('Dynamic search/index discovery is the primary locator') || !investigation.includes('discoverPantheonSourcesParallel(') || !investigation.includes('rememberPantheonDiscoveryOutcome(')) {
   throw new Error('Parallel discovery/learning is not piped through Pantheon person retrieval');
 }
 if (!coordinator.includes('learnedPatternPromise') || !coordinator.includes('if (freeUrls.length || options.includePaidFallback === false)')) {
