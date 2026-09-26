@@ -1,3 +1,4 @@
+import { GoogleGenAI } from '@google/genai';
 import { orchestratedWebSearch } from '../../openRouterWebSearch';
 import { supplementalPantheonDiscovery } from './PantheonSupplementalDiscovery';
 import { getPantheonLearnedQueryPatterns, getPantheonLearnedSources, rankPantheonDiscoveryUrls } from './PantheonDiscoveryLearning';
@@ -5,6 +6,7 @@ import { getPantheonLearnedQueryPatterns, getPantheonLearnedSources, rankPantheo
 export type PantheonDiscoveryLane =
   | 'learned'
   | 'first-party'
+  | 'gemini-google'
   | 'searxng'
   | 'ddgs'
   | 'openserp'
@@ -63,6 +65,35 @@ async function withTimeout<T>(
     clearTimeout(timer);
     parentSignal?.removeEventListener('abort', relay);
   }
+}
+
+async function geminiGoogleSearch(query: string, limit: number, timeoutMs: number, signal?: AbortSignal): Promise<PantheonDiscoveryEvidence[]> {
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
+  if (!apiKey) return [];
+  return withTimeout(timeoutMs, signal, async () => {
+    const client = new GoogleGenAI({ apiKey });
+    const response = await client.models.generateContent({
+      model: process.env.GEMINI_MODEL?.trim() || 'gemini-3.8-flash',
+      contents: [{ role: 'user', parts: [{ text: query }] }],
+      config: {
+        temperature: 0,
+        tools: [{ googleSearch: {} }],
+      },
+    });
+    const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    const seen = new Set<string>();
+    return chunks.flatMap((chunk: any) => {
+      const url = canonicalCandidate(String(chunk?.web?.uri || ''));
+      if (!url || seen.has(url)) return [];
+      seen.add(url);
+      return [{
+        url,
+        title: String(chunk?.web?.title || '').trim().slice(0, 240) || undefined,
+        snippet: String(response.text || '').trim().slice(0, 1200) || undefined,
+        lane: 'gemini-google' as const,
+      }];
+    }).slice(0, limit);
+  }).catch(() => []);
 }
 
 async function searxngSearch(query: string, limit: number, timeoutMs: number, signal?: AbortSignal): Promise<PantheonDiscoveryEvidence[]> {
@@ -246,6 +277,9 @@ export async function discoverPantheonSourcesParallel(
         .map(url => canonicalCandidate(url))
         .filter((url: string | null): url is string => Boolean(url));
     }),
+    lane('gemini-google', Boolean(process.env.GEMINI_API_KEY?.trim()), async () => (
+      await Promise.all(queryVariants.map(q => geminiGoogleSearch(q, limit, timeoutMs, options.signal)))
+    ).flat()),
     lane('searxng', Boolean(process.env.SEARXNG_URL?.trim()), async () => (await Promise.all(queryVariants.map(q => searxngSearch(q, limit, timeoutMs, options.signal)))).flat()),
     lane('ddgs', Boolean(process.env.DDGS_URL?.trim()), async () => (await Promise.all(queryVariants.map(q => ddgsSearch(q, limit, timeoutMs, options.signal)))).flat()),
     lane('openserp', Boolean(process.env.OPENSERP_URL?.trim()), async () => (await Promise.all(queryVariants.map(q => openSerpSearch(q, limit, timeoutMs, options.signal)))).flat()),
