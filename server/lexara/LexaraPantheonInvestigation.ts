@@ -47,7 +47,6 @@ const PERSON_RECURSIVE_MAX_TARGETS_PER_PASS = 10;
 const PERSON_RECURSIVE_MAX_TOTAL_TARGETS = 30;
 const PERSON_RECURSIVE_TOTAL_BUDGET_MS = 10 * 60_000;
 const STRUCTURED_CUSTODY_BUDGET_MS = 5 * 60_000;
-const PERSON_RECURSIVE_SUFFICIENT_EVIDENCE = 2;
 const PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD = 0.50;
 const PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD = 0.80;
 const PERSON_SOFT_CHECKPOINTS_MS = [25_000, 60_000, 120_000, 300_000] as const;
@@ -576,8 +575,7 @@ export async function investigatePersonQuestion(
         acceptedEvidence: acceptedEvidence.size + structuredEvidence.length,
       });
       // Adaptive successful endpoint: do not burn the ten-minute ceiling when
-      // multiple independent findings already clear the publishable threshold,
-      // or one exceptionally strong finding is independently corroborated.
+      // one sufficiently strong, contradiction-free finding resolves the objective.
       emitDueCheckpoints();
       // One strong source can resolve the objective by itself. Multiple useful
       // findings may strengthen the assessment, but corroboration is never a
