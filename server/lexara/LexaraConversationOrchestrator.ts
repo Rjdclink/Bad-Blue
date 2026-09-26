@@ -358,7 +358,10 @@ export async function generateLexaraConversationResponse(
   // about an identifiable person or organization.
   const mixedLegalFactNeed = researchDecision.objectiveKind === 'legal-authority'
     && /\b(?:who\s+(?:owns|runs)|owner|ownership|registered\s+agent|officer|director|employer|employment|address|residen|property|asset|mortgage|married|spouse|income|business\s+record|corporate\s+record|background|history)\b/i.test(cleanPrompt)
-    && /\b[A-Z][A-Za-z.'’-]+(?:\s+[A-Z][A-Za-z.'’-]+){1,5}\b/.test(cleanPrompt);
+    && (
+      /\b[A-Z][A-Za-z.'’-]+(?:\s+[A-Z][A-Za-z.'’-]+){1,5}\b/.test(cleanPrompt)
+      || /\b(?:the\s+)?(?:company|corporation|business|employer|defendant|plaintiff|spouse|husband|wife|party)\b/i.test(cleanPrompt)
+    );
   const pantheonDelegatedByLexara = researchDecision.objectiveKind !== 'legal-authority' || mixedLegalFactNeed;
 
   // Pantheon is the application-owned research backbone for eligible person/external
