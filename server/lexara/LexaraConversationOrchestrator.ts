@@ -353,12 +353,23 @@ export async function generateLexaraConversationResponse(
     };
   }
 
-  const pantheonInvestigationPromise = investigatePersonQuestion(researchDecision.needed ? researchDecision.objective : cleanPrompt, {
+  // Pantheon is the application-owned research backbone for eligible person/external
+  // fact turns. Optional web-discovery providers may supplement it but can never
+  // prevent or replace this handoff.
+  const pantheonPrompt = researchDecision.needed
+    ? `${cleanPrompt}\n\nResearch objective: ${researchDecision.objective}`
+    : cleanPrompt;
+  const pantheonInvestigationPromise = investigatePersonQuestion(pantheonPrompt, {
     previousMessages: context.previousMessages,
     jurisdiction,
     signal: context.signal,
     onProgress: context.onResearchProgress,
-  }).catch(() => null);
+  }).catch(error => {
+    console.warn('[LEXARA Pantheon] application-owned research route unavailable', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  });
   // Never await network-backed Pantheon work before the live research budget.
   // Identity clarification is returned synchronously by investigatePersonQuestion
   // before its first network await, so a microtask yield is sufficient to capture
