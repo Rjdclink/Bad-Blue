@@ -39,3 +39,14 @@ if (!investigation.includes('supplementalPantheonDiscovery(') || !investigation.
   throw new Error('Supplemental discovery is not piped through Pantheon retrieval/learning');
 }
 console.log('Credit-aware supplemental discovery verification passed.');
+
+const conversation = fs.readFileSync('server/lexara/LexaraConversationOrchestrator.ts', 'utf8');
+for (const token of [
+  'PERSON_PERMISSION_REFUSAL_PATTERN',
+  'pantheonInvestigation && isPersonPermissionRefusal(text)',
+  'normal turns gain no extra latency',
+  'I could not verify the requested fact from the sources Pantheon completed.'
+]) {
+  if (!conversation.includes(token)) throw new Error('Person-record permission guard missing invariant: ' + token);
+}
+console.log('Person-record private-subject permission-refusal guard verification passed.');
