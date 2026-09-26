@@ -225,11 +225,14 @@ export async function discoverPantheonSourcesParallel(
       [] as string[],
     )),
     lane('first-party', true, async () => {
+      // This lane is supplemental only. Credit/provider failure is normalized to
+      // an empty lane so registry, learned, self-hosted and Common Crawl lanes
+      // remain fully independent.
       const result = await orchestratedWebSearch(effectiveQuery, {
         useOnlinePlugin: true,
         timeout: timeoutMs,
         signal: options.signal,
-      });
+      }).catch(() => ({ sources: [] as string[] }));
       return result.sources
         .map(url => canonicalCandidate(url))
         .filter((url: string | null): url is string => Boolean(url));
