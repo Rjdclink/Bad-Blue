@@ -332,6 +332,8 @@ export async function investigatePersonQuestion(
             jurisdiction: context.jurisdiction,
             query: categoryDiscoveryTerms(categories),
             latencyMs: retrievalLatencyMs,
+            objective: combined,
+            entityType: 'person',
           });
         }
         emitDueCheckpoints();
@@ -399,6 +401,10 @@ export async function investigatePersonQuestion(
           crawler: item.crawler,
           query: categoryDiscoveryTerms(categories),
           latencyMs: retrievalLatencyMs,
+          objective: combined,
+          entityType: 'person',
+          evidenceConfidence: Math.max(0, Math.min(1, dynamicScore)),
+          evidenceYield: 1,
         });
       }
 
