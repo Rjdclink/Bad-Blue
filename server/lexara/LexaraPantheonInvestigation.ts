@@ -503,7 +503,10 @@ export async function investigatePersonQuestion(
       // 20s is a soft escalation checkpoint, not a job-killing ceiling. Give
       // productive crawler work a larger bounded slice while preserving the
       // ten-minute absolute investigation deadline.
-      const perPassBudgetMs = Math.min(pass === 0 ? 25_000 : 60_000, remainingMs);
+      // Each pass is a bounded parallel swarm. Give every selected route enough
+      // useful wall time to acquire/extract without allowing a single pass to
+      // consume the ten-minute investigation ceiling.
+      const perPassBudgetMs = Math.min(pass === 0 ? 45_000 : 75_000, remainingMs);
       let retrieval;
       try {
         retrieval = await pantheonRetrievalAdapter.retrieve({
