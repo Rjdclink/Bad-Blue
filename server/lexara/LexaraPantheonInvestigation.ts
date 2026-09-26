@@ -2,7 +2,7 @@ import { pantheonRetrievalAdapter, type RetrievalEvidence } from '../services/cr
 import { buildPantheonCategoryTargets, type PantheonBackgroundCategory } from '../services/pantheon/PantheonSovereignSourceRegistry';
 import { searchInmates } from '../services/inmateSearch/InmateSearchAggregator';
 import { matchPantheonSubject } from '../services/pantheon/PantheonEntityResolution';
-import { selectLexaraCrawlerPlan } from './LexaraCrawlerCapabilityRegistry';
+import { buildLexaraDynamicCrawlerAssignments, selectLexaraCrawlerPlan } from './LexaraCrawlerCapabilityRegistry';
 import { PANTHEON_PRIMARY_CRAWLER_IDS, type PantheonPrimaryCrawlerId } from '../services/pantheon/PantheonCrawlerCapabilityMatrix';
 import { discoverPantheonSourcesParallel } from '../services/pantheon/PantheonDiscoveryCoordinator';
 import { rememberPantheonDiscoveryOutcome } from '../services/pantheon/PantheonDiscoveryLearning';
@@ -371,6 +371,22 @@ export async function investigatePersonQuestion(
     const resolvedOrganization = extractOrganizationName(combined);
     const resolvedSubject = resolvedName || resolvedOrganization || '';
     const resolvedEntityType = resolvedOrganization && !resolvedName ? 'organization' : 'person';
+    const dynamicAssignments = buildLexaraDynamicCrawlerAssignments({
+      prompt: combined,
+      jurisdiction: context.jurisdiction,
+      hasDiscoveredUrls: true,
+      maxCrawlers: 16,
+    });
+    console.info('[LEXARA PantheonRoute]', {
+      stage: 'dynamic-rosters',
+      assignments: dynamicAssignments.map(assignment => ({
+        crawler: assignment.crawler.id,
+        roles: assignment.roles,
+        matchedCapabilities: assignment.matchedCapabilities,
+        priorityScore: assignment.priorityScore,
+        explorationRequired: assignment.explorationRequired,
+      })),
+    });
     const primaryCrawlerSet = new Set<string>(PANTHEON_PRIMARY_CRAWLER_IDS);
     const selectedPrimaryCrawlers = selectLexaraCrawlerPlan({
       prompt: combined,
@@ -387,6 +403,10 @@ export async function investigatePersonQuestion(
       ? [...new Set(selectedPrimaryCrawlers)]
       : [...PANTHEON_PRIMARY_CRAWLER_IDS];
     const escalationPrimaryCrawlers = [...PANTHEON_PRIMARY_CRAWLER_IDS];
+    const eligiblePrimaryCrawlerIds = dynamicAssignments
+      .filter(assignment => assignment.roles.includes('primary') && primaryCrawlerSet.has(assignment.crawler.id))
+      .map(assignment => assignment.crawler.id as PantheonPrimaryCrawlerId);
+    const explorationPrimaryQueue = [...new Set([...eligiblePrimaryCrawlerIds, ...PANTHEON_PRIMARY_CRAWLER_IDS])];
 
     const recursiveStartedAt = Date.now();
     const globalDeadlineAt = recursiveStartedAt + PERSON_RECURSIVE_TOTAL_BUDGET_MS;
@@ -439,7 +459,9 @@ export async function investigatePersonQuestion(
           subject: combined,
           location: context.jurisdiction,
           categoryLabel: conversationalReportCategoryLabel(prompt, categories),
-          primaryCrawlers: pass === 0 ? primaryCrawlers : escalationPrimaryCrawlers,
+          primaryCrawlers: pass === 0
+            ? primaryCrawlers
+            : explorationPrimaryQueue.filter((_, index) => index <= Math.min(explorationPrimaryQueue.length - 1, pass + 1)),
           signal: context.signal,
         });
       } catch (error) {
@@ -552,7 +574,8 @@ export async function investigatePersonQuestion(
         pass: recursionPasses,
         bestConfidence,
         publishableEvidence: rankedScores.filter(score => score >= PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD).length,
-        crawlerMode: pass === 0 ? 'selected' : 'escalated-full-primary',
+        crawlerMode: pass === 0 ? 'selected' : 'mandatory-capability-exploration',
+        eligibleCrawlerCount: dynamicAssignments.filter(assignment => assignment.explorationRequired).length,
         acceptedEvidence: acceptedEvidence.size + structuredEvidence.length,
       });
       // Adaptive successful endpoint: do not burn the ten-minute ceiling when
