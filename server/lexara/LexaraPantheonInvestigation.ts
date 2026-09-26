@@ -311,6 +311,7 @@ export async function investigatePersonQuestion(
     const primaryCrawlers = selectedPrimaryCrawlers.length
       ? [...new Set(selectedPrimaryCrawlers)]
       : [...PANTHEON_PRIMARY_CRAWLER_IDS];
+    const escalationPrimaryCrawlers = [...PANTHEON_PRIMARY_CRAWLER_IDS];
 
     const recursiveStartedAt = Date.now();
     const globalDeadlineAt = recursiveStartedAt + PERSON_RECURSIVE_TOTAL_BUDGET_MS;
@@ -359,7 +360,7 @@ export async function investigatePersonQuestion(
           deadlineAt: Math.min(globalDeadlineAt, retrievalStartedAt + perPassBudgetMs),
           subject: combined,
           location: context.jurisdiction,
-          primaryCrawlers,
+          primaryCrawlers: pass === 0 ? primaryCrawlers : escalationPrimaryCrawlers,
           signal: context.signal,
         });
       } catch (error) {
@@ -471,6 +472,7 @@ export async function investigatePersonQuestion(
         pass: recursionPasses,
         bestConfidence,
         publishableEvidence: rankedScores.filter(score => score >= PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD).length,
+        crawlerMode: pass === 0 ? 'selected' : 'escalated-full-primary',
         acceptedEvidence: acceptedEvidence.size + structuredEvidence.length,
       });
       // Adaptive successful endpoint: do not burn the ten-minute ceiling when
