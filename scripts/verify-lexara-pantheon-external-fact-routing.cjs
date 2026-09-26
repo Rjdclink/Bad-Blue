@@ -46,6 +46,11 @@ for(const token of [
   "stage: 'recursion-pass'",
   "stage: 'endpoint'",
   'evidenceAccepted:',
+  'discoverPantheonSourcesParallel(',
+  'selectLexaraCrawlerPlan({',
+  'primaryCrawlers,',
+  'PERSON_RECURSIVE_SUFFICIENT_EVIDENCE',
+  'pendingTargets = [...new Set([...frontier, ...discovered])]',
 ]) if(!investigation.includes(token)) throw new Error('Pantheon endpoint/telemetry invariant missing: '+token);
 for(const token of [
   'researchDecision.needed\n      ? pantheonInvestigationPromise',
@@ -54,3 +59,11 @@ for(const token of [
   'researchEndpointReached:',
 ]) if(!conversation.includes(token)) throw new Error('Research-required synthesis gate missing: '+token);
 console.log('Lexara/Pantheon full research architecture verification passed.');
+
+if(router.includes('if (question && externallyVariable)') || router.includes('if (question && legalAuthority)')) {
+  throw new Error('Unreachable legacy keyword gates remain after universal factual-question routing');
+}
+if(!conversation.includes('researchDecision.needed ? researchDecision.objective : cleanPrompt')) {
+  throw new Error('Structured research objective is not handed into Pantheon');
+}
+console.log('No legacy keyword authority or objective-handoff regression detected.');
