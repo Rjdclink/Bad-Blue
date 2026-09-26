@@ -13,7 +13,7 @@ for(const required of ['buildPantheonCategoryTargets','buildPantheonBackgroundRe
   if(!registry.includes(required)) throw new Error('Missing dynamic-seed registry token: '+required);
 }
 if(!people.includes('buildPantheonBackgroundRegistryTargets(name, location, 10)')) throw new Error('People search is not using ten category seeds');
-for(const required of ['SEARXNG_URL','DDGS_URL','OPENSERP_URL','GEMINI_API_KEY','GoogleGenAI',"'gemini-google'","'commoncrawl'","'first-party'","'learned'","'serpapi'","'scrapingbee'"]){
+for(const required of ['SEARXNG_URL','DDGS_URL','OPENSERP_URL','GEMINI_API_KEY','GoogleGenAI',"'gemini-google'","'commoncrawl'","'first-party'","'learned'","'serpapi'","'scrapingbee'",'paidUrls.map']){
   if(!discovery.includes(required)) throw new Error('Dynamic search mesh missing provider: '+required);
 }
 for(const required of ['searchCourtListener','searchGovInfo','discoverLegalMeshTier3','discoverLegalMeshSupplemental','Firecrawl','OpenRouter']){
@@ -22,7 +22,7 @@ for(const required of ['searchCourtListener','searchGovInfo','discoverLegalMeshT
 if(!legalMesh.includes('tavily') || !legalMesh.includes('discoverPantheonSourcesParallel')) throw new Error('Lexara legal mesh is not connected to Tavily + dynamic discovery');
 const searchFirst=fs.readFileSync('server/services/pantheon/PantheonSearchFirstDiscovery.ts','utf8');
 const categoryWorkflow=fs.readFileSync('server/services/pantheon/PantheonCategoryWorkflow.ts','utf8');
-for(const required of ['discoverPantheonSearchFirstCandidates','discoverPantheonCategoryGapCandidates','categoryIndexes','discoveryLanes','discoverPantheonSourcesParallel']){
+for(const required of ['discoverPantheonSearchFirstCandidates','discoverPantheonCategoryGapCandidates','CATEGORY_DISCOVERY_HINTS','includePaidFallback: true','categoryIndexes','discoveryLanes','discoverPantheonSourcesParallel']){
   if(!searchFirst.includes(required)) throw new Error('Pantheon search-first discovery missing invariant: '+required);
 }
 for(const required of ['search_first_candidates_ready','searchFirstCandidates','discoverPantheonCategoryGapCandidates','combinedFreshLedger']){
