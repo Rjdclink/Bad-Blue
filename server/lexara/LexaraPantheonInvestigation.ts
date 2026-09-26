@@ -562,7 +562,6 @@ export async function investigatePersonQuestion(
       const rankedEntries = [...acceptedEvidenceScores.entries()].sort((left, right) => right[1] - left[1]);
       const rankedScores = rankedEntries.map(([, score]) => score);
       const bestConfidence = Math.max(rankedScores[0] || 0, structuredEvidenceConfidence);
-      const multipleUsefulFindings = rankedScores.filter(score => score >= PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD).length >= PERSON_RECURSIVE_SUFFICIENT_EVIDENCE;
       const bestEvidence = rankedEntries[0] ? acceptedEvidence.get(rankedEntries[0][0]) : undefined;
       const hasMaterialIdentityConflict = bestEvidence && resolvedSubject
         ? (resolvedEntityType === 'person' ? matchPantheonSubject(bestEvidence, resolvedSubject, context.jurisdiction) : genericEntityMatch(bestEvidence, resolvedSubject)).conflicts.length > 0
@@ -583,7 +582,7 @@ export async function investigatePersonQuestion(
       // One strong source can resolve the objective by itself. Multiple useful
       // findings may strengthen the assessment, but corroboration is never a
       // prerequisite for preserving or reporting a single useful source.
-      if ((bestConfidence >= PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD || (multipleUsefulFindings && bestConfidence >= 0.70)) && !hasMaterialIdentityConflict) break;
+      if (bestConfidence >= PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD && !hasMaterialIdentityConflict) break;
       // Explicit exhaustion endpoints: pass count, wall-clock budget, target
       // budget, caller abort, or no new URLs. This prevents unbounded recursion.
       if (Date.now() >= globalDeadlineAt || pass + 1 >= PERSON_RECURSIVE_MAX_PASSES || seenTargets.size >= PERSON_RECURSIVE_MAX_TOTAL_TARGETS) break;
