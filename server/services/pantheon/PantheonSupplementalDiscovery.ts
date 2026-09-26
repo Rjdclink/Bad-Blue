@@ -3,26 +3,16 @@
  * they only teach Pantheon candidate URLs which its own retrieval stack must
  * fetch and verify. Internal/direct discovery always runs first.
  */
+import { rankPantheonDiscoveryUrls, rememberPantheonDiscoveryOutcome } from './PantheonDiscoveryLearning';
+
 export interface PantheonSupplementalDiscoveryResult {
   urls: string[];
   provider?: 'serpapi' | 'scrapingbee';
   attempted: boolean;
 }
 
-const learnedDiscoveryHosts = new Map<string, number>();
-
-function rankLearned(urls: string[]): string[] {
-  return [...new Set(urls)].sort((a, b) => {
-    const host = (value: string) => { try { return new URL(value).hostname; } catch { return ''; } };
-    return (learnedDiscoveryHosts.get(host(b)) || 0) - (learnedDiscoveryHosts.get(host(a)) || 0);
-  });
-}
-
 export function rememberPantheonDiscoverySuccess(url: string): void {
-  try {
-    const host = new URL(url).hostname;
-    learnedDiscoveryHosts.set(host, (learnedDiscoveryHosts.get(host) || 0) + 1);
-  } catch {}
+  void rememberPantheonDiscoveryOutcome(url, true);
 }
 
 export async function supplementalPantheonDiscovery(
@@ -52,7 +42,7 @@ export async function supplementalPantheonDiscovery(
       const response = await fetch(url, { signal: controller.signal });
       if (response.ok) {
         const payload = await response.json() as { organic_results?: Array<{ link?: string }> };
-        const urls = rankLearned((payload.organic_results || []).flatMap(item =>
+        const urls = rankPantheonDiscoveryUrls((payload.organic_results || []).flatMap(item =>
           item.link && /^https?:\/\//i.test(item.link) && !seen.has(item.link) ? [item.link] : []
         )).slice(0, limit);
         if (urls.length) return { urls, provider: 'serpapi', attempted: true };
@@ -80,7 +70,7 @@ export async function supplementalPantheonDiscovery(
         const matches = [...html.matchAll(/href=["'](?:\/url\?q=)?(https?:\/\/[^"'& ]+)/gi)]
           .map(match => match[1])
           .filter(url => !/google\.com/i.test(url) && !seen.has(url));
-        const urls = rankLearned(matches).slice(0, limit);
+        const urls = rankPantheonDiscoveryUrls(matches).slice(0, limit);
         if (urls.length) return { urls, provider: 'scrapingbee', attempted: true };
       }
     } catch {} finally {

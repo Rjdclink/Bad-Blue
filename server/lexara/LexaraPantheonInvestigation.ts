@@ -1,11 +1,11 @@
 import { pantheonRetrievalAdapter, type RetrievalEvidence } from '../services/crawlers/PantheonRetrievalAdapter';
-import { orchestratedWebSearch } from '../openRouterWebSearch';
 import { buildPantheonCategoryTargets, type PantheonBackgroundCategory } from '../services/pantheon/PantheonSovereignSourceRegistry';
 import { searchInmates } from '../services/inmateSearch/InmateSearchAggregator';
 import { matchPantheonSubject } from '../services/pantheon/PantheonEntityResolution';
 import { selectLexaraCrawlerPlan } from './LexaraCrawlerCapabilityRegistry';
 import { PANTHEON_PRIMARY_CRAWLER_IDS, type PantheonPrimaryCrawlerId } from '../services/pantheon/PantheonCrawlerCapabilityMatrix';
-import { rememberPantheonDiscoverySuccess, supplementalPantheonDiscovery } from '../services/pantheon/PantheonSupplementalDiscovery';
+import { discoverPantheonSourcesParallel } from '../services/pantheon/PantheonDiscoveryCoordinator';
+import { rememberPantheonDiscoveryOutcome } from '../services/pantheon/PantheonDiscoveryLearning';
 
 export interface LexaraPersonInvestigationContext {
   previousMessages?: Array<{ role?: string; content?: string }>;
@@ -167,9 +167,28 @@ export async function investigatePersonQuestion(
     };
   }
 
-  // Custody questions have a verified structured federal adapter. Use it
-  // before generic web retrieval so Lexara can return an actual facility when
-  // BOP has a subject match; Pantheon still performs the broader corroboration.
+  // Launch registry/free discovery before specialized adapters so independent
+  // research sequences overlap instead of creating serial latency.
+  const registryTargets = categories
+    .flatMap(category => buildPantheonCategoryTargets(category, combined, context.jurisdiction, 5))
+    .filter(target => target.subjectScoped || target.sourceKind === 'api' || target.sourceKind === 'search')
+    .filter((target, index, all) => all.findIndex(candidate => candidate.url === target.url) === index)
+    .slice(0, 6);
+  const registryUrls = registryTargets.map(target => target.url);
+  const discoveryPromise = discoverPantheonSourcesParallel(
+    `${combined} public records ${categories.join(' ')} ${categoryDiscoveryTerms(categories)} official government database search`,
+    registryUrls,
+    {
+      categories,
+      jurisdiction: context.jurisdiction,
+      limit: 8,
+      timeoutMs: 650,
+      signal: context.signal,
+    },
+  ).catch(() => null);
+
+  // Custody questions have a verified structured federal adapter. It runs in
+  // parallel with discovery so a slow provider cannot serialize the live turn.
   let structuredEvidence: string[] = [];
   let structuredSources: string[] = [];
   if (categories.includes('corrections')) {
@@ -199,31 +218,16 @@ export async function investigatePersonQuestion(
     }
   }
 
-  // Network work begins only after identity clarification has completed.
-  // Person-record retrieval may use a state supplied by the user, but a county
-  // is never inferred by the language model. County-specific claims must come
-  // from retrieved evidence containing that county or an explicit user fact.
-  const registryTargets = categories
-    .flatMap(category => buildPantheonCategoryTargets(category, combined, context.jurisdiction, 5))
-    .filter(target => target.subjectScoped || target.sourceKind === 'api' || target.sourceKind === 'search')
-    .filter((target, index, all) => all.findIndex(candidate => candidate.url === target.url) === index)
-    .slice(0, 6);
-
+  // Network work began above, after identity clarification. Person-record
+  // retrieval may use a state supplied by the user, but a county is never
+  // inferred by the language model. County claims still require retrieved evidence.
   let discoveredUrls: string[] = [];
-  try {
-    const discovery = await orchestratedWebSearch(
-      `${combined} public records ${categories.join(' ')} ${categoryDiscoveryTerms(categories)} official government database search`,
-      { useOnlinePlugin: true, timeout: 500, signal: context.signal },
-    );
-    discoveredUrls = discovery.sources
-      .filter(url => /^https?:\/\//i.test(url))
-      .filter(url => !/\/(?:terms|privacy|disclaimer)(?:[/?#]|$)/i.test(url))
-      .slice(0, 4);
-  } catch {
-    // Dynamic discovery is supplemental. Trusted registry sources remain usable.
-  }
+  const discovery = await discoveryPromise;
+  if (discovery) discoveredUrls = discovery.urls;
 
-  const targets = [...new Set([...registryTargets.map(target => target.url), ...discoveredUrls])].slice(0, 8);
+  // Known authorities and learned/free discovery enter the same bounded frontier.
+  // Registry URLs remain first so established direct sources are never displaced.
+  const targets = [...new Set([...registryUrls, ...discoveredUrls])].slice(0, 12);
   if (!targets.length) return {
     sources: [],
     categories,
@@ -257,6 +261,7 @@ export async function investigatePersonQuestion(
     let retrievalAvailable = true;
     let retrievalReason: string | undefined;
     const acceptedEvidence = new Map<string, RetrievalEvidence>();
+    const acceptedEvidenceScores = new Map<string, number>();
 
     for (let pass = 0; pass < PERSON_RECURSIVE_MAX_PASSES; pass++) {
       if (context.signal?.aborted || !pendingTargets.length) break;
@@ -268,6 +273,7 @@ export async function investigatePersonQuestion(
       passTargets.forEach(url => seenTargets.add(url));
 
       const remainingMs = Math.max(500, PERSON_RECURSIVE_TOTAL_BUDGET_MS - (Date.now() - recursiveStartedAt));
+      const retrievalStartedAt = Date.now();
       const retrieval = await pantheonRetrievalAdapter.retrieve({
         purpose: 'lexara_legal_research',
         targets: passTargets,
@@ -278,14 +284,52 @@ export async function investigatePersonQuestion(
         primaryCrawlers,
         signal: context.signal,
       });
+      const retrievalLatencyMs = Date.now() - retrievalStartedAt;
       retrievalAvailable = retrievalAvailable && retrieval.available;
       retrievalReason ||= retrieval.reason;
 
-      for (const item of retrieval.evidence
-        .filter(item => item.content?.trim())
-        .filter(item => resolvedName && matchPantheonSubject(item, resolvedName, context.jurisdiction).matched)) {
-        acceptedEvidence.set(`${item.sourceUrl}:${item.crawler}:${item.content.slice(0, 120)}`, item);
-        rememberPantheonDiscoverySuccess(item.sourceUrl);
+      if (!retrieval.available) {
+        for (const target of passTargets) {
+          void rememberPantheonDiscoveryOutcome(target, false, {
+            categories,
+            jurisdiction: context.jurisdiction,
+            query: categoryDiscoveryTerms(categories),
+            latencyMs: retrievalLatencyMs,
+          });
+        }
+      }
+
+      for (const item of retrieval.evidence.filter(item => item.content?.trim())) {
+        if (!resolvedName) continue;
+        const identityMatch = matchPantheonSubject(item, resolvedName, context.jurisdiction);
+        if (!identityMatch.matched) continue;
+        const evidenceKey = `${item.sourceUrl}:${item.crawler}:${item.content.slice(0, 120)}`;
+        let authorityBonus = 0;
+        try {
+          const host = new URL(item.sourceUrl).hostname.toLowerCase();
+          if (host.endsWith('.gov') || host.endsWith('.mil')) authorityBonus = 0.12;
+          else if (host.endsWith('.edu')) authorityBonus = 0.06;
+        } catch {}
+        const retrievedAgeMs = Math.max(0, Date.now() - Date.parse(item.retrievedAt));
+        const freshnessBonus = retrievedAgeMs <= 86_400_000 ? 0.05 : retrievedAgeMs <= 30 * 86_400_000 ? 0.025 : 0;
+        const contradictionPenalty = Math.min(0.2, identityMatch.conflicts.length * 0.05);
+        const correlateBonus = Math.min(0.12, identityMatch.independentCorrelates.length * 0.04);
+        const dynamicScore =
+          identityMatch.score * 0.55 +
+          item.confidence * 0.20 +
+          authorityBonus +
+          freshnessBonus +
+          correlateBonus -
+          contradictionPenalty;
+        acceptedEvidence.set(evidenceKey, item);
+        acceptedEvidenceScores.set(evidenceKey, dynamicScore);
+        void rememberPantheonDiscoveryOutcome(item.sourceUrl, true, {
+          categories,
+          jurisdiction: context.jurisdiction,
+          crawler: item.crawler,
+          query: categoryDiscoveryTerms(categories),
+          latencyMs: retrievalLatencyMs,
+        });
       }
 
       // Explicit successful endpoint: enough independent verified evidence.
@@ -304,31 +348,30 @@ export async function investigatePersonQuestion(
         const broadeningTerms = pass === 0
           ? 'official record database archive'
           : 'official government database historical archive alternate source';
-        const broadened = await orchestratedWebSearch(
+        const broadened = await discoverPantheonSourcesParallel(
           `${resolvedName || combined} ${categoryDiscoveryTerms(categories)} ${context.jurisdiction || ''} ${broadeningTerms}`,
-          { useOnlinePlugin: true, timeout: Math.min(650, remainingMs), signal: context.signal },
+          [...seenTargets, ...frontier],
+          {
+            categories,
+            jurisdiction: context.jurisdiction,
+            limit: PERSON_RECURSIVE_MAX_TARGETS_PER_PASS,
+            timeoutMs: Math.min(900, remainingMs),
+            signal: context.signal,
+          },
         );
-        discovered = broadened.sources.filter(url => /^https?:\/\//i.test(url));
+        discovered = broadened.urls;
       } catch {
-        // Frontier-derived candidates remain usable when a discovery provider fails.
-      }
-      // Paid supplemental discovery is a last resort only. Pantheon first uses
-      // its own frontier plus the existing web-discovery lane. Returned URLs
-      // are candidates, never evidence; Pantheon must retrieve/verify them.
-      if (!frontier.length && !discovered.length && acceptedEvidence.size === 0) {
-        const supplemental = await supplementalPantheonDiscovery(
-          `${resolvedName || combined} ${categoryDiscoveryTerms(categories)} ${context.jurisdiction || ''}`,
-          [...seenTargets],
-          { limit: PERSON_RECURSIVE_MAX_TARGETS_PER_PASS, timeoutMs: Math.min(900, remainingMs), signal: context.signal },
-        );
-        discovered.push(...supplemental.urls);
+        // Frontier-derived candidates remain usable when every discovery lane fails.
       }
       pendingTargets = [...new Set([...frontier, ...discovered])]
         .filter(url => !seenTargets.has(url))
         .slice(0, Math.min(PERSON_RECURSIVE_MAX_TARGETS_PER_PASS, PERSON_RECURSIVE_MAX_TOTAL_TARGETS - seenTargets.size));
     }
 
-    const evidence = [...acceptedEvidence.values()].slice(0, 12);
+    const evidence = [...acceptedEvidence.entries()]
+      .sort((left, right) => (acceptedEvidenceScores.get(right[0]) || 0) - (acceptedEvidenceScores.get(left[0]) || 0))
+      .map(([, item]) => item)
+      .slice(0, 12);
     const sources = [...new Set([...structuredSources, ...evidence.map(item => item.sourceUrl).filter(Boolean)])].slice(0, 12);
     const webEvidence = evidence.map((item, index) =>
       `${index + 1}. SOURCE: ${item.sourceUrl}\nEVIDENCE: ${item.content.trim().slice(0, 1200)}`
