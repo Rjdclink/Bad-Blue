@@ -166,6 +166,37 @@ export const LEXARA_CRAWLER_CAPABILITY_POOL: readonly LexaraCrawlerDescriptor[] 
   c('snake-agent', 'SnakeAgent Legacy Crawler', 'crypto-observational', 'server/services/cryptocrawl/agents/starburst-snake.ts', ['crypto-observation', 'pattern-analysis'], 'observational', 'instant', always, 'Compatibility crawler is read-only and cannot submit trades.'),
 ] as const;
 
+export interface LexaraCrawlerSelectionInput {
+  prompt: string;
+  jurisdiction?: string;
+  domainName?: string;
+  hasDiscoveredUrls?: boolean;
+  maxCrawlers?: number;
+}
+
+function desiredCapabilities(input: LexaraCrawlerSelectionInput): Set<LexaraCrawlerCapability> {
+  const text = `${input.domainName || ''} ${input.jurisdiction || ''} ${input.prompt || ''}`.toLowerCase();
+  const desired = new Set<LexaraCrawlerCapability>(['legal-authority', 'web-discovery', 'verification']);
+
+  if (/federal|pacer|district court|bankruptcy|appellate|circuit court|docket/.test(text)) desired.add('federal-docket');
+  if (/criminal|arrest|charge|conviction|warrant|sex offender|sentenc/.test(text)) desired.add('criminal-records');
+  if (/case|precedent|holding|opinion|docket/.test(text)) desired.add('case-law');
+  if (/statute|code section|u\.s\.c|law says|legislation/.test(text)) desired.add('statutes');
+  if (/regulation|c\.f\.r|agency rule/.test(text)) desired.add('regulations');
+  if (/person|people|phone|address|relative|associate|locate|born|birthday|date of birth|dob|employ|occupation|job|works? at|works? for|inmate|incarcerat|prison|jail|custody/.test(text)) desired.add('people-search');
+  if (/born|birthday|date of birth|dob|marriage|divorc|death|deceased/.test(text)) desired.add('vital-records');
+  if (/employ|occupation|job|works? at|works? for|profession/.test(text)) desired.add('occupation');
+  if (/inmate|incarcerat|prison|jail|custody|corrections/.test(text)) desired.add('incarceration');
+  if (/social media|facebook|instagram|linkedin|twitter|x\.com|tiktok/.test(text)) desired.add('social-media');
+  if (/property|asset|parcel|vehicle|business|company|corporation|llc/.test(text)) desired.add('public-records');
+  if (/crypto|blockchain|token|exchange|arbitrage|wallet|defi/.test(text)) desired.add('crypto-observation');
+  if (input.hasDiscoveredUrls) {
+    desired.add('semantic-extraction');
+    desired.add('structured-extraction');
+  }
+  return desired;
+}
+
 export type LexaraDynamicCrawlerRole = 'primary' | 'secondary' | 'tertiary';
 
 export interface LexaraDynamicCrawlerAssignment {
@@ -199,37 +230,6 @@ export function buildLexaraDynamicCrawlerAssignments(input: LexaraCrawlerSelecti
     })
     .filter(assignment => assignment.matchedCapabilities.length > 0 && assignment.roles.length > 0)
     .sort((left, right) => right.priorityScore - left.priorityScore);
-}
-
-export interface LexaraCrawlerSelectionInput {
-  prompt: string;
-  jurisdiction?: string;
-  domainName?: string;
-  hasDiscoveredUrls?: boolean;
-  maxCrawlers?: number;
-}
-
-function desiredCapabilities(input: LexaraCrawlerSelectionInput): Set<LexaraCrawlerCapability> {
-  const text = `${input.domainName || ''} ${input.jurisdiction || ''} ${input.prompt || ''}`.toLowerCase();
-  const desired = new Set<LexaraCrawlerCapability>(['legal-authority', 'web-discovery', 'verification']);
-
-  if (/federal|pacer|district court|bankruptcy|appellate|circuit court|docket/.test(text)) desired.add('federal-docket');
-  if (/criminal|arrest|charge|conviction|warrant|sex offender|sentenc/.test(text)) desired.add('criminal-records');
-  if (/case|precedent|holding|opinion|docket/.test(text)) desired.add('case-law');
-  if (/statute|code section|u\.s\.c|law says|legislation/.test(text)) desired.add('statutes');
-  if (/regulation|c\.f\.r|agency rule/.test(text)) desired.add('regulations');
-  if (/person|people|phone|address|relative|associate|locate|born|birthday|date of birth|dob|employ|occupation|job|works? at|works? for|inmate|incarcerat|prison|jail|custody/.test(text)) desired.add('people-search');
-  if (/born|birthday|date of birth|dob|marriage|divorc|death|deceased/.test(text)) desired.add('vital-records');
-  if (/employ|occupation|job|works? at|works? for|profession/.test(text)) desired.add('occupation');
-  if (/inmate|incarcerat|prison|jail|custody|corrections/.test(text)) desired.add('incarceration');
-  if (/social media|facebook|instagram|linkedin|twitter|x\.com|tiktok/.test(text)) desired.add('social-media');
-  if (/property|asset|parcel|vehicle|business|company|corporation|llc/.test(text)) desired.add('public-records');
-  if (/crypto|blockchain|token|exchange|arbitrage|wallet|defi/.test(text)) desired.add('crypto-observation');
-  if (input.hasDiscoveredUrls) {
-    desired.add('semantic-extraction');
-    desired.add('structured-extraction');
-  }
-  return desired;
 }
 
 export function selectLexaraCrawlerPlan(input: LexaraCrawlerSelectionInput): LexaraCrawlerDescriptor[] {
