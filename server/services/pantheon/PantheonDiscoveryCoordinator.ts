@@ -12,8 +12,15 @@ export type PantheonDiscoveryLane =
   | 'serpapi'
   | 'scrapingbee';
 
+export interface PantheonDiscoveryEvidence {
+  url: string;
+  title?: string;
+  snippet?: string;
+  lane: PantheonDiscoveryLane;
+}
 export interface PantheonDiscoveryCoordinatorResult {
   urls: string[];
+  evidence: PantheonDiscoveryEvidence[];
   lanesAttempted: PantheonDiscoveryLane[];
   lanesWithResults: PantheonDiscoveryLane[];
 }
@@ -58,7 +65,7 @@ async function withTimeout<T>(
   }
 }
 
-async function searxngSearch(query: string, limit: number, timeoutMs: number, signal?: AbortSignal): Promise<string[]> {
+async function searxngSearch(query: string, limit: number, timeoutMs: number, signal?: AbortSignal): Promise<PantheonDiscoveryEvidence[]> {
   const base = process.env.SEARXNG_URL?.trim();
   if (!base) return [];
   return withTimeout(timeoutMs, signal, async requestSignal => {
@@ -69,11 +76,10 @@ async function searxngSearch(query: string, limit: number, timeoutMs: number, si
     const response = await fetch(endpoint, { signal: requestSignal, headers: { accept: 'application/json' } });
     if (!response.ok) return [];
     const payload: any = await response.json();
-    return (Array.isArray(payload?.results) ? payload.results : [])
-      .flatMap((item: any) => [item?.url, item?.link].filter(Boolean))
-      .map((value: unknown) => canonicalCandidate(String(value)))
-      .filter((value: string | null): value is string => Boolean(value))
-      .slice(0, limit);
+    return (Array.isArray(payload?.results) ? payload.results : []).flatMap((item: any) => {
+      const url = canonicalCandidate(String(item?.url || item?.link || ''));
+      return url ? [{ url, title: String(item?.title || '').trim().slice(0, 240) || undefined, snippet: String(item?.content || item?.snippet || '').trim().slice(0, 1200) || undefined, lane: 'searxng' as const }] : [];
+    }).slice(0, limit);
   }).catch(() => []);
 }
 
@@ -208,12 +214,16 @@ export async function discoverPantheonSourcesParallel(
   const lanesAttempted: PantheonDiscoveryLane[] = [];
   const lanesWithResults: PantheonDiscoveryLane[] = [];
 
-  const lane = async (name: PantheonDiscoveryLane, enabled: boolean, work: () => Promise<string[]>) => {
-    if (!enabled) return { name, urls: [] as string[] };
+  const lane = async (name: PantheonDiscoveryLane, enabled: boolean, work: () => Promise<Array<string | PantheonDiscoveryEvidence>>) => {
+    if (!enabled) return { name, urls: [] as string[], evidence: [] as PantheonDiscoveryEvidence[] };
     lanesAttempted.push(name);
-    const urls = await work().catch(() => []);
+    const raw = await work().catch(() => []);
+    const evidence = raw.flatMap(item => typeof item === 'string'
+      ? (canonicalCandidate(item) ? [{ url: canonicalCandidate(item)!, lane: name }] : [])
+      : [{ ...item, lane: name }]);
+    const urls = evidence.map(item => item.url);
     if (urls.length) lanesWithResults.push(name);
-    return { name, urls };
+    return { name, urls, evidence };
   };
 
   // All free/applicable lanes launch together. Learned sources are queried in
@@ -247,12 +257,15 @@ export async function discoverPantheonSourcesParallel(
     settled.flatMap(result => result.urls)
       .filter(url => !seen.has(url)),
   ).slice(0, limit);
+  const freeEvidence = settled.flatMap(result => result.evidence)
+    .filter(item => freeUrls.includes(item.url));
 
   // Normal successful discovery returns immediately. Learned query patterns are
   // consulted only on a miss, avoiding a serial database dependency.
   if (freeUrls.length || options.includePaidFallback === false) {
     return {
       urls: freeUrls,
+      evidence: freeEvidence,
       lanesAttempted: [...new Set(lanesAttempted)],
       lanesWithResults: [...new Set(lanesWithResults)],
     };
@@ -283,6 +296,7 @@ export async function discoverPantheonSourcesParallel(
     if (learnedUrls.length) {
       return {
         urls: learnedUrls,
+        evidence: retry.flatMap(result => result.evidence).filter(item => learnedUrls.includes(item.url)),
         lanesAttempted: [...new Set(lanesAttempted)],
         lanesWithResults: [...new Set(lanesWithResults)],
       };
@@ -303,6 +317,7 @@ export async function discoverPantheonSourcesParallel(
   }
   return {
     urls: rankPantheonDiscoveryUrls(paid.urls.filter(url => !seen.has(url))).slice(0, limit),
+    evidence: [],
     lanesAttempted: [...new Set(lanesAttempted)],
     lanesWithResults: [...new Set(lanesWithResults)],
   };
