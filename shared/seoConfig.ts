@@ -60,7 +60,7 @@ export const GLOBAL_KEYWORDS: KeywordTaxonomy = {
   lsi: [
     "AI I can talk to about my legal problem", "talk to an AI about my case",
     "AI that researches my case", "AI that analyzes legal documents", "AI that analyzes evidence",
-    "AI that creates legal documents", "AI that edits uploaded media",/
+    "AI that creates legal documents", "AI that edits uploaded media",
     "real-time legal AI conversation", "download legal document DOCX", "download legal document PDF"
   ]
 };
