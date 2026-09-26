@@ -1371,9 +1371,9 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
     if (!serverRealtimeActiveRef.current) return;
     lexaraRealtimeVoiceClient.configureStt({
       keyterms: options.keyterms,
-      eagerEotThreshold: 0.4,
-      eotThreshold: 0.7,
-      eotTimeoutMs: 6_000,
+      eagerEotThreshold: 0.8,
+      eotThreshold: 0.85,
+      eotTimeoutMs: 8_000,
     });
   }, [options.keyterms]);
 
