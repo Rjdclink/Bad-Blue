@@ -45,3 +45,13 @@ for(const token of [
  "context.onProgress?.({ type: 'endpoint'",
 ]) if(!pantheon.includes(token)) throw new Error('Pantheon progressive event invariant missing '+token);
 console.log('Pantheon SSE progress pipeline verification passed.');
+
+for(const token of [
+ 'readLexaraSseResponse',
+ "fetch('/api/lexara/chat/stream'",
+ "Accept: 'text/event-stream'",
+ "event !== 'research'",
+ "payload?.type === 'evidence'",
+ "Number(payload?.confidence) >= 0.80",
+]) if(!client.includes(token)) throw new Error('Client SSE consumer invariant missing '+token);
+console.log('Pantheon progressive server-to-browser evidence pipe verification passed.');
