@@ -60,6 +60,39 @@ const ACKNOWLEDGEMENT_DEDUPE_MS = 8_000;
 const ACKNOWLEDGEMENT_COOLDOWN_MS = 2_500;
 const MAX_STORED_CONVERSATION_MESSAGES = 24;
 
+async function readLexaraSseResponse(response: Response, onEvent: (event: string, data: any) => void): Promise<any> {
+  if (!response.ok || !response.body) throw new Error(`LEXARA stream failed (${response.status})`);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let completed: any = null;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let boundary = buffer.indexOf('\n\n');
+    while (boundary >= 0) {
+      const frame = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      let event = 'message';
+      let dataText = '';
+      for (const line of frame.split(/\r?\n/)) {
+        if (line.startsWith('event:')) event = line.slice(6).trim();
+        else if (line.startsWith('data:')) dataText += line.slice(5).trim();
+      }
+      if (dataText) {
+        const data = JSON.parse(dataText);
+        onEvent(event, data);
+        if (event === 'complete') completed = data;
+        if (event === 'error') throw new Error(data?.error || 'LEXARA research failed');
+      }
+      boundary = buffer.indexOf('\n\n');
+    }
+  }
+  if (!completed) throw new Error('LEXARA stream ended before completion');
+  return completed;
+}
+
 function makeMessageId(role: ConversationMessage['role']): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
     return `${role}-${crypto.randomUUID()}`;
@@ -980,9 +1013,9 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       const canReuseSpeculative = speculative?.text === message;
       const analysisPromise = canReuseSpeculative
         ? speculative!.promise
-        : fetch('/api/lexara/chat', {
+        : fetch('/api/lexara/chat/stream', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
             signal: controller.signal,
             body: JSON.stringify({
               prompt: message,
@@ -1084,17 +1117,31 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       scheduleResearchProgress();
 
       const response = await trackedAnalysisPromise;
+      let data: any;
+      if (canReuseSpeculative) {
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(body?.error || body?.message || `LEXARA request failed (${response.status})`);
+        }
+        data = await response.json();
+      } else {
+        data = await readLexaraSseResponse(response, (event, payload) => {
+          if (generation !== generationRef.current || event !== 'research') return;
+          if (payload?.type === 'evidence' && Number(payload?.confidence) >= 0.80) {
+            const confidence = Math.round(Number(payload.confidence) * 100);
+            const evidenceText = String(payload?.evidence || '').trim();
+            if (!evidenceText) return;
+            const progressiveText = `I found evidence at ${confidence}% confidence: ${evidenceText.slice(0, 500)}`;
+            const progressiveId = appendMessage('lexara', progressiveText);
+            nonSemanticLexaraMessageIdsRef.current.add(progressiveId);
+            void speakLexara(progressiveText, generation).catch(() => undefined);
+          }
+        });
+      }
       if (researchProgressTimerRef.current !== null) {
         window.clearTimeout(researchProgressTimerRef.current);
         researchProgressTimerRef.current = null;
       }
-
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(body?.error || body?.message || `LEXARA request failed (${response.status})`);
-      }
-
-      const data = await response.json();
       if (generation !== generationRef.current) return;
       if (data?.documentIntent?.requested === true) {
         const resolvedJurisdiction = String(data?.jurisdiction || jurisdiction || '').trim();
