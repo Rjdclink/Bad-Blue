@@ -10,7 +10,6 @@ import { MaintenanceMode } from "@/components/MaintenanceMode";
 import { lazy, Suspense, useEffect, useState, Component, ErrorInfo, ReactNode } from "react";
 import { AuthLoadingSkeleton, PageSkeleton } from "@/components/ui/page-skeleton";
 import { useGlobalGestureNavigation } from "@/hooks/useGlobalGestureNavigation";
-import MasterPanelNavigator from "@/components/MasterPanelNavigator";
 
 if (typeof window !== 'undefined') {
   console.log('[Performance] App component loading...');
@@ -278,7 +277,6 @@ function Router() {
   return (
     <Suspense fallback={<PageLoader />}>
       <>
-        {isMasterSession && <MasterPanelNavigator />}
         <Switch>
           <Route path="/" component={Landing} />
           <Route path="/landing" component={Landing} />
