@@ -128,6 +128,58 @@ export const PANTHEON_REPORT_CATEGORY_LABELS = [
 
 export type PantheonReportCategoryLabel = typeof PANTHEON_REPORT_CATEGORY_LABELS[number];
 
+export interface PantheonCategoryExtractionSchema {
+  objectiveFields: readonly string[];
+  preferredRazors: readonly PantheonRazorSkillId[];
+  evidenceHints: readonly string[];
+}
+
+/**
+ * Explicit extraction objectives for every report category. This is the
+ * category-to-extractor contract: retrieval can stay generic while analysis
+ * knows exactly which facts make a page useful for the requested category.
+ */
+export const PANTHEON_CATEGORY_EXTRACTION_SCHEMAS: Record<PantheonReportCategoryLabel, PantheonCategoryExtractionSchema> = {
+  'Identity & Identity Verification': { objectiveFields: ['name','aliases','age','dateOfBirth'], preferredRazors: ['razor:identity','razor:record'], evidenceHints: ['identity','born','age','alias'] },
+  'Phone Numbers': { objectiveFields: ['phone'], preferredRazors: ['razor:contact','razor:identity'], evidenceHints: ['phone','telephone','contact'] },
+  'Email Addresses': { objectiveFields: ['email'], preferredRazors: ['razor:contact','razor:identity'], evidenceHints: ['email','contact'] },
+  'Current Address': { objectiveFields: ['currentAddress','city','state','zip'], preferredRazors: ['razor:address','razor:identity'], evidenceHints: ['address','resides','resident'] },
+  'Address History': { objectiveFields: ['addresses','from','to'], preferredRazors: ['razor:address','razor:identity'], evidenceHints: ['address','formerly','previous'] },
+  'Relatives & Family': { objectiveFields: ['relationship','name'], preferredRazors: ['razor:relation','razor:identity'], evidenceHints: ['relative','family','spouse','parent'] },
+  'Associates & Household Connections': { objectiveFields: ['associate','relationship'], preferredRazors: ['razor:relation','razor:identity'], evidenceHints: ['associate','household','connection'] },
+  'Social-Media Profiles': { objectiveFields: ['platform','profileUrl','handle'], preferredRazors: ['razor:social','razor:identity'], evidenceHints: ['profile','facebook','linkedin','instagram'] },
+  'Usernames & Online Accounts': { objectiveFields: ['username','service','profileUrl'], preferredRazors: ['razor:social','razor:identity'], evidenceHints: ['username','handle','account'] },
+  'Photos & Public Images': { objectiveFields: ['imageUrl','caption','publishedAt'], preferredRazors: ['razor:media','razor:identity'], evidenceHints: ['photo','image','caption'] },
+  'Employment History': { objectiveFields: ['occupation','employer','title','from','to'], preferredRazors: ['razor:identity','razor:business','razor:record'], evidenceHints: ['employment','employer','works','occupation','position'] },
+  'Education': { objectiveFields: ['school','degree','field','graduation'], preferredRazors: ['razor:identity','razor:record'], evidenceHints: ['education','university','college','degree'] },
+  'Professional Licenses & Credentials': { objectiveFields: ['licenseType','licenseNumber','status','issued','expires'], preferredRazors: ['razor:record','razor:identity'], evidenceHints: ['license','credential','certification'] },
+  'Business Ownership & Affiliations': { objectiveFields: ['business','role','status','filing'], preferredRazors: ['razor:business','razor:record'], evidenceHints: ['business','company','owner','manager','officer'] },
+  'Property & Real Estate': { objectiveFields: ['property','parcel','ownership','value','mortgage','lien'], preferredRazors: ['razor:asset','razor:record'], evidenceHints: ['property','parcel','assessor','deed','mortgage','lien'] },
+  'Vehicles & Transportation Records': { objectiveFields: ['vehicle','vin','registration'], preferredRazors: ['razor:asset','razor:record'], evidenceHints: ['vehicle','vin','registration'] },
+  'Court Records': { objectiveFields: ['caseNumber','court','parties','filed','status'], preferredRazors: ['razor:court','razor:record'], evidenceHints: ['court','case','docket'] },
+  'Criminal Records': { objectiveFields: ['caseNumber','charge','disposition','sentence'], preferredRazors: ['razor:court','razor:record'], evidenceHints: ['criminal','charge','conviction','sentence'] },
+  'Arrest & Police Records': { objectiveFields: ['agency','arrestDate','offense','status'], preferredRazors: ['razor:record','razor:court'], evidenceHints: ['arrest','police','sheriff','booking'] },
+  'Incarceration & Corrections': { objectiveFields: ['custodyStatus','facility','inmateNumber','releaseDate'], preferredRazors: ['razor:record','razor:identity'], evidenceHints: ['inmate','custody','incarcerated','corrections','prison'] },
+  'Probation & Parole Information': { objectiveFields: ['supervisionType','status','agency','endDate'], preferredRazors: ['razor:record','razor:court'], evidenceHints: ['probation','parole','supervision'] },
+  'Warrants & Wanted-Person Records': { objectiveFields: ['warrantStatus','agency','offense','issued'], preferredRazors: ['razor:record','razor:court'], evidenceHints: ['warrant','wanted'] },
+  'Sex-Offender Registries': { objectiveFields: ['registryStatus','jurisdiction','record'], preferredRazors: ['razor:record','razor:identity'], evidenceHints: ['registry','offender'] },
+  'Civil Litigation & Judgments': { objectiveFields: ['caseNumber','parties','judgment','status'], preferredRazors: ['razor:court','razor:record'], evidenceHints: ['civil','lawsuit','judgment'] },
+  'Bankruptcies, Liens & Financial Public Records': { objectiveFields: ['bankruptcy','lien','judgment','filing'], preferredRazors: ['razor:court','razor:asset','razor:record'], evidenceHints: ['bankruptcy','lien','financial','judgment'] },
+  'Marriage, Divorce & Vital-Record Information': { objectiveFields: ['eventType','date','parties','jurisdiction'], preferredRazors: ['razor:relation','razor:record','razor:identity'], evidenceHints: ['marriage','divorce','birth','death','vital'] },
+  'News & Media Mentions': { objectiveFields: ['headline','publisher','date','author','url'], preferredRazors: ['razor:media','razor:identity'], evidenceHints: ['news','published','headline','article'] },
+  'Internet & Web Footprint': { objectiveFields: ['url','service','username','mention'], preferredRazors: ['razor:social','razor:media','razor:identity'], evidenceHints: ['profile','website','account','mention'] },
+  'Government, Political & Public-Service Records': { objectiveFields: ['agency','office','role','term','filing'], preferredRazors: ['razor:record','razor:business','razor:media'], evidenceHints: ['government','agency','office','public service'] },
+  'Relationship & Timeline Intelligence': { objectiveFields: ['date','event','relationship','source'], preferredRazors: ['razor:relation','razor:identity','razor:media'], evidenceHints: ['timeline','relationship','associated','dated'] },
+};
+
+export function getPantheonCategoryExtractionSchema(label: string): PantheonCategoryExtractionSchema {
+  if (!(PANTHEON_REPORT_CATEGORY_LABELS as readonly string[]).includes(label)) {
+    throw new Error('Pantheon extraction schema rejected unknown report category: ' + label);
+  }
+  return PANTHEON_CATEGORY_EXTRACTION_SCHEMAS[label as PantheonReportCategoryLabel];
+}
+
+
 export type PantheonCapabilityClass = 'primary-retrieval' | 'secondary-retrieval' | 'evidence-extraction';
 export type PantheonTaskKind =
   | 'retrieve-source'
