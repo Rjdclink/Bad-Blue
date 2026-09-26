@@ -1258,12 +1258,6 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
   const sendGreeting = useCallback(async () => {
     if (greetingRef.current || userSpeechObservedRef.current) return;
-
-    // In live mode, do not consume the one-shot greeting while output readiness
-    // is still racing startup. The established spoken greeting must remain
-    // pending until the voice path is actually ready.
-    if (liveEnabled && !voiceReady) return;
-
     greetingRef.current = true;
     const greetingGeneration = generationRef.current;
     responseEmotionRef.current = 'calm';
@@ -1272,17 +1266,9 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     appendMessage('lexara', greeting);
 
     if (liveEnabled) {
-      try {
-        await speakLexara(greeting, greetingGeneration);
-      } catch {
-        if (greetingGeneration === generationRef.current && !userSpeechObservedRef.current) {
-          // Restore the proven retry behavior without changing normal turn TTS.
-          await new Promise(resolve => window.setTimeout(resolve, 180));
-          await speakLexara(greeting, greetingGeneration);
-        }
-      }
+      await speakLexara(greeting, greetingGeneration).catch(() => undefined);
     }
-  }, [appendMessage, liveEnabled, speakLexara, voiceReady]);
+  }, [appendMessage, liveEnabled, speakLexara]);
 
   useEffect(() => {
     if (initializedRef.current) return;
