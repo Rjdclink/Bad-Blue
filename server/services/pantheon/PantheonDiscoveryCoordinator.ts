@@ -210,7 +210,7 @@ export async function discoverPantheonSourcesParallel(
     75,
     [] as string[],
   );
-  const effectiveQuery = query;
+  const queryVariants = [...new Set([query.trim(), query.replace(/\s*\|\s*/g, ' ').replace(/\s+/g, ' ').trim()])].filter(Boolean).slice(0, 2);\n  const effectiveQuery = queryVariants[0] || query;
   const lanesAttempted: PantheonDiscoveryLane[] = [];
   const lanesWithResults: PantheonDiscoveryLane[] = [];
 
@@ -247,8 +247,8 @@ export async function discoverPantheonSourcesParallel(
         .map(url => canonicalCandidate(url))
         .filter((url: string | null): url is string => Boolean(url));
     }),
-    lane('searxng', Boolean(process.env.SEARXNG_URL?.trim()), () => searxngSearch(effectiveQuery, limit, timeoutMs, options.signal)),
-    lane('ddgs', Boolean(process.env.DDGS_URL?.trim()), () => ddgsSearch(effectiveQuery, limit, timeoutMs, options.signal)),
+    lane('searxng', Boolean(process.env.SEARXNG_URL?.trim()), async () => (await Promise.all(queryVariants.map(q => searxngSearch(q, limit, timeoutMs, options.signal)))).flat()),
+    lane('ddgs', Boolean(process.env.DDGS_URL?.trim()), async () => (await Promise.all(queryVariants.map(q => ddgsSearch(q, limit, timeoutMs, options.signal)))).flat()),
     lane('openserp', Boolean(process.env.OPENSERP_URL?.trim()), () => openSerpSearch(effectiveQuery, limit, timeoutMs, options.signal)),
     lane('commoncrawl', commonCrawlUseful(query), () => commonCrawlSearch(effectiveQuery, existingUrls, limit, timeoutMs, options.signal)),
   ]);
