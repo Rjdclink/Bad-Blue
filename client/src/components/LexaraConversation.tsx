@@ -790,7 +790,6 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const enableVoice = useCallback(async () => {
     try {
       await enableRecognition();
-      startListening();
 
       const backendReady = await checkVoiceBackendReadiness();
       setVoiceReady(backendReady);
@@ -1287,7 +1286,12 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       if (!voiceReady) {
         setVoiceReady(true);
         setErrorMessage(null);
-        startListening();
+        // Keep the microphone from winning the startup race against the
+        // one-shot spoken greeting. speakLexara() resumes full-duplex
+        // recognition as soon as the greeting begins.
+        if (greetingRef.current || userSpeechObservedRef.current) {
+          startListening();
+        }
       }
       if (phaseRef.current === 'text-only' || phaseRef.current === 'initializing') {
         setConversationPhase('listening');
