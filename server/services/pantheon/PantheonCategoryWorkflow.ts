@@ -50,6 +50,7 @@ import {
 import type { PantheonControlledQueryPlan, PantheonStartingIdentifier } from './PantheonQueryPlan';
 import {
   candidatesForPantheonCategory,
+  discoverPantheonCategoryGapCandidates,
   discoverPantheonSearchFirstCandidates,
   type PantheonSearchFirstCandidate,
 } from './PantheonSearchFirstDiscovery';
@@ -855,10 +856,21 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
       runnableCapabilities,
       ledgerGroups,
     );
-    const searchFirstEntries: PantheonUrlLedgerEntry[] = candidatesForPantheonCategory(
+    const initialCategoryDiscovery = candidatesForPantheonCategory(
       input.searchFirstCandidates,
       index,
-    ).flatMap((candidate, discoveryIndex) => {
+    );
+    const categoryDiscoveryCandidates = initialCategoryDiscovery.length
+      ? initialCategoryDiscovery
+      : await discoverPantheonCategoryGapCandidates({
+          name: input.name,
+          location: input.location,
+          category,
+          categoryIndex: index,
+          signal: input.signal,
+          timeoutMs: Math.min(1_500, Math.max(750, categoryDeadlineAt - Date.now() - finalizationReserveMs)),
+        }).catch(() => []);
+    const searchFirstEntries: PantheonUrlLedgerEntry[] = categoryDiscoveryCandidates.flatMap((candidate, discoveryIndex) => {
       const admission = admitPantheonUrl(candidate.url);
       if (!admission.ok) return [];
       const registryCategory = category.registry[0];
