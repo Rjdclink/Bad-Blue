@@ -11,7 +11,7 @@ for(const token of [
 
 for(const token of [
   'const researchDecision = decideLexaraResearchNeed(prompt, recentUserTurns)',
-  "researchDecision.needed && researchDecision.objectiveKind !== 'legal-authority'",
+  "researchDecision.needed && (researchDecision.objectiveKind !== 'legal-authority' || context.delegatedByLexara)",
   'hasEnoughIdentityContext(combined)',
 ]) if(!investigation.includes(token)) throw new Error('Pantheon intent handoff invariant missing: '+token);
 
@@ -53,7 +53,7 @@ for(const token of [
   'pendingTargets = [...new Set([...frontier, ...discovered])]',
 ]) if(!investigation.includes(token)) throw new Error('Pantheon endpoint/telemetry invariant missing: '+token);
 for(const token of [
-  "researchDecision.needed && researchDecision.objectiveKind !== 'legal-authority'\n      ? pantheonInvestigationPromise",
+  "pantheonDelegatedByLexara && researchDecision.objectiveKind !== 'legal-authority'\n      ? pantheonInvestigationPromise",
   'pantheonEndpoint:',
   'pantheonRecursionPasses:',
   'researchEndpointReached:',
