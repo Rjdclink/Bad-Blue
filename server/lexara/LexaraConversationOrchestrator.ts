@@ -367,9 +367,11 @@ export async function generateLexaraConversationResponse(
   // Pantheon is the application-owned research backbone for eligible person/external
   // fact turns. Optional web-discovery providers may supplement it but can never
   // prevent or replace this handoff.
-  const pantheonPrompt = researchDecision.needed
-    ? `${cleanPrompt}\n\nResearch objective: ${researchDecision.objective}`
-    : cleanPrompt;
+  const pantheonPrompt = mixedLegalFactNeed
+    ? `${cleanPrompt}\n\nLEXARA-DELEGATED FACTUAL OBJECTIVE: Retrieve only the person/company background facts materially relevant to this legal question. Do not perform the legal analysis and do not broaden into a full background report.`
+    : researchDecision.needed
+      ? `${cleanPrompt}\n\nResearch objective: ${researchDecision.objective}`
+      : cleanPrompt;
   const pantheonInvestigationPromise = pantheonDelegatedByLexara ? investigatePersonQuestion(pantheonPrompt, {
     delegatedByLexara: mixedLegalFactNeed,
     previousMessages: context.previousMessages,
