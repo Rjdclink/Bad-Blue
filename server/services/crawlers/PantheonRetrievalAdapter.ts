@@ -14,6 +14,7 @@ import { type CrawlerSupervisionResult } from './CainReaperSupervisor';
 import { twoStageDeployer } from '../pantheon/razors/TwoStageDeployer';
 import {
   getPantheonCategoryCapabilities,
+  getPantheonCategoryExtractionSchema,
   isPantheonCapabilitySourceCompatible,
   PANTHEON_CRAWLER_CAPABILITY_MATRIX,
   PANTHEON_PORTABLE_CAPABILITY_IDS,
@@ -498,6 +499,43 @@ export class PantheonRetrievalAdapter {
       // different compatible URL while preserving the failed source outcome.
     } else {
       results = await pantheonOrchestrator.search(request.targets, searchOptions);
+      // Conversational research also gets the full extraction/analysis skill
+      // inventory over material actually retrieved. These skills do not create
+      // extra network fetches; they help decide whether a page contains the
+      // requested fact instead of discarding useful occupation/DOB/custody/etc.
+      const extractionSchema = request.categoryLabel
+        ? (() => { try { return getPantheonCategoryExtractionSchema(request.categoryLabel!); } catch { return undefined; } })()
+        : undefined;
+      const conversationalCapabilityIds: PantheonCapabilityId[] = [
+        ...(extractionSchema?.preferredRazors || PANTHEON_RAZOR_SKILL_IDS),
+        ...PANTHEON_SECONDARY_CRAWLER_IDS,
+        ...PANTHEON_PORTABLE_CAPABILITY_IDS,
+      ];
+      const conversationalSupplementalPromises = results
+        .filter(result => result.content?.trim())
+        .slice(0, 4)
+        .map(result => runPantheonSupplementalCapabilities({
+          target: result.target,
+          canonicalContent: result.content,
+          capabilityIds: conversationalCapabilityIds,
+          budgetMs: Math.max(1_000, Math.min(5_000, remainingBudgetMs())),
+          deadlineAt: deadlineAt || (Date.now() + 5_000),
+          signal: operationSignal,
+          investigationId: `lexara:${retrievalStartedAt}`,
+          categoryId: request.categoryLabel || 'conversational',
+          workId: `lexara:${result.crawler}:${result.timestamp}`,
+          subject: request.subject || '',
+          location: request.location,
+          categoryLabel: request.categoryLabel,
+          transport: 'direct-http',
+          sourceContext: { transport: 'direct-http', workType: request.workType, subjectScoped: request.subjectScoped },
+        }));
+      if (conversationalSupplementalPromises.length) {
+        supplementalRunPromise = Promise.allSettled(conversationalSupplementalPromises).then(settled => ({
+          evidence: settled.flatMap(item => item.status === 'fulfilled' ? item.value.evidence : []),
+          crawlerAudit: settled.flatMap(item => item.status === 'fulfilled' ? item.value.crawlerAudit : []),
+        }));
+      }
     }
     throwIfPantheonAborted(operationSignal);
     recordCrawlerOutcomes(results);
@@ -548,26 +586,37 @@ export class PantheonRetrievalAdapter {
       const supplemental = await supplementalRunPromise;
       evidence.push(...supplemental.evidence);
       crawlerAudit.push(...supplemental.crawlerAudit);
-      const capabilityOutcomes = applicableCapabilities.map(capabilityId => {
-        const audits = crawlerAudit.filter(audit => audit.crawler === capabilityId);
-        const clean = audits.find(audit =>
-          ['completed_with_content', 'completed_with_evidence', 'completed_no_evidence'].includes(String(audit.status || ''))
-        );
-        const timedOut = audits.find(audit => audit.status === 'timed_out');
-        return {
-          capabilityId,
-          status: clean?.status || timedOut?.status || audits[0]?.status || 'not_observed',
-          attempts: audits.reduce((sum, audit) => sum + Math.max(0, Number(audit.attempts || 0)), 0),
-        };
-      });
-      console.log('[PANTHEON][CAPABILITY-BATCH]', JSON.stringify({
-        event: 'authorized_work_outcome',
-        investigationId: request.authority!.investigationId,
-        categoryIndex: request.authority!.categoryIndex,
-        category: request.categoryLabel,
-        workId: request.authority!.workId,
-        capabilityOutcomes,
-      }));
+      if (request.purpose !== 'background_report') {
+        console.log('[PANTHEON][CONVERSATIONAL-CAPABILITY-BATCH]', JSON.stringify({
+          event: 'conversational_skill_outcome',
+          selectedPrimaryCrawlers: plan.crawlers,
+          supplementalSkillsObserved: [...new Set(supplemental.crawlerAudit.map(item => item.crawler))],
+          supplementalEvidence: supplemental.evidence.length,
+          extractionObjectiveFields: extractionSchema?.objectiveFields || [],
+        }));
+      }
+      if (request.purpose === 'background_report') {
+        const capabilityOutcomes = applicableCapabilities.map(capabilityId => {
+          const audits = crawlerAudit.filter(audit => audit.crawler === capabilityId);
+          const clean = audits.find(audit =>
+            ['completed_with_content', 'completed_with_evidence', 'completed_no_evidence'].includes(String(audit.status || ''))
+          );
+          const timedOut = audits.find(audit => audit.status === 'timed_out');
+          return {
+            capabilityId,
+            status: clean?.status || timedOut?.status || audits[0]?.status || 'not_observed',
+            attempts: audits.reduce((sum, audit) => sum + Math.max(0, Number(audit.attempts || 0)), 0),
+          };
+        });
+        console.log('[PANTHEON][CAPABILITY-BATCH]', JSON.stringify({
+          event: 'authorized_work_outcome',
+          investigationId: request.authority!.investigationId,
+          categoryIndex: request.authority!.categoryIndex,
+          category: request.categoryLabel,
+          workId: request.authority!.workId,
+          capabilityOutcomes,
+        }));
+      }
     }
 
     // Every evidence lane, including local extraction/analysis lanes, carries

@@ -25,7 +25,10 @@ export type LexaraCrawlerCapability =
   | 'blind-spot-analysis'
   | 'structured-extraction'
   | 'market-observation'
-  | 'crypto-observation';
+  | 'crypto-observation'
+  | 'occupation'
+  | 'incarceration'
+  | 'vital-records';
 
 export type LexaraCrawlerFamily =
   | 'pantheon-core'
@@ -95,25 +98,25 @@ export const LEXARA_CRAWLER_CAPABILITY_POOL: readonly LexaraCrawlerDescriptor[] 
   c('lich', 'LichCrawler', 'pantheon-core', 'server/services/crawlers/TrinityCrawlers.ts', ['deep-crawl', 'verification'], 'retrieval', 'deep'),
 
   c('mirror', 'MirrorCrawler', 'seven-crawler', 'server/services/crawlers/SixCrawlerInitiative.ts', ['verification', 'pattern-analysis'], 'analysis', 'fast'),
-  c('key', 'KeyCrawler', 'seven-crawler', 'server/services/crawlers/SixCrawlerInitiative.ts', ['identity', 'verification', 'pattern-analysis'], 'analysis', 'fast'),
-  c('chewer', 'ChewerCrawler', 'seven-crawler', 'server/services/crawlers/SixCrawlerInitiative.ts', ['structured-extraction', 'pattern-analysis'], 'analysis', 'fast'),
+  c('key', 'KeyCrawler', 'seven-crawler', 'server/services/crawlers/SixCrawlerInitiative.ts', ['identity', 'vital-records', 'verification', 'pattern-analysis'], 'analysis', 'fast'),
+  c('chewer', 'ChewerCrawler', 'seven-crawler', 'server/services/crawlers/SixCrawlerInitiative.ts', ['structured-extraction', 'occupation', 'vital-records', 'incarceration', 'pattern-analysis'], 'analysis', 'fast'),
   c('computational', 'ComputationalCrawler', 'seven-crawler', 'server/services/crawlers/SixCrawlerInitiative.ts', ['pattern-analysis', 'verification'], 'analysis', 'fast'),
   c('usc', 'USCCrawler', 'seven-crawler', 'server/services/crawlers/SixCrawlerInitiative.ts', ['verification', 'pattern-analysis'], 'analysis', 'fast'),
   c('woo', 'WooCrawler', 'seven-crawler', 'server/services/crawlers/SixCrawlerInitiative.ts', ['pattern-analysis'], 'analysis', 'fast'),
   c('silence', 'SilenceCrawler', 'seven-crawler', 'server/services/crawlers/SixCrawlerInitiative.ts', ['blind-spot-analysis', 'verification'], 'analysis', 'fast'),
 
-  c('ice', 'IceCrawler', 'pantheon-secondary', 'server/services/pantheon/crawlers/ice.ts', ['structured-extraction', 'public-records', 'change-detection'], 'retrieval', 'fast'),
+  c('ice', 'IceCrawler', 'pantheon-secondary', 'server/services/pantheon/crawlers/ice.ts', ['structured-extraction', 'public-records', 'occupation', 'vital-records', 'incarceration', 'change-detection'], 'retrieval', 'fast'),
   c('hydra', 'HydraCrawler', 'pantheon-secondary', 'server/services/pantheon/crawlers/hydra.ts', ['web-discovery', 'deep-crawl'], 'retrieval', 'deep'),
   c('wraith', 'WraithCrawler', 'pantheon-secondary', 'server/services/pantheon/crawlers/wraith.ts', ['web-discovery', 'verification'], 'retrieval', 'fast'),
   c('farm', 'FarmCrawler', 'pantheon-secondary', 'server/services/pantheon/crawlers/utility.ts', ['verification', 'structured-extraction', 'change-detection'], 'retrieval', 'fast', always, 'Public-evidence fingerprinting and deduplication only.'),
   c('phantom', 'PhantomCrawler', 'pantheon-secondary', 'server/services/pantheon/crawlers/utility.ts', ['web-discovery', 'verification'], 'retrieval', 'fast'),
   c('nova', 'NovaCrawler', 'pantheon-secondary', 'server/services/pantheon/crawlers/utility.ts', ['web-discovery', 'legal-authority'], 'retrieval', 'instant'),
 
-  c('razor-identity', 'IdentityRazor', 'razor', 'server/services/pantheon/razors/implementations.ts', ['identity', 'structured-extraction'], 'extractor', 'instant'),
+  c('razor-identity', 'IdentityRazor', 'razor', 'server/services/pantheon/razors/implementations.ts', ['identity', 'vital-records', 'occupation', 'structured-extraction'], 'extractor', 'instant'),
   c('razor-contact', 'ContactRazor', 'razor', 'server/services/pantheon/razors/implementations.ts', ['contact', 'structured-extraction'], 'extractor', 'instant'),
   c('razor-address', 'AddressRazor', 'razor', 'server/services/pantheon/razors/implementations.ts', ['address', 'structured-extraction'], 'extractor', 'instant'),
   c('razor-social', 'SocialRazor', 'razor', 'server/services/pantheon/razors/implementations.ts', ['social-media', 'structured-extraction'], 'extractor', 'instant'),
-  c('razor-record', 'RecordRazor', 'razor', 'server/services/pantheon/razors/implementations.ts', ['public-records', 'structured-extraction'], 'extractor', 'instant'),
+  c('razor-record', 'RecordRazor', 'razor', 'server/services/pantheon/razors/implementations.ts', ['public-records', 'incarceration', 'occupation', 'vital-records', 'structured-extraction'], 'extractor', 'instant'),
   c('razor-asset', 'AssetRazor', 'razor', 'server/services/pantheon/razors/implementations.ts', ['assets', 'structured-extraction'], 'extractor', 'instant'),
   c('razor-court', 'CourtRazor', 'razor', 'server/services/pantheon/razors/implementations.ts', ['case-law', 'public-records', 'structured-extraction'], 'extractor', 'instant'),
   c('razor-business', 'BusinessRazor', 'razor', 'server/services/pantheon/razors/implementations.ts', ['business', 'structured-extraction'], 'extractor', 'instant'),
@@ -129,7 +132,7 @@ export const LEXARA_CRAWLER_CAPABILITY_POOL: readonly LexaraCrawlerDescriptor[] 
   c('adaptive-legal', 'AdaptiveCrawler', 'legal', 'server/services/legalIntelligence/adaptiveCrawler.ts', ['legal-authority', 'semantic-extraction', 'deep-crawl'], 'retrieval', 'deep'),
   c('legal-crawler', 'LegalCrawler', 'legal', 'server/legalCrawler.ts', ['legal-authority', 'case-law', 'statutes', 'regulations'], 'retrieval', 'deep'),
   c('beneficial', 'BeneficialCrawler', 'legal', 'server/beneficialCrawler.ts', ['verification', 'pattern-analysis'], 'analysis', 'deep'),
-  c('public-record', 'PublicRecordScraper', 'legal', 'server/services/iceEngine/scraping/PublicRecordScraper.ts', ['public-records', 'change-detection'], 'retrieval', 'fast'),
+  c('public-record', 'PublicRecordScraper', 'legal', 'server/services/iceEngine/scraping/PublicRecordScraper.ts', ['public-records', 'occupation', 'vital-records', 'incarceration', 'change-detection'], 'retrieval', 'fast'),
 
   c('pacer', 'PACERScraper', 'criminal', 'server/services/criminalRecords/sources/PACERScraper.ts', ['federal-docket', 'criminal-records', 'case-law'], 'retrieval', 'deep', hasPacer, 'PACER is billable in production and executes only when credentials are configured.'),
   c('state-court', 'StateCourtScraper', 'criminal', 'server/services/criminalRecords/sources/StateCourtScraper.ts', ['criminal-records', 'case-law'], 'retrieval', 'deep', always),
@@ -180,29 +183,61 @@ function desiredCapabilities(input: LexaraCrawlerSelectionInput): Set<LexaraCraw
   if (/case|precedent|holding|opinion|docket/.test(text)) desired.add('case-law');
   if (/statute|code section|u\.s\.c|law says|legislation/.test(text)) desired.add('statutes');
   if (/regulation|c\.f\.r|agency rule/.test(text)) desired.add('regulations');
-  if (/person|people|phone|address|relative|associate|locate/.test(text)) desired.add('people-search');
+  if (/person|people|phone|address|relative|associate|locate|born|birthday|date of birth|dob|employ|occupation|job|works? at|works? for|inmate|incarcerat|prison|jail|custody/.test(text)) desired.add('people-search');
+  if (/born|birthday|date of birth|dob|marriage|divorc|death|deceased/.test(text)) desired.add('vital-records');
+  if (/employ|occupation|job|works? at|works? for|profession/.test(text)) desired.add('occupation');
+  if (/inmate|incarcerat|prison|jail|custody|corrections/.test(text)) desired.add('incarceration');
   if (/social media|facebook|instagram|linkedin|twitter|x\.com|tiktok/.test(text)) desired.add('social-media');
   if (/property|asset|parcel|vehicle|business|company|corporation|llc/.test(text)) desired.add('public-records');
   if (/crypto|blockchain|token|exchange|arbitrage|wallet|defi/.test(text)) desired.add('crypto-observation');
-  if (input.hasDiscoveredUrls) desired.add('semantic-extraction');
+  if (input.hasDiscoveredUrls) {
+    desired.add('semantic-extraction');
+    desired.add('structured-extraction');
+  }
   return desired;
 }
 
-export function selectLexaraCrawlerPlan(input: LexaraCrawlerSelectionInput): LexaraCrawlerDescriptor[] {
-  const desired = desiredCapabilities(input);
-  const max = Math.max(1, Math.min(input.maxCrawlers ?? 8, 16));
+export type LexaraDynamicCrawlerRole = 'primary' | 'secondary' | 'tertiary';
 
+export interface LexaraDynamicCrawlerAssignment {
+  crawler: LexaraCrawlerDescriptor;
+  roles: LexaraDynamicCrawlerRole[];
+  matchedCapabilities: LexaraCrawlerCapability[];
+  priorityScore: number;
+  explorationRequired: boolean;
+}
+
+function rolesForCrawler(item: LexaraCrawlerDescriptor, desired: ReadonlySet<LexaraCrawlerCapability>): LexaraDynamicCrawlerRole[] {
+  const matched = item.capabilities.filter(capability => desired.has(capability));
+  const roles = new Set<LexaraDynamicCrawlerRole>();
+  if (item.executionMode === 'retrieval' || item.executionMode === 'external') roles.add('primary');
+  if (matched.some(capability => ['web-discovery','deep-crawl','social-graph','people-search','legal-authority','public-records'].includes(capability))) roles.add('secondary');
+  if (item.executionMode === 'analysis' || item.executionMode === 'extractor'
+    || matched.some(capability => ['structured-extraction','semantic-extraction','verification','pattern-analysis','blind-spot-analysis','identity'].includes(capability))) roles.add('tertiary');
+  return [...roles];
+}
+
+export function buildLexaraDynamicCrawlerAssignments(input: LexaraCrawlerSelectionInput): LexaraDynamicCrawlerAssignment[] {
+  const desired = desiredCapabilities(input);
+  // Dynamic assignment deliberately considers the complete configured pool.
+  // maxCrawlers limits the convenience shortlist returned by
+  // selectLexaraCrawlerPlan; it must never starve mandatory exploration.
   return LEXARA_CRAWLER_CAPABILITY_POOL
     .filter(item => item.configured?.() !== false)
-    .map(item => ({
-      item,
-      score: item.capabilities.reduce((sum, capability) => sum + (desired.has(capability) ? 3 : 0), 0)
-        + (item.latencyClass === 'instant' ? 2 : item.latencyClass === 'fast' ? 1 : 0),
-    }))
-    .filter(entry => entry.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, max)
-    .map(entry => entry.item);
+    .map(item => {
+      const matchedCapabilities = item.capabilities.filter(capability => desired.has(capability));
+      const roles = rolesForCrawler(item, desired);
+      const priorityScore = matchedCapabilities.length * 3
+        + (item.latencyClass === 'instant' ? 2 : item.latencyClass === 'fast' ? 1 : 0);
+      return { crawler: item, roles, matchedCapabilities, priorityScore, explorationRequired: matchedCapabilities.length > 0 };
+    })
+    .filter(assignment => assignment.matchedCapabilities.length > 0 && assignment.roles.length > 0)
+    .sort((left, right) => right.priorityScore - left.priorityScore);
+}
+
+export function selectLexaraCrawlerPlan(input: LexaraCrawlerSelectionInput): LexaraCrawlerDescriptor[] {
+  const max = Math.max(1, Math.min(input.maxCrawlers ?? 8, 16));
+  return buildLexaraDynamicCrawlerAssignments(input).slice(0, max).map(assignment => assignment.crawler);
 }
 
 export function getLexaraCrawlerCapabilityPool(): readonly LexaraCrawlerDescriptor[] {

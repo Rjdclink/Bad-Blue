@@ -19,12 +19,16 @@ export class IdentityRazor extends BaseRazor {
   async extract(html: string, _url: string) {
     const names = this.matchPatterns(html);
     const ageMatch = html.match(/(?:age|born)[:\s]*(\d{1,3})/i);
-    const dobMatch = html.match(/(?:dob|birth)[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i);
+    const dobMatch = html.match(/(?:dob|date\s+of\s+birth|birth(?:day|date)?|born)[:\s]*(?:on\s+)?((?:\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})|(?:[A-Z][a-z]+\s+\d{1,2},?\s+\d{4}))/i);
+    const occupationMatch = html.match(/(?:occupation|profession|job|employment|employed\s+as|works?\s+as|position|title)[:\s]*(?:is\s+)?([^<\n.;]{2,120})/i);
+    const employerMatch = html.match(/(?:employer|employed\s+(?:at|by)|works?\s+(?:at|for))[:\s]*([^<\n.;]{2,160})/i);
     
     return {
       names: names.slice(0, 5),
       age: ageMatch?.[1] ? parseInt(ageMatch[1]) : null,
       dateOfBirth: dobMatch?.[1] || null,
+      occupation: occupationMatch?.[1]?.trim() || null,
+      employer: employerMatch?.[1]?.trim() || null,
     };
   }
 }
@@ -127,12 +131,18 @@ export class RecordRazor extends BaseRazor {
   async extract(html: string, _url: string) {
     const records = this.matchPatterns(html);
     const caseNumbers = records.filter(r => /case/i.test(r));
+    const custodyMatch = html.match(/(?:custody\s+status|incarceration\s+status|status)[:\s]*(incarcerated|in\s+custody|released|paroled|detained|confined)/i);
+    const facilityMatch = html.match(/(?:facility|institution|prison|jail|correctional\s+(?:center|facility))[:\s]*([^<\n.;]{2,160})/i);
+    const inmateNumberMatch = html.match(/(?:inmate|register|offender)\s*(?:number|no\.?|#)[:\s]*([A-Z0-9-]+)/i);
     const licenses = records.filter(r => /license|permit/i.test(r));
     
     return {
       caseNumbers: caseNumbers.slice(0, 10),
       licenses: licenses.slice(0, 10),
       recordCount: records.length,
+      custodyStatus: custodyMatch?.[1] || null,
+      facility: facilityMatch?.[1]?.trim() || null,
+      inmateNumber: inmateNumberMatch?.[1] || null,
     };
   }
 }

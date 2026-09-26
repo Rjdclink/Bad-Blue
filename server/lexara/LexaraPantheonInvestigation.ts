@@ -2,7 +2,7 @@ import { pantheonRetrievalAdapter, type RetrievalEvidence } from '../services/cr
 import { buildPantheonCategoryTargets, type PantheonBackgroundCategory } from '../services/pantheon/PantheonSovereignSourceRegistry';
 import { searchInmates } from '../services/inmateSearch/InmateSearchAggregator';
 import { matchPantheonSubject } from '../services/pantheon/PantheonEntityResolution';
-import { selectLexaraCrawlerPlan } from './LexaraCrawlerCapabilityRegistry';
+import { buildLexaraDynamicCrawlerAssignments } from './LexaraCrawlerCapabilityRegistry';
 import { PANTHEON_PRIMARY_CRAWLER_IDS, type PantheonPrimaryCrawlerId } from '../services/pantheon/PantheonCrawlerCapabilityMatrix';
 import { discoverPantheonSourcesParallel } from '../services/pantheon/PantheonDiscoveryCoordinator';
 import { rememberPantheonDiscoveryOutcome } from '../services/pantheon/PantheonDiscoveryLearning';
@@ -105,6 +105,81 @@ function requestedCategories(prompt: string): PantheonBackgroundCategory[] {
   categories.add('identity-resolution');
   return [...categories];
 }
+const REPORT_LABEL_BY_BACKGROUND_CATEGORY: Partial<Record<PantheonBackgroundCategory, string>> = {
+  identity: 'Identity & Identity Verification',
+  'identity-resolution': 'Identity & Identity Verification',
+  contacts: 'Phone Numbers',
+  residence: 'Current Address',
+  relatives: 'Relatives & Family',
+  associates: 'Associates & Household Connections',
+  social: 'Social-Media Profiles',
+  usernames: 'Usernames & Online Accounts',
+  internet: 'Internet & Web Footprint',
+  news: 'News & Media Mentions',
+  employment: 'Employment History',
+  education: 'Education',
+  credentials: 'Professional Licenses & Credentials',
+  business: 'Business Ownership & Affiliations',
+  corporate: 'Business Ownership & Affiliations',
+  property: 'Property & Real Estate',
+  transportation: 'Vehicles & Transportation Records',
+  courts: 'Court Records',
+  criminal: 'Criminal Records',
+  arrests: 'Arrest & Police Records',
+  corrections: 'Incarceration & Corrections',
+  'probation-parole': 'Probation & Parole Information',
+  warrants: 'Warrants & Wanted-Person Records',
+  'sex-offender': 'Sex-Offender Registries',
+  'civil-litigation': 'Civil Litigation & Judgments',
+  bankruptcy: 'Bankruptcies, Liens & Financial Public Records',
+  'financial-public': 'Bankruptcies, Liens & Financial Public Records',
+  'vital-records': 'Marriage, Divorce & Vital-Record Information',
+  'government-employment': 'Government, Political & Public-Service Records',
+  'relationship-graph': 'Relationship & Timeline Intelligence',
+  chronology: 'Relationship & Timeline Intelligence',
+};
+
+function conversationalReportCategoryLabel(prompt: string, categories: readonly PantheonBackgroundCategory[]): string {
+  const rules: Array<[RegExp, string]> = [
+    [/phone|telephone/i, 'Phone Numbers'],
+    [/email|e-mail/i, 'Email Addresses'],
+    [/address\s+history|previous\s+address|formerly\s+lived/i, 'Address History'],
+    [/current\s+address|where\s+(?:does|is).*live|resides?/i, 'Current Address'],
+    [/relative|family|parent|sibling|brother|sister|child|son|daughter/i, 'Relatives & Family'],
+    [/associate|household|roommate|connection/i, 'Associates & Household Connections'],
+    [/social\s+media|facebook|instagram|linkedin|tiktok|twitter|x\.com/i, 'Social-Media Profiles'],
+    [/username|online\s+account|screen\s*name|handle/i, 'Usernames & Online Accounts'],
+    [/photo|image|picture/i, 'Photos & Public Images'],
+    [/employ|occupation|profession|job\s+history|works?\s+(?:at|for|as)/i, 'Employment History'],
+    [/education|school|college|university|degree|diploma/i, 'Education'],
+    [/professional\s+license|credential|certification|license\s+(?:status|suspend|reinstate|revok|active|inactive)/i, 'Professional Licenses & Credentials'],
+    [/business|company|corporat|llc|partnership|ownership/i, 'Business Ownership & Affiliations'],
+    [/property|house|home|real\s+estate|deed|parcel|assessor|mortgage/i, 'Property & Real Estate'],
+    [/vehicle|car|truck|motorcycle|vin|registration/i, 'Vehicles & Transportation Records'],
+    [/arrest|police|booking/i, 'Arrest & Police Records'],
+    [/inmate|incarcerat|prison|jail|custody|corrections/i, 'Incarceration & Corrections'],
+    [/probation|parole|supervision/i, 'Probation & Parole Information'],
+    [/warrant|wanted/i, 'Warrants & Wanted-Person Records'],
+    [/sex\s+offender|offender\s+registry/i, 'Sex-Offender Registries'],
+    [/bankrupt|lien|financial\s+public/i, 'Bankruptcies, Liens & Financial Public Records'],
+    [/civil\s+(?:case|litigation)|judgment|lawsuit/i, 'Civil Litigation & Judgments'],
+    [/criminal|conviction|sentenc/i, 'Criminal Records'],
+    [/court|case|docket/i, 'Court Records'],
+    [/married|marriage|spouse|husband|wife|divorc|birth|born|death|deceased|obituary|vital/i, 'Marriage, Divorce & Vital-Record Information'],
+    [/news|media|newspaper|press\s+release/i, 'News & Media Mentions'],
+    [/internet|web\s+footprint|website|domain/i, 'Internet & Web Footprint'],
+    [/government|public\s+service|campaign|political|lobby/i, 'Government, Political & Public-Service Records'],
+    [/timeline|chronolog|relationship|history|corroborat|contradict/i, 'Relationship & Timeline Intelligence'],
+    [/identity|date\s+of\s+birth|\bdob\b|\bage\b|birthday/i, 'Identity & Identity Verification'],
+  ];
+  for (const [pattern, label] of rules) if (pattern.test(prompt)) return label;
+  for (const category of categories) {
+    const label = REPORT_LABEL_BY_BACKGROUND_CATEGORY[category];
+    if (label) return label;
+  }
+  return 'Identity & Identity Verification';
+}
+
 function categoryDiscoveryTerms(categories: readonly PantheonBackgroundCategory[]): string {
   const terms = new Set<string>();
   if (categories.includes('corrections')) ['inmate locator','offender search','sheriff jail roster','detention center inmate search'].forEach(value => terms.add(value));
@@ -296,14 +371,26 @@ export async function investigatePersonQuestion(
     const resolvedOrganization = extractOrganizationName(combined);
     const resolvedSubject = resolvedName || resolvedOrganization || '';
     const resolvedEntityType = resolvedOrganization && !resolvedName ? 'organization' : 'person';
-    const primaryCrawlerSet = new Set<string>(PANTHEON_PRIMARY_CRAWLER_IDS);
-    const selectedPrimaryCrawlers = selectLexaraCrawlerPlan({
+    const dynamicAssignments = buildLexaraDynamicCrawlerAssignments({
       prompt: combined,
       jurisdiction: context.jurisdiction,
       hasDiscoveredUrls: true,
       maxCrawlers: 16,
-    })
-      .map(crawler => crawler.id)
+    });
+    console.info('[LEXARA PantheonRoute]', {
+      stage: 'dynamic-rosters',
+      assignments: dynamicAssignments.map(assignment => ({
+        crawler: assignment.crawler.id,
+        roles: assignment.roles,
+        matchedCapabilities: assignment.matchedCapabilities,
+        priorityScore: assignment.priorityScore,
+        explorationRequired: assignment.explorationRequired,
+      })),
+    });
+    const primaryCrawlerSet = new Set<string>(PANTHEON_PRIMARY_CRAWLER_IDS);
+    const selectedPrimaryCrawlers = dynamicAssignments
+      .filter(assignment => assignment.roles.includes('primary'))
+      .map(assignment => assignment.crawler.id)
       .filter((id): id is PantheonPrimaryCrawlerId => primaryCrawlerSet.has(id));
     // Never collapse a person-record lookup to one generic crawler. If the
     // capability scorer found no primary route, retain the complete primary
@@ -311,6 +398,10 @@ export async function investigatePersonQuestion(
     const primaryCrawlers = selectedPrimaryCrawlers.length
       ? [...new Set(selectedPrimaryCrawlers)]
       : [...PANTHEON_PRIMARY_CRAWLER_IDS];
+    const eligiblePrimaryCrawlerIds = dynamicAssignments
+      .filter(assignment => assignment.roles.includes('primary') && primaryCrawlerSet.has(assignment.crawler.id))
+      .map(assignment => assignment.crawler.id as PantheonPrimaryCrawlerId);
+    const explorationPrimaryQueue = [...new Set([...eligiblePrimaryCrawlerIds, ...PANTHEON_PRIMARY_CRAWLER_IDS])];
 
     const recursiveStartedAt = Date.now();
     const globalDeadlineAt = recursiveStartedAt + PERSON_RECURSIVE_TOTAL_BUDGET_MS;
@@ -348,7 +439,10 @@ export async function investigatePersonQuestion(
 
       const remainingMs = Math.max(500, PERSON_RECURSIVE_TOTAL_BUDGET_MS - (Date.now() - recursiveStartedAt));
       const retrievalStartedAt = Date.now();
-      const perPassBudgetMs = Math.min(20_000, remainingMs);
+      // 20s is a soft escalation checkpoint, not a job-killing ceiling. Give
+      // productive crawler work a larger bounded slice while preserving the
+      // ten-minute absolute investigation deadline.
+      const perPassBudgetMs = Math.min(pass === 0 ? 25_000 : 60_000, remainingMs);
       let retrieval;
       try {
         retrieval = await pantheonRetrievalAdapter.retrieve({
@@ -359,7 +453,10 @@ export async function investigatePersonQuestion(
           deadlineAt: Math.min(globalDeadlineAt, retrievalStartedAt + perPassBudgetMs),
           subject: combined,
           location: context.jurisdiction,
-          primaryCrawlers,
+          categoryLabel: conversationalReportCategoryLabel(prompt, categories),
+          primaryCrawlers: pass === 0
+            ? primaryCrawlers
+            : explorationPrimaryQueue.filter((_, index) => index <= Math.min(explorationPrimaryQueue.length - 1, pass + 1)),
           signal: context.signal,
         });
       } catch (error) {
@@ -379,7 +476,8 @@ export async function investigatePersonQuestion(
         emitDueCheckpoints();
         if (context.signal?.aborted) break;
         if (Date.now() >= globalDeadlineAt) break;
-        // A source/pass deadline is route-local. It must never become the
+        // A source/pass deadline is route-local and acts as an escalation
+        // checkpoint. It must never become the
         // conversational research job's hard deadline.
         pendingTargets = [];
         try {
@@ -471,6 +569,8 @@ export async function investigatePersonQuestion(
         pass: recursionPasses,
         bestConfidence,
         publishableEvidence: rankedScores.filter(score => score >= PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD).length,
+        crawlerMode: pass === 0 ? 'selected' : 'mandatory-capability-exploration',
+        eligibleCrawlerCount: dynamicAssignments.filter(assignment => assignment.explorationRequired).length,
         acceptedEvidence: acceptedEvidence.size + structuredEvidence.length,
       });
       // Adaptive successful endpoint: do not burn the ten-minute ceiling when
