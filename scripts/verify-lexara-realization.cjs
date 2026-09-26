@@ -763,7 +763,7 @@ must(
 );
 must(
   lexaraPantheonInvestigation.includes('PERSON_RECURSIVE_TOTAL_BUDGET_MS = 10 * 60_000') &&
-    lexaraPantheonInvestigation.includes('perPassBudgetMs = Math.min(pass === 0 ? 25_000 : 60_000, remainingMs)') &&
+    lexaraPantheonInvestigation.includes('perPassBudgetMs = Math.min(pass === 0 ? 45_000 : 75_000, remainingMs)') &&
     lexaraPantheonInvestigation.includes('NEVER name, infer, recommend, or substitute a county'),
   'targeted Pantheon research is bounded for live conversation and county claims require evidence',
 );
@@ -781,7 +781,7 @@ must(
   lexaraPantheonInvestigation.includes('coverageLimited?: boolean') &&
     lexaraPantheonInvestigation.includes('COVERAGE STATUS:') &&
     lexaraPantheonInvestigation.includes('This is not proof that no record exists') &&
-    lexaraPantheonInvestigation.includes('Do not infer that the person has no record'),
+    lexaraPantheonInvestigation.includes('never infer absence from a failed search'),
   'Pantheon retrieval gaps are communicated to Lexara as coverage limits rather than false negative records',
 );
 must(
@@ -803,7 +803,7 @@ must(
 );
 must(
   pantheonInvestigation.includes("date\\s+of\\s+death") &&
-    pantheonInvestigation.includes("['vital-records','historical','chronology','news','family-probate']"),
+    pantheonInvestigation.includes("['vital-records','historical','chronology','news','family-probate','estate']"),
   'Lexara death questions route through Pantheon vital historical chronology news and probate evidence',
 );
 must(
@@ -875,7 +875,7 @@ must(
   'Lexara accepts Pantheon person-record evidence only after subject matching',
 );
 must(
-  lexaraPantheonInvestigation.includes("'vital-records','credentials','professional-discipline','courts','criminal','corrections','historical','chronology','news'") &&
+  lexaraPantheonInvestigation.includes("['identity','identity-resolution','vital-records','historical','chronology']") &&
     lexaraPantheonInvestigation.includes("'professional license lookup','license verification','disciplinary order','reinstatement order'"),
   'person fact research broadens across record families rather than using a fact-specific single source',
 );
@@ -1005,6 +1005,13 @@ const domainImplementationSourceLines = domainImplementationSources.split('\n').
 must(domainExpertiseSourceLines.length === 40, 'literal 40-source LEXARA practice-area legal review is present');
 must(domainImplementationSourceLines.length === 10, 'literal 10-source LEXARA specialization implementation review is present');
 if (process.exitCode) process.exit(process.exitCode);
+must(
+  lexaraConversationOrchestrator.includes("researchDecision.objectiveKind !== 'legal-authority'") &&
+    lexaraPantheonInvestigation.includes('isLexaraLegalAuthorityIntent(prompt)') &&
+    lexaraPantheonInvestigation.includes("researchDecision.objectiveKind !== 'legal-authority'"),
+  'legal authority questions retain the fast legal route and cannot be hijacked by Pantheon person research',
+);
+
 console.log('LEXARA 40-domain specialization verification passed.');
 
 must(
