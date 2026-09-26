@@ -761,8 +761,8 @@ must(
   'person-record lookup cannot block before the live research budget or invent county jurisdiction',
 );
 must(
-  lexaraPantheonInvestigation.includes('PERSON_RECURSIVE_TOTAL_BUDGET_MS = 4_500') &&
-    lexaraPantheonInvestigation.includes('budgetMs: Math.min(1_600, remainingMs)') &&
+  lexaraPantheonInvestigation.includes('PERSON_RECURSIVE_TOTAL_BUDGET_MS = 10 * 60_000') &&
+    lexaraPantheonInvestigation.includes('perPassBudgetMs = Math.min(20_000, remainingMs)') &&
     lexaraPantheonInvestigation.includes('NEVER name, infer, recommend, or substitute a county'),
   'targeted Pantheon research is bounded for live conversation and county claims require evidence',
 );
@@ -863,7 +863,7 @@ for (const question of [
 }
 must(
   lexaraPantheonInvestigation.includes("structured_custody_budget_exhausted") &&
-    lexaraPantheonInvestigation.includes('1_200'),
+    lexaraPantheonInvestigation.includes('STRUCTURED_CUSTODY_BUDGET_MS = 5 * 60_000'),
   'structured custody lookup is bounded so slow inmate providers cannot stall Lexara',
 );
 must(
@@ -878,10 +878,11 @@ must(
   'person fact research broadens across record families rather than using a fact-specific single source',
 );
 must(
-  lexaraPantheonInvestigation.includes('PERSON_RECURSIVE_MAX_PASSES = 3') &&
-    lexaraPantheonInvestigation.includes('PERSON_RECURSIVE_MAX_TOTAL_TARGETS = 18') &&
+  lexaraPantheonInvestigation.includes('PERSON_RECURSIVE_MAX_PASSES = 30') &&
+    lexaraPantheonInvestigation.includes('PERSON_RECURSIVE_MAX_TARGETS_PER_PASS = 10') &&
+    lexaraPantheonInvestigation.includes('PERSON_RECURSIVE_MAX_TOTAL_TARGETS = 30') &&
     lexaraPantheonInvestigation.includes('discoverPantheonSourcesParallel(') &&
-    lexaraPantheonInvestigation.includes('acceptedEvidence.size + structuredEvidence.length >= PERSON_RECURSIVE_SUFFICIENT_EVIDENCE'),
+    lexaraPantheonInvestigation.includes('corroboratedHighConfidence || bestConfidence >= PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD'),
   'recursive person research broadens dynamically with explicit bounded low-latency endpoints',
 );
 must(
