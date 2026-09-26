@@ -1010,7 +1010,10 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       // wait silently for it. The acknowledgement endpoint is deliberately
       // sub-LLM and returns a context-aware conversational response right away.
       const speculative = speculativeRequestRef.current;
-      const canReuseSpeculative = speculative?.text === message;
+      // Speculative /chat responses cannot carry progressive Pantheon SSE
+      // evidence. Reuse them only for turns that do not need grounded research.
+      const researchLikely = /\?|\b(?:look\s+(?:it|this|that)\s+up|search|research|verify|find\s+out|check|investigate|current|currently|latest|today|now|record|filing|docket|license|mortgage|inmate|incarcerat|property)\b/i.test(message);
+      const canReuseSpeculative = speculative?.text === message && !researchLikely;
       const analysisPromise = canReuseSpeculative
         ? speculative!.promise
         : fetch('/api/lexara/chat/stream', {
