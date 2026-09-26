@@ -353,9 +353,10 @@ export async function discoverPantheonSourcesParallel(
     if (paidLane) lanesAttempted.push(paidLane);
     if (paidLane && paid.urls.length) lanesWithResults.push(paidLane);
   }
+  const paidUrls = rankPantheonDiscoveryUrls(paid.urls.filter(url => !seen.has(url))).slice(0, limit);
   return {
-    urls: rankPantheonDiscoveryUrls(paid.urls.filter(url => !seen.has(url))).slice(0, limit),
-    evidence: [],
+    urls: paidUrls,
+    evidence: paidUrls.map(url => ({ url, lane: (paid.provider || 'serpapi') as PantheonDiscoveryLane })),
     lanesAttempted: [...new Set(lanesAttempted)],
     lanesWithResults: [...new Set(lanesWithResults)],
   };
