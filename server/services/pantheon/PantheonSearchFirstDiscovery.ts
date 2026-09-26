@@ -95,3 +95,29 @@ export function candidatesForPantheonCategory(
 ): PantheonSearchFirstCandidate[] {
   return candidates.filter(candidate => candidate.categoryIndexes.includes(categoryIndex));
 }
+
+
+export async function discoverPantheonCategoryGapCandidates(input: {
+  name: string;
+  location?: string;
+  category: PantheonSearchFirstCategory;
+  categoryIndex: number;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}): Promise<PantheonSearchFirstCandidate[]> {
+  const locationClause = input.location?.trim() ? ` ${input.location.trim()}` : '';
+  const discoveryQuery = `"${input.name.trim()}"${locationClause} ${input.category.label} ${input.category.registry.join(' ')} official records`;
+  const result = await discoverPantheonSourcesParallel(discoveryQuery, [], {
+    categories: input.category.registry,
+    jurisdiction: input.location,
+    limit: 16,
+    timeoutMs: Math.max(750, Math.min(input.timeoutMs || 1_500, 3_000)),
+    signal: input.signal,
+    includePaidFallback: false,
+  });
+  return result.evidence.map(candidate => ({
+    ...candidate,
+    categoryIndexes: [...new Set([0, input.categoryIndex])],
+    discoveryQuery,
+  }));
+}
