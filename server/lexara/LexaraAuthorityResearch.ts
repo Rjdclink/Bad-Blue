@@ -160,7 +160,7 @@ async function discoverAuthoritySources(query: string, signal?: AbortSignal): Pr
     searchGovInfo(query, signal),
   ]);
   [...courtListenerResult, ...govInfoResult].forEach(add);
-  if (sources.some(source => source.kind === 'primary') || courtListenerResult.length > 0) return sources;
+  if (sources.some(source => source.kind === 'primary' && Boolean(source.excerpt?.trim())) || courtListenerResult.some(source => Boolean(source.excerpt?.trim()))) return sources;
 
   // Tiers 2-5: independent/self-hosted mesh. The shared discovery coordinator
   // supplies SearXNG, DDGS, OpenSERP, learned discovery, Common Crawl and
