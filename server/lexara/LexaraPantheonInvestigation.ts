@@ -23,6 +23,8 @@ export interface LexaraPersonInvestigation {
   fullBackgroundReportRequested: boolean;
   coverageLimited?: boolean;
   coverageNote?: string;
+  endpoint?: 'evidence-sufficient' | 'budget-exhausted' | 'sources-exhausted' | 'clarification-required';
+  recursionPasses?: number;
 }
 
 const PERSON_NAME_ONLY_PATTERN = /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}\b/;
@@ -156,7 +158,7 @@ export async function investigatePersonQuestion(
   const identityContext = hasEnoughIdentityContext(combined);
 
   if (!identityContext) {
-    return { clarification: clarificationFor(prompt), needsIdentityClarification: true, sources: [], categories, fullBackgroundReportRequested };
+    return { clarification: clarificationFor(prompt), needsIdentityClarification: true, sources: [], categories, fullBackgroundReportRequested, endpoint: 'clarification-required', recursionPasses: 0 };
   }
 
   // Full reports remain Pantheon's durable 30-category job workflow. The live
@@ -266,8 +268,11 @@ export async function investigatePersonQuestion(
     let retrievalReason: string | undefined;
     const acceptedEvidence = new Map<string, RetrievalEvidence>();
     const acceptedEvidenceScores = new Map<string, number>();
+    let recursionPasses = 0;
 
     for (let pass = 0; pass < PERSON_RECURSIVE_MAX_PASSES; pass++) {
+      recursionPasses = pass + 1;
+      console.info('[LEXARA PantheonRoute]', { stage: 'recursion-pass', pass: recursionPasses, pendingTargets: pendingTargets.length, categories });
       if (context.signal?.aborted || !pendingTargets.length) break;
       if (Date.now() - recursiveStartedAt >= PERSON_RECURSIVE_TOTAL_BUDGET_MS) break;
       const passTargets = pendingTargets
@@ -381,12 +386,27 @@ export async function investigatePersonQuestion(
       `${index + 1}. SOURCE: ${item.sourceUrl}\nEVIDENCE: ${item.content.trim().slice(0, 1200)}`
     );
     const evidenceSummary = [...structuredEvidence, ...webEvidence].join('\n\n').slice(0, 10_000);
+    const evidenceSufficient = evidence.length + structuredEvidence.length >= PERSON_RECURSIVE_SUFFICIENT_EVIDENCE;
+    const endpoint: LexaraPersonInvestigation['endpoint'] = evidenceSufficient
+      ? 'evidence-sufficient'
+      : Date.now() - recursiveStartedAt >= PERSON_RECURSIVE_TOTAL_BUDGET_MS
+        ? 'budget-exhausted'
+        : 'sources-exhausted';
+    console.info('[LEXARA PantheonRoute]', {
+      stage: 'endpoint',
+      endpoint,
+      recursionPasses,
+      sourcesAttempted: seenTargets.size,
+      evidenceAccepted: evidence.length + structuredEvidence.length,
+    });
     return {
       evidenceSummary,
       sources,
       categories,
       fullBackgroundReportRequested: false,
       coverageLimited: !retrievalAvailable || (evidence.length === 0 && structuredEvidence.length === 0),
+      endpoint,
+      recursionPasses,
       coverageNote: !retrievalAvailable
         ? retrievalReason || 'Pantheon retrieval was unavailable for one or more requested sources.'
         : evidence.length === 0 && structuredEvidence.length === 0
