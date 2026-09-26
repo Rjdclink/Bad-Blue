@@ -131,3 +131,30 @@ export function rankPantheonDiscoveryUrls(urls: readonly string[]): string[] {
     return (memoryScores.get(rightHost) || 0) - (memoryScores.get(leftHost) || 0);
   });
 }
+
+export async function getPantheonLearnedQueryPatterns(
+  categories: readonly string[],
+  jurisdiction?: string,
+  limit = 2,
+): Promise<string[]> {
+  const category = normalizedCategory(categories);
+  const normalizedLocation = normalizedJurisdiction(jurisdiction);
+  try {
+    await ensureLearningTable();
+    const result: any = await db.execute(sql`
+      SELECT query_pattern
+      FROM pantheon_discovery_learning
+      WHERE category = ${category}
+        AND (jurisdiction = ${normalizedLocation} OR jurisdiction = '' OR ${normalizedLocation} = '')
+        AND successes > 0
+        AND query_pattern <> ''
+      GROUP BY query_pattern
+      ORDER BY SUM(successes * 4 - failures * 2) DESC, MIN(NULLIF(avg_latency_ms, 0)) ASC NULLS LAST
+      LIMIT ${Math.max(1, Math.min(limit, 4))}
+    `);
+    const rows = Array.isArray(result?.rows) ? result.rows : Array.isArray(result) ? result : [];
+    return [...new Set(rows.map((row: any) => String(row?.query_pattern || '').trim()).filter(Boolean))];
+  } catch {
+    return [];
+  }
+}
