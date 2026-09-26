@@ -1,6 +1,7 @@
 import { orchestratedWebSearch } from '../openRouterWebSearch';
 import { pantheonRetrievalAdapter } from '../services/crawlers/PantheonRetrievalAdapter';
 import { selectLexaraCrawlerPlan } from './LexaraCrawlerCapabilityRegistry';
+import { decideLexaraResearchNeed } from './LexaraResearchIntentRouter';
 
 export type LexaraAuthoritySourceKind = 'primary' | 'secondary' | 'web';
 
@@ -316,7 +317,8 @@ export function shouldResearchLegalAuthority(
   const text = prompt.trim();
   if (!text) return false;
   if (AUTHORITY_SENSITIVE_PATTERN.test(text)) return true;
-  return !!context.jurisdiction && HIGH_CONSEQUENCE_PATTERN.test(text);
+  if (!!context.jurisdiction && HIGH_CONSEQUENCE_PATTERN.test(text)) return true;
+  return decideLexaraResearchNeed(text).needed;
 }
 
 export async function researchLegalAuthority(
