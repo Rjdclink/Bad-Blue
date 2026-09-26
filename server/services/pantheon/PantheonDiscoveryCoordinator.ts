@@ -70,16 +70,18 @@ async function withTimeout<T>(
 async function geminiGoogleSearch(query: string, limit: number, timeoutMs: number, signal?: AbortSignal): Promise<PantheonDiscoveryEvidence[]> {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) return [];
-  return withTimeout(timeoutMs, signal, async () => {
+  if (signal?.aborted) return [];
+  try {
     const client = new GoogleGenAI({ apiKey });
-    const response = await client.models.generateContent({
+    const response = await softTimeout(client.models.generateContent({
       model: process.env.GEMINI_MODEL?.trim() || 'gemini-3.8-flash',
       contents: [{ role: 'user', parts: [{ text: query }] }],
       config: {
         temperature: 0,
         tools: [{ googleSearch: {} }],
       },
-    });
+    }), timeoutMs, null);
+    if (!response || signal?.aborted) return [];
     const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
     const seen = new Set<string>();
     return chunks.flatMap((chunk: any) => {
@@ -93,7 +95,9 @@ async function geminiGoogleSearch(query: string, limit: number, timeoutMs: numbe
         lane: 'gemini-google' as const,
       }];
     }).slice(0, limit);
-  }).catch(() => []);
+  } catch {
+    return [];
+  }
 }
 
 async function searxngSearch(query: string, limit: number, timeoutMs: number, signal?: AbortSignal): Promise<PantheonDiscoveryEvidence[]> {
