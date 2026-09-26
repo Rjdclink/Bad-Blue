@@ -14,6 +14,7 @@ import { type CrawlerSupervisionResult } from './CainReaperSupervisor';
 import { twoStageDeployer } from '../pantheon/razors/TwoStageDeployer';
 import {
   getPantheonCategoryCapabilities,
+  getPantheonCategoryExtractionSchema,
   isPantheonCapabilitySourceCompatible,
   PANTHEON_CRAWLER_CAPABILITY_MATRIX,
   PANTHEON_PORTABLE_CAPABILITY_IDS,
@@ -502,8 +503,11 @@ export class PantheonRetrievalAdapter {
       // inventory over material actually retrieved. These skills do not create
       // extra network fetches; they help decide whether a page contains the
       // requested fact instead of discarding useful occupation/DOB/custody/etc.
+      const extractionSchema = request.categoryLabel
+        ? (() => { try { return getPantheonCategoryExtractionSchema(request.categoryLabel!); } catch { return undefined; } })()
+        : undefined;
       const conversationalCapabilityIds: PantheonCapabilityId[] = [
-        ...PANTHEON_RAZOR_SKILL_IDS,
+        ...(extractionSchema?.preferredRazors || PANTHEON_RAZOR_SKILL_IDS),
         ...PANTHEON_SECONDARY_CRAWLER_IDS,
         ...PANTHEON_PORTABLE_CAPABILITY_IDS,
       ];
@@ -588,6 +592,7 @@ export class PantheonRetrievalAdapter {
           selectedPrimaryCrawlers: plan.crawlers,
           supplementalSkillsObserved: [...new Set(supplemental.crawlerAudit.map(item => item.crawler))],
           supplementalEvidence: supplemental.evidence.length,
+          extractionObjectiveFields: extractionSchema?.objectiveFields || [],
         }));
       }
       const capabilityOutcomes = applicableCapabilities.map(capabilityId => {
