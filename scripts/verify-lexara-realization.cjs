@@ -892,6 +892,27 @@ must(
   'Lexara preserves current-versus-historical truth and labels derived person facts',
 );
 must(
+  lexaraPantheonInvestigation.includes('PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD = 0.50') &&
+    lexaraPantheonInvestigation.includes("'partial-evidence'") &&
+    lexaraPantheonInvestigation.includes('lack of corroboration alone is not a reason to suppress it') &&
+    lexaraPantheonInvestigation.includes('evidenceRetrieved:') &&
+    lexaraPantheonInvestigation.includes('evidenceRejectedIdentityMismatch:') &&
+    lexaraPantheonInvestigation.includes('evidenceRejectedBelowAssessment:') &&
+    lexaraPantheonInvestigation.includes('evidenceContradictions:'),
+  'Lexara preserves 50%+ partial/single-source evidence, distinguishes partial evidence from exhaustion, and exposes rejection telemetry',
+);
+must(
+  !lexaraPantheonInvestigation.includes('authorityBonus') &&
+    !lexaraPantheonInvestigation.includes('freshnessBonus') &&
+    !lexaraPantheonInvestigation.includes('correlateBonus'),
+  'source prestige, freshness, and corroboration do not act as evidence-survival gates',
+);
+must(
+  !conversation.includes('{interimTranscript && !isSpeaking && (') &&
+    conversation.includes('Only a final, echo-screened committed turn can enter'),
+  'interim STT hypotheses cannot render as apparent user messages',
+);
+must(
   orchestrator.includes('private individual, or the requested fact being personal, is NEVER by itself a reason') &&
     orchestrator.includes('pantheonInvestigation && isPersonPermissionRefusal(text)') &&
     orchestrator.includes('I could not verify the requested fact from the sources Pantheon completed.'),
