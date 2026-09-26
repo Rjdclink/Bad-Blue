@@ -5,6 +5,9 @@ const adapter = fs.readFileSync('server/services/crawlers/PantheonRetrievalAdapt
 const supplemental = fs.readFileSync('server/services/pantheon/PantheonSupplementalDiscovery.ts', 'utf8');
 const coordinator = fs.readFileSync('server/services/pantheon/PantheonDiscoveryCoordinator.ts', 'utf8');
 const learning = fs.readFileSync('server/services/pantheon/PantheonDiscoveryLearning.ts', 'utf8');
+const searxSettings = fs.readFileSync('infrastructure/pantheon/searxng/settings.yml', 'utf8');
+const ddgsDockerfile = fs.readFileSync('infrastructure/pantheon/ddgs/Dockerfile', 'utf8');
+const openserpDockerfile = fs.readFileSync('infrastructure/pantheon/openserp/Dockerfile', 'utf8');
 
 for (const token of [
   'PERSON_RECURSIVE_MAX_PASSES = 3',
@@ -53,13 +56,20 @@ for (const token of [
   'avg_latency_ms',
   'getPantheonLearnedSources',
   'rankPantheonDiscoveryUrls',
+  'getPantheonLearnedQueryPatterns',
 ]) {
   if (!learning.includes(token)) throw new Error('Persistent discovery learning missing invariant: ' + token);
 }
 if (!investigation.includes('discoverPantheonSourcesParallel(') || !investigation.includes('rememberPantheonDiscoveryOutcome(')) {
   throw new Error('Parallel discovery/learning is not piped through Pantheon person retrieval');
 }
-console.log('Parallel keyless discovery, credit fallback, and persistent learning verification passed.');
+if (!coordinator.includes('learnedPatternPromise') || !coordinator.includes('if (freeUrls.length || options.includePaidFallback === false)')) {
+  throw new Error('Persisted query learning must stay off the normal successful discovery latency path');
+}
+if (!searxSettings.includes('- json') || !ddgsDockerfile.includes('ddgs[api]') || !openserpDockerfile.includes('karust/openserp')) {
+  throw new Error('Self-hosted keyless discovery service definitions are incomplete');
+}
+console.log('Parallel keyless discovery, credit fallback, persistent learning, and self-host definitions verification passed.');
 
 const conversation = fs.readFileSync('server/lexara/LexaraConversationOrchestrator.ts', 'utf8');
 for (const token of [
