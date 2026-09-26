@@ -255,9 +255,10 @@ export async function discoverPantheonSourcesParallel(
     const evidence = raw.flatMap(item => typeof item === 'string'
       ? (canonicalCandidate(item) ? [{ url: canonicalCandidate(item)!, lane: name }] : [])
       : [{ ...item, lane: name }]);
-    const urls = evidence.map(item => item.url);
+    const uniqueEvidence = [...new Map(evidence.map(item => [item.url, item])).values()];
+    const urls = uniqueEvidence.map(item => item.url);
     if (urls.length) lanesWithResults.push(name);
-    return { name, urls, evidence };
+    return { name, urls, evidence: uniqueEvidence };
   };
 
   // All free/applicable lanes launch together. Learned sources are queried in
