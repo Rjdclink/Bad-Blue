@@ -34,3 +34,23 @@ for(const q of fixtures) {
   }
 }
 console.log('Lexara external-fact and Pantheon handoff regression verification passed.');
+
+for(const token of [
+  'objectiveKind: LexaraResearchObjectiveKind',
+  "'record-lookup'",
+  "'current-information'",
+]) if(!router.includes(token)) throw new Error('Structured research objective invariant missing: '+token);
+for(const token of [
+  "endpoint?: 'evidence-sufficient' | 'budget-exhausted' | 'sources-exhausted' | 'clarification-required'",
+  "'[LEXARA PantheonRoute]'",
+  "stage: 'recursion-pass'",
+  "stage: 'endpoint'",
+  'evidenceAccepted:',
+]) if(!investigation.includes(token)) throw new Error('Pantheon endpoint/telemetry invariant missing: '+token);
+for(const token of [
+  'researchDecision.needed\n      ? pantheonInvestigationPromise',
+  'pantheonEndpoint:',
+  'pantheonRecursionPasses:',
+  'researchEndpointReached:',
+]) if(!conversation.includes(token)) throw new Error('Research-required synthesis gate missing: '+token);
+console.log('Lexara/Pantheon full research architecture verification passed.');
