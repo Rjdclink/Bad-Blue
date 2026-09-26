@@ -166,6 +166,41 @@ export const LEXARA_CRAWLER_CAPABILITY_POOL: readonly LexaraCrawlerDescriptor[] 
   c('snake-agent', 'SnakeAgent Legacy Crawler', 'crypto-observational', 'server/services/cryptocrawl/agents/starburst-snake.ts', ['crypto-observation', 'pattern-analysis'], 'observational', 'instant', always, 'Compatibility crawler is read-only and cannot submit trades.'),
 ] as const;
 
+export type LexaraDynamicCrawlerRole = 'primary' | 'secondary' | 'tertiary';
+
+export interface LexaraDynamicCrawlerAssignment {
+  crawler: LexaraCrawlerDescriptor;
+  roles: LexaraDynamicCrawlerRole[];
+  matchedCapabilities: LexaraCrawlerCapability[];
+  priorityScore: number;
+  explorationRequired: boolean;
+}
+
+function rolesForCrawler(item: LexaraCrawlerDescriptor, desired: ReadonlySet<LexaraCrawlerCapability>): LexaraDynamicCrawlerRole[] {
+  const matched = item.capabilities.filter(capability => desired.has(capability));
+  const roles = new Set<LexaraDynamicCrawlerRole>();
+  if (item.executionMode === 'retrieval' || item.executionMode === 'external') roles.add('primary');
+  if (matched.some(capability => ['web-discovery','deep-crawl','social-graph','people-search','legal-authority','public-records'].includes(capability))) roles.add('secondary');
+  if (item.executionMode === 'analysis' || item.executionMode === 'extractor'
+    || matched.some(capability => ['structured-extraction','semantic-extraction','verification','pattern-analysis','blind-spot-analysis','identity'].includes(capability))) roles.add('tertiary');
+  return [...roles];
+}
+
+export function buildLexaraDynamicCrawlerAssignments(input: LexaraCrawlerSelectionInput): LexaraDynamicCrawlerAssignment[] {
+  const desired = desiredCapabilities(input);
+  return LEXARA_CRAWLER_CAPABILITY_POOL
+    .filter(item => item.configured?.() !== false)
+    .map(item => {
+      const matchedCapabilities = item.capabilities.filter(capability => desired.has(capability));
+      const roles = rolesForCrawler(item, desired);
+      const priorityScore = matchedCapabilities.length * 3
+        + (item.latencyClass === 'instant' ? 2 : item.latencyClass === 'fast' ? 1 : 0);
+      return { crawler: item, roles, matchedCapabilities, priorityScore, explorationRequired: matchedCapabilities.length > 0 };
+    })
+    .filter(assignment => assignment.matchedCapabilities.length > 0 && assignment.roles.length > 0)
+    .sort((left, right) => right.priorityScore - left.priorityScore);
+}
+
 export interface LexaraCrawlerSelectionInput {
   prompt: string;
   jurisdiction?: string;
@@ -198,20 +233,8 @@ function desiredCapabilities(input: LexaraCrawlerSelectionInput): Set<LexaraCraw
 }
 
 export function selectLexaraCrawlerPlan(input: LexaraCrawlerSelectionInput): LexaraCrawlerDescriptor[] {
-  const desired = desiredCapabilities(input);
   const max = Math.max(1, Math.min(input.maxCrawlers ?? 8, 16));
-
-  return LEXARA_CRAWLER_CAPABILITY_POOL
-    .filter(item => item.configured?.() !== false)
-    .map(item => ({
-      item,
-      score: item.capabilities.reduce((sum, capability) => sum + (desired.has(capability) ? 3 : 0), 0)
-        + (item.latencyClass === 'instant' ? 2 : item.latencyClass === 'fast' ? 1 : 0),
-    }))
-    .filter(entry => entry.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, max)
-    .map(entry => entry.item);
+  return buildLexaraDynamicCrawlerAssignments(input).slice(0, max).map(assignment => assignment.crawler);
 }
 
 export function getLexaraCrawlerCapabilityPool(): readonly LexaraCrawlerDescriptor[] {
