@@ -139,7 +139,40 @@ const REPORT_LABEL_BY_BACKGROUND_CATEGORY: Partial<Record<PantheonBackgroundCate
   chronology: 'Relationship & Timeline Intelligence',
 };
 
-function conversationalReportCategoryLabel(categories: readonly PantheonBackgroundCategory[]): string {
+function conversationalReportCategoryLabel(prompt: string, categories: readonly PantheonBackgroundCategory[]): string {
+  const rules: Array<[RegExp, string]> = [
+    [/phone|telephone/i, 'Phone Numbers'],
+    [/email|e-mail/i, 'Email Addresses'],
+    [/address\s+history|previous\s+address|formerly\s+lived/i, 'Address History'],
+    [/current\s+address|where\s+(?:does|is).*live|resides?/i, 'Current Address'],
+    [/relative|family|parent|sibling|brother|sister|child|son|daughter/i, 'Relatives & Family'],
+    [/associate|household|roommate|connection/i, 'Associates & Household Connections'],
+    [/social\s+media|facebook|instagram|linkedin|tiktok|twitter|x\.com/i, 'Social-Media Profiles'],
+    [/username|online\s+account|screen\s*name|handle/i, 'Usernames & Online Accounts'],
+    [/photo|image|picture/i, 'Photos & Public Images'],
+    [/employ|occupation|profession|job\s+history|works?\s+(?:at|for|as)/i, 'Employment History'],
+    [/education|school|college|university|degree|diploma/i, 'Education'],
+    [/professional\s+license|credential|certification|license\s+(?:status|suspend|reinstate|revok|active|inactive)/i, 'Professional Licenses & Credentials'],
+    [/business|company|corporat|llc|partnership|ownership/i, 'Business Ownership & Affiliations'],
+    [/property|house|home|real\s+estate|deed|parcel|assessor|mortgage/i, 'Property & Real Estate'],
+    [/vehicle|car|truck|motorcycle|vin|registration/i, 'Vehicles & Transportation Records'],
+    [/arrest|police|booking/i, 'Arrest & Police Records'],
+    [/inmate|incarcerat|prison|jail|custody|corrections/i, 'Incarceration & Corrections'],
+    [/probation|parole|supervision/i, 'Probation & Parole Information'],
+    [/warrant|wanted/i, 'Warrants & Wanted-Person Records'],
+    [/sex\s+offender|offender\s+registry/i, 'Sex-Offender Registries'],
+    [/bankrupt|lien|financial\s+public/i, 'Bankruptcies, Liens & Financial Public Records'],
+    [/civil\s+(?:case|litigation)|judgment|lawsuit/i, 'Civil Litigation & Judgments'],
+    [/criminal|conviction|sentenc/i, 'Criminal Records'],
+    [/court|case|docket/i, 'Court Records'],
+    [/married|marriage|spouse|husband|wife|divorc|birth|born|death|deceased|obituary|vital/i, 'Marriage, Divorce & Vital-Record Information'],
+    [/news|media|newspaper|press\s+release/i, 'News & Media Mentions'],
+    [/internet|web\s+footprint|website|domain/i, 'Internet & Web Footprint'],
+    [/government|public\s+service|campaign|political|lobby/i, 'Government, Political & Public-Service Records'],
+    [/timeline|chronolog|relationship|history|corroborat|contradict/i, 'Relationship & Timeline Intelligence'],
+    [/identity|date\s+of\s+birth|\bdob\b|\bage\b|birthday/i, 'Identity & Identity Verification'],
+  ];
+  for (const [pattern, label] of rules) if (pattern.test(prompt)) return label;
   for (const category of categories) {
     const label = REPORT_LABEL_BY_BACKGROUND_CATEGORY[category];
     if (label) return label;
@@ -405,7 +438,7 @@ export async function investigatePersonQuestion(
           deadlineAt: Math.min(globalDeadlineAt, retrievalStartedAt + perPassBudgetMs),
           subject: combined,
           location: context.jurisdiction,
-          categoryLabel: conversationalReportCategoryLabel(categories),
+          categoryLabel: conversationalReportCategoryLabel(prompt, categories),
           primaryCrawlers: pass === 0 ? primaryCrawlers : escalationPrimaryCrawlers,
           signal: context.signal,
         });
