@@ -66,3 +66,10 @@ Legal What? provides legal information and AI-assisted tools. It does not consti
 ## Crawling
 - [Sitemap](https://legalwhat.com/sitemap.xml): Canonical crawlable URL inventory.
 - [Robots](https://legalwhat.com/robots.txt): Search crawler directives.
+
+
+## Search-intent resources
+- [Legal AI and research guides](https://legalwhat.com/guides/): Conversational legal AI, two-way voice/text interaction, AI legal research, case analysis, evidence/media analysis, OSINT, public records, criminal procedure, appeals, post-conviction research, drafting, and document review.
+- [AI legal document library](https://legalwhat.com/documents/): Public discovery pages for motions, complaints, contracts, demand letters, affidavits, appellate briefs, habeas petitions, FOIA requests, sentencing memoranda, and legal research memoranda.
+
+LegalWhat's public discovery architecture describes capabilities in natural language while private user conversations, accounts, and protected workspaces remain outside search indexing.
