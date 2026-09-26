@@ -63,7 +63,7 @@ const CATEGORY_RULES: Array<[RegExp, PantheonBackgroundCategory[]]> = [
   [/social\s+media|facebook|instagram|linkedin|tiktok|twitter|\bx\.com\b/i, ['social','professional-web','internet']],
   [/username|online\s+account|screen\s*name|handle/i, ['usernames','domain-web','internet']],
   [/photo|image|picture/i, ['internet','social']],
-  [/employ|work(?:ed|s)?\s+(?:at|for)|job\s+history/i, ['employment','professional-web']],
+  [/employ|occupation|profession|career|job|work(?:ed|s|ing)?|do(?:es)?\s+(?:.+?\s+)?for\s+a\s+living|make(?:s)?\s+(?:a\s+)?living|earn(?:s|ing)?\s+(?:money|a\s+wage|income)|source\s+of\s+income|workplace|employer/i, ['employment','professional-web','credentials','government-employment']],
   [/education|school|college|university|degree|diploma/i, ['education','credentials']],
   [/professional\s+license|credential|certification|license\s+(?:status|suspend|reinstate|revok|active|inactive)/i, ['credentials','professional-discipline','historical','chronology','corroboration']],
   [/business|company|corporat|llc|partnership/i, ['business','corporate','organizations']],
@@ -179,6 +179,21 @@ function conversationalReportCategoryLabel(prompt: string, categories: readonly 
   return 'Identity & Identity Verification';
 }
 
+function semanticResearchExpressions(subject: string, categories: readonly PantheonBackgroundCategory[], prompt: string): string[] {
+  const expressions = new Set<string>();
+  const categoryTerms = categoryDiscoveryTerms(categories).split(/\s{2,}|,\s*/).filter(Boolean);
+  expressions.add(`"${subject}" ${prompt}`);
+  for (const term of categoryTerms) expressions.add(`"${subject}" ${term}`);
+  if (categories.includes('employment')) {
+    for (const term of ['occupation','profession','employer','employment','works at','works as','staff','professional license','career']) expressions.add(`"${subject}" ${term}`);
+  }
+  if (categories.includes('corrections')) for (const term of ['inmate','custody','incarcerated','jail','prison','offender search']) expressions.add(`"${subject}" ${term}`);
+  if (categories.includes('vital-records')) for (const term of ['married','marriage','spouse','birth','death','obituary']) expressions.add(`"${subject}" ${term}`);
+  if (categories.includes('residence')) for (const term of ['lives in','resides','address','property','address history']) expressions.add(`"${subject}" ${term}`);
+  if (categories.includes('financial-public') || categories.includes('property')) for (const term of ['mortgage','deed','recorder','lien','property record']) expressions.add(`"${subject}" ${term}`);
+  return [...expressions].slice(0, 18);
+}
+
 function categoryDiscoveryTerms(categories: readonly PantheonBackgroundCategory[]): string {
   const terms = new Set<string>();
   if (categories.includes('corrections')) ['inmate locator','offender search','sheriff jail roster','detention center inmate search'].forEach(value => terms.add(value));
@@ -186,6 +201,7 @@ function categoryDiscoveryTerms(categories: readonly PantheonBackgroundCategory[
   if (categories.includes('courts')) ['court docket','case search'].forEach(value => terms.add(value));
   if (categories.includes('property') || categories.includes('financial-public')) ['county recorder','register of deeds','mortgage record','property records'].forEach(value => terms.add(value));
   if (categories.includes('vital-records')) ['birth record','date of birth','marriage record','divorce record','death record','vital records'].forEach(value => terms.add(value));
+  if (categories.includes('employment')) ['occupation','profession','employer','employment history','works at','works as','professional profile','staff directory','professional license'].forEach(value => terms.add(value));
   if (categories.includes('credentials') || categories.includes('professional-discipline')) ['professional license lookup','license verification','disciplinary order','reinstatement order'].forEach(value => terms.add(value));
   if (categories.includes('family-probate')) ['probate court','estate record','obituary'].forEach(value => terms.add(value));
   return [...terms].join(' ');
@@ -261,6 +277,7 @@ export async function investigatePersonQuestion(
   const fullBackgroundReportRequested = FULL_REPORT_PATTERN.test(prompt);
   const combined = conversationText(prompt, context);
   const categories = requestedCategories(prompt);
+  const semanticExpressions = semanticResearchExpressions(combined, categories, prompt);
   const identityContext = hasEnoughIdentityContext(combined);
 
   if (!identityContext) {
@@ -288,7 +305,7 @@ export async function investigatePersonQuestion(
     .slice(0, PERSON_RECURSIVE_MAX_TARGETS_PER_PASS);
   const registryUrls = registryTargets.map(target => target.url);
   const discoveryPromise = discoverPantheonSourcesParallel(
-    `${combined} public records ${categories.join(' ')} ${categoryDiscoveryTerms(categories)} official government database search`,
+    `${semanticExpressions.join(' | ')} public records ${categories.join(' ')} ${categoryDiscoveryTerms(categories)} official government database search`,
     registryUrls,
     {
       categories,
@@ -488,7 +505,7 @@ export async function investigatePersonQuestion(
         pendingTargets = [];
         try {
           const broadened = await discoverPantheonSourcesParallel(
-            `${resolvedName || combined} ${categoryDiscoveryTerms(categories)} ${context.jurisdiction || ''} alternate authoritative source database archive`,
+            `${semanticResearchExpressions(resolvedName || combined, categories, prompt).join(' | ')} ${context.jurisdiction || ''} alternate source database archive`,
             [...seenTargets],
             { categories, jurisdiction: context.jurisdiction, limit: PERSON_RECURSIVE_MAX_TARGETS_PER_PASS, timeoutMs: Math.min(2_500, remainingMs), signal: context.signal },
           );
