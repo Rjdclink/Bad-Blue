@@ -24,6 +24,17 @@ import {
 } from '../server/services/pantheon/PantheonInvestigationController';
 
 async function main() {
+  // This verifier is build-time and must begin in a hermetic non-runtime mode.
+  // Individual persistence assertions below explicitly install their own test
+  // SESSION_SECRET/database settings before importing the report store.
+  const buildDatabaseEnvironment = {
+    SUPABASE_DATABASE_URL: process.env.SUPABASE_DATABASE_URL,
+    SUPABASE_DB_URL: process.env.SUPABASE_DB_URL,
+    DATABASE_URL: process.env.DATABASE_URL,
+  };
+  delete process.env.SUPABASE_DATABASE_URL;
+  delete process.env.SUPABASE_DB_URL;
+  delete process.env.DATABASE_URL;
   const submission = validatePantheonJobSubmission({
     name: 'Jane Example',
     location: 'Sioux Falls, SD',
@@ -463,6 +474,7 @@ async function main() {
     'SESSION_SECRET',
     'DATABASE_URL',
     'SUPABASE_DATABASE_URL',
+    'SUPABASE_DB_URL',
   ] as const;
   const previousEnvironment = Object.fromEntries(environmentKeys.map(key => [key, process.env[key]]));
   let reportStoreLoaded = false;
@@ -477,6 +489,7 @@ async function main() {
     process.env.SESSION_SECRET = 'pantheon-pdf-test-session-secret-at-least-32-characters';
     process.env.DATABASE_URL = 'postgresql://pantheon:testing@127.0.0.1:1/pantheon_test';
     delete process.env.SUPABASE_DATABASE_URL;
+    delete process.env.SUPABASE_DB_URL;
     const {
       persistPantheonPdfArtifact,
       readPantheonPdfArtifact,
@@ -518,6 +531,9 @@ async function main() {
     }
     await rm(temporaryDirectory, { recursive: true, force: true });
   }
+  if (buildDatabaseEnvironment.SUPABASE_DATABASE_URL !== undefined) process.env.SUPABASE_DATABASE_URL = buildDatabaseEnvironment.SUPABASE_DATABASE_URL;
+  if (buildDatabaseEnvironment.SUPABASE_DB_URL !== undefined) process.env.SUPABASE_DB_URL = buildDatabaseEnvironment.SUPABASE_DB_URL;
+  if (buildDatabaseEnvironment.DATABASE_URL !== undefined) process.env.DATABASE_URL = buildDatabaseEnvironment.DATABASE_URL;
   console.log('Pantheon end-to-end coverage, provenance, evidence, and PDF layout verification passed.');
   process.exit(0);
 }
