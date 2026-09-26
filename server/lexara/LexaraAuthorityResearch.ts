@@ -2,6 +2,7 @@ import { orchestratedWebSearch } from '../openRouterWebSearch';
 import { pantheonRetrievalAdapter } from '../services/crawlers/PantheonRetrievalAdapter';
 import { selectLexaraCrawlerPlan } from './LexaraCrawlerCapabilityRegistry';
 import { decideLexaraResearchNeed } from './LexaraResearchIntentRouter';
+import { discoverLegalMeshTier3, discoverLegalMeshSupplemental, legalMeshSufficient } from './LegalProviderMesh';
 
 export type LexaraAuthoritySourceKind = 'primary' | 'secondary' | 'web';
 
@@ -144,115 +145,51 @@ async function searchCourtListener(query: string, signal?: AbortSignal): Promise
 
 async function discoverAuthoritySources(query: string, signal?: AbortSignal): Promise<LexaraAuthoritySource[]> {
   type Discovered = { url: string; title: string; excerpt?: string };
-
-  const firecrawlDiscovery = async (): Promise<Discovered[]> => {
-    const apiKey = process.env.FIRECRAWL_API_KEY?.trim();
-    if (!apiKey) return [];
-
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), RESEARCH_TIMEOUT_MS);
-    const relayAbort = () => controller.abort();
-    if (signal?.aborted) controller.abort();
-    else signal?.addEventListener('abort', relayAbort, { once: true });
-    try {
-      const response = await fetch('https://api.firecrawl.dev/v1/search', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          query,
-          limit: MAX_AUTHORITY_SOURCES,
-          scrapeOptions: {
-            formats: ['markdown'],
-            onlyMainContent: true,
-          },
-        }),
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        console.warn('[LEXARA Authority] Firecrawl discovery unavailable', { status: response.status });
-        return [];
-      }
-
-      const payload = await response.json() as {
-        data?: Array<{
-          url?: string;
-          title?: string;
-          description?: string;
-          markdown?: string;
-        }>;
-      };
-      return (payload.data || []).flatMap(item => {
-        const url = cleanUrl(item.url);
-        if (!url) return [];
-        return [{
-          url,
-          title: item.title || 'Legal authority source',
-          excerpt: item.description || item.markdown,
-        }];
-      });
-    } catch (error) {
-      console.warn('[LEXARA Authority] Firecrawl discovery failed route-locally', {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return [];
-    } finally {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', relayAbort);
-    }
-  };
-
-  const openRouterDiscovery = async (): Promise<Discovered[]> => {
-    try {
-      const search = await orchestratedWebSearch(query, {
-        useOnlinePlugin: true,
-        timeout: RESEARCH_TIMEOUT_MS,
-        signal,
-      });
-      return search.sources.flatMap(urlValue => {
-        const url = cleanUrl(urlValue);
-        return url ? [{ url, title: 'Web-discovered legal authority' }] : [];
-      });
-    } catch (error) {
-      console.warn('[LEXARA Authority] OpenRouter web discovery unavailable', {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return [];
-    }
-  };
-
-  // Run independent discovery paths in parallel under a conversational latency
-  // budget. Authority discovery is valuable evidence, but a slow crawler must
-  // never hold the live spoken answer hostage.
-  const [firecrawlResult, openRouterResult, courtListenerResult, govInfoResult] = await Promise.all([
-    firecrawlDiscovery(),
-    openRouterDiscovery(),
-    searchCourtListener(query, signal),
-    searchGovInfo(query, signal),
-  ]);
-
   const seen = new Set<string>();
   const sources: LexaraAuthoritySource[] = [];
   const add = (item: Discovered) => {
     const url = cleanUrl(item.url);
     if (!url || seen.has(url) || sources.length >= MAX_AUTHORITY_SOURCES) return;
     seen.add(url);
-    sources.push({
-      title: item.title.trim().slice(0, 240) || 'Legal authority source',
-      url,
-      kind: classifySource(url),
-      excerpt: item.excerpt?.trim().slice(0, 900) || undefined,
-    });
+    sources.push({ title: item.title.trim().slice(0,240) || 'Legal authority source', url, kind: classifySource(url), excerpt: item.excerpt?.trim().slice(0,900) || undefined });
   };
 
-  // Prefer official-source-rich Firecrawl discovery when both return quickly,
-  // then fill remaining capacity from OpenRouter's current web-search tool.
-  for (const item of firecrawlResult) add(item);
-  for (const item of govInfoResult) add(item);
-  for (const item of courtListenerResult) add(item);
-  for (const item of openRouterResult) add(item);
+  // Tier 1: authoritative direct APIs in parallel.
+  const [courtListenerResult, govInfoResult] = await Promise.all([
+    searchCourtListener(query, signal),
+    searchGovInfo(query, signal),
+  ]);
+  [...courtListenerResult, ...govInfoResult].forEach(add);
+  if (sources.some(source => source.kind === 'primary' && Boolean(source.excerpt?.trim())) || courtListenerResult.some(source => Boolean(source.excerpt?.trim()))) return sources;
+
+  // Tiers 2-5: independent/self-hosted mesh. The shared discovery coordinator
+  // supplies SearXNG, DDGS, OpenSERP, learned discovery, Common Crawl and
+  // configured SerpApi/ScrapingBee fallback; Tavily is an independent lane.
+  const mesh = await discoverLegalMeshTier3(query, signal);
+  mesh.forEach(item => add(item));
+  if (legalMeshSufficient(mesh) || sources.length >= MAX_AUTHORITY_SOURCES) return sources;
+
+  // Tier 5: configured supplemental discovery (SerpApi/ScrapingBee and archive
+  // fallbacks) is attempted only after the free/self-hosted mesh is insufficient.
+  const supplemental = await discoverLegalMeshSupplemental(query, [...seen], signal);
+  supplemental.forEach(item => add(item));
+  if (legalMeshSufficient(supplemental) || sources.length >= MAX_AUTHORITY_SOURCES) return sources;
+
+  // Tier 6: Firecrawl and OpenRouter are emergency redundancy only. They are
+  // never attempted while the independent mesh has sufficient evidence.
+  const firecrawl = async (): Promise<Discovered[]> => {
+    const apiKey=process.env.FIRECRAWL_API_KEY?.trim(); if(!apiKey) return [];
+    try {
+      const r=await fetch('https://api.firecrawl.dev/v1/search',{method:'POST',signal,headers:{Authorization:`Bearer ${apiKey}`,'Content-Type':'application/json'},body:JSON.stringify({query,limit:MAX_AUTHORITY_SOURCES})});
+      if(!r.ok) return []; const j:any=await r.json();
+      return (j.data||[]).flatMap((x:any)=>{const url=cleanUrl(x.url);return url?[{url,title:x.title||'Legal authority source',excerpt:x.description||x.markdown}]:[]});
+    } catch { return []; }
+  };
+  const openrouter = async (): Promise<Discovered[]> => {
+    try { const r=await orchestratedWebSearch(query,{useOnlinePlugin:true,timeout:RESEARCH_TIMEOUT_MS,signal}); return r.sources.flatMap(v=>{const url=cleanUrl(v);return url?[{url,title:'Fallback web-discovered legal authority'}]:[]}); } catch { return []; }
+  };
+  const [firecrawlResult, openRouterResult] = await Promise.all([firecrawl(), openrouter()]);
+  [...firecrawlResult,...openRouterResult].forEach(add);
   return sources;
 }
 
