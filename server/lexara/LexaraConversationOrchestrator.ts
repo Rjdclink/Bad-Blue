@@ -406,6 +406,10 @@ export async function generateLexaraConversationResponse(
       authorityResearchPromise,
       new Promise<null>(resolve => setTimeout(() => resolve(null), LIVE_RESEARCH_BUDGET_MS)),
     ]),
+    // External/person-fact research is Pantheon's job: wait for its bounded,
+    // progressively reporting investigation instead of dropping it after the
+    // ordinary 2.4s legal-authority latency budget. Non-research conversation
+    // keeps the existing fast budget.
     researchDecision.needed
       ? pantheonInvestigationPromise
       : Promise.race([
