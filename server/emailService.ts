@@ -606,7 +606,7 @@ ${data.message}
 Sent from Bad Blue Contact Form
 ${new Date().toLocaleString()}`;
 
-    const supportEmail = process.env.ADMIN_EMAIL || "contact.badblue@gmail.com";
+    const supportEmail = "contact.badblue@gmail.com";
     console.log("[EMAIL] Sending to support email:", supportEmail);
 
     const success = await sendWithResend(
