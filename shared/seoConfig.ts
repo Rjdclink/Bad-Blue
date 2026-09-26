@@ -68,8 +68,8 @@ export const GLOBAL_KEYWORDS: KeywordTaxonomy = {
 export const SEO_CONFIG: Record<string, PageSEO> = {
   "/": {
     title: "Legal What? | Lexara Conversational Legal AI",
-    description: "LegalWhat features Lexara, an animated conversational legal AI for natural, real-time, two-way voice and text interaction across 40+ areas of law. Upload documents, images and media for analysis, critique, editing or alteration; Lexara can recognize when a legal document is needed, identify the appropriate document and jurisdiction, and generate it as a downloadable PDF or DOCX.",
-    keywords: "Lexara, conversational legal AI, animated legal AI, voice legal AI, text legal AI, 40 legal areas, legal media analysis, legal document generator, PDF legal documents, DOCX legal documents",
+    description: "LegalWhat features Lexara, an animated conversational legal AI for natural, real-time, two-way voice and text interaction across 40+ areas of law. Upload documents, images and media for analysis, critique, editing or alteration; Lexara can recognize when a legal document is needed, identify the appropriate document and jurisdiction, and generate it as a downloadable PDF or DOCX. LegalWhat is a sophisticated legal AI platform that is convenient and easy to use, with access available for a straightforward flat $19.99 monthly subscription.",
+    keywords: "Lexara, conversational legal AI, animated legal AI, voice legal AI, text legal AI, convenient legal AI, affordable legal AI, user-friendly legal AI, easy-to-use legal AI, flat-rate legal AI, $19.99 legal AI subscription, monthly legal AI subscription, 40 legal areas, legal media analysis, legal document generator, PDF legal documents, DOCX legal documents",
     keywordTaxonomy: GLOBAL_KEYWORDS,
     ogTitle: "Legal What? | Lexara Conversational Legal AI",
     ogDescription: "Talk with Lexara, LegalWhat’s animated conversational legal AI, by voice or text across 40+ areas of law. Analyze media and generate jurisdiction-aware PDF or DOCX legal documents.",
@@ -82,8 +82,8 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
   },
   "/landing": {
     title: "Legal What? | Lexara Conversational Legal AI",
-    description: "LegalWhat features Lexara, an animated conversational legal AI for natural, real-time, two-way voice and text interaction across 40+ areas of law. Upload documents, images and media for analysis, critique, editing or alteration; Lexara can recognize when a legal document is needed, identify the appropriate document and jurisdiction, and generate it as a downloadable PDF or DOCX.",
-    keywords: "Lexara, conversational legal AI, animated legal AI, voice and text legal AI, 40 legal practice areas, media analysis, jurisdiction-specific legal documents",
+    description: "LegalWhat features Lexara, an animated conversational legal AI for natural, real-time, two-way voice and text interaction across 40+ areas of law. Upload documents, images and media for analysis, critique, editing or alteration; Lexara can recognize when a legal document is needed, identify the appropriate document and jurisdiction, and generate it as a downloadable PDF or DOCX. LegalWhat is a sophisticated legal AI platform that is convenient and easy to use, with access available for a straightforward flat $19.99 monthly subscription.",
+    keywords: "Lexara, conversational legal AI, animated legal AI, voice and text legal AI, convenient legal AI, affordable legal AI, user-friendly legal AI, easy-to-use legal AI, flat-rate legal AI, $19.99 legal AI subscription, monthly legal AI subscription, 40 legal practice areas, media analysis, jurisdiction-specific legal documents",
     keywordTaxonomy: GLOBAL_KEYWORDS,
     ogType: "website",
     canonicalPath: "/",
