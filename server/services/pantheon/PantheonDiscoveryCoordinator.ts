@@ -82,11 +82,13 @@ async function ddgsSearch(query: string, limit: number, timeoutMs: number, signa
   if (!base) return [];
   return withTimeout(timeoutMs, signal, async requestSignal => {
     const endpoint = new URL('/search/text', base.endsWith('/') ? base : base + '/');
+    endpoint.searchParams.set('query', query);
+    endpoint.searchParams.set('max_results', String(limit));
+    endpoint.searchParams.set('safesearch', 'off');
     const response = await fetch(endpoint, {
-      method: 'POST',
+      method: 'GET',
       signal: requestSignal,
-      headers: { 'content-type': 'application/json', accept: 'application/json' },
-      body: JSON.stringify({ query, max_results: limit, safesearch: 'off' }),
+      headers: { accept: 'application/json' },
     });
     if (!response.ok) return [];
     const payload: any = await response.json();
