@@ -8,6 +8,8 @@ const learning = fs.readFileSync('server/services/pantheon/PantheonDiscoveryLear
 const searxSettings = fs.readFileSync('infrastructure/pantheon/searxng/settings.yml', 'utf8');
 const ddgsDockerfile = fs.readFileSync('infrastructure/pantheon/ddgs/Dockerfile', 'utf8');
 const openserpDockerfile = fs.readFileSync('infrastructure/pantheon/openserp/Dockerfile', 'utf8');
+const learningMigration = fs.readFileSync('server/migrations/062_pantheon_discovery_learning.sql', 'utf8');
+const dockerfile = fs.readFileSync('Dockerfile', 'utf8');
 
 for (const token of [
   'PERSON_RECURSIVE_MAX_PASSES = 3',
@@ -57,6 +59,7 @@ for (const token of [
   'getPantheonLearnedSources',
   'rankPantheonDiscoveryUrls',
   'getPantheonLearnedQueryPatterns',
+  'ENABLE ROW LEVEL SECURITY',
 ]) {
   if (!learning.includes(token)) throw new Error('Persistent discovery learning missing invariant: ' + token);
 }
@@ -68,6 +71,11 @@ if (!coordinator.includes('learnedPatternPromise') || !coordinator.includes('if 
 }
 if (!searxSettings.includes('- json') || !ddgsDockerfile.includes('ddgs[api]') || !openserpDockerfile.includes('karust/openserp')) {
   throw new Error('Self-hosted keyless discovery service definitions are incomplete');
+}
+if (!learningMigration.includes('pantheon_discovery_learning') ||
+    !learningMigration.includes('ENABLE ROW LEVEL SECURITY') ||
+    !dockerfile.includes('062_pantheon_discovery_learning.sql')) {
+  throw new Error('Durable discovery learning migration is not secured and shipped end to end');
 }
 console.log('Parallel keyless discovery, credit fallback, persistent learning, and self-host definitions verification passed.');
 
