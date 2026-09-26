@@ -26,10 +26,10 @@ async function tavily(query: string, signal?: AbortSignal): Promise<LegalMeshCan
 
 export async function discoverLegalMeshTier3(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
   const [existing, tavilyResults] = await Promise.all([
-    discoverPantheonSourcesParallel(query, [], { limit: 16, timeoutMs: 2200, signal, includePaidFallback: true }),
+    discoverPantheonSourcesParallel(query, [], { limit: 16, timeoutMs: 2200, signal, includePaidFallback: false }),
     tavily(query, signal),
   ]);
-  const mapped: LegalMeshCandidate[] = existing.urls.map(url => ({ url, title: 'Independent legal discovery result', tier: 3, provider: 'pantheon-discovery' }));
+  const mapped: LegalMeshCandidate[] = existing.urls.map(url => ({ url, title: 'Independent legal discovery result', tier: 3, provider: 'independent-discovery' }));
   const seen=new Set<string>(); return [...tavilyResults,...mapped].filter(x => !seen.has(x.url) && seen.add(x.url));
 }
 
