@@ -322,6 +322,7 @@ export async function investigatePersonQuestion(
     const acceptedEvidenceScores = new Map<string, number>();
     let recursionPasses = 0;
     let nextCheckpointIndex = 0;
+    const surfacedEvidenceKeys = new Set<string>();
     const emitDueCheckpoints = () => {
       const elapsedMs = Date.now() - recursiveStartedAt;
       while (nextCheckpointIndex < PERSON_SOFT_CHECKPOINTS_MS.length && elapsedMs >= PERSON_SOFT_CHECKPOINTS_MS[nextCheckpointIndex]) {
@@ -440,7 +441,10 @@ export async function investigatePersonQuestion(
         // Surface useful subject-matched evidence immediately. Confidence
         // controls wording and stopping, not whether a potentially useful lead
         // is hidden from the user.
-        context.onProgress?.({ type: 'evidence', pass: recursionPasses, confidence: Math.max(0, Math.min(1, dynamicScore)), sourceUrl: item.sourceUrl, evidence: item.content.trim().slice(0, 1200) });
+        if (!surfacedEvidenceKeys.has(evidenceKey)) {
+          surfacedEvidenceKeys.add(evidenceKey);
+          context.onProgress?.({ type: 'evidence', pass: recursionPasses, confidence: Math.max(0, Math.min(1, dynamicScore)), sourceUrl: item.sourceUrl, evidence: item.content.trim().slice(0, 1200) });
+        }
         void rememberPantheonDiscoveryOutcome(item.sourceUrl, true, {
           categories,
           jurisdiction: context.jurisdiction,
