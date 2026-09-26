@@ -11,6 +11,7 @@ export interface PantheonSearchFirstCategory {
 export interface PantheonSearchFirstCandidate extends PantheonDiscoveryEvidence {
   categoryIndexes: number[];
   discoveryQuery: string;
+  discoveryLanes?: string[];
 }
 
 function tokens(value: string): string[] {
@@ -79,10 +80,11 @@ export async function discoverPantheonSearchFirstCandidates(input: {
   for (const candidate of settled.flat()) {
     const existing = byUrl.get(candidate.url);
     if (!existing) {
-      byUrl.set(candidate.url, candidate);
+      byUrl.set(candidate.url, { ...candidate, discoveryLanes: [candidate.lane] });
       continue;
     }
     existing.categoryIndexes = [...new Set([...existing.categoryIndexes, ...candidate.categoryIndexes])];
+    existing.discoveryLanes = [...new Set([...(existing.discoveryLanes || [existing.lane]), candidate.lane])];
     if (!existing.title && candidate.title) existing.title = candidate.title;
     if (!existing.snippet && candidate.snippet) existing.snippet = candidate.snippet;
   }
