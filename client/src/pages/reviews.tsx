@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 import { Link, useSearch } from "wouter";
 import { Star, Send, CheckCircle2, ArrowLeft } from "lucide-react";
 import { SEOHead } from "@/components/SEOHead";
@@ -21,7 +21,7 @@ export default function ReviewsPage() {
   const [submitted, setSubmitted] = useState(false);
   const googleReviewUrl = String(import.meta.env.VITE_GOOGLE_REVIEW_URL || "").trim();
 
-  const submit = async (event: React.FormEvent) => {
+  const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!rating || name.trim().length < 2 || !email.includes("@") || review.trim().length < 20) {
       toast({ title: "Please complete your review", description: "Choose a rating and provide your name, email, and at least 20 characters of feedback.", variant: "destructive" });
