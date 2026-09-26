@@ -87,10 +87,11 @@ export default function Landing() {
     "@type": "WebApplication",
     "name": "Legal What?",
     "alternateName": ["LegalWhat", "Legal What"],
-    "description": "LegalWhat features Lexara, an animated conversational legal AI for natural, real-time, two-way voice and text interaction across 40+ areas of law. Upload documents, images and media for analysis, critique, editing or alteration; Lexara can recognize when a legal document is needed, identify the appropriate document and jurisdiction, and generate it as a downloadable PDF or DOCX.",
+    "description": "LegalWhat features Lexara, an animated conversational legal AI for natural, real-time, two-way voice and text interaction across 40+ areas of law. Upload documents, images and media for analysis, critique, editing or alteration; Lexara can recognize when a legal document is needed, identify the appropriate document and jurisdiction, and generate it as a downloadable PDF or DOCX. LegalWhat is a sophisticated legal AI platform that is convenient and easy to use, with access available for a straightforward flat $19.99 monthly subscription.",
     "url": baseUrl,
     "applicationCategory": "LegalApplication",
     "operatingSystem": "Web Browser",
+    "offers": { "@type": "Offer", "price": "19.99", "priceCurrency": "USD", "category": "monthly subscription" },
     "featureList": [
       "40 legal practice areas",
       "Two-way voice and text AI legal consultation",
@@ -99,7 +100,8 @@ export default function Landing() {
       "Uploaded document, image, and media analysis",
       "Media critique, editing, and alteration",
       "Intuitive jurisdiction-specific legal document generation",
-      "Downloadable PDF and DOCX legal documents"
+      "Downloadable PDF and DOCX legal documents",
+      "Convenient, affordable, user-friendly access for a flat $19.99 monthly subscription"
     ]
   };
 
@@ -107,9 +109,9 @@ export default function Landing() {
     <div className="min-h-screen">
       <SEOHead
         title="Legal What? | Lexara Conversational Legal AI"
-        description="LegalWhat features Lexara, an animated conversational legal AI for natural, real-time, two-way voice and text interaction across 40+ areas of law. Upload documents, images and media for analysis, critique, editing or alteration; Lexara can recognize when a legal document is needed, identify the appropriate document and jurisdiction, and generate it as a downloadable PDF or DOCX."
+        description="LegalWhat features Lexara, an animated conversational legal AI for natural, real-time, two-way voice and text interaction across 40+ areas of law. Upload documents, images and media for analysis, critique, editing or alteration; Lexara can recognize when a legal document is needed, identify the appropriate document and jurisdiction, and generate it as a downloadable PDF or DOCX. LegalWhat is a sophisticated legal AI platform that is convenient and easy to use, with access available for a straightforward flat $19.99 monthly subscription."
         ogTitle="Legal What? | Lexara Conversational Legal AI"
-        ogDescription="Talk with Lexara, LegalWhat’s animated conversational legal AI, by voice or text across 40+ areas of law. Analyze media and generate jurisdiction-aware PDF or DOCX legal documents."
+        ogDescription="Talk with Lexara, LegalWhat’s convenient, affordable, user-friendly conversational legal AI. Voice, text, media analysis and legal-document tools are available with a flat $19.99 monthly subscription."
         canonicalUrl="https://legalwhat.com/"
         ogImage="https://legalwhat.com/images/Legal%20What%20Icon.png"
         ogImageAlt="Legal What? legal technology platform logo"
