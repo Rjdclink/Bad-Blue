@@ -110,6 +110,20 @@
       "AI that searches public records",
       "AI that can read my court papers",
       "AI that can talk back to me about law"
+    ],
+    "value_affordability": [
+      "convenient legal AI",
+      "affordable legal AI",
+      "user-friendly legal AI",
+      "easy-to-use legal AI",
+      "affordable AI legal assistance",
+      "affordable conversational legal AI",
+      "flat-rate legal AI",
+      "$19.99 legal AI subscription",
+      "monthly legal AI subscription",
+      "legal AI monthly subscription",
+      "affordable legal AI subscription",
+      "convenient online legal AI"
     ]
   },
   "combination_rule": "Combine interaction mode + capability + legal subject + user task only when the resulting page has distinct, useful content. Avoid doorway pages and scaled-content abuse."
