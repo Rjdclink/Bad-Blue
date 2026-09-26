@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -15,11 +15,37 @@ import { usePageFaqSchema } from "@/hooks/useFaqSchema";
 import { AISystemShowcase } from "@/components/AISystemShowcase";
 import { LAW_TYPE_DATA } from "@shared/lawTypes";
 import { HiddenFAQ } from "@/components/HiddenFAQ";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 export default function Landing() {
   const [, setLocation] = useLocation();
   const [iconError, setIconError] = useState(false);
   const [lexaraImageError, setLexaraImageError] = useState(false);
+  const { toast } = useToast();
+  const [contactName, setContactName] = useState("");
+  const [contactEmail, setContactEmail] = useState("");
+  const [contactMessage, setContactMessage] = useState("");
+  const [contactBusy, setContactBusy] = useState(false);
+  const [contactSent, setContactSent] = useState(false);
+
+  const submitQuestionComment = async (event: FormEvent) => {
+    event.preventDefault();
+    if (contactName.trim().length < 2 || !contactEmail.includes("@") || contactMessage.trim().length < 10) {
+      toast({ title: "Please complete the form", description: "Enter your name, email, and question or comment.", variant: "destructive" });
+      return;
+    }
+    setContactBusy(true);
+    try {
+      await apiRequest("/api/contact", "POST", { type: "contact", name: contactName.trim(), email: contactEmail.trim(), subject: "LegalWhat landing page question/comment", message: contactMessage.trim() });
+      setContactSent(true);
+      toast({ title: "Message sent", description: "Your question or comment was sent to Legal What?." });
+    } catch (error: any) {
+      toast({ title: "Could not send message", description: error?.message || "Please try again.", variant: "destructive" });
+    } finally { setContactBusy(false); }
+  };
   
   // Enhanced image error handler with logging
   const handleImageError = (e: React.SyntheticEvent<HTMLImageElement>, imageName: string) => {
@@ -501,6 +527,27 @@ export default function Landing() {
               Use information responsibly and in accordance with applicable laws.
             </p>
           </div>
+        </div>
+      </section>
+
+      <section className="border-t bg-card/30 px-4 py-14" aria-labelledby="questions-comments">
+        <div className="mx-auto max-w-2xl">
+          <div className="mb-6 text-center">
+            <h2 id="questions-comments" className="text-2xl font-bold">Questions or Comments?</h2>
+            <p className="mt-2 text-sm text-muted-foreground">Send Legal What? a message directly at contact.badblue@gmail.com.</p>
+          </div>
+          {contactSent ? (
+            <Card><CardContent className="py-8 text-center"><p className="font-medium">Thank you. Your message has been sent.</p></CardContent></Card>
+          ) : (
+            <Card><CardContent className="pt-6">
+              <form onSubmit={submitQuestionComment} className="space-y-4">
+                <Input value={contactName} onChange={e => setContactName(e.target.value)} placeholder="Your name" maxLength={100} />
+                <Input value={contactEmail} onChange={e => setContactEmail(e.target.value)} type="email" placeholder="Your email" />
+                <Textarea value={contactMessage} onChange={e => setContactMessage(e.target.value)} placeholder="Your question or comment" rows={5} maxLength={3000} />
+                <Button type="submit" className="w-full" disabled={contactBusy}>{contactBusy ? "Sending…" : "Send Question / Comment"}</Button>
+              </form>
+            </CardContent></Card>
+          )}
         </div>
       </section>
 
