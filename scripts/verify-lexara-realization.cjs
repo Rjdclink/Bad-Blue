@@ -1023,10 +1023,12 @@ must(domainExpertiseSourceLines.length === 40, 'literal 40-source LEXARA practic
 must(domainImplementationSourceLines.length === 10, 'literal 10-source LEXARA specialization implementation review is present');
 if (process.exitCode) process.exit(process.exitCode);
 must(
-  lexaraConversationOrchestrator.includes("researchDecision.objectiveKind !== 'legal-authority'") &&
-    lexaraPantheonInvestigation.includes('isLexaraLegalAuthorityIntent(prompt)') &&
-    lexaraPantheonInvestigation.includes("researchDecision.objectiveKind !== 'legal-authority'"),
-  'legal authority questions retain the fast legal route and cannot be hijacked by Pantheon person research',
+  lexaraConversationOrchestrator.includes('planLexaraSequence(cleanPrompt, previousUserTurns)') &&
+    lexaraConversationOrchestrator.includes("sequencePlan.sequence === 'combined-legal-background'") &&
+    lexaraConversationOrchestrator.includes('const pantheonDelegatedByLexara = sequencePlan.usePantheon') &&
+    lexaraConversationOrchestrator.includes('const authorityResearchPromise = sequencePlan.useLegalResearch') &&
+    lexaraPantheonInvestigation.includes("researchDecision.objectiveKind !== 'legal-authority' || context.delegatedByLexara"),
+  'legal-only questions stay on Lexara while explicit mixed legal/background questions may delegate factual retrieval to Pantheon',
 );
 
 console.log('LEXARA 40-domain specialization verification passed.');
