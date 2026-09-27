@@ -46,8 +46,10 @@ const envSchema = z.object({
   // In dev/test these may be unset; production safety enforced in loadConfig().
   SQUARE_ACCESS_TOKEN: z.string().optional().default(''),
   SQUARE_SANDBOX_ACCESS_TOKEN: z.string().optional(),
+  SQUARE_SANDBOX_TOKEN: z.string().optional().default(''),
   SQUARE_LOCATION_ID: z.string().optional().default(''),
   SQUARE_APPLICATION_ID: z.string().optional().default(''),
+  SQUARE_SANDBOX_ID: z.string().optional().default(''),
   SQUARE_ENVIRONMENT: z.enum(['production', 'sandbox']).default('production'),
   SQUARE_WEBHOOK_SIGNATURE_KEY: z.string().optional(),
   SQUARE_SUBSCRIPTION_PLAN_VARIATION_ID: z.string().optional().default(''),
@@ -143,11 +145,30 @@ export function resolveDatabaseUrl(cfg: Pick<Config, 'SUPABASE_DATABASE_URL' | '
   return { url: '', source: 'none' };
 }
 
+type SquareRuntimeConfig = Pick<
+  Config,
+  | 'SQUARE_ENVIRONMENT'
+  | 'SQUARE_SANDBOX_ACCESS_TOKEN'
+  | 'SQUARE_SANDBOX_TOKEN'
+  | 'SQUARE_APPLICATION_ID'
+  | 'SQUARE_SANDBOX_ID'
+>;
+
+export function applySquareSandboxAliases(cfg: SquareRuntimeConfig): SquareRuntimeConfig {
+  if (cfg.SQUARE_ENVIRONMENT !== 'sandbox') return cfg;
+  return {
+    ...cfg,
+    SQUARE_SANDBOX_ACCESS_TOKEN: cfg.SQUARE_SANDBOX_ACCESS_TOKEN || cfg.SQUARE_SANDBOX_TOKEN || undefined,
+    SQUARE_APPLICATION_ID: cfg.SQUARE_APPLICATION_ID || cfg.SQUARE_SANDBOX_ID,
+  };
+}
+
 export function loadConfig(): Config {
   if (config) return config;
   
   try {
-    config = envSchema.parse(process.env);
+    const parsedConfig = envSchema.parse(process.env);
+    config = { ...parsedConfig, ...applySquareSandboxAliases(parsedConfig) };
     // Fail-fast: never allow placeholder/demo secrets.
     // This prevents production (and dev) from silently booting with an insecure default.
     const rawSessionSecret = String(process.env.SESSION_SECRET || '');
