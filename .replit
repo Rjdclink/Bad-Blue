@@ -1,9 +1,9 @@
-modules = ["nodejs-20", "web", "postgresql-16"]
+modules = ["nodejs-20", "web"]
 run = "npm run dev"
 hidden = [".config", ".git", "generated-icon.png", "node_modules", "dist"]
 
 [nix]
-channel = "stable-24_05"
+channel = "stable-25_05"
 packages = ["zip", "ffmpeg", "imagemagick"]
 
 [deployment]
@@ -14,70 +14,6 @@ run = ["sh", "-c", "NODE_ENV=production PORT=5000 node dist/index.js"]
 [[ports]]
 localPort = 5000
 externalPort = 80
-
-[[ports]]
-localPort = 35869
-externalPort = 5000
-
-[[ports]]
-localPort = 36939
-externalPort = 8099
-
-[[ports]]
-localPort = 37027
-externalPort = 5173
-
-[[ports]]
-localPort = 37213
-externalPort = 8081
-
-[[ports]]
-localPort = 38611
-externalPort = 8080
-
-[[ports]]
-localPort = 42847
-externalPort = 4200
-
-[[ports]]
-localPort = 43033
-externalPort = 8008
-
-[[ports]]
-localPort = 43119
-externalPort = 3002
-
-[[ports]]
-localPort = 44211
-externalPort = 6000
-
-[[ports]]
-localPort = 44397
-externalPort = 8000
-
-[[ports]]
-localPort = 44427
-externalPort = 3001
-
-[[ports]]
-localPort = 44983
-externalPort = 9000
-
-[[ports]]
-localPort = 45377
-externalPort = 3003
-
-[[ports]]
-localPort = 45649
-externalPort = 6800
-
-[[ports]]
-localPort = 46291
-externalPort = 9000
-
-[[ports]]
-localPort = 46397
-externalPort = 3000
 
 [env]
 PORT = "5000"
