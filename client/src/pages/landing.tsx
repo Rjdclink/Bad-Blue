@@ -2,17 +2,15 @@ import { useState, useEffect, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Shield, Search, FileText, TrendingUp, Upload, Database, Bell, Check, Scale, ArrowRight, Users } from "lucide-react";
+import { Shield } from "lucide-react";
 import { LanguageSelectorLight } from "@/components/LanguageSelectorLight";
 // Use Constitution.webp from public/images as background
 const heroImage = "/images/Constitution.webp";
 import { SEOHead } from "@/components/SEOHead";
 import { SupportEmailFooter } from "@/components/SupportEmailFooter";
 import { useLocation } from "wouter";
-import SampleLexaraConsultation from "@/components/SampleLegalConsultation"; // Sample Lexara consultation component
 import { FULL_ACCESS_PRICING, LAWSUIT_DIY_PRICING, LAWSUIT_FULL_SERVICE_PRICING, COMPLAINT_PRICING, PETITION_PRICING, FOIA_REQUEST_PRICING } from "@shared/schema";
 import { usePageFaqSchema } from "@/hooks/useFaqSchema";
-import { AISystemShowcase } from "@/components/AISystemShowcase";
 import { LAW_TYPE_DATA } from "@shared/lawTypes";
 import { HiddenFAQ } from "@/components/HiddenFAQ";
 import { Input } from "@/components/ui/input";
@@ -170,22 +168,6 @@ export default function Landing() {
           <h1 className="text-white text-4xl md:text-5xl lg:text-6xl font-bold leading-tight mb-8 animate-in fade-in slide-in-from-bottom-4 duration-700 delay-300 drop-shadow-2xl">
             Legal What? — AI Legal Tools for 40 Practice Areas
           </h1>
-          <p className="text-white/95 text-base md:text-lg mb-8 leading-relaxed max-w-3xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-700 delay-500 drop-shadow-lg">
-            Meet Lexara, LegalWhat’s animated conversational legal AI. Have a natural, real-time, two-way voice or text conversation across 40+ areas of law, upload documents, images and media for analysis or revision, and generate jurisdiction-aware legal documents as PDF or DOCX.
-          </p>
-
-          {/* Trust Signals */}
-          <div className="flex flex-wrap items-center justify-center gap-4 mb-10 text-sm text-white/95 animate-in fade-in slide-in-from-bottom-4 duration-700 delay-700">
-            <div className="flex items-center gap-2">
-              <span className="text-green-400">✓</span>
-              <span>Multiple AI Models Coordinate Each Analysis</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-green-400">✓</span>
-              <span>Each AI Contributes Its Specialty</span>
-            </div>
-          </div>
-
 
           {/* Login/Get Started Card - Overlays background with glassmorphism */}
           <div className="max-w-5xl mx-auto bg-white/10 backdrop-blur-md rounded-2xl p-8 border border-white/20 shadow-2xl">
@@ -220,46 +202,6 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* Search-visible service overview: truthful, user-facing capability content */}
-      <section className="py-16 px-4 bg-background" aria-labelledby="legalwhat-services">
-        <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-10">
-            <h2 id="legalwhat-services" className="text-3xl md:text-4xl font-bold mb-4">
-              AI Legal Consultation, Document Creation & Media Analysis
-            </h2>
-            <p className="text-muted-foreground max-w-3xl mx-auto leading-relaxed">
-              Legal What? combines two-way AI legal consultation across 40 practice areas with legal research, intuitive document generation, and analysis of uploaded documents, images, evidence, and other media.
-            </p>
-          </div>
-
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <Card>
-              <CardHeader>
-                <Scale className="w-8 h-8 text-primary mb-2" aria-hidden="true" />
-                <CardTitle>Two-Way AI Legal Consultation</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground leading-relaxed">
-                  Have a voice or text conversation with LEXARA across 40 legal practice areas. The system can ask follow-up questions, analyze the facts you provide, surface legal issues, and connect you with deeper case-analysis and research tools.
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <FileText className="w-8 h-8 text-primary mb-2" aria-hidden="true" />
-                <CardTitle>Legal Document Tools</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground leading-relaxed">
-                  Build and organize legal documents and public-record requests with AI-assisted drafting workflows, including police-accountability complaints, Section 1983 materials, FOIA requests, petitions, and broader legal-document support.
-                </p>
-              </CardContent>
-            </Card>
-          </div>
-        </div>
-      </section>
-
       {/* Search-visible coverage of all supported legal practice areas */}
       <section className="py-16 px-4 bg-card/40" aria-labelledby="legal-practice-areas">
         <div className="max-w-7xl mx-auto">
@@ -281,9 +223,8 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* LEXARA Visual Showcase Section */}
-      <section className="relative py-20 px-4 mt-16 overflow-hidden">
-        {/* Background Image with Dark Overlay */}
+      {/* LEXARA - primary landing-page presentation */}
+      <section className="relative py-20 px-4 overflow-hidden" aria-labelledby="lexara-overview">
         <div
           className="absolute inset-0 bg-cover bg-center bg-no-repeat"
           style={{
@@ -292,216 +233,82 @@ export default function Landing() {
             backgroundPosition: 'center center'
           }}
         >
-          <div className="absolute inset-0 bg-black/60" />
+          <div className="absolute inset-0 bg-black/65" />
         </div>
 
-        {/* Content Container - Wider for three-column layout */}
-        <div className="relative z-10 max-w-7xl mx-auto">
-          {/* Overlay Text - Description of LEXARA */}
-          <div className="text-center mb-12 px-4">
-            <p className="text-white text-lg md:text-xl lg:text-2xl leading-relaxed max-w-4xl mx-auto font-medium" style={{ textShadow: '2px 2px 4px rgba(0,0,0,0.8)' }}>
-              Meet Lexara, an animated conversational legal AI built for natural two-way voice and text interaction. She provides legal guidance, research, analysis and explanations across 40+ areas of law, can analyze and help revise uploaded media, and can recognize when your situation calls for a legal document, identify the appropriate jurisdiction, and prepare downloadable PDF or DOCX output.
-            </p>
+        <div className="relative z-10 max-w-5xl mx-auto text-white">
+          <div className="flex justify-center mb-6">
+            <div className="bg-white/10 backdrop-blur-sm rounded-3xl p-6 md:p-8 border border-white/20 max-w-md w-full shadow-[0_0_40px_rgba(96,165,250,0.3),0_20px_60px_rgba(0,0,0,0.5)]">
+              {!lexaraImageError ? (
+                <img
+                  src="/images/oip.webp"
+                  alt="LEXARA - Legal Expert AI Resource Advisor"
+                  className="w-full h-auto rounded-2xl object-cover shadow-[0_10px_40px_rgba(0,0,0,0.4)]"
+                  onError={() => setLexaraImageError(true)}
+                />
+              ) : (
+                <div className="w-full h-64 bg-gradient-to-br from-blue-600 to-purple-600 rounded-2xl flex items-center justify-center">
+                  <div className="text-center"><div className="text-6xl mb-2">⚖️</div><div className="text-sm font-semibold">LEXARA</div></div>
+                </div>
+              )}
+              <p className="mt-5 text-center text-sm">LEXARA — Legal Expert AI Resource Advisor</p>
+              <p className="mt-1 text-center text-xs text-white/80">Legal X — Computational Autonomous Reasoning Architecture</p>
+            </div>
           </div>
 
-          {/* Three-Column Layout: Left Features | LEXARA Image | Right Features */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start px-4">
-            {/* Left Column - Features 1-5 */}
-            <div className="space-y-6">
-              {/* Feature 1 */}
-              <div className="text-white">
-                <h3 className="text-base md:text-lg font-semibold mb-2" style={{ textShadow: '2px 2px 4px rgba(0,0,0,0.8)' }}>
-                  1. Parallel Reasoning Engine
-                </h3>
-                <p className="text-sm md:text-base text-white/90 mb-2" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
-                  — multiple specialized AIs analyze the same issue simultaneously.
+          <div className="flex justify-center mb-12">
+            <Button
+              size="lg"
+              className="text-lg px-10 shadow-lg"
+              onClick={() => setLocation('/login')}
+              data-testid="button-get-started-lexara"
+            >
+              Get Started
+            </Button>
+          </div>
+
+          <div className="rounded-3xl border border-white/20 bg-black/30 backdrop-blur-sm p-6 md:p-10">
+            <h2 id="lexara-overview" className="text-3xl md:text-4xl font-bold text-center mb-6">
+              AI Legal Consultation, Document Creation &amp; Media Analysis
+            </h2>
+            <div className="space-y-5 text-white/90 leading-relaxed">
+              <p>
+                Meet <strong>LEXARA — Legal Expert AI Resource Advisor</strong>, Legal What?’s animated conversational legal AI, built for natural, real-time, two-way voice and text interaction across <strong>40+ areas of law</strong>.
+              </p>
+              <p>
+                LEXARA provides legal guidance, research, analysis, and explanations based on the facts you provide. She can ask relevant follow-up questions, identify legal issues, apply jurisdiction-specific statutes, rules, and precedent, and connect your matter with deeper legal research and case-analysis tools.
+              </p>
+              <p>
+                LEXARA can also analyze uploaded <strong>documents, images, evidence, and other media</strong>, assist with revisions, and recognize when a situation calls for a legal document. Her document tools can identify the appropriate jurisdiction and help prepare pleadings, motions, petitions, affidavits, contracts, public-record requests, and other legal materials with downloadable <strong>PDF or DOCX</strong> output.
+              </p>
+
+              <div className="pt-4">
+                <h3 className="text-2xl font-bold text-white mb-3">Revolutionary 17-Model Harmony AI Network</h3>
+                <p>
+                  Behind LEXARA is Legal What?’s <strong>17-model Harmony AI Network</strong>—seventeen specialized AI participants working in synchronized, orchestrated coordination. Multiple models can analyze an issue in parallel, cross-check conclusions, contribute specialized expertise, and consolidate their work into a unified response.
                 </p>
-                <p className="text-sm text-white/80 italic" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
-                  Benefit: Delivers faster, corroborated answers grounded in multi-angle reasoning.
+                <p className="mt-3">
+                  The system combines <strong>parallel reasoning, cross-validation, jurisdictional filtering, structured legal research, document drafting, alternative procedural analysis, and verifiable reasoning</strong> to provide organized and reviewable legal analysis.
                 </p>
               </div>
 
-              {/* Feature 2 */}
-              <div className="text-white">
-                <h3 className="text-base md:text-lg font-semibold mb-2" style={{ textShadow: '2px 2px 4px rgba(0,0,0,0.8)' }}>
-                  2. Cross-Validation Check
-                </h3>
-                <p className="text-sm md:text-base text-white/90 mb-2" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
-                  — every legal conclusion is independently checked across multiple models.
-                </p>
-                <p className="text-sm text-white/80 italic" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
-                  Benefit: Produces advice that is consistent, defensible, and resistant to oversight.
-                </p>
-              </div>
-
-              {/* Feature 3 */}
-              <div className="text-white">
-                <h3 className="text-base md:text-lg font-semibold mb-2" style={{ textShadow: '2px 2px 4px rgba(0,0,0,0.8)' }}>
-                  3. Document Atelier
-                </h3>
-                <p className="text-sm md:text-base text-white/90 mb-2" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
-                  — precision drafting of pleadings, motions, contracts, affidavits, and more.
-                </p>
-                <p className="text-sm text-white/80 italic" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
-                  Benefit: Generates clean, structured documents that meet professional legal standards.
-                </p>
-              </div>
-
-              {/* Feature 4 */}
-              <div className="text-white">
-                <h3 className="text-base md:text-lg font-semibold mb-2" style={{ textShadow: '2px 2px 4px rgba(0,0,0,0.8)' }}>
-                  4. Strategic Playbooks (Non-Risk Scoring)
-                </h3>
-                <p className="text-sm md:text-base text-white/90 mb-2" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
-                  — generates clear procedural pathways without offering risk/reward scoring.
-                </p>
-                <p className="text-sm text-white/80 italic" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
-                  Benefit: Gives you organized, step-by-step legal direction without making outcome predictions.
-                </p>
-              </div>
-
-              {/* Feature 5 */}
-              <div className="text-white">
-                <h3 className="text-base md:text-lg font-semibold mb-2" style={{ textShadow: '2px 2px 4px rgba(0,0,0,0.8)' }}>
-                  5. Verifiable Reasoning Log
-                </h3>
-                <p className="text-sm md:text-base text-white/90 mb-2" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
-                  — transparent, structured explanation of how each conclusion was formed.
-                </p>
-                <p className="text-sm text-white/80 italic" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
-                  Benefit: Enables easy review, quality control, and compliance with professional expectations.
-                </p>
-              </div>
-            </div>
-
-            {/* Center Column - LEXARA Floating Card */}
-            <div className="flex justify-center">
-              <div className="bg-white/10 backdrop-blur-sm rounded-3xl p-6 md:p-8 border border-white/20 max-w-md w-full transform hover:scale-105 transition-transform duration-300 shadow-[0_0_40px_rgba(96,165,250,0.3),0_20px_60px_rgba(0,0,0,0.5)]">
-                {/* LEXARA Image */}
-                <div className="mb-6">
-                  {!lexaraImageError ? (
-                    <img
-                      src="/images/oip.webp"
-                      alt="LEXARA - Legal Expert AI Resource Advisor"
-                      className="w-full h-auto rounded-2xl object-cover shadow-[0_10px_40px_rgba(0,0,0,0.4)]"
-                      onError={(e) => {
-                        console.error('LEXARA image failed to load:', e.currentTarget.src);
-                        setLexaraImageError(true);
-                      }}
-                    />
-                  ) : (
-                    <div className="w-full h-64 bg-gradient-to-br from-blue-600 to-purple-600 rounded-2xl flex items-center justify-center shadow-[0_10px_40px_rgba(0,0,0,0.4)]">
-                      <div className="text-white text-center">
-                        <div className="text-6xl mb-2">⚖️</div>
-                        <div className="text-sm font-semibold">LEXARA</div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Label Text */}
-                <div className="text-center">
-                  <p className="text-white text-xs font-light tracking-tight whitespace-nowrap" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.6)' }}>
-                    Legal X-(computational Autonomous Reasoning Architecture)
-                  </p>
+              <div className="pt-4">
+                <h3 className="text-2xl font-bold text-white mb-5">LEXARA’s Integrated Capabilities</h3>
+                <div className="space-y-5">
+                  <p><strong>1. Parallel Reasoning Engine</strong> — Multiple specialized AIs analyze the same issue simultaneously, providing multi-angle analysis and corroboration.</p>
+                  <p><strong>2. Cross-Validation Check</strong> — Legal conclusions can be independently examined across multiple models to identify inconsistencies and reduce overlooked issues.</p>
+                  <p><strong>3. Document Atelier</strong> — Assists with structured drafting of pleadings, motions, contracts, affidavits, petitions, public-record requests, and other legal documents.</p>
+                  <p><strong>4. Strategic Playbooks</strong> — Organizes procedural options and potential legal pathways into understandable, step-by-step guidance without predicting outcomes.</p>
+                  <p><strong>5. Verifiable Reasoning Log</strong> — Provides structured explanations supporting conclusions for easier review and quality control.</p>
+                  <p><strong>6. Orchestrated Expert Modules</strong> — Seventeen specialized AI engines operate through a coordinated architecture to combine different areas of expertise into unified analysis.</p>
+                  <p><strong>7. Scoped Jurisdictional Filters</strong> — Narrows research and analysis to applicable jurisdictions, statutes, rules, and precedent.</p>
+                  <p><strong>8. Parallel Case Simulation Sandbox</strong> — Examines alternative filings, procedural choices, and argument paths side by side to help identify available approaches.</p>
+                  <p><strong>9. Legally Compliant Drafting</strong> — Applies relevant jurisdictional, statutory, and formatting requirements when preparing legal documents.</p>
+                  <p><strong>10. Secure Collaboration &amp; Version Vault</strong> — Supports organized document versions, review history, annotations, and reasoning records for a clear audit trail.</p>
                 </div>
               </div>
             </div>
-
-            {/* Right Column - Features 6-10 */}
-            <div className="space-y-6">
-              {/* Feature 6 */}
-              <div className="text-white">
-                <h3 className="text-base md:text-lg font-semibold mb-2" style={{ textShadow: '2px 2px 4px rgba(0,0,0,0.8)' }}>
-                  6. Orchestrated Expert Modules
-                </h3>
-                <p className="text-sm md:text-base text-white/90 mb-2" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
-                  — seventeen specialized engines work in synchronized, orchestrated coordination.
-                </p>
-                <p className="text-sm text-white/80 italic" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
-                  Benefit: Produces unified legal insight that draws from multiple areas of expertise without contradiction.
-                </p>
-              </div>
-
-              {/* Feature 7 */}
-              <div className="text-white">
-                <h3 className="text-base md:text-lg font-semibold mb-2" style={{ textShadow: '2px 2px 4px rgba(0,0,0,0.8)' }}>
-                  7. Scoped Jurisdictional Filters
-                </h3>
-                <p className="text-sm md:text-base text-white/90 mb-2" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
-                  — automatically narrows analysis to the proper scope of statutes, rules, and precedent.
-                </p>
-                <p className="text-sm text-white/80 italic" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
-                  Benefit: Removes irrelevant material and improves accuracy for your specific jurisdiction.
-                </p>
-              </div>
-
-              {/* Feature 8 */}
-              <div className="text-white">
-                <h3 className="text-base md:text-lg font-semibold mb-2" style={{ textShadow: '2px 2px 4px rgba(0,0,0,0.8)' }}>
-                  8. Parallel Case Simulation Sandbox
-                </h3>
-                <p className="text-sm md:text-base text-white/90 mb-2" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
-                  — evaluates alternative filings, procedural choices, and argument paths in parallel.
-                </p>
-                <p className="text-sm text-white/80 italic" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
-                  Benefit: Helps you compare viable approaches using structured, side-by-side reasoning.
-                </p>
-              </div>
-
-              {/* Feature 9 */}
-              <div className="text-white">
-                <h3 className="text-base md:text-lg font-semibold mb-2" style={{ textShadow: '2px 2px 4px rgba(0,0,0,0.8)' }}>
-                  9. Legally Compliant Drafting
-                </h3>
-                <p className="text-sm md:text-base text-white/90 mb-2" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
-                  — aligns all generated documents with statutory, formatting, and jurisdiction-specific requirements.
-                </p>
-                <p className="text-sm text-white/80 italic" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
-                  Benefit: Ensures every piece of work is correct on its face, reducing revisions and avoiding rejection.
-                </p>
-              </div>
-
-              {/* Feature 10 */}
-              <div className="text-white">
-                <h3 className="text-base md:text-lg font-semibold mb-2" style={{ textShadow: '2px 2px 4px rgba(0,0,0,0.8)' }}>
-                  10. Secure Collaboration & Version Vault
-                </h3>
-                <p className="text-sm md:text-base text-white/90 mb-2" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
-                  — encrypted storage with immutable versions and reviewer annotations linked to the Verifiable Reasoning Log.
-                </p>
-                <p className="text-sm text-white/80 italic" style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.8)' }}>
-                  Benefit: Simplifies team workflows and preserves a clean audit-ready history of edits and decisions.
-                </p>
-              </div>
-            </div>
           </div>
-        </div>
-      </section>
-
-      {/* AI System Showcase Section */}
-      <section className="py-20 px-4 bg-gradient-to-b from-background to-card">
-        <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-12">
-            <h2 className="text-3xl font-bold mb-4">Revolutionary 17-Model Harmony AI Network</h2>
-            <p className="text-muted-foreground max-w-2xl mx-auto">
-              Seventeen specialized AI participants working in synchronized coordination to deliver unmatched legal intelligence.
-            </p>
-          </div>
-          <AISystemShowcase variant="full" />
-        </div>
-      </section>
-
-      {/* Interactive LEXARA Consultation Sample */}
-      <section className="py-20 px-4 bg-background">
-        <div className="max-w-4xl mx-auto">
-          <div className="text-center mb-8">
-            <h2 className="text-2xl font-bold mb-4">Try LEXARA</h2>
-            <p className="text-sm text-muted-foreground max-w-xl mx-auto">
-              Experience Legal What?'s AI-powered legal analysis with a free sample consultation. No signup required.
-            </p>
-          </div>
-          <SampleLexaraConsultation />
         </div>
       </section>
 
