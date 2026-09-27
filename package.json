@@ -13,7 +13,7 @@
     "verify:seo": "node scripts/verify-seo-branding.cjs",
     "verify:neon-failover": "node scripts/verify-legalwhat-neon-failover.cjs",
     "db:neon:push": "drizzle-kit push --config drizzle.neon.config.ts",
-    "build": "npm run verify:seo && npm run verify:neon-failover && npm run verify:ai-harmony && node scripts/verify-lexara-realization.cjs && node scripts/verify-lexara-crawler-capabilities.cjs && npm run verify:pantheon-realization && npm run verify:spectra && vite build && npm run build:server && npm run build:worker && npm run build:skale-pow-worker",
+    "build": "npm run verify:seo && npm run verify:neon-failover && npm run verify:ai-harmony && node scripts/verify-lexara-realization.cjs && node scripts/verify-lexara-six-sequences.cjs && node scripts/verify-lexara-crawler-capabilities.cjs && npm run verify:pantheon-realization && npm run verify:spectra && vite build && npm run build:server && npm run build:worker && npm run build:skale-pow-worker",
     "build:server": "node scripts/cryptocrawl/build-server-overflow-authority.mjs server/index.ts dist/index.js",
     "build:worker": "esbuild workers/peopleSearchWorker/index.ts --bundle --platform=node --target=node20 --outfile=dist/peopleSearchWorker.js --format=esm --packages=external --define:process.env.NODE_ENV=\"'production'\"",
     "build:skale-pow-worker": "mkdir -p dist && cp server/services/computationalBeam/skale-pow-worker.cjs dist/skale-pow-worker.cjs",
