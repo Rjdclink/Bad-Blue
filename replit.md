@@ -19,6 +19,7 @@ The platform features a React 18 frontend with TypeScript, Vite, Wouter for rout
     - **Relaxed Polling**: SearchSessionManager polls every 180 seconds (vs 60s) to reduce database pressure
     - **Pool Monitoring**: `getPoolStats()` in server/db.ts for diagnostics
 *   **Intelligent AI Architecture**: A coordinated multi-provider AI system with context-aware routing:
+    - **Lexara/Pantheon background research**: OpenRouter and Firecrawl are optional participants, never required prerequisites or completion gates. Preserve the existing provider/search/crawler mesh and its fallback behavior. A fetched, subject-matched source and explicit Pantheon endpoint are required before claiming verified research; a missing optional provider cannot be treated as a negative search.
     - **USER Searches**: Gemini → Mistral → Claude → Groq (Groq last resort only)
     - **AUTONOMOUS Functions**: Groq exclusively (no rate limit, unlimited capacity)
     - **Groq Policy**: Reserved for autonomous functions only. No autonomous rate limit. Only used for user searches as absolute last resort when all other providers fail.

@@ -14,6 +14,7 @@ import {
 import {
   formatPantheonInvestigationForSystem,
   investigatePersonQuestion,
+  type LexaraPersonInvestigation,
 } from './LexaraPantheonInvestigation';
 import {
   formatLexaraDomainSpecialization,
@@ -21,6 +22,7 @@ import {
 } from './LexaraLegalDomainProfiles';
 import { decideLexaraResearchNeed } from './LexaraResearchIntentRouter';
 import { planLexaraSequence } from './LexaraSequenceRouter';
+import { resolveLexaraBackgroundSubject } from './LexaraBackgroundSubject';
 
 export interface LexaraConversationMessage {
   role: 'user' | 'lexara' | 'assistant';
@@ -42,6 +44,8 @@ export interface LexaraConversationResult {
   text: string;
   jurisdiction?: string;
   mappedLawType?: ExpertLawType;
+  pantheonEndpoint?: import('./LexaraPantheonInvestigation').LexaraPersonInvestigation['endpoint'];
+  pantheonStatus?: 'completed' | 'partial' | 'unavailable' | 'failed' | 'clarification-required' | 'consent-required';
 }
 
 const MAX_HISTORY_MESSAGES = 16;
@@ -316,6 +320,136 @@ function degradedLegalResponse(jurisdiction?: string): string {
   return `The live legal-reasoning service is temporarily unavailable. I have the jurisdiction as ${jurisdiction}. I can preserve the facts you have given me, but I will not invent controlling law, cases, citations, or deadlines while the analysis service is unavailable. Please retry this turn when live analysis is restored.`;
 }
 
+function extractVerifiedPantheonSourceExcerpt(
+  result: import('./LexaraPantheonInvestigation').LexaraPersonInvestigation | null,
+): { text: string; sourceUrl: string; excerpt: string } | null {
+  if (!result?.evidenceSummary || !result.sources.length) return null;
+  const evidence = result.evidenceSummary;
+  const webRecord = /^\s*\d+\.\s*SOURCE:\s*(https?:\/\/[^\s]+)\s*\nASSESSMENT:\s*(?:STRONG|PARTIAL\/INFERENTIAL)\s*\(\d+%\)\s*\nEVIDENCE:\s*([\s\S]*?)(?=\n\d+\.\s*SOURCE:|$)/m.exec(evidence);
+  const custodyRecord = /^\s*STRUCTURED CUSTODY SOURCE:\s*(https?:\/\/[^\s]+)\s*\n([\s\S]*?)(?=\nSTRUCTURED CUSTODY SOURCE:|$)/m.exec(evidence);
+  const sourceUrl = webRecord?.[1] || custodyRecord?.[1];
+  const excerpt = (webRecord?.[2] || custodyRecord?.[2] || '').replace(/\s+/g, ' ').trim();
+  if (!sourceUrl || !excerpt) return null;
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(sourceUrl);
+  } catch {
+    return null;
+  }
+  if (!['http:', 'https:'].includes(parsedUrl.protocol)
+    || !result.sources.some(source => source === parsedUrl.toString())) return null;
+
+  const quote = excerpt.replace(/["“”]/g, "'").slice(0, 700);
+  return {
+    text: `Pantheon retrieved verified, subject-matched source material. The source says: “${quote}” Source: ${parsedUrl.toString()}. This is the retrieved evidence, not a separate conclusion.`,
+    sourceUrl: parsedUrl.toString(),
+    excerpt,
+  };
+}
+
+function normalizeFactCheckText(value: string): string {
+  return value.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase();
+}
+
+function verifiedExcerptDirectlyAnswers(
+  prompt: string,
+  previousMessages: LexaraConversationMessage[],
+  jurisdiction: string | undefined,
+  investigation: import('./LexaraPantheonInvestigation').LexaraPersonInvestigation,
+  excerpt: string,
+): boolean {
+  if (investigation.endpoint !== 'evidence-sufficient') return false;
+  const previousUserTurns = previousMessages
+    .filter(message => message.role === 'user')
+    .slice(-8)
+    .map(message => message.content || '');
+  const subject = resolveLexaraBackgroundSubject(prompt, previousUserTurns, jurisdiction);
+  if (!subject?.name) return false;
+  const normalizedEvidence = normalizeFactCheckText(excerpt);
+  const subjectTokens = normalizeFactCheckText(subject.name).match(/[\p{L}\p{N}]+/gu) || [];
+  if (!subjectTokens.length || !subjectTokens.every(token => new RegExp(`(?:^|[^\\p{L}\\p{N}])${token}(?:$|[^\\p{L}\\p{N}])`, 'u').test(normalizedEvidence))) {
+    return false;
+  }
+
+  // A supplied source URL locates evidence; its hostname/path are not factual
+  // predicates that must also appear in the retrieved passage.
+  const factQuestion = prompt.replace(/https?:\/\/[^\s<>"')]+/gi, ' ');
+  const normalizedPrompt = normalizeFactCheckText(factQuestion);
+  const explicitlyRequestedJurisdiction = inferJurisdiction(factQuestion);
+  if (explicitlyRequestedJurisdiction) {
+    const locationTokens = normalizeFactCheckText(explicitlyRequestedJurisdiction).match(/[\p{L}\p{N}]+/gu) || [];
+    if (!locationTokens.every(token => new RegExp(`(?:^|[^\\p{L}\\p{N}])${token}(?:$|[^\\p{L}\\p{N}])`, 'u').test(normalizedEvidence))) {
+      return false;
+    }
+  }
+  const requestedYears = normalizedPrompt.match(/\b(?:19|20)\d{2}\b/g) || [];
+  if (!requestedYears.every(year => normalizedEvidence.includes(year))) return false;
+  const qualifierChecks: Array<{ request: RegExp; evidence: RegExp }> = [
+    { request: /\b(?:current|currently|present|presently|today|now|latest|recent)\b/, evidence: /\b(?:current|currently|present|presently|today|now|as of|updated|latest|recent)\b/ },
+    { request: /\b(?:before|prior to|earlier than)\b/, evidence: /\b(?:before|prior to|earlier than)\b/ },
+    { request: /\b(?:after|since|later than)\b/, evidence: /\b(?:after|since|later than)\b/ },
+    { request: /\b(?:how many|how much|amount|total|value|worth)\b/, evidence: /(?:\$|€|£|\b(?:amount|total|value|worth|number of|quantity)\b)/ },
+  ];
+  if (!qualifierChecks.every(check => !check.request.test(normalizedPrompt) || check.evidence.test(normalizedEvidence))) {
+    return false;
+  }
+  const normalizedSubject = normalizeFactCheckText(subject.name);
+  const jurisdictionWords: string[] = jurisdiction ? normalizeFactCheckText(jurisdiction).match(/[\p{L}\p{N}]+/gu) || [] : [];
+  const stopWords = new Set([
+    'a', 'about', 'an', 'and', 'any', 'are', 'as', 'at', 'be', 'been', 'being', 'by', 'can', 'did', 'do', 'does',
+    'for', 'from', 'give', 'has', 'have', 'he', 'her', 'his', 'how', 'i', 'in', 'is', 'it', 'its', 'me', 'of', 'on',
+    'or', 'please', 'she', 'show', 'some', 'tell', 'that', 'the', 'their', 'them', 'there', 'they', 'this', 'to',
+    'was', 'we', 'were', 'what', 'when', 'where', 'which', 'who', 'why', 'with', 'would', 'you',
+    'background', 'database', 'fact', 'facts', 'information', 'mention', 'mentions', 'public', 'record', 'records',
+    'research', 'source', 'sources', 'verify', 'verified', 'whether',
+    'according', 'official', 'page', 'site',
+  ]);
+  const factFamilies: Array<{ request: RegExp; evidence: RegExp }> = [
+    { request: /\b(?:phone|telephone|mobile|cell|number)\b/, evidence: /\b(?:phone|telephone|mobile|cell|number|contact)\b/ },
+    { request: /\b(?:email|e-mail|mailbox|electronic mail)\b/, evidence: /\b(?:email|e-mail|mailbox|electronic mail)\b/ },
+    { request: /\b(?:address|residence|resides|lives|home|location)\b/, evidence: /\b(?:address|residen\w*|reside\w*|live[sd]?\s+in|home|location)\b/ },
+    { request: /\b(?:relative|family|parent|child|sibling|spouse|husband|wife|kin)\b/, evidence: /\b(?:relative|family|parent|child|sibling|spouse|husband|wife|kin|married)\b/ },
+    { request: /\b(?:associate|connection|household|affiliate|relationship|friend|partner)\b/, evidence: /\b(?:associate|connection|household|affiliate|relationship|friend|partner)\b/ },
+    { request: /\b(?:social media|profile|facebook|instagram|linkedin|tiktok|twitter)\b/, evidence: /\b(?:social media|profile|facebook|instagram|linkedin|tiktok|twitter|x\.com)\b/ },
+    { request: /\b(?:username|handle|screen name|online account)\b/, evidence: /\b(?:username|handle|screen name|online account|account name)\b/ },
+    { request: /\b(?:photo|picture|image|portrait)\b/, evidence: /\b(?:photo|picture|image|portrait)\b/ },
+    { request: /\b(?:employer|employment|occupation|profession|job|work)\b/, evidence: /\b(?:employer|employ\w*|occupation|profession|job|work\w*)\b/ },
+    { request: /\b(?:education|school|college|university|degree|diploma)\b/, evidence: /\b(?:education|school|college|university|degree|diploma|student|graduate)\b/ },
+    { request: /\b(?:license|licence|credential|certification|discipline)\b/, evidence: /\b(?:license|licence|credential|certification|discipline|licensed)\b/ },
+    { request: /\b(?:business|company|corporation|ownership|owner|affiliate)\b/, evidence: /\b(?:business|company|corporation|ownership|owner|affiliate|owned)\b/ },
+    { request: /\b(?:property|real estate|deed|parcel|land)\b/, evidence: /\b(?:property|real estate|deed|parcel|land|assessor)\b/ },
+    { request: /\b(?:vehicle|car|truck|motorcycle|vin|registration)\b/, evidence: /\b(?:vehicle|car|truck|motorcycle|vin|registration|title)\b/ },
+    { request: /\b(?:court|case|docket|filing|lawsuit)\b/, evidence: /\b(?:court|case|docket|filing|lawsuit|judge)\b/ },
+    { request: /\b(?:criminal|crime|charge|conviction|convicted)\b/, evidence: /\b(?:criminal|crime|charge|convict\w*|sentence)\b/ },
+    { request: /\b(?:arrest|arrested|booking|booked|police)\b/, evidence: /\b(?:arrest\w*|book\w*|police|detain\w*)\b/ },
+    { request: /\b(?:incarcerat|inmate|custody|prison|jail)\b/, evidence: /\b(?:incarcerat\w*|inmate|custody|prison|jail)\b/ },
+    { request: /\b(?:probation|parole|supervision)\b/, evidence: /\b(?:probation|parole|supervision)\b/ },
+    { request: /\b(?:warrant|wanted)\b/, evidence: /\b(?:warrant|wanted|fugitive)\b/ },
+    { request: /\b(?:sex offender|offender registry|registry status)\b/, evidence: /\b(?:sex offender|offender registry|registry status)\b/ },
+    { request: /\b(?:civil|litigation|judgment|lawsuit)\b/, evidence: /\b(?:civil|litigation|judgment|lawsuit|plaintiff|defendant)\b/ },
+    { request: /\b(?:bankruptcy|bankrupt|lien|mortgage|financial record)\b/, evidence: /\b(?:bankruptcy|bankrupt|lien|mortgage|financial record|foreclosure)\b/ },
+    { request: /\b(?:marriage|married|divorce|divorced|birth|death|vital record)\b/, evidence: /\b(?:marriage|married|divorce|divorced|birth|born|death|deceased|vital record)\b/ },
+    { request: /\b(?:news|media|newspaper|press)\b/, evidence: /\b(?:news|media|newspaper|press|article|reported)\b/ },
+    { request: /\b(?:internet|website|web footprint|domain|online presence)\b/, evidence: /\b(?:internet|website|web footprint|domain|online presence|web page)\b/ },
+    { request: /\b(?:government|political|public service|campaign|public office)\b/, evidence: /\b(?:government|political|public service|campaign|public office|elected)\b/ },
+    { request: /\b(?:timeline|chronology|sequence of events|history)\b/, evidence: /\b(?:timeline|chronology|sequence of events|history|dated)\b/ },
+    { request: /\b(?:born|birth|birthday|date of birth|dob)\b/, evidence: /\b(?:born|birth|birthday|date of birth|dob)\b/ },
+  ];
+  const matchingFamilies = factFamilies.filter(family => family.request.test(normalizedPrompt));
+  if (matchingFamilies.length) {
+    return matchingFamilies.every(family => family.evidence.test(normalizedEvidence));
+  }
+
+  const subjectFreePrompt = normalizedPrompt.replace(normalizedSubject, ' ');
+  const specificTerms = (subjectFreePrompt.match(/[\p{L}\p{N}]+/gu) || [])
+    .filter(term => term.length > 3 && !stopWords.has(term) && !jurisdictionWords.includes(term));
+  if (!specificTerms.length) return false;
+  return specificTerms.every(term =>
+    new RegExp(`(?:^|[^\\p{L}\\p{N}])${term.slice(0, Math.min(term.length, 5))}[\\p{L}\\p{N}]*`, 'u').test(normalizedEvidence)
+  );
+}
+
 export async function generateLexaraConversationResponse(
   prompt: string,
   context: LexaraConversationContext = {},
@@ -374,7 +508,7 @@ export async function generateLexaraConversationResponse(
     : researchDecision.needed
       ? `${cleanPrompt}\n\nResearch objective: ${researchDecision.objective}`
       : cleanPrompt;
-  const pantheonInvestigationPromise = pantheonDelegatedByLexara ? investigatePersonQuestion(pantheonPrompt, {
+  const pantheonInvestigationPromise: Promise<LexaraPersonInvestigation | null> = pantheonDelegatedByLexara ? investigatePersonQuestion(pantheonPrompt, {
     delegatedByLexara: mixedLegalFactNeed,
     previousMessages: context.previousMessages,
     jurisdiction,
@@ -384,7 +518,11 @@ export async function generateLexaraConversationResponse(
     console.warn('[LEXARA Pantheon] application-owned research route unavailable', {
       error: error instanceof Error ? error.message : String(error),
     });
-    return null;
+    return {
+      sources: [], categories: [], fullBackgroundReportRequested: false,
+      endpoint: 'failed' as const, coverageLimited: true,
+      coverageNote: 'Pantheon research failed before a verified result was returned.',
+    };
   }) : Promise.resolve(null);
   // Never await network-backed Pantheon work before the live research budget.
   // Identity clarification is returned synchronously by investigatePersonQuestion
@@ -399,6 +537,8 @@ export async function generateLexaraConversationResponse(
       text: initialPantheon.clarification,
       jurisdiction,
       mappedLawType,
+      pantheonEndpoint: initialPantheon.endpoint,
+      pantheonStatus: initialPantheon.fullBackgroundReportRequested ? 'consent-required' : 'clarification-required',
     };
   }
 
@@ -438,6 +578,28 @@ export async function generateLexaraConversationResponse(
   if (!authorityResearch) researchController.abort();
   context.signal?.removeEventListener('abort', relayResearchAbort);
   const researchWaitMs = Date.now() - researchStartedAt;
+  const pantheonEndpoint = pantheonDelegatedByLexara
+    ? pantheonInvestigation?.endpoint || 'unavailable' : undefined;
+  const pantheonStatus = pantheonEndpoint === 'evidence-sufficient'
+    ? 'completed' as const
+    : pantheonEndpoint === 'best-available-evidence' || pantheonEndpoint === 'partial-evidence' || pantheonEndpoint === 'budget-exhausted' || pantheonEndpoint === 'sources-exhausted'
+      ? 'partial' as const
+      : pantheonEndpoint === 'clarification-required' ? 'clarification-required' as const
+      : pantheonEndpoint === 'report-handoff' ? 'consent-required' as const
+      : pantheonEndpoint === 'failed' ? 'failed' as const
+      : pantheonEndpoint === 'unavailable' ? 'unavailable' as const : undefined;
+  if (pantheonDelegatedByLexara && !mixedLegalFactNeed && !pantheonInvestigation?.evidenceSummary) {
+    const text = pantheonInvestigation?.clarification
+      || (pantheonStatus === 'failed' || pantheonStatus === 'unavailable'
+        ? 'Pantheon could not complete this lookup. I cannot verify the requested fact or rule out a record; please retry when the sources are available.'
+        : 'Pantheon completed a limited lookup but found no verified, subject-matched evidence for this question. That does not establish that no record exists.');
+    console.info('[LEXARA Performance] background turn', {
+      pantheonEndpoint, pantheonStatus, researchWaitMs,
+      crawlerAudit: pantheonInvestigation?.crawlerAudit,
+      discoveryLanes: pantheonInvestigation?.discoveryLanes,
+    });
+    return { text, jurisdiction, mappedLawType, pantheonEndpoint, pantheonStatus };
+  }
 
   const systemPrompt = buildLegalSystemPrompt(context, mappedLawType, jurisdiction)
     + formatAuthorityResearchForSystem(authorityResearch)
@@ -518,16 +680,38 @@ export async function generateLexaraConversationResponse(
     }
   }
 
+  // OpenRouter is an optional recovery gateway, not a Pantheon completion
+  // prerequisite. When every answer model is unavailable, preserve verified
+  // research as a clearly labelled source excerpt instead of treating an
+  // evidence-backed background turn as an ungrounded legal-analysis failure.
+  let usedPantheonSourceExcerptFallback = false;
+  if (!text && pantheonDelegatedByLexara && !mixedLegalFactNeed && pantheonInvestigation?.evidenceSummary) {
+    const fallback = extractVerifiedPantheonSourceExcerpt(pantheonInvestigation);
+    if (fallback) {
+      text = fallback.text;
+      usedPantheonSourceExcerptFallback = true;
+    }
+  }
+
   // Safety remains narrow: only after both the normal capability pool and the
   // independent recovery lane are exhausted do we decline to invent current law.
+  const answerServiceUnavailable = !text;
   if (!text) text = degradedLegalResponse(jurisdiction);
+  if (pantheonDelegatedByLexara && !mixedLegalFactNeed
+    && /^The live legal-reasoning service is temporarily unavailable/.test(text)) {
+    const validatedFallback = extractVerifiedPantheonSourceExcerpt(pantheonInvestigation);
+    text = validatedFallback?.text
+      || (pantheonInvestigation?.evidenceSummary
+        ? 'Pantheon retrieved material, but its source citation could not be validated and I cannot safely confirm the requested fact.'
+        : 'Pantheon did not verify this fact; a source or answer service was unavailable.');
+  }
 
   // Deterministic person-record guard: provider/model policy drift may not
   // convert "private individual" into a fabricated application permission rule.
   // This lane runs only when Pantheon was actually targeted AND the generated
   // answer contains that prohibited refusal pattern, so normal turns gain no
   // extra latency.
-  if (pantheonInvestigation && isPersonPermissionRefusal(text)) {
+  if (pantheonInvestigation && !usedPantheonSourceExcerptFallback && isPersonPermissionRefusal(text)) {
     if (pantheonInvestigation.evidenceSummary && process.env.OPENROUTER_API_KEY?.trim() && !context.signal?.aborted) {
       try {
         const correction = await generateOpenRouterText(
@@ -549,9 +733,17 @@ export async function generateLexaraConversationResponse(
       }
     }
     if (isPersonPermissionRefusal(text)) {
-      text = pantheonInvestigation.evidenceSummary
-        ? 'Pantheon retrieved subject-specific source material, but the requested fact was not verified strongly enough from the completed sources for me to state it as fact.'
-        : 'I could not verify the requested fact from the sources Pantheon completed.';
+      const fallback = !mixedLegalFactNeed
+        ? extractVerifiedPantheonSourceExcerpt(pantheonInvestigation)
+        : null;
+      if (fallback) {
+        text = fallback.text;
+        usedPantheonSourceExcerptFallback = true;
+      } else {
+        text = pantheonInvestigation.evidenceSummary
+          ? 'Pantheon retrieved subject-specific source material, but the requested fact was not verified strongly enough from the completed sources for me to state it as fact.'
+          : 'I could not verify the requested fact; some sources may not have been available.';
+      }
     }
   }
 
@@ -560,16 +752,18 @@ export async function generateLexaraConversationResponse(
     harmonyMs: Date.now() - harmonyStartedAt,
     totalMs: Date.now() - turnStartedAt,
     grounded: !!authorityResearch || !!pantheonInvestigation?.evidenceSummary,
-    pantheonTargeted: !!pantheonInvestigation,
+    pantheonTargeted: pantheonDelegatedByLexara,
     pantheonEvidence: !!pantheonInvestigation?.evidenceSummary,
     pantheonCategories: pantheonInvestigation?.categories || [],
     pantheonSourceCount: pantheonInvestigation?.sources?.length || 0,
     pantheonCoverageLimited: pantheonInvestigation?.coverageLimited === true,
     pantheonEndpoint: pantheonInvestigation?.endpoint || null,
+    answerServiceUnavailable,
+    sourceExcerptFallback: usedPantheonSourceExcerptFallback,
     pantheonRecursionPasses: pantheonInvestigation?.recursionPasses || 0,
     researchNeeded: researchDecision.needed,
     researchObjectiveKind: researchDecision.objectiveKind,
-    researchEndpointReached: !researchDecision.needed || Boolean(authorityResearch || pantheonInvestigation),
+    researchEndpointReached: !researchDecision.needed || Boolean(authorityResearch || pantheonEndpoint),
     providersConfigured: harmonyProviders.length,
     initialHedgeParticipants: Math.min(3, harmonyProviders.length),
     reserveParticipants: Math.max(0, harmonyProviders.length - 3),
@@ -580,5 +774,11 @@ export async function generateLexaraConversationResponse(
     text,
     jurisdiction,
     mappedLawType,
+    pantheonEndpoint,
+    pantheonStatus: usedPantheonSourceExcerptFallback && pantheonInvestigation?.endpoint === 'evidence-sufficient'
+      && verifiedExcerptDirectlyAnswers(cleanPrompt, context.previousMessages || [], jurisdiction, pantheonInvestigation, extractVerifiedPantheonSourceExcerpt(pantheonInvestigation)?.excerpt || '')
+      ? 'completed'
+      : (answerServiceUnavailable || usedPantheonSourceExcerptFallback) && pantheonDelegatedByLexara && pantheonInvestigation?.evidenceSummary
+        ? 'partial' : pantheonStatus,
   };
 }

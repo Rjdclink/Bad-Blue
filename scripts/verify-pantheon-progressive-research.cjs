@@ -14,7 +14,7 @@ for(const token of [
  'PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD = 0.80',
  "stage: 'evidence-progress'",
  'publishableEvidence:',
- 'perPassBudgetMs = Math.min(pass === 0 ? 6_000 : 8_000, remainingMs)',
+ 'perPassBudgetMs = Math.min(pass === 0 ? 12_000 : 8_000, remainingMs)',
 ]) if(!pantheon.includes(token)) throw new Error('Progressive Pantheon invariant missing '+token);
 if(!authority.includes('RESEARCH_TIMEOUT_MS = 3 * 60_000')) throw new Error('Authority research is not capped at three minutes');
 for(const token of [
@@ -71,7 +71,7 @@ for(const token of [
  'PERSON_SOFT_CHECKPOINTS_MS = [25_000, 60_000, 120_000, 300_000]',
  'A source/pass deadline is route-local',
  'contradictionPenalty = identityMatch.conflicts.length > 0',
- "resolvedEntityType = resolvedOrganization && !resolvedName ? 'organization' : 'person'",
+ "resolvedEntityType = resolved?.kind || 'person'",
 ]) if(!pantheon.includes(token)) throw new Error('Progressive research blueprint invariant missing '+token);
 console.log('Pantheon full progressive-learning blueprint verification passed.');
 
@@ -133,8 +133,8 @@ console.log('Pantheon 30-category schema-driven extraction verification passed.'
 
 for(const token of [
  'REPORT_LABEL_BY_BACKGROUND_CATEGORY',
- 'function conversationalReportCategoryLabel(prompt: string',
- "categoryLabel: conversationalReportCategoryLabel(prompt, categories)",
+ 'function conversationalReportCategoryLabel(',
+ "categoryLabel: conversationalReportCategoryLabel(prompt, categories, previousUserTurns)",
  "'Phone Numbers'",
  "'Email Addresses'",
  "'Address History'",

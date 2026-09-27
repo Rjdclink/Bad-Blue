@@ -105,8 +105,10 @@ must(
   'server VAD records continuously while barge-in authority requires a transcript-correlated non-destructive STT probe',
 );
 must(
-  conversation.includes('CONVERSATION_STORAGE_SCHEMA_VERSION = 2'),
-  'conversation storage is versioned to quarantine corrupt prior turns',
+  conversation.includes('fetch(`/api/lexara/conversations/latest?${params}`') &&
+    conversation.includes('if (!historyReadyRef.current) return;') &&
+    !conversation.includes('loadStoredConversation('),
+  'signed-in Lexara history restores from owner-scoped server storage before new turns can begin',
 );
 must(
   voiceMode.includes('SERVER_VAD_MIN_SILENCE_MS = 1_800') &&
@@ -657,8 +659,9 @@ must(
 must(
   conversation.includes('isMasterSession') &&
     conversation.includes("key?.startsWith('lexara-live-session:')") &&
-    lexaraChatRoutes.includes("persistenceStatus: isMaster ? 'master-ephemeral' : 'queued'") &&
-    lexaraChatRoutes.includes('if (!isMaster)'),
+    lexaraChatRoutes.includes("persistenceStatus: 'master-ephemeral'") &&
+    lexaraChatRoutes.includes('await persistConversationTurn(req, {') &&
+    lexaraChatRoutes.includes("persistenceStatus: 'saved'"),
   'master Lexara matters are ephemeral and reset across law-area/session changes',
 );
 
@@ -683,9 +686,7 @@ must(
   'attorney portrait is included in production assets and missing assets cannot masquerade as SPA HTML',
 );
 must(
-  storage.includes('db as overflowRuntimeDb') &&
-    storage.includes('isOverflowRuntimeDatabaseConfigured') &&
-    storage.includes('await overflowRuntimeDb') &&
+  storage.includes('getLexaraConversationPersistenceDb()') &&
     storage.includes('[LEXARA Persistence] insert attempt failed') &&
     storage.includes('for (let attempt = 1; attempt <= 3; attempt += 1)') &&
     overflowSchema.includes("'public.lexara_conversations'") &&
@@ -936,8 +937,6 @@ must(
     orchestrator.includes('I could not verify the requested fact from the sources Pantheon completed.'),
   'Lexara has no blanket private-individual permission refusal after Pantheon targeting',
 );
-if (process.exitCode) process.exit(process.exitCode);
-console.log('LEXARA realization verification passed.');
 // Practice-area specialization gate (40-book LegalWhat library).
 const lawTypesSource = read('shared/lawTypes.ts');
 const legalDomainProfiles = read('server/lexara/LexaraLegalDomainProfiles.ts');
@@ -1020,7 +1019,6 @@ const domainImplementationSources = domainImplementationReview.split('## Sources
 const domainImplementationSourceLines = domainImplementationSources.split('\n').filter(line => /^\d+\.\s/.test(line));
 must(domainExpertiseSourceLines.length === 40, 'literal 40-source LEXARA practice-area legal review is present');
 must(domainImplementationSourceLines.length === 10, 'literal 10-source LEXARA specialization implementation review is present');
-if (process.exitCode) process.exit(process.exitCode);
 must(
   lexaraConversationOrchestrator.includes('planLexaraSequence(cleanPrompt, previousUserTurns)') &&
     lexaraConversationOrchestrator.includes("sequencePlan.sequence === 'combined-legal-background'") &&
@@ -1029,8 +1027,6 @@ must(
     lexaraPantheonInvestigation.includes("researchDecision.objectiveKind !== 'legal-authority' || context.delegatedByLexara"),
   'legal-only questions stay on Lexara while explicit mixed legal/background questions may delegate factual retrieval to Pantheon',
 );
-
-console.log('LEXARA 40-domain specialization verification passed.');
 
 must(
   pantheonInvestigation.includes('shouldUsePantheonForPersonQuestion') &&
@@ -1156,8 +1152,6 @@ must(
     voiceRoutes.includes('res.flushHeaders()'),
   'playback telemetry carries one turn identity and the server flushes progressive audio headers immediately',
 );
-if (process.exitCode) process.exit(process.exitCode);
-
 // Regression gates for the established document/voice working points.
 must(
   conversation.includes("data?.validated !== true || String(data?.documentType || '') !== pendingDocument.title"),
@@ -1168,5 +1162,5 @@ must(
     conversation.includes('if (!suppressDocumentBodySpeech)'),
   'document bodies must never be sent to realtime TTS',
 );
-console.log('LEXARA independent recovery verification passed.');
+if (!process.exitCode) console.log('LEXARA realization verification passed.');
 

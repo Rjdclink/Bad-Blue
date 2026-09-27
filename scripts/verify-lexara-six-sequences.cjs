@@ -34,9 +34,9 @@ if (!pantheon.includes('discoverPantheonSourcesParallel(') || !pantheon.includes
 // This specifically prevents the production regression where the router selected
 // Pantheon but an undeclared legacy registryUrls identifier crashed before crawler dispatch.
 if (pantheon.includes('...registryUrls')) throw new Error('Stale undefined registryUrls can crash Pantheon before crawler dispatch');
-if (!pantheon.includes('const targets = [...new Set([...categorySeedUrls, ...discoveredUrls])]')) throw new Error('Pantheon selected route is not wired from scoped seeds + discovery into crawler targets');
+if (!pantheon.includes('const targets = [...new Set([...explicitUrls, ...discoveredUrls, ...categorySeedUrls])]')) throw new Error('Pantheon selected route must include safe user-supplied URLs, discovered sources, and scoped seeds');
 if (!orchestrator.includes('pantheonDelegatedByLexara\n      ? pantheonInvestigationPromise')) throw new Error('Selected Pantheon route is not awaited through the execution handoff');
-if (!orchestrator.includes('researchEndpointReached: !researchDecision.needed || Boolean(authorityResearch || pantheonInvestigation)')) throw new Error('Research endpoint completion telemetry missing');
+if (!orchestrator.includes('researchEndpointReached: !researchDecision.needed || Boolean(authorityResearch || pantheonEndpoint)')) throw new Error('Research endpoint telemetry must use an explicit Pantheon endpoint rather than a routed investigation object');
 if (!authority.includes('discoverLegalMeshTier3') || !authority.includes('enrichAuthoritySourcesWithCrawlerPool')) throw new Error('Lexara legal discovery/crawler sequence missing');
 if (!routes.includes('documentIntent') || !routes.includes("send('complete'")) throw new Error('Document/action handoff missing');
 

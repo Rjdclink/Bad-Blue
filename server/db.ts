@@ -331,7 +331,9 @@ export async function activateLegalWhatNeonFallback(reason: string): Promise<boo
     const required = [
       'users', 'auth_accounts', 'sessions', 'plans', 'subscriptions',
       'trial_consultations', 'complaints', 'lawsuit_filings',
-      'foia_requests', 'officer_profiles', 'ai_subagent_logs', 'lexara_conversations',
+      // Lexara conversation history belongs to the separate Overflow authority,
+      // not the LegalWhat Primary/Neon failover candidate.
+      'foia_requests', 'officer_profiles', 'ai_subagent_logs',
       'subagent_learning_patterns', 'subagent_search_sessions', 'officer_category_priority',
     ];
     const proof = await candidate.query({
@@ -628,7 +630,8 @@ export async function verifyDatabaseSchema(): Promise<{
     'foia_routing_history',        // FOIA routing tracking
     'trial_consultations',         // IP-based consultations
     'ai_subagent_logs',            // AI sub-agent activity logs
-    'lexara_conversations',        // LEXARA durable consultation history
+    // Lexara conversations are verified on the separate Overflow authority,
+    // not against this Primary application database.
   ];
 
   try {
