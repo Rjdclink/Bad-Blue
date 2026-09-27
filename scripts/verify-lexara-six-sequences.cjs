@@ -26,7 +26,7 @@ for (const token of [
 
 if (!orchestrator.includes('planLexaraSequence(cleanPrompt, previousUserTurns)')) throw new Error('Conversation orchestrator does not use six-sequence router');
 if (!orchestrator.includes("sequencePlan.sequence === 'combined-legal-background'")) throw new Error('Mixed legal/background route is not explicit');
-if (!orchestrator.includes('sequencePlan.usePantheon ? investigatePersonQuestion')) throw new Error('Pantheon handoff is not sequence-owned');
+if (!orchestrator.includes('const pantheonDelegatedByLexara = sequencePlan.usePantheon') || !orchestrator.includes('pantheonDelegatedByLexara ? investigatePersonQuestion')) throw new Error('Pantheon handoff is not sequence-owned');
 if (!orchestrator.includes('sequencePlan.useLegalResearch')) throw new Error('Legal research handoff is not sequence-owned');
 if (!web.includes('discoverPantheonSourcesParallel(query') || !web.includes('pantheonRetrievalAdapter.retrieve')) throw new Error('Discovery-first -> crawler retrieval backbone missing');
 if (!pantheon.includes('discoverPantheonSourcesParallel(') || !pantheon.includes('pantheonRetrievalAdapter.retrieve')) throw new Error('Recursive Pantheon discovery/retrieval missing');
