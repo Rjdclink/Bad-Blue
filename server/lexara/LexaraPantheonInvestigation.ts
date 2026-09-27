@@ -539,7 +539,7 @@ export async function investigatePersonQuestion(
         const inmateResult = await Promise.race([
           searchInmates({
             firstName,
-            lastName
+            lastName,
             middleName: person.middleName,
             state: extractStateCode(combined),
             searchScope: 'all',
