@@ -519,7 +519,7 @@ export async function investigatePersonQuestion(
       categories,
       jurisdiction: context.jurisdiction,
       limit: 8,
-      timeoutMs: 650,
+      timeoutMs: 10_000,
       signal: context.signal,
     },
   ).catch(() => null);
@@ -539,7 +539,7 @@ export async function investigatePersonQuestion(
         const inmateResult = await Promise.race([
           searchInmates({
             firstName,
-            lastName,
+            lastName
             middleName: person.middleName,
             state: extractStateCode(combined),
             searchScope: 'all',
