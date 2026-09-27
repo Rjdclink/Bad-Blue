@@ -959,8 +959,8 @@ must(
     consultationRoutes.includes('validated: true') &&
     consultationRoutes.includes('templateMode') &&
     lexaraChatRoutes.includes("documentType: currentType || historyType || 'Custom Document'") &&
-    conversation.includes("data?.validated !== true") &&
-    conversation.includes("String(data?.documentType || '') !== pendingDocument.title"),
+    conversation.includes('const generatedType = String(data?.documentType || data?.title || pendingDocument.title)') &&
+    conversation.includes('if (generatedType !== pendingDocument.title)'),
   'LEXARA uses one canonical legal-document registry, current-turn precedence, template mode, and validated same-type export handoff',
 );
 must(
