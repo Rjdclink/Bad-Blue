@@ -3,6 +3,7 @@ import bcrypt from "bcrypt";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { getConfig } from "./config";
 import { pool } from "./db";
+import type { TrialActivationOutcome } from "./trialAccess";
 
 export const LOCAL_SESSION_COOKIE = "legalwhat_user";
 const LOCAL_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -15,6 +16,15 @@ export interface StatelessLocalUser {
   lastName: string | null;
   status: string;
   hasPaidForAccess: boolean;
+  trialEligible?: boolean;
+  trialStartedAt?: string | null;
+  trialExpiresAt?: string | null;
+  trialConsumedAt?: string | null;
+}
+
+export interface LocalTrialActivation {
+  outcome: TrialActivationOutcome;
+  user: StatelessLocalUser;
 }
 
 export interface StatelessLocalSession extends StatelessLocalUser {
@@ -52,6 +62,13 @@ type LocalAuthBackend =
 
 let authBackend: LocalAuthBackend | null = null;
 let authBackendSelection: Promise<LocalAuthBackend> | null = null;
+let trialSchemaReady = false;
+const LEGACY_LOCAL_USER_FIELDS = "id,email,first_name,last_name,status,has_paid_for_access";
+const TRIAL_LOCAL_USER_FIELDS =
+  `${LEGACY_LOCAL_USER_FIELDS},trial_eligible,trial_started_at,trial_expires_at,trial_consumed_at`;
+function localUserSelectFields(): string {
+  return trialSchemaReady ? TRIAL_LOCAL_USER_FIELDS : LEGACY_LOCAL_USER_FIELDS;
+}
 const AUTH_DB_QUERY_TIMEOUT_MS = 4_000;
 // Supabase Edge Functions may incur a multi-second cold start after a deployment.
 // Keep this bounded, but long enough for the first authenticated probe to warm the
@@ -62,11 +79,13 @@ const AUTH_EDGE_FUNCTION = "legalwhat-local-auth";
 interface EdgeAuthResponse {
   ok?: boolean;
   user?: StatelessLocalUser | null;
+  decision?: { outcome?: TrialActivationOutcome } | null;
+  trialSchemaReady?: boolean;
   error?: string;
 }
 
 async function edgeAuthRequest(
-  action: "probe" | "login" | "register" | "user" | "set_subscription",
+  action: "probe" | "login" | "register" | "user" | "set_subscription" | "activate_trial",
   payload: Record<string, unknown> = {},
 ): Promise<EdgeAuthResponse> {
   const url = String(process.env.LEGALWHAT_AUTH_SUPABASE_URL || getConfig().SUPABASE_URL || "").trim();
@@ -97,8 +116,9 @@ async function edgeAuthRequest(
   return body;
 }
 
-async function probeEdgeAuthStore(): Promise<void> {
-  await edgeAuthRequest("probe");
+async function probeEdgeAuthStore(): Promise<boolean> {
+  const result = await edgeAuthRequest("probe");
+  return result.trialSchemaReady === true;
 }
 
 async function authDbQuery(text: string, values: unknown[] = []): Promise<any> {
@@ -114,6 +134,37 @@ async function probePostgresAuthStore(): Promise<void> {
     authDbQuery("SELECT id FROM users LIMIT 1"),
     authDbQuery("SELECT id FROM auth_accounts LIMIT 1"),
   ]);
+}
+
+async function probePostgresTrialSchema(): Promise<boolean> {
+  try {
+    const result = await authDbQuery(`
+      SELECT
+        (SELECT count(*) = 4 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'users'
+            AND column_name IN ('trial_eligible','trial_started_at','trial_expires_at','trial_consumed_at'))
+        AND to_regprocedure('public.legalwhat_activate_trial(character varying)') IS NOT NULL
+        AND to_regprocedure('public.legalwhat_bind_trial_square_customer(character varying,character varying)') IS NOT NULL
+        AS ready
+    `);
+    return result.rows?.[0]?.ready === true;
+  } catch {
+    return false;
+  }
+}
+
+async function probeSupabaseTrialSchema(supabase: SupabaseClient): Promise<boolean> {
+  try {
+    const { error: columnError } = await supabase
+      .from("users")
+      .select("trial_eligible,trial_started_at,trial_expires_at,trial_consumed_at")
+      .limit(0);
+    if (columnError) return false;
+    const { data, error } = await supabase.rpc("legalwhat_trial_schema_ready");
+    return !error && data === true;
+  } catch {
+    return false;
+  }
 }
 
 function buildPrimarySupabaseClient(url: string, key: string): SupabaseClient {
@@ -199,7 +250,7 @@ async function resolveLocalAuthBackend(): Promise<LocalAuthBackend> {
     // general application project cannot silently redirect signups elsewhere.
     if (dedicatedAuthConfigured && edgeSecretConfigured) {
       try {
-        await probeEdgeAuthStore();
+        trialSchemaReady = await probeEdgeAuthStore();
         authBackend = { kind: "edge" };
         return authBackend;
       } catch (error) {
@@ -209,6 +260,7 @@ async function resolveLocalAuthBackend(): Promise<LocalAuthBackend> {
 
     try {
       const supabase = await primarySupabaseClient();
+      trialSchemaReady = await probeSupabaseTrialSchema(supabase);
       authBackend = { kind: "supabase", client: supabase };
       return authBackend;
     } catch (error) {
@@ -219,7 +271,7 @@ async function resolveLocalAuthBackend(): Promise<LocalAuthBackend> {
     // bounded fallback for deployments using the application Supabase project.
     if (!dedicatedAuthConfigured || !edgeSecretConfigured) {
       try {
-        await probeEdgeAuthStore();
+        trialSchemaReady = await probeEdgeAuthStore();
         authBackend = { kind: "edge" };
         console.warn("[AUTH] Direct Supabase server credential unavailable; using project-local Supabase Edge authentication authority");
         return authBackend;
@@ -230,6 +282,7 @@ async function resolveLocalAuthBackend(): Promise<LocalAuthBackend> {
 
     try {
       await probePostgresAuthStore();
+      trialSchemaReady = await probePostgresTrialSchema();
       authBackend = { kind: "postgres" };
       console.warn("[AUTH] Supabase HTTP and Edge authentication unavailable; using bounded canonical PostgreSQL auth store");
       return authBackend;
@@ -261,6 +314,12 @@ function normalizeName(value: string, label: string): string {
 }
 
 function mapUser(row: any): StatelessLocalUser {
+  const mapTimestamp = (value: unknown): string | null => {
+    if (value == null) return null;
+    const date = value instanceof Date ? value : new Date(String(value));
+    return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+  };
+
   return {
     id: String(row.id),
     email: String(row.email || ""),
@@ -268,17 +327,22 @@ function mapUser(row: any): StatelessLocalUser {
     lastName: row.last_name == null ? null : String(row.last_name),
     status: String(row.status || "pending_payment"),
     hasPaidForAccess: row.has_paid_for_access === true,
+    trialEligible: row.trial_eligible === true,
+    trialStartedAt: mapTimestamp(row.trial_started_at),
+    trialExpiresAt: mapTimestamp(row.trial_expires_at),
+    trialConsumedAt: mapTimestamp(row.trial_consumed_at),
   };
 }
 
 export async function probeLocalAuthStoreHttp(): Promise<void> {
   const backend = await resolveLocalAuthBackend();
   if (backend.kind === "edge") {
-    await probeEdgeAuthStore();
+    trialSchemaReady = await probeEdgeAuthStore();
     return;
   }
   if (backend.kind === "postgres") {
     await probePostgresAuthStore();
+    trialSchemaReady = await probePostgresTrialSchema();
     return;
   }
 
@@ -288,6 +352,12 @@ export async function probeLocalAuthStoreHttp(): Promise<void> {
   ]);
   if (usersProbe.error) throw new Error(`Users store probe failed: ${usersProbe.error.message}`);
   if (accountsProbe.error) throw new Error(`Auth accounts store probe failed: ${accountsProbe.error.message}`);
+  trialSchemaReady = await probeSupabaseTrialSchema(backend.client);
+}
+
+export async function isLocalTrialSchemaReady(): Promise<boolean> {
+  await resolveLocalAuthBackend();
+  return trialSchemaReady;
 }
 
 export async function getLocalUserByIdHttp(userId: string): Promise<StatelessLocalUser | null> {
@@ -300,7 +370,7 @@ export async function getLocalUserByIdHttp(userId: string): Promise<StatelessLoc
   }
   if (backend.kind === "postgres") {
     const result = await authDbQuery(
-      "SELECT id,email,first_name,last_name,status,has_paid_for_access FROM users WHERE id = $1 LIMIT 1",
+      `SELECT ${localUserSelectFields()} FROM users WHERE id = $1 LIMIT 1`,
       [userId],
     );
     return result.rows?.[0] ? mapUser(result.rows[0]) : null;
@@ -308,7 +378,7 @@ export async function getLocalUserByIdHttp(userId: string): Promise<StatelessLoc
 
   const { data, error } = await backend.client
     .from("users")
-    .select("id,email,first_name,last_name,status,has_paid_for_access")
+    .select(localUserSelectFields())
     .eq("id", userId)
     .maybeSingle();
   if (error) throw new Error(`User lookup failed: ${error.message}`);
@@ -327,7 +397,7 @@ export async function authenticateLocalUserHttp(email: string, password: string)
 
   if (backend.kind === "postgres") {
     const userResult = await authDbQuery(
-      "SELECT id,email,first_name,last_name,status,has_paid_for_access FROM users WHERE lower(email) = $1 LIMIT 1",
+      `SELECT ${localUserSelectFields()} FROM users WHERE lower(email) = $1 LIMIT 1`,
       [normalizedEmail],
     );
     const userRow = userResult.rows?.[0];
@@ -353,16 +423,18 @@ export async function authenticateLocalUserHttp(email: string, password: string)
 
   const { data: userRow, error: userError } = await backend.client
     .from("users")
-    .select("id,email,first_name,last_name,status,has_paid_for_access")
+    .select(localUserSelectFields())
     .eq("email", normalizedEmail)
     .maybeSingle();
   if (userError) throw new Error(`User lookup failed: ${userError.message}`);
   if (!userRow) return null;
+  const authenticatedUserId = String((userRow as any).id || "");
+  if (!authenticatedUserId) throw new Error("User lookup returned no account ID");
 
   const { data: authRow, error: authError } = await backend.client
     .from("auth_accounts")
     .select("id,user_id,password_hash")
-    .eq("user_id", userRow.id)
+    .eq("user_id", authenticatedUserId)
     .eq("auth_type", "local")
     .maybeSingle();
   if (authError) throw new Error(`Authentication lookup failed: ${authError.message}`);
@@ -373,7 +445,7 @@ export async function authenticateLocalUserHttp(email: string, password: string)
 
   const now = new Date().toISOString();
   void Promise.allSettled([
-    backend.client.from("users").update({ last_login_at: now, updated_at: now }).eq("id", userRow.id),
+    backend.client.from("users").update({ last_login_at: now, updated_at: now }).eq("id", authenticatedUserId),
     backend.client.from("auth_accounts").update({ last_login_at: now, updated_at: now }).eq("id", authRow.id),
   ]);
 
@@ -422,11 +494,13 @@ export async function registerLocalUserHttp(
       );
       if (existing.rows?.length) throw new Error("Email already registered");
 
+      const trialEligibilityColumn = trialSchemaReady ? ",trial_eligible" : "";
+      const trialEligibilityValue = trialSchemaReady ? ",true" : "";
       const inserted = await dbClient.query(
         `INSERT INTO users
-           (id,email,first_name,last_name,profile_image_url,status,has_paid_for_access,created_at,updated_at)
-         VALUES ($1,$2,$3,$4,NULL,'pending_payment',false,$5,$5)
-         RETURNING id,email,first_name,last_name,status,has_paid_for_access`,
+           (id,email,first_name,last_name,profile_image_url,status,has_paid_for_access${trialEligibilityColumn},created_at,updated_at)
+         VALUES ($1,$2,$3,$4,NULL,'pending_payment',false${trialEligibilityValue},$5,$5)
+         RETURNING ${localUserSelectFields()}`,
         [userId, normalizedEmail, normalizedFirstName, normalizedLastName, now],
       );
 
@@ -467,10 +541,11 @@ export async function registerLocalUserHttp(
       profile_image_url: null,
       status: "pending_payment",
       has_paid_for_access: false,
+      ...(trialSchemaReady ? { trial_eligible: true } : {}),
       created_at: now,
       updated_at: now,
     })
-    .select("id,email,first_name,last_name,status,has_paid_for_access")
+    .select(localUserSelectFields())
     .single();
 
   if (userError || !userRow) {
@@ -496,6 +571,45 @@ export async function registerLocalUserHttp(
   }
 
   return mapUser(userRow);
+}
+
+export async function activateLocalTrialHttp(userId: string): Promise<LocalTrialActivation> {
+  const id = String(userId || "").trim();
+  if (!id) throw new Error("A user account is required to activate a trial");
+
+  const backend = await resolveLocalAuthBackend();
+  if (!trialSchemaReady) {
+    const user = await getLocalUserByIdHttp(id);
+    if (!user) throw new Error("Trial account was not found");
+    return { outcome: "AMBIGUOUS", user };
+  }
+  let decision: any;
+
+  if (backend.kind === "edge") {
+    const result = await edgeAuthRequest("activate_trial", { userId: id });
+    decision = result.decision;
+  } else if (backend.kind === "postgres") {
+    const result = await authDbQuery(
+      "SELECT public.legalwhat_activate_trial($1) AS decision",
+      [id],
+    );
+    decision = result.rows?.[0]?.decision;
+  } else {
+    const { data, error } = await backend.client.rpc("legalwhat_activate_trial", {
+      p_user_id: id,
+    });
+    if (error) throw new Error(`Trial activation failed: ${error.message}`);
+    decision = data;
+  }
+
+  const outcome = String(decision?.outcome || "") as TrialActivationOutcome;
+  if (!["ELIGIBLE", "CLEAR_REPEAT", "AMBIGUOUS"].includes(outcome)) {
+    throw new Error("Trial authority returned an invalid decision");
+  }
+
+  const user = await getLocalUserByIdHttp(id);
+  if (!user) throw new Error("Trial account was not found after activation");
+  return { outcome, user };
 }
 
 function normalizeSubscriptionUpdate(update: LocalSubscriptionStateUpdate): LocalSubscriptionStateUpdate {
@@ -563,7 +677,16 @@ async function persistPostgresSubscriptionState(
     String(currentUserResult.rows[0].status || "").toLowerCase() === "suspended";
   let activeAdminOverride = false;
   if (!update.hasPaidForAccess && !administrativelySuspended) {
-    try {
+    const overrideSchema = await dbClient.query(`
+      SELECT to_regclass('public.user_subscriptions') IS NOT NULL
+        AND (
+          SELECT count(*) = 4
+          FROM information_schema.columns
+          WHERE table_schema='public' AND table_name='user_subscriptions'
+            AND column_name = ANY(ARRAY['id','user_id','is_active','payment_id'])
+        ) AS ready
+    `);
+    if (overrideSchema.rows?.[0]?.ready === true) {
       const overrideResult = await dbClient.query(
         `SELECT id FROM user_subscriptions
           WHERE user_id=$1 AND is_active=true AND payment_id IS NULL
@@ -571,9 +694,6 @@ async function persistPostgresSubscriptionState(
         [userId],
       );
       activeAdminOverride = Boolean(overrideResult.rows?.[0]?.id);
-    } catch {
-      // A missing legacy override table must never block a Square revocation.
-      activeAdminOverride = false;
     }
   }
   const effectiveUserStatus = administrativelySuspended
@@ -631,15 +751,28 @@ async function persistPostgresSubscriptionState(
               square_customer_id=COALESCE($2,square_customer_id),
               updated_at=NOW()
         WHERE id=$3
-        RETURNING id,email,first_name,last_name,status,has_paid_for_access`,
+        RETURNING ${localUserSelectFields()}`,
       [effectiveUserStatus, update.squareCustomerId, userId],
     );
     if (!updated.rows?.[0]) throw new Error("Subscription user update failed");
+    if (update.squareCustomerId && trialSchemaReady) {
+      await dbClient.query(
+        "SELECT public.legalwhat_bind_trial_square_customer($1,$2)",
+        [userId, update.squareCustomerId],
+      );
+    }
     return mapUser(updated.rows[0]);
   }
 
+  if (update.squareCustomerId && trialSchemaReady) {
+    await dbClient.query(
+      "SELECT public.legalwhat_bind_trial_square_customer($1,$2)",
+      [userId, update.squareCustomerId],
+    );
+  }
+
   const refreshed = await dbClient.query(
-    "SELECT id,email,first_name,last_name,status,has_paid_for_access FROM users WHERE id = $1 LIMIT 1",
+    `SELECT ${localUserSelectFields()} FROM users WHERE id = $1 LIMIT 1`,
     [userId],
   );
   if (!refreshed.rows?.[0]) throw new Error("Subscription user refresh failed");
@@ -783,17 +916,32 @@ async function persistSupabaseSubscriptionState(
       .from("users")
       .update(userPatch)
       .eq("id", userId)
-      .select("id,email,first_name,last_name,status,has_paid_for_access")
+      .select(localUserSelectFields())
       .single();
     if (userError || !userRow) {
       throw new Error(`Subscription user update failed: ${userError?.message || "unknown error"}`);
     }
+    if (update.squareCustomerId && trialSchemaReady) {
+      const { error: bindError } = await supabase.rpc("legalwhat_bind_trial_square_customer", {
+        p_user_id: userId,
+        p_square_customer_id: update.squareCustomerId,
+      });
+      if (bindError) throw new Error(`Verified Square trial identity binding failed: ${bindError.message}`);
+    }
     return mapUser(userRow);
+  }
+
+  if (update.squareCustomerId && trialSchemaReady) {
+    const { error: bindError } = await supabase.rpc("legalwhat_bind_trial_square_customer", {
+      p_user_id: userId,
+      p_square_customer_id: update.squareCustomerId,
+    });
+    if (bindError) throw new Error(`Verified Square trial identity binding failed: ${bindError.message}`);
   }
 
   const { data: userRow, error: userError } = await supabase
     .from("users")
-    .select("id,email,first_name,last_name,status,has_paid_for_access")
+    .select(localUserSelectFields())
     .eq("id", userId)
     .single();
   if (userError || !userRow) {

@@ -34,6 +34,7 @@ declare global {
       isAdmin?: boolean;
       isAdminBypass?: boolean;
       isMasterBypass?: boolean;
+      accessState?: "master" | "paid" | "trial_active" | "trial_expired" | "no_access";
       // Three-tier master password access
       accessZone?: AccessZone;
       accessRole?: AccessRole;

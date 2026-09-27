@@ -8,12 +8,15 @@ export function useAuth() {
   const { data: user, isLoading, isFetched, error } = useQuery<User | null>({
     queryKey: ["/api/auth/user"],
     retry: false,
-    // Optimize auth query with caching
-    staleTime: 5 * 60 * 1000, // 5 minutes - data is considered fresh
+    // Keep normal auth reads cached, but refresh trials so the browser follows
+    // the same server-derived expiry state while the tab remains open.
+    staleTime: 30 * 1000,
     gcTime: 10 * 60 * 1000, // 10 minutes - keep in cache (gcTime replaces cacheTime in v5)
     refetchOnMount: false, // Don't refetch if we have cached data
-    refetchOnWindowFocus: false, // Disable refetch on window focus
+    refetchOnWindowFocus: true,
     refetchOnReconnect: false, // Disable refetch on reconnect
+    refetchInterval: query =>
+      (query.state.data as any)?.accessState === "trial_active" ? 30_000 : false,
     // Only fetch if we're on a page that needs auth
     enabled: typeof window !== 'undefined',
   });

@@ -23,6 +23,16 @@ async function throwIfResNotOk(res: Response) {
       const text = await res.text();
       if (text) {
         errorMessage = text;
+        if (res.status === 402 && typeof window !== "undefined") {
+          try {
+            const body = JSON.parse(text);
+            if (body?.code === "TRIAL_EXPIRED" && window.location.pathname !== "/trial-expired") {
+              window.location.replace("/trial-expired");
+            }
+          } catch {
+            // Non-JSON API errors keep the existing error behavior.
+          }
+        }
       }
     } catch (e) {
       // If reading text fails, use statusText

@@ -20,6 +20,7 @@ import {
 import { authRateLimit } from "./rateLimit";
 import {
   LOCAL_SESSION_COOKIE,
+  activateLocalTrialHttp,
   authenticateLocalUserHttp,
   createLocalSessionToken,
   getLocalSessionMaxAgeSeconds,
@@ -31,6 +32,7 @@ import {
   type StatelessLocalSession,
   type StatelessLocalUser,
 } from "./statelessLocalAuth";
+import { getLegalWhatAccessState, getTrialRemainingMilliseconds } from "./trialAccess";
 
 
 function readCookie(req: any, name: string): string | null {
@@ -63,6 +65,7 @@ function masterPlatformUser(): Express.User {
     isAdmin: true,
     isAdminBypass: false,
     isMasterBypass: true,
+    accessState: "master",
     accessZone: zone,
     accessRole: zoneConfig.role,
     redirectRoute: zoneConfig.route,
@@ -215,6 +218,10 @@ export async function refreshRequestUser(req: any, res?: any): Promise<any | nul
     lastName: fresh.lastName,
     status: fresh.status,
     hasPaidForAccess: fresh.hasPaidForAccess,
+    trialEligible: fresh.trialEligible,
+    trialStartedAt: fresh.trialStartedAt,
+    trialExpiresAt: fresh.trialExpiresAt,
+    trialConsumedAt: fresh.trialConsumedAt,
     claims: {
       ...(current?.claims || {}),
       sub: fresh.id,
@@ -236,31 +243,35 @@ export async function resolvePaidAccess(req: any, res?: any): Promise<{
   authenticated: boolean;
   authorized: boolean;
   reason: "ok" | "unauthenticated" | "subscription_required" | "auth_store_unavailable";
+  accessState: "master" | "paid" | "trial_active" | "trial_expired" | "no_access";
   user: any | null;
 }> {
   if (!requestHasIdentity(req)) {
-    return { authenticated: false, authorized: false, reason: "unauthenticated", user: null };
+    return { authenticated: false, authorized: false, reason: "unauthenticated", accessState: "no_access", user: null };
   }
 
   const current = req.user as any;
   if (current?.isMasterBypass || current?.isAdminBypass || current?.isAdmin) {
-    return { authenticated: true, authorized: true, reason: "ok", user: current };
+    return { authenticated: true, authorized: true, reason: "ok", accessState: "master", user: current };
   }
 
   try {
     const fresh = await refreshRequestUser(req, res);
     if (!fresh) {
-      return { authenticated: false, authorized: false, reason: "unauthenticated", user: null };
+      return { authenticated: false, authorized: false, reason: "unauthenticated", accessState: "no_access", user: null };
     }
+    const accessState = getLegalWhatAccessState(fresh);
+    const authorized = accessState === "paid" || accessState === "trial_active";
     return {
       authenticated: true,
-      authorized: hasPaidServiceAccess(fresh),
-      reason: hasPaidServiceAccess(fresh) ? "ok" : "subscription_required",
+      authorized,
+      reason: authorized ? "ok" : "subscription_required",
+      accessState,
       user: fresh,
     };
   } catch (error) {
     console.error("[AUTH] Paid-access freshness check unavailable:", error instanceof Error ? error.message : String(error));
-    return { authenticated: true, authorized: false, reason: "auth_store_unavailable", user: current };
+    return { authenticated: true, authorized: false, reason: "auth_store_unavailable", accessState: "no_access", user: current };
   }
 }
 
@@ -354,6 +365,7 @@ export async function setupAuth(app: Express) {
       success: true,
       message: "Login successful",
       isMasterBypass: true,
+      accessState: "master",
       hasActiveSubscription: true,
       accessZone,
       accessRole: zoneConfig.role,
@@ -366,8 +378,15 @@ export async function setupAuth(app: Express) {
     try {
       const email = typeof req.body?.email === "string" ? req.body.email : "";
       const password = typeof req.body?.password === "string" ? req.body.password : "";
-      const user = await authenticateLocalUserHttp(email, password);
+      let user = await authenticateLocalUserHttp(email, password);
       if (!user) return res.status(401).json({ message: "Invalid email or password" });
+
+      let trialOutcome: string | undefined;
+      if (user.trialEligible && !user.trialStartedAt) {
+        const activation = await activateLocalTrialHttp(user.id);
+        user = activation.user;
+        trialOutcome = activation.outcome;
+      }
 
       setLocalCookie(res, createLocalSessionToken(user));
       cachePaidAccessUser(user);
@@ -376,6 +395,9 @@ export async function setupAuth(app: Express) {
         success: true,
         user,
         hasActiveSubscription: hasPaidServiceAccess(user),
+        accessState: getLegalWhatAccessState(user),
+        trialExpiresAt: user.trialExpiresAt || null,
+        trialOutcome,
       });
     } catch (error) {
       console.error("[AUTH] HTTP local login unavailable:", error instanceof Error ? error.message : String(error));
@@ -385,23 +407,28 @@ export async function setupAuth(app: Express) {
 
   app.post("/api/local-register", authRateLimit, async (req, res) => {
     try {
-      const user = await registerLocalUserHttp(
+      const createdUser = await registerLocalUserHttp(
         typeof req.body?.email === "string" ? req.body.email : "",
         typeof req.body?.password === "string" ? req.body.password : "",
         typeof req.body?.firstName === "string" ? req.body.firstName : "",
         typeof req.body?.lastName === "string" ? req.body.lastName : "",
       );
+      const activation = await activateLocalTrialHttp(createdUser.id);
+      const user = activation.user;
       // Signup establishes a pending authenticated session so the user can move
-      // directly into verified Square subscription checkout without re-entering
-      // credentials. Pending users remain fail-closed until Square is confirmed.
+      // directly into a trial or the existing Square subscription path.
       setLocalCookie(res, createLocalSessionToken(user));
       cachePaidAccessUser(user);
       clearMasterCookie(res);
       return res.status(201).json({
         success: true,
         user,
-        hasActiveSubscription: false,
-        paymentRequired: true,
+        hasActiveSubscription: hasPaidServiceAccess(user),
+        accessState: getLegalWhatAccessState(user),
+        trialExpiresAt: user.trialExpiresAt || null,
+        trialOutcome: activation.outcome,
+        paymentRequired: activation.outcome !== "ELIGIBLE" ||
+          getLegalWhatAccessState(user) !== "trial_active",
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Registration failed";
@@ -475,6 +502,13 @@ export async function setupAuth(app: Express) {
         profileImageUrl: null,
         status: fresh.status,
         hasPaidForAccess: fresh.hasPaidForAccess,
+          trialEligible: fresh.trialEligible === true,
+          trialStartedAt: fresh.trialStartedAt || null,
+          trialExpiresAt: fresh.trialExpiresAt || null,
+          trialConsumedAt: fresh.trialConsumedAt || null,
+          accessState: getLegalWhatAccessState(fresh),
+          trialRemainingMs: getTrialRemainingMilliseconds(fresh),
+          serverNow: new Date().toISOString(),
         accessPaymentId: null,
         accessPaidAt: null,
         lastLoginAt: null,
@@ -570,8 +604,11 @@ export const isAuthenticated: RequestHandler = async (req, res, next) => {
       });
     }
     return res.status(402).json({
-      message: "Active LegalWhat subscription required",
-      code: "SUBSCRIPTION_REQUIRED",
+      message: decision.accessState === "trial_expired"
+        ? "Your LegalWhat free trial has ended. Continue with the existing Square subscription checkout to restore access."
+        : "Active LegalWhat subscription required",
+      code: decision.accessState === "trial_expired" ? "TRIAL_EXPIRED" : "SUBSCRIPTION_REQUIRED",
+      accessState: decision.accessState,
     });
   }
 
