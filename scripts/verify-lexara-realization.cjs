@@ -1158,5 +1158,16 @@ must(
   'playback telemetry carries one turn identity and the server flushes progressive audio headers immediately',
 );
 if (process.exitCode) process.exit(process.exitCode);
+
+// Regression gates for the established document/voice working points.
+must(
+  lexaraConversation.includes("data?.validated !== true || String(data?.documentType || '') !== pendingDocument.title"),
+  'document export must retain strict server validation/type identity',
+);
+must(
+  lexaraConversation.includes('const suppressDocumentBodySpeech = documentIntentRequested || Boolean(priorPendingDocument)') &&
+    lexaraConversation.includes('if (!suppressDocumentBodySpeech)'),
+  'document bodies must never be sent to realtime TTS',
+);
 console.log('LEXARA independent recovery verification passed.');
 
