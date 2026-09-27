@@ -1138,7 +1138,9 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         researchProgressTimerRef.current = null;
       }
       if (generation !== generationRef.current) return;
-      if (data?.documentIntent?.requested === true) {
+      const priorPendingDocument = pendingDocument;
+      const documentIntentRequested = data?.documentIntent?.requested === true;
+      if (documentIntentRequested) {
         const resolvedJurisdiction = String(data?.jurisdiction || jurisdiction || '').trim();
         if (resolvedJurisdiction) {
           const facts = [...previousMessages, { role: 'user', content: message }]
@@ -1202,12 +1204,18 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         }
 
         appendMessage('lexara', answer);
+        // A document-action turn owns the artifact handoff. Keep the full draft
+        // visible in chat, but do not feed document bodies/markup/placeholders
+        // into realtime TTS; speak only ordinary conversational responses.
+        const suppressDocumentBodySpeech = documentIntentRequested || Boolean(priorPendingDocument);
         // Ask for neutral feedback only after a completed substantive answer.
         // This is not sentiment-gated: positive, negative, and mixed experiences
         // all reach the same review page.
         setShowReviewPrompt(true);
         setGaze('camera');
-        await speakLexara(answer, generation);
+        if (!suppressDocumentBodySpeech) {
+          await speakLexara(answer, generation);
+        }
       }
     } catch (error: any) {
       if (generation !== generationRef.current) return;
@@ -1240,7 +1248,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         }
       }
     }
-  }, [appendMessage, clearVoiceTurnBuffer, jurisdiction, lawTypeId, lawTypeName, liveEnabled, setConversationPhase, speakLexara, stopSpeaking, voiceReady]);
+  }, [appendMessage, clearVoiceTurnBuffer, jurisdiction, lawTypeId, lawTypeName, liveEnabled, pendingDocument, setConversationPhase, speakLexara, stopSpeaking, voiceReady]);
 
   handleMessageRef.current = handleUserMessage;
 
