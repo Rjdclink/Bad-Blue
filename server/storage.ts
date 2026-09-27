@@ -103,10 +103,7 @@ type InsertPublicEvidence = {
   description?: string | null;
 };
 import { db, isDatabaseConfigured } from "./db";
-import {
-  db as overflowRuntimeDb,
-  isCryptocrawlRuntimeDatabaseConfigured as isOverflowRuntimeDatabaseConfigured,
-} from "./services/cryptocrawl/runtime/cryptocrawl-runtime-database";
+import { getLexaraConversationPersistenceDb } from "./services/lexara/LexaraConversationPersistenceDatabase";
 import { eq, desc, and, gte, sql } from "drizzle-orm";
 
 // Validate database connection on module load
@@ -1624,10 +1621,6 @@ export class DatabaseStorage implements IStorage {
     model?: string;
     context?: any;
   }): Promise<LexaraConversation> {
-    if (!isOverflowRuntimeDatabaseConfigured) {
-      throw new Error('LEXARA Overflow persistence is not configured');
-    }
-
     const values = {
       id: crypto.randomUUID(),
       userId: data.userId || null,
@@ -1657,7 +1650,7 @@ export class DatabaseStorage implements IStorage {
 
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
-        const [conversation] = await overflowRuntimeDb
+        const [conversation] = await getLexaraConversationPersistenceDb()
           .insert(lexaraConversations)
           .values(values)
           .returning();
@@ -1692,7 +1685,7 @@ export class DatabaseStorage implements IStorage {
    * Get Lexara conversation by ID
    */
   async getLexaraConversation(conversationId: string): Promise<LexaraConversation | undefined> {
-    const [conversation] = await overflowRuntimeDb
+    const [conversation] = await getLexaraConversationPersistenceDb()
       .select()
       .from(lexaraConversations)
       .where(eq(lexaraConversations.id, conversationId))
@@ -1704,7 +1697,7 @@ export class DatabaseStorage implements IStorage {
    * Get user's Lexara conversation history
    */
   async getUserLexaraConversations(userId: string, limit = 50): Promise<LexaraConversation[]> {
-    return await overflowRuntimeDb
+    return await getLexaraConversationPersistenceDb()
       .select()
       .from(lexaraConversations)
       .where(eq(lexaraConversations.userId, userId))
@@ -1713,10 +1706,49 @@ export class DatabaseStorage implements IStorage {
   }
 
   /**
+   * Recover only the signed-in user's most recent session. Always scope both
+   * queries by owner, even when a session ID is known.
+   */
+  async getLatestUserLexaraSession(userId: string, lawType?: string) {
+    const database = getLexaraConversationPersistenceDb();
+    const lawFilter = lawType
+      ? sql`${lexaraConversations.context}->>'lawType' = ${lawType}`
+      : undefined;
+    const selectTurn = {
+      id: lexaraConversations.id,
+      sessionId: lexaraConversations.sessionId,
+      userPrompt: lexaraConversations.userPrompt,
+      lexaraResponse: lexaraConversations.lexaraResponse,
+      context: lexaraConversations.context,
+      createdAt: lexaraConversations.createdAt,
+    };
+    const [latest] = await database
+      .select(selectTurn)
+      .from(lexaraConversations)
+      .where(and(eq(lexaraConversations.userId, userId), lawFilter))
+      .orderBy(desc(lexaraConversations.createdAt), desc(lexaraConversations.id))
+      .limit(1);
+    if (!latest) return null;
+    if (!latest.sessionId) return { sessionId: null, turns: [latest] };
+
+    const turns = await database
+      .select(selectTurn)
+      .from(lexaraConversations)
+      .where(and(
+        eq(lexaraConversations.userId, userId),
+        eq(lexaraConversations.sessionId, latest.sessionId),
+        lawFilter,
+      ))
+      .orderBy(desc(lexaraConversations.createdAt), desc(lexaraConversations.id))
+      .limit(24);
+    return { sessionId: latest.sessionId, turns: turns.reverse() };
+  }
+
+  /**
    * Get Lexara conversations by session ID
    */
   async getLexaraConversationsBySession(sessionId: string, limit = 100): Promise<LexaraConversation[]> {
-    return await overflowRuntimeDb
+    return await getLexaraConversationPersistenceDb()
       .select()
       .from(lexaraConversations)
       .where(eq(lexaraConversations.sessionId, sessionId))

@@ -508,6 +508,18 @@ async function acquireOnce(
     ? Date.now() + Math.max(500, timeoutMs)
     : Math.min(hardDeadlineAt, Date.now() + Math.max(1, timeoutMs));
   const host = url.hostname.toLowerCase();
+  // Credentials are scoped to the originally authorized origin. Public
+  // redirects may be followed after admission, but never inherit source
+  // cookies/tokens across an origin boundary.
+  let authorityCredentialOrigin: string | undefined;
+  if (authority?.requestHeaders && authority.canonicalUrl) {
+    try {
+      authorityCredentialOrigin = new URL(authority.canonicalUrl).origin;
+    } catch {
+      // An invalid canonical authority must never receive its credentials.
+    }
+  }
+  const requestOptionsOrigin = url.origin;
   const admitted = await waitForHost(host, deadlineAt, signal);
   if (!admitted) return { ...failureResult(url.toString(), 0, new Error('Host circuit open or acquisition deadline exhausted')), errorType: 'circuit_open' };
 
@@ -545,8 +557,8 @@ async function acquireOnce(
           headers: {
             'user-agent': `${PANTHEON_USER_AGENT} public-record research`,
             accept: 'text/html,application/xhtml+xml,application/json,application/xml,text/xml,text/csv,text/plain,application/pdf;q=0.8',
-            ...(authority?.requestHeaders || {}),
-            ...(requestOptions.headers || {}),
+            ...(current.origin === authorityCredentialOrigin ? authority?.requestHeaders || {} : {}),
+            ...(current.origin === requestOptionsOrigin ? requestOptions.headers || {} : {}),
           },
         });
       } finally {

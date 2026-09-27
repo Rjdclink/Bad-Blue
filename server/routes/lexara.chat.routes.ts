@@ -68,6 +68,41 @@ function detectDocumentIntent(prompt: string, previousMessages: LexaraConversati
   };
 }
 
+function detectFullReportRequest(prompt: string): boolean {
+  return /\b(?:full|complete|comprehensive|entire)\s+(?:background\s+)?(?:report|check|investigation)\b|\b(?:run|do|generate|prepare)\s+(?:a\s+)?background\s+(?:report|check)\b/i.test(prompt);
+}
+
+function buildPantheonReportHandoff(requested: boolean) {
+  if (!requested) return null;
+  return {
+    requested: true,
+    status: 'consent-required' as const,
+    workflow: 'pantheon-durable-background-report' as const,
+    categoryCount: 30,
+    started: false,
+    consentRequired: true,
+    handoffUrl: '/pantheon',
+    submissionEndpoint: '/api/osint/report-jobs',
+    message: 'No full PANTHEON report has been submitted. Open /pantheon to review the report scope and provide the required public-records consent before submitting.',
+  };
+}
+
+function getPantheonTurnStatus(result: Awaited<ReturnType<typeof generateLexaraConversationResponse>>) {
+  // These fields are optional until the orchestrator exposes its investigation
+  // endpoint/status. Keep chat compatible with both versions.
+  const pantheonResult = result as typeof result & {
+    pantheonEndpoint?: string | null;
+    pantheonStatus?: string | null;
+  };
+  return {
+    pantheonEndpoint: pantheonResult.pantheonEndpoint || null,
+    pantheonStatus: pantheonResult.pantheonStatus || null,
+    jobStatus: pantheonResult.pantheonStatus || (pantheonResult.pantheonEndpoint ? 'unavailable' : 'completed'),
+    // A terminal HTTP turn is not the same as completed background research.
+    jobCompleted: !pantheonResult.pantheonEndpoint || pantheonResult.pantheonStatus === 'completed',
+  };
+}
+
 function sanitizePreviousMessages(value: unknown): LexaraConversationMessage[] {
   if (!Array.isArray(value)) return [];
 
@@ -85,6 +120,69 @@ function sanitizePreviousMessages(value: unknown): LexaraConversationMessage[] {
       } satisfies LexaraConversationMessage];
     });
 }
+
+async function persistConversationTurn(
+  req: Request,
+  data: {
+    prompt: string;
+    response: string;
+    sessionId?: string;
+    lawType?: string;
+    jurisdiction?: string;
+    mappedLawType?: string | null;
+    behaviorMode: string;
+    audioBase64?: string;
+  },
+): Promise<{ conversationId: string | null; persistenceSuccess: boolean | null; persistenceStatus: 'saved' | 'master-ephemeral' }> {
+  const user = (req as any).user;
+  const userId = user?.id || user?.claims?.sub;
+  if (user?.isMasterBypass || userId === MASTER_USER_ID) {
+    return { conversationId: null, persistenceSuccess: null, persistenceStatus: 'master-ephemeral' };
+  }
+  if (!userId) throw new Error('Authenticated Lexara user has no ID');
+
+  const { storage } = await import('../storage');
+  const conversation = await storage.createLexaraConversation({
+    userId,
+    sessionId: data.sessionId,
+    userPrompt: data.prompt,
+    lexaraResponse: data.response,
+    audioGenerated: !!data.audioBase64,
+    audioBase64: data.audioBase64,
+    model: 'lexara-legal-orchestrator',
+    context: {
+      lawType: data.lawType || null,
+      jurisdiction: data.jurisdiction || null,
+      mappedLawType: data.mappedLawType || null,
+      behaviorMode: data.behaviorMode,
+    },
+  });
+  return { conversationId: conversation.id, persistenceSuccess: true, persistenceStatus: 'saved' };
+}
+
+/**
+ * GET /api/lexara/conversations/latest
+ * No caller-supplied user or session ID is accepted; all reads are owner-scoped.
+ */
+router.get('/conversations/latest', async (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  const user = (req as any).user;
+  const userId = user?.id || user?.claims?.sub;
+  if (user?.isMasterBypass || userId === MASTER_USER_ID) {
+    return res.json({ success: true, conversation: null });
+  }
+  if (!userId) return res.status(401).json({ success: false, error: 'Sign in to restore a conversation' });
+
+  try {
+    const lawType = cleanOptionalString(req.query.lawType);
+    const { storage } = await import('../storage');
+    const conversation = await storage.getLatestUserLexaraSession(userId, lawType);
+    return res.json({ success: true, conversation });
+  } catch (error) {
+    log.error('[LEXARA] Failed to restore conversation', { error });
+    return res.status(503).json({ success: false, error: 'LEXARA could not restore your last conversation' });
+  }
+});
 
 /**
  * POST /api/lexara/acknowledge
@@ -154,6 +252,9 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       signal: controller.signal,
       onResearchProgress: event => send('research', event),
     });
+    const pantheonReportHandoff = buildPantheonReportHandoff(
+      detectFullReportRequest(prompt) && result.pantheonEndpoint === 'report-handoff'
+    );
     const reasoningDocumentIntent = detectDocumentIntent(result.text, [
       ...previousMessages,
       { role: 'user', content: prompt },
@@ -164,15 +265,48 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
         documentIntent.documentType = reasoningDocumentIntent.documentType;
       }
     }
+    const response = pantheonReportHandoff
+      ? `${result.text}\n\n${pantheonReportHandoff.message}`
+      : result.text;
+    let persistence: Awaited<ReturnType<typeof persistConversationTurn>>;
+    try {
+      persistence = await persistConversationTurn(req, {
+        prompt,
+        response,
+        sessionId: cleanOptionalString((rawContext as any).sessionId, 128),
+        lawType: cleanOptionalString((rawContext as any).lawType),
+        jurisdiction: result.jurisdiction || cleanOptionalString((rawContext as any).jurisdiction, 80),
+        mappedLawType: result.mappedLawType,
+        behaviorMode: (rawContext as any).behaviorMode === 'personable' ? 'personable' : 'professional',
+      });
+    } catch (dbError) {
+      log.error('[LEXARA] Failed to persist streamed conversation', { error: dbError });
+      send('error', {
+        success: false,
+        jobCompleted: false,
+        jobStatus: 'failed',
+        persistenceSuccess: false,
+        persistenceStatus: 'failed',
+        error: 'LEXARA could not save this reply; please try again',
+      });
+      return;
+    }
     send('complete', {
       success: true,
-      response: result.text,
+      response,
+      ...persistence,
       jurisdiction: result.jurisdiction,
       mappedLawType: result.mappedLawType,
       documentIntent,
+      ...getPantheonTurnStatus(result),
+      pantheonReportHandoff,
     });
   } catch (error) {
-    if (!controller.signal.aborted) send('error', { error: error instanceof Error ? error.message : 'LEXARA research failed' });
+    log.error('[LEXARA] Stream turn failed', { error });
+    if (!controller.signal.aborted) send('error', {
+      success: false, jobCompleted: false, jobStatus: 'failed',
+      error: error instanceof Error ? error.message : 'LEXARA research failed',
+    });
   } finally {
     clearInterval(heartbeat);
     if (!res.writableEnded) res.end();
@@ -248,7 +382,12 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       res.off('close', abortIfDisconnected);
     }
 
-    const responseText = conversationResult.text;
+    const pantheonReportHandoff = buildPantheonReportHandoff(
+      detectFullReportRequest(prompt) && conversationResult.pantheonEndpoint === 'report-handoff'
+    );
+    const responseText = pantheonReportHandoff
+      ? `${conversationResult.text}\n\n${pantheonReportHandoff.message}`
+      : conversationResult.text;
     const model = 'lexara-legal-orchestrator';
 
     // Preserve the deterministic explicit-request fast path, but let LEXARA's
@@ -303,39 +442,28 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       }
     }
 
-    const requestUserId = (req as any).user?.id || (req as any).user?.claims?.sub;
-    const isMaster = Boolean((req as any).user?.isMasterBypass) || requestUserId === MASTER_USER_ID;
-
-    // Master consultations are intentionally ephemeral. They are never written
-    // to conversation storage, so login/relogin and law-area changes cannot
-    // resurrect an earlier master matter from server-side history.
-    if (!isMaster) {
-      // Persistence is audit/recovery work, not conversational-path authority.
-      // Return the legal turn immediately and persist asynchronously so a slow
-      // database can never add dead air to LEXARA Live.
-      void (async () => {
-        try {
-          const { storage } = await import('../storage');
-          await storage.createLexaraConversation({
-            userId: requestUserId,
-            sessionId,
-            userPrompt: prompt,
-            lexaraResponse: responseText,
-            audioGenerated: !!audioData,
-            audioBase64: audioData?.audioBase64 || undefined,
-            audioDurationMs: audioData?.durationMs || undefined,
-            model,
-            context: {
-              lawType: lawType || null,
-              jurisdiction: conversationResult.jurisdiction || jurisdiction || null,
-              mappedLawType: conversationResult.mappedLawType || null,
-              behaviorMode,
-            },
-          });
-        } catch (dbError) {
-          log.error('[LEXARA] Failed to persist conversation asynchronously', { error: dbError });
-        }
-      })();
+    // A successful reply must be recoverable. Master consultations remain
+    // deliberately ephemeral, without opening a database connection.
+    let persistence: Awaited<ReturnType<typeof persistConversationTurn>>;
+    try {
+      persistence = await persistConversationTurn(req, {
+        prompt,
+        response: responseText,
+        sessionId,
+        lawType,
+        jurisdiction: conversationResult.jurisdiction || jurisdiction,
+        mappedLawType: conversationResult.mappedLawType,
+        behaviorMode,
+        audioBase64: audioData?.audioBase64,
+      });
+    } catch (dbError) {
+      log.error('[LEXARA] Failed to persist conversation', { error: dbError });
+      return res.status(503).json({
+        success: false,
+        error: 'LEXARA could not save this reply; please try again',
+        persistenceSuccess: false,
+        persistenceStatus: 'failed',
+      });
     }
 
     return res.json({
@@ -345,19 +473,17 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       audio: audioData,
       jurisdiction: conversationResult.jurisdiction,
       mappedLawType: conversationResult.mappedLawType,
-      conversationId: null,
-      persistenceSuccess: null,
-      persistenceStatus: isMaster ? 'master-ephemeral' : 'queued',
-      jobCompleted: true,
-      jobStatus: 'completed',
+      ...persistence,
       documentIntent,
+      ...getPantheonTurnStatus(conversationResult),
+      pantheonReportHandoff,
     });
   } catch (error) {
     log.error('[LEXARA] Chat endpoint error', { error });
     return res.status(500).json({
       success: false,
       error: 'LEXARA could not complete the legal analysis for this turn',
-      jobCompleted: true,
+      jobCompleted: false,
       jobStatus: 'failed',
     });
   }

@@ -1,12 +1,18 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import {
+  acquirePublicResource,
   acquirePantheonResource,
   admitPantheonUrl,
   detectPublicAccessBarrier,
   isPantheonRobotsAllowed,
+  runWithPantheonAcquisitionContext,
 } from '../server/services/crawlers/PublicAcquisitionInfrastructure';
 import { canonicalizeSixDegreesTarget } from '../server/services/crawlers/SixDegreesCrawler';
 import {
+  classifyPantheonRetrievalAccessOutcome,
   extractPantheonDiscoveredCandidates,
   extractPantheonSourceNavigationCandidates,
 } from '../server/services/crawlers/PantheonRetrievalAdapter';
@@ -170,5 +176,130 @@ assert.equal(
   undefined,
   'a public page must not be rejected merely because it contains a sign-in link',
 );
+
+const originalFetch = globalThis.fetch;
+const originalFrontierMode = process.env.PANTHEON_FRONTIER_LOCAL_ONLY;
+const originalSnapshotDirectory = process.env.PANTHEON_RAW_SNAPSHOT_DIR;
+const snapshotDirectory = await mkdtemp(path.join(os.tmpdir(), 'pantheon-access-fixture-'));
+const authorizedHeader = 'Bearer fixture-only-authorized-route';
+let redirectedCredentialObserved = false;
+let unrelatedOriginCredentialObserved = false;
+process.env.PANTHEON_FRONTIER_LOCAL_ONLY = '1';
+process.env.PANTHEON_RAW_SNAPSHOT_DIR = snapshotDirectory;
+globalThis.fetch = async (input, init = {}) => {
+  const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url);
+  if (url.pathname === '/robots.txt') return new Response('', { status: 404 });
+  if (url.hostname === '1.1.1.1') {
+    return new Response('<html><title>Public Records</title><article>Public record 7482.</article></html>', {
+      status: 200,
+      headers: { 'content-type': 'text/html; charset=utf-8' },
+    });
+  }
+  if (url.hostname === '8.8.8.8') {
+    if (url.pathname === '/records/cross-origin-redirect') {
+      return new Response('', {
+        status: 302,
+        headers: { location: 'https://9.9.9.9/records/redirect-target' },
+      });
+    }
+    const headers = new Headers(init.headers);
+    return headers.get('authorization') === authorizedHeader
+      ? new Response('<html><title>Authorized Records</title><article>Authorized record 6193.</article></html>', {
+          status: 200,
+          headers: { 'content-type': 'text/html; charset=utf-8' },
+        })
+      : new Response('<html><title>Sign in required</title><p>Please sign in to view records.</p></html>', {
+          status: 401,
+          headers: { 'content-type': 'text/html; charset=utf-8' },
+        });
+  }
+  if (url.hostname === '9.9.9.9') {
+    if (url.pathname === '/records/redirect-target') {
+      redirectedCredentialObserved ||= new Headers(init.headers).has('authorization');
+      return new Response('<html><title>Public Redirect Result</title><article>Public redirected record.</article></html>', {
+        status: 200,
+        headers: { 'content-type': 'text/html; charset=utf-8' },
+      });
+    }
+    unrelatedOriginCredentialObserved ||= new Headers(init.headers).has('authorization');
+    return new Response('<html><title>Sign in required</title><p>Please sign in to view records.</p></html>', {
+      status: 401,
+      headers: { 'content-type': 'text/html; charset=utf-8' },
+    });
+  }
+  throw new Error(`Unexpected fixture request: ${url.hostname}${url.pathname}`);
+};
+
+const authorizedWork = (url: string, investigationId: string, requestHeaders?: Record<string, string>) => ({
+  investigationId,
+  categoryId: `${investigationId}:category`,
+  workId: `${investigationId}:work`,
+  capability: 'startrek',
+  deadlineAt: Date.now() + 5_000,
+  canonicalUrl: url,
+  requestHeaders,
+});
+
+try {
+  const publicRecordUrl = 'https://1.1.1.1/records/public-check';
+  const publicRecord = await acquirePantheonResource(
+    publicRecordUrl,
+    4_000,
+    authorizedWork(publicRecordUrl, 'public-fixture'),
+  );
+  assert.equal(publicRecord.ok, true, 'an accessible public source must be acquired');
+  assert.match(publicRecord.content, /Public record 7482/, 'publicly fetched source content remains attributable evidence');
+
+  const configuredRouteUrl = 'https://8.8.8.8/records/authorized-check';
+  const configuredRoute = await acquirePantheonResource(
+    configuredRouteUrl,
+    4_000,
+    authorizedWork(configuredRouteUrl, 'authorized-fixture', { authorization: authorizedHeader }),
+  );
+  assert.equal(configuredRoute.ok, true, 'a source reached through the already-authorized request-header route must be retrieved');
+  assert.match(configuredRoute.content, /Authorized record 6193/);
+
+  const redirectedUrl = 'https://8.8.8.8/records/cross-origin-redirect';
+  const redirected = await acquirePantheonResource(
+    redirectedUrl,
+    4_000,
+    authorizedWork(redirectedUrl, 'redirected-fixture', { authorization: authorizedHeader }),
+  );
+  assert.equal(redirected.ok, true, 'public cross-origin redirects remain usable');
+  assert.equal(redirectedCredentialObserved, false, 'authorized headers must not be sent to a different redirect origin');
+
+  const unrelatedTargetResult = await runWithPantheonAcquisitionContext(
+    authorizedWork('https://8.8.8.8/records/authorized-check', 'unrelated-target-fixture', {
+      authorization: authorizedHeader,
+    }),
+    undefined,
+    () => acquirePublicResource('https://9.9.9.9/records/controlled-check', 4_000),
+  );
+  assert.equal(unrelatedTargetResult.ok, false);
+  assert.equal(unrelatedOriginCredentialObserved, false,
+    'an acquisition context must not send source credentials to an unrelated initial target origin');
+
+  const controlledUrl = 'https://9.9.9.9/records/controlled-check';
+  const controlledResult = await acquirePantheonResource(
+    controlledUrl,
+    4_000,
+    authorizedWork(controlledUrl, 'controlled-fixture'),
+  );
+  assert.equal(controlledResult.ok, false, 'a controlled source without an authorized route remains inaccessible');
+  assert.equal(controlledResult.errorType, 'auth_required');
+  assert.equal(controlledResult.status, 401);
+  assert.equal(
+    classifyPantheonRetrievalAccessOutcome(controlledResult)?.status,
+    'access_limited',
+    'an authentication wall remains an explicit access-limited outcome, not a no-record result',
+  );
+} finally {
+  globalThis.fetch = originalFetch;
+  if (originalFrontierMode == null) delete process.env.PANTHEON_FRONTIER_LOCAL_ONLY;
+  else process.env.PANTHEON_FRONTIER_LOCAL_ONLY = originalFrontierMode;
+  if (originalSnapshotDirectory == null) delete process.env.PANTHEON_RAW_SNAPSHOT_DIR;
+  else process.env.PANTHEON_RAW_SNAPSHOT_DIR = originalSnapshotDirectory;
+  await rm(snapshotDirectory, { recursive: true, force: true });
+}
 
 console.log('Pantheon retrieval behavior verification passed.');

@@ -26,18 +26,6 @@ interface ConversationMessage {
   timestamp: Date;
 }
 
-interface StoredConversationState {
-  schemaVersion: number;
-  sessionId: string;
-  jurisdiction?: string;
-  messages: Array<{
-    id: string;
-    role: 'user' | 'lexara';
-    content: string;
-    timestamp: string;
-  }>;
-}
-
 type ConversationPhase =
   | 'initializing'
   | 'listening'
@@ -46,7 +34,6 @@ type ConversationPhase =
   | 'text-only'
   | 'error';
 
-const CONVERSATION_STORAGE_SCHEMA_VERSION = 2;
 const BROWSER_FINAL_FALLBACK_SETTLE_MS = 1_200;
 const SERVER_VOICE_TURN_SETTLE_MS = 300;
 const FLUX_FINAL_SETTLE_MS = 1_200;
@@ -58,7 +45,6 @@ const RESEARCH_PROGRESS_REPEAT_MS = 30_000;
 const ACKNOWLEDGEMENT_SOFT_TIMEOUT_MS = 450;
 const ACKNOWLEDGEMENT_DEDUPE_MS = 8_000;
 const ACKNOWLEDGEMENT_COOLDOWN_MS = 2_500;
-const MAX_STORED_CONVERSATION_MESSAGES = 24;
 
 async function readLexaraSseResponse(response: Response, onEvent: (event: string, data: any) => void): Promise<any> {
   if (!response.ok || !response.body) throw new Error(`LEXARA stream failed (${response.status})`);
@@ -105,61 +91,6 @@ function makeSessionId(): string {
     return `lexara-${crypto.randomUUID()}`;
   }
   return `lexara-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function conversationStorageKey(lawTypeId?: string): string {
-  const normalized = lawTypeId?.trim().toLowerCase() || 'general';
-  return `lexara-live-session:${normalized}`;
-}
-
-function loadStoredConversation(lawTypeId?: string): {
-  sessionId: string;
-  jurisdiction?: string;
-  messages: ConversationMessage[];
-} {
-  const fallback = {
-    sessionId: makeSessionId(),
-    jurisdiction: undefined,
-    messages: [] as ConversationMessage[],
-  };
-
-  if (typeof window === 'undefined') return fallback;
-
-  try {
-    const raw = window.sessionStorage.getItem(conversationStorageKey(lawTypeId));
-    if (!raw) return fallback;
-
-    const parsed = JSON.parse(raw) as Partial<StoredConversationState>;
-    if (parsed.schemaVersion !== CONVERSATION_STORAGE_SCHEMA_VERSION) {
-      window.sessionStorage.removeItem(conversationStorageKey(lawTypeId));
-      return fallback;
-    }
-    const sessionId = typeof parsed.sessionId === 'string' && parsed.sessionId.trim()
-      ? parsed.sessionId.trim().slice(0, 128)
-      : fallback.sessionId;
-    const jurisdiction = typeof parsed.jurisdiction === 'string' && parsed.jurisdiction.trim()
-      ? parsed.jurisdiction.trim().slice(0, 80)
-      : undefined;
-    const messages = Array.isArray(parsed.messages)
-      ? parsed.messages
-        .slice(-MAX_STORED_CONVERSATION_MESSAGES)
-        .flatMap(item => {
-          if (!item || (item.role !== 'user' && item.role !== 'lexara')) return [];
-          if (typeof item.content !== 'string' || !item.content.trim()) return [];
-          const timestamp = new Date(item.timestamp || Date.now());
-          return [{
-            id: typeof item.id === 'string' && item.id ? item.id : makeMessageId(item.role),
-            role: item.role,
-            content: item.content.trim(),
-            timestamp: Number.isNaN(timestamp.getTime()) ? new Date() : timestamp,
-          } satisfies ConversationMessage];
-        })
-      : [];
-
-    return { sessionId, jurisdiction, messages };
-  } catch {
-    return fallback;
-  }
 }
 
 function friendlyError(error: unknown): string {
@@ -447,20 +378,18 @@ function emotionFromUserText(text: string): LEXARAEmotionHint {
 }
 
 export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraConversationProps) {
-  const { user } = useAuth();
+  const { user, isLoading: authLoading } = useAuth();
   const isMasterSession = Boolean((user as any)?.isMasterBypass);
-  const initialStateRef = useRef(
-    isMasterSession
-      ? { sessionId: makeSessionId(), jurisdiction: undefined, messages: [] as ConversationMessage[] }
-      : loadStoredConversation(lawTypeId),
-  );
-  const storageKeyRef = useRef(conversationStorageKey(lawTypeId));
-  const sessionIdRef = useRef(initialStateRef.current.sessionId);
+  const userId = (user as any)?.id || (user as any)?.claims?.sub;
+  const sessionIdRef = useRef(makeSessionId());
 
-  const [conversation, setConversation] = useState<ConversationMessage[]>(initialStateRef.current.messages);
+  const [conversation, setConversation] = useState<ConversationMessage[]>([]);
   const [userInput, setUserInput] = useState('');
   const [phase, setPhase] = useState<ConversationPhase>('initializing');
-  const [jurisdiction, setJurisdiction] = useState<string | undefined>(initialStateRef.current.jurisdiction);
+  const [jurisdiction, setJurisdiction] = useState<string | undefined>();
+  const [historyReady, setHistoryReady] = useState(false);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [restoreAttempt, setRestoreAttempt] = useState(0);
   const [liveEnabled, setLiveEnabled] = useState(false);
   const [voiceReady, setVoiceReady] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState<'live' | 'degraded' | 'reconnecting'>('reconnecting');
@@ -473,7 +402,8 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const [pendingDocument, setPendingDocument] = useState<{ title: string; facts: string; state: string; templateMode: boolean } | null>(null);
   const [showReviewPrompt, setShowReviewPrompt] = useState(false);
 
-  const conversationRef = useRef<ConversationMessage[]>(initialStateRef.current.messages);
+  const conversationRef = useRef<ConversationMessage[]>([]);
+  const historyReadyRef = useRef(false);
   const phaseRef = useRef<ConversationPhase>('initializing');
   const currentRequestRef = useRef<AbortController | null>(null);
   const generationRef = useRef(0);
@@ -864,6 +794,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   }, [clearVoiceTurnBuffer, liveEnabled, resumeListening, setConversationPhase, speak, voiceReady]);
 
   const handleUserMessage = useCallback(async (rawMessage: string) => {
+    if (!historyReadyRef.current) return;
     const message = rawMessage.trim();
     if (!message) return;
 
@@ -1261,7 +1192,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   };
 
   const sendGreeting = useCallback(async () => {
-    if (greetingRef.current || userSpeechObservedRef.current) return;
+    if (!historyReady || greetingRef.current || userSpeechObservedRef.current) return;
     if (liveEnabled && !voiceReady) return;
 
     const greetingGeneration = generationRef.current;
@@ -1274,7 +1205,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     greetingRef.current = true;
     appendMessage('lexara', greeting);
     await speakLexara(greeting, greetingGeneration).catch(() => undefined);
-  }, [appendMessage, liveEnabled, speakLexara, voiceReady]);
+  }, [appendMessage, historyReady, liveEnabled, speakLexara, voiceReady]);
 
   useEffect(() => {
     if (initializedRef.current) return;
@@ -1371,26 +1302,82 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   }, [clearVoiceTurnBuffer, isMasterSession, lawTypeId]);
 
   useEffect(() => {
-    if (isMasterSession) return;
-    try {
-      const stored: StoredConversationState = {
-        schemaVersion: CONVERSATION_STORAGE_SCHEMA_VERSION,
-        sessionId: sessionIdRef.current,
-        jurisdiction,
-        messages: conversation
-          .slice(-MAX_STORED_CONVERSATION_MESSAGES)
-          .map(message => ({
-            id: message.id,
-            role: message.role,
-            content: message.content,
-            timestamp: message.timestamp.toISOString(),
-          })),
-      };
-      window.sessionStorage.setItem(storageKeyRef.current, JSON.stringify(stored));
-    } catch {
-      // Session persistence is best-effort; live conversation still works without it.
+    if (authLoading) return;
+    if (isMasterSession) {
+      historyReadyRef.current = true;
+      setHistoryReady(true);
+      return;
     }
-  }, [conversation, isMasterSession, jurisdiction]);
+
+    const controller = new AbortController();
+    historyReadyRef.current = false;
+    setHistoryReady(false);
+    setRestoreError(null);
+    currentRequestRef.current?.abort();
+    currentRequestRef.current = null;
+    generationRef.current += 1;
+    sessionIdRef.current = makeSessionId();
+    conversationRef.current = [];
+    setConversation([]);
+    setJurisdiction(undefined);
+    greetingRef.current = false;
+    userSpeechObservedRef.current = false;
+    pendingUserTurnQueueRef.current = [];
+    nonSemanticLexaraMessageIdsRef.current.clear();
+
+    if (!userId) {
+      historyReadyRef.current = true;
+      setHistoryReady(true);
+      return () => controller.abort();
+    }
+
+    const restore = async () => {
+      const params = new URLSearchParams();
+      if (lawTypeId) params.set('lawType', lawTypeId);
+      const response = await fetch(`/api/lexara/conversations/latest?${params}`, {
+        credentials: 'include',
+        signal: controller.signal,
+        cache: 'no-store',
+      });
+      if (!response.ok) throw new Error('Could not load your last Lexara conversation.');
+      const data = await response.json();
+      if (data?.success !== true) throw new Error('Could not load your last Lexara conversation.');
+      if (controller.signal.aborted) return;
+
+      const saved = data.conversation;
+      if (saved && Array.isArray(saved.turns) && saved.turns.length) {
+        const messages: ConversationMessage[] = saved.turns.flatMap((turn: any) => {
+          if (typeof turn?.userPrompt !== 'string' || typeof turn?.lexaraResponse !== 'string') return [];
+          const timestamp = new Date(turn.createdAt);
+          const at = Number.isNaN(timestamp.getTime()) ? new Date() : timestamp;
+          return [
+            { id: `${turn.id}-user`, role: 'user' as const, content: turn.userPrompt, timestamp: at },
+            { id: `${turn.id}-lexara`, role: 'lexara' as const, content: turn.lexaraResponse, timestamp: at },
+          ];
+        });
+        if (messages.length) {
+          sessionIdRef.current = typeof saved.sessionId === 'string' && saved.sessionId
+            ? saved.sessionId : makeSessionId();
+          conversationRef.current = messages;
+          setConversation(messages);
+          const latestContext = saved.turns[saved.turns.length - 1]?.context;
+          setJurisdiction(typeof latestContext?.jurisdiction === 'string'
+            ? latestContext.jurisdiction : undefined);
+          greetingRef.current = true;
+          userSpeechObservedRef.current = true;
+        }
+      }
+      historyReadyRef.current = true;
+      setHistoryReady(true);
+    };
+
+    void restore().catch(() => {
+      if (!controller.signal.aborted) {
+        setRestoreError('Could not load your last Lexara conversation. Retry before continuing.');
+      }
+    });
+    return () => controller.abort();
+  }, [authLoading, isMasterSession, lawTypeId, restoreAttempt, userId]);
 
   useEffect(() => {
     if (phase === 'initializing' || greetingRef.current) return;
@@ -1417,13 +1404,14 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   }, [clearVoiceTurnBuffer, stopListening, stopSpeaking]);
 
   const statusLabel = useMemo(() => {
+    if (!historyReady) return restoreError ? 'History unavailable' : 'Restoring conversation';
     if (phase === 'initializing') return 'Preparing live consultation';
     if (phase === 'thinking') return 'Analyzing';
     if (phase === 'speaking') return 'Speaking';
     if (phase === 'listening') return 'Listening';
     if (phase === 'error') return 'Text available';
     return 'Text consultation';
-  }, [phase]);
+  }, [historyReady, phase, restoreError]);
 
   const generateAndDownloadPendingDocument = async (format: 'docx' | 'pdf') => {
     if (!pendingDocument || documentBusy) return;
@@ -1554,6 +1542,12 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         </div>
 
         <div ref={conversationScrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-4" aria-live="polite">
+          {!historyReady && !restoreError && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Restoring your last conversation…
+            </div>
+          )}
           {conversation.map(message => (
             <div
               key={message.id}
@@ -1642,6 +1636,14 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
               <span>{errorMessage}</span>
             </div>
           )}
+          {restoreError && (
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+              <span>{restoreError}</span>
+              <Button type="button" variant="outline" size="sm" onClick={() => setRestoreAttempt(value => value + 1)}>
+                Retry
+              </Button>
+            </div>
+          )}
 
           <div ref={messageEndRef} />
         </div>
@@ -1663,8 +1665,9 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
           <form onSubmit={submitText} className="flex gap-2">
             <input
               value={userInput}
+              disabled={!historyReady}
               onChange={event => setUserInput(event.target.value)}
-              placeholder="Type or speak naturally…"
+              placeholder={historyReady ? 'Type or speak naturally…' : 'Restoring your last conversation…'}
               className="min-w-0 flex-1 rounded-full border bg-background px-4 py-3 text-base outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring sm:text-sm"
               aria-label="Message LEXARA"
               enterKeyHint="send"
@@ -1672,7 +1675,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
               autoCapitalize="sentences"
               spellCheck
             />
-            <Button type="submit" size="icon" className="h-11 w-11 shrink-0 touch-manipulation rounded-full" disabled={!userInput.trim()} aria-label="Send message">
+            <Button type="submit" size="icon" className="h-11 w-11 shrink-0 touch-manipulation rounded-full" disabled={!historyReady || !userInput.trim()} aria-label="Send message">
               <Send className="h-4 w-4" />
             </Button>
           </form>
