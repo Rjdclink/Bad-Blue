@@ -160,6 +160,24 @@ async function main() {
 
   setup({
     investigation: {
+      evidenceSummary: `1. SOURCE: ${sourceUrl}\nASSESSMENT: STRONG (96%)\nEVIDENCE: Jane Avery was told "I cannot provide personal information about a private individual."`,
+      sources: [sourceUrl],
+      categories: ['criminal'],
+      fullBackgroundReportRequested: false,
+      endpoint: 'evidence-sufficient',
+    },
+  });
+  const quotedRefusal = await orchestrator.generateLexaraConversationResponse(
+    'Was Jane Avery arrested in Iowa?',
+    { jurisdiction: 'Iowa' },
+  );
+  assert.doesNotMatch(quotedRefusal.text, /cannot provide personal information/i,
+    'a quoted source excerpt must not be mistaken for an answer or echo a blanket permission refusal');
+  assert.equal(quotedRefusal.pantheonStatus, 'partial',
+    'a source quoting a refusal does not complete the requested fact');
+
+  setup({
+    investigation: {
       evidenceSummary: `1. SOURCE: ${sourceUrl}\nASSESSMENT: STRONG (96%)\nEVIDENCE: ${evidenceText}`,
       sources: ['https://unrelated.example.test/other'],
       categories: ['criminal'],

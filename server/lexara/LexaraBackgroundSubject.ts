@@ -23,8 +23,9 @@ function refersToPriorSubject(text: string): boolean {
 function candidates(text: string): string[] {
   return [...text.matchAll(PROPER_NAME)]
     .map(match => match[0]
-      .replace(/^(?:(?:Please|Research|Lexara|Pantheon|Tell|Find|Check|Show|Look|Full|Complete|Current|Background|The)\s+)+/i, '')
-      .replace(/\s+(?:of|the|and)$/i, '').trim())
+      .replace(/^(?:(?:Please|Research|Lexara|Pantheon|Tell|Find|Check|Show|Look|Full|Complete|Current|Background|The|Is|Are|Has|Have|Who|Where|When|How|Does|Did|Can|Could|Would|Should)\s+)+/i, '')
+      .replace(/\s+(?:of|the|and)$/i, '')
+      .replace(/['’]s(?:\s+.*)?$/i, '').trim())
     .filter(name => name.split(/\s+/).length >= 2 && !NOISE.test(name))
     .filter(name => !/^(?:What|Who|Where|When|How|Does|Did|Has|Have|Is|Are|Can|Please|Research|Lexara|Pantheon|Tell|Find|Check|Show|Look|Full|Complete|Current|Background|The)\s/i.test(name));
 }
@@ -61,6 +62,7 @@ export function resolveLexaraBackgroundSubject(
     kind,
     location,
     identifiable: kind === 'organization' || kind === 'entity'
-      || (kind === 'place' ? Boolean(location || name.split(/\s+/).length > 2) : Boolean(location || IDENTIFIER.test(context))),
+      || (kind === 'place' ? Boolean(location || name.split(/\s+/).length > 2)
+        : Boolean(location || IDENTIFIER.test(context) || name.split(/\s+/).length >= 3)),
   };
 }

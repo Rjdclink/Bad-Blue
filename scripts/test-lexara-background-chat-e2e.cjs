@@ -89,6 +89,7 @@ const investigationPlugin = {
           export const pantheonRetrievalAdapter = { async retrieve(request) {
             const s = globalThis.__lexaraBackgroundChatTest.scenario;
             s.retrievalCalls.push([...request.targets]);
+             (s.retrievalBudgets ||= []).push(request.budgetMs);
             if (s.mode === 'throw') throw new Error('fixture crawler outage');
             const pass = s.retrievalCalls.length;
             const selected = s.evidenceForPass ? (s.evidenceForPass[pass - 1] || []) : (s.evidence || []);
@@ -148,9 +149,10 @@ const investigationPlugin = {
           ])};
         `,
         discovery: `
-          export async function discoverPantheonSourcesParallel() {
+          export async function discoverPantheonSourcesParallel(query) {
             const s=globalThis.__lexaraBackgroundChatTest.scenario;
             s.discoveryCalls++;
+            (s.discoveryQueries ||= []).push(query);
             if (s.mode === 'unavailable' || s.mode === 'failed') return {urls:[],lanesAttempted:['fixture-lane']};
             if (s.discoveryCalls === 1) return {urls:[...(s.urls || [])],lanesAttempted:['fixture-lane']};
             return {urls:[...(s.followupUrls || [])],lanesAttempted:['fixture-lane']};
@@ -276,6 +278,7 @@ async function testInvestigation(investigator) {
     assert.equal(result.endpoint, 'evidence-sufficient', `${kind} subject reaches evidence endpoint`);
     assert.match(result.evidenceSummary, new RegExp(subject.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     assert.equal(scenario.retrievalCalls[0].length, 1, `${kind} retrieval isolates one target per pass`);
+     assert.equal(scenario.retrievalBudgets[0], 6_000, `${kind} first pass stays within the interactive acquisition budget`);
     assert.ok(scenario.retrievalCalls[0].includes('https://search.example.test/lead'), `${kind} discovered URL reaches retrieval`);
     assert.equal(scenario.evidence[0].crawler, 'fixture-crawler', `${kind} evidence carries crawler attribution`);
     assert.equal(scenario.auditInputs[0].crawlerStatus, 'completed_with_content', `${kind} has a successful crawler audit`);
@@ -283,6 +286,27 @@ async function testInvestigation(investigator) {
     if (kind === 'place') assert.ok(result.categories.includes('geography'), 'place research includes geography');
     if (kind === 'company') assert.ok(result.categories.includes('corporate'), 'company research includes corporate records');
   }
+  for (const [prompt, name, category] of [
+    ['Where is Jordan Michael Carter incarcerated?', 'Jordan Michael Carter', 'corrections'],
+    ['Is Sarah Loretta Graves married?', 'Sarah Loretta Graves', 'vital-records'],
+    ["How much is William Rodney Lawrence's mortgage?", 'William Rodney Lawrence', 'financial-public'],
+    ['Where does Tessa Gracie Bendland live?', 'Tessa Gracie Bendland', 'residence'],
+    ['When did Brian Kenneth Lee Clinkenbeard die?', 'Brian Kenneth Lee Clinkenbeard', 'vital-records'],
+    ['Has Jeremy Scott Rose ever been arrested and what were the charged crimes?', 'Jeremy Scott Rose', 'arrests'],
+  ]) {
+    const { result, scenario } = await investigate(investigator, { evidence: [] }, prompt);
+    assert.ok(result, `${prompt} enters Pantheon`);
+    assert.ok(result.categories.includes(category), `${prompt} selects the relevant record category`);
+    assert.equal(result.endpoint, 'sources-exhausted', `${prompt} reports an honest empty-source endpoint`);
+    assert.ok(scenario.retrievalCalls.length > 0, `${prompt} attempts category-scoped retrieval`);
+    assert.ok(scenario.discoveryQueries[0].includes(`"${name}"`), `${prompt} searches for the actual named subject`);
+  }
+  const deepLookup = await investigate(investigator, {
+    evidence: [evidence('Jane Avery')],
+  }, 'Do a deep investigation of public records for Jane Avery, born 1984, in Iowa?');
+  assert.equal(deepLookup.result.endpoint, 'evidence-sufficient');
+  assert.equal(deepLookup.scenario.retrievalBudgets[0], 12_000,
+    'explicit deep research may spend a longer first pass without slowing ordinary lookups');
 
   const personPrompt = cases[0][1];
   const mismatch = evidence('Unrelated Person', { content: 'Official record for Unrelated Person only.' });
@@ -318,6 +342,8 @@ async function testInvestigation(investigator) {
     ['https://search.example.test/first'],
     ['https://search.example.test/frontier'],
   ], 'recursive retrieval isolates frontier targets in pass order');
+   assert.deepEqual(recursive.scenario.retrievalBudgets, [6_000, 8_000],
+     'only later recursive passes receive the longer acquisition budget');
 
   const eventOrder = [];
   seam.scenario = { mode: 'unavailable', urls: [], discoveryCalls: 0, retrievalCalls: [] };

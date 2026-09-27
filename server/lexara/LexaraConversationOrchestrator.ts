@@ -711,7 +711,10 @@ export async function generateLexaraConversationResponse(
   // This lane runs only when Pantheon was actually targeted AND the generated
   // answer contains that prohibited refusal pattern, so normal turns gain no
   // extra latency.
-  if (pantheonInvestigation && !usedPantheonSourceExcerptFallback && isPersonPermissionRefusal(text)) {
+  let permissionRefusalUnverified = false;
+  const modelPermissionRefusal = Boolean(pantheonInvestigation && !usedPantheonSourceExcerptFallback && isPersonPermissionRefusal(text));
+  const sourceExcerptPermissionRefusal = Boolean(pantheonInvestigation && isPersonPermissionRefusal(text) && usedPantheonSourceExcerptFallback);
+  if (pantheonInvestigation && (modelPermissionRefusal || sourceExcerptPermissionRefusal)) {
     if (pantheonInvestigation.evidenceSummary && process.env.OPENROUTER_API_KEY?.trim() && !context.signal?.aborted) {
       try {
         const correction = await generateOpenRouterText(
@@ -736,13 +739,16 @@ export async function generateLexaraConversationResponse(
       const fallback = !mixedLegalFactNeed
         ? extractVerifiedPantheonSourceExcerpt(pantheonInvestigation)
         : null;
-      if (fallback) {
+      if (fallback && !isPersonPermissionRefusal(fallback.text)) {
         text = fallback.text;
         usedPantheonSourceExcerptFallback = true;
       } else {
+        permissionRefusalUnverified = true;
         text = pantheonInvestigation.evidenceSummary
           ? 'Pantheon retrieved subject-specific source material, but the requested fact was not verified strongly enough from the completed sources for me to state it as fact.'
-          : 'I could not verify the requested fact; some sources may not have been available.';
+          : pantheonInvestigation.endpoint === 'unavailable' || pantheonInvestigation.endpoint === 'failed'
+            ? 'I could not verify the requested fact; some sources may not have been available.'
+            : 'I could not verify the requested fact from the sources Pantheon completed.';
       }
     }
   }
@@ -775,7 +781,8 @@ export async function generateLexaraConversationResponse(
     jurisdiction,
     mappedLawType,
     pantheonEndpoint,
-    pantheonStatus: usedPantheonSourceExcerptFallback && pantheonInvestigation?.endpoint === 'evidence-sufficient'
+    pantheonStatus: permissionRefusalUnverified ? 'partial'
+      : usedPantheonSourceExcerptFallback && pantheonInvestigation?.endpoint === 'evidence-sufficient'
       && verifiedExcerptDirectlyAnswers(cleanPrompt, context.previousMessages || [], jurisdiction, pantheonInvestigation, extractVerifiedPantheonSourceExcerpt(pantheonInvestigation)?.excerpt || '')
       ? 'completed'
       : (answerServiceUnavailable || usedPantheonSourceExcerptFallback) && pantheonDelegatedByLexara && pantheonInvestigation?.evidenceSummary
