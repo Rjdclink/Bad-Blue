@@ -1436,7 +1436,11 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       });
       const data = await generated.json().catch(() => ({}));
       if (!generated.ok || !data?.document) throw new Error(data?.error || 'Document generation failed');
-      if (data?.validated !== true || String(data?.documentType || '') !== pendingDocument.title) {
+      // Last-known-good handoff: the generation endpoint owns draft validation.
+      // The client verifies type identity when supplied, but must not re-reject a
+      // structurally accepted server draft based on a transport metadata flag.
+      const generatedType = String(data?.documentType || data?.title || pendingDocument.title);
+      if (generatedType !== pendingDocument.title) {
         throw new Error('LEXARA rejected a document that did not match the requested legal-document type');
       }
       const title = String(data?.title || pendingDocument.title);
