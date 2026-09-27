@@ -22,6 +22,8 @@
  */
 
 import { canActivatePantheon, pantheonOrchestrator, type CrawlerResult } from './services/pantheonCrawlerOrchestrator';
+import { discoverPantheonSourcesParallel } from './services/pantheon/PantheonDiscoveryCoordinator';
+import { pantheonRetrievalAdapter } from './services/crawlers/PantheonRetrievalAdapter';
 import { orchestratedWebSearch, isOpenRouterWebSearchAvailable } from './openRouterWebSearch';
 
 const WEB_SEARCH_ENABLED = process.env.WEB_SEARCH_ENABLED !== 'false';
@@ -133,7 +135,7 @@ export interface OfficerSearchResult {
   dataQuality: number;
 }
 
-// CRAWLER-ONLY MODE: no LLM "search" providers here.
+// Discovery-first mode: search/index lanes locate candidate sources; crawlers retrieve them.
 
 /**
  * Search using Bing Web Search API
@@ -163,8 +165,25 @@ export async function geminiSearch(
   query: string,
   options: SearchOptions = {}
 ): Promise<EnhancedSearchResult[]> {
-  throw new Error('Gemini web search disabled: crawler-only mode is enforced');
-
+  if (!WEB_SEARCH_ENABLED) throw new Error('Web search disabled (WEB_SEARCH_ENABLED=false)');
+  const discovered = await discoverPantheonSourcesParallel(query, [], {
+    limit: Math.min(options.limit || 10, 24),
+    timeoutMs: Math.min(options.timeout || 2500, 5000),
+    includePaidFallback: false,
+  });
+  return discovered.evidence
+    .filter(item => item.lane === 'gemini-google')
+    .slice(0, options.limit || 10)
+    .map(item => ({
+      title: item.title || extractTitleFromUrl(item.url),
+      url: item.url,
+      snippet: item.snippet,
+      source: 'gemini' as const,
+      aiSummary: item.snippet,
+      reliability: determineReliability(item.url),
+      relevanceScore: determineReliability(item.url) === 'high' ? 95 : 80,
+      metadata: { discoveryLane: item.lane },
+    }));
 }
 
 /**
@@ -176,67 +195,69 @@ export async function unifiedSearch(
   query: string,
   options: SearchOptions = {}
 ): Promise<EnhancedSearchResult[]> {
-  if (!WEB_SEARCH_ENABLED) {
-    throw new Error('Web search disabled (WEB_SEARCH_ENABLED=false)');
+  if (!WEB_SEARCH_ENABLED) throw new Error('Web search disabled (WEB_SEARCH_ENABLED=false)');
+
+  const limit = Math.min(options.limit || 10, 24);
+  const timeoutMs = Math.min(options.timeout || 5000, 20_000);
+
+  // Stage 1 — discovery. All configured free/applicable search/index lanes fan
+  // out together. Paid lanes are fallback-only inside the coordinator.
+  const discovered = await discoverPantheonSourcesParallel(query, [], {
+    limit,
+    timeoutMs: Math.min(timeoutMs, 5000),
+    includePaidFallback: true,
+  });
+
+  if (!discovered.urls.length) {
+    return fallbackToOpenRouterSearch(query, options, 'discovery mesh returned no candidate URLs');
   }
 
-  // Basic circuit breaker for crawler failures
-  const pantheonAvailability = canActivatePantheon();
-  const pantheonUsable = !isCircuitOpen('pantheon') && pantheonAvailability.available;
-
-  if (!pantheonUsable) {
-    return fallbackToOpenRouterSearch(
-      query,
-      options,
-      pantheonAvailability.reason || 'PANTHEON crawler circuit open (temporarily disabled due to failures)'
-    );
-  }
-
+  // Stage 2 — retrieval. Search engines are scouts; Pantheon crawlers fetch the
+  // strongest discovered URLs. Discovery evidence remains usable if a crawler
+  // cannot enrich a particular source.
+  let retrievedByUrl = new Map<string, { content: string; confidence: number; crawler?: string }>();
   try {
-    await pantheonOrchestrator.initialize();
-
-    const crawlerResults: CrawlerResult[] = await pantheonOrchestrator.search([query], {
+    const retrieval = await pantheonRetrievalAdapter.retrieve({
+      purpose: 'lexara_legal_research',
+      targets: discovered.urls.slice(0, Math.min(limit, 10)),
       depth: 2,
-      // Keep this to crawlers that are designed for general discovery.
-      // (Avoid SixDegrees unless explicitly needed to prevent noise.)
-      crawlers: ['startrek', 'birdofprey'],
-      maxResultsPerCrawler: Math.min(options.limit || 10, 25),
-      timeout: options.timeout || 20000,
-      stealth: true,
+      budgetMs: Math.min(timeoutMs, 8000),
     });
-
+    retrievedByUrl = new Map(
+      (retrieval.evidence || [])
+        .filter(item => item.sourceUrl && item.content?.trim())
+        .map(item => [item.sourceUrl, {
+          content: item.content.trim(),
+          confidence: item.confidence || 0,
+          crawler: item.crawler,
+        }]),
+    );
     recordSuccess('pantheon');
-
-    if (!crawlerResults || crawlerResults.length === 0) return [];
-
-    // Convert and lightly normalize/deduplicate by URL when present
-    const mapped: EnhancedSearchResult[] = crawlerResults.map((r, idx) => {
-      const url = (r.metadata as any)?.url || (r.metadata as any)?.sourceUrl || '';
-      const reliability: EnhancedSearchResult['reliability'] =
-        r.confidence >= 0.85 ? 'high' : r.confidence >= 0.7 ? 'medium' : 'low';
-      return {
-        title: (r.metadata as any)?.title || `${r.crawler.toUpperCase()} Result ${idx + 1}`,
-        url,
-        snippet: (r.content || '').slice(0, 500),
-        source: 'combined' as const,
-        aiSummary: r.content,
-        reliability,
-        relevanceScore: Math.round((r.confidence || 0) * 100),
-        metadata: r.metadata,
-      };
-    });
-
-    const seen = new Set<string>();
-    return mapped.filter((r) => {
-      const key = r.url ? r.url : `${r.title}:${r.snippet}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
   } catch (error: any) {
-    recordFailure('pantheon', error?.message || 'Unknown error');
-    return fallbackToOpenRouterSearch(query, options, error?.message || 'Unknown crawler error');
+    recordFailure('pantheon', error?.message || 'crawler enrichment failed');
   }
+
+  const evidenceByUrl = new Map(discovered.evidence.map(item => [item.url, item]));
+  return discovered.urls.slice(0, limit).map(url => {
+    const discovery = evidenceByUrl.get(url);
+    const retrieved = retrievedByUrl.get(url);
+    const reliability = determineReliability(url);
+    return {
+      title: discovery?.title || extractTitleFromUrl(url),
+      url,
+      snippet: (retrieved?.content || discovery?.snippet || '').slice(0, 500),
+      source: discovery?.lane === 'gemini-google' ? 'gemini' as const : 'combined' as const,
+      aiSummary: retrieved?.content || discovery?.snippet,
+      reliability,
+      relevanceScore: Math.round(Math.max(retrieved?.confidence || 0, reliability === 'high' ? 0.95 : reliability === 'medium' ? 0.8 : 0.65) * 100),
+      metadata: {
+        discoveryLane: discovery?.lane,
+        crawler: retrieved?.crawler,
+        lanesAttempted: discovered.lanesAttempted,
+        lanesWithResults: discovered.lanesWithResults,
+      },
+    };
+  });
 }
 
 /**
@@ -535,10 +556,17 @@ export function isWebSearchAvailable(): {
   any: boolean 
 } {
   return {
-    // LLM-only OpenRouter is not treated as real-world web search here.
-    openrouter: false,
-    gemini: false,
-    any: WEB_SEARCH_ENABLED && canActivatePantheon().available,
+    // OpenRouter remains fallback; Gemini/Google is a real discovery lane when configured.
+    openrouter: WEB_SEARCH_ENABLED && isOpenRouterWebSearchAvailable(),
+    gemini: WEB_SEARCH_ENABLED && Boolean(process.env.GEMINI_API_KEY?.trim()),
+    any: WEB_SEARCH_ENABLED && (
+      Boolean(process.env.GEMINI_API_KEY?.trim())
+      || Boolean(process.env.SEARXNG_URL?.trim())
+      || Boolean(process.env.DDGS_URL?.trim())
+      || Boolean(process.env.OPENSERP_URL?.trim())
+      || isOpenRouterWebSearchAvailable()
+      || canActivatePantheon().available
+    ),
   };
 }
 
@@ -676,8 +704,15 @@ export class EnhancedWebSearchService {
 export const enhancedWebSearch = new EnhancedWebSearchService();
 
 console.log('[Web Search Service] Initialized:', {
-  mode: 'crawler-only',
-  pantheonAvailable: canActivatePantheon().available,
+  mode: 'discovery-first',
+  discovery: {
+    geminiGoogle: Boolean(process.env.GEMINI_API_KEY?.trim()),
+    searxng: Boolean(process.env.SEARXNG_URL?.trim()),
+    ddgs: Boolean(process.env.DDGS_URL?.trim()),
+    openserp: Boolean(process.env.OPENSERP_URL?.trim()),
+    openrouterFallback: isOpenRouterWebSearchAvailable(),
+  },
+  pantheonCrawlerAvailable: canActivatePantheon().available,
 });
 
 /**
