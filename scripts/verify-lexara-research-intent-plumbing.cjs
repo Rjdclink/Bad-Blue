@@ -11,8 +11,10 @@ for(const token of [
   'previousUserTurns].reverse().find',
 ]) if(!router.includes(token)) throw new Error('Research intent router missing '+token);
 for(const token of [
-  'researchDecision = decideLexaraResearchNeed',
+  'sequencePlan = planLexaraSequence(cleanPrompt, previousUserTurns)',
+  'const researchDecision = sequencePlan.researchDecision',
   "'[LEXARA ResearchRoute]'",
+  'sequence: sequencePlan.sequence',
   'researchNeeded: researchDecision.needed',
   'researchDecision.needed ? researchDecision.objective : cleanPrompt',
 ]) if(!conversation.includes(token)) throw new Error('Conversation research plumbing missing '+token);
