@@ -20,6 +20,7 @@ import {
   getLexaraLegalDomainProfile,
 } from './LexaraLegalDomainProfiles';
 import { decideLexaraResearchNeed } from './LexaraResearchIntentRouter';
+import { planLexaraSequence } from './LexaraSequenceRouter';
 
 export interface LexaraConversationMessage {
   role: 'user' | 'lexara' | 'assistant';
@@ -337,12 +338,19 @@ export async function generateLexaraConversationResponse(
     .filter(message => message.role === 'user')
     .slice(-8)
     .map(message => message.content || '');
-  const researchDecision = decideLexaraResearchNeed(cleanPrompt, previousUserTurns);
+  const sequencePlan = planLexaraSequence(cleanPrompt, previousUserTurns);
+  const researchDecision = sequencePlan.researchDecision;
   console.log('[LEXARA ResearchRoute]', {
+    sequence: sequencePlan.sequence,
     researchNeeded: researchDecision.needed,
     reason: researchDecision.reason,
     objectivePresent: Boolean(researchDecision.objective),
     objectiveKind: researchDecision.objectiveKind,
+    useLegalResearch: sequencePlan.useLegalResearch,
+    usePantheon: sequencePlan.usePantheon,
+    recursive: sequencePlan.recursive,
+    classifyPantheon: sequencePlan.classifyPantheon,
+    documentAction: sequencePlan.documentAction,
   });
 
   // Pure presence checks are conversational control turns, not legal-analysis
@@ -356,23 +364,11 @@ export async function generateLexaraConversationResponse(
     };
   }
 
-  // LEXARA remains the controlling legal orchestrator. Pantheon is a retrieval
-  // tool she may delegate to when a legal matter itself requires factual research
-  // about an identifiable person or organization.
-  const namedPartyLegalNeed = researchDecision.objectiveKind === 'legal-authority'
-    && /\b[A-Z][A-Za-z.'’-]+(?:\s+[A-Z][A-Za-z.'’-]+){0,4}\s+(?:v\.?|vs\.?|versus)\s+(?:the\s+)?[A-Z][A-Za-z.'’ -]{1,80}\b/i.test(researchDecision.objective);
-  const mixedLegalFactNeed = researchDecision.objectiveKind === 'legal-authority'
-    && (/\b(?:who\s+(?:owns|runs)|owner|ownership|registered\s+agent|officer|director|employer|employment|address|residen|property|asset|mortgage|married|spouse|income|business\s+record|corporate\s+record|background|history)\b/i.test(cleanPrompt)
-      || namedPartyLegalNeed)
-    && (
-      /\b[A-Z][A-Za-z.'’-]+(?:\s+[A-Z][A-Za-z.'’-]+){1,5}\b/.test(cleanPrompt)
-      || /\b(?:the\s+)?(?:company|corporation|business|employer|defendant|plaintiff|spouse|husband|wife|party)\b/i.test(cleanPrompt)
-    );
-  const pantheonDelegatedByLexara = researchDecision.objectiveKind !== 'legal-authority' || mixedLegalFactNeed;
+  // The explicit six-sequence router owns subsystem selection. Mixed legal and
+  // background questions deliberately run both research domains in parallel.
+  const mixedLegalFactNeed = sequencePlan.sequence === 'combined-legal-background';
+  const pantheonDelegatedByLexara = sequencePlan.usePantheon;
 
-  // Pantheon is the application-owned research backbone for eligible person/external
-  // fact turns. Optional web-discovery providers may supplement it but can never
-  // prevent or replace this handoff.
   const pantheonPrompt = mixedLegalFactNeed
     ? `${researchDecision.objective}\n\nLEXARA-DELEGATED FACTUAL OBJECTIVE: Retrieve only background facts and identifiers materially useful for identifying or resolving this legal matter (for example name variants, locations, dates, related proceedings, court references, docket/citation clues, and relevant public records). Do not perform the legal analysis and do not broaden into an unrestricted background report.`
     : researchDecision.needed
@@ -414,13 +410,15 @@ export async function generateLexaraConversationResponse(
   const relayResearchAbort = () => researchController.abort();
   if (context.signal?.aborted) researchController.abort();
   else context.signal?.addEventListener('abort', relayResearchAbort, { once: true });
-  const authorityResearchPromise = researchLegalAuthority(researchDecision.needed ? researchDecision.objective : cleanPrompt, {
-    jurisdiction,
-    domainName,
-    researchHints: domainProfile?.researchHints,
-    preferredOfficialDomains: domainProfile?.preferredOfficialDomains,
-    signal: researchController.signal,
-  }).catch(() => null);
+  const authorityResearchPromise = sequencePlan.useLegalResearch
+    ? researchLegalAuthority(researchDecision.needed ? researchDecision.objective : cleanPrompt, {
+        jurisdiction,
+        domainName,
+        researchHints: domainProfile?.researchHints,
+        preferredOfficialDomains: domainProfile?.preferredOfficialDomains,
+        signal: researchController.signal,
+      }).catch(() => null)
+    : Promise.resolve(null);
   const [authorityResearch, pantheonInvestigation] = await Promise.all([
     Promise.race([
       authorityResearchPromise,
