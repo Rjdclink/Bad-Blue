@@ -105,16 +105,8 @@ export function setupConsultationRoutes(app: Express): void {
     }
     const finalDocument = String(document || '').trim();
     const finalValidation = validateLegalDocumentDraft(requestedType, finalDocument, templateMode);
-    // Preserve the canonical registry as a quality signal, but retain the proven
-    // last-known-good export contract: a structurally complete filing draft must
-    // not be discarded solely because a stricter registry heuristic disagrees.
-    const structurallyComplete = Boolean(finalDocument)
-      && (!filingLike || (
-        finalDocument.length >= (templateMode ? 400 : 700)
-        && /(?:court|caption|plaintiff|defendant|petitioner|respondent|movant|case\s*(?:no\.?|number)|wherefore|respectfully|signature|relief|\[[A-Z0-9 _/.-]{3,}\])/i.test(finalDocument)
-      ));
-    if (!structurallyComplete) {
-      return res.status(422).json({ error: 'LEXARA could not produce a complete legal-document draft from the supplied facts. The incomplete output was not exported.' });
+    if (!finalValidation.valid || (filingLike && finalDocument.length < (templateMode ? 400 : 700))) {
+      return res.status(422).json({ error: 'LEXARA could not produce a validated legal-document draft of the requested type. The incomplete output was not exported.' });
     }
     return res.json({
       title: requestedType,
