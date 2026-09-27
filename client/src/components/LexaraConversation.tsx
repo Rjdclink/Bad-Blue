@@ -806,6 +806,14 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   }, [checkVoiceBackendReadiness, enableRecognition, setConversationPhase, startListening]);
 
   const speakLexara = useCallback(async (text: string, generation?: number) => {
+    // TTS must only receive the same finalized semantic text rendered in chat.
+    // Reject control characters / malformed transport residue rather than
+    // synthesizing it as audible gibberish.
+    const finalizedSpeech = String(text || '')
+      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+      .trim();
+    if (!finalizedSpeech) return;
+    text = finalizedSpeech;
     if (!liveEnabled || !voiceReady) {
       if (generation === undefined || generation === generationRef.current) {
         setConversationPhase('text-only');
