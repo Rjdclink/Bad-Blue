@@ -418,9 +418,11 @@ export async function investigatePersonQuestion(
     };
   }
 
-  // Known authorities and learned/free discovery enter the same bounded frontier.
-  // Registry URLs remain first so established direct sources are never displaced.
-  const targets = [...new Set([...registryUrls, ...discoveredUrls])].slice(0, 12);
+  // Category seeds and learned/free discovery enter the same bounded frontier.
+  // categorySeedUrls is the current scoped seed set; never reference the removed
+  // legacy registryUrls variable (that runtime ReferenceError used to collapse a
+  // correctly-routed Pantheon turn into a null/no-evidence response).
+  const targets = [...new Set([...categorySeedUrls, ...discoveredUrls])].slice(0, 12);
   if (!targets.length) return {
     sources: [],
     categories,
