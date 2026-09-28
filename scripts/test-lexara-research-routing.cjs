@@ -178,6 +178,21 @@ test('cancelled research starts no provider or crawler work', async () => {
   const result = await h.load('server/lexara/LexaraAuthorityResearch.ts').researchLegalAuthority('Find the statute', { signal: controller.signal });
   assert.equal(result, null); assert.equal(h.calls.http.length, 0); assert.equal(h.calls.gateway.length, 0); assert.equal(h.calls.crawlers.length, 0);
 });
+test('release source-registry guard requires independent discovery and rejects the retired routes', () => {
+  const verifier = fs.readFileSync(path.join(root, 'scripts/verify-pantheon-source-registry.cjs'), 'utf8');
+  const start = verifier.indexOf("for(const required of ['searchCourtListener'");
+  const end = verifier.indexOf('const searchFirst=', start);
+  assert(start >= 0 && end > start);
+  const guard = verifier.slice(start, end);
+  const authority = fs.readFileSync(path.join(root, 'server/lexara/LexaraAuthorityResearch.ts'), 'utf8');
+  const legalMesh = fs.readFileSync(path.join(root, 'server/lexara/LegalProviderMesh.ts'), 'utf8');
+  const verify = (research = authority, mesh = legalMesh) => vm.runInNewContext(guard, { authority: research, legalMesh: mesh });
+  assert.doesNotThrow(() => verify());
+  for (const forbidden of ['orchestratedWebSearch', 'FIRECRAWL_API_KEY', 'api.firecrawl.dev']) {
+    assert.throws(() => verify(authority + '\n' + forbidden), /Removed Lexara research route/);
+  }
+  assert.throws(() => verify(authority, legalMesh.replaceAll("providerPolicy: 'legalwhat'", '')), /canonical provider policy/);
+});
 (async () => {
   let passed = 0;
   for (const { name, run } of testCases) { await run(); passed++; console.log('PASS', name); }

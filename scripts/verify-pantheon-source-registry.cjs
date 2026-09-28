@@ -16,9 +16,13 @@ if(!people.includes('buildPantheonBackgroundRegistryTargets(name, location, 10)'
 for(const required of ['SEARXNG_URL','DDGS_URL','OPENSERP_URL','GEMINI_API_KEY','GoogleGenAI',"'gemini-google'","'commoncrawl'","'first-party'","'learned'","'serpapi'","'scrapingbee'",'paidUrls.map']){
   if(!discovery.includes(required)) throw new Error('Dynamic search mesh missing provider: '+required);
 }
-for(const required of ['searchCourtListener','searchGovInfo','discoverLegalMeshTier3','discoverLegalMeshSupplemental','Firecrawl','OpenRouter']){
+for(const required of ['searchCourtListener','searchGovInfo','discoverLegalMeshTier3','discoverLegalMeshSupplemental']){
   if(!authority.includes(required)) throw new Error('Lexara legal provider mesh missing route: '+required);
 }
+for(const forbidden of ['orchestratedWebSearch','FIRECRAWL_API_KEY','api.firecrawl.dev']){
+  if(authority.includes(forbidden)) throw new Error('Removed Lexara research route remains: '+forbidden);
+}
+if(!legalMesh.includes("providerPolicy: 'legalwhat'")) throw new Error('Lexara discovery must carry its canonical provider policy');
 if(!legalMesh.includes('tavily') || !legalMesh.includes('discoverPantheonSourcesParallel')) throw new Error('Lexara legal mesh is not connected to Tavily + dynamic discovery');
 const searchFirst=fs.readFileSync('server/services/pantheon/PantheonSearchFirstDiscovery.ts','utf8');
 const categoryWorkflow=fs.readFileSync('server/services/pantheon/PantheonCategoryWorkflow.ts','utf8');
