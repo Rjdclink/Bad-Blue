@@ -818,14 +818,15 @@ startupTrace('routes_registration_completed');
   // turning a scoped dependency outage into a whole-application deployment failure.
   startupTrace('auth_store_readiness_started');
   void (async () => {
-    const { probeLocalAuthStoreHttp } = await import('./statelessLocalAuth');
+    const { probeLocalAuthStoreHttp, isLocalTrialSchemaReady } = await import('./statelessLocalAuth');
     let lastAuthStoreError: unknown = null;
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       try {
         await probeLocalAuthStoreHttp();
         authStoreReady = true;
-        startupTrace('auth_store_ready', { attempt });
-        console.log('[STARTUP] ✓ LegalWhat local authentication store ready');
+        const trialSchemaReady = await isLocalTrialSchemaReady();
+        startupTrace('auth_store_ready', { attempt, trialSchemaReady });
+        console.log('[STARTUP] ✓ LegalWhat local authentication store ready', { trialSchemaReady });
         return;
       } catch (error) {
         lastAuthStoreError = error;
