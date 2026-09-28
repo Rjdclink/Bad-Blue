@@ -1,23 +1,5 @@
 [
   {
-    "timestamp": "2025-11-08T07:58:41.618Z",
-    "check": "database_heartbeat",
-    "status": "success",
-    "consecutiveFailures": 0
-  },
-  {
-    "timestamp": "2025-11-08T08:05:52.925Z",
-    "check": "database_heartbeat",
-    "status": "success",
-    "consecutiveFailures": 0
-  },
-  {
-    "timestamp": "2025-11-08T08:07:05.259Z",
-    "check": "database_heartbeat",
-    "status": "success",
-    "consecutiveFailures": 0
-  },
-  {
     "timestamp": "2025-11-08T08:08:12.484Z",
     "check": "database_heartbeat",
     "status": "success",
@@ -5794,5 +5776,20 @@
     "status": "failed",
     "error": "Failed query: SELECT 1\nparams: ",
     "consecutiveFailures": 1
+  },
+  {
+    "timestamp": "2026-09-27T01:32:13.928Z",
+    "check": "database_heartbeat",
+    "status": "success"
+  },
+  {
+    "timestamp": "2026-09-27T01:35:57.743Z",
+    "check": "database_heartbeat",
+    "status": "success"
+  },
+  {
+    "timestamp": "2026-09-27T01:36:32.438Z",
+    "check": "database_heartbeat",
+    "status": "success"
   }
 ]
