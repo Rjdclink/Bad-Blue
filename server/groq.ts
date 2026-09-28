@@ -44,10 +44,13 @@ function normalizeGroqModelId(model: string): string {
   return trimmed.startsWith('groq/') ? trimmed.slice('groq/'.length) : trimmed;
 }
 
-async function resolveGroqModel(requestedModel: string, apiKey: string): Promise<string> {
+async function resolveGroqModel(requestedModel: string, apiKey: string, signal?: AbortSignal): Promise<string> {
+  signal?.throwIfAborted();
   const now = Date.now();
   if (!groqModelCatalogCache || now >= groqModelCatalogCache.expiresAt) {
     const controller = new AbortController();
+    const relayAbort = () => controller.abort(signal?.reason);
+    signal?.addEventListener('abort', relayAbort, { once: true });
     const timer = setTimeout(() => controller.abort(), 2_500);
     try {
       const response = await fetch('https://api.groq.com/openai/v1/models', {
@@ -68,8 +71,10 @@ async function resolveGroqModel(requestedModel: string, apiKey: string): Promise
       // Model discovery is an optimization. A catalog outage must not block chat.
     } finally {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', relayAbort);
     }
   }
+  signal?.throwIfAborted();
 
   const requested = normalizeGroqModelId(requestedModel);
   const models = groqModelCatalogCache?.models;
@@ -131,7 +136,16 @@ async function callGroqAPI(request: GroqChatCompletionRequest): Promise<string> 
   const attempted = new Set<string>();
 
   while (attempted.size < 6) {
-    model = await resolveGroqModel(request.model, apiKey);
+    request.signal?.throwIfAborted();
+    try {
+      model = await resolveGroqModel(request.model, apiKey, request.signal);
+    } catch (error) {
+      request.signal?.throwIfAborted();
+      // Preserve the last actual API rejection when all remaining models were
+      // exhausted; the generic resolver error used to hide that diagnosis.
+      if (response && errorText) break;
+      throw error;
+    }
     if (attempted.has(model)) break;
     attempted.add(model);
 
@@ -156,7 +170,11 @@ async function callGroqAPI(request: GroqChatCompletionRequest): Promise<string> 
       )
       || (
         response.status === 400
-        && /model_terms_required|requires terms acceptance|accept the terms|not supported.*chat|chat.*not supported/i.test(errorText)
+        && /model_terms_required|requires terms acceptance|accept the terms|not supported.*chat|chat.*not supported|model_decommissioned/i.test(errorText)
+      )
+      || (
+        response.status === 404
+        && /model_not_found|model.*(?:not found|does not exist)/i.test(errorText)
       );
 
     if (routeLocalModelFailure) {
@@ -170,7 +188,7 @@ async function callGroqAPI(request: GroqChatCompletionRequest): Promise<string> 
   if (!response?.ok) {
     const { rateLimitTracker } = await import('./rateLimitTracker');
     const status = response?.status ?? 503;
-    const error = new Error(`Groq API error (${status}): ${errorText || 'no compatible permitted model responded'}`);
+    const error = new Error(`Groq API error (${status}, model=${model}): ${errorText || 'no compatible permitted model responded'}`);
     rateLimitTracker.recordGroqError(error);
     throw error;
   }

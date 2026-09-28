@@ -31,6 +31,8 @@ export function isClaudeAvailable(): boolean {
 }
 
 export interface ClaudeOptions {
+  providerPolicy?: string;
+  effort?: 'low' | 'medium' | 'high';
   systemPrompt?: string;
   temperature?: number;
   maxTokens?: number;
@@ -56,9 +58,11 @@ export async function callClaude(
     
     const model = options.model || CURRENT_AI_MODELS.claudeBalanced;
     const samplingControlsDeprecated = /claude-(?:opus|sonnet|haiku)-5|claude-opus-4-(?:7|8|9)/i.test(model);
+    const supportsEffort = /claude-(?:opus|sonnet)-5|claude-opus-4-[5-9]|claude-sonnet-4-6/i.test(model);
     const createMessage = (maxTokens: number) => client.messages.create({
       model,
       max_tokens: maxTokens,
+      ...(supportsEffort && options.effort ? { output_config: { effort: options.effort } } : {}),
       ...(!samplingControlsDeprecated && options.temperature !== undefined
         ? { temperature: options.temperature }
         : {}),
@@ -69,7 +73,10 @@ export async function callClaude(
           content: prompt
         }
       ]
-    }, options.signal ? { signal: options.signal } : undefined);
+    }, {
+      ...(options.signal ? { signal: options.signal } : {}),
+      ...(options.providerPolicy === 'legalwhat' ? { maxRetries: 0 } : {}),
+    });
 
     const extractText = (message: Awaited<ReturnType<typeof createMessage>>) =>
       message.content
@@ -89,7 +96,7 @@ export async function callClaude(
     // failure. If the model spent the entire budget before producing text, make
     // one bounded continuation-sized retry; every other state remains local and
     // is surfaced with enough metadata for the circuit breaker to classify it.
-    if (!content && response.stop_reason === 'max_tokens') {
+    if (!content && response.stop_reason === 'max_tokens' && options.providerPolicy !== 'legalwhat') {
       const retryBudget = Math.min(
         4000,
         Math.max(3000, (options.maxTokens || 2000) * 2),
