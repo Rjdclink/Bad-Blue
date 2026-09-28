@@ -25,6 +25,7 @@ const PROVIDER = {
   PERPLEXITY: asProvider('perplexity'),
   FIREWORKS: asProvider('fireworks'),
   CEREBRAS: asProvider('cerebras'),
+  CLOUDFLARE: asProvider('cloudflare'),
 } as const;
 
 /**
@@ -51,6 +52,7 @@ export const CURRENT_AI_MODELS = {
   openRouterAuto: process.env.OPENROUTER_MODEL?.trim() || 'openrouter/auto',
   xai: process.env.XAI_MODEL?.trim() || 'grok-4.6',
   cerebras: process.env.CEREBRAS_MODEL?.trim() || 'gpt-oss-120b',
+  cloudflare: process.env.CLOUDFLARE_AI_MODEL?.trim() || '@cf/openai/gpt-oss-120b',
   fireworks: process.env.FIREWORKS_MODEL?.trim() || 'accounts/fireworks/models/gpt-oss-120b',
   cohere: process.env.COHERE_MODEL?.trim() || 'command-a-plus-05-2026',
   together: process.env.TOGETHER_MODEL?.trim() || 'openai/gpt-oss-120b',
@@ -145,7 +147,7 @@ export const HARMONY_17_PARTICIPANTS: readonly HarmonyParticipant[] = [
     provider: PROVIDER.GPT_OSS,
     model: CURRENT_AI_MODELS.gptOss,
     capabilities: ['fast-chat', 'deep-reasoning', 'coding', 'structured-output'],
-    configured: () => !!(process.env.GROQ_API_KEY?.trim() || process.env.CEREBRAS_API_KEY?.trim() || process.env.OPENROUTER_API_KEY?.trim()),
+    configured: () => !!process.env.GROQ_API_KEY?.trim(),
   },
   {
     provider: PROVIDER.OPENROUTER,
@@ -160,10 +162,10 @@ export const HARMONY_17_PARTICIPANTS: readonly HarmonyParticipant[] = [
     configured: () => !!process.env.XAI_API_KEY?.trim(),
   },
   {
-    provider: PROVIDER.CEREBRAS,
-    model: CURRENT_AI_MODELS.cerebras,
-    capabilities: ['fast-chat', 'deep-reasoning', 'coding', 'structured-output'],
-    configured: () => !!process.env.CEREBRAS_API_KEY?.trim(),
+    provider: PROVIDER.CLOUDFLARE,
+    model: CURRENT_AI_MODELS.cloudflare,
+    capabilities: ['fast-chat', 'deep-reasoning', 'legal-analysis', 'long-context', 'structured-output'],
+    configured: () => !!(process.env.CLOUDFLARE_ACCOUNT_ID?.trim() && process.env.CLOUDFLARE_AI_API_TOKEN?.trim()),
   },
   {
     provider: PROVIDER.FIREWORKS,
@@ -202,7 +204,6 @@ export type HarmonyProviderPolicy = 'default' | 'capability-first' | 'capability
 /** Resolve the independent transport for the GPT OSS alias without a gateway. */
 export function getDirectGptOssProvider(): AIProvider | null {
   if (process.env.GROQ_API_KEY?.trim()) return PROVIDER.GROQ;
-  if (process.env.CEREBRAS_API_KEY?.trim()) return PROVIDER.CEREBRAS;
   return null;
 }
 
@@ -212,9 +213,12 @@ export function isHarmonyProviderAllowed(
   policy: HarmonyProviderPolicy = 'capability-first',
 ): boolean {
   if (policy !== 'legalwhat') return true;
-  if (provider === PROVIDER.GPT_OSS) return getDirectGptOssProvider() !== null;
-  return HARMONY_17_PARTICIPANTS.some(participant => participant.provider === provider)
-    && getOpenRouterModelForProvider(provider) === null;
+  // The GPT-OSS alias is the same Groq transport, never another fallback.
+  // Only direct, explicitly authorized providers may serve LegalWhat.
+  return [
+    PROVIDER.CLAUDE, PROVIDER.CLAUDE_OPUS, PROVIDER.GROQ,
+    PROVIDER.GEMINI, PROVIDER.COHERE, PROVIDER.MISTRAL, PROVIDER.CLOUDFLARE,
+  ].includes(provider);
 }
 
 export function getConfiguredHarmonyParticipants(

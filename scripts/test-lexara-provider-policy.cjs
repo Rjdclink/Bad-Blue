@@ -6,7 +6,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const ts = require('typescript');
 const root = path.resolve(__dirname, '..');
-const keys = ['GEMINI_API_KEY','ANTHROPIC_API_KEY','GROQ_API_KEY','MISTRAL_API_KEY','OPENROUTER_API_KEY','XAI_API_KEY','CEREBRAS_API_KEY','FIREWORKS_API_KEY','COHERE_API_KEY','TOGETHER_API_KEY'];
+const keys = ['GEMINI_API_KEY','ANTHROPIC_API_KEY','GROQ_API_KEY','MISTRAL_API_KEY','OPENROUTER_API_KEY','XAI_API_KEY','CEREBRAS_API_KEY','FIREWORKS_API_KEY','COHERE_API_KEY','TOGETHER_API_KEY','CLOUDFLARE_ACCOUNT_ID','CLOUDFLARE_AI_API_TOKEN'];
 function harness(enabled, { fail = false, warm = true, stall = false, recoveryModels = [] } = {}) {
   const env = Object.fromEntries(enabled.map(key => [key, 'fixture-key']));
   const calls = [];
@@ -25,7 +25,7 @@ function harness(enabled, { fail = false, warm = true, stall = false, recoveryMo
       markHarmonyProviderWarmSuccess: () => {},
     },
     'server/aiProvider.ts': { runProvider: async (provider, prompt, options) => {
-      const call = { transport: provider, model: options.model };
+      const call = { transport: provider, model: options.model, prompt };
       calls.push(call);
       if (stall) {
         assert(options.signal, 'stalled provider must receive the linked cancellation signal');
@@ -67,9 +67,11 @@ function harness(enabled, { fail = false, warm = true, stall = false, recoveryMo
       process: { env }, console: { info() {}, warn() {}, log() {}, error() {} },
       AbortController, DOMException, setTimeout, clearTimeout,
       fetch: async url => {
-        const transport = String(url).includes('cerebras') ? 'cerebras' : 'unknown-http';
+        const transport = String(url).includes('cerebras') ? 'cerebras'
+          : String(url).includes('cloudflare') ? 'cloudflare' : 'unknown-http';
         calls.push({ transport });
-        const failure = typeof fail === 'function' ? fail(transport) : (fail ? 'fixture HTTP failure' : null);
+        const failure = typeof fail === 'function' ? fail(transport)
+          : (fail === true || fail === transport ? 'fixture HTTP failure' : null);
         if (failure) throw new Error(failure);
         return { ok: true, json: async () => ({ choices: [{ message: { content: 'Direct HTTP fixture answer' } }], usage: { total_tokens: 8 } }) };
       },
@@ -117,8 +119,8 @@ test('scoped registry excludes gateway aliases and retains independent providers
   const h = harness(keys);
   assert.equal(h.registry.getConfiguredHarmonyProviders().length, 17, 'global mesh preserved');
   const scoped = Array.from(h.registry.getConfiguredHarmonyProviders('legalwhat'));
-  for (const banned of ['openrouter','deepseek','grok','kimi','qwen','gpt5_mini']) assert(!scoped.includes(banned), banned);
-  for (const retained of ['gemini','claude','claude_opus','groq','mistral','gpt_oss','xai','cerebras','fireworks','cohere','together']) assert(scoped.includes(retained), retained);
+  for (const banned of ['openrouter','deepseek','grok','kimi','qwen','gpt5_mini','gpt_oss','xai','cerebras','fireworks','together']) assert(!scoped.includes(banned), banned);
+  for (const retained of ['gemini','claude','claude_opus','groq','mistral','cohere','cloudflare']) assert(scoped.includes(retained), retained);
 });
 test('all direct failures cannot escape through gateway recovery', async () => {
   const h = harness(['GEMINI_API_KEY','OPENROUTER_API_KEY'], { fail: true });
@@ -138,17 +140,17 @@ test('allowed direct fallback survives a provider failure', async () => {
   assert(h.calls.some(call => call.transport === 'mistral'));
   assert(!h.calls.some(call => call.transport === 'openrouter'));
 });
-test('GPT OSS keeps direct Groq transport even before warm readiness', async () => {
-  const h = harness(['GROQ_API_KEY','OPENROUTER_API_KEY'], { warm: false });
-  const result = await h.run(['gpt_oss']);
-  assert.equal(result.finalAnswer, 'Supported fixture answer');
-  assert(h.calls.every(call => call.transport === 'groq'));
+test('GPT OSS alias cannot duplicate Groq or escape to a paid gateway', async () => {
+  const h = harness(['GROQ_API_KEY','OPENROUTER_API_KEY']);
+  assert(!h.registry.getConfiguredHarmonyProviders('legalwhat').includes('gpt_oss'));
+  await assert.rejects(h.run(['gpt_oss']), /No providers available/);
+  assert.equal(h.calls.length, 0);
 });
-test('GPT OSS can use configured direct Cerebras without gateway transport', async () => {
-  const h = harness(['CEREBRAS_API_KEY','OPENROUTER_API_KEY'], { warm: false });
-  const result = await h.run(['gpt_oss']);
+test('Cloudflare is an independent direct fallback when configured', async () => {
+  const h = harness(['GEMINI_API_KEY','CLOUDFLARE_ACCOUNT_ID','CLOUDFLARE_AI_API_TOKEN'], { fail: 'gemini' });
+  const result = await h.run(['gemini','cloudflare']);
   assert.equal(result.finalAnswer, 'Direct HTTP fixture answer');
-  assert(h.calls.every(call => call.transport === 'cerebras'));
+  assert(h.calls.some(call => call.transport === 'cloudflare'));
 });
 test('global policy retains existing gateway participant and recovery behavior', async () => {
   const h = harness(['GEMINI_API_KEY','OPENROUTER_API_KEY'], { fail: true });
@@ -232,7 +234,7 @@ function circuitTask(h, provider, overrides = {}) {
     failedProviders: new Set(), ...overrides };
 }
 for (const [provider, failure] of [
-  ['cerebras', 'cerebras HTTP 402 Payment required'],
+  ['cloudflare', 'cloudflare HTTP 402 Payment required'],
   ['mistral', 'Mistral API error Status 429 Rate limit exceeded'],
   ['groq', 'No permitted capability-compatible Groq model is currently available'],
   ['claude', 'claude timed out after 6000ms'],
@@ -247,13 +249,24 @@ for (const [provider, failure] of [
     assert.equal(h.calls.filter(call => call.transport === provider).length, 1);
   });
 }
+test('document routing requests a complete draft and full document synthesis', async () => {
+  const h = harness(['ANTHROPIC_API_KEY','GEMINI_API_KEY']);
+  const result = await h.engine.orchestrateCollaboration(
+    'document-generation', 'Draft a demand letter with supplied facts',
+    { ...h.attributes, needsFastResponse: false, estimatedTokens: 3000 },
+    ['claude','gemini'], { providerPolicy: 'legalwhat', maxParticipants: 2, maxFallbacks: 0 },
+  );
+  assert.equal(result.finalAnswer, 'Supported fixture answer');
+  assert(h.calls.some(call => /Draft the complete requested legal document/.test(call.prompt)));
+  assert(h.calls.some(call => /do not shorten the document/.test(call.prompt)));
+});
 test('a request-local rejected provider stays skipped independently of warm readiness', async () => {
   const h = harness(keys);
-  const result = await h.engine.executeTask(circuitTask(h, 'cerebras', {
-    failedProviders: new Set(['cerebras']), allowCoolingRecovery: true,
+  const result = await h.engine.executeTask(circuitTask(h, 'mistral', {
+    failedProviders: new Set(['mistral']), allowCoolingRecovery: true,
   }), new Map());
   assert.equal(result.provider, 'gemini');
-  assert(!h.calls.some(call => call.transport === 'cerebras'));
+  assert(!h.calls.some(call => call.transport === 'mistral'));
 });
 test('Gemini overload recovers once through a catalog-confirmed alternate', async () => {
   const h = harness(['GEMINI_API_KEY'], {

@@ -75,7 +75,7 @@ async function resolveGroqModel(requestedModel: string, apiKey: string): Promise
   const models = groqModelCatalogCache?.models;
   const discoveredTextModels = models
     ? [...models].filter(model =>
-        !/whisper|speech|tts|audio|playai|orpheus|canopylabs|guard|moderation|compound|llama-3\.1-8b-instant|llama-3\.3-70b-versatile/i.test(model)
+        !/whisper|speech|tts|audio|playai|orpheus|canopylabs|guard|moderation|compound|llama-3\.1-8b-instant/i.test(model)
       )
     : [];
 
@@ -86,6 +86,7 @@ async function resolveGroqModel(requestedModel: string, apiKey: string): Promise
     'openai/gpt-oss-120b',
     'qwen/qwen3.6-27b',
     'qwen/qwen3.8-27b',
+    'llama-3.3-70b-versatile',
     ...discoveredTextModels,
   ]
     .map(normalizeGroqModelId)
@@ -130,7 +131,8 @@ async function callGroqAPI(request: GroqChatCompletionRequest): Promise<string> 
   let errorText = '';
   const attempted = new Set<string>();
 
-  while (attempted.size < 6) {
+  // Avoid burning the free request allowance against a long list of blocked models.
+  while (attempted.size < 2) {
     model = await resolveGroqModel(request.model, apiKey);
     if (attempted.has(model)) break;
     attempted.add(model);
@@ -155,8 +157,8 @@ async function callGroqAPI(request: GroqChatCompletionRequest): Promise<string> 
         && /model_permission_blocked_(?:project|org)|model.*blocked/i.test(errorText)
       )
       || (
-        response.status === 400
-        && /model_terms_required|requires terms acceptance|accept the terms|not supported.*chat|chat.*not supported/i.test(errorText)
+        (response.status === 400 || response.status === 404)
+        && /model_terms_required|requires terms acceptance|accept the terms|not supported.*chat|chat.*not supported|model.*not found|unknown model/i.test(errorText)
       );
 
     if (routeLocalModelFailure) {
@@ -228,15 +230,8 @@ export async function warmGroqModelCatalog(): Promise<{ ready: boolean; model?: 
   const apiKey = process.env.GROQ_API_KEY?.trim();
   if (!apiKey) return { ready: false, error: 'not configured' };
   try {
-    // Catalog presence is not readiness: org/project model permissions are enforced
-    // only when inference is attempted. Probe the same fail-local resolver used by
-    // production so blocked/retired models are skipped before Harmony selects Groq.
-    await callGroqAPI({
-      model: DEFAULT_GROQ_MODEL,
-      messages: [{ role: 'user', content: 'Reply OK.' }],
-      temperature: 0,
-      max_tokens: 16,
-    });
+    // Catalog checks are free of inference usage. Permissions are learned from
+    // actual user requests; an API key can list a model it cannot invoke.
     const model = await resolveGroqModel(DEFAULT_GROQ_MODEL, apiKey);
     return { ready: true, model };
   } catch (error) {

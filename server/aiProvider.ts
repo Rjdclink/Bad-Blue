@@ -71,7 +71,7 @@ export async function generateText(
     const budget = await aiTokenGovernor.getBudgetForTask(task);
     const actualPrompt = buildPromptWithVerbosity(prompt, budget.verbosityLevel);
     const normalizedName = task.taskName.toLowerCase();
-    const legalTask = /legal|lexara|law|case|petition|complaint|court|officer|criminal/.test(normalizedName);
+    const legalTask = /legal|lexara|law|case|petition|complaint|motion|draft|document|court|officer|criminal/.test(normalizedName);
     const codeTask = /code|repair|build|deploy|implementation|developer/.test(normalizedName);
     const researchTask = /search|research|finder|spectra|background|report|verify|fact/.test(normalizedName);
 
