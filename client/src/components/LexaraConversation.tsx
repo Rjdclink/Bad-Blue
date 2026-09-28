@@ -11,6 +11,7 @@ import {
 } from '@/components/LexaraEtherealAvatar';
 import { getLexaraLiveEnabled } from '@/components/LexaraLiveConsentModal';
 import { analyzeUserSignals } from '@shared/lexaraVoicePersona';
+import { lexaraDocumentSpeech } from '@shared/lexaraDocumentSpeech';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 
@@ -1142,15 +1143,13 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         // A document-action turn owns the artifact handoff. Keep the full draft
         // visible in chat, but do not feed document bodies/markup/placeholders
         // into realtime TTS; speak only ordinary conversational responses.
-        const suppressDocumentBodySpeech = documentIntentRequested || Boolean(priorPendingDocument);
+        const spokenAnswer = lexaraDocumentSpeech(answer, documentIntentRequested || Boolean(priorPendingDocument));
         // Ask for neutral feedback only after a completed substantive answer.
         // This is not sentiment-gated: positive, negative, and mixed experiences
         // all reach the same review page.
         setShowReviewPrompt(true);
         setGaze('camera');
-        if (!suppressDocumentBodySpeech) {
-          await speakLexara(answer, generation);
-        }
+        await speakLexara(spokenAnswer, generation);
       }
     } catch (error: any) {
       if (generation !== generationRef.current) return;
@@ -1584,7 +1583,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             <div className="flex justify-start">
               <div className="max-w-[92%] rounded-2xl border bg-card p-4 text-sm shadow-sm">
                 <div className="mb-2 font-medium">{pendingDocument.title}</div>
-                <div className="mb-3">Would you like your document as a DOCX or PDF?</div>
+                <div className="mb-3">Choose DOCX or PDF to generate your draft and download it.</div>
                 <div className="flex gap-2">
                   <Button size="sm" variant="outline" disabled={documentBusy} onClick={() => void generateAndDownloadPendingDocument('docx')}><Download className="mr-1 h-4 w-4" />DOCX</Button>
                   <Button size="sm" variant="outline" disabled={documentBusy} onClick={() => void generateAndDownloadPendingDocument('pdf')}><Download className="mr-1 h-4 w-4" />PDF</Button>
