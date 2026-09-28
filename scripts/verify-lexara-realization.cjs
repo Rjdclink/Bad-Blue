@@ -966,7 +966,8 @@ must(
 must(
   conversation.includes("const greeting = 'How can I help you?';") &&
     conversation.includes('if (liveEnabled && !voiceReady) return;') &&
-    conversation.includes('await speakLexara(greeting, greetingGeneration).catch(() => undefined);') &&
+    conversation.includes('await speakLexara(greeting, greetingGeneration).catch(() => false);') &&
+    conversation.includes('if (liveEnabled && !started && greetingGeneration === generationRef.current)') &&
     conversation.includes('if (!greetingRef.current && !userSpeechObservedRef.current) {') &&
     conversation.includes('void sendGreeting();') &&
     !conversation.includes('Hello. Tell me what happened'),
@@ -1164,5 +1165,4 @@ must(
 );
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-research-routing.cjs')], { stdio: 'inherit' });
 if (!process.exitCode) console.log('LEXARA realization verification passed.');
-
 

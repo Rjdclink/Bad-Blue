@@ -410,6 +410,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const initializedRef = useRef(false);
   // Greeting is scoped to this page entry, not persisted conversation history.
   const greetingRef = useRef(false);
+  const greetingDisplayedRef = useRef(false);
   const userSpeechObservedRef = useRef(false);
   const handleMessageRef = useRef<(text: string) => void>(() => undefined);
   const messageEndRef = useRef<HTMLDivElement>(null);
@@ -742,13 +743,13 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     const finalizedSpeech = String(text || '')
       .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
       .trim();
-    if (!finalizedSpeech) return;
+    if (!finalizedSpeech) return false;
     text = finalizedSpeech;
     if (!liveEnabled || !voiceReady) {
       if (generation === undefined || generation === generationRef.current) {
         setConversationPhase('text-only');
       }
-      return;
+      return false;
     }
 
     clearVoiceTurnBuffer();
@@ -764,10 +765,12 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     }
 
     let voiceFailed = false;
+    let playbackStarted = false;
     try {
       await speak(text, {
         context: 'guidance',
         autoPlay: true,
+        onStart: () => { playbackStarted = true; },
         onError: () => {
           voiceFailed = true;
           setVoiceReady(false);
@@ -791,6 +794,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         }
       }
     }
+    return playbackStarted;
   }, [clearVoiceTurnBuffer, liveEnabled, resumeListening, setConversationPhase, speak, voiceReady]);
 
   const handleUserMessage = useCallback(async (rawMessage: string) => {
@@ -1203,8 +1207,16 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     // Once ready, reserve it before the await so overlapping readiness effects
     // cannot speak the greeting twice.
     greetingRef.current = true;
-    appendMessage('lexara', greeting);
-    await speakLexara(greeting, greetingGeneration).catch(() => undefined);
+    if (!greetingDisplayedRef.current) {
+      greetingDisplayedRef.current = true;
+      appendMessage('lexara', greeting);
+    }
+    const started = await speakLexara(greeting, greetingGeneration).catch(() => false);
+    // Only a pre-playback failure may retry after voice readiness recovers.
+    // An interrupted/partially heard greeting must never restart over the user.
+    if (liveEnabled && !started && greetingGeneration === generationRef.current) {
+      greetingRef.current = false;
+    }
   }, [appendMessage, historyReady, liveEnabled, speakLexara, voiceReady]);
 
   useEffect(() => {
@@ -1289,6 +1301,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     setConversation([]);
     setJurisdiction(undefined);
     greetingRef.current = false;
+    greetingDisplayedRef.current = false;
     pendingUserTurnQueueRef.current = [];
     currentPreRenderedTurnIdRef.current = null;
     nonSemanticLexaraMessageIdsRef.current.clear();
@@ -1321,6 +1334,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     setConversation([]);
     setJurisdiction(undefined);
     greetingRef.current = false;
+    greetingDisplayedRef.current = false;
     userSpeechObservedRef.current = false;
     pendingUserTurnQueueRef.current = [];
     nonSemanticLexaraMessageIdsRef.current.clear();
