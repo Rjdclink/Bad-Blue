@@ -23,10 +23,13 @@ export interface LexaraResearchDecision {
 
 const LEGAL_AUTHORITY_INTENT_PATTERN = /\b(?:versus|case\s+law|court\s+(?:case|decision|opinion|holding)|holding|precedent|statute|u\.?s\.?c\.?|cfr|code\s+section|rule\s+\d|motion|appeal|lawsuit|cause\s+of\s+action|civil\s+(?:issue|case|claim|matter)|criminal\s+(?:issue|case|charge)|constitutional|jurisdiction|legal\s+(?:issue|question|claim|case|matter|right|remedy|defense))\b/i;
 const CASE_CAPTION_PATTERN = /\b[A-Z][A-Za-z.'’-]+(?:\s+[A-Z][A-Za-z.'’-]+){0,4}\s+(?:v\.?|vs\.?|versus)\s+(?:the\s+)?[A-Z][A-Za-z.'’ -]{1,80}\b/i;
+// Ordinary procedural questions often omit the word "legal". They must not
+// become subject-background lookups merely because they are questions.
+const PERSONAL_LEGAL_PROCEDURE_PATTERN = /\b(?:how\s+(?:do|can|should|would)\s+(?:i|we)|can\s+(?:i|we)|what\s+(?:forms?|rights?|remedies|options|steps|documents)\s+(?:do|can|are)|(?:i|we)\s+(?:need|want)\s+to)\b[\s\S]{0,180}\b(?:divorc\w*|custody|evict\w*|bankrupt\w*|probate|immigration|asylum|sue|appeal|file|filing|court|lease|tenant|landlord|restraining\s+order|protective\s+order)\b/i;
 
 export function isLexaraLegalAuthorityIntent(text: string): boolean {
   const value = String(text || '').trim();
-  return CASE_CAPTION_PATTERN.test(value) || LEGAL_AUTHORITY_INTENT_PATTERN.test(value);
+  return CASE_CAPTION_PATTERN.test(value) || LEGAL_AUTHORITY_INTENT_PATTERN.test(value) || PERSONAL_LEGAL_PROCEDURE_PATTERN.test(value);
 }
 
 /**
