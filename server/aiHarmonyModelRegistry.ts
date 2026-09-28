@@ -67,10 +67,13 @@ export const CURRENT_AI_MODELS = {
 export const LEGAL_AI_MODELS = {
   claudeFast: 'claude-sonnet-5', claudeDeep: 'claude-opus-5-5',
   openaiFast: 'gpt-6-sol', openaiDeep: 'gpt-6-astra',
-  geminiFast: 'gemini-3.8-flash', geminiDeep: 'gemini-3.1-pro-preview',
+  geminiFast: 'gemini-3.8-flash', geminiDeep: 'gemini-3.8-flash',
   mistralFast: 'mistral-small-latest', mistralDeep: 'mistral-large-latest',
   cohereFast: 'command-a-plus-05-2026', cohereDeep: 'command-a-plus-05-2026',
-  groqFast: 'openai/gpt-oss-20b', groqDeep: 'openai/gpt-oss-120b',
+  groqFast: 'openai/gpt-oss-120b', groqDeep: 'openai/gpt-oss-120b',
+  groqAlternate: 'qwen/qwen3.8-27b',
+  deepseekFast: CURRENT_AI_MODELS.deepseek, deepseekDeep: CURRENT_AI_MODELS.deepseek,
+  kimiFast: CURRENT_AI_MODELS.kimi, kimiDeep: CURRENT_AI_MODELS.kimi,
 } as const;
 export function isCurrentLegalModel(provider: AIProvider, model: string): boolean {
   const company = provider === PROVIDER.CLAUDE_OPUS ? 'claude' : provider;
@@ -240,12 +243,13 @@ export function isHarmonyProviderAllowed(
   provider: AIProvider,
   policy: HarmonyProviderPolicy = 'capability-first',
 ): boolean {
+  if (provider === PROVIDER.CEREBRAS) return false;
   if (policy !== 'legalwhat') return true;
   // The GPT-OSS alias is the same Groq transport, never another fallback.
   // Only direct, explicitly authorized providers may serve LegalWhat.
   return [
-    PROVIDER.CLAUDE, PROVIDER.CLAUDE_OPUS, PROVIDER.GROQ,
-    PROVIDER.GEMINI, PROVIDER.COHERE, PROVIDER.MISTRAL, PROVIDER.OPENAI,
+    PROVIDER.CLAUDE, PROVIDER.GROQ, PROVIDER.GEMINI,
+    PROVIDER.DEEPSEEK, PROVIDER.KIMI,
   ].includes(provider);
 }
 

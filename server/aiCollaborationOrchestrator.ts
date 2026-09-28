@@ -271,10 +271,6 @@ async function callOpenAICompatibleHarmonyProvider(
   signal?: AbortSignal,
 ): Promise<{ content: string; tokensUsed: number }> {
   const configs: Partial<Record<AIProvider, { baseUrl: string; key?: string }>> = {
-    [AIProvider.CEREBRAS]: {
-      baseUrl: 'https://api.cerebras.ai/v1',
-      key: process.env.CEREBRAS_API_KEY?.trim(),
-    },
     [AIProvider.CLOUDFLARE]: {
       baseUrl: `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || '')}/ai/v1`,
       key: process.env.CLOUDFLARE_AI_API_TOKEN?.trim(),
@@ -512,9 +508,7 @@ export class AICollaborationOrchestrator {
         : attributes.needsFastResponse ? 'fast' : 'reasoning';
       attributes = { ...attributes, legalWorkKind };
     }
-    const configuredProviders = getAvailableProvidersForContext(context, options.providerPolicy)
-      .filter(provider => options.providerPolicy !== 'legalwhat' || options.legalReviewReason
-        || (provider !== AIProvider.CLAUDE && provider !== AIProvider.CLAUDE_OPUS));
+    const configuredProviders = getAvailableProvidersForContext(context, options.providerPolicy);
     const callerPool = new Set(_availableProviders.length ? _availableProviders : configuredProviders);
     const eligibleProviders = Array.from(new Set(configuredProviders
       .filter(provider => callerPool.has(provider))
@@ -555,8 +549,8 @@ export class AICollaborationOrchestrator {
     
     // Build collaboration tasks
     const deadlineAt = options.providerPolicy === 'legalwhat'
-      ? Date.now() + (options.requestTimeoutMs ?? (attributes.needsFastResponse ? 6000
-        : /document|draft|petition|complaint|motion/i.test(taskName) ? 25000 : 12000)) : undefined;
+      ? Date.now() + 2 * (options.requestTimeoutMs ?? (attributes.needsFastResponse ? 12000
+        : /document|draft|petition|complaint|motion/i.test(taskName) ? 25000 : 15000)) : undefined;
     const failedProviders = options.providerPolicy === 'legalwhat' ? new Set<AIProvider>() : undefined;
     const reserveProviders = eligibleProviders.filter(provider => admission(provider) && !providers.includes(provider));
     const tasks = this.buildCollaborationTasks(
@@ -582,10 +576,10 @@ export class AICollaborationOrchestrator {
         providerPolicy: options.providerPolicy,
         systemPrompt: options.systemPrompt,
         requestTimeoutMs: options.providerPolicy === 'legalwhat'
-          ? (options.requestTimeoutMs ?? (attributes.needsFastResponse ? 6_000
-            : /document|draft|petition|complaint|motion/i.test(taskName) ? 25_000 : 12_000))
+          ? (options.requestTimeoutMs ?? (attributes.needsFastResponse ? 12_000
+            : /document|draft|petition|complaint|motion/i.test(taskName) ? 25_000 : 15_000))
           : task.requestTimeoutMs || task.timeout || options.requestTimeoutMs,
-        maxFallbacks: task.maxFallbacks ?? options.maxFallbacks,
+        maxFallbacks: options.maxFallbacks ?? task.maxFallbacks,
         signal: options.signal,
         allowCoolingRecovery: healthyProviders.length === 0,
         failedProviders,
@@ -684,9 +678,9 @@ export class AICollaborationOrchestrator {
       }
     }
     
-    // Only an explicit exceptional review or an unresolved synthesis conflict
-    // spends Claude credits. Ordinary execution and fallback never select it.
+    // Review an unresolved conflict only when Claude has not already contributed.
     if (options.providerPolicy === 'legalwhat' && !options.legalReviewReason
+      && !results.some(result => result.success && result.provider === AIProvider.CLAUDE)
       && /^\[LEGAL_REVIEW_REQUIRED\]/.test(finalAnswer.trim()) && !options.signal?.aborted) {
       const draft = finalAnswer.trim().replace(/^\[LEGAL_REVIEW_REQUIRED\]\s*/, '');
       finalAnswer = draft;
@@ -1536,7 +1530,6 @@ export class AICollaborationOrchestrator {
           }
           break;
         }
-        case AIProvider.CEREBRAS:
         case AIProvider.CLOUDFLARE:
         case AIProvider.XAI:
         case AIProvider.FIREWORKS: {
@@ -1676,14 +1669,13 @@ export class AICollaborationOrchestrator {
       // A model-specific denial can fall back once to the smaller listed model
       // on the same credential. Do not retry quota, payment, or auth failures.
       if (task.providerPolicy === 'legalwhat' && !task.modelRecoveryAttempted
-        && [AIProvider.OPENAI, AIProvider.MISTRAL, AIProvider.COHERE, AIProvider.GROQ].includes(task.provider)
-        && /\b404\b|model.*(?:not found|unavailable|not available|not permitted)|(?:access|permission).*model/i
+        && task.provider === AIProvider.GROQ
+        && /\b404\b|model.*(?:not found|unavailable|not available|not permitted|blocked)|(?:access|permission).*model/i
           .test(error instanceof Error ? error.message : String(error))) {
-        const fastModel = this.getLegalTaskModel(task.provider, {
-          ...task.attributes, needsFastResponse: true,
-        });
+        const fastModel = getHarmonyRecoveryModels(task.provider).find(model =>
+          model !== task.model && isCurrentLegalModel(task.provider, model));
         const remainingMs = taskTimeoutMs - (Date.now() - startTime);
-        if (fastModel !== task.model && remainingMs > 0) {
+        if (fastModel && remainingMs > 0) {
           const recovered = await this.executeTask({
             ...task, model: fastModel, modelRecoveryAttempted: true,
             requestTimeoutMs: remainingMs, fallbackProviders: [], maxFallbacks: 0,
@@ -1861,18 +1853,13 @@ export class AICollaborationOrchestrator {
   ): AIProvider[] {
     // A single transport cannot count twice as redundancy. Claude Opus is
     // available after Sonnet fails but does not become a parallel hedge.
-    const priority = attrs.needsFastResponse
-      ? [AIProvider.GROQ, AIProvider.COHERE, AIProvider.GEMINI, AIProvider.CLAUDE,
-          AIProvider.MISTRAL, AIProvider.OPENAI, AIProvider.CLAUDE_OPUS]
-      : attrs.legalWorkKind === 'drafting'
-        ? [AIProvider.COHERE, AIProvider.MISTRAL, AIProvider.OPENAI, AIProvider.GEMINI,
-            AIProvider.GROQ, AIProvider.CLAUDE, AIProvider.CLAUDE_OPUS]
-        : [AIProvider.GEMINI, AIProvider.GROQ, AIProvider.OPENAI, AIProvider.COHERE,
-            AIProvider.MISTRAL, AIProvider.CLAUDE, AIProvider.CLAUDE_OPUS];
+    const priority = [AIProvider.CLAUDE, AIProvider.GEMINI, AIProvider.GROQ,
+      AIProvider.DEEPSEEK, AIProvider.KIMI];
     const ranked = providers.slice().sort((a, b) => {
       const fit = (provider: AIProvider) => {
         const index = priority.indexOf(provider);
-        return (index < 0 ? 0 : (priority.length - index) * 4)
+        return (provider === AIProvider.CLAUDE ? 1000 : 0)
+          + (index < 0 ? 0 : (priority.length - index) * 4)
           + legalProviderCapacityScore(provider)
           + Math.max(-20, Math.min(20, harmonyProviderRuntimeScore(provider)));
       };
@@ -1900,6 +1887,8 @@ export class AICollaborationOrchestrator {
       case AIProvider.MISTRAL: return fast ? LEGAL_AI_MODELS.mistralFast : LEGAL_AI_MODELS.mistralDeep;
       case AIProvider.COHERE: return fast ? LEGAL_AI_MODELS.cohereFast : LEGAL_AI_MODELS.cohereDeep;
       case AIProvider.GROQ: return fast ? LEGAL_AI_MODELS.groqFast : LEGAL_AI_MODELS.groqDeep;
+      case AIProvider.DEEPSEEK: return LEGAL_AI_MODELS.deepseekDeep;
+      case AIProvider.KIMI: return LEGAL_AI_MODELS.kimiDeep;
       default: return this.getDefaultModelForProvider(provider);
     }
   }
@@ -2003,6 +1992,7 @@ export class AICollaborationOrchestrator {
         return getHarmonyCapabilities(provider).reduce(
           (sum, capability) => sum + (desired.has(capability) ? 25 : 0),
           harmonyProviderRuntimeScore(provider) + transportDiversity
+            + (task.providerPolicy === 'legalwhat' && provider === AIProvider.CLAUDE ? 1000 : 0)
             + (task.providerPolicy === 'legalwhat' ? legalProviderCapacityScore(provider) : 0),
         );
       };

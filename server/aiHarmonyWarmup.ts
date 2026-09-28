@@ -292,7 +292,6 @@ export async function prewarmHarmonyProviders(): Promise<HarmonyWarmStatus[]> {
         }
 
         const openAICompatible: Partial<Record<AIProvider, { url: string; key?: string }>> = {
-          [AIProvider.CEREBRAS]: { url: 'https://api.cerebras.ai/v1/models', key: process.env.CEREBRAS_API_KEY?.trim() },
           [AIProvider.TOGETHER]: { url: 'https://api.together.xyz/v1/models', key: process.env.TOGETHER_API_KEY?.trim() },
           [AIProvider.COHERE]: { url: 'https://api.cohere.com/v1/models?endpoint=chat&page_size=100', key: process.env.COHERE_API_KEY?.trim() },
           [AIProvider.XAI]: { url: 'https://api.x.ai/v1/models', key: process.env.XAI_API_KEY?.trim() },
@@ -326,7 +325,10 @@ export async function prewarmHarmonyProviders(): Promise<HarmonyWarmStatus[]> {
   })();
 
   try {
-    return await warmupInFlight;
+    const result = await warmupInFlight;
+    void import('./legalSupportReadiness').then(module => module.verifyLegalSupportReadiness())
+      .catch(error => console.warn('[LEXARA SupportReadiness] startup check failed', { error: String(error) }));
+    return result;
   } finally {
     warmupInFlight = null;
   }

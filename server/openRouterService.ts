@@ -138,7 +138,7 @@ export async function generateOpenRouterText(
 
     if (!response.ok) {
       const detail = (await response.text()).slice(0, 600);
-      throw new Error(`OpenRouter API error (${response.status}): ${detail}`);
+      throw Object.assign(new Error(`OpenRouter API error (${response.status}): ${detail}`), { headers: response.headers, status: response.status });
     }
 
     const data = await response.json() as {
