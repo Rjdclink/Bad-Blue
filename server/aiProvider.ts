@@ -32,6 +32,7 @@ export { getZeroApiStatus } from './zeroApiIntelligence';
 export type { AITaskMetadata };
 
 interface AIResponse {
+  contributions?: import('./aiCollaborationOrchestrator').CollaborationResult[];
   content: string;
   provider: AIProvider;
   tokensUsed: number;
@@ -39,6 +40,7 @@ interface AIResponse {
 }
 
 interface GenerateOptions {
+  includeContributions?: boolean;
   providerPolicy?: HarmonyProviderPolicy;
   systemPrompt?: string;
   temperature?: number;
@@ -117,6 +119,7 @@ export async function generateText(
 
       return {
         content: orchestrated.finalAnswer,
+        ...(options.includeContributions ? { contributions: orchestrated.contributions } : {}),
         provider: orchestrated.providersUsed[0] || (options.providerPolicy === 'legalwhat' ? providers[0] : AIProvider.OPENROUTER),
         tokensUsed: orchestrated.totalTokens,
         latencyMs: Date.now() - startTime,

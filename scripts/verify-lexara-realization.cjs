@@ -502,15 +502,13 @@ must(
   'Lexara keeps all 17 configured participants as a hot reserve while only a three-route capability/latency hedge owns normal turn latency',
 );
 must(
-  !authorityResearch.includes('GoogleGenAI') &&
-    authorityResearch.includes('FIRECRAWL_API_KEY') &&
-    authorityResearch.includes("https://api.firecrawl.dev/v1/search") &&
+  !authorityResearch.includes('openRouterWebSearch') &&
+    !authorityResearch.includes('FIRECRAWL_API_KEY') &&
+    !authorityResearch.includes('api.firecrawl.dev') &&
     authorityResearch.includes('Promise.all') &&
-    authorityResearch.includes('orchestratedWebSearch') &&
-    modernWebSearch.includes("type: 'openrouter:web_search'") &&
-    modernWebSearch.includes('deprecated') &&
-    webSearch.includes('useOnlinePlugin: true'),
-  'legal authority research races independent discovery paths and uses the current non-Google OpenRouter web-search server tool',
+    authorityResearch.includes('discoverLegalMeshTier3') &&
+    authorityResearch.includes('discoverLegalMeshSupplemental'),
+  'legal authority research uses independent discovery without OpenRouter or Firecrawl fallback',
 );
 must(
   crawlerRegistry.includes('LEXARA_CRAWLER_CAPABILITY_POOL') &&
@@ -1171,5 +1169,6 @@ must(
     conversation.includes('if (!suppressDocumentBodySpeech)'),
   'document bodies must never be sent to realtime TTS',
 );
+require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-research-routing.cjs')], { stdio: 'inherit' });
 console.log('LEXARA independent recovery verification passed.');
 

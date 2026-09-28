@@ -1,0 +1,185 @@
+// Execute the real research entry points, mesh, registry and discovery coordinator.
+// External transports/provider inference/database I/O are fixtures, not live acceptance.
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const ts = require('typescript');
+const root = path.resolve(__dirname, '..');
+const testCases = [];
+const test = (name, run) => testCases.push({ name, run });
+const factual = 'The fictional contract requires written notice before termination';
+const urls = ['https://example.test/contract-a', 'https://example.test/contract-b'];
+const contribution = (provider, index, role = 'legal-analyst') => ({
+  provider, model: provider + '-fixture', role, taskId: provider,
+  success: true, content: factual + '. Source: ' + urls[index], latencyMs: 5, tokensUsed: 20,
+});
+
+function harness(options = {}) {
+  const env = { ANTHROPIC_API_KEY: 'fixture', MISTRAL_API_KEY: 'fixture',
+    OPENROUTER_API_KEY: 'forbidden-fixture', FIRECRAWL_API_KEY: 'forbidden-fixture', ...options.env };
+  const calls = { gateway: [], http: [], reasoning: [], crawlers: [], paid: 0 };
+  const cache = new Map();
+  const enums = fs.readFileSync(path.join(root, 'server/aiTokenGovernor.ts'), 'utf8')
+    .match(/export enum (?:AIProvider|UsageContext|TaskPriority|TaskComplexity)\s*\{[^}]+\}/g).join('\n');
+  const governor = {};
+  vm.runInNewContext(ts.transpileModule(enums, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, { exports: governor });
+  governor.aiTokenGovernor = { getBudgetForTask: async () => ({ verbosityLevel: 'normal', maxTokens: 3000 }) };
+  const contributions = options.contributions ?? [contribution('claude', 0), contribution('mistral', 1)];
+  const stubs = {
+    'server/aiTokenGovernor.ts': governor,
+    'server/aiCollaborationOrchestrator.ts': { AICollaborationOrchestrator: { orchestrateCollaboration: async (...args) => {
+      calls.reasoning.push(args);
+      if (options.reasoningFailure) throw new Error('fixture unavailable');
+      return { finalAnswer: 'Fixture synthesis', contributions, providersUsed: ['claude', 'mistral'], totalTokens: 40 };
+    } } },
+    'server/groq.ts': { getGroqClient() { throw new Error('unexpected direct Groq SDK'); } },
+    'server/mistral.ts': { callMistral() { throw new Error('unexpected direct Mistral SDK'); } },
+    'server/claude.ts': { callClaude() { throw new Error('unexpected direct Claude SDK'); } },
+    'server/gemini.ts': { callGemini() { throw new Error('unexpected direct Gemini SDK'); } },
+    'server/zeroApiIntelligence.ts': {
+      generateZeroApiResponse: async () => ({ content: 'Existing local fallback remains available' }),
+      shouldUseZeroApiMode: () => false, getZeroApiStatus: () => ({}),
+    },
+    'server/openRouterService.ts': new Proxy({}, { get() { throw new Error('OpenRouter legal inference reached'); } }),
+    'server/openRouterWebSearch.ts': { orchestratedWebSearch: async query => {
+      calls.gateway.push(query);
+      if (!options.allowLegacyGateway) throw new Error('forbidden gateway reached');
+      return { sources: options.gatewaySources?.(calls.gateway.length) ?? [urls[0]] };
+    } },
+    'server/services/pantheon/PantheonDiscoveryLearning.ts': {
+      getPantheonLearnedQueryPatterns: async () => options.learnedPattern ? [options.learnedPattern] : [],
+      getPantheonLearnedSources: async () => [],
+      rankPantheonDiscoveryUrls: values => [...new Set(values)],
+    },
+    'server/services/pantheon/PantheonSupplementalDiscovery.ts': { supplementalPantheonDiscovery: async () => {
+      calls.paid++; return { urls: options.paidUrls || [], attempted: true, provider: 'serpapi' };
+    } },
+    'server/services/crawlers/PantheonRetrievalAdapter.ts': { pantheonRetrievalAdapter: { retrieve: async request => {
+      calls.crawlers.push(request);
+      return { evidence: request.targets.map(target => ({ target, content: 'Extracted fixture source evidence' })) };
+    } } },
+    'server/lexara/LexaraResearchIntentRouter.ts': { decideLexaraResearchNeed: () => ({ needed: true }) },
+  };
+  const forbidden = /openrouter|firecrawl/i;
+  async function fixtureFetch(raw, init) {
+    const url = String(raw); calls.http.push({ url, init });
+    assert(!forbidden.test(url), 'removed transport received an HTTP request: ' + url);
+    const payload = options.fetchPayload?.(url, init, calls.http.length) ?? { results: [] };
+    return { ok: true, json: async () => payload };
+  }
+  function load(relative) {
+    if (stubs[relative]) return stubs[relative];
+    if (cache.has(relative)) return cache.get(relative).exports;
+    assert(!/cryptocrawl|cryptara/i.test(relative), 'out-of-scope module');
+    const filename = path.join(root, relative);
+    const source = fs.readFileSync(filename, 'utf8');
+    const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } });
+    const module = { exports: {} }; cache.set(relative, module);
+    const requireLocal = spec => {
+      if (spec === '@google/genai') return { GoogleGenAI: class { constructor() { throw new Error('unexpected Google SDK'); } } };
+      assert(spec.startsWith('.'), 'unexpected dependency: ' + spec);
+      let next = path.relative(root, path.resolve(path.dirname(filename), spec));
+      if (!next.endsWith('.ts')) next += '.ts';
+      return load(next);
+    };
+    vm.runInNewContext(`(function(require,module,exports){${compiled.outputText}\n})`, {
+      process: { env }, console: { log() {}, warn() {}, error() {}, info() {} },
+      fetch: fixtureFetch, URL, AbortController, DOMException, setTimeout, clearTimeout,
+    }, { filename })(requireLocal, module, module.exports);
+    return module.exports;
+  }
+  return { load, calls };
+}
+
+test('removed transports and Firecrawl-only seed adapter are not selectable', () => {
+  const h = harness(); const registry = h.load('server/lexara/LexaraCrawlerCapabilityRegistry.ts');
+  const pool = registry.getLexaraCrawlerCapabilityPool();
+  assert.equal(pool.length, 60);
+  assert(!pool.some(item => ['firecrawl', 'openrouter-web-search', 'seed-startrek'].includes(item.id)));
+  for (const id of ['startrek', 'birdofprey', 'sixdegrees', 'seed-birdofprey', 'seed-trinity', 'instant-legal']) assert(pool.some(x => x.id === id));
+});
+for (const configured of [false, true]) {
+  test(`enhanced legal search retains independent contributions with gateway key ${configured ? 'present' : 'absent'}`, async () => {
+    const h = harness({ env: { OPENROUTER_API_KEY: configured ? 'forbidden' : '' } });
+    const result = await h.load('server/enhancedLegalSearch.ts').performEnhancedLegalSearch('Fictional contract facts', { context: 'Preserve this context', requireSources: true });
+    assert.equal(h.calls.reasoning.length, 1);
+    assert.equal(h.calls.reasoning[0][4].providerPolicy, 'legalwhat');
+    assert(h.calls.reasoning[0][1].includes('Preserve this context'));
+    assert.equal(result.modelResponses.length, 2);
+    assert(result.attributedFacts.some(f => f.fact === factual));
+    assert(result.metadata.totalSources >= 2);
+    assert.equal(h.calls.gateway.length, 0);
+  });
+}
+test('syntheses, failed routes and duplicate provider/model responses do not create independent votes', async () => {
+  const first = contribution('claude', 0);
+  const h = harness({ contributions: [first, { ...first }, { ...contribution('mistral', 1), success: false }, contribution('mistral', 1, 'harmony-synthesizer')] });
+  const result = await h.load('server/enhancedLegalSearch.ts').performEnhancedLegalSearch('Fictional contract facts');
+  assert.equal(result.modelResponses.length, 1);
+  assert.equal(result.attributedFacts.length, 0);
+});
+test('existing AI callers retain their response shape unless contributions are requested', async () => {
+  const h = harness();
+  const result = await h.load('server/aiProvider.ts').generateUserText('fixture-legal', 'Fictional contract facts', { providerPolicy: 'legalwhat' });
+  assert.equal(result.content, 'Fixture synthesis');
+  assert.equal(Object.hasOwn(result, 'contributions'), false);
+});
+test('mesh failure preserves the existing local fallback without gateway recovery', async () => {
+  const h = harness({ reasoningFailure: true });
+  const result = await h.load('server/enhancedLegalSearch.ts').performEnhancedLegalSearch('Fictional contract facts');
+  assert.equal(result.modelResponses[0].model, 'lmai');
+  assert.equal(result.attributedFacts.length, 0);
+  assert.equal(h.calls.reasoning.length, 1); assert.equal(h.calls.gateway.length, 0);
+});
+test('both legal discovery tiers preserve DDGS results while carrying the canonical exclusion policy', async () => {
+  const h = harness({ env: { DDGS_URL: 'https://ddgs.fixture.test' }, fetchPayload: () => ({ results: [{ href: urls[0], title: 'Fresh result', body: 'Fresh source evidence' }] }) });
+  const mesh = h.load('server/lexara/LegalProviderMesh.ts');
+  const primary = await mesh.discoverLegalMeshTier3('contract fixture');
+  const supplemental = await mesh.discoverLegalMeshSupplemental('contract fixture', []);
+  assert.equal(primary[0].url, urls[0]); assert.equal(primary[0].excerpt, 'Fresh source evidence');
+  assert.equal(supplemental[0].url, urls[0]); assert.equal(h.calls.gateway.length, 0);
+});
+test('legal discovery misses and learned-query retries never reopen OpenRouter', async () => {
+  const h = harness({ env: { DDGS_URL: 'https://ddgs.fixture.test' }, learnedPattern: 'court records' });
+  const result = await h.load('server/services/pantheon/PantheonDiscoveryCoordinator.ts').discoverPantheonSourcesParallel('contract fixture', [], { providerPolicy: 'legalwhat', includePaidFallback: true, timeoutMs: 250 });
+  assert.equal(result.urls.length, 0); assert.equal(h.calls.gateway.length, 0);
+  assert.equal(h.calls.http.length, 2); assert.equal(h.calls.paid, 1);
+  assert(!result.lanesAttempted.includes('first-party'));
+});
+for (const retry of [false, true]) {
+  test(`shared default discovery retains its existing ${retry ? 'learned retry' : 'initial'} route`, async () => {
+    const h = harness({ allowLegacyGateway: true, learnedPattern: 'court records', gatewaySources: n => retry && n === 1 ? [] : [urls[0]] });
+    const result = await h.load('server/services/pantheon/PantheonDiscoveryCoordinator.ts').discoverPantheonSourcesParallel('contract fixture', [], { timeoutMs: 250 });
+    assert.equal(result.urls[0], urls[0]); assert.equal(h.calls.gateway.length, retry ? 2 : 1);
+  });
+}
+test('direct official-authority results retain their evidence and avoid unnecessary discovery', async () => {
+  const h = harness({ env: { COURTLISTENER_API_TOKEN: 'fixture' }, fetchPayload: () => ({ results: [{ caseName: 'Fixture Case', absolute_url: '/opinion/1/fixture/', snippet: 'Relevant source excerpt' }] }) });
+  const result = await h.load('server/lexara/LexaraAuthorityResearch.ts').researchLegalAuthority('Find case law', { jurisdiction: 'Iowa' });
+  assert.equal(result.sources[0].excerpt, 'Relevant source excerpt');
+  assert.equal(h.calls.http.length, 1); assert.equal(h.calls.crawlers.length, 0); assert.equal(h.calls.gateway.length, 0);
+});
+test('discovered legal URLs still reach crawler enrichment and return to Lexara', async () => {
+  const h = harness({ env: { DDGS_URL: 'https://ddgs.fixture.test' }, fetchPayload: () => ({ results: [{ href: 'https://fixture.gov/opinion', title: 'Fixture authority' }] }) });
+  const result = await h.load('server/lexara/LexaraAuthorityResearch.ts').researchLegalAuthority('Find the statute', { jurisdiction: 'Iowa' });
+  assert.equal(h.calls.crawlers.length, 1); assert.equal(h.calls.crawlers[0].purpose, 'lexara_legal_research');
+  assert.equal(h.calls.crawlers[0].targets[0], 'https://fixture.gov/opinion');
+  assert.equal(result.sources[0].excerpt, 'Extracted fixture source evidence');
+  assert(result.summary.includes('Extracted fixture source evidence')); assert.equal(h.calls.gateway.length, 0);
+});
+test('complete discovery exhaustion cannot activate removed emergency providers even with their keys set', async () => {
+  const h = harness({ learnedPattern: 'court records' });
+  const result = await h.load('server/lexara/LexaraAuthorityResearch.ts').researchLegalAuthority('Find the statute');
+  assert.equal(result, null); assert.equal(h.calls.gateway.length, 0); assert.equal(h.calls.http.length, 0);
+});
+test('cancelled research starts no provider or crawler work', async () => {
+  const h = harness(); const controller = new AbortController(); controller.abort();
+  const result = await h.load('server/lexara/LexaraAuthorityResearch.ts').researchLegalAuthority('Find the statute', { signal: controller.signal });
+  assert.equal(result, null); assert.equal(h.calls.http.length, 0); assert.equal(h.calls.gateway.length, 0); assert.equal(h.calls.crawlers.length, 0);
+});
+(async () => {
+  let passed = 0;
+  for (const { name, run } of testCases) { await run(); passed++; console.log('PASS', name); }
+  console.log(`${passed}/${testCases.length} Lexara research routing checks passed (external I/O mocked).`);
+})().catch(error => { console.error(error); process.exitCode = 1; });
