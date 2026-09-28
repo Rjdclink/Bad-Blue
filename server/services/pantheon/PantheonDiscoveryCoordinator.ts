@@ -77,14 +77,15 @@ async function geminiGoogleSearch(query: string, limit: number, timeoutMs: numbe
   if (signal?.aborted) return [];
   try {
     const client = new GoogleGenAI({ apiKey });
-    const response = await softTimeout(client.models.generateContent({
+    const response = await withTimeout(timeoutMs, signal, requestSignal => client.models.generateContent({
       model: process.env.GEMINI_MODEL?.trim() || 'gemini-3.8-flash',
       contents: [{ role: 'user', parts: [{ text: query }] }],
       config: {
         temperature: 0,
         tools: [{ googleSearch: {} }],
+        abortSignal: requestSignal,
       },
-    }), timeoutMs, null);
+    }));
     if (!response || signal?.aborted) return [];
     const grounding = response.candidates?.[0]?.groundingMetadata;
     const chunks = grounding?.groundingChunks || [];
@@ -373,4 +374,3 @@ export async function discoverPantheonSourcesParallel(
     lanesWithResults: [...new Set(lanesWithResults)],
   };
 }
-
