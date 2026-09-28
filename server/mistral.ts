@@ -89,8 +89,13 @@ export async function callMistral(
 
     return { content, tokensUsed };
   } catch (error: any) {
-    console.error('[Mistral] Error:', error);
-    throw new Error(`Mistral API error: ${error.message}`);
+    if (options.signal?.aborted) throw options.signal.reason || error;
+    const minuteLimit = error?.headers?.get?.('x-ratelimit-limit-req-minute')
+      || error?.rawResponse?.headers?.get?.('x-ratelimit-limit-req-minute');
+    // Carry the provider's zero-allotment response to the Harmony circuit.
+    const reason = minuteLimit === '0' ? ' (provider permits 0 requests/minute)' : '';
+    console.warn('[Mistral] Request failed', { status: error?.statusCode, minuteLimit });
+    throw new Error(`Mistral API error: ${error.message}${reason}`);
   }
 }
 

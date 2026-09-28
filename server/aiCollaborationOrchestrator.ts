@@ -12,6 +12,7 @@ import { AIProvider, UsageContext, TaskPriority as GovernorTaskPriority, TaskCom
 import { AIModelSelector, TaskAttributes, TaskComplexity, TaskPriority } from './aiModelSelector';
 import { runProvider, type AITaskMetadata } from './aiProvider';
 import { generateOpenRouterText } from './openRouterService';
+import { canUseLegalProvider, reserveLegalProvider, noteLegalProviderError } from './legalProviderAdmission';
 import {
   CURRENT_AI_MODELS,
   getConfiguredHarmonyProviders,
@@ -121,6 +122,7 @@ const harmonyTransportCooldownUntil = new Map<string, number>();
 function harmonyTransportDomain(provider: AIProvider): string {
   if (provider === AIProvider.CLAUDE || provider === AIProvider.CLAUDE_OPUS) return 'anthropic';
   if (provider === AIProvider.GROQ) return 'groq';
+  if (provider === AIProvider.CLOUDFLARE) return 'cloudflare';
   if (provider === AIProvider.XAI) return 'xai';
   if (provider === AIProvider.FIREWORKS) return 'fireworks';
   if (provider === AIProvider.GPT_OSS) {
@@ -270,6 +272,10 @@ async function callOpenAICompatibleHarmonyProvider(
     [AIProvider.CEREBRAS]: {
       baseUrl: 'https://api.cerebras.ai/v1',
       key: process.env.CEREBRAS_API_KEY?.trim(),
+    },
+    [AIProvider.CLOUDFLARE]: {
+      baseUrl: `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || '')}/ai/v1`,
+      key: process.env.CLOUDFLARE_AI_API_TOKEN?.trim(),
     },
     [AIProvider.TOGETHER]: {
       baseUrl: 'https://api.together.xyz/v1',
@@ -460,11 +466,13 @@ export class AICollaborationOrchestrator {
       .map(provider => options.providerPolicy === 'legalwhat' && provider === AIProvider.GPT_OSS
         ? getDirectGptOssProvider()!
         : provider)));
-    const healthyProviders = eligibleProviders.filter(harmonyProviderAvailable);
+    const admission = (provider: AIProvider) => options.providerPolicy !== 'legalwhat'
+      || canUseLegalProvider(provider, getHarmonyResolvedModel(provider));
+    const healthyProviders = eligibleProviders.filter(provider => admission(provider) && harmonyProviderAvailable(provider));
     // A degraded startup probe may be retried, but an active runtime circuit
     // must never be overridden by legal recovery (billing, quota, or timeout).
     const recoveryProviders = options.providerPolicy === 'legalwhat'
-      ? eligibleProviders.filter(provider => !harmonyProviderCoolingDown(provider))
+      ? eligibleProviders.filter(provider => admission(provider) && !harmonyProviderCoolingDown(provider))
       : eligibleProviders;
     const initialCandidateProviders = healthyProviders.length > 0 ? healthyProviders : recoveryProviders;
 
@@ -480,18 +488,16 @@ export class AICollaborationOrchestrator {
     // Harmony is a capability pool, not a fan-out mandate. Select the smallest
     // healthy subset that covers this task's required capabilities. Every
     // configured participant remains eligible for tasks where its strengths fit.
-    const providers = this.selectProvidersForTask(
-      attributes,
-      initialCandidateProviders,
-      options.maxParticipants,
-    );
+    const providers = options.providerPolicy === 'legalwhat'
+      ? this.selectLegalProvidersForTask(attributes, initialCandidateProviders, options.maxParticipants)
+      : this.selectProvidersForTask(attributes, initialCandidateProviders, options.maxParticipants);
     
     // Determine orchestration strategy
     const strategy = this.selectStrategy(attributes, providers);
     
     // Build collaboration tasks
     const failedProviders = options.providerPolicy === 'legalwhat' ? new Set<AIProvider>() : undefined;
-    const reserveProviders = eligibleProviders.filter(provider => !providers.includes(provider));
+    const reserveProviders = eligibleProviders.filter(provider => admission(provider) && !providers.includes(provider));
     const tasks = this.buildCollaborationTasks(
       taskName,
       query,
@@ -729,6 +735,7 @@ export class AICollaborationOrchestrator {
     providers: AIProvider[]
   ): CollaborationTask[] {
     const tasks: CollaborationTask[] = [];
+    const drafting = /document|draft|petition|complaint|motion/i.test(taskName);
 
     // The selected capability-matched subset contributes specialist work in
     // parallel. The full 17-participant pool remains available for other tasks.
@@ -737,7 +744,7 @@ export class AICollaborationOrchestrator {
       // Live legal turns are a first-valid-answer race. Every selected participant
       // must therefore be capable of returning a complete user-ready answer; a
       // verifier-only winner would force a second synthesis call onto the latency path.
-      const role = attrs.needsFastResponse
+      const role = drafting ? 'legal-drafter' : attrs.needsFastResponse
         ? 'legal-analyst'
         : capabilities.includes('legal-analysis')
           ? 'legal-analyst'
@@ -746,7 +753,9 @@ export class AICollaborationOrchestrator {
             : capabilities.includes('research')
               ? 'rapid-searcher'
               : 'pattern-analyst';
-      const focus = role === 'legal-analyst'
+      const focus = role === 'legal-drafter'
+        ? 'Draft the complete requested legal document with its required sections, facts, jurisdiction, and requested relief. Mark unknown facts for review; never invent an authority.'
+        : role === 'legal-analyst'
         ? (attrs.needsFastResponse
             ? 'Produce a direct, user-ready legal answer to the current turn. Lead with the answer, preserve material uncertainty, and keep it concise unless detail is necessary.'
             : 'Analyze legal issues, defenses, procedure, uncertainty, and the highest-value missing fact.')
@@ -779,7 +788,9 @@ export class AICollaborationOrchestrator {
         provider: synthProvider,
         model: this.getDefaultModelForProvider(synthProvider),
         role: 'synthesizer',
-        prompt: 'Synthesize the successful specialist analyses into one direct, natural spoken answer to the user. Answer the current question or statement first. Default to 2-5 concise sentences unless additional detail is materially necessary or explicitly requested. Remove repetition, preserve uncertainty, never invent authority, and do not mention internal providers.\n\n[Results will be provided]',
+        prompt: drafting
+          ? 'Produce the complete requested document from the successful drafts. Preserve every required section and the user-supplied facts. Flag missing facts and uncertain authority for review; do not shorten the document into a conversational summary. Return only document text.\n\n[Results will be provided]'
+          : 'Synthesize the successful specialist analyses into one direct, natural spoken answer to the user. Answer the current question or statement first. Default to 2-5 concise sentences unless additional detail is materially necessary or explicitly requested. Remove repetition, preserve uncertainty, never invent authority, and do not mention internal providers.\n\n[Results will be provided]',
         priority: 2,
         dependencies,
         timeout: attrs.needsFastResponse ? 1_400 : undefined,
@@ -1107,16 +1118,23 @@ export class AICollaborationOrchestrator {
     if (fastSynthesisTask) {
       const dependencyIds = new Set(fastSynthesisTask.dependencies || []);
       const sourceTasks = tasks.filter(task => dependencyIds.has(task.id));
-      const hedgeEntries = sourceTasks.map(task => {
+      const hedgeEntries = sourceTasks.map((task, index) => {
         const controller = new AbortController();
         const relayAbort = () => controller.abort(task.signal?.reason);
         if (task.signal?.aborted) controller.abort(task.signal.reason);
         else task.signal?.addEventListener('abort', relayAbort, { once: true });
 
-        const promise = this.executeTask(
-          { ...task, signal: controller.signal },
-          completedTasks,
-        ).then(result => {
+        const promise = (async (): Promise<CollaborationResult> => {
+          // Spend a second provider's allowance only when the primary has not
+          // produced a timely answer. A cancelled hedge never dispatches.
+          if (index > 0) await new Promise(resolve => setTimeout(resolve, 600));
+          if (controller.signal.aborted) return {
+            taskId: task.id, provider: task.provider, model: task.model, role: task.role,
+            content: '', tokensUsed: 0, latencyMs: 0, success: false,
+            error: 'Hedge cancelled before dispatch',
+          };
+          return this.executeTask({ ...task, signal: controller.signal }, completedTasks);
+        })().then(result => {
           task.signal?.removeEventListener('abort', relayAbort);
           if (result.success && result.content.trim()) {
             completedTasks.set(task.id, result);
@@ -1300,12 +1318,16 @@ export class AICollaborationOrchestrator {
     const maxTokens = Math.max(
       96,
       Math.min(
-        1_800,
+        task.providerPolicy === 'legalwhat' && /document|legal-issue-analysis/.test(task.id) ? 4_500 : 1_800,
         Number(task.attributes.estimatedTokens || 1_100),
       ),
     );
 
-    const taskTimeoutMs = task.requestTimeoutMs || 6_000;
+    const taskTimeoutMs = task.requestTimeoutMs
+      || (task.providerPolicy === 'legalwhat'
+        ? (task.attributes.needsFastResponse ? 6_000
+          : /document|draft|petition|complaint|motion/i.test(task.id) ? 25_000 : 12_000)
+        : 6_000);
     const attempt = createLinkedDeadlineSignal(task.signal, taskTimeoutMs, task.provider);
 
     try {
@@ -1322,6 +1344,10 @@ export class AICollaborationOrchestrator {
       }
 
       const outputTokenLimit = maxTokens;
+      if (task.providerPolicy === 'legalwhat'
+        && !reserveLegalProvider(task.provider, task.model, outputTokenLimit, prompt)) {
+        throw new Error(`${task.provider} quota reserve withheld`);
+      }
       switch (task.provider) {
         case AIProvider.GEMINI:
         case AIProvider.GROQ:
@@ -1412,6 +1438,7 @@ export class AICollaborationOrchestrator {
           break;
         }
         case AIProvider.CEREBRAS:
+        case AIProvider.CLOUDFLARE:
         case AIProvider.XAI:
         case AIProvider.FIREWORKS: {
           const result = await withHarmonyDeadline(
@@ -1536,7 +1563,8 @@ export class AICollaborationOrchestrator {
         }
       }
 
-      const skipped = /cooling down after a recent route failure/.test(
+      if (task.providerPolicy === 'legalwhat') noteLegalProviderError(task.provider, task.model, error);
+      const skipped = /cooling down after a recent route failure|quota reserve withheld/.test(
         error instanceof Error ? error.message : String(error),
       );
       // A skipped route is not a new provider failure and must not extend its circuit.
@@ -1557,7 +1585,10 @@ export class AICollaborationOrchestrator {
       const allAlternatives = this.rankFallbackProviders(
         task,
         (task.fallbackProviders || [])
-          .filter(provider => provider !== task.provider && isHarmonyProviderAllowed(provider, task.providerPolicy)),
+          .filter(provider => provider !== task.provider
+            && isHarmonyProviderAllowed(provider, task.providerPolicy)
+            && (task.providerPolicy !== 'legalwhat'
+              || canUseLegalProvider(provider, getHarmonyResolvedModel(provider)))),
       );
       const healthyAlternatives = allAlternatives.filter(harmonyProviderAvailable);
       const coolingAlternatives = allAlternatives.filter(provider => !harmonyProviderAvailable(provider));
@@ -1566,7 +1597,23 @@ export class AICollaborationOrchestrator {
         || (!harmonyProviderCoolingDown(provider) && !task.failedProviders?.has(provider)),
       );
       const fallbackLimit = Math.max(0, Math.min(task.maxFallbacks ?? 1, 3));
-      if (fallbackLimit > 0 && alternatives.length > 0) {
+      // A legal failure may try successive independent routes, never fan out
+      // several retries at once and multiply the same user's quota usage.
+      if (task.providerPolicy === 'legalwhat' && fallbackLimit > 0) {
+        let tried = 0;
+        for (const provider of alternatives) {
+          if (tried++ >= fallbackLimit || task.signal?.aborted) break;
+          if (harmonyTransportDomain(provider) === harmonyTransportDomain(task.provider)) continue;
+          const candidate = await this.executeTask({
+            ...task, provider, model: this.getDefaultModelForProvider(provider),
+            fallbackProviders: [], maxFallbacks: 0,
+          }, completedTasks);
+          if (candidate.success && candidate.content.trim()) {
+            return { ...candidate, taskId: task.id, role: task.role };
+          }
+        }
+      }
+      if (task.providerPolicy !== 'legalwhat' && fallbackLimit > 0 && alternatives.length > 0) {
         const recoveryBatch = alternatives.slice(0, fallbackLimit);
         const recoveryEntries = recoveryBatch.map(provider => {
           const controller = new AbortController();
@@ -1676,6 +1723,31 @@ export class AICollaborationOrchestrator {
     return `Collaborative Analysis (${strategy}):\n\n${combined}`;
   }
   
+  private static selectLegalProvidersForTask(
+    attrs: TaskAttributes,
+    providers: AIProvider[],
+    explicitMax?: number,
+  ): AIProvider[] {
+    // A single transport cannot count twice as redundancy. Claude Opus is
+    // available after Sonnet fails but does not become a parallel hedge.
+    const priority = attrs.needsFastResponse
+      ? [AIProvider.GROQ, AIProvider.CLAUDE, AIProvider.COHERE, AIProvider.GEMINI,
+          AIProvider.CLOUDFLARE, AIProvider.MISTRAL, AIProvider.CLAUDE_OPUS]
+      : [AIProvider.CLAUDE, AIProvider.COHERE, AIProvider.GEMINI, AIProvider.GROQ,
+          AIProvider.CLOUDFLARE, AIProvider.MISTRAL, AIProvider.CLAUDE_OPUS];
+    const ranked = providers.slice().sort((a, b) => priority.indexOf(a) - priority.indexOf(b));
+    const selected: AIProvider[] = [];
+    const domains = new Set<string>();
+    for (const provider of ranked) {
+      const domain = harmonyTransportDomain(provider);
+      if (domains.has(domain)) continue;
+      selected.push(provider);
+      domains.add(domain);
+      if (selected.length >= Math.min(explicitMax || 2, 2)) break;
+    }
+    return selected;
+  }
+
   private static selectProvidersForTask(
     attrs: TaskAttributes,
     providers: AIProvider[],

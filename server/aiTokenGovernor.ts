@@ -69,6 +69,7 @@ export enum AIProvider {
   PERPLEXITY = 'perplexity',
   FIREWORKS = 'fireworks',
   CEREBRAS = 'cerebras',
+  CLOUDFLARE = 'cloudflare',
 }
 
 export enum UsageContext {

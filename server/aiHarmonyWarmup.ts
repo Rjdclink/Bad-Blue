@@ -186,7 +186,7 @@ export async function prewarmHarmonyProviders(): Promise<HarmonyWarmStatus[]> {
             provider,
             result.model || model,
             startedAt,
-            result.ready ? 'ready' : 'degraded',
+            result.ready ? 'catalog' : 'degraded',
             result.error,
           );
         }
@@ -232,12 +232,10 @@ export async function prewarmHarmonyProviders(): Promise<HarmonyWarmStatus[]> {
           );
           // Recovery must use a live text-capable Flash model, never a guessed ID
           // or an image/audio/preview route. Try at most one alternate per task.
-          recoveryModels.set(provider, [...catalog].filter(candidate =>
-            /^gemini-.*flash/i.test(candidate)
-            && !/image|audio|tts|live|native|preview|experimental|exp-|embedding/i.test(candidate)
-          ));
+          const supportedFreeFlash = ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash'];
+          recoveryModels.set(provider, supportedFreeFlash.filter(candidate => catalog.has(candidate)));
           const resolved = chooseCatalogModel(catalog, model, [
-            candidate => /gemini/i.test(candidate) && !/embedding|imagen|image|veo|tts|audio|live|native/i.test(candidate),
+            candidate => supportedFreeFlash.includes(candidate),
           ]);
           return record(provider, resolved || model, startedAt, resolved ? 'catalog' : 'degraded', resolved ? undefined : 'no live compatible Gemini model');
         }
