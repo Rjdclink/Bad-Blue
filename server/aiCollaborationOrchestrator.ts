@@ -226,7 +226,7 @@ function markHarmonyProviderFailure(provider: AIProvider, error: unknown, policy
                 : /timeout|timed out|econnreset|fetch failed|socket/.test(message)
                   ? 5_000
                   : 15_000;
-  if (policy === 'legalwhat' && /503|overloaded|high demand|unavailable/.test(message)) {
+  if (policy === 'legalwhat' && /\b503\b|overloaded|high demand/.test(message)) {
     const failures = (harmonyOverloadFailures.get(provider) || 0) + 1;
     harmonyOverloadFailures.set(provider, failures);
     cooldownMs = Math.min(120_000, 15_000 * 2 ** Math.min(failures - 1, 3)) + Math.floor(Math.random() * 1_000);
@@ -1513,6 +1513,16 @@ export class AICollaborationOrchestrator {
       } else {
         markHarmonyProviderSuccess(task.provider);
         recordHarmonyProviderRuntime(task.provider, true, Date.now() - startTime);
+        if (task.providerPolicy === 'legalwhat') {
+          console.info('[HARMONY] Provider route succeeded', {
+            task: task.id,
+            provider: task.provider,
+            model: task.model,
+            transport: harmonyTransportDomain(task.provider),
+            latencyMs: Date.now() - startTime,
+            tokensUsed,
+          });
+        }
       }
     } catch (error: any) {
       attempt.cleanup();
@@ -1533,11 +1543,12 @@ export class AICollaborationOrchestrator {
 
       // A skipped route made no request: do not extend its cooldown or record
       // another provider failure merely because another role selected it.
-      if (!/cooling down after a recent route failure|already has an in-flight call/.test(String(error))) {
+      const routeSkipped = /cooling down after a recent route failure|already has an in-flight call/.test(String(error));
+      if (!routeSkipped) {
         markHarmonyProviderFailure(task.provider, error, task.providerPolicy);
         recordHarmonyProviderRuntime(task.provider, false, Date.now() - startTime);
       }
-      console.warn('[HARMONY] Provider route failed', {
+      console.warn(routeSkipped ? '[HARMONY] Provider route skipped' : '[HARMONY] Provider route failed', {
         task: task.id,
         provider: task.provider,
         model: task.model,
