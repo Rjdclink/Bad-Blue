@@ -117,7 +117,7 @@ must(
     voiceMode.includes('initializeRealtimeRecognition') &&
     voiceMode.includes("provider: 'deepgram-flux'") &&
     conversation.includes('const BROWSER_FINAL_FALLBACK_SETTLE_MS = 1_200') &&
-    conversation.includes('Would you like your document as a DOCX or PDF?') &&
+    conversation.includes('Choose DOCX or PDF to generate your draft and download it.') &&
     conversation.includes('generateAndDownloadPendingDocument') &&
     conversation.includes("fetch('/api/lexara/documents/export'") &&
     conversation.includes('URL.createObjectURL(blob)') &&
@@ -1160,10 +1160,10 @@ must(
   'document export must retain strict server validation/type identity',
 );
 must(
-  conversation.includes('const suppressDocumentBodySpeech = documentIntentRequested || Boolean(priorPendingDocument)') &&
-    conversation.includes('if (!suppressDocumentBodySpeech)'),
+  conversation.includes('lexaraDocumentSpeech(answer, documentIntentRequested || Boolean(priorPendingDocument))') &&
+    conversation.includes('await speakLexara(spokenAnswer, generation)'),
   'document bodies must never be sent to realtime TTS',
 );
+require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-document-handoff.cjs')], { stdio: 'inherit' });
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-research-routing.cjs')], { stdio: 'inherit' });
 if (!process.exitCode) console.log('LEXARA realization verification passed.');
-

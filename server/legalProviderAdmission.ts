@@ -11,6 +11,7 @@ const cache = new Map<string, LegalQuotaState>();
 let ledgerUnavailableUntil = 0;
 let sequence = 0;
 export function legalQuotaDomain(provider: AIProvider): string {
+  if (provider === 'deepseek' || provider === 'kimi') return 'openrouter';
   return provider === 'claude_opus' ? 'claude' : provider === 'gpt_oss' ? 'groq' : provider;
 }
 function limit(domain: string, name: string, fallback: number): number {

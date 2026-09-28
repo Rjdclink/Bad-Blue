@@ -118,7 +118,7 @@ function harness(enabled, { fail = false, warm = true, stall = false, recoveryMo
     return load('server/services/factCheckEngine.ts');
   }
   return { registry, engine, attributes, calls, run, env, entry, legalModel, factCheck,
-    admission: load('server/legalProviderAdmission.ts'), advance: ms => { clock += ms; } };
+    admission: load('server/legalProviderAdmission.ts'), now: () => clock, advance: ms => { clock += ms; } };
 }
 const tests = [];
 const test = (name, run) => tests.push({ name, run });
@@ -126,9 +126,9 @@ test('scoped registry excludes gateway aliases and retains independent providers
   const h = harness(keys);
   assert.equal(h.registry.getConfiguredHarmonyProviders().length, 17, 'global mesh preserved');
   const scoped = Array.from(h.registry.getConfiguredHarmonyProviders('legalwhat'));
-  for (const banned of ['openrouter','deepseek','grok','kimi','qwen','gpt5_mini','gpt_oss','xai','cerebras','fireworks','together','cloudflare']) assert(!scoped.includes(banned), banned);
-  for (const retained of ['gemini','claude','claude_opus','groq','mistral','cohere','openai']) assert(scoped.includes(retained), retained);
-  assert.equal(scoped.length, 7, 'six direct provider companies; Sonnet and Opus share Anthropic');
+  for (const banned of ['openrouter','mistral','cohere','openai','claude_opus','grok','qwen','gpt5_mini','gpt_oss','xai','cerebras','fireworks','together','cloudflare']) assert(!scoped.includes(banned), banned);
+  for (const retained of ['gemini','claude','groq','deepseek','kimi']) assert(scoped.includes(retained), retained);
+  assert.equal(scoped.length, 5, 'Claude plus four supporting model families');
 });
 test('all direct failures cannot escape through gateway recovery', async () => {
   const h = harness(['GEMINI_API_KEY','OPENROUTER_API_KEY'], { fail: true });
@@ -137,15 +137,15 @@ test('all direct failures cannot escape through gateway recovery', async () => {
   assert.match(result.finalAnswer, /No successful responses/);
 });
 test('an empty scoped pool cannot reopen excluded configured providers', async () => {
-  const h = harness(['OPENROUTER_API_KEY']);
+  const h = harness(['COHERE_API_KEY']);
   await assert.rejects(h.run([]), /No providers available/);
   assert.equal(h.calls.length, 0);
 });
 test('allowed direct fallback survives a provider failure', async () => {
-  const h = harness(['GEMINI_API_KEY','MISTRAL_API_KEY','OPENROUTER_API_KEY'], { fail: 'gemini' });
-  const result = await h.run(['gemini','mistral']);
+  const h = harness(['GEMINI_API_KEY','GROQ_API_KEY','OPENROUTER_API_KEY'], { fail: 'gemini' });
+  const result = await h.run(['gemini','groq']);
   assert.equal(result.finalAnswer, 'Supported fixture answer');
-  assert(h.calls.some(call => call.transport === 'mistral'));
+  assert(h.calls.some(call => call.transport === 'groq'));
   assert(!h.calls.some(call => call.transport === 'openrouter'));
 });
 test('GPT OSS alias cannot duplicate Groq or escape to a paid gateway', async () => {
@@ -154,34 +154,28 @@ test('GPT OSS alias cannot duplicate Groq or escape to a paid gateway', async ()
   await assert.rejects(h.run(['gpt_oss']), /No providers available/);
   assert.equal(h.calls.length, 0);
 });
-test('direct OpenAI recovers a legal request without using OpenRouter or Groq credentials', async () => {
-  const h = harness(['GEMINI_API_KEY','OPENAI_API_KEY','OPENROUTER_API_KEY'], { fail: 'gemini' });
-  const result = await h.run(['gemini','openai']);
-  assert.equal(result.finalAnswer, 'Direct OpenAI fixture answer');
-  assert(h.calls.some(call => call.transport === 'openai'));
-  const openai = h.calls.find(call => call.transport === 'openai');
-  assert.equal(openai.request.model, 'gpt-6-astra');
-  assert.equal(openai.request.store, false);
-  assert.equal(openai.request.input.includes('Fixture question'), true);
-  assert(!h.calls.some(call => call.transport === 'openrouter' || call.transport === 'groq'));
+test('removed providers cannot execute even with valid configured keys', async () => {
+  const h = harness(keys);
+  for (const provider of ['openai','cohere','mistral','cerebras']) {
+    const result = await h.engine.executeTask(circuitTask(h, provider), new Map());
+    assert.equal(result.success, false); assert.match(result.error, /excluded/);
+  }
+  assert.equal(h.calls.length, 0);
 });
-test('a fast legal request uses direct GPT-6 Sol with a bounded caller deadline', async () => {
-  const h = harness(['OPENAI_API_KEY']);
-  const result = await h.engine.orchestrateCollaboration(
-    'fixture-fast-openai', 'Fixture question', { ...h.attributes, needsFastResponse: true },
-    ['openai'], { providerPolicy: 'legalwhat', maxParticipants: 1, maxFallbacks: 0, requestTimeoutMs: 2500 },
-  );
-  assert.equal(result.finalAnswer, 'Direct OpenAI fixture answer');
-  assert.equal(h.calls.find(call => call.transport === 'openai').request.model, 'gpt-6-sol');
+test('Claude is primary for fast legal conversation', async () => {
+  const h = harness(keys);
+  await h.engine.orchestrateCollaboration('fast-conversation','Facts',
+    {...h.attributes, needsFastResponse:true}, ['claude','gemini','groq'],
+    {providerPolicy:'legalwhat',maxParticipants:1});
+  assert.equal(h.calls[0].transport,'claude');
 });
 test('the legal model pairs select deep analysis or fast response without changing the global pool', async () => {
   const h = harness(keys);
   const expected = [
     ['openai', 'gpt-6-astra', 'gpt-6-sol'],
-    ['gemini', 'gemini-3.1-pro-preview', 'gemini-3.8-flash'],
-    ['mistral', 'mistral-large-latest', 'mistral-small-latest'],
+    ['gemini', 'gemini-3.8-flash', 'gemini-3.8-flash'],
     ['cohere', 'command-a-plus-05-2026', 'command-a-plus-05-2026'],
-    ['groq', 'openai/gpt-oss-120b', 'openai/gpt-oss-20b'],
+    ['groq', 'openai/gpt-oss-120b', 'openai/gpt-oss-120b'],
   ];
   for (const [provider, deep, fast] of expected) {
     assert.equal(h.engine.getLegalTaskModel(provider, h.attributes), deep);
@@ -213,19 +207,19 @@ test('execution guard rejects excluded task and fallback transports', async () =
   assert.equal(h.calls.length, 0);
 });
 test('allowed primary failure skips excluded fallbacks and preserves direct recovery', async () => {
-  const h = harness(['MISTRAL_API_KEY','GEMINI_API_KEY','OPENROUTER_API_KEY'], { fail: 'mistral' });
+  const h = harness(['GROQ_API_KEY','GEMINI_API_KEY','OPENROUTER_API_KEY'], { fail: 'groq' });
   const result = await h.engine.executeTask({
-    id: 'fixture-scoped-fallback', provider: 'mistral', model: h.registry.CURRENT_AI_MODELS.mistralFast,
+    id: 'fixture-scoped-fallback', provider: 'groq', model: h.registry.CURRENT_AI_MODELS.mistralFast,
     role: 'legal-analyst', prompt: 'Fixture', priority: 1, attributes: h.attributes,
-    providerPolicy: 'legalwhat', fallbackProviders: ['openrouter','deepseek','gemini'], maxFallbacks: 1,
+    providerPolicy: 'legalwhat', fallbackProviders: ['openrouter','cohere','gemini'], maxFallbacks: 1,
   }, new Map());
   assert.equal(result.success, true);
   assert.equal(result.provider, 'gemini');
   assert.equal(result.content, 'Supported fixture answer');
-  assert.deepEqual(h.calls.map(call => call.transport), ['mistral','gemini']);
+  assert.deepEqual(h.calls.map(call => call.transport), ['groq','gemini']);
 });
 test('parent deadline cancels a stalled parallel race without starting fallback', async () => {
-  const h = harness(['GEMINI_API_KEY','MISTRAL_API_KEY','OPENROUTER_API_KEY'], { stall: true });
+  const h = harness(['GEMINI_API_KEY','GROQ_API_KEY','OPENROUTER_API_KEY'], { stall: true });
   const controller = new AbortController();
   const startedAt = Date.now();
   const timer = setTimeout(() => controller.abort('fixture-parent-deadline'), 40);
@@ -233,7 +227,7 @@ test('parent deadline cancels a stalled parallel race without starting fallback'
     const result = await h.engine.orchestrateCollaboration(
       'fixture-correction-cancellation', 'Fixture question',
       { ...h.attributes, needsLegalAnalysis: false, needsFastResponse: true },
-      ['gemini','mistral'],
+      ['gemini','groq'],
       { providerPolicy: 'legalwhat', maxParticipants: 1, maxFallbacks: 3,
         requestTimeoutMs: 5000, signal: controller.signal },
     );
@@ -277,8 +271,7 @@ function circuitTask(h, provider, overrides = {}) {
     failedProviders: new Set(), ...overrides };
 }
 for (const [provider, failure] of [
-  ['openai', 'openai HTTP 402 Payment required'],
-  ['mistral', 'Mistral API error Status 429 Rate limit exceeded'],
+  ['groq', 'Groq API error Status 429 Rate limit exceeded'],
   ['groq', 'No permitted capability-compatible Groq model is currently available'],
   ['claude', 'claude timed out after 6000ms'],
 ]) {
@@ -293,11 +286,11 @@ for (const [provider, failure] of [
   });
 }
 test('document routing requests a complete draft and full document synthesis', async () => {
-  const h = harness(['MISTRAL_API_KEY','GEMINI_API_KEY']);
+  const h = harness(['GROQ_API_KEY','GEMINI_API_KEY']);
   const result = await h.engine.orchestrateCollaboration(
     'document-generation', 'Draft a demand letter with supplied facts',
     { ...h.attributes, needsFastResponse: false, estimatedTokens: 3000 },
-    ['mistral','gemini'], { providerPolicy: 'legalwhat', maxParticipants: 2, maxFallbacks: 0 },
+    ['groq','gemini'], { providerPolicy: 'legalwhat', maxParticipants: 2, maxFallbacks: 0 },
   );
   assert.equal(result.finalAnswer, 'Supported fixture answer');
   assert(h.calls.some(call => /Draft the complete requested legal document/.test(call.prompt)));
@@ -305,11 +298,11 @@ test('document routing requests a complete draft and full document synthesis', a
 });
 test('a request-local rejected provider stays skipped independently of warm readiness', async () => {
   const h = harness(keys);
-  const result = await h.engine.executeTask(circuitTask(h, 'mistral', {
-    failedProviders: new Set(['mistral']), allowCoolingRecovery: true,
+  const result = await h.engine.executeTask(circuitTask(h, 'groq', {
+    failedProviders: new Set(['groq']), allowCoolingRecovery: true,
   }), new Map());
   assert.equal(result.provider, 'gemini');
-  assert(!h.calls.some(call => call.transport === 'mistral'));
+  assert(!h.calls.some(call => call.transport === 'groq'));
 });
 test('Gemini overload recovers once through a catalog-confirmed alternate', async () => {
   const h = harness(['GEMINI_API_KEY'], {
@@ -322,33 +315,32 @@ test('Gemini overload recovers once through a catalog-confirmed alternate', asyn
   assert.deepEqual(h.calls.map(call => call.model), ['fixture-primary', 'gemini-3.8-flash']);
 });
 test('Gemini overload without a catalog alternate preserves independent fallback', async () => {
-  const h = harness(['GEMINI_API_KEY','MISTRAL_API_KEY'], {
+  const h = harness(['GEMINI_API_KEY','GROQ_API_KEY'], {
     fail: provider => provider === 'gemini' ? '503 UNAVAILABLE' : null,
   });
-  const result = await h.engine.executeTask(circuitTask(h, 'gemini', { fallbackProviders: ['mistral'] }), new Map());
-  assert.equal(result.provider, 'mistral');
-  assert.deepEqual(h.calls.map(call => call.transport), ['gemini','mistral']);
+  const result = await h.engine.executeTask(circuitTask(h, 'gemini', { fallbackProviders: ['groq'] }), new Map());
+  assert.equal(result.provider, 'groq');
+  assert.deepEqual(h.calls.map(call => call.transport), ['gemini','groq']);
 });
 test('Gemini quota failure does not try a model-capacity alternate', async () => {
-  const h = harness(['GEMINI_API_KEY','MISTRAL_API_KEY'], {
+  const h = harness(['GEMINI_API_KEY','GROQ_API_KEY'], {
     recoveryModels: ['gemini-3.8-flash'],
     fail: provider => provider === 'gemini' ? '429 RESOURCE_EXHAUSTED' : null,
   });
-  const result = await h.engine.executeTask(circuitTask(h, 'gemini', { fallbackProviders: ['mistral'] }), new Map());
-  assert.equal(result.provider, 'mistral');
+  const result = await h.engine.executeTask(circuitTask(h, 'gemini', { fallbackProviders: ['groq'] }), new Map());
+  assert.equal(result.provider, 'groq');
   assert.equal(h.calls.filter(call => call.transport === 'gemini').length, 1);
 });
-test('Mistral model denial tries the fast model once, without contacting another company', async () => {
-  const h = harness(['MISTRAL_API_KEY'], {
-    fail: (_provider, model) => model === 'mistral-large-latest' ? 'Mistral API error: model not available' : null,
-  });
-  const result = await h.run(['mistral']);
-  assert.equal(result.finalAnswer, 'Supported fixture answer');
-  assert.deepEqual(h.calls.map(call => call.model), ['mistral-large-latest','mistral-small-latest']);
+test('Groq permission denial tries one catalog-confirmed legal alternate', async () => {
+  const h = harness(['GROQ_API_KEY'], { recoveryModels:['qwen/qwen3.8-27b'],
+    fail: (_,model) => model === 'openai/gpt-oss-120b' ? '403 model blocked at project level' : null });
+  const result = await h.run(['groq']);
+  assert.equal(result.finalAnswer,'Supported fixture answer');
+  assert.deepEqual(h.calls.map(x=>x.model),['openai/gpt-oss-120b','qwen/qwen3.8-27b']);
 });
 test('a same-account quota failure does not burn the fast model as a retry', async () => {
-  const h = harness(['MISTRAL_API_KEY'], { fail: 'mistral' });
-  await h.run(['mistral']);
+  const h = harness(['GROQ_API_KEY'], { fail: 'groq' });
+  await h.run(['groq']);
   assert.equal(h.calls.length, 1);
 });
 
@@ -394,10 +386,10 @@ test('legal consensus uses the scoped registry and the same Harmony authority', 
   const result = await module.executeWithConsensus({ ...h.attributes, legalTaskType: 'legal-reasoning' }, 'Fixture');
   assert.equal(result.result, 'Fixture consensus');
   assert.equal(h.calls[0].policy, 'legalwhat');
-  assert.deepEqual(h.calls[0].pool, ['gemini']);
+  assert.deepEqual(h.calls[0].pool, ['gemini','deepseek','kimi']);
 });
 test('legal consensus with only excluded credentials retains providerless handling', async () => {
-  const h = harness(['OPENROUTER_API_KEY']);
+  const h = harness(['COHERE_API_KEY']);
   const result = await h.legalModel().executeWithConsensus({ ...h.attributes, legalTaskType: 'legal-reasoning' }, 'Fixture');
   assert.equal(result.result, 'Existing local fallback');
   assert.equal(result.recommendation, 'needs-review');
@@ -418,8 +410,8 @@ test('fact-checking uses scoped legal consensus and preserves providerless uncer
     .factCheckClaim({ claim: 'Fixture', context: { lawType: 'family', state: 'Iowa' } });
   assert.equal(result.verified, false);
   assert.equal(h.calls[0].policy, 'legalwhat');
-  assert.deepEqual(h.calls[0].pool, ['gemini']);
-  const empty = harness(['OPENROUTER_API_KEY']);
+  assert.deepEqual(h.calls[0].pool, ['gemini','deepseek','kimi']);
+  const empty = harness(['COHERE_API_KEY']);
   const unavailable = await empty.factCheck().factCheckClaim({ claim: 'Fixture', context: { lawType: 'family', state: 'Iowa' } });
   assert.equal(unavailable.verified, false);
   assert.equal(unavailable.confidence, 0);
@@ -429,7 +421,7 @@ test('unified legal-analysis helper passes the policy and excludes the gateway p
   const h = harness(['GEMINI_API_KEY','OPENROUTER_API_KEY']);
   assert.equal(await h.entry().generateLegalAnalysis('fixture', 'Fixture legal question'), 'Fixture entry answer');
   assert.equal(h.calls[0].policy, 'legalwhat');
-  assert.deepEqual(h.calls[0].pool, ['gemini']);
+  assert.deepEqual(h.calls[0].pool, ['gemini','deepseek','kimi']);
 });
 test('scoped exhausted reasoning preserves and truthfully labels the existing local fallback', async () => {
   const h = harness(['GEMINI_API_KEY','OPENROUTER_API_KEY']);
@@ -488,21 +480,18 @@ for (const [name, env, expectedKey] of [
   });
 }
 
-test('routine requests rotate across all five non-Claude companies', async () => {
+test('Claude stays primary when eligible and Gemini supports it', async () => {
   const h = harness(keys);
-  for (let i = 0; i < 8; i++) {
-    const result = await h.run(['groq','gemini','mistral','cohere','openai','claude','claude_opus']);
-    assert(result.contributions.some(x => x.success));
-    h.advance(1000);
-  }
-  const used = new Set(h.calls.map(x => x.transport));
-  for (const provider of ['groq','gemini','mistral','cohere','openai']) assert(used.has(provider), provider);
-  assert(!used.has('claude'));
+  for(let i=0;i<3;i++) { await h.run(['claude','gemini','groq','deepseek','kimi']); h.advance(1000); }
+  assert(h.calls.every(x=>x.transport==='claude'));
+  const chosen=Array.from(h.engine.selectLegalProvidersForTask(h.attributes,['gemini','claude','groq'],2));
+  assert.equal(chosen[0],'claude'); assert.equal(chosen.length,2);
 });
-test('routine outage never silently spends Claude credits', async () => {
-  const h = harness(['ANTHROPIC_API_KEY']);
-  await assert.rejects(h.run(['claude','claude_opus']), /No providers available/);
-  assert.equal(h.calls.length, 0);
+test('Claude alone remains a working legal primary', async () => {
+  const h=harness(['ANTHROPIC_API_KEY']);
+  const result=await h.run(['claude']);
+  assert.equal(result.finalAnswer,'Supported fixture answer');
+  assert.equal(h.calls[0].transport,'claude');
 });
 test('explicit exceptional review can use Claude Sonnet', async () => {
   const h = harness(['ANTHROPIC_API_KEY']);
@@ -512,32 +501,32 @@ test('explicit exceptional review can use Claude Sonnet', async () => {
   assert(result.contributions.some(x => x.success));
   assert.equal(h.calls[0].model, 'claude-sonnet-5');
 });
-test('an unresolved synthesis conflict invokes one Claude review', async () => {
-  const h = harness(['ANTHROPIC_API_KEY','GEMINI_API_KEY','MISTRAL_API_KEY'], {
+test('Claude synthesis does not invoke a redundant exceptional review', async () => {
+  const h = harness(['ANTHROPIC_API_KEY','GEMINI_API_KEY','GROQ_API_KEY'], {
     reply: call => call.transport === 'claude' ? 'Reviewed answer with uncertainty'
       : /Synthesize/.test(call.prompt) ? '[LEGAL_REVIEW_REQUIRED] Material conflict remains.' : 'Independent analysis',
   });
   const result = await h.engine.orchestrateCollaboration('legal-reasoning', 'Resolve this issue',
-    h.attributes, ['gemini','mistral','claude'], { providerPolicy: 'legalwhat', maxParticipants: 2 });
+    h.attributes, ['gemini','groq','claude'], { providerPolicy: 'legalwhat', maxParticipants: 2 });
   assert.equal(result.finalAnswer, 'Reviewed answer with uncertainty');
-  assert.equal(h.calls.filter(x => x.transport === 'claude').length, 1);
+  assert.equal(h.calls.filter(x => x.transport === 'claude').length, 2);
 });
 test('drafting overrides a caller fast flag and uses the full drafting path', async () => {
-  const h = harness(['GEMINI_API_KEY','MISTRAL_API_KEY']);
+  const h = harness(['GEMINI_API_KEY','GROQ_API_KEY']);
   await h.engine.orchestrateCollaboration('document-drafting', 'Draft the supplied facts',
-    { ...h.attributes, needsFastResponse: true }, ['gemini','mistral'],
+    { ...h.attributes, needsFastResponse: true }, ['gemini','groq'],
     { providerPolicy: 'legalwhat', maxParticipants: 2 });
-  assert(h.calls.some(x => x.model === 'gemini-3.1-pro-preview'));
+  assert(h.calls.some(x => x.model === 'gemini-3.8-flash'));
   assert(h.calls.some(x => /do not shorten the document/.test(x.prompt)));
 });
 test('independent legal analyses actually overlap', async () => {
   let active = 0, peak = 0;
-  const h = harness(['GEMINI_API_KEY','MISTRAL_API_KEY'], { reply: async () => {
+  const h = harness(['GEMINI_API_KEY','GROQ_API_KEY'], { reply: async () => {
     peak = Math.max(peak, ++active);
     await new Promise(resolve => setTimeout(resolve, 20)); active--; return 'Independent answer';
   } });
   await h.engine.orchestrateCollaboration('legal-analysis', 'Facts', h.attributes,
-    ['gemini','mistral'], { providerPolicy: 'legalwhat', maxParticipants: 2 });
+    ['gemini','groq'], { providerPolicy: 'legalwhat', maxParticipants: 2 });
   assert.equal(peak, 2);
 });
 test('atomic admission prevents concurrent transport duplication', async () => {
@@ -594,12 +583,53 @@ test('actual remaining-token headers reserve output before dispatch', async () =
   assert(await a.reserveLegalProvider('groq','model',101,''));
 });
 test('legacy model catalog entries cannot reenter legal recovery', async () => {
-  const h = harness(['GEMINI_API_KEY','MISTRAL_API_KEY'], {
+  const h = harness(['GEMINI_API_KEY','GROQ_API_KEY'], {
     recoveryModels: ['gemini-2.5-flash'],
     fail: provider => provider === 'gemini' ? '503 UNAVAILABLE' : null,
   });
-  await h.engine.executeTask(circuitTask(h,'gemini',{ fallbackProviders: ['mistral'] }), new Map());
+  await h.engine.executeTask(circuitTask(h,'gemini',{ fallbackProviders: ['groq'] }), new Map());
   assert(!h.calls.some(x => x.model === 'gemini-2.5-flash'));
+});
+
+test('DeepSeek and Kimi share quota and cannot double-spend one account', async () => {
+  const h = harness(keys), a = h.admission;
+  const lease = await a.reserveLegalProvider('deepseek','model',100,'Facts');
+  assert(lease);
+  assert.equal(await a.reserveLegalProvider('kimi','model',100,'Facts'),null);
+  await a.releaseLegalProvider(lease);
+  await a.noteLegalProviderError('deepseek','model',new Error('402 insufficient credits'));
+  assert.equal(a.canUseLegalProvider('kimi','model'),false);
+});
+test('support failure prefers Claude before another support provider', async () => {
+  const h = harness(keys,{fail:'gemini'});
+  const result = await h.engine.executeTask(circuitTask(h,'gemini',{
+    fallbackProviders:['groq','claude','deepseek'],maxFallbacks:1,
+  }),new Map());
+  assert.equal(result.provider,'claude'); assert.equal(result.success,true);
+});
+test('a slow failed primary leaves a full fallback attempt window', async () => {
+  const h = harness(keys, { fail: provider => {
+    if(provider==='claude') { h.advance(95); return 'fixture failure'; }
+    return null;
+  } });
+  const seen=[]; const execute=h.engine.executeTask;
+  h.engine.executeTask=function(task,completed) {
+    seen.push({provider:task.provider,remaining:task.deadlineAt-h.now()});
+    return execute.call(this,task,completed);
+  };
+  const result=await h.run(['claude','gemini']);
+  assert.equal(result.finalAnswer,'Supported fixture answer');
+  assert(h.calls.some(call=>call.transport==='gemini'));
+  assert(seen.find(item=>item.provider==='gemini').remaining >= 100, 'fallback receives a full 100ms fixture window');
+});
+test('both approved OpenRouter specialists can produce through their exact models', async () => {
+  for(const provider of ['deepseek','kimi']) {
+    const h=harness(['OPENROUTER_API_KEY']);
+    const result=await h.run([provider]);
+    assert.equal(result.finalAnswer,'Gateway fixture answer');
+    assert.equal(h.calls[0].model,h.registry.getOpenRouterModelForProvider(provider));
+    assert.notEqual(h.calls[0].model,'openrouter/auto');
+  }
 });
 
 (async () => {
