@@ -46,15 +46,15 @@ for (const token of [
   'SEARXNG_URL',
   'DDGS_URL',
   "method: 'POST'",
-  "body: JSON.stringify({ query, max_results: limit, safesearch: 'off' })",
+  "body: JSON.stringify({ query, max_results: limit, safesearch: 'off', backend })",
   'OPENSERP_URL',
   "'commoncrawl'",
   'Promise.all([',
   'queryVariants.map(q => searxngSearch',
   'queryVariants.map(q => ddgsSearch',
   'queryVariants.map(q => openSerpSearch',
-  'Credit-bearing providers remain a true fallback',
-  'supplementalPantheonDiscovery(effectiveQuery',
+  'prioritizePantheonDiscoveryEvidenceGroups(evidenceGroups, seen, limit)',
+  'const learnedPatterns = await learnedPatternPromise;',
 ]) {
   if (!coordinator.includes(token)) throw new Error('Parallel discovery coordinator missing invariant: ' + token);
 }
@@ -74,7 +74,7 @@ for (const token of [
 if (!investigation.includes('Dynamic search/index discovery is the primary locator') || !investigation.includes('discoverPantheonSourcesParallel(') || !investigation.includes('rememberPantheonDiscoveryOutcome(')) {
   throw new Error('Parallel discovery/learning is not piped through Pantheon person retrieval');
 }
-if (!coordinator.includes('learnedPatternPromise') || !coordinator.includes('if (freeUrls.length || options.includePaidFallback === false)')) {
+if (!coordinator.includes('learnedPatternPromise') || !coordinator.includes('if (freeUrls.length)')) {
   throw new Error('Persisted query learning must stay off the normal successful discovery latency path');
 }
 if (!searxSettings.includes('- json') || !ddgsDockerfile.includes('ddgs[api]') || !openserpDockerfile.includes('karust/openserp')) {
@@ -85,7 +85,7 @@ if (!learningMigration.includes('pantheon_discovery_learning') ||
     !dockerfile.includes('062_pantheon_discovery_learning.sql')) {
   throw new Error('Durable discovery learning migration is not secured and shipped end to end');
 }
-console.log('Parallel keyless discovery, credit fallback, persistent learning, and self-host definitions verification passed.');
+console.log('Parallel discovery, fresh evidence priority, persistent learning, and self-host definitions verification passed.');
 
 const conversation = fs.readFileSync('server/lexara/LexaraConversationOrchestrator.ts', 'utf8');
 for (const token of [
@@ -98,3 +98,6 @@ for (const token of [
   if (!conversation.includes(token)) throw new Error('Person-record permission guard missing invariant: ' + token);
 }
 console.log('Person-record private-subject permission-refusal guard verification passed.');
+
+if (/supplementalPantheonDiscovery\s*\(/.test(coordinator)) throw new Error('Paid discovery must not re-enter the active coordinator');
+
