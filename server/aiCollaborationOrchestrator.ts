@@ -1413,11 +1413,25 @@ export class AICollaborationOrchestrator {
     );
 
     const remainingDeadline = task.deadlineAt ? task.deadlineAt - Date.now() : Infinity;
-    const taskTimeoutMs = Math.max(1, Math.min(remainingDeadline, task.requestTimeoutMs
+    const requestedTaskTimeoutMs = Math.max(1, Math.min(remainingDeadline, task.requestTimeoutMs
       || (task.providerPolicy === 'legalwhat'
         ? (task.attributes.needsFastResponse ? 6_000
           : /document|draft|petition|complaint|motion/i.test(task.id) ? 25_000 : 12_000)
         : 6_000)));
+    // A document draft already exists by the time dependent synthesis starts.
+    // Reserve half the remaining legal deadline for an independent fallback.
+    // If synthesis still fails, the completed draft remains available.
+    const hasCompletedDraft = task.providerPolicy === 'legalwhat'
+      && task.role === 'synthesizer'
+      && (task.maxFallbacks ?? 1) > 0
+      && /document|draft|petition|complaint|motion/i.test(task.id)
+      && (task.dependencies || []).some(id => {
+        const result = completedTasks.get(id);
+        return result?.success && !!result.content.trim();
+      });
+    const taskTimeoutMs = hasCompletedDraft && Number.isFinite(remainingDeadline)
+      ? Math.max(1, Math.min(requestedTaskTimeoutMs, Math.floor(remainingDeadline / 2)))
+      : requestedTaskTimeoutMs;
     let lease: LegalProviderLease | null = null;
     const attempt = createLinkedDeadlineSignal(task.signal, taskTimeoutMs, task.provider);
 
