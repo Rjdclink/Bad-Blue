@@ -66,12 +66,12 @@ export function decideLexaraResearchNeed(
 
   // A question mark alone is not an external-research objective. Conversation
   // recall and ordinary legal discussion stay with Lexara.
-  const externalAttribute = /\b(?:employ(?:er|ment|ed|s|ing)?|works?\s+(?:at|for)|address|residen(?:ce|tial|t)|license|record|filing|docket|property|mortgage|occupation|job|business|owner|ownership|spouse|married|income|current|currently|latest|today|recent|where\s+.+\s+(?:live|work)|who\s+(?:owns|is)|when\s+(?:was|did))\b/i.test(text);
+  const externalAttribute = /\b(?:birth(?:day|date)?|born|age|employ(?:er|ment|ed|s|ing)?|works?\s+(?:at|for)|address|residen(?:ce|tial|t)|license|record|filing|docket|property|mortgage|occupation|job|business|owner|ownership|spouse|married|income|current|currently|latest|today|recent|where\s+.+\s+(?:live|work)|who\s+(?:owns|is)|when\s+(?:was|did))\b/i.test(text);
   const question = /\?|^(?:what|when|where|who|which|how|is|are|was|were|does|do|did|has|have)\b/i.test(text) && externalAttribute;
   // Spoken factual requests also arrive as statements and imperatives.
   const factualRequest = /\b(?:tell\s+me|find|locate|identify|determine|show|give\s+me|need\s+to\s+know|want\s+to\s+know)\b/i.test(text)
     && /\b(?:employ(?:er|ment|ed|s|ing)?|works?\s+(?:at|for)|address|residen(?:ce|tial|t)|license|record|filing|docket|property|mortgage|occupation|job|business|owner|ownership|spouse|married|income|current|currently|where|who|when|what)\b/i.test(text);
-  if ((question && externalAttribute) || factualRequest) {
+  if (question || factualRequest) {
     return { needed: true, reason: 'external-fact-question', objective: text, objectiveKind: /\b(?:record|filing|docket|license|mortgage|inmate|incarcerat|property)\b/i.test(text) ? 'record-lookup' : /\b(?:current|currently|latest|today|now|recent)\b/i.test(text) ? 'current-information' : 'external-fact' };
   }
 
