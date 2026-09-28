@@ -86,16 +86,22 @@ async function geminiGoogleSearch(query: string, limit: number, timeoutMs: numbe
       },
     }), timeoutMs, null);
     if (!response || signal?.aborted) return [];
-    const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    const grounding = response.candidates?.[0]?.groundingMetadata;
+    const chunks = grounding?.groundingChunks || [];
+    const supports = grounding?.groundingSupports || [];
     const seen = new Set<string>();
-    return chunks.flatMap((chunk: any) => {
+    return chunks.flatMap((chunk: any, index: number) => {
       const url = canonicalCandidate(String(chunk?.web?.uri || ''));
       if (!url || seen.has(url)) return [];
       seen.add(url);
       return [{
         url,
         title: String(chunk?.web?.title || '').trim().slice(0, 240) || undefined,
-        snippet: String(response.text || '').trim().slice(0, 1200) || undefined,
+        // A generated answer may cite several pages. Attach only the segments
+        // that Gemini explicitly attributed to this particular search result.
+        snippet: supports.filter((support: any) => support.groundingChunkIndices?.includes(index))
+          .map((support: any) => String(support.segment?.text || '').trim())
+          .filter(Boolean).join(' ').slice(0, 1200) || undefined,
         lane: 'gemini-google' as const,
       }];
     }).slice(0, limit);

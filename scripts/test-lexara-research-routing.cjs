@@ -55,6 +55,9 @@ function harness(options = {}) {
     'server/services/pantheon/PantheonSupplementalDiscovery.ts': { supplementalPantheonDiscovery: async () => {
       calls.paid++; return { urls: options.paidUrls || [], attempted: true, provider: 'serpapi' };
     } },
+    ...(options.discoveryStub ? { 'server/services/pantheon/PantheonDiscoveryCoordinator.ts': {
+      discoverPantheonSourcesParallel: options.discoveryStub,
+    } } : {}),
     'server/services/crawlers/PantheonRetrievalAdapter.ts': { pantheonRetrievalAdapter: { retrieve: async request => {
       calls.crawlers.push(request);
       return { evidence: request.targets.map(target => ({ target, content: 'Extracted fixture source evidence' })) };
@@ -98,6 +101,18 @@ test('removed transports and Firecrawl-only seed adapter are not selectable', ()
   assert.equal(pool.length, 60);
   assert(!pool.some(item => ['firecrawl', 'openrouter-web-search', 'seed-startrek'].includes(item.id)));
   for (const id of ['startrek', 'birdofprey', 'sixdegrees', 'seed-birdofprey', 'seed-trinity', 'instant-legal']) assert(pool.some(x => x.id === id));
+});
+test('one failed search query cannot erase the other Pantheon search leads', async () => {
+  let queries = 0;
+  const h = harness({ discoveryStub: async () => {
+    if (++queries === 2) throw new Error('one search lane failed');
+    return { evidence: [{ url: urls[0], title: 'Public record', lane: 'ddgs' }] };
+  } });
+  const candidates = await h.load('server/services/pantheon/PantheonSearchFirstDiscovery.ts')
+    .discoverPantheonSearchFirstCandidates({ name: 'Jane Doe', categories: [{ label: 'Court Records', registry: ['court'] }] });
+  assert.equal(queries, 3, 'searches run independently');
+  assert.equal(candidates.length, 1, 'successful search results survive the failed query');
+  assert.equal(candidates[0].url, urls[0]);
 });
 for (const configured of [false, true]) {
   test(`enhanced legal search retains independent contributions with gateway key ${configured ? 'present' : 'absent'}`, async () => {
@@ -231,4 +246,3 @@ test('release source-registry guard requires independent discovery and rejects t
   for (const { name, run } of testCases) { await run(); passed++; console.log('PASS', name); }
   console.log(`${passed}/${testCases.length} Lexara research routing checks passed (external I/O mocked).`);
 })().catch(error => { console.error(error); process.exitCode = 1; });
-

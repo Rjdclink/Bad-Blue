@@ -21,7 +21,16 @@ export interface LexaraResearchDecision {
   objectiveKind: LexaraResearchObjectiveKind;
 }
 
-const LEGAL_AUTHORITY_INTENT_PATTERN = /\b(?:versus|case\s+law|court\s+(?:case|decision|opinion|holding)|holding|precedent|statute|u\.?s\.?c\.?|cfr|code\s+section|rule\s+\d|motion|appeal|lawsuit|cause\s+of\s+action|civil\s+(?:issue|case|claim|matter)|criminal\s+(?:issue|case|charge)|constitutional|jurisdiction|legal\s+(?:issue|question|claim|case|matter|right|remedy|defense))\b/i;
+// Conversation repair refers to the dialogue, never to an outside person/record.
+export function isLexaraRepeatRequest(text: string): boolean {
+  return /^(?:(?:sorry|please|lexara)[, ]+)*(?:(?:what (?:did|do) you (?:just )?say)|(?:can|could|would) you (?:please )?(?:repeat (?:that|your (?:last )?(?:answer|response))|say that again)|repeat (?:that|your (?:last )?(?:answer|response))|say (?:that|it) again|i (?:didn't|did not|couldn't|could not) hear (?:you|that))[?.! ]*$/i.test(text.trim());
+}
+
+export function isLexaraConversationControl(text: string): boolean {
+  return isLexaraRepeatRequest(text) || /^(?:(?:please|lexara)[, ]+)*(?:what do you mean|can you explain (?:that|your answer)|explain that|could you clarify|are you (?:still )?there|can you hear me|did you hear me|are you listening|how are you|who are you|what can you do|can you help me)[?.! ]*$/i.test(text.trim());
+}
+
+const LEGAL_AUTHORITY_INTENT_PATTERN = /\b(?:versus|case\s+law|court\s+(?:case|decision|opinion|holding)|holding|precedent|statute|u\.?s\.?c\.?|cfr|code\s+section|rule\s+\d|motion|appeal|lawsuit|cause\s+of\s+action|civil\s+(?:issue|case|claim|matter)|criminal\s+(?:issue|case|charge)|constitutional|jurisdiction|legal\s+(?:issue|question|claim|case|matter|right|remedy|defense|option|analysis|advice)s?)\b/i;
 const CASE_CAPTION_PATTERN = /\b[A-Z][A-Za-z.'’-]+(?:\s+[A-Z][A-Za-z.'’-]+){0,4}\s+(?:v\.?|vs\.?|versus)\s+(?:the\s+)?[A-Z][A-Za-z.'’ -]{1,80}\b/i;
 // Ordinary procedural questions often omit the word "legal". They must not
 // become subject-background lookups merely because they are questions.
@@ -42,6 +51,7 @@ export function decideLexaraResearchNeed(
 ): LexaraResearchDecision {
   const text = String(prompt || '').trim();
   if (!text) return { needed: false, reason: 'none', objective: '', objectiveKind: 'none' };
+  if (isLexaraConversationControl(text)) return { needed: false, reason: 'none', objective: text, objectiveKind: 'none' };
 
   // Restore the established legal lane before generic external-fact routing.
   // A party name inside a case caption is a legal entity in this turn, not a
@@ -54,14 +64,14 @@ export function decideLexaraResearchNeed(
     return { needed: true, reason: 'explicit-research', objective: text, objectiveKind: 'explicit-research' };
   }
 
-  const question = /\?|^(?:what|when|where|who|which|how|is|are|was|were|does|do|did|has|have)\b/i.test(text);
-  // Natural spoken factual requests often arrive as statements/imperatives rather
-  // than grammatical questions (for example, "tell me where X works"). Keep the
-  // existing question default, but also recognize fact-seeking predicates when an
-  // identifiable subject or concrete record/current attribute is present.
+  // A question mark alone is not an external-research objective. Conversation
+  // recall and ordinary legal discussion stay with Lexara.
+  const externalAttribute = /\b(?:employ(?:er|ment|ed|s|ing)?|works?\s+(?:at|for)|address|residen(?:ce|tial|t)|license|record|filing|docket|property|mortgage|occupation|job|business|owner|ownership|spouse|married|income|current|currently|latest|today|recent|where\s+.+\s+(?:live|work)|who\s+(?:owns|is)|when\s+(?:was|did))\b/i.test(text);
+  const question = /\?|^(?:what|when|where|who|which|how|is|are|was|were|does|do|did|has|have)\b/i.test(text) && externalAttribute;
+  // Spoken factual requests also arrive as statements and imperatives.
   const factualRequest = /\b(?:tell\s+me|find|locate|identify|determine|show|give\s+me|need\s+to\s+know|want\s+to\s+know)\b/i.test(text)
     && /\b(?:employ(?:er|ment|ed|s|ing)?|works?\s+(?:at|for)|address|residen(?:ce|tial|t)|license|record|filing|docket|property|mortgage|occupation|job|business|owner|ownership|spouse|married|income|current|currently|where|who|when|what)\b/i.test(text);
-  if (question || factualRequest) {
+  if ((question && externalAttribute) || factualRequest) {
     return { needed: true, reason: 'external-fact-question', objective: text, objectiveKind: /\b(?:record|filing|docket|license|mortgage|inmate|incarcerat|property)\b/i.test(text) ? 'record-lookup' : /\b(?:current|currently|latest|today|now|recent)\b/i.test(text) ? 'current-information' : 'external-fact' };
   }
 
