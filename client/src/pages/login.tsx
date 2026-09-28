@@ -78,7 +78,11 @@ export default function Login() {
     }
 
     const data = await response.json();
-    const needsSubscriptionCheckout = !data.accessZone && data.hasActiveSubscription !== true;
+    const accessState = String(data.accessState || "");
+    const needsSubscriptionCheckout =
+      !data.accessZone &&
+      !["paid", "trial_active", "master"].includes(accessState) &&
+      data.hasActiveSubscription !== true;
     if (needsSubscriptionCheckout) {
       // Own checkout before auth-query invalidation can rerender this page and
       // start the resume effect in parallel.
@@ -86,10 +90,23 @@ export default function Login() {
     }
     await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
 
+    if (accessState === "trial_expired") {
+      setLocation("/trial-expired");
+      return;
+    }
+    if (data.trialOutcome === "AMBIGUOUS") {
+      setLocation("/trial-review");
+      return;
+    }
+
     const redirectPath = data.accessZone ? (data.redirectRoute || "/lexara-consent") : "/lexara-consent";
     toast({
-      title: "Login successful",
-      description: data.accessZone ? "Master access enabled." : "Welcome back!",
+      title: accessState === "trial_active" ? "Free trial active" : "Login successful",
+      description: data.accessZone
+        ? "Master access enabled."
+        : accessState === "trial_active"
+          ? "Your 72-hour trial is active. No payment card is required."
+          : "Welcome back!",
     });
 
     if (!needsSubscriptionCheckout) {
@@ -159,12 +176,33 @@ export default function Login() {
       });
 
       if (response.ok) {
-        await response.json();
-        subscriptionResumeStarted.current = true;
+        const data = await response.json();
         await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+
+        if (data.accessState === "trial_active" && data.trialOutcome === "ELIGIBLE") {
+          toast({
+            title: "Your free trial has started",
+            description: "You have 72 hours of LegalWhat access. No payment card is required.",
+          });
+          setLocation("/lexara-consent");
+          return;
+        }
+
+        if (data.trialOutcome === "AMBIGUOUS") {
+          toast({
+            title: "Trial eligibility needs review",
+            description: "Your account is safe. Continue with subscription or contact support for help.",
+          });
+          setLocation("/trial-review");
+          return;
+        }
+
+        subscriptionResumeStarted.current = true;
         toast({
-          title: "Account created",
-          description: "Continue to Square to activate your LegalWhat subscription.",
+          title: data.trialOutcome === "CLEAR_REPEAT" ? "Trial already used" : "Account created",
+          description: data.trialOutcome === "CLEAR_REPEAT"
+            ? "This account is linked to a previously used trial. Continue with the existing Square subscription."
+            : "Continue to the existing Square checkout to activate your LegalWhat subscription.",
         });
         try {
           await beginSubscriptionCheckout();

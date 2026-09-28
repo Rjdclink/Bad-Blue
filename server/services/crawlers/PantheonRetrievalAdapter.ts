@@ -47,9 +47,22 @@ import type { PantheonIdentifierKind } from '../pantheon/PantheonQueryPlan';
 
 export type RetrievalEvidence = PantheonStructuredSourceResult;
 
+export type PantheonRetrievalAccessStatus =
+  | 'access_limited'
+  | 'denied'
+  | 'rate_limited'
+  | 'robots_disallowed'
+  | 'challenge_detected';
+
+export interface PantheonRetrievalAccessOutcome {
+  status: PantheonRetrievalAccessStatus;
+  reason: string;
+}
+
 export interface PantheonRetrievalResponse {
   available: boolean;
   reason?: string;
+  accessOutcome?: PantheonRetrievalAccessOutcome;
   plan: CrawlerSelectionPlan;
   evidence: RetrievalEvidence[];
   /**
@@ -86,6 +99,54 @@ export interface PantheonRetrievalResponse {
     capabilityOutput?: Record<string, unknown>;
   }>;
   supervision?: CrawlerSupervisionResult;
+}
+
+function accessStatusForError(error: unknown): PantheonRetrievalAccessStatus | undefined {
+  const message = String(error || '').toLowerCase();
+  if (/robots\.txt policy/.test(message)) return 'robots_disallowed';
+  if (/429|too many requests|rate limit/.test(message)) return 'rate_limited';
+  if (/captcha|challenge response|verify you are human|unusual traffic/.test(message)) return 'challenge_detected';
+  if (/401|402|credential-gated|sign[ -]?in required|login required|authentication required|api[ _-]?key.*required|access token.*required|subscription required|contact-registration/.test(message)) {
+    return 'access_limited';
+  }
+  if (/403|forbidden|access denied/.test(message)) return 'denied';
+  return undefined;
+}
+
+/**
+ * Access failures describe a retrieval barrier, not evidence that a record
+ * does not exist. Keep the barrier explicit at the retrieval boundary while
+ * leaving its attributable crawler/source audit intact.
+ */
+export function classifyPantheonRetrievalAccessOutcome(
+  acquisition?: Pick<PublicAcquisitionResult, 'error' | 'errorType' | 'status'>,
+  crawlerAudit: PantheonRetrievalResponse['crawlerAudit'] = [],
+): PantheonRetrievalAccessOutcome | undefined {
+  const acquisitionStatus: Partial<Record<NonNullable<PublicAcquisitionResult['errorType']>, PantheonRetrievalAccessStatus>> = {
+    auth_required: 'access_limited',
+    forbidden: 'denied',
+    rate_limited: 'rate_limited',
+    robots_disallowed: 'robots_disallowed',
+    challenge_detected: 'challenge_detected',
+  };
+  const acquisitionBarrier = (acquisition?.errorType && acquisitionStatus[acquisition.errorType])
+    || accessStatusForError(acquisition?.error);
+  const auditErrors = crawlerAudit.flatMap(audit => [
+    audit.error,
+    ...(audit.sourceOutcomes || []).map(outcome => outcome.error),
+  ]).filter((error): error is string => Boolean(error));
+  const auditBarrier = auditErrors
+    .map(error => ({ error, status: accessStatusForError(error) }))
+    .find((entry): entry is { error: string; status: PantheonRetrievalAccessStatus } => Boolean(entry.status));
+  const status = acquisitionBarrier || auditBarrier?.status;
+  if (!status) return undefined;
+
+  const matchingAuditError = auditErrors.find(error => accessStatusForError(error) === status);
+  const reason = String(acquisitionBarrier === status && acquisition?.error
+    ? acquisition.error
+    : matchingAuditError
+    || `Source retrieval stopped at a ${status.replace(/_/g, ' ')} barrier.`);
+  return { status, reason: reason.slice(0, 500) };
 }
 
 interface PantheonSupplementalCapabilityRun {
@@ -278,6 +339,8 @@ export class PantheonRetrievalAdapter {
     /** Explicit need-driven primary crawler roster for conversational retrieval. */
     primaryCrawlers?: PantheonPrimaryCrawlerId[];
     transportHint?: string[];
+    /** Origin-scoped headers from an existing conversational source-access authority. */
+    requestHeaders?: Record<string, string>;
     signal?: AbortSignal;
     authority?: {
       investigationId: string;
@@ -294,6 +357,18 @@ export class PantheonRetrievalAdapter {
     };
   }): Promise<PantheonRetrievalResponse> {
     throwIfPantheonAborted(request.signal);
+    if (request.requestHeaders) {
+      if (request.purpose === 'background_report') {
+        throw new Error('Pantheon background retrieval requires request headers on its canonical work authority.');
+      }
+      if (request.targets.length !== 1) {
+        throw new Error('Pantheon authorized conversational retrieval requires exactly one canonical source target.');
+      }
+      const admittedTarget = admitPantheonUrl(request.targets[0]);
+      if (!admittedTarget.ok || admittedTarget.url !== request.targets[0]) {
+        throw new Error('Pantheon authorized conversational retrieval rejected a noncanonical source target.');
+      }
+    }
     if (request.purpose === 'background_report') {
       const authority = request.authority;
       if (!authority?.investigationId || !authority.categoryId || !authority.workId || !authority.canonicalUrl || !authority.capability) {
@@ -433,6 +508,7 @@ export class PantheonRetrievalAdapter {
     let crawlerAudit: PantheonRetrievalResponse['crawlerAudit'] = [];
     let applicableCapabilities: PantheonCapabilityId[] = [];
     let supplementalRunPromise: Promise<PantheonSupplementalCapabilityRun> | undefined;
+    let extractionSchema: ReturnType<typeof getPantheonCategoryExtractionSchema> | undefined;
     if (request.purpose === 'background_report') {
       const acquisitionAuthority = {
         investigationId: request.authority!.investigationId,
@@ -501,14 +577,25 @@ export class PantheonRetrievalAdapter {
       // Conversational research uses the same isolated primary-crawler swarm as
       // background work. One slow crawler cannot consume the shared pass before
       // the remaining selected crawlers receive execution time.
-      const isolated = await pantheonOrchestrator.searchAllIsolatedWithAudit(request.targets, searchOptions);
+      const executeIsolatedSearch = () => pantheonOrchestrator.searchAllIsolatedWithAudit(request.targets, searchOptions);
+      const isolated = request.requestHeaders
+        ? await runWithPantheonAcquisitionContext({
+            investigationId: `lexara:${retrievalStartedAt}`,
+            categoryId: request.categoryLabel || 'conversational',
+            workId: `authorized-source:${retrievalStartedAt}`,
+            capability: plan.crawlers[0] || 'startrek',
+            deadlineAt: deadlineAt || (retrievalStartedAt + totalBudgetMs),
+            canonicalUrl: request.targets[0],
+            requestHeaders: request.requestHeaders,
+          }, operationSignal, executeIsolatedSearch)
+        : await executeIsolatedSearch();
       results = isolated.results;
       crawlerAudit = isolated.audit;
       // Conversational research also gets the full extraction/analysis skill
       // inventory over material actually retrieved. These skills do not create
       // extra network fetches; they help decide whether a page contains the
       // requested fact instead of discarding useful occupation/DOB/custody/etc.
-      const extractionSchema = request.categoryLabel
+      extractionSchema = request.categoryLabel
         ? (() => { try { return getPantheonCategoryExtractionSchema(request.categoryLabel!); } catch { return undefined; } })()
         : undefined;
       const conversationalCapabilityIds: PantheonCapabilityId[] = [
@@ -542,7 +629,6 @@ export class PantheonRetrievalAdapter {
         }));
       }
     }
-    throwIfPantheonAborted(operationSignal);
     recordCrawlerOutcomes(results);
 
     const canonicalFrontierCandidates = canonicalAcquisition?.ok && canonicalAcquisition.content.trim()
@@ -637,8 +723,15 @@ export class PantheonRetrievalAdapter {
       }
     }
 
+    const accessOutcome = evidence.length === 0
+      ? classifyPantheonRetrievalAccessOutcome(canonicalAcquisition, crawlerAudit)
+      : undefined;
     return {
-      available: true,
+      available: !accessOutcome,
+      ...(accessOutcome ? {
+        reason: `Source is unavailable because retrieval was ${accessOutcome.status.replace(/_/g, ' ')}: ${accessOutcome.reason}`,
+        accessOutcome,
+      } : {}),
       plan,
       evidence,
       ...(canonicalFrontierCandidates ? { frontierCandidates: canonicalFrontierCandidates } : {}),

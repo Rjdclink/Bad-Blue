@@ -90,10 +90,10 @@ console.log('Parallel keyless discovery, credit fallback, persistent learning, a
 const conversation = fs.readFileSync('server/lexara/LexaraConversationOrchestrator.ts', 'utf8');
 for (const token of [
   'PERSON_PERMISSION_REFUSAL_PATTERN',
-  'pantheonInvestigation && isPersonPermissionRefusal(text)',
+  'pantheonInvestigation && !usedPantheonSourceExcerptFallback && isPersonPermissionRefusal(text)',
   'answer contains that prohibited refusal pattern, so normal turns gain no',
   'extra latency.',
-  'I could not verify the requested fact from the sources Pantheon completed.'
+  'I could not verify the requested fact; some sources may not have been available.'
 ]) {
   if (!conversation.includes(token)) throw new Error('Person-record permission guard missing invariant: ' + token);
 }

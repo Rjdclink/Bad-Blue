@@ -10,6 +10,8 @@ import { MaintenanceMode } from "@/components/MaintenanceMode";
 import { lazy, Suspense, useEffect, useState, Component, ErrorInfo, ReactNode } from "react";
 import { AuthLoadingSkeleton, PageSkeleton } from "@/components/ui/page-skeleton";
 import { useGlobalGestureNavigation } from "@/hooks/useGlobalGestureNavigation";
+import { TrialStatusBanner } from "@/components/TrialStatusBanner";
+import TrialAccessPage from "@/pages/trial-access";
 
 if (typeof window !== 'undefined') {
   console.log('[Performance] App component loading...');
@@ -212,11 +214,16 @@ function GatedControlRoom() {
 function Router() {
   const { user, isAuthenticated, isLoading } = useAuth();
   const isMasterSession = Boolean((user as any)?.isMasterBypass);
-  const userStatus = String((user as any)?.status || "").toLowerCase();
-  const hasPaidAccess = isMasterSession || Boolean(
-    (user as any)?.hasPaidForAccess === true &&
-    !["suspended", "past_due", "canceled", "expired"].includes(userStatus),
-  );
+  const accessState = String((user as any)?.accessState || "");
+  const hasPaidAccess = isMasterSession ||
+    accessState === "master" ||
+    accessState === "paid" ||
+    accessState === "trial_active" ||
+    (!accessState &&
+      Boolean((user as any)?.hasPaidForAccess === true) &&
+      !["suspended", "past_due", "canceled", "expired"].includes(
+        String((user as any)?.status || "").trim().toLowerCase(),
+      ));
 
   // Swipe routing remains available to ordinary authenticated sessions, but is
   // deliberately disabled for the master shell. On mobile, vertical scrolling
@@ -277,11 +284,24 @@ function Router() {
   return (
     <Suspense fallback={<PageLoader />}>
       <>
+        <TrialStatusBanner
+          accessState={accessState}
+          trialRemainingMs={Number((user as any)?.trialRemainingMs || 0)}
+        />
         <Switch>
           <Route path="/" component={Landing} />
           <Route path="/landing" component={Landing} />
 
           <Route path="/subscription-success" component={SubscriptionSuccess} />
+          <Route path="/trial-expired">
+            <TrialAccessPage />
+          </Route>
+          <Route path="/trial-review">
+            <TrialAccessPage review />
+          </Route>
+          <Route path="/subscription-required">
+            <TrialAccessPage required />
+          </Route>
           <Route path="/control-room" component={GatedControlRoom} />
           <Route path="/orchestrator-console" component={GatedOrchestratorConsole} />
           <Route path="/login" component={Login} />
@@ -359,7 +379,13 @@ function Router() {
             </>
           ) : null}
 
-          <Route component={NotFound} />
+          <Route>
+            {isAuthenticated && accessState === "trial_expired"
+              ? <Redirect to="/trial-expired" />
+              : isAuthenticated && !hasPaidAccess
+                ? <Redirect to="/subscription-required" />
+                : <NotFound />}
+          </Route>
         </Switch>
       </>
     </Suspense>

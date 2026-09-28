@@ -49,6 +49,12 @@ export const users = pgTable("users", {
 
   // Full access is fail-closed until the LegalWhat Square subscription is verified.
   hasPaidForAccess: boolean("has_paid_for_access").default(false).notNull(),
+  // Trial access is separate from paid status and is activated only by the
+  // server-side trial entitlement function.
+  trialEligible: boolean("trial_eligible").default(false).notNull(),
+  trialStartedAt: timestamp("trial_started_at", { withTimezone: true }),
+  trialExpiresAt: timestamp("trial_expires_at", { withTimezone: true }),
+  trialConsumedAt: timestamp("trial_consumed_at", { withTimezone: true }),
   accessPaymentId: varchar("access_payment_id"), // Stripe payment intent ID for access payment (kept for backwards compatibility)
   accessPaidAt: timestamp("access_paid_at"), // When user paid for access (kept for backwards compatibility)
 

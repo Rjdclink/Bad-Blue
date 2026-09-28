@@ -1433,6 +1433,26 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
           const batchRetrieval = waveResult.retrieval;
           retrievalEvidence.push(...batchRetrieval.evidence);
           retrievalAudit.push(...batchRetrieval.crawlerAudit);
+          if (batchRetrieval.accessOutcome) {
+            const accessFailure = `${batchRetrieval.accessOutcome.status}: ${batchRetrieval.accessOutcome.reason}`;
+            const recordedAt = new Date().toISOString();
+            retrievalAudit.push({
+              crawler: 'category-orchestrator',
+              capabilityClass: 'pantheon-secondary',
+              status: batchRetrieval.accessOutcome.status,
+              evidenceCount: 0,
+              attempts: 1,
+              targets: 1,
+              error: accessFailure.slice(0, 500),
+              sourceOutcomes: [{
+                sourceUrl,
+                status: 'failed',
+                retrievedAt: recordedAt,
+                durationMs: 0,
+                error: accessFailure.slice(0, 500),
+              }],
+            });
+          }
           settleCapabilityWorkForSource(
             capabilityWorkLedger,
             sourceUrl,
@@ -1647,7 +1667,11 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
         (item.sourceOutcomes || []).some(outcome => canonicalPantheonEvidenceUrl(outcome.sourceUrl) === entry.url)
       );
       const matchingAudit = matchingAudits.find(item => Number(item.targets || 0) > 0);
-      const auditFailures = matchingAudits.filter(item => item.status === 'failed' || item.status === 'timed_out');
+      const auditFailures = matchingAudits.filter(item =>
+        item.status === 'failed'
+        || item.status === 'timed_out'
+        || ['access_limited', 'denied', 'rate_limited', 'robots_disallowed', 'challenge_detected'].includes(item.status)
+      );
       const liveWorkSucceeded = matchingAudits.some(item =>
         item.capabilityClass === 'primary'
           && ['completed_with_content', 'completed_with_evidence', 'completed_no_evidence'].includes(item.status)
@@ -1663,7 +1687,7 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
         entry.evidenceIds = [...new Set([...entry.evidenceIds, ...evidenceIds])];
         const lastTransport = entry.transportAttempts?.[entry.transportAttempts.length - 1];
         if (lastTransport) lastTransport.outcome = 'succeeded';
-      } else if (auditFailures.some(item => /429|rate/i.test(String(item.error || '')))) {
+      } else if (auditFailures.some(item => item.status === 'rate_limited' || /429|rate/i.test(String(item.error || '')))) {
         const lastTransport = entry.transportAttempts?.[entry.transportAttempts.length - 1];
         if (lastTransport) { lastTransport.outcome = 'failed'; lastTransport.reason = 'rate_limited'; }
         entry.state = 'rate_limited';
@@ -1671,7 +1695,10 @@ async function executePantheonCategory(input: PantheonCategoryExecutionInput): P
       } else if (auditFailures.some(item => item.status === 'timed_out')) {
         entry.state = 'timed_out';
         entry.failureReason = 'timed_out';
-      } else if (auditFailures.some(item => /401|402|403|credential-gated|sign[ -]?in|required.*api[ _-]?key|subscription|contact-registration|unsupported.*verification/i.test(String(item.error || '')))) {
+      } else if (auditFailures.some(item =>
+        ['access_limited', 'denied', 'robots_disallowed', 'challenge_detected'].includes(item.status)
+        || /401|402|403|credential-gated|sign[ -]?in|required.*api[ _-]?key|subscription|contact-registration|unsupported.*verification/i.test(String(item.error || ''))
+      )) {
         entry.state = 'blocked';
         entry.failureReason = auditFailures.find(item => item.error)?.error || 'Source requires unsupported access credentials.';
       } else if (auditFailures.length > 0) {

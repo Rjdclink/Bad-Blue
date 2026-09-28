@@ -1,4 +1,10 @@
 import { decideLexaraResearchNeed, isLexaraLegalAuthorityIntent, type LexaraResearchDecision } from './LexaraResearchIntentRouter';
+import { resolveLexaraBackgroundSubject } from './LexaraBackgroundSubject';
+import {
+  classifyPantheonSemanticCategories,
+  isContextualReference,
+  isFullPantheonReportIntent,
+} from './LexaraPantheonSemanticIntent';
 
 export type LexaraSequenceId =
   | 'simple-factual'
@@ -20,7 +26,10 @@ export interface LexaraSequencePlan {
   reason: string;
 }
 
-const BACKGROUND_PATTERN = /\b(?:background|history|record|records|filing|docket|license|mortgage|property|address|residen|employ|occupation|job|business|owner|ownership|spouse|married|inmate|incarcerat|arrest|disciplin|misconduct|age|born|birth|date of birth|dob)\b/i;
+// Keep this classifier aligned with Pantheon's 30 user-facing report
+// categories. The investigation layer has the detailed category rules; this
+// boundary only decides whether the turn must enter that evidence pipeline.
+const BACKGROUND_PATTERN = /\b(?:background|identit\w*|alias\w*|date\s+of\s+birth|dob|age\w*|phone\w*|telephone\w*|email\w*|e-mail\w*|address\w*|residen\w*|lived|relativ\w*|famil\w*|associat\w*|affiliat\w*|household\w*|social\s+media|facebook|instagram|linkedin|tiktok|twitter|username\w*|online\s+account\w*|photo\w*|image\w*|employ\w*|occupation\w*|job\w*|work\w*|education\w*|school\w*|college\w*|university|degree\w*|license\w*|credential\w*|certification\w*|business\w*|compan\w*|corporat\w*|ownership|property\w*|real\s+estate|vehicle\w*|car\w*|truck\w*|vin\w*|court\w*|case\w*|docket\w*|criminal\w*|conviction\w*|arrest\w*|police|inmate\w*|incarcerat\w*|prison\w*|jail\w*|probation|parole|warrant\w*|wanted|sex[-\s]+offender\w*|civil\s+litigation|judgment\w*|bankrupt\w*|lien\w*|mortgage\w*|financial\w*|marriage\w*|married|spouse\w*|divorc\w*|vital\w*|news|media|internet|web\s+footprint|government\w*|political\w*|public\s+service|timeline\w*|chronolog\w*|relationship\w*|history|record\w*|filing\w*|misconduct\w*)/i;
 const DEEP_PATTERN = /\b(?:deep|thorough|comprehensive|recursive|broaden|keep looking|look harder|search again|investigate|everything|full background|background report)\b/i;
 const DOCUMENT_PATTERN = /\b(?:draft|prepare|create|generate|write|download|export|pdf|docx|word document|demand|complaint|petition|motion|affidavit|declaration|letter|request)\b/i;
 const ACTION_PATTERN = /\b(?:need|want|give|provide|make|prepare|draft|create|generate|write|download|export|file|serve|send)\b/i;
@@ -34,7 +43,19 @@ export function planLexaraSequence(prompt: string, previousUserTurns: string[] =
   const text = String(prompt || '').trim();
   const researchDecision = decideLexaraResearchNeed(text, previousUserTurns);
   const legal = isLexaraLegalAuthorityIntent(text) || researchDecision.objectiveKind === 'legal-authority';
-  const background = BACKGROUND_PATTERN.test(text) && hasIdentifiableSubject(text);
+  const subject = resolveLexaraBackgroundSubject(text, previousUserTurns);
+  const semanticCategories = classifyPantheonSemanticCategories(text, previousUserTurns);
+  const priorBackground = previousUserTurns.slice(-4).some(turn =>
+    BACKGROUND_PATTERN.test(turn) || classifyPantheonSemanticCategories(turn).length > 0,
+  );
+  const contextualFollowup = Boolean(subject && priorBackground && isContextualReference(text));
+  const fullReport = isFullPantheonReportIntent(text);
+  const background = Boolean(
+    ((semanticCategories.length > 0 || BACKGROUND_PATTERN.test(text) || fullReport)
+      && (subject?.identifiable || hasIdentifiableSubject(text)
+        || Boolean(subject && priorBackground && isContextualReference(text))))
+    || (contextualFollowup && (researchDecision.needed || semanticCategories.length > 0))
+  );
   const documentAction = DOCUMENT_PATTERN.test(text) && ACTION_PATTERN.test(text);
   const deep = DEEP_PATTERN.test(text) && researchDecision.needed;
 
@@ -84,8 +105,8 @@ export function planLexaraSequence(prompt: string, previousUserTurns: string[] =
   if (researchDecision.needed) {
     return {
       sequence: 'simple-factual', researchDecision,
-      useLegalResearch: false, usePantheon: true, recursive: false,
-      classifyPantheon: false, documentAction: false,
+      useLegalResearch: false, usePantheon: true, recursive: semanticCategories.length > 0,
+      classifyPantheon: semanticCategories.length > 0, documentAction: false,
       reason: 'ordinary external fact/current-information route',
     };
   }

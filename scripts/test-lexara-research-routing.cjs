@@ -144,14 +144,17 @@ test('legal discovery misses and learned-query retries never reopen OpenRouter',
   const h = harness({ env: { DDGS_URL: 'https://ddgs.fixture.test' }, learnedPattern: 'court records' });
   const result = await h.load('server/services/pantheon/PantheonDiscoveryCoordinator.ts').discoverPantheonSourcesParallel('contract fixture', [], { providerPolicy: 'legalwhat', includePaidFallback: true, timeoutMs: 250 });
   assert.equal(result.urls.length, 0); assert.equal(h.calls.gateway.length, 0);
-  assert.equal(h.calls.http.length, 2); assert.equal(h.calls.paid, 1);
+  assert.equal(h.calls.http.length, 2); assert.equal(h.calls.paid, 0);
   assert(!result.lanesAttempted.includes('first-party'));
 });
 for (const retry of [false, true]) {
-  test(`shared default discovery retains its existing ${retry ? 'learned retry' : 'initial'} route`, async () => {
-    const h = harness({ allowLegacyGateway: true, learnedPattern: 'court records', gatewaySources: n => retry && n === 1 ? [] : [urls[0]] });
+  test(`shared default discovery preserves develop's gateway exclusion on ${retry ? 'learned retry' : 'initial search'}`, async () => {
+    const h = harness({ env: { DDGS_URL: 'https://ddgs.fixture.test' }, learnedPattern: 'court records', fetchPayload: (_url, _init, n) => ({ results: retry && n === 1 ? [] : [{ href: urls[0], title: 'Independent result', body: 'Fresh evidence' }] }) });
     const result = await h.load('server/services/pantheon/PantheonDiscoveryCoordinator.ts').discoverPantheonSourcesParallel('contract fixture', [], { timeoutMs: 250 });
-    assert.equal(result.urls[0], urls[0]); assert.equal(h.calls.gateway.length, retry ? 2 : 1);
+    assert.equal(result.urls[0], urls[0]);
+    assert.equal(h.calls.gateway.length, 0);
+    assert.equal(h.calls.http.length, retry ? 2 : 1);
+    assert.equal(h.calls.paid, 0);
   });
 }
 test('Lexara delegated discovery excludes the gateway on initial, recovery and recursive searches', async () => {
@@ -228,3 +231,4 @@ test('release source-registry guard requires independent discovery and rejects t
   for (const { name, run } of testCases) { await run(); passed++; console.log('PASS', name); }
   console.log(`${passed}/${testCases.length} Lexara research routing checks passed (external I/O mocked).`);
 })().catch(error => { console.error(error); process.exitCode = 1; });
+

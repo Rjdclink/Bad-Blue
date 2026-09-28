@@ -37,7 +37,43 @@ function safeUser(row: any) {
     lastName: row.last_name == null ? null : String(row.last_name),
     status: String(row.status || "pending_payment"),
     hasPaidForAccess: row.has_paid_for_access === true,
+    trialEligible: row.trial_eligible === true,
+    trialStartedAt: row.trial_started_at == null ? null : String(row.trial_started_at),
+    trialExpiresAt: row.trial_expires_at == null ? null : String(row.trial_expires_at),
+    trialConsumedAt: row.trial_consumed_at == null ? null : String(row.trial_consumed_at),
   };
+}
+
+const LEGACY_LOCAL_USER_FIELDS = "id,email,first_name,last_name,status,has_paid_for_access";
+const TRIAL_LOCAL_USER_FIELDS =
+  `${LEGACY_LOCAL_USER_FIELDS},trial_eligible,trial_started_at,trial_expires_at,trial_consumed_at`;
+
+async function trialSchemaAvailable(supabase: any): Promise<boolean> {
+  try {
+    const { data, error } = await supabase.rpc("legalwhat_trial_schema_ready");
+    return !error && data === true;
+  } catch {
+    return false;
+  }
+}
+
+async function activateTrial(supabase: any, userId: string) {
+  const { data: decision, error: activationError } = await supabase.rpc("legalwhat_activate_trial", {
+    p_user_id: userId,
+  });
+  if (activationError) throw new Error("Trial activation failed: " + activationError.message);
+  const outcome = String(decision?.outcome || "");
+  if (!["ELIGIBLE", "CLEAR_REPEAT", "AMBIGUOUS"].includes(outcome)) {
+    throw new Error("Trial authority returned an invalid decision");
+  }
+
+  const { data: userRow, error: userError } = await supabase
+    .from("users")
+    .select(TRIAL_LOCAL_USER_FIELDS)
+    .eq("id", userId)
+    .maybeSingle();
+  if (userError || !userRow) throw new Error("Trial account refresh failed: " + (userError?.message || "not found"));
+  return { outcome, user: safeUser(userRow) };
 }
 
 const RAILWAY_AUTH_SECRET_SHA256 = "3824b802f2a1cba6aa82f624c6aae41c64ef3c17f36a306d7c2986ef09056d53";
@@ -86,7 +122,8 @@ async function ensureSubscriptionPlan(supabase: any, squarePlanVariationId: stri
   return Number(inserted.id);
 }
 
-async function setSubscriptionState(supabase: any, body: any) {
+async function setSubscriptionState(supabase: any, body: any, trialSchemaReady: boolean) {
+  const userFields = trialSchemaReady ? TRIAL_LOCAL_USER_FIELDS : LEGACY_LOCAL_USER_FIELDS;
   const requestedUserId = String(body?.userId || "").trim();
   const squareCustomerId = String(body?.squareCustomerId || "").trim();
   const squareSubscriptionId = String(body?.squareSubscriptionId || "").trim();
@@ -201,9 +238,17 @@ async function setSubscriptionState(supabase: any, body: any) {
     if (error) throw new Error("Subscription access grant failed: " + error.message);
   }
 
+  if (squareCustomerId && trialSchemaReady) {
+    const { error } = await supabase.rpc("legalwhat_bind_trial_square_customer", {
+      p_user_id: userId,
+      p_square_customer_id: squareCustomerId,
+    });
+    if (error) throw new Error("Verified Square trial identity binding failed: " + error.message);
+  }
+
   const { data: userRow, error: userError } = await supabase
     .from("users")
-    .select("id,email,first_name,last_name,status,has_paid_for_access")
+    .select(userFields)
     .eq("id", userId)
     .single();
   if (userError || !userRow) throw new Error("Subscription user refresh failed: " + (userError?.message || "unknown error"));
@@ -222,6 +267,8 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const action = String(body?.action || "");
     const supabase = adminClient();
+    const trialSchemaReady = await trialSchemaAvailable(supabase);
+    const userFields = trialSchemaReady ? TRIAL_LOCAL_USER_FIELDS : LEGACY_LOCAL_USER_FIELDS;
 
     if (action === "probe") {
       const [usersProbe, accountsProbe] = await Promise.all([
@@ -230,7 +277,7 @@ Deno.serve(async (req) => {
       ]);
       if (usersProbe.error) throw new Error("Users store probe failed: " + usersProbe.error.message);
       if (accountsProbe.error) throw new Error("Auth accounts store probe failed: " + accountsProbe.error.message);
-      return json({ ok: true });
+      return json({ ok: true, trialSchemaReady });
     }
 
     if (action === "user") {
@@ -238,7 +285,7 @@ Deno.serve(async (req) => {
       if (!userId) return json({ ok: false, error: "User ID is required" }, 400);
       const { data: userRow, error } = await supabase
         .from("users")
-        .select("id,email,first_name,last_name,status,has_paid_for_access")
+        .select(userFields)
         .eq("id", userId)
         .maybeSingle();
       if (error) throw new Error("User lookup failed: " + error.message);
@@ -252,7 +299,7 @@ Deno.serve(async (req) => {
 
       const { data: userRow, error: userError } = await supabase
         .from("users")
-        .select("id,email,first_name,last_name,status,has_paid_for_access")
+        .select(userFields)
         .eq("email", email)
         .maybeSingle();
       if (userError) throw new Error("User lookup failed: " + userError.message);
@@ -304,9 +351,10 @@ Deno.serve(async (req) => {
         .insert({
           id: userId, email, first_name: firstName, last_name: lastName,
           profile_image_url: null, status: "pending_payment", has_paid_for_access: false,
+          ...(trialSchemaReady ? { trial_eligible: true } : {}),
           created_at: now, updated_at: now,
         })
-        .select("id,email,first_name,last_name,status,has_paid_for_access")
+        .select(userFields)
         .single();
       if (userError || !userRow) {
         if (userError?.code === "23505") return json({ ok: false, error: "Email already registered" }, 409);
@@ -327,8 +375,24 @@ Deno.serve(async (req) => {
     }
 
     if (action === "set_subscription") {
-      const user = await setSubscriptionState(supabase, body);
+      const user = await setSubscriptionState(supabase, body, trialSchemaReady);
       return json({ ok: true, user });
+    }
+
+    if (action === "activate_trial") {
+      const userId = String(body?.userId || "").trim();
+      if (!userId) return json({ ok: false, error: "User ID is required" }, 400);
+      if (!trialSchemaReady) {
+        const { data: userRow, error } = await supabase
+          .from("users")
+          .select(userFields)
+          .eq("id", userId)
+          .maybeSingle();
+        if (error || !userRow) throw new Error("Trial account lookup failed: " + (error?.message || "not found"));
+        return json({ ok: true, decision: { outcome: "AMBIGUOUS" }, user: safeUser(userRow) });
+      }
+      const result = await activateTrial(supabase, userId);
+      return json({ ok: true, decision: { outcome: result.outcome }, user: result.user });
     }
 
     return json({ ok: false, error: "Unknown action" }, 400);
