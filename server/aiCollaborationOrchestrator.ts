@@ -49,6 +49,8 @@ export interface CollaborationTask {
   signal?: AbortSignal;
   allowCoolingRecovery?: boolean;
   providerPolicy?: CollaborationProviderPolicy;
+  // Shared only within one legal orchestration, never across users/prompts.
+  inFlightProviders?: Set<AIProvider>;
 }
 
 /**
@@ -114,6 +116,7 @@ export type CollaborationProviderPolicy = HarmonyProviderPolicy;
 
 const harmonyProviderCooldownUntil = new Map<AIProvider, number>();
 const harmonyTransportCooldownUntil = new Map<string, number>();
+const harmonyOverloadFailures = new Map<AIProvider, number>();
 
 function harmonyTransportDomain(provider: AIProvider): string {
   if (provider === AIProvider.CLAUDE || provider === AIProvider.CLAUDE_OPUS) return 'anthropic';
@@ -188,14 +191,17 @@ function harmonyProviderRuntimeScore(provider: AIProvider): number {
   return Math.round(readinessScore + latencyBonus - reliabilityPenalty);
 }
 
-function harmonyProviderAvailable(provider: AIProvider): boolean {
+function harmonyProviderCooling(provider: AIProvider): boolean {
   const transport = harmonyTransportDomain(provider);
-  return (harmonyProviderCooldownUntil.get(provider) || 0) <= Date.now()
-    && (harmonyTransportCooldownUntil.get(transport) || 0) <= Date.now()
-    && isHarmonyProviderWarmHealthy(provider);
+  return (harmonyProviderCooldownUntil.get(provider) || 0) > Date.now()
+    || (harmonyTransportCooldownUntil.get(transport) || 0) > Date.now();
 }
 
-function markHarmonyProviderFailure(provider: AIProvider, error: unknown): void {
+function harmonyProviderAvailable(provider: AIProvider): boolean {
+  return !harmonyProviderCooling(provider) && isHarmonyProviderWarmHealthy(provider);
+}
+
+function markHarmonyProviderFailure(provider: AIProvider, error: unknown, policy?: CollaborationProviderPolicy): void {
   const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
   if (
     /cooling down after a recent route failure/.test(message)
@@ -203,7 +209,7 @@ function markHarmonyProviderFailure(provider: AIProvider, error: unknown): void 
   ) {
     return;
   }
-  const cooldownMs = /402|payment required|billing|credits? (?:required|depleted|remaining)/.test(message)
+  let cooldownMs = /402|payment required|billing|credits? (?:required|depleted|remaining)/.test(message)
     ? 30 * 60_000
     : /no permitted capability-compatible|retired|deprecated|model .* unavailable/.test(message)
       ? 10 * 60_000
@@ -220,6 +226,15 @@ function markHarmonyProviderFailure(provider: AIProvider, error: unknown): void 
                 : /timeout|timed out|econnreset|fetch failed|socket/.test(message)
                   ? 5_000
                   : 15_000;
+  if (policy === 'legalwhat' && /\b503\b|overloaded|high demand/.test(message)) {
+    const failures = (harmonyOverloadFailures.get(provider) || 0) + 1;
+    harmonyOverloadFailures.set(provider, failures);
+    cooldownMs = Math.min(120_000, 15_000 * 2 ** Math.min(failures - 1, 3)) + Math.floor(Math.random() * 1_000);
+  }
+  const retryAfterMs = Number((error as { retryAfterMs?: number })?.retryAfterMs);
+  if (policy === 'legalwhat' && Number.isFinite(retryAfterMs) && retryAfterMs > 0) {
+    cooldownMs = Math.max(cooldownMs, retryAfterMs);
+  }
   harmonyProviderCooldownUntil.set(provider, Date.now() + cooldownMs);
 
   if (/402|payment required|billing|credits?|429|rate limit|quota|401|invalid api key|authentication|fetch failed|socket|econnreset|network/i.test(message)) {
@@ -238,6 +253,7 @@ function markHarmonyProviderFailure(provider: AIProvider, error: unknown): void 
 }
 
 function markHarmonyProviderSuccess(provider: AIProvider): void {
+  harmonyOverloadFailures.delete(provider);
   harmonyProviderCooldownUntil.delete(provider);
   harmonyTransportCooldownUntil.delete(harmonyTransportDomain(provider));
   markHarmonyProviderWarmSuccess(provider);
@@ -453,10 +469,13 @@ export class AICollaborationOrchestrator {
     const eligibleProviders = Array.from(new Set(configuredProviders
       .filter(provider => callerPool.has(provider))
       .map(provider => options.providerPolicy === 'legalwhat' && provider === AIProvider.GPT_OSS
-        ? getDirectGptOssProvider()!
+        ? getDirectGptOssProvider(options.providerPolicy)!
         : provider)));
     const healthyProviders = eligibleProviders.filter(harmonyProviderAvailable);
-    const initialCandidateProviders = healthyProviders.length > 0 ? healthyProviders : eligibleProviders;
+    const recoveryProviders = options.providerPolicy === 'legalwhat'
+      ? eligibleProviders.filter(provider => !harmonyProviderCooling(provider))
+      : eligibleProviders;
+    const initialCandidateProviders = healthyProviders.length > 0 ? healthyProviders : recoveryProviders;
 
     if (initialCandidateProviders.length === 0) {
       throw new Error(`No providers available for ${context} context`);
@@ -481,7 +500,8 @@ export class AICollaborationOrchestrator {
     
     // Build collaboration tasks
     const reserveProviders = eligibleProviders.filter(provider => !providers.includes(provider));
-    const tasks = this.buildCollaborationTasks(
+    const inFlightProviders = options.providerPolicy === 'legalwhat' ? new Set<AIProvider>() : undefined;
+    const tasks: CollaborationTask[] = this.buildCollaborationTasks(
       taskName,
       query,
       attributes,
@@ -495,6 +515,7 @@ export class AICollaborationOrchestrator {
       return {
         ...task,
         providerPolicy: options.providerPolicy,
+        inFlightProviders,
         systemPrompt: options.systemPrompt,
         requestTimeoutMs: options.providerPolicy === 'legalwhat' && options.requestTimeoutMs !== undefined
           ? options.requestTimeoutMs
@@ -535,6 +556,7 @@ export class AICollaborationOrchestrator {
         provider: finalProvider,
         model: this.getDefaultModelForProvider(finalProvider),
         role: 'harmony-synthesizer',
+        inFlightProviders,
         providerPolicy: options.providerPolicy,
         prompt: attributes.needsStructuredOutput
           ? 'Synthesize the successful specialist contributions into the requested JSON. Return ONLY valid JSON, with no markdown or provider details.\n\n[Results will be provided]'
@@ -545,6 +567,7 @@ export class AICollaborationOrchestrator {
         fallbackProviders: eligibleProviders.filter(candidate => candidate !== finalProvider),
         requestTimeoutMs: options.requestTimeoutMs,
         maxFallbacks: options.maxFallbacks,
+        signal: options.signal,
         attributes: { ...attributes, needsVerification: true },
       });
     }
@@ -1228,7 +1251,7 @@ export class AICollaborationOrchestrator {
     // The scoped GPT OSS alias uses the same canonical direct transport as its
     // independently configured participant, including that transport's health.
     if (task.providerPolicy === 'legalwhat' && task.provider === AIProvider.GPT_OSS) {
-      const directProvider = getDirectGptOssProvider();
+      const directProvider = getDirectGptOssProvider(task.providerPolicy);
       if (directProvider) task = { ...task, provider: directProvider, model: this.getDefaultModelForProvider(directProvider) };
     }
     // Guard the actual dispatch as well as selection; an excluded route must not
@@ -1293,15 +1316,26 @@ export class AICollaborationOrchestrator {
 
     const taskTimeoutMs = task.requestTimeoutMs || 6_000;
     const attempt = createLinkedDeadlineSignal(task.signal, taskTimeoutMs, task.provider);
+    let ownsProviderSlot = false;
+    const releaseProviderSlot = () => {
+      if (ownsProviderSlot) task.inFlightProviders?.delete(task.provider);
+      ownsProviderSlot = false;
+    };
 
     try {
       if (task.signal?.aborted) {
         attempt.cleanup();
         throw new DOMException('Superseded generation', 'AbortError');
       }
-      if (!harmonyProviderAvailable(task.provider) && !task.allowCoolingRecovery) {
+      if ((task.providerPolicy === 'legalwhat' && harmonyProviderCooling(task.provider))
+        || (!harmonyProviderAvailable(task.provider) && !task.allowCoolingRecovery)) {
         throw new Error(`${task.provider} is cooling down after a recent route failure`);
       }
+      if (task.inFlightProviders?.has(task.provider)) {
+        throw new Error(`${task.provider} already has an in-flight call for this orchestration`);
+      }
+      task.inFlightProviders?.add(task.provider);
+      ownsProviderSlot = true;
 
       const outputTokenLimit = maxTokens;
       switch (task.provider) {
@@ -1313,7 +1347,9 @@ export class AICollaborationOrchestrator {
             runProvider(
               task.provider,
               prompt,
-              { model: task.model, systemPrompt: task.systemPrompt, signal: attempt.signal },
+              { model: task.model, systemPrompt: task.systemPrompt, signal: attempt.signal,
+                providerPolicy: task.providerPolicy,
+                effort: task.providerPolicy === 'legalwhat' && task.attributes.needsFastResponse ? 'medium' : undefined },
               outputTokenLimit,
               taskMetadata,
             ),
@@ -1330,7 +1366,9 @@ export class AICollaborationOrchestrator {
             runProvider(
               AIProvider.CLAUDE,
               prompt,
-              { model: task.model, systemPrompt: task.systemPrompt, signal: attempt.signal },
+              { model: task.model, systemPrompt: task.systemPrompt, signal: attempt.signal,
+                providerPolicy: task.providerPolicy,
+                effort: task.providerPolicy === 'legalwhat' && task.attributes.needsFastResponse ? 'medium' : undefined },
               outputTokenLimit,
               taskMetadata,
             ),
@@ -1475,9 +1513,20 @@ export class AICollaborationOrchestrator {
       } else {
         markHarmonyProviderSuccess(task.provider);
         recordHarmonyProviderRuntime(task.provider, true, Date.now() - startTime);
+        if (task.providerPolicy === 'legalwhat') {
+          console.info('[HARMONY] Provider route succeeded', {
+            task: task.id,
+            provider: task.provider,
+            model: task.model,
+            transport: harmonyTransportDomain(task.provider),
+            latencyMs: Date.now() - startTime,
+            tokensUsed,
+          });
+        }
       }
     } catch (error: any) {
       attempt.cleanup();
+      releaseProviderSlot();
       if (isHarmonyRequestCancellation(error, task.signal)) {
         return {
           taskId: task.id,
@@ -1492,9 +1541,14 @@ export class AICollaborationOrchestrator {
         };
       }
 
-      markHarmonyProviderFailure(task.provider, error);
-      recordHarmonyProviderRuntime(task.provider, false, Date.now() - startTime);
-      console.warn('[HARMONY] Provider route failed', {
+      // A skipped route made no request: do not extend its cooldown or record
+      // another provider failure merely because another role selected it.
+      const routeSkipped = /cooling down after a recent route failure|already has an in-flight call/.test(String(error));
+      if (!routeSkipped) {
+        markHarmonyProviderFailure(task.provider, error, task.providerPolicy);
+        recordHarmonyProviderRuntime(task.provider, false, Date.now() - startTime);
+      }
+      console.warn(routeSkipped ? '[HARMONY] Provider route skipped' : '[HARMONY] Provider route failed', {
         task: task.id,
         provider: task.provider,
         model: task.model,
@@ -1506,11 +1560,13 @@ export class AICollaborationOrchestrator {
       const allAlternatives = this.rankFallbackProviders(
         task,
         (task.fallbackProviders || [])
-          .filter(provider => provider !== task.provider && isHarmonyProviderAllowed(provider, task.providerPolicy)),
+          .filter(provider => provider !== task.provider && isHarmonyProviderAllowed(provider, task.providerPolicy))
+          .filter(provider => task.providerPolicy !== 'legalwhat' || !harmonyProviderCooling(provider)),
       );
       const healthyAlternatives = allAlternatives.filter(harmonyProviderAvailable);
       const coolingAlternatives = allAlternatives.filter(provider => !harmonyProviderAvailable(provider));
-      const alternatives = [...healthyAlternatives, ...coolingAlternatives];
+      const alternatives = [...healthyAlternatives, ...coolingAlternatives]
+        .filter(provider => !task.inFlightProviders?.has(provider));
       const fallbackLimit = Math.max(0, Math.min(task.maxFallbacks ?? 1, 3));
       if (fallbackLimit > 0 && alternatives.length > 0) {
         const recoveryBatch = alternatives.slice(0, fallbackLimit);
@@ -1563,6 +1619,7 @@ export class AICollaborationOrchestrator {
     }
 
     attempt.cleanup();
+    releaseProviderSlot();
 
     const result: CollaborationResult = {
       taskId: task.id,

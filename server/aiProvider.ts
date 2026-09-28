@@ -40,6 +40,7 @@ interface AIResponse {
 }
 
 interface GenerateOptions {
+  effort?: 'low' | 'medium' | 'high';
   includeContributions?: boolean;
   providerPolicy?: HarmonyProviderPolicy;
   systemPrompt?: string;

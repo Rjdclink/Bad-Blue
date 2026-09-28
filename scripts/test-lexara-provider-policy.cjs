@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const ts = require('typescript');
 const root = path.resolve(__dirname, '..');
 const keys = ['GEMINI_API_KEY','ANTHROPIC_API_KEY','GROQ_API_KEY','MISTRAL_API_KEY','OPENROUTER_API_KEY','XAI_API_KEY','CEREBRAS_API_KEY','FIREWORKS_API_KEY','COHERE_API_KEY','TOGETHER_API_KEY'];
-function harness(enabled, { fail = false, warm = true, stall = false } = {}) {
+function harness(enabled, { fail = false, warm = true, stall = false, errors = {}, clock, beforeCall } = {}) {
   const env = Object.fromEntries(enabled.map(key => [key, 'fixture-key']));
   const calls = [];
   const cache = new Map();
@@ -26,6 +26,8 @@ function harness(enabled, { fail = false, warm = true, stall = false } = {}) {
     'server/aiProvider.ts': { runProvider: async (provider, prompt, options) => {
       const call = { transport: provider, model: options.model };
       calls.push(call);
+      if (beforeCall) await beforeCall(provider, options);
+      if (errors[provider]) throw typeof errors[provider] === 'string' ? new Error(errors[provider]) : errors[provider];
       if (stall) {
         assert(options.signal, 'stalled provider must receive the linked cancellation signal');
         return new Promise((_resolve, reject) => {
@@ -63,8 +65,12 @@ function harness(enabled, { fail = false, warm = true, stall = false } = {}) {
     vm.runInNewContext(`(function(require,module,exports){${compiled.outputText}\n})`, {
       process: { env }, console: { info() {}, warn() {}, log() {}, error() {} },
       AbortController, DOMException, setTimeout, clearTimeout,
+      Date: clock ? class extends Date { static now() { return clock.now; } } : Date,
       fetch: async url => {
         calls.push({ transport: String(url).includes('cerebras') ? 'cerebras' : 'unknown-http' });
+        if (String(url).includes('cerebras') && errors.cerebras) {
+          return { ok: false, status: 402, text: async () => errors.cerebras };
+        }
         if (fail) throw new Error('fixture HTTP failure');
         return { ok: true, json: async () => ({ choices: [{ message: { content: 'Direct HTTP fixture answer' } }], usage: { total_tokens: 8 } }) };
       },
@@ -108,12 +114,93 @@ function harness(enabled, { fail = false, warm = true, stall = false } = {}) {
 }
 const tests = [];
 const test = (name, run) => tests.push({ name, run });
+test('parallel legal fallback branches never duplicate an in-flight provider', async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const h = harness(['GEMINI_API_KEY','MISTRAL_API_KEY','GROQ_API_KEY'], {
+    errors: { mistral: '429 Rate limit exceeded' },
+    beforeCall: provider => provider === 'gemini' ? gate : undefined,
+  });
+  const inFlightProviders = new Set();
+  const task = { id: 'same-turn', provider: 'gemini', model: 'fixture', role: 'legal-analyst',
+    prompt: 'Fixture', priority: 1, attributes: h.attributes, providerPolicy: 'legalwhat',
+    requestTimeoutMs: 5000, maxFallbacks: 0, inFlightProviders };
+  const pending = h.engine.executeTask(task, new Map());
+  try {
+    const fallback = await h.engine.executeTask({ ...task, provider: 'mistral',
+      fallbackProviders: ['gemini','groq'], maxFallbacks: 3 }, new Map());
+    assert.equal(fallback.provider, 'groq');
+    assert.equal(h.calls.filter(call => call.transport === 'gemini').length, 1);
+  } finally { release(); await pending; }
+  assert.equal(inFlightProviders.size, 0);
+  assert.equal((await h.engine.executeTask(task, new Map())).success, true,
+    'a later synthesis may reuse a successful provider');
+});
+test('skipped routes do not extend cooldown and become eligible after expiry', async () => {
+  const clock = { now: 100000 };
+  const errors = { claude: 'claude timed out after 2500ms' };
+  const h = harness(['ANTHROPIC_API_KEY'], { clock, errors });
+  const task = { id: 'expiry', provider: 'claude', model: 'fixture', role: 'legal-analyst',
+    prompt: 'Fixture', priority: 1, attributes: h.attributes, providerPolicy: 'legalwhat',
+    maxFallbacks: 0, allowCoolingRecovery: true };
+  await h.engine.executeTask(task, new Map());
+  clock.now += 4000;
+  await h.engine.executeTask(task, new Map());
+  assert.equal(h.calls.length, 1);
+  delete errors.claude;
+  clock.now += 2000;
+  assert.equal((await h.engine.executeTask(task, new Map())).success, true);
+  assert.equal(h.calls.length, 2);
+});
+test('overload cooldown backs off and provider Retry-After is honored', async () => {
+  const clock = { now: 100000 };
+  const h = harness(['GEMINI_API_KEY','MISTRAL_API_KEY'], { clock,
+    errors: { gemini: '503 UNAVAILABLE high demand',
+      mistral: Object.assign(new Error('429 Rate limit exceeded'), { retryAfterMs: 600000 }) } });
+  const task = provider => ({ id: 'backoff', provider, model: 'fixture', role: 'legal-analyst',
+    prompt: 'Fixture', priority: 1, attributes: h.attributes, providerPolicy: 'legalwhat',
+    maxFallbacks: 0, allowCoolingRecovery: true });
+  await h.engine.executeTask(task('gemini'), new Map());
+  await h.engine.executeTask(task('mistral'), new Map());
+  clock.now += 17000;
+  await h.engine.executeTask(task('gemini'), new Map());
+  clock.now += 17000;
+  await h.engine.executeTask(task('gemini'), new Map());
+  assert.equal(h.calls.filter(call => call.transport === 'gemini').length, 2);
+  clock.now = 450000;
+  await h.engine.executeTask(task('mistral'), new Map());
+  assert.equal(h.calls.filter(call => call.transport === 'mistral').length, 1);
+});
+for (const [provider, key, error] of [
+  ['mistral', 'MISTRAL_API_KEY', 'Mistral API error: Status 429 Rate limit exceeded'],
+  ['gemini', 'GEMINI_API_KEY', '503 UNAVAILABLE high demand'],
+  ['claude', 'ANTHROPIC_API_KEY', 'claude timed out after 2500ms'],
+]) {
+  test(`${provider} live failure cannot bypass cooldown through primary or fallback recovery`, async () => {
+    const h = harness([key, 'GROQ_API_KEY'], { errors: { [provider]: error } });
+    const task = {
+      id: 'cooldown-regression', provider, model: h.registry.getCurrentModelForProvider(provider),
+      role: 'legal-analyst', prompt: 'Fixture', priority: 1, attributes: h.attributes,
+      providerPolicy: 'legalwhat', maxFallbacks: 0, requestTimeoutMs: 100,
+    };
+    assert.equal((await h.engine.executeTask(task, new Map())).success, false);
+    const count = h.calls.filter(call => call.transport === provider).length;
+    assert.equal(count, 1);
+    const recovered = await h.engine.executeTask({ ...task, allowCoolingRecovery: true,
+      fallbackProviders: [provider, 'groq'], maxFallbacks: 3 }, new Map());
+    assert.equal(recovered.success, true);
+    assert.equal(recovered.provider, 'groq');
+    assert.equal(h.calls.filter(call => call.transport === provider).length, count);
+    await assert.rejects(h.run([provider]), /No providers available/);
+    assert.equal(h.calls.filter(call => call.transport === provider).length, count);
+  });
+}
 test('scoped registry excludes gateway aliases and retains independent providers', () => {
   const h = harness(keys);
   assert.equal(h.registry.getConfiguredHarmonyProviders().length, 17, 'global mesh preserved');
   const scoped = Array.from(h.registry.getConfiguredHarmonyProviders('legalwhat'));
-  for (const banned of ['openrouter','deepseek','grok','kimi','qwen','gpt5_mini']) assert(!scoped.includes(banned), banned);
-  for (const retained of ['gemini','claude','claude_opus','groq','mistral','gpt_oss','xai','cerebras','fireworks','cohere','together']) assert(scoped.includes(retained), retained);
+  for (const banned of ['openrouter','deepseek','grok','kimi','qwen','gpt5_mini','cerebras']) assert(!scoped.includes(banned), banned);
+  for (const retained of ['gemini','claude','claude_opus','groq','mistral','gpt_oss','xai','fireworks','cohere','together']) assert(scoped.includes(retained), retained);
 });
 test('all direct failures cannot escape through gateway recovery', async () => {
   const h = harness(['GEMINI_API_KEY','OPENROUTER_API_KEY'], { fail: true });
@@ -139,11 +226,12 @@ test('GPT OSS keeps direct Groq transport even before warm readiness', async () 
   assert.equal(result.finalAnswer, 'Supported fixture answer');
   assert(h.calls.every(call => call.transport === 'groq'));
 });
-test('GPT OSS can use configured direct Cerebras without gateway transport', async () => {
+test('Cerebras cannot reenter legal routing through the GPT OSS alias', async () => {
   const h = harness(['CEREBRAS_API_KEY','OPENROUTER_API_KEY'], { warm: false });
-  const result = await h.run(['gpt_oss']);
-  assert.equal(result.finalAnswer, 'Direct HTTP fixture answer');
-  assert(h.calls.every(call => call.transport === 'cerebras'));
+  await assert.rejects(h.run(['gpt_oss']), /No providers available/);
+  assert.equal(h.calls.length, 0);
+  assert(h.registry.getConfiguredHarmonyProviders().includes('cerebras'), 'unrelated global policy preserved');
+  assert.equal(h.registry.getDirectGptOssProvider('legalwhat'), null);
 });
 test('global policy retains existing gateway participant and recovery behavior', async () => {
   const h = harness(['GEMINI_API_KEY','OPENROUTER_API_KEY'], { fail: true });

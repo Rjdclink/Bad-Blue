@@ -89,8 +89,30 @@ export async function callMistral(
 
     return { content, tokensUsed };
   } catch (error: any) {
-    console.error('[Mistral] Error:', error);
-    throw new Error(`Mistral API error: ${error.message}`);
+    if (options.signal?.aborted) {
+      throw options.signal.reason instanceof Error
+        ? options.signal.reason
+        : new DOMException('Mistral request cancelled', 'AbortError');
+    }
+    const headers = error?.headers || error?.rawResponse?.headers;
+    const retryAfter = headers?.get?.('retry-after');
+    const retrySeconds = retryAfter == null ? NaN : Number(retryAfter);
+    const retryAfterMs = Number.isFinite(retrySeconds)
+      ? Math.max(0, retrySeconds * 1000)
+      : Math.max(0, Date.parse(retryAfter || '') - Date.now());
+    const failure = Object.assign(new Error(`Mistral API error: ${error.message}`), {
+      status: error?.statusCode || error?.rawResponse?.status,
+      ...(Number.isFinite(retryAfterMs) ? { retryAfterMs } : {}),
+    });
+    // Keep useful quota evidence without dumping response headers/cookies.
+    console.error('[Mistral] Request failed', {
+      status: failure.status,
+      error: failure.message,
+      requestLimitPerMinute: headers?.get?.('x-ratelimit-limit-req-minute'),
+      requestsRemaining: headers?.get?.('x-ratelimit-remaining-req-minute'),
+      retryAfterMs: Number.isFinite(retryAfterMs) ? retryAfterMs : undefined,
+    });
+    throw failure;
   }
 }
 
