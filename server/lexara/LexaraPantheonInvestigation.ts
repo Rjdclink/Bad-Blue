@@ -354,6 +354,7 @@ export async function investigatePersonQuestion(
       limit: 8,
       timeoutMs: 650,
       signal: context.signal,
+      providerPolicy: 'legalwhat',
     },
   ).catch(() => null);
 
@@ -583,7 +584,7 @@ export async function investigatePersonQuestion(
           const broadened = await discoverPantheonSourcesParallel(
             `${semanticResearchExpressions(resolvedName || combined, categories, prompt).join(' | ')} ${context.jurisdiction || ''} alternate source database archive`,
             [...seenTargets],
-            { categories, jurisdiction: context.jurisdiction, limit: PERSON_RECURSIVE_MAX_TARGETS_PER_PASS, timeoutMs: Math.min(2_500, remainingMs), signal: context.signal },
+            { categories, jurisdiction: context.jurisdiction, limit: PERSON_RECURSIVE_MAX_TARGETS_PER_PASS, timeoutMs: Math.min(2_500, remainingMs), signal: context.signal, providerPolicy: 'legalwhat' },
           );
           pendingTargets = broadened.urls.filter(url => !seenTargets.has(url)).slice(0, Math.min(PERSON_RECURSIVE_MAX_TARGETS_PER_PASS, PERSON_RECURSIVE_MAX_TOTAL_TARGETS - seenTargets.size));
         } catch {}
@@ -709,6 +710,7 @@ export async function investigatePersonQuestion(
             limit: PERSON_RECURSIVE_MAX_TARGETS_PER_PASS,
             timeoutMs: Math.min(900, remainingMs),
             signal: context.signal,
+            providerPolicy: 'legalwhat',
           },
         );
         discovered = broadened.urls;

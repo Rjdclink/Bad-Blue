@@ -154,6 +154,36 @@ for (const retry of [false, true]) {
     assert.equal(result.urls[0], urls[0]); assert.equal(h.calls.gateway.length, retry ? 2 : 1);
   });
 }
+test('Lexara delegated discovery excludes the gateway on initial, recovery and recursive searches', async () => {
+  const filename = 'server/lexara/LexaraPantheonInvestigation.ts';
+  const source = fs.readFileSync(path.join(root, filename), 'utf8');
+  const parsed = ts.createSourceFile(filename, source, ts.ScriptTarget.Latest, true);
+  const callOptions = [];
+  function visit(node) {
+    if (ts.isCallExpression(node) && node.expression.getText(parsed) === 'discoverPantheonSourcesParallel') {
+      callOptions.push(node.arguments[2].getText(parsed));
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(parsed);
+  assert.equal(callOptions.length, 3, 'cover initial discovery, failed-crawl recovery and recursive broadening');
+  for (const expression of callOptions) {
+    const options = vm.runInNewContext(`(${expression})`, {
+      categories: ['identity'], context: { jurisdiction: 'Iowa' },
+      PERSON_RECURSIVE_MAX_TARGETS_PER_PASS: 12, remainingMs: 5000,
+    });
+    assert.equal(options.providerPolicy, 'legalwhat');
+    const success = harness({ env: { DDGS_URL: 'https://ddgs.fixture.test' }, fetchPayload: () => ({ results: [{ href: urls[0], title: 'Fresh result', body: 'Preserved evidence' }] }) });
+    const result = await success.load('server/services/pantheon/PantheonDiscoveryCoordinator.ts').discoverPantheonSourcesParallel('fixture person', [], options);
+    assert.equal(result.urls[0], urls[0]);
+    assert.equal(result.evidence[0].snippet, 'Preserved evidence');
+    assert.equal(success.calls.gateway.length, 0);
+    const miss = harness({ env: { DDGS_URL: 'https://ddgs.fixture.test' }, learnedPattern: 'court records' });
+    await miss.load('server/services/pantheon/PantheonDiscoveryCoordinator.ts').discoverPantheonSourcesParallel('fixture person', [], options);
+    assert.equal(miss.calls.gateway.length, 0, 'a miss and learned retry must retain the exclusion');
+    assert.equal(miss.calls.http.length, 2);
+  }
+});
 test('direct official-authority results retain their evidence and avoid unnecessary discovery', async () => {
   const h = harness({ env: { COURTLISTENER_API_TOKEN: 'fixture' }, fetchPayload: () => ({ results: [{ caseName: 'Fixture Case', absolute_url: '/opinion/1/fixture/', snippet: 'Relevant source excerpt' }] }) });
   const result = await h.load('server/lexara/LexaraAuthorityResearch.ts').researchLegalAuthority('Find case law', { jurisdiction: 'Iowa' });
