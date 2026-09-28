@@ -13,12 +13,19 @@ for(const required of ['buildPantheonCategoryTargets','buildPantheonBackgroundRe
   if(!registry.includes(required)) throw new Error('Missing dynamic-seed registry token: '+required);
 }
 if(!people.includes('buildPantheonBackgroundRegistryTargets(name, location, 10)')) throw new Error('People search is not using ten category seeds');
-for(const required of ['SEARXNG_URL','DDGS_URL','OPENSERP_URL','GEMINI_API_KEY','GoogleGenAI',"'gemini-google'","'commoncrawl'","'first-party'","'learned'","'serpapi'","'scrapingbee'",'paidUrls.map']){
+for(const required of ['SEARXNG_URL','DDGS_URL','OPENSERP_URL','GEMINI_API_KEY','GoogleGenAI',"'gemini-google'","'commoncrawl'","'learned'"]){
   if(!discovery.includes(required)) throw new Error('Dynamic search mesh missing provider: '+required);
 }
-for(const required of ['searchCourtListener','searchGovInfo','discoverLegalMeshTier3','discoverLegalMeshSupplemental','Firecrawl','OpenRouter']){
+for(const forbidden of ['orchestratedWebSearch','supplementalPantheonDiscovery']){
+  if(discovery.includes(forbidden)) throw new Error('Removed shared discovery transport remains: '+forbidden);
+}
+for(const required of ['searchCourtListener','searchGovInfo','discoverLegalMeshTier3','discoverLegalMeshSupplemental']){
   if(!authority.includes(required)) throw new Error('Lexara legal provider mesh missing route: '+required);
 }
+for(const forbidden of ['orchestratedWebSearch','FIRECRAWL_API_KEY','api.firecrawl.dev']){
+  if(authority.includes(forbidden)) throw new Error('Removed Lexara research route remains: '+forbidden);
+}
+if(!legalMesh.includes("providerPolicy: 'legalwhat'")) throw new Error('Lexara discovery must carry its canonical provider policy');
 if(!legalMesh.includes('tavily') || !legalMesh.includes('discoverPantheonSourcesParallel')) throw new Error('Lexara legal mesh is not connected to Tavily + dynamic discovery');
 const searchFirst=fs.readFileSync('server/services/pantheon/PantheonSearchFirstDiscovery.ts','utf8');
 const categoryWorkflow=fs.readFileSync('server/services/pantheon/PantheonCategoryWorkflow.ts','utf8');
@@ -32,3 +39,4 @@ if(!legalMesh.includes('gemini-google-grounding') || !legalMesh.includes("tier: 
   throw new Error('Lexara Tier 3 does not preserve Gemini Google grounding as a parallel legal discovery provider');
 }
 console.log('Pantheon legacy 4,500-source registry removal verified; dynamic search/index mesh and Lexara legal provider mesh remain exclusively wired.');
+

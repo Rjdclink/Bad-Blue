@@ -472,7 +472,7 @@ must(
 
 must(
   orchestrator.includes('AICollaborationOrchestrator.orchestrateCollaboration') &&
-    orchestrator.includes("providerPolicy: 'capability-first'") &&
+    orchestrator.includes("providerPolicy: 'legalwhat'") &&
     orchestrator.includes('getConfiguredHarmonyProviders') &&
     harmony.includes("'capability-first'") &&
     harmony.includes('selectProvidersForTask') &&
@@ -504,15 +504,13 @@ must(
   'Lexara keeps all 17 configured participants as a hot reserve while only a three-route capability/latency hedge owns normal turn latency',
 );
 must(
-  !authorityResearch.includes('GoogleGenAI') &&
-    authorityResearch.includes('FIRECRAWL_API_KEY') &&
-    authorityResearch.includes("https://api.firecrawl.dev/v1/search") &&
+  !authorityResearch.includes('openRouterWebSearch') &&
+    !authorityResearch.includes('FIRECRAWL_API_KEY') &&
+    !authorityResearch.includes('api.firecrawl.dev') &&
     authorityResearch.includes('Promise.all') &&
-    authorityResearch.includes('orchestratedWebSearch') &&
-    modernWebSearch.includes("type: 'openrouter:web_search'") &&
-    modernWebSearch.includes('deprecated') &&
-    webSearch.includes('useOnlinePlugin: true'),
-  'legal authority research races independent discovery paths and uses the current non-Google OpenRouter web-search server tool',
+    authorityResearch.includes('discoverLegalMeshTier3') &&
+    authorityResearch.includes('discoverLegalMeshSupplemental'),
+  'legal authority research uses independent discovery without OpenRouter or Firecrawl fallback',
 );
 must(
   crawlerRegistry.includes('LEXARA_CRAWLER_CAPABILITY_POOL') &&
@@ -1052,13 +1050,16 @@ must(
   'LEXARA identifies the subject before targeted Pantheon research, scopes the requested record categories, and permits dynamic source discovery without silently running a full report',
 );
 
-// Independent live-reasoning recovery invariant.
+// Lexara reasoning and evidence correction share the existing Harmony authority.
 must(
-  orchestrator.includes("import { generateOpenRouterText } from '../openRouterService';") &&
-    orchestrator.includes('independent gateway recovered live legal turn') &&
-    orchestrator.includes('model: CURRENT_AI_MODELS.openRouterAuto') &&
-    orchestrator.indexOf('independent gateway recovered live legal turn') < orchestrator.lastIndexOf('degradedLegalResponse(jurisdiction)'),
-  'LEXARA exhausts an orchestration-independent live reasoning lane before degraded legal mode',
+  !orchestrator.includes("import { generateOpenRouterText }") &&
+    !orchestrator.includes('independent gateway recovered live legal turn') &&
+    orchestrator.includes("getConfiguredHarmonyProviders('legalwhat')") &&
+    orchestrator.includes("providerPolicy: 'legalwhat'") &&
+    orchestrator.includes('lexara-evidence-correction') &&
+    harmony.includes('isHarmonyProviderAllowed(AIProvider.OPENROUTER, options.providerPolicy)') &&
+    harmony.includes('isHarmonyProviderAllowed(task.provider, task.providerPolicy)'),
+  'LEXARA reasoning, correction and recovery retain the canonical scoped provider policy without an independent excluded route',
 );
 
 
@@ -1162,5 +1163,7 @@ must(
     conversation.includes('if (!suppressDocumentBodySpeech)'),
   'document bodies must never be sent to realtime TTS',
 );
+require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-research-routing.cjs')], { stdio: 'inherit' });
 if (!process.exitCode) console.log('LEXARA realization verification passed.');
+
 

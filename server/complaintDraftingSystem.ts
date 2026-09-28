@@ -766,6 +766,7 @@ Provide an enhanced version that:
 3. Emphasizes constitutional violations
 4. Is suitable for official complaint submission`,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt: `You are a legal writing assistant specializing in civil rights complaints. 
 Your task is to improve incident narratives while maintaining complete factual accuracy. 
 Never add facts not present in the original. Focus on clarity and professional presentation.`,

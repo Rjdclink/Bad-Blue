@@ -18,6 +18,9 @@ import {
   getCurrentModelForProvider,
   getHarmonyCapabilities,
   getOpenRouterModelForProvider,
+  getDirectGptOssProvider,
+  isHarmonyProviderAllowed,
+  type HarmonyProviderPolicy,
 } from './aiHarmonyModelRegistry';
 import {
   getHarmonyResolvedModel,
@@ -45,6 +48,7 @@ export interface CollaborationTask {
   maxFallbacks?: number;
   signal?: AbortSignal;
   allowCoolingRecovery?: boolean;
+  providerPolicy?: CollaborationProviderPolicy;
 }
 
 /**
@@ -106,7 +110,7 @@ export type CollaborationRole = keyof typeof COLLABORATION_ROLES;
 /**
  * Get available providers based on context
  */
-export type CollaborationProviderPolicy = 'default' | 'capability-first' | 'capability-first-no-google';
+export type CollaborationProviderPolicy = HarmonyProviderPolicy;
 
 const harmonyProviderCooldownUntil = new Map<AIProvider, number>();
 const harmonyTransportCooldownUntil = new Map<string, number>();
@@ -241,11 +245,11 @@ function markHarmonyProviderSuccess(provider: AIProvider): void {
 
 function getAvailableProvidersForContext(
   _context: UsageContext,
-  _providerPolicy: CollaborationProviderPolicy = 'capability-first',
+  providerPolicy: CollaborationProviderPolicy = 'capability-first',
 ): AIProvider[] {
   // Platform-wide Harmony is capability-driven. User/autonomous context no
   // longer partitions providers into artificial fixed-priority silos.
-  return getConfiguredHarmonyProviders();
+  return getConfiguredHarmonyProviders(providerPolicy);
 }
 
 async function callOpenAICompatibleHarmonyProvider(
@@ -446,7 +450,11 @@ export class AICollaborationOrchestrator {
     
     const configuredProviders = getAvailableProvidersForContext(context, options.providerPolicy);
     const callerPool = new Set(_availableProviders.length ? _availableProviders : configuredProviders);
-    const eligibleProviders = configuredProviders.filter(provider => callerPool.has(provider));
+    const eligibleProviders = Array.from(new Set(configuredProviders
+      .filter(provider => callerPool.has(provider))
+      .map(provider => options.providerPolicy === 'legalwhat' && provider === AIProvider.GPT_OSS
+        ? getDirectGptOssProvider()!
+        : provider)));
     const healthyProviders = eligibleProviders.filter(harmonyProviderAvailable);
     const initialCandidateProviders = healthyProviders.length > 0 ? healthyProviders : eligibleProviders;
 
@@ -486,8 +494,11 @@ export class AICollaborationOrchestrator {
         : [];
       return {
         ...task,
+        providerPolicy: options.providerPolicy,
         systemPrompt: options.systemPrompt,
-        requestTimeoutMs: task.requestTimeoutMs || task.timeout || options.requestTimeoutMs,
+        requestTimeoutMs: options.providerPolicy === 'legalwhat' && options.requestTimeoutMs !== undefined
+          ? options.requestTimeoutMs
+          : task.requestTimeoutMs || task.timeout || options.requestTimeoutMs,
         maxFallbacks: task.maxFallbacks ?? options.maxFallbacks,
         signal: options.signal,
         allowCoolingRecovery: healthyProviders.length === 0,
@@ -524,6 +535,7 @@ export class AICollaborationOrchestrator {
         provider: finalProvider,
         model: this.getDefaultModelForProvider(finalProvider),
         role: 'harmony-synthesizer',
+        providerPolicy: options.providerPolicy,
         prompt: attributes.needsStructuredOutput
           ? 'Synthesize the successful specialist contributions into the requested JSON. Return ONLY valid JSON, with no markdown or provider details.\n\n[Results will be provided]'
           : 'Synthesize the successful specialist contributions into one direct answer to the user. Answer the current question first, remove repetition, preserve material uncertainty, and do not mention providers or orchestration.\n\n[Results will be provided]',
@@ -547,6 +559,7 @@ export class AICollaborationOrchestrator {
     let finalAnswer = this.synthesizeResults(query, results, strategy);
     if (
       /^No successful responses from collaboration\.?$/i.test(finalAnswer.trim())
+      && isHarmonyProviderAllowed(AIProvider.OPENROUTER, options.providerPolicy)
       && process.env.OPENROUTER_API_KEY?.trim()
       && !options.signal?.aborted
     ) {
@@ -1212,7 +1225,22 @@ export class AICollaborationOrchestrator {
     completedTasks: Map<string, CollaborationResult>
   ): Promise<CollaborationResult> {
     const startTime = Date.now();
-    
+    // The scoped GPT OSS alias uses the same canonical direct transport as its
+    // independently configured participant, including that transport's health.
+    if (task.providerPolicy === 'legalwhat' && task.provider === AIProvider.GPT_OSS) {
+      const directProvider = getDirectGptOssProvider();
+      if (directProvider) task = { ...task, provider: directProvider, model: this.getDefaultModelForProvider(directProvider) };
+    }
+    // Guard the actual dispatch as well as selection; an excluded route must not
+    // execute or poison shared provider health when a caller supplies a stale task.
+    if (!isHarmonyProviderAllowed(task.provider, task.providerPolicy)) {
+      return {
+        taskId: task.id, provider: task.provider, model: task.model, role: task.role,
+        content: '', tokensUsed: 0, latencyMs: 0, success: false,
+        error: `Provider ${task.provider} is excluded by the ${task.providerPolicy} policy`,
+      };
+    }
+
     // Build prompt with dependency results
     let prompt = task.prompt;
     if (task.dependencies && task.dependencies.length > 0) {
@@ -1478,7 +1506,7 @@ export class AICollaborationOrchestrator {
       const allAlternatives = this.rankFallbackProviders(
         task,
         (task.fallbackProviders || [])
-          .filter(provider => provider !== task.provider),
+          .filter(provider => provider !== task.provider && isHarmonyProviderAllowed(provider, task.providerPolicy)),
       );
       const healthyAlternatives = allAlternatives.filter(harmonyProviderAvailable);
       const coolingAlternatives = allAlternatives.filter(provider => !harmonyProviderAvailable(provider));

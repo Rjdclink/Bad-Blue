@@ -71,6 +71,7 @@ Provide verification with specific legal authorities (statutes, case law, regula
       `fact-check-${modelName}`,
       userPrompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt,
         temperature: 0.1, // Low temperature for factual accuracy
         useJSON: true

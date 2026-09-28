@@ -62,8 +62,6 @@ export interface LexaraCrawlerDescriptor {
 }
 
 const always = () => true;
-const hasFirecrawl = () => !!process.env.FIRECRAWL_API_KEY?.trim();
-const hasOpenRouter = () => !!process.env.OPENROUTER_API_KEY?.trim();
 const hasPacer = () => !!(process.env.PACER_USERNAME?.trim() && process.env.PACER_PASSWORD?.trim());
 const hasSpiderFoot = () => !!process.env.SPIDERFOOT_URL?.trim();
 const hasBrowser = () => !!process.env.BROWSER_WS_ENDPOINT?.trim();
@@ -123,7 +121,6 @@ export const LEXARA_CRAWLER_CAPABILITY_POOL: readonly LexaraCrawlerDescriptor[] 
   c('razor-relation', 'RelationRazor', 'razor', 'server/services/pantheon/razors/implementations.ts', ['relationships', 'structured-extraction'], 'extractor', 'instant'),
   c('razor-media', 'MediaRazor', 'razor', 'server/services/pantheon/razors/implementations.ts', ['media', 'structured-extraction'], 'extractor', 'instant'),
 
-  c('seed-startrek', 'SeedFetchStarTrek', 'seed-first', 'server/services/crawlers/seedFirst/SeedFetchStarTrek.ts', ['web-discovery', 'legal-authority'], 'retrieval', 'fast', hasFirecrawl),
   c('seed-birdofprey', 'SeedFetchBirdOfPrey', 'seed-first', 'server/services/crawlers/seedFirst/SeedFetchBirdOfPrey.ts', ['web-discovery', 'deep-crawl'], 'retrieval', 'fast', hasBrowser),
   c('seed-trinity', 'SeedFetchTrinity', 'seed-first', 'server/services/crawlers/seedFirst/SeedFetchTrinity.ts', ['web-discovery', 'verification'], 'retrieval', 'fast'),
   c('seed-sixdegrees', 'SeedFetchSixDegrees', 'seed-first', 'server/services/crawlers/seedFirst/SeedFetchSixDegrees.ts', ['social-graph', 'relationships'], 'retrieval', 'deep'),
@@ -145,8 +142,6 @@ export const LEXARA_CRAWLER_CAPABILITY_POOL: readonly LexaraCrawlerDescriptor[] 
   c('whitepages', 'WhitePagesScraper', 'people', 'server/services/peopleSearch/sources/WhitePagesScraper.ts', ['people-search', 'identity', 'contact', 'address'], 'retrieval', 'deep', hasBrowser),
   c('social-media-scraper', 'SocialMediaScraperService', 'people', 'server/services/socialMediaScraper.ts', ['social-media', 'identity'], 'retrieval', 'deep'),
 
-  c('firecrawl', 'Firecrawl', 'external', 'server/lexara/LexaraAuthorityResearch.ts', ['web-discovery', 'legal-authority', 'deep-crawl'], 'external', 'fast', hasFirecrawl),
-  c('openrouter-web-search', 'OpenRouter Web Search', 'external', 'server/openRouterWebSearch.ts', ['web-discovery', 'legal-authority', 'verification'], 'external', 'fast', hasOpenRouter),
   c('spiderfoot', 'SpiderFoot', 'external', 'server/services/spiderfootClient.ts', ['people-search', 'identity', 'social-media', 'verification'], 'external', 'deep', hasSpiderFoot),
   c('puppeteer', 'Puppeteer', 'external', 'server/services/crawlers/seedFirst/SeedFetchBirdOfPrey.ts', ['web-discovery', 'deep-crawl'], 'external', 'deep', hasBrowser),
   c('apify', 'Apify', 'external', 'server/services/volumeEngine/stealth/ApifyIntegration.ts', ['web-discovery', 'deep-crawl'], 'external', 'deep'),

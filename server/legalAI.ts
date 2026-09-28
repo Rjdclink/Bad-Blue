@@ -40,6 +40,7 @@ async function generateLegalContent(
       `legal-${taskName}`,
       prompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt,
         temperature: 0.7,
         useJSON: expectJSON
@@ -179,6 +180,7 @@ export async function analyzeLegalIssue(
           `legal-consultation-${lawType}`,
           consultationPrompt,
           {
+            providerPolicy: 'legalwhat',
             systemPrompt: expertise.systemPrompt,
             temperature: 0.3
           },
@@ -245,6 +247,7 @@ IMPORTANT: Write your entire response in plain English, as if explaining to some
       'legal-issue-analysis',
       prompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt,
         temperature: 0.3
       },
@@ -411,6 +414,7 @@ RESPONSE FORMAT:
       'legal-statute-research-pass1',
       userPrompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt,
         temperature: 0.1,
         useJSON: true
@@ -451,6 +455,7 @@ Return the ENHANCED and VERIFIED research in the same JSON format.`;
       'legal-statute-research-pass2',
       verificationPrompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt,
         temperature: 0.1,
         useJSON: true
@@ -636,6 +641,7 @@ RESPONSE FORMAT:
       'legal-district-rules',
       userPrompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt,
         temperature: 0.2,
         useJSON: true
@@ -810,6 +816,7 @@ RESPONSE FORMAT:
       'legal-caselaw-pass1',
       userPrompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt,
         temperature: 0.2,
         useJSON: true
@@ -857,6 +864,7 @@ Return the ENHANCED and VERIFIED case law analysis in the same JSON format.`;
       'legal-caselaw-pass2',
       shepardizationPrompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt,
         temperature: 0.2,
         useJSON: true
@@ -1142,6 +1150,7 @@ Generate a complete, court-ready document that demonstrates sophisticated legal 
       `legal-${documentType}-generation`,
       userPrompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt,
         temperature: 0.3
       },
@@ -1366,6 +1375,7 @@ NOTE: Generate realistic, plausible data based on typical patterns in ${city}, $
       'legal-public-records',
       userPrompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt,
         temperature: 0.7,
         useJSON: true
@@ -1582,6 +1592,7 @@ YOU MUST RETURN A RATING OF 1, 2, 3, or null BASED STRICTLY ON THE strengthAsses
       'legal-actionability-pass1',
       userPrompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt,
         temperature: 0.5,
         useJSON: true
@@ -1640,6 +1651,7 @@ Return the ENHANCED and VERIFIED analysis in the same JSON format.`;
       'legal-actionability-pass2',
       verificationPrompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt,
         temperature: 0.5,
         useJSON: true
@@ -1809,6 +1821,7 @@ IMPORTANT NOTES:
       'legal-persuasive-content',
       userPrompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt,
         temperature: 0.7,
         useJSON: true
@@ -2027,6 +2040,7 @@ IMPORTANT NOTES:
       'legal-form-research',
       userPrompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt,
         temperature: 0.6,
         useJSON: true
@@ -2312,6 +2326,7 @@ Analyze this response and:
       'legal-form-assistant',
       userPrompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt,
         temperature: 0.7,
         useJSON: true
@@ -2413,6 +2428,7 @@ Return ONLY the redrafted text, no explanations or meta-commentary.`;
       'legal-redraft-offense',
       userPrompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt,
         temperature: 0.3
       },
@@ -2494,6 +2510,7 @@ Use ONLY the verified facts above. Do not add information not supported by the s
       'enhanced-legal-analysis',
       analysisPrompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt,
         temperature: 0.3,
       },

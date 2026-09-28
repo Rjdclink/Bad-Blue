@@ -199,6 +199,7 @@ Return ONLY a JSON array of questions in this format:
       'legal-consultation-interview',
       prompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.3,
         maxTokens: 1500,
@@ -256,6 +257,7 @@ Return ONLY valid JSON in this exact format:
       'fact-extraction',
       prompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.1,
         maxTokens: 2000,
@@ -344,6 +346,7 @@ Return ONLY valid JSON array in this exact format:
       'legal-analysis',
       prompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.2,
         maxTokens: 3000,
@@ -404,6 +407,7 @@ Return ONLY valid JSON array:
       'gap-analysis',
       prompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.2,
         maxTokens: 2000,
@@ -477,6 +481,7 @@ Return ONLY valid JSON:
       'procedural-strategy',
       prompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.2,
         maxTokens: 2000,
@@ -557,6 +562,7 @@ Return ONLY valid JSON:
       'strength-assessment',
       prompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.2,
         maxTokens: 1500,
@@ -767,6 +773,7 @@ Write in narrative form, not JSON.`;
       'consultation-summary',
       prompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.4,
         maxTokens: detailLevel === 'comprehensive' ? 4000 : detailLevel === 'detailed' ? 2500 : 1500

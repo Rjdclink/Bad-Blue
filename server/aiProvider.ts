@@ -18,7 +18,7 @@ import {
   TaskComplexity,
   type AITaskMetadata 
 } from './aiTokenGovernor';
-import { getConfiguredHarmonyProviders, getCurrentModelForProvider, CURRENT_AI_MODELS } from './aiHarmonyModelRegistry';
+import { getConfiguredHarmonyProviders, getCurrentModelForProvider, CURRENT_AI_MODELS, type HarmonyProviderPolicy } from './aiHarmonyModelRegistry';
 import { 
   generateZeroApiResponse, 
   shouldUseZeroApiMode, 
@@ -32,6 +32,7 @@ export { getZeroApiStatus } from './zeroApiIntelligence';
 export type { AITaskMetadata };
 
 interface AIResponse {
+  contributions?: import('./aiCollaborationOrchestrator').CollaborationResult[];
   content: string;
   provider: AIProvider;
   tokensUsed: number;
@@ -39,6 +40,8 @@ interface AIResponse {
 }
 
 interface GenerateOptions {
+  includeContributions?: boolean;
+  providerPolicy?: HarmonyProviderPolicy;
   systemPrompt?: string;
   temperature?: number;
   maxTokens?: number;
@@ -62,7 +65,7 @@ export async function generateText(
   options: GenerateOptions = {}
 ): Promise<AIResponse> {
   const startTime = Date.now();
-  const providers = getConfiguredHarmonyProviders();
+  const providers = getConfiguredHarmonyProviders(options.providerPolicy);
 
   if (providers.length > 0) {
     const budget = await aiTokenGovernor.getBudgetForTask(task);
@@ -102,18 +105,22 @@ export async function generateText(
         } as any,
         providers,
         {
-          providerPolicy: 'capability-first',
+          providerPolicy: options.providerPolicy || 'capability-first',
           systemPrompt: options.systemPrompt,
+          ...(options.providerPolicy === 'legalwhat' ? { signal: options.signal } : {}),
         },
       );
 
-      if (!orchestrated.finalAnswer?.trim()) {
+      if (!orchestrated.finalAnswer?.trim()
+        || (options.providerPolicy === 'legalwhat'
+          && /^No successful responses from collaboration\.?$/i.test(orchestrated.finalAnswer.trim()))) {
         throw new Error('Harmony returned no usable synthesized answer');
       }
 
       return {
         content: orchestrated.finalAnswer,
-        provider: orchestrated.providersUsed[0] || AIProvider.OPENROUTER,
+        ...(options.includeContributions ? { contributions: orchestrated.contributions } : {}),
+        provider: orchestrated.providersUsed[0] || (options.providerPolicy === 'legalwhat' ? providers[0] : AIProvider.OPENROUTER),
         tokensUsed: orchestrated.totalTokens,
         latencyMs: Date.now() - startTime,
       };
@@ -135,7 +142,7 @@ export async function generateText(
   });
   return {
     content: zeroApiResult.content,
-    provider: AIProvider.OPENROUTER,
+    provider: options.providerPolicy === 'legalwhat' ? AIProvider.LMAI : AIProvider.OPENROUTER,
     tokensUsed: Math.floor(zeroApiResult.content.length / 4),
     latencyMs: Date.now() - startTime,
   };
@@ -318,7 +325,7 @@ export async function generateLegalAnalysis(
     TaskPriority.CRITICAL_USER,
     TaskComplexity.COMPREHENSIVE
   );
-  const response = await generateText(task, prompt, options);
+  const response = await generateText(task, prompt, { ...options, providerPolicy: 'legalwhat' });
   return response.content;
 }
 

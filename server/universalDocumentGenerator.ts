@@ -660,6 +660,7 @@ DO NOT include the caption, signature block, or certificate of service - those w
       `document-generation-${request.documentType}`,
       prompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.3,
         maxTokens: 4000

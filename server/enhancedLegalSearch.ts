@@ -2,7 +2,7 @@
  * Ultra-Enhanced AI Legal Search and Fact Analysis System
  * 
  * Integrates:
- * - Parallel querying of all OpenRouter free-tier models (DeepSeek, Grok, Kimi)
+ * - Legal reasoning through the canonical LegalWhat Harmony mesh
  * - Asynchronous streaming and aggregation of model responses
  * - Entity extraction for legal elements (dates, statutes, parties, citations, clauses)
  * - Strict source attribution validation (discard uncited facts)
@@ -14,16 +14,6 @@
  * - No hallucinations: only verified, cited sources
  */
 
-import {
-  deepSeekSearch,
-  llamaSearch,
-  qwenSearch,
-  grokSearch,
-  kimiSearch,
-  isOpenRouterAvailable,
-  getOpenRouterStatus,
-  type OpenRouterSearchResult
-} from './openRouterService';
 import { generateUserText, TaskPriority } from './aiProvider';
 
 // ============================================
@@ -966,13 +956,8 @@ export class EnhancedLegalSearchSystem {
     console.log(`[Enhanced Legal Search] Starting search for: ${query}`);
     const startTime = Date.now();
 
-    // Check if OpenRouter is available
-    if (!isOpenRouterAvailable()) {
-      throw new Error('OpenRouter API not configured - cannot perform enhanced legal search');
-    }
-
-    // Step 1: Parallel query all available OpenRouter models
-    const modelResponses = await this.parallelQueryModels(query, options.context);
+    // Step 1: Query the canonical legal mesh once; retain its individual contributions.
+    const modelResponses = await this.queryLegalMesh(query, options.context);
     console.log(`[Enhanced Legal Search] Received ${modelResponses.length} model responses`);
 
     // Step 2: Extract entities from all responses
@@ -1022,98 +1007,51 @@ export class EnhancedLegalSearchSystem {
     };
   }
 
-  /**
-   * Query all available OpenRouter models in parallel
-   */
-  private async parallelQueryModels(query: string, context?: string): Promise<ModelResponse[]> {
+  /** Preserve independent contributions without a second provider-routing authority. */
+  private async queryLegalMesh(query: string, context?: string): Promise<ModelResponse[]> {
     const contextPrompt = context ? `Context: ${context}\n\n` : '';
     const fullPrompt = `${contextPrompt}Legal Question: ${query}\n\nProvide detailed, factual information with specific source citations (URLs, statutes, case law). Include all relevant legal authorities and precedents.`;
+    const start = Date.now();
+    const response = await generateUserText(
+      'enhanced-legal-search',
+      fullPrompt,
+      {
+        providerPolicy: 'legalwhat',
+        includeContributions: true,
+        systemPrompt: 'You are an expert legal researcher. Provide detailed, factual information with specific source citations (URLs, statutes, case law).',
+        temperature: 0.3,
+        maxTokens: 3000,
+      },
+      TaskPriority.CRITICAL_USER,
+    );
 
-    const promises: Promise<{ model: string; result: OpenRouterSearchResult | null; processingTime: number }>[] = [];
+    // A synthesis repeats its inputs; it is not another independent contribution.
+    const seen = new Set<string>();
+    const modelResponses = (response.contributions || []).flatMap(contribution => {
+      const model = `${contribution.provider}:${contribution.model}`;
+      if (!contribution.success || !contribution.content?.trim()
+        || /synthesizer$/.test(contribution.role) || seen.has(model)) return [];
+      seen.add(model);
+      return [{
+        model,
+        response: contribution.content,
+        sources: this.extractUrlsFromText(contribution.content),
+        entities: [],
+        processingTime: contribution.latencyMs,
+      }];
+    });
+    if (modelResponses.length) return modelResponses;
+    if (!response.content?.trim()) throw new Error('All AI models unavailable for legal search');
 
-    // Check status of each model
-    const status = getOpenRouterStatus();
-
-    if (status.deepseek.available) {
-      promises.push(
-        (async () => {
-          const start = Date.now();
-          const result = await deepSeekSearch(fullPrompt, context);
-          return { model: 'DeepSeek', result, processingTime: Date.now() - start };
-        })()
-      );
-    }
-
-    if (status.grok.available) {
-      promises.push(
-        (async () => {
-          const start = Date.now();
-          const result = await grokSearch(fullPrompt, { includeReasoning: true });
-          return { model: 'Grok', result, processingTime: Date.now() - start };
-        })()
-      );
-    }
-
-    if (status.kimi.available) {
-      promises.push(
-        (async () => {
-          const start = Date.now();
-          const result = await kimiSearch(fullPrompt, { structuredOutput: true });
-          return { model: 'Kimi', result, processingTime: Date.now() - start };
-        })()
-      );
-    }
-
-    // Execute all queries in parallel
-    const results = await Promise.allSettled(promises);
-
-    const modelResponses: ModelResponse[] = [];
-
-    for (const result of results) {
-      if (result.status === 'fulfilled' && result.value.result) {
-        modelResponses.push({
-          model: result.value.model,
-          response: result.value.result.content,
-          sources: result.value.result.sources || [],
-          entities: [],
-          processingTime: result.value.processingTime,
-        });
-      } else if (result.status === 'rejected') {
-        console.error(`[Enhanced Legal Search] Model query failed:`, result.reason);
-      }
-    }
-
-    // Fallback to unified AI provider if no OpenRouter models available
-    if (modelResponses.length === 0) {
-      console.log('[Enhanced Legal Search] No OpenRouter models available, using fallback AI provider');
-      const start = Date.now();
-      
-      try {
-        const fallbackResponse = await generateUserText(
-          'enhanced-legal-search-fallback',
-          fullPrompt,
-          {
-            systemPrompt: 'You are an expert legal researcher. Provide detailed, factual information with specific source citations (URLs, statutes, case law).',
-            temperature: 0.3,
-            maxTokens: 3000,
-          },
-          TaskPriority.CRITICAL_USER
-        );
-
-        modelResponses.push({
-          model: 'Fallback AI',
-          response: fallbackResponse.content,
-          sources: this.extractUrlsFromText(fallbackResponse.content),
-          entities: [],
-          processingTime: Date.now() - start,
-        });
-      } catch (error) {
-        console.error('[Enhanced Legal Search] Fallback AI failed:', error);
-        throw new Error('All AI models unavailable for legal search');
-      }
-    }
-
-    return modelResponses;
+    // Preserve the existing single-answer/local fallback contract. A single
+    // response does not become multiple votes in the existing consensus engine.
+    return [{
+      model: String(response.provider),
+      response: response.content,
+      sources: this.extractUrlsFromText(response.content),
+      entities: [],
+      processingTime: Date.now() - start,
+    }];
   }
 
   private extractUrlsFromText(text: string): string[] {

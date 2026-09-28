@@ -8,11 +8,15 @@ import { CURRENT_AI_MODELS } from './aiHarmonyModelRegistry';
 
 let claudeClient: Anthropic | null = null;
 
+function getClaudeApiKey(): string | undefined {
+  return process.env.ANTHROPIC_API_KEY?.trim() || process.env.CLAUDE_API_KEY?.trim();
+}
+
 function getClaudeClient(): Anthropic {
   if (!claudeClient) {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
+    const apiKey = getClaudeApiKey();
     if (!apiKey) {
-      throw new Error('ANTHROPIC_API_KEY environment variable is not set');
+      throw new Error('ANTHROPIC_API_KEY or CLAUDE_API_KEY environment variable is not set');
     }
     claudeClient = new Anthropic({ apiKey });
   }
@@ -23,7 +27,7 @@ function getClaudeClient(): Anthropic {
  * Check if Claude is available
  */
 export function isClaudeAvailable(): boolean {
-  return !!process.env.ANTHROPIC_API_KEY;
+  return !!getClaudeApiKey();
 }
 
 export interface ClaudeOptions {

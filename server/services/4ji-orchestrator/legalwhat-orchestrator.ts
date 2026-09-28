@@ -508,7 +508,8 @@ Additional context: ${JSON.stringify(request.additionalContext ?? {})}`;
       const aiResponse = await generateUserText(
         `legal-consultation-${request.id}`,
         prompt,
-        { useJSON: true, temperature: 0.2 },
+        {
+          providerPolicy: 'legalwhat', useJSON: true, temperature: 0.2 },
         request.urgency === 'emergency' ? TaskPriority.CRITICAL_USER : TaskPriority.HIGH_USER
       );
       const result = parseConsultationResponse(aiResponse.content);
@@ -564,7 +565,8 @@ Additional context: ${JSON.stringify(request.additionalContext ?? {})}`;
         const response = await generateUserText(
           `legal-document-${documentType}`,
           `Create a complete ${documentType} using the following case data. Use professional legal formatting and do not invent facts.\n\n${JSON.stringify(templateData)}`,
-          { temperature: 0.2 },
+          {
+            providerPolicy: 'legalwhat', temperature: 0.2 },
           TaskPriority.HIGH_USER
         );
 
@@ -598,7 +600,8 @@ Additional context: ${JSON.stringify(request.additionalContext ?? {})}`;
         const response = await generateUserText(
           'legal-evidence-analysis',
           `Analyze this evidence for relevance, reliability, corroboration needs, and legal significance. Return only JSON with analysis and strength (a number from 0 to 1).\n\nEvidence:\n${JSON.stringify(evidenceData)}`,
-          { useJSON: true, temperature: 0.2 },
+          {
+            providerPolicy: 'legalwhat', useJSON: true, temperature: 0.2 },
           TaskPriority.HIGH_USER
         );
 

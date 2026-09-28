@@ -237,6 +237,7 @@ Return JSON format:
           `legal-extraction-${schema.name}`,
           userPrompt,
           {
+            providerPolicy: 'legalwhat',
             systemPrompt,
             temperature,
             useJSON: true,

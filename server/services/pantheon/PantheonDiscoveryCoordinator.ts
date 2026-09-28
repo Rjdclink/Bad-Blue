@@ -1,3 +1,4 @@
+import type { HarmonyProviderPolicy } from '../../aiHarmonyModelRegistry';
 import { GoogleGenAI } from '@google/genai';
 import { getPantheonLearnedQueryPatterns, getPantheonLearnedSources, rankPantheonDiscoveryUrls } from './PantheonDiscoveryLearning';
 
@@ -267,7 +268,8 @@ export async function discoverPantheonSourcesParallel(
     limit?: number;
     timeoutMs?: number;
     signal?: AbortSignal;
-
+    includePaidFallback?: boolean;
+    providerPolicy?: HarmonyProviderPolicy;
   } = {},
 ): Promise<PantheonDiscoveryCoordinatorResult> {
   const limit = Math.max(1, Math.min(options.limit || 12, 24));
@@ -365,3 +367,4 @@ export async function discoverPantheonSourcesParallel(
     lanesWithResults: [...new Set(lanesWithResults)],
   };
 }
+
