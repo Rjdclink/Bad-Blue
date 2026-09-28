@@ -32,6 +32,7 @@ export enum TaskPriority {
  * Task attributes for intelligent model selection
  */
 export interface TaskAttributes {
+  legalWorkKind?: 'fast' | 'reasoning' | 'drafting';
   needsMultimodal?: boolean;
   needsLongContext?: boolean;
   needsMassiveContext?: boolean;

@@ -48,6 +48,7 @@ export enum AIProvider {
   GROQ = 'groq',
   MISTRAL = 'mistral',
   CLAUDE = 'claude',
+  OPENAI = 'openai',
   DEEPSEEK = 'deepseek',
   // OpenRouter models (legacy names for backward compatibility)
   GROK = 'grok',

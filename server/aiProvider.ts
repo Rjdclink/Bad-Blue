@@ -232,6 +232,7 @@ async function callGroq(
       temperature: options.temperature ?? 0.7,
       max_tokens: maxTokens,
       signal: options.signal,
+      providerPolicy: options.providerPolicy,
     });
 
     const content = response.choices[0]?.message?.content;
@@ -351,12 +352,8 @@ export async function searchOfficerData(
  * This ensures that provider-incompatible model identifiers cannot leak across transports.
  * the provider's default model is used instead.
  * 
- * Task-aware model selection (December 2025):
- * - GEMINI: 3-tier selection (lite/default/pro) based on complexity
- * - GROQ: 2-tier selection (default/comprehensive) 
- * - MISTRAL: Single model (only free tier available)
- * - CLAUDE: 2-tier selection (default/comprehensive)
- * - OPENROUTER: Valid free models (Qwen, DeepSeek, Llama)
+ * Task-aware model selection. LegalWhat passes an explicit model selected from
+ * the canonical registry; no service-local table may override that choice.
  */
 function getProviderModel(provider: AIProvider, requestedModel?: string, complexity?: TaskComplexity): string {
   const validModels: Partial<Record<AIProvider, { 
@@ -441,13 +438,12 @@ function getProviderModel(provider: AIProvider, requestedModel?: string, complex
       }
     }
 
-    // GROQ: 2-tier selection (both Llama models are free)
+    // GROQ: 2-tier selection using the configured GPT-OSS models.
     if (provider === AIProvider.GROQ && complexity === TaskComplexity.COMPREHENSIVE && providerConfig.comprehensive) {
       return providerConfig.comprehensive;
     }
 
-    // MISTRAL: Only one free model - no selection needed
-    // Always returns undefined here, will fall back to default
+    // MISTRAL: Explicit legal model selection remains authoritative.
 
     // CLAUDE: 2-tier selection based on complexity
     if (provider === AIProvider.CLAUDE && complexity === TaskComplexity.COMPREHENSIVE && providerConfig.comprehensive) {
