@@ -17,8 +17,12 @@ while ((match = entryPattern.exec(registry))) {
   entries.push({ id: match[1], name: match[2], path: match[3] });
 }
 
-if (entries.length < 63) fail(`crawler capability pool unexpectedly small: ${entries.length}`);
+if (entries.length < 60) fail(`crawler capability pool unexpectedly small: ${entries.length}`);
 else ok(`crawler capability pool inventories ${entries.length} executable/callable capabilities`);
+
+for (const removed of ['seed-startrek', 'firecrawl', 'openrouter-web-search']) {
+  if (entries.some(entry => entry.id === removed)) fail(`removed research provider remains selectable: ${removed}`);
+}
 
 const ids = new Set();
 for (const entry of entries) {
@@ -34,11 +38,11 @@ const requiredNames = [
   'IceCrawler', 'HydraCrawler', 'WraithCrawler', 'FarmCrawler', 'PhantomCrawler', 'NovaCrawler',
   'IdentityRazor', 'ContactRazor', 'AddressRazor', 'SocialRazor', 'RecordRazor', 'AssetRazor', 'CourtRazor',
   'BusinessRazor', 'RelationRazor', 'MediaRazor',
-  'SeedFetchStarTrek', 'SeedFetchBirdOfPrey', 'SeedFetchTrinity', 'SeedFetchSixDegrees',
+  'SeedFetchBirdOfPrey', 'SeedFetchTrinity', 'SeedFetchSixDegrees',
   'InstantLegalCrawler', 'AdaptiveCrawler', 'LegalCrawler', 'BeneficialCrawler', 'PublicRecordScraper',
   'PACERScraper', 'StateCourtScraper', 'CountyCourtScraper', 'WarrantDatabaseScraper', 'SexOffenderRegistryScraper',
   'FastPeopleSearchScraper', 'TruePeopleSearchScraper', 'WhitePagesScraper', 'SocialMediaScraperService',
-  'Firecrawl', 'OpenRouter Web Search', 'SpiderFoot', 'Puppeteer', 'Apify', 'Crawl4AI Adaptive Pattern',
+  'SpiderFoot', 'Puppeteer', 'Apify', 'Crawl4AI Adaptive Pattern',
   'CainCrawler', 'ConjoinedTwinCrawler', 'EnhancedMicroCrawler', 'CainTwinHybrid', 'GravityCrawler',
   'DiscoBallCrawler', 'Starburst Dynamic Crawler Pool', 'Starburst Micro-Crawlers',
   'Verification Crawlers', 'SnakeAgent Legacy Crawler',

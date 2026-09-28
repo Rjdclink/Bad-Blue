@@ -1,3 +1,5 @@
+import { isHarmonyProviderAllowed, type HarmonyProviderPolicy } from '../../aiHarmonyModelRegistry';
+import type { AIProvider } from '../../aiTokenGovernor';
 import { GoogleGenAI } from '@google/genai';
 import { orchestratedWebSearch } from '../../openRouterWebSearch';
 import { supplementalPantheonDiscovery } from './PantheonSupplementalDiscovery';
@@ -231,6 +233,7 @@ export async function discoverPantheonSourcesParallel(
     timeoutMs?: number;
     signal?: AbortSignal;
     includePaidFallback?: boolean;
+    providerPolicy?: HarmonyProviderPolicy;
   } = {},
 ): Promise<PantheonDiscoveryCoordinatorResult> {
   const limit = Math.max(1, Math.min(options.limit || 12, 24));
@@ -269,7 +272,7 @@ export async function discoverPantheonSourcesParallel(
       75,
       [] as string[],
     )),
-    lane('first-party', true, async () => {
+    lane('first-party', isHarmonyProviderAllowed('openrouter' as AIProvider, options.providerPolicy), async () => {
       // This lane is supplemental only. Credit/provider failure is normalized to
       // an empty lane so registry, learned, self-hosted and Common Crawl lanes
       // remain fully independent.
@@ -314,7 +317,7 @@ export async function discoverPantheonSourcesParallel(
   if (learnedPattern && !query.toLowerCase().includes(learnedPattern.toLowerCase())) {
     const learnedQuery = `${query} ${learnedPattern}`;
     const retry = await Promise.all([
-      lane('first-party', true, async () => {
+      lane('first-party', isHarmonyProviderAllowed('openrouter' as AIProvider, options.providerPolicy), async () => {
         const result = await orchestratedWebSearch(learnedQuery, {
           useOnlinePlugin: true,
           timeout: Math.min(timeoutMs, 650),
