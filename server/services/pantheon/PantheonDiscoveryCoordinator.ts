@@ -8,7 +8,6 @@ export type PantheonDiscoveryLane =
   | 'ddgs'
   | 'openserp'
   | 'commoncrawl'
-  | 'scrapingbee';
 
 export interface PantheonDiscoveryEvidence {
   url: string;
