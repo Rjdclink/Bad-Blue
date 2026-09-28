@@ -8,7 +8,6 @@ export type LexaraTTSProviderId =
   | 'deepgram'
   | 'xai'
   | 'groq'
-  | 'openrouter'
   | 'azure'
   | 'elevenlabs';
 
@@ -80,10 +79,6 @@ interface MistralVoice {
   languages?: string[];
 }
 
-interface OpenRouterSpeechModel {
-  id?: string;
-}
-
 const runtime = new Map<LexaraTTSProviderId, ProviderRuntimeState>();
 const probeInFlight = new Map<LexaraTTSProviderId, Promise<boolean>>();
 const LEXARA_TTS_READY_TTL_MS = 5 * 60_000;
@@ -92,9 +87,7 @@ const LEXARA_TTS_TRANSIENT_COOLDOWN_MS = 15_000;
 const LEXARA_TTS_PROBE_TIMEOUT_MS = 4_000;
 const LEXARA_TTS_REQUEST_TIMEOUT_MS = 8_000;
 const MISTRAL_VOICE_CACHE_TTL_MS = 30 * 60_000;
-const OPENROUTER_CATALOG_TTL_MS = 10 * 60_000;
 let mistralVoiceCache: { id: string; expiresAt: number } | null = null;
-let openRouterCatalogCache: { ids: Set<string>; expiresAt: number } | null = null;
 let warmStandbyTimerStarted = false;
 
 function deepgramApiKey(): string {
@@ -109,8 +102,6 @@ const LEXARA_FEMALE_VOICE = {
   groq: process.env.GROQ_TTS_VOICE?.trim() || 'hannah',
   azure: process.env.AZURE_TTS_VOICE?.trim() || 'en-US-JennyNeural',
   xai: process.env.XAI_TTS_VOICE_ID?.trim() || 'eve',
-  openrouterMistral: process.env.OPENROUTER_MISTRAL_TTS_VOICE?.trim() || 'gb_jane_neutral',
-  openrouterGemini: process.env.OPENROUTER_GEMINI_TTS_VOICE?.trim() || 'Kore',
 } as const;
 
 export function getLexaraVoiceProfileBindings() {
@@ -123,20 +114,12 @@ export function getLexaraVoiceProfileBindings() {
       groq: LEXARA_FEMALE_VOICE.groq,
       azure: LEXARA_FEMALE_VOICE.azure,
       xai: LEXARA_FEMALE_VOICE.xai,
-      openrouterMistral: LEXARA_FEMALE_VOICE.openrouterMistral,
-      openrouterGemini: LEXARA_FEMALE_VOICE.openrouterGemini,
     },
   };
 }
 
 function providerIndependenceDomain(provider: LexaraTTSProviderId): string {
-  if (provider !== 'openrouter') return provider;
-  const model = stateFor(provider).lastModel || '';
-  if (model.startsWith('mistralai/')) return 'mistral';
-  if (model.startsWith('google/')) return 'gemini';
-  if (model.startsWith('x-ai/')) return 'xai';
-  if (model.startsWith('microsoft/')) return 'azure';
-  return 'openrouter';
+  return provider;
 }
 
 function stateFor(provider: LexaraTTSProviderId): ProviderRuntimeState {
@@ -169,8 +152,6 @@ function configured(provider: LexaraTTSProviderId): boolean {
       return !!process.env.XAI_API_KEY?.trim();
     case 'groq':
       return !!process.env.GROQ_API_KEY?.trim();
-    case 'openrouter':
-      return !!process.env.OPENROUTER_API_KEY?.trim();
     case 'azure':
       return !!(process.env.AZURE_SPEECH_KEY?.trim() && process.env.AZURE_SPEECH_REGION?.trim());
     case 'elevenlabs':
@@ -181,7 +162,6 @@ function configured(provider: LexaraTTSProviderId): boolean {
 const BASE_ORDER: LexaraTTSProviderId[] = [
   'deepgram',
   'gemini',
-  'openrouter',
   'mistral',
   'groq',
   'azure',
@@ -231,10 +211,9 @@ function providerScore(provider: LexaraTTSProviderId): number {
   return base + readinessBonus + conversationalPrimaryBonus - failureRate * 250 - latencyPenalty - slowRoutePenalty - quotaPenalty;
 }
 
-function orderedCandidates(text: string): LexaraTTSProviderId[] {
+function orderedCandidates(): LexaraTTSProviderId[] {
   return getConfiguredLexaraTTSProviders()
     .filter(provider => ready(provider))
-    .filter(provider => provider !== 'groq' || text.length <= 200)
     .sort((a, b) => providerScore(b) - providerScore(a));
 }
 
@@ -345,13 +324,55 @@ async function fetchWithTimeout(
   const relayAbort = () => controller.abort(parentSignal?.reason);
   if (parentSignal?.aborted) controller.abort(parentSignal.reason);
   else parentSignal?.addEventListener('abort', relayAbort, { once: true });
-
-  const timer = setTimeout(() => controller.abort(new Error(`TTS request timed out after ${timeoutMs}ms`)), timeoutMs);
-  try {
-    return await fetch(url, { ...init, signal: controller.signal });
-  } finally {
+  let timer: ReturnType<typeof setTimeout>;
+  const armTimeout = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => controller.abort(new Error(`TTS request timed out after ${timeoutMs}ms without audio progress`)), timeoutMs);
+  };
+  const cleanup = () => {
     clearTimeout(timer);
     parentSignal?.removeEventListener('abort', relayAbort);
+  };
+  armTimeout();
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    if (!response.body) { cleanup(); return response; }
+    const reader = response.body.getReader();
+    let finished = false;
+    let onAbort: () => void;
+    const finish = () => {
+      finished = true;
+      cleanup();
+      controller.signal.removeEventListener('abort', onAbort);
+    };
+    const body = new ReadableStream<Uint8Array>({
+      start(stream) {
+        onAbort = () => {
+          if (finished) return;
+          finish();
+          stream.error(controller.signal.reason);
+          void reader.cancel(controller.signal.reason).catch(() => undefined);
+        };
+        if (controller.signal.aborted) onAbort();
+        else controller.signal.addEventListener('abort', onAbort, { once: true });
+      },
+      async pull(stream) {
+        try {
+          const part = await reader.read();
+          if (finished) return;
+          if (part.done) { finish(); stream.close(); return; }
+          if (part.value.length) armTimeout();
+          stream.enqueue(part.value);
+        } catch (error) {
+          if (!finished) { finish(); stream.error(error); }
+        }
+      },
+      async cancel(reason) { finish(); await reader.cancel(reason); },
+    });
+    return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+  } catch (error) {
+    cleanup();
+    throw error;
   }
 }
 
@@ -409,27 +430,25 @@ async function requireAudioResponse(
   };
 }
 
-async function fetchMistralVoiceDetails(voiceId: string): Promise<MistralVoice | null> {
-  try {
-    const response = await fetchWithTimeout(
-      `https://api.mistral.ai/v1/audio/voices/${encodeURIComponent(voiceId)}`,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.MISTRAL_API_KEY!.trim()}`,
-          Accept: 'application/json',
-        },
-      },
-      2_500,
-    );
-    if (!response.ok) return null;
-    const detail = await response.json() as MistralVoice;
-    return detail?.id ? detail : null;
-  } catch {
-    return null;
+async function fetchMistralVoiceDetails(voiceId: string, signal?: AbortSignal): Promise<MistralVoice | null> {
+  const response = await fetchWithTimeout(
+    `https://api.mistral.ai/v1/audio/voices/${encodeURIComponent(voiceId)}`,
+    { headers: { Authorization: `Bearer ${process.env.MISTRAL_API_KEY!.trim()}`, Accept: 'application/json' }, signal },
+    2_500,
+  );
+  if (response.status === 404) { await response.body?.cancel(); return null; }
+  if (!response.ok) {
+    const detail = (await response.text()).slice(0, 500);
+    const failure = classifyFailure(response.status, detail);
+    const message = `mistral voice details ${failure} (${response.status}): ${detail}`;
+    markFailure('mistral', failure, message, retryAfterMs(response));
+    throw new Error(message);
   }
+  const detail = await response.json() as MistralVoice;
+  return detail?.id === voiceId ? detail : null;
 }
 
-async function resolveMistralVoiceId(force = false): Promise<string> {
+async function resolveMistralVoiceId(force = false, signal?: AbortSignal): Promise<string> {
   if (!force && mistralVoiceCache && mistralVoiceCache.expiresAt > Date.now()) {
     return mistralVoiceCache.id;
   }
@@ -442,11 +461,11 @@ async function resolveMistralVoiceId(force = false): Promise<string> {
     return /(?:^|[_ -])lexara(?:[_ -]|$)|(?:^|[_ -])jane(?:[_ -]|$)|(?:^|[_ -])marie(?:[_ -]|$)|female/.test(identity);
   };
   const isVerifiedFemaleEnglish = (voice: MistralVoice) =>
-    speaksEnglish(voice) && (isFemale(voice) || isKnownFemalePreset(voice));
+    speaksEnglish(voice) && (isFemale(voice) || (!voice.gender && isKnownFemalePreset(voice)));
 
   const explicit = process.env.MISTRAL_TTS_VOICE_ID?.trim();
   if (explicit) {
-    const detail = await fetchMistralVoiceDetails(explicit);
+    const detail = await fetchMistralVoiceDetails(explicit, signal);
     if (detail && isVerifiedFemaleEnglish(detail)) {
       mistralVoiceCache = { id: explicit, expiresAt: Date.now() + MISTRAL_VOICE_CACHE_TTL_MS };
       return explicit;
@@ -459,6 +478,7 @@ async function resolveMistralVoiceId(force = false): Promise<string> {
   const response = await fetchWithTimeout(
     'https://api.mistral.ai/v1/audio/voices?type=all&limit=100',
     {
+      signal,
       headers: {
         Authorization: `Bearer ${process.env.MISTRAL_API_KEY!.trim()}`,
         Accept: 'application/json',
@@ -491,60 +511,53 @@ async function resolveMistralVoiceId(force = false): Promise<string> {
       .some(value => String(value).toLowerCase() === preferredName);
   };
 
-  // The list endpoint intentionally returns only lightweight voice metadata.
-  // Prefer an obviously female catalog name when one is available; otherwise
-  // resolve full voice details with bounded concurrency until a female English
-  // preset is proven.
-  const listVerified = voices.find(voice => matchesName(voice) && isKnownFemalePreset(voice))
-    || voices.find(voice => isKnownFemalePreset(voice));
-  if (listVerified?.id) {
-    const detail = await fetchMistralVoiceDetails(String(listVerified.id));
-    if (detail && isVerifiedFemaleEnglish(detail)) {
-      const id = String(detail.id);
-      mistralVoiceCache = { id, expiresAt: Date.now() + MISTRAL_VOICE_CACHE_TTL_MS };
-      return id;
-    }
-  }
-
+  // Full catalog metadata can already establish the voice. Lightweight entries
+  // need details, but their names must survive sparse/null detail fields.
   const orderedVoices = preferredName
     ? [...voices.filter(matchesName), ...voices.filter(voice => !matchesName(voice))]
     : voices;
-  let selected: MistralVoice | null = null;
+  const catalogVerified = orderedVoices.find(voice =>
+    isFemale(voice) && !!voice.languages?.length && speaksEnglish(voice));
+  if (catalogVerified?.id) {
+    mistralVoiceCache = { id: catalogVerified.id, expiresAt: Date.now() + MISTRAL_VOICE_CACHE_TTL_MS };
+    return catalogVerified.id;
+  }
+  const selection: { voice: MistralVoice | null } = { voice: null };
   let cursor = 0;
+  const lookupErrors: unknown[] = [];
   const workerCount = Math.min(8, orderedVoices.length);
-
   await Promise.all(Array.from({ length: workerCount }, async () => {
-    while (!selected) {
-      const index = cursor;
-      cursor += 1;
-      if (index >= orderedVoices.length) return;
-      const candidate = orderedVoices[index];
-      const detail = await fetchMistralVoiceDetails(String(candidate.id));
-      if (detail && isVerifiedFemaleEnglish(detail)) {
-        selected = detail;
-        return;
-      }
+    while (!selection.voice && !lookupErrors.length) {
+      const candidate = orderedVoices[cursor++];
+      if (!candidate) return;
+      try {
+        const detail = await fetchMistralVoiceDetails(String(candidate.id), signal);
+        if (!detail) continue;
+        const merged = { ...candidate, ...Object.fromEntries(Object.entries(detail).filter(([, value]) => value != null)) };
+        if (isVerifiedFemaleEnglish(merged)) { selection.voice = merged; return; }
+      } catch (error) { lookupErrors.push(error); }
     }
   }));
-
-  if (!selected?.id) {
+  if (lookupErrors.length) throw lookupErrors[0];
+  if (!selection.voice?.id) {
     const message = 'mistral voice catalog contains no LEXARA-compatible female English voice';
     markFailure('mistral', 'configuration_blocked', message);
     throw new Error(message);
   }
 
-  const id = String(selected.id);
+  const id = String(selection.voice.id);
   mistralVoiceCache = { id, expiresAt: Date.now() + MISTRAL_VOICE_CACHE_TTL_MS };
   return id;
 }
 
-async function synthesizeMistral(text: string, probe = false): Promise<LexaraTTSAudio> {
+async function synthesizeMistral(text: string, probe = false, signal?: AbortSignal): Promise<LexaraTTSAudio> {
   const provider: LexaraTTSProviderId = 'mistral';
   const startedAt = Date.now();
   const model = process.env.MISTRAL_TTS_MODEL?.trim() || 'voxtral-mini-tts-2603';
-  const voiceId = await resolveMistralVoiceId();
+  const voiceId = await resolveMistralVoiceId(false, signal);
   const response = await fetchWithTimeout('https://api.mistral.ai/v1/audio/speech', {
     method: 'POST',
+    signal,
     headers: {
       Authorization: `Bearer ${process.env.MISTRAL_API_KEY!.trim()}`,
       'Content-Type': 'application/json',
@@ -553,7 +566,7 @@ async function synthesizeMistral(text: string, probe = false): Promise<LexaraTTS
       model,
       input: text,
       voice_id: voiceId,
-      response_format: probe ? 'pcm' : 'mp3',
+      response_format: 'mp3',
       stream: false,
     }),
   }, probe ? LEXARA_TTS_PROBE_TIMEOUT_MS : LEXARA_TTS_REQUEST_TIMEOUT_MS);
@@ -570,13 +583,13 @@ async function synthesizeMistral(text: string, probe = false): Promise<LexaraTTS
     throw new Error(message);
   }
 
-  const audioData = probe ? pcm16MonoToWav(raw, 24_000) : raw;
+  const audioData = raw;
   const latencyMs = Date.now() - startedAt;
   markSuccess(provider, latencyMs, model, voiceId);
-  return { provider, audioData, mimeType: probe ? 'audio/wav' : 'audio/mpeg', voiceId, model, latencyMs };
+  return { provider, audioData, mimeType: 'audio/mpeg', voiceId, model, latencyMs };
 }
 
-async function synthesizeGemini(text: string, probe = false): Promise<LexaraTTSAudio> {
+async function synthesizeGemini(text: string, probe = false, signal?: AbortSignal): Promise<LexaraTTSAudio> {
   const provider: LexaraTTSProviderId = 'gemini';
   const startedAt = Date.now();
   const key = process.env.GEMINI_API_KEY!.trim();
@@ -586,6 +599,7 @@ async function synthesizeGemini(text: string, probe = false): Promise<LexaraTTSA
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
     {
       method: 'POST',
+    signal,
       headers: { 'x-goog-api-key': key, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text }] }],
@@ -623,7 +637,7 @@ async function synthesizeGemini(text: string, probe = false): Promise<LexaraTTSA
   return { provider, audioData, mimeType: 'audio/wav', voiceId, model, latencyMs };
 }
 
-async function synthesizeDeepgram(text: string, probe = false): Promise<LexaraTTSAudio> {
+async function synthesizeDeepgram(text: string, probe = false, signal?: AbortSignal): Promise<LexaraTTSAudio> {
   const provider: LexaraTTSProviderId = 'deepgram';
   const startedAt = Date.now();
   const model = LEXARA_FEMALE_VOICE.deepgram;
@@ -637,6 +651,7 @@ async function synthesizeDeepgram(text: string, probe = false): Promise<LexaraTT
     `https://api.deepgram.com${endpoint}?${query}`,
     {
       method: 'POST',
+    signal,
       headers: {
         Authorization: `Token ${deepgramApiKey()}`,
         'Content-Type': 'application/json',
@@ -649,13 +664,14 @@ async function synthesizeDeepgram(text: string, probe = false): Promise<LexaraTT
   return requireAudioResponse(provider, response, voiceId, model, startedAt);
 }
 
-async function synthesizeXai(text: string, probe = false): Promise<LexaraTTSAudio> {
+async function synthesizeXai(text: string, probe = false, signal?: AbortSignal): Promise<LexaraTTSAudio> {
   const provider: LexaraTTSProviderId = 'xai';
   const startedAt = Date.now();
   const model = process.env.XAI_TTS_MODEL?.trim() || 'grok-voice-tts-1.0';
   const voiceId = LEXARA_FEMALE_VOICE.xai;
   const response = await fetchWithTimeout('https://api.x.ai/v1/tts', {
     method: 'POST',
+    signal,
     headers: {
       Authorization: `Bearer ${process.env.XAI_API_KEY!.trim()}`,
       'Content-Type': 'application/json',
@@ -665,173 +681,93 @@ async function synthesizeXai(text: string, probe = false): Promise<LexaraTTSAudi
   return requireAudioResponse(provider, response, voiceId, model, startedAt);
 }
 
-async function synthesizeGroq(text: string, probe = false): Promise<LexaraTTSAudio> {
+function splitGroqSpeech(text: string): string[] {
+  const chunks: string[] = [];
+  let remaining = text;
+  while (remaining.length > 200) {
+    let end = remaining.lastIndexOf(' ', 199) + 1;
+    if (end < 80) end = 200;
+    // Never split a UTF-16 surrogate pair.
+    if (/[\uD800-\uDBFF]/.test(remaining[end - 1])) end -= 1;
+    chunks.push(remaining.slice(0, end));
+    remaining = remaining.slice(end);
+  }
+  if (remaining) chunks.push(remaining);
+  return chunks;
+}
+
+function joinGroqWav(chunks: Buffer[]): Buffer {
+  let format: Buffer | undefined;
+  const data: Buffer[] = [];
+  for (const audio of chunks) {
+    if (audio.toString('ascii', 0, 4) !== 'RIFF' || audio.toString('ascii', 8, 12) !== 'WAVE') {
+      throw new Error('Groq returned an invalid WAV format');
+    }
+    let currentFormat: Buffer | undefined;
+    const currentData: Buffer[] = [];
+    for (let offset = 12; offset + 8 <= audio.length;) {
+      const id = audio.toString('ascii', offset, offset + 4);
+      const size = audio.readUInt32LE(offset + 4);
+      const end = offset + 8 + size;
+      if (end > audio.length) throw new Error('Groq returned a truncated WAV chunk');
+      if (id === 'fmt ') currentFormat = audio.subarray(offset + 8, end);
+      if (id === 'data') currentData.push(audio.subarray(offset + 8, end));
+      offset = end + (size % 2);
+    }
+    if (!currentFormat || currentFormat.length < 16 || currentFormat.readUInt16LE(0) !== 1 || !currentData.some(part => part.length > 0)) {
+      throw new Error('Groq returned an unsupported or empty PCM WAV format');
+    }
+    if (format && !format.equals(currentFormat)) throw new Error('Groq returned incompatible WAV formats');
+    const blockAlign = currentFormat.readUInt16LE(12);
+    if (!blockAlign || currentData.some(part => part.length % blockAlign)) throw new Error('Groq returned incomplete WAV samples');
+    format = currentFormat;
+    data.push(...currentData);
+  }
+  if (!format || !data.length) throw new Error('Groq returned no WAV audio');
+  if (chunks.length === 1) return chunks[0];
+  const samples = Buffer.concat(data);
+  const fmtHeader = Buffer.alloc(8); fmtHeader.write('fmt '); fmtHeader.writeUInt32LE(format.length, 4);
+  const dataHeader = Buffer.alloc(8); dataHeader.write('data'); dataHeader.writeUInt32LE(samples.length, 4);
+  const content = Buffer.concat([Buffer.from('WAVE'), fmtHeader, format, Buffer.alloc(format.length % 2), dataHeader, samples, Buffer.alloc(samples.length % 2)]);
+  const header = Buffer.alloc(8); header.write('RIFF'); header.writeUInt32LE(content.length, 4);
+  return Buffer.concat([header, content]);
+}
+
+async function synthesizeGroq(text: string, probe = false, signal?: AbortSignal): Promise<LexaraTTSAudio> {
   const provider: LexaraTTSProviderId = 'groq';
   const startedAt = Date.now();
   const model = process.env.GROQ_TTS_MODEL?.trim() || 'canopylabs/orpheus-v1-english';
   const voiceId = LEXARA_FEMALE_VOICE.groq;
-  const response = await fetchWithTimeout('https://api.groq.com/openai/v1/audio/speech', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${process.env.GROQ_API_KEY!.trim()}`,
-      'Content-Type': 'application/json',
+  const chunks: Buffer[] = [];
+  for (const input of splitGroqSpeech(text)) {
+    signal?.throwIfAborted();
+    const response = await fetchWithTimeout('https://api.groq.com/openai/v1/audio/speech', {
+      method: 'POST', signal,
+      headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY!.trim()}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, input, voice: voiceId, response_format: 'wav' }),
+    }, probe ? LEXARA_TTS_PROBE_TIMEOUT_MS : LEXARA_TTS_REQUEST_TIMEOUT_MS);
+    if (!response.ok) return requireAudioResponse(provider, response, voiceId, model, startedAt);
+    chunks.push(Buffer.from(await response.arrayBuffer()));
+  }
+  const audioData = joinGroqWav(chunks);
+  const latencyMs = Date.now() - startedAt;
+  markSuccess(provider, latencyMs, model, voiceId);
+  return { provider, audioData, mimeType: 'audio/wav', voiceId, model, latencyMs };
+}
+
+async function firstAudioBody(body: ReadableStream<Uint8Array>): Promise<ReadableStream<Uint8Array>> {
+  const reader = body.getReader();
+  let first = await reader.read();
+  while (!first.done && !first.value.length) first = await reader.read();
+  if (first.done) throw new Error('TTS returned empty audio');
+  return new ReadableStream<Uint8Array>({
+    start(stream) { stream.enqueue(first.value!); },
+    async pull(stream) {
+      try { const next = await reader.read(); if (next.done) stream.close(); else stream.enqueue(next.value); }
+      catch (error) { stream.error(error); }
     },
-    body: JSON.stringify({ model, input: text.slice(0, 200), voice: voiceId, response_format: 'wav' }),
-  }, probe ? LEXARA_TTS_PROBE_TIMEOUT_MS : LEXARA_TTS_REQUEST_TIMEOUT_MS);
-  return requireAudioResponse(provider, response, voiceId, model, startedAt);
-}
-
-async function loadOpenRouterSpeechCatalog(force = false): Promise<Set<string>> {
-  if (!force && openRouterCatalogCache && openRouterCatalogCache.expiresAt > Date.now()) {
-    return openRouterCatalogCache.ids;
-  }
-
-  try {
-    const response = await fetchWithTimeout(
-      'https://openrouter.ai/api/v1/models?output_modalities=speech',
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY!.trim()}`,
-          Accept: 'application/json',
-        },
-      },
-      LEXARA_TTS_PROBE_TIMEOUT_MS,
-    );
-    if (!response.ok) throw new Error(`catalog status ${response.status}`);
-    const payload = await response.json() as { data?: OpenRouterSpeechModel[] };
-    const ids = new Set(
-      (Array.isArray(payload.data) ? payload.data : [])
-        .map(model => String(model?.id || '').trim())
-        .filter(Boolean),
-    );
-    openRouterCatalogCache = { ids, expiresAt: Date.now() + OPENROUTER_CATALOG_TTL_MS };
-    return ids;
-  } catch {
-    return new Set();
-  }
-}
-
-function openRouterVoiceForModel(model: string): string {
-  if (model === 'mistralai/voxtral-mini-tts-2603') {
-    return LEXARA_FEMALE_VOICE.openrouterMistral;
-  }
-  if (model.startsWith('microsoft/mai-voice-2')) {
-    return process.env.OPENROUTER_MICROSOFT_TTS_VOICE?.trim() || 'en-US-Harper:MAI-Voice-2';
-  }
-  if (model === 'x-ai/grok-voice-tts-1.0') {
-    return process.env.OPENROUTER_GROK_TTS_VOICE?.trim() || 'eve';
-  }
-  return LEXARA_FEMALE_VOICE.openrouterGemini;
-}
-
-async function openRouterTtsCandidates(): Promise<string[]> {
-  const explicit = process.env.OPENROUTER_TTS_MODEL?.trim();
-  const preferred = [
-    explicit,
-    'mistralai/voxtral-mini-tts-2603',
-    'google/gemini-3.1-flash-tts-preview',
-  ].filter((value): value is string => !!value);
-
-  const catalog = await loadOpenRouterSpeechCatalog();
-  const unique = [...new Set(preferred)];
-  if (!catalog.size) return unique;
-
-  const mappedDiscovered = [...catalog].filter(model =>
-    model.startsWith('mistralai/')
-    || model.startsWith('google/')
-    || model.startsWith('x-ai/')
-    || model.startsWith('microsoft/')
-  );
-  return [...new Set([
-    ...unique.filter(model => catalog.has(model)),
-    ...mappedDiscovered,
-  ])];
-}
-
-
-async function openOpenRouterSpeechStream(text: string, signal?: AbortSignal): Promise<LexaraTTSStream | null> {
-  const provider: LexaraTTSProviderId = 'openrouter';
-  if (!ready(provider)) return null;
-
-  const candidates = (await openRouterTtsCandidates())
-    .filter(model => !model.startsWith('google/'));
-  const errors: string[] = [];
-
-  for (const model of candidates) {
-    const voiceId = openRouterVoiceForModel(model);
-    const startedAt = Date.now();
-    const controller = new AbortController();
-    const relayAbort = () => controller.abort(signal?.reason);
-    if (signal?.aborted) controller.abort(signal.reason);
-    else signal?.addEventListener('abort', relayAbort, { once: true });
-    const timer = setTimeout(() => controller.abort(new Error('OpenRouter TTS timeout')), LEXARA_TTS_REQUEST_TIMEOUT_MS);
-
-    try {
-      const response = await fetch('https://openrouter.ai/api/v1/audio/speech', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY!.trim()}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': process.env.PUBLIC_BASE_URL?.trim() || 'https://legalwhat.com',
-          'X-Title': 'Legal What LEXARA',
-        },
-        body: JSON.stringify({
-          model,
-          input: text,
-          voice: voiceId,
-          response_format: 'mp3',
-        }),
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', relayAbort);
-
-      if (response.ok && response.body) {
-        const firstByteLatencyMs = Date.now() - startedAt;
-        markSuccess(provider, firstByteLatencyMs, model, voiceId);
-        log.info('[LEXARA TTS] progressive stream opened', {
-          provider,
-          model,
-          firstByteLatencyMs,
-        });
-        return {
-          provider,
-          body: response.body as ReadableStream<Uint8Array>,
-          mimeType: response.headers.get('content-type') || 'audio/mpeg',
-          voiceId,
-          model,
-          firstByteLatencyMs,
-        };
-      }
-
-      const detail = (await response.text()).slice(0, 700);
-      errors.push(`${model}: ${response.status} ${detail}`);
-      const failure = classifyFailure(response.status, detail);
-
-      if (
-        failure === 'auth_blocked'
-        || failure === 'billing_blocked'
-        || failure === 'capacity_exhausted'
-        || failure === 'rate_limited'
-      ) {
-        const message = `openrouter streaming TTS ${failure} (${response.status}): ${detail}`;
-        markFailure(provider, failure, message, retryAfterMs(response));
-        return null;
-      }
-    } catch (error) {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', relayAbort);
-      const message = error instanceof Error ? error.message : String(error);
-      errors.push(`${model}: ${message}`);
-    }
-  }
-
-  if (errors.length) {
-    log.warn('[LEXARA TTS] progressive OpenRouter route unavailable; buffered mesh remains eligible', {
-      errors: errors.join(' | ').slice(0, 1_000),
-    });
-  }
-  return null;
+    cancel(reason) { return reader.cancel(reason); },
+  });
 }
 
 async function openDeepgramSpeechStream(text: string, signal?: AbortSignal): Promise<LexaraTTSStream | null> {
@@ -867,6 +803,7 @@ async function openDeepgramSpeechStream(text: string, signal?: AbortSignal): Pro
       markFailure(provider, failure, message, retryAfterMs(response));
       return null;
     }
+    const body = await firstAudioBody(response.body);
     const firstByteLatencyMs = Date.now() - startedAt;
     markSuccess(provider, firstByteLatencyMs, model, model);
     log.info('[LEXARA TTS] progressive stream opened', {
@@ -876,13 +813,14 @@ async function openDeepgramSpeechStream(text: string, signal?: AbortSignal): Pro
     });
     return {
       provider,
-      body: response.body as ReadableStream<Uint8Array>,
+      body,
       mimeType: response.headers.get('content-type') || 'audio/mpeg',
       voiceId: model,
       model,
       firstByteLatencyMs,
     };
   } catch (error) {
+    if (signal?.aborted) return null;
     const message = error instanceof Error ? error.message : String(error);
     markFailure(provider, 'transport_failed', message);
     return null;
@@ -922,17 +860,19 @@ async function openElevenLabsSpeechStream(text: string, signal?: AbortSignal): P
       return null;
     }
 
+    const body = await firstAudioBody(response.body);
     const firstByteLatencyMs = Date.now() - startedAt;
     markSuccess(provider, firstByteLatencyMs, model, voiceId);
     return {
       provider,
-      body: response.body as ReadableStream<Uint8Array>,
+      body,
       mimeType: response.headers.get('content-type') || 'audio/mpeg',
       voiceId,
       model,
       firstByteLatencyMs,
     };
   } catch (error) {
+    if (signal?.aborted) return null;
     const message = error instanceof Error ? error.message : String(error);
     markFailure(provider, 'transport_failed', message);
     return null;
@@ -947,150 +887,57 @@ async function openProgressiveProvider(
   signal?: AbortSignal,
 ): Promise<LexaraTTSStream | null> {
   if (provider === 'deepgram') return openDeepgramSpeechStream(text, signal);
-  if (provider === 'openrouter') return openOpenRouterSpeechStream(text, signal);
   if (provider === 'elevenlabs') return openElevenLabsSpeechStream(text, signal);
-  return null;
+  // MP3 buffer adapters may rescue the same playback pipe. WAV routes remain
+  // buffered-only because multi-part speech concatenates MP3, not WAV headers.
+  const audio = await synthesizeWith(provider, text, false, signal);
+  return { provider, body: new ReadableStream<Uint8Array>({ start(stream) { stream.enqueue(audio.audioData); stream.close(); } }),
+    mimeType: audio.mimeType, voiceId: audio.voiceId, model: audio.model, firstByteLatencyMs: audio.latencyMs };
+}
+
+function raceVoiceRoutes<T>(
+  providers: LexaraTTSProviderId[],
+  attempt: (provider: LexaraTTSProviderId, signal: AbortSignal) => Promise<T | null>,
+  discard: (value: T) => void = () => undefined,
+): Promise<T | null> {
+  if (!providers.length) return Promise.resolve(null);
+  return new Promise(resolve => {
+    const controllers = new Map<LexaraTTSProviderId, AbortController>();
+    let cursor = 0;
+    let active = 0;
+    let settled = false;
+    let hedgeTimer: ReturnType<typeof setTimeout> | undefined;
+    const startNext = () => {
+      if (settled || cursor >= providers.length) return;
+      const provider = providers[cursor++];
+      const controller = new AbortController();
+      controllers.set(provider, controller);
+      active += 1;
+      void attempt(provider, controller.signal).then(value => {
+        if (!value) return;
+        if (settled) { discard(value); return; }
+        settled = true;
+        clearTimeout(hedgeTimer);
+        for (const [other, pending] of controllers) if (other !== provider) pending.abort('tts-hedge-loser');
+        resolve(value);
+      }).catch(() => undefined).finally(() => {
+        active -= 1;
+        if (settled) return;
+        if (cursor < providers.length) startNext();
+        else if (!active) { settled = true; clearTimeout(hedgeTimer); resolve(null); }
+      });
+    };
+    startNext();
+    if (providers.length > 1) hedgeTimer = setTimeout(startNext, LEXARA_TTS_HEDGE_DELAY_MS);
+  });
 }
 
 export async function openLexaraSpeechStream(text: string): Promise<LexaraTTSStream | null> {
   const clean = String(text || '').trim();
   if (!clean) return null;
-
-  const readiness = getLexaraTTSReadiness();
-  const streamable = readiness.healthyProviders.filter(provider =>
-    provider === 'deepgram' || provider === 'openrouter' || provider === 'elevenlabs'
-  );
-  if (!streamable.length) return null;
-
-  const primary = streamable[0];
-  const primaryController = new AbortController();
-  const primaryPromise = openProgressiveProvider(primary, clean, primaryController.signal);
-
-  if (streamable.length === 1) return primaryPromise;
-
-  const early = await Promise.race([
-    primaryPromise.then(stream => ({ kind: 'primary' as const, stream })),
-    new Promise<{ kind: 'hedge' }>(resolve =>
-      setTimeout(() => resolve({ kind: 'hedge' }), LEXARA_TTS_HEDGE_DELAY_MS),
-    ),
-  ]);
-
-  if (early.kind === 'primary') {
-    if (early.stream) return early.stream;
-    primaryController.abort('primary-route-unavailable');
-    return openProgressiveProvider(streamable[1], clean);
-  }
-
-  const backup = streamable.find(provider =>
-    provider !== primary
-    && providerIndependenceDomain(provider) !== providerIndependenceDomain(primary)
-  ) || streamable[1];
-  const backupController = new AbortController();
-  const backupPromise = openProgressiveProvider(backup, clean, backupController.signal);
-
-  try {
-    const winner = await Promise.any([
-      primaryPromise.then(stream => {
-        if (!stream) throw new Error(`${primary} progressive route unavailable`);
-        return { provider: primary, stream };
-      }),
-      backupPromise.then(stream => {
-        if (!stream) throw new Error(`${backup} progressive route unavailable`);
-        return { provider: backup, stream };
-      }),
-    ]);
-
-    if (winner.provider === primary) {
-      backupController.abort('tts-hedge-loser');
-      void backupPromise.then(stream => stream?.body.cancel('tts-hedge-loser')).catch(() => undefined);
-    } else {
-      primaryController.abort('tts-hedge-loser');
-      void primaryPromise.then(stream => stream?.body.cancel('tts-hedge-loser')).catch(() => undefined);
-    }
-
-    log.info('[LEXARA TTS] progressive hedge resolved', {
-      primary,
-      backup,
-      winner: winner.provider,
-      hedgeDelayMs: LEXARA_TTS_HEDGE_DELAY_MS,
-    });
-    return winner.stream;
-  } catch {
-    primaryController.abort('tts-hedge-exhausted');
-    backupController.abort('tts-hedge-exhausted');
-    return null;
-  }
-}
-
-async function synthesizeOpenRouter(text: string, probe = false): Promise<LexaraTTSAudio> {
-  const provider: LexaraTTSProviderId = 'openrouter';
-  const candidates = await openRouterTtsCandidates();
-  const errors: string[] = [];
-
-  for (const model of candidates) {
-    const startedAt = Date.now();
-    const voiceId = openRouterVoiceForModel(model);
-    const response = await fetchWithTimeout('https://openrouter.ai/api/v1/audio/speech', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${process.env.OPENROUTER_API_KEY!.trim()}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': process.env.PUBLIC_BASE_URL?.trim() || 'https://legalwhat.com',
-        'X-Title': 'Legal What LEXARA',
-      },
-      body: JSON.stringify({
-        model,
-        input: text,
-        voice: voiceId,
-        response_format: model.startsWith('google/') ? 'pcm' : 'mp3',
-      }),
-    }, probe ? LEXARA_TTS_PROBE_TIMEOUT_MS : LEXARA_TTS_REQUEST_TIMEOUT_MS);
-
-    if (response.ok) {
-      if (model.startsWith('google/')) {
-        const pcm = Buffer.from(await response.arrayBuffer());
-        if (!pcm.length) {
-          const message = 'openrouter Gemini TTS returned empty PCM audio';
-          markFailure(provider, 'invalid_response', message);
-          throw new Error(message);
-        }
-        const latencyMs = Date.now() - startedAt;
-        markSuccess(provider, latencyMs, model, voiceId);
-        return {
-          provider,
-          audioData: pcm16MonoToWav(pcm, 24_000),
-          mimeType: 'audio/wav',
-          voiceId,
-          model,
-          latencyMs,
-        };
-      }
-      return requireAudioResponse(provider, response, voiceId, model, startedAt);
-    }
-
-    const detail = (await response.text()).slice(0, 700);
-    errors.push(`${model}: ${response.status} ${detail}`);
-    const failure = classifyFailure(response.status, detail);
-
-    // Authentication, billing, and account-level throttling are transport-domain
-    // failures. Model format/provider-policy incompatibility is route-local and
-    // must not quarantine every otherwise-valid OpenRouter speech route.
-    if (
-      failure === 'auth_blocked'
-      || failure === 'billing_blocked'
-      || failure === 'capacity_exhausted'
-      || failure === 'rate_limited'
-    ) {
-      const message = `openrouter TTS ${failure} (${response.status}): ${detail}`;
-      markFailure(provider, failure, message, retryAfterMs(response));
-      throw new Error(message);
-    }
-  }
-
-  const detail = errors.join(' | ').slice(0, 1_200);
-  const message = `openrouter TTS route-local failure: ${detail || 'no compatible speech model was available'}`;
-  markFailure(provider, 'invalid_response', message, 5_000);
-  throw new Error(message);
+  const candidates = orderedCandidates().filter(provider => provider !== 'gemini' && provider !== 'groq');
+  return raceVoiceRoutes(candidates, (provider, signal) => openProgressiveProvider(provider, clean, signal),
+    stream => { void stream.body.cancel('tts-hedge-loser').catch(() => undefined); });
 }
 
 function escapeXml(value: string): string {
@@ -1103,7 +950,7 @@ function escapeXml(value: string): string {
   }[character] || character));
 }
 
-async function synthesizeAzure(text: string, probe = false): Promise<LexaraTTSAudio> {
+async function synthesizeAzure(text: string, probe = false, signal?: AbortSignal): Promise<LexaraTTSAudio> {
   const provider: LexaraTTSProviderId = 'azure';
   const startedAt = Date.now();
   const region = process.env.AZURE_SPEECH_REGION!.trim();
@@ -1113,6 +960,7 @@ async function synthesizeAzure(text: string, probe = false): Promise<LexaraTTSAu
     `https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`,
     {
       method: 'POST',
+    signal,
       headers: {
         'Ocp-Apim-Subscription-Key': process.env.AZURE_SPEECH_KEY!.trim(),
         'Content-Type': 'application/ssml+xml',
@@ -1169,7 +1017,7 @@ async function refreshElevenLabsQuota(): Promise<void> {
   }
 }
 
-async function synthesizeElevenLabs(text: string, probe = false): Promise<LexaraTTSAudio> {
+async function synthesizeElevenLabs(text: string, probe = false, signal?: AbortSignal): Promise<LexaraTTSAudio> {
   const provider: LexaraTTSProviderId = 'elevenlabs';
   if (probe) await refreshElevenLabsQuota();
 
@@ -1181,6 +1029,7 @@ async function synthesizeElevenLabs(text: string, probe = false): Promise<Lexara
     `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream?output_format=${encodeURIComponent(outputFormat)}`,
     {
       method: 'POST',
+    signal,
       headers: {
         'xi-api-key': process.env.ELEVENLABS_API_KEY!.trim(),
         'Content-Type': 'application/json',
@@ -1197,16 +1046,27 @@ async function synthesizeWith(
   provider: LexaraTTSProviderId,
   text: string,
   probe = false,
+  signal?: AbortSignal,
 ): Promise<LexaraTTSAudio> {
-  switch (provider) {
-    case 'mistral': return synthesizeMistral(text, probe);
-    case 'gemini': return synthesizeGemini(text, probe);
-    case 'deepgram': return synthesizeDeepgram(text, probe);
-    case 'xai': return synthesizeXai(text, probe);
-    case 'groq': return synthesizeGroq(text, probe);
-    case 'openrouter': return synthesizeOpenRouter(text, probe);
-    case 'azure': return synthesizeAzure(text, probe);
-    case 'elevenlabs': return synthesizeElevenLabs(text, probe);
+  const failuresBefore = stateFor(provider).failures;
+  try {
+    signal?.throwIfAborted();
+    switch (provider) {
+      case 'mistral': return await synthesizeMistral(text, probe, signal);
+      case 'gemini': return await synthesizeGemini(text, probe, signal);
+      case 'deepgram': return await synthesizeDeepgram(text, probe, signal);
+      case 'xai': return await synthesizeXai(text, probe, signal);
+      case 'groq': return await synthesizeGroq(text, probe, signal);
+      case 'azure': return await synthesizeAzure(text, probe, signal);
+      case 'elevenlabs': return await synthesizeElevenLabs(text, probe, signal);
+    }
+  } catch (error) {
+    if (!signal?.aborted && stateFor(provider).failures === failuresBefore) {
+      const message = error instanceof Error ? error.message : String(error);
+      const failure = error instanceof SyntaxError || /WAV|empty audio|no audio/i.test(message) ? 'invalid_response' : 'transport_failed';
+      markFailure(provider, failure, message);
+    }
+    throw error;
   }
 }
 
@@ -1235,9 +1095,8 @@ async function verifyProvider(provider: LexaraTTSProviderId, force = false): Pro
         latencyMs: result.latencyMs,
       });
       return true;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      log.debug('[LEXARA TTS] provider readiness probe degraded locally; mesh fallback remains authoritative', { provider, error: message });
+    } catch {
+      log.warn('[LEXARA TTS] provider readiness probe degraded locally; mesh fallback remains authoritative', { provider, failure: state.lastFailure });
       return false;
     } finally {
       probeInFlight.delete(provider);
@@ -1283,34 +1142,30 @@ export async function synthesizeLexaraSpeechWithFailover(text: string): Promise<
   const clean = String(text || '').trim();
   if (!clean) throw new Error('Text is required for LEXARA TTS');
 
-  let candidates = orderedCandidates(clean);
+  let candidates = orderedCandidates();
   if (!candidates.length) {
     await refreshLexaraTTSReadiness(false);
-    candidates = orderedCandidates(clean);
+    candidates = orderedCandidates();
   }
   if (!candidates.length) {
     throw new Error('No verified healthy LEXARA TTS provider is currently available');
   }
 
   const errors: string[] = [];
-  for (const provider of candidates) {
-    try {
-      const result = await synthesizeWith(provider, clean, false);
-      log.info('[LEXARA TTS] synthesis succeeded', {
-        provider: result.provider,
-        model: result.model,
-        latencyMs: result.latencyMs,
-        bytes: result.audioData.length,
-      });
-      return result;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      errors.push(message);
-      log.warn('[LEXARA TTS] provider failed locally; trying next verified route', { provider, error: message });
+  const result = await raceVoiceRoutes(candidates, async (provider, signal) => {
+    try { return await synthesizeWith(provider, clean, false, signal); }
+    catch (error) {
+      if (!signal.aborted) {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(message);
+        log.warn('[LEXARA TTS] provider failed locally; trying next verified route', { provider, failure: stateFor(provider).lastFailure });
+      }
+      return null;
     }
-  }
-
-  throw new Error(`All verified compatible LEXARA TTS routes failed: ${errors.join(' | ').slice(0, 1_800)}`);
+  });
+  if (!result) throw new Error(`All verified compatible LEXARA TTS routes failed: ${errors.join(' | ').slice(0, 1_800)}`);
+  log.info('[LEXARA TTS] synthesis succeeded', { provider: result.provider, model: result.model, latencyMs: result.latencyMs, bytes: result.audioData.length });
+  return result;
 }
 
 export function getLexaraTTSReadiness() {
@@ -1320,7 +1175,7 @@ export function getLexaraTTSReadiness() {
     .sort((a, b) => providerScore(b) - providerScore(a));
 
   const streamingProviders = healthyProviders.filter(provider =>
-    provider === 'openrouter' || provider === 'deepgram' || provider === 'elevenlabs'
+    provider === 'deepgram' || provider === 'elevenlabs'
   );
   const independentDomains = [...new Set(healthyProviders.map(providerIndependenceDomain))];
   const redundancyVerified = independentDomains.length >= 2;
