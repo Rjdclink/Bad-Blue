@@ -1,6 +1,4 @@
 import { AICollaborationOrchestrator } from '../aiCollaborationOrchestrator';
-import { generateOpenRouterText } from '../openRouterService';
-import { CURRENT_AI_MODELS } from '../aiHarmonyModelRegistry';
 import { UsageContext } from '../aiTokenGovernor';
 import { TaskComplexity, TaskPriority } from '../aiModelSelector';
 import { getConfiguredHarmonyProviders } from '../aiHarmonyModelRegistry';
@@ -447,7 +445,7 @@ export async function generateLexaraConversationResponse(
   // Capability-first Harmony route. No model is globally preferred. The shared
   // Harmony engine assigns independent legal-analysis, verification, and synthesis
   // roles according to capability while provider failures remain local.
-  const harmonyProviders = getConfiguredHarmonyProviders();
+  const harmonyProviders = getConfiguredHarmonyProviders('legalwhat');
   let text = '';
   const harmonyStartedAt = Date.now();
   if (harmonyProviders.length > 0) {
@@ -471,7 +469,7 @@ export async function generateLexaraConversationResponse(
         },
         harmonyProviders,
         {
-          providerPolicy: 'capability-first',
+          providerPolicy: 'legalwhat',
           systemPrompt,
           maxParticipants: 3,
           requestTimeoutMs: LIVE_REASONING_PROVIDER_ATTEMPT_MS,
@@ -489,37 +487,7 @@ export async function generateLexaraConversationResponse(
     }
   }
 
-  // Independent recovery lane: Harmony and its provider/model routing are one
-  // failure domain. If that entire domain produces no usable answer, make one
-  // bounded direct gateway attempt before exposing degraded mode. This path is
-  // deliberately outside AICollaborationOrchestrator so an orchestration bug,
-  // provider-health bookkeeping error, or exhausted Harmony route cannot become
-  // a global LEXARA outage.
-  if (!text && process.env.OPENROUTER_API_KEY?.trim() && !context.signal?.aborted) {
-    try {
-      const recovery = await generateOpenRouterText(userPrompt, {
-        model: CURRENT_AI_MODELS.openRouterAuto,
-        systemPrompt,
-        maxTokens: 700,
-        timeoutMs: LIVE_REASONING_PROVIDER_ATTEMPT_MS,
-        signal: context.signal,
-      });
-      text = recovery.content.trim();
-      if (text) {
-        console.info('[LEXARA Recovery] independent gateway recovered live legal turn', {
-          model: recovery.model,
-          latencyMs: recovery.latencyMs,
-        });
-      }
-    } catch (error) {
-      console.warn('[LEXARA Recovery] independent gateway unavailable', {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  // Safety remains narrow: only after both the normal capability pool and the
-  // independent recovery lane are exhausted do we decline to invent current law.
+  // The canonical Harmony route owns provider recovery.
   if (!text) text = degradedLegalResponse(jurisdiction);
 
   // Deterministic person-record guard: provider/model policy drift may not
@@ -528,24 +496,46 @@ export async function generateLexaraConversationResponse(
   // answer contains that prohibited refusal pattern, so normal turns gain no
   // extra latency.
   if (pantheonInvestigation && isPersonPermissionRefusal(text)) {
-    if (pantheonInvestigation.evidenceSummary && process.env.OPENROUTER_API_KEY?.trim() && !context.signal?.aborted) {
+    if (pantheonInvestigation.evidenceSummary && harmonyProviders.length > 0 && !context.signal?.aborted) {
+      // Preserve the correction deadline while using the canonical provider route.
+      const correctionController = new AbortController();
+      const relayCorrectionAbort = () => correctionController.abort(context.signal?.reason);
+      context.signal?.addEventListener('abort', relayCorrectionAbort, { once: true });
+      const correctionTimer = setTimeout(() => {
+        correctionController.abort(new Error('Evidence correction deadline exceeded'));
+      }, LIVE_REASONING_PROVIDER_ATTEMPT_MS);
       try {
-        const correction = await generateOpenRouterText(
+        const correction = await AICollaborationOrchestrator.orchestrateCollaboration(
+          'lexara-evidence-correction',
           `CURRENT USER TURN:\n${cleanPrompt}\n\nPANTHEON VERIFIED EVIDENCE:\n${pantheonInvestigation.evidenceSummary}\n\nRewrite the answer using only this evidence. Do not refuse merely because the subject is a private individual or because the requested fact is personal. If the specific fact is not established, say it was not verified from the completed sources.`,
           {
-            model: CURRENT_AI_MODELS.openRouterAuto,
+            context: UsageContext.USER,
+            complexity: TaskComplexity.MODERATE,
+            priority: TaskPriority.CRITICAL,
+            needsVerification: true,
+            needsFastResponse: true,
+            estimatedTokens: 500,
+          },
+          harmonyProviders,
+          {
+            providerPolicy: 'legalwhat',
             systemPrompt,
-            maxTokens: 500,
-            timeoutMs: LIVE_REASONING_PROVIDER_ATTEMPT_MS,
-            signal: context.signal,
+            maxParticipants: 1,
+            requestTimeoutMs: LIVE_REASONING_PROVIDER_ATTEMPT_MS,
+            maxFallbacks: LIVE_REASONING_MAX_FALLBACKS,
+            signal: correctionController.signal,
           },
         );
-        const corrected = correction.content.trim();
-        if (corrected && !isPersonPermissionRefusal(corrected)) text = corrected;
+        const corrected = correction.finalAnswer.trim();
+        if (corrected && !/^No successful responses from collaboration\.?$/i.test(corrected)
+          && !isPersonPermissionRefusal(corrected)) text = corrected;
       } catch (error) {
         console.warn('[LEXARA PersonRecord] permission-refusal correction unavailable', {
           error: error instanceof Error ? error.message : String(error),
         });
+      } finally {
+        clearTimeout(correctionTimer);
+        context.signal?.removeEventListener('abort', relayCorrectionAbort);
       }
     }
     if (isPersonPermissionRefusal(text)) {

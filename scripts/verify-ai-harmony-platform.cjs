@@ -102,7 +102,7 @@ must(
 
 must(
   collaboration.includes("Return ONLY valid JSON") &&
-  provider.includes("providerPolicy: 'capability-first'") &&
+  provider.includes("providerPolicy: options.providerPolicy || 'capability-first'") &&
   provider.includes("await import('./aiCollaborationOrchestrator')") &&
   !provider.includes('AUTONOMOUS_BLOCK_GEMINI'),
   'platform AI entry point routes through capability-first Harmony, preserves structured JSON, and has no context-based provider exclusion',
@@ -122,9 +122,10 @@ must(
 );
 
 must(
-  lexara.includes('getConfiguredHarmonyProviders') &&
-  lexara.includes("providerPolicy: 'capability-first'"),
-  'LEXARA uses the shared configured Harmony capability pool',
+  lexara.includes("getConfiguredHarmonyProviders('legalwhat')") &&
+  lexara.includes("providerPolicy: 'legalwhat'") &&
+  !lexara.includes('generateOpenRouterText'),
+  'LEXARA uses the shared Harmony authority with its scoped transport policy',
 );
 
 must(
@@ -253,3 +254,6 @@ for (const path of activeRuntimeFiles) {
 
 if (process.exitCode) process.exit(process.exitCode);
 console.log('AI Harmony platform verification passed.');
+
+// Exercise actual selection, fallback and dispatch with provider I/O isolated.
+require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-provider-policy.cjs')], { stdio: 'inherit' });

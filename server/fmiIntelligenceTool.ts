@@ -231,6 +231,7 @@ Return ONLY valid JSON:
       'fmi-extraction',
       prompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.1,
         maxTokens: 2500,
@@ -454,6 +455,7 @@ Return ONLY valid JSON:
       'fmi-classification',
       prompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.2,
         maxTokens: 1500,

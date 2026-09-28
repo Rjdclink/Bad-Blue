@@ -17,7 +17,7 @@ import { TaskComplexity, TaskPriority, type TaskAttributes } from '../aiModelSel
 export async function factCheckClaim(request: FactCheckRequest): Promise<FactCheckResponse> {
   const { claim, context } = request;
   const prompt = generateFactCheckPrompt(claim, context);
-  const providers = getConfiguredHarmonyProviders();
+  const providers = getConfiguredHarmonyProviders('legalwhat');
 
   if (providers.length === 0) {
     return {
@@ -49,7 +49,7 @@ export async function factCheckClaim(request: FactCheckRequest): Promise<FactChe
     attributes,
     providers,
     {
-      providerPolicy: 'capability-first',
+      providerPolicy: 'legalwhat',
       systemPrompt: 'Verify legal claims conservatively. Do not invent statutes, cases, quotations, holdings, or URLs. Return the requested JSON structure.',
     },
   );
