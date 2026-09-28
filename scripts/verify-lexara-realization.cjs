@@ -1020,7 +1020,7 @@ must(domainExpertiseSourceLines.length === 40, 'literal 40-source LEXARA practic
 must(domainImplementationSourceLines.length === 10, 'literal 10-source LEXARA specialization implementation review is present');
 must(
   lexaraConversationOrchestrator.includes('planLexaraSequence(cleanPrompt, previousUserTurns)') &&
-    lexaraConversationOrchestrator.includes("sequencePlan.sequence === 'combined-legal-background'") &&
+    lexaraConversationOrchestrator.includes('sequencePlan.usePantheon && sequencePlan.useLegalResearch') &&
     lexaraConversationOrchestrator.includes('const pantheonDelegatedByLexara = sequencePlan.usePantheon') &&
     lexaraConversationOrchestrator.includes('const authorityResearchPromise = sequencePlan.useLegalResearch') &&
     lexaraPantheonInvestigation.includes("researchDecision.objectiveKind !== 'legal-authority' || context.delegatedByLexara"),
