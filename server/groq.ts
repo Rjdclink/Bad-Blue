@@ -75,7 +75,7 @@ async function resolveGroqModel(requestedModel: string, apiKey: string): Promise
   const models = groqModelCatalogCache?.models;
   const discoveredTextModels = models
     ? [...models].filter(model =>
-        !/whisper|speech|tts|audio|playai|orpheus|canopylabs|guard|moderation|compound|llama-3\.1-8b-instant/i.test(model)
+        !/whisper|speech|tts|audio|playai|orpheus|canopylabs|guard|moderation|compound|llama-3\.1-8b-instant|llama-3\.3-70b-versatile/i.test(model)
       )
     : [];
 
@@ -86,7 +86,6 @@ async function resolveGroqModel(requestedModel: string, apiKey: string): Promise
     'openai/gpt-oss-120b',
     'qwen/qwen3.6-27b',
     'qwen/qwen3.8-27b',
-    'llama-3.3-70b-versatile',
     ...discoveredTextModels,
   ]
     .map(normalizeGroqModelId)
