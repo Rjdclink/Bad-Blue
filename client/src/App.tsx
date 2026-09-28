@@ -287,6 +287,8 @@ function Router() {
         <TrialStatusBanner
           accessState={accessState}
           trialRemainingMs={Number((user as any)?.trialRemainingMs || 0)}
+          trialExpiresAt={(user as any)?.trialExpiresAt || null}
+          userId={(user as any)?.id}
         />
         <Switch>
           <Route path="/" component={Landing} />
@@ -295,6 +297,9 @@ function Router() {
           <Route path="/subscription-success" component={SubscriptionSuccess} />
           <Route path="/trial-expired">
             <TrialAccessPage />
+          </Route>
+          <Route path="/trial-upgrade">
+            <TrialAccessPage early />
           </Route>
           <Route path="/trial-review">
             <TrialAccessPage review />

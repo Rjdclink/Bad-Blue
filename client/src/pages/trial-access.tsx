@@ -10,9 +10,10 @@ import { apiRequest } from "@/lib/queryClient";
 interface TrialAccessPageProps {
   review?: boolean;
   required?: boolean;
+  early?: boolean;
 }
 
-export default function TrialAccessPage({ review = false, required = false }: TrialAccessPageProps) {
+export default function TrialAccessPage({ review = false, required = false, early = false }: TrialAccessPageProps) {
   const [, setLocation] = useLocation();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
@@ -63,11 +64,15 @@ export default function TrialAccessPage({ review = false, required = false }: Tr
       <SEOHead
         title={review
           ? "Trial Eligibility Review | Legal What?"
+          : early
+            ? "Continue After Your Trial | Legal What?"
           : required
             ? "Subscription Required | Legal What?"
             : "Free Trial Ended | Legal What?"}
         description={review
           ? "Get help with your Legal What? trial eligibility."
+          : early
+            ? "Your free trial remains active. Set up a subscription when you are ready."
           : required
             ? "Start a Legal What? subscription to access protected tools."
           : "Continue your Legal What? subscription after the free trial."}
@@ -84,6 +89,8 @@ export default function TrialAccessPage({ review = false, required = false }: Tr
             <h1 className="text-2xl font-bold">
               {review
                 ? "We need to review trial eligibility"
+                : early
+                  ? "Your free trial is still active"
                 : required
                   ? "A subscription is required"
                   : "Your free trial has ended"}
@@ -91,6 +98,8 @@ export default function TrialAccessPage({ review = false, required = false }: Tr
             <p className="text-muted-foreground">
               {review
                 ? "Your account and saved information are safe. We could not confidently confirm trial eligibility, so no new trial was started."
+                : early
+                  ? "You can keep using your free trial until it ends. If you choose to subscribe now, Square checkout will show the payment details before you confirm."
                 : required
                   ? "Your account and saved information are safe. This account does not have an active trial or paid subscription. Start a subscription to access protected tools."
                   : "Your 72-hour trial is over. Your account and saved information remain available; start a subscription to restore access to protected tools."}
