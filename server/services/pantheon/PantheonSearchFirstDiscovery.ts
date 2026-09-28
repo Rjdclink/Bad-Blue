@@ -96,7 +96,7 @@ export async function discoverPantheonSearchFirstCandidates(input: {
     `"${subject}"${locationClause} government professional social business address`,
   ];
   const perQueryTimeout = Math.max(900, Math.min(input.timeoutMs || 2_500, 5_000));
-  const settled = await Promise.all(queries.map(async discoveryQuery => {
+  const settled = await Promise.allSettled(queries.map(async discoveryQuery => {
     const result = await discoverPantheonSourcesParallel(discoveryQuery, [], {
       categories: input.categories.flatMap(category => category.registry),
       jurisdiction: location,
@@ -112,7 +112,7 @@ export async function discoverPantheonSearchFirstCandidates(input: {
     }));
   }));
   const byUrl = new Map<string, PantheonSearchFirstCandidate>();
-  for (const candidate of settled.flat()) {
+  for (const candidate of settled.flatMap(result => result.status === 'fulfilled' ? result.value : [])) {
     const existing = byUrl.get(candidate.url);
     if (!existing) {
       byUrl.set(candidate.url, { ...candidate, discoveryLanes: [candidate.lane] });

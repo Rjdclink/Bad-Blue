@@ -1,4 +1,4 @@
-import { decideLexaraResearchNeed, isLexaraLegalAuthorityIntent, type LexaraResearchDecision } from './LexaraResearchIntentRouter';
+import { decideLexaraResearchNeed, isLexaraLegalAuthorityIntent, isLexaraConversationControl, type LexaraResearchDecision } from './LexaraResearchIntentRouter';
 import { resolveLexaraBackgroundSubject } from './LexaraBackgroundSubject';
 import {
   classifyPantheonSemanticCategories,
@@ -33,6 +33,7 @@ const BACKGROUND_PATTERN = /\b(?:background|identit\w*|alias\w*|date\s+of\s+birt
 const DEEP_PATTERN = /\b(?:deep|thorough|comprehensive|recursive|broaden|keep looking|look harder|search again|investigate|everything|full background|background report)\b/i;
 const DOCUMENT_PATTERN = /\b(?:draft|prepare|create|generate|write|download|export|pdf|docx|word document|demand|complaint|petition|motion|affidavit|declaration|letter|request)\b/i;
 const ACTION_PATTERN = /\b(?:need|want|give|provide|make|prepare|draft|create|generate|write|download|export|file|serve|send)\b/i;
+const BACKGROUND_OBJECTIVE_PATTERN = /\b(?:background|investigat\w*|search|find|look\s*up|verify|locate|identity|alias|employment|work(?:s|ed)?\s+(?:at|for)|address|residen\w*|records?\s+(?:of|on|for|about)|criminal\s+record|property\s+(?:owned|ownership)|who\s+owns|where\s+.+\s+(?:live|work)|report)\b/i;
 
 function hasIdentifiableSubject(text: string): boolean {
   return /\b[A-Z][A-Za-z.'’-]+(?:\s+[A-Z][A-Za-z.'’-]+){1,5}\b/.test(text)
@@ -42,6 +43,11 @@ function hasIdentifiableSubject(text: string): boolean {
 export function planLexaraSequence(prompt: string, previousUserTurns: string[] = []): LexaraSequencePlan {
   const text = String(prompt || '').trim();
   const researchDecision = decideLexaraResearchNeed(text, previousUserTurns);
+  if (isLexaraConversationControl(text)) return {
+    sequence: 'conversation-only', researchDecision, useLegalResearch: false,
+    usePantheon: false, recursive: false, classifyPantheon: false,
+    documentAction: false, reason: 'conversation history/control turn',
+  };
   const legal = isLexaraLegalAuthorityIntent(text) || researchDecision.objectiveKind === 'legal-authority';
   const subject = resolveLexaraBackgroundSubject(text, previousUserTurns);
   const semanticCategories = classifyPantheonSemanticCategories(text, previousUserTurns);
@@ -52,6 +58,7 @@ export function planLexaraSequence(prompt: string, previousUserTurns: string[] =
   const fullReport = isFullPantheonReportIntent(text);
   const background = Boolean(
     ((semanticCategories.length > 0 || BACKGROUND_PATTERN.test(text) || fullReport)
+      && (!legal || fullReport || BACKGROUND_OBJECTIVE_PATTERN.test(text))
       && (subject?.identifiable || hasIdentifiableSubject(text)
         || Boolean(subject && priorBackground && isContextualReference(text))))
     || (contextualFollowup && (researchDecision.needed || semanticCategories.length > 0))
@@ -62,7 +69,7 @@ export function planLexaraSequence(prompt: string, previousUserTurns: string[] =
   if (documentAction) {
     return {
       sequence: 'document-action', researchDecision,
-      useLegalResearch: legal || researchDecision.needed,
+      useLegalResearch: legal || !background,
       usePantheon: background,
       recursive: deep || background,
       classifyPantheon: background,

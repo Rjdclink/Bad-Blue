@@ -42,7 +42,7 @@ for(const token of [
   "'current-information'",
 ]) if(!router.includes(token)) throw new Error('Structured research objective invariant missing: '+token);
 for(const token of [
-  "endpoint: 'evidence-sufficient' | 'best-available-evidence' | 'partial-evidence' | 'budget-exhausted' | 'sources-exhausted' | 'clarification-required' | 'unavailable' | 'failed' | 'report-handoff'",
+  "endpoint: 'evidence-sufficient' | 'best-available-evidence' | 'partial-evidence' | 'budget-exhausted' | 'sources-exhausted' | 'clarification-required' | 'unavailable' | 'failed' | 'report-handoff' | 'search-leads-only'",
   "'[LEXARA PantheonRoute]'",
   "stage: 'recursion-pass'",
   "stage: 'endpoint'",
@@ -53,7 +53,7 @@ for(const token of [
   'pendingTargets = [...new Set([...pendingTargets.filter(url => !seenTargets.has(url)), ...frontier, ...discovered])]',
 ]) if(!investigation.includes(token)) throw new Error('Pantheon endpoint/telemetry invariant missing: '+token);
 for(const token of [
-  "pantheonDelegatedByLexara\n      ? pantheonInvestigationPromise",
+  "pantheonDelegatedByLexara\n      ? mixedLegalFactNeed",
   'pantheonEndpoint:',
   'pantheonRecursionPasses:',
   'researchEndpointReached:',

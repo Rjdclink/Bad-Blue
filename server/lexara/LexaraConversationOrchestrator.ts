@@ -18,9 +18,10 @@ import {
   formatLexaraDomainSpecialization,
   getLexaraLegalDomainProfile,
 } from './LexaraLegalDomainProfiles';
-import { decideLexaraResearchNeed } from './LexaraResearchIntentRouter';
+import { decideLexaraResearchNeed, isLexaraRepeatRequest } from './LexaraResearchIntentRouter';
 import { planLexaraSequence } from './LexaraSequenceRouter';
 import { resolveLexaraBackgroundSubject } from './LexaraBackgroundSubject';
+import { discoverPantheonSourcesParallel } from '../services/pantheon/PantheonDiscoveryCoordinator';
 
 export interface LexaraConversationMessage {
   role: 'user' | 'lexara' | 'assistant';
@@ -471,6 +472,12 @@ export async function generateLexaraConversationResponse(
     .slice(-8)
     .map(message => message.content || '');
   const sequencePlan = planLexaraSequence(cleanPrompt, previousUserTurns);
+  if (isLexaraRepeatRequest(cleanPrompt)) {
+    const lastReply = [...(context.previousMessages || [])].reverse().find(message =>
+      message.role === 'lexara' || message.role === 'assistant');
+    return { text: lastReply?.content?.trim() || 'I do not have my previous answer in this conversation. Please repeat your question.',
+      jurisdiction, mappedLawType };
+  }
   const researchDecision = sequencePlan.researchDecision;
   console.log('[LEXARA ResearchRoute]', {
     sequence: sequencePlan.sequence,
@@ -498,7 +505,7 @@ export async function generateLexaraConversationResponse(
 
   // The explicit six-sequence router owns subsystem selection. Mixed legal and
   // background questions deliberately run both research domains in parallel.
-  const mixedLegalFactNeed = sequencePlan.sequence === 'combined-legal-background';
+  const mixedLegalFactNeed = sequencePlan.usePantheon && sequencePlan.useLegalResearch;
   const pantheonDelegatedByLexara = sequencePlan.usePantheon;
 
   const pantheonPrompt = mixedLegalFactNeed
@@ -506,13 +513,30 @@ export async function generateLexaraConversationResponse(
     : researchDecision.needed
       ? `${cleanPrompt}\n\nResearch objective: ${researchDecision.objective}`
       : cleanPrompt;
-  const pantheonInvestigationPromise: Promise<LexaraPersonInvestigation | null> = pantheonDelegatedByLexara ? investigatePersonQuestion(pantheonPrompt, {
+  const pantheonController = new AbortController();
+  const relayPantheonAbort = () => pantheonController.abort(context.signal?.reason);
+  if (context.signal?.aborted) pantheonController.abort(context.signal.reason);
+  else context.signal?.addEventListener('abort', relayPantheonAbort, { once: true });
+  const searchOnlyFact = sequencePlan.sequence === 'simple-factual'
+    && !resolveLexaraBackgroundSubject(cleanPrompt, previousUserTurns, jurisdiction);
+  const pantheonInvestigationPromise: Promise<LexaraPersonInvestigation | null> = pantheonDelegatedByLexara ? (searchOnlyFact
+    ? discoverPantheonSourcesParallel(researchDecision.objective || cleanPrompt, [], {
+        jurisdiction, limit: 8, timeoutMs: 6_000,
+        signal: pantheonController.signal, providerPolicy: 'legalwhat',
+      }).then(discovery => ({
+        sources: [], searchLeads: discovery.urls, categories: [], fullBackgroundReportRequested: false,
+        endpoint: discovery.urls.length ? 'search-leads-only' as const : 'unavailable' as const,
+        coverageLimited: true,
+        coverageNote: 'Search links have not been independently fetched or verified.',
+        discoveryLanes: discovery.lanesAttempted,
+      }))
+    : investigatePersonQuestion(pantheonPrompt, {
     delegatedByLexara: mixedLegalFactNeed,
     previousMessages: context.previousMessages,
     jurisdiction,
-    signal: context.signal,
+    signal: pantheonController.signal,
     onProgress: context.onResearchProgress,
-  }).catch(error => {
+  })).catch(error => {
     console.warn('[LEXARA Pantheon] application-owned research route unavailable', {
       error: error instanceof Error ? error.message : String(error),
     });
@@ -557,6 +581,7 @@ export async function generateLexaraConversationResponse(
         signal: researchController.signal,
       }).catch(() => null)
     : Promise.resolve(null);
+  let mixedPantheonTimer: ReturnType<typeof setTimeout> | undefined;
   const [authorityResearch, pantheonInvestigation] = await Promise.all([
     Promise.race([
       authorityResearchPromise,
@@ -567,12 +592,22 @@ export async function generateLexaraConversationResponse(
     // ordinary 2.4s legal-authority latency budget. Non-research conversation
     // keeps the existing fast budget.
     pantheonDelegatedByLexara
-      ? pantheonInvestigationPromise
+      ? mixedLegalFactNeed
+        ? Promise.race([
+            pantheonInvestigationPromise,
+            new Promise<null>(resolve => { mixedPantheonTimer = setTimeout(() => {
+              pantheonController.abort(new Error('Mixed-turn Pantheon budget reached'));
+              resolve(null);
+            }, 8_000); }),
+          ])
+        : pantheonInvestigationPromise
       : Promise.race([
           pantheonInvestigationPromise,
           new Promise<null>(resolve => setTimeout(() => resolve(null), LIVE_RESEARCH_BUDGET_MS)),
         ]),
   ]);
+  if (mixedPantheonTimer) clearTimeout(mixedPantheonTimer);
+  context.signal?.removeEventListener('abort', relayPantheonAbort);
   if (!authorityResearch) researchController.abort();
   context.signal?.removeEventListener('abort', relayResearchAbort);
   const researchWaitMs = Date.now() - researchStartedAt;
@@ -580,15 +615,18 @@ export async function generateLexaraConversationResponse(
     ? pantheonInvestigation?.endpoint || 'unavailable' : undefined;
   const pantheonStatus = pantheonEndpoint === 'evidence-sufficient'
     ? 'completed' as const
-    : pantheonEndpoint === 'best-available-evidence' || pantheonEndpoint === 'partial-evidence' || pantheonEndpoint === 'budget-exhausted' || pantheonEndpoint === 'sources-exhausted'
+    : pantheonEndpoint === 'best-available-evidence' || pantheonEndpoint === 'partial-evidence' || pantheonEndpoint === 'budget-exhausted' || pantheonEndpoint === 'sources-exhausted' || pantheonEndpoint === 'search-leads-only'
       ? 'partial' as const
       : pantheonEndpoint === 'clarification-required' ? 'clarification-required' as const
       : pantheonEndpoint === 'report-handoff' ? 'consent-required' as const
       : pantheonEndpoint === 'failed' ? 'failed' as const
       : pantheonEndpoint === 'unavailable' ? 'unavailable' as const : undefined;
   if (pantheonDelegatedByLexara && !mixedLegalFactNeed && !pantheonInvestigation?.evidenceSummary) {
+    const searchLeads = pantheonInvestigation?.searchLeads || [];
     const text = pantheonInvestigation?.clarification
-      || (pantheonStatus === 'failed' || pantheonStatus === 'unavailable'
+      || (searchLeads.length
+        ? `Pantheon found these search leads, but could not verify the pages. They are leads, not established facts:\n${searchLeads.map(url => `- ${url}`).join('\n')}`
+        : pantheonStatus === 'failed' || pantheonStatus === 'unavailable'
         ? 'Pantheon could not complete this lookup. I cannot verify the requested fact or rule out a record; please retry when the sources are available.'
         : 'Pantheon completed a limited lookup but found no verified, subject-matched evidence for this question. That does not establish that no record exists.');
     console.info('[LEXARA Performance] background turn', {

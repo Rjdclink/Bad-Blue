@@ -100,6 +100,16 @@ assert.equal(
 assert.equal(classifyPantheonSemanticCategories('Explain general contract law.').length, 0,
   'ordinary legal analysis does not accidentally enter a Pantheon category');
 assert.equal(planLexaraSequence('Explain general contract law.').usePantheon, false);
+const repeat = planLexaraSequence('What did you say?', ['My neighbor damaged my lawn.']);
+assert.equal(repeat.sequence, 'conversation-only', 'conversation recall cannot launch Pantheon');
+assert.equal(repeat.usePantheon, false);
+const demand = planLexaraSequence('I live in Spirit Lake, Iowa. My neighbor’s dog keeps fouling my lawn. Draft me a demand letter.');
+assert.equal(demand.documentAction, true);
+assert.equal(demand.useLegalResearch, true, 'legal drafting retains the legal lane');
+assert.equal(demand.usePantheon, false, 'a legal demand letter does not imply a neighbor investigation');
+const mixed = planLexaraSequence('Find Jane Doe’s court records in Iowa and explain the legal options they establish.');
+assert.equal(mixed.usePantheon, true, 'explicit background records use Pantheon');
+assert.equal(mixed.useLegalResearch, true, 'mixed turn also runs legal analysis');
 
 const ambiguousIdentity = await investigatePersonQuestion('What is Jane Doe’s professional license status?');
 assert.equal(ambiguousIdentity?.endpoint, 'clarification-required',
