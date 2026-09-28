@@ -247,24 +247,23 @@ must(
     ttsMesh.includes("'deepgram'") &&
     ttsMesh.includes("'xai'") &&
     ttsMesh.includes("'groq'") &&
-    ttsMesh.includes("'openrouter'") &&
+    !/openrouter/i.test(ttsMesh) &&
     ttsMesh.includes("'azure'") &&
     ttsMesh.includes("'elevenlabs'") &&
     ttsMesh.includes('configuration_blocked') &&
     ttsMesh.includes('refreshLexaraTTSReadiness') &&
     ttsMesh.includes('verifyProvider') &&
     ttsMesh.includes('/v1/audio/voices?type=all') &&
-    ttsMesh.includes("google/gemini-3.1-flash-tts-preview") &&
-    ttsMesh.includes("mistralai/voxtral-mini-tts-2603") &&
+    ttsMesh.includes("gemini-3.1-flash-tts-preview") &&
+    ttsMesh.includes("voxtral-mini-tts-2603") &&
     ttsMesh.includes('/v1/user/subscription') &&
     !ttsMesh.includes("process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY") &&
-    ttsMesh.includes("'gb_jane_neutral'") &&
     !ttsMesh.includes("'en_paul_neutral'") &&
     ttsMesh.includes('fetchMistralVoiceDetails') &&
     ttsMesh.includes('workerCount = Math.min(8') &&
     ttsMesh.includes('configured Mistral TTS voice is not a verified female English voice') &&
     ttsMesh.includes('mistral voice catalog contains no LEXARA-compatible female English voice') &&
-    ttsMesh.includes("model.startsWith('google/') ? 'pcm' : 'mp3'") &&
+    ttsMesh.includes("response_format: 'mp3'") &&
     ttsMesh.includes("mimeType: 'audio/wav'") &&
     ttsMesh.includes('pcm16MonoToWav(pcm, 24_000)') &&
     ttsMesh.includes('LEXARA_TTS_REQUEST_TIMEOUT_MS = 8_000') &&
@@ -272,11 +271,11 @@ must(
     !ttsMesh.includes("'microsoft/mai-voice-2-flash'") &&
     ttsMesh.includes('synthesizeLexaraSpeechWithFailover') &&
     ttsMesh.includes('openLexaraSpeechStream') &&
-    ttsMesh.includes('openOpenRouterSpeechStream') &&
+    ttsMesh.includes('raceVoiceRoutes') &&
     ttsMesh.includes('openDeepgramSpeechStream') &&
     ttsMesh.includes('openElevenLabsSpeechStream') &&
     ttsMesh.includes("'flux-haley-en'") &&
-    ttsMesh.includes("const BASE_ORDER: LexaraTTSProviderId[] = [\n  'deepgram',\n  'gemini',\n  'openrouter'") &&
+    ttsMesh.includes("const BASE_ORDER: LexaraTTSProviderId[] = [\n  'deepgram',\n  'gemini',\n  'mistral'") &&
     ttsMesh.includes("endpoint = flux ? '/v2/speak' : '/v1/speak'") &&
     ttsMesh.includes('LEXARA_FEMALE_VOICE') &&
     ttsMesh.includes('providerIndependenceDomain') &&
@@ -1170,5 +1169,6 @@ must(
   'document bodies must never be sent to realtime TTS',
 );
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-research-routing.cjs')], { stdio: 'inherit' });
+require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-tts-mesh.cjs')], { stdio: 'inherit' });
 console.log('LEXARA independent recovery verification passed.');
 
