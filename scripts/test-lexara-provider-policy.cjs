@@ -143,8 +143,7 @@ test('allowed direct fallback survives a provider failure', async () => {
 test('GPT OSS alias cannot duplicate Groq or escape to a paid gateway', async () => {
   const h = harness(['GROQ_API_KEY','OPENROUTER_API_KEY']);
   assert(!h.registry.getConfiguredHarmonyProviders('legalwhat').includes('gpt_oss'));
-  const result = await h.run(['gpt_oss']);
-  assert.match(result.finalAnswer, /No successful responses/);
+  await assert.rejects(h.run(['gpt_oss']), /No providers available/);
   assert.equal(h.calls.length, 0);
 });
 test('Cloudflare is an independent direct fallback when configured', async () => {
