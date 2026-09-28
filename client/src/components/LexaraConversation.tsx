@@ -394,6 +394,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const [voiceReady, setVoiceReady] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState<'live' | 'degraded' | 'reconnecting'>('reconnecting');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [officialForms, setOfficialForms] = useState<Array<{ name: string; url: string }>>([]);
   const [audioLevel, setAudioLevel] = useState(0);
   const [emotion, setEmotion] = useState<LEXARAEmotionHint>('calm');
   const [gaze, setGaze] = useState<LEXARAGazeHint>('camera');
@@ -1079,7 +1080,8 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         const resolvedJurisdiction = String(data?.jurisdiction || jurisdiction || '').trim();
         if (resolvedJurisdiction) {
           const facts = [...previousMessages, { role: 'user', content: message }]
-            .map(item => `${item.role === 'user' ? 'USER' : 'LEXARA'}: ${item.content}`)
+            .filter(item => item.role === 'user')
+            .map(item => `USER: ${item.content}`)
             .join('\n\n')
             .slice(-30000);
           const pendingTitle = String(data.documentIntent.documentType || 'Legal Document');
@@ -1300,6 +1302,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     conversationRef.current = [];
     setConversation([]);
     setJurisdiction(undefined);
+    setOfficialForms([]);
     greetingRef.current = false;
     greetingDisplayedRef.current = false;
     pendingUserTurnQueueRef.current = [];
@@ -1333,6 +1336,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     conversationRef.current = [];
     setConversation([]);
     setJurisdiction(undefined);
+    setOfficialForms([]);
     greetingRef.current = false;
     greetingDisplayedRef.current = false;
     userSpeechObservedRef.current = false;
@@ -1430,12 +1434,13 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const generateAndDownloadPendingDocument = async (format: 'docx' | 'pdf') => {
     if (!pendingDocument || documentBusy) return;
     setDocumentBusy(true);
+    setOfficialForms([]);
     try {
       const generated = await fetch('/api/lexara/documents/generate', {
         method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          state: pendingDocument.state,
-          facts: pendingDocument.facts,
+          state: jurisdiction || pendingDocument.state,
+          facts: conversationRef.current.filter(item => item.role === 'user').map(item => `USER: ${item.content}`).join('\n\n').slice(-30000) || pendingDocument.facts,
           lawType: lawTypeId,
           documentType: pendingDocument.title,
           templateMode: pendingDocument.templateMode,
@@ -1445,7 +1450,17 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         }),
       });
       const data = await generated.json().catch(() => ({}));
-      if (!generated.ok || !data?.document) throw new Error(data?.error || 'Document generation failed');
+      if (!generated.ok || !data?.document) {
+        setOfficialForms(Array.isArray(data?.requirements?.forms) ? data.requirements.forms.filter((form: any) =>
+          typeof form.name === 'string' && typeof form.url === 'string' && /^https?:\/\//i.test(form.url)) : []);
+        if (data?.requirements?.status === 'clarification' && typeof data?.error === 'string') {
+          appendMessage('lexara', data.error);
+          setErrorMessage(null);
+          void speakLexara(data.error, generationRef.current).catch(() => undefined);
+          return;
+        }
+        throw new Error(data?.error || 'Document generation failed');
+      }
       // Restore the proven strict handoff: only a server-validated document of
       // the requested type may become the downloadable artifact.
       if (data?.validated !== true || String(data?.documentType || '') !== pendingDocument.title) {
@@ -1644,6 +1659,14 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             </div>
           )}
 
+          {officialForms.length > 0 && (
+            <div className="rounded-lg border bg-card p-3 text-sm">
+              <p className="font-medium">Official court forms</p>
+              <ul className="mt-2 space-y-2">
+                {officialForms.map(form => <li key={form.url}><a className="underline" href={form.url} target="_blank" rel="noopener noreferrer">{form.name}</a></li>)}
+              </ul>
+            </div>
+          )}
           {errorMessage && (
             <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
