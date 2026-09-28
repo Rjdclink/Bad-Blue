@@ -554,6 +554,7 @@ export class AICollaborationOrchestrator {
         model: this.getDefaultModelForProvider(finalProvider),
         role: 'harmony-synthesizer',
         providerPolicy: options.providerPolicy,
+        allowCoolingRecovery: healthyProviders.length === 0,
         failedProviders,
         signal: options.signal,
         prompt: attributes.needsStructuredOutput
