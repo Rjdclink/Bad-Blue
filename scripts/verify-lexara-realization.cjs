@@ -320,8 +320,8 @@ must(
     realtimeVoiceClient.includes('sampleRate * 0.120') &&
     realtimeVoiceClient.includes('mobile-network jitter gap occurs') &&
     orchestrator.includes('LIVE_RESEARCH_BUDGET_MS = 10_000') &&
-    orchestrator.includes('LIVE_REASONING_PROVIDER_ATTEMPT_MS = 2_500') &&
-    orchestrator.includes('LIVE_REASONING_MAX_FALLBACKS = 3') &&
+    orchestrator.includes('LIVE_REASONING_PROVIDER_ATTEMPT_MS = 6_000') &&
+    orchestrator.includes('LIVE_REASONING_MAX_FALLBACKS = 2') &&
     !realtimeVoiceClient.includes('LEXARA_REALTIME_OUTPUT_SAMPLE_RATE = 24_000') &&
     realtimeVoiceClient.includes('audio.defaultPlaybackRate = 1') &&
     realtimeVoiceClient.includes('audio.playbackRate = 1') &&
@@ -484,12 +484,12 @@ must(
     harmony.includes("return 'legal-fast'") &&
     harmony.includes('withHarmonyDeadline') &&
     harmonyRegistry.includes('HARMONY_17_PARTICIPANTS') &&
-    orchestrator.includes('maxParticipants: 3') &&
+    orchestrator.includes('maxParticipants: 2') &&
     orchestrator.includes('estimatedTokens: 450') &&
     !orchestrator.includes('LIVE_REASONING_DEADLINE_MS') &&
     !orchestrator.includes('harmonyDeadline') &&
-    orchestrator.includes('LIVE_REASONING_PROVIDER_ATTEMPT_MS = 2_500') &&
-    orchestrator.includes('LIVE_REASONING_MAX_FALLBACKS = 3') &&
+    orchestrator.includes('LIVE_REASONING_PROVIDER_ATTEMPT_MS = 6_000') &&
+    orchestrator.includes('LIVE_REASONING_MAX_FALLBACKS = 2') &&
     orchestrator.includes('requestTimeoutMs: LIVE_REASONING_PROVIDER_ATTEMPT_MS') &&
     orchestrator.includes('maxFallbacks: LIVE_REASONING_MAX_FALLBACKS') &&
     harmony.includes('fastSynthesisTask') &&
@@ -501,7 +501,7 @@ must(
     harmonyWarmup.includes('getHarmonyWarmState') &&
     harmonyWarmup.includes("'catalog'") &&
     groq.includes('warmGroqModelCatalog'),
-  'Lexara keeps all 17 configured participants as a hot reserve while only a three-route capability/latency hedge owns normal turn latency',
+  'Lexara keeps all 17 configured participants as a hot reserve while only a two-route capability/latency hedge owns normal turn latency',
 );
 must(
   !authorityResearch.includes('openRouterWebSearch') &&
@@ -577,7 +577,7 @@ must(
     groq.includes('normalizeGroqModelId') &&
     groq.includes('orpheus|canopylabs') &&
     groq.includes('model_terms_required') &&
-    groq.includes('while (attempted.size < 6)') &&
+    groq.includes('while (attempted.size < 2)') &&
     aiProvider.includes("prefixes: ['llama-', 'meta-llama/', 'openai/', 'qwen/']") &&
     harmonyRegistry.includes("'claude-opus-5'") &&
     harmony.includes('harmonyProviderCooldownUntil') &&
