@@ -19,6 +19,11 @@ export interface HarmonyWarmStatus {
 
 const warmStatus = new Map<AIProvider, HarmonyWarmStatus>();
 const resolvedModels = new Map<AIProvider, string>();
+const recoveryModels = new Map<AIProvider, string[]>();
+
+export function getHarmonyRecoveryModels(provider: AIProvider): string[] {
+  return [...(recoveryModels.get(provider) || [])];
+}
 let warmupInFlight: Promise<HarmonyWarmStatus[]> | null = null;
 const CATALOG_TIMEOUT_MS = 3_500;
 
@@ -137,8 +142,9 @@ export function isHarmonyProviderWarmHealthy(provider: AIProvider): boolean {
   return false;
 }
 
-export function markHarmonyProviderWarmSuccess(provider: AIProvider): void {
-  const model = getHarmonyResolvedModel(provider);
+export function markHarmonyProviderWarmSuccess(provider: AIProvider, successfulModel?: string): void {
+  if (successfulModel) resolvedModels.set(provider, successfulModel);
+  const model = successfulModel || getHarmonyResolvedModel(provider);
   warmStatus.set(provider, {
     provider,
     model,
@@ -220,10 +226,18 @@ export async function prewarmHarmonyProviders(): Promise<HarmonyWarmStatus[]> {
           const catalog = await fetchCatalog(
             `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}&pageSize=100`,
             {},
-            payload => (payload?.models || []).map((item: any) => item?.name),
+            payload => (payload?.models || [])
+              .filter((item: any) => item?.supportedGenerationMethods?.includes('generateContent'))
+              .map((item: any) => item?.name),
           );
+          // Recovery must use a live text-capable Flash model, never a guessed ID
+          // or an image/audio/preview route. Try at most one alternate per task.
+          recoveryModels.set(provider, [...catalog].filter(candidate =>
+            /^gemini-.*flash/i.test(candidate)
+            && !/image|audio|tts|live|native|preview|experimental|exp-|embedding/i.test(candidate)
+          ));
           const resolved = chooseCatalogModel(catalog, model, [
-            candidate => /gemini/i.test(candidate) && !/embedding|imagen|veo|tts|audio/i.test(candidate),
+            candidate => /gemini/i.test(candidate) && !/embedding|imagen|image|veo|tts|audio|live|native/i.test(candidate),
           ]);
           return record(provider, resolved || model, startedAt, resolved ? 'catalog' : 'degraded', resolved ? undefined : 'no live compatible Gemini model');
         }

@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const ts = require('typescript');
 const root = path.resolve(__dirname, '..');
 const keys = ['GEMINI_API_KEY','ANTHROPIC_API_KEY','GROQ_API_KEY','MISTRAL_API_KEY','OPENROUTER_API_KEY','XAI_API_KEY','CEREBRAS_API_KEY','FIREWORKS_API_KEY','COHERE_API_KEY','TOGETHER_API_KEY'];
-function harness(enabled, { fail = false, warm = true, stall = false } = {}) {
+function harness(enabled, { fail = false, warm = true, stall = false, recoveryModels = [] } = {}) {
   const env = Object.fromEntries(enabled.map(key => [key, 'fixture-key']));
   const calls = [];
   const cache = new Map();
@@ -20,6 +20,7 @@ function harness(enabled, { fail = false, warm = true, stall = false } = {}) {
     'server/aiHarmonyWarmup.ts': {
       getHarmonyResolvedModel: provider => load('server/aiHarmonyModelRegistry.ts').getCurrentModelForProvider(provider),
       getHarmonyWarmState: () => warm ? 'ready' : 'catalog',
+      getHarmonyRecoveryModels: () => recoveryModels,
       isHarmonyProviderWarmHealthy: () => warm,
       markHarmonyProviderWarmSuccess: () => {},
     },
@@ -38,7 +39,9 @@ function harness(enabled, { fail = false, warm = true, stall = false } = {}) {
           else options.signal.addEventListener('abort', onAbort, { once: true });
         });
       }
-      if (fail === true || fail === provider) throw new Error('fixture provider failure');
+      const failure = typeof fail === 'function' ? fail(provider, options.model)
+        : (fail === true || fail === provider ? 'fixture provider failure' : null);
+      if (failure) throw new Error(failure);
       return { content: 'Supported fixture answer', tokensUsed: 8 };
     } },
     'server/openRouterService.ts': { generateOpenRouterText: async (_prompt, options) => {
@@ -64,8 +67,10 @@ function harness(enabled, { fail = false, warm = true, stall = false } = {}) {
       process: { env }, console: { info() {}, warn() {}, log() {}, error() {} },
       AbortController, DOMException, setTimeout, clearTimeout,
       fetch: async url => {
-        calls.push({ transport: String(url).includes('cerebras') ? 'cerebras' : 'unknown-http' });
-        if (fail) throw new Error('fixture HTTP failure');
+        const transport = String(url).includes('cerebras') ? 'cerebras' : 'unknown-http';
+        calls.push({ transport });
+        const failure = typeof fail === 'function' ? fail(transport) : (fail ? 'fixture HTTP failure' : null);
+        if (failure) throw new Error(failure);
         return { ok: true, json: async () => ({ choices: [{ message: { content: 'Direct HTTP fixture answer' } }], usage: { total_tokens: 8 } }) };
       },
     }, { filename })(requireLocal, module, module.exports);
@@ -219,6 +224,65 @@ for (const [policy, legalTimeout, raceTimeout] of [['legalwhat', 2500, 2500], ['
     assert(observed.every(timeout => timeout === raceTimeout), `race task budgets: ${observed}`);
   });
 }
+
+function circuitTask(h, provider, overrides = {}) {
+  return { id: 'fixture-runtime-circuit', provider, model: 'fixture-primary', role: 'legal-analyst',
+    prompt: 'Fixture', priority: 1, attributes: h.attributes, providerPolicy: 'legalwhat',
+    fallbackProviders: ['gemini'], maxFallbacks: 1, requestTimeoutMs: 100,
+    failedProviders: new Set(), ...overrides };
+}
+for (const [provider, failure] of [
+  ['cerebras', 'cerebras HTTP 402 Payment required'],
+  ['mistral', 'Mistral API error Status 429 Rate limit exceeded'],
+  ['groq', 'No permitted capability-compatible Groq model is currently available'],
+  ['claude', 'claude timed out after 6000ms'],
+]) {
+  test(provider + ' runtime circuit cannot be bypassed by legal recovery', async () => {
+    const h = harness(keys, { fail: p => p === provider ? failure : null });
+    const first = await h.engine.executeTask(circuitTask(h, provider), new Map());
+    const second = await h.engine.executeTask(circuitTask(h, provider, { allowCoolingRecovery: true }), new Map());
+    assert.equal(first.success, true);
+    assert.equal(second.success, true);
+    assert.equal(second.provider, 'gemini');
+    assert.equal(h.calls.filter(call => call.transport === provider).length, 1);
+  });
+}
+test('a request-local rejected provider stays skipped independently of warm readiness', async () => {
+  const h = harness(keys);
+  const result = await h.engine.executeTask(circuitTask(h, 'cerebras', {
+    failedProviders: new Set(['cerebras']), allowCoolingRecovery: true,
+  }), new Map());
+  assert.equal(result.provider, 'gemini');
+  assert(!h.calls.some(call => call.transport === 'cerebras'));
+});
+test('Gemini overload recovers once through a catalog-confirmed alternate', async () => {
+  const h = harness(['GEMINI_API_KEY'], {
+    recoveryModels: ['fixture-alternate-flash'],
+    fail: (_provider, model) => model === 'fixture-primary' ? '503 UNAVAILABLE high demand' : null,
+  });
+  const result = await h.engine.executeTask(circuitTask(h, 'gemini', { fallbackProviders: [] }), new Map());
+  assert.equal(result.success, true);
+  assert.equal(result.model, 'fixture-alternate-flash');
+  assert.deepEqual(h.calls.map(call => call.model), ['fixture-primary', 'fixture-alternate-flash']);
+});
+test('Gemini overload without a catalog alternate preserves independent fallback', async () => {
+  const h = harness(['GEMINI_API_KEY','MISTRAL_API_KEY'], {
+    fail: provider => provider === 'gemini' ? '503 UNAVAILABLE' : null,
+  });
+  const result = await h.engine.executeTask(circuitTask(h, 'gemini', { fallbackProviders: ['mistral'] }), new Map());
+  assert.equal(result.provider, 'mistral');
+  assert.deepEqual(h.calls.map(call => call.transport), ['gemini','mistral']);
+});
+test('Gemini quota failure does not try a model-capacity alternate', async () => {
+  const h = harness(['GEMINI_API_KEY','MISTRAL_API_KEY'], {
+    recoveryModels: ['fixture-alternate-flash'],
+    fail: provider => provider === 'gemini' ? '429 RESOURCE_EXHAUSTED' : null,
+  });
+  const result = await h.engine.executeTask(circuitTask(h, 'gemini', { fallbackProviders: ['mistral'] }), new Map());
+  assert.equal(result.provider, 'mistral');
+  assert.equal(h.calls.filter(call => call.transport === 'gemini').length, 1);
+});
+
 const scopedCallerCounts = {
   'server/legalAI.ts': 17,
   'server/consultationCoordinator.ts': 3,
