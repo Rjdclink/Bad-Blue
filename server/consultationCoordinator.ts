@@ -95,6 +95,7 @@ Format your response as JSON:
       'legal-consultation-coordinator',
       prompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt,
         temperature: 0.3,
         useJSON: true,
@@ -156,6 +157,7 @@ Return JSON:
       'people-finder-detection',
       prompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt,
         temperature: 0.2,
         useJSON: true,
@@ -195,6 +197,7 @@ Return JSON array of document types:
       'document-determination',
       prompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt,
         temperature: 0.3,
         useJSON: true,

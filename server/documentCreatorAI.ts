@@ -150,6 +150,7 @@ Respond in JSON format:
       'document-creator-conversation',
       userPrompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt,
         temperature: 0.7,
         useJSON: true
@@ -325,6 +326,7 @@ Return the complete document text, properly formatted for printing and filing.`;
       'document-creator-generate',
       userPrompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt,
         temperature: 0.5
       },
@@ -371,6 +373,7 @@ Provide the complete revised document with the requested changes incorporated.`;
       'document-creator-revise',
       userPrompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt,
         temperature: 0.5
       },

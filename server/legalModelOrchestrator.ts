@@ -18,6 +18,7 @@ import {
   HARMONY_17_PARTICIPANTS,
   getConfiguredHarmonyParticipants,
   getConfiguredHarmonyProviders,
+  isHarmonyProviderAllowed,
   type HarmonyCapability,
 } from './aiHarmonyModelRegistry';
 import { createLogger } from './logger';
@@ -116,8 +117,8 @@ export function selectModelsForTask(
   priority: TaskPriority,
   complexity: TaskComplexity
 ): ModelSelection {
-  const configured = getConfiguredHarmonyParticipants();
-  const pool = configured.length > 0 ? configured : [...HARMONY_17_PARTICIPANTS];
+  const configured = getConfiguredHarmonyParticipants('legalwhat');
+  const pool = configured.length > 0 ? configured : HARMONY_17_PARTICIPANTS.filter(participant => isHarmonyProviderAllowed(participant.provider, 'legalwhat'));
   const required = LEGAL_TASK_CAPABILITIES[taskType];
 
   const scored = pool
@@ -169,7 +170,7 @@ export async function executeWithConsensus<T>(
     parseResult?: (content: string) => T;
   } = {}
 ): Promise<ConsensusResult<T>> {
-  const providers = getConfiguredHarmonyProviders();
+  const providers = getConfiguredHarmonyProviders('legalwhat');
 
   log.info('Executing legal task through full Harmony consensus', {
     taskType: task.legalTaskType,
@@ -181,6 +182,7 @@ export async function executeWithConsensus<T>(
       `${task.legalTaskType}-consensus-local-fallback`,
       prompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt: options.systemPrompt,
         temperature: options.temperature,
         maxTokens: options.maxTokens,
@@ -223,7 +225,7 @@ export async function executeWithConsensus<T>(
     } as any,
     providers,
     {
-      providerPolicy: 'capability-first',
+      providerPolicy: 'legalwhat',
       systemPrompt: options.systemPrompt,
     },
   );
@@ -486,6 +488,7 @@ export async function executeLegalConsultation(
     'legal-consultation',
     prompt,
     {
+      providerPolicy: 'legalwhat',
       systemPrompt,
       temperature: options.temperature || 0.3,
       maxTokens: options.maxTokens || 3000
@@ -516,6 +519,7 @@ export async function executeDocumentGeneration(
     'document-generation',
     prompt,
     {
+      providerPolicy: 'legalwhat',
       systemPrompt,
       temperature: options.temperature || 0.3,
       maxTokens: options.maxTokens || 4000
@@ -547,6 +551,7 @@ export async function executeEvidenceAnalysis(
     'evidence-analysis',
     prompt,
     {
+      providerPolicy: 'legalwhat',
       systemPrompt,
       temperature: options.temperature || 0.1,
       maxTokens: options.maxTokens || 2500,
@@ -673,6 +678,7 @@ export async function executeWithMLRouting<T>(
     `${task.legalTaskType}-ml-routing`,
     prompt,
     {
+      providerPolicy: 'legalwhat',
       systemPrompt: options.systemPrompt,
       temperature: options.temperature,
       maxTokens: options.maxTokens,

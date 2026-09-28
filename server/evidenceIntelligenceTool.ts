@@ -209,6 +209,7 @@ Return ONLY valid JSON:
       'evidence-extraction',
       prompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.1,
         maxTokens: 2500,
@@ -305,6 +306,7 @@ Return ONLY valid JSON:
       'evidence-classification',
       prompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.2,
         maxTokens: 1000,
@@ -376,6 +378,7 @@ Return ONLY valid JSON:
       'legal-significance',
       prompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.2,
         maxTokens: 1000,
@@ -448,6 +451,7 @@ Return ONLY valid JSON:
       'evidence-strength',
       prompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.2,
         maxTokens: 1500,
@@ -616,6 +620,7 @@ Return ONLY valid JSON:
       'conflict-detection',
       prompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.2,
         maxTokens: 2000,
@@ -740,6 +745,7 @@ Write a 2-3 sentence professional summary of this evidence's importance and role
       'evidence-summary',
       prompt,
       {
+        providerPolicy: 'legalwhat',
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.3,
         maxTokens: 300

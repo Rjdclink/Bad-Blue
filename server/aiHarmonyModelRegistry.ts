@@ -197,12 +197,37 @@ const LEGACY_MODEL_ALIASES: Partial<Record<AIProvider, string>> = {
   [PROVIDER.PERPLEXITY]: CURRENT_AI_MODELS.openRouterAuto,
 };
 
-export function getConfiguredHarmonyParticipants(): HarmonyParticipant[] {
-  return HARMONY_17_PARTICIPANTS.filter(participant => participant.configured());
+export type HarmonyProviderPolicy = 'default' | 'capability-first' | 'capability-first-no-google' | 'legalwhat';
+
+/** Resolve the independent transport for the GPT OSS alias without a gateway. */
+export function getDirectGptOssProvider(): AIProvider | null {
+  if (process.env.GROQ_API_KEY?.trim()) return PROVIDER.GROQ;
+  if (process.env.CEREBRAS_API_KEY?.trim()) return PROVIDER.CEREBRAS;
+  return null;
 }
 
-export function getConfiguredHarmonyProviders(): AIProvider[] {
-  return getConfiguredHarmonyParticipants().map(participant => participant.provider);
+/** LegalWhat membership is enforced here, alongside the canonical model registry. */
+export function isHarmonyProviderAllowed(
+  provider: AIProvider,
+  policy: HarmonyProviderPolicy = 'capability-first',
+): boolean {
+  if (policy !== 'legalwhat') return true;
+  if (provider === PROVIDER.GPT_OSS) return getDirectGptOssProvider() !== null;
+  return HARMONY_17_PARTICIPANTS.some(participant => participant.provider === provider)
+    && getOpenRouterModelForProvider(provider) === null;
+}
+
+export function getConfiguredHarmonyParticipants(
+  policy: HarmonyProviderPolicy = 'capability-first',
+): HarmonyParticipant[] {
+  return HARMONY_17_PARTICIPANTS.filter(participant =>
+    participant.configured() && isHarmonyProviderAllowed(participant.provider, policy));
+}
+
+export function getConfiguredHarmonyProviders(
+  policy: HarmonyProviderPolicy = 'capability-first',
+): AIProvider[] {
+  return getConfiguredHarmonyParticipants(policy).map(participant => participant.provider);
 }
 
 export function getCurrentModelForProvider(provider: AIProvider): string {

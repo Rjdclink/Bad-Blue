@@ -283,6 +283,7 @@ Return ONLY a JSON array of scores in the same order: [0.95, 0.82, ...]
         'precedent-ranking',
         scoringPrompt,
         {
+          providerPolicy: 'legalwhat',
           systemPrompt: 'You are a legal research expert. Provide only a JSON array of relevance scores.',
           temperature: 0.3,
           useJSON: true,

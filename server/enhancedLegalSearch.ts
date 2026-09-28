@@ -1093,6 +1093,7 @@ export class EnhancedLegalSearchSystem {
           'enhanced-legal-search-fallback',
           fullPrompt,
           {
+            providerPolicy: 'legalwhat',
             systemPrompt: 'You are an expert legal researcher. Provide detailed, factual information with specific source citations (URLs, statutes, case law).',
             temperature: 0.3,
             maxTokens: 3000,

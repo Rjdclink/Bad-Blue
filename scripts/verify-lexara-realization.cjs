@@ -470,7 +470,7 @@ must(
 
 must(
   orchestrator.includes('AICollaborationOrchestrator.orchestrateCollaboration') &&
-    orchestrator.includes("providerPolicy: 'capability-first'") &&
+    orchestrator.includes("providerPolicy: 'legalwhat'") &&
     orchestrator.includes('getConfiguredHarmonyProviders') &&
     harmony.includes("'capability-first'") &&
     harmony.includes('selectProvidersForTask') &&
@@ -1056,13 +1056,16 @@ must(
   'LEXARA identifies the subject before targeted Pantheon research, scopes the requested record categories, and permits dynamic source discovery without silently running a full report',
 );
 
-// Independent live-reasoning recovery invariant.
+// Lexara reasoning and evidence correction share the existing Harmony authority.
 must(
-  orchestrator.includes("import { generateOpenRouterText } from '../openRouterService';") &&
-    orchestrator.includes('independent gateway recovered live legal turn') &&
-    orchestrator.includes('model: CURRENT_AI_MODELS.openRouterAuto') &&
-    orchestrator.indexOf('independent gateway recovered live legal turn') < orchestrator.lastIndexOf('degradedLegalResponse(jurisdiction)'),
-  'LEXARA exhausts an orchestration-independent live reasoning lane before degraded legal mode',
+  !orchestrator.includes("import { generateOpenRouterText }") &&
+    !orchestrator.includes('independent gateway recovered live legal turn') &&
+    orchestrator.includes("getConfiguredHarmonyProviders('legalwhat')") &&
+    orchestrator.includes("providerPolicy: 'legalwhat'") &&
+    orchestrator.includes('lexara-evidence-correction') &&
+    harmony.includes('isHarmonyProviderAllowed(AIProvider.OPENROUTER, options.providerPolicy)') &&
+    harmony.includes('isHarmonyProviderAllowed(task.provider, task.providerPolicy)'),
+  'LEXARA reasoning, correction and recovery retain the canonical scoped provider policy without an independent excluded route',
 );
 
 
