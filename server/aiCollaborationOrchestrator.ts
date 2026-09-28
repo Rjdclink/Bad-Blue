@@ -1320,7 +1320,8 @@ export class AICollaborationOrchestrator {
       96,
       Math.min(
         task.providerPolicy === 'legalwhat' && /document|legal-issue-analysis/.test(task.id) ? 4_500 : 1_800,
-        Number(task.attributes.estimatedTokens || 1_100),
+        Number(/document|draft|petition|complaint|motion/i.test(task.id) && task.providerPolicy === 'legalwhat'
+          ? 4_500 : task.attributes.estimatedTokens || 1_100),
       ),
     );
 
