@@ -7,6 +7,7 @@ const ts = require('typescript');
 const source = fs.readFileSync(process.env.LEXARA_TTS_TEST_SOURCE || path.join(__dirname, '../server/lexara/LexaraTTSMesh.ts'), 'utf8');
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 function load(env, fetchImpl) {
+  env = { LEXARA_TTS_ACTIVE_PROVIDERS: 'deepgram,gemini,mistral,groq,azure,xai,elevenlabs', ...env };
   const exports = {};
   const calls = [];
   const context = vm.createContext({ exports, Buffer, Response, ReadableStream, AbortController, Date,
@@ -140,4 +141,15 @@ test('Groq short audio stays byte-for-byte intact and empty audio data is reject
   await api.refreshLexaraTTSReadiness(); assert.deepEqual((await api.synthesizeLexaraSpeechWithFailover('Hello')).audioData,fixture);
   const broken=load({GROQ_API_KEY:'fixture'},()=>new Response(wav(Buffer.alloc(0))));
   await broken.api.refreshLexaraTTSReadiness(); assert.equal(state(broken.api,'groq').healthy,false);
+});
+
+test('production default uses healthy Deepgram without probing disabled provider keys', async () => {
+  const h = load({ DEEPGRAM_API_KEY: 'fixture', MISTRAL_API_KEY: 'fixture', GROQ_API_KEY: 'fixture', GEMINI_API_KEY: 'fixture', ELEVENLABS_API_KEY: 'fixture', ELEVENLABS_VOICE_ID: 'fixture', LEXARA_TTS_ACTIVE_PROVIDERS: '' }, async url => {
+    assert.match(String(url), /api.deepgram.com/); return mp3();
+  });
+  await h.api.refreshLexaraTTSReadiness();
+  const readiness = h.api.getLexaraTTSReadiness();
+  assert.equal(JSON.stringify(readiness.configuredProviders), JSON.stringify(['deepgram']));
+  assert.equal(readiness.voiceStatus, 'live'); assert.equal(readiness.degraded, false);
+  assert.equal(readiness.redundancyVerified, false); assert.equal(h.calls.length, 1);
 });

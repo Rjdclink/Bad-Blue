@@ -290,9 +290,10 @@ must(
     ttsMesh.includes('readiness probe verified') &&
     ttsMesh.includes('progressive stream opened') &&
     ttsMesh.includes('redundancyVerified') &&
-    ttsMesh.includes("voiceStatus: redundancyVerified") &&
+    ttsMesh.includes("voiceStatus: healthyProviders.length > 0 ? 'live' : 'reconnecting'") &&
+    ttsMesh.includes("process.env.LEXARA_TTS_ACTIVE_PROVIDERS || 'deepgram'") &&
     ttsMesh.includes('setInterval(refresh, 90_000)'),
-  'LEXARA admits only verified female TTS routes, progressively streams the active route, and keeps a verified independent hot-backup pool warm',
+  'LEXARA uses verified Deepgram by default and keeps inactive provider adapters out of live routing',
 );
 must(
   speechClient.includes('async resume(): Promise<void>') &&

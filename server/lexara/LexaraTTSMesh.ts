@@ -170,7 +170,10 @@ const BASE_ORDER: LexaraTTSProviderId[] = [
 ];
 
 export function getConfiguredLexaraTTSProviders(): LexaraTTSProviderId[] {
-  return BASE_ORDER.filter(configured);
+  // Only production-verified routes are active. Other adapters remain dormant
+  // until deliberately re-enabled after their provider-specific failure is fixed.
+  const active = new Set((process.env.LEXARA_TTS_ACTIVE_PROVIDERS || 'deepgram').split(',').map(value => value.trim()));
+  return BASE_ORDER.filter(provider => active.has(provider) && configured(provider));
 }
 
 function ready(provider: LexaraTTSProviderId): boolean {
@@ -1188,17 +1191,13 @@ export function getLexaraTTSReadiness() {
 
   return {
     available: healthyProviders.length > 0,
-    degraded: !redundancyVerified,
+    degraded: healthyProviders.length === 0,
     redundancyVerified,
     independentDomains,
     configuredProviders,
     healthyProviders,
     streamingProviders,
-    voiceStatus: redundancyVerified
-      ? 'live'
-      : healthyProviders.length > 0
-        ? 'degraded'
-        : 'reconnecting',
+    voiceStatus: healthyProviders.length > 0 ? 'live' : 'reconnecting',
     verifiedAt: healthyProviders.reduce(
       (latest, provider) => Math.max(latest, stateFor(provider).verifiedAt),
       0,

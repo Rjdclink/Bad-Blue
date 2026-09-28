@@ -359,7 +359,8 @@ class LexaraRealtimeVoiceClient {
   private playbackLevel = 0;
   private playbackBrightness = 0;
   private playbackZeroCrossingRate = 0;
-  private cumulativeRenderedFrames = 0;
+  private sessionRenderedFrames = 0;
+  private interruptInFlight = false;
   private playbackEpoch = 0;
   private realtimeOutputSampleRate: number | null = null;
   private onSttEvent: ((event: LexaraRealtimeSttEvent) => void) | null = null;
@@ -599,7 +600,7 @@ class LexaraRealtimeVoiceClient {
       if (Number.isFinite(zeroCrossingRate)) {
         this.playbackZeroCrossingRate = Math.max(0, Math.min(1, zeroCrossingRate));
       }
-      const active = this.activeSpeech;
+      const active = this.interruptInFlight ? null : this.activeSpeech;
       if (
         active
         && !active.renderReported
@@ -740,7 +741,12 @@ class LexaraRealtimeVoiceClient {
     if (!cleanText || !cleanTurnId) return;
     if (!this.isSpeechOutputReady()) throw new Error('LEXARA realtime voice output is not ready');
 
-    if (this.activeSpeech) this.interrupt();
+    if (this.activeSpeech || this.interruptInFlight) {
+      this.interrupt();
+      // Never overwrite a turn awaiting its provider interruption acknowledgement.
+      // The caller can use the independent server audio route for this reply.
+      throw new Error('LEXARA realtime interruption is still pending');
+    }
 
     this.clearPlayback();
     this.playbackEpoch += 1;
@@ -803,6 +809,12 @@ class LexaraRealtimeVoiceClient {
     this.clearPlayback();
     if (active && !this.interruptInFlight && this.socket?.readyState === WebSocket.OPEN) {
       this.interruptInFlight = true;
+      window.clearTimeout(active.timeout);
+      active.timeout = window.setTimeout(() => {
+        if (this.activeSpeech !== active || !this.interruptInFlight) return;
+        this.speechOutputReady = false;
+        this.failActiveSpeech(new Error('LEXARA interruption acknowledgement timed out'));
+      }, 1_500);
       this.socket.send(JSON.stringify({
         type: 'tts_interrupt',
         turnId: active.turnId,
@@ -816,12 +828,23 @@ class LexaraRealtimeVoiceClient {
 
     // Keep the active turn authoritative until Deepgram confirms
     // SpeechInterrupted. This prevents a new Speak from racing in-flight PCM.
-    if (active) window.clearTimeout(active.timeout);
+    if (active && !this.interruptInFlight) {
+      window.clearTimeout(active.timeout);
+      this.activeSpeech = null;
+      active.resolve();
+    }
   }
 
   close(stopTracks = false): void {
     this.ready = false;
     this.interrupt();
+    const active = this.activeSpeech;
+    if (active) {
+      window.clearTimeout(active.timeout);
+      this.activeSpeech = null;
+      active.resolve();
+    }
+    this.interruptInFlight = false;
 
     const socket = this.socket;
     this.socket = null;
@@ -870,7 +893,7 @@ class LexaraRealtimeVoiceClient {
 
   private handleAudio(buffer: ArrayBuffer): void {
     const active = this.activeSpeech;
-    if (!active || !this.playback) return;
+    if (!active || !this.playback || this.interruptInFlight) return;
 
     if (!active.firstAudioReceived) {
       active.firstAudioReceived = true;
@@ -947,7 +970,7 @@ class LexaraRealtimeVoiceClient {
       return;
     }
 
-    if (payload.type === 'SpeechMetadata') {
+    if (payload.type === 'SpeechMetadata' && !this.interruptInFlight) {
       const active = this.activeSpeech;
       if (!active) return;
       active.metadataComplete = true;
