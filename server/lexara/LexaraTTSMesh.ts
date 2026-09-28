@@ -1096,7 +1096,13 @@ async function verifyProvider(provider: LexaraTTSProviderId, force = false): Pro
       });
       return true;
     } catch {
-      log.warn('[LEXARA TTS] provider readiness probe degraded locally; mesh fallback remains authoritative', { provider, failure: state.lastFailure });
+      let detail = state.lastError || 'No provider failure detail';
+      for (const [name, value] of Object.entries(process.env)) {
+        if (/KEY|TOKEN|SECRET|PASSWORD/i.test(name) && value && value.length >= 8) {
+          detail = detail.split(value).join('[REDACTED]');
+        }
+      }
+      log.warn('[LEXARA TTS] provider readiness probe degraded locally; mesh fallback remains authoritative', { provider, failure: state.lastFailure, detail: detail.slice(0, 500) });
       return false;
     } finally {
       probeInFlight.delete(provider);
