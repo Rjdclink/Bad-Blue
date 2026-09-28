@@ -629,7 +629,6 @@ export class PantheonRetrievalAdapter {
         }));
       }
     }
-    throwIfPantheonAborted(operationSignal);
     recordCrawlerOutcomes(results);
 
     const canonicalFrontierCandidates = canonicalAcquisition?.ok && canonicalAcquisition.content.trim()
