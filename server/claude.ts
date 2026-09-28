@@ -37,6 +37,7 @@ export interface ClaudeOptions {
   model?: string;
   useJSON?: boolean;
   signal?: AbortSignal;
+  providerPolicy?: string;
 }
 
 /**
@@ -69,7 +70,7 @@ export async function callClaude(
           content: prompt
         }
       ]
-    }, options.signal ? { signal: options.signal } : undefined);
+    }, { signal: options.signal, ...(options.providerPolicy === 'legalwhat' ? { maxRetries: 0 } : {}) });
 
     const extractText = (message: Awaited<ReturnType<typeof createMessage>>) =>
       message.content
@@ -89,7 +90,7 @@ export async function callClaude(
     // failure. If the model spent the entire budget before producing text, make
     // one bounded continuation-sized retry; every other state remains local and
     // is surfaced with enough metadata for the circuit breaker to classify it.
-    if (!content && response.stop_reason === 'max_tokens') {
+    if (!content && response.stop_reason === 'max_tokens' && options.providerPolicy !== 'legalwhat') {
       const retryBudget = Math.min(
         4000,
         Math.max(3000, (options.maxTokens || 2000) * 2),
@@ -121,7 +122,7 @@ export async function callClaude(
       );
     }
     console.error('[Claude] Error:', error);
-    throw new Error(`Claude API error: ${error.message}`);
+    throw Object.assign(new Error(`Claude API error: ${error.message}`), { headers: error.headers, status: error.status });
   }
 }
 

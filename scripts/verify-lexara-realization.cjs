@@ -577,7 +577,7 @@ must(
     groq.includes('normalizeGroqModelId') &&
     groq.includes('orpheus|canopylabs') &&
     groq.includes('model_terms_required') &&
-    groq.includes('while (attempted.size < 2)') &&
+    groq.includes("while (attempted.size < (request.providerPolicy === 'legalwhat' ? 1 : 2))") &&
     aiProvider.includes("prefixes: ['llama-', 'meta-llama/', 'openai/', 'qwen/']") &&
     harmonyRegistry.includes("'claude-opus-5'") &&
     harmony.includes('harmonyProviderCooldownUntil') &&

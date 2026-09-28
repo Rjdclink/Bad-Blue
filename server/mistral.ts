@@ -36,6 +36,7 @@ export interface MistralOptions {
   model?: string;
   useJSON?: boolean;
   signal?: AbortSignal;
+  providerPolicy?: string;
 }
 
 /**
@@ -69,7 +70,7 @@ export async function callMistral(
       temperature: options.temperature || 0.7,
       maxTokens: options.maxTokens || 2000,
       responseFormat: options.useJSON ? { type: 'json_object' } : undefined,
-    }, options.signal ? { fetchOptions: { signal: options.signal } } : undefined);
+    }, { fetchOptions: { signal: options.signal }, ...(options.providerPolicy === 'legalwhat' ? { retries: { strategy: 'none' as const } } : {}) });
 
     const rawContent = response.choices?.[0]?.message?.content;
     if (!rawContent) {
@@ -95,7 +96,7 @@ export async function callMistral(
     // Carry the provider's zero-allotment response to the Harmony circuit.
     const reason = minuteLimit === '0' ? ' (provider permits 0 requests/minute)' : '';
     console.warn('[Mistral] Request failed', { status: error?.statusCode, minuteLimit });
-    throw new Error(`Mistral API error: ${error.message}${reason}`);
+    throw Object.assign(new Error(`Mistral API error: ${error.message}${reason}`), { headers: error.headers || error.rawResponse?.headers, status: error.statusCode });
   }
 }
 

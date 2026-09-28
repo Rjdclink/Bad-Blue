@@ -1,3 +1,5 @@
+import { noteLegalProviderHeaders } from './legalProviderAdmission';
+import { AIProvider } from './aiTokenGovernor';
 /**
  * Groq AI Service - Ultra-fast, free AI inference
  * Uses native HTTP calls - NO OpenAI SDK dependency
@@ -22,6 +24,7 @@ interface GroqChatCompletionRequest {
   temperature?: number;
   max_tokens?: number;
   signal?: AbortSignal;
+  providerPolicy?: string;
 }
 
 let groqModelCatalogCache: { models: Set<string>; expiresAt: number } | null = null;
@@ -131,12 +134,12 @@ async function callGroqAPI(request: GroqChatCompletionRequest): Promise<string> 
   const attempted = new Set<string>();
 
   // Avoid burning the free request allowance against a long list of blocked models.
-  while (attempted.size < 2) {
-    model = await resolveGroqModel(request.model, apiKey);
+  while (attempted.size < (request.providerPolicy === 'legalwhat' ? 1 : 2)) {
+    model = request.providerPolicy === 'legalwhat' ? request.model : await resolveGroqModel(request.model, apiKey);
     if (attempted.has(model)) break;
     attempted.add(model);
 
-    const { signal, ...wireRequest } = request;
+    const { signal, providerPolicy, ...wireRequest } = request;
     response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -147,6 +150,7 @@ async function callGroqAPI(request: GroqChatCompletionRequest): Promise<string> 
       signal,
     });
 
+    if (providerPolicy === 'legalwhat') await noteLegalProviderHeaders(AIProvider.GROQ, response.headers);
     if (response.ok) break;
     errorText = await response.text();
 
@@ -171,7 +175,7 @@ async function callGroqAPI(request: GroqChatCompletionRequest): Promise<string> 
   if (!response?.ok) {
     const { rateLimitTracker } = await import('./rateLimitTracker');
     const status = response?.status ?? 503;
-    const error = new Error(`Groq API error (${status}): ${errorText || 'no compatible permitted model responded'}`);
+    const error = Object.assign(new Error(`Groq API error (${status}): ${errorText || 'no compatible permitted model responded'}`), { headers: response?.headers, status });
     rateLimitTracker.recordGroqError(error);
     throw error;
   }

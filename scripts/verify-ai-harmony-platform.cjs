@@ -55,12 +55,15 @@ must(
 );
 
 for (const model of [
-  'gemini-3.7-flash',
+  'gemini-3.8-flash',
+  'gemini-3.1-pro-preview',
   'claude-sonnet-5',
   'claude-opus-5',
   'openai/gpt-oss-120b',
-  'mistral-small-2603',
-  'mistral-medium-3-5',
+  'mistral-small-latest',
+  'mistral-large-latest',
+  'gpt-6-sol',
+  'gpt-6-astra',
   'deepseek/deepseek-v4.1-flash',
   'x-ai/grok-4.6',
   'moonshotai/kimi-k3',
@@ -228,7 +231,6 @@ const activeRuntimeFiles = [
 ];
 
 const retiredOrSuperseded = [
-  /gemini-2\.5/i,
   /gemini-2\.0/i,
   /claude-opus-4-1-20250805/i,
   /claude-3-sonnet/i,

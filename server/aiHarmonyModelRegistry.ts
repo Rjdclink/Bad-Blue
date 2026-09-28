@@ -7,6 +7,7 @@ const PROVIDER = {
   GROQ: asProvider('groq'),
   MISTRAL: asProvider('mistral'),
   CLAUDE: asProvider('claude'),
+  OPENAI: asProvider('openai'),
   DEEPSEEK: asProvider('deepseek'),
   GROK: asProvider('grok'),
   KIMI: asProvider('kimi'),
@@ -57,6 +58,24 @@ export const CURRENT_AI_MODELS = {
   cohere: process.env.COHERE_MODEL?.trim() || 'command-a-plus-05-2026',
   together: process.env.TOGETHER_MODEL?.trim() || 'openai/gpt-oss-120b',
 } as const;
+
+
+/** Legal-scoped current models, verified against provider catalogs 2026-09-28.
+ * Legacy shared environment defaults cannot silently restore retired legal IDs.
+ * The wider 17-participant registry remains unchanged.
+ */
+export const LEGAL_AI_MODELS = {
+  claudeFast: 'claude-sonnet-5', claudeDeep: 'claude-opus-5-5',
+  openaiFast: 'gpt-6-sol', openaiDeep: 'gpt-6-astra',
+  geminiFast: 'gemini-3.8-flash', geminiDeep: 'gemini-3.1-pro-preview',
+  mistralFast: 'mistral-small-latest', mistralDeep: 'mistral-large-latest',
+  cohereFast: 'command-a-plus-05-2026', cohereDeep: 'command-a-plus-05-2026',
+  groqFast: 'openai/gpt-oss-20b', groqDeep: 'openai/gpt-oss-120b',
+} as const;
+export function isCurrentLegalModel(provider: AIProvider, model: string): boolean {
+  const company = provider === PROVIDER.CLAUDE_OPUS ? 'claude' : provider;
+  return Object.entries(LEGAL_AI_MODELS).some(([key, value]) => key.startsWith(company) && value === model);
+}
 
 export type HarmonyCapability =
   | 'fast-chat'
@@ -187,10 +206,19 @@ export const HARMONY_17_PARTICIPANTS: readonly HarmonyParticipant[] = [
   },
 ] as const;
 
-
 if (HARMONY_17_PARTICIPANTS.length !== 17) {
   throw new Error(`Harmony registry invariant violated: expected 17 participants, found ${HARMONY_17_PARTICIPANTS.length}`);
 }
+
+// A direct OpenAI lane is legal-scoped. The older GPT5_MINI participant remains
+// an OpenRouter transport for non-legal Harmony callers; the two cannot share
+// credentials or be treated as independent legal fallbacks.
+const LEGAL_OPENAI_PARTICIPANT: HarmonyParticipant = {
+  provider: PROVIDER.OPENAI,
+  model: LEGAL_AI_MODELS.openaiDeep,
+  capabilities: ['legal-analysis', 'deep-reasoning', 'verification', 'structured-output', 'agentic'],
+  configured: () => !!process.env.OPENAI_API_KEY?.trim(),
+};
 
 const LEGACY_MODEL_ALIASES: Partial<Record<AIProvider, string>> = {
   [PROVIDER.FALCON]: CURRENT_AI_MODELS.gptOss,
@@ -217,14 +245,17 @@ export function isHarmonyProviderAllowed(
   // Only direct, explicitly authorized providers may serve LegalWhat.
   return [
     PROVIDER.CLAUDE, PROVIDER.CLAUDE_OPUS, PROVIDER.GROQ,
-    PROVIDER.GEMINI, PROVIDER.COHERE, PROVIDER.MISTRAL, PROVIDER.CLOUDFLARE,
+    PROVIDER.GEMINI, PROVIDER.COHERE, PROVIDER.MISTRAL, PROVIDER.OPENAI,
   ].includes(provider);
 }
 
 export function getConfiguredHarmonyParticipants(
   policy: HarmonyProviderPolicy = 'capability-first',
 ): HarmonyParticipant[] {
-  return HARMONY_17_PARTICIPANTS.filter(participant =>
+  const participants = policy === 'legalwhat'
+    ? [...HARMONY_17_PARTICIPANTS, LEGAL_OPENAI_PARTICIPANT]
+    : HARMONY_17_PARTICIPANTS;
+  return participants.filter(participant =>
     participant.configured() && isHarmonyProviderAllowed(participant.provider, policy));
 }
 
@@ -235,12 +266,14 @@ export function getConfiguredHarmonyProviders(
 }
 
 export function getCurrentModelForProvider(provider: AIProvider): string {
+  if (provider === PROVIDER.OPENAI) return LEGAL_OPENAI_PARTICIPANT.model;
   const participant = HARMONY_17_PARTICIPANTS.find(item => item.provider === provider);
   if (participant) return participant.model;
   return LEGACY_MODEL_ALIASES[provider] || CURRENT_AI_MODELS.openRouterAuto;
 }
 
 export function getHarmonyCapabilities(provider: AIProvider): readonly HarmonyCapability[] {
+  if (provider === PROVIDER.OPENAI) return LEGAL_OPENAI_PARTICIPANT.capabilities;
   return HARMONY_17_PARTICIPANTS.find(item => item.provider === provider)?.capabilities || [];
 }
 
