@@ -1,18 +1,13 @@
 import { GoogleGenAI } from '@google/genai';
-import { orchestratedWebSearch } from '../../openRouterWebSearch';
-import { supplementalPantheonDiscovery } from './PantheonSupplementalDiscovery';
 import { getPantheonLearnedQueryPatterns, getPantheonLearnedSources, rankPantheonDiscoveryUrls } from './PantheonDiscoveryLearning';
 
 export type PantheonDiscoveryLane =
   | 'learned'
-  | 'first-party'
   | 'gemini-google'
   | 'searxng'
   | 'ddgs'
   | 'openserp'
   | 'commoncrawl'
-  | 'serpapi'
-  | 'scrapingbee';
 
 export interface PantheonDiscoveryEvidence {
   url: string;
@@ -40,6 +35,14 @@ function canonicalCandidate(raw: string): string | null {
   } catch {
     return null;
   }
+}
+
+export function buildPantheonSearchQueryVariants(query: string): string[] {
+  return [...new Set(query
+    .split(/\s*\|\s*/)
+    .map(variant => variant.replace(/\s+/g, ' ').trim())
+    .filter(Boolean))]
+    .slice(0, 4);
 }
 
 function softTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
@@ -119,26 +122,43 @@ async function searxngSearch(query: string, limit: number, timeoutMs: number, si
 }
 
 async function ddgsSearch(query: string, limit: number, timeoutMs: number, signal?: AbortSignal): Promise<PantheonDiscoveryEvidence[]> {
-  const base = process.env.DDGS_URL?.trim();
-  if (!base) return [];
-  return withTimeout(timeoutMs, signal, async requestSignal => {
-    const endpoint = new URL('/search/text', base.endsWith('/') ? base : base + '/');
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      signal: requestSignal,
-      headers: { 'content-type': 'application/json', accept: 'application/json' },
-      body: JSON.stringify({ query, max_results: limit, safesearch: 'off' }),
-    });
-    if (!response.ok) return [];
-    const payload: any = await response.json();
-    return (Array.isArray(payload?.results) ? payload.results : []).flatMap((item: any) => {
-      const url = canonicalCandidate(String(item?.href || item?.url || item?.link || ''));
-      return url ? [{ url, title: String(item?.title || '').trim().slice(0, 240) || undefined, snippet: String(item?.body || item?.snippet || '').trim().slice(0, 1200) || undefined, lane: 'ddgs' as const }] : [];
-    }).slice(0, limit);
-  }).catch(() => []);
-}
-
-async function openSerpSearch(query: string, limit: number, timeoutMs: number, signal?: AbortSignal): Promise<PantheonDiscoveryEvidence[]> {
+      const base = process.env.DDGS_URL?.trim();
+      if (!base) return [];
+      const preferredBackend = [...new Set(
+        (process.env.PANTHEON_DDGS_BACKEND?.trim() || 'auto')
+          .split(',')
+          .map(engine => engine.trim())
+          .filter(Boolean),
+      )].join(',');
+      const preferredEngines = new Set(preferredBackend.split(','));
+      const fallbackBackend = [...new Set(
+        (process.env.PANTHEON_DDGS_FALLBACK_BACKENDS?.trim() || 'auto')
+          .split(',')
+          .map(engine => engine.trim())
+          .filter(engine => engine && !preferredEngines.has(engine)),
+      )].join(',');
+      const deadline = Date.now() + timeoutMs;
+      const requestBackend = (backend: string, budgetMs: number) => withTimeout(budgetMs, signal, async requestSignal => {
+        const endpoint = new URL('/search/text', base.endsWith('/') ? base : base + '/');
+        const response = await fetch(endpoint, {
+          method: 'POST', signal: requestSignal,
+          headers: { 'content-type': 'application/json', accept: 'application/json' },
+          body: JSON.stringify({ query, max_results: limit, safesearch: 'off', backend }),
+        });
+        if (!response.ok) return [];
+        const payload: any = await response.json();
+        return (Array.isArray(payload?.results) ? payload.results : []).flatMap((item: any) => {
+          const url = canonicalCandidate(String(item?.href || item?.url || item?.link || ''));
+          return url ? [{ url, title: String(item?.title || '').trim().slice(0, 240) || undefined, snippet: String(item?.body || item?.snippet || '').trim().slice(0, 1200) || undefined, lane: 'ddgs' as const }] : [];
+        }).slice(0, limit);
+      }).catch(() => [] as PantheonDiscoveryEvidence[]);
+      // Bound the preferred backend, then use the configured independent fallback group.
+      const first = await requestBackend(preferredBackend, Math.max(300, Math.floor(timeoutMs * 0.55)));
+      if (first.length || signal?.aborted) return first;
+      const remaining = deadline - Date.now();
+      return fallbackBackend && remaining >= 100 ? requestBackend(fallbackBackend, remaining) : [];
+    }
+    async function openSerpSearch(query: string, limit: number, timeoutMs: number, signal?: AbortSignal): Promise<PantheonDiscoveryEvidence[]> {
   const base = process.env.OPENSERP_URL?.trim();
   if (!base) return [];
   return withTimeout(timeoutMs, signal, async requestSignal => {
@@ -221,6 +241,23 @@ async function commonCrawlSearch(
   }).catch(() => []);
 }
 
+export function prioritizePantheonDiscoveryEvidenceGroups(
+  evidenceGroups: readonly (readonly PantheonDiscoveryEvidence[])[],
+  seen: ReadonlySet<string>,
+  limit: number,
+): PantheonDiscoveryEvidence[] {
+  const evidenceByUrl = new Map<string, PantheonDiscoveryEvidence>();
+  const rankedUrls: string[] = [];
+  for (const group of evidenceGroups) {
+    for (const item of group) if (!evidenceByUrl.has(item.url)) evidenceByUrl.set(item.url, item);
+    rankedUrls.push(...rankPantheonDiscoveryUrls(group.map(item => item.url).filter(url => !seen.has(url))));
+  }
+  return [...new Set(rankedUrls)].slice(0, Math.max(0, limit)).flatMap(url => {
+    const item = evidenceByUrl.get(url);
+    return item ? [item] : [];
+  });
+}
+
 export async function discoverPantheonSourcesParallel(
   query: string,
   existingUrls: readonly string[],
@@ -230,7 +267,7 @@ export async function discoverPantheonSourcesParallel(
     limit?: number;
     timeoutMs?: number;
     signal?: AbortSignal;
-    includePaidFallback?: boolean;
+
   } = {},
 ): Promise<PantheonDiscoveryCoordinatorResult> {
   const limit = Math.max(1, Math.min(options.limit || 12, 24));
@@ -243,7 +280,7 @@ export async function discoverPantheonSourcesParallel(
     75,
     [] as string[],
   );
-  const queryVariants = [...new Set([query.trim(), query.replace(/\s*\|\s*/g, ' ').replace(/\s+/g, ' ').trim()])].filter(Boolean).slice(0, 2);
+  const queryVariants = buildPantheonSearchQueryVariants(query);
   const effectiveQuery = queryVariants[0] || query;
   const lanesAttempted: PantheonDiscoveryLane[] = [];
   const lanesWithResults: PantheonDiscoveryLane[] = [];
@@ -269,19 +306,6 @@ export async function discoverPantheonSourcesParallel(
       75,
       [] as string[],
     )),
-    lane('first-party', true, async () => {
-      // This lane is supplemental only. Credit/provider failure is normalized to
-      // an empty lane so registry, learned, self-hosted and Common Crawl lanes
-      // remain fully independent.
-      const result = await orchestratedWebSearch(effectiveQuery, {
-        useOnlinePlugin: true,
-        timeout: timeoutMs,
-        signal: options.signal,
-      }).catch(() => ({ sources: [] as string[] }));
-      return result.sources
-        .map(url => canonicalCandidate(url))
-        .filter((url: string | null): url is string => Boolean(url));
-    }),
     lane('gemini-google', Boolean(process.env.GEMINI_API_KEY?.trim()), async () => (
       await Promise.all(queryVariants.map(q => geminiGoogleSearch(q, limit, timeoutMs, options.signal)))
     ).flat()),
@@ -291,16 +315,18 @@ export async function discoverPantheonSourcesParallel(
     lane('commoncrawl', commonCrawlUseful(query), () => commonCrawlSearch(effectiveQuery, existingUrls, limit, timeoutMs, options.signal)),
   ]);
 
-  const freeUrls = rankPantheonDiscoveryUrls(
-    settled.flatMap(result => result.urls)
-      .filter(url => !seen.has(url)),
-  ).slice(0, limit);
-  const freeEvidence = settled.flatMap(result => result.evidence)
-    .filter(item => freeUrls.includes(item.url));
+  // Fresh query-specific results outrank archives and learned source history.
+  const evidenceGroups = [
+    settled.filter(result => result.name !== 'learned' && result.name !== 'commoncrawl').flatMap(result => result.evidence),
+    settled.filter(result => result.name === 'commoncrawl').flatMap(result => result.evidence),
+    settled.filter(result => result.name === 'learned').flatMap(result => result.evidence),
+  ];
+  const freeEvidence = prioritizePantheonDiscoveryEvidenceGroups(evidenceGroups, seen, limit);
+  const freeUrls = freeEvidence.map(item => item.url);
 
   // Normal successful discovery returns immediately. Learned query patterns are
   // consulted only on a miss, avoiding a serial database dependency.
-  if (freeUrls.length || options.includePaidFallback === false) {
+  if (freeUrls.length) {
     return {
       urls: freeUrls,
       evidence: freeEvidence,
@@ -314,16 +340,6 @@ export async function discoverPantheonSourcesParallel(
   if (learnedPattern && !query.toLowerCase().includes(learnedPattern.toLowerCase())) {
     const learnedQuery = `${query} ${learnedPattern}`;
     const retry = await Promise.all([
-      lane('first-party', true, async () => {
-        const result = await orchestratedWebSearch(learnedQuery, {
-          useOnlinePlugin: true,
-          timeout: Math.min(timeoutMs, 650),
-          signal: options.signal,
-        }).catch(() => ({ sources: [] as string[] }));
-        return result.sources
-          .map(url => canonicalCandidate(url))
-          .filter((url: string | null): url is string => Boolean(url));
-      }),
       lane('searxng', Boolean(process.env.SEARXNG_URL?.trim()), () => searxngSearch(learnedQuery, limit, Math.min(timeoutMs, 650), options.signal)),
       lane('ddgs', Boolean(process.env.DDGS_URL?.trim()), () => ddgsSearch(learnedQuery, limit, Math.min(timeoutMs, 650), options.signal)),
       lane('openserp', Boolean(process.env.OPENSERP_URL?.trim()), () => openSerpSearch(learnedQuery, limit, Math.min(timeoutMs, 650), options.signal)),
@@ -341,22 +357,10 @@ export async function discoverPantheonSourcesParallel(
     }
   }
 
-  // Credit-bearing providers remain a true fallback: they never race free
-  // lanes and therefore cannot consume credits when free discovery succeeded.
-  const paid = await supplementalPantheonDiscovery(effectiveQuery, existingUrls, {
-    limit,
-    timeoutMs,
-    signal: options.signal,
-  });
-  if (paid.attempted) {
-    const paidLane = paid.provider as 'serpapi' | 'scrapingbee' | undefined;
-    if (paidLane) lanesAttempted.push(paidLane);
-    if (paidLane && paid.urls.length) lanesWithResults.push(paidLane);
-  }
-  const paidUrls = rankPantheonDiscoveryUrls(paid.urls.filter(url => !seen.has(url))).slice(0, limit);
+  // Paid search remains disabled; a miss is not a negative factual finding.
   return {
-    urls: paidUrls,
-    evidence: paidUrls.map(url => ({ url, lane: (paid.provider || 'serpapi') as PantheonDiscoveryLane })),
+    urls: [],
+    evidence: [],
     lanesAttempted: [...new Set(lanesAttempted)],
     lanesWithResults: [...new Set(lanesWithResults)],
   };

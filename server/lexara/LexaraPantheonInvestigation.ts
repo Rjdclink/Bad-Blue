@@ -310,6 +310,12 @@ function conversationalReportCategoryLabel(
 function semanticResearchExpressions(subject: string, categories: readonly PantheonBackgroundCategory[], prompt: string): string[] {
   const expressions = new Set<string>();
   const categoryTerms = categoryDiscoveryTerms(categories).split(/\s{2,}|,\s*/).filter(Boolean);
+  if (/\b(?:background(?!\s+(?:check|report))|biograph(?:y|ical)|life\s+of|who\s+was)\b/i.test(prompt)) {
+    expressions.add(`${subject} biography`);
+    expressions.add(`"${subject}" biography`);
+    expressions.add(`"${subject}" official biography`);
+    expressions.add(`"${subject}" presidential library`);
+  }
   expressions.add(`"${subject}" ${prompt}`);
   for (const term of categoryTerms) expressions.add(`"${subject}" ${term}`);
   if (categories.includes('employment')) {
