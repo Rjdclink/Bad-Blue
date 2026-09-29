@@ -1,7 +1,7 @@
 import {
   lexaraRetrievalAdapter,
   type LexaraRetrievalResponse,
-  type LexaraLexaraRetrievalEvidence,
+  type LexaraRetrievalEvidence,
 } from './LexaraRetrievalAdapter';
 import { buildLexaraBackgroundCategoryTargets, discoverLexaraBackgroundSourcesParallel, matchLexaraBackgroundSubject, validateLexaraBackgroundSourceResult, rememberLexaraBackgroundDiscoveryOutcome, createLexaraRegistrationAuthority, ensureLexaraContactRegistration, LEXARA_BACKGROUND_PRIMARY_CRAWLER_IDS, LEXARA_BACKGROUND_RAZOR_SKILL_IDS, LEXARA_BACKGROUND_SECONDARY_CRAWLER_IDS, LEXARA_BACKGROUND_PORTABLE_CAPABILITY_IDS, type LexaraBackgroundCategory, type LexaraBackgroundPrimaryCrawlerId, type LexaraBackgroundReportCategoryLabel, type LexaraRegistrationAuthority } from './LexaraBackgroundIntelligence';
 import { searchInmates } from '../services/inmateSearch/InmateSearchAggregator';
