@@ -180,4 +180,8 @@ if (ORIGINAL_DATABASE_ENV.SUPABASE_DATABASE_URL !== undefined) process.env.SUPAB
 if (ORIGINAL_DATABASE_ENV.SUPABASE_DB_URL !== undefined) process.env.SUPABASE_DB_URL = ORIGINAL_DATABASE_ENV.SUPABASE_DB_URL;
 if (ORIGINAL_DATABASE_ENV.DATABASE_URL !== undefined) process.env.DATABASE_URL = ORIGINAL_DATABASE_ENV.DATABASE_URL;
 delete process.env.PANTHEON_FRONTIER_LOCAL_ONLY;
+// This is a build-time verifier, not a runtime process. Runtime modules imported by
+// the workflow may own background handles; once every assertion above has passed,
+// terminate the verifier explicitly so those handles cannot stall the Docker build.
 console.log('Pantheon 30-category dynamic depth, bounded standby frontier, priority, and deadline-drain verification passed.');
+process.exit(0);
