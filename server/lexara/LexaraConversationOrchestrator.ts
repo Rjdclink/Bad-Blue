@@ -53,8 +53,8 @@ const MAX_PROMPT_CHARACTERS = 7000;
 const LIVE_RESEARCH_BUDGET_MS = 10_000;
 // Provider attempts stay bounded, but the conversation has no independent master
 // kill-switch. Only the caller may cancel a superseded/disconnected turn.
-const LIVE_REASONING_PROVIDER_ATTEMPT_MS = 6_000;
-const LIVE_REASONING_MAX_FALLBACKS = 2;
+const LIVE_REASONING_PROVIDER_ATTEMPT_MS = 15_000;
+const LIVE_REASONING_MAX_FALLBACKS = 3;
 
 export type LexaraAcknowledgementKind =
   | 'presence'
@@ -665,7 +665,7 @@ export async function generateLexaraConversationResponse(
           needsVerification: true,
           needsReasoning: true,
           needsFastResponse: true,
-          estimatedTokens: 450,
+          estimatedTokens: 1_500,
         },
         harmonyProviders,
         {
