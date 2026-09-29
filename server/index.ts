@@ -30,6 +30,7 @@ import {
 } from './aiHarmonyModelRegistry';
 import { getHarmonyWarmStatus, prewarmHarmonyProviders } from './aiHarmonyWarmup';
 import { getLexaraCrawlerReadiness } from './lexara/LexaraCrawlerCapabilityRegistry';
+import { warmLocalNetworkJurisdiction } from './lexara/LocalNetworkJurisdiction';
 
 // CRITICAL: Validate configuration before anything else
 // Note: Using console.log here intentionally as logger is not yet initialized during bootstrap
@@ -82,6 +83,8 @@ let databaseRuntimeMode: DatabaseRuntimeMode = 'initializing';
 let httpServer: Server | null = null;
 
 startupTrace('express_created');
+// Non-blocking: if local DB-IP data cannot initialize, jurisdiction inference fails closed.
+warmLocalNetworkJurisdiction();
 
 declare module 'http' {
   interface IncomingMessage {
