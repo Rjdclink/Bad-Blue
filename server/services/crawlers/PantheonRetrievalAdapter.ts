@@ -435,7 +435,7 @@ export class PantheonRetrievalAdapter {
     // Every crawler remains available. Callers may supply a capability-derived
     // primary roster; background-report URL-ledger routing remains authoritative.
     if (request.purpose !== 'background_report' && request.primaryCrawlers?.length) {
-      plan.crawlers = [...new Set(request.primaryCrawlers)];
+      plan.crawlers = [...new Set(request.primaryCrawlers)].slice(0, 4);
       plan.rationale.unshift('Conversational capability routing selected the primary crawler roster.');
     }
     if (request.purpose === 'background_report') {
