@@ -43,12 +43,20 @@ async function xaiModel(key: string, signal: AbortSignal): Promise<string> {
 async function askXai(prompt: string, signal: AbortSignal): Promise<string> {
   const key = process.env.XAI_API_KEY?.trim(); if (!key) throw new Error('xAI is not configured');
   const model = await xaiModel(key, signal);
-  const response = await fetch('https://api.x.ai/v1/chat/completions', {
-    method: 'POST', signal,
-    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], max_tokens: 220, temperature: 0.2 }),
-  });
-  if (!response.ok) throw new Error(`xAI Grok HTTP ${response.status}`);
+  let response: Response | null = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    response = await fetch('https://api.x.ai/v1/chat/completions', {
+      method: 'POST', signal,
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], max_tokens: 220, temperature: 0.2 }),
+    });
+    if (response.ok) break;
+    if (![429, 500, 502, 503, 504].includes(response.status) || attempt === 2) throw new Error(`xAI Grok HTTP ${response.status}`);
+    const retryAfter = Number(response.headers?.get?.('retry-after'));
+    const delayMs = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 500 * 2 ** attempt;
+    await new Promise(resolve => setTimeout(resolve, Math.min(delayMs, 4000)));
+  }
+  if (!response?.ok) throw new Error('xAI Grok request failed');
   const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
   return String(data.choices?.[0]?.message?.content || '');
 }
