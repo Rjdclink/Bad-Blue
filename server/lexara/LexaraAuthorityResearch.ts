@@ -183,10 +183,10 @@ async function enrichAuthoritySourcesWithCrawlerPool(
   signal?: AbortSignal,
 ): Promise<LexaraAuthoritySource[]> {
   if (!sources.length) return sources;
-  const usePantheon = selectedCrawlerIds.some(id =>
+  const useCrawlerEnrichment = selectedCrawlerIds.some(id =>
     ['startrek', 'birdofprey', 'sixdegrees', 'blizzard', 'cerberus', 'lich'].includes(id)
   );
-  if (!usePantheon) return sources;
+  if (!useCrawlerEnrichment) return sources;
 
   // Discovery providers often already return enough primary-source text.
   // Only pay crawler-enrichment latency for sources that still lack evidence.
