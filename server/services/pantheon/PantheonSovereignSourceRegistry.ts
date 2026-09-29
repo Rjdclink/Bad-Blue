@@ -74,6 +74,15 @@ const KEYLESS_CATEGORY_SOURCES: Partial<Record<PantheonBackgroundCategory, reado
   authority: 'primary'|'secondary';
   jurisdiction: string;
 }[]>> = {
+  'business': [
+    { url: 'https://www.sec.gov/edgar/search/', name: 'SEC EDGAR Company Filings', authority: 'primary', jurisdiction: 'US' },
+  ],
+  'corporate': [
+    { url: 'https://www.sec.gov/edgar/search/', name: 'SEC EDGAR Company Filings', authority: 'primary', jurisdiction: 'US' },
+  ],
+  'securities': [
+    { url: 'https://www.sec.gov/edgar/search/', name: 'SEC EDGAR Company Filings', authority: 'primary', jurisdiction: 'US' },
+  ],
   'criminal': [
     { url: 'https://www.courtlistener.com/', name: 'CourtListener / RECAP', authority: 'primary', jurisdiction: 'US' },
   ],
