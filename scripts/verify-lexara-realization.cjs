@@ -586,14 +586,9 @@ must(
 );
 must(
   harmonyRegistry.includes("'claude-sonnet-5'") &&
-    harmonyRegistry.includes("'claude-opus-5'") &&
-    harmonyRegistry.includes("'gemini-3.7-flash'") &&
-    harmonyRegistry.includes("'deepseek/deepseek-v4.1-flash'") &&
-    harmonyRegistry.includes("'x-ai/grok-4.6'") &&
-    harmonyRegistry.includes("'moonshotai/kimi-k3'") &&
-    harmonyRegistry.includes("'qwen/qwen3.8-max-0902'") &&
-    harmonyRegistry.includes("'openai/gpt-5.6-luna'"),
-  'Harmony current-model registry pins verified 2026 provider generations',
+    harmonyRegistry.includes("'gemini-3.8-flash'") &&
+    harmonyRegistry.includes("'grok-4.7'"),
+  'Harmony current-model registry pins Claude, Gemini and direct xAI Grok generations',
 );
 must(
   lexaraChatRoutes.includes("router.post('/acknowledge'") &&
