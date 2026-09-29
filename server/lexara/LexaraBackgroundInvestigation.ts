@@ -9,9 +9,9 @@ export {
   investigatePersonQuestion as investigateLexaraBackgroundQuestion,
   formatLexaraBackgroundInvestigationForSystem,
   retrieveLexaraConversationalSource,
-} from './LexaraPantheonInvestigation';
+} from './LexaraBackgroundResearch';
 
 export type {
   LexaraPersonInvestigation as LexaraBackgroundInvestigation,
   LexaraPantheonProgressEvent as LexaraBackgroundProgressEvent,
-} from './LexaraPantheonInvestigation';
+} from './LexaraBackgroundResearch';
