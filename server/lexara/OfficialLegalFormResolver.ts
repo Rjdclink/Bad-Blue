@@ -13,7 +13,7 @@ const FORM_HINT = /\\b(form|petition|complaint|motion|notice|summons|cover sheet
 const MANDATORY_HINT = /\\b(must|required|shall|required form|prescribed form|use (?:this|the) form)\\b/i;
 const OPTIONAL_HINT = /\\b(optional|may use|provided for convenience)\\b/i;
 const CUSTOM_HINT = /\\b(no official form|no prescribed form|may be drafted|local form not required)\\b/i;
-function official(url: string): boolean { try { return OFFICIAL_HOST.test(new URL(url).hostname); } catch { return false; } }
+function official(url: string): boolean { try { const host=new URL(url).hostname.toLowerCase(); return host.endsWith('.gov') || host==='gov' || host.endsWith('.uscourts.gov') || /(?:^|\\.)courts?\\.[a-z]{2}\\.us$/.test(host); } catch { return false; } }
 function typeOf(url: string): OfficialLegalForm['contentType'] {
   const clean=url.toLowerCase().split('?')[0]; if(clean.endsWith('.pdf')) return 'pdf';
   if(clean.endsWith('.docx')||clean.endsWith('.doc')) return 'docx'; if(clean.startsWith('http')) return 'html'; return 'unknown';
