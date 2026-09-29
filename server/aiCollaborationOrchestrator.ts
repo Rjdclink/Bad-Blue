@@ -301,26 +301,32 @@ async function callOpenAICompatibleHarmonyProvider(
   if (signal?.aborted) controller.abort();
   else signal?.addEventListener('abort', relayAbort, { once: true });
   try {
-    const response = await fetch(`${config.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${config.key}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
-          { role: 'user', content: prompt },
-        ],
-        max_tokens: maxTokens,
-      }),
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw Object.assign(new Error(`${provider} HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`),
-        { status: response.status, headers: response.headers });
+    let response: Response | null = null;
+    for (let retry = 0; retry < (provider === AIProvider.XAI ? 3 : 1); retry++) {
+      response = await fetch(`${config.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${config.key}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          messages: [
+            ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
+            { role: 'user', content: prompt },
+          ],
+          max_tokens: maxTokens,
+        }),
+        signal: controller.signal,
+      });
+      if (response.ok) break;
+      if (![429, 500, 502, 503, 504].includes(response.status) || retry === 2) {
+        throw Object.assign(new Error(`${provider} HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`),
+          { status: response.status, headers: response.headers });
+      }
+      const retryAfter = Number(response.headers.get('retry-after'));
+      const delayMs = Number.isFinite(retryAfter) && retryAfter > 0
+        ? retryAfter * 1000 : Math.min(4000, 500 * 2 ** retry) + Math.floor(Math.random() * 150);
+      await new Promise(resolve => setTimeout(resolve, delayMs));
     }
+    if (!response?.ok) throw new Error(`${provider} request failed`);
     const payload = await response.json() as any;
     const content = String(payload?.choices?.[0]?.message?.content || '').trim();
     if (!content) throw new Error(`${provider} returned no text`);
