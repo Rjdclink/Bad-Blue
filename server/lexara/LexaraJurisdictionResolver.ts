@@ -39,25 +39,19 @@ function jurisdictionQueries(text: string, state?: string): string[] {
   return [...queries];
 }
 
-export async function resolveNetworkState(ip?: string): Promise<{ state?: string; confidence?: number; provider?: string } | null> {
-  const account = process.env.MAXMIND_ACCOUNT_ID?.trim();
-  const license = process.env.MAXMIND_LICENSE_KEY?.trim();
+export async function resolveNetworkState(ip?: string): Promise<{ state?: string; provider?: string } | null> {
+  // Local-only network jurisdiction hook. No visitor network identifier leaves
+  // LegalWhat. Populate NETWORK_REGION_PREFIXES from an attributed, locally
+  // maintained IP-to-region dataset during deployment; absent data fails closed.
   const address = (ip || '').split(',')[0].trim();
-  if (!account || !license || !address || /^(?:127\.|10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|::1$)/.test(address)) return null;
-  const auth = Buffer.from(`${account}:${license}`).toString('base64');
-  const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  if (!address || /^(?:127\.|10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|::1$)/.test(address)) return null;
+  const raw = process.env.NETWORK_REGION_PREFIXES?.trim();
+  if (!raw) return null;
   try {
-    const response = await fetch('https://geoip.maxmind.com/geoip/v2.1/insights/' + encodeURIComponent(address), {
-      headers: { Authorization: `Basic ${auth}` }, signal: controller.signal,
-    });
-    if (!response.ok) return null;
-    const data = await response.json() as any;
-    const subdivision = data?.subdivisions?.[0];
-    const state = subdivision?.names?.en;
-    const confidence = Number(subdivision?.confidence);
-    if (!state) return null;
-    return { state, confidence: Number.isFinite(confidence) ? confidence : undefined, provider: 'maxmind' };
-  } catch { return null; } finally { clearTimeout(timer); }
+    const entries = JSON.parse(raw) as Array<{ prefix?: string; state?: string }>;
+    const match = entries.find(item => item.prefix && item.state && address.startsWith(item.prefix));
+    return match?.state ? { state: match.state, provider: 'local-network-region' } : null;
+  } catch { return null; }
 }
 
 async function geonames(query: string): Promise<Candidate | null> {
