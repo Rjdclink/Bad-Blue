@@ -1160,6 +1160,11 @@ must(
   'document export must retain strict server validation/type identity',
 );
 must(
+  consultationRoutes.includes("/api/lexara/documents/official-form") &&
+    conversation.includes("/api/lexara/documents/official-form"),
+  'mandatory verified official forms must continue from Lexara conversation into completion/download',
+);
+must(
   conversation.includes('lexaraDocumentSpeech(answer, documentIntentRequested || Boolean(priorPendingDocument))') &&
     conversation.includes('await speakLexara(spokenAnswer, generation)'),
   'document bodies must never be sent to realtime TTS',

@@ -21,6 +21,7 @@ import { apiRateLimit } from '../rateLimit';
 import { analyzeFMIEvidence, type FMIFile } from '../fmiIntelligenceTool';
 import { extractLexaraEvidenceContent } from '../lexara/LexaraMediaExtraction';
 import { MASTER_INTERNAL_EMAIL, MASTER_USER_ID } from '../masterPassword';
+import { detectFlatFormLayout } from '../lexara/FlatFormLayoutDetector';
 
 const log = createLogger('FMI-Routes');
 
@@ -284,6 +285,11 @@ export function setupFMIRoutes(app: Express): void {
           caseContext
         );
 
+        const isFormLike = /\b(form|petition|complaint|motion|application|affidavit|notice|summons|signature|case\s*(?:no|number))\b/i.test(extractedText);
+        const formLayout = isFormLike && (storedFile.file_type === 'application/pdf' || String(storedFile.file_type).startsWith('image/'))
+          ? await detectFlatFormLayout(await fs.readFile(storedFile.storage_path), storedFile.file_type === 'application/pdf' ? 'pdf' : 'image')
+          : null;
+
         const structuredSignalCount =
           analysis.extracted.facts.length
           + analysis.extracted.parties.length
@@ -352,6 +358,7 @@ export function setupFMIRoutes(app: Express): void {
           success: true,
           message: 'F.M.I. analysis completed',
           analysis: analysisForClient,
+          formIntelligence: formLayout ? { isLegalForm: true, layout: formLayout, editable: formLayout.verified } : { isLegalForm: false },
         });
       } catch (error) {
         log.error('[F.M.I.] Analysis failed', { error, fileId, userId });

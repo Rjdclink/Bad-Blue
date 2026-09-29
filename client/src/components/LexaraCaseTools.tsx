@@ -97,6 +97,17 @@ export default function LexaraCaseTools({ lawTypeId, lawTypeName }: LexaraCaseTo
         body: JSON.stringify({ state, facts: situation.trim(), lawType: mapProductLawTypeToExpert(lawTypeId) || lawTypeId, documentType, instructions: documentInstructions.trim() || undefined }),
       });
       const data = await response.json().catch(() => ({}));
+      if (response.status === 409 && data?.officialFormRequired && data?.officialForm) {
+        const official = await fetch('/api/lexara/documents/official-form', {
+          method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ officialForm: data.officialForm, facts: situation.trim() }),
+        });
+        if (!official.ok) { const issue = await official.json().catch(() => ({})); const missing = Array.isArray(issue?.missingFields) && issue.missingFields.length ? ' Missing information: ' + issue.missingFields.join(', ') + '.' : ''; throw new Error((issue?.error || 'Official form completion failed.') + missing); }
+        const blob = await official.blob(); const url = URL.createObjectURL(blob); const nativeFormat = blob.type.includes('wordprocessingml') ? 'docx' : 'pdf';
+        const anchor = document.createElement('a'); anchor.href = url; anchor.download = String(data.officialForm.title || documentType).replace(/[^a-z0-9._-]+/gi, '-') + '.' + nativeFormat;
+        document.body.appendChild(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url);
+        setDocumentTitle(data.officialForm.title || documentType); setDocumentDraft(''); return;
+      }
       if (!response.ok) throw new Error(data.error || 'LEXARA could not generate the document.');
       setDocumentTitle(data.title || documentType); setDocumentDraft(data.document || '');
     } catch (e) { setDocumentError(e instanceof Error ? e.message : 'Document generation failed.'); }
