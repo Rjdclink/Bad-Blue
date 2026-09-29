@@ -321,7 +321,7 @@ must(
     realtimeVoiceClient.includes('mobile-network jitter gap occurs') &&
     orchestrator.includes('LIVE_RESEARCH_BUDGET_MS = 10_000') &&
     orchestrator.includes('LIVE_REASONING_PROVIDER_ATTEMPT_MS = 15_000') &&
-    orchestrator.includes('LIVE_REASONING_MAX_FALLBACKS = 2') &&
+    orchestrator.includes('LIVE_REASONING_MAX_FALLBACKS = 3') &&
     !realtimeVoiceClient.includes('LEXARA_REALTIME_OUTPUT_SAMPLE_RATE = 24_000') &&
     realtimeVoiceClient.includes('audio.defaultPlaybackRate = 1') &&
     realtimeVoiceClient.includes('audio.playbackRate = 1') &&
@@ -489,7 +489,7 @@ must(
     !orchestrator.includes('LIVE_REASONING_DEADLINE_MS') &&
     !orchestrator.includes('harmonyDeadline') &&
     orchestrator.includes('LIVE_REASONING_PROVIDER_ATTEMPT_MS = 15_000') &&
-    orchestrator.includes('LIVE_REASONING_MAX_FALLBACKS = 2') &&
+    orchestrator.includes('LIVE_REASONING_MAX_FALLBACKS = 3') &&
     orchestrator.includes('requestTimeoutMs: LIVE_REASONING_PROVIDER_ATTEMPT_MS') &&
     orchestrator.includes('maxFallbacks: LIVE_REASONING_MAX_FALLBACKS') &&
     harmony.includes('fastSynthesisTask') &&
