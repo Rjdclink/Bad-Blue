@@ -175,6 +175,16 @@ export function setupConsultationRoutes(app: Express): void {
       const detectedLayout = flatLayout || await detectFlatFormLayout(inspected.bytes, 'pdf');
       const checkedLayout = validateFlatFormLayout(detectedLayout);
       if (!checkedLayout.verified) return res.status(409).json({ error: 'Flat-form field coordinates did not meet verification confidence.', sourceUrl: inspected.sourceUrl });
+      if (facts && Object.keys(values).length === 0) {
+        const labels = [...new Set(checkedLayout.anchors.map(field => field.label))];
+        const mappingRaw = await generateLegalAnalysis('document-drafting', [
+          'Map ONLY facts explicitly supplied by the user to the visible official-form labels below.',
+          'Return one JSON object whose keys exactly match applicable labels. Omit unknown values. Never invent missing facts.',
+          'FORM LABELS: ' + JSON.stringify(labels),
+          'USER FACTS: ' + facts,
+        ].join('\n\n'), { systemPrompt: 'You are a deterministic legal-form field mapper. Return JSON only. Never invent missing facts.', temperature: 0, maxTokens: 4000 });
+        try { values = JSON.parse(String(mappingRaw).replace(/^\x60\x60\x60(?:json)?\s*|\s*\x60\x60\x60$/gi, '').trim()); } catch { values = {}; }
+      }
       const missingFlatFields = checkedLayout.anchors.filter(field => values[field.label] === undefined).map(field => field.label);
       if (missingFlatFields.length) return res.status(422).json({ error: 'Additional information is required to complete the official form', missingFields: missingFlatFields, sourceUrl: inspected.sourceUrl });
       const output = await overlayFlatOfficialPdf(inspected, checkedLayout, values);
