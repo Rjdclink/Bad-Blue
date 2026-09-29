@@ -725,8 +725,8 @@ export async function generateLexaraConversationResponse(
     const validatedFallback = extractVerifiedPantheonSourceExcerpt(pantheonInvestigation);
     text = validatedFallback?.text
       || (pantheonInvestigation?.evidenceSummary
-        ? 'Pantheon retrieved material, but its source citation could not be validated and I cannot safely confirm the requested fact.'
-        : 'Pantheon did not verify this fact; a source or answer service was unavailable.');
+        ? 'I found potentially relevant material, but I could not independently validate its source citation, so I cannot safely confirm the requested fact.'
+        : 'I could not independently verify this factual detail from the sources currently available.');
   }
 
   // Deterministic person-record guard: provider/model policy drift may not
@@ -790,10 +790,10 @@ export async function generateLexaraConversationResponse(
       } else {
         permissionRefusalUnverified = true;
         text = pantheonInvestigation.evidenceSummary
-          ? 'Pantheon retrieved subject-specific source material, but the requested fact was not verified strongly enough from the completed sources for me to state it as fact.'
+          ? 'I found subject-specific source material, but the requested fact was not verified strongly enough for me to state it as fact.'
           : pantheonInvestigation.endpoint === 'unavailable' || pantheonInvestigation.endpoint === 'failed'
             ? 'I could not verify the requested fact; some sources may not have been available.'
-            : 'I could not verify the requested fact from the sources Pantheon completed.';
+            : 'I could not independently verify the requested fact from the sources I was able to assess.';
       }
     }
   }
