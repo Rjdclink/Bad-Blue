@@ -23,6 +23,8 @@ import {
   activateLocalTrialHttp,
   authenticateLocalUserHttp,
   createLocalSessionToken,
+  createLocalPasswordResetTokenHttp,
+  resetLocalPasswordHttp,
   getLocalSessionMaxAgeSeconds,
   registerLocalUserHttp,
   verifyLocalSessionToken,
@@ -33,6 +35,8 @@ import {
   type StatelessLocalUser,
 } from "./statelessLocalAuth";
 import { getLegalWhatAccessState, getTrialRemainingMilliseconds } from "./trialAccess";
+import { sendAdminEmail, sendEmail } from "./emailService";
+import { getBaseUrl } from "./config";
 
 
 function readCookie(req: any, name: string): string | null {
@@ -413,6 +417,11 @@ export async function setupAuth(app: Express) {
         typeof req.body?.firstName === "string" ? req.body.firstName : "",
         typeof req.body?.lastName === "string" ? req.body.lastName : "",
       );
+      void sendAdminEmail({
+        to: "contact.badblue@gmail.com",
+        subject: "LegalWhat: New signup",
+        message: `New LegalWhat signup\n\nName: ${[createdUser.firstName, createdUser.lastName].filter(Boolean).join(" ") || "Not provided"}\nEmail: ${createdUser.email}`,
+      }).catch((error) => console.error("[AUTH] Signup notification failed:", error));
       const activation = await activateLocalTrialHttp(createdUser.id);
       const user = activation.user;
       // Signup establishes a pending authenticated session so the user can move
@@ -436,6 +445,41 @@ export async function setupAuth(app: Express) {
       if (/required|valid email|at least 8 characters/i.test(message)) return res.status(400).json({ message });
       console.error("[AUTH] HTTP local registration unavailable:", message);
       return res.status(503).json({ message: "Registration service is temporarily unavailable" });
+    }
+  });
+
+  app.post("/api/auth/forgot-password", authRateLimit, async (req, res) => {
+    const generic = { message: "If that email belongs to a LegalWhat account, a password-reset link has been sent." };
+    try {
+      const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+      const token = await createLocalPasswordResetTokenHttp(email);
+      if (token) {
+        const resetUrl = `${getBaseUrl().replace(/\/$/, "")}/login?reset=${encodeURIComponent(token)}`;
+        void sendEmail({
+          to: email,
+          subject: "LegalWhat password reset",
+          html: `<p>A password reset was requested for your LegalWhat account.</p><p><a href="${resetUrl}">Reset your password</a></p><p>This link expires in 30 minutes and stops working after your password changes.</p>`,
+        }).catch((error) => console.error("[AUTH] Password-reset email failed:", error));
+      }
+    } catch (error) {
+      console.error("[AUTH] Password-reset request failed:", error instanceof Error ? error.message : String(error));
+    }
+    return res.json(generic);
+  });
+
+  app.post("/api/auth/reset-password", authRateLimit, async (req, res) => {
+    try {
+      const token = typeof req.body?.token === "string" ? req.body.token : "";
+      const password = typeof req.body?.password === "string" ? req.body.password : "";
+      if (!await resetLocalPasswordHttp(token, password)) {
+        return res.status(400).json({ message: "This password-reset link is invalid or has expired." });
+      }
+      clearLocalCookie(res);
+      return res.json({ success: true, message: "Password updated. Please sign in with your new password." });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (/at least 8 characters/i.test(message)) return res.status(400).json({ message });
+      return res.status(400).json({ message: "This password-reset link is invalid or has expired." });
     }
   });
 

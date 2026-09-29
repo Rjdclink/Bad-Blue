@@ -13,6 +13,7 @@ import {
   updateLocalUserSubscriptionHttp,
   type StatelessLocalUser,
 } from "../statelessLocalAuth";
+import { sendAdminEmail } from "../emailService";
 
 const SUBSCRIPTION_NAME = "LegalWhat Subscription";
 const SUBSCRIPTION_PRICE_CENTS = 1999;
@@ -218,6 +219,13 @@ async function bindAndReconcile(id: string, customerId: string): Promise<{ activ
     status: "active",
     hasPaidForAccess: true,
   });
+  if (!currentUser.hasPaidForAccess) {
+    void sendAdminEmail({
+      to: "contact.badblue@gmail.com",
+      subject: "LegalWhat: Subscription payment confirmed",
+      message: `LegalWhat subscription payment confirmed\n\nName: ${[user.firstName, user.lastName].filter(Boolean).join(" ") || "Not provided"}\nEmail: ${user.email}\nStatus: Paid subscription active`,
+    }).catch((error) => console.error("[SUBSCRIPTION] Payment notification failed:", error));
+  }
   return { active: true, user };
 }
 
