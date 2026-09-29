@@ -25,6 +25,7 @@ async function run(outputs) {
     '../legalAI': { analyzeLegalIssue() { throw new Error('Civil-rights analyzer must not draft documents'); } },
     '../aiProvider': { generateLegalAnalysis: async (...args) => { calls.push(args); return outputs.shift(); } },
     '../lexara/LexaraAuthorityResearch': { researchLegalAuthority: async () => null, formatAuthorityResearchForSystem: () => '' },
+    '../lexara/LexaraJurisdictionResolver': { resolveUSJurisdiction: async (_text, state) => state ? { display: state, state, country: 'United States', providers: ['verifier'] } : null },
     '../logger': { createLogger: () => ({ info() {}, warn: (...args) => warnings.push(args) }) },
     '../lexara/legalDocumentRegistry': registry,
   });
