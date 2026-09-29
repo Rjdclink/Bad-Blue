@@ -150,6 +150,48 @@ export async function sendEmail({
   return success;
 }
 
+
+const LEGALWHAT_ADMIN_EMAIL = "contact.badblue@gmail.com";
+
+export async function sendLegalWhatSignupNotification(user: {
+  firstName?: string | null; lastName?: string | null; email: string;
+}): Promise<boolean> {
+  const name = [user.firstName, user.lastName].filter(Boolean).join(" ").trim() || "Not provided";
+  return sendAdminEmail({
+    to: LEGALWHAT_ADMIN_EMAIL,
+    subject: "LegalWhat: New signup",
+    message: `A new user signed up for LegalWhat.
+
+Name: ${name}
+Email: ${user.email}`,
+  });
+}
+
+export async function sendLegalWhatSubscriptionNotification(user: {
+  firstName?: string | null; lastName?: string | null; email: string;
+}): Promise<boolean> {
+  const name = [user.firstName, user.lastName].filter(Boolean).join(" ").trim() || "Not provided";
+  return sendAdminEmail({
+    to: LEGALWHAT_ADMIN_EMAIL,
+    subject: "LegalWhat: Subscription payment confirmed",
+    message: `A LegalWhat subscription payment was confirmed.
+
+Name: ${name}
+Email: ${user.email}
+Status: Paid subscription active`,
+  });
+}
+
+export async function sendLegalWhatPasswordResetEmail(email: string, resetUrl: string): Promise<boolean> {
+  return sendEmail({
+    to: email,
+    subject: "LegalWhat password reset",
+    html: `<p>A password reset was requested for your LegalWhat account.</p>
+<p><a href="${resetUrl}">Reset your password</a></p>
+<p>This link expires in 30 minutes and stops working after your password is changed. If you did not request this, you can ignore this email.</p>`,
+  });
+}
+
 // --- Types ------------------------------------------------------------------
 
 interface WelcomeEmailData {
