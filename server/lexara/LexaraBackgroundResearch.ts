@@ -21,10 +21,10 @@ export interface LexaraPersonInvestigationContext {
   previousMessages?: Array<{ role?: string; content?: string }>;
   jurisdiction?: string;
   signal?: AbortSignal;
-  onProgress?: (event: LexaraPantheonProgressEvent) => void;
+  onProgress?: (event: LexaraBackgroundProgressEvent) => void;
 }
 
-export interface LexaraPantheonProgressEvent {
+export interface LexaraBackgroundProgressEvent {
   type: 'searching' | 'checkpoint' | 'evidence' | 'endpoint';
   pass: number;
   confidence?: number;
