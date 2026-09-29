@@ -639,20 +639,10 @@ export async function generateLexaraConversationResponse(
       : pantheonEndpoint === 'report-handoff' ? 'consent-required' as const
       : pantheonEndpoint === 'failed' ? 'failed' as const
       : pantheonEndpoint === 'unavailable' ? 'unavailable' as const : undefined;
-  if (pantheonDelegatedByLexara && !mixedLegalFactNeed && !pantheonInvestigation?.evidenceSummary) {
-    const searchLeads = pantheonInvestigation?.searchLeads || [];
-    const text = pantheonInvestigation?.clarification
-      || (searchLeads.length
-        ? `Pantheon found these search leads, but could not verify the pages. They are leads, not established facts:\n${searchLeads.map(url => `- ${url}`).join('\n')}`
-        : pantheonStatus === 'failed' || pantheonStatus === 'unavailable'
-        ? 'Pantheon could not complete this lookup. I cannot verify the requested fact or rule out a record; please retry when the sources are available.'
-        : 'Pantheon completed a limited lookup but found no verified, subject-matched evidence for this question. That does not establish that no record exists.');
-    console.info('[LEXARA Performance] background turn', {
+  if (pantheonDelegatedByLexara && !pantheonInvestigation?.evidenceSummary) {
+    console.info('[LEXARA Performance] background research incomplete; continuing to legal reasoning', {
       pantheonEndpoint, pantheonStatus, researchWaitMs,
-      crawlerAudit: pantheonInvestigation?.crawlerAudit,
-      discoveryLanes: pantheonInvestigation?.discoveryLanes,
     });
-    return { text, jurisdiction: publicJurisdiction, mappedLawType, pantheonEndpoint, pantheonStatus };
   }
 
   const silentLocationContext = jurisdictionRelevant && !explicitStateJurisdiction && !resolvedJurisdiction?.locality && backgroundStateJurisdiction
