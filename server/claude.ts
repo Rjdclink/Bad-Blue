@@ -90,7 +90,7 @@ export async function callClaude(
     // failure. If the model spent the entire budget before producing text, make
     // one bounded continuation-sized retry; every other state remains local and
     // is surfaced with enough metadata for the circuit breaker to classify it.
-    if (!content && response.stop_reason === 'max_tokens' && options.providerPolicy !== 'legalwhat') {
+    if (!content && response.stop_reason === 'max_tokens') {
       const retryBudget = Math.min(
         4000,
         Math.max(3000, (options.maxTokens || 2000) * 2),
