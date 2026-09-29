@@ -5,14 +5,14 @@
 import { callClaude } from '../../claude';
 import { LEGAL_AI_MODELS } from '../../aiHarmonyModelRegistry';
 
-export type PantheonAssistant = 'claude' | 'xai' | 'jenova';
+export type PantheonAssistant = 'claude' | 'xai';
 export interface PantheonResearchPlan { queries: string[]; assistants: PantheonAssistant[] }
 
 const PROVIDER_COOLDOWN_MS = 60_000;
 const cooling = new Map<PantheonAssistant, number>();
 const available = (provider: PantheonAssistant) => (cooling.get(provider) || 0) <= Date.now();
 const active = new Map<PantheonAssistant, number>();
-const concurrency: Record<PantheonAssistant, number> = { claude: 2, xai: 2, jenova: 2 };
+const concurrency: Record<PantheonAssistant, number> = { claude: 2, xai: 2 };
 function reserve(provider: PantheonAssistant): boolean {
   const count = active.get(provider) || 0;
   if (count >= concurrency[provider]) return false;
@@ -26,43 +26,6 @@ function queriesFromAnswer(answer: string, original: string): string[] {
     .map(line => line.replace(/^\s*(?:\d+[.)]|[-*])\s*/, '').replace(/^['"]|['"]$/g, '').trim())
     .filter(line => line.length >= 12 && line.length <= 180 && !/^https?:/i.test(line)
       && line.toLowerCase() !== original.toLowerCase()))].slice(0, 2);
-}
-async function jenovaAgent(key: string, signal: AbortSignal): Promise<string> {
-  const configured = process.env.JENOVA_BACKGROUND_AGENT?.trim();
-  if (configured) return configured;
-  const response = await fetch('https://api.jenova.ai/v1/agents', {
-    headers: { Authorization: `Bearer ${key}` }, signal,
-  });
-  if (!response.ok) throw new Error(`Jenova agent catalog HTTP ${response.status}`);
-  const data = await response.json() as { agents?: Array<{ agent?: string; display_name?: string }> };
-  const agent = data.agents?.find(item => /professional.background.investigator/i.test(`${item.agent || ''} ${item.display_name || ''}`));
-  if (!agent?.agent) throw new Error('Professional Background Investigator is not available to this Jenova API key');
-  return agent.agent;
-}
-async function askJenova(prompt: string, signal: AbortSignal): Promise<string> {
-  const key = process.env.JENOVA_API_KEY?.trim(); if (!key) throw new Error('Jenova is not configured');
-  const agent = await jenovaAgent(key, signal);
-  const response = await fetch('https://api.jenova.ai/v1/messages', {
-    method: 'POST', signal,
-    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ agent, content: prompt, ephemeral: true, stream: true }),
-  });
-  if (!response.ok) throw new Error(`Jenova HTTP ${response.status}`);
-  const reader = response.body?.getReader(); if (!reader) throw new Error('Jenova returned no stream');
-  const decoder = new TextDecoder(); let buffer = '', answer = '';
-  try {
-    while (answer.length < 2_000) {
-      const { value, done } = await reader.read(); if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const frames = buffer.split(/\r?\n\r?\n/); buffer = frames.pop() || '';
-      for (const frame of frames) {
-        if (!/^event: stream_delta$/m.test(frame)) continue;
-        const payload = /^data: (.*)$/m.exec(frame)?.[1]; if (!payload) continue;
-        try { answer += String(JSON.parse(payload).chunk_content || ''); } catch {}
-      }
-    }
-  } finally { await reader.cancel().catch(() => {}); }
-  return answer;
 }
 let xaiModelCache: { model: string; until: number } | null = null;
 async function xaiModel(key: string, signal: AbortSignal): Promise<string> {
@@ -94,7 +57,7 @@ async function askClaude(prompt: string, signal: AbortSignal): Promise<string> {
   return result.content;
 }
 
-/** Claude and xAI Grok are primary redundant planners; Jenova joins when healthy. */
+/** Claude leads Pantheon planning; xAI Grok independently supports it. */
 export async function planPantheonResearchQueries(
   query: string, options: { signal?: AbortSignal; timeoutMs?: number } = {},
 ): Promise<PantheonResearchPlan> {
@@ -107,7 +70,6 @@ export async function planPantheonResearchQueries(
   const providers: Array<[PantheonAssistant, boolean, () => Promise<string>]> = [
     ['claude', !!(process.env.ANTHROPIC_API_KEY?.trim() || process.env.CLAUDE_API_KEY?.trim()), () => askClaude(prompt, controller.signal)],
     ['xai', !!process.env.XAI_API_KEY?.trim(), () => askXai(prompt, controller.signal)],
-    ['jenova', !!process.env.JENOVA_API_KEY?.trim(), () => askJenova(prompt, controller.signal)],
   ];
   const configured = providers.filter(([provider, enabled]) => enabled && available(provider));
   try {
@@ -116,7 +78,7 @@ export async function planPantheonResearchQueries(
       try { return { provider, queries: queriesFromAnswer(await call(), query), skipped: false }; }
       catch (error) {
         if (!controller.signal.aborted) {
-          cooling.set(provider, Date.now() + PROVIDER_COOLDOWN_MS);
+          cooling.set(provider, Date.now() + (provider === 'xai' ? 5_000 : PROVIDER_COOLDOWN_MS));
           console.warn('[PANTHEON] Research assistant unavailable', { provider, reason: error instanceof Error ? error.message : String(error) });
         }
         return { provider, queries: [] as string[], skipped: false };
