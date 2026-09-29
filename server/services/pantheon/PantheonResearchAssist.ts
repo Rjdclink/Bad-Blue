@@ -90,7 +90,7 @@ async function askXai(prompt: string, signal: AbortSignal): Promise<string> {
   return String(data.choices?.[0]?.message?.content || '');
 }
 async function askClaude(prompt: string, signal: AbortSignal): Promise<string> {
-  const result = await callClaude(prompt, { model: LEGAL_AI_MODELS.claudeFast, maxTokens: 220, signal });
+  const result = await callClaude(prompt, { model: process.env.PANTHEON_CLAUDE_MODEL?.trim() || LEGAL_AI_MODELS.claudeBalanced, maxTokens: 220, signal });
   return result.content;
 }
 
