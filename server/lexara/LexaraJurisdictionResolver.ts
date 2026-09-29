@@ -17,6 +17,13 @@ function normalize(value?: string): string {
 }
 function same(a?: string,b?: string): boolean { return !!a && !!b && normalize(a) === normalize(b); }
 
+export function hasExplicitLocationCue(text: string): boolean {
+  const clean = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!clean) return false;
+  return /\b(?:in|at|near|from|located\s+in|live(?:s|d)?\s+in|resid(?:e|es|ed|ing)\s+in)\s+[A-Z][A-Za-z.'’-]+/i.test(clean)
+    || /\b[A-Z][A-Za-z.'’-]+(?:\s+[A-Z][A-Za-z.'’-]+){0,2}\s+(?:County|Parish|Borough|Township|Municipality)\b/.test(clean);
+}
+
 function jurisdictionQueries(text: string, state?: string): string[] {
   const clean = text.replace(/\s+/g, ' ').trim();
   if (!clean) return [];
