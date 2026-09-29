@@ -52,8 +52,8 @@ export class GeminiRateLimitError extends Error {
 let geminiRateLimited = false;
 let rateLimitResetTime = 0;
 let consecutiveFailures = 0;
-const BASE_COOLDOWN_MS = 30000; // 30 seconds base cooldown
-const MAX_COOLDOWN_MS = 300000; // 5 minutes max cooldown
+const BASE_COOLDOWN_MS = 2000; // short transient backoff
+const MAX_COOLDOWN_MS = 30000; // repeated transient failures only
 
 export function isGeminiRateLimited(): boolean {
   if (geminiRateLimited && Date.now() < rateLimitResetTime) {
