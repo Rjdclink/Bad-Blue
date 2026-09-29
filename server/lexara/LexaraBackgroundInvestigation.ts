@@ -13,5 +13,5 @@ export {
 
 export type {
   LexaraPersonInvestigation as LexaraBackgroundInvestigation,
-  LexaraPantheonProgressEvent as LexaraBackgroundProgressEvent,
+  LexaraBackgroundProgressEvent,
 } from './LexaraBackgroundResearch';
