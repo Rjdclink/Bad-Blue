@@ -14,6 +14,7 @@ import { resolveUSJurisdiction } from '../lexara/LexaraJurisdictionResolver';
 import { resolveOfficialLegalForm, officialFormDirective } from '../lexara/OfficialLegalFormResolver';
 import { inspectOfficialForm, fillOfficialPdf, fillOfficialDocx } from '../lexara/OfficialFormFiller';
 import { overlayFlatOfficialPdf, validateFlatFormLayout } from '../lexara/FlatOfficialFormOverlay';
+import { detectFlatFormLayout } from '../lexara/FlatFormLayoutDetector';
 import { conductMasterConsultation, shouldInvokePeopleFinder } from '../consultationCoordinator';
 import { performConsultation } from '../legalConsultationEngine';
 import { createLogger } from '../logger';
@@ -159,8 +160,8 @@ export function setupConsultationRoutes(app: Express): void {
     const inspected = await inspectOfficialForm(officialForm);
     const flatLayout = req.body?.flatLayout;
     if (inspected.contentType === 'pdf' && !inspected.fillable) {
-      if (!flatLayout) return res.status(409).json({ error: 'The verified official PDF is flat. Verified field coordinates are required before modification.', fields: [], sourceUrl: inspected.sourceUrl });
-      const checkedLayout = validateFlatFormLayout(flatLayout);
+      const detectedLayout = flatLayout || await detectFlatFormLayout(inspected.bytes, 'pdf');
+      const checkedLayout = validateFlatFormLayout(detectedLayout);
       if (!checkedLayout.verified) return res.status(409).json({ error: 'Flat-form field coordinates did not meet verification confidence.', sourceUrl: inspected.sourceUrl });
       const missingFlatFields = checkedLayout.anchors.filter(field => values[field.label] === undefined).map(field => field.label);
       if (missingFlatFields.length) return res.status(422).json({ error: 'Additional information is required to complete the official form', missingFields: missingFlatFields, sourceUrl: inspected.sourceUrl });
