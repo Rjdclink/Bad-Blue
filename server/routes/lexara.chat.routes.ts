@@ -215,7 +215,7 @@ router.post('/acknowledge', express.json(), (req: Request, res: Response) => {
 
 /**
  * POST /api/lexara/chat/stream
- * Server-Sent Events transport for progressive Pantheon research.
+ * Server-Sent Events transport for progressive Lexara research.
  */
 router.post('/chat/stream', express.json(), async (req: Request, res: Response) => {
   const body = req.body || {};
@@ -307,7 +307,7 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       jurisdiction: result.jurisdiction,
       mappedLawType: result.mappedLawType,
       documentIntent,
-      ...getPantheonTurnStatus(result),
+      ...getLexaraResearchTurnStatus(result),
       pantheonReportHandoff,
     });
   } catch (error) {
@@ -492,7 +492,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       mappedLawType: conversationResult.mappedLawType,
       ...persistence,
       documentIntent,
-      ...getPantheonTurnStatus(conversationResult),
+      ...getLexaraResearchTurnStatus(conversationResult),
       pantheonReportHandoff,
     });
   } catch (error) {
