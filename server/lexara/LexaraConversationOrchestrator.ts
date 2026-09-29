@@ -504,9 +504,9 @@ export async function generateLexaraConversationResponse(
     objectivePresent: Boolean(researchDecision.objective),
     objectiveKind: researchDecision.objectiveKind,
     useLegalResearch: sequencePlan.useLegalResearch,
-    usePantheon: sequencePlan.useBackgroundResearch,
+    useBackgroundResearch: sequencePlan.useBackgroundResearch,
     recursive: sequencePlan.recursive,
-    classifyPantheon: sequencePlan.classifyBackground,
+    classifyBackground: sequencePlan.classifyBackground,
     documentAction: sequencePlan.documentAction,
   });
 
