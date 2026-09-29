@@ -245,7 +245,7 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
     const documentIntent = detectDocumentIntent(prompt, previousMessages);
     const explicitJurisdiction = cleanOptionalString((rawContext as any).jurisdiction, 80);
     const networkState = explicitJurisdiction ? null : await resolveNetworkState(
-      String(req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || req.headers['cf-connecting-ip'] || req.ip || '')
+      String(req.headers['x-real-ip'] || req.headers['cf-connecting-ip'] || req.ip || '')
     );
     const result = await generateLexaraConversationResponse(prompt, {
       previousMessages,
