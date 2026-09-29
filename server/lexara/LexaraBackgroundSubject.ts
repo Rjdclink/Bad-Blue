@@ -1,4 +1,4 @@
-import { isContextualReference } from './LexaraPantheonSemanticIntent';
+import { isContextualReference } from './LexaraBackgroundSemanticIntent';
 
 export type LexaraBackgroundSubjectKind = 'person' | 'organization' | 'place' | 'entity';
 
