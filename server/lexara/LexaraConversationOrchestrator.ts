@@ -10,10 +10,10 @@ import {
   researchLegalAuthority,
 } from './LexaraAuthorityResearch';
 import {
-  formatPantheonInvestigationForSystem,
-  investigatePersonQuestion,
-  type LexaraPersonInvestigation,
-} from './LexaraPantheonInvestigation';
+  formatLexaraBackgroundInvestigationForSystem,
+  investigateLexaraBackgroundQuestion,
+  type LexaraBackgroundInvestigation,
+} from './LexaraBackgroundInvestigation';
 import {
   formatLexaraDomainSpecialization,
   getLexaraLegalDomainProfile,
@@ -41,14 +41,14 @@ export interface LexaraConversationContext {
   behaviorMode?: 'personable' | 'professional';
   sessionId?: string;
   signal?: AbortSignal;
-  onResearchProgress?: (event: import('./LexaraPantheonInvestigation').LexaraPantheonProgressEvent) => void;
+  onResearchProgress?: (event: import('./LexaraBackgroundInvestigation').LexaraBackgroundProgressEvent) => void;
 }
 
 export interface LexaraConversationResult {
   text: string;
   jurisdiction?: string;
   mappedLawType?: ExpertLawType;
-  pantheonEndpoint?: import('./LexaraPantheonInvestigation').LexaraPersonInvestigation['endpoint'];
+  pantheonEndpoint?: import('./LexaraBackgroundInvestigation').LexaraBackgroundInvestigation['endpoint'];
   pantheonStatus?: 'completed' | 'partial' | 'unavailable' | 'failed' | 'clarification-required' | 'consent-required';
 }
 
@@ -325,7 +325,7 @@ function degradedLegalResponse(jurisdiction?: string): string {
 }
 
 function extractVerifiedPantheonSourceExcerpt(
-  result: import('./LexaraPantheonInvestigation').LexaraPersonInvestigation | null,
+  result: import('./LexaraPantheonInvestigation').LexaraBackgroundInvestigation | null,
 ): { text: string; sourceUrl: string; excerpt: string } | null {
   if (!result?.evidenceSummary || !result.sources.length) return null;
   const evidence = result.evidenceSummary;
@@ -360,7 +360,7 @@ function verifiedExcerptDirectlyAnswers(
   prompt: string,
   previousMessages: LexaraConversationMessage[],
   jurisdiction: string | undefined,
-  investigation: import('./LexaraPantheonInvestigation').LexaraPersonInvestigation,
+  investigation: import('./LexaraPantheonInvestigation').LexaraBackgroundInvestigation,
   excerpt: string,
 ): boolean {
   if (investigation.endpoint !== 'evidence-sufficient') return false;
@@ -537,7 +537,7 @@ export async function generateLexaraConversationResponse(
   else context.signal?.addEventListener('abort', relayPantheonAbort, { once: true });
   const searchOnlyFact = sequencePlan.sequence === 'simple-factual'
     && !resolveLexaraBackgroundSubject(cleanPrompt, previousUserTurns, jurisdiction);
-  const pantheonInvestigationPromise: Promise<LexaraPersonInvestigation | null> = pantheonDelegatedByLexara ? (searchOnlyFact
+  const pantheonInvestigationPromise: Promise<LexaraBackgroundInvestigation | null> = pantheonDelegatedByLexara ? (searchOnlyFact
     ? discoverLexaraBackgroundSourcesParallel(researchDecision.objective || cleanPrompt, [], {
         jurisdiction, limit: 8, timeoutMs: 6_000,
         signal: pantheonController.signal, providerPolicy: 'capability-first',
@@ -548,7 +548,7 @@ export async function generateLexaraConversationResponse(
         coverageNote: 'Search links have not been independently fetched or verified.',
         discoveryLanes: discovery.lanesAttempted,
       }))
-    : investigatePersonQuestion(pantheonPrompt, {
+    : investigateLexaraBackgroundQuestion(pantheonPrompt, {
     delegatedByLexara: mixedLegalFactNeed,
     previousMessages: context.previousMessages,
     jurisdiction,
@@ -655,7 +655,7 @@ export async function generateLexaraConversationResponse(
   const systemPrompt = buildLegalSystemPrompt(context, mappedLawType, jurisdiction)
     + silentLocationContext
     + formatAuthorityResearchForSystem(authorityResearch)
-    + formatPantheonInvestigationForSystem(pantheonInvestigation);
+    + formatLexaraBackgroundInvestigationForSystem(pantheonInvestigation);
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
 
   // Capability-first Harmony route. No model is globally preferred. The shared
