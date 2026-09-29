@@ -20,28 +20,46 @@ function jurisdictionQueries(text: string, state?: string): string[] {
   if (!clean) return [];
   const queries = new Set<string>();
   const add = (value: string) => {
-    const v=value.trim().replace(/^[,.;:\s]+|[,.;:\s]+$/g,'');
-    if(v.length>=2 && v.length<=180) queries.add(v);
+    const v = value.trim().replace(/^[,.;:\s]+|[,.;:\s]+$/g, '');
+    if (v.length >= 2 && v.length <= 120) queries.add(v);
   };
-
-  // Let the geographic providers interpret the user's own wording first.
-  add(clean);
-  if (state && !new RegExp('\\b' + state.replace(/[.*+?^$()|[\]\\]/g,'\\$&') + '\\b','i').test(clean)) add(clean + ', ' + state);
-
-  // Also submit small location-shaped fragments so surrounding legal prose does
-  // not prevent a geocoder from recognizing a place. These are candidates only;
-  // no fragment becomes jurisdiction unless independent providers/Census verify it.
-  const words=clean.split(/\s+/);
-  for(let size=1;size<=4;size++){
-    for(let i=0;i+size<=words.length;i++){
-      const fragment=words.slice(i,i+size).join(' ').replace(/^[^A-Za-z]+|[^A-Za-z.'’ -]+$/g,'');
-      if(!fragment || fragment.length<2 || fragment.length>80) continue;
-      if(state) add(fragment + ', ' + state);
-      else if(/\b(?:county|parish|borough|township|municipality)\b/i.test(fragment)) add(fragment);
+  // Only explicit location-shaped language may reach geographic providers.
+  // Ordinary conversational words must never be promoted into a city/county.
+  const patterns = [
+    /\b(?:in|at|near|from|located\s+in|live(?:s|d)?\s+in|resid(?:e|es|ed|ing)\s+in)\s+([A-Z][A-Za-z.'’-]+(?:\s+[A-Z][A-Za-z.'’-]+){0,3}(?:,\s*[A-Z]{2}|,\s*[A-Z][A-Za-z ]+)?)\b/g,
+    /\b([A-Z][A-Za-z.'’-]+(?:\s+[A-Z][A-Za-z.'’-]+){0,2}\s+(?:County|Parish|Borough|Township|Municipality))\b/g,
+  ];
+  for (const pattern of patterns) {
+    for (const match of clean.matchAll(pattern)) {
+      const place = match[1]?.trim(); if (!place) continue;
+      add(place);
+      if (state && !new RegExp('\\b' + state.replace(/[.*+?^$()|[\]\\]/g, '\\$&') + '\\b', 'i').test(place)) add(place + ', ' + state);
     }
   }
   return [...queries];
 }
+
+export async function resolveNetworkState(ip?: string): Promise<{ state?: string; confidence?: number; provider?: string } | null> {
+  const account = process.env.MAXMIND_ACCOUNT_ID?.trim();
+  const license = process.env.MAXMIND_LICENSE_KEY?.trim();
+  const address = (ip || '').split(',')[0].trim();
+  if (!account || !license || !address || /^(?:127\.|10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|::1$)/.test(address)) return null;
+  const auth = Buffer.from(`${account}:${license}`).toString('base64');
+  const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const response = await fetch('https://geoip.maxmind.com/geoip/v2.1/insights/' + encodeURIComponent(address), {
+      headers: { Authorization: `Basic ${auth}` }, signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    const data = await response.json() as any;
+    const subdivision = data?.subdivisions?.[0];
+    const state = subdivision?.names?.en;
+    const confidence = Number(subdivision?.confidence);
+    if (!state) return null;
+    return { state, confidence: Number.isFinite(confidence) ? confidence : undefined, provider: 'maxmind' };
+  } catch { return null; } finally { clearTimeout(timer); }
+}
+
 async function geonames(query: string): Promise<Candidate | null> {
   const username = process.env.GEONAMES_USERNAME?.trim(); if (!username) return null;
   const data = await getJson('https://secure.geonames.org/searchJSON?q=' + encodeURIComponent(query) + '&country=US&maxRows=5&featureClass=P&featureClass=A&username=' + encodeURIComponent(username));
