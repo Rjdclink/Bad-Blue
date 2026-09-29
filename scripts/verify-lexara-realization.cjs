@@ -927,7 +927,7 @@ must(
 must(
   orchestrator.includes('private individual, or the requested fact being personal, is NEVER by itself a reason') &&
     orchestrator.includes('pantheonInvestigation && isPersonPermissionRefusal(text)') &&
-    orchestrator.includes('I could not verify the requested fact from the sources Pantheon completed.'),
+    orchestrator.includes('I could not independently verify the requested fact from the sources I was able to assess.'),
   'Lexara has no blanket private-individual permission refusal after Pantheon targeting',
 );
 // Practice-area specialization gate (40-book LegalWhat library).
