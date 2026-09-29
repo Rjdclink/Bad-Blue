@@ -39,7 +39,7 @@ function jurisdictionQueries(text: string, state?: string): string[] {
   return [...queries];
 }
 
-export async function resolveNetworkState(ip?: string): Promise<{ state?: string; provider?: string } | null> {
+export async function resolveNetworkState(ip?: string): Promise<{ locality?: string; state?: string; area?: string; provider?: string; confidence?: number } | null> {
   // Local-only network jurisdiction hook. No visitor network identifier leaves
   // LegalWhat. Populate NETWORK_REGION_PREFIXES from an attributed, locally
   // maintained IP-to-region dataset during deployment; absent data fails closed.
@@ -48,9 +48,18 @@ export async function resolveNetworkState(ip?: string): Promise<{ state?: string
   const raw = process.env.NETWORK_REGION_PREFIXES?.trim();
   if (!raw) return null;
   try {
-    const entries = JSON.parse(raw) as Array<{ prefix?: string; state?: string }>;
-    const match = entries.find(item => item.prefix && item.state && address.startsWith(item.prefix));
-    return match?.state ? { state: match.state, provider: 'local-network-region' } : null;
+    const entries = JSON.parse(raw) as Array<{ prefix?: string; state?: string; city?: string; area?: string }>;
+    const match = entries
+      .filter(item => item.prefix && item.state && address.startsWith(item.prefix))
+      .sort((a, b) => String(b.prefix).length - String(a.prefix).length)[0];
+    if (!match?.state) return null;
+    return {
+      locality: match.city || undefined,
+      state: match.state,
+      area: match.area || match.city || undefined,
+      provider: 'local-network-region',
+      confidence: match.city ? 0.55 : 0.7,
+    };
   } catch { return null; }
 }
 
