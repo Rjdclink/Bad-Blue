@@ -385,7 +385,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
         previousMessages,
         lawType,
         lawTypeName,
-        jurisdiction,
+        jurisdiction: explicitJurisdiction,
         backgroundJurisdiction: networkState?.state,
         backgroundLocality: networkState?.locality,
         backgroundArea: networkState?.area,
