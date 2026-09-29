@@ -128,7 +128,12 @@ async function openDatabase(): Promise<DbHandle | null> {
   return buildDatabase(Database, dbPath);
 }
 async function database(): Promise<DbHandle | null> {
-  if (!databasePromise) databasePromise = openDatabase();
+  if (!databasePromise) {
+    databasePromise = openDatabase().then(result => {
+      if (!result) setTimeout(() => { databasePromise = null; }, 5 * 60_000);
+      return result;
+    });
+  }
   return databasePromise;
 }
 export function warmLocalNetworkJurisdiction(): void {
