@@ -16,6 +16,7 @@ import { MASTER_USER_ID } from '../masterPassword';
 import { isAuthenticated } from '../auth';
 import { getConfiguredHarmonyParticipants } from '../aiHarmonyModelRegistry';
 import { isBlankLegalDocumentRequest, resolveLegalDocumentType } from '../lexara/legalDocumentRegistry';
+import { resolveNetworkState } from '../lexara/LexaraJurisdictionResolver';
 
 const router = express.Router();
 router.use(isAuthenticated);
@@ -242,11 +243,19 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
     send('started', { status: 'researching' });
     const previousMessages = sanitizePreviousMessages((rawContext as any).previousMessages);
     const documentIntent = detectDocumentIntent(prompt, previousMessages);
+    const explicitJurisdiction = cleanOptionalString((rawContext as any).jurisdiction, 80);
+    const networkState = explicitJurisdiction ? null : await resolveNetworkState(
+      String(req.headers['x-real-ip'] || req.headers['cf-connecting-ip'] || req.ip || '')
+    );
     const result = await generateLexaraConversationResponse(prompt, {
       previousMessages,
       lawType: cleanOptionalString((rawContext as any).lawType),
       lawTypeName: cleanOptionalString((rawContext as any).lawTypeName, 160),
-      jurisdiction: cleanOptionalString((rawContext as any).jurisdiction, 80),
+      jurisdiction: explicitJurisdiction,
+      backgroundJurisdiction: networkState?.state,
+      backgroundLocality: networkState?.locality,
+      backgroundArea: networkState?.area,
+      backgroundLocationConfidence: networkState?.confidence,
       behaviorMode: (rawContext as any).behaviorMode === 'personable' ? 'personable' : 'professional',
       sessionId: cleanOptionalString((rawContext as any).sessionId, 128),
       signal: controller.signal,
@@ -259,7 +268,7 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       ...previousMessages,
       { role: 'user', content: prompt },
     ]);
-    if (!documentIntent.requested && reasoningDocumentIntent.requested) {
+    if (!documentIntent.requested && reasoningDocumentIntent.requested && reasoningDocumentIntent.explicit && reasoningDocumentIntent.documentType !== 'Custom Document') {
       documentIntent.requested = true;
       if (documentIntent.documentType === 'Custom Document') {
         documentIntent.documentType = reasoningDocumentIntent.documentType;
@@ -345,7 +354,11 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
     const previousMessages = sanitizePreviousMessages((rawContext as any).previousMessages);
     const lawType = cleanOptionalString((rawContext as any).lawType);
     const lawTypeName = cleanOptionalString((rawContext as any).lawTypeName, 160);
-    const jurisdiction = cleanOptionalString((rawContext as any).jurisdiction, 80);
+    const explicitJurisdiction = cleanOptionalString((rawContext as any).jurisdiction, 80);
+    const networkState = explicitJurisdiction ? null : await resolveNetworkState(
+      String(req.headers['x-real-ip'] || req.headers['cf-connecting-ip'] || req.ip || '')
+    );
+    const jurisdiction = explicitJurisdiction || networkState?.state;
     const behaviorMode = (rawContext as any).behaviorMode === 'personable' ? 'personable' : 'professional';
     const sessionId = cleanOptionalString((rawContext as any).sessionId, 128);
     const documentIntent = detectDocumentIntent(prompt, previousMessages);
@@ -372,7 +385,11 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
         previousMessages,
         lawType,
         lawTypeName,
-        jurisdiction,
+        jurisdiction: explicitJurisdiction,
+        backgroundJurisdiction: networkState?.state,
+        backgroundLocality: networkState?.locality,
+        backgroundArea: networkState?.area,
+        backgroundLocationConfidence: networkState?.confidence,
         behaviorMode,
         sessionId,
         signal: requestController.signal,
@@ -397,7 +414,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       ...previousMessages,
       { role: 'user', content: prompt },
     ]);
-    if (!documentIntent.requested && reasoningDocumentIntent.requested) {
+    if (!documentIntent.requested && reasoningDocumentIntent.requested && reasoningDocumentIntent.explicit && reasoningDocumentIntent.documentType !== 'Custom Document') {
       documentIntent.requested = true;
       if (documentIntent.documentType === 'Custom Document') {
         documentIntent.documentType = reasoningDocumentIntent.documentType;

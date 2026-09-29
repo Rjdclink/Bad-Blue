@@ -129,6 +129,9 @@ export default function LegalConsultationPage() {
         onConsent={handleLiveConsent}
         targetLawArea={domainInfo?.name}
       />
+      <div className="pb-2 text-center text-[10px] text-muted-foreground/60">
+        <a href="https://db-ip.com" target="_blank" rel="noreferrer" className="hover:underline">IP Geolocation by DB-IP</a>
+      </div>
     </div>
   );
 }
