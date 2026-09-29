@@ -21,7 +21,6 @@ export const LEXARA_EAGLE_EYE_KEYLESS_SOURCES: readonly LexaraSupplementalSource
   { id:'eagleeye-epa-echo', root:'https://echo.epa.gov/', categories:['property','business','regulatory'], queryHints:['EPA ECHO','facility enforcement','environmental violations'], authority:'primary', jurisdiction:'US' },
   { id:'eagleeye-openfema', root:'https://www.fema.gov/api/open/', categories:['property','geography'], queryHints:['OpenFEMA','disaster declarations','flood claims'], authority:'primary', jurisdiction:'US' },
   { id:'eagleeye-nhtsa-vpic', root:'https://vpic.nhtsa.dot.gov/api/', categories:['transportation'], queryHints:['NHTSA vPIC','VIN decode','vehicle'], authority:'primary', jurisdiction:'US' },
-  { id:'eagleeye-courtlistener', root:'https://www.courtlistener.com/', categories:['courts','civil-litigation','criminal','bankruptcy'], queryHints:['CourtListener','RECAP','court docket'], authority:'secondary', jurisdiction:'US' },
   { id:'eagleeye-nominatim', root:'https://nominatim.openstreetmap.org/', categories:['residence','property','geography'], queryHints:['OpenStreetMap','Nominatim','address'], authority:'secondary', jurisdiction:'global' },
 ] as const;
 
