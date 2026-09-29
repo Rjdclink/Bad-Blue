@@ -219,7 +219,8 @@
     "zod": "^3.24.2",
     "zod-validation-error": "^3.4.0",
     "zustand": "^4.5.2",
-    "pdf-lib": "^1.17.1"
+    "pdf-lib": "^1.17.1",
+    "mmdb-lib": "^3.0.3"
   },
   "devDependencies": {
     "@babel/core": "^7.28.5",
