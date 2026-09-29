@@ -26,6 +26,7 @@ async function run(outputs) {
     '../aiProvider': { generateLegalAnalysis: async (...args) => { calls.push(args); return outputs.shift(); } },
     '../lexara/LexaraAuthorityResearch': { researchLegalAuthority: async () => null, formatAuthorityResearchForSystem: () => '' },
     '../lexara/LexaraJurisdictionResolver': { resolveUSJurisdiction: async (_text, state) => state ? { display: state, state, country: 'United States', providers: ['verifier'] } : null },
+    '../lexara/OfficialLegalFormResolver': { resolveOfficialLegalForm: () => ({ requirement: 'custom_allowed', verifiedOfficial: true, localRules: [], companionDocuments: [], provenance: [] }), officialFormDirective: () => 'Custom drafting verified as permitted.' },
     '../logger': { createLogger: () => ({ info() {}, warn: (...args) => warnings.push(args) }) },
     '../lexara/legalDocumentRegistry': registry,
   });
