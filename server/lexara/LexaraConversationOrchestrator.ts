@@ -504,9 +504,9 @@ export async function generateLexaraConversationResponse(
     objectivePresent: Boolean(researchDecision.objective),
     objectiveKind: researchDecision.objectiveKind,
     useLegalResearch: sequencePlan.useLegalResearch,
-    usePantheon: sequencePlan.usePantheon,
+    usePantheon: sequencePlan.useBackgroundResearch,
     recursive: sequencePlan.recursive,
-    classifyPantheon: sequencePlan.classifyPantheon,
+    classifyPantheon: sequencePlan.classifyBackground,
     documentAction: sequencePlan.documentAction,
   });
 
@@ -523,8 +523,8 @@ export async function generateLexaraConversationResponse(
 
   // The explicit six-sequence router owns subsystem selection. Mixed legal and
   // background questions deliberately run both research domains in parallel.
-  const mixedLegalFactNeed = sequencePlan.usePantheon && sequencePlan.useLegalResearch;
-  const pantheonDelegatedByLexara = sequencePlan.usePantheon;
+  const mixedLegalFactNeed = sequencePlan.useBackgroundResearch && sequencePlan.useLegalResearch;
+  const pantheonDelegatedByLexara = sequencePlan.useBackgroundResearch;
 
   const pantheonPrompt = mixedLegalFactNeed
     ? `${researchDecision.objective}\n\nLEXARA-DELEGATED FACTUAL OBJECTIVE: Retrieve only background facts and identifiers materially useful for identifying or resolving this legal matter (for example name variants, locations, dates, related proceedings, court references, docket/citation clues, and relevant public records). Do not perform the legal analysis and do not broaden into an unrestricted background report.`
