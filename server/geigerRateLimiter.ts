@@ -47,104 +47,29 @@ export interface RotationResult {
 
 // Free AI Provider Configurations
 const FREE_PROVIDERS: ProviderConfig[] = [
-  // All free providers have EQUAL priority (5) for balanced utilization
-  {
-    name: 'groq',
-    endpoint: 'https://api.groq.com/openai/v1/chat/completions',
-    models: [
-      CURRENT_AI_MODELS.groqDeep,
-      CURRENT_AI_MODELS.groqFast,
-      'qwen/qwen3.8-27b',
-      'whisper-large-v3',
-      'whisper-large-v3-turbo',
-    ],
-    rpmLimit: 30,
-    rpdLimit: 14400,
-    tpdLimit: 500000,
-    apiKeyEnv: 'GROQ_API_KEY',
-    priority: 5,  // Equal priority for balanced utilization
-    isAvailable: () => !!process.env.GROQ_API_KEY,
-  },
-  {
-    name: 'gemini',
-    endpoint: 'https://generativelanguage.googleapis.com/v1beta/models',
-    models: [CURRENT_AI_MODELS.gemini, 'gemini-3.8-live', 'gemini-3.7-flash'],
-    rpmLimit: 15,
-    rpdLimit: 1500,
-    apiKeyEnv: 'GEMINI_API_KEY',
-    priority: 5,  // Equal priority for balanced utilization
-    isAvailable: () => !!process.env.GEMINI_API_KEY,
-  },
-  {
-    name: 'mistral',
-    endpoint: 'https://api.mistral.ai/v1/chat/completions',
-    models: [CURRENT_AI_MODELS.mistralFast, CURRENT_AI_MODELS.mistralDeep],
-    rpmLimit: 5,
-    rpdLimit: 500,
-    apiKeyEnv: 'MISTRAL_API_KEY',
-    priority: 5,  // Equal priority for balanced utilization
-    isAvailable: () => !!process.env.MISTRAL_API_KEY,
-  },
   {
     name: 'claude',
     endpoint: 'https://api.anthropic.com/v1/messages',
     models: [CURRENT_AI_MODELS.claudeBalanced, CURRENT_AI_MODELS.claudeFast, CURRENT_AI_MODELS.claudeDeep],
-    rpmLimit: 5,
-    rpdLimit: 100,
-    tpdLimit: 25000,
-    apiKeyEnv: 'ANTHROPIC_API_KEY',
-    priority: 5,  // Equal priority for balanced utilization
+    rpmLimit: 5, rpdLimit: 100, tpdLimit: 25000,
+    apiKeyEnv: 'ANTHROPIC_API_KEY', priority: 1,
     isAvailable: () => !!process.env.ANTHROPIC_API_KEY || !!process.env.CLAUDE_API_KEY,
   },
   {
-    name: 'cohere',
-    endpoint: 'https://api.cohere.ai/v1/chat',
-    models: [CURRENT_AI_MODELS.cohere],
-    rpmLimit: 20,
-    rpdLimit: 1000,
-    apiKeyEnv: 'COHERE_API_KEY',
-    priority: 5,  // Equal priority for balanced utilization
-    isAvailable: () => !!process.env.COHERE_API_KEY,
-  },
-  {
-    name: 'together',
-    endpoint: 'https://api.together.xyz/v1/chat/completions',
-    models: [CURRENT_AI_MODELS.gptOss],
-    rpmLimit: 10,
-    rpdLimit: 1000,
-    apiKeyEnv: 'TOGETHER_API_KEY',
-    priority: 5,  // Equal priority for balanced utilization
-    isAvailable: () => !!process.env.TOGETHER_API_KEY,
+    name: 'gemini',
+    endpoint: 'https://generativelanguage.googleapis.com/v1beta/models',
+    models: [CURRENT_AI_MODELS.gemini],
+    rpmLimit: 15, rpdLimit: 1500,
+    apiKeyEnv: 'GEMINI_API_KEY', priority: 5,
+    isAvailable: () => !!process.env.GEMINI_API_KEY || !!process.env.GOOGLE_API_KEY,
   },
   {
     name: 'xai',
     endpoint: 'https://api.x.ai/v1/chat/completions',
     models: [CURRENT_AI_MODELS.xai],
-    rpmLimit: 20,
-    rpdLimit: 1000,
-    apiKeyEnv: 'XAI_API_KEY',
-    priority: 5,
+    rpmLimit: 150, rpdLimit: Number.MAX_SAFE_INTEGER,
+    apiKeyEnv: 'XAI_API_KEY', priority: 5,
     isAvailable: () => !!process.env.XAI_API_KEY,
-  },
-  {
-    name: 'cerebras',
-    endpoint: 'https://api.cerebras.ai/v1/chat/completions',
-    models: [CURRENT_AI_MODELS.cerebras],
-    rpmLimit: 30,
-    rpdLimit: 1000,
-    apiKeyEnv: 'CEREBRAS_API_KEY',
-    priority: 5,  // Equal priority for balanced utilization
-    isAvailable: () => !!process.env.CEREBRAS_API_KEY,
-  },
-  {
-    name: 'fireworks',
-    endpoint: 'https://api.fireworks.ai/inference/v1/chat/completions',
-    models: [CURRENT_AI_MODELS.fireworks],
-    rpmLimit: 20,
-    rpdLimit: 1000,
-    apiKeyEnv: 'FIREWORKS_API_KEY',
-    priority: 5,
-    isAvailable: () => !!process.env.FIREWORKS_API_KEY,
   },
 ];
 
@@ -284,9 +209,9 @@ class GeigerRateLimiter {
     const usageFactor = reading.dailyUsage / provider.rpdLimit;
     const healthFactor = 1 - (reading.healthScore / 100);
     
-    // Remove priority weighting - all providers are equal
-    // Weight heavily toward usage balance for equal distribution
-    return (radiationFactor * 0.3) + (usageFactor * 0.5) + (healthFactor * 0.2);
+    // Claude is the primary authority; Gemini and xAI support it when healthy.
+    const priorityFactor = (provider.priority - 1) * 0.25;
+    return priorityFactor + (radiationFactor * 0.3) + (usageFactor * 0.3) + (healthFactor * 0.15);
   }
 
   /**
@@ -353,10 +278,15 @@ class GeigerRateLimiter {
     // Spike radiation on failure
     reading.radiation = Math.min(100, reading.radiation + 30);
     
-    // Calculate exponential backoff cooldown
+    // Transient capacity failures get short provider-local backoff; permanent
+    // credential/configuration failures remain cooled longer.
+    const message = String(error || '').toLowerCase();
+    const transient = /429|408|500|502|503|504|rate.limit|resource_exhausted|unavailable|timeout/.test(message);
+    const permanent = /400|401|402|403|invalid.api|unauthoriz|payment|required/.test(message);
+    const base = permanent ? 15 * 60_000 : transient ? 2_000 : 5_000;
     const cooldownMs = Math.min(
-      this.COOLDOWN_MAX_MS,
-      this.COOLDOWN_BASE_MS * Math.pow(2, Math.min(reading.failures, 5))
+      permanent ? 30 * 60_000 : 30_000,
+      base * Math.pow(2, Math.min(reading.failures - 1, 4))
     );
     reading.cooldownUntil = now + cooldownMs;
     

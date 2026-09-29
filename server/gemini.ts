@@ -52,8 +52,8 @@ export class GeminiRateLimitError extends Error {
 let geminiRateLimited = false;
 let rateLimitResetTime = 0;
 let consecutiveFailures = 0;
-const BASE_COOLDOWN_MS = 30000; // 30 seconds base cooldown
-const MAX_COOLDOWN_MS = 300000; // 5 minutes max cooldown
+const BASE_COOLDOWN_MS = 2000; // short transient backoff
+const MAX_COOLDOWN_MS = 30000; // repeated transient failures only
 
 export function isGeminiRateLimited(): boolean {
   if (geminiRateLimited && Date.now() < rateLimitResetTime) {
@@ -89,6 +89,21 @@ function recordGeminiRateLimit(): void {
   console.warn(`[Gemini] Rate limit #${consecutiveFailures} - cooldown for ${Math.round(cooldownMs / 1000)}s`);
 }
 
+async function retryGeminiTransient<T>(call: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try { return await call(); } catch (error: any) {
+      if (signal?.aborted) throw error;
+      lastError = error;
+      const message = String(error?.message || error);
+      if (!/429|408|500|502|503|504|RESOURCE_EXHAUSTED|UNAVAILABLE|rate limit|timeout/i.test(message) || attempt === 2) throw error;
+      const delayMs = Math.min(8000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 250);
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+  throw lastError;
+}
+
 export async function callGemini(
   prompt: string,
   options: GeminiOptions = {},
@@ -118,11 +133,11 @@ export async function callGemini(
   }
 
   try {
-    const response = await client.models.generateContent({
+    const response = await retryGeminiTransient(() => client.models.generateContent({
       model: modelName,
       contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
       config,
-    });
+    }), options.signal);
 
     const text = response.text || "";
 

@@ -645,7 +645,7 @@ export async function investigatePersonQuestion(
       prompt: combined,
       jurisdiction: context.jurisdiction,
       hasDiscoveredUrls: true,
-      maxCrawlers: 16,
+      maxCrawlers: 4,
     });
     const supplementalIds = new Set<string>([
       ...PANTHEON_RAZOR_SKILL_IDS,
@@ -679,12 +679,12 @@ export async function investigatePersonQuestion(
     // capability scorer found no primary route, retain the complete primary
     // inventory and let the bounded pools govern concurrency.
     const primaryCrawlers = selectedPrimaryCrawlers.length
-      ? [...new Set(selectedPrimaryCrawlers)]
-      : [...PANTHEON_PRIMARY_CRAWLER_IDS];
+      ? [...new Set(selectedPrimaryCrawlers)].slice(0, 4)
+      : PANTHEON_PRIMARY_CRAWLER_IDS.slice(0, 2);
     const eligiblePrimaryCrawlerIds = dynamicAssignments
       .filter(assignment => assignment.roles.includes('primary') && primaryCrawlerSet.has(assignment.crawler.id))
       .map(assignment => assignment.crawler.id as PantheonPrimaryCrawlerId);
-    const explorationPrimaryQueue = [...new Set([...eligiblePrimaryCrawlerIds, ...PANTHEON_PRIMARY_CRAWLER_IDS])];
+    const explorationPrimaryQueue = [...new Set(eligiblePrimaryCrawlerIds)].slice(0, 4);
 
     const recursiveStartedAt = Date.now();
     const globalDeadlineAt = recursiveStartedAt + PERSON_RECURSIVE_TOTAL_BUDGET_MS;

@@ -495,20 +495,6 @@ export async function runProvider(
       tokensUsed = Math.floor((prompt.length + content.length) / 4);
       break;
     }
-    case AIProvider.GROQ: {
-      const model = getProviderModel(AIProvider.GROQ, options.model, task.complexity);
-      const text = await callGroq(prompt, { ...options, model }, maxTokens);
-      content = text;
-      tokensUsed = Math.floor((prompt.length + content.length) / 4);
-      break;
-    }
-    case AIProvider.MISTRAL: {
-      const model = getProviderModel(AIProvider.MISTRAL, options.model, task.complexity);
-      const mistralResult = await callMistral(prompt, { ...options, model, maxTokens });
-      content = mistralResult.content;
-      tokensUsed = mistralResult.tokensUsed ?? Math.floor((prompt.length + content.length) / 4);
-      break;
-    }
     case AIProvider.CLAUDE: {
       // getProviderModel handles complexity-based selection automatically
       // Additional check: if detailed verbosity is requested and no model specified, use sonnet

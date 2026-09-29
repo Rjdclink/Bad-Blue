@@ -36,39 +36,19 @@ const constants = read('server/constants.ts');
 const openRouterService = read('server/openRouterService.ts');
 const harmonyWarmup = read('server/aiHarmonyWarmup.ts');
 
-const registrySection = registry.split('HARMONY_17_PARTICIPANTS')[1]?.split('if (HARMONY_17_PARTICIPANTS.length !== 17)')[0] || '';
+const registrySection = registry.split('HARMONY_17_PARTICIPANTS')[1]?.split('const LEGACY_MODEL_ALIASES')[0] || '';
 const participantCount = (registrySection.match(/provider:\s*PROVIDER\./g) || []).length;
-must(participantCount === 17, `Harmony registry contains exactly 17 logical participants (found ${participantCount})`);
+must(participantCount === 3, `Harmony registry contains exactly Claude, Gemini and xAI (found ${participantCount})`);
 
 must(
-  !registry.includes('HUGGINGFACE') &&
-    !registry.includes('SAMBANOVA') &&
-    registry.includes('PROVIDER.XAI') &&
-    registry.includes('PROVIDER.FIREWORKS') &&
-    collaboration.includes("return 'xai'") &&
-    collaboration.includes("return 'fireworks'") &&
-    !collaboration.includes('HUGGINGFACE') &&
-    !collaboration.includes('SAMBANOVA') &&
-    !harmonyWarmup.includes('HUGGINGFACE') &&
-    !harmonyWarmup.includes('SAMBANOVA'),
-  'blocked credit/payment providers are absent from active Harmony and replaced by independent xAI/Fireworks quota domains',
+  registry.includes('PROVIDER.CLAUDE') && registry.includes('PROVIDER.GEMINI') && registry.includes('PROVIDER.XAI')
+    && registry.includes('return [PROVIDER.CLAUDE, PROVIDER.GEMINI, PROVIDER.XAI].includes(provider)'),
+  'active Harmony inference authority is limited to Claude, Gemini and direct xAI',
 );
-
 for (const model of [
   'gemini-3.8-flash',
   'claude-sonnet-5',
-  'claude-opus-5',
-  'openai/gpt-oss-120b',
-  'mistral-small-2603',
-  'mistral-medium-3-5',
-  'deepseek/deepseek-v4.1-flash',
-  'x-ai/grok-4.6',
-  'moonshotai/kimi-k3',
-  'qwen/qwen3.8-max-0902',
-  'openai/gpt-5.6-luna',
-  'command-a-plus-05-2026',
-  'grok-4.6',
-  'accounts/fireworks/models/gpt-oss-120b',
+  'grok-4.7',
 ]) {
   must(registry.includes(model), `current Harmony registry includes ${model}`);
 }
@@ -76,7 +56,6 @@ for (const model of [
 must(
   harmonyWarmup.includes('prewarmHarmonyProviders') &&
     harmonyWarmup.includes('isHarmonyProviderWarmHealthy') &&
-    harmonyWarmup.includes('warmGroqModelCatalog') &&
     collaboration.includes('isHarmonyProviderWarmHealthy') &&
     serverIndex.includes('prewarmHarmonyProviders()'),
   'Harmony prewarms live model catalogs without making warmup a startup dependency',
@@ -178,16 +157,6 @@ must(
   'system config, health, legal ML metadata, compatibility aliases, and OpenRouter status all derive from current Harmony authority without stale local model priorities',
 );
 
-must(
-  !groq.includes("'llama-3.1-8b-instant',") &&
-  !groq.includes("'llama-3.3-70b-versatile',") &&
-  groq.includes("'openai/gpt-oss-20b'") &&
-  groq.includes("'openai/gpt-oss-120b'") &&
-  groq.includes("'qwen/qwen3.6-27b'") &&
-  groq.includes("'qwen/qwen3.8-27b'") &&
-  groq.includes('orpheus|canopylabs'),
-  'Groq recovery avoids shutdown developer-tier Llama IDs and uses current permitted text-model candidates while excluding speech models',
-);
 
 const activeRuntimeFiles = [
   'server/aiProvider.ts',

@@ -36,7 +36,7 @@ const PROVIDER = {
  * not a hard priority order; environment overrides remain authoritative.
  */
 export const CURRENT_AI_MODELS = {
-  gemini: process.env.GEMINI_MODEL?.trim() || 'gemini-3.7-flash',
+  gemini: process.env.GEMINI_MODEL?.trim() || 'gemini-3.8-flash',
   claudeFast: process.env.CLAUDE_FAST_MODEL?.trim() || 'claude-haiku-4-5-20251001',
   claudeBalanced: process.env.CLAUDE_MODEL?.trim() || 'claude-sonnet-5',
   claudeDeep: process.env.CLAUDE_OPUS_MODEL?.trim() || 'claude-opus-5',
@@ -51,7 +51,7 @@ export const CURRENT_AI_MODELS = {
   openaiFastViaOpenRouter: process.env.OPENAI_FAST_MODEL?.trim() || 'openai/gpt-5.6-luna',
   gptOss: process.env.GPT_OSS_MODEL?.trim() || 'openai/gpt-oss-120b',
   openRouterAuto: process.env.OPENROUTER_MODEL?.trim() || 'openrouter/auto',
-  xai: process.env.XAI_MODEL?.trim() || 'grok-4.6',
+  xai: process.env.XAI_MODEL?.trim() || 'grok-4.7',
   cerebras: process.env.CEREBRAS_MODEL?.trim() || 'gpt-oss-120b',
   cloudflare: process.env.CLOUDFLARE_AI_MODEL?.trim() || '@cf/openai/gpt-oss-120b',
   fireworks: process.env.FIREWORKS_MODEL?.trim() || 'accounts/fireworks/models/gpt-oss-120b',
@@ -97,76 +97,16 @@ export interface HarmonyParticipant {
  */
 export const HARMONY_17_PARTICIPANTS: readonly HarmonyParticipant[] = [
   {
-    provider: PROVIDER.GEMINI,
-    model: CURRENT_AI_MODELS.gemini,
-    capabilities: ['fast-chat', 'research', 'long-context', 'multimodal', 'agentic', 'structured-output'],
-    configured: () => !!(process.env.GEMINI_API_KEY?.trim() || process.env.GOOGLE_API_KEY?.trim()),
-  },
-  {
     provider: PROVIDER.CLAUDE,
     model: CURRENT_AI_MODELS.claudeBalanced,
     capabilities: ['legal-analysis', 'deep-reasoning', 'verification', 'long-context', 'coding', 'agentic'],
     configured: () => !!(process.env.ANTHROPIC_API_KEY?.trim() || process.env.CLAUDE_API_KEY?.trim()),
   },
   {
-    provider: PROVIDER.CLAUDE_OPUS,
-    model: CURRENT_AI_MODELS.claudeDeep,
-    capabilities: ['legal-analysis', 'deep-reasoning', 'verification', 'long-context', 'coding', 'agentic'],
-    configured: () => !!(process.env.ANTHROPIC_API_KEY?.trim() || process.env.CLAUDE_API_KEY?.trim()),
-  },
-  {
-    provider: PROVIDER.GROQ,
-    model: CURRENT_AI_MODELS.groqDeep,
-    capabilities: ['fast-chat', 'deep-reasoning', 'coding', 'structured-output'],
-    configured: () => !!process.env.GROQ_API_KEY?.trim(),
-  },
-  {
-    provider: PROVIDER.MISTRAL,
-    model: CURRENT_AI_MODELS.mistralFast,
-    capabilities: ['fast-chat', 'coding', 'agentic', 'multimodal', 'structured-output'],
-    configured: () => !!process.env.MISTRAL_API_KEY?.trim(),
-  },
-  {
-    provider: PROVIDER.DEEPSEEK,
-    model: CURRENT_AI_MODELS.deepseek,
-    capabilities: ['deep-reasoning', 'coding', 'agentic', 'long-context', 'multimodal'],
-    configured: () => !!process.env.OPENROUTER_API_KEY?.trim(),
-  },
-  {
-    provider: PROVIDER.GROK,
-    model: CURRENT_AI_MODELS.grok,
-    capabilities: ['deep-reasoning', 'coding', 'research', 'multimodal', 'agentic'],
-    configured: () => !!process.env.OPENROUTER_API_KEY?.trim(),
-  },
-  {
-    provider: PROVIDER.KIMI,
-    model: CURRENT_AI_MODELS.kimi,
-    capabilities: ['deep-reasoning', 'coding', 'long-context', 'multimodal', 'agentic'],
-    configured: () => !!process.env.OPENROUTER_API_KEY?.trim(),
-  },
-  {
-    provider: PROVIDER.QWEN,
-    model: CURRENT_AI_MODELS.qwen,
-    capabilities: ['deep-reasoning', 'coding', 'long-context', 'multimodal', 'agentic', 'structured-output'],
-    configured: () => !!process.env.OPENROUTER_API_KEY?.trim(),
-  },
-  {
-    provider: PROVIDER.GPT5_MINI,
-    model: CURRENT_AI_MODELS.openaiFastViaOpenRouter,
-    capabilities: ['fast-chat', 'legal-analysis', 'coding', 'structured-output', 'agentic'],
-    configured: () => !!process.env.OPENROUTER_API_KEY?.trim(),
-  },
-  {
-    provider: PROVIDER.GPT_OSS,
-    model: CURRENT_AI_MODELS.gptOss,
-    capabilities: ['fast-chat', 'deep-reasoning', 'coding', 'structured-output'],
-    configured: () => !!process.env.GROQ_API_KEY?.trim(),
-  },
-  {
-    provider: PROVIDER.OPENROUTER,
-    model: CURRENT_AI_MODELS.openRouterAuto,
-    capabilities: ['fast-chat', 'deep-reasoning', 'legal-analysis', 'research', 'coding', 'long-context', 'multimodal', 'agentic'],
-    configured: () => !!process.env.OPENROUTER_API_KEY?.trim(),
+    provider: PROVIDER.GEMINI,
+    model: CURRENT_AI_MODELS.gemini,
+    capabilities: ['fast-chat', 'research', 'long-context', 'multimodal', 'agentic', 'structured-output'],
+    configured: () => !!(process.env.GEMINI_API_KEY?.trim() || process.env.GOOGLE_API_KEY?.trim()),
   },
   {
     provider: PROVIDER.XAI,
@@ -174,35 +114,8 @@ export const HARMONY_17_PARTICIPANTS: readonly HarmonyParticipant[] = [
     capabilities: ['fast-chat', 'deep-reasoning', 'legal-analysis', 'verification', 'coding', 'research', 'multimodal', 'agentic', 'structured-output'],
     configured: () => !!process.env.XAI_API_KEY?.trim(),
   },
-  {
-    provider: PROVIDER.CLOUDFLARE,
-    model: CURRENT_AI_MODELS.cloudflare,
-    capabilities: ['fast-chat', 'deep-reasoning', 'legal-analysis', 'long-context', 'structured-output'],
-    configured: () => !!(process.env.CLOUDFLARE_ACCOUNT_ID?.trim() && process.env.CLOUDFLARE_AI_API_TOKEN?.trim()),
-  },
-  {
-    provider: PROVIDER.FIREWORKS,
-    model: CURRENT_AI_MODELS.fireworks,
-    capabilities: ['fast-chat', 'deep-reasoning', 'coding', 'structured-output', 'agentic'],
-    configured: () => !!process.env.FIREWORKS_API_KEY?.trim(),
-  },
-  {
-    provider: PROVIDER.COHERE,
-    model: CURRENT_AI_MODELS.cohere,
-    capabilities: ['legal-analysis', 'verification', 'research', 'multimodal', 'agentic', 'structured-output'],
-    configured: () => !!process.env.COHERE_API_KEY?.trim(),
-  },
-  {
-    provider: PROVIDER.TOGETHER,
-    model: CURRENT_AI_MODELS.together,
-    capabilities: ['deep-reasoning', 'coding', 'agentic'],
-    configured: () => !!process.env.TOGETHER_API_KEY?.trim(),
-  },
 ] as const;
 
-if (HARMONY_17_PARTICIPANTS.length !== 17) {
-  throw new Error(`Harmony registry invariant violated: expected 17 participants, found ${HARMONY_17_PARTICIPANTS.length}`);
-}
 
 const LEGACY_MODEL_ALIASES: Partial<Record<AIProvider, string>> = {
   [PROVIDER.FALCON]: CURRENT_AI_MODELS.gptOss,
@@ -224,10 +137,8 @@ export function isHarmonyProviderAllowed(
   provider: AIProvider,
   policy: HarmonyProviderPolicy = 'capability-first',
 ): boolean {
-  if (provider === PROVIDER.CEREBRAS) return false;
-  if (policy !== 'legalwhat') return true;
-  // xAI Grok has its own key and transport; the OpenRouter GROK alias and
-  // GROQ inference service do not belong to Lexara's legal lane.
+  // Platform-wide inference authority is intentionally limited to the three
+  // independently authenticated providers retained by LegalWhat.
   return [PROVIDER.CLAUDE, PROVIDER.GEMINI, PROVIDER.XAI].includes(provider);
 }
 
