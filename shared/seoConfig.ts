@@ -196,7 +196,7 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
   },
   "/legal-consultation": {
     title: "LEXARA AI Legal Consultation | Legal What?",
-    description: "Have a natural two-way voice or text conversation with Lexara across 40+ areas of law, analyze uploaded media, and create jurisdiction-aware legal documents as PDF or DOCX.",
+    description: "Talk live with Lexara, a jurisdiction-aware legal AI covering 40+ areas of law. Analyze and revise uploaded documents and media, identify jurisdiction-specific requirements, use appropriate local legal forms, and create legal documents. Try LegalWhat free for 3 days, then only $19.99/month.",
     keywords: "Lexara, conversational legal AI, animated legal AI, voice legal consultation, text legal consultation, legal guidance AI, legal research, legal media analysis, legal document generator",
     keywordTaxonomy: GLOBAL_KEYWORDS,
     ogType: "service",
