@@ -89,6 +89,7 @@ function harness(options = {}) {
       if (spec === 'net') return require('node:net');
       if (spec === 'node:async_hooks') return require('node:async_hooks');
       if (spec === 'node:crypto') return require('node:crypto');
+      if (spec.startsWith('node:')) return require(spec);
       assert(spec.startsWith('.'), 'unexpected dependency: ' + spec);
       let next = path.relative(root, path.resolve(path.dirname(filename), spec));
       if (!next.endsWith('.ts')) next += '.ts';
