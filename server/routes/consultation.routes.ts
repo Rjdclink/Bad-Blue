@@ -10,6 +10,7 @@ import { asyncHandler } from '../errorHandler';
 import { analyzeLegalIssue } from '../legalAI';
 import { generateLegalAnalysis } from '../aiProvider';
 import { researchLegalAuthority, formatAuthorityResearchForSystem } from '../lexara/LexaraAuthorityResearch';
+import { resolveUSJurisdiction } from '../lexara/LexaraJurisdictionResolver';
 import { conductMasterConsultation, shouldInvokePeopleFinder } from '../consultationCoordinator';
 import { performConsultation } from '../legalConsultationEngine';
 import { createLogger } from '../logger';
@@ -64,15 +65,18 @@ export function setupConsultationRoutes(app: Express): void {
     if (!state || !facts || !requestedType) return res.status(400).json({ error: 'Jurisdiction, case facts, and a supported document type are required' });
     if (facts.length > 30_000 || customInstructions.length > 8_000) return res.status(413).json({ error: 'Document request is too large' });
 
+    const resolvedJurisdiction = await resolveUSJurisdiction(facts, state);
+    const documentJurisdiction = resolvedJurisdiction?.display || state;
+
     const authorityPrompt = [
-      `Jurisdiction: ${state}. Document: ${requestedType}.`,
+      `Jurisdiction: ${documentJurisdiction}. Document: ${requestedType}.`,
       'Before drafting, determine from current authoritative court/government sources whether this jurisdiction requires an official/prescribed form, provides an optional official form, or permits a custom-drafted document.',
       'Identify the controlling court/agency and local rules when the facts establish them. Prefer official government/court sources. Do not invent a form number, URL, rule, requirement, or filing instruction.',
       'If a mandatory official form applies, do not substitute a custom document. State the official form identity/source and the factual fields still needed to complete it.',
       'If facts required for a complete document are missing, identify only those missing facts instead of pretending the document is complete.',
       `CASE FACTS:\n${facts}`,
     ].join('\n\n');
-    const authorityResearch = await researchLegalAuthority(authorityPrompt, { jurisdiction: state });
+    const authorityResearch = await researchLegalAuthority(authorityPrompt, { jurisdiction: documentJurisdiction });
     const authorityAssessment = formatAuthorityResearchForSystem(authorityResearch)
       || 'No current authority was retrieved. Do not invent or claim verification of legal requirements, citations, deadlines, or official forms. Do not present this as ready to file.';
     const generateDraft = (prompt: string) => generateLegalAnalysis('document-drafting', prompt, {
@@ -82,7 +86,7 @@ export function setupConsultationRoutes(app: Express): void {
     });
 
     const draftingPrompt = [
-      `Prepare a professional ${requestedType} for a matter in ${state}.`,
+      `Prepare a professional ${requestedType} for a matter in ${documentJurisdiction}.`,
       `JURISDICTION-FIRST AUTHORITY ASSESSMENT:\n${String(authorityAssessment || '').slice(0, 8000)}`,
       'Use ONLY facts supplied below. Never invent names, dates, courts, case numbers, quotations, authorities, procedural posture, or requested relief.',
       'Where a required fact is unknown, insert a conspicuous bracketed placeholder such as [COURT NAME NEEDED].',
