@@ -4,19 +4,20 @@ import { getConfiguredHarmonyProviders } from './aiHarmonyModelRegistry';
 import { AICollaborationOrchestrator } from './aiCollaborationOrchestrator';
 
 let started = false;
-/** One small synthetic request per support route per process, never user facts. */
+/** One small synthetic request per legal support route per process, never user facts. */
 export async function verifyLegalSupportReadiness(): Promise<void> {
   if (started) return;
   started = true;
   const configured = getConfiguredHarmonyProviders('legalwhat');
-  // Sequential because DeepSeek and Kimi share an OpenRouter account.
-  for (const provider of [AIProvider.GROQ, AIProvider.DEEPSEEK, AIProvider.KIMI]) {
+  // Verify the two independent assistants through actual inference; a model
+  // catalog alone cannot establish project permission.
+  for (const provider of [AIProvider.GEMINI, AIProvider.XAI]) {
     if (!configured.includes(provider)) continue;
     try {
       const result = await AICollaborationOrchestrator.orchestrateCollaboration(
         'legal-support-readiness', 'Reply with the single word READY.',
         { context: UsageContext.USER, complexity: TaskComplexity.LIGHTWEIGHT,
-          priority: TaskPriority.HIGH, needsFastResponse: true, estimatedTokens: 512 },
+          priority: TaskPriority.HIGH, needsFastResponse: true, estimatedTokens: 100 },
         [provider], { providerPolicy: 'legalwhat', maxParticipants: 1,
           maxFallbacks: 0, requestTimeoutMs: 15000 },
       );

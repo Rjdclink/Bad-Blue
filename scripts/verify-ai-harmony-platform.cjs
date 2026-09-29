@@ -56,14 +56,11 @@ must(
 
 for (const model of [
   'gemini-3.8-flash',
-  'qwen/qwen3.8-27b',
   'claude-sonnet-5',
   'claude-opus-5',
   'openai/gpt-oss-120b',
-  'mistral-small-latest',
-  'mistral-large-latest',
-  'gpt-6-sol',
-  'gpt-6-astra',
+  'mistral-small-2603',
+  'mistral-medium-3-5',
   'deepseek/deepseek-v4.1-flash',
   'x-ai/grok-4.6',
   'moonshotai/kimi-k3',
@@ -259,3 +256,4 @@ console.log('AI Harmony platform verification passed.');
 
 // Exercise actual selection, fallback and dispatch with provider I/O isolated.
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-provider-policy.cjs')], { stdio: 'inherit' });
+require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-pantheon-research-assist.cjs')], { stdio: 'inherit' });

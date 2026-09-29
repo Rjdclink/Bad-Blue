@@ -52,6 +52,9 @@ function harness(options = {}) {
       getPantheonLearnedSources: async () => [],
       rankPantheonDiscoveryUrls: values => [...new Set(values)],
     },
+    'server/services/pantheon/PantheonResearchAssist.ts': {
+      planPantheonResearchQueries: async () => ({ queries: [], assistants: [] }),
+    },
     'server/services/pantheon/PantheonSupplementalDiscovery.ts': { supplementalPantheonDiscovery: async () => {
       calls.paid++; return { urls: options.paidUrls || [], attempted: true, provider: 'serpapi' };
     } },
@@ -190,7 +193,7 @@ test('Lexara delegated discovery excludes the gateway on initial, recovery and r
       categories: ['identity'], context: { jurisdiction: 'Iowa' },
       PERSON_RECURSIVE_MAX_TARGETS_PER_PASS: 12, remainingMs: 5000,
     });
-    assert.equal(options.providerPolicy, 'legalwhat');
+    assert.equal(options.providerPolicy, 'capability-first');
     const success = harness({ env: { DDGS_URL: 'https://ddgs.fixture.test' }, fetchPayload: () => ({ results: [{ href: urls[0], title: 'Fresh result', body: 'Preserved evidence' }] }) });
     const result = await success.load('server/services/pantheon/PantheonDiscoveryCoordinator.ts').discoverPantheonSourcesParallel('fixture person', [], options);
     assert.equal(result.urls[0], urls[0]);

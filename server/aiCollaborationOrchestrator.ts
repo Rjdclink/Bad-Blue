@@ -314,7 +314,8 @@ async function callOpenAICompatibleHarmonyProvider(
       signal: controller.signal,
     });
     if (!response.ok) {
-      throw new Error(`${provider} HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`);
+      throw Object.assign(new Error(`${provider} HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`),
+        { status: response.status, headers: response.headers });
     }
     const payload = await response.json() as any;
     const content = String(payload?.choices?.[0]?.message?.content || '').trim();
@@ -434,50 +435,6 @@ async function callCohereHarmony(
   }
 }
 
-/** Direct OpenAI Responses transport. GPT-5 is not a Groq or OpenRouter route. */
-async function callOpenAILegal(
-  model: string,
-  prompt: string,
-  systemPrompt: string | undefined,
-  maxTokens: number,
-  timeoutMs: number,
-  signal?: AbortSignal,
-): Promise<{ content: string; tokensUsed: number }> {
-  const key = process.env.OPENAI_API_KEY?.trim();
-  if (!key) throw new Error('openai is not configured');
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(new Error('openai timed out')), Math.max(1_000, timeoutMs));
-  const relayAbort = () => controller.abort(signal?.reason);
-  if (signal?.aborted) relayAbort();
-  else signal?.addEventListener('abort', relayAbort, { once: true });
-  try {
-    const response = await fetch('https://api.openai.com/v1/responses', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model, input: prompt, ...(systemPrompt ? { instructions: systemPrompt } : {}),
-        max_output_tokens: maxTokens, store: false,
-        reasoning: { effort: model === LEGAL_AI_MODELS.openaiFast ? 'low' : 'medium' },
-      }),
-      signal: controller.signal,
-    });
-    await noteLegalProviderHeaders(AIProvider.OPENAI, response.headers);
-    if (!response.ok) throw Object.assign(new Error(`openai HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`), { headers: response.headers });
-    const payload = await response.json() as any;
-    const content = (payload?.output || [])
-      .filter((item: any) => item?.type === 'message')
-      .flatMap((item: any) => item?.content || [])
-      .filter((part: any) => part?.type === 'output_text')
-      .map((part: any) => String(part?.text || ''))
-      .join('\n').trim();
-    if (!content) throw new Error(`openai returned no text (${payload?.status || 'unknown status'})`);
-    return { content, tokensUsed: Number(payload?.usage?.total_tokens || Math.ceil(content.length / 4)) };
-  } finally {
-    clearTimeout(timer);
-    signal?.removeEventListener('abort', relayAbort);
-  }
-}
-
 /**
  * AI Collaboration Orchestrator
  */
@@ -579,7 +536,7 @@ export class AICollaborationOrchestrator {
           ? (options.requestTimeoutMs ?? (attributes.needsFastResponse ? 12_000
             : /document|draft|petition|complaint|motion/i.test(taskName) ? 25_000 : 15_000))
           : task.requestTimeoutMs || task.timeout || options.requestTimeoutMs,
-        maxFallbacks: options.maxFallbacks ?? task.maxFallbacks,
+        maxFallbacks: options.maxFallbacks ?? (options.providerPolicy === 'legalwhat' ? 2 : task.maxFallbacks),
         signal: options.signal,
         allowCoolingRecovery: healthyProviders.length === 0,
         failedProviders,
@@ -602,7 +559,8 @@ export class AICollaborationOrchestrator {
       && !hasDependentSynthesizer
       && strategy !== 'parallel-race'
     ) {
-      const finalProvider = this.selectProviderByCapabilities(
+      const finalProvider = options.providerPolicy === 'legalwhat' && providers.includes(AIProvider.CLAUDE)
+        ? AIProvider.CLAUDE : this.selectProviderByCapabilities(
         providers,
         attributes.needsLegalAnalysis
           ? ['legal-analysis', 'deep-reasoning', 'verification']
@@ -629,7 +587,7 @@ export class AICollaborationOrchestrator {
         dependencies: allContributionIds,
         fallbackProviders: eligibleProviders.filter(candidate => candidate !== finalProvider),
         requestTimeoutMs: options.requestTimeoutMs,
-        maxFallbacks: options.maxFallbacks,
+        maxFallbacks: options.maxFallbacks ?? (options.providerPolicy === 'legalwhat' ? 2 : undefined),
         attributes: { ...attributes, needsVerification: true },
       });
     }
@@ -867,10 +825,8 @@ export class AICollaborationOrchestrator {
 
     if (tasks.length > 1) {
       const dependencies = tasks.map(task => task.id);
-      const synthProvider = this.selectProviderByCapabilities(
-        providers,
-        ['legal-analysis', 'deep-reasoning', 'verification'],
-      );
+      const synthProvider = providers.includes(AIProvider.CLAUDE) ? AIProvider.CLAUDE
+        : this.selectProviderByCapabilities(providers, ['legal-analysis', 'deep-reasoning', 'verification']);
       tasks.push({
         id: `${taskName}-synthesis`,
         provider: synthProvider,
@@ -1413,7 +1369,12 @@ export class AICollaborationOrchestrator {
     );
 
     const remainingDeadline = task.deadlineAt ? task.deadlineAt - Date.now() : Infinity;
-    const taskTimeoutMs = Math.max(1, Math.min(remainingDeadline, task.requestTimeoutMs
+    const synthesisReserveMs = task.providerPolicy === 'legalwhat'
+      && /document|draft|petition|complaint|motion/i.test(task.id)
+      && (task.role === 'synthesizer' || task.role === 'harmony-synthesizer')
+      && (task.fallbackProviders?.length || 0) > 0
+        ? Math.max(1, Math.floor(remainingDeadline / 2)) : remainingDeadline;
+    const taskTimeoutMs = Math.max(1, Math.min(synthesisReserveMs, task.requestTimeoutMs
       || (task.providerPolicy === 'legalwhat'
         ? (task.attributes.needsFastResponse ? 6_000
           : /document|draft|petition|complaint|motion/i.test(task.id) ? 25_000 : 12_000)
@@ -1569,16 +1530,6 @@ export class AICollaborationOrchestrator {
           tokensUsed = result.tokensUsed;
           break;
         }
-        case AIProvider.OPENAI: {
-          const result = await withHarmonyDeadline(
-            callOpenAILegal(task.model, prompt, task.systemPrompt,
-              Math.max(outputTokenLimit, 768), taskTimeoutMs, attempt.signal),
-            taskTimeoutMs, task.provider, attempt.signal,
-          );
-          content = result.content;
-          tokensUsed = result.tokensUsed;
-          break;
-        }
         case AIProvider.TOGETHER: {
           const result = await withHarmonyDeadline(
             callOpenAICompatibleHarmonyProvider(
@@ -1666,18 +1617,17 @@ export class AICollaborationOrchestrator {
         }
       }
 
-      // A model-specific denial can fall back once to the smaller listed model
-      // on the same credential. Do not retry quota, payment, or auth failures.
-      if (task.providerPolicy === 'legalwhat' && !task.modelRecoveryAttempted
-        && task.provider === AIProvider.GROQ
-        && /\b404\b|model.*(?:not found|unavailable|not available|not permitted|blocked)|(?:access|permission).*model/i
+      // A project can expose the latest Grok in its catalog yet deny inference.
+      // Try the previous supported direct xAI model on this same credential
+      // before moving to the independent Gemini/Claude routes.
+      if (task.providerPolicy === 'legalwhat' && task.provider === AIProvider.XAI
+        && !task.modelRecoveryAttempted && task.model !== LEGAL_AI_MODELS.xaiAlternate
+        && /model.*(?:not found|unavailable|not available|not permitted|blocked)|(?:access|permission).*model|HTTP 404/i
           .test(error instanceof Error ? error.message : String(error))) {
-        const fastModel = getHarmonyRecoveryModels(task.provider).find(model =>
-          model !== task.model && isCurrentLegalModel(task.provider, model));
         const remainingMs = taskTimeoutMs - (Date.now() - startTime);
-        if (fastModel && remainingMs > 0) {
-          const recovered = await this.executeTask({
-            ...task, model: fastModel, modelRecoveryAttempted: true,
+        if (remainingMs > 0) {
+          const recovered = await this.executeTask({ ...task,
+            model: LEGAL_AI_MODELS.xaiAlternate, modelRecoveryAttempted: true,
             requestTimeoutMs: remainingMs, fallbackProviders: [], maxFallbacks: 0,
           }, completedTasks);
           if (recovered.success) return recovered;
@@ -1853,8 +1803,7 @@ export class AICollaborationOrchestrator {
   ): AIProvider[] {
     // A single transport cannot count twice as redundancy. Claude Opus is
     // available after Sonnet fails but does not become a parallel hedge.
-    const priority = [AIProvider.CLAUDE, AIProvider.GEMINI, AIProvider.GROQ,
-      AIProvider.DEEPSEEK, AIProvider.KIMI];
+    const priority = [AIProvider.CLAUDE, AIProvider.GEMINI, AIProvider.XAI];
     const ranked = providers.slice().sort((a, b) => {
       const fit = (provider: AIProvider) => {
         const index = priority.indexOf(provider);
@@ -1882,13 +1831,8 @@ export class AICollaborationOrchestrator {
     switch (provider) {
       case AIProvider.CLAUDE:
       case AIProvider.CLAUDE_OPUS: return LEGAL_AI_MODELS.claudeFast; // Sonnet reviews; no routine Opus spend.
-      case AIProvider.OPENAI: return fast ? LEGAL_AI_MODELS.openaiFast : LEGAL_AI_MODELS.openaiDeep;
       case AIProvider.GEMINI: return fast ? LEGAL_AI_MODELS.geminiFast : LEGAL_AI_MODELS.geminiDeep;
-      case AIProvider.MISTRAL: return fast ? LEGAL_AI_MODELS.mistralFast : LEGAL_AI_MODELS.mistralDeep;
-      case AIProvider.COHERE: return fast ? LEGAL_AI_MODELS.cohereFast : LEGAL_AI_MODELS.cohereDeep;
-      case AIProvider.GROQ: return fast ? LEGAL_AI_MODELS.groqFast : LEGAL_AI_MODELS.groqDeep;
-      case AIProvider.DEEPSEEK: return LEGAL_AI_MODELS.deepseekDeep;
-      case AIProvider.KIMI: return LEGAL_AI_MODELS.kimiDeep;
+      case AIProvider.XAI: return fast ? LEGAL_AI_MODELS.xaiFast : LEGAL_AI_MODELS.xaiDeep;
       default: return this.getDefaultModelForProvider(provider);
     }
   }
