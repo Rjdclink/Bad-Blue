@@ -2,23 +2,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 
 const HARMONY_MODELS = [
-  "Gemini 3.7 Flash",
   "Claude Sonnet 5",
-  "Claude Opus 5",
-  "GPT-OSS 120B (Groq)",
-  "Mistral Small 4",
-  "DeepSeek V4.1 Flash",
-  "Grok 4.6",
-  "Kimi K3",
-  "Qwen 3.8 Max",
-  "GPT-5.6 Luna",
-  "GPT-OSS 120B",
-  "OpenRouter Auto",
-  "Grok 4.6 (xAI)",
-  "GPT-OSS 120B (Cerebras)",
-  "GPT-OSS 120B (Fireworks)",
-  "Command A+ (Cohere)",
-  "GPT-OSS 120B (Together)"
+  "Gemini 3.8 Flash",
+  "Grok 4.7 (xAI)"
 ];
 
 interface AISystemShowcaseProps {
@@ -27,7 +13,7 @@ interface AISystemShowcaseProps {
 
 export function AISystemShowcase({ variant = "full" }: AISystemShowcaseProps) {
   if (variant === "minimal") {
-    return <Badge variant="secondary" className="text-xs sm:text-sm">🤖 Powered by 17 Harmony AI Participants</Badge>;
+    return <Badge variant="secondary" className="text-xs sm:text-sm">🤖 Powered by Claude, Gemini & Grok</Badge>;
   }
 
   return (
@@ -35,7 +21,7 @@ export function AISystemShowcase({ variant = "full" }: AISystemShowcaseProps) {
       {variant === "full" && <><img src="/images/superc.comp13.jpg" alt="" aria-hidden="true" className="absolute inset-0 h-full w-full object-cover" /><div className="absolute inset-0 bg-black/65" /></>}\n      <CardHeader className="relative z-10 text-center">
         <CardTitle className="text-xl md:text-2xl flex items-center justify-center gap-2">
           <span aria-hidden="true">🤖</span>
-          17-Model Harmony AI Network
+          Claude-Led 3-Provider AI Network
         </CardTitle>
         <CardDescription>
           Specialized AI participants coordinated through one orchestration network.
