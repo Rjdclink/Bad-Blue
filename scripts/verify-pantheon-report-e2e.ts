@@ -29,9 +29,12 @@ async function main() {
     SUPABASE_DB_URL: process.env.SUPABASE_DB_URL,
     DATABASE_URL: process.env.DATABASE_URL,
   };
+  // Install the verifier's unreachable test database identity before any dynamic
+  // Pantheon imports can cache database readiness. This satisfies configuration
+  // guards without permitting live persistence during the build.
+  process.env.DATABASE_URL = 'postgresql://pantheon:testing@127.0.0.1:1/pantheon_test';
   delete process.env.SUPABASE_DATABASE_URL;
   delete process.env.SUPABASE_DB_URL;
-  delete process.env.DATABASE_URL;
   const {
     initializePantheonCategoryPlans,
     PANTHEON_REPORT_CATEGORIES,
