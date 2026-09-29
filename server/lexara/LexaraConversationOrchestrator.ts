@@ -318,7 +318,7 @@ function isPersonPermissionRefusal(text: string): boolean {
 
 function degradedLegalResponse(jurisdiction?: string): string {
   if (!jurisdiction) {
-    return 'The live legal-reasoning service is temporarily unavailable. I can keep your facts organized, but I will not guess at controlling law, cases, or deadlines. Tell me the state or jurisdiction involved so the next legal-analysis turn can be grounded correctly.';
+    return 'The live legal-reasoning service is temporarily unavailable. I can keep your facts organized, but I will not guess at controlling law, cases, or deadlines. Please retry this turn when live analysis is restored.';
   }
 
   return `The live legal-reasoning service is temporarily unavailable. I have the jurisdiction as ${jurisdiction}. I can preserve the facts you have given me, but I will not invent controlling law, cases, citations, or deadlines while the analysis service is unavailable. Please retry this turn when live analysis is restored.`;
