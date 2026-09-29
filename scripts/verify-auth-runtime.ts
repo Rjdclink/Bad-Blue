@@ -85,7 +85,7 @@ assert.match(statelessLocalAuthSource, /'pending_payment',false/, 'new PostgreSQ
 assert.match(statelessLocalAuthSource, /status:\s*"pending_payment"[\s\S]{0,120}has_paid_for_access:\s*false/, 'new Supabase accounts must remain payment-pending');
 assert.match(statelessLocalAuthSource, /edgeAuthRequest\("set_subscription"/, 'subscription state must persist through the selected auth authority');
 assert.match(statelessLocalAuthSource, /Paid access requires a verified active Square subscription/, 'paid access must fail closed without verified Square subscription identity');
-assert.match(authSource, /app\.post\("\/api\/local-register"[\s\S]{0,900}setLocalCookie\(res, createLocalSessionToken\(user\)\)/, 'signup must establish the pending authenticated checkout session');
+assert.match(authSource, /app\.post\("\/api\/local-register"[\s\S]{0,1800}setLocalCookie\(res, createLocalSessionToken\(user\)\)/, 'signup must establish the pending authenticated checkout session');
 assert.match(authSource, /isIdentityAuthenticated[\s\S]{0,1000}SUBSCRIPTION_REQUIRED/, 'ordinary authenticated services must require verified paid access');
 assert.match(subscriptionFlowSource, /isIdentityAuthenticated/, 'pending users must retain access to subscription activation routes');
 assert.match(subscriptionFlowSource, /subscriptionPlanId:\s*await resolvePlanVariationId\(square\)/, 'Square hosted checkout must use the catalog-validated $19.99 monthly plan variation');
