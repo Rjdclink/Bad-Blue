@@ -34,6 +34,7 @@ export interface LexaraConversationContext {
   lawType?: string;
   lawTypeName?: string;
   jurisdiction?: string;
+  backgroundJurisdiction?: string;
   behaviorMode?: 'personable' | 'professional';
   sessionId?: string;
   signal?: AbortSignal;
@@ -92,7 +93,7 @@ export function getLexaraImmediateAcknowledgement(
   context: LexaraAcknowledgementContext = {},
 ): LexaraImmediateAcknowledgement {
   const clean = String(prompt || '').trim();
-  const normalized = clean.toLowerCase().replace(/\s+/g, ' ');
+  const normalized = clean.toLowerCase().replace(/return { text: lastReply?.content?.trim() || 'I do not have my previous answer in this conversation. Please repeat your question.',\n      jurisdiction: publicJurisdiction, mappedLawType };s+/g, ' ');
   const presenceOnly = /^(?:(?:hey|hello)[, ]*)?(?:lexara[, ]*)?(?:are you (?:still )?there|you still there|you there|can you hear me|are you listening|hello|did you hear me|are you still working(?: on (?:this|it))?)[?.! ]*$/i.test(clean);
 
   if (presenceOnly) {
@@ -463,11 +464,18 @@ export async function generateLexaraConversationResponse(
   const mappedLawType = mapLexaraLawType(context.lawType);
   const immediate = getLexaraImmediateAcknowledgement(cleanPrompt);
   const history = buildConversationHistory(context.previousMessages);
-  const stateJurisdiction = inferJurisdiction(cleanPrompt)
+  const explicitStateJurisdiction = inferJurisdiction(cleanPrompt)
     || normalizeJurisdiction(context.jurisdiction)
     || inferPriorUserJurisdiction(context.previousMessages);
+  const jurisdictionRelevant = /\b(?:law|legal|court|case|charge|crime|criminal|civil|lawsuit|sue|claim|statute|deadline|limitation|file|filing|motion|petition|complaint|divorce|custody|probation|parole|warrant|rights?|attorney|judge|jurisdiction|venue|state\s+law|federal)\b/i.test(cleanPrompt);
+  const backgroundStateJurisdiction = jurisdictionRelevant
+    ? normalizeJurisdiction(context.backgroundJurisdiction) : undefined;
+  const stateJurisdiction = explicitStateJurisdiction || backgroundStateJurisdiction;
   const resolvedJurisdiction = await resolveUSJurisdiction(cleanPrompt, stateJurisdiction);
   const jurisdiction = resolvedJurisdiction?.display || stateJurisdiction;
+  // Network-derived jurisdiction is silent context. Only user/conversation-derived
+  // jurisdiction is returned to the client for display/persistence.
+  const publicJurisdiction = resolvedJurisdiction?.display || explicitStateJurisdiction;
   const domainName = trustedDomainName(context.lawType);
   const domainProfile = getLexaraLegalDomainProfile(context.lawType);
   const previousUserTurns = (context.previousMessages || [])
