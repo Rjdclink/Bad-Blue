@@ -250,6 +250,19 @@ async function commonCrawlSearch(
   }).catch(() => []);
 }
 
+function pantheonSourceFamily(raw: string): string {
+  try {
+    const host = new URL(raw).hostname.toLowerCase().replace(/^www\./, '');
+    const parts = host.split('.').filter(Boolean);
+    // Group ordinary subdomains under their parent source family while keeping
+    // government/court hosts independently addressable.
+    if (parts.length <= 2 || /\.gov$|\.us$/.test(host)) return host;
+    return parts.slice(-2).join('.');
+  } catch {
+    return raw.toLowerCase();
+  }
+}
+
 export function prioritizePantheonDiscoveryEvidenceGroups(
   evidenceGroups: readonly (readonly PantheonDiscoveryEvidence[])[],
   seen: ReadonlySet<string>,
@@ -261,7 +274,32 @@ export function prioritizePantheonDiscoveryEvidenceGroups(
     for (const item of group) if (!evidenceByUrl.has(item.url)) evidenceByUrl.set(item.url, item);
     rankedUrls.push(...rankPantheonDiscoveryUrls(group.map(item => item.url).filter(url => !seen.has(url))));
   }
-  return [...new Set(rankedUrls)].slice(0, Math.max(0, limit)).flatMap(url => {
+
+  // A broad crawler fan-out is not broad research when every URL belongs to
+  // the same source family. First take one result per independent family, then
+  // fill remaining capacity with at most two URLs from any family.
+  const uniqueRanked = [...new Set(rankedUrls)];
+  const selected: string[] = [];
+  const familyCounts = new Map<string, number>();
+  for (const url of uniqueRanked) {
+    const family = pantheonSourceFamily(url);
+    if ((familyCounts.get(family) || 0) > 0) continue;
+    selected.push(url);
+    familyCounts.set(family, 1);
+    if (selected.length >= Math.max(0, limit)) break;
+  }
+  if (selected.length < Math.max(0, limit)) {
+    for (const url of uniqueRanked) {
+      if (selected.includes(url)) continue;
+      const family = pantheonSourceFamily(url);
+      const count = familyCounts.get(family) || 0;
+      if (count >= 2) continue;
+      selected.push(url);
+      familyCounts.set(family, count + 1);
+      if (selected.length >= Math.max(0, limit)) break;
+    }
+  }
+  return selected.flatMap(url => {
     const item = evidenceByUrl.get(url);
     return item ? [item] : [];
   });

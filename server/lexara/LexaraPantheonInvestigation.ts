@@ -517,6 +517,11 @@ export async function investigatePersonQuestion(
   // seeds are hints for ranking/context only; they are not a URL traversal plan.
   const categorySeedUrls = categories
     .flatMap(category => buildPantheonCategoryTargets(category, semanticSubject, context.jurisdiction, 10))
+    // Search-provider pages are discovery mechanisms, not source documents.
+    // Dynamic discovery already fans out across independent search lanes; putting
+    // DuckDuckGo result pages back into the crawler frontier caused the live
+    // relationship lookup to spend its budget repeatedly crawling one search page.
+    .filter(target => target.transport !== 'search-provider')
     .map(target => target.url)
     .filter((url, index, all) => all.indexOf(url) === index)
     .slice(0, PERSON_RECURSIVE_MAX_TARGETS_PER_PASS);
