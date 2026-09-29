@@ -12,6 +12,9 @@ for(const forbidden of ['PANTHEON_VERIFIED_SOURCE_INVENTORY','PANTHEON_EXECUTABL
 for(const required of ['buildPantheonCategoryTargets','buildPantheonBackgroundRegistryTargets','perCategory=10','KEYLESS_CATEGORY_SOURCES']){
   if(!registry.includes(required)) throw new Error('Missing dynamic-seed registry token: '+required);
 }
+for(const required of ["'business': [","'corporate': [","'securities': [","https://www.sec.gov/edgar/search/","SEC EDGAR Company Filings"]){
+  if(!registry.includes(required)) throw new Error('Missing keyless SEC EDGAR integration token: '+required);
+}
 if(!people.includes('buildPantheonBackgroundRegistryTargets(name, location, 10)')) throw new Error('People search is not using ten category seeds');
 for(const required of ['SEARXNG_URL','DDGS_URL','OPENSERP_URL','GEMINI_API_KEY','GoogleGenAI',"'gemini-google'","'commoncrawl'","'learned'"]){
   if(!discovery.includes(required)) throw new Error('Dynamic search mesh missing provider: '+required);
