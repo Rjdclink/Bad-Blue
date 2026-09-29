@@ -17,8 +17,8 @@ for(const token of [
 
 for(const token of [
   'researchNeeded: researchDecision.needed',
-  'pantheonTargeted: pantheonDelegatedByLexara',
-  'pantheonSourceCount: pantheonInvestigation?.sources?.length || 0',
+  'backgroundTargeted: backgroundResearchRequested',
+  'backgroundSourceCount: backgroundInvestigation?.sources?.length || 0',
 ]) if(!conversation.includes(token)) throw new Error('Routing telemetry invariant missing: '+token);
 
 const fixtures=[
@@ -34,7 +34,7 @@ for(const q of fixtures) {
     throw new Error('Research fixture does not reach external fact lane: '+q);
   }
 }
-console.log('Lexara external-fact and Pantheon handoff regression verification passed.');
+console.log('Lexara external-fact background-route regression verification passed.');
 
 for(const token of [
   'objectiveKind: LexaraResearchObjectiveKind',
@@ -53,17 +53,17 @@ for(const token of [
   'pendingTargets = [...new Set([...pendingTargets.filter(url => !seenTargets.has(url)), ...frontier, ...discovered])]',
 ]) if(!investigation.includes(token)) throw new Error('Pantheon endpoint/telemetry invariant missing: '+token);
 for(const token of [
-  "pantheonDelegatedByLexara\n      ? mixedLegalFactNeed",
-  'pantheonEndpoint:',
-  'pantheonRecursionPasses:',
+  "backgroundResearchRequested\n      ? mixedLegalFactNeed",
+  'backgroundEndpoint:',
+  'backgroundRecursionPasses:',
   'researchEndpointReached:',
 ]) if(!conversation.includes(token)) throw new Error('Research-required synthesis gate missing: '+token);
-console.log('Lexara/Pantheon full research architecture verification passed.');
+console.log('Lexara full research architecture verification passed.');
 
 if(router.includes('if (question && externallyVariable)') || router.includes('if (question && legalAuthority)')) {
   throw new Error('Unreachable legacy keyword gates remain after universal factual-question routing');
 }
 if(!conversation.includes('researchDecision.needed ? researchDecision.objective : cleanPrompt')) {
-  throw new Error('Structured research objective is not handed into Pantheon');
+  throw new Error('Structured research objective is not handed into Lexara background research');
 }
 console.log('No legacy keyword authority or objective-handoff regression detected.');
