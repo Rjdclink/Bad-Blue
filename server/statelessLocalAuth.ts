@@ -465,7 +465,7 @@ async function passwordFingerprintForEmail(email: string): Promise<string | null
         WHERE lower(u.email)=$1 LIMIT 1`, [normalizedEmail]);
     passwordHash = String(result.rows?.[0]?.password_hash || "");
   } else {
-    const supabase = directClient || backend.client;
+    const supabase = backend.kind === "supabase" ? backend.client : directClient!;
     const { data: user } = await supabase.from("users").select("id").eq("email", normalizedEmail).maybeSingle();
     if (!user?.id) return null;
     const { data: account } = await supabase.from("auth_accounts").select("password_hash")
@@ -510,7 +510,7 @@ export async function resetLocalPasswordHttp(token: string, newPassword: string,
       [passwordHash, salt, updatedAt, payload.email]);
     return Boolean(result.rows?.[0]?.id);
   }
-  const supabase = directClient || backend.client;
+  const supabase = backend.kind === "supabase" ? backend.client : directClient!;
   const { data: user } = await supabase.from("users").select("id").eq("email", payload.email).maybeSingle();
   if (!user?.id) return false;
   const { error } = await supabase.from("auth_accounts").update({
