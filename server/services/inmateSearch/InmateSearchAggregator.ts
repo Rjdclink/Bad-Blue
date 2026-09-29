@@ -225,7 +225,7 @@ function getEnvFlag(name: string, defaultValue: boolean): boolean {
 }
 
 const INMATE_ENABLE_STATE_DOC = getEnvFlag('INMATE_ENABLE_STATE_DOC', true);
-const INMATE_ENABLE_VINE = getEnvFlag('INMATE_ENABLE_VINE', true);
+const INMATE_ENABLE_VINE = getEnvFlag('INMATE_ENABLE_VINE', false);
 
 function normalizeSex(value: unknown): 'Male' | 'Female' | 'Unknown' | undefined {
   if (value == null) return undefined;
