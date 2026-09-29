@@ -50,12 +50,12 @@ export function planLexaraSequence(prompt: string, previousUserTurns: string[] =
   };
   const legal = isLexaraLegalAuthorityIntent(text) || researchDecision.objectiveKind === 'legal-authority';
   const subject = resolveLexaraBackgroundSubject(text, previousUserTurns);
-  const semanticCategories = classifyBackgroundSemanticCategories(text, previousUserTurns);
+  const semanticCategories = classifyPantheonSemanticCategories(text, previousUserTurns);
   const priorBackground = previousUserTurns.slice(-4).some(turn =>
-    BACKGROUND_PATTERN.test(turn) || classifyBackgroundSemanticCategories(turn).length > 0,
+    BACKGROUND_PATTERN.test(turn) || classifyPantheonSemanticCategories(turn).length > 0,
   );
   const contextualFollowup = Boolean(subject && priorBackground && isContextualReference(text));
-  const fullReport = isFullBackgroundReportIntent(text);
+  const fullReport = isFullPantheonReportIntent(text);
   const background = Boolean(
     ((semanticCategories.length > 0 || BACKGROUND_PATTERN.test(text) || fullReport)
       && (!legal || fullReport || BACKGROUND_OBJECTIVE_PATTERN.test(text))
@@ -95,7 +95,7 @@ export function planLexaraSequence(prompt: string, previousUserTurns: string[] =
   }
   if (background) {
     return {
-      sequence: deep ? 'deep-recursive' : 'background-background', researchDecision,
+      sequence: deep ? 'deep-recursive' : 'lexara-background', researchDecision,
       useLegalResearch: false, useBackground: true, recursive: true,
       classifyBackground: true, documentAction: false,
       reason: deep ? 'deep identifiable-subject investigation' : 'identifiable-subject background/fact route',
