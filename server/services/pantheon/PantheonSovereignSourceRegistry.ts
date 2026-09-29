@@ -1,4 +1,5 @@
 import { admitPantheonUrl } from '../crawlers/PublicAcquisitionInfrastructure';
+import { getLexaraSupplementalQueryHints, getLexaraSupplementalSources } from '../../lexara/LexaraSupplementalOsintSources';
 /**
  * PANTHEON sovereign source registry.
  *
@@ -137,7 +138,10 @@ export function buildPantheonCategoryTargets(
  // routed crawler a policy-compliant source page from which it can discover
  // lawful public search/result routes. Discovery remains a fallback, never
  // the sole source plan.
- const inventory=(KEYLESS_CATEGORY_SOURCES[category] || []).map((source,index)=>({
+ const supplementalSources=getLexaraSupplementalSources([category]).map(source=>({
+   url:source.root, name:source.id, authority:source.authority==='discovery'?'secondary':source.authority, jurisdiction:source.jurisdiction,
+ }));
+ const inventory=[...(KEYLESS_CATEGORY_SOURCES[category] || []), ...supplementalSources].map((source,index)=>({
    id:`keyless-${category}-${index+1}`,
    sourceIds:[`keyless-${category}-${index+1}`],
    names:[source.name],
@@ -153,7 +157,8 @@ export function buildPantheonCategoryTargets(
  }));
  for (const source of inventory) {
    if (!source.categories.includes(category)) continue;
-   const q=`${identity} ${category}`;
+   const supplementalHints=getLexaraSupplementalQueryHints([category]).slice(0,4).join(' ');
+   const q=[identity,category,supplementalHints].filter(Boolean).join(' ');
    const parsedSource=new URL(source.url);
    const host=parsedSource.hostname;
    const sourceRoot=`${parsedSource.protocol}//${parsedSource.host}`;
