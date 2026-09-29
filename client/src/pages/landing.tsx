@@ -165,7 +165,7 @@ export default function Landing() {
             </h2>
             <div className="space-y-5 text-white/90 leading-relaxed">
               <p>
-                Meet <strong>LEXARA — Legal Expert AI Resource Advisor</strong>, Legal What?’s animated conversational legal AI, built for natural, real-time, two-way voice and text interaction across <strong>40+ areas of law</strong>.
+                Meet <strong>LEXARA — Legal Expert AI Resource Advisor</strong>, Legal What?’s animated conversational legal AI, built for a natural, real-time, two-way voice or text conversation across <strong>40+ areas of law</strong>.
               </p>
               <p>
                 LEXARA provides legal guidance, research, analysis, and explanations based on the facts you provide. She can ask relevant follow-up questions, identify legal issues, apply jurisdiction-specific statutes, rules, and precedent, and connect your matter with deeper legal research and case-analysis tools.
