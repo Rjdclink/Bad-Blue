@@ -12,6 +12,7 @@ import { generateLegalAnalysis } from '../aiProvider';
 import { researchLegalAuthority, formatAuthorityResearchForSystem } from '../lexara/LexaraAuthorityResearch';
 import { resolveUSJurisdiction } from '../lexara/LexaraJurisdictionResolver';
 import { resolveOfficialLegalForm, officialFormDirective } from '../lexara/OfficialLegalFormResolver';
+import { inspectOfficialForm, fillOfficialPdf, fillOfficialDocx } from '../lexara/OfficialFormFiller';
 import { conductMasterConsultation, shouldInvokePeopleFinder } from '../consultationCoordinator';
 import { performConsultation } from '../legalConsultationEngine';
 import { createLogger } from '../logger';
@@ -148,6 +149,26 @@ export function setupConsultationRoutes(app: Express): void {
       reviewRequired: true,
       notice: 'Draft generated from supplied facts. Verify facts, authorities, local rules, deadlines, signatures, service, and filing requirements before use.',
     });
+  }));
+
+  app.post('/api/lexara/documents/official-form', isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
+    const officialForm = req.body?.officialForm;
+    const values = req.body?.values && typeof req.body.values === 'object' ? req.body.values : {};
+    if (!officialForm?.verifiedOfficial || !officialForm?.url) return res.status(400).json({ error: 'A verified official form is required' });
+    const inspected = await inspectOfficialForm(officialForm);
+    if (inspected.contentType === 'pdf' && !inspected.fillable) {
+      return res.status(409).json({ error: 'The verified official PDF is not field-fillable. Automatic overlay requires verified field coordinates before modification.', fields: [], sourceUrl: inspected.sourceUrl });
+    }
+    const missingFields = inspected.fields.filter(field => values[field.name] === undefined).map(field => field.name);
+    if (missingFields.length) return res.status(422).json({ error: 'Additional information is required to complete the official form', missingFields, sourceUrl: inspected.sourceUrl });
+    const output = inspected.contentType === 'pdf'
+      ? await fillOfficialPdf(inspected, values, true)
+      : await fillOfficialDocx(inspected, values);
+    const extension = inspected.contentType === 'pdf' ? 'pdf' : 'docx';
+    res.setHeader('Content-Type', inspected.contentType === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', 'attachment; filename="lexara-official-form.' + extension + '"');
+    res.setHeader('X-Lexara-Official-Source', inspected.sourceUrl);
+    res.send(output);
   }));
 
   app.post('/api/lexara/documents/export', isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
