@@ -45,3 +45,25 @@ export {
 export type {
   PantheonInvestigationIntelligence as LexaraBackgroundInvestigationIntelligence,
 } from '../services/pantheon/PantheonInvestigationIntelligence';
+
+export {
+  PANTHEON_REPORT_CATEGORY_LABELS as LEXARA_BACKGROUND_REPORT_CATEGORY_LABELS,
+  PANTHEON_PRIMARY_CRAWLER_IDS as LEXARA_BACKGROUND_PRIMARY_CRAWLER_IDS,
+  PANTHEON_SECONDARY_CRAWLER_IDS as LEXARA_BACKGROUND_SECONDARY_CRAWLER_IDS,
+  PANTHEON_RAZOR_SKILL_IDS as LEXARA_BACKGROUND_RAZOR_SKILL_IDS,
+  PANTHEON_PORTABLE_CAPABILITY_IDS as LEXARA_BACKGROUND_PORTABLE_CAPABILITY_IDS,
+} from '../services/pantheon/PantheonCrawlerCapabilityMatrix';
+
+export type {
+  PantheonReportCategoryLabel as LexaraBackgroundReportCategoryLabel,
+  PantheonPrimaryCrawlerId as LexaraBackgroundPrimaryCrawlerId,
+} from '../services/pantheon/PantheonCrawlerCapabilityMatrix';
+
+export { matchPantheonSubject as matchLexaraBackgroundSubject } from '../services/pantheon/PantheonEntityResolution';
+export { validatePantheonSourceResult as validateLexaraBackgroundSourceResult } from '../services/pantheon/PantheonSourceResult';
+export { rememberPantheonDiscoveryOutcome as rememberLexaraBackgroundDiscoveryOutcome } from '../services/pantheon/PantheonDiscoveryLearning';
+export {
+  createPantheonRegistrationAuthority as createLexaraRegistrationAuthority,
+  ensurePantheonContactRegistration as ensureLexaraContactRegistration,
+} from '../services/pantheon/PantheonContactRegistrationBroker';
+export type { PantheonRegistrationAuthority as LexaraRegistrationAuthority } from '../services/pantheon/PantheonContactRegistrationBroker';
