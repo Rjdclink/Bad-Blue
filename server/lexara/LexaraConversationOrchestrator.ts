@@ -490,7 +490,7 @@ export async function generateLexaraConversationResponse(
     const lastReply = [...(context.previousMessages || [])].reverse().find(message =>
       message.role === 'lexara' || message.role === 'assistant');
     return { text: lastReply?.content?.trim() || 'I do not have my previous answer in this conversation. Please repeat your question.',
-      jurisdiction, mappedLawType };
+      jurisdiction: publicJurisdiction, mappedLawType };
   }
   const researchDecision = sequencePlan.researchDecision;
   console.log('[LEXARA ResearchRoute]', {
@@ -512,7 +512,7 @@ export async function generateLexaraConversationResponse(
   if (immediate.terminal) {
     return {
       text: immediate.text,
-      jurisdiction,
+      jurisdiction: publicJurisdiction,
       mappedLawType,
     };
   }
@@ -648,7 +648,7 @@ export async function generateLexaraConversationResponse(
       crawlerAudit: pantheonInvestigation?.crawlerAudit,
       discoveryLanes: pantheonInvestigation?.discoveryLanes,
     });
-    return { text, jurisdiction, mappedLawType, pantheonEndpoint, pantheonStatus };
+    return { text, jurisdiction: publicJurisdiction, mappedLawType, pantheonEndpoint, pantheonStatus };
   }
 
   const silentLocationContext = jurisdictionRelevant && !explicitStateJurisdiction && backgroundStateJurisdiction
@@ -725,7 +725,7 @@ export async function generateLexaraConversationResponse(
   // After the canonical provider routes and source fallback are exhausted,
   // do not invent current law.
   const answerServiceUnavailable = !text;
-  if (!text) text = degradedLegalResponse(jurisdiction);
+  if (!text) text = degradedLegalResponse(publicJurisdiction);
   if (pantheonDelegatedByLexara && !mixedLegalFactNeed
     && /^The live legal-reasoning service is temporarily unavailable/.test(text)) {
     const validatedFallback = extractVerifiedPantheonSourceExcerpt(pantheonInvestigation);
@@ -829,7 +829,7 @@ export async function generateLexaraConversationResponse(
 
   return {
     text,
-    jurisdiction,
+    jurisdiction: publicJurisdiction,
     mappedLawType,
     pantheonEndpoint,
     pantheonStatus: permissionRefusalUnverified ? 'partial'
