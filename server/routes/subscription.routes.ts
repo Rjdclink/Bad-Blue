@@ -13,6 +13,7 @@ import {
   updateLocalUserSubscriptionHttp,
   type StatelessLocalUser,
 } from "../statelessLocalAuth";
+import { sendLegalWhatSubscriptionNotification } from "../emailService";
 
 const SUBSCRIPTION_NAME = "LegalWhat Subscription";
 const SUBSCRIPTION_PRICE_CENTS = 1999;
@@ -218,6 +219,10 @@ async function bindAndReconcile(id: string, customerId: string): Promise<{ activ
     status: "active",
     hasPaidForAccess: true,
   });
+  if (!currentUser.hasPaidForAccess) {
+    void sendLegalWhatSubscriptionNotification(user).catch((error) =>
+      console.error("[SUBSCRIPTION] Payment notification failed:", error instanceof Error ? error.message : String(error)));
+  }
   return { active: true, user };
 }
 
