@@ -3,6 +3,8 @@ export interface ResolvedJurisdiction {
   latitude?: number; longitude?: number; providers: string[];
 }
 type Candidate = Omit<ResolvedJurisdiction, 'display' | 'providers'> & { provider: string; query?: string };
+import { resolveLocalNetworkJurisdiction } from './LocalNetworkJurisdiction';
+
 const TIMEOUT_MS = 2500;
 
 async function getJson(url: string, headers: Record<string,string> = {}): Promise<any | null> {
@@ -40,27 +42,7 @@ function jurisdictionQueries(text: string, state?: string): string[] {
 }
 
 export async function resolveNetworkState(ip?: string): Promise<{ locality?: string; state?: string; area?: string; provider?: string; confidence?: number } | null> {
-  // Local-only network jurisdiction hook. No visitor network identifier leaves
-  // LegalWhat. Populate NETWORK_REGION_PREFIXES from an attributed, locally
-  // maintained IP-to-region dataset during deployment; absent data fails closed.
-  const address = (ip || '').split(',')[0].trim();
-  if (!address || /^(?:127\.|10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|::1$)/.test(address)) return null;
-  const raw = process.env.NETWORK_REGION_PREFIXES?.trim();
-  if (!raw) return null;
-  try {
-    const entries = JSON.parse(raw) as Array<{ prefix?: string; state?: string; city?: string; area?: string }>;
-    const match = entries
-      .filter(item => item.prefix && item.state && address.startsWith(item.prefix))
-      .sort((a, b) => String(b.prefix).length - String(a.prefix).length)[0];
-    if (!match?.state) return null;
-    return {
-      locality: match.city || undefined,
-      state: match.state,
-      area: match.area || match.city || undefined,
-      provider: 'local-network-region',
-      confidence: match.city ? 0.55 : 0.7,
-    };
-  } catch { return null; }
+  return resolveLocalNetworkJurisdiction(ip);
 }
 
 async function geonames(query: string): Promise<Candidate | null> {
