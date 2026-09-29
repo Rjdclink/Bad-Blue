@@ -32,7 +32,7 @@ function dataDir(): string {
   return process.env.DBIP_LOCAL_DIR?.trim() || path.join(os.tmpdir(), 'legalwhat-dbip');
 }
 function sqlitePath(): string {
-  return path.join(dataDir(), 'dbip-city-lite.sqlite');
+  return path.join(dataDir(), `dbip-city-lite-${monthStamp()}.sqlite`);
 }
 function isPrivateOrLoopback(ip: string): boolean {
   return /^(?:127\.|10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|::1$|fc|fd|fe80:)/i.test(ip);
@@ -88,7 +88,7 @@ async function downloadDataset(target: string): Promise<boolean> {
   return false;
 }
 async function buildDatabase(Database: any, dbPath: string): Promise<DbHandle | null> {
-  const gzipPath = path.join(dataDir(), 'dbip-city-lite.csv.gz');
+  const gzipPath = path.join(dataDir(), `dbip-city-lite-${monthStamp()}.csv.gz`);
   if (!fs.existsSync(gzipPath) && !(await downloadDataset(gzipPath))) return null;
   const tempDb = dbPath + '.building';
   await fsp.rm(tempDb, { force: true });
