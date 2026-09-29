@@ -1160,11 +1160,6 @@ must(
   'document export must retain strict server validation/type identity',
 );
 must(
-  consultationRoutes.includes("officialFormRequired: true") &&
-    consultationRoutes.includes("fetch") === false ? true : true,
-  'official-form document route remains represented in realization source',
-);
-must(
   consultationRoutes.includes("/api/lexara/documents/official-form") &&
     conversation.includes("/api/lexara/documents/official-form"),
   'mandatory verified official forms must continue from Lexara conversation into completion/download',
