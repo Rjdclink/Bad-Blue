@@ -18,7 +18,6 @@ export interface LexaraSupplementalSource {
 export const LEXARA_EAGLE_EYE_KEYLESS_SOURCES: readonly LexaraSupplementalSource[] = [
   { id:'eagleeye-sec-edgar', root:'https://www.sec.gov/edgar/search/', categories:['business','corporate','securities'], queryHints:['SEC EDGAR','company filings','officer filings'], authority:'primary', jurisdiction:'US' },
   { id:'eagleeye-census-geocoder', root:'https://geocoding.geo.census.gov/geocoder/', categories:['residence','property','geography'], queryHints:['Census geocoder','address census tract'], authority:'primary', jurisdiction:'US' },
-  { id:'eagleeye-census-data', root:'https://api.census.gov/data/', categories:['residence','geography'], queryHints:['Census data','housing demographics'], authority:'primary', jurisdiction:'US' },
   { id:'eagleeye-epa-echo', root:'https://echo.epa.gov/', categories:['property','business','regulatory'], queryHints:['EPA ECHO','facility enforcement','environmental violations'], authority:'primary', jurisdiction:'US' },
   { id:'eagleeye-openfema', root:'https://www.fema.gov/api/open/', categories:['property','geography'], queryHints:['OpenFEMA','disaster declarations','flood claims'], authority:'primary', jurisdiction:'US' },
   { id:'eagleeye-nhtsa-vpic', root:'https://vpic.nhtsa.dot.gov/api/', categories:['transportation'], queryHints:['NHTSA vPIC','VIN decode','vehicle'], authority:'primary', jurisdiction:'US' },
