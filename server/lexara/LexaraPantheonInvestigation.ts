@@ -3,13 +3,9 @@ import {
   type LexaraRetrievalResponse,
   type LexaraLexaraRetrievalEvidence,
 } from './LexaraRetrievalAdapter';
-import { buildPantheonCategoryTargets, type PantheonBackgroundCategory } from '../services/pantheon/PantheonSovereignSourceRegistry';
+import { buildLexaraBackgroundCategoryTargets, discoverLexaraBackgroundSourcesParallel, matchLexaraBackgroundSubject, validateLexaraBackgroundSourceResult, rememberLexaraBackgroundDiscoveryOutcome, createLexaraRegistrationAuthority, ensureLexaraContactRegistration, LEXARA_BACKGROUND_PRIMARY_CRAWLER_IDS, LEXARA_BACKGROUND_RAZOR_SKILL_IDS, LEXARA_BACKGROUND_SECONDARY_CRAWLER_IDS, LEXARA_BACKGROUND_PORTABLE_CAPABILITY_IDS, type LexaraBackgroundCategory, type LexaraBackgroundPrimaryCrawlerId, type LexaraBackgroundReportCategoryLabel, type LexaraRegistrationAuthority } from './LexaraBackgroundIntelligence';
 import { searchInmates } from '../services/inmateSearch/InmateSearchAggregator';
-import { matchPantheonSubject } from '../services/pantheon/PantheonEntityResolution';
 import { buildLexaraDynamicCrawlerAssignments, getLexaraCrawlerReadiness } from './LexaraCrawlerCapabilityRegistry';
-import { PANTHEON_PRIMARY_CRAWLER_IDS, PANTHEON_RAZOR_SKILL_IDS, PANTHEON_SECONDARY_CRAWLER_IDS, PANTHEON_PORTABLE_CAPABILITY_IDS, type PantheonPrimaryCrawlerId } from '../services/pantheon/PantheonCrawlerCapabilityMatrix';
-import { discoverPantheonSourcesParallel } from '../services/pantheon/PantheonDiscoveryCoordinator';
-import { rememberPantheonDiscoveryOutcome } from '../services/pantheon/PantheonDiscoveryLearning';
 import { decideLexaraResearchNeed, isLexaraLegalAuthorityIntent } from './LexaraResearchIntentRouter';
 import { resolveLexaraBackgroundSubject } from './LexaraBackgroundSubject';
 import {
@@ -18,14 +14,7 @@ import {
   LEXARA_REPORT_CATEGORY_TO_BACKGROUND_CATEGORIES,
   type LexaraBackgroundSemanticCategoryMatch,
 } from './LexaraBackgroundSemanticIntent';
-import type { PantheonReportCategoryLabel } from '../services/pantheon/PantheonCrawlerCapabilityMatrix';
-import { validatePantheonSourceResult } from '../services/pantheon/PantheonSourceResult';
 import { admitPantheonUrl } from '../services/crawlers/PublicAcquisitionInfrastructure';
-import {
-  createPantheonRegistrationAuthority,
-  ensurePantheonContactRegistration,
-  type PantheonRegistrationAuthority,
-} from '../services/pantheon/PantheonContactRegistrationBroker';
 
 export interface LexaraPersonInvestigationContext {
   delegatedByLexara?: boolean;
@@ -50,11 +39,11 @@ export interface LexaraPersonInvestigation {
   evidenceSummary?: string;
   sources: string[];
   searchLeads?: string[];
-  categories: PantheonBackgroundCategory[];
+  categories: LexaraBackgroundCategory[];
   fullBackgroundReportRequested: boolean;
   coverageLimited?: boolean;
   coverageNote?: string;
-  reportCategoryLabels?: PantheonReportCategoryLabel[];
+  reportCategoryLabels?: LexaraBackgroundReportCategoryLabel[];
   endpoint: 'evidence-sufficient' | 'best-available-evidence' | 'partial-evidence' | 'budget-exhausted' | 'sources-exhausted' | 'clarification-required' | 'unavailable' | 'failed' | 'report-handoff' | 'search-leads-only';
   recursionPasses?: number;
   crawlerAudit?: Array<{ crawler: string; status: string; attempts: number; evidenceCount: number; reason?: string }>;
@@ -87,7 +76,7 @@ type LexaraConversationalRetrieval = (request: LexaraConversationalRetrievalRequ
 export async function retrieveLexaraConversationalSource(
   request: LexaraConversationalRetrievalRequest,
   options: {
-    registrationAuthority?: PantheonRegistrationAuthority;
+    registrationAuthority?: LexaraRegistrationAuthority;
     retrieve?: LexaraConversationalRetrieval;
   } = {},
 ): Promise<LexaraRetrievalResponse> {
@@ -109,7 +98,7 @@ export async function retrieveLexaraConversationalSource(
   } catch {
     return initial;
   }
-  const registrationAuthority = options.registrationAuthority || createPantheonRegistrationAuthority();
+  const registrationAuthority = options.registrationAuthority || createLexaraRegistrationAuthority();
   const unavailableReason = !registrationAuthority.enabled
     ? registrationAuthority.unavailableReason || 'Contact-only registration is not configured.'
     : !registrationAuthority.profile
@@ -129,7 +118,7 @@ export async function retrieveLexaraConversationalSource(
     };
   }
 
-  const access = await ensurePantheonContactRegistration({
+  const access = await ensureLexaraContactRegistration({
     sourceUrl: target,
     authority: registrationAuthority,
     deadlineAt: request.deadlineAt || Date.now() + Math.max(500, request.budgetMs || 5_000),
@@ -155,7 +144,7 @@ export async function retrieveLexaraConversationalSource(
 
 const IDENTIFIER_PATTERN = /\b(?:born|dob|date\s+of\s+birth|age\s+\d{1,3}|\d{1,2}[\/-]\d{1,2}[\/-](?:19|20)\d{2}|(?:19|20)\d{2}|lives?\s+in|from\s+[A-Z][a-z]+|address|street|avenue|road|drive|lane|city|county|state|phone|email|employer|works?\s+(?:at|for)|middle\s+name)\b/i;
 
-const CATEGORY_RULES: Array<[RegExp, PantheonBackgroundCategory[]]> = [
+const CATEGORY_RULES: Array<[RegExp, LexaraBackgroundCategory[]]> = [
   [/\b(?:city|town|county|landmark|museum|memorial|building|bridge|park|river|geography|location|located)\b/i, ['geography','historical','news']],
   [/identity|date\s+of\s+birth|\bdob\b|\bage\b|\bborn\b|birthday|how\s+old/i, ['identity','identity-resolution','vital-records','historical','chronology']],
   [/phone|telephone|cell(?:phone)?|mobile\s+number/i, ['contacts','identity-resolution']],
@@ -215,20 +204,20 @@ function conversationText(prompt: string, context: LexaraPersonInvestigationCont
 
 function requestedCategories(
   prompt: string,
-): PantheonBackgroundCategory[] {
-  const categories = new Set<PantheonBackgroundCategory>();
+): LexaraBackgroundCategory[] {
+  const categories = new Set<LexaraBackgroundCategory>();
   for (const match of classifyLexaraBackgroundSemanticCategories(prompt)) {
     for (const category of LEXARA_REPORT_CATEGORY_TO_BACKGROUND_CATEGORIES[match.label]) {
       categories.add(category);
     }
   }
   for (const [pattern, values] of CATEGORY_RULES) if (pattern.test(prompt)) values.forEach(value => categories.add(value));
-  if (!categories.size) ['identity','identity-resolution'].forEach(value => categories.add(value as PantheonBackgroundCategory));
+  if (!categories.size) ['identity','identity-resolution'].forEach(value => categories.add(value as LexaraBackgroundCategory));
   categories.add('identity');
   categories.add('identity-resolution');
   return [...categories];
 }
-const REPORT_LABEL_BY_BACKGROUND_CATEGORY: Partial<Record<PantheonBackgroundCategory, string>> = {
+const REPORT_LABEL_BY_BACKGROUND_CATEGORY: Partial<Record<LexaraBackgroundCategory, string>> = {
   identity: 'Identity & Identity Verification',
   'identity-resolution': 'Identity & Identity Verification',
   contacts: 'Phone Numbers',
@@ -264,7 +253,7 @@ const REPORT_LABEL_BY_BACKGROUND_CATEGORY: Partial<Record<PantheonBackgroundCate
 
 function conversationalReportCategoryLabel(
   prompt: string,
-  categories: readonly PantheonBackgroundCategory[],
+  categories: readonly LexaraBackgroundCategory[],
   previousUserTurns: readonly string[] = [],
 ): string {
   const semanticMatch = classifyLexaraBackgroundSemanticCategories(prompt, previousUserTurns)[0];
@@ -309,7 +298,7 @@ function conversationalReportCategoryLabel(
   return 'Identity & Identity Verification';
 }
 
-function semanticResearchExpressions(subject: string, categories: readonly PantheonBackgroundCategory[], prompt: string): string[] {
+function semanticResearchExpressions(subject: string, categories: readonly LexaraBackgroundCategory[], prompt: string): string[] {
   const expressions = new Set<string>();
   const categoryTerms = categoryDiscoveryTerms(categories).split(/\s{2,}|,\s*/).filter(Boolean);
   if (/\b(?:background(?!\s+(?:check|report))|biograph(?:y|ical)|life\s+of|who\s+was)\b/i.test(prompt)) {
@@ -330,7 +319,7 @@ function semanticResearchExpressions(subject: string, categories: readonly Panth
   return [...expressions].slice(0, 18);
 }
 
-function categoryDiscoveryTerms(categories: readonly PantheonBackgroundCategory[]): string {
+function categoryDiscoveryTerms(categories: readonly LexaraBackgroundCategory[]): string {
   const terms = new Set<string>();
   if (categories.includes('corrections')) ['inmate locator','offender search','sheriff jail roster','detention center inmate search'].forEach(value => terms.add(value));
   if (categories.includes('criminal') || categories.includes('arrests')) ['criminal court records','case search','arrest records'].forEach(value => terms.add(value));
@@ -516,7 +505,7 @@ export async function investigatePersonQuestion(
   // Dynamic search/index discovery is the primary locator. Curated category
   // seeds are hints for ranking/context only; they are not a URL traversal plan.
   const categorySeedUrls = categories
-    .flatMap(category => buildPantheonCategoryTargets(category, semanticSubject, context.jurisdiction, 10))
+    .flatMap(category => buildLexaraBackgroundCategoryTargets(category, semanticSubject, context.jurisdiction, 10))
     // Search-provider pages are discovery mechanisms, not source documents.
     // Dynamic discovery already fans out across independent search lanes; putting
     // DuckDuckGo result pages back into the crawler frontier caused the live
@@ -525,7 +514,7 @@ export async function investigatePersonQuestion(
     .map(target => target.url)
     .filter((url, index, all) => all.indexOf(url) === index)
     .slice(0, PERSON_RECURSIVE_MAX_TARGETS_PER_PASS);
-  const discoveryPromise = discoverPantheonSourcesParallel(
+  const discoveryPromise = discoverLexaraBackgroundSourcesParallel(
     `${semanticExpressions.join(' | ')} public records ${categories.join(' ')} ${categoryDiscoveryTerms(categories)} official government database search`,
     categorySeedUrls,
     {
@@ -648,9 +637,9 @@ export async function investigatePersonQuestion(
       maxCrawlers: 4,
     });
     const supplementalIds = new Set<string>([
-      ...PANTHEON_RAZOR_SKILL_IDS,
-      ...PANTHEON_SECONDARY_CRAWLER_IDS,
-      ...PANTHEON_PORTABLE_CAPABILITY_IDS,
+      ...LEXARA_BACKGROUND_RAZOR_SKILL_IDS,
+      ...LEXARA_BACKGROUND_SECONDARY_CRAWLER_IDS,
+      ...LEXARA_BACKGROUND_PORTABLE_CAPABILITY_IDS,
     ]);
     console.info('[LEXARA BackgroundRoute]', {
       stage: 'dynamic-rosters',
@@ -670,20 +659,20 @@ export async function investigatePersonQuestion(
             : !item.configured ? 'prerequisite-unavailable' : 'outside-conversational-adapter-contract',
         })),
     });
-    const primaryCrawlerSet = new Set<string>(PANTHEON_PRIMARY_CRAWLER_IDS);
+    const primaryCrawlerSet = new Set<string>(LEXARA_BACKGROUND_PRIMARY_CRAWLER_IDS);
     const selectedPrimaryCrawlers = dynamicAssignments
       .filter(assignment => assignment.roles.includes('primary'))
       .map(assignment => assignment.crawler.id)
-      .filter((id): id is PantheonPrimaryCrawlerId => primaryCrawlerSet.has(id));
+      .filter((id): id is LexaraBackgroundPrimaryCrawlerId => primaryCrawlerSet.has(id));
     // Never collapse a person-record lookup to one generic crawler. If the
     // capability scorer found no primary route, retain the complete primary
     // inventory and let the bounded pools govern concurrency.
     const primaryCrawlers = selectedPrimaryCrawlers.length
       ? [...new Set(selectedPrimaryCrawlers)].slice(0, 4)
-      : PANTHEON_PRIMARY_CRAWLER_IDS.slice(0, 2);
+      : LEXARA_BACKGROUND_PRIMARY_CRAWLER_IDS.slice(0, 2);
     const eligiblePrimaryCrawlerIds = dynamicAssignments
       .filter(assignment => assignment.roles.includes('primary') && primaryCrawlerSet.has(assignment.crawler.id))
-      .map(assignment => assignment.crawler.id as PantheonPrimaryCrawlerId);
+      .map(assignment => assignment.crawler.id as LexaraBackgroundPrimaryCrawlerId);
     const explorationPrimaryQueue = [...new Set(eligiblePrimaryCrawlerIds)].slice(0, 4);
 
     const recursiveStartedAt = Date.now();
@@ -763,7 +752,7 @@ export async function investigatePersonQuestion(
           targets: passTargets.length,
         });
         for (const target of passTargets) {
-          void rememberPantheonDiscoveryOutcome(target, false, {
+          void rememberLexaraBackgroundDiscoveryOutcome(target, false, {
             categories,
             jurisdiction: context.jurisdiction,
             query: categoryDiscoveryTerms(categories),
@@ -780,7 +769,7 @@ export async function investigatePersonQuestion(
         // conversational research job's hard deadline.
         pendingTargets = pendingTargets.filter(url => !seenTargets.has(url));
         try {
-          const broadened = await discoverPantheonSourcesParallel(
+          const broadened = await discoverLexaraBackgroundSourcesParallel(
             `${semanticResearchExpressions(resolvedSubject, categories, prompt).join(' | ')} ${context.jurisdiction || ''} alternate source database archive`,
             [...seenTargets],
             { categories, jurisdiction: context.jurisdiction, limit: PERSON_RECURSIVE_MAX_TARGETS_PER_PASS, timeoutMs: Math.min(2_500, remainingMs), signal: context.signal, providerPolicy: 'capability-first' },
@@ -801,7 +790,7 @@ export async function investigatePersonQuestion(
 
       if (!retrieval.available) {
         for (const target of passTargets) {
-          void rememberPantheonDiscoveryOutcome(target, false, {
+          void rememberLexaraBackgroundDiscoveryOutcome(target, false, {
             categories,
             jurisdiction: context.jurisdiction,
             query: categoryDiscoveryTerms(categories),
@@ -813,7 +802,7 @@ export async function investigatePersonQuestion(
       for (const item of retrieval.evidence.filter(item => item.content?.trim())) {
         retrievedEvidenceCount += 1;
         try {
-          validatePantheonSourceResult(item);
+          validateLexaraBackgroundSourceResult(item);
           if (item.metadata?.discoveryOnly || item.provenance.transport === 'search-provider'
             || item.crawler.startsWith('search-index:')
             || !retrieval.crawlerAudit.some(audit => audit.crawler === item.crawler
@@ -829,7 +818,7 @@ export async function investigatePersonQuestion(
         }
         if (!resolvedSubject) continue;
         const identityMatch = resolvedEntityType === 'person'
-          ? matchPantheonSubject(item, resolvedSubject, context.jurisdiction)
+          ? matchLexaraBackgroundSubject(item, resolvedSubject, context.jurisdiction)
           : genericEntityMatch(item, resolvedSubject);
         if (!identityMatch.matched) {
           rejectedIdentityMismatchCount += 1;
@@ -861,7 +850,7 @@ export async function investigatePersonQuestion(
           surfacedEvidenceKeys.add(evidenceKey);
           context.onProgress?.({ type: 'evidence', pass: recursionPasses, confidence: Math.max(0, Math.min(1, dynamicScore)), sourceUrl: item.sourceUrl, evidence: subjectRelevantExcerpt(item.content, resolvedSubject) });
         }
-        void rememberPantheonDiscoveryOutcome(item.sourceUrl, true, {
+        void rememberLexaraBackgroundDiscoveryOutcome(item.sourceUrl, true, {
           categories,
           jurisdiction: context.jurisdiction,
           crawler: item.crawler,
@@ -879,7 +868,7 @@ export async function investigatePersonQuestion(
       const bestConfidence = Math.max(rankedScores[0] || 0, structuredEvidenceConfidence);
       const bestEvidence = rankedEntries[0] ? acceptedEvidence.get(rankedEntries[0][0]) : undefined;
       const hasMaterialIdentityConflict = bestEvidence && resolvedSubject
-        ? (resolvedEntityType === 'person' ? matchPantheonSubject(bestEvidence, resolvedSubject, context.jurisdiction) : genericEntityMatch(bestEvidence, resolvedSubject)).conflicts.length > 0
+        ? (resolvedEntityType === 'person' ? matchLexaraBackgroundSubject(bestEvidence, resolvedSubject, context.jurisdiction) : genericEntityMatch(bestEvidence, resolvedSubject)).conflicts.length > 0
         : false;
       console.info('[LEXARA BackgroundRoute]', {
         stage: 'evidence-progress',
@@ -920,7 +909,7 @@ export async function investigatePersonQuestion(
         const broadeningTerms = pass === 0
           ? 'official record database archive'
           : 'official government database historical archive alternate source';
-        const broadened = await discoverPantheonSourcesParallel(
+        const broadened = await discoverLexaraBackgroundSourcesParallel(
           `${semanticResearchExpressions(resolvedSubject, categories, prompt).join(' | ')} ${context.jurisdiction || ''} ${broadeningTerms}`,
           [...seenTargets, ...frontier],
           {
@@ -957,7 +946,7 @@ export async function investigatePersonQuestion(
     const publishableEvidenceCount = evidenceEntries.filter(([key]) => (acceptedEvidenceScores.get(key) || 0) >= PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD).length;
     const finalBestEvidence = evidenceEntries[0]?.[1];
     const finalHasMaterialIdentityConflict = finalBestEvidence && resolvedSubject
-      ? (resolvedEntityType === 'person' ? matchPantheonSubject(finalBestEvidence, resolvedSubject, context.jurisdiction) : genericEntityMatch(finalBestEvidence, resolvedSubject)).conflicts.length > 0
+      ? (resolvedEntityType === 'person' ? matchLexaraBackgroundSubject(finalBestEvidence, resolvedSubject, context.jurisdiction) : genericEntityMatch(finalBestEvidence, resolvedSubject)).conflicts.length > 0
       : false;
     const evidenceSufficient = bestConfidence >= PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD && !finalHasMaterialIdentityConflict;
     const hasUsefulPartialEvidence = publishableEvidenceCount > 0 || structuredEvidence.length > 0;
