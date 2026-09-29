@@ -8,3 +8,8 @@ export type {
   LexaraPantheonProgressEvent as LexaraBackgroundProgressEvent,
 } from './LexaraPantheonInvestigation';
 export { discoverPantheonSourcesParallel as discoverLexaraBackgroundSourcesParallel } from '../services/pantheon/PantheonDiscoveryCoordinator';
+
+export {
+  getLexaraSupplementalQueryHints,
+  getLexaraSupplementalSources,
+} from './LexaraSupplementalOsintSources';
