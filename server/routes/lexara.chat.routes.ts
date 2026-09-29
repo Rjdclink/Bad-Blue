@@ -243,11 +243,19 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
     send('started', { status: 'researching' });
     const previousMessages = sanitizePreviousMessages((rawContext as any).previousMessages);
     const documentIntent = detectDocumentIntent(prompt, previousMessages);
+    const explicitJurisdiction = cleanOptionalString((rawContext as any).jurisdiction, 80);
+    const networkState = explicitJurisdiction ? null : await resolveNetworkState(
+      String(req.headers['x-real-ip'] || req.headers['cf-connecting-ip'] || req.ip || '')
+    );
     const result = await generateLexaraConversationResponse(prompt, {
       previousMessages,
       lawType: cleanOptionalString((rawContext as any).lawType),
       lawTypeName: cleanOptionalString((rawContext as any).lawTypeName, 160),
-      jurisdiction: cleanOptionalString((rawContext as any).jurisdiction, 80),
+      jurisdiction: explicitJurisdiction,
+      backgroundJurisdiction: networkState?.state,
+      backgroundLocality: networkState?.locality,
+      backgroundArea: networkState?.area,
+      backgroundLocationConfidence: networkState?.confidence,
       behaviorMode: (rawContext as any).behaviorMode === 'personable' ? 'personable' : 'professional',
       sessionId: cleanOptionalString((rawContext as any).sessionId, 128),
       signal: controller.signal,
