@@ -22,7 +22,7 @@ import { decideLexaraResearchNeed, isLexaraRepeatRequest } from './LexaraResearc
 import { planLexaraSequence } from './LexaraSequenceRouter';
 import { resolveLexaraBackgroundSubject } from './LexaraBackgroundSubject';
 import { discoverPantheonSourcesParallel } from '../services/pantheon/PantheonDiscoveryCoordinator';
-import { resolveUSJurisdiction } from './LexaraJurisdictionResolver';
+import { hasExplicitLocationCue, resolveUSJurisdiction } from './LexaraJurisdictionResolver';
 
 export interface LexaraConversationMessage {
   role: 'user' | 'lexara' | 'assistant';
@@ -473,7 +473,11 @@ export async function generateLexaraConversationResponse(
   const jurisdictionRelevant = /\b(?:law|legal|court|case|charge|crime|criminal|civil|lawsuit|sue|claim|statute|deadline|limitation|file|filing|motion|petition|complaint|divorce|custody|probation|parole|warrant|rights?|attorney|judge|jurisdiction|venue|state\s+law|federal)\b/i.test(cleanPrompt);
   const backgroundStateJurisdiction = jurisdictionRelevant
     ? normalizeJurisdiction(context.backgroundJurisdiction) : undefined;
-  const stateJurisdiction = explicitStateJurisdiction || backgroundStateJurisdiction;
+  const explicitLocationCue = hasExplicitLocationCue(cleanPrompt);
+  // User-supplied place language outranks the network estimate. Never constrain
+  // an explicit city/county with a conflicting inferred state.
+  const stateJurisdiction = explicitStateJurisdiction
+    || (!explicitLocationCue ? backgroundStateJurisdiction : undefined);
   const resolvedJurisdiction = await resolveUSJurisdiction(cleanPrompt, stateJurisdiction);
   const jurisdiction = resolvedJurisdiction?.display || stateJurisdiction;
   // Network-derived jurisdiction is silent context. Only user/conversation-derived
@@ -651,7 +655,7 @@ export async function generateLexaraConversationResponse(
     return { text, jurisdiction: publicJurisdiction, mappedLawType, pantheonEndpoint, pantheonStatus };
   }
 
-  const silentLocationContext = jurisdictionRelevant && !explicitStateJurisdiction && backgroundStateJurisdiction
+  const silentLocationContext = jurisdictionRelevant && !explicitStateJurisdiction && !resolvedJurisdiction?.locality && backgroundStateJurisdiction
     ? `\n\nINTERNAL LOCATION CONTEXT (do not volunteer or announce): Network-derived jurisdiction estimate: ${[
         context.backgroundLocality,
         context.backgroundArea && context.backgroundArea !== context.backgroundLocality ? context.backgroundArea : undefined,
