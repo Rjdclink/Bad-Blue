@@ -49,7 +49,7 @@ for (const model of [
   'gemini-3.8-flash',
   'claude-sonnet-5',
   'grok-4.7',
-{
+]) {
   must(registry.includes(model), `current Harmony registry includes ${model}`);
 }
 
