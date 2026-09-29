@@ -36,7 +36,7 @@ import {
 } from "./statelessLocalAuth";
 import { getLegalWhatAccessState, getTrialRemainingMilliseconds } from "./trialAccess";
 import { sendLegalWhatSignupNotification, sendLegalWhatPasswordResetEmail } from "./emailService";
-import { getBaseUrl } from "./subscriptionConfig";
+import { getBaseUrl } from "./config";
 
 
 function readCookie(req: any, name: string): string | null {
