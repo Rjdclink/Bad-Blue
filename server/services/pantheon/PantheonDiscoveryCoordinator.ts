@@ -1,6 +1,7 @@
 import type { HarmonyProviderPolicy } from '../../aiHarmonyModelRegistry';
 import { GoogleGenAI } from '@google/genai';
 import { getPantheonLearnedQueryPatterns, getPantheonLearnedSources, rankPantheonDiscoveryUrls } from './PantheonDiscoveryLearning';
+import { planPantheonResearchQueries } from './PantheonResearchAssist';
 
 export type PantheonDiscoveryLane =
   | 'learned'
@@ -362,6 +363,27 @@ export async function discoverPantheonSourcesParallel(
         evidence: retry.flatMap(result => result.evidence).filter(item => learnedUrls.includes(item.url)),
         lanesAttempted: [...new Set(lanesAttempted)],
         lanesWithResults: [...new Set(lanesWithResults)],
+      };
+    }
+  }
+
+  // The assistants suggest better queries only after independent search has
+  // missed. They cannot replace the search lanes or manufacture source evidence.
+  // Legal authority discovery is separate from Pantheon's background team.
+  if (options.providerPolicy !== 'legalwhat' && !options.signal?.aborted) {
+    const plan = await planPantheonResearchQueries(query, { signal: options.signal, timeoutMs: 7_000 });
+    if (plan.queries.length) {
+      const expanded = await Promise.all(plan.queries.map(async alternate => Promise.all([
+        lane('gemini-google', Boolean(process.env.GEMINI_API_KEY?.trim()), () => geminiGoogleSearch(alternate, limit, timeoutMs, options.signal)),
+        lane('searxng', Boolean(process.env.SEARXNG_URL?.trim()), () => searxngSearch(alternate, limit, timeoutMs, options.signal)),
+        lane('ddgs', Boolean(process.env.DDGS_URL?.trim()), () => ddgsSearch(alternate, limit, timeoutMs, options.signal)),
+        lane('openserp', Boolean(process.env.OPENSERP_URL?.trim()), () => openSerpSearch(alternate, limit, timeoutMs, options.signal)),
+      ])));
+      const evidence = prioritizePantheonDiscoveryEvidenceGroups(
+        [expanded.flatMap(results => results.flatMap(result => result.evidence))], seen, limit);
+      if (evidence.length) return {
+        urls: evidence.map(item => item.url), evidence,
+        lanesAttempted: [...new Set(lanesAttempted)], lanesWithResults: [...new Set(lanesWithResults)],
       };
     }
   }

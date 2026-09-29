@@ -84,6 +84,9 @@ async function resolveGroqModel(requestedModel: string, apiKey: string): Promise
 
   const capabilityCandidates = [
     requested,
+    // The background lane needs an independently permitted alternative when
+    // a project lists Qwen but denies inference for that particular model.
+    ...(requested === 'qwen/qwen3.8-27b' ? ['openai/gpt-oss-20b'] : []),
     DEFAULT_GROQ_MODEL,
     'openai/gpt-oss-20b',
     'openai/gpt-oss-120b',

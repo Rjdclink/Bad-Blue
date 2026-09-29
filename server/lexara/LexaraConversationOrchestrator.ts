@@ -522,7 +522,7 @@ export async function generateLexaraConversationResponse(
   const pantheonInvestigationPromise: Promise<LexaraPersonInvestigation | null> = pantheonDelegatedByLexara ? (searchOnlyFact
     ? discoverPantheonSourcesParallel(researchDecision.objective || cleanPrompt, [], {
         jurisdiction, limit: 8, timeoutMs: 6_000,
-        signal: pantheonController.signal, providerPolicy: 'legalwhat',
+        signal: pantheonController.signal, providerPolicy: 'capability-first',
       }).then(discovery => ({
         sources: [], searchLeads: discovery.urls, categories: [], fullBackgroundReportRequested: false,
         endpoint: discovery.urls.length ? 'search-leads-only' as const : 'unavailable' as const,
