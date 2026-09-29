@@ -93,7 +93,7 @@ export function getLexaraImmediateAcknowledgement(
   context: LexaraAcknowledgementContext = {},
 ): LexaraImmediateAcknowledgement {
   const clean = String(prompt || '').trim();
-  const normalized = clean.toLowerCase().replace(/return { text: lastReply?.content?.trim() || 'I do not have my previous answer in this conversation. Please repeat your question.',\n      jurisdiction: publicJurisdiction, mappedLawType };s+/g, ' ');
+  const normalized = clean.toLowerCase().replace(/\s+/g, ' ');
   const presenceOnly = /^(?:(?:hey|hello)[, ]*)?(?:lexara[, ]*)?(?:are you (?:still )?there|you still there|you there|can you hear me|are you listening|hello|did you hear me|are you still working(?: on (?:this|it))?)[?.! ]*$/i.test(clean);
 
   if (presenceOnly) {
