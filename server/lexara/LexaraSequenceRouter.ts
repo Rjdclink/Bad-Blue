@@ -4,7 +4,7 @@ import {
   classifyBackgroundSemanticCategories,
   isContextualReference,
   isFullPantheonReportIntent,
-} from './LexaraPantheonSemanticIntent';
+} from './LexaraBackgroundSemanticIntent';
 
 export type LexaraSequenceId =
   | 'simple-factual'
