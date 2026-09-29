@@ -555,13 +555,13 @@ export async function generateLexaraConversationResponse(
     signal: pantheonController.signal,
     onProgress: context.onResearchProgress,
   })).catch(error => {
-    console.warn('[LEXARA Pantheon] application-owned research route unavailable', {
+    console.warn('[LEXARA Background] application-owned research route unavailable', {
       error: error instanceof Error ? error.message : String(error),
     });
     return {
       sources: [], categories: [], fullBackgroundReportRequested: false,
       endpoint: 'failed' as const, coverageLimited: true,
-      coverageNote: 'Pantheon research failed before a verified result was returned.',
+      coverageNote: 'Background research failed before a verified result was returned.',
     };
   }) : Promise.resolve(null);
   // Never await network-backed Pantheon work before the live research budget.
@@ -749,7 +749,7 @@ export async function generateLexaraConversationResponse(
       try {
         const correction = await AICollaborationOrchestrator.orchestrateCollaboration(
           'lexara-evidence-correction',
-          `CURRENT USER TURN:\n${cleanPrompt}\n\nPANTHEON VERIFIED EVIDENCE:\n${pantheonInvestigation.evidenceSummary}\n\nRewrite the answer using only this evidence. Do not refuse merely because the subject is a private individual or because the requested fact is personal. If the specific fact is not established, say it was not verified from the completed sources.`,
+          `CURRENT USER TURN:\n${cleanPrompt}\n\nLEXARA VERIFIED BACKGROUND EVIDENCE:\n${pantheonInvestigation.evidenceSummary}\n\nRewrite the answer using only this evidence. Do not refuse merely because the subject is a private individual or because the requested fact is personal. If the specific fact is not established, say it was not verified from the completed sources.`,
           {
             context: UsageContext.USER,
             complexity: TaskComplexity.MODERATE,
