@@ -82,6 +82,7 @@ interface EdgeAuthResponse {
   decision?: { outcome?: TrialActivationOutcome } | null;
   trialSchemaReady?: boolean;
   error?: string;
+  fingerprint?: string | null;
 }
 
 async function edgeAuthRequest(
@@ -450,6 +451,72 @@ export async function authenticateLocalUserHttp(email: string, password: string)
   ]);
 
   return mapUser(userRow);
+}
+
+
+async function passwordFingerprintForEmail(email: string): Promise<string | null> {
+  const normalizedEmail = normalizeEmail(email);
+  const backend = await resolveLocalAuthBackend();
+  const directClient = backend.kind === "edge" ? await primarySupabaseClient() : null;
+  let passwordHash = "";
+  if (backend.kind === "postgres") {
+    const result = await authDbQuery(
+      `SELECT a.password_hash FROM users u JOIN auth_accounts a ON a.user_id=u.id AND a.auth_type='local'
+        WHERE lower(u.email)=$1 LIMIT 1`, [normalizedEmail]);
+    passwordHash = String(result.rows?.[0]?.password_hash || "");
+  } else {
+    const supabase = backend.kind === "supabase" ? backend.client : directClient!;
+    const { data: user } = await supabase.from("users").select("id").eq("email", normalizedEmail).maybeSingle();
+    if (!user?.id) return null;
+    const { data: account } = await supabase.from("auth_accounts").select("password_hash")
+      .eq("user_id", user.id).eq("auth_type", "local").maybeSingle();
+    passwordHash = String(account?.password_hash || "");
+  }
+  return passwordHash ? crypto.createHash("sha256").update(passwordHash).digest("base64url") : null;
+}
+
+const PASSWORD_RESET_TTL_MS = 30 * 60 * 1000;
+export async function createLocalPasswordResetTokenHttp(email: string, now = Date.now()): Promise<string | null> {
+  const normalizedEmail = normalizeEmail(email);
+  const fingerprint = await passwordFingerprintForEmail(normalizedEmail);
+  if (!fingerprint) return null;
+  const payload = Buffer.from(JSON.stringify({
+    v: 1, email: normalizedEmail, fingerprint, exp: now + PASSWORD_RESET_TTL_MS,
+    nonce: crypto.randomBytes(24).toString("base64url"),
+  }), "utf8").toString("base64url");
+  return `${payload}.${sign(payload)}`;
+}
+
+export async function resetLocalPasswordHttp(token: string, newPassword: string, now = Date.now()): Promise<boolean> {
+  if (String(newPassword || "").length < 8) throw new Error("Password must be at least 8 characters");
+  const [encoded, signature, ...extra] = String(token || "").split(".");
+  if (extra.length || !encoded || !signature || !safeEquals(signature, sign(encoded))) return false;
+  let payload: any;
+  try { payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")); } catch { return false; }
+  if (payload?.v !== 1 || !Number.isSafeInteger(payload?.exp) || payload.exp <= now ||
+      typeof payload?.email !== "string" || typeof payload?.fingerprint !== "string") return false;
+  const currentFingerprint = await passwordFingerprintForEmail(payload.email);
+  if (!currentFingerprint || !safeEquals(currentFingerprint, payload.fingerprint)) return false;
+
+  const backend = await resolveLocalAuthBackend();
+  const directClient = backend.kind === "edge" ? await primarySupabaseClient() : null;
+  const salt = await bcrypt.genSalt(BCRYPT_SALT_ROUNDS);
+  const passwordHash = await bcrypt.hash(newPassword, salt);
+  const updatedAt = new Date(now).toISOString();
+  if (backend.kind === "postgres") {
+    const result = await authDbQuery(
+      `UPDATE auth_accounts a SET password_hash=$1,password_salt=$2,updated_at=$3
+        FROM users u WHERE a.user_id=u.id AND a.auth_type='local' AND lower(u.email)=$4 RETURNING a.id`,
+      [passwordHash, salt, updatedAt, payload.email]);
+    return Boolean(result.rows?.[0]?.id);
+  }
+  const supabase = backend.kind === "supabase" ? backend.client : directClient!;
+  const { data: user } = await supabase.from("users").select("id").eq("email", payload.email).maybeSingle();
+  if (!user?.id) return false;
+  const { error } = await supabase.from("auth_accounts").update({
+    password_hash: passwordHash, password_salt: salt, updated_at: updatedAt,
+  }).eq("user_id", user.id).eq("auth_type", "local");
+  return !error;
 }
 
 export async function registerLocalUserHttp(
