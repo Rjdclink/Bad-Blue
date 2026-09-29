@@ -85,7 +85,7 @@ export default function Landing() {
     "@type": "WebApplication",
     "name": "Legal What?",
     "alternateName": ["LegalWhat", "Legal What"],
-    "description": "LegalWhat features Lexara, an animated conversational legal AI for natural, real-time, two-way voice and text interaction across 40+ areas of law. Upload documents, images and media for analysis, critique, editing or alteration; Lexara can recognize when a legal document is needed, identify the appropriate document and jurisdiction, and generate it as a downloadable PDF or DOCX. LegalWhat is a sophisticated legal AI platform that is convenient and easy to use, with access available for a straightforward flat $19.99 monthly subscription.",
+    "description": "Lexara is a jurisdiction-aware conversational legal AI with extensive knowledge across 40+ areas of law. Talk live by voice or text, analyze and revise uploaded documents and media, identify jurisdiction-specific requirements, find and use appropriate local legal forms, and create legal documents. Try LegalWhat free for 3 days, then only $19.99/month.",
     "url": baseUrl,
     "applicationCategory": "LegalApplication",
     "operatingSystem": "Web Browser",
@@ -107,9 +107,9 @@ export default function Landing() {
     <div className="min-h-screen">
       <SEOHead
         title="Legal What? | Lexara Conversational Legal AI"
-        description="LegalWhat features Lexara, an animated conversational legal AI for natural, real-time, two-way voice and text interaction across 40+ areas of law. Upload documents, images and media for analysis, critique, editing or alteration; Lexara can recognize when a legal document is needed, identify the appropriate document and jurisdiction, and generate it as a downloadable PDF or DOCX. LegalWhat is a sophisticated legal AI platform that is convenient and easy to use, with access available for a straightforward flat $19.99 monthly subscription."
+        description="Lexara is a jurisdiction-aware conversational legal AI with extensive knowledge across 40+ areas of law. Talk live by voice or text, analyze and revise uploaded documents and media, identify jurisdiction-specific requirements, find and use appropriate local legal forms, and create legal documents. Try LegalWhat free for 3 days, then only $19.99/month."
         ogTitle="Legal What? | Lexara Conversational Legal AI"
-        ogDescription="Talk with Lexara, LegalWhat’s convenient, affordable, user-friendly conversational legal AI. Voice, text, media analysis and legal-document tools are available with a flat $19.99 monthly subscription."
+        ogDescription="Lexara is a jurisdiction-aware conversational legal AI with extensive knowledge across 40+ areas of law. Talk live by voice or text, analyze and revise uploaded documents and media, identify jurisdiction-specific requirements, find and use appropriate local legal forms, and create legal documents. Try LegalWhat free for 3 days, then only $19.99/month."
         canonicalUrl="https://legalwhat.com/"
         ogImage="https://legalwhat.com/images/Legal%20What%20Icon.png"
         ogImageAlt="Legal What? legal technology platform logo"
@@ -176,7 +176,7 @@ export default function Landing() {
             </h2>
             <div className="space-y-5 text-white/90 leading-relaxed">
               <p>
-                Meet <strong>LEXARA — Legal Expert AI Resource Advisor</strong>, Legal What?’s animated conversational legal AI, built for a natural, real-time, two-way voice or text conversation across 40+ areas of law.
+                Lexara is a jurisdiction-aware conversational legal AI with extensive knowledge across 40+ areas of law. Talk live by voice or text, analyze and revise uploaded documents and media, identify jurisdiction-specific requirements, find and use appropriate local legal forms, and create legal documents.
               </p>
               <p>
                 LEXARA provides legal guidance, research, analysis, and explanations based on the facts you provide. She can ask relevant follow-up questions, identify legal issues, apply jurisdiction-specific statutes, rules, and precedent, and connect your matter with deeper legal research and case-analysis tools.
