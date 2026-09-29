@@ -42,7 +42,7 @@ function fixture({ xai = true, failXai = false } = {}) {
   const primary=fixture();
   const result=await primary.plan(query);
   assert.deepEqual(Array.from(result.assistants),['claude','xai']);
-  assert.equal(result.queries.length,4);
+  assert.equal(result.queries.length,3);
   assert(primary.calls.includes('claude'));
   assert(primary.calls.some(item=>String(item).includes('api.x.ai/v1/chat/completions')));
   const fallback=fixture({failXai:true});

@@ -527,10 +527,10 @@ test('independent legal analyses actually overlap', async () => {
 });
 test('atomic admission prevents concurrent transport duplication', async () => {
   const h = harness(keys), a = h.admission;
-  const leases = await Promise.all(Array.from({ length: 20 }, () => a.reserveLegalProvider('groq','model',100,'Facts')));
+  const leases = await Promise.all(Array.from({ length: 20 }, () => a.reserveLegalProvider('xai','model',100,'Facts')));
   assert.equal(leases.filter(Boolean).length, 1);
   await a.releaseLegalProvider(leases.find(Boolean));
-  assert(await a.reserveLegalProvider('groq','model',100,'Facts'));
+  assert(await a.reserveLegalProvider('xai','model',100,'Facts'));
 });
 test('Sonnet and Opus share the same account reservation', async () => {
   const h = harness(keys), a = h.admission;
@@ -548,15 +548,15 @@ test('Claude has no artificial daily request cap', async () => {
 });
 test('actual configured sliding allowance rejects overspend without partial reservation', async () => {
   const h = harness(keys), a = h.admission;
-  h.env.LEXARA_GROQ_RPM = '2'; h.env.LEXARA_GROQ_TPM = '250';
-  let lease = await a.reserveLegalProvider('groq','model',100,'Facts');
+  h.env.LEXARA_XAI_RPM = '2'; h.env.LEXARA_XAI_TPM = '250';
+  let lease = await a.reserveLegalProvider('xai','model',100,'Facts');
   assert(lease); await a.releaseLegalProvider(lease);
-  assert.equal(await a.reserveLegalProvider('groq','model',200,'Facts'), null);
-  lease = await a.reserveLegalProvider('groq','model',100,'Facts');
+  assert.equal(await a.reserveLegalProvider('xai','model',200,'Facts'), null);
+  lease = await a.reserveLegalProvider('xai','model',100,'Facts');
   assert(lease); await a.releaseLegalProvider(lease);
-  assert.equal(await a.reserveLegalProvider('groq','model',1,''), null);
+  assert.equal(await a.reserveLegalProvider('xai','model',1,''), null);
   h.advance(60001);
-  assert(await a.reserveLegalProvider('groq','model',100,'Facts'));
+  assert(await a.reserveLegalProvider('xai','model',100,'Facts'));
 });
 test('Retry-After pauses the whole account and cancellation does not extend it', async () => {
   const h = harness(keys), a = h.admission;
@@ -570,36 +570,27 @@ test('Retry-After pauses the whole account and cancellation does not extend it',
 });
 test('actual remaining-token headers reserve output before dispatch', async () => {
   const h = harness(keys), a = h.admission;
-  await a.noteLegalProviderHeaders('groq', { 'x-ratelimit-remaining-tokens': '100', 'x-ratelimit-reset-tokens': '2m' });
-  assert.equal(await a.reserveLegalProvider('groq','model',101,''), null);
-  const lease = await a.reserveLegalProvider('groq','model',80,'');
+  await a.noteLegalProviderHeaders('xai', { 'x-ratelimit-remaining-tokens': '100', 'x-ratelimit-reset-tokens': '2m' });
+  assert.equal(await a.reserveLegalProvider('xai','model',101,''), null);
+  const lease = await a.reserveLegalProvider('xai','model',80,'');
   assert(lease); await a.releaseLegalProvider(lease);
-  assert.equal(await a.reserveLegalProvider('groq','model',21,''), null);
+  assert.equal(await a.reserveLegalProvider('xai','model',21,''), null);
   h.advance(120001);
-  assert(await a.reserveLegalProvider('groq','model',101,''));
+  assert(await a.reserveLegalProvider('xai','model',101,''));
 });
 test('legacy model catalog entries cannot reenter legal recovery', async () => {
   const h = harness(['GEMINI_API_KEY','XAI_API_KEY'], {
     recoveryModels: ['gemini-2.5-flash'],
     fail: provider => provider === 'gemini' ? '503 UNAVAILABLE' : null,
   });
-  await h.engine.executeTask(circuitTask(h,'gemini',{ fallbackProviders: ['groq'] }), new Map());
+  await h.engine.executeTask(circuitTask(h,'gemini',{ fallbackProviders: ['xai'] }), new Map());
   assert(!h.calls.some(x => x.model === 'gemini-2.5-flash'));
 });
 
-test('DeepSeek and Kimi share quota and cannot double-spend one account', async () => {
-  const h = harness(keys), a = h.admission;
-  const lease = await a.reserveLegalProvider('deepseek','model',100,'Facts');
-  assert(lease);
-  assert.equal(await a.reserveLegalProvider('kimi','model',100,'Facts'),null);
-  await a.releaseLegalProvider(lease);
-  await a.noteLegalProviderError('deepseek','model',new Error('402 insufficient credits'));
-  assert.equal(a.canUseLegalProvider('kimi','model'),false);
-});
 test('support failure prefers Claude before another support provider', async () => {
   const h = harness(keys,{fail:'gemini'});
   const result = await h.engine.executeTask(circuitTask(h,'gemini',{
-    fallbackProviders:['groq','claude','deepseek'],maxFallbacks:1,
+    fallbackProviders:['claude','xai'],maxFallbacks:1,
   }),new Map());
   assert.equal(result.provider,'claude'); assert.equal(result.success,true);
 });
