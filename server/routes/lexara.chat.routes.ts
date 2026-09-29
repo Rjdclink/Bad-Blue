@@ -247,7 +247,6 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
     const networkState = explicitJurisdiction ? null : await resolveNetworkState(
       String(req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || req.headers['cf-connecting-ip'] || req.ip || '')
     );
-    const backgroundJurisdiction = explicitJurisdiction || networkState?.state;
     const result = await generateLexaraConversationResponse(prompt, {
       previousMessages,
       lawType: cleanOptionalString((rawContext as any).lawType),
