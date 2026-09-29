@@ -1,3 +1,4 @@
+// Lexara owns this research surface; underlying utilities remain shared and unchanged.
 export {
   investigatePersonQuestion as investigateLexaraBackgroundQuestion,
   formatPantheonInvestigationForSystem as formatLexaraBackgroundResearchForSystem,
