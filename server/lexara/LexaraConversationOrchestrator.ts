@@ -482,7 +482,7 @@ export async function generateLexaraConversationResponse(
   const jurisdiction = resolvedJurisdiction?.display || stateJurisdiction;
   // Network-derived jurisdiction is silent context. Only user/conversation-derived
   // jurisdiction is returned to the client for display/persistence.
-  const publicJurisdiction = resolvedJurisdiction?.display || explicitStateJurisdiction;
+  const publicJurisdiction = explicitStateJurisdiction || (explicitLocationCue ? resolvedJurisdiction?.display : undefined);
   const domainName = trustedDomainName(context.lawType);
   const domainProfile = getLexaraLegalDomainProfile(context.lawType);
   const previousUserTurns = (context.previousMessages || [])
