@@ -84,6 +84,7 @@ function harness(options = {}) {
     const module = { exports: {} }; cache.set(relative, module);
     const requireLocal = spec => {
       if (spec === '@google/genai') return { GoogleGenAI: class { constructor() { throw new Error('unexpected Google SDK'); } } };
+      if (spec === 'url') return require('node:url');
       assert(spec.startsWith('.'), 'unexpected dependency: ' + spec);
       let next = path.relative(root, path.resolve(path.dirname(filename), spec));
       if (!next.endsWith('.ts')) next += '.ts';
