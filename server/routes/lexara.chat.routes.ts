@@ -73,37 +73,6 @@ function detectFullReportRequest(prompt: string): boolean {
   return /\b(?:full|complete|comprehensive|entire)\s+(?:background\s+)?(?:report|check|investigation)\b|\b(?:run|do|generate|prepare)\s+(?:a\s+)?background\s+(?:report|check)\b/i.test(prompt);
 }
 
-function buildPantheonReportHandoff(requested: boolean) {
-  if (!requested) return null;
-  return {
-    requested: true,
-    status: 'consent-required' as const,
-    workflow: 'pantheon-durable-background-report' as const,
-    categoryCount: 30,
-    started: false,
-    consentRequired: true,
-    handoffUrl: '/pantheon',
-    submissionEndpoint: '/api/osint/report-jobs',
-    message: 'No full PANTHEON report has been submitted. Open /pantheon to review the report scope and provide the required public-records consent before submitting.',
-  };
-}
-
-function getPantheonTurnStatus(result: Awaited<ReturnType<typeof generateLexaraConversationResponse>>) {
-  // These fields are optional until the orchestrator exposes its investigation
-  // endpoint/status. Keep chat compatible with both versions.
-  const pantheonResult = result as typeof result & {
-    pantheonEndpoint?: string | null;
-    pantheonStatus?: string | null;
-  };
-  return {
-    pantheonEndpoint: pantheonResult.pantheonEndpoint || null,
-    pantheonStatus: pantheonResult.pantheonStatus || null,
-    jobStatus: pantheonResult.pantheonStatus || (pantheonResult.pantheonEndpoint ? 'unavailable' : 'completed'),
-    // A terminal HTTP turn is not the same as completed background research.
-    jobCompleted: !pantheonResult.pantheonEndpoint || pantheonResult.pantheonStatus === 'completed',
-  };
-}
-
 function sanitizePreviousMessages(value: unknown): LexaraConversationMessage[] {
   if (!Array.isArray(value)) return [];
 
@@ -215,7 +184,7 @@ router.post('/acknowledge', express.json(), (req: Request, res: Response) => {
 
 /**
  * POST /api/lexara/chat/stream
- * Server-Sent Events transport for progressive Pantheon research.
+ * Server-Sent Events transport for progressive Lexara research.
  */
 router.post('/chat/stream', express.json(), async (req: Request, res: Response) => {
   const body = req.body || {};
@@ -261,9 +230,7 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       signal: controller.signal,
       onResearchProgress: event => send('research', event),
     });
-    const pantheonReportHandoff = buildPantheonReportHandoff(
-      detectFullReportRequest(prompt) && result.pantheonEndpoint === 'report-handoff'
-    );
+
     const reasoningDocumentIntent = detectDocumentIntent(result.text, [
       ...previousMessages,
       { role: 'user', content: prompt },
@@ -274,9 +241,7 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
         documentIntent.documentType = reasoningDocumentIntent.documentType;
       }
     }
-    const response = pantheonReportHandoff
-      ? `${result.text}\n\n${pantheonReportHandoff.message}`
-      : result.text;
+    const response = result.text;
     let persistence: Awaited<ReturnType<typeof persistConversationTurn>>;
     try {
       persistence = await persistConversationTurn(req, {
@@ -307,8 +272,6 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       jurisdiction: result.jurisdiction,
       mappedLawType: result.mappedLawType,
       documentIntent,
-      ...getPantheonTurnStatus(result),
-      pantheonReportHandoff,
     });
   } catch (error) {
     log.error('[LEXARA] Stream turn failed', { error });
@@ -399,12 +362,8 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       res.off('close', abortIfDisconnected);
     }
 
-    const pantheonReportHandoff = buildPantheonReportHandoff(
-      detectFullReportRequest(prompt) && conversationResult.pantheonEndpoint === 'report-handoff'
-    );
-    const responseText = pantheonReportHandoff
-      ? `${conversationResult.text}\n\n${pantheonReportHandoff.message}`
-      : conversationResult.text;
+
+    const responseText = conversationResult.text;
     const model = 'lexara-legal-orchestrator';
 
     // Preserve the deterministic explicit-request fast path, but let LEXARA's
@@ -492,8 +451,6 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       mappedLawType: conversationResult.mappedLawType,
       ...persistence,
       documentIntent,
-      ...getPantheonTurnStatus(conversationResult),
-      pantheonReportHandoff,
     });
   } catch (error) {
     log.error('[LEXARA] Chat endpoint error', { error });
