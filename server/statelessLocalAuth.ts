@@ -457,10 +457,7 @@ export async function authenticateLocalUserHttp(email: string, password: string)
 async function passwordFingerprintForEmail(email: string): Promise<string | null> {
   const normalizedEmail = normalizeEmail(email);
   const backend = await resolveLocalAuthBackend();
-  if (backend.kind === "edge") {
-    const result = await edgeAuthRequest("reset_fingerprint", { email: normalizedEmail });
-    return result.fingerprint || null;
-  }
+  const directClient = backend.kind === "edge" ? await primarySupabaseClient() : null;
   let passwordHash = "";
   if (backend.kind === "postgres") {
     const result = await authDbQuery(
@@ -468,9 +465,10 @@ async function passwordFingerprintForEmail(email: string): Promise<string | null
         WHERE lower(u.email)=$1 LIMIT 1`, [normalizedEmail]);
     passwordHash = String(result.rows?.[0]?.password_hash || "");
   } else {
-    const { data: user } = await backend.client.from("users").select("id").eq("email", normalizedEmail).maybeSingle();
+    const supabase = directClient || backend.client;
+    const { data: user } = await supabase.from("users").select("id").eq("email", normalizedEmail).maybeSingle();
     if (!user?.id) return null;
-    const { data: account } = await backend.client.from("auth_accounts").select("password_hash")
+    const { data: account } = await supabase.from("auth_accounts").select("password_hash")
       .eq("user_id", user.id).eq("auth_type", "local").maybeSingle();
     passwordHash = String(account?.password_hash || "");
   }
@@ -501,10 +499,7 @@ export async function resetLocalPasswordHttp(token: string, newPassword: string,
   if (!currentFingerprint || !safeEquals(currentFingerprint, payload.fingerprint)) return false;
 
   const backend = await resolveLocalAuthBackend();
-  if (backend.kind === "edge") {
-    const result = await edgeAuthRequest("reset_password", { email: payload.email, fingerprint: payload.fingerprint, newPassword });
-    return result.ok === true;
-  }
+  const directClient = backend.kind === "edge" ? await primarySupabaseClient() : null;
   const salt = await bcrypt.genSalt(BCRYPT_SALT_ROUNDS);
   const passwordHash = await bcrypt.hash(newPassword, salt);
   const updatedAt = new Date(now).toISOString();
@@ -515,9 +510,10 @@ export async function resetLocalPasswordHttp(token: string, newPassword: string,
       [passwordHash, salt, updatedAt, payload.email]);
     return Boolean(result.rows?.[0]?.id);
   }
-  const { data: user } = await backend.client.from("users").select("id").eq("email", payload.email).maybeSingle();
+  const supabase = directClient || backend.client;
+  const { data: user } = await supabase.from("users").select("id").eq("email", payload.email).maybeSingle();
   if (!user?.id) return false;
-  const { error } = await backend.client.from("auth_accounts").update({
+  const { error } = await supabase.from("auth_accounts").update({
     password_hash: passwordHash, password_salt: salt, updated_at: updatedAt,
   }).eq("user_id", user.id).eq("auth_type", "local");
   return !error;
