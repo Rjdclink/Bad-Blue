@@ -22,6 +22,7 @@ import { decideLexaraResearchNeed, isLexaraRepeatRequest } from './LexaraResearc
 import { planLexaraSequence } from './LexaraSequenceRouter';
 import { resolveLexaraBackgroundSubject } from './LexaraBackgroundSubject';
 import { discoverPantheonSourcesParallel } from '../services/pantheon/PantheonDiscoveryCoordinator';
+import { resolveUSJurisdiction } from './LexaraJurisdictionResolver';
 
 export interface LexaraConversationMessage {
   role: 'user' | 'lexara' | 'assistant';
@@ -462,9 +463,11 @@ export async function generateLexaraConversationResponse(
   const mappedLawType = mapLexaraLawType(context.lawType);
   const immediate = getLexaraImmediateAcknowledgement(cleanPrompt);
   const history = buildConversationHistory(context.previousMessages);
-  const jurisdiction = inferJurisdiction(cleanPrompt)
+  const stateJurisdiction = inferJurisdiction(cleanPrompt)
     || normalizeJurisdiction(context.jurisdiction)
     || inferPriorUserJurisdiction(context.previousMessages);
+  const resolvedJurisdiction = await resolveUSJurisdiction(cleanPrompt, stateJurisdiction);
+  const jurisdiction = resolvedJurisdiction?.display || stateJurisdiction;
   const domainName = trustedDomainName(context.lawType);
   const domainProfile = getLexaraLegalDomainProfile(context.lawType);
   const previousUserTurns = (context.previousMessages || [])
