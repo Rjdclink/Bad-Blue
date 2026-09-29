@@ -1,4 +1,4 @@
-import { pantheonRetrievalAdapter } from '../services/crawlers/PantheonRetrievalAdapter';
+import { lexaraRetrievalAdapter } from './LexaraRetrievalAdapter';
 import { selectLexaraCrawlerPlan } from './LexaraCrawlerCapabilityRegistry';
 import { decideLexaraResearchNeed } from './LexaraResearchIntentRouter';
 import { discoverLegalMeshTier3, discoverLegalMeshSupplemental, legalMeshSufficient } from './LegalProviderMesh';
@@ -202,7 +202,7 @@ async function enrichAuthoritySourcesWithCrawlerPool(
       signal.addEventListener('abort', abortHandler, { once: true });
     });
     const enrichment = await Promise.race([
-      pantheonRetrievalAdapter.retrieve({
+      lexaraRetrievalAdapter.retrieve({
         purpose: 'lexara_legal_research',
         targets,
         depth: 2,
