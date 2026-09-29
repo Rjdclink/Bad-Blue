@@ -1,6 +1,6 @@
 # Legal What?
 
-> LegalWhat features Lexara, an animated conversational legal AI for natural, real-time, two-way voice and text interaction across 40+ areas of law. Upload documents, images and media for analysis, critique, editing or alteration; Lexara can recognize when a legal document is needed, identify the appropriate document and jurisdiction, and generate it as a downloadable PDF or DOCX. LegalWhat is a sophisticated legal AI platform that is convenient and easy to use, with access available for a straightforward flat $19.99 monthly subscription.
+> Lexara is a jurisdiction-aware conversational legal AI with extensive knowledge across 40+ areas of law. Talk live by voice or text, analyze and revise uploaded documents and media, identify jurisdiction-specific requirements, find and use appropriate local legal forms, and create legal documents. Try LegalWhat free for 3 days, then only $19.99/month.
 
 Legal What? provides legal information and AI-assisted tools. It does not constitute legal advice.
 
