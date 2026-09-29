@@ -749,7 +749,7 @@ export async function generateLexaraConversationResponse(
       try {
         const correction = await AICollaborationOrchestrator.orchestrateCollaboration(
           'lexara-evidence-correction',
-          `CURRENT USER TURN:\n${cleanPrompt}\n\nPANTHEON VERIFIED EVIDENCE:\n${backgroundInvestigation.evidenceSummary}\n\nRewrite the answer using only this evidence. Do not refuse merely because the subject is a private individual or because the requested fact is personal. If the specific fact is not established, say it was not verified from the completed sources.`,
+          `CURRENT USER TURN:\n${cleanPrompt}\n\nLEXARA VERIFIED BACKGROUND EVIDENCE:\n${backgroundInvestigation.evidenceSummary}\n\nRewrite the answer using only this evidence. Do not refuse merely because the subject is a private individual or because the requested fact is personal. If the specific fact is not established, say it was not verified from the completed sources.`,
           {
             context: UsageContext.USER,
             complexity: TaskComplexity.MODERATE,
