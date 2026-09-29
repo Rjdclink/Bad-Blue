@@ -89,7 +89,7 @@ export default function Landing() {
     "url": baseUrl,
     "applicationCategory": "LegalApplication",
     "operatingSystem": "Web Browser",
-    "offers": { "@type": "Offer", "price": "19.99", "priceCurrency": "USD", "category": "monthly subscription" },
+    "offers": { "@type": "Offer", "price": "19.99", "priceCurrency": "USD", "category": "monthly subscription", "description": "3-day free trial, then $19.99/month" },
     "featureList": [
       "40 legal practice areas",
       "Two-way voice and text AI legal consultation",
@@ -99,7 +99,7 @@ export default function Landing() {
       "Media critique, editing, and alteration",
       "Intuitive jurisdiction-specific legal document generation",
       "Downloadable PDF and DOCX legal documents",
-      "Convenient, affordable, user-friendly access for a flat $19.99 monthly subscription"
+      "3-day free trial, then $19.99/month for full access"
     ]
   };
 
