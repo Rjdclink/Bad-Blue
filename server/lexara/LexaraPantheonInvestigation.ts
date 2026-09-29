@@ -13,11 +13,11 @@ import { rememberPantheonDiscoveryOutcome } from '../services/pantheon/PantheonD
 import { decideLexaraResearchNeed, isLexaraLegalAuthorityIntent } from './LexaraResearchIntentRouter';
 import { resolveLexaraBackgroundSubject } from './LexaraBackgroundSubject';
 import {
-  classifyPantheonSemanticCategories,
-  isFullPantheonReportIntent,
-  PANTHEON_REPORT_CATEGORY_TO_BACKGROUND_CATEGORIES,
-  type PantheonSemanticCategoryMatch,
-} from './LexaraPantheonSemanticIntent';
+  classifyLexaraBackgroundSemanticCategories,
+  isFullLexaraBackgroundReportIntent,
+  LEXARA_REPORT_CATEGORY_TO_BACKGROUND_CATEGORIES,
+  type LexaraBackgroundSemanticCategoryMatch,
+} from './LexaraBackgroundSemanticIntent';
 import type { PantheonReportCategoryLabel } from '../services/pantheon/PantheonCrawlerCapabilityMatrix';
 import { validatePantheonSourceResult } from '../services/pantheon/PantheonSourceResult';
 import { admitPantheonUrl } from '../services/crawlers/PublicAcquisitionInfrastructure';
@@ -217,8 +217,8 @@ function requestedCategories(
   prompt: string,
 ): PantheonBackgroundCategory[] {
   const categories = new Set<PantheonBackgroundCategory>();
-  for (const match of classifyPantheonSemanticCategories(prompt)) {
-    for (const category of PANTHEON_REPORT_CATEGORY_TO_BACKGROUND_CATEGORIES[match.label]) {
+  for (const match of classifyLexaraBackgroundSemanticCategories(prompt)) {
+    for (const category of LEXARA_REPORT_CATEGORY_TO_BACKGROUND_CATEGORIES[match.label]) {
       categories.add(category);
     }
   }
@@ -267,7 +267,7 @@ function conversationalReportCategoryLabel(
   categories: readonly PantheonBackgroundCategory[],
   previousUserTurns: readonly string[] = [],
 ): string {
-  const semanticMatch = classifyPantheonSemanticCategories(prompt, previousUserTurns)[0];
+  const semanticMatch = classifyLexaraBackgroundSemanticCategories(prompt, previousUserTurns)[0];
   if (semanticMatch) return semanticMatch.label;
   const rules: Array<[RegExp, string]> = [
     [/phone|telephone/i, 'Phone Numbers'],
@@ -440,7 +440,7 @@ export function shouldUseLexaraBackgroundResearch(
     .slice(-8)
     .map(message => message.content || '');
   const combined = conversationText(prompt, context);
-  const semanticCategories = classifyPantheonSemanticCategories(prompt, recentUserTurns);
+  const semanticCategories = classifyLexaraBackgroundSemanticCategories(prompt, recentUserTurns);
   if (semanticCategories.length
     && resolveLexaraBackgroundSubject(prompt, recentUserTurns, context.jurisdiction)) return true;
   // A grounded-research decision plus identifiable human subject is sufficient
@@ -459,18 +459,18 @@ export async function investigatePersonQuestion(
   context: LexaraPersonInvestigationContext = {},
 ): Promise<LexaraPersonInvestigation | null> {
   if (!shouldUseLexaraBackgroundResearch(prompt, context)) return null;
-  const fullBackgroundReportRequested = FULL_REPORT_PATTERN.test(prompt) || isFullPantheonReportIntent(prompt);
+  const fullBackgroundReportRequested = FULL_REPORT_PATTERN.test(prompt) || isFullLexaraBackgroundReportIntent(prompt);
   const combined = conversationText(prompt, context);
   const previousUserTurns = (context.previousMessages || []).filter(message => message.role === 'user').map(message => message.content || '');
   const resolved = resolveLexaraBackgroundSubject(prompt, previousUserTurns, context.jurisdiction);
-  const reportCategoryMatches = classifyPantheonSemanticCategories(prompt, previousUserTurns);
+  const reportCategoryMatches = classifyLexaraBackgroundSemanticCategories(prompt, previousUserTurns);
   const reportCategoryLabels = reportCategoryMatches.map(match => match.label);
   // Direct wording always determines the initial research categories. Add
   // context-inherited categories separately so a follow-up retains its earlier
   // objective without displacing categories stated in the current turn.
   const categories = requestedCategories(prompt);
   for (const match of reportCategoryMatches) {
-    for (const category of PANTHEON_REPORT_CATEGORY_TO_BACKGROUND_CATEGORIES[match.label]) {
+    for (const category of LEXARA_REPORT_CATEGORY_TO_BACKGROUND_CATEGORIES[match.label]) {
       if (!categories.includes(category)) categories.push(category);
     }
   }
