@@ -95,7 +95,7 @@ const MAX_RETRIES = 2;
 const MAX_BACKOFF_MS = 12_000;
 const CIRCUIT_FAILURE_THRESHOLD = 4;
 const CIRCUIT_OPEN_MS = 30_000;
-const PANTHEON_USER_AGENT = 'LegalWhat-Pantheon/1.0';
+const PANTHEON_USER_AGENT = process.env.PANTHEON_USER_AGENT?.trim() || 'LegalWhat-Pantheon/1.0 contact.badblue@gmail.com';
 const ROBOTS_CACHE_TTL_MS = 30 * 60_000;
 interface PantheonRobotsPolicy {
   isAllowed(url: string, userAgent?: string): boolean | undefined;
