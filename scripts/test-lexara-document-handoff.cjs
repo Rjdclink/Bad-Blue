@@ -27,6 +27,9 @@ async function run(outputs) {
     '../lexara/LexaraAuthorityResearch': { researchLegalAuthority: async () => null, formatAuthorityResearchForSystem: () => '' },
     '../lexara/LexaraJurisdictionResolver': { resolveUSJurisdiction: async (_text, state) => state ? { display: state, state, country: 'United States', providers: ['verifier'] } : null },
     '../lexara/OfficialLegalFormResolver': { resolveOfficialLegalForm: () => ({ requirement: 'custom_allowed', verifiedOfficial: true, localRules: [], companionDocuments: [], provenance: [] }), officialFormDirective: () => 'Custom drafting verified as permitted.' },
+    '../lexara/OfficialFormFiller': { inspectOfficialForm: async () => ({ contentType: 'pdf', bytes: Buffer.from(''), fields: [], fillable: true, sourceUrl: 'https://example.gov/form.pdf' }), fillOfficialPdf: async () => Buffer.from('pdf'), fillOfficialDocx: async () => Buffer.from('docx') },
+    '../lexara/FlatOfficialFormOverlay': { overlayFlatOfficialPdf: async () => Buffer.from('pdf'), validateFlatFormLayout: layout => layout },
+    '../lexara/FlatFormLayoutDetector': { detectFlatFormLayout: async () => ({ anchors: [], verified: false, method: 'unavailable' }) },
     '../logger': { createLogger: () => ({ info() {}, warn: (...args) => warnings.push(args) }) },
     '../lexara/legalDocumentRegistry': registry,
   });
