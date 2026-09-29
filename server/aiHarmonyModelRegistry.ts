@@ -145,8 +145,12 @@ export function isHarmonyProviderAllowed(
 export function getConfiguredHarmonyParticipants(
   policy: HarmonyProviderPolicy = 'capability-first',
 ): HarmonyParticipant[] {
-  return HARMONY_17_PARTICIPANTS.filter(participant =>
+  const configured = HARMONY_17_PARTICIPANTS.filter(participant =>
     participant.configured() && isHarmonyProviderAllowed(participant.provider, policy));
+  if (policy !== 'legalwhat') return configured;
+  const legalWhatOrder: AIProvider[] = [PROVIDER.CLAUDE, PROVIDER.GEMINI, PROVIDER.XAI];
+  return configured.sort((left, right) =>
+    legalWhatOrder.indexOf(left.provider) - legalWhatOrder.indexOf(right.provider));
 }
 
 export function getConfiguredHarmonyProviders(
