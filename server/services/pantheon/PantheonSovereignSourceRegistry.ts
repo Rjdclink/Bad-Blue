@@ -74,6 +74,22 @@ const KEYLESS_CATEGORY_SOURCES: Partial<Record<PantheonBackgroundCategory, reado
   authority: 'primary'|'secondary';
   jurisdiction: string;
 }[]>> = {
+  'criminal': [
+    { url: 'https://www.courtlistener.com/', name: 'CourtListener / RECAP', authority: 'primary', jurisdiction: 'US' },
+  ],
+  'arrests': [
+    { url: 'https://www.courtlistener.com/', name: 'CourtListener / RECAP', authority: 'primary', jurisdiction: 'US' },
+  ],
+  'corrections': [
+    { url: 'https://www.bop.gov/inmateloc/', name: 'Federal Bureau of Prisons Inmate Locator', authority: 'primary', jurisdiction: 'US' },
+    { url: 'https://www.vinelink.com/', name: 'VINELink public custody locator', authority: 'primary', jurisdiction: 'US' },
+  ],
+  'probation-parole': [
+    { url: 'https://www.vinelink.com/', name: 'VINELink public custody/status locator', authority: 'primary', jurisdiction: 'US' },
+  ],
+  'courts': [
+    { url: 'https://www.courtlistener.com/', name: 'CourtListener / RECAP', authority: 'primary', jurisdiction: 'US' },
+  ],
   'domain-web': [
     { url: 'https://lookup.icann.org/en', name: 'ICANN Registration Data Lookup', authority: 'primary', jurisdiction: 'global' },
     { url: 'https://data.iana.org/rdap/dns.json', name: 'IANA RDAP DNS Bootstrap Registry', authority: 'primary', jurisdiction: 'global' },

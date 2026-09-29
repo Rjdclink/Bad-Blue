@@ -52,11 +52,7 @@ export function validateVINEConfig(): void {
                     process.env.INMATE_ENABLE_VINE === '1';
   
   if (isEnabled) {
-    // VINE requires API credentials or scraper implementation
-    console.warn(
-      '[Inmate Search Config] VINE is enabled but no VINE integration is configured. ' +
-      'Only BOP (federal) searches will work. Implement VINELink integration in InmateSearchAggregator.ts'
-    );
+    console.log('[Inmate Search Config] VINE public-source discovery is enabled through Pantheon');
   }
 }
 
