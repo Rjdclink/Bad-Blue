@@ -8,7 +8,7 @@ const routes = fs.readFileSync('server/routes/lexara.chat.routes.ts','utf8');
 
 for (const id of [
   "'simple-factual'",
-  "'pantheon-background'",
+  "'lexara-background'",
   "'lexara-legal'",
   "'combined-legal-background'",
   "'deep-recursive'",
@@ -18,15 +18,15 @@ for (const id of [
 }
 for (const token of [
   'useLegalResearch',
-  'usePantheon',
+  'useBackgroundResearch',
   'recursive',
-  'classifyPantheon',
+  'classifyBackground',
   'documentAction',
 ]) if (!router.includes(token)) throw new Error('Sequence contract missing '+token);
 
 if (!orchestrator.includes('planLexaraSequence(cleanPrompt, previousUserTurns)')) throw new Error('Conversation orchestrator does not use six-sequence router');
-if (!orchestrator.includes('sequencePlan.usePantheon && sequencePlan.useLegalResearch')) throw new Error('Mixed legal/background route is not explicit');
-if (!orchestrator.includes('const pantheonDelegatedByLexara = sequencePlan.usePantheon') || !orchestrator.includes('investigatePersonQuestion(pantheonPrompt')) throw new Error('Pantheon handoff is not sequence-owned');
+if (!orchestrator.includes('sequencePlan.useBackgroundResearch && sequencePlan.useLegalResearch')) throw new Error('Mixed legal/background route is not explicit');
+if (!orchestrator.includes('const backgroundResearchRequested = sequencePlan.useBackgroundResearch') || !orchestrator.includes('investigateLexaraBackgroundQuestion(backgroundPrompt')) throw new Error('Lexara background route is not sequence-owned');
 if (!orchestrator.includes('sequencePlan.useLegalResearch')) throw new Error('Legal research handoff is not sequence-owned');
 if (!web.includes('discoverPantheonSourcesParallel(query') || !web.includes('pantheonRetrievalAdapter.retrieve')) throw new Error('Discovery-first -> crawler retrieval backbone missing');
 if (!pantheon.includes('discoverPantheonSourcesParallel(') || !pantheon.includes('pantheonRetrievalAdapter.retrieve')) throw new Error('Recursive Pantheon discovery/retrieval missing');
@@ -35,9 +35,9 @@ if (!pantheon.includes('discoverPantheonSourcesParallel(') || !pantheon.includes
 // Pantheon but an undeclared legacy registryUrls identifier crashed before crawler dispatch.
 if (pantheon.includes('...registryUrls')) throw new Error('Stale undefined registryUrls can crash Pantheon before crawler dispatch');
 if (!pantheon.includes('const targets = [...new Set([...explicitUrls, ...discoveredUrls, ...categorySeedUrls])]')) throw new Error('Pantheon selected route must include safe user-supplied URLs, discovered sources, and scoped seeds');
-if (!orchestrator.includes('pantheonDelegatedByLexara\n      ? mixedLegalFactNeed') || !orchestrator.includes(': pantheonInvestigationPromise')) throw new Error('Selected Pantheon route is not awaited through the execution handoff');
-if (!orchestrator.includes('researchEndpointReached: !researchDecision.needed || Boolean(authorityResearch || pantheonEndpoint)')) throw new Error('Research endpoint telemetry must use an explicit Pantheon endpoint rather than a routed investigation object');
+if (!orchestrator.includes('backgroundResearchRequested\n      ? mixedLegalFactNeed') || !orchestrator.includes(': backgroundInvestigationPromise')) throw new Error('Selected Lexara background route is not awaited through the execution path');
+if (!orchestrator.includes('researchEndpointReached: !researchDecision.needed || Boolean(authorityResearch || backgroundEndpoint)')) throw new Error('Research endpoint telemetry must use an explicit Lexara background endpoint rather than a routed investigation object');
 if (!authority.includes('discoverLegalMeshTier3') || !authority.includes('enrichAuthoritySourcesWithCrawlerPool')) throw new Error('Lexara legal discovery/crawler sequence missing');
 if (!routes.includes('documentIntent') || !routes.includes("send('complete'")) throw new Error('Document/action handoff missing');
 
-console.log('LEXARA/Pantheon six-sequence routing verification passed.');
+console.log('LEXARA six-sequence routing verification passed.');
