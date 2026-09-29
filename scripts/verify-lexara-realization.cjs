@@ -320,7 +320,7 @@ must(
     realtimeVoiceClient.includes('sampleRate * 0.120') &&
     realtimeVoiceClient.includes('mobile-network jitter gap occurs') &&
     orchestrator.includes('LIVE_RESEARCH_BUDGET_MS = 10_000') &&
-    orchestrator.includes('LIVE_REASONING_PROVIDER_ATTEMPT_MS = 6_000') &&
+    orchestrator.includes('LIVE_REASONING_PROVIDER_ATTEMPT_MS = 15_000') &&
     orchestrator.includes('LIVE_REASONING_MAX_FALLBACKS = 2') &&
     !realtimeVoiceClient.includes('LEXARA_REALTIME_OUTPUT_SAMPLE_RATE = 24_000') &&
     realtimeVoiceClient.includes('audio.defaultPlaybackRate = 1') &&
