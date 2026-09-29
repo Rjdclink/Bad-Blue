@@ -1,10 +1,10 @@
 import { decideLexaraResearchNeed, isLexaraLegalAuthorityIntent, isLexaraConversationControl, type LexaraResearchDecision } from './LexaraResearchIntentRouter';
 import { resolveLexaraBackgroundSubject } from './LexaraBackgroundSubject';
 import {
-  classifyPantheonSemanticCategories,
+  classifyLexaraBackgroundSemanticCategories,
   isContextualReference,
-  isFullPantheonReportIntent,
-} from './LexaraPantheonSemanticIntent';
+  isFullLexaraBackgroundReportIntent,
+} from './LexaraBackgroundSemanticIntent';
 
 export type LexaraSequenceId =
   | 'simple-factual'
@@ -50,12 +50,12 @@ export function planLexaraSequence(prompt: string, previousUserTurns: string[] =
   };
   const legal = isLexaraLegalAuthorityIntent(text) || researchDecision.objectiveKind === 'legal-authority';
   const subject = resolveLexaraBackgroundSubject(text, previousUserTurns);
-  const semanticCategories = classifyPantheonSemanticCategories(text, previousUserTurns);
+  const semanticCategories = classifyLexaraBackgroundSemanticCategories(text, previousUserTurns);
   const priorBackground = previousUserTurns.slice(-4).some(turn =>
-    BACKGROUND_PATTERN.test(turn) || classifyPantheonSemanticCategories(turn).length > 0,
+    BACKGROUND_PATTERN.test(turn) || classifyLexaraBackgroundSemanticCategories(turn).length > 0,
   );
   const contextualFollowup = Boolean(subject && priorBackground && isContextualReference(text));
-  const fullReport = isFullPantheonReportIntent(text);
+  const fullReport = isFullLexaraBackgroundReportIntent(text);
   const background = Boolean(
     ((semanticCategories.length > 0 || BACKGROUND_PATTERN.test(text) || fullReport)
       && (!legal || fullReport || BACKGROUND_OBJECTIVE_PATTERN.test(text))
