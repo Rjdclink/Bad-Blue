@@ -122,7 +122,7 @@ export async function noteLegalProviderError(provider: AIProvider, _model: strin
   // Local skips and cancellation must never lengthen a remote-provider circuit.
   if (/reserve withheld|cooling down|superseded|abort/.test(message)) return;
   const duration = /402|payment required|insufficient.credit|insufficient_quota|daily|per.day|0 requests\/minute|limit-req-minute.*0/.test(message) ? DAY
-    : /429|rate.limit|quota|resource_exhausted/.test(message) ? MINUTE
+    : /429|rate.limit|quota|resource_exhausted/.test(message) ? 5_000
     : /401|403|unauthoriz|invalid.api.key/.test(message) ? 15 * MINUTE : 0;
   if (!duration) return;
   try {
