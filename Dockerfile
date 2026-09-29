@@ -52,6 +52,8 @@ RUN apt-get update && apt-get install -y \
     libimage-exiftool-perl \
     poppler-utils \
     tesseract-ocr \
+    zip \
+    unzip \
     wget \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
