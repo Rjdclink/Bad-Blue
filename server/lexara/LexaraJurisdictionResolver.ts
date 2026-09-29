@@ -15,21 +15,32 @@ function normalize(value?: string): string {
 }
 function same(a?: string,b?: string): boolean { return !!a && !!b && normalize(a) === normalize(b); }
 
-function extractLocationCandidates(text: string, state?: string): string[] {
+function jurisdictionQueries(text: string, state?: string): string[] {
   const clean = text.replace(/\s+/g, ' ').trim();
   if (!clean) return [];
-  const results = new Set<string>();
-  const add = (value?: string) => {
-    const v = value?.trim().replace(/^[,.;:\s]+|[,.;:\s]+$/g, '');
-    if (v && v.length >= 2 && v.length <= 100) results.add(v);
+  const queries = new Set<string>();
+  const add = (value: string) => {
+    const v=value.trim().replace(/^[,.;:\s]+|[,.;:\s]+$/g,'');
+    if(v.length>=2 && v.length<=180) queries.add(v);
   };
-  if (state) {
-    const escaped = state.replace(/[.*+?^$()|[\]\\]/g, '\\$&');
-    for (const match of clean.matchAll(new RegExp("([A-Z][A-Za-z.'’ -]{1,60}),?\\s+" + escaped + "\\b", 'g'))) add(match[1] + ', ' + state);
-    for (const match of clean.matchAll(new RegExp("\\b(?:in|at|within|from|near|of|around|inside)\\s+([A-Za-z][A-Za-z.'’ -]{1,60}?)(?=\\s*(?:,\\s*" + escaped + "\\b|\\bin\\s+" + escaped + "\\b|[?.!,;]|$))", 'gi'))) add(match[1] + ', ' + state);
+
+  // Let the geographic providers interpret the user's own wording first.
+  add(clean);
+  if (state && !new RegExp('\\b' + state.replace(/[.*+?^$()|[\]\\]/g,'\\$&') + '\\b','i').test(clean)) add(clean + ', ' + state);
+
+  // Also submit small location-shaped fragments so surrounding legal prose does
+  // not prevent a geocoder from recognizing a place. These are candidates only;
+  // no fragment becomes jurisdiction unless independent providers/Census verify it.
+  const words=clean.split(/\s+/);
+  for(let size=1;size<=4;size++){
+    for(let i=0;i+size<=words.length;i++){
+      const fragment=words.slice(i,i+size).join(' ').replace(/^[^A-Za-z]+|[^A-Za-z.'’ -]+$/g,'');
+      if(!fragment || fragment.length<2 || fragment.length>80) continue;
+      if(state) add(fragment + ', ' + state);
+      else if(/\b(?:county|parish|borough|township|municipality)\b/i.test(fragment)) add(fragment);
+    }
   }
-  for (const match of clean.matchAll(/\b([A-Za-z][A-Za-z.'’ -]{1,60}\s+(?:County|Parish|Borough|Township|Municipality))(?:,\s*([A-Za-z][A-Za-z.'’ -]+))?/gi)) add([match[1], match[2] || state].filter(Boolean).join(', '));
-  return [...results];
+  return [...queries];
 }
 async function geonames(query: string): Promise<Candidate | null> {
   const username = process.env.GEONAMES_USERNAME?.trim(); if (!username) return null;
@@ -59,10 +70,10 @@ async function census(candidate: Candidate): Promise<Candidate | null> {
 }
 
 export async function resolveUSJurisdiction(text:string, fallbackState?:string):Promise<ResolvedJurisdiction|null>{
-  const queries=extractLocationCandidates(text,fallbackState);
+  const queries=jurisdictionQueries(text,fallbackState);
   if(!queries.length) return fallbackState ? {display:fallbackState,state:fallbackState,country:'United States',providers:['existing-state-detector']} : null;
 
-  const batches=await Promise.all(queries.slice(0,4).map(async query => (await Promise.all([geonames(query),nominatim(query),arcgis(query)])).filter(Boolean) as Candidate[]));
+  const batches=await Promise.all(queries.slice(0,24).map(async query => (await Promise.all([geonames(query),nominatim(query),arcgis(query)])).filter(Boolean) as Candidate[]));
   const base=batches.flat();
   if(!base.length) return fallbackState ? {display:fallbackState,state:fallbackState,country:'United States',providers:['existing-state-detector']} : null;
 
