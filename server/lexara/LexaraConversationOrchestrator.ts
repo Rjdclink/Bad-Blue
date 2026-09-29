@@ -22,7 +22,7 @@ import { decideLexaraResearchNeed, isLexaraRepeatRequest } from './LexaraResearc
 import { planLexaraSequence } from './LexaraSequenceRouter';
 import { resolveLexaraBackgroundSubject } from './LexaraBackgroundSubject';
 import { discoverPantheonSourcesParallel } from '../services/pantheon/PantheonDiscoveryCoordinator';
-import { resolveUSJurisdiction } from './LexaraJurisdictionResolver';
+import { hasExplicitLocationCue, resolveUSJurisdiction } from './LexaraJurisdictionResolver';
 
 export interface LexaraConversationMessage {
   role: 'user' | 'lexara' | 'assistant';
@@ -34,6 +34,10 @@ export interface LexaraConversationContext {
   lawType?: string;
   lawTypeName?: string;
   jurisdiction?: string;
+  backgroundJurisdiction?: string;
+  backgroundLocality?: string;
+  backgroundArea?: string;
+  backgroundLocationConfidence?: number;
   behaviorMode?: 'personable' | 'professional';
   sessionId?: string;
   signal?: AbortSignal;
@@ -314,7 +318,7 @@ function isPersonPermissionRefusal(text: string): boolean {
 
 function degradedLegalResponse(jurisdiction?: string): string {
   if (!jurisdiction) {
-    return 'The live legal-reasoning service is temporarily unavailable. I can keep your facts organized, but I will not guess at controlling law, cases, or deadlines. Tell me the state or jurisdiction involved so the next legal-analysis turn can be grounded correctly.';
+    return 'The live legal-reasoning service is temporarily unavailable. I can keep your facts organized, but I will not guess at controlling law, cases, or deadlines. Please retry this turn when live analysis is restored.';
   }
 
   return `The live legal-reasoning service is temporarily unavailable. I have the jurisdiction as ${jurisdiction}. I can preserve the facts you have given me, but I will not invent controlling law, cases, citations, or deadlines while the analysis service is unavailable. Please retry this turn when live analysis is restored.`;
@@ -463,11 +467,22 @@ export async function generateLexaraConversationResponse(
   const mappedLawType = mapLexaraLawType(context.lawType);
   const immediate = getLexaraImmediateAcknowledgement(cleanPrompt);
   const history = buildConversationHistory(context.previousMessages);
-  const stateJurisdiction = inferJurisdiction(cleanPrompt)
+  const explicitStateJurisdiction = inferJurisdiction(cleanPrompt)
     || normalizeJurisdiction(context.jurisdiction)
     || inferPriorUserJurisdiction(context.previousMessages);
+  const jurisdictionRelevant = /\b(?:law|legal|court|case|charge|crime|criminal|civil|lawsuit|sue|claim|statute|deadline|limitation|file|filing|motion|petition|complaint|divorce|custody|probation|parole|warrant|rights?|attorney|judge|jurisdiction|venue|state\s+law|federal)\b/i.test(cleanPrompt);
+  const backgroundStateJurisdiction = jurisdictionRelevant
+    ? normalizeJurisdiction(context.backgroundJurisdiction) : undefined;
+  const explicitLocationCue = hasExplicitLocationCue(cleanPrompt);
+  // User-supplied place language outranks the network estimate. Never constrain
+  // an explicit city/county with a conflicting inferred state.
+  const stateJurisdiction = explicitStateJurisdiction
+    || (!explicitLocationCue ? backgroundStateJurisdiction : undefined);
   const resolvedJurisdiction = await resolveUSJurisdiction(cleanPrompt, stateJurisdiction);
   const jurisdiction = resolvedJurisdiction?.display || stateJurisdiction;
+  // Network-derived jurisdiction is silent context. Only user/conversation-derived
+  // jurisdiction is returned to the client for display/persistence.
+  const publicJurisdiction = explicitStateJurisdiction || (explicitLocationCue ? resolvedJurisdiction?.display : undefined);
   const domainName = trustedDomainName(context.lawType);
   const domainProfile = getLexaraLegalDomainProfile(context.lawType);
   const previousUserTurns = (context.previousMessages || [])
@@ -479,7 +494,7 @@ export async function generateLexaraConversationResponse(
     const lastReply = [...(context.previousMessages || [])].reverse().find(message =>
       message.role === 'lexara' || message.role === 'assistant');
     return { text: lastReply?.content?.trim() || 'I do not have my previous answer in this conversation. Please repeat your question.',
-      jurisdiction, mappedLawType };
+      jurisdiction: publicJurisdiction, mappedLawType };
   }
   const researchDecision = sequencePlan.researchDecision;
   console.log('[LEXARA ResearchRoute]', {
@@ -501,7 +516,7 @@ export async function generateLexaraConversationResponse(
   if (immediate.terminal) {
     return {
       text: immediate.text,
-      jurisdiction,
+      jurisdiction: publicJurisdiction,
       mappedLawType,
     };
   }
@@ -637,10 +652,18 @@ export async function generateLexaraConversationResponse(
       crawlerAudit: pantheonInvestigation?.crawlerAudit,
       discoveryLanes: pantheonInvestigation?.discoveryLanes,
     });
-    return { text, jurisdiction, mappedLawType, pantheonEndpoint, pantheonStatus };
+    return { text, jurisdiction: publicJurisdiction, mappedLawType, pantheonEndpoint, pantheonStatus };
   }
 
+  const silentLocationContext = jurisdictionRelevant && !explicitStateJurisdiction && !resolvedJurisdiction?.locality && backgroundStateJurisdiction
+    ? `\n\nINTERNAL LOCATION CONTEXT (do not volunteer or announce): Network-derived jurisdiction estimate: ${[
+        context.backgroundLocality,
+        context.backgroundArea && context.backgroundArea !== context.backgroundLocality ? context.backgroundArea : undefined,
+        backgroundStateJurisdiction,
+      ].filter(Boolean).join(', ')}. Treat city/area as approximate network geography, not GPS-level certainty. Use only when location/jurisdiction is relevant to the current legal issue; if it materially affects the answer and conflicts with stronger user-supplied facts, prefer the user-supplied facts or ask a brief clarification.`
+    : '';
   const systemPrompt = buildLegalSystemPrompt(context, mappedLawType, jurisdiction)
+    + silentLocationContext
     + formatAuthorityResearchForSystem(authorityResearch)
     + formatPantheonInvestigationForSystem(pantheonInvestigation);
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
@@ -706,7 +729,7 @@ export async function generateLexaraConversationResponse(
   // After the canonical provider routes and source fallback are exhausted,
   // do not invent current law.
   const answerServiceUnavailable = !text;
-  if (!text) text = degradedLegalResponse(jurisdiction);
+  if (!text) text = degradedLegalResponse(publicJurisdiction);
   if (pantheonDelegatedByLexara && !mixedLegalFactNeed
     && /^The live legal-reasoning service is temporarily unavailable/.test(text)) {
     const validatedFallback = extractVerifiedPantheonSourceExcerpt(pantheonInvestigation);
@@ -810,7 +833,7 @@ export async function generateLexaraConversationResponse(
 
   return {
     text,
-    jurisdiction,
+    jurisdiction: publicJurisdiction,
     mappedLawType,
     pantheonEndpoint,
     pantheonStatus: permissionRefusalUnverified ? 'partial'

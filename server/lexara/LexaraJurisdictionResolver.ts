@@ -3,6 +3,8 @@ export interface ResolvedJurisdiction {
   latitude?: number; longitude?: number; providers: string[];
 }
 type Candidate = Omit<ResolvedJurisdiction, 'display' | 'providers'> & { provider: string; query?: string };
+import { resolveLocalNetworkJurisdiction } from './LocalNetworkJurisdiction';
+
 const TIMEOUT_MS = 2500;
 
 async function getJson(url: string, headers: Record<string,string> = {}): Promise<any | null> {
@@ -15,33 +17,41 @@ function normalize(value?: string): string {
 }
 function same(a?: string,b?: string): boolean { return !!a && !!b && normalize(a) === normalize(b); }
 
+export function hasExplicitLocationCue(text: string): boolean {
+  const clean = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!clean) return false;
+  return /\b(?:in|at|near|from|located\s+in|live(?:s|d)?\s+in|resid(?:e|es|ed|ing)\s+in)\s+[A-Z][A-Za-z.'’-]+/i.test(clean)
+    || /\b[A-Z][A-Za-z.'’-]+(?:\s+[A-Z][A-Za-z.'’-]+){0,2}\s+(?:County|Parish|Borough|Township|Municipality)\b/.test(clean);
+}
+
 function jurisdictionQueries(text: string, state?: string): string[] {
   const clean = text.replace(/\s+/g, ' ').trim();
   if (!clean) return [];
   const queries = new Set<string>();
   const add = (value: string) => {
-    const v=value.trim().replace(/^[,.;:\s]+|[,.;:\s]+$/g,'');
-    if(v.length>=2 && v.length<=180) queries.add(v);
+    const v = value.trim().replace(/^[,.;:\s]+|[,.;:\s]+$/g, '');
+    if (v.length >= 2 && v.length <= 120) queries.add(v);
   };
-
-  // Let the geographic providers interpret the user's own wording first.
-  add(clean);
-  if (state && !new RegExp('\\b' + state.replace(/[.*+?^$()|[\]\\]/g,'\\$&') + '\\b','i').test(clean)) add(clean + ', ' + state);
-
-  // Also submit small location-shaped fragments so surrounding legal prose does
-  // not prevent a geocoder from recognizing a place. These are candidates only;
-  // no fragment becomes jurisdiction unless independent providers/Census verify it.
-  const words=clean.split(/\s+/);
-  for(let size=1;size<=4;size++){
-    for(let i=0;i+size<=words.length;i++){
-      const fragment=words.slice(i,i+size).join(' ').replace(/^[^A-Za-z]+|[^A-Za-z.'’ -]+$/g,'');
-      if(!fragment || fragment.length<2 || fragment.length>80) continue;
-      if(state) add(fragment + ', ' + state);
-      else if(/\b(?:county|parish|borough|township|municipality)\b/i.test(fragment)) add(fragment);
+  // Only explicit location-shaped language may reach geographic providers.
+  // Ordinary conversational words must never be promoted into a city/county.
+  const patterns = [
+    /\b(?:in|at|near|from|located\s+in|live(?:s|d)?\s+in|resid(?:e|es|ed|ing)\s+in)\s+([A-Z][A-Za-z.'’-]+(?:\s+[A-Z][A-Za-z.'’-]+){0,3}(?:,\s*[A-Z]{2}|,\s*[A-Z][A-Za-z ]+)?)\b/g,
+    /\b([A-Z][A-Za-z.'’-]+(?:\s+[A-Z][A-Za-z.'’-]+){0,2}\s+(?:County|Parish|Borough|Township|Municipality))\b/g,
+  ];
+  for (const pattern of patterns) {
+    for (const match of clean.matchAll(pattern)) {
+      const place = match[1]?.trim(); if (!place) continue;
+      add(place);
+      if (state && !new RegExp('\\b' + state.replace(/[.*+?^$()|[\]\\]/g, '\\$&') + '\\b', 'i').test(place)) add(place + ', ' + state);
     }
   }
   return [...queries];
 }
+
+export async function resolveNetworkState(ip?: string): Promise<{ locality?: string; state?: string; area?: string; provider?: string; confidence?: number } | null> {
+  return resolveLocalNetworkJurisdiction(ip);
+}
+
 async function geonames(query: string): Promise<Candidate | null> {
   const username = process.env.GEONAMES_USERNAME?.trim(); if (!username) return null;
   const data = await getJson('https://secure.geonames.org/searchJSON?q=' + encodeURIComponent(query) + '&country=US&maxRows=5&featureClass=P&featureClass=A&username=' + encodeURIComponent(username));
