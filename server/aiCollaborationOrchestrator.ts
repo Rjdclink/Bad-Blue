@@ -219,7 +219,9 @@ function markHarmonyProviderFailure(provider: AIProvider, error: unknown): void 
       : /returned no text content block|returned no text|empty response/.test(message)
         ? 2 * 60_000
         : /429|rate limit|quota/.test(message)
-          ? 5 * 60_000
+          ? 5_000
+          : /503|unavailable|overloaded/.test(message)
+            ? 2_000
           : /401|invalid api key|authentication/.test(message)
             ? 10 * 60_000
             : /403|permission|blocked/.test(message)
@@ -237,7 +239,9 @@ function markHarmonyProviderFailure(provider: AIProvider, error: unknown): void 
       : /401|invalid api key|authentication/.test(message)
         ? 10 * 60_000
         : /429|rate limit|quota/.test(message)
-          ? 60_000
+          ? 5_000
+          : /503|unavailable|overloaded/.test(message)
+            ? 2_000
           : 3_000;
     harmonyTransportCooldownUntil.set(
       harmonyTransportDomain(provider),
