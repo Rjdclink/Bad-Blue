@@ -7,7 +7,7 @@
  */
 export {
   investigatePersonQuestion as investigateLexaraBackgroundQuestion,
-  formatPantheonInvestigationForSystem as formatLexaraBackgroundInvestigationForSystem,
+  formatLexaraBackgroundInvestigationForSystem,
   retrieveLexaraConversationalSource,
 } from './LexaraPantheonInvestigation';
 
