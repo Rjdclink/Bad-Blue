@@ -41,7 +41,7 @@ for (const capability of ['Visible animated AI', 'DOCX and PDF', 'Uploaded docum
   must(index.includes(capability), `root metadata/schema must expose Lexara capability: ${capability}`);
 }
 const lexaraSeoPage = read('public/services/ai-legal-consultation/index.html');
-for (const capability of ['animated conversational legal AI', '40+ areas of law', 'PDF or DOCX', 'Upload documents, evidence, images, and other media']) {
+for (const capability of ['animated conversational legal AI', '40+ areas of law', 'DOCX or PDF', 'Upload documents, evidence, images, and other media']) {
   must(lexaraSeoPage.includes(capability), `Lexara crawlable page must expose capability: ${capability}`);
 }
 
