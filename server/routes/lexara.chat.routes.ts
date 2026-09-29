@@ -356,7 +356,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
     const lawTypeName = cleanOptionalString((rawContext as any).lawTypeName, 160);
     const explicitJurisdiction = cleanOptionalString((rawContext as any).jurisdiction, 80);
     const networkState = explicitJurisdiction ? null : await resolveNetworkState(
-      String(req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || req.headers['cf-connecting-ip'] || req.ip || '')
+      String(req.headers['x-real-ip'] || req.headers['cf-connecting-ip'] || req.ip || '')
     );
     const jurisdiction = explicitJurisdiction || networkState?.state;
     const behaviorMode = (rawContext as any).behaviorMode === 'personable' ? 'personable' : 'professional';
