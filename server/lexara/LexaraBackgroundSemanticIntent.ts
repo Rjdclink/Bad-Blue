@@ -1,13 +1,11 @@
 import {
-  PANTHEON_REPORT_CATEGORY_LABELS,
-  type PantheonReportCategoryLabel,
-} from '../services/pantheon/PantheonCrawlerCapabilityMatrix';
-import type {
-  PantheonBackgroundCategory,
-} from '../services/pantheon/PantheonSovereignSourceRegistry';
+  LEXARA_BACKGROUND_REPORT_CATEGORY_LABELS,
+  type LexaraBackgroundReportCategoryLabel,
+  type LexaraBackgroundCategory,
+} from './LexaraBackgroundIntelligence';
 
 export interface LexaraBackgroundSemanticCategoryMatch {
-  label: PantheonReportCategoryLabel;
+  label: LexaraBackgroundReportCategoryLabel;
   score: number;
   matchedCues: string[];
 }
@@ -15,7 +13,7 @@ export interface LexaraBackgroundSemanticCategoryMatch {
 // Lexical concepts describe the user's requested fact, not a required exact
 // command. Keep common natural-language paraphrases together so both sequence
 // routing and the evidence search receive the same bounded multi-label intent.
-const CATEGORY_CUES: Record<PantheonReportCategoryLabel, readonly string[]> = {
+const CATEGORY_CUES: Record<LexaraBackgroundReportCategoryLabel, readonly string[]> = {
   'Identity & Identity Verification': [
     'identity', 'verify identity', 'confirm identity', 'who is', 'real name', 'legal name',
     'alias', 'aliases', 'aka', 'also known as', 'previous name', 'known under', 'birth date', 'date of birth', 'birthday',
@@ -163,8 +161,8 @@ const CATEGORY_CUES: Record<PantheonReportCategoryLabel, readonly string[]> = {
 };
 
 export const LEXARA_REPORT_CATEGORY_TO_BACKGROUND_CATEGORIES: Record<
-  PantheonReportCategoryLabel,
-  readonly PantheonBackgroundCategory[]
+  LexaraBackgroundReportCategoryLabel,
+  readonly LexaraBackgroundCategory[]
 > = {
   'Identity & Identity Verification': ['identity', 'identity-resolution', 'historical', 'chronology'],
   'Phone Numbers': ['contacts', 'identity-resolution'],
@@ -203,10 +201,10 @@ export const LEXARA_REPORT_CATEGORY_TO_BACKGROUND_CATEGORIES: Record<
 };
 
 const NORMALIZED_CUES: Array<{
-  label: PantheonReportCategoryLabel;
+  label: LexaraBackgroundReportCategoryLabel;
   cue: string;
   score: number;
-}> = PANTHEON_REPORT_CATEGORY_LABELS.flatMap(label =>
+}> = LEXARA_BACKGROUND_REPORT_CATEGORY_LABELS.flatMap(label =>
   CATEGORY_CUES[label].map(cue => ({
     label,
     cue,
@@ -235,7 +233,7 @@ export function classifyLexaraBackgroundSemanticCategories(
   previousUserTurns: readonly string[] = [],
 ): LexaraBackgroundSemanticCategoryMatch[] {
   const current = normalizedText(text);
-  const currentScores = new Map<PantheonReportCategoryLabel, { score: number; cues: string[] }>();
+  const currentScores = new Map<LexaraBackgroundReportCategoryLabel, { score: number; cues: string[] }>();
   for (const { label, cue, score } of NORMALIZED_CUES) {
     if (!matchesCue(current, cue)) continue;
     const existing = currentScores.get(label) || { score: 0, cues: [] };
@@ -261,7 +259,7 @@ export function classifyLexaraBackgroundSemanticCategories(
   const ranked = [...currentScores.entries()]
     .map(([label, result]) => ({ label, ...result }))
     .sort((left, right) => right.score - left.score
-      || PANTHEON_REPORT_CATEGORY_LABELS.indexOf(left.label) - PANTHEON_REPORT_CATEGORY_LABELS.indexOf(right.label));
+      || LEXARA_BACKGROUND_REPORT_CATEGORY_LABELS.indexOf(left.label) - LEXARA_BACKGROUND_REPORT_CATEGORY_LABELS.indexOf(right.label));
   if (!ranked.length) return [];
 
   // Keep independent, materially expressed facts (e.g., an arrest and later
@@ -269,7 +267,7 @@ export function classifyLexaraBackgroundSemanticCategories(
   const threshold = Math.max(2, ranked[0].score * 0.45);
   return ranked
     .filter((match, index) => index === 0 || match.score >= threshold)
-    .slice(0, PANTHEON_REPORT_CATEGORY_LABELS.length)
+    .slice(0, LEXARA_BACKGROUND_REPORT_CATEGORY_LABELS.length)
     .map(({ label, score, cues }) => ({ label, score, matchedCues: [...new Set(cues)] }));
 }
 
