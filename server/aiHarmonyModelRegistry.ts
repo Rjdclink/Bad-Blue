@@ -36,7 +36,7 @@ const PROVIDER = {
  * not a hard priority order; environment overrides remain authoritative.
  */
 export const CURRENT_AI_MODELS = {
-  gemini: process.env.GEMINI_MODEL?.trim() || 'gemini-3.7-flash',
+  gemini: process.env.GEMINI_MODEL?.trim() || 'gemini-3.8-flash',
   claudeFast: process.env.CLAUDE_FAST_MODEL?.trim() || 'claude-haiku-4-5-20251001',
   claudeBalanced: process.env.CLAUDE_MODEL?.trim() || 'claude-sonnet-5',
   claudeDeep: process.env.CLAUDE_OPUS_MODEL?.trim() || 'claude-opus-5',
@@ -51,7 +51,7 @@ export const CURRENT_AI_MODELS = {
   openaiFastViaOpenRouter: process.env.OPENAI_FAST_MODEL?.trim() || 'openai/gpt-5.6-luna',
   gptOss: process.env.GPT_OSS_MODEL?.trim() || 'openai/gpt-oss-120b',
   openRouterAuto: process.env.OPENROUTER_MODEL?.trim() || 'openrouter/auto',
-  xai: process.env.XAI_MODEL?.trim() || 'grok-4.6',
+  xai: process.env.XAI_MODEL?.trim() || 'grok-4.7',
   cerebras: process.env.CEREBRAS_MODEL?.trim() || 'gpt-oss-120b',
   cloudflare: process.env.CLOUDFLARE_AI_MODEL?.trim() || '@cf/openai/gpt-oss-120b',
   fireworks: process.env.FIREWORKS_MODEL?.trim() || 'accounts/fireworks/models/gpt-oss-120b',
