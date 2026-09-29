@@ -1,5 +1,10 @@
 import { PDFDocument } from 'pdf-lib';
-import { patchDocument, PatchType, TextRun } from 'docx';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+const execFileAsync = promisify(execFile);
 import type { OfficialLegalForm } from './OfficialLegalFormResolver';
 
 const MAX_FORM_BYTES = 20 * 1024 * 1024;
@@ -55,9 +60,23 @@ export async function fillOfficialPdf(inspected: InspectedOfficialForm, values: 
   if(flatten) form.flatten();
   return Buffer.from(await pdf.save());
 }
+function escapeXmlText(value: string): string { return value.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 export async function fillOfficialDocx(inspected: InspectedOfficialForm, values: Record<string,string>): Promise<Buffer> {
+  if(inspected.contentType!=='docx') throw new Error('Official form is not DOCX');
+  const dir=await mkdtemp(path.join(tmpdir(),'lexara-docx-')); const input=path.join(dir,'official.docx'); const out=path.join(dir,'completed.docx'); const unpack=path.join(dir,'unpacked');
+  try {
+    await writeFile(input,inspected.bytes); await execFileAsync('unzip',['-q',input,'-d',unpack]);
+    const documentPath=path.join(unpack,'word','document.xml'); let xml=await readFile(documentPath,'utf8');
+    for(const [key,value] of Object.entries(values)) {
+      const escapedKey=key.replace(/[.*+?^$()|[\]\\]/g,'\\export async function fillOfficialDocx(inspected: InspectedOfficialForm, values: Record<string,string>): Promise<Buffer> {
   if(inspected.contentType!=='docx') throw new Error('Official form is not DOCX');
   const patches: Record<string,any>={};
   for(const [key,value] of Object.entries(values)) patches[key]={type:PatchType.PARAGRAPH,children:[new TextRun({text:value})]};
   return Buffer.from(await patchDocument({outputType:'nodebuffer',data:inspected.bytes,keepOriginalStyles:true,patches}));
+}'); const safe=escapeXmlText(String(value));
+      xml=xml.replace(new RegExp('\\[\\s*'+escapedKey+'\\s*\\]','gi'),safe).replace(new RegExp('{{\\s*'+escapedKey+'\\s*}}','gi'),safe);
+    }
+    await writeFile(documentPath,xml,'utf8'); await execFileAsync('zip',['-qr',out,'.'],{cwd:unpack});
+    return await readFile(out);
+  } finally { await rm(dir,{recursive:true,force:true}).catch(()=>{}); }
 }
