@@ -3,7 +3,7 @@ import { resolveLexaraBackgroundSubject } from './LexaraBackgroundSubject';
 import {
   classifyBackgroundSemanticCategories,
   isContextualReference,
-  isFullPantheonReportIntent,
+  isFullLexaraBackgroundReportIntent,
 } from './LexaraBackgroundSemanticIntent';
 
 export type LexaraSequenceId =
@@ -55,7 +55,7 @@ export function planLexaraSequence(prompt: string, previousUserTurns: string[] =
     BACKGROUND_PATTERN.test(turn) || classifyBackgroundSemanticCategories(turn).length > 0,
   );
   const contextualFollowup = Boolean(subject && priorBackground && isContextualReference(text));
-  const fullReport = isFullPantheonReportIntent(text);
+  const fullReport = isFullLexaraBackgroundReportIntent(text);
   const background = Boolean(
     ((semanticCategories.length > 0 || BACKGROUND_PATTERN.test(text) || fullReport)
       && (!legal || fullReport || BACKGROUND_OBJECTIVE_PATTERN.test(text))
