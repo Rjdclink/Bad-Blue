@@ -16,6 +16,7 @@ import { MASTER_USER_ID } from '../masterPassword';
 import { isAuthenticated } from '../auth';
 import { getConfiguredHarmonyParticipants } from '../aiHarmonyModelRegistry';
 import { isBlankLegalDocumentRequest, resolveLegalDocumentType } from '../lexara/legalDocumentRegistry';
+import { resolveNetworkState } from '../lexara/LexaraJurisdictionResolver';
 
 const router = express.Router();
 router.use(isAuthenticated);
@@ -259,7 +260,7 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       ...previousMessages,
       { role: 'user', content: prompt },
     ]);
-    if (!documentIntent.requested && reasoningDocumentIntent.requested) {
+    if (!documentIntent.requested && reasoningDocumentIntent.requested && reasoningDocumentIntent.explicit && reasoningDocumentIntent.documentType !== 'Custom Document') {
       documentIntent.requested = true;
       if (documentIntent.documentType === 'Custom Document') {
         documentIntent.documentType = reasoningDocumentIntent.documentType;
@@ -397,7 +398,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       ...previousMessages,
       { role: 'user', content: prompt },
     ]);
-    if (!documentIntent.requested && reasoningDocumentIntent.requested) {
+    if (!documentIntent.requested && reasoningDocumentIntent.requested && reasoningDocumentIntent.explicit && reasoningDocumentIntent.documentType !== 'Custom Document') {
       documentIntent.requested = true;
       if (documentIntent.documentType === 'Custom Document') {
         documentIntent.documentType = reasoningDocumentIntent.documentType;
