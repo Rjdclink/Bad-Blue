@@ -125,7 +125,7 @@ const tests = [];
 const test = (name, run) => tests.push({ name, run });
 test('legal policy has exactly Claude, Gemini and direct xAI Grok', () => {
   const h = harness(keys);
-  assert.equal(h.registry.getConfiguredHarmonyProviders().length, 17);
+  assert.equal(h.registry.getConfiguredHarmonyProviders().length, 3);
   assert.deepEqual(Array.from(h.registry.getConfiguredHarmonyProviders('legalwhat')).sort(), ['claude','gemini','xai']);
   assert.equal(h.registry.isHarmonyProviderAllowed('grok','legalwhat'), false);
   assert.equal(h.registry.isHarmonyProviderAllowed('groq','legalwhat'), false);
@@ -165,7 +165,7 @@ test('removed providers cannot execute even with valid configured keys', async (
 test('Claude is primary for fast legal conversation', async () => {
   const h = harness(keys);
   await h.engine.orchestrateCollaboration('fast-conversation','Facts',
-    {...h.attributes, needsFastResponse:true}, ['claude','gemini','groq'],
+    {...h.attributes, needsFastResponse:true}, ['claude','gemini','xai'],
     {providerPolicy:'legalwhat',maxParticipants:1});
   assert.equal(h.calls[0].transport,'claude');
 });
@@ -181,11 +181,11 @@ test('Cloudflare is no longer an authorized legal transport', async () => {
   await assert.rejects(h.run(['cloudflare']), /No providers available/);
   assert.equal(h.calls.length, 0);
 });
-test('global policy retains existing gateway participant and recovery behavior', async () => {
+test('global policy cannot reopen removed providers', async () => {
   const h = harness(['GEMINI_API_KEY','OPENROUTER_API_KEY'], { fail: true });
   const result = await h.run(['gemini'], 'capability-first');
-  assert.equal(result.finalAnswer, 'Gateway fixture answer');
-  assert(h.calls.some(call => call.transport === 'openrouter'));
+  assert.match(result.finalAnswer, /No successful responses/);
+  assert(!h.calls.some(call => call.transport === 'openrouter'));
 });
 test('execution guard rejects excluded task and fallback transports', async () => {
   const h = harness(keys);
@@ -210,7 +210,7 @@ test('xAI failure uses Gemini without the excluded gateway', async () => {
   assert.deepEqual(h.calls.map(call => call.transport), ['xai','gemini']);
 });
 test('parent deadline cancels a stalled parallel race without starting fallback', async () => {
-  const h = harness(['GEMINI_API_KEY','GROQ_API_KEY','OPENROUTER_API_KEY'], { stall: true });
+  const h = harness(['GEMINI_API_KEY','XAI_API_KEY'], { stall: true });
   const controller = new AbortController();
   const startedAt = Date.now();
   const timer = setTimeout(() => controller.abort('fixture-parent-deadline'), 40);
@@ -218,7 +218,7 @@ test('parent deadline cancels a stalled parallel race without starting fallback'
     const result = await h.engine.orchestrateCollaboration(
       'fixture-correction-cancellation', 'Fixture question',
       { ...h.attributes, needsLegalAnalysis: false, needsFastResponse: true },
-      ['gemini','groq'],
+      ['gemini','xai'],
       { providerPolicy: 'legalwhat', maxParticipants: 1, maxFallbacks: 3,
         requestTimeoutMs: 5000, signal: controller.signal },
     );
@@ -498,12 +498,12 @@ test('explicit exceptional review can use Claude Sonnet', async () => {
   assert.equal(h.calls[0].model, 'claude-sonnet-5');
 });
 test('Claude synthesis does not invoke a redundant exceptional review', async () => {
-  const h = harness(['ANTHROPIC_API_KEY','GEMINI_API_KEY','GROQ_API_KEY'], {
+  const h = harness(['ANTHROPIC_API_KEY','GEMINI_API_KEY','XAI_API_KEY'], {
     reply: call => call.transport === 'claude' ? 'Reviewed answer with uncertainty'
       : /Synthesize/.test(call.prompt) ? '[LEGAL_REVIEW_REQUIRED] Material conflict remains.' : 'Independent analysis',
   });
   const result = await h.engine.orchestrateCollaboration('legal-reasoning', 'Resolve this issue',
-    h.attributes, ['gemini','groq','claude'], { providerPolicy: 'legalwhat', maxParticipants: 2 });
+    h.attributes, ['gemini','xai','claude'], { providerPolicy: 'legalwhat', maxParticipants: 2 });
   assert.equal(result.finalAnswer, 'Reviewed answer with uncertainty');
   assert.equal(h.calls.filter(x => x.transport === 'claude').length, 2);
 });
