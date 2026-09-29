@@ -35,6 +35,9 @@ export interface LexaraConversationContext {
   lawTypeName?: string;
   jurisdiction?: string;
   backgroundJurisdiction?: string;
+  backgroundLocality?: string;
+  backgroundArea?: string;
+  backgroundLocationConfidence?: number;
   behaviorMode?: 'personable' | 'professional';
   sessionId?: string;
   signal?: AbortSignal;
@@ -648,7 +651,15 @@ export async function generateLexaraConversationResponse(
     return { text, jurisdiction, mappedLawType, pantheonEndpoint, pantheonStatus };
   }
 
+  const silentLocationContext = jurisdictionRelevant && !explicitStateJurisdiction && backgroundStateJurisdiction
+    ? `\n\nINTERNAL LOCATION CONTEXT (do not volunteer or announce): Network-derived jurisdiction estimate: ${[
+        context.backgroundLocality,
+        context.backgroundArea && context.backgroundArea !== context.backgroundLocality ? context.backgroundArea : undefined,
+        backgroundStateJurisdiction,
+      ].filter(Boolean).join(', ')}. Treat city/area as approximate network geography, not GPS-level certainty. Use only when location/jurisdiction is relevant to the current legal issue; if it materially affects the answer and conflicts with stronger user-supplied facts, prefer the user-supplied facts or ask a brief clarification.`
+    : '';
   const systemPrompt = buildLegalSystemPrompt(context, mappedLawType, jurisdiction)
+    + silentLocationContext
     + formatAuthorityResearchForSystem(authorityResearch)
     + formatPantheonInvestigationForSystem(pantheonInvestigation);
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
