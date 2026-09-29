@@ -65,6 +65,7 @@ const PERSON_NAME_ONLY_PATTERN = /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}\b/;
 const ORGANIZATION_NAME_PATTERN = /\b[A-Z][A-Za-z0-9&.'-]*(?:\s+[A-Z][A-Za-z0-9&.'-]*){0,5}\s+(?:LLC|L\.L\.C\.|Inc\.?|Corporation|Corp\.?|Company|Co\.?|LP|LLP|PLLC|Foundation|Association|University|Bank)\b/;
 
 const PERSON_RECORD_PATTERN = /\b(?:identity|date\s+of\s+birth|dob|age|phone|email|address|where\s+(?:does|did)\s+.+?\s+live|residen|relative|family|associate|household|social\s+media|username|online\s+account|photo|image|employ(?:ed|ment)|work(?:ed|s)?\s+(?:at|for)|education|school|college|university|degree|professional\s+license|credential|business|company|corporat|property|house|home|real\s+estate|vehicle|car|truck|title|registration|court|case|docket|lawsuit|judgment|arrest(?:ed|s)?|criminal\s+record|conviction|warrant|inmate|incarcerat(?:e|ed|ion)?|prison|parole|probation|sex\s+offender|bankrupt|mortgage|loan\s+on|lien|married|marriage|divorc|spouse|husband|wife|die|died|death|deceased|obituary|news|media|government\s+(?:job|employment|service)|public\s+service|campaign|contribution|donation|political|patent|trademark|copyright|timeline|history|relationship|background\s+(?:check|report)|investigat(?:e|ion)\s+(?:him|her|them|this\s+person))\b/i;
+const CRIMINAL_DETAIL_PATTERN = /\b(?:charge(?:s|d)?|offense(?:s)?|crime(?:s)?|criminal\s+(?:history|record)|conviction(?:s)?|convicted|arrest(?:s|ed)?|booking|case|docket|sentence(?:d|s)?|warrant(?:s)?)\b/i;
 const FULL_REPORT_PATTERN = /\b(?:full|complete|comprehensive|entire)\s+(?:background\s+)?(?:report|check|investigation)|\b(?:run|do|generate|prepare)\s+(?:a\s+)?background\s+(?:report|check)\b/i;
 const PERSON_RECURSIVE_MAX_PASSES = 30;
 const PERSON_RECURSIVE_MAX_TARGETS_PER_PASS = 10;
@@ -595,7 +596,8 @@ export async function investigatePersonQuestion(
   // A direct structured result that already clears the fact-specific stop
   // threshold ends this objective immediately; ten minutes is a ceiling, not a
   // target. No unrelated crawling continues after the requested fact is strong.
-  if (structuredEvidence.length > 0 && structuredEvidenceConfidence >= PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD) {
+  const criminalDetailRequested = CRIMINAL_DETAIL_PATTERN.test(combined);
+  if (structuredEvidence.length > 0 && structuredEvidenceConfidence >= PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD && !criminalDetailRequested) {
     context.onProgress?.({ type: 'endpoint', pass: 0, confidence: structuredEvidenceConfidence, endpoint: 'evidence-sufficient' });
     return {
       evidenceSummary: structuredEvidence.join('\n\n').slice(0, 10_000),
