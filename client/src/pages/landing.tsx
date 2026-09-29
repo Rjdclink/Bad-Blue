@@ -115,114 +115,6 @@ export default function Landing() {
         ogImageAlt="Legal What? legal technology platform logo"
         structuredData={structuredData}
       />
-      {/* Hero Section */}
-      <section className="relative min-h-[100vh] flex items-center justify-center py-12 overflow-hidden">
-        {/* Background Image with Optimized Display */}
-        <div
-          className="absolute inset-0 bg-cover bg-center bg-no-repeat"
-          style={{ 
-            backgroundImage: `url(${heroImage}), linear-gradient(to bottom, #1a1a2e, #16213e)`,
-            backgroundSize: 'cover',
-            backgroundPosition: 'center center'
-          }}
-        >
-          {/* Dark overlay for text readability over constitutional background */}
-          <div className="absolute inset-0 bg-black/40" />
-        </div>
-
-        {/* Language Selector - Fixed top right */}
-        <div className="absolute top-6 right-6 z-20">
-          <div className="bg-white/10 backdrop-blur-sm rounded-lg p-1 border border-white/20">
-            <LanguageSelectorLight />
-          </div>
-        </div>
-
-        {/* Hero Content */}
-        <div className="relative z-10 max-w-4xl mx-auto px-4 text-center">
-          {/* LegalWhat Icon - Medium-sized Prominent Display */}
-          <div className="mb-8 flex justify-center animate-in fade-in slide-in-from-bottom-4 duration-700 delay-150">
-            <div className="relative">
-              {/* Glow effect behind icon */}
-              <div className="absolute inset-0 bg-primary/30 blur-2xl rounded-full scale-125" />
-              {/* Icon container with enhanced styling */}
-              <div className="relative bg-white/10 backdrop-blur-md p-4 rounded-xl border-2 border-white/30 shadow-2xl hover:scale-105 transition-transform duration-300">
-                {!iconError ? (
-                  <img 
-                    src="/images/Legal%20What%20Icon.png" 
-                    alt="Legal What? - AI Legal Platform" 
-                    className="w-28 h-28 md:w-32 md:h-32 object-contain filter drop-shadow-[0_0_15px_rgba(255,255,255,0.4)]"
-                    onError={(e) => {
-                      handleImageError(e, 'Legal What? Icon');
-                      setIconError(true);
-                    }}
-                  />
-                ) : (
-                  <div className="w-28 h-28 md:w-32 md:h-32 flex items-center justify-center text-white text-4xl font-bold">
-                    LW
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-          
-          <h1 className="text-white text-4xl md:text-5xl lg:text-6xl font-bold leading-tight mb-8 animate-in fade-in slide-in-from-bottom-4 duration-700 delay-300 drop-shadow-2xl">
-            Legal What? — AI Legal Tools for 40 Practice Areas
-          </h1>
-
-          {/* Login/Get Started Card - Overlays background with glassmorphism */}
-          <div className="max-w-5xl mx-auto bg-white/10 backdrop-blur-md rounded-2xl p-8 border border-white/20 shadow-2xl">
-            {/* CTA Button */}
-            <div className="mt-6 flex justify-center px-4 relative z-10">
-              <Button
-                size="default"
-                className="text-base px-6 bg-primary hover:bg-primary/90 backdrop-blur-sm border border-white/50 shadow-lg"
-                onClick={() => setLocation('/login')}
-                data-testid="button-get-started"
-              >
-                Get Started
-              </Button>
-            </div>
-
-            {/* Trust Indicator */}
-            <div className="mt-8">
-              <Badge className="bg-white/15 backdrop-blur-md text-white border-white/20 px-4 py-2 text-sm">
-                <Shield className="w-4 h-4 mr-2" />
-                Powered by Public Records
-              </Badge>
-            </div>
-          </div>
-
-        </div>
-
-        {/* Scroll Indicator */}
-        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 animate-bounce">
-          <div className="w-6 h-10 border-2 border-white/50 rounded-full flex items-start justify-center p-2">
-            <div className="w-1.5 h-3 bg-white/70 rounded-full" />
-          </div>
-        </div>
-      </section>
-
-      {/* Search-visible coverage of all supported legal practice areas */}
-      <section className="py-16 px-4 bg-card/40" aria-labelledby="legal-practice-areas">
-        <div className="max-w-7xl mx-auto">
-          <div className="text-center mb-10">
-            <h2 id="legal-practice-areas" className="text-3xl md:text-4xl font-bold mb-4">
-              40 Legal Practice Areas
-            </h2>
-            <p className="text-muted-foreground max-w-3xl mx-auto leading-relaxed">
-              Legal What? supports AI-assisted legal information, research, issue spotting, and document workflows across the following 40 practice areas.
-            </p>
-          </div>
-          <div className="flex flex-wrap justify-center gap-2 max-w-6xl mx-auto">
-            {LAW_TYPE_DATA.map((area) => (
-              <span key={area.id} className="rounded-full border bg-background px-3 py-1.5 text-sm font-medium shadow-sm">
-                {area.name}
-              </span>
-            ))}
-          </div>
-        </div>
-      </section>
-
       {/* LEXARA - primary landing-page presentation */}
       <section className="relative py-20 px-4 overflow-hidden" aria-labelledby="lexara-overview">
         <div
@@ -302,6 +194,91 @@ export default function Landing() {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Hero Section */}
+      <section className="relative min-h-[100vh] flex items-center justify-center py-12 overflow-hidden">
+        {/* Background Image with Optimized Display */}
+        <div
+          className="absolute inset-0 bg-cover bg-center bg-no-repeat"
+          style={{ 
+            backgroundImage: `url(${heroImage}), linear-gradient(to bottom, #1a1a2e, #16213e)`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center center'
+          }}
+        >
+          {/* Dark overlay for text readability over constitutional background */}
+          <div className="absolute inset-0 bg-black/40" />
+        </div>
+
+        {/* Language Selector - Fixed top right */}
+        <div className="absolute top-6 right-6 z-20">
+          <div className="bg-white/10 backdrop-blur-sm rounded-lg p-1 border border-white/20">
+            <LanguageSelectorLight />
+          </div>
+        </div>
+
+        {/* Hero Content */}
+        <div className="relative z-10 max-w-4xl mx-auto px-4 text-center">
+          {/* LegalWhat Icon - Medium-sized Prominent Display */}
+          <div className="mb-8 flex justify-center animate-in fade-in slide-in-from-bottom-4 duration-700 delay-150">
+            <div className="relative">
+              {/* Glow effect behind icon */}
+              <div className="absolute inset-0 bg-primary/30 blur-2xl rounded-full scale-125" />
+              {/* Icon container with enhanced styling */}
+              <div className="relative bg-white/10 backdrop-blur-md p-4 rounded-xl border-2 border-white/30 shadow-2xl hover:scale-105 transition-transform duration-300">
+                {!iconError ? (
+                  <img 
+                    src="/images/Legal%20What%20Icon.png" 
+                    alt="Legal What? - AI Legal Platform" 
+                    className="w-28 h-28 md:w-32 md:h-32 object-contain filter drop-shadow-[0_0_15px_rgba(255,255,255,0.4)]"
+                    onError={(e) => {
+                      handleImageError(e, 'Legal What? Icon');
+                      setIconError(true);
+                    }}
+                  />
+                ) : (
+                  <div className="w-28 h-28 md:w-32 md:h-32 flex items-center justify-center text-white text-4xl font-bold">
+                    LW
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+          
+          <h1 className="text-white text-4xl md:text-5xl lg:text-6xl font-bold leading-tight mb-8 animate-in fade-in slide-in-from-bottom-4 duration-700 delay-300 drop-shadow-2xl">
+            Legal What? — AI Legal Tools for 40 Practice Areas
+          </h1>
+
+        </div>
+
+        {/* Scroll Indicator */}
+        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 animate-bounce">
+          <div className="w-6 h-10 border-2 border-white/50 rounded-full flex items-start justify-center p-2">
+            <div className="w-1.5 h-3 bg-white/70 rounded-full" />
+          </div>
+        </div>
+      </section>
+
+      {/* Search-visible coverage of all supported legal practice areas */}
+      <section className="py-16 px-4 bg-card/40" aria-labelledby="legal-practice-areas">
+        <div className="max-w-7xl mx-auto">
+          <div className="text-center mb-10">
+            <h2 id="legal-practice-areas" className="text-3xl md:text-4xl font-bold mb-4">
+              40 Legal Practice Areas
+            </h2>
+            <p className="text-muted-foreground max-w-3xl mx-auto leading-relaxed">
+              Legal What? supports AI-assisted legal information, research, issue spotting, and document workflows across the following 40 practice areas.
+            </p>
+          </div>
+          <div className="flex flex-wrap justify-center gap-2 max-w-6xl mx-auto">
+            {LAW_TYPE_DATA.map((area) => (
+              <span key={area.id} className="rounded-full border bg-background px-3 py-1.5 text-sm font-medium shadow-sm">
+                {area.name}
+              </span>
+            ))}
           </div>
         </div>
       </section>
