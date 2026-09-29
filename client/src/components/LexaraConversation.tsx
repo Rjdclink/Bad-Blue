@@ -1076,6 +1076,14 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       if (generation !== generationRef.current) return;
       const priorPendingDocument = pendingDocument;
       const documentIntentRequested = data?.documentIntent?.requested === true;
+      const documentFollowup = /\b(?:document|draft|form|letter|complaint|petition|motion|affidavit|declaration|pdf|docx|edit|revise|change|paragraph|section|signature|download|export|file|filing)\b/i.test(message);
+      // Document controls belong to the active document task, never to the
+      // conversation globally. An unrelated completed turn retires stale UI.
+      if (!documentIntentRequested && priorPendingDocument && !documentFollowup) {
+        setPendingDocument(null);
+        setConversationDocument(null);
+        if (pendingActionRef.current?.kind === 'document') pendingActionRef.current = null;
+      }
       if (documentIntentRequested) {
         const resolvedJurisdiction = String(data?.jurisdiction || jurisdiction || '').trim();
         if (resolvedJurisdiction) {
