@@ -1,14 +1,14 @@
 import { decideLexaraResearchNeed, isLexaraLegalAuthorityIntent, isLexaraConversationControl, type LexaraResearchDecision } from './LexaraResearchIntentRouter';
 import { resolveLexaraBackgroundSubject } from './LexaraBackgroundSubject';
 import {
-  classifyBackgroundSemanticCategories,
+  classifyPantheonSemanticCategories,
   isContextualReference,
-  isFullBackgroundReportIntent,
-} from './LexaraBackgroundSemanticIntent';
+  isFullPantheonReportIntent,
+} from './LexaraPantheonSemanticIntent';
 
 export type LexaraSequenceId =
   | 'simple-factual'
-  | 'background-background'
+  | 'lexara-background'
   | 'lexara-legal'
   | 'combined-legal-background'
   | 'deep-recursive'
@@ -26,7 +26,7 @@ export interface LexaraSequencePlan {
   reason: string;
 }
 
-// Keep this classifier aligned with Background's 30 user-facing report
+// Keep this classifier aligned with Lexara's background report
 // categories. The investigation layer has the detailed category rules; this
 // boundary only decides whether the turn must enter that evidence pipeline.
 const BACKGROUND_PATTERN = /\b(?:background|identit\w*|alias\w*|date\s+of\s+birth|dob|age\w*|phone\w*|telephone\w*|email\w*|e-mail\w*|address\w*|residen\w*|lived|relativ\w*|famil\w*|associat\w*|affiliat\w*|household\w*|social\s+media|facebook|instagram|linkedin|tiktok|twitter|username\w*|online\s+account\w*|photo\w*|image\w*|employ\w*|occupation\w*|job\w*|work\w*|education\w*|school\w*|college\w*|university|degree\w*|license\w*|credential\w*|certification\w*|business\w*|compan\w*|corporat\w*|ownership|property\w*|real\s+estate|vehicle\w*|car\w*|truck\w*|vin\w*|court\w*|case\w*|docket\w*|criminal\w*|conviction\w*|arrest\w*|police|inmate\w*|incarcerat\w*|prison\w*|jail\w*|probation|parole|warrant\w*|wanted|sex[-\s]+offender\w*|civil\s+litigation|judgment\w*|bankrupt\w*|lien\w*|mortgage\w*|financial\w*|marriage\w*|married|spouse\w*|divorc\w*|vital\w*|news|media|internet|web\s+footprint|government\w*|political\w*|public\s+service|timeline\w*|chronolog\w*|relationship\w*|history|record\w*|filing\w*|misconduct\w*)/i;
