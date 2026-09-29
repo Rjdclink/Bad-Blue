@@ -1,4 +1,4 @@
-import { pantheonRetrievalAdapter } from '../services/crawlers/PantheonRetrievalAdapter';
+import { lexaraRetrievalAdapter } from './LexaraRetrievalBoundary';
 import { selectLexaraCrawlerPlan } from './LexaraCrawlerCapabilityRegistry';
 import { decideLexaraResearchNeed } from './LexaraResearchIntentRouter';
 import { discoverLegalMeshTier3, discoverLegalMeshSupplemental, legalMeshSufficient } from './LegalProviderMesh';
@@ -183,10 +183,10 @@ async function enrichAuthoritySourcesWithCrawlerPool(
   signal?: AbortSignal,
 ): Promise<LexaraAuthoritySource[]> {
   if (!sources.length) return sources;
-  const usePantheon = selectedCrawlerIds.some(id =>
+  const useCrawlerEnrichment = selectedCrawlerIds.some(id =>
     ['startrek', 'birdofprey', 'sixdegrees', 'blizzard', 'cerberus', 'lich'].includes(id)
   );
-  if (!usePantheon) return sources;
+  if (!useCrawlerEnrichment) return sources;
 
   // Discovery providers often already return enough primary-source text.
   // Only pay crawler-enrichment latency for sources that still lack evidence.
@@ -202,7 +202,7 @@ async function enrichAuthoritySourcesWithCrawlerPool(
       signal.addEventListener('abort', abortHandler, { once: true });
     });
     const enrichment = await Promise.race([
-      pantheonRetrievalAdapter.retrieve({
+      lexaraRetrievalAdapter.retrieve({
         purpose: 'lexara_legal_research',
         targets,
         depth: 2,
