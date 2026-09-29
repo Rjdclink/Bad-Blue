@@ -21,6 +21,7 @@ type DbIpCityRecord = {
 };
 
 let readerPromise: Promise<Reader<DbIpCityRecord> | null> | null = null;
+let readyReader: Reader<DbIpCityRecord> | null = null;
 function dataPath(): string {
   return process.env.DBIP_LOCAL_MMDB?.trim() || path.join(os.tmpdir(), 'legalwhat-dbip-city-lite.mmdb');
 }
@@ -57,6 +58,7 @@ async function openReader(): Promise<Reader<DbIpCityRecord> | null> {
 async function reader(): Promise<Reader<DbIpCityRecord> | null> {
   if (!readerPromise) {
     readerPromise = openReader().then(result => {
+      readyReader = result;
       if (!result) setTimeout(() => { readerPromise = null; }, 5 * 60_000);
       return result;
     });
@@ -69,7 +71,9 @@ export function warmLocalNetworkJurisdiction(): void {
 export async function resolveLocalNetworkJurisdiction(ip?: string): Promise<LocalNetworkJurisdictionEstimate | null> {
   const address = String(ip || '').split(',')[0].trim();
   if (!address || isPrivateOrLoopback(address)) return null;
-  const db = await reader(); if (!db) return null;
+  // Never make a user's conversation wait for the dataset download. Startup
+  // warming owns initialization; until ready, location inference simply skips.
+  const db = readyReader; if (!db) { void reader(); return null; }
   try {
     const row = db.get(address);
     if (!row || row.country?.iso_code !== 'US') return null;
