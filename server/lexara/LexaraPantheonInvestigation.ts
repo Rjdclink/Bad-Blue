@@ -1,8 +1,8 @@
 import {
-  pantheonRetrievalAdapter,
-  type PantheonRetrievalResponse,
-  type RetrievalEvidence,
-} from '../services/crawlers/PantheonRetrievalAdapter';
+  lexaraRetrievalAdapter,
+  type LexaraRetrievalResponse,
+  type LexaraLexaraRetrievalEvidence,
+} from './LexaraRetrievalAdapter';
 import { buildPantheonCategoryTargets, type PantheonBackgroundCategory } from '../services/pantheon/PantheonSovereignSourceRegistry';
 import { searchInmates } from '../services/inmateSearch/InmateSearchAggregator';
 import { matchPantheonSubject } from '../services/pantheon/PantheonEntityResolution';
@@ -75,8 +75,8 @@ const STRUCTURED_CUSTODY_BUDGET_MS = 5 * 60_000;
 const PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD = 0.50;
 const PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD = 0.80;
 const PERSON_SOFT_CHECKPOINTS_MS = [25_000, 60_000, 120_000, 300_000] as const;
-type LexaraConversationalRetrievalRequest = Parameters<typeof pantheonRetrievalAdapter.retrieve>[0];
-type LexaraConversationalRetrieval = (request: LexaraConversationalRetrievalRequest) => Promise<PantheonRetrievalResponse>;
+type LexaraConversationalRetrievalRequest = Parameters<typeof lexaraRetrievalAdapter.retrieve>[0];
+type LexaraConversationalRetrieval = (request: LexaraConversationalRetrievalRequest) => Promise<LexaraRetrievalResponse>;
 
 /**
  * Uses only the existing explicitly enabled, host-allowlisted contact
@@ -90,8 +90,8 @@ export async function retrieveLexaraConversationalSource(
     registrationAuthority?: PantheonRegistrationAuthority;
     retrieve?: LexaraConversationalRetrieval;
   } = {},
-): Promise<PantheonRetrievalResponse> {
-  const retrieve = options.retrieve || (value => pantheonRetrievalAdapter.retrieve(value));
+): Promise<LexaraRetrievalResponse> {
+  const retrieve = options.retrieve || (value => lexaraRetrievalAdapter.retrieve(value));
   const initial = await retrieve(request);
   if (request.purpose !== 'lexara_legal_research'
     || request.targets.length !== 1
@@ -391,7 +391,7 @@ function extractOrganizationName(text: string): string | undefined {
   return text.match(ORGANIZATION_NAME_PATTERN)?.[0]?.trim();
 }
 
-function genericEntityMatch(item: RetrievalEvidence, subject: string): { matched: boolean; score: number; conflicts: string[]; independentCorrelates: string[] } {
+function genericEntityMatch(item: LexaraRetrievalEvidence, subject: string): { matched: boolean; score: number; conflicts: string[]; independentCorrelates: string[] } {
   const normalizedSubject = subject.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
   const content = ` ${String(item.content || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim()} `;
   const exactPhrase = Boolean(normalizedSubject && content.includes(` ${normalizedSubject} `));
@@ -693,7 +693,7 @@ export async function investigatePersonQuestion(
     let retrievalAvailable = true;
     let retrievalReason: string | undefined;
     const crawlerAudit: NonNullable<LexaraPersonInvestigation['crawlerAudit']> = [];
-    const acceptedEvidence = new Map<string, RetrievalEvidence>();
+    const acceptedEvidence = new Map<string, LexaraRetrievalEvidence>();
     const acceptedEvidenceScores = new Map<string, number>();
     // Index snippets and discovered URLs are leads, never verified evidence.
     let recursionPasses = 0;
