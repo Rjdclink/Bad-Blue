@@ -244,13 +244,9 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
     const previousMessages = sanitizePreviousMessages((rawContext as any).previousMessages);
     const documentIntent = detectDocumentIntent(prompt, previousMessages);
     const explicitJurisdiction = cleanOptionalString((rawContext as any).jurisdiction, 80);
-    const networkStatePromise = explicitJurisdiction
-      ? Promise.resolve(null)
-      : resolveNetworkState(String(req.headers['x-real-ip'] || req.headers['cf-connecting-ip'] || req.ip || ''));
-    const networkState = await Promise.race([
-      networkStatePromise,
-      new Promise<null>(resolve => setTimeout(() => resolve(null), 150)),
-    ]);
+    const networkState = explicitJurisdiction ? null : await resolveNetworkState(
+      String(req.headers['x-real-ip'] || req.headers['cf-connecting-ip'] || req.ip || '')
+    );
     const result = await generateLexaraConversationResponse(prompt, {
       previousMessages,
       lawType: cleanOptionalString((rawContext as any).lawType),
@@ -359,13 +355,9 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
     const lawType = cleanOptionalString((rawContext as any).lawType);
     const lawTypeName = cleanOptionalString((rawContext as any).lawTypeName, 160);
     const explicitJurisdiction = cleanOptionalString((rawContext as any).jurisdiction, 80);
-    const networkStatePromise = explicitJurisdiction
-      ? Promise.resolve(null)
-      : resolveNetworkState(String(req.headers['x-real-ip'] || req.headers['cf-connecting-ip'] || req.ip || ''));
-    const networkState = await Promise.race([
-      networkStatePromise,
-      new Promise<null>(resolve => setTimeout(() => resolve(null), 150)),
-    ]);
+    const networkState = explicitJurisdiction ? null : await resolveNetworkState(
+      String(req.headers['x-real-ip'] || req.headers['cf-connecting-ip'] || req.ip || '')
+    );
     const jurisdiction = explicitJurisdiction || networkState?.state;
     const behaviorMode = (rawContext as any).behaviorMode === 'personable' ? 'personable' : 'professional';
     const sessionId = cleanOptionalString((rawContext as any).sessionId, 128);
