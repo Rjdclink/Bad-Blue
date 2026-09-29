@@ -278,7 +278,7 @@ export function isContextualReference(text: string): boolean {
   return /\b(?:he|she|they|them|their|his|her|its|it|that|this|those|these|same person|same company|same place|and what about|what about|how about|also check|and the|how is|where is it|what happened next|keep looking|try again|look further)\b/.test(normalized);
 }
 
-export function isFullPantheonReportIntent(text: string): boolean {
+export function isFullLexaraBackgroundReportIntent(text: string): boolean {
   const normalized = normalizedText(text);
   return /\b(?:full|complete|comprehensive|entire|all 30|every category)\b.{0,35}\b(?:background|report|check|investigation)\b|\b(?:run|do|generate|prepare|conduct)\b.{0,20}\b(?:background report|background check|full report)\b/.test(normalized);
 }
