@@ -1,4 +1,4 @@
-import { discoverPantheonSourcesParallel } from '../services/pantheon/PantheonDiscoveryCoordinator';
+import { discoverLexaraBackgroundSourcesParallel } from './LexaraBackgroundIntelligence';
 
 export type LegalMeshTier = 1 | 2 | 3 | 4 | 5 | 6;
 export interface LegalMeshCandidate { url: string; title: string; excerpt?: string; tier: LegalMeshTier; provider: string; }
@@ -26,7 +26,7 @@ async function tavily(query: string, signal?: AbortSignal): Promise<LegalMeshCan
 
 export async function discoverLegalMeshTier3(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
   const [existing, tavilyResults] = await Promise.all([
-    discoverPantheonSourcesParallel(query, [], { limit: 16, timeoutMs: 2200, signal, includePaidFallback: false, providerPolicy: 'legalwhat' }),
+    discoverLexaraBackgroundSourcesParallel(query, [], { limit: 16, timeoutMs: 2200, signal, includePaidFallback: false, providerPolicy: 'legalwhat' }),
     tavily(query, signal),
   ]);
   const evidenceByUrl = new Map(existing.evidence.map(item => [item.url, item]));
@@ -44,7 +44,7 @@ export async function discoverLegalMeshTier3(query: string, signal?: AbortSignal
 }
 
 export async function discoverLegalMeshSupplemental(query: string, existingUrls: readonly string[], signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
-  const result = await discoverPantheonSourcesParallel(query, existingUrls, { limit: 12, timeoutMs: 2500, signal, includePaidFallback: true, providerPolicy: 'legalwhat' });
+  const result = await discoverLexaraBackgroundSourcesParallel(query, existingUrls, { limit: 12, timeoutMs: 2500, signal, includePaidFallback: true, providerPolicy: 'legalwhat' });
   return result.urls.map(url => ({ url, title: 'Supplemental legal discovery result', tier: 5 as const, provider: 'supplemental-discovery' }));
 }
 
