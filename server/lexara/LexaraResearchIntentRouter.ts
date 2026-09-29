@@ -31,6 +31,7 @@ export function isLexaraConversationControl(text: string): boolean {
 }
 
 const LEGAL_AUTHORITY_INTENT_PATTERN = /\b(?:versus|case\s+law|court\s+(?:case|decision|opinion|holding)|holding|precedent|statute|u\.?s\.?c\.?|cfr|code\s+section|rule\s+\d|motion|appeal|lawsuit|cause\s+of\s+action|civil\s+(?:issue|case|claim|matter)|criminal\s+(?:issue|case|charge)|constitutional|jurisdiction|legal\s+(?:issue|question|claim|case|matter|right|remedy|defense|option|analysis|advice)s?)\b/i;
+const LOCAL_REGULATORY_LEGAL_PATTERN = /\\b(?:ordinance|municipal|city\\s+code|county\\s+code|local\\s+(?:law|rule|ordinance)|nuisance|animal\\s+control|leash|dog\\s+at\\s+large|zoning|landlord|tenant|eviction|property\\s+boundary|trespass|noise\\s+ordinance|traffic\\s+(?:law|ordinance)|licensing|permit)\\b/i;
 const CASE_CAPTION_PATTERN = /\b[A-Z][A-Za-z.'’-]+(?:\s+[A-Z][A-Za-z.'’-]+){0,4}\s+(?:v\.?|vs\.?|versus)\s+(?:the\s+)?[A-Z][A-Za-z.'’ -]{1,80}\b/i;
 // Ordinary procedural questions often omit the word "legal". They must not
 // become subject-background lookups merely because they are questions.
@@ -38,7 +39,7 @@ const PERSONAL_LEGAL_PROCEDURE_PATTERN = /\b(?:how\s+(?:do|can|should|would)\s+(
 
 export function isLexaraLegalAuthorityIntent(text: string): boolean {
   const value = String(text || '').trim();
-  return CASE_CAPTION_PATTERN.test(value) || LEGAL_AUTHORITY_INTENT_PATTERN.test(value) || PERSONAL_LEGAL_PROCEDURE_PATTERN.test(value);
+  return CASE_CAPTION_PATTERN.test(value) || LEGAL_AUTHORITY_INTENT_PATTERN.test(value) || PERSONAL_LEGAL_PROCEDURE_PATTERN.test(value) || LOCAL_REGULATORY_LEGAL_PATTERN.test(value);
 }
 
 /**
