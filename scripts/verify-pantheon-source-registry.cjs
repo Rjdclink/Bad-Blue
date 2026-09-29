@@ -19,6 +19,12 @@ for(const required of ['SEARXNG_URL','DDGS_URL','OPENSERP_URL','GEMINI_API_KEY',
 for(const forbidden of ['orchestratedWebSearch','supplementalPantheonDiscovery']){
   if(discovery.includes(forbidden)) throw new Error('Removed shared discovery transport remains: '+forbidden);
 }
+for(const required of ['pantheonSourceFamily','familyCounts','count >= 2']){
+  if(!discovery.includes(required)) throw new Error('Pantheon source-family diversity guard missing: '+required);
+}
+if(!investigation.includes("target.transport !== 'search-provider'")){
+  throw new Error('Pantheon conversational frontier must exclude search-provider result pages');
+}
 for(const required of ['searchCourtListener','searchGovInfo','discoverLegalMeshTier3','discoverLegalMeshSupplemental']){
   if(!authority.includes(required)) throw new Error('Lexara legal provider mesh missing route: '+required);
 }
