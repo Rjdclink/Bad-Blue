@@ -129,6 +129,17 @@ export default function Landing() {
         </div>
 
         <div className="relative z-10 max-w-5xl mx-auto text-white">
+          <div className="flex justify-center mb-5">
+            <div className="max-w-2xl rounded-2xl border border-white/25 bg-black/45 px-5 py-3 text-center shadow-lg backdrop-blur-md">
+              <p className="text-base font-semibold md:text-lg">
+                Try LegalWhat free for 3 days — no payment card required.
+              </p>
+              <p className="mt-1 text-sm text-white/85 md:text-base">
+                After your free trial, continue with full access for just $19.99/month.
+              </p>
+            </div>
+          </div>
+
           <div className="flex justify-center mb-6">
             <div className="bg-white/10 backdrop-blur-sm rounded-3xl p-6 md:p-8 border border-white/20 max-w-md w-full shadow-[0_0_40px_rgba(96,165,250,0.3),0_20px_60px_rgba(0,0,0,0.5)]">
               {!lexaraImageError ? (
