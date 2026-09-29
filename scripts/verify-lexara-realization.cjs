@@ -521,7 +521,7 @@ must(
     crawlerRegistry.includes("'SpiderFoot'") &&
     crawlerRegistry.includes("'GravityCrawler'") &&
     authorityResearch.includes('selectLexaraCrawlerPlan') &&
-    authorityResearch.includes('pantheonRetrievalAdapter.retrieve'),
+    authorityResearch.includes('lexaraRetrievalAdapter.retrieve'),
   'Lexara owns one need-driven crawler capability pool spanning legal, PANTHEON, extractor, external, people/criminal, and read-only crypto evidence tools',
 );
 must(
@@ -796,13 +796,13 @@ must(
   'Pantheon retrieval gaps are communicated to Lexara as coverage limits rather than false negative records',
 );
 must(
-  lexaraConversationOrchestrator.includes('initialPantheon.fullBackgroundReportRequested'),
+  lexaraConversationOrchestrator.includes('initialBackground.fullBackgroundReportRequested'),
   'full background-report requests are explicitly handed back to Pantheon workflow instead of silently falling through ordinary chat',
 );
 must(
-  lexaraConversationOrchestrator.includes('pantheonCategories:') &&
-    lexaraConversationOrchestrator.includes('pantheonSourceCount:') &&
-    lexaraConversationOrchestrator.includes('pantheonCoverageLimited:'),
+  lexaraConversationOrchestrator.includes('backgroundCategories:') &&
+    lexaraConversationOrchestrator.includes('backgroundSourceCount:') &&
+    lexaraConversationOrchestrator.includes('backgroundCoverageLimited:'),
   'Lexara production telemetry proves Pantheon category/source/coverage handoff per live turn',
 );
 must(
@@ -926,7 +926,7 @@ must(
 );
 must(
   orchestrator.includes('private individual, or the requested fact being personal, is NEVER by itself a reason') &&
-    orchestrator.includes('pantheonInvestigation && isPersonPermissionRefusal(text)') &&
+    orchestrator.includes('backgroundInvestigation && isPersonPermissionRefusal(text)') &&
     orchestrator.includes('I could not independently verify the requested fact from the sources I was able to assess.'),
   'Lexara has no blanket private-individual permission refusal after Pantheon targeting',
 );
@@ -1015,8 +1015,8 @@ must(domainExpertiseSourceLines.length === 40, 'literal 40-source LEXARA practic
 must(domainImplementationSourceLines.length === 10, 'literal 10-source LEXARA specialization implementation review is present');
 must(
   lexaraConversationOrchestrator.includes('planLexaraSequence(cleanPrompt, previousUserTurns)') &&
-    lexaraConversationOrchestrator.includes('sequencePlan.usePantheon && sequencePlan.useLegalResearch') &&
-    lexaraConversationOrchestrator.includes('const pantheonDelegatedByLexara = sequencePlan.usePantheon') &&
+    lexaraConversationOrchestrator.includes('sequencePlan.useBackgroundResearch && sequencePlan.useLegalResearch') &&
+    lexaraConversationOrchestrator.includes('const backgroundResearchRequested = sequencePlan.useBackgroundResearch') &&
     lexaraConversationOrchestrator.includes('const authorityResearchPromise = sequencePlan.useLegalResearch') &&
     lexaraPantheonInvestigation.includes("researchDecision.objectiveKind !== 'legal-authority' || context.delegatedByLexara"),
   'legal-only questions stay on Lexara while explicit mixed legal/background questions may delegate factual retrieval to Pantheon',
@@ -1037,12 +1037,12 @@ must(
     pantheonInvestigation.includes('perPassBudgetMs = Math.min(pass === 0 ? 6_000 : 8_000, remainingMs)') &&
     pantheonInvestigation.includes('fullBackgroundReportRequested') &&
     pantheonInvestigation.includes('needsIdentityClarification?: boolean') &&
-    orchestrator.includes('initialPantheon?.clarification && (initialPantheon.needsIdentityClarification || initialPantheon.fullBackgroundReportRequested)') &&
-    orchestrator.includes('const pantheonPrompt = mixedLegalFactNeed') &&
-    orchestrator.includes('investigatePersonQuestion(pantheonPrompt') &&
+    orchestrator.includes('initialBackground?.clarification && (initialBackground.needsIdentityClarification || initialBackground.fullBackgroundReportRequested)') &&
+    orchestrator.includes('const backgroundPrompt = mixedLegalFactNeed') &&
+    orchestrator.includes('investigateLexaraBackgroundQuestion(backgroundPrompt') &&
     orchestrator.includes('new Promise<null>(resolve => setTimeout(() => resolve(null), 0))') &&
     !orchestrator.includes('new Promise<null>(resolve => setTimeout(() => resolve(null), 60))') &&
-    orchestrator.includes('formatPantheonInvestigationForSystem(pantheonInvestigation)'),
+    orchestrator.includes('formatLexaraBackgroundResearchForSystem(backgroundInvestigation)'),
   'LEXARA identifies the subject before targeted Pantheon research, scopes the requested record categories, and permits dynamic source discovery without silently running a full report',
 );
 
