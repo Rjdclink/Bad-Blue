@@ -225,7 +225,7 @@ function getEnvFlag(name: string, defaultValue: boolean): boolean {
 }
 
 const INMATE_ENABLE_STATE_DOC = getEnvFlag('INMATE_ENABLE_STATE_DOC', true);
-const INMATE_ENABLE_VINE = getEnvFlag('INMATE_ENABLE_VINE', false);
+const INMATE_ENABLE_VINE = getEnvFlag('INMATE_ENABLE_VINE', true);
 
 function normalizeSex(value: unknown): 'Male' | 'Female' | 'Unknown' | undefined {
   if (value == null) return undefined;
@@ -462,9 +462,46 @@ function createStateDOCAdapter(stateCode: string): DataSourceAdapter {
  */
 const VINEAdapter: DataSourceAdapter = {
   name: 'VINE',
-  async search(_query: InmateSearchQuery): Promise<InmateRecord[]> {
-    // Fail closed rather than presenting a locator/discovery page as custody proof.
-    return [];
+  async search(query: InmateSearchQuery): Promise<InmateRecord[]> {
+    // VINELink participates as an authoritative custody discovery source through
+    // Pantheon's supervised acquisition layer. Its public locator page is a
+    // discovery target, not by itself proof that a particular person is in custody.
+    try {
+      const identity = [query.firstName, query.middleName, query.lastName, query.inmateId]
+        .filter(Boolean).join(' ').trim();
+      const retrieval = await pantheonRetrievalAdapter.retrieve({
+        purpose: 'state_doc_inmate_search',
+        targets: ['https://www.vinelink.com/'],
+        depth: 2,
+        budgetMs: 2_500,
+        subject: identity || undefined,
+        location: query.state,
+      });
+      const first = (query.firstName || '').trim().toLowerCase();
+      const last = (query.lastName || '').trim().toLowerCase();
+      const inmateId = (query.inmateId || '').trim().toLowerCase();
+      const evidence = retrieval.evidence.filter(item => {
+        const text = String(item.content || '').toLowerCase();
+        if (!text) return false;
+        if (inmateId && text.includes(inmateId)) return true;
+        return Boolean(first && last && text.includes(first) && text.includes(last));
+      });
+      if (evidence.length) {
+        logger.info('[InmateSearch] VINELink subject-specific evidence discovered', {
+          state: query.state?.toUpperCase(),
+          evidenceCount: evidence.length,
+        });
+      }
+      // Only a future structured VINELink record adapter may emit InmateRecord.
+      // Discovery evidence continues through Pantheon for identity/provenance checks.
+      return [];
+    } catch (error) {
+      logger.warn('[InmateSearch] VINELink discovery unavailable', {
+        state: query.state?.toUpperCase(),
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    }
   }
 };
 
