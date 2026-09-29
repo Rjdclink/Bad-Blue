@@ -29,9 +29,9 @@ async function main() {
     SUPABASE_DB_URL: process.env.SUPABASE_DB_URL,
     DATABASE_URL: process.env.DATABASE_URL,
   };
-  delete process.env.SUPABASE_DATABASE_URL;
-  delete process.env.SUPABASE_DB_URL;
-  delete process.env.DATABASE_URL;
+  // Keep database configuration stable while the verifier's module graph loads.
+  // The persistence fixture below installs its own unreachable test DATABASE_URL
+  // before importing PantheonReportStore, so no live database work is performed.
   const {
     initializePantheonCategoryPlans,
     PANTHEON_REPORT_CATEGORIES,
