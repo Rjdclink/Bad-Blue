@@ -88,11 +88,12 @@ export function setupConsultationRoutes(app: Express): void {
 
     if (officialForm.requirement === 'mandatory') {
       return res.status(409).json({
-        error: 'A mandatory official form appears to apply; Lexara will not substitute a custom draft.',
+        error: 'A mandatory official form applies. Lexara will use the verified official form rather than substitute a custom draft.',
         documentType: requestedType,
         jurisdiction: documentJurisdiction,
         officialForm,
-        missingFactsRequired: true,
+        officialFormRequired: true,
+        facts,
       });
     }
     const generateDraft = (prompt: string) => generateLegalAnalysis('document-drafting', prompt, {
@@ -155,9 +156,20 @@ export function setupConsultationRoutes(app: Express): void {
 
   app.post('/api/lexara/documents/official-form', isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const officialForm = req.body?.officialForm;
-    const values = req.body?.values && typeof req.body.values === 'object' ? req.body.values : {};
+    let values = req.body?.values && typeof req.body.values === 'object' ? req.body.values : {};
+    const facts = typeof req.body?.facts === 'string' ? req.body.facts.trim().slice(0, 30_000) : '';
     if (!officialForm?.verifiedOfficial || !officialForm?.url) return res.status(400).json({ error: 'A verified official form is required' });
     const inspected = await inspectOfficialForm(officialForm);
+    const fieldNames = inspected.fields.map(field => field.name);
+    if (facts && fieldNames.length && Object.keys(values).length === 0) {
+      const mappingRaw = await generateLegalAnalysis('document-drafting', [
+        'Map ONLY facts explicitly supplied by the user to the official form field names below.',
+        'Return one JSON object whose keys exactly match applicable field names. Omit any field whose value is unknown. Never infer names, dates, addresses, identifiers, signatures, case numbers, or factual allegations.',
+        'FORM FIELDS: ' + JSON.stringify(fieldNames),
+        'USER FACTS: ' + facts,
+      ].join('\n\n'), { systemPrompt: 'You are a deterministic legal-form field mapper. Return JSON only. Never invent missing facts.', temperature: 0, maxTokens: 4000 });
+      try { values = JSON.parse(String(mappingRaw).replace(/^\x60\x60\x60(?:json)?\s*|\s*\x60\x60\x60$/gi, '').trim()); } catch { values = {}; }
+    }
     const flatLayout = req.body?.flatLayout;
     if (inspected.contentType === 'pdf' && !inspected.fillable) {
       const detectedLayout = flatLayout || await detectFlatFormLayout(inspected.bytes, 'pdf');
