@@ -15,24 +15,22 @@ function normalize(value?: string): string {
 }
 function same(a?: string,b?: string): boolean { return !!a && !!b && normalize(a) === normalize(b); }
 
-function extractLocationPhrase(text: string, state?: string): string | null {
-  if (!text.trim()) return null;
+function extractLocationCandidates(text: string, state?: string): string[] {
+  const clean = text.replace(/\s+/g, ' ').trim();
+  if (!clean) return [];
+  const results = new Set<string>();
+  const add = (value?: string) => {
+    const v = value?.trim().replace(/^[,.;:\s]+|[,.;:\s]+$/g, '');
+    if (v && v.length >= 2 && v.length <= 100) results.add(v);
+  };
   if (state) {
     const escaped = state.replace(/[.*+?^$()|[\]\\]/g, '\\$&');
-    const patterns = [
-      new RegExp('\\b(?:in|at|within|from|near|of)\\s+([A-Z][A-Za-z.\'’ -]{1,60}),?\\s+' + escaped + '\\b', 'i'),
-      new RegExp('\\b([A-Z][A-Za-z.\'’ -]{1,60}\\s+(?:County|Parish|Borough|Township)),?\\s+' + escaped + '\\b', 'i'),
-      new RegExp('\\b([A-Z][A-Za-z.\'’ -]{1,60}),\\s*' + escaped + '\\b', 'i'),
-    ];
-    for (const pattern of patterns) {
-      const match = pattern.exec(text);
-      if (match?.[1]) return match[1].trim() + ', ' + state;
-    }
+    for (const match of clean.matchAll(new RegExp("([A-Z][A-Za-z.'’ -]{1,60}),?\\s+" + escaped + "\\b", 'g'))) add(match[1] + ', ' + state);
+    for (const match of clean.matchAll(new RegExp("\\b(?:in|at|within|from|near|of|around|inside)\\s+([A-Za-z][A-Za-z.'’ -]{1,60}?)(?=\\s*(?:,\\s*" + escaped + "\\b|\\bin\\s+" + escaped + "\\b|[?.!,;]|$))", 'gi'))) add(match[1] + ', ' + state);
   }
-  const explicit = /\b(?:in|at|within|from|near|of)\s+([A-Z][A-Za-z.'’ -]{1,60}\s+(?:County|Parish|Borough|Township))(?:,\s*([A-Z][A-Za-z.'’ -]+))?/i.exec(text);
-  return explicit ? [explicit[1], explicit[2] || state].filter(Boolean).join(', ') : null;
+  for (const match of clean.matchAll(/\b([A-Za-z][A-Za-z.'’ -]{1,60}\s+(?:County|Parish|Borough|Township|Municipality))(?:,\s*([A-Za-z][A-Za-z.'’ -]+))?/gi)) add([match[1], match[2] || state].filter(Boolean).join(', '));
+  return [...results];
 }
-
 async function geonames(query: string): Promise<Candidate | null> {
   const username = process.env.GEONAMES_USERNAME?.trim(); if (!username) return null;
   const data = await getJson('https://secure.geonames.org/searchJSON?q=' + encodeURIComponent(query) + '&country=US&maxRows=5&featureClass=P&featureClass=A&username=' + encodeURIComponent(username));
@@ -61,10 +59,11 @@ async function census(candidate: Candidate): Promise<Candidate | null> {
 }
 
 export async function resolveUSJurisdiction(text:string, fallbackState?:string):Promise<ResolvedJurisdiction|null>{
-  const query=extractLocationPhrase(text,fallbackState);
-  if(!query) return fallbackState ? {display:fallbackState,state:fallbackState,country:'United States',providers:['existing-state-detector']} : null;
+  const queries=extractLocationCandidates(text,fallbackState);
+  if(!queries.length) return fallbackState ? {display:fallbackState,state:fallbackState,country:'United States',providers:['existing-state-detector']} : null;
 
-  const base=(await Promise.all([geonames(query),nominatim(query),arcgis(query)])).filter(Boolean) as Candidate[];
+  const batches=await Promise.all(queries.slice(0,4).map(async query => (await Promise.all([geonames(query),nominatim(query),arcgis(query)])).filter(Boolean) as Candidate[]));
+  const base=batches.flat();
   if(!base.length) return fallbackState ? {display:fallbackState,state:fallbackState,country:'United States',providers:['existing-state-detector']} : null;
 
   const censusChecks=(await Promise.all(base.map(census))).filter(Boolean) as Candidate[];
@@ -82,5 +81,5 @@ export async function resolveUSJurisdiction(text:string, fallbackState?:string):
   const county=candidates.map(c=>c.county).find(v=>v && candidates.filter(c=>same(c.county,v)).length>=2) || best.county;
   const state=candidates.map(c=>c.state).find(v=>v && candidates.filter(c=>same(c.state,v)).length>=2) || best.state || fallbackState;
   const display=[locality,county,state].filter((v,i,a)=>v && a.findIndex(x=>same(x as string,v as string))===i).join(', ');
-  return {display:display||state||query,locality,county,state,country:'United States',latitude:best.latitude,longitude:best.longitude,providers:[...new Set(candidates.map(c=>c.provider))]};
+  return {display:display||state||queries[0],locality,county,state,country:'United States',latitude:best.latitude,longitude:best.longitude,providers:[...new Set(candidates.map(c=>c.provider))]};
 }
