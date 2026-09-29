@@ -282,15 +282,9 @@ export default function Landing() {
                 LEXARA can also analyze uploaded <strong>documents, images, evidence, and other media</strong>, assist with revisions, and recognize when a situation calls for a legal document. Her document tools can identify the appropriate jurisdiction and help prepare pleadings, motions, petitions, affidavits, contracts, public-record requests, and other legal materials with downloadable <strong>PDF or DOCX</strong> output.
               </p>
 
-              <div className="pt-4">
-                <h3 className="text-2xl font-bold text-white mb-3">Revolutionary 17-Model Harmony AI Network</h3>
-                <p>
-                  Behind LEXARA is Legal What?’s <strong>17-model Harmony AI Network</strong>—seventeen specialized AI participants working in synchronized, orchestrated coordination. Multiple models can analyze an issue in parallel, cross-check conclusions, contribute specialized expertise, and consolidate their work into a unified response.
-                </p>
-                <p className="mt-3">
-                  The system combines <strong>parallel reasoning, cross-validation, jurisdictional filtering, structured legal research, document drafting, alternative procedural analysis, and verifiable reasoning</strong> to provide organized and reviewable legal analysis.
-                </p>
-              </div>
+              <p>
+                The system combines <strong>parallel reasoning, cross-validation, jurisdictional filtering, structured legal research, document drafting, alternative procedural analysis, and verifiable reasoning</strong> to provide organized and reviewable legal analysis.
+              </p>
 
               <div className="pt-4">
                 <h3 className="text-2xl font-bold text-white mb-5">LEXARA’s Integrated Capabilities</h3>
@@ -300,7 +294,7 @@ export default function Landing() {
                   <p><strong>3. Document Atelier</strong> — Assists with structured drafting of pleadings, motions, contracts, affidavits, petitions, public-record requests, and other legal documents.</p>
                   <p><strong>4. Strategic Playbooks</strong> — Organizes procedural options and potential legal pathways into understandable, step-by-step guidance without predicting outcomes.</p>
                   <p><strong>5. Verifiable Reasoning Log</strong> — Provides structured explanations supporting conclusions for easier review and quality control.</p>
-                  <p><strong>6. Orchestrated Expert Modules</strong> — Seventeen specialized AI engines operate through a coordinated architecture to combine different areas of expertise into unified analysis.</p>
+                  <p><strong>6. Orchestrated Expert Modules</strong> — Specialized AI engines operate through a coordinated architecture to combine different areas of expertise into unified analysis.</p>
                   <p><strong>7. Scoped Jurisdictional Filters</strong> — Narrows research and analysis to applicable jurisdictions, statutes, rules, and precedent.</p>
                   <p><strong>8. Parallel Case Simulation Sandbox</strong> — Examines alternative filings, procedural choices, and argument paths side by side to help identify available approaches.</p>
                   <p><strong>9. Legally Compliant Drafting</strong> — Applies relevant jurisdictional, statutory, and formatting requirements when preparing legal documents.</p>
