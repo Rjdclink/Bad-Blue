@@ -13,6 +13,7 @@ import { researchLegalAuthority, formatAuthorityResearchForSystem } from '../lex
 import { resolveUSJurisdiction } from '../lexara/LexaraJurisdictionResolver';
 import { resolveOfficialLegalForm, officialFormDirective } from '../lexara/OfficialLegalFormResolver';
 import { inspectOfficialForm, fillOfficialPdf, fillOfficialDocx } from '../lexara/OfficialFormFiller';
+import { overlayFlatOfficialPdf, validateFlatFormLayout } from '../lexara/FlatOfficialFormOverlay';
 import { conductMasterConsultation, shouldInvokePeopleFinder } from '../consultationCoordinator';
 import { performConsultation } from '../legalConsultationEngine';
 import { createLogger } from '../logger';
@@ -156,8 +157,19 @@ export function setupConsultationRoutes(app: Express): void {
     const values = req.body?.values && typeof req.body.values === 'object' ? req.body.values : {};
     if (!officialForm?.verifiedOfficial || !officialForm?.url) return res.status(400).json({ error: 'A verified official form is required' });
     const inspected = await inspectOfficialForm(officialForm);
+    const flatLayout = req.body?.flatLayout;
     if (inspected.contentType === 'pdf' && !inspected.fillable) {
-      return res.status(409).json({ error: 'The verified official PDF is not field-fillable. Automatic overlay requires verified field coordinates before modification.', fields: [], sourceUrl: inspected.sourceUrl });
+      if (!flatLayout) return res.status(409).json({ error: 'The verified official PDF is flat. Verified field coordinates are required before modification.', fields: [], sourceUrl: inspected.sourceUrl });
+      const checkedLayout = validateFlatFormLayout(flatLayout);
+      if (!checkedLayout.verified) return res.status(409).json({ error: 'Flat-form field coordinates did not meet verification confidence.', sourceUrl: inspected.sourceUrl });
+      const missingFlatFields = checkedLayout.anchors.filter(field => values[field.label] === undefined).map(field => field.label);
+      if (missingFlatFields.length) return res.status(422).json({ error: 'Additional information is required to complete the official form', missingFields: missingFlatFields, sourceUrl: inspected.sourceUrl });
+      const output = await overlayFlatOfficialPdf(inspected, checkedLayout, values);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', 'attachment; filename="lexara-official-form.pdf"');
+      res.setHeader('X-Lexara-Official-Source', inspected.sourceUrl);
+      res.send(output);
+      return;
     }
     const missingFields = inspected.fields.filter(field => values[field.name] === undefined).map(field => field.name);
     if (missingFields.length) return res.status(422).json({ error: 'Additional information is required to complete the official form', missingFields, sourceUrl: inspected.sourceUrl });
