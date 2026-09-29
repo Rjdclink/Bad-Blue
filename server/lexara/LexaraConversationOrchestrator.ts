@@ -21,7 +21,7 @@ import {
 import { decideLexaraResearchNeed, isLexaraRepeatRequest } from './LexaraResearchIntentRouter';
 import { planLexaraSequence } from './LexaraSequenceRouter';
 import { resolveLexaraBackgroundSubject } from './LexaraBackgroundSubject';
-import { discoverPantheonSourcesParallel } from '../services/pantheon/PantheonDiscoveryCoordinator';
+import { discoverLexaraBackgroundSourcesParallel } from './LexaraBackgroundIntelligence';
 import { hasExplicitLocationCue, resolveUSJurisdiction } from './LexaraJurisdictionResolver';
 
 export interface LexaraConversationMessage {
@@ -538,7 +538,7 @@ export async function generateLexaraConversationResponse(
   const searchOnlyFact = sequencePlan.sequence === 'simple-factual'
     && !resolveLexaraBackgroundSubject(cleanPrompt, previousUserTurns, jurisdiction);
   const pantheonInvestigationPromise: Promise<LexaraPersonInvestigation | null> = pantheonDelegatedByLexara ? (searchOnlyFact
-    ? discoverPantheonSourcesParallel(researchDecision.objective || cleanPrompt, [], {
+    ? discoverLexaraBackgroundSourcesParallel(researchDecision.objective || cleanPrompt, [], {
         jurisdiction, limit: 8, timeoutMs: 6_000,
         signal: pantheonController.signal, providerPolicy: 'capability-first',
       }).then(discovery => ({
