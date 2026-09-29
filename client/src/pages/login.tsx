@@ -29,6 +29,10 @@ export default function Login() {
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [masterPassword, setMasterPassword] = useState("");
+  const resetToken = urlParams.get("reset") || "";
+  const [forgotMode, setForgotMode] = useState(false);
+  const [recoveryEmail, setRecoveryEmail] = useState("");
+  const [newPassword, setNewPassword] = useState("");
 
   const [signupEmail, setSignupEmail] = useState("");
   const [signupPassword, setSignupPassword] = useState("");
@@ -141,6 +145,31 @@ export default function Login() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleForgotPassword = async (e: FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+    try {
+      const response = await apiRequest("/api/auth/forgot-password", "POST", { email: recoveryEmail });
+      const data = await response.json().catch(() => ({}));
+      toast({ title: "Check your email", description: data.message || "If the account exists, a reset link has been sent." });
+    } finally { setIsLoading(false); }
+  };
+
+  const handleResetPassword = async (e: FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+    try {
+      const response = await apiRequest("/api/auth/reset-password", "POST", { token: resetToken, password: newPassword });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || "Password reset failed");
+      toast({ title: "Password updated", description: "Sign in with your new password." });
+      window.history.replaceState({}, "", "/login");
+      setNewPassword("");
+    } catch (error: any) {
+      toast({ title: "Password reset failed", description: error.message, variant: "destructive" });
+    } finally { setIsLoading(false); }
   };
 
   const handleMasterLogin = async (e: FormEvent) => {
@@ -276,6 +305,26 @@ export default function Login() {
                 </TabsList>
 
                 <TabsContent value="login">
+                  {resetToken ? (
+                    <form onSubmit={handleResetPassword} className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="reset-password">New Password</Label>
+                        <Input id="reset-password" type="password" autoComplete="new-password" value={newPassword}
+                          onChange={(e) => setNewPassword(e.target.value)} minLength={8} required disabled={isLoading} />
+                      </div>
+                      <Button type="submit" className="w-full" disabled={isLoading}>Set New Password</Button>
+                    </form>
+                  ) : forgotMode ? (
+                    <form onSubmit={handleForgotPassword} className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="recovery-email">Email</Label>
+                        <Input id="recovery-email" type="email" autoComplete="email" value={recoveryEmail}
+                          onChange={(e) => setRecoveryEmail(e.target.value)} required disabled={isLoading} />
+                      </div>
+                      <Button type="submit" className="w-full" disabled={isLoading}>Send Reset Link</Button>
+                      <Button type="button" variant="link" className="w-full" onClick={() => setForgotMode(false)}>Back to Login</Button>
+                    </form>
+                  ) : (
                   <form onSubmit={handleLogin} className="space-y-4">
                     <div className="space-y-2">
                       <Label htmlFor="login-email">Email</Label>
@@ -311,7 +360,9 @@ export default function Login() {
                     <Button type="submit" className="w-full" disabled={isLoading}>
                       {isLoading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Logging in...</> : "Login"}
                     </Button>
+                    <Button type="button" variant="link" className="w-full" onClick={() => setForgotMode(true)}>Forgot Password?</Button>
                   </form>
+                  )}
                 </TabsContent>
 
                 <TabsContent value="master">
