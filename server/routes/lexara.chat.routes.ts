@@ -354,7 +354,11 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
     const previousMessages = sanitizePreviousMessages((rawContext as any).previousMessages);
     const lawType = cleanOptionalString((rawContext as any).lawType);
     const lawTypeName = cleanOptionalString((rawContext as any).lawTypeName, 160);
-    const jurisdiction = cleanOptionalString((rawContext as any).jurisdiction, 80);
+    const explicitJurisdiction = cleanOptionalString((rawContext as any).jurisdiction, 80);
+    const networkState = explicitJurisdiction ? null : await resolveNetworkState(
+      String(req.headers['x-real-ip'] || req.headers['cf-connecting-ip'] || req.ip || '')
+    );
+    const jurisdiction = explicitJurisdiction;
     const behaviorMode = (rawContext as any).behaviorMode === 'personable' ? 'personable' : 'professional';
     const sessionId = cleanOptionalString((rawContext as any).sessionId, 128);
     const documentIntent = detectDocumentIntent(prompt, previousMessages);
@@ -382,6 +386,10 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
         lawType,
         lawTypeName,
         jurisdiction,
+        backgroundJurisdiction: networkState?.state,
+        backgroundLocality: networkState?.locality,
+        backgroundArea: networkState?.area,
+        backgroundLocationConfidence: networkState?.confidence,
         behaviorMode,
         sessionId,
         signal: requestController.signal,
