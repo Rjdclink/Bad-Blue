@@ -392,7 +392,7 @@ test('legal consensus with only excluded credentials retains providerless handli
   assert.equal(h.calls.length, 0);
 });
 test('legal advisory metadata never recommends an excluded route', () => {
-  const h = harness(['OPENROUTER_API_KEY']);
+  const h = harness(['ANTHROPIC_API_KEY','GEMINI_API_KEY','XAI_API_KEY']);
   const selection = h.legalModel().selectModelsForTask('legal-reasoning', 100, 3);
   const allowedModels = h.registry.HARMONY_17_PARTICIPANTS
     .filter(p => h.registry.isHarmonyProviderAllowed(p.provider, 'legalwhat')).map(p => p.model);
@@ -426,11 +426,11 @@ test('scoped exhausted reasoning preserves and truthfully labels the existing lo
   assert.equal(response.content, 'Existing local fallback');
   assert.equal(response.provider, 'lmai');
 });
-test('unscoped generation retains its previous default policy and participant pool', async () => {
-  const h = harness(['GEMINI_API_KEY','OPENROUTER_API_KEY']);
+test('unscoped generation uses the same three-provider authority', async () => {
+  const h = harness(['GEMINI_API_KEY','XAI_API_KEY','ANTHROPIC_API_KEY']);
   await h.entry().generateUserText('unscoped-fixture', 'Fixture');
   assert.equal(h.calls[0].policy, 'capability-first');
-  assert(h.calls[0].pool.includes('openrouter'));
+  assert(h.calls[0].pool.every(provider => ['claude','gemini','xai'].includes(provider)));
 });
 // Exercise the real Claude adapter against an isolated SDK constructor so key
 // readiness and inference cannot silently disagree when only the alias is set.
