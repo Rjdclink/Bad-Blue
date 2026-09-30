@@ -75,6 +75,9 @@ for (const forbidden of ['discoverPantheonSourcesParallel', 'PantheonDiscoveryCo
 if (!legalMesh.includes('isPreferredOfficialCandidate') || !legalMesh.includes('const preferred=diversify')) {
   throw new Error('Lexara factual discovery does not prioritize matching official registries');
 }
+if (!legalMesh.includes("if (!options.requestedFact || options.requestedFact === 'none') return false;")) {
+  throw new Error('Official-source priority can still reorder non-factual legal research');
+}
 if (!router.includes('const contextualContinuation') || !router.includes('const contextualPrompt')) {
   throw new Error('Lexara sequence router does not preserve short factual follow-up context');
 }
