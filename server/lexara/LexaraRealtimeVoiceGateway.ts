@@ -412,14 +412,20 @@ function handleRealtimeClient(client: WebSocket, ticket: RealtimeTicket): void {
       const turnId = String(message.turnId || '').trim();
       const text = String(message.text || '').trim();
       if (!turnId || !text || recentTurnIds.includes(turnId)) return;
-      if (activeTurnId === turnId) return;
+      if (activeTurnId === turnId) {
+        if (activeTurnFlushed) return;
+        // Flux concatenates Speak payloads verbatim. Preserve a boundary between
+        // safe Claude chunks while keeping them inside one Deepgram turn.
+        tts.send(JSON.stringify({ type: 'Speak', text: `${text} ` }));
+        return;
+      }
       if (activeTurnId && activeTurnId !== turnId) {
         tts.send(JSON.stringify({ type: 'Interrupt' }));
         rememberTurn(activeTurnId);
       }
       activeTurnId = turnId;
       activeTurnFlushed = false;
-      tts.send(JSON.stringify({ type: 'Speak', text }));
+      tts.send(JSON.stringify({ type: 'Speak', text: `${text} ` }));
       return;
     }
 
