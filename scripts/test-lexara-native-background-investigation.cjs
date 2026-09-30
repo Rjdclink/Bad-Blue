@@ -204,8 +204,8 @@ function reset(mode) {
     { jurisdiction: 'Iowa' },
   );
   assert.equal(empty.endpoint, 'search-leads-only');
-  assert.deepEqual(empty.sources, []);
-  assert.deepEqual(empty.searchLeads, ['https://records.example.test/empty']);
+  assert.deepEqual(Array.from(empty.sources), []);
+  assert.deepEqual(Array.from(empty.searchLeads || []), ['https://records.example.test/empty']);
   assert.match(empty.coverageNote, /not a negative-record conclusion/i);
 
   reset('dob-recursive');
