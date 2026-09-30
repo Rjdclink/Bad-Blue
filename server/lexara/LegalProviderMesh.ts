@@ -9,6 +9,7 @@ import {
   getLexaraLearnedSources,
   rankLexaraDiscoveryUrls,
 } from './LexaraDiscoveryLearning';
+import { planLexaraResearchQueries } from './LexaraResearchAssist';
 
 export type LegalMeshTier = 1 | 2 | 3 | 4 | 5 | 6;
 export interface LegalMeshCandidate {
@@ -328,6 +329,21 @@ export async function discoverLegalMeshSupplemental(
   for(const pattern of learnedPatterns){
     const retry=await freeSearch(`${query} ${pattern}`,signal);
     const fresh=retry.filter(item=>!seen.has(item.url)).map(item=>({...item,tier:5 as const,provider:`supplemental-${item.provider}`}));
+    if(fresh.length) return diversify(fresh,12);
+  }
+
+  // Only after independent search + learned-pattern retries miss, let the
+  // Claude-led redundant reasoning mesh suggest alternate queries. These
+  // suggestions are never evidence; every result is still independently searched.
+  const planned=await planLexaraResearchQueries(query,{
+    subject:options.subject,
+    requestedFact:options.requestedFact,
+    jurisdiction:options.jurisdiction,
+    signal,
+  });
+  for(const alternate of planned.queries){
+    const retry=await freeSearch(alternate,signal);
+    const fresh=retry.filter(item=>!seen.has(item.url)).map(item=>({...item,tier:5 as const,provider:`planned-${item.provider}`}));
     if(fresh.length) return diversify(fresh,12);
   }
 
