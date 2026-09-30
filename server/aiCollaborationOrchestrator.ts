@@ -303,7 +303,7 @@ async function callOpenAICompatibleHarmonyProvider(
   else signal?.addEventListener('abort', relayAbort, { once: true });
   try {
     let response: Response | null = null;
-    for (let retry = 0; retry < (provider === AIProvider.XAI ? 2 : 1); retry++) {
+    for (let retry = 0; retry < (provider === AIProvider.XAI ? 3 : 1); retry++) {
       response = await fetch(`${config.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${config.key}`, 'Content-Type': 'application/json' },
@@ -320,7 +320,7 @@ async function callOpenAICompatibleHarmonyProvider(
       if (response.ok) break;
       // Do not retry rate/quota exhaustion. Surface 429 immediately so
       // admission can exclude the route and continue with another provider.
-      if (![500, 502, 503, 504].includes(response.status) || retry === 1) {
+      if (![500, 502, 503, 504].includes(response.status) || retry === 2) {
         throw Object.assign(new Error(`${provider} HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`),
           { status: response.status, headers: response.headers });
       }
