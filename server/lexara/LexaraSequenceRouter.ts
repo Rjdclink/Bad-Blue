@@ -69,8 +69,8 @@ export function planLexaraSequence(prompt: string, previousUserTurns: string[] =
   if (documentAction) {
     return {
       sequence: 'document-action', researchDecision,
-      useLegalResearch: legal || !background,
-      useBackgroundResearch: background,
+      useLegalResearch: legal || background || researchDecision.needed,
+      useBackgroundResearch: false,
       recursive: deep || background,
       classifyBackground: background,
       documentAction: true,
@@ -80,9 +80,9 @@ export function planLexaraSequence(prompt: string, previousUserTurns: string[] =
   if (legal && background) {
     return {
       sequence: 'combined-legal-background', researchDecision,
-      useLegalResearch: true, useBackgroundResearch: true, recursive: deep,
+      useLegalResearch: true, useBackgroundResearch: false, recursive: deep,
       classifyBackground: true, documentAction: false,
-      reason: 'legal analysis and identifiable background facts are both material',
+      reason: 'legal analysis and factual research stay on Lexara legal reasoning',
     };
   }
   if (legal) {
@@ -96,25 +96,25 @@ export function planLexaraSequence(prompt: string, previousUserTurns: string[] =
   if (background) {
     return {
       sequence: deep ? 'deep-recursive' : 'lexara-background', researchDecision,
-      useLegalResearch: false, useBackgroundResearch: true, recursive: true,
+      useLegalResearch: true, useBackgroundResearch: false, recursive: true,
       classifyBackground: true, documentAction: false,
-      reason: deep ? 'deep identifiable-subject investigation' : 'identifiable-subject background/fact route',
+      reason: deep ? 'deep factual research routed through Lexara legal reasoning' : 'identifiable-subject fact research routed through Lexara legal reasoning',
     };
   }
   if (deep) {
     return {
       sequence: 'deep-recursive', researchDecision,
-      useLegalResearch: false, useBackgroundResearch: true, recursive: true,
+      useLegalResearch: true, useBackgroundResearch: false, recursive: true,
       classifyBackground: true, documentAction: false,
-      reason: 'explicit deep/recursive external research route',
+      reason: 'explicit deep/recursive research routed through Lexara legal reasoning',
     };
   }
   if (researchDecision.needed) {
     return {
       sequence: 'simple-factual', researchDecision,
-      useLegalResearch: false, useBackgroundResearch: true, recursive: semanticCategories.length > 0,
+      useLegalResearch: true, useBackgroundResearch: false, recursive: semanticCategories.length > 0,
       classifyBackground: semanticCategories.length > 0, documentAction: false,
-      reason: 'ordinary external fact/current-information route',
+      reason: 'ordinary external fact/current-information routed through Lexara legal reasoning',
     };
   }
   return {

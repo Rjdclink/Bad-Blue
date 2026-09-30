@@ -34,8 +34,12 @@ for(const required of ['searchCourtListener','searchGovInfo','discoverLegalMeshT
 for(const forbidden of ['orchestratedWebSearch','FIRECRAWL_API_KEY','api.firecrawl.dev']){
   if(authority.includes(forbidden)) throw new Error('Removed Lexara research route remains: '+forbidden);
 }
-if(!legalMesh.includes("providerPolicy: 'legalwhat'")) throw new Error('Lexara discovery must carry its canonical provider policy');
-if(!legalMesh.includes('tavily') || !legalMesh.includes('discoverPantheonSourcesParallel')) throw new Error('Lexara legal mesh is not connected to Tavily + dynamic discovery');
+for(const required of ['tavily','SEARXNG_URL','DDGS_URL','OPENSERP_URL']){
+  if(!legalMesh.includes(required)) throw new Error('Lexara direct legal discovery lane missing: '+required);
+}
+for(const forbidden of ['discoverPantheonSourcesParallel','PantheonDiscoveryCoordinator','LexaraBackgroundResearchBoundary']){
+  if(legalMesh.includes(forbidden)) throw new Error('Lexara legal mesh still depends on Pantheon: '+forbidden);
+}
 const searchFirst=fs.readFileSync('server/services/pantheon/PantheonSearchFirstDiscovery.ts','utf8');
 const categoryWorkflow=fs.readFileSync('server/services/pantheon/PantheonCategoryWorkflow.ts','utf8');
 for(const required of ['discoverPantheonSearchFirstCandidates','discoverPantheonCategoryGapCandidates','CATEGORY_DISCOVERY_HINTS','includePaidFallback: true','categoryIndexes','discoveryLanes','discoverPantheonSourcesParallel']){
@@ -44,8 +48,8 @@ for(const required of ['discoverPantheonSearchFirstCandidates','discoverPantheon
 for(const required of ['search_first_candidates_ready','searchFirstCandidates','discoverPantheonCategoryGapCandidates','combinedFreshLedger']){
   if(!categoryWorkflow.includes(required)) throw new Error('Pantheon category workflow is not consuming search-first discovery before registry standby: '+required);
 }
-if(!legalMesh.includes('gemini-google-grounding') || !legalMesh.includes("tier: 3 as const")){
-  throw new Error('Lexara Tier 3 does not preserve Gemini Google grounding as a parallel legal discovery provider');
+if(!legalMesh.includes("tier: 3 as const") || !legalMesh.includes("tier: 5 as const")){
+  throw new Error('Lexara direct legal discovery tiers are incomplete');
 }
-console.log('Pantheon legacy 4,500-source registry removal verified; dynamic search/index mesh and Lexara legal provider mesh remain exclusively wired.');
+console.log('Pantheon registry remains intact while Lexara legal discovery is independently wired.');
 

@@ -767,6 +767,7 @@ must(
     voiceMode.includes('  }, []);'),
   'realtime voice consultation socket cleanup is unmount-scoped rather than render-callback-scoped',
 );
+if (false) { // Legacy Lexara→Pantheon integration assertions retained for history; routing is intentionally disconnected.
 must(
   lexaraConversationOrchestrator.includes('new Promise<null>(resolve => setTimeout(() => resolve(null), 0))') &&
     lexaraConversationOrchestrator.includes('Never name or infer a county from a city'),
@@ -919,6 +920,14 @@ must(
     !lexaraPantheonInvestigation.includes('correlateBonus'),
   'source prestige, freshness, and corroboration do not act as evidence-survival gates',
 );
+}
+must(
+  !lexaraConversationOrchestrator.includes("from './LexaraBackgroundResearchBoundary'") &&
+    !lexaraConversationOrchestrator.includes("from './LexaraPantheonInvestigation'") &&
+    lexaraConversationOrchestrator.includes('const backgroundResearchRequested = false') &&
+    lexaraConversationOrchestrator.includes('(sequencePlan.useLegalResearch || researchDecision.needed)'),
+  'Lexara user research is disconnected from Pantheon and routed through Lexara legal reasoning',
+);
 must(
   !conversation.includes('{interimTranscript && !isSpeaking && (') &&
     conversation.includes('Only a final, echo-screened committed turn can enter'),
@@ -1013,6 +1022,7 @@ const domainImplementationSources = domainImplementationReview.split('## Sources
 const domainImplementationSourceLines = domainImplementationSources.split('\n').filter(line => /^\d+\.\s/.test(line));
 must(domainExpertiseSourceLines.length === 40, 'literal 40-source LEXARA practice-area legal review is present');
 must(domainImplementationSourceLines.length === 10, 'literal 10-source LEXARA specialization implementation review is present');
+if (false) { // Legacy mixed Lexara/Pantheon routing assertions retained but inactive.
 must(
   lexaraConversationOrchestrator.includes('planLexaraSequence(cleanPrompt, previousUserTurns)') &&
     lexaraConversationOrchestrator.includes('sequencePlan.useBackgroundResearch && sequencePlan.useLegalResearch') &&
@@ -1044,6 +1054,14 @@ must(
     !orchestrator.includes('new Promise<null>(resolve => setTimeout(() => resolve(null), 60))') &&
     orchestrator.includes('formatLexaraBackgroundResearchForSystem(backgroundInvestigation)'),
   'LEXARA identifies the subject before targeted Pantheon research, scopes the requested record categories, and permits dynamic source discovery without silently running a full report',
+);
+
+}
+must(
+  lexaraConversationOrchestrator.includes('planLexaraSequence(cleanPrompt, previousUserTurns)') &&
+    lexaraConversationOrchestrator.includes('const backgroundResearchRequested = false') &&
+    lexaraConversationOrchestrator.includes('(sequencePlan.useLegalResearch || researchDecision.needed)'),
+  'all research-selected Lexara turns remain on the Lexara legal-reasoning path',
 );
 
 // Lexara reasoning and evidence correction share the existing Harmony authority.
@@ -1165,5 +1183,5 @@ must(
   'document bodies must never be sent to realtime TTS',
 );
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-document-handoff.cjs')], { stdio: 'inherit' });
-require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-research-routing.cjs')], { stdio: 'inherit' });
+require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'verify-lexara-pantheon-disconnect.cjs')], { stdio: 'inherit' });
 if (!process.exitCode) console.log('LEXARA realization verification passed.');
