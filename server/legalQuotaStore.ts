@@ -8,6 +8,9 @@ export type LegalQuotaState = {
   monthStart: number; monthRequests: number;
   blockedUntil: number; lastUsed: number;
   leases: Record<string, number>;
+  // Fingerprint only; never store the credential itself. A hard credential
+  // failure stays excluded until the configured key actually changes.
+  hardBlockedCredentialFingerprint?: string;
   observed?: { requests?: number; tokens?: number; requestReset?: number; tokenReset?: number };
 };
 export const freshLegalQuotaState = (): LegalQuotaState => ({
