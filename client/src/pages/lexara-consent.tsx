@@ -8,6 +8,7 @@ import { LAW_TYPE_DATA } from '@shared/lawTypes';
 import { SEOHead } from '@/components/SEOHead';
 import { setLexaraLiveEnabled } from '@/components/LexaraLiveConsentModal';
 import { unlockAudio } from '@/lib/lexaraSpeechClient';
+import { captureLexaraDeviceLocation } from '@/lib/lexaraLocation';
 
 function consentMicrophoneConstraints(): MediaTrackConstraints {
   const supported = navigator.mediaDevices?.getSupportedConstraints?.() || {};
@@ -64,6 +65,9 @@ export default function LexaraConsentPage() {
         })
         .catch(() => null);
 
+      // Location is best-effort and never blocks voice/text readiness. The
+      // browser owns permission; denial simply leaves Lexara on weaker signals.
+      void captureLexaraDeviceLocation({ prompt: true }).catch(() => undefined);
       const [audioUnlocked, stream, readiness] = await Promise.all([
         unlockAudio(),
         navigator.mediaDevices.getUserMedia({
@@ -197,7 +201,7 @@ export default function LexaraConsentPage() {
                   className="mt-1"
                 />
                 <Label htmlFor="lexara-live-consent" className="cursor-pointer text-sm leading-relaxed text-slate-200">
-                  I agree to let LEXARA use my microphone for this conversation and play her spoken replies.
+                  I agree to let LEXARA use my microphone for this conversation, play her spoken replies, and use my device location when I allow it to improve jurisdiction selection.
                 </Label>
               </div>
             </div>

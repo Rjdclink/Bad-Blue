@@ -20,6 +20,8 @@ const embodimentEngine = read('client/src/lib/lexaraEmbodimentEngine.ts');
 const preparedFacePoses = read('client/src/lib/lexaraPreparedFacePoses.ts');
 const synthesis = read('client/src/hooks/useVoiceSynthesis.ts');
 const speechClient = read('client/src/lib/lexaraSpeechClient.ts');
+const lexaraLocation = read('client/src/lib/lexaraLocation.ts');
+const jurisdictionResolver = read('server/lexara/LexaraJurisdictionResolver.ts');
 must(synthesis.includes('FIRST_SPEECH_CHUNK_MAX_CHARS = 140'), 'LEXARA must preserve bounded first-audible speech unit');
 must(synthesis.includes('firstSpeechChunk(text)'), 'LEXARA must start a bounded first speech unit before long-answer buffering');
 must(synthesis.includes('remainingUnit'), 'LEXARA must preserve the remainder of the answer after first-audible playback');
@@ -1256,6 +1258,44 @@ must(
     conversation.includes('await speakLexara(spokenAnswer, generation)'),
   'document bodies must never be sent to realtime TTS',
 );
+must(
+  lexaraLocation.includes('navigator.geolocation.getCurrentPosition') &&
+    lexaraLocation.includes("navigator.permissions.query({ name: 'geolocation' })") &&
+    conversation.includes('deviceLocation: readLexaraDeviceLocation()') &&
+    lexaraChatRoutes.includes('resolveBestLocationEstimate') &&
+    jurisdictionResolver.includes('browser-geolocation+dbip-local') &&
+    jurisdictionResolver.includes('browserLocationConfidence'),
+  'LEXARA fuses permitted device location with IP fallback instead of treating IP as sole location authority',
+);
+must(
+  lexaraConversationOrchestrator.includes('backgroundLocationTrusted') &&
+    lexaraConversationOrchestrator.includes('!explicitLocationCue && backgroundLocationTrusted ? backgroundStateJurisdiction : undefined') &&
+    lexaraConversationOrchestrator.includes('If the user states a location, that statement controls immediately') &&
+    lexaraConversationOrchestrator.includes('JURISDICTION CORRECTION TURN') &&
+    lexaraConversationOrchestrator.includes('Do not explain competing location signals'),
+  'user-stated jurisdiction silently overrides automatic estimates and correction turns stay conversational',
+);
+must(
+  lexaraConversationOrchestrator.includes('LIVE_BACKGROUND_FACT_BUDGET_MS = 16_000') &&
+    lexaraConversationOrchestrator.includes('lexara_live_background_budget_exhausted') &&
+    lexaraBackgroundInvestigation.includes('LIVE_RESEARCH_BUDGET_MS = 15_000') &&
+    lexaraBackgroundInvestigation.includes('LIVE_RECURSIVE_PASSES = 6') &&
+    lexaraBackgroundInvestigation.includes('usefulCount >= 3') &&
+    lexaraBackgroundInvestigation.includes('stagnantUsefulPasses >= 2'),
+  'ordinary background fact turns have bounded live budgets and stop when useful evidence converges',
+);
+must(
+  harmony.includes('task.failedProviders?.add(task.provider)') &&
+    harmony.includes('A skipped route is not a new remote-provider failure') &&
+    harmony.includes('!task.failedProviders?.has(provider)'),
+  'quota-withheld and cooling Harmony routes are not selected again inside the same turn',
+);
+must(
+  lexaraConversationOrchestrator.includes('derivedFact:') &&
+    lexaraConversationOrchestrator.includes("researchDecision.requestedFact === 'age-dob'"),
+  'live telemetry records the synthesized age fact or range when Lexara states one',
+);
+require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-location-fusion.cjs')], { stdio: 'inherit' });
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-document-handoff.cjs')], { stdio: 'inherit' });
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'verify-lexara-pantheon-disconnect.cjs')], { stdio: 'inherit' });
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-native-factual-routing.cjs')], { stdio: 'inherit' });

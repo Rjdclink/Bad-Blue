@@ -71,9 +71,13 @@ interface AssessedEvidence {
 }
 
 const MAX_RECURSIVE_PASSES = 30;
+const LIVE_RECURSIVE_PASSES = 6;
 const MAX_TOTAL_CANDIDATES = 30;
+const LIVE_TOTAL_CANDIDATES = 12;
 const TARGETS_PER_PASS = 10;
+const LIVE_TARGETS_PER_PASS = 4;
 const TOTAL_RESEARCH_BUDGET_MS = 10 * 60_000;
+const LIVE_RESEARCH_BUDGET_MS = 15_000;
 const PARTIAL_EVIDENCE_THRESHOLD = 0.52;
 const SUFFICIENT_EVIDENCE_THRESHOLD = 0.80;
 const MIN_IDENTITY_CONFIDENCE = 0.62;
@@ -361,14 +365,22 @@ export async function investigateLexaraBackgroundQuestion(
     };
   }
 
+  const deepAcquisitionRequested = /\b(?:deep|thorough|recursive|broaden|look harder)\b/i.test(prompt);
+  const researchBudgetMs = deepAcquisitionRequested ? TOTAL_RESEARCH_BUDGET_MS : LIVE_RESEARCH_BUDGET_MS;
+  const maxPasses = deepAcquisitionRequested ? MAX_RECURSIVE_PASSES : LIVE_RECURSIVE_PASSES;
+  const maxCandidates = deepAcquisitionRequested ? MAX_TOTAL_CANDIDATES : LIVE_TOTAL_CANDIDATES;
+  const targetsPerPass = deepAcquisitionRequested ? TARGETS_PER_PASS : LIVE_TARGETS_PER_PASS;
   const startedAt = Date.now();
-  const deadlineAt = startedAt + TOTAL_RESEARCH_BUDGET_MS;
+  const deadlineAt = startedAt + researchBudgetMs;
   const assessed = new Map<string, AssessedEvidence>();
   const seenUrls = new Set<string>();
   const discoveryLanes = new Set<string>();
   let candidates: LegalMeshCandidate[] = [];
   let recursionPasses = 0;
   let exhausted = false;
+  let converged = false;
+  let priorUsefulCount = 0;
+  let stagnantUsefulPasses = 0;
 
   try {
     const initialQuery = decision.standaloneQuery || decision.objective || prompt;
@@ -381,9 +393,9 @@ export async function investigateLexaraBackgroundQuestion(
     }));
     candidates.forEach(item => discoveryLanes.add(item.provider));
 
-    for (let pass = 0; pass < MAX_RECURSIVE_PASSES && Date.now() < deadlineAt; pass += 1) {
+    for (let pass = 0; pass < maxPasses && Date.now() < deadlineAt; pass += 1) {
       recursionPasses = pass + 1;
-      const fresh = candidates.filter(item => !seenUrls.has(item.url)).slice(0, TARGETS_PER_PASS);
+      const fresh = candidates.filter(item => !seenUrls.has(item.url)).slice(0, targetsPerPass);
       if (!fresh.length) {
         exhausted = true;
       } else {
@@ -422,8 +434,23 @@ export async function investigateLexaraBackgroundQuestion(
 
       const ranked = [...assessed.values()].sort((a, b) => b.confidence - a.confidence);
       const best = ranked[0];
+      const usefulCount = ranked.filter(item => item.confidence >= PARTIAL_EVIDENCE_THRESHOLD).length;
+      if (usefulCount > priorUsefulCount) stagnantUsefulPasses = 0;
+      else if (usefulCount > 0) stagnantUsefulPasses += 1;
+      priorUsefulCount = usefulCount;
       if (best?.directlyAnswers && best.confidence >= SUFFICIENT_EVIDENCE_THRESHOLD) break;
-      if (pass + 1 >= MAX_RECURSIVE_PASSES || Date.now() >= deadlineAt) break;
+      if (!deepAcquisitionRequested
+        && usefulCount >= 3
+        && Boolean(best?.directlyAnswers || best?.inferentiallySupports)
+        && (best?.confidence || 0) >= 0.60) {
+        converged = true;
+        break;
+      }
+      if (!deepAcquisitionRequested && stagnantUsefulPasses >= 2 && usefulCount > 0) {
+        converged = true;
+        break;
+      }
+      if (pass + 1 >= maxPasses || Date.now() >= deadlineAt || seenUrls.size >= maxCandidates) break;
 
       const query = broadenedQuery(subject, decision, categories, context.jurisdiction, pass);
       context.onProgress?.({ type: 'checkpoint', pass: recursionPasses, confidence: best?.confidence || 0 });
@@ -442,7 +469,8 @@ export async function investigateLexaraBackgroundQuestion(
         }),
       ]);
       [...primary, ...supplemental].forEach(item => discoveryLanes.add(item.provider));
-      const merged = uniqueCandidates([...primary, ...supplemental, ...candidates]);
+      const merged = uniqueCandidates([...primary, ...supplemental, ...candidates])
+        .slice(0, maxCandidates);
       exhausted = merged.every(item => seenUrls.has(item.url));
       candidates = merged;
       if (exhausted) break;
@@ -459,7 +487,7 @@ export async function investigateLexaraBackgroundQuestion(
     const endpoint: LexaraBackgroundResearchResult['endpoint'] = directlyAnswered
       ? 'evidence-sufficient'
       : useful.length
-        ? exhausted ? 'best-available-evidence' : 'partial-evidence'
+        ? exhausted || converged ? 'best-available-evidence' : 'partial-evidence'
         : candidates.length
           ? 'search-leads-only'
           : timedOut

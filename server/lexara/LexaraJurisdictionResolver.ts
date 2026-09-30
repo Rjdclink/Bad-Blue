@@ -2,6 +2,20 @@ export interface ResolvedJurisdiction {
   display: string; locality?: string; county?: string; state?: string; country?: string;
   latitude?: number; longitude?: number; providers: string[];
 }
+export interface BrowserLocationSignal {
+  latitude: number;
+  longitude: number;
+  accuracyMeters?: number;
+}
+export interface BestLocationEstimate {
+  locality?: string;
+  state?: string;
+  area?: string;
+  provider: string;
+  confidence: number;
+  accuracyMeters?: number;
+  sources: string[];
+}
 type Candidate = Omit<ResolvedJurisdiction, 'display' | 'providers'> & { provider: string; query?: string };
 import { resolveLocalNetworkJurisdiction } from './LocalNetworkJurisdiction';
 
@@ -77,6 +91,56 @@ async function census(candidate: Candidate): Promise<Candidate | null> {
   const state=g.States?.[0]?.NAME;
   if(!county && !place && !state) return null;
   return {provider:'census',query:candidate.query,locality:place,county,state,country:'United States',latitude:candidate.latitude,longitude:candidate.longitude};
+}
+
+function browserLocationConfidence(accuracyMeters?: number): number {
+  if (!Number.isFinite(accuracyMeters)) return 0.82;
+  if ((accuracyMeters as number) <= 1_000) return 0.98;
+  if ((accuracyMeters as number) <= 10_000) return 0.95;
+  if ((accuracyMeters as number) <= 50_000) return 0.90;
+  if ((accuracyMeters as number) <= 100_000) return 0.82;
+  if ((accuracyMeters as number) <= 250_000) return 0.70;
+  return 0.60;
+}
+
+export async function resolveBestLocationEstimate(
+  ip?: string,
+  device?: BrowserLocationSignal,
+): Promise<BestLocationEstimate | null> {
+  const validDevice = !!device
+    && Number.isFinite(device.latitude) && device.latitude >= -90 && device.latitude <= 90
+    && Number.isFinite(device.longitude) && device.longitude >= -180 && device.longitude <= 180;
+  const [network, deviceGeography] = await Promise.all([
+    resolveLocalNetworkJurisdiction(ip),
+    validDevice
+      ? census({
+          provider: 'browser-geolocation',
+          latitude: device!.latitude,
+          longitude: device!.longitude,
+          country: 'United States',
+        })
+      : Promise.resolve(null),
+  ]);
+
+  if (deviceGeography?.state) {
+    const baseConfidence = browserLocationConfidence(device?.accuracyMeters);
+    const networkAgrees = !!network?.state && same(network.state, deviceGeography.state);
+    const confidence = Math.min(0.99, baseConfidence + (networkAgrees ? 0.03 : 0));
+    return {
+      locality: deviceGeography.locality,
+      state: deviceGeography.state,
+      area: deviceGeography.locality ? `${deviceGeography.locality} area` : deviceGeography.state,
+      provider: networkAgrees ? 'browser-geolocation+dbip-local' : 'browser-geolocation',
+      confidence,
+      accuracyMeters: device?.accuracyMeters,
+      sources: networkAgrees ? ['browser-geolocation', 'dbip-local'] : ['browser-geolocation'],
+    };
+  }
+
+  return network ? {
+    ...network,
+    sources: [network.provider],
+  } : null;
 }
 
 export async function resolveUSJurisdiction(text:string, fallbackState?:string):Promise<ResolvedJurisdiction|null>{

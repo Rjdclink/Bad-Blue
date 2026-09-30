@@ -14,6 +14,7 @@ import { analyzeUserSignals } from '@shared/lexaraVoicePersona';
 import { lexaraDocumentSpeech } from '@shared/lexaraDocumentSpeech';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
+import { captureLexaraDeviceLocation, readLexaraDeviceLocation } from '@/lib/lexaraLocation';
 
 interface LexaraConversationProps {
   lawTypeId?: string;
@@ -400,6 +401,12 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const [gaze, setGaze] = useState<LEXARAGazeHint>('camera');
   const [conversationDocument, setConversationDocument] = useState<{ title: string; content: string } | null>(null);
   const [documentBusy, setDocumentBusy] = useState(false);
+
+  useEffect(() => {
+    // Reuse browser geolocation only when permission is already granted. Live
+    // consent may have populated the signal; text-only mode never gets a surprise prompt.
+    void captureLexaraDeviceLocation({ prompt: false }).catch(() => undefined);
+  }, []);
   const [pendingDocument, setPendingDocument] = useState<{ title: string; facts: string; state: string; templateMode: boolean } | null>(null);
   const [showReviewPrompt, setShowReviewPrompt] = useState(false);
 
@@ -928,6 +935,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         lawType: lawTypeId,
         lawTypeName,
         jurisdiction,
+        deviceLocation: readLexaraDeviceLocation(),
         sessionId: sessionIdRef.current,
         behaviorMode: 'professional',
       };
