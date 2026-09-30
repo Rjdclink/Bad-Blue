@@ -616,7 +616,6 @@ export async function generateLexaraConversationResponse(
         signal: researchController.signal,
       }).catch(() => null)
     : Promise.resolve(null);
-  let mixedBackgroundTimer: ReturnType<typeof setTimeout> | undefined;
   const [authorityResearch, backgroundInvestigation] = await Promise.all([
     Promise.race([
       authorityResearchPromise,
@@ -627,21 +626,12 @@ export async function generateLexaraConversationResponse(
     // ordinary 2.4s legal-authority latency budget. Non-research conversation
     // keeps the existing fast budget.
     backgroundResearchRequested
-      ? mixedLegalFactNeed
-        ? Promise.race([
-            backgroundInvestigationPromise,
-            new Promise<null>(resolve => { mixedBackgroundTimer = setTimeout(() => {
-              backgroundController.abort(new Error('Mixed-turn background-research budget reached'));
-              resolve(null);
-            }, 8_000); }),
-          ])
-        : backgroundInvestigationPromise
+      ? backgroundInvestigationPromise
       : Promise.race([
           backgroundInvestigationPromise,
           new Promise<null>(resolve => setTimeout(() => resolve(null), LIVE_RESEARCH_BUDGET_MS)),
         ]),
   ]);
-  if (mixedBackgroundTimer) clearTimeout(mixedBackgroundTimer);
   context.signal?.removeEventListener('abort', relayBackgroundAbort);
   if (!authorityResearch) researchController.abort();
   context.signal?.removeEventListener('abort', relayResearchAbort);
