@@ -1232,4 +1232,5 @@ must(
 );
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-document-handoff.cjs')], { stdio: 'inherit' });
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'verify-lexara-pantheon-disconnect.cjs')], { stdio: 'inherit' });
+require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-native-factual-routing.cjs')], { stdio: 'inherit' });
 if (!process.exitCode) console.log('LEXARA realization verification passed.');
