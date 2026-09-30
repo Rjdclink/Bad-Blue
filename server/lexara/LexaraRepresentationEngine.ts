@@ -212,6 +212,7 @@ function matterTitle(proceeding: string | undefined, jurisdiction: string | unde
 }
 
 function shouldOpenMatter(prompt: string, prior?: RepresentationMatterState | null): boolean {
+  if (!prior && isSavedMatterListRequest(prompt)) return false;
   return Boolean(prior) || MATTER_SIGNAL.test(prompt);
 }
 
