@@ -53,6 +53,8 @@ export const LEXARA_PUBLIC_SOURCES: readonly LexaraPublicSource[] = [
   { id:'iana-rdap-bootstrap', root:'https://data.iana.org/rdap/dns.json', categories:['domain-web'], queryHints:['IANA RDAP bootstrap','authoritative RDAP'], authority:'primary', jurisdiction:'global' },
   { id:'cisa-advisories', root:'https://www.cisa.gov/news-events/cybersecurity-advisories', categories:['domain-web','news-history'], queryHints:['cybersecurity advisory','public breach notice'], authority:'primary', jurisdiction:'US' },
   { id:'hibp-breach-directory', root:'https://haveibeenpwned.com/PwnedWebsites', categories:['domain-web','news-history'], queryHints:['public breach directory','breach notice'], authority:'secondary', jurisdiction:'global' },
+  { id:'wikidata', root:'https://www.wikidata.org/', categories:['identity','business','government-public','news-history'], queryHints:['Wikidata','public knowledge graph','identity relationship'], authority:'secondary', jurisdiction:'global' },
+  { id:'wikidata-query', root:'https://query.wikidata.org/', categories:['identity','business','government-public','news-history'], queryHints:['Wikidata query','public knowledge graph'], authority:'secondary', jurisdiction:'global' },
   { id:'commoncrawl-index', root:'https://index.commoncrawl.org/', categories:['news-history','domain-web','employment','business'], queryHints:['historical web page','archived page','former employer','old profile'], authority:'archive', jurisdiction:'global' },
 ] as const;
 
