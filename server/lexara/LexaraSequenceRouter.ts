@@ -1,11 +1,4 @@
 import { decideLexaraResearchNeed, isLexaraLegalAuthorityIntent, isLexaraConversationControl, type LexaraResearchDecision } from './LexaraResearchIntentRouter';
-import { resolveLexaraBackgroundSubject } from './LexaraBackgroundSubject';
-import {
-  classifyPantheonSemanticCategories as classifyBackgroundSemanticCategories,
-  isContextualReference,
-  isFullLexaraBackgroundReportIntent,
-} from './LexaraBackgroundSemanticIntent';
-
 export type LexaraSequenceId =
   | 'simple-factual'
   | 'lexara-background'
@@ -34,6 +27,8 @@ const DEEP_PATTERN = /\b(?:deep|thorough|comprehensive|recursive|broaden|keep lo
 const DOCUMENT_PATTERN = /\b(?:draft|prepare|create|generate|write|download|export|pdf|docx|word document|demand|complaint|petition|motion|affidavit|declaration|letter|request)\b/i;
 const ACTION_PATTERN = /\b(?:need|want|give|provide|make|prepare|draft|create|generate|write|download|export|file|serve|send)\b/i;
 const BACKGROUND_OBJECTIVE_PATTERN = /\b(?:background|investigat\w*|search|find|look\s*up|verify|locate|identity|alias|employment|work(?:s|ed)?\s+(?:at|for)|address|residen\w*|records?\s+(?:of|on|for|about)|criminal\s+record|property\s+(?:owned|ownership)|who\s+owns|where\s+.+\s+(?:live|work)|report)\b/i;
+const FULL_REPORT_PATTERN = /\b(?:full|complete|comprehensive|entire|all)\b.{0,35}\b(?:background|report|check|investigation)\b|\b(?:run|do|generate|prepare|conduct)\b.{0,20}\b(?:background report|background check|full report)\b/i;
+const CONTEXTUAL_REFERENCE_PATTERN = /\b(?:he|she|they|them|their|his|her|its|it|that|this|those|these|same person|same company|same place|and what about|what about|how about|also check|and the|keep looking|try again|look further)\b/i;
 
 function hasIdentifiableSubject(text: string): boolean {
   return /\b[A-Z][A-Za-z.'’-]+(?:\s+[A-Z][A-Za-z.'’-]+){1,5}\b/.test(text)
@@ -49,19 +44,14 @@ export function planLexaraSequence(prompt: string, previousUserTurns: string[] =
     documentAction: false, reason: 'conversation history/control turn',
   };
   const legal = isLexaraLegalAuthorityIntent(text) || researchDecision.objectiveKind === 'legal-authority';
-  const subject = resolveLexaraBackgroundSubject(text, previousUserTurns);
-  const semanticCategories = classifyBackgroundSemanticCategories(text, previousUserTurns);
-  const priorBackground = previousUserTurns.slice(-4).some(turn =>
-    BACKGROUND_PATTERN.test(turn) || classifyBackgroundSemanticCategories(turn).length > 0,
-  );
-  const contextualFollowup = Boolean(subject && priorBackground && isContextualReference(text));
-  const fullReport = isFullLexaraBackgroundReportIntent(text);
+  const priorBackground = previousUserTurns.slice(-4).some(turn => BACKGROUND_PATTERN.test(turn));
+  const contextualFollowup = priorBackground && CONTEXTUAL_REFERENCE_PATTERN.test(text);
+  const fullReport = FULL_REPORT_PATTERN.test(text);
   const background = Boolean(
-    ((semanticCategories.length > 0 || BACKGROUND_PATTERN.test(text) || fullReport)
+    ((BACKGROUND_PATTERN.test(text) || fullReport)
       && (!legal || fullReport || BACKGROUND_OBJECTIVE_PATTERN.test(text))
-      && (subject?.identifiable || hasIdentifiableSubject(text)
-        || Boolean(subject && priorBackground && isContextualReference(text))))
-    || (contextualFollowup && (researchDecision.needed || semanticCategories.length > 0))
+      && (hasIdentifiableSubject(text) || contextualFollowup))
+    || (contextualFollowup && researchDecision.needed)
   );
   const documentAction = DOCUMENT_PATTERN.test(text) && ACTION_PATTERN.test(text);
   const deep = DEEP_PATTERN.test(text) && researchDecision.needed;
@@ -112,8 +102,8 @@ export function planLexaraSequence(prompt: string, previousUserTurns: string[] =
   if (researchDecision.needed) {
     return {
       sequence: 'simple-factual', researchDecision,
-      useLegalResearch: true, useBackgroundResearch: false, recursive: semanticCategories.length > 0,
-      classifyBackground: semanticCategories.length > 0, documentAction: false,
+      useLegalResearch: true, useBackgroundResearch: false, recursive: false,
+      classifyBackground: false, documentAction: false,
       reason: 'ordinary external fact/current-information routed through Lexara legal reasoning',
     };
   }

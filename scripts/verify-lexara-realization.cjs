@@ -48,6 +48,7 @@ const voiceRoutes = read('server/routes/voice.routes.ts');
 const orchestrator = read('server/lexara/LexaraConversationOrchestrator.ts');
 const openRouter = read('server/openRouterService.ts');
 const authorityResearch = read('server/lexara/LexaraAuthorityResearch.ts');
+const lexaraRetrievalBoundary = read('server/lexara/LexaraRetrievalBoundary.ts');
 const pantheonInvestigation = read('server/lexara/LexaraPantheonInvestigation.ts');
 const webSearch = read('server/webSearchService.ts');
 const modernWebSearch = read('server/openRouterWebSearch.ts');
@@ -513,16 +514,14 @@ must(
   'legal authority research uses independent discovery without OpenRouter or Firecrawl fallback',
 );
 must(
-  crawlerRegistry.includes('LEXARA_CRAWLER_CAPABILITY_POOL') &&
-    crawlerRegistry.includes("'PACERScraper'") &&
-    crawlerRegistry.includes("'InstantLegalCrawler'") &&
-    crawlerRegistry.includes("'AdaptiveCrawler'") &&
-    crawlerRegistry.includes("'IdentityRazor'") &&
-    crawlerRegistry.includes("'SpiderFoot'") &&
-    crawlerRegistry.includes("'GravityCrawler'") &&
-    authorityResearch.includes('selectLexaraCrawlerPlan') &&
-    authorityResearch.includes('lexaraRetrievalAdapter.retrieve'),
-  'Lexara owns one need-driven crawler capability pool spanning legal, PANTHEON, extractor, external, people/criminal, and read-only crypto evidence tools',
+  authorityResearch.includes('lexaraRetrievalAdapter.retrieve') &&
+    authorityResearch.includes('enrichAuthoritySourcesWithLexaraRetrieval') &&
+    !authorityResearch.includes('selectLexaraCrawlerPlan') &&
+    lexaraRetrievalBoundary.includes("purpose: 'lexara_legal_research'") &&
+    !lexaraRetrievalBoundary.includes('PantheonRetrievalAdapter') &&
+    !lexaraRetrievalBoundary.includes('pantheonRetrievalAdapter') &&
+    !lexaraRetrievalBoundary.includes('../services/pantheon/'),
+  'Lexara legal research owns an independent retrieval boundary and does not execute through Pantheon',
 );
 must(
   pacer.includes('pacer.login.uscourts.gov/services/cso-auth') &&

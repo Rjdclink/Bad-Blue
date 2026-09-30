@@ -1,5 +1,4 @@
 import { lexaraRetrievalAdapter } from './LexaraRetrievalBoundary';
-import { selectLexaraCrawlerPlan } from './LexaraCrawlerCapabilityRegistry';
 import { decideLexaraResearchNeed } from './LexaraResearchIntentRouter';
 import { discoverLegalMeshTier3, discoverLegalMeshSupplemental, legalMeshSufficient } from './LegalProviderMesh';
 
@@ -32,7 +31,7 @@ const MAX_RESEARCH_PROMPT_CHARACTERS = 6_000;
 const MAX_RESEARCH_SUMMARY_CHARACTERS = 7_000;
 const MAX_AUTHORITY_SOURCES = 12;
 const RESEARCH_TIMEOUT_MS = 3 * 60_000;
-const CRAWLER_ENRICHMENT_TIMEOUT_MS = 1_800;
+const LEXARA_RETRIEVAL_TIMEOUT_MS = 1_800;
 const COURTLISTENER_TIMEOUT_MS = 1_800;
 
 const AUTHORITY_SENSITIVE_PATTERN = /\b(?:cite|citation|source|authority|case\s*law|precedent|holding|statute|statutory|code\s+section|regulation|c\.f\.r\.|u\.s\.c\.|court\s+rule|rule\s+\d|legal\s+standard|elements?\s+of|controlling\s+law|current\s+law|recent\s+law|supreme\s+court|circuit\s+court|appellate\s+court|judge|judges|court|sentenc(?:e|ed|es|ing)|statistics?|data|rates?|average|compare|comparison|lenien(?:t|cy)|harsh(?:er|ness)?|outcomes?|disposition|statute\s+of\s+limitations|limitations\s+period|filing\s+deadline|appeal\s+deadline|notice\s+deadline|deadline|jurisdiction|venue|preemption)\b/i;
@@ -177,19 +176,14 @@ async function discoverAuthoritySources(query: string, signal?: AbortSignal): Pr
   return sources;
 }
 
-async function enrichAuthoritySourcesWithCrawlerPool(
+async function enrichAuthoritySourcesWithLexaraRetrieval(
   sources: LexaraAuthoritySource[],
-  selectedCrawlerIds: string[],
   signal?: AbortSignal,
 ): Promise<LexaraAuthoritySource[]> {
   if (!sources.length) return sources;
-  const useCrawlerEnrichment = selectedCrawlerIds.some(id =>
-    ['startrek', 'birdofprey', 'sixdegrees', 'blizzard', 'cerberus', 'lich'].includes(id)
-  );
-  if (!useCrawlerEnrichment) return sources;
 
-  // Discovery providers often already return enough primary-source text.
-  // Only pay crawler-enrichment latency for sources that still lack evidence.
+  // Discovery providers often already return enough source text. Lexara only
+  // retrieves sources still missing evidence, through its own retrieval boundary.
   const targets = sources.filter(source => !source.excerpt?.trim()).slice(0, 6).map(source => source.url);
   if (!targets.length) return sources;
 
@@ -205,10 +199,10 @@ async function enrichAuthoritySourcesWithCrawlerPool(
       lexaraRetrievalAdapter.retrieve({
         purpose: 'lexara_legal_research',
         targets,
-        depth: 2,
+        signal,
       }),
       aborted,
-      new Promise<null>(resolve => setTimeout(() => resolve(null), CRAWLER_ENRICHMENT_TIMEOUT_MS)),
+      new Promise<null>(resolve => setTimeout(() => resolve(null), LEXARA_RETRIEVAL_TIMEOUT_MS)),
     ]);
     if (abortHandler) signal?.removeEventListener('abort', abortHandler);
     if (!enrichment?.evidence?.length) return sources;
@@ -223,7 +217,7 @@ async function enrichAuthoritySourcesWithCrawlerPool(
       excerpt: source.excerpt || byTarget.get(source.url) || undefined,
     }));
   } catch (error) {
-    console.warn('[LEXARA Authority] Crawler enrichment failed route-locally', {
+    console.warn('[LEXARA Authority] Direct source retrieval failed route-locally', {
       error: error instanceof Error ? error.message : String(error),
     });
     return sources;
@@ -265,21 +259,15 @@ export async function researchLegalAuthority(
     'Prefer official court opinions, legislature/government statutes, regulations, court rules, and official agency material.',
   ].filter(Boolean).join(' ');
 
-  const selectedCrawlers = selectLexaraCrawlerPlan({
-    prompt: legalQuestion,
-    jurisdiction: context.jurisdiction,
-    domainName: context.domainName,
-    maxCrawlers: 8,
-  }).map(crawler => crawler.id);
+  const selectedCrawlers = ['lexara-direct-retrieval'];
 
   try {
-    // Discovery accepts natural-language legal queries; URL-only crawlers are
-    // used only after discovery. Google/Gemini is never a LEXARA dependency.
+    // Discovery accepts natural-language legal queries; Lexara retrieves only discovered URLs through its own boundary. Google/Gemini is never a LEXARA dependency.
     if (context.signal?.aborted) return null;
     const discoveredSources = await discoverAuthoritySources(query, context.signal);
     if (!discoveredSources.length) return null;
     if (context.signal?.aborted) return null;
-    const sources = await enrichAuthoritySourcesWithCrawlerPool(discoveredSources, selectedCrawlers, context.signal);
+    const sources = await enrichAuthoritySourcesWithLexaraRetrieval(discoveredSources, context.signal);
 
     const summary = sources
       .map((source, index) => {

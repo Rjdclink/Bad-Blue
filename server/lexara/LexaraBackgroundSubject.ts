@@ -1,5 +1,3 @@
-import { isContextualReference } from './LexaraBackgroundSemanticIntent';
-
 export type LexaraBackgroundSubjectKind = 'person' | 'organization' | 'place' | 'entity';
 
 export interface LexaraBackgroundSubject {
@@ -15,9 +13,10 @@ const NOISE = /^(?:Research Objective|Current User|Lexara Delegated|Full Backgro
 const PROPER_NAME = /\b[A-Z][\p{L}\p{N}.'’&-]*(?:\s+(?:of|the|and|&|[A-Z][\p{L}\p{N}.'’&-]*)){1,6}/gu;
 const IDENTIFIER = /\b(?:born\s+(?:in\s+)?(?:19|20)\d{2}|dob\s*[:=]?\s*\d|age\s+\d{1,3}|lives?\s+in\s+[A-Z]|from\s+[A-Z][a-z]+|in\s+[A-Z][a-z]+(?:,|\s+[A-Z])|employer\s+[A-Z]|works?\s+(?:at|for)\s+[A-Z]|email\s+\S+@|phone\s+\d|address\s+\d|middle\s+name\s+[A-Z])\b/i;
 const FOLLOWUP = /\b(?:he|she|they|them|their|his|her|its|it|that|this|same|there|about\s+them|about\s+it|try\s+again|keep\s+looking)\b/i;
+const CONTEXTUAL_REFERENCE = /\b(?:he|she|they|them|their|his|her|its|it|that|this|those|these|same person|same company|same place|and what about|what about|how about|also check|and the|keep looking|try again|look further)\b/i;
 
 function refersToPriorSubject(text: string): boolean {
-  return FOLLOWUP.test(text) || isContextualReference(text);
+  return FOLLOWUP.test(text) || CONTEXTUAL_REFERENCE.test(text);
 }
 
 function candidates(text: string): string[] {
