@@ -145,6 +145,33 @@ async function geminiGoogle(query: string, signal?: AbortSignal): Promise<LegalM
   }
 }
 
+async function duckDuckGoInstantAnswer(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
+  const result=await withTimeout(1_500,signal,async requestSignal=>{
+    const endpoint=new URL('https://api.duckduckgo.com/');
+    endpoint.searchParams.set('q',query);
+    endpoint.searchParams.set('format','json');
+    endpoint.searchParams.set('no_html','1');
+    endpoint.searchParams.set('no_redirect','1');
+    const response=await fetch(endpoint,{signal:requestSignal,headers:{accept:'application/json'}});
+    if(!response.ok) return [];
+    const payload:any=await response.json();
+    const candidates:LegalMeshCandidate[]=[];
+    const abstractUrl=clean(payload?.AbstractURL);
+    const abstract=String(payload?.AbstractText||payload?.Abstract||'').trim();
+    if(abstractUrl && abstract){
+      candidates.push({
+        url:abstractUrl,
+        title:String(payload?.Heading||payload?.AbstractSource||'DuckDuckGo Instant Answer').slice(0,240),
+        excerpt:abstract.slice(0,1200),
+        tier:3 as const,
+        provider:'duckduckgo-instant-answer',
+      });
+    }
+    return candidates;
+  });
+  return result||[];
+}
+
 async function searxng(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
   const base = process.env.SEARXNG_URL?.trim();
   if (!base) return [];
@@ -280,6 +307,7 @@ async function freeSearch(query: string, signal?: AbortSignal): Promise<LegalMes
   const groups=await Promise.all([
     geminiGoogle(query,signal),
     tavily(query,signal),
+    duckDuckGoInstantAnswer(query,signal),
     searxng(query,signal),
     ddgs(query,signal),
     openserp(query,signal),
