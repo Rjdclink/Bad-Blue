@@ -727,7 +727,9 @@ export async function generateLexaraConversationResponse(
   // Stream only turns whose final answer is not subject to downstream evidence
   // correction. Research-backed turns remain final-answer-first so a preliminary
   // model sentence can never outrun source validation.
-  const progressiveClaudeAllowed = !backgroundResearchRequested && !researchDecision.needed;
+  const progressiveClaudeAllowed = !backgroundResearchRequested
+    && !researchDecision.needed
+    && !sequencePlan.documentAction;
 
   let text = '';
   const claudeStartedAt = Date.now();
