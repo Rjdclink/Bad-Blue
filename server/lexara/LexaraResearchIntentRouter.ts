@@ -89,6 +89,7 @@ function requestedFact(text: string): LexaraRequestedFact {
   if (/\b(?:how old|age|date of birth|birth date|birthday|dob|born)\b/.test(value)) return 'age-dob';
   if (/\b(?:(?:nurs(?:e|ing)|medical|physician|lawyer|attorney|realtor|contractor|professional)\s+)?licen[cs](?:e|es|ed|ing)|licensure|credentials?|certifications?|board certified\b/.test(value)) return 'professional-license';
   if (/\b(?:married|marriage|spouse|husband|wife|divorc(?:e|ed)|marital status)\b/.test(value)) return 'marriage-divorce';
+  if (/\b(?:government employee|government employment|public service|public office|campaign contribution|campaign donation|lobbying|lobbyist|government contract)\b/.test(value)) return 'government-public';
   if (/\b(?:employ(?:er|ment|ed)|works?\s+(?:at|for)|where\s+(?:does|did)\s+.+\s+work|work history|job|occupation|profession|career)\b/.test(value)) return 'employment';
   if (/\b(?:property|real estate|parcel|deed|assessor|mortgage|owns?\s+(?:a\s+)?(?:house|home|land)|home ownership)\b/.test(value)) return 'property';
   if (/\b(?:court record|court case|docket|case filing|judgment|lawsuit|litigation)\b/.test(value)) return 'court-record';
@@ -101,7 +102,6 @@ function requestedFact(text: string): LexaraRequestedFact {
   if (/\b(?:domain|website|rdap|whois|web footprint|internet footprint)\b/.test(value)) return 'domain-web';
   if (/\b(?:social media|facebook|instagram|linkedin|tiktok|twitter|x\.com|username|online account|profile)\b/.test(value)) return 'social-online';
   if (/\b(?:photo|photos|picture|pictures|image|images|headshot|portrait)\b/.test(value)) return 'public-image';
-  if (/\b(?:government employee|government employment|public service|public office|campaign contribution|campaign donation|lobbying|lobbyist|government contract)\b/.test(value)) return 'government-public';
   if (/\b(?:news|newspaper|press|media|historical|archive|former|previously)\b/.test(value)) return 'news-history';
   if (/\b(?:identity|alias|aka|real name|who is)\b/.test(value)) return 'identity';
   if (/\b(?:phone|telephone|email|address|residen(?:ce|t)|where .+ live)\b/.test(value)) return 'contact-address';
