@@ -390,6 +390,8 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const [userInput, setUserInput] = useState('');
   const [phase, setPhase] = useState<ConversationPhase>('initializing');
   const [jurisdiction, setJurisdiction] = useState<string | undefined>();
+  const [representationMatter, setRepresentationMatter] = useState<any | null>(null);
+  const [hasSavedMatters, setHasSavedMatters] = useState(false);
   const [historyReady, setHistoryReady] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [restoreAttempt, setRestoreAttempt] = useState(0);
@@ -948,6 +950,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         jurisdiction,
         deviceLocation: readLexaraDeviceLocation(),
         sessionId: sessionIdRef.current,
+        representationMatter,
         behaviorMode: 'professional',
       };
 
@@ -1155,6 +1158,12 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         researchProgressTimerRef.current = null;
       }
       if (generation !== generationRef.current) return;
+      if (data?.representationMatter && typeof data.representationMatter === 'object') {
+        setRepresentationMatter(data.representationMatter);
+      }
+      if (typeof data?.matterSessionId === 'string' && data.matterSessionId.trim()) {
+        sessionIdRef.current = data.matterSessionId.trim();
+      }
       const priorPendingDocument = pendingDocument;
       const documentIntentRequested = data?.documentIntent?.requested === true;
       const documentFollowup = /\b(?:document|draft|form|letter|complaint|petition|motion|affidavit|declaration|pdf|docx|edit|revise|change|paragraph|section|signature|download|export|file|filing)\b/i.test(message);
@@ -1298,7 +1307,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         }
       }
     }
-  }, [appendMessage, clearVoiceTurnBuffer, jurisdiction, lawTypeId, lawTypeName, liveEnabled, pendingDocument, resumeListening, setConversationPhase, speakLexara, stopSpeaking, updateMessageContent, voiceReady]);
+  }, [appendMessage, clearVoiceTurnBuffer, jurisdiction, lawTypeId, lawTypeName, liveEnabled, pendingDocument, representationMatter, resumeListening, setConversationPhase, speakLexara, stopSpeaking, updateMessageContent, voiceReady]);
 
   handleMessageRef.current = handleUserMessage;
 
@@ -1316,7 +1325,9 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
     const greetingGeneration = generationRef.current;
     responseEmotionRef.current = 'calm';
-    const greeting = 'How can I help you?';
+    const greeting = hasSavedMatters
+      ? 'You have saved legal matters I can pull up if you want to continue where you left off. How may I help you?'
+      : 'How may I help you?';
 
     // Do not consume the one-shot greeting until the voice path is ready.
     // Once ready, reserve it before the await so overlapping readiness effects
@@ -1332,7 +1343,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     if (liveEnabled && !started && greetingGeneration === generationRef.current) {
       greetingRef.current = false;
     }
-  }, [appendMessage, historyReady, liveEnabled, speakLexara, voiceReady]);
+  }, [appendMessage, hasSavedMatters, historyReady, liveEnabled, speakLexara, voiceReady]);
 
   useEffect(() => {
     if (initializedRef.current) return;
@@ -1415,6 +1426,8 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     conversationRef.current = [];
     setConversation([]);
     setJurisdiction(undefined);
+    setRepresentationMatter(null);
+    setHasSavedMatters(false);
     greetingRef.current = false;
     greetingDisplayedRef.current = false;
     pendingUserTurnQueueRef.current = [];
@@ -1448,6 +1461,8 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     conversationRef.current = [];
     setConversation([]);
     setJurisdiction(undefined);
+    setRepresentationMatter(null);
+    setHasSavedMatters(false);
     greetingRef.current = false;
     greetingDisplayedRef.current = false;
     userSpeechObservedRef.current = false;
@@ -1473,6 +1488,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       if (data?.success !== true) throw new Error('Could not load your last Lexara conversation.');
       if (controller.signal.aborted) return;
 
+      setHasSavedMatters(data?.hasSavedMatters === true);
       const saved = data.conversation;
       if (saved && Array.isArray(saved.turns) && saved.turns.length) {
         const messages: ConversationMessage[] = saved.turns.flatMap((turn: any) => {
@@ -1492,8 +1508,12 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
           const latestContext = saved.turns[saved.turns.length - 1]?.context;
           setJurisdiction(typeof latestContext?.jurisdiction === 'string'
             ? latestContext.jurisdiction : undefined);
-          greetingRef.current = true;
-          userSpeechObservedRef.current = true;
+          setRepresentationMatter(latestContext?.representationMatter && typeof latestContext.representationMatter === 'object'
+            ? latestContext.representationMatter : null);
+          // A returning user gets a fresh spoken entry greeting even when the
+          // prior matter history is restored beneath it.
+          greetingRef.current = false;
+          userSpeechObservedRef.current = false;
         }
       }
       historyReadyRef.current = true;
