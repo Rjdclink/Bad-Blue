@@ -296,7 +296,7 @@ function buildLegalSystemPrompt(
       const state = jurisdiction.slice('Federal + '.length);
       expertise += ` The facts implicate both federal law and ${state} law. Analyze the two layers separately, including jurisdiction, venue, preemption, supplemental jurisdiction, and differing procedural rules when relevant.`;
     } else {
-      expertise += ` The user has identified ${jurisdiction} as the relevant state jurisdiction. Distinguish state law from federal law and flag any federal overlay or venue uncertainty.`;
+      expertise += ` The conversation context identifies ${jurisdiction} as the relevant state jurisdiction. Distinguish state law from federal law and flag any federal overlay or venue uncertainty.`;
     }
   }
 
