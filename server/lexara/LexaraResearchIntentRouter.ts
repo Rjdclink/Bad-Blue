@@ -35,6 +35,17 @@ export type LexaraRequestedFact =
   | 'domain-web'
   | 'news-history'
   | 'identity'
+  | 'contact-address'
+  | 'relatives-associates'
+  | 'social-online'
+  | 'education'
+  | 'vehicle'
+  | 'criminal-arrest'
+  | 'probation-parole'
+  | 'warrant'
+  | 'sex-offender'
+  | 'bankruptcy-financial'
+  | 'relationship-timeline'
   | 'general-public-record'
   | 'none';
 
@@ -88,6 +99,17 @@ function requestedFact(text: string): LexaraRequestedFact {
   if (/\b(?:domain|website|rdap|whois|web footprint|internet footprint)\b/.test(value)) return 'domain-web';
   if (/\b(?:news|newspaper|press|media|historical|archive|former|previously)\b/.test(value)) return 'news-history';
   if (/\b(?:identity|alias|aka|real name|who is)\b/.test(value)) return 'identity';
+  if (/\b(?:phone|telephone|email|address|residen(?:ce|t)|where .+ live)\b/.test(value)) return 'contact-address';
+  if (/\b(?:relative|family|parent|mother|father|sibling|brother|sister|associate|household|roommate|lives with)\b/.test(value)) return 'relatives-associates';
+  if (/\b(?:social media|facebook|instagram|linkedin|tiktok|twitter|x\.com|username|online account|profile)\b/.test(value)) return 'social-online';
+  if (/\b(?:education|school|college|university|degree|diploma|graduat|alma mater)\b/.test(value)) return 'education';
+  if (/\b(?:vehicle|car|truck|motorcycle|vin|vehicle title|vehicle registration)\b/.test(value)) return 'vehicle';
+  if (/\b(?:criminal record|criminal history|conviction|charge|arrest|booking|police record|sheriff record)\b/.test(value)) return 'criminal-arrest';
+  if (/\b(?:probation|parole|supervised release|community supervision)\b/.test(value)) return 'probation-parole';
+  if (/\b(?:warrant|wanted|fugitive)\b/.test(value)) return 'warrant';
+  if (/\b(?:sex offender|offender registry|registered offender)\b/.test(value)) return 'sex-offender';
+  if (/\b(?:bankrupt|bankruptcy|lien|ucc|financial public record|judgment lien)\b/.test(value)) return 'bankruptcy-financial';
+  if (/\b(?:timeline|chronology|relationship history|sequence of events|event history)\b/.test(value)) return 'relationship-timeline';
   if (/\b(?:public record|record|filing|registry|background)\b/.test(value)) return 'general-public-record';
   return 'none';
 }
@@ -112,6 +134,17 @@ function sourceCategoriesForFact(fact: LexaraRequestedFact, text: string): Lexar
     case 'domain-web': return ['domain-web','news-history'];
     case 'news-history': return ['news-history','domain-web'];
     case 'identity': return ['identity','vital-records','general-public-records'];
+    case 'contact-address': return ['contacts-addresses','identity','general-public-records'];
+    case 'relatives-associates': return ['relationships','general-public-records'];
+    case 'social-online': return ['social-online','domain-web','news-history'];
+    case 'education': return ['education','employment','general-public-records'];
+    case 'vehicle': return ['transportation','general-public-records'];
+    case 'criminal-arrest': return ['criminal-records','law-enforcement','courts','general-public-records'];
+    case 'probation-parole': return ['probation-parole','corrections','general-public-records'];
+    case 'warrant': return ['warrants','law-enforcement','courts','general-public-records'];
+    case 'sex-offender': return ['sex-offender','criminal-records','law-enforcement'];
+    case 'bankruptcy-financial': return ['financial-public','courts','property','general-public-records'];
+    case 'relationship-timeline': return ['relationship-timeline','relationships','news-history','general-public-records'];
     case 'general-public-record': return ['general-public-records'];
     default: return [];
   }
@@ -134,7 +167,7 @@ function factualQuestion(text: string, fact: LexaraRequestedFact): boolean {
 }
 
 function objectiveKindForFact(fact: LexaraRequestedFact, text: string): LexaraResearchObjectiveKind {
-  if (['professional-license','marriage-divorce','property','court-record','incarceration','financial-professional','sanctions-discipline'].includes(fact)) return 'record-lookup';
+  if (['professional-license','marriage-divorce','property','court-record','incarceration','financial-professional','sanctions-discipline','criminal-arrest','probation-parole','warrant','sex-offender','bankruptcy-financial','vehicle'].includes(fact)) return 'record-lookup';
   if (/\b(?:current|currently|latest|today|now|recent)\b/i.test(text)) return 'current-information';
   return 'external-fact';
 }
