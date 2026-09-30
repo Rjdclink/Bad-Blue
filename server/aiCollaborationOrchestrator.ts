@@ -1867,9 +1867,10 @@ export class AICollaborationOrchestrator {
     return providers.includes(AIProvider.CLAUDE) ? [AIProvider.CLAUDE] : [];
   }
 
-  private static getClaudeEffort(task: CollaborationTask): 'high' | 'max' {
-    // Sonnet 5.5 stays at high effort. Any paid Opus 5.5 escalation is genuinely
-    // complex work, so use max effort: efficiency may reduce waste, never capability.
+  private static getClaudeEffort(task: CollaborationTask): 'high' | 'max' | undefined {
+    // Haiku 4.5 does not support output_config.effort. Paid Sonnet stays at high
+    // effort; paid deep/document work may escalate to Opus at max effort.
+    if (task.model === LEGAL_AI_MODELS.claudeFast) return undefined;
     return task.attributes.allowClaudeOpus === true
       && task.model === LEGAL_AI_MODELS.claudeDeep
       ? 'max'
@@ -1882,7 +1883,8 @@ export class AICollaborationOrchestrator {
     switch (provider) {
       case AIProvider.CLAUDE:
       case AIProvider.CLAUDE_OPUS:
-        return deepClaude ? LEGAL_AI_MODELS.claudeDeep : LEGAL_AI_MODELS.claudeFast;
+        if (attrs.allowClaudeOpus !== true) return LEGAL_AI_MODELS.claudeFast;
+        return deepClaude ? LEGAL_AI_MODELS.claudeDeep : LEGAL_AI_MODELS.claudeBalanced;
       default: return this.getDefaultModelForProvider(provider);
     }
   }
