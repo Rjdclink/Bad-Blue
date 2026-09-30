@@ -49,6 +49,11 @@ const orchestrator = read('server/lexara/LexaraConversationOrchestrator.ts');
 const openRouter = read('server/openRouterService.ts');
 const authorityResearch = read('server/lexara/LexaraAuthorityResearch.ts');
 const lexaraRetrievalBoundary = read('server/lexara/LexaraRetrievalBoundary.ts');
+const lexaraResearchIntent = read('server/lexara/LexaraResearchIntentRouter.ts');
+const lexaraSourceRegistry = read('server/lexara/LexaraPublicSourceRegistry.ts');
+const lexaraLegalMesh = read('server/lexara/LegalProviderMesh.ts');
+const lexaraDiscoveryLearning = read('server/lexara/LexaraDiscoveryLearning.ts');
+const lexaraResearchAssist = read('server/lexara/LexaraResearchAssist.ts');
 const pantheonInvestigation = read('server/lexara/LexaraPantheonInvestigation.ts');
 const webSearch = read('server/webSearchService.ts');
 const modernWebSearch = read('server/openRouterWebSearch.ts');
@@ -485,7 +490,7 @@ must(
     harmony.includes("return 'legal-fast'") &&
     harmony.includes('withHarmonyDeadline') &&
     harmonyRegistry.includes('HARMONY_17_PARTICIPANTS') &&
-    orchestrator.includes('maxParticipants: 2') &&
+    orchestrator.includes('maxParticipants: 3') &&
     orchestrator.includes('estimatedTokens: 1_500') &&
     !orchestrator.includes('LIVE_REASONING_DEADLINE_MS') &&
     !orchestrator.includes('harmonyDeadline') &&
@@ -502,16 +507,60 @@ must(
     harmonyWarmup.includes('getHarmonyWarmState') &&
     harmonyWarmup.includes("'catalog'") &&
     groq.includes('warmGroqModelCatalog'),
-  'Lexara keeps all 17 configured participants as a hot reserve while only a two-route capability/latency hedge owns normal turn latency',
+  'Lexara keeps Claude primary with Gemini and xAI as redundant legal-reasoning peers while preserving bounded provider recovery',
 );
 must(
   !authorityResearch.includes('openRouterWebSearch') &&
     !authorityResearch.includes('FIRECRAWL_API_KEY') &&
     !authorityResearch.includes('api.firecrawl.dev') &&
-    authorityResearch.includes('Promise.all') &&
     authorityResearch.includes('discoverLegalMeshTier3') &&
-    authorityResearch.includes('discoverLegalMeshSupplemental'),
-  'legal authority research uses independent discovery without OpenRouter or Firecrawl fallback',
+    authorityResearch.includes('discoverLegalMeshSupplemental') &&
+    authorityResearch.includes('forceResearch') &&
+    authorityResearch.includes('researchIntent'),
+  'Lexara legal and factual research use the independent Lexara search mesh without OpenRouter or Firecrawl',
+);
+must(
+  lexaraResearchIntent.includes("'age-dob'") &&
+    lexaraResearchIntent.includes("'professional-license'") &&
+    lexaraResearchIntent.includes("'marriage-divorce'") &&
+    lexaraResearchIntent.includes("'employment'") &&
+    lexaraResearchIntent.includes('standaloneQuery') &&
+    lexaraResearchIntent.includes('research-follow-up') &&
+    lexaraResearchIntent.includes('sourceCategories'),
+  'one Lexara-owned semantic planner carries inferred factual intent and follow-up context into research',
+);
+must(
+  lexaraLegalMesh.includes('gemini-google-grounding') &&
+    lexaraLegalMesh.includes('SEARXNG_URL') &&
+    lexaraLegalMesh.includes('DDGS_URL') &&
+    lexaraLegalMesh.includes('OPENSERP_URL') &&
+    lexaraLegalMesh.includes('TAVILY_API_KEY') &&
+    lexaraLegalMesh.includes('index.commoncrawl.org') &&
+    lexaraLegalMesh.includes('SERPAPI_KEY') &&
+    lexaraLegalMesh.includes('SCRAPINGBEE_API_KEY') &&
+    lexaraLegalMesh.includes('planLexaraResearchQueries') &&
+    !lexaraLegalMesh.includes('PantheonDiscoveryCoordinator'),
+  'Lexara owns the former non-crawler discovery lanes, archive fallback, paid fallback, and query expansion',
+);
+must(
+  lexaraSourceRegistry.includes('cdc-vital-records') &&
+    lexaraSourceRegistry.includes('nursys-license') &&
+    lexaraSourceRegistry.includes('careeronestop-license-finder') &&
+    lexaraSourceRegistry.includes('bop-inmate-locator') &&
+    lexaraSourceRegistry.includes('finra-brokercheck') &&
+    lexaraSourceRegistry.includes('sec-edgar') &&
+    lexaraSourceRegistry.includes('icann-rdap') &&
+    lexaraSourceRegistry.includes('uspto-patents') &&
+    lexaraSourceRegistry.includes('usagov-state-local'),
+  'Lexara owns category-aware authoritative source routing for vital, license, employment, court, corrections, business, property, domain and IP facts',
+);
+must(
+  lexaraDiscoveryLearning.includes('lexara_discovery_learning') &&
+    lexaraDiscoveryLearning.includes('rememberLexaraDiscoveryOutcome') &&
+    lexaraDiscoveryLearning.includes('getLexaraLearnedQueryPatterns') &&
+    lexaraResearchAssist.includes("providerPolicy:'legalwhat'") &&
+    lexaraResearchAssist.includes('maxParticipants:3'),
+  'Lexara owns discovery learning and Claude-led redundant research-query planning',
 );
 must(
   authorityResearch.includes('lexaraRetrievalAdapter.retrieve') &&
