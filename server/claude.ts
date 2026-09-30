@@ -43,6 +43,36 @@ export interface ClaudeOptions {
   cacheSystemPrompt?: boolean;
 }
 
+export interface ClaudeStreamingOptions extends ClaudeOptions {
+  onTextDelta?: (delta: string) => void;
+  onSpeechChunk?: (chunk: string) => void;
+}
+
+const CLAUDE_SPEECH_ABBREVIATIONS = [
+  'u.s.', 'u.s.c.', 'f.2d.', 'f.3d.', 's.ct.', 'l.ed.', 'v.', 'no.', 'nos.',
+  'mr.', 'mrs.', 'ms.', 'dr.', 'inc.', 'corp.', 'ltd.', 'e.g.', 'i.e.', 'etc.',
+];
+
+function findSafeSpeechBoundary(value: string): number {
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (char !== '.' && char !== '!' && char !== '?') continue;
+    if (char === '.' && /\d/.test(value[index - 1] || '') && /\d/.test(value[index + 1] || '')) continue;
+
+    let end = index + 1;
+    while (end < value.length && /["')\]]/.test(value[end])) end += 1;
+    if (end < value.length && !/\s/.test(value[end])) continue;
+
+    const candidate = value.slice(0, end).trim();
+    if (candidate.length < 24) continue;
+    const lower = candidate.toLowerCase();
+    if (CLAUDE_SPEECH_ABBREVIATIONS.some(abbreviation => lower.endsWith(abbreviation))) continue;
+
+    return end;
+  }
+  return -1;
+}
+
 /**
  * Generate text using Claude
  */
@@ -167,6 +197,110 @@ export async function callClaude(
       );
     }
     console.error('[Claude] Error:', error);
+    throw Object.assign(new Error(`Claude API error: ${error.message}`), { headers: error.headers, status: error.status });
+  }
+}
+
+/**
+ * Stream Claude text while preserving the same final-message semantics as callClaude.
+ * Speech callbacks receive only conservative completed sentence chunks; the final
+ * tail is emitted only after Anthropic reports the message complete.
+ */
+export async function callClaudeStreaming(
+  prompt: string,
+  options: ClaudeStreamingOptions = {},
+): Promise<{ content: string; tokensUsed: number }> {
+  const client = getClaudeClient();
+  const systemPrompt = options.systemPrompt || '';
+  const jsonInstruction = options.useJSON
+    ? '\n\nIMPORTANT: Respond ONLY with valid JSON. No markdown, no explanations, just raw JSON.'
+    : '';
+  const model = options.model || CURRENT_AI_MODELS.claudeBalanced;
+  const samplingControlsDeprecated = /claude-(?:opus|sonnet|haiku)-5|claude-opus-4-(?:7|8|9)/i.test(model);
+  const systemText = systemPrompt + jsonInstruction;
+  const cacheSystemPrompt = options.cacheSystemPrompt === true && systemText.length >= 2_048;
+  let speechBuffer = '';
+
+  try {
+    const stream = client.messages.stream({
+      model,
+      max_tokens: options.maxTokens || 2000,
+      ...(!samplingControlsDeprecated && options.temperature !== undefined
+        ? { temperature: options.temperature }
+        : {}),
+      ...(options.effort ? { output_config: { effort: options.effort } } : {}),
+      system: cacheSystemPrompt
+        ? [{ type: 'text', text: systemText, cache_control: { type: 'ephemeral' } }]
+        : systemText,
+      messages: [{ role: 'user', content: prompt }],
+    } as any, {
+      signal: options.signal,
+      ...(options.providerPolicy === 'legalwhat' ? { maxRetries: 0 } : {}),
+    });
+
+    stream.on('text', (delta: string) => {
+      if (!delta) return;
+      options.onTextDelta?.(delta);
+      if (!options.onSpeechChunk) return;
+      speechBuffer += delta;
+      let boundary = findSafeSpeechBoundary(speechBuffer);
+      while (boundary >= 0) {
+        const chunk = speechBuffer.slice(0, boundary).trim();
+        speechBuffer = speechBuffer.slice(boundary).trimStart();
+        if (chunk) options.onSpeechChunk(chunk);
+        boundary = findSafeSpeechBoundary(speechBuffer);
+      }
+    });
+
+    const response = await stream.finalMessage();
+    const content = response.content
+      .flatMap(block =>
+        block.type === 'text' && typeof (block as any).text === 'string'
+          ? [(block as any).text]
+          : []
+      )
+      .join('\n')
+      .trim();
+
+    if (!content) {
+      const blockTypes = response.content.map(block => block.type).join(',') || 'none';
+      throw new Error(
+        `Claude returned no text content block (stop_reason=${response.stop_reason || 'unknown'}, blocks=${blockTypes})`,
+      );
+    }
+
+    if (options.onSpeechChunk && speechBuffer.trim()) {
+      options.onSpeechChunk(speechBuffer.trim());
+      speechBuffer = '';
+    }
+
+    const usage = response.usage as any;
+    const inputTokens = Number(usage.input_tokens || 0);
+    const outputTokens = Number(usage.output_tokens || 0);
+    const cacheReadInputTokens = Number(usage.cache_read_input_tokens || 0);
+    const cacheCreationInputTokens = Number(usage.cache_creation_input_tokens || 0);
+    const tokensUsed = inputTokens + outputTokens + cacheReadInputTokens + cacheCreationInputTokens;
+
+    console.info('[Claude Streaming]', {
+      model,
+      effort: options.effort || 'provider-default',
+      inputTokens,
+      outputTokens,
+      cacheReadInputTokens,
+      cacheCreationInputTokens,
+    });
+
+    return { content, tokensUsed };
+  } catch (error: any) {
+    if (options.signal?.aborted) {
+      const reason = options.signal.reason;
+      if (reason instanceof Error || reason instanceof DOMException) throw reason;
+      throw new DOMException(
+        typeof reason === 'string' ? reason : 'Claude request cancelled',
+        'AbortError',
+      );
+    }
+    console.error('[Claude Streaming] Error:', error);
     throw Object.assign(new Error(`Claude API error: ${error.message}`), { headers: error.headers, status: error.status });
   }
 }
