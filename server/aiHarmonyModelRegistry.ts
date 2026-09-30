@@ -60,11 +60,10 @@ export const CURRENT_AI_MODELS = {
 } as const;
 
 
-/** Legal-scoped models. The wider Harmony registry remains unchanged. */
+/** Legal-scoped models. Claude is the sole LegalWhat inference provider. */
 export const LEGAL_AI_MODELS = {
-  claudeFast: 'claude-sonnet-5-5', claudeDeep: 'claude-opus-5-5',
-  geminiFast: 'gemini-3.8-flash', geminiDeep: 'gemini-3.8-flash',
-  xaiFast: 'grok-4.7', xaiDeep: 'grok-4.7', xaiAlternate: 'grok-4.6',
+  claudeFast: 'claude-sonnet-5-5',
+  claudeDeep: 'claude-opus-5-5',
 } as const;
 export function isCurrentLegalModel(provider: AIProvider, model: string): boolean {
   const company = provider === PROVIDER.CLAUDE_OPUS ? 'claude' : provider;
@@ -102,18 +101,6 @@ export const HARMONY_17_PARTICIPANTS: readonly HarmonyParticipant[] = [
     capabilities: ['legal-analysis', 'deep-reasoning', 'verification', 'long-context', 'coding', 'agentic'],
     configured: () => !!(process.env.ANTHROPIC_API_KEY?.trim() || process.env.CLAUDE_API_KEY?.trim()),
   },
-  {
-    provider: PROVIDER.GEMINI,
-    model: CURRENT_AI_MODELS.gemini,
-    capabilities: ['fast-chat', 'research', 'long-context', 'multimodal', 'agentic', 'structured-output'],
-    configured: () => !!(process.env.GEMINI_API_KEY?.trim() || process.env.GOOGLE_API_KEY?.trim()),
-  },
-  {
-    provider: PROVIDER.XAI,
-    model: CURRENT_AI_MODELS.xai,
-    capabilities: ['fast-chat', 'deep-reasoning', 'legal-analysis', 'verification', 'coding', 'research', 'multimodal', 'agentic', 'structured-output'],
-    configured: () => !!process.env.XAI_API_KEY?.trim(),
-  },
 ] as const;
 
 
@@ -128,7 +115,6 @@ export type HarmonyProviderPolicy = 'default' | 'capability-first' | 'capability
 
 /** Resolve the independent transport for the GPT OSS alias without a gateway. */
 export function getDirectGptOssProvider(): AIProvider | null {
-  if (process.env.GROQ_API_KEY?.trim()) return PROVIDER.GROQ;
   return null;
 }
 
@@ -137,9 +123,8 @@ export function isHarmonyProviderAllowed(
   provider: AIProvider,
   policy: HarmonyProviderPolicy = 'capability-first',
 ): boolean {
-  // Platform-wide inference authority is intentionally limited to the three
-  // independently authenticated providers retained by LegalWhat.
-  return [PROVIDER.CLAUDE, PROVIDER.GEMINI, PROVIDER.XAI].includes(provider);
+  // Claude is the sole configured inference authority.
+  return provider === PROVIDER.CLAUDE;
 }
 
 export function getConfiguredHarmonyParticipants(
@@ -148,7 +133,7 @@ export function getConfiguredHarmonyParticipants(
   const configured = HARMONY_17_PARTICIPANTS.filter(participant =>
     participant.configured() && isHarmonyProviderAllowed(participant.provider, policy));
   if (policy !== 'legalwhat') return configured;
-  const legalWhatOrder: AIProvider[] = [PROVIDER.CLAUDE, PROVIDER.GEMINI, PROVIDER.XAI];
+  const legalWhatOrder: AIProvider[] = [PROVIDER.CLAUDE];
   return configured.sort((left, right) =>
     legalWhatOrder.indexOf(left.provider) - legalWhatOrder.indexOf(right.provider));
 }
@@ -169,20 +154,6 @@ export function getHarmonyCapabilities(provider: AIProvider): readonly HarmonyCa
   return HARMONY_17_PARTICIPANTS.find(item => item.provider === provider)?.capabilities || [];
 }
 
-export function getOpenRouterModelForProvider(provider: AIProvider): string | null {
-  switch (provider) {
-    case PROVIDER.DEEPSEEK: return CURRENT_AI_MODELS.deepseek;
-    case PROVIDER.GROK: return CURRENT_AI_MODELS.grok;
-    case PROVIDER.KIMI: return CURRENT_AI_MODELS.kimi;
-    case PROVIDER.QWEN: return CURRENT_AI_MODELS.qwen;
-    case PROVIDER.GPT5_MINI: return CURRENT_AI_MODELS.openaiFastViaOpenRouter;
-    case PROVIDER.OPENROUTER: return CURRENT_AI_MODELS.openRouterAuto;
-    case PROVIDER.FALCON:
-    case PROVIDER.CODE_LLAMA:
-    case PROVIDER.GPT_NEOX:
-    case PROVIDER.PERPLEXITY:
-      return getCurrentModelForProvider(provider);
-    default:
-      return null;
-  }
+export function getOpenRouterModelForProvider(_provider: AIProvider): string | null {
+  return null;
 }
