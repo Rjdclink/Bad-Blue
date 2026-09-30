@@ -4,7 +4,6 @@ import {
   getCurrentModelForProvider,
 } from './aiHarmonyModelRegistry';
 import { warmGroqModelCatalog } from './groq';
-import { callClaude } from './claude';
 
 export type HarmonyWarmState = 'unknown' | 'catalog' | 'ready' | 'degraded';
 
@@ -132,12 +131,11 @@ export function isHarmonyProviderWarmHealthy(provider: AIProvider): boolean {
   const status = warmStatus.get(provider);
   if (!status || status.state !== 'degraded') return true;
 
-  // A catalog/API outage during startup must not quarantine a provider forever.
-  // After a short TTL the route becomes eligible for one live trial while a
-  // background refresh updates the resolved model/health state.
+  // A provider already known degraded is excluded from user work. After a
+  // short TTL, refresh only its non-inference catalog state in the background;
+  // it becomes eligible again only after that refresh succeeds.
   if (Date.now() - status.checkedAt > 60_000) {
     void prewarmHarmonyProviders().catch(() => undefined);
-    return true;
   }
   return false;
 }
@@ -257,26 +255,9 @@ export async function prewarmHarmonyProviders(): Promise<HarmonyWarmStatus[]> {
             return record(provider, model, startedAt, 'degraded', 'no live compatible Anthropic model');
           }
 
-          // Prove the selected model can actually infer. This runs in background
-          // warmup and never gates the working Lexara voice/text path.
-          const controller = new AbortController();
-          const timer = setTimeout(
-            () => controller.abort(new Error(`${provider} readiness probe timed out`)),
-            CATALOG_TIMEOUT_MS,
-          );
-          try {
-            await callClaude('Reply OK.', {
-              model: resolved,
-              // Synthetic readiness only: low effort avoids spending legal-reasoning
-              // tokens while still proving this credential can infer on the model.
-              effort: 'low',
-              maxTokens: 128,
-              signal: controller.signal,
-            });
-            return record(provider, resolved, startedAt, 'ready');
-          } finally {
-            clearTimeout(timer);
-          }
+          // Startup is catalog-only. Never spend an inference call to prove
+          // readiness; the first inference must belong to real user work.
+          return record(provider, resolved, startedAt, 'catalog');
         }
 
         if (provider === AIProvider.MISTRAL) {
@@ -328,10 +309,7 @@ export async function prewarmHarmonyProviders(): Promise<HarmonyWarmStatus[]> {
   })();
 
   try {
-    const result = await warmupInFlight;
-    void import('./legalSupportReadiness').then(module => module.verifyLegalSupportReadiness())
-      .catch(error => console.warn('[LEXARA SupportReadiness] startup check failed', { error: String(error) }));
-    return result;
+    return await warmupInFlight;
   } finally {
     warmupInFlight = null;
   }
