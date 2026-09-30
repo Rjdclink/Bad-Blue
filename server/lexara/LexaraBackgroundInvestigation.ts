@@ -150,21 +150,51 @@ function normalize(value: string): string {
   return value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
+function locationMatchConfidence(content: string, location?: string): number {
+  const normalizedLocation = normalize(location || '');
+  if (!normalizedLocation) return 0;
+  const normalizedContent = normalize(content);
+  if (normalizedContent.includes(normalizedLocation)) return 1;
+  const tokens = normalizedLocation.split(' ').filter(token => token.length > 2);
+  if (!tokens.length) return 0;
+  const matched = tokens.filter(token => normalizedContent.includes(token)).length;
+  return matched === tokens.length ? 0.85 : matched > 0 ? matched / tokens.length * 0.45 : 0;
+}
+
 function subjectConfidence(content: string, subject: LexaraBackgroundSubject): number {
   const normalizedContent = normalize(content);
   const normalizedName = normalize(subject.name);
   if (!normalizedName) return 0;
-  if (normalizedContent.includes(normalizedName)) return 1;
 
   const tokens = normalizedName.split(' ').filter(token => token.length > 1);
-  if (tokens.length < 2) return normalizedContent.includes(tokens[0] || '') ? 0.62 : 0;
-  const first = tokens[0];
-  const last = tokens[tokens.length - 1];
-  if (normalizedContent.includes(first) && normalizedContent.includes(last)) {
-    const all = tokens.every(token => normalizedContent.includes(token));
-    return all ? 0.86 : 0.72;
+  let nameConfidence = 0;
+  if (normalizedContent.includes(normalizedName)) nameConfidence = 0.72;
+  else if (tokens.length < 2) nameConfidence = normalizedContent.includes(tokens[0] || '') ? 0.48 : 0;
+  else {
+    const first = tokens[0];
+    const last = tokens[tokens.length - 1];
+    if (normalizedContent.includes(first) && normalizedContent.includes(last)) {
+      nameConfidence = tokens.every(token => normalizedContent.includes(token)) ? 0.66 : 0.56;
+    }
   }
-  return 0;
+  if (!nameConfidence) return 0;
+  const locationConfidence = locationMatchConfidence(content, subject.location);
+  return Math.min(1, nameConfidence + locationConfidence * 0.18);
+}
+
+function subjectRelevantWindow(content: string, subject: LexaraBackgroundSubject): string {
+  const lower = content.toLocaleLowerCase();
+  const exact = subject.name.toLocaleLowerCase();
+  let index = lower.indexOf(exact);
+  if (index < 0) {
+    const tokens = normalize(subject.name).split(' ').filter(token => token.length > 1);
+    const first = tokens[0] || '';
+    const last = tokens[tokens.length - 1] || '';
+    const firstIndex = first ? normalize(content).indexOf(first) : -1;
+    const lastIndex = last ? normalize(content).indexOf(last) : -1;
+    index = firstIndex >= 0 && lastIndex >= 0 ? Math.min(firstIndex, lastIndex) : 0;
+  }
+  return content.slice(Math.max(0, index - 500), Math.min(content.length, index + 1200));
 }
 
 function factPattern(decision: LexaraResearchDecision, prompt: string): RegExp {
@@ -203,7 +233,8 @@ function assessEvidence(
   const identity = subjectConfidence(content, subject);
   if (identity <= 0) return null;
   const pattern = factPattern(decision, prompt);
-  const directlyAnswers = pattern.test(content);
+  const relevantWindow = subjectRelevantWindow(content, subject);
+  const directlyAnswers = pattern.test(relevantWindow);
   const confidence = Math.max(0, Math.min(1,
     identity * 0.58 + (directlyAnswers ? 0.34 : 0.08) + sourceAuthorityBonus(url),
   ));
