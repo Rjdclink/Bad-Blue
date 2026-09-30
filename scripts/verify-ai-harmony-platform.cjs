@@ -41,12 +41,12 @@ const packageLock = JSON.parse(read('package-lock.json'));
 
 const registrySection = registry.split('HARMONY_17_PARTICIPANTS')[1]?.split('const LEGACY_MODEL_ALIASES')[0] || '';
 const participantCount = (registrySection.match(/provider:\s*PROVIDER\./g) || []).length;
-must(participantCount === 3, `Harmony registry contains exactly Claude, Gemini and xAI (found ${participantCount})`);
+must(participantCount === 1, `Harmony registry contains exactly one active provider: Claude (found ${participantCount})`);
 
 must(
-  registry.includes('PROVIDER.CLAUDE') && registry.includes('PROVIDER.GEMINI') && registry.includes('PROVIDER.XAI')
-    && registry.includes('return [PROVIDER.CLAUDE, PROVIDER.GEMINI, PROVIDER.XAI].includes(provider)'),
-  'active Harmony inference authority is limited to Claude, Gemini and direct xAI',
+  registry.includes('PROVIDER.CLAUDE') &&
+    registry.includes('return provider === PROVIDER.CLAUDE'),
+  'active Harmony inference authority is limited to Claude only',
 );
 for (const model of [
   'gemini-3.8-flash',
