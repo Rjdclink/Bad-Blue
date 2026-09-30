@@ -74,7 +74,7 @@ export function isLexaraLegalAuthorityIntent(text: string): boolean {
 function requestedFact(text: string): LexaraRequestedFact {
   const value = text.toLowerCase();
   if (/\b(?:how old|age|date of birth|birth date|birthday|dob|born)\b/.test(value)) return 'age-dob';
-  if (/\b(?:nurs(?:e|ing)|medical|physician|lawyer|attorney|realtor|contractor|professional)?\s*licen[cs]e|licensure|credential|certification|board certified\b/.test(value)) return 'professional-license';
+  if (/\b(?:(?:nurs(?:e|ing)|medical|physician|lawyer|attorney|realtor|contractor|professional)\s+)?licen[cs](?:e|es|ed|ing)|licensure|credentials?|certifications?|board certified\b/.test(value)) return 'professional-license';
   if (/\b(?:married|marriage|spouse|husband|wife|divorc(?:e|ed)|marital status)\b/.test(value)) return 'marriage-divorce';
   if (/\b(?:employ(?:er|ment|ed)|works?\s+(?:at|for)|work history|job|occupation|profession|career)\b/.test(value)) return 'employment';
   if (/\b(?:property|real estate|parcel|deed|assessor|mortgage|owns?\s+(?:a\s+)?(?:house|home|land)|home ownership)\b/.test(value)) return 'property';
