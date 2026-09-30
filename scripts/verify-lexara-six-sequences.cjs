@@ -47,7 +47,7 @@ if (!orchestrator.includes("from './LexaraBackgroundInvestigation'")
 for (const forbidden of ['PantheonRetrievalAdapter','pantheonRetrievalAdapter','../services/pantheon/','PantheonDiscoveryCoordinator']) {
   if (background.includes(forbidden)) throw new Error('Lexara native background investigator depends on Pantheon: '+forbidden);
 }
-for (const token of ['MAX_RECURSIVE_PASSES','discoverLegalMeshTier3','discoverLegalMeshSupplemental','lexaraRetrievalAdapter','directlyAnswers']) {
+for (const token of ['MAX_RECURSIVE_PASSES','discoverLegalMeshTier3','discoverLegalMeshSupplemental','lexaraRetrievalAdapter','directlyAnswers','retrievedAt']) {
   if (!background.includes(token)) throw new Error('Lexara native background investigation missing '+token);
 }
 if (!orchestrator.includes('const researchRouteSelected = sequencePlan.useLegalResearch || researchDecision.needed')) {
