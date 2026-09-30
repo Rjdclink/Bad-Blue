@@ -1201,7 +1201,13 @@ must(
 );
 must(
   conversation.includes('lexaraDocumentSpeech(answer, documentIntentRequested || Boolean(priorPendingDocument))') &&
-    conversation.includes('await speakLexara(spokenAnswer, generation)'),
+    conversation.includes('&& !pendingDocument') &&
+    conversation.includes('const recoverySpeech =') &&
+    conversation.includes(': spokenAnswer;') &&
+    conversation.includes('await speakLexara(recoverySpeech, generation)') &&
+    lexaraChatRoutes.includes('onSpeechChunk: documentIntent.requested') &&
+    lexaraChatRoutes.includes('? undefined') &&
+    lexaraChatRoutes.includes(": chunk => send('speech-chunk', { chunk })"),
   'document bodies must never be sent to realtime TTS',
 );
 must(
