@@ -283,7 +283,7 @@ test('document routing lets one healthy support provider complete the draft when
     { ...h.attributes, needsFastResponse: false, estimatedTokens: 3000 },
     ['xai','gemini'], { providerPolicy: 'legalwhat', maxParticipants: 2, maxFallbacks: 0 },
   );
-  assert.equal(result.finalAnswer, 'Direct HTTP fixture answer');
+  assert.equal(result.finalAnswer, 'Supported fixture answer');
   assert.equal(h.calls.length, 1);
   assert(h.calls.some(call => /Draft the complete requested legal document/.test(call.prompt)));
 });
@@ -488,7 +488,7 @@ test('Claude stays primary and adds one support provider only when verification 
 test('Claude keeps at most one scarce independent support provider when requested', () => {
   const h = harness(['ANTHROPIC_API_KEY','GEMINI_API_KEY','XAI_API_KEY']);
   const chosen = Array.from(h.engine.selectLegalProvidersForTask(
-    h.attributes, ['gemini','xai','claude'], 3,
+    { ...h.attributes, needsVerification: true }, ['gemini','xai','claude'], 3,
   ));
   assert.equal(chosen[0], 'claude');
   assert.equal(chosen.length, 2);
