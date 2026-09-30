@@ -542,8 +542,9 @@ export async function generateLexaraConversationResponse(
   const relayBackgroundAbort = () => backgroundController.abort(context.signal?.reason);
   if (context.signal?.aborted) backgroundController.abort(context.signal.reason);
   else context.signal?.addEventListener('abort', relayBackgroundAbort, { once: true });
+  const resolvedBackgroundSubject = resolveLexaraBackgroundSubject(cleanPrompt, previousUserTurns, jurisdiction);
   const searchOnlyFact = sequencePlan.sequence === 'simple-factual'
-    && !resolveLexaraBackgroundSubject(cleanPrompt, previousUserTurns, jurisdiction);
+    && !resolvedBackgroundSubject;
   const backgroundInvestigationPromise: Promise<LexaraBackgroundResearchResult | null> = backgroundResearchRequested ? (searchOnlyFact
     ? discoverLexaraBackgroundSourcesParallel(researchDecision.objective || cleanPrompt, [], {
         jurisdiction, limit: 8,
@@ -600,7 +601,8 @@ export async function generateLexaraConversationResponse(
   const relayResearchAbort = () => researchController.abort();
   if (context.signal?.aborted) researchController.abort();
   else context.signal?.addEventListener('abort', relayResearchAbort, { once: true });
-  const researchRouteSelected = sequencePlan.useLegalResearch || researchDecision.needed;
+  const purePersonFactResearch = researchDecision.intent === 'factual' && resolvedBackgroundSubject?.kind === 'person';
+  const researchRouteSelected = purePersonFactResearch ? false : sequencePlan.useLegalResearch || researchDecision.needed;
   const authorityResearchPromise = researchRouteSelected
     ? researchLegalAuthority(researchDecision.standaloneQuery || researchDecision.objective || cleanPrompt, {
         jurisdiction,
