@@ -1075,6 +1075,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       const progressiveVoiceReady =
         liveEnabled
         && voiceReady
+        && !pendingDocument
         && lexaraRealtimeVoiceClient.isSpeechOutputReady();
       if (canReuseSpeculative) {
         if (!response.ok) {
