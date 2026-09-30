@@ -10,12 +10,6 @@ import {
   researchLegalAuthority,
 } from './LexaraAuthorityResearch';
 import {
-  formatLexaraBackgroundResearchForSystem,
-  investigateLexaraBackgroundQuestion,
-  discoverLexaraBackgroundSourcesParallel,
-  type LexaraBackgroundResearchResult,
-} from './LexaraBackgroundResearchBoundary';
-import {
   formatLexaraDomainSpecialization,
   getLexaraLegalDomainProfile,
 } from './LexaraLegalDomainProfiles';
@@ -27,6 +21,41 @@ import { hasExplicitLocationCue, resolveUSJurisdiction } from './LexaraJurisdict
 export interface LexaraConversationMessage {
   role: 'user' | 'lexara' | 'assistant';
   content: string;
+}
+
+type LexaraBackgroundProgressEvent = {
+  type: 'searching' | 'checkpoint' | 'evidence' | 'endpoint';
+  pass: number;
+  confidence?: number;
+  sourceUrl?: string;
+  evidence?: string;
+  endpoint?: LexaraBackgroundResearchResult['endpoint'];
+};
+
+type LexaraBackgroundResearchResult = {
+  clarification?: string;
+  needsIdentityClarification?: boolean;
+  evidenceSummary?: string;
+  sources: string[];
+  categories: string[];
+  fullBackgroundReportRequested: boolean;
+  coverageLimited?: boolean;
+  coverageNote?: string;
+  endpoint: 'evidence-sufficient' | 'best-available-evidence' | 'partial-evidence' | 'budget-exhausted' | 'sources-exhausted' | 'clarification-required' | 'unavailable' | 'failed' | 'report-handoff' | 'search-leads-only';
+  recursionPasses?: number;
+  discoveryLanes?: string[];
+};
+
+// Compatibility surface only. Lexara no longer invokes Pantheon from user turns.
+// All research-selected turns are routed through Lexara's legal authority/reasoning service.
+async function investigateLexaraBackgroundQuestion(): Promise<LexaraBackgroundResearchResult | null> {
+  return null;
+}
+async function discoverLexaraBackgroundSourcesParallel(): Promise<{ urls: string[]; lanesAttempted: string[] }> {
+  return { urls: [], lanesAttempted: [] };
+}
+function formatLexaraBackgroundResearchForSystem(): string {
+  return '';
 }
 
 export interface LexaraConversationContext {
@@ -41,14 +70,14 @@ export interface LexaraConversationContext {
   behaviorMode?: 'personable' | 'professional';
   sessionId?: string;
   signal?: AbortSignal;
-  onResearchProgress?: (event: import('./LexaraBackgroundResearchBoundary').LexaraBackgroundProgressEvent) => void;
+  onResearchProgress?: (event: LexaraBackgroundProgressEvent) => void;
 }
 
 export interface LexaraConversationResult {
   text: string;
   jurisdiction?: string;
   mappedLawType?: ExpertLawType;
-  backgroundEndpoint?: import('./LexaraBackgroundResearchBoundary').LexaraBackgroundResearchResult['endpoint'];
+  backgroundEndpoint?: LexaraBackgroundResearchResult['endpoint'];
   backgroundStatus?: 'completed' | 'partial' | 'unavailable' | 'failed' | 'clarification-required' | 'consent-required';
 }
 
@@ -325,7 +354,7 @@ function degradedLegalResponse(jurisdiction?: string): string {
 }
 
 function extractVerifiedBackgroundSourceExcerpt(
-  result: import('./LexaraBackgroundResearchBoundary').LexaraBackgroundResearchResult | null,
+  result: LexaraBackgroundResearchResult | null,
 ): { text: string; sourceUrl: string; excerpt: string } | null {
   if (!result?.evidenceSummary || !result.sources.length) return null;
   const evidence = result.evidenceSummary;
@@ -360,7 +389,7 @@ function verifiedExcerptDirectlyAnswers(
   prompt: string,
   previousMessages: LexaraConversationMessage[],
   jurisdiction: string | undefined,
-  investigation: import('./LexaraBackgroundResearchBoundary').LexaraBackgroundResearchResult,
+  investigation: LexaraBackgroundResearchResult,
   excerpt: string,
 ): boolean {
   if (investigation.endpoint !== 'evidence-sufficient') return false;
@@ -523,8 +552,8 @@ export async function generateLexaraConversationResponse(
 
   // The explicit six-sequence router owns subsystem selection. Mixed legal and
   // background questions deliberately run both research domains in parallel.
-  const mixedLegalFactNeed = sequencePlan.useBackgroundResearch && sequencePlan.useLegalResearch;
-  const backgroundResearchRequested = sequencePlan.useBackgroundResearch;
+  const mixedLegalFactNeed = false;
+  const backgroundResearchRequested = false;
 
   const backgroundPrompt = mixedLegalFactNeed
     ? `${researchDecision.objective}\n\nLEXARA-DELEGATED FACTUAL OBJECTIVE: Retrieve only background facts and identifiers materially useful for identifying or resolving this legal matter (for example name variants, locations, dates, related proceedings, court references, docket/citation clues, and relevant public records). Do not perform the legal analysis and do not broaden into an unrestricted background report.`
@@ -590,7 +619,7 @@ export async function generateLexaraConversationResponse(
   const relayResearchAbort = () => researchController.abort();
   if (context.signal?.aborted) researchController.abort();
   else context.signal?.addEventListener('abort', relayResearchAbort, { once: true });
-  const authorityResearchPromise = sequencePlan.useLegalResearch
+  const authorityResearchPromise = (sequencePlan.useLegalResearch || researchDecision.needed)
     ? researchLegalAuthority(researchDecision.needed ? researchDecision.objective : cleanPrompt, {
         jurisdiction,
         domainName,
