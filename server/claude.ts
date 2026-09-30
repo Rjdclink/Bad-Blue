@@ -4,6 +4,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import type { MessageCreateParamsNonStreaming } from '@anthropic-ai/sdk/resources/messages';
 import { CURRENT_AI_MODELS } from './aiHarmonyModelRegistry';
 
 let claudeClient: Anthropic | null = null;
@@ -38,6 +39,8 @@ export interface ClaudeOptions {
   useJSON?: boolean;
   signal?: AbortSignal;
   providerPolicy?: string;
+  effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  cacheSystemPrompt?: boolean;
 }
 
 /**
@@ -57,20 +60,34 @@ export async function callClaude(
     
     const model = options.model || CURRENT_AI_MODELS.claudeBalanced;
     const samplingControlsDeprecated = /claude-(?:opus|sonnet|haiku)-5|claude-opus-4-(?:7|8|9)/i.test(model);
-    const createMessage = (maxTokens: number) => client.messages.create({
-      model,
-      max_tokens: maxTokens,
-      ...(!samplingControlsDeprecated && options.temperature !== undefined
-        ? { temperature: options.temperature }
-        : {}),
-      system: systemPrompt + jsonInstruction,
-      messages: [
-        {
-          role: 'user',
-          content: prompt
-        }
-      ]
-    }, { signal: options.signal, ...(options.providerPolicy === 'legalwhat' ? { maxRetries: 0 } : {}) });
+    const systemText = systemPrompt + jsonInstruction;
+    // Claude 5.5 can cache prompts at 512+ tokens. Restrict caching to large,
+    // repeated LegalWhat system directives so one-off short prompts do not pay
+    // a cache-write premium without a realistic chance of reuse.
+    const cacheSystemPrompt = options.cacheSystemPrompt === true && systemText.length >= 2_048;
+    const createMessage = (maxTokens: number) => {
+      const requestBody: MessageCreateParamsNonStreaming = {
+        model,
+        max_tokens: maxTokens,
+        ...(!samplingControlsDeprecated && options.temperature !== undefined
+          ? { temperature: options.temperature }
+          : {}),
+        ...(options.effort ? { output_config: { effort: options.effort } } : {}),
+        system: cacheSystemPrompt
+          ? [{ type: 'text', text: systemText, cache_control: { type: 'ephemeral' } }]
+          : systemText,
+        messages: [
+          {
+            role: 'user',
+            content: prompt
+          }
+        ]
+      };
+      return client.messages.create(requestBody, {
+        signal: options.signal,
+        ...(options.providerPolicy === 'legalwhat' ? { maxRetries: 0 } : {}),
+      });
+    };
 
     const extractText = (message: Awaited<ReturnType<typeof createMessage>>) =>
       message.content
@@ -106,7 +123,35 @@ export async function callClaude(
       );
     }
 
-    const tokensUsed = response.usage.input_tokens + response.usage.output_tokens;
+    const usage = response.usage as any;
+    const inputTokens = Number(usage.input_tokens || 0);
+    const outputTokens = Number(usage.output_tokens || 0);
+    const cacheReadInputTokens = Number(usage.cache_read_input_tokens || 0);
+    const cacheCreationInputTokens = Number(usage.cache_creation_input_tokens || 0);
+    const tokensUsed = inputTokens + outputTokens + cacheReadInputTokens + cacheCreationInputTokens;
+
+    const rates = /claude-opus-5-5/i.test(model)
+      ? { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 }
+      : /claude-sonnet-5-5/i.test(model)
+        ? { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 }
+        : null;
+    if (rates) {
+      const estimatedUsd = (
+        inputTokens * rates.input
+        + outputTokens * rates.output
+        + cacheReadInputTokens * rates.cacheRead
+        + cacheCreationInputTokens * rates.cacheWrite
+      ) / 1_000_000;
+      console.info('[Claude Usage]', {
+        model,
+        effort: options.effort || 'provider-default',
+        inputTokens,
+        outputTokens,
+        cacheReadInputTokens,
+        cacheCreationInputTokens,
+        estimatedUsd: Number(estimatedUsd.toFixed(6)),
+      });
+    }
 
     return { content, tokensUsed };
   } catch (error: any) {

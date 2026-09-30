@@ -6,7 +6,7 @@ Updated 2026-09-28.
 
 Lexara's legal lane admits only Claude (Anthropic), Gemini (Google), and Grok (xAI's own API key and endpoint). Claude Sonnet is the first choice and the preferred final synthesizer; Gemini and xAI Grok assist from independent accounts. A short conversation can use a delayed hedge; deeper reasoning and drafting use independent specialists in parallel and preserve any successful draft if synthesis fails. Failed attempts can move to the other eligible providers while a provider's actual quota or cooldown is respected. The Groq hosting service and OpenRouter's GROK alias are outside this legal lane. The platform's wider Harmony pool remains available to unrelated services.
 
-The legal model IDs are `claude-sonnet-5`, `gemini-3.8-flash`, and `grok-4.7` (with `grok-4.6` after a model-specific permission denial). Shared quota leases, observed rate-limit headers, and Retry-After feedback prevent avoidable bursts. There is no arbitrary daily or monthly usage cap. Internal deadlines preserve a recovery window for legal-document synthesis. External provider outages and limits can still prevent an answer.
+The legal model IDs are `claude-sonnet-5-5`, `gemini-3.8-flash`, and `grok-4.7` (with `grok-4.6` after a model-specific permission denial). Shared quota leases, observed rate-limit headers, and Retry-After feedback prevent avoidable bursts. There is no arbitrary daily or monthly usage cap. Internal deadlines preserve a recovery window for legal-document synthesis. External provider outages and limits can still prevent an answer.
 
 ## Background searches
 

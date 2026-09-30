@@ -18,7 +18,7 @@ function fixture({ xai = true, failXai = false } = {}) {
   }});
   const stubs = {
     '../../claude': { callClaude: async () => { calls.push('claude'); return {content:'"Jane Doe" Iowa state archives\n"Jane Doe" Iowa county records'}; } },
-    '../../aiHarmonyModelRegistry': { LEGAL_AI_MODELS: {claudeFast:'claude-sonnet-5',claudeBalanced:'claude-sonnet-5'} },
+    '../../aiHarmonyModelRegistry': { LEGAL_AI_MODELS: {claudeFast:'claude-sonnet-5-5',claudeBalanced:'claude-sonnet-5-5'} },
   };
   const fetch = async url => {
     calls.push(String(url));

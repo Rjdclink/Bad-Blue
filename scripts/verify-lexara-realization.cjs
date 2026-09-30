@@ -43,6 +43,9 @@ const lexaraRoutes = read('server/routes/lexara.routes.ts');
 const lexaraChatRoutes = read('server/routes/lexara.chat.routes.ts');
 const legalDocumentRegistry = read('server/lexara/legalDocumentRegistry.ts');
 const consultationRoutes = read('server/routes/consultation.routes.ts');
+const documentRoutes = read('server/routes/document.routes.ts');
+const authSource = read('server/auth.ts');
+const universalDocumentGenerator = read('server/universalDocumentGenerator.ts');
 const appSource = read('client/src/App.tsx');
 const loginPage = read('client/src/pages/login.tsx');
 const voiceRoutes = read('server/routes/voice.routes.ts');
@@ -629,13 +632,13 @@ must(
     groq.includes('model_terms_required') &&
     groq.includes("while (attempted.size < (request.providerPolicy === 'legalwhat' ? 1 : 2))") &&
     aiProvider.includes("prefixes: ['llama-', 'meta-llama/', 'openai/', 'qwen/']") &&
-    harmonyRegistry.includes("'claude-opus-5'") &&
+    harmonyRegistry.includes("'claude-opus-5-5'") &&
     harmony.includes('harmonyProviderCooldownUntil') &&
     harmony.includes('markHarmonyProviderFailure'),
   'Harmony uses robust Claude content parsing, permission-aware Groq recursive recovery, and provider-local cooldowns',
 );
 must(
-  harmonyRegistry.includes("'claude-sonnet-5'") &&
+  harmonyRegistry.includes("'claude-sonnet-5-5'") &&
     harmonyRegistry.includes("'gemini-3.8-flash'") &&
     harmonyRegistry.includes("'grok-4.7'"),
   'Harmony current-model registry pins Claude, Gemini and direct xAI Grok generations',
@@ -1007,6 +1010,19 @@ const productLawTypes = [...lawTypesBlock.matchAll(/'([^']+)'/g)].map(match => m
 
 must(productLawTypes.length === 40, 'LegalWhat exposes exactly 40 bookshelf practice areas');
 must(productLawTypes.includes('post-conviction-law'), 'Post Conviction is a first-class product law type');
+
+must(
+  authSource.includes('(req.user as any).accessState = decision.accessState') &&
+    lexaraChatRoutes.includes('allowClaudeOpus: canUseClaudeOpus(req)') &&
+    lexaraConversationOrchestrator.includes('allowClaudeOpus?: boolean') &&
+    lexaraConversationOrchestrator.includes('requiresDeepClaudeForTurn') &&
+    lexaraConversationOrchestrator.includes("sequencePlan.sequence === 'combined-legal-background'") &&
+    lexaraConversationOrchestrator.includes("Never reveal or discuss underlying model names") &&
+    consultationRoutes.includes("claudeWorkload: 'document-drafting'") &&
+    documentRoutes.includes('const allowClaudeOpus =') &&
+    universalDocumentGenerator.includes("claudeWorkload: 'document-drafting'"),
+  'paid/master Claude escalation is server-derived end to end, trial fails closed, and Lexara never exposes internal model policy',
+);
 
 must(
   legalDocumentRegistry.includes('export const LEGAL_DOCUMENT_TYPES = [') &&

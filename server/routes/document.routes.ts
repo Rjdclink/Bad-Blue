@@ -94,7 +94,9 @@ router.post('/generate', isAuthenticated, async (req: Request, res: Response) =>
       state: validatedData.state
     });
 
-    const document = await generateLegalDocument(validatedData);
+    const accessState = String((req.user as any)?.accessState || '').trim().toLowerCase();
+    const allowClaudeOpus = accessState === 'paid' || accessState === 'master';
+    const document = await generateLegalDocument({ ...validatedData, allowClaudeOpus });
 
     log.info('Document generation completed', {
       userId,
