@@ -254,6 +254,8 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       allowClaudeOpus: canUseClaudeOpus(req),
       signal: controller.signal,
       onResearchProgress: event => send('research', event),
+      onTextDelta: delta => send('answer-delta', { delta }),
+      onSpeechChunk: chunk => send('speech-chunk', { chunk }),
     });
 
     const reasoningDocumentIntent = detectDocumentIntent(result.text, [
