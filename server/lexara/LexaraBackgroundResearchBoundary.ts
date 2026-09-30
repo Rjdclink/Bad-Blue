@@ -1,13 +1,13 @@
 // Lexara owns this research surface; underlying utilities remain shared and unchanged.
 export {
-  investigatePersonQuestion as investigateLexaraBackgroundQuestion,
-  formatPantheonInvestigationForSystem as formatLexaraBackgroundResearchForSystem,
-} from './LexaraPantheonInvestigation';
+  investigateLexaraBackgroundQuestion,
+  formatLexaraBackgroundResearchForSystem,
+  discoverLexaraBackgroundSourcesParallel,
+} from './LexaraStandaloneBackgroundResearch';
 export type {
-  LexaraPersonInvestigation as LexaraBackgroundResearchResult,
-  LexaraPantheonProgressEvent as LexaraBackgroundProgressEvent,
-} from './LexaraPantheonInvestigation';
-export { discoverPantheonSourcesParallel as discoverLexaraBackgroundSourcesParallel } from '../services/pantheon/PantheonDiscoveryCoordinator';
+  LexaraBackgroundResearchResult,
+  LexaraBackgroundProgressEvent,
+} from './LexaraStandaloneBackgroundResearch';
 
 export {
   getLexaraSupplementalQueryHints,
