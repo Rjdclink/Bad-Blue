@@ -72,6 +72,16 @@ factual('Is Sarah Loretta Graves married?', 'marriage-divorce', ['vital-records'
 factual('Where does Sarah Loretta Graves work?', 'employment', ['employment']);
 factual('Where is Sarah Loretta Graves incarcerated?', 'incarceration', ['corrections']);
 factual('Does Sarah Loretta Graves own real estate?', 'property', ['property']);
+factual('What address does Sarah Loretta Graves live at?', 'contact-address', ['contacts-addresses']);
+factual('Does Sarah Loretta Graves have any relatives?', 'relatives-associates', ['relationships']);
+factual('What social media profiles does Sarah Loretta Graves use?', 'social-online', ['social-online']);
+factual('Where did Sarah Loretta Graves go to college?', 'education', ['education']);
+factual('Does Sarah Loretta Graves have a criminal record?', 'criminal-arrest', ['criminal-records']);
+factual('Is Sarah Loretta Graves on probation or parole?', 'probation-parole', ['probation-parole']);
+factual('Does Sarah Loretta Graves have an outstanding warrant?', 'warrant', ['warrants']);
+factual('Is Sarah Loretta Graves on a sex offender registry?', 'sex-offender', ['sex-offender']);
+factual('Has Sarah Loretta Graves filed bankruptcy?', 'bankruptcy-financial', ['financial-public']);
+
 
 const legal = planner.decideLexaraResearchNeed('How do I file for divorce in Iowa?', []);
 assert.equal(legal.needed, true);
