@@ -60,6 +60,7 @@ function harness(enabled, { fail = false, warm = true, stall = false, recoveryMo
     const module = { exports: {} };
     cache.set(relative, module);
     const requireLocal = spec => {
+      if (spec === 'node:crypto') return require('node:crypto');
       if (!spec.startsWith('.')) throw new Error('Unexpected external dependency: ' + spec);
       let next = path.relative(root, path.resolve(path.dirname(filename), spec));
       if (!next.endsWith('.ts')) next += '.ts';
@@ -275,7 +276,7 @@ for (const [provider, failure] of [
     assert.equal(h.calls.filter(call => call.transport === provider).length, 1);
   });
 }
-test('document routing requests a complete draft and full document synthesis', async () => {
+test('document routing lets one healthy support provider complete the draft when Claude is unavailable', async () => {
   const h = harness(['XAI_API_KEY','GEMINI_API_KEY']);
   const result = await h.engine.orchestrateCollaboration(
     'document-generation', 'Draft a demand letter with supplied facts',
@@ -283,8 +284,8 @@ test('document routing requests a complete draft and full document synthesis', a
     ['xai','gemini'], { providerPolicy: 'legalwhat', maxParticipants: 2, maxFallbacks: 0 },
   );
   assert.equal(result.finalAnswer, 'Direct HTTP fixture answer');
+  assert.equal(h.calls.length, 1);
   assert(h.calls.some(call => /Draft the complete requested legal document/.test(call.prompt)));
-  assert(h.calls.some(call => /do not shorten the document/.test(call.prompt)));
 });
 test('a request-local rejected provider stays skipped independently of warm readiness', async () => {
   const h = harness(keys);
@@ -476,11 +477,12 @@ for (const [name, env, expectedKey] of [
   });
 }
 
-test('Claude stays primary when eligible and Gemini supports it', async () => {
+test('Claude stays primary and adds one support provider only when verification is needed', async () => {
   const h = harness(keys);
   for(let i=0;i<3;i++) { await h.run(['claude','gemini','xai']); h.advance(1000); }
   assert(h.calls.every(x=>x.transport==='claude'));
-  const chosen=Array.from(h.engine.selectLegalProvidersForTask(h.attributes,['gemini','claude','xai'],2));
+  const chosen=Array.from(h.engine.selectLegalProvidersForTask(
+    {...h.attributes, needsVerification:true}, ['gemini','claude','xai'], 2));
   assert.equal(chosen[0],'claude'); assert.equal(chosen.length,2);
 });
 test('Claude keeps at most one scarce independent support provider when requested', () => {
@@ -587,17 +589,17 @@ test('Claude synthesis does not invoke a redundant exceptional review', async ()
       : /Synthesize/.test(call.prompt) ? '[LEGAL_REVIEW_REQUIRED] Material conflict remains.' : 'Independent analysis',
   });
   const result = await h.engine.orchestrateCollaboration('legal-reasoning', 'Resolve this issue',
-    h.attributes, ['gemini','xai','claude'], { providerPolicy: 'legalwhat', maxParticipants: 2 });
+    { ...h.attributes, needsVerification: true }, ['gemini','xai','claude'], { providerPolicy: 'legalwhat', maxParticipants: 2 });
   assert.equal(result.finalAnswer, 'Reviewed answer with uncertainty');
   assert.equal(h.calls.filter(x => x.transport === 'claude').length, 2);
 });
-test('drafting overrides a caller fast flag and uses the full drafting path', async () => {
+test('drafting overrides a caller fast flag while keeping one healthy support route when Claude is unavailable', async () => {
   const h = harness(['GEMINI_API_KEY','XAI_API_KEY']);
   await h.engine.orchestrateCollaboration('document-drafting', 'Draft the supplied facts',
     { ...h.attributes, needsFastResponse: true }, ['gemini','xai'],
     { providerPolicy: 'legalwhat', maxParticipants: 2 });
-  assert(h.calls.some(x => x.model === 'gemini-3.8-flash'));
-  assert(h.calls.some(x => /do not shorten the document/.test(x.prompt)));
+  assert.equal(h.calls.length, 1);
+  assert(h.calls.some(x => /Draft the complete requested legal document/.test(x.prompt)));
 });
 test('independent legal analyses actually overlap', async () => {
   let active = 0, peak = 0;
@@ -605,7 +607,8 @@ test('independent legal analyses actually overlap', async () => {
     peak = Math.max(peak, ++active);
     await new Promise(resolve => setTimeout(resolve, 20)); active--; return 'Independent answer';
   } });
-  await h.engine.orchestrateCollaboration('legal-analysis', 'Facts', h.attributes,
+  await h.engine.orchestrateCollaboration('legal-analysis', 'Facts',
+    { ...h.attributes, needsVerification: true },
     ['gemini','claude'], { providerPolicy: 'legalwhat', maxParticipants: 2 });
   assert.equal(peak, 2);
 });
