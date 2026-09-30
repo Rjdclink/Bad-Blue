@@ -62,6 +62,7 @@ export interface LexaraBackgroundInvestigationContext {
 
 interface AssessedEvidence {
   url: string;
+  retrievedAt: string;
   excerpt: string;
   confidence: number;
   directlyAnswers: boolean;
@@ -190,6 +191,7 @@ function excerptAround(content: string, pattern: RegExp, subject: LexaraBackgrou
 function assessEvidence(
   content: string,
   url: string,
+  retrievedAt: string,
   subject: LexaraBackgroundSubject,
   decision: LexaraResearchDecision,
   prompt: string,
@@ -204,6 +206,7 @@ function assessEvidence(
   ));
   return {
     url,
+    retrievedAt,
     excerpt: excerptAround(content, pattern, subject),
     confidence,
     directlyAnswers,
@@ -337,7 +340,7 @@ export async function investigateLexaraBackgroundQuestion(
         for (const candidate of fresh) {
           const evidence = evidenceByTarget.get(candidate.url);
           const evaluation = evidence
-            ? assessEvidence(evidence.content, candidate.url, subject, decision, prompt)
+            ? assessEvidence(evidence.content, candidate.url, evidence.retrievedAt, subject, decision, prompt)
             : null;
           void rememberLexaraDiscoveryOutcome(candidate.url, Boolean(evaluation), {
             categories,
@@ -393,7 +396,7 @@ export async function investigateLexaraBackgroundQuestion(
     const directlyAnswered = Boolean(best?.directlyAnswers && best.confidence >= SUFFICIENT_EVIDENCE_THRESHOLD);
     const useful = ranked.filter(item => item.confidence >= PARTIAL_EVIDENCE_THRESHOLD);
     const evidenceSummary = useful.slice(0, 10).map((item, index) =>
-      `${index + 1}. SOURCE: ${item.url}\nASSESSMENT: ${item.directlyAnswers ? 'DIRECT' : 'PARTIAL'} (${Math.round(item.confidence * 100)}%)\nEVIDENCE: ${item.excerpt}`,
+      `${index + 1}. SOURCE: ${item.url}\nRETRIEVED: ${item.retrievedAt}\nASSESSMENT: ${item.directlyAnswers ? 'DIRECT' : 'PARTIAL'} (${Math.round(item.confidence * 100)}%)\nEVIDENCE: ${item.excerpt}`,
     ).join('\n\n');
     const timedOut = Date.now() >= deadlineAt;
     const endpoint: LexaraBackgroundResearchResult['endpoint'] = directlyAnswered
