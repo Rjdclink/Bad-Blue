@@ -30,6 +30,7 @@ import { callMistral, isMistralAvailable } from './mistral';
 import { callClaude, isClaudeAvailable } from './claude';
 import { isGroqAvailable, generateGroqStructuredResponse } from './groq';
 import { generateOpenRouterText, isOpenRouterAvailable } from './openRouterService';
+import { CURRENT_AI_MODELS } from './aiHarmonyModelRegistry';
 import selfImprovementEngine, { type AIProviderName, type OutcomeContext } from './selfImprovementEngine';
 
 const SUBAGENT_DATA_DIR = path.join(process.cwd(), 'data', 'subagent');
@@ -241,6 +242,9 @@ export interface AIFallbackOptions {
   taskName?: string;
   sessionId?: string;
   timeoutMs?: number;
+  providerPolicy?: 'legalwhat' | 'capability-first';
+  allowClaudeOpus?: boolean;
+  claudeWorkload?: 'standard' | 'deep-legal' | 'document-drafting';
 }
 
 /**
@@ -345,6 +349,11 @@ export async function callAIWithFallback(
         temperature: options.temperature,
         maxTokens: options.maxTokens,
         useJSON: options.useJSON,
+        providerPolicy: options.providerPolicy,
+        ...(options.providerPolicy === 'legalwhat' ? {
+          allowClaudeOpus: options.allowClaudeOpus === true,
+          claudeWorkload: options.claudeWorkload,
+        } : {}),
       },
       TaskPriority.HIGH_USER,
     );
@@ -391,7 +400,9 @@ export async function callAIWithFallback(
           systemPrompt: options.systemPrompt,
           temperature: options.temperature,
           maxTokens: options.maxTokens,
-          model: process.env.LEXARA_CLAUDE_MODEL?.trim() || process.env.CLAUDE_MODEL?.trim() || 'claude-sonnet-5-5',
+          model: options.providerPolicy === 'legalwhat'
+            ? (options.allowClaudeOpus === true ? CURRENT_AI_MODELS.claudeBalanced : CURRENT_AI_MODELS.claudeFast)
+            : process.env.LEXARA_CLAUDE_MODEL?.trim() || process.env.CLAUDE_MODEL?.trim() || CURRENT_AI_MODELS.claudeBalanced,
           useJSON: options.useJSON,
         });
         return result.content;
