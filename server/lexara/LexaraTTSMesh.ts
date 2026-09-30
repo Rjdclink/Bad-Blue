@@ -151,15 +151,7 @@ function configured(provider: LexaraTTSProviderId): boolean {
   }
 }
 
-const BASE_ORDER: LexaraTTSProviderId[] = [
-  'deepgram',
-  'gemini',
-  'mistral',
-  'groq',
-  'azure',
-  'xai',
-  'elevenlabs',
-];
+const BASE_ORDER: LexaraTTSProviderId[] = ['deepgram'];
 
 export function getConfiguredLexaraTTSProviders(): LexaraTTSProviderId[] {
   // Deepgram is the sole Lexara speech provider. Environment variables cannot
