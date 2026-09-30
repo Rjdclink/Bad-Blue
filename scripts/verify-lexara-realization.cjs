@@ -1080,20 +1080,22 @@ must(
   lexaraConversationOrchestrator.includes('planLexaraSequence(cleanPrompt, previousUserTurns)') &&
     lexaraConversationOrchestrator.includes("const backgroundResearchRequested = researchDecision.intent === 'factual' || mixedLegalFactNeed") &&
     lexaraConversationOrchestrator.includes('const researchRouteSelected = sequencePlan.useLegalResearch || researchDecision.needed') &&
-    lexaraConversationOrchestrator.includes("getConfiguredHarmonyProviders('legalwhat')"),
-  'factual/mixed turns add Lexara-native background research without replacing the established legal-reasoning path',
+    lexaraConversationOrchestrator.includes('callClaudeStreaming') &&
+    lexaraConversationOrchestrator.includes('callClaude('),
+  'factual/mixed turns add Lexara-native background research while preserving the direct Claude legal-reasoning path',
 );
 
-// Lexara reasoning and evidence correction share the existing Harmony authority.
+// Lexara reasoning and evidence correction share the same direct Claude authority.
 must(
   !orchestrator.includes("import { generateOpenRouterText }") &&
     !orchestrator.includes('independent gateway recovered live legal turn') &&
-    orchestrator.includes("getConfiguredHarmonyProviders('legalwhat')") &&
+    orchestrator.includes('callClaudeStreaming') &&
+    orchestrator.includes('callClaude(') &&
     orchestrator.includes("providerPolicy: 'legalwhat'") &&
-    orchestrator.includes('lexara-evidence-correction') &&
-    harmony.includes('isHarmonyProviderAllowed(AIProvider.OPENROUTER, options.providerPolicy)') &&
-    harmony.includes('isHarmonyProviderAllowed(task.provider, task.providerPolicy)'),
-  'LEXARA reasoning, correction and recovery retain the canonical scoped provider policy without an independent excluded route',
+    orchestrator.includes('Evidence correction deadline exceeded') &&
+    !orchestrator.includes('getConfiguredHarmonyProviders') &&
+    !orchestrator.includes('AICollaborationOrchestrator'),
+  'LEXARA reasoning and evidence correction use one direct Claude authority without excluded provider routes',
 );
 
 
