@@ -235,10 +235,11 @@ export function decideLexaraResearchNeed(
     };
   }
 
-  const factual = factualQuestion(text, fact) || (explicitResearch && (fact !== 'none' || Boolean(subject)));
+  const pureLegalProcedure = legal && PERSONAL_LEGAL_PROCEDURE_PATTERN.test(text) && !subject && !explicitResearch;
+  const factual = !pureLegalProcedure && (factualQuestion(text, fact) || (explicitResearch && (fact !== 'none' || Boolean(subject))));
   if (legal || factual || explicitResearch) {
-    const intent: LexaraResearchIntent = legal && (factual || fact !== 'none') ? 'mixed' : legal ? 'legal' : 'factual';
-    const effectiveFact = fact !== 'none' ? fact : factual || explicitResearch ? 'general-public-record' : 'none';
+    const intent: LexaraResearchIntent = legal && factual ? 'mixed' : legal ? 'legal' : 'factual';
+    const effectiveFact = pureLegalProcedure ? 'none' : fact !== 'none' ? fact : factual || explicitResearch ? 'general-public-record' : 'none';
     const effectiveCategories = categories.length ? categories : sourceCategoriesForFact(effectiveFact, text);
     const standaloneQuery = [subject, text, effectiveFact !== 'none' ? effectiveFact.replace(/-/g, ' ') : '']
       .filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
