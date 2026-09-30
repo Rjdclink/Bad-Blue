@@ -1,7 +1,7 @@
 import { decideLexaraResearchNeed, isLexaraLegalAuthorityIntent, isLexaraConversationControl, type LexaraResearchDecision } from './LexaraResearchIntentRouter';
 import { resolveLexaraBackgroundSubject } from './LexaraBackgroundSubject';
 import {
-  classifyBackgroundSemanticCategories,
+  classifyPantheonSemanticCategories as classifyBackgroundSemanticCategories,
   isContextualReference,
   isFullLexaraBackgroundReportIntent,
 } from './LexaraBackgroundSemanticIntent';
