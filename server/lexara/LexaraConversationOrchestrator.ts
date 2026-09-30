@@ -1,7 +1,5 @@
-import { AICollaborationOrchestrator } from '../aiCollaborationOrchestrator';
-import { UsageContext } from '../aiTokenGovernor';
-import { TaskComplexity, TaskPriority } from '../aiModelSelector';
-import { getConfiguredHarmonyProviders } from '../aiHarmonyModelRegistry';
+import { callClaude, callClaudeStreaming } from '../claude';
+import { CURRENT_AI_MODELS } from '../aiHarmonyModelRegistry';
 import type { LawType as ExpertLawType } from '../../shared/legalCounselTypes';
 import { LAW_TYPE_DATA } from '../../shared/lawTypes';
 import { mapProductLawTypeToExpert } from '../../shared/legalDomainMapping';
@@ -47,6 +45,8 @@ export interface LexaraConversationContext {
   allowClaudeOpus?: boolean;
   signal?: AbortSignal;
   onResearchProgress?: (event: LexaraBackgroundProgressEvent) => void;
+  onTextDelta?: (delta: string) => void;
+  onSpeechChunk?: (chunk: string) => void;
 }
 
 export interface LexaraConversationResult {
@@ -62,10 +62,9 @@ const MAX_HISTORY_CHARACTERS = 14000;
 const MAX_PROMPT_CHARACTERS = 7000;
 const LIVE_RESEARCH_BUDGET_MS = 10_000;
 const LIVE_BACKGROUND_FACT_BUDGET_MS = 16_000;
-// Provider attempts stay bounded, but the conversation has no independent master
-// kill-switch. Only the caller may cancel a superseded/disconnected turn.
+// Claude is the sole live reasoning provider. The caller may still cancel a
+// superseded/disconnected turn; evidence-correction retries remain locally bounded.
 const LIVE_REASONING_PROVIDER_ATTEMPT_MS = 15_000;
-const LIVE_REASONING_MAX_FALLBACKS = 3;
 
 export type LexaraAcknowledgementKind =
   | 'presence'
@@ -719,62 +718,49 @@ export async function generateLexaraConversationResponse(
     + researchStatusPrompt
     + formatLexaraBackgroundResearchForSystem(backgroundInvestigation);
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
-  const explicitCrossCheck = /\b(?:verify|double[- ]check|cross[- ]check|second opinion|confirm|conflicting|contradict(?:ion|ory)?)\b/i.test(cleanPrompt);
-  const scarceSupportNeeded = deepClaudeNeeded
-    || explicitCrossCheck
-    || mixedLegalFactNeed
-    || Boolean(backgroundResearchRequested && backgroundInvestigation?.coverageLimited)
-    || Boolean(researchDecision.intent === 'legal' && authorityResearch && !authorityResearch.hasPrimaryAuthority);
+  const claudeModel = deepClaudeNeeded && context.allowClaudeOpus === true
+    ? CURRENT_AI_MODELS.claudeDeep
+    : CURRENT_AI_MODELS.claudeBalanced;
+  const claudeEffort = deepClaudeNeeded
+    ? (context.allowClaudeOpus === true ? 'max' as const : 'high' as const)
+    : 'medium' as const;
+  // Stream only turns whose final answer is not subject to downstream evidence
+  // correction. Research-backed turns remain final-answer-first so a preliminary
+  // model sentence can never outrun source validation.
+  const progressiveClaudeAllowed = !backgroundResearchRequested && !researchDecision.needed;
 
-  // Claude owns the normal live answer. Gemini/xAI are scarce support capacity
-  // and join only when this real user turn materially needs a cross-check or
-  // deeper independent reasoning. Healthy support remains available as fallback.
-  const harmonyProviders = getConfiguredHarmonyProviders('legalwhat');
   let text = '';
-  const harmonyStartedAt = Date.now();
-  if (harmonyProviders.length > 0) {
-    // Do not wrap Harmony in a second aggregate deadline. Provider-local deadlines,
-    // health scoring and fallback limits bound failed routes. The caller signal is
-    // reserved for a genuinely superseded/disconnected user turn, so a slow
-    // primary can never abort its own recovery routes.
-    try {
-      const harmony = await AICollaborationOrchestrator.orchestrateCollaboration(
-        'lexara-live-conversation',
-        userPrompt,
-        {
-          context: UsageContext.USER,
-          complexity: TaskComplexity.COMPREHENSIVE,
-          priority: TaskPriority.CRITICAL,
-          needsLegalAnalysis: true,
-          needsVerification: scarceSupportNeeded,
-          needsReasoning: true,
-          needsSearchGrounding: researchDecision.needed,
-          needsFastResponse: true,
-          estimatedTokens: 1_500,
-        },
-        harmonyProviders,
-        {
-          providerPolicy: 'legalwhat',
+  const claudeStartedAt = Date.now();
+  try {
+    const claude = progressiveClaudeAllowed
+      ? await callClaudeStreaming(userPrompt, {
           systemPrompt,
-          allowClaudeOpus: context.allowClaudeOpus === true,
-          claudeWorkload,
-          maxParticipants: scarceSupportNeeded ? 2 : 1,
-          requestTimeoutMs: LIVE_REASONING_PROVIDER_ATTEMPT_MS,
-          maxFallbacks: LIVE_REASONING_MAX_FALLBACKS,
+          model: claudeModel,
+          effort: claudeEffort,
+          maxTokens: 1_500,
+          cacheSystemPrompt: true,
+          providerPolicy: 'legalwhat',
           signal: context.signal,
-        },
-      );
-      if (!/^No successful responses from collaboration\.?$/i.test(harmony.finalAnswer.trim())) {
-        text = harmony.finalAnswer.trim();
-      }
-    } catch (error) {
-      console.warn('[LEXARA Harmony] Live provider collaboration unavailable', {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+          onTextDelta: context.onTextDelta,
+          onSpeechChunk: context.onSpeechChunk,
+        })
+      : await callClaude(userPrompt, {
+          systemPrompt,
+          model: claudeModel,
+          effort: claudeEffort,
+          maxTokens: 1_500,
+          cacheSystemPrompt: true,
+          providerPolicy: 'legalwhat',
+          signal: context.signal,
+        });
+    text = claude.content.trim();
+  } catch (error) {
+    console.warn('[LEXARA Claude] Live legal reasoning unavailable', {
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 
-  // The canonical Harmony route owns provider recovery.
+  // Verified source fallback remains available when Claude itself is unavailable.
   // When every answer model is unavailable, preserve verified
   // research as a clearly labelled source excerpt instead of treating an
   // evidence-backed background turn as an ungrounded legal-analysis failure.
@@ -815,8 +801,7 @@ export async function generateLexaraConversationResponse(
   const sourceExcerptPermissionRefusal = Boolean(backgroundInvestigation && isPersonPermissionRefusal(text) && usedBackgroundSourceExcerptFallback);
   if ((backgroundInvestigation || factualAuthorityResearch) && (modelPermissionRefusal || sourceExcerptPermissionRefusal)) {
     const correctionEvidence = factualAuthorityResearch ? authorityResearch?.summary : backgroundInvestigation?.evidenceSummary;
-    if (correctionEvidence && harmonyProviders.length > 0 && !context.signal?.aborted) {
-      // Preserve the correction deadline while using the canonical provider route.
+    if (correctionEvidence && !context.signal?.aborted) {
       const correctionController = new AbortController();
       const relayCorrectionAbort = () => correctionController.abort(context.signal?.reason);
       context.signal?.addEventListener('abort', relayCorrectionAbort, { once: true });
@@ -824,32 +809,20 @@ export async function generateLexaraConversationResponse(
         correctionController.abort(new Error('Evidence correction deadline exceeded'));
       }, LIVE_REASONING_PROVIDER_ATTEMPT_MS);
       try {
-        const correction = await AICollaborationOrchestrator.orchestrateCollaboration(
-          'lexara-evidence-correction',
+        const correction = await callClaude(
           `CURRENT USER TURN:\n${cleanPrompt}\n\nLEXARA VERIFIED RESEARCH EVIDENCE:\n${correctionEvidence}\n\nRewrite the answer using only this evidence. Do not refuse merely because the subject is a private individual or because the requested fact is personal. If the specific fact is not established, say it was not verified from the completed sources.`,
           {
-            context: UsageContext.USER,
-            complexity: TaskComplexity.MODERATE,
-            priority: TaskPriority.CRITICAL,
-            needsVerification: true,
-            needsFastResponse: true,
-            estimatedTokens: 500,
-          },
-          harmonyProviders,
-          {
-            providerPolicy: 'legalwhat',
             systemPrompt,
-            allowClaudeOpus: context.allowClaudeOpus === true,
-            claudeWorkload,
-            maxParticipants: 1,
-            requestTimeoutMs: LIVE_REASONING_PROVIDER_ATTEMPT_MS,
-            maxFallbacks: LIVE_REASONING_MAX_FALLBACKS,
+            model: claudeModel,
+            effort: 'medium',
+            maxTokens: 500,
+            cacheSystemPrompt: true,
+            providerPolicy: 'legalwhat',
             signal: correctionController.signal,
           },
         );
-        const corrected = correction.finalAnswer.trim();
-        if (corrected && !/^No successful responses from collaboration\.?$/i.test(corrected)
-          && !isPersonPermissionRefusal(corrected)) text = corrected;
+        const corrected = correction.content.trim();
+        if (corrected && !isPersonPermissionRefusal(corrected)) text = corrected;
       } catch (error) {
         console.warn('[LEXARA PersonRecord] permission-refusal correction unavailable', {
           error: error instanceof Error ? error.message : String(error),
@@ -879,7 +852,7 @@ export async function generateLexaraConversationResponse(
 
   console.info('[LEXARA Performance] live turn', {
     researchWaitMs,
-    harmonyMs: Date.now() - harmonyStartedAt,
+    claudeMs: Date.now() - claudeStartedAt,
     totalMs: Date.now() - turnStartedAt,
     grounded: !!authorityResearch || !!backgroundInvestigation?.evidenceSummary,
     backgroundTargeted: researchDecision.intent === 'factual' || researchDecision.intent === 'mixed',
@@ -907,9 +880,9 @@ export async function generateLexaraConversationResponse(
     researchLanes: authorityResearch?.selectedCrawlers || [],
     researchSourceCount: authorityResearch?.sources?.length || 0,
     researchEndpointReached: !researchDecision.needed || Boolean(authorityResearch || backgroundEndpoint),
-    providersConfigured: harmonyProviders.length,
-    initialHedgeParticipants: Math.min(3, harmonyProviders.length),
-    reserveParticipants: Math.max(0, harmonyProviders.length - 3),
+    reasoningProvider: 'claude',
+    reasoningModel: claudeModel,
+    progressiveClaude: progressiveClaudeAllowed,
     degraded: /^The live legal-reasoning service is temporarily unavailable/.test(text),
   });
 
