@@ -72,6 +72,11 @@ assert.match(follow.standaloneQuery, /Nursing license/i);
 const followPlan = router.planLexaraSequence('Nursing license', ['Does Avery Example hold any licenses?']);
 assert.equal(followPlan.useBackgroundResearch, false, 'Lexara follow-up must never route to Pantheon');
 
+const contextualFollowPlan = router.planLexaraSequence('And her status?', ['Does Avery Example hold any licenses?']);
+assert.notEqual(contextualFollowPlan.sequence, 'conversation-only', 'Natural factual follow-up must retain active research context');
+assert.equal(contextualFollowPlan.researchDecision.requestedFact, 'professional-license');
+assert.equal(contextualFollowPlan.researchDecision.subject, 'Avery Example');
+
 factual('Is Avery Example married?', 'marriage-divorce', ['vital-records']);
 factual('Where does Avery Example work?', 'employment', ['employment']);
 factual('Where is Avery Example incarcerated?', 'incarceration', ['corrections']);
