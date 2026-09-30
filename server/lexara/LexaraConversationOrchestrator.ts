@@ -16,6 +16,13 @@ import {
 import { decideLexaraResearchNeed, isLexaraRepeatRequest } from './LexaraResearchIntentRouter';
 import { planLexaraSequence } from './LexaraSequenceRouter';
 import { resolveLexaraBackgroundSubject } from './LexaraBackgroundSubject';
+import {
+  discoverLexaraBackgroundSourcesParallel,
+  formatLexaraBackgroundResearchForSystem,
+  investigateLexaraBackgroundQuestion,
+  type LexaraBackgroundProgressEvent,
+  type LexaraBackgroundResearchResult,
+} from './LexaraBackgroundInvestigation';
 import { hasExplicitLocationCue, resolveUSJurisdiction } from './LexaraJurisdictionResolver';
 
 export interface LexaraConversationMessage {
@@ -23,40 +30,6 @@ export interface LexaraConversationMessage {
   content: string;
 }
 
-type LexaraBackgroundProgressEvent = {
-  type: 'searching' | 'checkpoint' | 'evidence' | 'endpoint';
-  pass: number;
-  confidence?: number;
-  sourceUrl?: string;
-  evidence?: string;
-  endpoint?: LexaraBackgroundResearchResult['endpoint'];
-};
-
-type LexaraBackgroundResearchResult = {
-  clarification?: string;
-  needsIdentityClarification?: boolean;
-  evidenceSummary?: string;
-  sources: string[];
-  categories: string[];
-  fullBackgroundReportRequested: boolean;
-  coverageLimited?: boolean;
-  coverageNote?: string;
-  endpoint: 'evidence-sufficient' | 'best-available-evidence' | 'partial-evidence' | 'budget-exhausted' | 'sources-exhausted' | 'clarification-required' | 'unavailable' | 'failed' | 'report-handoff' | 'search-leads-only';
-  recursionPasses?: number;
-  discoveryLanes?: string[];
-};
-
-// Compatibility surface only. Lexara no longer invokes Pantheon from user turns.
-// All research-selected turns are routed through Lexara's legal authority/reasoning service.
-async function investigateLexaraBackgroundQuestion(..._args: any[]): Promise<LexaraBackgroundResearchResult | null> {
-  return null;
-}
-async function discoverLexaraBackgroundSourcesParallel(..._args: any[]): Promise<{ urls: string[]; lanesAttempted: string[] }> {
-  return { urls: [], lanesAttempted: [] };
-}
-function formatLexaraBackgroundResearchForSystem(..._args: any[]): string {
-  return '';
-}
 
 export interface LexaraConversationContext {
   previousMessages?: LexaraConversationMessage[];
@@ -557,8 +530,8 @@ export async function generateLexaraConversationResponse(
 
   // The explicit six-sequence router owns subsystem selection. Mixed legal and
   // background questions deliberately run both research domains in parallel.
-  const mixedLegalFactNeed = false;
-  const backgroundResearchRequested = false;
+  const mixedLegalFactNeed = researchDecision.intent === 'mixed';
+  const backgroundResearchRequested = researchDecision.intent === 'factual' || mixedLegalFactNeed;
 
   const backgroundPrompt = mixedLegalFactNeed
     ? `${researchDecision.objective}\n\nLEXARA-DELEGATED FACTUAL OBJECTIVE: Retrieve only background facts and identifiers materially useful for identifying or resolving this legal matter (for example name variants, locations, dates, related proceedings, court references, docket/citation clues, and relevant public records). Do not perform the legal analysis and do not broaden into an unrestricted background report.`
@@ -573,8 +546,11 @@ export async function generateLexaraConversationResponse(
     && !resolveLexaraBackgroundSubject(cleanPrompt, previousUserTurns, jurisdiction);
   const backgroundInvestigationPromise: Promise<LexaraBackgroundResearchResult | null> = backgroundResearchRequested ? (searchOnlyFact
     ? discoverLexaraBackgroundSourcesParallel(researchDecision.objective || cleanPrompt, [], {
-        jurisdiction, limit: 8, timeoutMs: 6_000,
-        signal: backgroundController.signal, providerPolicy: 'capability-first',
+        jurisdiction, limit: 8,
+        signal: backgroundController.signal,
+        categories: researchDecision.sourceCategories,
+        subject: researchDecision.subject,
+        requestedFact: researchDecision.requestedFact,
       }).then(discovery => ({
         sources: [], searchLeads: discovery.urls, categories: [], fullBackgroundReportRequested: false,
         endpoint: discovery.urls.length ? 'search-leads-only' as const : 'unavailable' as const,
