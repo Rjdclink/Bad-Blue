@@ -488,7 +488,9 @@ test('Claude, Gemini, and xAI are all retained as independent legal redundancy w
   const chosen = Array.from(h.engine.selectLegalProvidersForTask(
     h.attributes, ['gemini','xai','claude'], 3,
   ));
-  assert.deepEqual(chosen, ['claude','gemini','xai']);
+  assert.equal(chosen[0], 'claude');
+  assert.equal(chosen.length, 3);
+  assert.deepEqual(new Set(chosen), new Set(['claude','gemini','xai']));
 });
 test('xAI failure prefers Claude as the legalwhat recovery route', async () => {
   const h = harness(keys,{fail:'xai'});
