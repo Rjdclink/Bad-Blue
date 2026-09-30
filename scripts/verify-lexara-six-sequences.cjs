@@ -3,6 +3,7 @@ const router = fs.readFileSync('server/lexara/LexaraSequenceRouter.ts','utf8');
 const orchestrator = fs.readFileSync('server/lexara/LexaraConversationOrchestrator.ts','utf8');
 const authority = fs.readFileSync('server/lexara/LexaraAuthorityResearch.ts','utf8');
 const legalMesh = fs.readFileSync('server/lexara/LegalProviderMesh.ts','utf8');
+const retrieval = fs.readFileSync('server/lexara/LexaraRetrievalBoundary.ts','utf8');
 const routes = fs.readFileSync('server/routes/lexara.chat.routes.ts','utf8');
 
 for (const id of [
@@ -41,8 +42,11 @@ if (orchestrator.includes("from './LexaraBackgroundResearchBoundary'") || orches
 if (!orchestrator.includes('(sequencePlan.useLegalResearch || researchDecision.needed)')) {
   throw new Error('Factual/research turns are not handed to Lexara legal research');
 }
-if (!authority.includes('discoverLegalMeshTier3') || !authority.includes('enrichAuthoritySourcesWithCrawlerPool')) {
-  throw new Error('Lexara legal discovery/crawler sequence missing');
+if (!authority.includes('discoverLegalMeshTier3') || !authority.includes('enrichAuthoritySourcesWithLexaraRetrieval')) {
+  throw new Error('Lexara legal discovery/retrieval sequence missing');
+}
+if (authority.includes('selectLexaraCrawlerPlan') || retrieval.includes('PantheonRetrievalAdapter') || retrieval.includes('pantheonRetrievalAdapter')) {
+  throw new Error('Lexara legal retrieval still depends on Pantheon');
 }
 for (const directLane of ['tavily', 'SEARXNG_URL', 'DDGS_URL', 'OPENSERP_URL']) {
   if (!legalMesh.includes(directLane)) throw new Error('Lexara direct legal discovery lane missing: '+directLane);
