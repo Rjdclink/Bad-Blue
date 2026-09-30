@@ -307,6 +307,14 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
     send('started', { status: 'researching' });
     const previousMessages = sanitizePreviousMessages((rawContext as any).previousMessages);
     const documentIntent = detectDocumentIntent(prompt, previousMessages);
+    const requestedSessionId = cleanOptionalString((rawContext as any).sessionId, 128);
+    const representationContext = await loadRepresentationContext(
+      req,
+      prompt,
+      requestedSessionId,
+      (rawContext as any).representationMatter,
+    );
+    const activeSessionId = representationContext.activeSessionId || requestedSessionId || `lexara-${Date.now()}`;
     const explicitJurisdiction = cleanOptionalString((rawContext as any).jurisdiction, 80);
     const locationState = explicitJurisdiction ? null : await resolveBestLocationEstimate(
       String(req.headers['x-real-ip'] || req.headers['cf-connecting-ip'] || req.ip || ''),
@@ -323,7 +331,9 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       backgroundLocationConfidence: locationState?.confidence,
       backgroundLocationSource: locationState?.provider,
       behaviorMode: (rawContext as any).behaviorMode === 'personable' ? 'personable' : 'professional',
-      sessionId: cleanOptionalString((rawContext as any).sessionId, 128),
+      sessionId: activeSessionId,
+      representationMatter: representationContext.activeMatter,
+      savedMatters: representationContext.savedMatters,
       allowClaudeOpus: canUseClaudeOpus(req),
       signal: controller.signal,
       onResearchProgress: event => send('research', event),
@@ -346,16 +356,27 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       }
     }
     const response = result.text;
+    const representationMatter = await advanceRepresentationMatter({
+      prompt,
+      response,
+      sessionId: activeSessionId,
+      lawType: cleanOptionalString((rawContext as any).lawType),
+      jurisdiction: result.jurisdiction || explicitJurisdiction,
+      prior: representationContext.activeMatter,
+      allowClaudeOpus: canUseClaudeOpus(req),
+      signal: controller.signal,
+    });
     let persistence: Awaited<ReturnType<typeof persistConversationTurn>>;
     try {
       persistence = await persistConversationTurn(req, {
         prompt,
         response,
-        sessionId: cleanOptionalString((rawContext as any).sessionId, 128),
+        sessionId: activeSessionId,
         lawType: cleanOptionalString((rawContext as any).lawType),
         jurisdiction: result.jurisdiction || cleanOptionalString((rawContext as any).jurisdiction, 80),
         mappedLawType: result.mappedLawType,
         behaviorMode: (rawContext as any).behaviorMode === 'personable' ? 'personable' : 'professional',
+        representationMatter,
       });
     } catch (dbError) {
       log.error('[LEXARA] Failed to persist streamed conversation', { error: dbError });
@@ -376,6 +397,9 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       jurisdiction: result.jurisdiction,
       mappedLawType: result.mappedLawType,
       documentIntent,
+      representationMatter,
+      matterSessionId: activeSessionId,
+      savedMatters: representationContext.savedMatters,
     });
   } catch (error) {
     log.error('[LEXARA] Stream turn failed', { error });
@@ -428,7 +452,14 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
     );
     const jurisdiction = explicitJurisdiction;
     const behaviorMode = (rawContext as any).behaviorMode === 'personable' ? 'personable' : 'professional';
-    const sessionId = cleanOptionalString((rawContext as any).sessionId, 128);
+    const requestedSessionId = cleanOptionalString((rawContext as any).sessionId, 128);
+    const representationContext = await loadRepresentationContext(
+      req,
+      prompt,
+      requestedSessionId,
+      (rawContext as any).representationMatter,
+    );
+    const sessionId = representationContext.activeSessionId || requestedSessionId || `lexara-${Date.now()}`;
     const documentIntent = detectDocumentIntent(prompt, previousMessages);
 
     log.info('[LEXARA] Conversational legal turn received', {
@@ -461,6 +492,8 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
         backgroundLocationSource: locationState?.provider,
         behaviorMode,
         sessionId,
+        representationMatter: representationContext.activeMatter,
+        savedMatters: representationContext.savedMatters,
         allowClaudeOpus: canUseClaudeOpus(req),
         signal: requestController.signal,
       });
@@ -471,6 +504,16 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
 
 
     const responseText = conversationResult.text;
+    const representationMatter = await advanceRepresentationMatter({
+      prompt,
+      response: responseText,
+      sessionId,
+      lawType,
+      jurisdiction: conversationResult.jurisdiction || jurisdiction,
+      prior: representationContext.activeMatter,
+      allowClaudeOpus: canUseClaudeOpus(req),
+      signal: requestController.signal,
+    });
     const model = 'lexara-legal-orchestrator';
 
     // Preserve the deterministic explicit-request fast path, but let LEXARA's
@@ -538,6 +581,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
         mappedLawType: conversationResult.mappedLawType,
         behaviorMode,
         audioBase64: audioData?.audioBase64,
+        representationMatter,
       });
     } catch (dbError) {
       log.error('[LEXARA] Failed to persist conversation', { error: dbError });
@@ -558,6 +602,9 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       mappedLawType: conversationResult.mappedLawType,
       ...persistence,
       documentIntent,
+      representationMatter,
+      matterSessionId: sessionId,
+      savedMatters: representationContext.savedMatters,
     });
   } catch (error) {
     log.error('[LEXARA] Chat endpoint error', { error });
