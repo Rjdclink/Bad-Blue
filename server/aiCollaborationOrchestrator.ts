@@ -1858,43 +1858,13 @@ export class AICollaborationOrchestrator {
   }
   
   private static selectLegalProvidersForTask(
-    attrs: TaskAttributes,
+    _attrs: TaskAttributes,
     providers: AIProvider[],
-    explicitMax?: number,
+    _explicitMax?: number,
   ): AIProvider[] {
-    // Claude is the normal legal lead. Gemini/xAI are scarce support capacity:
-    // use at most one when the task materially needs verification, research,
-    // multimodal help, or deep/document work. If Claude is unavailable, one
-    // healthy support provider may carry the user task rather than fail the turn.
-    const priority = [AIProvider.CLAUDE, AIProvider.GEMINI, AIProvider.XAI];
-    const ranked = providers.slice().sort((a, b) => {
-      const fit = (provider: AIProvider) => {
-        const index = priority.indexOf(provider);
-        return (provider === AIProvider.CLAUDE ? 1000 : 0)
-          + (index < 0 ? 0 : (priority.length - index) * 4)
-          + legalProviderCapacityScore(provider)
-          + Math.max(-20, Math.min(20, harmonyProviderRuntimeScore(provider)));
-      };
-      return fit(b) - fit(a);
-    });
-
-    const max = Math.max(1, Math.min(explicitMax || 2, 2));
-    const claude = ranked.find(provider => provider === AIProvider.CLAUDE);
-    if (!claude) return ranked.slice(0, 1);
-
-    const supportNeeded = attrs.needsVerification === true
-      || attrs.needsMultimodal === true
-      || attrs.needsImageAnalysis === true
-      || attrs.claudeWorkload === 'deep-legal'
-      || attrs.claudeWorkload === 'document-drafting';
-
-    if (!supportNeeded || max === 1) return [claude];
-
-    const support = ranked.find(provider =>
-      provider !== AIProvider.CLAUDE
-      && harmonyTransportDomain(provider) !== harmonyTransportDomain(claude)
-    );
-    return support ? [claude, support] : [claude];
+    // LegalWhat inference is Claude-only. Legacy callers may still hand this
+    // selector stale pools, but removed providers must never re-enter routing.
+    return providers.includes(AIProvider.CLAUDE) ? [AIProvider.CLAUDE] : [];
   }
 
   private static getClaudeEffort(task: CollaborationTask): 'high' | 'max' {
