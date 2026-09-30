@@ -507,7 +507,7 @@ export async function generateLexaraConversationResponse(
   // A weaker automatic estimate may still guide the internal analysis, but only
   // a stronger fused estimate is persisted as the matter's working jurisdiction.
   const stateJurisdiction = explicitStateJurisdiction
-    || (!explicitLocationCue ? backgroundStateJurisdiction : undefined);
+    || (!explicitLocationCue && backgroundLocationTrusted ? backgroundStateJurisdiction : undefined);
   const resolvedJurisdiction = await resolveUSJurisdiction(cleanPrompt, stateJurisdiction);
   const jurisdiction = resolvedJurisdiction?.display || stateJurisdiction;
   const publicJurisdiction = explicitStateJurisdiction
