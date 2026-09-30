@@ -50,7 +50,7 @@ if (!authority.includes('discoverLegalMeshTier3') || !authority.includes('enrich
 if (authority.includes('selectLexaraCrawlerPlan') || retrieval.includes('PantheonRetrievalAdapter') || retrieval.includes('pantheonRetrievalAdapter')) {
   throw new Error('Lexara legal retrieval still depends on Pantheon');
 }
-for (const directLane of ['tavily', 'gemini-google-grounding', 'SEARXNG_URL', 'DDGS_URL', 'OPENSERP_URL', 'index.commoncrawl.org', 'SERPAPI_KEY', 'SCRAPINGBEE_API_KEY']) {
+for (const directLane of ['tavily', 'gemini-google-grounding', 'duckduckgo-instant-answer', 'SEARXNG_URL', 'DDGS_URL', 'OPENSERP_URL', 'index.commoncrawl.org', 'SERPAPI_KEY', 'SCRAPINGBEE_API_KEY']) {
   if (!legalMesh.includes(directLane)) throw new Error('Lexara direct legal discovery lane missing: '+directLane);
 }
 for (const forbidden of ['discoverPantheonSourcesParallel', 'PantheonDiscoveryCoordinator', 'LexaraBackgroundResearchBoundary']) {
