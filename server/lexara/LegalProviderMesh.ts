@@ -1,4 +1,3 @@
-import { GoogleGenAI } from '@google/genai';
 import {
   buildLexaraSourceQueries,
   getLexaraPublicSources,
@@ -134,31 +133,6 @@ async function tavily(query: string, signal?: AbortSignal): Promise<LegalMeshCan
       const url=clean(x.url);
       return url ? [{url,title:String(x.title||'Tavily result'),excerpt:String(x.content||'').slice(0,1200),tier:3 as const,provider:'tavily'}] : [];
     });
-  } catch {
-    return [];
-  }
-}
-
-async function geminiGoogle(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
-  const apiKey = process.env.GEMINI_API_KEY?.trim() || process.env.GOOGLE_API_KEY?.trim();
-  if (!apiKey) return [];
-  try {
-    const client = new GoogleGenAI({ apiKey });
-    const response = await withTimeout(3_000, signal, requestSignal => client.models.generateContent({
-      model: process.env.GEMINI_MODEL?.trim() || 'gemini-3.8-flash',
-      contents: [{ role: 'user', parts: [{ text: query }] }],
-      config: { temperature: 0, tools: [{ googleSearch: {} }], abortSignal: requestSignal },
-    }));
-    const grounding:any = (response as any)?.candidates?.[0]?.groundingMetadata;
-    const chunks:any[] = grounding?.groundingChunks || [];
-    const supports:any[] = grounding?.groundingSupports || [];
-    return chunks.flatMap((chunk:any, index:number) => {
-      const url=clean(chunk?.web?.uri);
-      if(!url) return [];
-      const excerpt=supports.filter((s:any)=>s.groundingChunkIndices?.includes(index))
-        .map((s:any)=>String(s.segment?.text||'').trim()).filter(Boolean).join(' ').slice(0,1200);
-      return [{url,title:String(chunk?.web?.title||'Google-grounded result'),excerpt:excerpt||undefined,tier:3 as const,provider:'gemini-google-grounding'}];
-    }).slice(0,12);
   } catch {
     return [];
   }
@@ -324,7 +298,6 @@ async function commonCrawl(query: string, existingUrls: readonly string[], optio
 
 async function freeSearch(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
   const groups=await Promise.all([
-    geminiGoogle(query,signal),
     tavily(query,signal),
     duckDuckGoInstantAnswer(query,signal),
     searxng(query,signal),
