@@ -255,7 +255,11 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       signal: controller.signal,
       onResearchProgress: event => send('research', event),
       onTextDelta: delta => send('answer-delta', { delta }),
-      onSpeechChunk: chunk => send('speech-chunk', { chunk }),
+      // A document turn must never enter realtime TTS. Flux can emit audio as
+      // soon as Speak text arrives, so gate speech before the first chunk.
+      onSpeechChunk: documentIntent.requested
+        ? undefined
+        : chunk => send('speech-chunk', { chunk }),
     });
 
     const reasoningDocumentIntent = detectDocumentIntent(result.text, [
