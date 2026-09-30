@@ -513,6 +513,75 @@ for (const [name, env, expectedKey] of [
   });
 }
 
+test('Claude adapter strips unsupported effort from Haiku while preserving paid-model effort', async () => {
+  const payloads = [];
+  class FixtureAnthropic {
+    constructor() {
+      this.messages = {
+        create: async body => {
+          payloads.push({ kind: 'create', body });
+          return {
+            content: [{ type: 'text', text: 'Fixture Claude answer' }],
+            stop_reason: 'end_turn',
+            usage: { input_tokens: 1, output_tokens: 2 },
+          };
+        },
+        stream: body => {
+          payloads.push({ kind: 'stream', body });
+          return {
+            on() { return this; },
+            finalMessage: async () => ({
+              content: [{ type: 'text', text: 'Fixture Claude stream answer' }],
+              stop_reason: 'end_turn',
+              usage: { input_tokens: 1, output_tokens: 2 },
+            }),
+          };
+        },
+      };
+    }
+  }
+  const source = fs.readFileSync(path.join(root, 'server/claude.ts'), 'utf8');
+  const compiled = ts.transpileModule(source, { compilerOptions: {
+    module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true,
+  } }).outputText;
+  const module = { exports: {} };
+  const requireFixture = spec => {
+    if (spec === '@anthropic-ai/sdk') return FixtureAnthropic;
+    if (spec === './aiHarmonyModelRegistry') {
+      return { CURRENT_AI_MODELS: { claudeBalanced: 'claude-sonnet-5-5' } };
+    }
+    throw new Error('Unexpected Claude dependency: ' + spec);
+  };
+  vm.runInNewContext(`(function(require,module,exports){${compiled}\n})`, {
+    process: { env: { ANTHROPIC_API_KEY: 'fixture-key' } },
+    console: { info() {}, error() {} },
+    DOMException,
+  })(requireFixture, module, module.exports);
+
+  await module.exports.callClaude('Fixture', {
+    model: 'claude-haiku-4-5-20251001',
+    effort: 'high',
+  });
+  await module.exports.callClaudeStreaming('Fixture', {
+    model: 'claude-haiku-4-5-20251001',
+    effort: 'high',
+  });
+  await module.exports.callClaude('Fixture', {
+    model: 'claude-sonnet-5-5',
+    effort: 'high',
+  });
+  await module.exports.callClaude('Fixture', {
+    model: 'claude-opus-5-5',
+    effort: 'max',
+  });
+
+  assert.equal(payloads.length, 4);
+  assert.equal(Object.hasOwn(payloads[0].body, 'output_config'), false);
+  assert.equal(Object.hasOwn(payloads[1].body, 'output_config'), false);
+  assert.equal(payloads[2].body.output_config?.effort, 'high');
+  assert.equal(payloads[3].body.output_config?.effort, 'max');
+});
+
 test('Claude stays primary and adds one support provider only when verification is needed', async () => {
   const h = harness(keys);
   for(let i=0;i<3;i++) { await h.run(['claude','gemini','xai']); h.advance(1000); }
