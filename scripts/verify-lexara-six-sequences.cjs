@@ -60,6 +60,9 @@ if (!orchestrator.includes('backgroundResearchRequested\n      ? backgroundInves
 if (!authority.includes('discoverLegalMeshTier3') || !authority.includes('enrichAuthoritySourcesWithLexaraRetrieval')) {
   throw new Error('Lexara legal discovery/retrieval sequence missing');
 }
+if (!authority.includes("research.researchIntent === 'factual' && research.subject")) {
+  throw new Error('Pure person-fact authority evidence can still bypass the identity-gated background path');
+}
 if (authority.includes('selectLexaraCrawlerPlan') || retrieval.includes('PantheonRetrievalAdapter') || retrieval.includes('pantheonRetrievalAdapter')) {
   throw new Error('Lexara legal retrieval still depends on Pantheon');
 }
