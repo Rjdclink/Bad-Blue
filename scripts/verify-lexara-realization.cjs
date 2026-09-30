@@ -1269,6 +1269,7 @@ must(
 );
 must(
   lexaraConversationOrchestrator.includes('backgroundLocationTrusted') &&
+    lexaraConversationOrchestrator.includes('!explicitLocationCue && backgroundLocationTrusted ? backgroundStateJurisdiction : undefined') &&
     lexaraConversationOrchestrator.includes('If the user states a location, that statement controls immediately') &&
     lexaraConversationOrchestrator.includes('JURISDICTION CORRECTION TURN') &&
     lexaraConversationOrchestrator.includes('Do not explain competing location signals'),
