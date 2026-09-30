@@ -1708,9 +1708,11 @@ export class AICollaborationOrchestrator {
       const skipped = /cooling down after a recent route failure|quota reserve withheld/.test(
         error instanceof Error ? error.message : String(error),
       );
-      // A skipped route is not a new provider failure and must not extend its circuit.
+      // A skipped route is not a new remote-provider failure and must not
+      // extend its circuit, but it is unavailable for the rest of this
+      // orchestration and should not be selected again by sibling/fallback tasks.
+      task.failedProviders?.add(task.provider);
       if (!skipped) {
-        task.failedProviders?.add(task.provider);
         markHarmonyProviderFailure(task.provider, error);
         recordHarmonyProviderRuntime(task.provider, false, Date.now() - startTime);
       }
