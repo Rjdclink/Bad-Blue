@@ -96,7 +96,11 @@ async function retryGeminiTransient<T>(call: () => Promise<T>, signal?: AbortSig
       if (signal?.aborted) throw error;
       lastError = error;
       const message = String(error?.message || error);
-      if (!/429|408|500|502|503|504|RESOURCE_EXHAUSTED|UNAVAILABLE|rate limit|timeout/i.test(message) || attempt === 2) throw error;
+      // Quota/rate-limit errors are admission signals, not retry candidates.
+      // Surface them immediately so the shared legal gate can exclude Gemini
+      // and continue with another healthy provider without burning more calls.
+      if (/429|RESOURCE_EXHAUSTED|rate limit|quota|Too Many Requests/i.test(message)) throw error;
+      if (!/408|500|502|503|504|UNAVAILABLE|timeout/i.test(message) || attempt === 2) throw error;
       const delayMs = Math.min(8000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 250);
       await new Promise(resolve => setTimeout(resolve, delayMs));
     }
