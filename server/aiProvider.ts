@@ -48,6 +48,11 @@ interface GenerateOptions {
   model?: string;
   useJSON?: boolean;
   signal?: AbortSignal;
+  // Server-only Claude routing controls. Callers must derive entitlement from auth.
+  allowClaudeOpus?: boolean;
+  claudeWorkload?: 'standard' | 'deep-legal' | 'document-drafting';
+  effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  cacheSystemPrompt?: boolean;
 }
 
 /**
@@ -107,7 +112,11 @@ export async function generateText(
         {
           providerPolicy: options.providerPolicy || 'capability-first',
           systemPrompt: options.systemPrompt,
-          ...(options.providerPolicy === 'legalwhat' ? { signal: options.signal } : {}),
+          ...(options.providerPolicy === 'legalwhat' ? {
+            signal: options.signal,
+            allowClaudeOpus: options.allowClaudeOpus === true,
+            claudeWorkload: options.claudeWorkload,
+          } : {}),
         },
       );
 

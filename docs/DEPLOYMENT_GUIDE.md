@@ -145,7 +145,7 @@ Current Harmony model defaults are owned by `server/aiHarmonyModelRegistry.ts`; 
 - Cohere: `COHERE_API_KEY`
 - Together: `TOGETHER_API_KEY`
 
-Canonical defaults currently include `gemini-3.8-flash`, `claude-sonnet-5`, `claude-opus-5`, `openai/gpt-oss-120b`, `mistral-small-2603`, `deepseek/deepseek-v4.1-flash`, `x-ai/grok-4.6`, `moonshotai/kimi-k3`, `qwen/qwen3.8-max-0902`, and `openai/gpt-5.6-luna`, plus the registry's current gateway/provider-specific participants.
+Canonical defaults currently include `gemini-3.8-flash`, `claude-sonnet-5-5`, `claude-opus-5-5`, `openai/gpt-oss-120b`, `mistral-small-2603`, `deepseek/deepseek-v4.1-flash`, `x-ai/grok-4.6`, `moonshotai/kimi-k3`, `qwen/qwen3.8-max-0902`, and `openai/gpt-5.6-luna`, plus the registry's current gateway/provider-specific participants.
 
 #### Square Payment Processing (if using payments)
 ```bash

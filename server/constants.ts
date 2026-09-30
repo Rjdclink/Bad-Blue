@@ -96,7 +96,7 @@ export const OPENROUTER_MODELS = {
   OPENAI_GPT4O: 'openai/gpt-5.6-luna',                   // Legacy key -> current fast OpenAI model
   MISTRAL_LARGE: 'mistralai/mistral-medium-3.5',          // Current frontier-class Mistral
   DEEPSEEK_R1: 'deepseek/deepseek-v4.1-flash',           // Current DeepSeek Flash
-  ANTHROPIC_CLAUDE: 'anthropic/claude-sonnet-5',         // Current Claude Sonnet
+  ANTHROPIC_CLAUDE: 'anthropic/claude-sonnet-5-5',         // Current Claude Sonnet
   PERPLEXITY_SONAR: 'perplexity/sonar-pro',             // Perplexity - Best: Sonar Pro (web-grounded)
   QWEN_72B: 'qwen/qwen3.8-max-0902',                     // Legacy key -> current Qwen3.8 Max
   CLOUDFLARE_LLAMA: 'openrouter/auto',                  // Legacy alias -> current gateway-selected model

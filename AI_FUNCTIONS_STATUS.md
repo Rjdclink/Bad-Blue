@@ -15,7 +15,7 @@ AI-powered services are no longer “Gemini-only” or split into fixed user/aut
 
 ## Canonical current defaults
 
-Gemini `gemini-3.8-flash`; Claude `claude-sonnet-5`; Claude Opus `claude-opus-5`; Groq `openai/gpt-oss-120b`; Mistral `mistral-small-2603`; DeepSeek `deepseek/deepseek-v4.1-flash`; Grok `x-ai/grok-4.6`; Kimi `moonshotai/kimi-k3`; Qwen `qwen/qwen3.8-max-0902`; OpenAI fast via OpenRouter `openai/gpt-5.6-luna`; plus the canonical GPT-OSS, OpenRouter-auto, Hugging Face, Cerebras, SambaNova, Cohere, and Together participants in the registry.
+Gemini `gemini-3.8-flash`; Claude `claude-sonnet-5-5`; Claude Opus `claude-opus-5-5`; Groq `openai/gpt-oss-120b`; Mistral `mistral-small-2603`; DeepSeek `deepseek/deepseek-v4.1-flash`; Grok `x-ai/grok-4.6`; Kimi `moonshotai/kimi-k3`; Qwen `qwen/qwen3.8-max-0902`; OpenAI fast via OpenRouter `openai/gpt-5.6-luna`; plus the canonical GPT-OSS, OpenRouter-auto, Hugging Face, Cerebras, SambaNova, Cohere, and Together participants in the registry.
 
 ## Invariant
 

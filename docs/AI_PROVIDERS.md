@@ -7,8 +7,8 @@ The canonical source of truth is `server/aiHarmonyModelRegistry.ts`. Do not copy
 | Participant | Default model | Transport |
 |---|---|---|
 | Gemini | `gemini-3.7-flash` | Google |
-| Claude | `claude-sonnet-5` | Anthropic |
-| Claude Opus | `claude-opus-5` | Anthropic (same account as Sonnet) |
+| Claude | `claude-sonnet-5-5` | Anthropic |
+| Claude Opus | `claude-opus-5-5` | Anthropic (same account as Sonnet) |
 | Groq | `openai/gpt-oss-120b` | Groq |
 | Mistral | `mistral-small-2603` | Mistral |
 | DeepSeek | `deepseek/deepseek-v4.1-flash` | OpenRouter |

@@ -268,7 +268,7 @@ export class ForgeAI {
       // Claude models
       {
         id: CURRENT_AI_MODELS.claudeDeep,
-        name: 'Claude Opus 5',
+        name: 'Claude Opus 5.5',
         provider: AIProvider.CLAUDE_OPUS,
         capabilities: ['reasoning', 'legal-analysis', 'creative-writing', 'orchestration', 'long-context'],
         domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
@@ -279,7 +279,7 @@ export class ForgeAI {
       },
       {
         id: CURRENT_AI_MODELS.claudeBalanced,
-        name: 'Claude Sonnet 5',
+        name: 'Claude Sonnet 5.5',
         provider: AIProvider.CLAUDE,
         capabilities: ['reasoning', 'legal-analysis', 'document-generation', 'verification'],
         domains: [Domain.LEGAL_WHAT, Domain.CRYPTO_CRAWLER],
