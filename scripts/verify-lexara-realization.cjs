@@ -767,157 +767,38 @@ must(
     voiceMode.includes('  }, []);'),
   'realtime voice consultation socket cleanup is unmount-scoped rather than render-callback-scoped',
 );
-must(
-  lexaraConversationOrchestrator.includes('new Promise<null>(resolve => setTimeout(() => resolve(null), 0))') &&
-    lexaraConversationOrchestrator.includes('Never name or infer a county from a city'),
-  'person-record lookup cannot block before the live research budget or invent county jurisdiction',
-);
-must(
-  lexaraPantheonInvestigation.includes('PERSON_RECURSIVE_TOTAL_BUDGET_MS = 10 * 60_000') &&
-    lexaraPantheonInvestigation.includes('perPassBudgetMs = Math.min(pass === 0 ? 6_000 : 8_000, remainingMs)') &&
-    lexaraPantheonInvestigation.includes('NEVER name, infer, recommend, or substitute a county'),
-  'targeted Pantheon research is bounded for live conversation and county claims require evidence',
-);
-must(
-  lexaraPantheonInvestigation.includes("['transportation']") &&
-    lexaraPantheonInvestigation.includes("['education','credentials']") &&
-    lexaraPantheonInvestigation.includes("['sex-offender']") &&
-    lexaraPantheonInvestigation.includes("['bankruptcy','financial-public','property']") &&
-    lexaraPantheonInvestigation.includes("['news','adverse-media']") &&
-    lexaraPantheonInvestigation.includes("['government-employment','campaign-finance','lobbying','government-contracting']") &&
-    lexaraPantheonInvestigation.includes("['relationship-graph','chronology','corroboration','contradictions','provenance']"),
-  'Lexara routes person-record questions across the complete Pantheon report-domain surface rather than a narrow subset',
-);
-must(
-  lexaraPantheonInvestigation.includes('coverageLimited?: boolean') &&
-    lexaraPantheonInvestigation.includes('COVERAGE STATUS:') &&
-    lexaraPantheonInvestigation.includes('This is not proof that no record exists') &&
-    lexaraPantheonInvestigation.includes('never infer absence from a failed search'),
-  'Pantheon retrieval gaps are communicated to Lexara as coverage limits rather than false negative records',
-);
-must(
-  lexaraConversationOrchestrator.includes('initialBackground.fullBackgroundReportRequested'),
-  'full background-report requests are explicitly handed back to Pantheon workflow instead of silently falling through ordinary chat',
-);
-must(
-  lexaraConversationOrchestrator.includes('backgroundCategories:') &&
-    lexaraConversationOrchestrator.includes('backgroundSourceCount:') &&
-    lexaraConversationOrchestrator.includes('backgroundCoverageLimited:'),
-  'Lexara production telemetry proves Pantheon category/source/coverage handoff per live turn',
-);
-must(
-  pantheonInvestigation.includes("import { searchInmates }") &&
-    pantheonInvestigation.includes("STRUCTURED CUSTODY SOURCE:") &&
-    pantheonInvestigation.includes("inmate.facilityName") &&
-    pantheonInvestigation.includes("inmate.custodyStatus"),
-  'Lexara custody questions consume verified structured inmate results before generic Pantheon corroboration',
-);
-must(
-  pantheonInvestigation.includes("date\\s+of\\s+death") &&
-    pantheonInvestigation.includes("['vital-records','historical','chronology','news','family-probate','estate']"),
-  'Lexara death questions route through Pantheon vital historical chronology news and probate evidence',
-);
-must(
-  pantheonInvestigation.includes('incarcerat(?:e|ed|ion)?') &&
-    pantheonInvestigation.includes('wife|die|died|death|deceased|obituary') &&
-    pantheonInvestigation.includes('where\\s+(?:does|did)\\s+.+?\\s+live'),
-  'Lexara recognizes natural incarceration residence and death question wording',
-);
-must(
-  pantheonInvestigation.includes("STRUCTURED CUSTODY SOURCE:") &&
-    pantheonInvestigation.includes("searchInmates({"),
-  'Lexara consumes structured custody records for incarceration questions',
-);
-must(
-  pantheonInvestigation.includes("incarcerat(?:e|ed|ion)?") &&
-    pantheonInvestigation.includes("where\\s+(?:does|did)\\s+.+?\\s+live") &&
-    pantheonInvestigation.includes("wife|die|died|death|deceased|obituary"),
-  'natural incarceration residence and death wording routes to Pantheon',
-);
-must(
-  inmateSearchAggregator.includes("INMATE_ENABLE_STATE_DOC', true") &&
-    inmateSearchAggregator.includes("purpose: 'state_doc_inmate_search'") &&
-    inmateSearchAggregator.includes("return [];"),
-  'official state corrections discovery participates by default while person-level custody results fail closed without structured proof',
-);
-must(
-  lexaraPantheonInvestigation.includes('Do not state that a record belongs to the subject unless the identifiers support that match.') &&
-    lexaraPantheonInvestigation.includes('NEVER name, infer, recommend, or substitute a county'),
-  'Lexara person-record handoff preserves identity and county truth boundaries',
-);
-must(
-  lexaraPantheonInvestigation.includes('specificFullName') &&
-    lexaraPantheonInvestigation.includes('split(/\\s+/).length >= 3'),
-  'specific three-or-more-part names can enter bounded identity research without forcing a redundant identifier prompt',
-);
-must(
-  lexaraPantheonInvestigation.includes("'sheriff jail roster'") &&
-    lexaraPantheonInvestigation.includes("'criminal court records'") &&
-    lexaraPantheonInvestigation.includes("'mortgage record'") &&
-    lexaraPantheonInvestigation.includes("'death record'"),
-  'person-record discovery uses record-type-specific official-source terms for custody criminal property and vital records',
-);
+const lexaraSequenceRouter = read('server/lexara/LexaraSequenceRouter.ts');
+const legalProviderMesh = read('server/lexara/LegalProviderMesh.ts');
+const pantheonRegistry = read('server/services/pantheon/PantheonSovereignSourceRegistry.ts');
+const pantheonDiscovery = read('server/services/pantheon/PantheonDiscoveryCoordinator.ts');
 
-for (const question of [
-  'Where is Jordan Michael Carter incarcerated?',
-  'Is Sarah Loretta Graves married?',
-  "How much is William Rodney Lawrence's mortgage?",
-  'Where does Tessa Gracie Bendland live?',
-  'When did Brian Kenneth Lee Clinkenbeard die?',
-  'Has Jeremy Scott Rose ever been arrested and what were the charged crimes?',
-]) {
-  must(
-    lexaraPantheonInvestigation.includes('PERSON_RECORD_PATTERN') &&
-      lexaraPantheonInvestigation.includes('CATEGORY_RULES') &&
-      lexaraPantheonInvestigation.includes('requestedCategories(prompt)'),
-    'natural-language person-record examples route through Pantheon: ' + question,
-  );
-}
 must(
-  lexaraPantheonInvestigation.includes("structured_custody_budget_exhausted") &&
-    lexaraPantheonInvestigation.includes('STRUCTURED_CUSTODY_BUDGET_MS = 5 * 60_000'),
-  'structured custody lookup is bounded so slow inmate providers cannot stall Lexara',
+  !lexaraSequenceRouter.includes('useBackgroundResearch: true') &&
+    lexaraSequenceRouter.includes('useLegalResearch: true, useBackgroundResearch: false'),
+  'Lexara factual/background research routes exclusively through Lexara legal reasoning',
 );
 must(
-  lexaraPantheonInvestigation.includes("from '../services/pantheon/PantheonEntityResolution'") &&
-    lexaraPantheonInvestigation.includes("const identityMatch = resolvedEntityType === 'person'") &&
-    lexaraPantheonInvestigation.includes('matchPantheonSubject(item, resolvedSubject, context.jurisdiction)') &&
-    lexaraPantheonInvestigation.includes('if (!identityMatch.matched) {'),
-  'Lexara accepts Pantheon person-record evidence only after subject matching',
+  !lexaraConversationOrchestrator.includes("from './LexaraBackgroundResearchBoundary'") &&
+    !lexaraConversationOrchestrator.includes("from './LexaraPantheonInvestigation'") &&
+    lexaraConversationOrchestrator.includes('const backgroundResearchRequested = false') &&
+    lexaraConversationOrchestrator.includes('(sequencePlan.useLegalResearch || researchDecision.needed)'),
+  'Lexara conversation runtime is disconnected from Pantheon and routes research to legal authority reasoning',
 );
 must(
-  lexaraPantheonInvestigation.includes("['identity','identity-resolution','vital-records','historical','chronology']") &&
-    lexaraPantheonInvestigation.includes("'professional license lookup','license verification','disciplinary order','reinstatement order'"),
-  'person fact research broadens across record families rather than using a fact-specific single source',
+  !legalProviderMesh.includes('discoverPantheonSourcesParallel') &&
+    !legalProviderMesh.includes('PantheonDiscoveryCoordinator') &&
+    !legalProviderMesh.includes('LexaraBackgroundResearchBoundary') &&
+    legalProviderMesh.includes('SEARXNG_URL') &&
+    legalProviderMesh.includes('DDGS_URL') &&
+    legalProviderMesh.includes('OPENSERP_URL') &&
+    legalProviderMesh.includes('tavily'),
+  'Lexara legal provider mesh uses independent direct discovery lanes without Pantheon',
 );
 must(
-  lexaraPantheonInvestigation.includes('PERSON_RECURSIVE_MAX_PASSES = 30') &&
-    lexaraPantheonInvestigation.includes('PERSON_RECURSIVE_MAX_TARGETS_PER_PASS = 10') &&
-    lexaraPantheonInvestigation.includes('PERSON_RECURSIVE_MAX_TOTAL_TARGETS = 30') &&
-    lexaraPantheonInvestigation.includes('discoverPantheonSourcesParallel(') &&
-    lexaraPantheonInvestigation.includes('bestConfidence >= PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD'),
-  'recursive person research broadens dynamically with explicit bounded low-latency endpoints',
-);
-must(
-  lexaraPantheonInvestigation.includes('Separate historical status from current status') &&
-    lexaraPantheonInvestigation.includes('label it as an inference'),
-  'Lexara preserves current-versus-historical truth and labels derived person facts',
-);
-must(
-  lexaraPantheonInvestigation.includes('PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD = 0.50') &&
-    lexaraPantheonInvestigation.includes("'partial-evidence'") &&
-    lexaraPantheonInvestigation.includes('lack of corroboration alone is not a reason to suppress it') &&
-    lexaraPantheonInvestigation.includes('evidenceRetrieved:') &&
-    lexaraPantheonInvestigation.includes('evidenceRejectedIdentityMismatch:') &&
-    lexaraPantheonInvestigation.includes('evidenceRejectedBelowAssessment:') &&
-    lexaraPantheonInvestigation.includes('evidenceContradictions:'),
-  'Lexara preserves 50%+ partial/single-source evidence, distinguishes partial evidence from exhaustion, and exposes rejection telemetry',
-);
-must(
-  !lexaraPantheonInvestigation.includes('authorityBonus') &&
-    !lexaraPantheonInvestigation.includes('freshnessBonus') &&
-    !lexaraPantheonInvestigation.includes('correlateBonus'),
-  'source prestige, freshness, and corroboration do not act as evidence-survival gates',
+  pantheonRegistry.includes('buildPantheonCategoryTargets') &&
+    pantheonRegistry.includes('KEYLESS_CATEGORY_SOURCES') &&
+    pantheonDiscovery.includes('discoverPantheonSourcesParallel'),
+  'Pantheon remains intact as a separate system',
 );
 must(
   !conversation.includes('{interimTranscript && !isSpeaking && (') &&
@@ -1015,35 +896,10 @@ must(domainExpertiseSourceLines.length === 40, 'literal 40-source LEXARA practic
 must(domainImplementationSourceLines.length === 10, 'literal 10-source LEXARA specialization implementation review is present');
 must(
   lexaraConversationOrchestrator.includes('planLexaraSequence(cleanPrompt, previousUserTurns)') &&
-    lexaraConversationOrchestrator.includes('sequencePlan.useBackgroundResearch && sequencePlan.useLegalResearch') &&
-    lexaraConversationOrchestrator.includes('const backgroundResearchRequested = sequencePlan.useBackgroundResearch') &&
-    lexaraConversationOrchestrator.includes('const authorityResearchPromise = sequencePlan.useLegalResearch') &&
-    lexaraPantheonInvestigation.includes("researchDecision.objectiveKind !== 'legal-authority' || context.delegatedByLexara"),
-  'legal-only questions stay on Lexara while explicit mixed legal/background questions may delegate factual retrieval to Pantheon',
-);
-
-must(
-  pantheonInvestigation.includes('shouldUsePantheonForPersonQuestion') &&
-    pantheonInvestigation.includes('PERSON_RECORD_PATTERN.test(recentText) && IDENTIFIER_PATTERN.test(prompt)') &&
-    pantheonInvestigation.includes("researchDecision.needed && (researchDecision.objectiveKind !== 'legal-authority' || context.delegatedByLexara) && hasEnoughIdentityContext(combined)") &&
-    pantheonInvestigation.includes('export function hasEnoughIdentityContext') &&
-    pantheonInvestigation.includes('buildPantheonCategoryTargets') &&
-    pantheonInvestigation.includes('discoverPantheonSourcesParallel') &&
-    pantheonInvestigation.includes('Dynamic search/index discovery is the primary locator') &&
-    pantheonInvestigation.includes('categorySeedUrls') &&
-    pantheonInvestigation.includes("purpose: 'lexara_legal_research'") &&
-    pantheonInvestigation.includes('depth: 3') &&
-    pantheonInvestigation.includes('budgetMs: perPassBudgetMs') &&
-    pantheonInvestigation.includes('perPassBudgetMs = Math.min(pass === 0 ? 6_000 : 8_000, remainingMs)') &&
-    pantheonInvestigation.includes('fullBackgroundReportRequested') &&
-    pantheonInvestigation.includes('needsIdentityClarification?: boolean') &&
-    orchestrator.includes('initialBackground?.clarification && (initialBackground.needsIdentityClarification || initialBackground.fullBackgroundReportRequested)') &&
-    orchestrator.includes('const backgroundPrompt = mixedLegalFactNeed') &&
-    orchestrator.includes('investigateLexaraBackgroundQuestion(backgroundPrompt') &&
-    orchestrator.includes('new Promise<null>(resolve => setTimeout(() => resolve(null), 0))') &&
-    !orchestrator.includes('new Promise<null>(resolve => setTimeout(() => resolve(null), 60))') &&
-    orchestrator.includes('formatLexaraBackgroundResearchForSystem(backgroundInvestigation)'),
-  'LEXARA identifies the subject before targeted Pantheon research, scopes the requested record categories, and permits dynamic source discovery without silently running a full report',
+    lexaraConversationOrchestrator.includes('const backgroundResearchRequested = false') &&
+    lexaraConversationOrchestrator.includes('(sequencePlan.useLegalResearch || researchDecision.needed)') &&
+    !lexaraConversationOrchestrator.includes("from './LexaraBackgroundResearchBoundary'"),
+  'all Lexara research-selected turns stay on the Lexara legal reasoning path',
 );
 
 // Lexara reasoning and evidence correction share the existing Harmony authority.
@@ -1165,5 +1021,5 @@ must(
   'document bodies must never be sent to realtime TTS',
 );
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-document-handoff.cjs')], { stdio: 'inherit' });
-require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-research-routing.cjs')], { stdio: 'inherit' });
+require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'verify-lexara-pantheon-disconnect.cjs')], { stdio: 'inherit' });
 if (!process.exitCode) console.log('LEXARA realization verification passed.');
