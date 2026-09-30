@@ -79,6 +79,8 @@ factual('Does Avery Example own real estate?', 'property', ['property']);
 factual('What address does Avery Example live at?', 'contact-address', ['contacts-addresses']);
 factual('Does Avery Example have any relatives?', 'relatives-associates', ['relationships']);
 factual('What social media profiles does Avery Example use?', 'social-online', ['social-online']);
+factual('Find a public photo of Avery Example.', 'public-image', ['public-images']);
+factual('Did Avery Example hold public office or work for the government?', 'government-public', ['government-public']);
 factual('Where did Avery Example go to college?', 'education', ['education']);
 factual('Does Avery Example have a criminal record?', 'criminal-arrest', ['criminal-records']);
 factual('Is Avery Example on probation or parole?', 'probation-parole', ['probation-parole']);

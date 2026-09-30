@@ -6,6 +6,7 @@ const orchestrator = fs.readFileSync('server/lexara/LexaraConversationOrchestrat
 const legalMesh = fs.readFileSync('server/lexara/LegalProviderMesh.ts', 'utf8');
 const authority = fs.readFileSync('server/lexara/LexaraAuthorityResearch.ts', 'utf8');
 const retrieval = fs.readFileSync('server/lexara/LexaraRetrievalBoundary.ts', 'utf8');
+const background = fs.readFileSync('server/lexara/LexaraBackgroundInvestigation.ts', 'utf8');
 const pantheonRegistry = fs.readFileSync('server/services/pantheon/PantheonSovereignSourceRegistry.ts', 'utf8');
 const pantheonDiscovery = fs.readFileSync('server/services/pantheon/PantheonDiscoveryCoordinator.ts', 'utf8');
 
@@ -25,10 +26,11 @@ if (orchestrator.includes("from './LexaraBackgroundResearchBoundary'")
   || orchestrator.includes("from '../services/pantheon/")) {
   throw new Error('Lexara conversation runtime still imports Pantheon');
 }
-if (!orchestrator.includes('const backgroundResearchRequested = false')
+if (!orchestrator.includes("const backgroundResearchRequested = researchDecision.intent === 'factual' || mixedLegalFactNeed")
   || !orchestrator.includes('const researchRouteSelected = sequencePlan.useLegalResearch || researchDecision.needed')
-  || !orchestrator.includes('forceResearch: true')) {
-  throw new Error('Lexara user research is not hard-routed to the single Lexara research service');
+  || !orchestrator.includes('forceResearch: true')
+  || !orchestrator.includes("from './LexaraBackgroundInvestigation'")) {
+  throw new Error('Lexara factual research is not wired to the native background investigator while legal research remains intact');
 }
 for (const forbidden of ['discoverPantheonSourcesParallel', 'PantheonDiscoveryCoordinator', 'LexaraBackgroundResearchBoundary']) {
   if (legalMesh.includes(forbidden)) throw new Error('Lexara legal provider mesh still depends on Pantheon: ' + forbidden);
@@ -44,6 +46,10 @@ if (authority.includes('selectLexaraCrawlerPlan') || authority.includes('Pantheo
 }
 for (const forbidden of ['PantheonRetrievalAdapter', 'pantheonRetrievalAdapter', '../services/pantheon/', '../services/crawlers/Pantheon']) {
   if (retrieval.includes(forbidden)) throw new Error('Lexara retrieval boundary still depends on Pantheon: ' + forbidden);
+  if (background.includes(forbidden)) throw new Error('Lexara background investigator still depends on Pantheon: ' + forbidden);
+}
+for (const required of ['discoverLegalMeshTier3', 'discoverLegalMeshSupplemental', 'lexaraRetrievalAdapter', 'MAX_RECURSIVE_PASSES', 'directlyAnswers']) {
+  if (!background.includes(required)) throw new Error('Lexara native background investigator missing: ' + required);
 }
 for (const required of ["purpose: 'lexara_legal_research'", 'assertPublicUrl', 'retrieveOne', 'lexaraRetrievalAdapter']) {
   if (!retrieval.includes(required)) throw new Error('Lexara independent retrieval boundary missing: ' + required);

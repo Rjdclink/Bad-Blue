@@ -38,6 +38,8 @@ export type LexaraRequestedFact =
   | 'contact-address'
   | 'relatives-associates'
   | 'social-online'
+  | 'public-image'
+  | 'government-public'
   | 'education'
   | 'vehicle'
   | 'criminal-arrest'
@@ -98,6 +100,8 @@ function requestedFact(text: string): LexaraRequestedFact {
   if (/\b(?:patent|trademark|inventor|assignee|intellectual property)\b/.test(value)) return 'intellectual-property';
   if (/\b(?:domain|website|rdap|whois|web footprint|internet footprint)\b/.test(value)) return 'domain-web';
   if (/\b(?:social media|facebook|instagram|linkedin|tiktok|twitter|x\.com|username|online account|profile)\b/.test(value)) return 'social-online';
+  if (/\b(?:photo|photos|picture|pictures|image|images|headshot|portrait)\b/.test(value)) return 'public-image';
+  if (/\b(?:government employee|government employment|public service|public office|campaign contribution|campaign donation|lobbying|lobbyist|government contract)\b/.test(value)) return 'government-public';
   if (/\b(?:news|newspaper|press|media|historical|archive|former|previously)\b/.test(value)) return 'news-history';
   if (/\b(?:identity|alias|aka|real name|who is)\b/.test(value)) return 'identity';
   if (/\b(?:phone|telephone|email|address|residen(?:ce|t)|where .+ live)\b/.test(value)) return 'contact-address';
@@ -137,6 +141,8 @@ function sourceCategoriesForFact(fact: LexaraRequestedFact, text: string): Lexar
     case 'contact-address': return ['contacts-addresses','identity','general-public-records'];
     case 'relatives-associates': return ['relationships','general-public-records'];
     case 'social-online': return ['social-online','domain-web','news-history'];
+    case 'public-image': return ['public-images','social-online','news-history'];
+    case 'government-public': return ['government-public','employment','business','general-public-records'];
     case 'education': return ['education','employment','general-public-records'];
     case 'vehicle': return ['transportation','general-public-records'];
     case 'criminal-arrest': return ['criminal-records','law-enforcement','courts','general-public-records'];
