@@ -26,8 +26,9 @@ if (orchestrator.includes("from './LexaraBackgroundResearchBoundary'")
   throw new Error('Lexara conversation runtime still imports Pantheon');
 }
 if (!orchestrator.includes('const backgroundResearchRequested = false')
-  || !orchestrator.includes('(sequencePlan.useLegalResearch || researchDecision.needed)')) {
-  throw new Error('Lexara user research is not hard-routed to the legal research service');
+  || !orchestrator.includes('const researchRouteSelected = sequencePlan.useLegalResearch || researchDecision.needed')
+  || !orchestrator.includes('forceResearch: true')) {
+  throw new Error('Lexara user research is not hard-routed to the single Lexara research service');
 }
 for (const forbidden of ['discoverPantheonSourcesParallel', 'PantheonDiscoveryCoordinator', 'LexaraBackgroundResearchBoundary']) {
   if (legalMesh.includes(forbidden)) throw new Error('Lexara legal provider mesh still depends on Pantheon: ' + forbidden);
