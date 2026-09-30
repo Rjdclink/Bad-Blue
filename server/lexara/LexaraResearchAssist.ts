@@ -1,6 +1,6 @@
 import { AICollaborationOrchestrator } from '../aiCollaborationOrchestrator';
 import { getConfiguredHarmonyProviders } from '../aiHarmonyModelRegistry';
-import { UsageContext } from '../aiTokenGovernor';
+import { AIProvider, UsageContext } from '../aiTokenGovernor';
 import { TaskComplexity, TaskPriority } from '../aiModelSelector';
 
 export interface LexaraResearchPlan {
@@ -17,9 +17,9 @@ function queriesFromAnswer(answer: string, original: string): string[] {
 }
 
 /**
- * Fallback-only query planning. Claude leads/synthesizes while Gemini and xAI
- * contribute redundant independent approaches. Suggested queries are never
- * evidence; the Lexara search mesh must still retrieve and verify sources.
+ * Fallback-only query planning. Claude alone may suggest alternate searches;
+ * scarce Gemini/xAI inference is reserved for material user-answer support.
+ * Suggested queries are never evidence; the search mesh still verifies sources.
  */
 export async function planLexaraResearchQueries(
   query: string,
@@ -30,7 +30,8 @@ export async function planLexaraResearchQueries(
     signal?: AbortSignal;
   } = {},
 ): Promise<LexaraResearchPlan> {
-  const providers=getConfiguredHarmonyProviders('legalwhat');
+  const providers=getConfiguredHarmonyProviders('legalwhat')
+    .filter(provider => provider === AIProvider.CLAUDE);
   if(!providers.length || context.signal?.aborted) return {queries:[],providers:[]};
   const prompt=[
     'Generate up to four distinct, short public-record/search queries for this unresolved research objective.',
@@ -59,8 +60,8 @@ export async function planLexaraResearchQueries(
       providers,
       {
         providerPolicy:'legalwhat',
-        maxParticipants:3,
-        maxFallbacks:2,
+        maxParticipants:1,
+        maxFallbacks:0,
         requestTimeoutMs:9_000,
         signal:context.signal,
       },
