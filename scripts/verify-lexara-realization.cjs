@@ -974,7 +974,7 @@ must(
   !lexaraConversationOrchestrator.includes("from './LexaraBackgroundResearchBoundary'") &&
     !lexaraConversationOrchestrator.includes("from './LexaraPantheonInvestigation'") &&
     lexaraConversationOrchestrator.includes('const backgroundResearchRequested = false') &&
-    lexaraConversationOrchestrator.includes('(sequencePlan.useLegalResearch || researchDecision.needed)'),
+    lexaraConversationOrchestrator.includes('const researchRouteSelected = sequencePlan.useLegalResearch || researchDecision.needed'),
   'Lexara user research is disconnected from Pantheon and routed through Lexara legal reasoning',
 );
 must(
@@ -1109,7 +1109,7 @@ must(
 must(
   lexaraConversationOrchestrator.includes('planLexaraSequence(cleanPrompt, previousUserTurns)') &&
     lexaraConversationOrchestrator.includes('const backgroundResearchRequested = false') &&
-    lexaraConversationOrchestrator.includes('(sequencePlan.useLegalResearch || researchDecision.needed)'),
+    lexaraConversationOrchestrator.includes('const researchRouteSelected = sequencePlan.useLegalResearch || researchDecision.needed'),
   'all research-selected Lexara turns remain on the Lexara legal-reasoning path',
 );
 
