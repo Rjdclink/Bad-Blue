@@ -1907,7 +1907,6 @@ export class AICollaborationOrchestrator {
   }
 
   private static getLegalTaskModel(provider: AIProvider, attrs: TaskAttributes): string {
-    const fast = !!attrs.needsFastResponse;
     const deepClaude = attrs.allowClaudeOpus === true
       && (attrs.claudeWorkload === 'deep-legal' || attrs.claudeWorkload === 'document-drafting');
     switch (provider) {
