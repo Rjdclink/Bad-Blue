@@ -90,6 +90,7 @@ export async function callClaude(
     
     const model = options.model || CURRENT_AI_MODELS.claudeBalanced;
     const samplingControlsDeprecated = /claude-(?:opus|sonnet|haiku)-5|claude-opus-4-(?:7|8|9)/i.test(model);
+    const effectiveEffort = /^claude-haiku-/i.test(model) ? undefined : options.effort;
     const systemText = systemPrompt + jsonInstruction;
     // Claude 5.5 can cache prompts at 512+ tokens. Restrict caching to large,
     // repeated LegalWhat system directives so one-off short prompts do not pay
@@ -102,7 +103,7 @@ export async function callClaude(
         ...(!samplingControlsDeprecated && options.temperature !== undefined
           ? { temperature: options.temperature }
           : {}),
-        ...(options.effort ? { output_config: { effort: options.effort } } : {}),
+        ...(effectiveEffort ? { output_config: { effort: effectiveEffort } } : {}),
         system: cacheSystemPrompt
           ? [{ type: 'text', text: systemText, cache_control: { type: 'ephemeral' } }]
           : systemText,
@@ -174,7 +175,7 @@ export async function callClaude(
       ) / 1_000_000;
       console.info('[Claude Usage]', {
         model,
-        effort: options.effort || 'provider-default',
+        effort: effectiveEffort || 'provider-default',
         inputTokens,
         outputTokens,
         cacheReadInputTokens,
@@ -217,6 +218,7 @@ export async function callClaudeStreaming(
     : '';
   const model = options.model || CURRENT_AI_MODELS.claudeBalanced;
   const samplingControlsDeprecated = /claude-(?:opus|sonnet|haiku)-5|claude-opus-4-(?:7|8|9)/i.test(model);
+  const effectiveEffort = /^claude-haiku-/i.test(model) ? undefined : options.effort;
   const systemText = systemPrompt + jsonInstruction;
   const cacheSystemPrompt = options.cacheSystemPrompt === true && systemText.length >= 2_048;
   let speechBuffer = '';
@@ -228,7 +230,7 @@ export async function callClaudeStreaming(
       ...(!samplingControlsDeprecated && options.temperature !== undefined
         ? { temperature: options.temperature }
         : {}),
-      ...(options.effort ? { output_config: { effort: options.effort } } : {}),
+      ...(effectiveEffort ? { output_config: { effort: effectiveEffort } } : {}),
       system: cacheSystemPrompt
         ? [{ type: 'text', text: systemText, cache_control: { type: 'ephemeral' } }]
         : systemText,
@@ -283,7 +285,7 @@ export async function callClaudeStreaming(
 
     console.info('[Claude Streaming]', {
       model,
-      effort: options.effort || 'provider-default',
+      effort: effectiveEffort || 'provider-default',
       inputTokens,
       outputTokens,
       cacheReadInputTokens,
