@@ -53,6 +53,10 @@ for (const token of ['MAX_RECURSIVE_PASSES = 30','TARGETS_PER_PASS = 10','TOTAL_
 if (!orchestrator.includes('const researchRouteSelected = sequencePlan.useLegalResearch || researchDecision.needed')) {
   throw new Error('Factual/research turns are not handed to the single Lexara research route');
 }
+if (!orchestrator.includes('backgroundResearchRequested\n      ? backgroundInvestigationPromise')
+  || orchestrator.includes('Mixed-turn background-research budget reached')) {
+  throw new Error('Lexara factual/mixed background research can still be cut off by an outer mixed-turn deadline');
+}
 if (!authority.includes('discoverLegalMeshTier3') || !authority.includes('enrichAuthoritySourcesWithLexaraRetrieval')) {
   throw new Error('Lexara legal discovery/retrieval sequence missing');
 }
