@@ -67,6 +67,7 @@ interface AssessedEvidence {
   confidence: number;
   directlyAnswers: boolean;
   inferentiallySupports: boolean;
+  identityConfidence: number;
 }
 
 const MAX_RECURSIVE_PASSES = 30;
@@ -75,6 +76,7 @@ const TARGETS_PER_PASS = 10;
 const TOTAL_RESEARCH_BUDGET_MS = 10 * 60_000;
 const PARTIAL_EVIDENCE_THRESHOLD = 0.52;
 const SUFFICIENT_EVIDENCE_THRESHOLD = 0.80;
+const MIN_IDENTITY_CONFIDENCE = 0.62;
 
 const PROMPT_CATEGORY_RULES: Array<[RegExp, LexaraSourceCategory[]]> = [
   [/\b(?:photo|picture|image|portrait|headshot)\b/i, ['public-images','social-online','news-history']],
@@ -159,10 +161,13 @@ function normalize(value: string): string {
 }
 
 function locationMatchConfidence(content: string, location?: string): number {
-  const normalizedLocation = normalize(location || '');
+  const rawLocation = String(location || '').trim();
+  const normalizedLocation = normalize(rawLocation);
   if (!normalizedLocation) return 0;
   const normalizedContent = normalize(content);
   if (normalizedContent.includes(normalizedLocation)) return 1;
+  const locality = normalize(rawLocation.split(',')[0] || '');
+  if (locality && normalizedContent.includes(locality)) return 0.90;
   const tokens = normalizedLocation.split(' ').filter(token => token.length > 2);
   if (!tokens.length) return 0;
   const matched = tokens.filter(token => normalizedContent.includes(token)).length;
@@ -175,18 +180,25 @@ function subjectConfidence(content: string, subject: LexaraBackgroundSubject): n
   if (!normalizedName) return 0;
 
   const tokens = normalizedName.split(' ').filter(token => token.length > 1);
+  const locationConfidence = locationMatchConfidence(content, subject.location);
   let nameConfidence = 0;
-  if (normalizedContent.includes(normalizedName)) nameConfidence = 0.72;
-  else if (tokens.length < 2) nameConfidence = normalizedContent.includes(tokens[0] || '') ? 0.48 : 0;
-  else {
+  if (normalizedContent.includes(normalizedName)) {
+    if (subject.location && locationConfidence < 0.85 && tokens.length < 3) return 0;
+    nameConfidence = subject.location && locationConfidence < 0.85 ? 0.62 : 0.72;
+  } else if (tokens.length < 2) {
+    nameConfidence = normalizedContent.includes(tokens[0] || '') && (!subject.location || locationConfidence >= 0.85) ? 0.48 : 0;
+  } else {
     const first = tokens[0];
     const last = tokens[tokens.length - 1];
     if (normalizedContent.includes(first) && normalizedContent.includes(last)) {
-      nameConfidence = tokens.every(token => normalizedContent.includes(token)) ? 0.66 : 0.56;
+      if (tokens.every(token => normalizedContent.includes(token))) {
+        nameConfidence = subject.location && locationConfidence < 0.85 ? 0.62 : 0.66;
+      } else if (locationConfidence >= 0.85) {
+        nameConfidence = 0.64;
+      }
     }
   }
   if (!nameConfidence) return 0;
-  const locationConfidence = locationMatchConfidence(content, subject.location);
   return Math.min(1, nameConfidence + locationConfidence * 0.18);
 }
 
@@ -239,7 +251,7 @@ function assessEvidence(
 ): AssessedEvidence | null {
   if (!content.trim()) return null;
   const identity = subjectConfidence(content, subject);
-  if (identity <= 0) return null;
+  if (identity < MIN_IDENTITY_CONFIDENCE) return null;
   const pattern = factPattern(decision, prompt);
   const relevantWindow = subjectRelevantWindow(content, subject);
   const directlyAnswers = pattern.test(relevantWindow);
@@ -255,6 +267,7 @@ function assessEvidence(
     confidence,
     directlyAnswers,
     inferentiallySupports,
+    identityConfidence: identity,
   };
 }
 
