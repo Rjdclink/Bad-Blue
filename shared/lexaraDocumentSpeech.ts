@@ -5,6 +5,6 @@ export function lexaraDocumentSpeech(answer: string, documentTurn: boolean): str
   const looksLikeInstrument = /\[[A-Z][A-Z0-9 _/.-]{2,}\]|^(?:#{1,3}\s*)?(?:DEMAND LETTER|IN THE .*COURT|Dear\s|To:\s|RE:\s)/m.test(body)
     || body.length > 1200;
   return looksLikeInstrument
-    ? 'The document text is on screen. You can choose PDF or DOCX to prepare a download.'
+    ? 'I have enough information to prepare your document. Choose PDF or DOCX to generate it.'
     : body;
 }
