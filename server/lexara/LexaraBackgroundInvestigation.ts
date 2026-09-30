@@ -416,7 +416,6 @@ export async function investigateLexaraBackgroundQuestion(
             pass: recursionPasses,
             confidence: evaluation.confidence,
             sourceUrl: evaluation.url,
-            evidence: evaluation.excerpt,
           });
         }
       }
