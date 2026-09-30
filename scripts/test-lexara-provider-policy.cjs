@@ -208,7 +208,7 @@ test('Claude is primary for fast legal conversation', async () => {
 });
 test('legal models use the scoped Claude, Gemini and xAI IDs', () => {
   const h = harness(keys);
-  for (const [provider, model] of [['claude','claude-sonnet-5-5'], ['gemini','gemini-3.8-flash'], ['xai','grok-4.7']]) {
+  for (const [provider, model] of [['claude','claude-haiku-4-5-20251001'], ['gemini','gemini-3.8-flash'], ['xai','grok-4.7']]) {
     assert.equal(h.engine.getLegalTaskModel(provider, h.attributes), model);
     assert.equal(h.engine.getLegalTaskModel(provider, {...h.attributes, needsFastResponse:true}), model);
   }
@@ -544,14 +544,14 @@ test('Claude alone remains a working legal primary', async () => {
   assert.equal(result.finalAnswer,'Supported fixture answer');
   assert.equal(h.calls[0].transport,'claude');
 });
-test('trial or unentitled exceptional review remains on Sonnet 5.5', async () => {
+test('trial or unentitled exceptional review stays on Haiku 4.5', async () => {
   const h = harness(['ANTHROPIC_API_KEY']);
   const result = await h.engine.orchestrateCollaboration('exception-review', 'Review disputed reasoning',
     h.attributes, ['claude'], { providerPolicy: 'legalwhat', legalReviewReason: 'difficult-review',
       maxParticipants: 1, maxFallbacks: 0 });
   assert(result.contributions.some(x => x.success));
-  assert.equal(h.calls[0].model, 'claude-sonnet-5-5');
-  assert.equal(h.calls[0].effort, 'high');
+  assert.equal(h.calls[0].model, 'claude-haiku-4-5-20251001');
+  assert.equal(h.calls[0].effort, undefined);
 });
 test('paid complex legal review escalates to Opus 5.5 at max effort', async () => {
   const h = harness(['ANTHROPIC_API_KEY']);
@@ -571,13 +571,13 @@ test('paid legal document drafting uses Opus 5.5 at max effort', async () => {
   assert.equal(h.calls[0].model, 'claude-opus-5-5');
   assert.equal(h.calls[0].effort, 'max');
 });
-test('trial legal document drafting can never reach Opus', async () => {
+test('trial legal document drafting stays on Haiku and can never reach Sonnet or Opus', async () => {
   const h = harness(['ANTHROPIC_API_KEY']);
   await h.engine.orchestrateCollaboration('document-drafting', 'Draft the supplied facts',
     h.attributes, ['claude'], { providerPolicy: 'legalwhat', claudeWorkload: 'document-drafting',
       maxParticipants: 1, maxFallbacks: 0 });
-  assert.equal(h.calls[0].model, 'claude-sonnet-5-5');
-  assert.equal(h.calls[0].effort, 'high');
+  assert.equal(h.calls[0].model, 'claude-haiku-4-5-20251001');
+  assert.equal(h.calls[0].effort, undefined);
 });
 test('paid deep drafting spends Anthropic once and finishes through Opus', async () => {
   const h = harness(['ANTHROPIC_API_KEY','GEMINI_API_KEY','XAI_API_KEY'], {
@@ -761,9 +761,13 @@ test('Claude failure cannot escape through removed providers or gateway recovery
   assert.deepEqual(h.calls.map(call => call.transport), ['claude']);
 });
 
-test('Claude-only legal model selection preserves Sonnet and paid Opus', () => {
+test('Claude-only legal model selection enforces trial Haiku, paid Sonnet, and paid deep Opus', () => {
   const h = harness(['ANTHROPIC_API_KEY']);
-  assert.equal(h.engine.getLegalTaskModel('claude', h.attributes), 'claude-sonnet-5-5');
+  assert.equal(h.engine.getLegalTaskModel('claude', h.attributes), 'claude-haiku-4-5-20251001');
+  assert.equal(
+    h.engine.getLegalTaskModel('claude', { ...h.attributes, allowClaudeOpus: true, claudeWorkload: 'standard' }),
+    'claude-sonnet-5-5',
+  );
   assert.equal(
     h.engine.getLegalTaskModel('claude', { ...h.attributes, allowClaudeOpus: true, claudeWorkload: 'deep-legal' }),
     'claude-opus-5-5',
