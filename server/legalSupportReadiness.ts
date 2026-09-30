@@ -1,34 +1,29 @@
-import { AIProvider, UsageContext } from './aiTokenGovernor';
-import { TaskComplexity, TaskPriority } from './aiModelSelector';
+import { AIProvider } from './aiTokenGovernor';
 import { getConfiguredHarmonyProviders } from './aiHarmonyModelRegistry';
-import { AICollaborationOrchestrator } from './aiCollaborationOrchestrator';
+import { getHarmonyWarmStatus } from './aiHarmonyWarmup';
 
 let started = false;
-/** One small synthetic request per legal support route per process, never user facts. */
+
+/**
+ * Non-inference support readiness snapshot.
+ * Startup must never spend a metered Claude, Gemini, or xAI inference call.
+ */
 export async function verifyLegalSupportReadiness(): Promise<void> {
   if (started) return;
   started = true;
-  const configured = getConfiguredHarmonyProviders('legalwhat');
-  // Verify the two independent assistants through actual inference; a model
-  // catalog alone cannot establish project permission.
+
+  const configured = new Set(getConfiguredHarmonyProviders('legalwhat'));
+  const warm = new Map(getHarmonyWarmStatus().map(status => [status.provider, status]));
+
   for (const provider of [AIProvider.GEMINI, AIProvider.XAI]) {
-    if (!configured.includes(provider)) continue;
-    try {
-      const result = await AICollaborationOrchestrator.orchestrateCollaboration(
-        'legal-support-readiness', 'Reply with the single word READY.',
-        { context: UsageContext.USER, complexity: TaskComplexity.LIGHTWEIGHT,
-          priority: TaskPriority.HIGH, needsFastResponse: true, estimatedTokens: 100 },
-        [provider], { providerPolicy: 'legalwhat', maxParticipants: 1,
-          maxFallbacks: 0, requestTimeoutMs: 15000 },
-      );
-      const successful = result.contributions.find(item => item.provider === provider && item.success && item.content.trim());
-      console.info('[LEXARA SupportReadiness]', {
-        provider, model: successful?.model, inferenceVerified: Boolean(successful),
-        reason: successful ? undefined : 'No successful inference; inspect provider route failure',
-      });
-    } catch (error) {
-      console.warn('[LEXARA SupportReadiness]', { provider, inferenceVerified: false,
-        reason: error instanceof Error ? error.message : 'Readiness failed' });
-    }
+    if (!configured.has(provider)) continue;
+    const status = warm.get(provider);
+    console.info('[LEXARA SupportReadiness]', {
+      provider,
+      model: status?.model,
+      inferenceVerified: false,
+      catalogState: status?.state || 'unknown',
+      reason: 'Startup is catalog-only; inference is reserved for real user work',
+    });
   }
 }

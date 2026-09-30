@@ -29,6 +29,7 @@ import {
   getHarmonyWarmState,
   isHarmonyProviderWarmHealthy,
   markHarmonyProviderWarmSuccess,
+  prewarmHarmonyProviders,
 } from './aiHarmonyWarmup';
 
 /**
@@ -317,7 +318,9 @@ async function callOpenAICompatibleHarmonyProvider(
         signal: controller.signal,
       });
       if (response.ok) break;
-      if (![429, 500, 502, 503, 504].includes(response.status) || retry === 2) {
+      // Do not retry rate/quota exhaustion. Surface 429 immediately so
+      // admission can exclude the route and continue with another provider.
+      if (![500, 502, 503, 504].includes(response.status) || retry === 2) {
         throw Object.assign(new Error(`${provider} HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`),
           { status: response.status, headers: response.headers });
       }
@@ -495,24 +498,23 @@ export class AICollaborationOrchestrator {
       .map(provider => options.providerPolicy === 'legalwhat' && provider === AIProvider.GPT_OSS
         ? getDirectGptOssProvider()!
         : provider)));
-    if (options.providerPolicy === 'legalwhat') await refreshLegalProviderAdmission(eligibleProviders);
+    if (options.providerPolicy === 'legalwhat') {
+      // Resolve unknown startup state only through non-inference model catalogs.
+      // A real user request must never double as a provider health probe.
+      if (eligibleProviders.some(provider => getHarmonyWarmState(provider) === 'unknown')) {
+        await prewarmHarmonyProviders().catch(() => undefined);
+      }
+      await refreshLegalProviderAdmission(eligibleProviders);
+    }
     const admission = (provider: AIProvider) => options.providerPolicy !== 'legalwhat'
       || canUseLegalProvider(provider, this.getLegalTaskModel(provider, attributes));
     const healthyProviders = eligibleProviders.filter(provider => admission(provider) && harmonyProviderAvailable(provider));
-    // A degraded startup probe may be retried, but an active runtime circuit
-    // must never be overridden by legal recovery (billing, quota, or timeout).
-    const recoveryProviders = options.providerPolicy === 'legalwhat'
-      ? eligibleProviders.filter(provider => admission(provider) && !harmonyProviderCoolingDown(provider))
-      : eligibleProviders;
-    const initialCandidateProviders = healthyProviders.length > 0 ? healthyProviders : recoveryProviders;
+    const initialCandidateProviders = options.providerPolicy === 'legalwhat'
+      ? healthyProviders
+      : (healthyProviders.length > 0 ? healthyProviders : eligibleProviders);
 
     if (initialCandidateProviders.length === 0) {
       throw new Error(`No providers available for ${context} context`);
-    }
-    if (healthyProviders.length === 0 && eligibleProviders.length > 0) {
-      console.warn('[HARMONY] All configured routes were cooling; entering bounded recovery mode', {
-        configured: eligibleProviders.length,
-      });
     }
 
     // Harmony is a capability pool, not a fan-out mandate. Select the smallest
@@ -547,7 +549,8 @@ export class AICollaborationOrchestrator {
     const deadlineAt = options.providerPolicy === 'legalwhat'
       ? Date.now() + 2 * legalAttemptTimeoutMs : undefined;
     const failedProviders = options.providerPolicy === 'legalwhat' ? new Set<AIProvider>() : undefined;
-    const reserveProviders = eligibleProviders.filter(provider => admission(provider) && !providers.includes(provider));
+    const reserveProviders = (options.providerPolicy === 'legalwhat' ? healthyProviders : eligibleProviders)
+      .filter(provider => admission(provider) && !providers.includes(provider));
     const tasks = this.buildCollaborationTasks(
       taskName,
       query,
@@ -575,7 +578,7 @@ export class AICollaborationOrchestrator {
           : task.requestTimeoutMs || task.timeout || options.requestTimeoutMs,
         maxFallbacks: options.maxFallbacks ?? (options.providerPolicy === 'legalwhat' ? 2 : task.maxFallbacks),
         signal: options.signal,
-        allowCoolingRecovery: healthyProviders.length === 0,
+        allowCoolingRecovery: options.providerPolicy === 'legalwhat' ? false : healthyProviders.length === 0,
         failedProviders,
         fallbackProviders: [
           ...rotatedReserve,
@@ -615,7 +618,7 @@ export class AICollaborationOrchestrator {
         deadlineAt,
         role: 'harmony-synthesizer',
         providerPolicy: options.providerPolicy,
-        allowCoolingRecovery: healthyProviders.length === 0,
+        allowCoolingRecovery: options.providerPolicy === 'legalwhat' ? false : healthyProviders.length === 0,
         failedProviders,
         signal: options.signal,
         prompt: attributes.needsStructuredOutput
@@ -1735,7 +1738,10 @@ export class AICollaborationOrchestrator {
       );
       const healthyAlternatives = allAlternatives.filter(harmonyProviderAvailable);
       const coolingAlternatives = allAlternatives.filter(provider => !harmonyProviderAvailable(provider));
-      const alternatives = [...healthyAlternatives, ...coolingAlternatives].filter(provider =>
+      const alternatives = (task.providerPolicy === 'legalwhat'
+        ? healthyAlternatives
+        : [...healthyAlternatives, ...coolingAlternatives]
+      ).filter(provider =>
         task.providerPolicy !== 'legalwhat'
         || (!harmonyProviderCoolingDown(provider) && !task.failedProviders?.has(provider)),
       );
@@ -1873,10 +1879,10 @@ export class AICollaborationOrchestrator {
     providers: AIProvider[],
     explicitMax?: number,
   ): AIProvider[] {
-    // A single transport cannot count twice as redundancy. Claude Opus is
-    // available after Sonnet fails but does not become a parallel hedge.
-    // LegalWhat uses Claude as the lead/final safety net while Gemini and xAI
-    // participate as independent redundant peers whenever healthy.
+    // Claude is the normal legal lead. Gemini/xAI are scarce support capacity:
+    // use at most one when the task materially needs verification, research,
+    // multimodal help, or deep/document work. If Claude is unavailable, one
+    // healthy support provider may carry the user task rather than fail the turn.
     const priority = [AIProvider.CLAUDE, AIProvider.GEMINI, AIProvider.XAI];
     const ranked = providers.slice().sort((a, b) => {
       const fit = (provider: AIProvider) => {
@@ -1888,16 +1894,24 @@ export class AICollaborationOrchestrator {
       };
       return fit(b) - fit(a);
     });
-    const selected: AIProvider[] = [];
-    const domains = new Set<string>();
-    for (const provider of ranked) {
-      const domain = harmonyTransportDomain(provider);
-      if (domains.has(domain)) continue;
-      selected.push(provider);
-      domains.add(domain);
-      if (selected.length >= Math.min(explicitMax || 3, 3)) break;
-    }
-    return selected;
+
+    const max = Math.max(1, Math.min(explicitMax || 2, 2));
+    const claude = ranked.find(provider => provider === AIProvider.CLAUDE);
+    if (!claude) return ranked.slice(0, 1);
+
+    const supportNeeded = attrs.needsVerification === true
+      || attrs.needsMultimodal === true
+      || attrs.needsImageAnalysis === true
+      || attrs.claudeWorkload === 'deep-legal'
+      || attrs.claudeWorkload === 'document-drafting';
+
+    if (!supportNeeded || max === 1) return [claude];
+
+    const support = ranked.find(provider =>
+      provider !== AIProvider.CLAUDE
+      && harmonyTransportDomain(provider) !== harmonyTransportDomain(claude)
+    );
+    return support ? [claude, support] : [claude];
   }
 
   private static getClaudeEffort(task: CollaborationTask): 'high' | 'max' {

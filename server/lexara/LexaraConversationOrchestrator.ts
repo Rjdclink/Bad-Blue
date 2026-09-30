@@ -719,10 +719,16 @@ export async function generateLexaraConversationResponse(
     + researchStatusPrompt
     + formatLexaraBackgroundResearchForSystem(backgroundInvestigation);
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
+  const explicitCrossCheck = /\b(?:verify|double[- ]check|cross[- ]check|second opinion|confirm|conflicting|contradict(?:ion|ory)?)\b/i.test(cleanPrompt);
+  const scarceSupportNeeded = deepClaudeNeeded
+    || explicitCrossCheck
+    || mixedLegalFactNeed
+    || Boolean(backgroundResearchRequested && backgroundInvestigation?.coverageLimited)
+    || Boolean(researchDecision.intent === 'legal' && authorityResearch && !authorityResearch.hasPrimaryAuthority);
 
-  // Capability-first Harmony route. No model is globally preferred. The shared
-  // Harmony engine assigns independent legal-analysis, verification, and synthesis
-  // roles according to capability while provider failures remain local.
+  // Claude owns the normal live answer. Gemini/xAI are scarce support capacity
+  // and join only when this real user turn materially needs a cross-check or
+  // deeper independent reasoning. Healthy support remains available as fallback.
   const harmonyProviders = getConfiguredHarmonyProviders('legalwhat');
   let text = '';
   const harmonyStartedAt = Date.now();
@@ -740,7 +746,7 @@ export async function generateLexaraConversationResponse(
           complexity: TaskComplexity.COMPREHENSIVE,
           priority: TaskPriority.CRITICAL,
           needsLegalAnalysis: true,
-          needsVerification: true,
+          needsVerification: scarceSupportNeeded,
           needsReasoning: true,
           needsSearchGrounding: researchDecision.needed,
           needsFastResponse: true,
@@ -752,7 +758,7 @@ export async function generateLexaraConversationResponse(
           systemPrompt,
           allowClaudeOpus: context.allowClaudeOpus === true,
           claudeWorkload,
-          maxParticipants: 3,
+          maxParticipants: scarceSupportNeeded ? 2 : 1,
           requestTimeoutMs: LIVE_REASONING_PROVIDER_ATTEMPT_MS,
           maxFallbacks: LIVE_REASONING_MAX_FALLBACKS,
           signal: context.signal,

@@ -496,7 +496,7 @@ must(
     harmony.includes("return 'legal-fast'") &&
     harmony.includes('withHarmonyDeadline') &&
     harmonyRegistry.includes('HARMONY_17_PARTICIPANTS') &&
-    orchestrator.includes('maxParticipants: 3') &&
+    orchestrator.includes('maxParticipants: scarceSupportNeeded ? 2 : 1') &&
     orchestrator.includes('estimatedTokens: 1_500') &&
     !orchestrator.includes('LIVE_REASONING_DEADLINE_MS') &&
     !orchestrator.includes('harmonyDeadline') &&
@@ -513,7 +513,7 @@ must(
     harmonyWarmup.includes('getHarmonyWarmState') &&
     harmonyWarmup.includes("'catalog'") &&
     groq.includes('warmGroqModelCatalog'),
-  'Lexara keeps Claude primary with Gemini and xAI as redundant legal-reasoning peers while preserving bounded provider recovery',
+  'Lexara keeps Claude primary, uses scarce Gemini/xAI support only when materially needed, and excludes unavailable routes before dispatch',
 );
 must(
   !authorityResearch.includes('openRouterWebSearch') &&
@@ -536,8 +536,7 @@ must(
   'one Lexara-owned semantic planner carries inferred factual intent and follow-up context into research',
 );
 must(
-  lexaraLegalMesh.includes('gemini-google-grounding') &&
-    lexaraLegalMesh.includes('duckduckgo-instant-answer') &&
+  lexaraLegalMesh.includes('duckduckgo-instant-answer') &&
     lexaraLegalMesh.includes('SEARXNG_URL') &&
     lexaraLegalMesh.includes('DDGS_URL') &&
     lexaraLegalMesh.includes('OPENSERP_URL') &&
@@ -566,8 +565,9 @@ must(
     lexaraDiscoveryLearning.includes('rememberLexaraDiscoveryOutcome') &&
     lexaraDiscoveryLearning.includes('getLexaraLearnedQueryPatterns') &&
     lexaraResearchAssist.includes("providerPolicy:'legalwhat'") &&
-    lexaraResearchAssist.includes('maxParticipants:3'),
-  'Lexara owns discovery learning and Claude-led redundant research-query planning',
+    lexaraResearchAssist.includes('maxParticipants:1') &&
+    lexaraResearchAssist.includes('maxFallbacks:0'),
+  'Lexara owns discovery learning while scarce support providers stay out of query planning',
 );
 must(
   authorityResearch.includes('lexaraRetrievalAdapter.retrieve') &&
