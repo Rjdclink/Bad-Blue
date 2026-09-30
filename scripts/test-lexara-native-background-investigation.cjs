@@ -220,7 +220,7 @@ function reset(mode) {
   assert.match(inferredAge.evidenceSummary, /juvenile/i);
   const inferredPrompt = investigator.formatLexaraBackgroundResearchForSystem(inferredAge);
   assert.match(inferredPrompt, /strongest defensible answer/i);
-  assert.match(inferredPrompt, /shortest directly responsive answer/i);
+  assert.match(inferredPrompt, /first sentence must contain only/i);
   assert.match(inferredPrompt, /about.*approximately.*probably.*range/i);
 
   reset('wrong-identity');
