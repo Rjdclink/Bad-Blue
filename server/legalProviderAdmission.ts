@@ -7,6 +7,33 @@
 import type { AIProvider } from './aiTokenGovernor';
 import { changeLegalQuotaState, readLegalQuotaStates, freshLegalQuotaState, type LegalQuotaState } from './legalQuotaStore';
 const MINUTE = 60_000, DAY = 86_400_000;
+
+function pacificParts(at: number) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(at));
+  const read = (type: string) => Number(parts.find(part => part.type === type)?.value || 0);
+  return { year: read('year'), month: read('month'), day: read('day'),
+    hour: read('hour'), minute: read('minute'), second: read('second') };
+}
+
+function pacificOffsetMs(at: number): number {
+  const p = pacificParts(at);
+  const localAsUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+  return localAsUtc - Math.floor(at / 1000) * 1000;
+}
+
+function nextPacificMidnight(at: number): number {
+  const p = pacificParts(at);
+  const targetLocal = Date.UTC(p.year, p.month - 1, p.day + 1, 0, 0, 0);
+  let guess = targetLocal - pacificOffsetMs(at);
+  // Re-evaluate the offset at the target so DST boundaries stay correct.
+  guess = targetLocal - pacificOffsetMs(guess);
+  return Math.max(at + MINUTE, guess);
+}
 const cache = new Map<string, LegalQuotaState>();
 let ledgerUnavailableUntil = 0;
 let sequence = 0;
@@ -121,13 +148,18 @@ export async function noteLegalProviderError(provider: AIProvider, _model: strin
   const message = String(error instanceof Error ? error.message : error).toLowerCase();
   // Local skips and cancellation must never lengthen a remote-provider circuit.
   if (/reserve withheld|cooling down|superseded|abort/.test(message)) return;
-  const duration = /402|payment required|insufficient.credit|insufficient_quota|daily|per.day|0 requests\/minute|limit-req-minute.*0/.test(message) ? DAY
+  const dailyExhausted = /daily|per.day|requestsperday|generate_requests_per_day|generaterequestsperday|0 requests\/minute|limit-req-minute.*0/.test(message);
+  const duration = /402|payment required|insufficient.credit|insufficient_quota/.test(message) ? DAY
+    : dailyExhausted ? DAY
     : /429|rate.limit|quota|resource_exhausted/.test(message) ? 5_000
     : /401|403|unauthoriz|invalid.api.key/.test(message) ? 15 * MINUTE : 0;
   if (!duration) return;
   try {
     await changeLegalQuotaState(domain, (state, now) => {
-      state.blockedUntil = Math.max(state.blockedUntil, now + Math.max(duration, retryAfter(error, now)));
+      const resetAt = dailyExhausted && domain === 'gemini'
+        ? nextPacificMidnight(now)
+        : now + Math.max(duration, retryAfter(error, now));
+      state.blockedUntil = Math.max(state.blockedUntil, resetAt);
       cache.set(domain, state);
     });
   } catch { ledgerUnavailableUntil = Date.now() + 5000; }
