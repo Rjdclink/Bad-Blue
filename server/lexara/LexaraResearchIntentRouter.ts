@@ -90,7 +90,7 @@ function requestedFact(text: string): LexaraRequestedFact {
   if (/\b(?:employ(?:er|ment|ed)|works?\s+(?:at|for)|where\s+(?:does|did)\s+.+\s+work|work history|job|occupation|profession|career)\b/.test(value)) return 'employment';
   if (/\b(?:property|real estate|parcel|deed|assessor|mortgage|owns?\s+(?:a\s+)?(?:house|home|land)|home ownership)\b/.test(value)) return 'property';
   if (/\b(?:court record|court case|docket|case filing|judgment|lawsuit|litigation)\b/.test(value)) return 'court-record';
-  if (/\b(?:inmate|incarcerat|prison|jail|custody|correctional|where is .+ (?:held|locked up))\b/.test(value)) return 'incarceration';
+  if (/\b(?:inmate|incarcerat\w*|prison|jail|custody|correctional|where is .+ (?:held|locked up))\b/.test(value)) return 'incarceration';
   if (/\b(?:business|company|corporation|llc|registered agent|company officer|director|ownership)\b/.test(value)) return 'business';
   if (/\b(?:broker|financial adviser|investment adviser|finra|crd|securities license)\b/.test(value)) return 'financial-professional';
   if (/\b(?:npi|healthcare provider|health care provider|medical provider|practice address)\b/.test(value)) return 'healthcare-professional';
@@ -100,7 +100,7 @@ function requestedFact(text: string): LexaraRequestedFact {
   if (/\b(?:news|newspaper|press|media|historical|archive|former|previously)\b/.test(value)) return 'news-history';
   if (/\b(?:identity|alias|aka|real name|who is)\b/.test(value)) return 'identity';
   if (/\b(?:phone|telephone|email|address|residen(?:ce|t)|where .+ live)\b/.test(value)) return 'contact-address';
-  if (/\b(?:relative|family|parent|mother|father|sibling|brother|sister|associate|household|roommate|lives with)\b/.test(value)) return 'relatives-associates';
+  if (/\b(?:relatives?|family|parent|mother|father|sibling|brother|sister|associate|household|roommate|lives with)\b/.test(value)) return 'relatives-associates';
   if (/\b(?:social media|facebook|instagram|linkedin|tiktok|twitter|x\.com|username|online account|profile)\b/.test(value)) return 'social-online';
   if (/\b(?:education|school|college|university|degree|diploma|graduat|alma mater)\b/.test(value)) return 'education';
   if (/\b(?:vehicle|car|truck|motorcycle|vin|vehicle title|vehicle registration)\b/.test(value)) return 'vehicle';
