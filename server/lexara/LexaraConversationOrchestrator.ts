@@ -521,6 +521,9 @@ export async function generateLexaraConversationResponse(
     .filter(message => message.role === 'user')
     .slice(-8)
     .map(message => message.content || '');
+  const jurisdictionCorrectionOnly = Boolean(inferJurisdiction(cleanPrompt))
+    && !jurisdictionRelevant
+    && (context.previousMessages?.length || 0) > 0;
   const sequencePlan = planLexaraSequence(cleanPrompt, previousUserTurns);
   const deepClaudeNeeded = requiresDeepClaudeForTurn(
     cleanPrompt,
@@ -706,8 +709,12 @@ export async function generateLexaraConversationResponse(
   const researchStatusPrompt = researchRouteSelected && !authorityResearch
     ? '\n\nAPPLICATION RESEARCH STATUS\nLexara attempted the selected external research route for this turn but no independently usable source result was returned within the live research budget. Do not claim that no search was attempted. Do not invent the requested fact; say it could not be verified from the completed search and preserve useful next steps or clarification.'
     : '';
+  const jurisdictionCorrectionPrompt = jurisdictionCorrectionOnly
+    ? '\n\nJURISDICTION CORRECTION TURN\nThe user has supplied or corrected the location for the ongoing matter. Adopt it silently as controlling context. Do not explain jurisdictional background or repeat the correction. Continue directly with the single next necessary question or answer from the existing matter.'
+    : '';
   const systemPrompt = buildLegalSystemPrompt(context, mappedLawType, jurisdiction)
     + silentLocationContext
+    + jurisdictionCorrectionPrompt
     + formatAuthorityResearchForSystem(authorityResearch)
     + researchStatusPrompt
     + formatLexaraBackgroundResearchForSystem(backgroundInvestigation);
