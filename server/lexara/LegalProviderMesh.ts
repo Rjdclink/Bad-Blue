@@ -72,6 +72,24 @@ function sourceFamily(raw: string): string {
   }
 }
 
+function isPreferredOfficialCandidate(item: LegalMeshCandidate, options: LegalMeshSearchOptions): boolean {
+  let host = '';
+  try {
+    host = new URL(item.url).hostname.toLowerCase().replace(/^www\./, '');
+  } catch {
+    return false;
+  }
+  if (host.endsWith('.gov') || host.endsWith('.mil') || host.endsWith('.uscourts.gov')) return true;
+  const preferredHosts = getLexaraPublicSources(options.categories || [], options.jurisdiction).flatMap(source => {
+    try {
+      return [new URL(source.root).hostname.toLowerCase().replace(/^www\./, '')];
+    } catch {
+      return [];
+    }
+  });
+  return preferredHosts.some(preferred => host === preferred || host.endsWith(`.${preferred}`));
+}
+
 function diversify(items: LegalMeshCandidate[], limit = 16): LegalMeshCandidate[] {
   const byUrl = [...new Map(items.map(item => [item.url, item])).values()];
   const ranked = rankLexaraDiscoveryUrls(byUrl.map(item => item.url));
@@ -339,7 +357,11 @@ export async function discoverLegalMeshTier3(
     new Promise<string[]>(resolve=>setTimeout(()=>resolve([]),75)),
   ]);
   const learnedCandidates=learnedSources.map(url=>({url,title:'Previously successful Lexara source',tier:3 as const,provider:'lexara-learned'}));
-  return diversify([...groups.flat(),...learnedCandidates],18);
+  const combined=[...groups.flat(),...learnedCandidates];
+  const preferred=diversify(combined.filter(item=>isPreferredOfficialCandidate(item,options)),8);
+  const preferredUrls=new Set(preferred.map(item=>item.url));
+  const remainder=diversify(combined.filter(item=>!preferredUrls.has(item.url)),18);
+  return [...preferred,...remainder].slice(0,18);
 }
 
 export async function discoverLegalMeshSupplemental(
