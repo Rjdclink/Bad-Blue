@@ -505,6 +505,11 @@ export async function investigatePersonQuestion(
   const structuredCustodyBudgetMs = deepAcquisitionRequested
     ? STRUCTURED_CUSTODY_BUDGET_MS
     : STRUCTURED_CUSTODY_LIVE_BUDGET_MS;
+  // Own the complete live lookup budget from before source discovery begins,
+  // not merely the later crawl loop. This keeps discovery + structured adapters
+  // + recursive retrieval inside one user-facing deadline.
+  const investigationStartedAt = Date.now();
+  const investigationDeadlineAt = investigationStartedAt + investigationBudgetMs;
 
   if (!identityContext) {
     context.onProgress?.({ type: 'endpoint', pass: 0, endpoint: 'clarification-required' });
@@ -548,7 +553,7 @@ export async function investigatePersonQuestion(
       categories,
       jurisdiction: context.jurisdiction,
       limit: 8,
-      timeoutMs: 10_000,
+      timeoutMs: Math.max(500, Math.min(10_000, investigationDeadlineAt - Date.now())),
       signal: context.signal,
       providerPolicy: 'capability-first',
     },
@@ -703,7 +708,7 @@ export async function investigatePersonQuestion(
     const explorationPrimaryQueue = [...new Set(eligiblePrimaryCrawlerIds)].slice(0, 4);
 
     const recursiveStartedAt = Date.now();
-    const globalDeadlineAt = recursiveStartedAt + investigationBudgetMs;
+    const globalDeadlineAt = investigationDeadlineAt;
     const seenTargets = new Set<string>();
     let pendingTargets = targets.slice(0, PERSON_RECURSIVE_MAX_TARGETS_PER_PASS);
     let retrievalAvailable = true;
@@ -737,7 +742,7 @@ export async function investigatePersonQuestion(
       console.info('[LEXARA PantheonRoute]', { stage: 'recursion-pass', pass: recursionPasses, pendingTargets: pendingTargets.length, categories });
       context.onProgress?.({ type: 'searching', pass: recursionPasses });
       if (context.signal?.aborted || !pendingTargets.length) break;
-      if (Date.now() - recursiveStartedAt >= investigationBudgetMs) break;
+      if (Date.now() >= globalDeadlineAt) break;
       // Isolate URLs: one blocked search-provider or challenge page must not
       // discard a different source's successful crawler response in the batch.
       const passTargets = pendingTargets
@@ -746,7 +751,7 @@ export async function investigatePersonQuestion(
       if (!passTargets.length) break;
       passTargets.forEach(url => seenTargets.add(url));
 
-      const remainingMs = Math.max(500, investigationBudgetMs - (Date.now() - recursiveStartedAt));
+      const remainingMs = Math.max(500, globalDeadlineAt - Date.now());
       const retrievalStartedAt = Date.now();
       // The first pass must stay within the interactive acquisition budget;
       // subsequent passes can spend longer exploring alternate capabilities.
@@ -1001,7 +1006,7 @@ export async function investigatePersonQuestion(
           ? 'partial-evidence'
         : searchLeads.length ? 'search-leads-only'
         : !retrievalAvailable || !sourceActuallyFetched ? 'unavailable'
-        : Date.now() - recursiveStartedAt >= investigationBudgetMs
+        : Date.now() >= globalDeadlineAt
           ? 'budget-exhausted'
           : 'sources-exhausted';
     context.onProgress?.({ type: 'endpoint', pass: recursionPasses, confidence: bestConfidence, endpoint });
