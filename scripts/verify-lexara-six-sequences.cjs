@@ -53,9 +53,14 @@ for (const token of ['MAX_RECURSIVE_PASSES = 30','TARGETS_PER_PASS = 10','TOTAL_
 if (!orchestrator.includes('const researchRouteSelected = sequencePlan.useLegalResearch || researchDecision.needed')) {
   throw new Error('Factual/research turns are not handed to the single Lexara research route');
 }
-if (!orchestrator.includes('backgroundResearchRequested\n      ? backgroundInvestigationPromise')
+if (!orchestrator.includes('const backgroundWaitBudgetMs = deepBackgroundRequested')
+  || !orchestrator.includes('? 10 * 60_000')
+  || !orchestrator.includes(': LIVE_BACKGROUND_FACT_BUDGET_MS')
+  || !orchestrator.includes('backgroundResearchRequested\n      ? Promise.race([')
+  || !orchestrator.includes('new Promise<null>(resolve => setTimeout(() => resolve(null), backgroundWaitBudgetMs))')
+  || !orchestrator.includes('backgroundResearchRequested && !backgroundInvestigation && !deepBackgroundRequested')
   || orchestrator.includes('Mixed-turn background-research budget reached')) {
-  throw new Error('Lexara factual/mixed background research can still be cut off by an outer mixed-turn deadline');
+  throw new Error('Lexara factual/mixed background research does not preserve its explicit ordinary/deep live budgets');
 }
 if (!authority.includes('discoverLegalMeshTier3') || !authority.includes('enrichAuthoritySourcesWithLexaraRetrieval')) {
   throw new Error('Lexara legal discovery/retrieval sequence missing');
