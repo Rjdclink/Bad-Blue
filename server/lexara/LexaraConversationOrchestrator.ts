@@ -40,6 +40,7 @@ export interface LexaraConversationContext {
   backgroundLocality?: string;
   backgroundArea?: string;
   backgroundLocationConfidence?: number;
+  backgroundLocationSource?: string;
   behaviorMode?: 'personable' | 'professional';
   sessionId?: string;
   // Server-derived entitlement. Trial/client payloads never set this directly.
@@ -60,6 +61,7 @@ const MAX_HISTORY_MESSAGES = 16;
 const MAX_HISTORY_CHARACTERS = 14000;
 const MAX_PROMPT_CHARACTERS = 7000;
 const LIVE_RESEARCH_BUDGET_MS = 10_000;
+const LIVE_BACKGROUND_FACT_BUDGET_MS = 16_000;
 // Provider attempts stay bounded, but the conversation has no independent master
 // kill-switch. Only the caller may cancel a superseded/disconnected turn.
 const LIVE_REASONING_PROVIDER_ATTEMPT_MS = 15_000;
@@ -302,6 +304,8 @@ function buildLegalSystemPrompt(
 - Never reveal or discuss underlying model names, AI providers, routing, effort settings, subscription-based model access, quotas, credit usage, or internal orchestration. Present yourself only as LEXARA.
 - A subject being a private individual, or the requested fact being personal, is NEVER by itself a reason to refuse person-record research. If background research was invoked for the turn, answer from the application-supplied evidence when evidence exists. If background research found no verified evidence, say only that the requested fact was not verified from the completed sources; never invent a permission-based refusal.
 \n- When grounded retrieval is supplied, answer the user's factual question from that evidence. Do not tell the user to go look up, examine, search, check, or research information that the application has already retrieved or can answer from the supplied evidence.\n- For requests about judges, courts, sentencing patterns, statistics, comparative outcomes, current rules, or other externally verifiable legal facts, use application-supplied research when present and report the actual findings, relevant scope/date, and source attribution. If the evidence is insufficient, say exactly what could not be verified rather than delegating the research to the user.\n\nLEGAL REASONING REQUIREMENTS\n- Separate known facts, user allegations, reasonable inferences, and legal conclusions.\n- Analyze and stress-test the user's position. Identify weaknesses, defenses, missing elements, contradictory facts, procedural problems, evidentiary gaps, and stronger alternative theories when relevant.\n- Do not tunnel on the selected law-book category. Identify adjacent legal domains, federal/state overlap, procedural doctrines, remedies, defenses, and collateral consequences whenever the facts reasonably trigger them.\n- If a missing fact materially changes the legal analysis, ask the single highest-value follow-up question rather than dumping a questionnaire.\n- If an external factual detail cannot be independently verified, state that limitation briefly when material and continue answering every legal issue that can still be resolved without that fact.\n- If jurisdiction is unknown and jurisdiction materially affects the answer, say so and ask for the state or jurisdiction. Do not invent one.
+- If the user corrects or supplies their location/jurisdiction, silently treat that user statement as controlling. Do not explain competing location signals.
+- When a turn only corrects jurisdiction/location for an ongoing matter, adopt it and continue with the single next necessary question. Do not volunteer jurisdictional background unless the user asks or it is necessary to prevent a materially wrong answer.
 - Never name or infer a county from a city, state, model recollection, or nearby geography. A county may be stated only when the user explicitly supplied it or application-supplied evidence verifies it. If county-level jurisdiction matters and is unverified, say the county has not been established.\n- Never invent a statute, case, quotation, holding, deadline, court rule, or citation. If current authority has not been grounded or otherwise verified, say that verification is needed before relying on a specific citation.\n- Do not treat agreement among language models as legal verification. Prefer primary legal authority when verification is available.\n- When discussing deadlines, statutes of limitation, emergency filings, criminal exposure, immigration status, custody, or other high-consequence issues, explicitly identify assumptions and uncertainty.\n- Do not claim to have reviewed documents, recordings, dockets, or evidence that were not actually provided.\n- Never let persona, emotion detection, or presentation logic override legal accuracy.\n\nCONVERSATIONAL PERFORMANCE\n- Respond directly to the specific question, statement, or new fact the user just provided.\n- Put the useful answer in the first sentence. Do not bury it under background or repeat facts the user already gave you.\n- Default to 1-3 concise sentences. Give more detail only when the user explicitly asks for detail or an additional sentence is necessary to prevent a materially misleading answer.
 - Do not volunteer adjacent information, extra options, examples, background, next steps, or offers to do more work unless they are necessary to answer the user's actual request.
 - Never pad an answer with phrases such as "I can also," "if you'd like," "would you like me to," or process narration. Answer and stop.\n- Sound natural when spoken aloud. Avoid headings, tables, long lists, and memorandum-style exposition unless the user asks for structure.\n- Avoid repetitive disclaimers, canned introductions, filler, and unnecessary restatement.
@@ -496,16 +500,21 @@ export async function generateLexaraConversationResponse(
   const jurisdictionRelevant = /\b(?:law|legal|court|case|charge|crime|criminal|civil|lawsuit|sue|claim|statute|deadline|limitation|file|filing|motion|petition|complaint|divorce|custody|probation|parole|warrant|rights?|attorney|judge|jurisdiction|venue|state\s+law|federal)\b/i.test(cleanPrompt);
   const backgroundStateJurisdiction = jurisdictionRelevant
     ? normalizeJurisdiction(context.backgroundJurisdiction) : undefined;
+  const backgroundLocationConfidence = Math.max(0, Math.min(1, Number(context.backgroundLocationConfidence || 0)));
+  const backgroundLocationUsable = Boolean(backgroundStateJurisdiction && backgroundLocationConfidence >= 0.75);
   const explicitLocationCue = hasExplicitLocationCue(cleanPrompt);
-  // User-supplied place language outranks the network estimate. Never constrain
-  // an explicit city/county with a conflicting inferred state.
+  // User-supplied place language always outranks automatic location evidence.
+  // Automatic location is only promoted to working jurisdiction when confidence
+  // is strong enough; weaker estimates remain silent context for clarification.
   const stateJurisdiction = explicitStateJurisdiction
-    || (!explicitLocationCue ? backgroundStateJurisdiction : undefined);
+    || (!explicitLocationCue && backgroundLocationUsable ? backgroundStateJurisdiction : undefined);
   const resolvedJurisdiction = await resolveUSJurisdiction(cleanPrompt, stateJurisdiction);
   const jurisdiction = resolvedJurisdiction?.display || stateJurisdiction;
-  // Network-derived jurisdiction is silent context. Only user/conversation-derived
-  // jurisdiction is returned to the client for display/persistence.
-  const publicJurisdiction = explicitStateJurisdiction || (explicitLocationCue ? resolvedJurisdiction?.display : undefined);
+  // High-confidence device/network fusion may seed the matter, but any later
+  // user-stated location overrides it through inferJurisdiction above.
+  const publicJurisdiction = explicitStateJurisdiction
+    || (explicitLocationCue ? resolvedJurisdiction?.display : undefined)
+    || (backgroundLocationUsable ? stateJurisdiction : undefined);
   const domainName = trustedDomainName(context.lawType);
   const domainProfile = getLexaraLegalDomainProfile(context.lawType);
   const previousUserTurns = (context.previousMessages || [])
@@ -645,22 +654,28 @@ export async function generateLexaraConversationResponse(
         signal: researchController.signal,
       }).catch(() => null)
     : Promise.resolve(null);
+  const deepBackgroundRequested = /\b(?:deep|thorough|recursive|broaden|look harder)\b/i.test(cleanPrompt);
+  const backgroundWaitBudgetMs = deepBackgroundRequested
+    ? 10 * 60_000
+    : LIVE_BACKGROUND_FACT_BUDGET_MS;
   const [authorityResearch, backgroundInvestigation] = await Promise.all([
     Promise.race([
       authorityResearchPromise,
       new Promise<null>(resolve => setTimeout(() => resolve(null), LIVE_RESEARCH_BUDGET_MS)),
     ]),
-    // External/person-fact research is Lexara's background-research job: wait for its bounded,
-    // progressively reporting investigation instead of dropping it after the
-    // ordinary 2.4s legal-authority latency budget. Non-research conversation
-    // keeps the existing fast budget.
     backgroundResearchRequested
-      ? backgroundInvestigationPromise
+      ? Promise.race([
+          backgroundInvestigationPromise,
+          new Promise<null>(resolve => setTimeout(() => resolve(null), backgroundWaitBudgetMs)),
+        ])
       : Promise.race([
           backgroundInvestigationPromise,
           new Promise<null>(resolve => setTimeout(() => resolve(null), LIVE_RESEARCH_BUDGET_MS)),
         ]),
   ]);
+  if (backgroundResearchRequested && !backgroundInvestigation && !deepBackgroundRequested) {
+    backgroundController.abort(new Error('lexara_live_background_budget_exhausted'));
+  }
   context.signal?.removeEventListener('abort', relayBackgroundAbort);
   if (!authorityResearch) researchController.abort();
   context.signal?.removeEventListener('abort', relayResearchAbort);
@@ -681,12 +696,12 @@ export async function generateLexaraConversationResponse(
     });
   }
 
-  const silentLocationContext = jurisdictionRelevant && !explicitStateJurisdiction && !resolvedJurisdiction?.locality && backgroundStateJurisdiction
-    ? `\n\nINTERNAL LOCATION CONTEXT (do not volunteer or announce): Network-derived jurisdiction estimate: ${[
+  const silentLocationContext = jurisdictionRelevant && !explicitStateJurisdiction && backgroundStateJurisdiction
+    ? `\n\nINTERNAL LOCATION CONTEXT (never announce the detection method or compare it with the user): Automatic location estimate: ${[
         context.backgroundLocality,
         context.backgroundArea && context.backgroundArea !== context.backgroundLocality ? context.backgroundArea : undefined,
         backgroundStateJurisdiction,
-      ].filter(Boolean).join(', ')}. Treat city/area as approximate network geography, not GPS-level certainty. Use only when location/jurisdiction is relevant to the current legal issue; if it materially affects the answer and conflicts with stronger user-supplied facts, prefer the user-supplied facts or ask a brief clarification.`
+      ].filter(Boolean).join(', ')}. Confidence: ${Math.round(backgroundLocationConfidence * 100)}%. Source class: ${context.backgroundLocationSource || 'automatic-location'}. If confidence is below 75% and jurisdiction materially changes the legal answer, ask only for the needed state/jurisdiction. If the user states a location, that statement controls immediately.`
     : '';
   const researchStatusPrompt = researchRouteSelected && !authorityResearch
     ? '\n\nAPPLICATION RESEARCH STATUS\nLexara attempted the selected external research route for this turn but no independently usable source result was returned within the live research budget. Do not claim that no search was attempted. Do not invent the requested fact; say it could not be verified from the completed search and preserve useful next steps or clarification.'
@@ -867,6 +882,14 @@ export async function generateLexaraConversationResponse(
     researchObjectiveKind: researchDecision.objectiveKind,
     researchIntent: researchDecision.intent,
     requestedFact: researchDecision.requestedFact,
+    derivedFact: researchDecision.requestedFact === 'age-dob'
+      ? (() => {
+          const range = /\b(\d{1,3})\s*(?:-|–|—|to)\s*(\d{1,3})\s*(?:years?\s+old)?\b/i.exec(text);
+          if (range) return `age ${range[1]}-${range[2]}`;
+          const age = /\b(?:age(?:d)?\s*)?(\d{1,3})\s*(?:years?\s+old)\b/i.exec(text);
+          return age ? `age ${age[1]}` : null;
+        })()
+      : null,
     researchSubject: researchDecision.subject || null,
     researchLanes: authorityResearch?.selectedCrawlers || [],
     researchSourceCount: authorityResearch?.sources?.length || 0,
