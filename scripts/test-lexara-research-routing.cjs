@@ -90,6 +90,11 @@ function harness(options = {}) {
       if (spec === 'node:async_hooks') return require('node:async_hooks');
       if (spec === 'node:crypto') return require('node:crypto');
       if (spec === 'node:child_process') return require('node:child_process');
+      if (spec === 'node:fs/promises') return require('node:fs/promises');
+      if (spec === 'node:os') return require('node:os');
+      if (spec === 'node:path') return require('node:path');
+      if (spec === 'node:util') return require('node:util');
+      if (spec === 'node:zlib') return require('node:zlib');
       assert(spec.startsWith('.'), 'unexpected dependency: ' + spec);
       let next = path.relative(root, path.resolve(path.dirname(filename), spec));
       if (!next.endsWith('.ts')) next += '.ts';
