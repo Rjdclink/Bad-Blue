@@ -71,6 +71,13 @@ export interface RepresentationMatterState {
   stage: RepresentationStage;
   courtOrAgency?: string;
   packet?: RepresentationPacket;
+  knownFacts: string[];
+  legalIssues: string[];
+  defensesAndRisks: string[];
+  missingInformation: string[];
+  evidenceNeeds: string[];
+  parties: string[];
+  historySummary?: string;
   artifacts: RepresentationArtifact[];
   deadlines: Array<{
     label: string;
@@ -121,6 +128,21 @@ const PACKET_SIGNAL =
 function clamp(value: unknown, max = 400): string {
   const text = typeof value === 'string' ? value.trim() : '';
   return text.length <= max ? text : text.slice(0, max);
+}
+
+function mergeUnique(existing: string[] = [], incoming: unknown, max = 40, maxLength = 500): string[] {
+  const values = Array.isArray(incoming) ? incoming : [];
+  const seen = new Set<string>();
+  const merged: string[] = [];
+  for (const value of [...existing, ...values]) {
+    const text = clamp(value, maxLength);
+    const key = text.toLowerCase();
+    if (!text || seen.has(key)) continue;
+    seen.add(key);
+    merged.push(text);
+    if (merged.length >= max) break;
+  }
+  return merged;
 }
 
 function safeJsonObject(value: string): Record<string, any> | null {
@@ -423,6 +445,13 @@ export function sanitizeRepresentationMatter(value: unknown): RepresentationMatt
     stage,
     courtOrAgency: clamp(raw.courtOrAgency, 240) || undefined,
     packet: raw.packet && typeof raw.packet === 'object' ? raw.packet as RepresentationPacket : undefined,
+    knownFacts: mergeUnique([], raw.knownFacts, 60, 600),
+    legalIssues: mergeUnique([], raw.legalIssues, 40, 500),
+    defensesAndRisks: mergeUnique([], raw.defensesAndRisks, 40, 500),
+    missingInformation: mergeUnique([], raw.missingInformation, 40, 500),
+    evidenceNeeds: mergeUnique([], raw.evidenceNeeds, 40, 500),
+    parties: mergeUnique([], raw.parties, 30, 240),
+    historySummary: clamp(raw.historySummary, 2000) || undefined,
     artifacts,
     deadlines: Array.isArray(raw.deadlines) ? raw.deadlines.slice(0, 40) : [],
     nextSteps: Array.isArray(raw.nextSteps) ? raw.nextSteps.map((value: unknown) => clamp(value, 500)).filter(Boolean).slice(0, 20) : [],
@@ -453,12 +482,73 @@ export async function advanceRepresentationMatter(input: AdvanceMatterInput): Pr
     stage,
     courtOrAgency: prior?.courtOrAgency,
     packet: prior?.packet,
+    knownFacts: prior?.knownFacts || [],
+    legalIssues: prior?.legalIssues || [],
+    defensesAndRisks: prior?.defensesAndRisks || [],
+    missingInformation: prior?.missingInformation || [],
+    evidenceNeeds: prior?.evidenceNeeds || [],
+    parties: prior?.parties || [],
+    historySummary: prior?.historySummary,
     artifacts: prior?.artifacts || [],
     deadlines: prior?.deadlines || [],
     nextSteps: prior?.nextSteps || [],
     createdAt: prior?.createdAt || now,
     updatedAt: now,
   };
+
+  try {
+    const stateRaw = await generateLegalAnalysis('representation-state-update', [
+      'Update the structured matter record from ONLY the supplied current user turn, current Lexara response, and prior matter record.',
+      'Return JSON only with keys: knownFacts, legalIssues, defensesAndRisks, missingInformation, evidenceNeeds, parties, historySummary, courtOrAgency, nextSteps, deadlines.',
+      'Do not invent facts, names, dates, deadlines, filings, evidence, parties, or legal conclusions.',
+      'knownFacts may include only facts stated by the user or explicitly identified in the supplied response as user-provided facts.',
+      'legalIssues, defensesAndRisks, missingInformation, evidenceNeeds, and nextSteps may summarize only points explicitly present in the supplied response.',
+      'For deadlines, include only a deadline date explicitly present in the supplied text; every new deadline must have status "unverified" unless a source URL is explicitly present in the supplied text.',
+      'Keep the historySummary under 900 characters and describe what has happened in the matter so far, not generic law.',
+      `PRIOR MATTER: ${JSON.stringify(prior || {})}`,
+      `CURRENT USER TURN: ${input.prompt}`,
+      `CURRENT LEXARA RESPONSE: ${input.response}`,
+    ].join('\n\n'), {
+      providerPolicy: 'legalwhat',
+      systemPrompt: 'You are a deterministic legal matter-record clerk. Extract and organize only supplied information. Return JSON only.',
+      temperature: 0,
+      maxTokens: 2600,
+      useJSON: true,
+      allowClaudeOpus: false,
+      claudeWorkload: 'standard',
+      signal: input.signal,
+    });
+    const stateUpdate = safeJsonObject(stateRaw);
+    if (stateUpdate) {
+      matter.knownFacts = mergeUnique(matter.knownFacts, stateUpdate.knownFacts, 60, 600);
+      matter.legalIssues = mergeUnique(matter.legalIssues, stateUpdate.legalIssues, 40, 500);
+      matter.defensesAndRisks = mergeUnique(matter.defensesAndRisks, stateUpdate.defensesAndRisks, 40, 500);
+      matter.missingInformation = mergeUnique(matter.missingInformation, stateUpdate.missingInformation, 40, 500);
+      matter.evidenceNeeds = mergeUnique(matter.evidenceNeeds, stateUpdate.evidenceNeeds, 40, 500);
+      matter.parties = mergeUnique(matter.parties, stateUpdate.parties, 30, 240);
+      matter.historySummary = clamp(stateUpdate.historySummary, 2000) || matter.historySummary;
+      matter.courtOrAgency = clamp(stateUpdate.courtOrAgency, 240) || matter.courtOrAgency;
+      matter.nextSteps = mergeUnique(matter.nextSteps, stateUpdate.nextSteps, 20, 500);
+      if (Array.isArray(stateUpdate.deadlines)) {
+        for (const deadline of stateUpdate.deadlines.slice(0, 20)) {
+          const label = clamp(deadline?.label, 220);
+          const date = clamp(deadline?.date, 40);
+          if (!label || !date) continue;
+          if (matter.deadlines.some(existing => existing.label.toLowerCase() === label.toLowerCase() && existing.date === date)) continue;
+          const sourceUrl = normalizeSourceUrl(deadline?.sourceUrl);
+          matter.deadlines.push({
+            label,
+            date,
+            sourceUrl: sourceUrl || undefined,
+            status: sourceUrl ? 'verified' : 'unverified',
+          });
+        }
+      }
+    }
+  } catch {
+    // Matter persistence must never block the legal answer if structured state
+    // extraction is temporarily unavailable. The deterministic core above remains.
+  }
 
   if (shouldPlanPacket(input.prompt, matter)) {
     matter.packet = await buildPacket(matter, {
@@ -539,6 +629,13 @@ export function formatRepresentationForSystem(
     proceeding: current.proceeding,
     stage: current.stage,
     courtOrAgency: current.courtOrAgency,
+    knownFacts: current.knownFacts,
+    legalIssues: current.legalIssues,
+    defensesAndRisks: current.defensesAndRisks,
+    missingInformation: current.missingInformation,
+    evidenceNeeds: current.evidenceNeeds,
+    parties: current.parties,
+    historySummary: current.historySummary,
     packet: current.packet ? {
       name: current.packet.name,
       coverage: current.packet.coverage,
