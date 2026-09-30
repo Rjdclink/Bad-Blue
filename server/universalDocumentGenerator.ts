@@ -85,6 +85,8 @@ export interface DocumentGenerationRequest {
   urgency?: 'emergency' | 'expedited' | 'standard';
   tone?: 'aggressive' | 'balanced' | 'conciliatory';
   verifyAll?: boolean;
+  // Internal server entitlement; never accepted directly from document request JSON.
+  allowClaudeOpus?: boolean;
 }
 
 export interface GeneratedDocument {
@@ -663,7 +665,9 @@ DO NOT include the caption, signature block, or certificate of service - those w
         providerPolicy: 'legalwhat',
         systemPrompt: expertConfig.systemPrompt,
         temperature: 0.3,
-        maxTokens: 4000
+        maxTokens: 4000,
+        allowClaudeOpus: request.allowClaudeOpus === true,
+        claudeWorkload: 'document-drafting',
       },
       taskPriority
     );

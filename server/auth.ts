@@ -656,6 +656,10 @@ export const isAuthenticated: RequestHandler = async (req, res, next) => {
     });
   }
 
+  // Carry the canonical, freshly resolved entitlement into protected server routes.
+  // Downstream model routing must never infer paid status from client input.
+  if (req.user) (req.user as any).accessState = decision.accessState;
+
   return next();
 };
 

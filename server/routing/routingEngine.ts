@@ -89,8 +89,8 @@ const DEFAULT_MODELS: ModelConfig[] = [
     maxBudget: 2000
   },
   {
-    id: 'claude-sonnet-5',
-    name: 'Claude Sonnet 5',
+    id: 'claude-sonnet-5-5',
+    name: 'Claude Sonnet 5.5',
     provider: 'anthropic',
     status: 'online',
     priority: 2,
@@ -144,17 +144,17 @@ const DEFAULT_ROUTES: RouteConfig[] = [
     domain: 'legal',
     taskType: 'analysis',
     primaryModelId: 'gemini-3.8-flash',
-    backupModelIds: ['claude-sonnet-5', 'openai/gpt-oss-120b', 'mistral-small-2603'],
+    backupModelIds: ['claude-sonnet-5-5', 'openai/gpt-oss-120b', 'mistral-small-2603'],
     routingStrategy: 'dual',
-    weights: { 'gemini-3.8-flash': 1.0, 'claude-sonnet-5': 0.9, 'openai/gpt-oss-120b': 0.7 }
+    weights: { 'gemini-3.8-flash': 1.0, 'claude-sonnet-5-5': 0.9, 'openai/gpt-oss-120b': 0.7 }
   },
   {
     domain: 'legal',
     taskType: 'drafting',
-    primaryModelId: 'claude-sonnet-5',
+    primaryModelId: 'claude-sonnet-5-5',
     backupModelIds: ['gemini-3.8-flash', 'gemini-3.8-flash', 'mistral-small-2603'],
     routingStrategy: 'single',
-    weights: { 'claude-sonnet-5': 1.0, 'gemini-3.8-flash': 0.95 }
+    weights: { 'claude-sonnet-5-5': 1.0, 'gemini-3.8-flash': 0.95 }
   },
   {
     domain: 'crypto',
@@ -176,9 +176,9 @@ const DEFAULT_ROUTES: RouteConfig[] = [
     domain: 'general',
     taskType: 'chat',
     primaryModelId: 'gemini-3.8-flash',
-    backupModelIds: ['claude-sonnet-5', 'openai/gpt-oss-120b', 'mistral-small-2603', 'local-llm'],
+    backupModelIds: ['claude-sonnet-5-5', 'openai/gpt-oss-120b', 'mistral-small-2603', 'local-llm'],
     routingStrategy: 'single',
-    weights: { 'gemini-3.8-flash': 1.0, 'claude-sonnet-5': 0.9, 'openai/gpt-oss-120b': 0.85 }
+    weights: { 'gemini-3.8-flash': 1.0, 'claude-sonnet-5-5': 0.9, 'openai/gpt-oss-120b': 0.85 }
   }
 ];
 

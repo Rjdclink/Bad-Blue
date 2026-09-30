@@ -27,6 +27,11 @@ const MAX_HISTORY_MESSAGES = 16;
 const MAX_HISTORY_MESSAGE_CHARACTERS = 2_500;
 const MAX_CONTEXT_FIELD_CHARACTERS = 128;
 
+function canUseClaudeOpus(req: Request): boolean {
+  const accessState = String((req.user as any)?.accessState || '').trim().toLowerCase();
+  return accessState === 'paid' || accessState === 'master';
+}
+
 function cleanOptionalString(value: unknown, maxLength = MAX_CONTEXT_FIELD_CHARACTERS): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
@@ -227,6 +232,7 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       backgroundLocationConfidence: networkState?.confidence,
       behaviorMode: (rawContext as any).behaviorMode === 'personable' ? 'personable' : 'professional',
       sessionId: cleanOptionalString((rawContext as any).sessionId, 128),
+      allowClaudeOpus: canUseClaudeOpus(req),
       signal: controller.signal,
       onResearchProgress: event => send('research', event),
     });
@@ -355,6 +361,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
         backgroundLocationConfidence: networkState?.confidence,
         behaviorMode,
         sessionId,
+        allowClaudeOpus: canUseClaudeOpus(req),
         signal: requestController.signal,
       });
     } finally {

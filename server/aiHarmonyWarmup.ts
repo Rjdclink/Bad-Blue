@@ -267,7 +267,10 @@ export async function prewarmHarmonyProviders(): Promise<HarmonyWarmStatus[]> {
           try {
             await callClaude('Reply OK.', {
               model: resolved,
-              maxTokens: 16,
+              // Synthetic readiness only: low effort avoids spending legal-reasoning
+              // tokens while still proving this credential can infer on the model.
+              effort: 'low',
+              maxTokens: 128,
               signal: controller.signal,
             });
             return record(provider, resolved, startedAt, 'ready');

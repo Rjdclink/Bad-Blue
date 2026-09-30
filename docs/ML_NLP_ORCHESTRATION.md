@@ -61,7 +61,7 @@ import { analyzeConfidence, type ModelOutput } from './services/mlnlp';
 
 const outputs: ModelOutput[] = [
   {
-    modelName: 'claude-sonnet-5',
+    modelName: 'claude-sonnet-5-5',
     response: 'Legal analysis text...',
     timestamp: new Date()
   },
@@ -74,7 +74,7 @@ const outputs: ModelOutput[] = [
 
 const analysis = await analyzeConfidence(outputs, 'legal consultation context');
 
-console.log(analysis.recommendation.primaryModel); // 'claude-sonnet-5'
+console.log(analysis.recommendation.primaryModel); // 'claude-sonnet-5-5'
 console.log(analysis.consensusScore); // 0.85
 console.log(analysis.conflicts); // []
 ```
@@ -118,7 +118,7 @@ const task: Task = {
 
 const routing = await routeTask(task);
 
-console.log(routing.decision.primaryModel); // advisory capability match, e.g. 'claude-sonnet-5'
+console.log(routing.decision.primaryModel); // advisory capability match, e.g. 'claude-sonnet-5-5'
 console.log(routing.decision.reasoning); // capability-fit explanation
 console.log(routing.decision.shouldParallelize); // advisory metadata only
 // Runtime execution still uses the task-scoped Harmony subset.

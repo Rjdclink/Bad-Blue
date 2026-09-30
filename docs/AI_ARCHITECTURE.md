@@ -13,8 +13,8 @@ Environment overrides remain authoritative. These are the canonical defaults as 
 | Logical participant | Default model | Typical capabilities |
 |---|---|---|
 | Gemini | `gemini-3.8-flash` | fast chat, research, long context, multimodal, structured output |
-| Claude | `claude-sonnet-5` | legal analysis, deep reasoning, verification, coding |
-| Claude Opus | `claude-opus-5` | deep legal/reasoning work, verification |
+| Claude | `claude-sonnet-5-5` | legal analysis, deep reasoning, verification, coding |
+| Claude Opus | `claude-opus-5-5` | deep legal/reasoning work, verification |
 | Groq | `openai/gpt-oss-120b` | fast reasoning, coding, structured output |
 | Mistral | `mistral-small-2603` | fast chat, coding, agentic work, structured output |
 | DeepSeek | `deepseek/deepseek-v4.1-flash` | deep reasoning, coding, long context |

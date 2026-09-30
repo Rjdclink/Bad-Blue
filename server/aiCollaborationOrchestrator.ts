@@ -460,6 +460,9 @@ export class AICollaborationOrchestrator {
     options: {
       providerPolicy?: CollaborationProviderPolicy;
       legalReviewReason?: 'difficult-review' | 'provider-disagreement';
+      // Server-derived paid/master entitlement only; fail closed when absent.
+      allowClaudeOpus?: boolean;
+      claudeWorkload?: 'standard' | 'deep-legal' | 'document-drafting';
       systemPrompt?: string;
       maxParticipants?: number;
       requestTimeoutMs?: number;
@@ -473,7 +476,17 @@ export class AICollaborationOrchestrator {
     if (options.providerPolicy === 'legalwhat') {
       const legalWorkKind = /document|draft|petition|complaint|motion/i.test(taskName) ? 'drafting'
         : attributes.needsFastResponse ? 'fast' : 'reasoning';
-      attributes = { ...attributes, legalWorkKind };
+      const claudeWorkload = options.legalReviewReason
+        ? 'deep-legal'
+        : options.claudeWorkload
+          ?? (legalWorkKind === 'drafting' ? 'document-drafting' : 'standard');
+      attributes = {
+        ...attributes,
+        legalWorkKind,
+        // Entitlement is accepted only from the server-side orchestration option.
+        allowClaudeOpus: options.allowClaudeOpus === true,
+        claudeWorkload,
+      };
     }
     const configuredProviders = getAvailableProvidersForContext(context, options.providerPolicy);
     const callerPool = new Set(_availableProviders.length ? _availableProviders : configuredProviders);
@@ -505,8 +518,13 @@ export class AICollaborationOrchestrator {
     // Harmony is a capability pool, not a fan-out mandate. Select the smallest
     // healthy subset that covers this task's required capabilities. Every
     // configured participant remains eligible for tasks where its strengths fit.
-    attributes = options.providerPolicy === 'legalwhat' && /document|draft|petition|complaint|motion/i.test(taskName)
-      ? { ...attributes, needsFastResponse: false, needsLegalAnalysis: true } : attributes;
+    const paidDeepClaudeWork = options.providerPolicy === 'legalwhat'
+      && attributes.allowClaudeOpus === true
+      && (attributes.claudeWorkload === 'deep-legal' || attributes.claudeWorkload === 'document-drafting');
+    attributes = options.providerPolicy === 'legalwhat'
+      && (/document|draft|petition|complaint|motion/i.test(taskName) || paidDeepClaudeWork)
+      ? { ...attributes, needsFastResponse: false, needsLegalAnalysis: true }
+      : attributes;
     const providers = options.providerPolicy === 'legalwhat'
       ? this.selectLegalProvidersForTask(attributes, initialCandidateProviders, options.maxParticipants)
       : this.selectProvidersForTask(attributes, initialCandidateProviders, options.maxParticipants);
@@ -514,10 +532,17 @@ export class AICollaborationOrchestrator {
     // Determine orchestration strategy
     const strategy = this.selectStrategy(attributes, providers);
     
-    // Build collaboration tasks
+    // Build collaboration tasks. Deep paid Claude work gets enough wall-clock
+    // headroom for adaptive thinking; routine Sonnet timing stays unchanged.
+    const requestedLegalAttemptMs = options.requestTimeoutMs ?? (attributes.needsFastResponse ? 12000
+      : /document|draft|petition|complaint|motion/i.test(taskName) ? 25000 : 15000);
+    const deepClaudeTimeoutFloorMs = attributes.allowClaudeOpus === true
+      ? attributes.claudeWorkload === 'document-drafting' ? 45_000
+        : attributes.claudeWorkload === 'deep-legal' ? 25_000 : 0
+      : 0;
+    const legalAttemptTimeoutMs = Math.max(requestedLegalAttemptMs, deepClaudeTimeoutFloorMs);
     const deadlineAt = options.providerPolicy === 'legalwhat'
-      ? Date.now() + 2 * (options.requestTimeoutMs ?? (attributes.needsFastResponse ? 12000
-        : /document|draft|petition|complaint|motion/i.test(taskName) ? 25000 : 15000)) : undefined;
+      ? Date.now() + 2 * legalAttemptTimeoutMs : undefined;
     const failedProviders = options.providerPolicy === 'legalwhat' ? new Set<AIProvider>() : undefined;
     const reserveProviders = eligibleProviders.filter(provider => admission(provider) && !providers.includes(provider));
     const tasks = this.buildCollaborationTasks(
@@ -543,8 +568,7 @@ export class AICollaborationOrchestrator {
         providerPolicy: options.providerPolicy,
         systemPrompt: options.systemPrompt,
         requestTimeoutMs: options.providerPolicy === 'legalwhat'
-          ? (options.requestTimeoutMs ?? (attributes.needsFastResponse ? 12_000
-            : /document|draft|petition|complaint|motion/i.test(taskName) ? 25_000 : 15_000))
+          ? legalAttemptTimeoutMs
           : task.requestTimeoutMs || task.timeout || options.requestTimeoutMs,
         maxFallbacks: options.maxFallbacks ?? (options.providerPolicy === 'legalwhat' ? 2 : task.maxFallbacks),
         signal: options.signal,
@@ -553,7 +577,9 @@ export class AICollaborationOrchestrator {
         fallbackProviders: [
           ...rotatedReserve,
           ...providers.filter(provider => provider !== task.provider),
-        ],
+        ].filter(candidate =>
+          !(reserveClaudeForDeepFinal && task.provider !== AIProvider.CLAUDE && candidate === AIProvider.CLAUDE)
+        ),
       };
     });
 
@@ -596,7 +622,7 @@ export class AICollaborationOrchestrator {
         priority: maxPriority + 1,
         dependencies: allContributionIds,
         fallbackProviders: eligibleProviders.filter(candidate => candidate !== finalProvider),
-        requestTimeoutMs: options.requestTimeoutMs,
+        requestTimeoutMs: options.providerPolicy === 'legalwhat' ? legalAttemptTimeoutMs : options.requestTimeoutMs,
         maxFallbacks: options.maxFallbacks ?? (options.providerPolicy === 'legalwhat' ? 2 : undefined),
         attributes: { ...attributes, needsVerification: true },
       });
@@ -793,9 +819,20 @@ export class AICollaborationOrchestrator {
     const tasks: CollaborationTask[] = [];
     const drafting = /document|draft|petition|complaint|motion/i.test(taskName);
 
+    // For paid deep work, reserve Claude/Opus for one final authoritative pass
+    // instead of spending the same Anthropic account on both a specialist draft
+    // and a second synthesis. Independent providers can contribute first.
+    const reserveClaudeForDeepFinal = attrs.allowClaudeOpus === true
+      && (attrs.claudeWorkload === 'deep-legal' || attrs.claudeWorkload === 'document-drafting')
+      && providers.includes(AIProvider.CLAUDE)
+      && providers.some(provider => provider !== AIProvider.CLAUDE);
+    const specialistProviders = reserveClaudeForDeepFinal
+      ? providers.filter(provider => provider !== AIProvider.CLAUDE)
+      : providers;
+
     // The selected capability-matched subset contributes specialist work in
-    // parallel. The full 17-participant pool remains available for other tasks.
-    for (const provider of providers) {
+    // parallel. The full configured pool remains route-local reserve capacity.
+    for (const provider of specialistProviders) {
       const capabilities = getHarmonyCapabilities(provider);
       // Live legal turns are a first-valid-answer race. Every selected participant
       // must therefore be capable of returning a complete user-ready answer; a
@@ -833,7 +870,7 @@ export class AICollaborationOrchestrator {
       });
     }
 
-    if (tasks.length > 1) {
+    if (reserveClaudeForDeepFinal ? tasks.length > 0 : tasks.length > 1) {
       const dependencies = tasks.map(task => task.id);
       const synthProvider = providers.includes(AIProvider.CLAUDE) ? AIProvider.CLAUDE
         : this.selectProviderByCapabilities(providers, ['legal-analysis', 'deep-reasoning', 'verification']);
@@ -843,8 +880,10 @@ export class AICollaborationOrchestrator {
         model: this.getDefaultModelForProvider(synthProvider),
         role: 'synthesizer',
         prompt: drafting
-          ? 'Produce the complete requested document from the successful drafts. Preserve every required section and the user-supplied facts. Flag missing facts and uncertain authority for review; do not shorten the document into a conversational summary. Return only document text.\n\n[Results will be provided]'
-          : 'Synthesize the successful specialist analyses into one direct, natural spoken answer to the user. Answer the current question or statement first. Default to 2-5 concise sentences unless additional detail is materially necessary or explicitly requested. Remove repetition, preserve uncertainty, never invent authority, and do not mention internal providers.\n\n[Results will be provided]',
+          ? `Produce the complete requested document from the original request and any successful independent drafts below. Preserve every required section and the user-supplied facts. Flag missing facts and uncertain authority for review; do not shorten the document into a conversational summary. Return only document text.\n\nORIGINAL REQUEST:\n${query}\n\n[Results will be provided]`
+          : reserveClaudeForDeepFinal
+            ? `Perform the final deep legal analysis using the original request and any successful independent analyses below. Resolve conflicts, stress-test the legal reasoning, preserve material uncertainty, and return one direct user-ready answer without mentioning internal providers.\n\nORIGINAL REQUEST:\n${query}\n\n[Results will be provided]`
+            : 'Synthesize the successful specialist analyses into one direct, natural spoken answer to the user. Answer the current question or statement first. Default to 2-5 concise sentences unless additional detail is materially necessary or explicitly requested. Remove repetition, preserve uncertainty, never invent authority, and do not mention internal providers.\n\n[Results will be provided]',
         priority: 2,
         dependencies,
         timeout: attrs.needsFastResponse ? 1_400 : undefined,
@@ -1369,14 +1408,18 @@ export class AICollaborationOrchestrator {
     let content = '';
     let tokensUsed = 0;
     let success = true;
-    const maxTokens = Math.max(
-      96,
-      Math.min(
-        task.providerPolicy === 'legalwhat' && /document|legal-issue-analysis/.test(task.id) ? 4_500 : 1_800,
-        Number(/document|draft|petition|complaint|motion/i.test(task.id) && task.providerPolicy === 'legalwhat'
-          ? 4_500 : task.attributes.estimatedTokens || 1_100),
-      ),
-    );
+    const documentLike = task.providerPolicy === 'legalwhat'
+      && /document|draft|petition|complaint|motion/i.test(task.id);
+    const deepClaude = task.provider === AIProvider.CLAUDE
+      && task.model === LEGAL_AI_MODELS.claudeDeep
+      && task.attributes.allowClaudeOpus === true;
+    // max_tokens is a hard ceiling, not prepaid usage. Give adaptive thinking
+    // enough room so efficiency controls never truncate substantive legal work.
+    const maxTokens = deepClaude
+      ? (documentLike ? 16_000 : 8_000)
+      : documentLike ? 8_000
+        : task.providerPolicy === 'legalwhat' && /legal-issue-analysis/.test(task.id) ? 4_500
+          : Math.max(96, Math.min(1_800, Number(task.attributes.estimatedTokens || 1_100)));
 
     const remainingDeadline = task.deadlineAt ? task.deadlineAt - Date.now() : Infinity;
     const synthesisReserveMs = task.providerPolicy === 'legalwhat'
@@ -1421,7 +1464,21 @@ export class AICollaborationOrchestrator {
             runProvider(
               task.provider,
               prompt,
-              { model: task.model, systemPrompt: task.systemPrompt, signal: attempt.signal, providerPolicy: task.providerPolicy },
+              {
+                model: task.model,
+                systemPrompt: task.systemPrompt,
+                signal: attempt.signal,
+                providerPolicy: task.providerPolicy,
+                ...(task.provider === AIProvider.CLAUDE
+                  ? {
+                      effort: this.getClaudeEffort(task),
+                      // Live Lexara system prompts contain turn-specific research and
+                      // jurisdiction context; caching those would create write cost
+                      // without reliable reuse. Stable legal/document prompts remain cached.
+                      cacheSystemPrompt: !/^lexara-(?:live-conversation|evidence-correction)/.test(task.id),
+                    }
+                  : {}),
+              },
               outputTokenLimit,
               taskMetadata,
             ),
@@ -1838,11 +1895,23 @@ export class AICollaborationOrchestrator {
     return selected;
   }
 
+  private static getClaudeEffort(task: CollaborationTask): 'high' | 'max' {
+    // Sonnet 5.5 stays at high effort. Any paid Opus 5.5 escalation is genuinely
+    // complex work, so use max effort: efficiency may reduce waste, never capability.
+    return task.attributes.allowClaudeOpus === true
+      && task.model === LEGAL_AI_MODELS.claudeDeep
+      ? 'max'
+      : 'high';
+  }
+
   private static getLegalTaskModel(provider: AIProvider, attrs: TaskAttributes): string {
     const fast = !!attrs.needsFastResponse;
+    const deepClaude = attrs.allowClaudeOpus === true
+      && (attrs.claudeWorkload === 'deep-legal' || attrs.claudeWorkload === 'document-drafting');
     switch (provider) {
       case AIProvider.CLAUDE:
-      case AIProvider.CLAUDE_OPUS: return LEGAL_AI_MODELS.claudeFast; // Sonnet reviews; no routine Opus spend.
+      case AIProvider.CLAUDE_OPUS:
+        return deepClaude ? LEGAL_AI_MODELS.claudeDeep : LEGAL_AI_MODELS.claudeFast;
       case AIProvider.GEMINI: return fast ? LEGAL_AI_MODELS.geminiFast : LEGAL_AI_MODELS.geminiDeep;
       case AIProvider.XAI: return fast ? LEGAL_AI_MODELS.xaiFast : LEGAL_AI_MODELS.xaiDeep;
       default: return this.getDefaultModelForProvider(provider);

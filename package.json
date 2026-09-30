@@ -79,7 +79,7 @@
     "verify:pantheon-blueprint-66": "node --import tsx scripts/verify-pantheon-blueprint-through-66.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.68.0",
+    "@anthropic-ai/sdk": "^0.129.0",
     "@elevenlabs/elevenlabs-js": "^2.27.0",
     "@flashbots/ethers-provider-bundle": "^0.6.2",
     "@google-cloud/storage": "^7.17.2",
