@@ -33,6 +33,7 @@ must(
 const realtimeVoiceClient = read('client/src/lib/lexaraRealtimeVoiceClient.ts');
 const lexaraConversationOrchestrator = read('server/lexara/LexaraConversationOrchestrator.ts');
 const lexaraPantheonInvestigation = read('server/lexara/LexaraPantheonInvestigation.ts');
+const lexaraBackgroundInvestigation = read('server/lexara/LexaraBackgroundInvestigation.ts');
 const inmateSearchAggregator = read('server/services/inmateSearch/InmateSearchAggregator.ts');
 const liveAvatarReview = read('docs/LEXARA_LIVE_AVATAR_100_SOURCE_REVIEW_20260920.md');
 const embodiedConversationReview = read('docs/LEXARA_EMBODIED_CONVERSATION_50_SOURCE_BLUEPRINT_20260920.md');
@@ -973,9 +974,16 @@ must(
 must(
   !lexaraConversationOrchestrator.includes("from './LexaraBackgroundResearchBoundary'") &&
     !lexaraConversationOrchestrator.includes("from './LexaraPantheonInvestigation'") &&
-    lexaraConversationOrchestrator.includes('const backgroundResearchRequested = false') &&
-    lexaraConversationOrchestrator.includes('const researchRouteSelected = sequencePlan.useLegalResearch || researchDecision.needed'),
-  'Lexara user research is disconnected from Pantheon and routed through Lexara legal reasoning',
+    lexaraConversationOrchestrator.includes("from './LexaraBackgroundInvestigation'") &&
+    lexaraConversationOrchestrator.includes("const backgroundResearchRequested = researchDecision.intent === 'factual' || mixedLegalFactNeed") &&
+    lexaraConversationOrchestrator.includes('const researchRouteSelected = sequencePlan.useLegalResearch || researchDecision.needed') &&
+    !lexaraBackgroundInvestigation.includes('../services/pantheon/') &&
+    !lexaraBackgroundInvestigation.includes('PantheonRetrievalAdapter') &&
+    lexaraBackgroundInvestigation.includes('discoverLegalMeshTier3') &&
+    lexaraBackgroundInvestigation.includes('discoverLegalMeshSupplemental') &&
+    lexaraBackgroundInvestigation.includes('lexaraRetrievalAdapter') &&
+    lexaraBackgroundInvestigation.includes('directlyAnswers'),
+  'Lexara background research is native, recursive, fact-gated, and Pantheon-disconnected while legal reasoning remains on its existing route',
 );
 must(
   !conversation.includes('{interimTranscript && !isSpeaking && (') &&
@@ -1108,9 +1116,10 @@ must(
 }
 must(
   lexaraConversationOrchestrator.includes('planLexaraSequence(cleanPrompt, previousUserTurns)') &&
-    lexaraConversationOrchestrator.includes('const backgroundResearchRequested = false') &&
-    lexaraConversationOrchestrator.includes('const researchRouteSelected = sequencePlan.useLegalResearch || researchDecision.needed'),
-  'all research-selected Lexara turns remain on the Lexara legal-reasoning path',
+    lexaraConversationOrchestrator.includes("const backgroundResearchRequested = researchDecision.intent === 'factual' || mixedLegalFactNeed") &&
+    lexaraConversationOrchestrator.includes('const researchRouteSelected = sequencePlan.useLegalResearch || researchDecision.needed') &&
+    lexaraConversationOrchestrator.includes("getConfiguredHarmonyProviders('legalwhat')"),
+  'factual/mixed turns add Lexara-native background research without replacing the established legal-reasoning path',
 );
 
 // Lexara reasoning and evidence correction share the existing Harmony authority.
