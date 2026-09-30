@@ -378,6 +378,7 @@ export async function investigateLexaraBackgroundQuestion(
   let candidates: LegalMeshCandidate[] = [];
   let recursionPasses = 0;
   let exhausted = false;
+  let converged = false;
   let priorUsefulCount = 0;
   let stagnantUsefulPasses = 0;
 
@@ -441,8 +442,14 @@ export async function investigateLexaraBackgroundQuestion(
       if (!deepAcquisitionRequested
         && usefulCount >= 3
         && Boolean(best?.directlyAnswers || best?.inferentiallySupports)
-        && (best?.confidence || 0) >= 0.60) break;
-      if (!deepAcquisitionRequested && stagnantUsefulPasses >= 2 && usefulCount > 0) break;
+        && (best?.confidence || 0) >= 0.60) {
+        converged = true;
+        break;
+      }
+      if (!deepAcquisitionRequested && stagnantUsefulPasses >= 2 && usefulCount > 0) {
+        converged = true;
+        break;
+      }
       if (pass + 1 >= maxPasses || Date.now() >= deadlineAt || seenUrls.size >= maxCandidates) break;
 
       const query = broadenedQuery(subject, decision, categories, context.jurisdiction, pass);
@@ -480,7 +487,7 @@ export async function investigateLexaraBackgroundQuestion(
     const endpoint: LexaraBackgroundResearchResult['endpoint'] = directlyAnswered
       ? 'evidence-sufficient'
       : useful.length
-        ? exhausted ? 'best-available-evidence' : 'partial-evidence'
+        ? exhausted || converged ? 'best-available-evidence' : 'partial-evidence'
         : candidates.length
           ? 'search-leads-only'
           : timedOut
