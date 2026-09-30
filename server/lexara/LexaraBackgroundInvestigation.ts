@@ -139,8 +139,11 @@ function backgroundCategories(
 
 function cleanSubject(subject: LexaraBackgroundSubject): LexaraBackgroundSubject {
   if (subject.kind !== 'person') return subject;
+  const locationSuffix = subject.name.match(/\s+(?:of|from|in)\s+(.+)$/u)?.[1]?.trim();
   const cleaned = subject.name.replace(/\s+(?:of|from|in)\s+[A-Z].*$/u, '').trim();
-  return cleaned && cleaned !== subject.name ? { ...subject, name: cleaned } : subject;
+  return cleaned && cleaned !== subject.name
+    ? { ...subject, name: cleaned, location: subject.location || locationSuffix }
+    : subject;
 }
 
 function normalize(value: string): string {
