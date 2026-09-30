@@ -75,6 +75,11 @@ const mesh = {
     if (state.mode === 'empty') return [candidate('https://records.example.test/empty')];
     if (state.mode === 'employment') return [candidate('https://records.example.test/employer')];
     if (state.mode === 'age-inference') return [candidate('https://records.example.test/juvenile')];
+    if (state.mode === 'converged-inference') return [
+      candidate('https://records.example.test/juvenile-a'),
+      candidate('https://records.example.test/juvenile-b'),
+      candidate('https://records.example.test/juvenile-c'),
+    ];
     if (state.mode === 'wrong-identity') return [candidate('https://records.example.test/wrong-identity')];
     if (state.mode === 'dob-recursive' && state.tierCalls.length === 1) {
       return [candidate('https://records.example.test/profile')];
@@ -116,6 +121,15 @@ const retrieval = {
             target,
             content: 'In 2002, Avery Example of Des Moines, Iowa was a juvenile.',
             retrievedAt: '2026-09-30T12:00:02.000Z',
+            contentType: 'text/html',
+          }];
+        }
+        if (/\/juvenile-[abc]$/.test(target)) {
+          const year = target.endsWith('-a') ? 2001 : target.endsWith('-b') ? 2002 : 2003;
+          return [{
+            target,
+            content: `In ${year}, Avery Example of Des Moines, Iowa was a juvenile in a public proceeding.`,
+            retrievedAt: `2026-09-30T12:00:0${year - 2000}.000Z`,
             contentType: 'text/html',
           }];
         }
@@ -222,6 +236,15 @@ function reset(mode) {
   assert.match(inferredPrompt, /strongest defensible answer/i);
   assert.match(inferredPrompt, /first sentence must contain only the requested fact/i);
   assert.match(inferredPrompt, /about.*approximately.*probably.*range/i);
+
+  reset('converged-inference');
+  const converged = await investigator.investigateLexaraBackgroundQuestion(
+    'How old is Avery Example of Des Moines, Iowa?',
+  );
+  assert.equal(converged.endpoint, 'best-available-evidence');
+  assert.equal(converged.recursionPasses, 1,
+    'ordinary live factual research stops when several useful inferential sources converge');
+  assert.equal(converged.sources.length, 3);
 
   reset('wrong-identity');
   const wrongIdentity = await investigator.investigateLexaraBackgroundQuestion(
