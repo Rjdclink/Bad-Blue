@@ -85,7 +85,7 @@ const PROMPT_CATEGORY_RULES: Array<[RegExp, LexaraSourceCategory[]]> = [
 ];
 
 const FACT_EVIDENCE_PATTERNS: Partial<Record<LexaraRequestedFact, RegExp>> = {
-  'age-dob': /\b(?:date\s+of\s+birth|birth\s+date|birthday|born|dob)\b|\b(?:19|20)\d{2}\b|\b\d{1,2}[\/-]\d{1,2}[\/-](?:19|20)?\d{2}\b/i,
+  'age-dob': /\b(?:date\s+of\s+birth|birth\s+date|birthday|dob)\b[^.\n]{0,90}(?:\d{1,2}[\/-]\d{1,2}[\/-](?:19|20)?\d{2}|(?:19|20)\d{2})|\bborn\b[^.\n]{0,60}(?:\d{1,2}[\/-]\d{1,2}[\/-](?:19|20)?\d{2}|(?:19|20)\d{2})|\bage\s+\d{1,3}\b/i,
   'professional-license': /\b(?:license|licensure|credential|certification|board certified|disciplin|registration)\b/i,
   'marriage-divorce': /\b(?:married|marriage|spouse|husband|wife|divorc|marital)\b/i,
   employment: /\b(?:employer|employ(?:ed|ment)|works?\s+(?:at|for)|worked\s+(?:at|for)|occupation|profession|job\s+title|staff|position)\b/i,
@@ -381,7 +381,7 @@ export async function investigateLexaraBackgroundQuestion(
         }),
       ]);
       [...primary, ...supplemental].forEach(item => discoveryLanes.add(item.provider));
-      const merged = uniqueCandidates([...candidates, ...primary, ...supplemental]);
+      const merged = uniqueCandidates([...primary, ...supplemental, ...candidates]);
       exhausted = merged.every(item => seenUrls.has(item.url));
       candidates = merged;
       if (exhausted && !ranked.length) break;
