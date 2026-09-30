@@ -240,7 +240,7 @@ export function decideLexaraResearchNeed(
   if (legal || factual || explicitResearch) {
     const intent: LexaraResearchIntent = legal && factual ? 'mixed' : legal ? 'legal' : 'factual';
     const effectiveFact = pureLegalProcedure ? 'none' : fact !== 'none' ? fact : factual || explicitResearch ? 'general-public-record' : 'none';
-    const effectiveCategories = categories.length ? categories : sourceCategoriesForFact(effectiveFact, text);
+    const effectiveCategories = pureLegalProcedure ? [] : categories.length ? categories : sourceCategoriesForFact(effectiveFact, text);
     const standaloneQuery = [subject, text, effectiveFact !== 'none' ? effectiveFact.replace(/-/g, ' ') : '']
       .filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
     return {
