@@ -1898,7 +1898,6 @@ export class AICollaborationOrchestrator {
     if (!claude) return ranked.slice(0, 1);
 
     const supportNeeded = attrs.needsVerification === true
-      || attrs.needsSearchGrounding === true
       || attrs.needsMultimodal === true
       || attrs.needsImageAnalysis === true
       || attrs.claudeWorkload === 'deep-legal'
