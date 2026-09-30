@@ -1690,23 +1690,6 @@ export class AICollaborationOrchestrator {
         }
       }
 
-      // A project can expose the latest Grok in its catalog yet deny inference.
-      // Try the previous supported direct xAI model on this same credential
-      // before moving to the independent Gemini/Claude routes.
-      if (task.providerPolicy === 'legalwhat' && task.provider === AIProvider.XAI
-        && !task.modelRecoveryAttempted && task.model !== LEGAL_AI_MODELS.xaiAlternate
-        && /model.*(?:not found|unavailable|not available|not permitted|blocked)|(?:access|permission).*model|HTTP 404/i
-          .test(error instanceof Error ? error.message : String(error))) {
-        const remainingMs = taskTimeoutMs - (Date.now() - startTime);
-        if (remainingMs > 0) {
-          const recovered = await this.executeTask({ ...task,
-            model: LEGAL_AI_MODELS.xaiAlternate, modelRecoveryAttempted: true,
-            requestTimeoutMs: remainingMs, fallbackProviders: [], maxFallbacks: 0,
-          }, completedTasks);
-          if (recovered.success) return recovered;
-        }
-      }
-
       if (task.providerPolicy === 'legalwhat') await noteLegalProviderError(task.provider, task.model, error);
       const skipped = /cooling down after a recent route failure|quota reserve withheld/.test(
         error instanceof Error ? error.message : String(error),
@@ -1924,15 +1907,12 @@ export class AICollaborationOrchestrator {
   }
 
   private static getLegalTaskModel(provider: AIProvider, attrs: TaskAttributes): string {
-    const fast = !!attrs.needsFastResponse;
     const deepClaude = attrs.allowClaudeOpus === true
       && (attrs.claudeWorkload === 'deep-legal' || attrs.claudeWorkload === 'document-drafting');
     switch (provider) {
       case AIProvider.CLAUDE:
       case AIProvider.CLAUDE_OPUS:
         return deepClaude ? LEGAL_AI_MODELS.claudeDeep : LEGAL_AI_MODELS.claudeFast;
-      case AIProvider.GEMINI: return fast ? LEGAL_AI_MODELS.geminiFast : LEGAL_AI_MODELS.geminiDeep;
-      case AIProvider.XAI: return fast ? LEGAL_AI_MODELS.xaiFast : LEGAL_AI_MODELS.xaiDeep;
       default: return this.getDefaultModelForProvider(provider);
     }
   }

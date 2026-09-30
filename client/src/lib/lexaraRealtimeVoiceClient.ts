@@ -28,6 +28,7 @@ interface SpeakOptions {
 interface ActiveSpeech {
   turnId: string;
   epoch: number;
+  completion: Promise<void>;
   resolve: () => void;
   reject: (error: Error) => void;
   metadataComplete: boolean;
@@ -735,16 +736,13 @@ class LexaraRealtimeVoiceClient {
     }));
   }
 
-  async speak(text: string, turnId: string, options: SpeakOptions = {}): Promise<void> {
-    const cleanText = text.replace(/\s+/g, ' ').trim();
+  beginSpeechStream(turnId: string, options: SpeakOptions = {}): Promise<void> {
     const cleanTurnId = turnId.trim();
-    if (!cleanText || !cleanTurnId) return;
+    if (!cleanTurnId) return Promise.resolve();
     if (!this.isSpeechOutputReady()) throw new Error('LEXARA realtime voice output is not ready');
 
     if (this.activeSpeech || this.interruptInFlight) {
       this.interrupt();
-      // Never overwrite a turn awaiting its provider interruption acknowledgement.
-      // The caller can use the independent server audio route for this reply.
       throw new Error('LEXARA realtime interruption is still pending');
     }
 
@@ -759,44 +757,74 @@ class LexaraRealtimeVoiceClient {
     this.playbackBrightness = 0;
     this.playbackZeroCrossingRate = 0;
 
-    const promise = new Promise<void>((resolve, reject) => {
-      const timeout = window.setTimeout(() => {
-        if (this.activeSpeech?.turnId !== cleanTurnId) return;
-        const error = this.realtimeSpeechFailure(
-          'LEXARA realtime speech timed out',
-          'speech-timeout',
-        );
-        this.activeSpeech = null;
-        reject(error);
-      }, SPEECH_TIMEOUT_MS);
-
-      this.activeSpeech = {
-        turnId: cleanTurnId,
-        epoch: this.playbackEpoch,
-        resolve,
-        reject,
-        metadataComplete: false,
-        playbackDrained: false,
-        started: false,
-        onStart: options.onStart,
-        timeout,
-        requestedAt: performance.now(),
-        firstAudioReceived: false,
-        renderReported: false,
-      };
+    let resolveSpeech!: () => void;
+    let rejectSpeech!: (error: Error) => void;
+    const completion = new Promise<void>((resolve, reject) => {
+      resolveSpeech = resolve;
+      rejectSpeech = reject;
     });
+    const timeout = window.setTimeout(() => {
+      if (this.activeSpeech?.turnId !== cleanTurnId) return;
+      const error = this.realtimeSpeechFailure(
+        'LEXARA realtime speech timed out',
+        'speech-timeout',
+      );
+      this.activeSpeech = null;
+      rejectSpeech(error);
+    }, SPEECH_TIMEOUT_MS);
 
+    this.activeSpeech = {
+      turnId: cleanTurnId,
+      epoch: this.playbackEpoch,
+      completion,
+      resolve: resolveSpeech,
+      reject: rejectSpeech,
+      metadataComplete: false,
+      playbackDrained: false,
+      started: false,
+      onStart: options.onStart,
+      timeout,
+      requestedAt: performance.now(),
+      firstAudioReceived: false,
+      renderReported: false,
+    };
+    return completion;
+  }
+
+  appendSpeechStream(text: string, turnId: string): void {
+    const cleanText = text.replace(/\s+/g, ' ').trim();
+    const cleanTurnId = turnId.trim();
+    if (!cleanText || !cleanTurnId) return;
+    if (!this.isSpeechOutputReady() || this.activeSpeech?.turnId !== cleanTurnId) {
+      throw new Error('LEXARA realtime speech stream is not active');
+    }
     this.socket!.send(JSON.stringify({
       type: 'tts_speak',
       turnId: cleanTurnId,
       text: cleanText,
     }));
+  }
+
+  endSpeechStream(turnId: string): Promise<void> {
+    const cleanTurnId = turnId.trim();
+    const active = this.activeSpeech;
+    if (!cleanTurnId || !active || active.turnId !== cleanTurnId) return Promise.resolve();
     this.socket!.send(JSON.stringify({
       type: 'tts_flush',
       turnId: cleanTurnId,
     }));
+    return active.completion;
+  }
 
-    return promise;
+  async speak(text: string, turnId: string, options: SpeakOptions = {}): Promise<void> {
+    const cleanText = text.replace(/\s+/g, ' ').trim();
+    const cleanTurnId = turnId.trim();
+    if (!cleanText || !cleanTurnId) return;
+
+    const completion = this.beginSpeechStream(cleanTurnId, options);
+    this.appendSpeechStream(cleanText, cleanTurnId);
+    void this.endSpeechStream(cleanTurnId);
+    return completion;
   }
 
   interrupt(): void {

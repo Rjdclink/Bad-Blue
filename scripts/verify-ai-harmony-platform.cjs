@@ -126,10 +126,13 @@ must(
 );
 
 must(
-  lexara.includes("getConfiguredHarmonyProviders('legalwhat')") &&
-  lexara.includes("providerPolicy: 'legalwhat'") &&
+  lexara.includes('callClaudeStreaming') &&
+  lexara.includes('callClaude(') &&
+  lexara.includes('progressiveClaudeAllowed') &&
+  !lexara.includes('AICollaborationOrchestrator') &&
+  !lexara.includes('getConfiguredHarmonyProviders') &&
   !lexara.includes('generateOpenRouterText'),
-  'LEXARA uses the shared Harmony authority with its scoped transport policy',
+  'LEXARA routes live legal reasoning directly to Claude and bypasses provider-selection overhead',
 );
 
 must(

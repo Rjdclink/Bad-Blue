@@ -98,10 +98,6 @@ function deepgramApiKey(): string {
 
 const LEXARA_FEMALE_VOICE = {
   deepgram: process.env.DEEPGRAM_TTS_MODEL?.trim() || 'flux-haley-en',
-  gemini: process.env.GEMINI_TTS_VOICE?.trim() || 'Kore',
-  groq: process.env.GROQ_TTS_VOICE?.trim() || 'hannah',
-  azure: process.env.AZURE_TTS_VOICE?.trim() || 'en-US-JennyNeural',
-  xai: process.env.XAI_TTS_VOICE_ID?.trim() || 'eve',
 } as const;
 
 export function getLexaraVoiceProfileBindings() {
@@ -110,10 +106,6 @@ export function getLexaraVoiceProfileBindings() {
     gender: 'female' as const,
     bindings: {
       deepgram: LEXARA_FEMALE_VOICE.deepgram,
-      gemini: LEXARA_FEMALE_VOICE.gemini,
-      groq: LEXARA_FEMALE_VOICE.groq,
-      azure: LEXARA_FEMALE_VOICE.azure,
-      xai: LEXARA_FEMALE_VOICE.xai,
     },
   };
 }
@@ -159,21 +151,12 @@ function configured(provider: LexaraTTSProviderId): boolean {
   }
 }
 
-const BASE_ORDER: LexaraTTSProviderId[] = [
-  'deepgram',
-  'gemini',
-  'mistral',
-  'groq',
-  'azure',
-  'xai',
-  'elevenlabs',
-];
+const BASE_ORDER: LexaraTTSProviderId[] = ['deepgram'];
 
 export function getConfiguredLexaraTTSProviders(): LexaraTTSProviderId[] {
-  // Only production-verified routes are active. Other adapters remain dormant
-  // until deliberately re-enabled after their provider-specific failure is fixed.
-  const active = new Set((process.env.LEXARA_TTS_ACTIVE_PROVIDERS || 'deepgram').split(',').map(value => value.trim()));
-  return BASE_ORDER.filter(provider => active.has(provider) && configured(provider));
+  // Deepgram is the sole Lexara speech provider. Environment variables cannot
+  // re-enable alternate TTS vendors or put provider selection back on the hot path.
+  return configured('deepgram') ? ['deepgram'] : [];
 }
 
 function ready(provider: LexaraTTSProviderId): boolean {

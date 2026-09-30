@@ -15,6 +15,7 @@ import { lexaraDocumentSpeech } from '@shared/lexaraDocumentSpeech';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { captureLexaraDeviceLocation, readLexaraDeviceLocation } from '@/lib/lexaraLocation';
+import { lexaraRealtimeVoiceClient } from '@/lib/lexaraRealtimeVoiceClient';
 
 interface LexaraConversationProps {
   lawTypeId?: string;
@@ -727,6 +728,16 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     return nextMessage.id;
   }, []);
 
+  const updateMessageContent = useCallback((id: string, content: string) => {
+    setConversation(previous => {
+      const next = previous.map(message =>
+        message.id === id ? { ...message, content } : message
+      );
+      conversationRef.current = next;
+      return next;
+    });
+  }, []);
+
   const enableVoice = useCallback(async () => {
     try {
       await enableRecognition();
@@ -1055,6 +1066,16 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
       const response = await trackedAnalysisPromise;
       let data: any;
+      let streamedAnswer = '';
+      let streamedAnswerMessageId: string | null = null;
+      let streamedSpeechTurnId: string | null = null;
+      let streamedSpeechCompletion: Promise<void> | null = null;
+      let streamedSpeechFailed = false;
+      let progressiveSpokenText = '';
+      const progressiveVoiceReady =
+        liveEnabled
+        && voiceReady
+        && lexaraRealtimeVoiceClient.isSpeechOutputReady();
       if (canReuseSpeculative) {
         if (!response.ok) {
           const body = await response.json().catch(() => ({}));
@@ -1063,8 +1084,59 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         data = await response.json();
       } else {
         data = await readLexaraSseResponse(response, (event, payload) => {
-          if (generation !== generationRef.current || event !== 'research') return;
-          if (payload?.type === 'evidence' || payload?.type === 'checkpoint') {
+          if (generation !== generationRef.current) return;
+
+          if (event === 'answer-delta') {
+            const delta = String(payload?.delta || '');
+            if (!delta) return;
+            streamedAnswer += delta;
+            if (!streamedAnswerMessageId) {
+              streamedAnswerMessageId = appendMessage('lexara', streamedAnswer);
+            } else {
+              updateMessageContent(streamedAnswerMessageId, streamedAnswer);
+            }
+            return;
+          }
+
+          if (event === 'speech-chunk') {
+            const chunk = String(payload?.chunk || '').trim();
+            if (!chunk || !progressiveVoiceReady || streamedSpeechFailed) return;
+            try {
+              if (!streamedSpeechTurnId) {
+                streamedSpeechTurnId = `lexara-stream-${generation}-${Date.now()}`;
+                clearVoiceTurnBuffer();
+                resumeListening();
+                setConversationPhase('speaking');
+                setEmotion(responseEmotionRef.current);
+                setGaze('camera');
+                streamedSpeechCompletion = lexaraRealtimeVoiceClient.beginSpeechStream(
+                  streamedSpeechTurnId,
+                  {
+                    onStart: () => {
+                      if (generation !== generationRef.current) return;
+                      setConversationPhase('speaking');
+                    },
+                  },
+                );
+              }
+              progressiveSpokenText = `${progressiveSpokenText}${progressiveSpokenText ? ' ' : ''}${chunk}`;
+              activeLexaraSpeechRef.current = progressiveSpokenText;
+              recentLexaraSpeechRef.current = {
+                text: progressiveSpokenText,
+                expiresAt: Number.POSITIVE_INFINITY,
+              };
+              lexaraRealtimeVoiceClient.appendSpeechStream(chunk, streamedSpeechTurnId);
+            } catch {
+              streamedSpeechFailed = true;
+              lexaraRealtimeVoiceClient.interrupt();
+              streamedSpeechTurnId = null;
+              streamedSpeechCompletion = null;
+              activeLexaraSpeechRef.current = '';
+            }
+            return;
+          }
+
+          if (event === 'research' && (payload?.type === 'evidence' || payload?.type === 'checkpoint')) {
             const confidence = Math.max(0, Math.min(100, Math.round(Number(payload?.confidence || 0) * 100)));
             const evidenceText = String(payload?.evidence || '').trim();
             if (!evidenceText) return;
@@ -1129,6 +1201,8 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       // factual turn immediately re-runs the analysis against the accumulated
       // case context. Presence checks and new questions do not trigger this.
       if (reconcileBeforeAnswer) {
+        if (streamedSpeechTurnId) lexaraRealtimeVoiceClient.interrupt();
+        activeLexaraSpeechRef.current = '';
         return;
       }
 
@@ -1155,7 +1229,11 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
           if (controlAcknowledgementSpeechRef.current === controlSpeech) break;
         }
 
-        appendMessage('lexara', answer);
+        if (streamedAnswerMessageId) {
+          updateMessageContent(streamedAnswerMessageId, answer);
+        } else {
+          appendMessage('lexara', answer);
+        }
         // A document-action turn owns the artifact handoff. Keep the full draft
         // visible in chat, but do not feed document bodies/markup/placeholders
         // into realtime TTS; speak only ordinary conversational responses.
@@ -1165,7 +1243,28 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         // all reach the same review page.
         setShowReviewPrompt(true);
         setGaze('camera');
-        await speakLexara(spokenAnswer, generation);
+
+        if (streamedSpeechTurnId && streamedSpeechCompletion && !streamedSpeechFailed) {
+          const completedTurnId = streamedSpeechTurnId;
+          const completion = lexaraRealtimeVoiceClient.endSpeechStream(completedTurnId);
+          await completion;
+          activeLexaraSpeechRef.current = '';
+          recentLexaraSpeechRef.current = {
+            text: progressiveSpokenText,
+            expiresAt: Date.now() + 8_000,
+          };
+          resumeListening();
+          if (generation === generationRef.current) {
+            setConversationPhase('listening');
+            setEmotion('calm');
+          }
+        } else {
+          const spokenPrefix = progressiveSpokenText.trim();
+          const recoverySpeech = streamedSpeechFailed && spokenPrefix && spokenAnswer.startsWith(spokenPrefix)
+            ? spokenAnswer.slice(spokenPrefix.length).trim()
+            : spokenAnswer;
+          if (recoverySpeech) await speakLexara(recoverySpeech, generation);
+        }
       }
     } catch (error: any) {
       if (generation !== generationRef.current) return;
@@ -1198,7 +1297,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         }
       }
     }
-  }, [appendMessage, clearVoiceTurnBuffer, jurisdiction, lawTypeId, lawTypeName, liveEnabled, pendingDocument, setConversationPhase, speakLexara, stopSpeaking, voiceReady]);
+  }, [appendMessage, clearVoiceTurnBuffer, jurisdiction, lawTypeId, lawTypeName, liveEnabled, pendingDocument, resumeListening, setConversationPhase, speakLexara, stopSpeaking, updateMessageContent, voiceReady]);
 
   handleMessageRef.current = handleUserMessage;
 
