@@ -718,12 +718,16 @@ export async function generateLexaraConversationResponse(
     + researchStatusPrompt
     + formatLexaraBackgroundResearchForSystem(backgroundInvestigation);
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
-  const claudeModel = deepClaudeNeeded && context.allowClaudeOpus === true
-    ? CURRENT_AI_MODELS.claudeDeep
-    : CURRENT_AI_MODELS.claudeBalanced;
-  const claudeEffort = deepClaudeNeeded
-    ? (context.allowClaudeOpus === true ? 'max' as const : 'high' as const)
-    : 'medium' as const;
+  const claudeModel = context.allowClaudeOpus !== true
+    ? CURRENT_AI_MODELS.claudeFast
+    : deepClaudeNeeded
+      ? CURRENT_AI_MODELS.claudeDeep
+      : CURRENT_AI_MODELS.claudeBalanced;
+  const claudeEffort = context.allowClaudeOpus !== true
+    ? undefined
+    : deepClaudeNeeded
+      ? 'max' as const
+      : 'medium' as const;
   // Stream only turns whose final answer is not subject to downstream evidence
   // correction. Research-backed turns remain final-answer-first so a preliminary
   // model sentence can never outrun source validation.

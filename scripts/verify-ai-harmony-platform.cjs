@@ -66,7 +66,8 @@ must(
 
 must(
   claude.includes('MessageCreateParamsNonStreaming') &&
-    claude.includes('output_config: { effort: options.effort }') &&
+    claude.split("const effectiveEffort = /^claude-haiku-/i.test(model) ? undefined : options.effort;").length === 3 &&
+    claude.split('output_config: { effort: effectiveEffort }').length === 3 &&
     claude.includes("cache_control: { type: 'ephemeral' }") &&
     claude.includes("console.info('[Claude Usage]'") &&
     collaboration.includes('allowClaudeOpus?: boolean') &&
@@ -75,7 +76,7 @@ must(
     collaboration.includes("? 'max'") &&
     collaboration.includes(": 'high'") &&
     provider.includes('allowClaudeOpus: options.allowClaudeOpus === true'),
-  'Claude efficiency controls preserve high legal effort while enabling paid deep-model escalation and prompt-cache telemetry',
+  'Claude transport suppresses unsupported Haiku effort globally while preserving paid Sonnet/Opus effort and prompt-cache telemetry',
 );
 
 must(

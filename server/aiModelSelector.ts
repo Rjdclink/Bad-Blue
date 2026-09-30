@@ -78,13 +78,10 @@ export class AIModelSelector {
    * Select optimal Claude model based on task attributes
    */
   static selectClaudeModel(attrs: TaskAttributes): string {
-    if (attrs.needsFastResponse && !attrs.needsLegalAnalysis && attrs.complexity === TaskComplexity.LIGHTWEIGHT) {
+    if (attrs.allowClaudeOpus !== true) {
       return CURRENT_AI_MODELS.claudeFast;
     }
-    if (
-      attrs.allowClaudeOpus === true
-      && (attrs.claudeWorkload === 'deep-legal' || attrs.claudeWorkload === 'document-drafting')
-    ) {
+    if (attrs.claudeWorkload === 'deep-legal' || attrs.claudeWorkload === 'document-drafting') {
       return CURRENT_AI_MODELS.claudeDeep;
     }
     return CURRENT_AI_MODELS.claudeBalanced;

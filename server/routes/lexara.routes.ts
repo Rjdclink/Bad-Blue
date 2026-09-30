@@ -31,6 +31,11 @@ import { getHarmonyWarmStatus } from '../aiHarmonyWarmup';
 const router = express.Router();
 router.use(isAuthenticated);
 
+function canUsePaidClaude(req: Request): boolean {
+  const accessState = String((req.user as any)?.accessState || '').trim().toLowerCase();
+  return accessState === 'paid' || accessState === 'master';
+}
+
 const lexaraVoiceUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 8 * 1024 * 1024 },
@@ -191,6 +196,9 @@ router.post('/respond', express.json(), async (req: Request, res: Response) => {
       systemPrompt: LEXARA_PERSONA.systemPrompt,
       temperature: 0.7,
       maxTokens: 1000,
+      providerPolicy: 'legalwhat',
+      allowClaudeOpus: canUsePaidClaude(req),
+      claudeWorkload: 'standard',
     });
 
     if (!aiResponse.success || !aiResponse.content) {

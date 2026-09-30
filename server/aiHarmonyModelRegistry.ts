@@ -62,7 +62,8 @@ export const CURRENT_AI_MODELS = {
 
 /** Legal-scoped models. Claude is the sole LegalWhat inference provider. */
 export const LEGAL_AI_MODELS = {
-  claudeFast: 'claude-sonnet-5-5',
+  claudeFast: 'claude-haiku-4-5-20251001',
+  claudeBalanced: 'claude-sonnet-5-5',
   claudeDeep: 'claude-opus-5-5',
 } as const;
 export function isCurrentLegalModel(provider: AIProvider, model: string): boolean {
