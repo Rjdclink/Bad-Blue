@@ -65,6 +65,9 @@ export default function LexaraConsentPage() {
         })
         .catch(() => null);
 
+      // Location is best-effort and never blocks voice/text readiness. The
+      // browser owns permission; denial simply leaves Lexara on weaker signals.
+      void captureLexaraDeviceLocation({ prompt: true }).catch(() => undefined);
       const [audioUnlocked, stream, readiness] = await Promise.all([
         unlockAudio(),
         navigator.mediaDevices.getUserMedia({
@@ -72,9 +75,6 @@ export default function LexaraConsentPage() {
           video: false,
         }),
         readinessPromise,
-        // Location is best-effort and never blocks voice/text access. The
-        // browser owns permission; denial simply leaves Lexara on weaker signals.
-        captureLexaraDeviceLocation({ prompt: true }).catch(() => undefined),
       ]);
 
       const microphoneGranted = stream.getAudioTracks().length > 0;
