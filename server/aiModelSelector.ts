@@ -33,6 +33,9 @@ export enum TaskPriority {
  */
 export interface TaskAttributes {
   legalWorkKind?: 'fast' | 'reasoning' | 'drafting';
+  // Server-derived only. Never accept this entitlement from a client payload.
+  allowClaudeOpus?: boolean;
+  claudeWorkload?: 'standard' | 'deep-legal' | 'document-drafting';
   needsMultimodal?: boolean;
   needsLongContext?: boolean;
   needsMassiveContext?: boolean;
@@ -78,7 +81,10 @@ export class AIModelSelector {
     if (attrs.needsFastResponse && !attrs.needsLegalAnalysis && attrs.complexity === TaskComplexity.LIGHTWEIGHT) {
       return CURRENT_AI_MODELS.claudeFast;
     }
-    if (attrs.complexity === TaskComplexity.COMPREHENSIVE && attrs.needsReasoning) {
+    if (
+      attrs.allowClaudeOpus === true
+      && (attrs.claudeWorkload === 'deep-legal' || attrs.claudeWorkload === 'document-drafting')
+    ) {
       return CURRENT_AI_MODELS.claudeDeep;
     }
     return CURRENT_AI_MODELS.claudeBalanced;

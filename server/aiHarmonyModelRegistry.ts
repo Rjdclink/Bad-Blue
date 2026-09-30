@@ -38,8 +38,8 @@ const PROVIDER = {
 export const CURRENT_AI_MODELS = {
   gemini: process.env.GEMINI_MODEL?.trim() || 'gemini-3.8-flash',
   claudeFast: process.env.CLAUDE_FAST_MODEL?.trim() || 'claude-haiku-4-5-20251001',
-  claudeBalanced: process.env.CLAUDE_MODEL?.trim() || 'claude-sonnet-5',
-  claudeDeep: process.env.CLAUDE_OPUS_MODEL?.trim() || 'claude-opus-5',
+  claudeBalanced: process.env.CLAUDE_MODEL?.trim() || 'claude-sonnet-5-5',
+  claudeDeep: process.env.CLAUDE_OPUS_MODEL?.trim() || 'claude-opus-5-5',
   groqFast: process.env.GROQ_FAST_MODEL?.trim() || 'openai/gpt-oss-20b',
   groqDeep: process.env.GROQ_CHAT_MODEL?.trim() || process.env.GROQ_MODEL?.trim() || 'openai/gpt-oss-120b',
   mistralFast: process.env.MISTRAL_MODEL?.trim() || 'mistral-small-2603',
@@ -62,7 +62,7 @@ export const CURRENT_AI_MODELS = {
 
 /** Legal-scoped models. The wider Harmony registry remains unchanged. */
 export const LEGAL_AI_MODELS = {
-  claudeFast: 'claude-sonnet-5', claudeDeep: 'claude-opus-5-5',
+  claudeFast: 'claude-sonnet-5-5', claudeDeep: 'claude-opus-5-5',
   geminiFast: 'gemini-3.8-flash', geminiDeep: 'gemini-3.8-flash',
   xaiFast: 'grok-4.7', xaiDeep: 'grok-4.7', xaiAlternate: 'grok-4.6',
 } as const;

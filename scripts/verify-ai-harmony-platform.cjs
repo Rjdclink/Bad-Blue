@@ -35,6 +35,9 @@ const mlRoutingWorker = read('server/services/mlnlp/mlRoutingWorker.ts');
 const constants = read('server/constants.ts');
 const openRouterService = read('server/openRouterService.ts');
 const harmonyWarmup = read('server/aiHarmonyWarmup.ts');
+const claude = read('server/claude.ts');
+const packageJson = JSON.parse(read('package.json'));
+const packageLock = JSON.parse(read('package-lock.json'));
 
 const registrySection = registry.split('HARMONY_17_PARTICIPANTS')[1]?.split('const LEGACY_MODEL_ALIASES')[0] || '';
 const participantCount = (registrySection.match(/provider:\s*PROVIDER\./g) || []).length;
@@ -47,11 +50,33 @@ must(
 );
 for (const model of [
   'gemini-3.8-flash',
-  'claude-sonnet-5',
+  'claude-sonnet-5-5',
   'grok-4.7',
 ]) {
   must(registry.includes(model), `current Harmony registry includes ${model}`);
 }
+
+must(
+  registry.includes("'claude-sonnet-5-5'") &&
+    registry.includes("'claude-opus-5-5'") &&
+    packageJson.dependencies?.['@anthropic-ai/sdk'] === '^0.129.0' &&
+    packageLock.packages?.['node_modules/@anthropic-ai/sdk']?.version === '0.129.0',
+  'Claude 5.5 model IDs and current Anthropic SDK are pinned together',
+);
+
+must(
+  claude.includes('MessageCreateParamsNonStreaming') &&
+    claude.includes('output_config: { effort: options.effort }') &&
+    claude.includes("cache_control: { type: 'ephemeral' }") &&
+    claude.includes("console.info('[Claude Usage]'") &&
+    collaboration.includes('allowClaudeOpus?: boolean') &&
+    collaboration.includes("claudeWorkload?: 'standard' | 'deep-legal' | 'document-drafting'") &&
+    collaboration.includes("task.model === LEGAL_AI_MODELS.claudeDeep") &&
+    collaboration.includes("? 'max'") &&
+    collaboration.includes(": 'high'") &&
+    provider.includes('allowClaudeOpus: options.allowClaudeOpus === true'),
+  'Claude efficiency controls preserve high legal effort while enabling paid deep-model escalation and prompt-cache telemetry',
+);
 
 must(
   harmonyWarmup.includes('prewarmHarmonyProviders') &&
