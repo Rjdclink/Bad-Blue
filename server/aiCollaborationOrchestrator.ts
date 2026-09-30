@@ -528,6 +528,9 @@ export class AICollaborationOrchestrator {
     const providers = options.providerPolicy === 'legalwhat'
       ? this.selectLegalProvidersForTask(attributes, initialCandidateProviders, options.maxParticipants)
       : this.selectProvidersForTask(attributes, initialCandidateProviders, options.maxParticipants);
+    const reserveClaudeForDeepFinal = paidDeepClaudeWork
+      && providers.includes(AIProvider.CLAUDE)
+      && providers.some(provider => provider !== AIProvider.CLAUDE);
     
     // Determine orchestration strategy
     const strategy = this.selectStrategy(attributes, providers);
