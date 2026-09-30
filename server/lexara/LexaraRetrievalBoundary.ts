@@ -1,5 +1,5 @@
 import { lookup } from 'node:dns/promises';
-import net from 'node:net';
+import { isIP } from 'node:net';
 import { load } from 'cheerio';
 
 export interface LexaraRetrievalEvidence {
@@ -43,7 +43,7 @@ function isPrivateIpv6(address: string): boolean {
 }
 
 function isPrivateAddress(address: string): boolean {
-  const version = net.isIP(address);
+  const version = isIP(address);
   if (version === 4) return isPrivateIpv4(address);
   if (version === 6) return isPrivateIpv6(address);
   return true;
@@ -57,7 +57,7 @@ async function assertPublicUrl(raw: string): Promise<URL> {
   if (!hostname || hostname === 'localhost' || hostname.endsWith('.localhost')) {
     throw new Error('Lexara retrieval rejects local hosts.');
   }
-  if (net.isIP(hostname)) {
+  if (isIP(hostname)) {
     if (isPrivateAddress(hostname)) throw new Error('Lexara retrieval rejects private network targets.');
     return url;
   }
@@ -114,7 +114,7 @@ async function retrieveOne(target: string, parentSignal?: AbortSignal): Promise<
       const content = textFromResponse(raw, contentType);
       if (!content) return null;
       return {
-        target: current.toString(),
+        target,
         content,
         retrievedAt: new Date().toISOString(),
         contentType,
