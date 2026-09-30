@@ -50,7 +50,7 @@ for (const forbidden of ['PantheonRetrievalAdapter','pantheonRetrievalAdapter','
 for (const token of ['MAX_RECURSIVE_PASSES = 30','TARGETS_PER_PASS = 10','TOTAL_RESEARCH_BUDGET_MS = 10 * 60_000','discoverLegalMeshTier3','discoverLegalMeshSupplemental','lexaraRetrievalAdapter','directlyAnswers','retrievedAt']) {
   if (!background.includes(token)) throw new Error('Lexara native background investigation missing '+token);
 }
-if (!orchestrator.includes('const researchRouteSelected = sequencePlan.useLegalResearch || researchDecision.needed')) {
+if (!orchestrator.includes('const researchRouteSelected = purePersonFactResearch ? false : sequencePlan.useLegalResearch || researchDecision.needed')) {
   throw new Error('Factual/research turns are not handed to the single Lexara research route');
 }
 if (!orchestrator.includes('backgroundResearchRequested\n      ? backgroundInvestigationPromise')
