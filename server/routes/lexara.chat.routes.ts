@@ -17,6 +17,14 @@ import { isAuthenticated } from '../auth';
 import { getConfiguredHarmonyParticipants } from '../aiHarmonyModelRegistry';
 import { isBlankLegalDocumentRequest, resolveLegalDocumentType } from '../lexara/legalDocumentRegistry';
 import { resolveBestLocationEstimate, type BrowserLocationSignal } from '../lexara/LexaraJurisdictionResolver';
+import {
+  advanceRepresentationMatter,
+  findReferencedMatter,
+  sanitizeRepresentationMatter,
+  summarizeMatter,
+  type RepresentationMatterState,
+  type SavedMatterSummary,
+} from '../lexara/LexaraRepresentationEngine';
 
 const router = express.Router();
 router.use(isAuthenticated);
@@ -30,6 +38,59 @@ const MAX_CONTEXT_FIELD_CHARACTERS = 128;
 function canUseClaudeOpus(req: Request): boolean {
   const accessState = String((req.user as any)?.accessState || '').trim().toLowerCase();
   return accessState === 'paid' || accessState === 'master';
+}
+
+function hasPersistentMatterAccess(req: Request): boolean {
+  return String((req.user as any)?.accessState || '').trim().toLowerCase() === 'paid';
+}
+
+function authenticatedUserId(req: Request): string | undefined {
+  const user = (req as any).user;
+  const id = user?.id || user?.claims?.sub;
+  return typeof id === 'string' && id.trim() ? id.trim() : undefined;
+}
+
+async function loadRepresentationContext(
+  req: Request,
+  prompt: string,
+  requestedSessionId: string | undefined,
+  clientMatter: unknown,
+): Promise<{
+  persistent: boolean;
+  activeMatter: RepresentationMatterState | null;
+  activeSessionId: string | undefined;
+  savedMatters: SavedMatterSummary[];
+}> {
+  if (!hasPersistentMatterAccess(req)) {
+    const ephemeral = sanitizeRepresentationMatter(clientMatter);
+    return {
+      persistent: false,
+      activeMatter: ephemeral,
+      activeSessionId: ephemeral?.sessionId || requestedSessionId,
+      savedMatters: [],
+    };
+  }
+
+  const userId = authenticatedUserId(req);
+  if (!userId) return { persistent: false, activeMatter: null, activeSessionId: requestedSessionId, savedMatters: [] };
+
+  const { storage } = await import('../storage');
+  const rows = await storage.getUserLexaraMatterStates(userId, 200);
+  const matters = rows.flatMap((row: any) => {
+    const state = sanitizeRepresentationMatter(row?.matter);
+    return state ? [{ state, summary: summarizeMatter(state) }] : [];
+  });
+  const current = requestedSessionId
+    ? matters.find((entry: any) => entry.state.sessionId === requestedSessionId)?.state || null
+    : null;
+  const referenced = findReferencedMatter(prompt, matters);
+  const activeMatter = referenced || current || null;
+  return {
+    persistent: true,
+    activeMatter,
+    activeSessionId: activeMatter?.sessionId || requestedSessionId,
+    savedMatters: matters.map((entry: any) => entry.summary),
+  };
 }
 
 function cleanOptionalString(value: unknown, maxLength = MAX_CONTEXT_FIELD_CHARACTERS): string | undefined {
@@ -124,10 +185,15 @@ async function persistConversationTurn(
     mappedLawType?: string | null;
     behaviorMode: string;
     audioBase64?: string;
+    representationMatter?: RepresentationMatterState | null;
   },
-): Promise<{ conversationId: string | null; persistenceSuccess: boolean | null; persistenceStatus: 'saved' | 'master-ephemeral' }> {
+): Promise<{ conversationId: string | null; persistenceSuccess: boolean | null; persistenceStatus: 'saved' | 'master-ephemeral' | 'trial-ephemeral' }> {
   const user = (req as any).user;
   const userId = user?.id || user?.claims?.sub;
+  const accessState = String(user?.accessState || '').trim().toLowerCase();
+  if (accessState === 'trial_active') {
+    return { conversationId: null, persistenceSuccess: null, persistenceStatus: 'trial-ephemeral' };
+  }
   if (user?.isMasterBypass || userId === MASTER_USER_ID) {
     return { conversationId: null, persistenceSuccess: null, persistenceStatus: 'master-ephemeral' };
   }
@@ -147,6 +213,7 @@ async function persistConversationTurn(
       jurisdiction: data.jurisdiction || null,
       mappedLawType: data.mappedLawType || null,
       behaviorMode: data.behaviorMode,
+      representationMatter: data.representationMatter || null,
     },
   });
   return { conversationId: conversation.id, persistenceSuccess: true, persistenceStatus: 'saved' };
@@ -161,15 +228,21 @@ router.get('/conversations/latest', async (req: Request, res: Response) => {
   const user = (req as any).user;
   const userId = user?.id || user?.claims?.sub;
   if (user?.isMasterBypass || userId === MASTER_USER_ID) {
-    return res.json({ success: true, conversation: null });
+    return res.json({ success: true, conversation: null, hasSavedMatters: false });
   }
   if (!userId) return res.status(401).json({ success: false, error: 'Sign in to restore a conversation' });
+  if (!hasPersistentMatterAccess(req)) {
+    return res.json({ success: true, conversation: null, hasSavedMatters: false });
+  }
 
   try {
     const lawType = cleanOptionalString(req.query.lawType);
     const { storage } = await import('../storage');
-    const conversation = await storage.getLatestUserLexaraSession(userId, lawType);
-    return res.json({ success: true, conversation });
+    const [conversation, matterRows] = await Promise.all([
+      storage.getLatestUserLexaraSession(userId, lawType),
+      storage.getUserLexaraMatterStates(userId, 200),
+    ]);
+    return res.json({ success: true, conversation, hasSavedMatters: matterRows.length > 0 });
   } catch (error) {
     log.error('[LEXARA] Failed to restore conversation', { error });
     return res.status(503).json({ success: false, error: 'LEXARA could not restore your last conversation' });
