@@ -410,6 +410,7 @@ export async function investigateLexaraBackgroundQuestion(
     return {
       evidenceSummary: evidenceSummary || undefined,
       sources: useful.map(item => item.url),
+      searchLeads: useful.length ? undefined : candidates.slice(0, 12).map(item => item.url),
       categories,
       fullBackgroundReportRequested: false,
       coverageLimited: !directlyAnswered,
