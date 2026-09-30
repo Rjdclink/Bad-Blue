@@ -68,10 +68,14 @@ const PERSON_RECORD_PATTERN = /\b(?:identity|date\s+of\s+birth|dob|age|phone|ema
 const CRIMINAL_DETAIL_PATTERN = /\b(?:charge(?:s|d)?|offense(?:s)?|crime(?:s)?|criminal\s+(?:history|record)|conviction(?:s)?|convicted|arrest(?:s|ed)?|booking|case|docket|sentence(?:d|s)?|warrant(?:s)?)\b/i;
 const FULL_REPORT_PATTERN = /\b(?:full|complete|comprehensive|entire)\s+(?:background\s+)?(?:report|check|investigation)|\b(?:run|do|generate|prepare)\s+(?:a\s+)?background\s+(?:report|check)\b/i;
 const PERSON_RECURSIVE_MAX_PASSES = 30;
+const PERSON_LIVE_MAX_PASSES = 6;
 const PERSON_RECURSIVE_MAX_TARGETS_PER_PASS = 10;
 const PERSON_RECURSIVE_MAX_TOTAL_TARGETS = 30;
+const PERSON_LIVE_MAX_TOTAL_TARGETS = 12;
 const PERSON_RECURSIVE_TOTAL_BUDGET_MS = 10 * 60_000;
+const PERSON_LIVE_FACT_BUDGET_MS = 15_000;
 const STRUCTURED_CUSTODY_BUDGET_MS = 5 * 60_000;
+const STRUCTURED_CUSTODY_LIVE_BUDGET_MS = 12_000;
 const PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD = 0.50;
 const PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD = 0.80;
 const PERSON_SOFT_CHECKPOINTS_MS = [25_000, 60_000, 120_000, 300_000] as const;
@@ -489,6 +493,18 @@ export async function investigatePersonQuestion(
   const semanticExpressions = semanticResearchExpressions(semanticSubject, categories, prompt);
   const identityContext = Boolean(resolved?.identifiable);
   const deepAcquisitionRequested = /\b(?:deep|thorough|recursive|broaden|look harder)\b/i.test(prompt);
+  const investigationBudgetMs = deepAcquisitionRequested
+    ? PERSON_RECURSIVE_TOTAL_BUDGET_MS
+    : PERSON_LIVE_FACT_BUDGET_MS;
+  const investigationMaxPasses = deepAcquisitionRequested
+    ? PERSON_RECURSIVE_MAX_PASSES
+    : PERSON_LIVE_MAX_PASSES;
+  const investigationMaxTargets = deepAcquisitionRequested
+    ? PERSON_RECURSIVE_MAX_TOTAL_TARGETS
+    : PERSON_LIVE_MAX_TOTAL_TARGETS;
+  const structuredCustodyBudgetMs = deepAcquisitionRequested
+    ? STRUCTURED_CUSTODY_BUDGET_MS
+    : STRUCTURED_CUSTODY_LIVE_BUDGET_MS;
 
   if (!identityContext) {
     context.onProgress?.({ type: 'endpoint', pass: 0, endpoint: 'clarification-required' });
@@ -561,7 +577,7 @@ export async function investigatePersonQuestion(
           new Promise<never>((_, reject) => {
             custodyTimeout = setTimeout(
               () => reject(new Error('structured_custody_budget_exhausted')),
-              STRUCTURED_CUSTODY_BUDGET_MS,
+              structuredCustodyBudgetMs,
             );
           }),
         ]);
@@ -687,7 +703,7 @@ export async function investigatePersonQuestion(
     const explorationPrimaryQueue = [...new Set(eligiblePrimaryCrawlerIds)].slice(0, 4);
 
     const recursiveStartedAt = Date.now();
-    const globalDeadlineAt = recursiveStartedAt + PERSON_RECURSIVE_TOTAL_BUDGET_MS;
+    const globalDeadlineAt = recursiveStartedAt + investigationBudgetMs;
     const seenTargets = new Set<string>();
     let pendingTargets = targets.slice(0, PERSON_RECURSIVE_MAX_TARGETS_PER_PASS);
     let retrievalAvailable = true;
@@ -716,21 +732,21 @@ export async function investigatePersonQuestion(
       }
     };
 
-    for (let pass = 0; pass < PERSON_RECURSIVE_MAX_PASSES; pass++) {
+    for (let pass = 0; pass < investigationMaxPasses; pass++) {
       recursionPasses = pass + 1;
       console.info('[LEXARA PantheonRoute]', { stage: 'recursion-pass', pass: recursionPasses, pendingTargets: pendingTargets.length, categories });
       context.onProgress?.({ type: 'searching', pass: recursionPasses });
       if (context.signal?.aborted || !pendingTargets.length) break;
-      if (Date.now() - recursiveStartedAt >= PERSON_RECURSIVE_TOTAL_BUDGET_MS) break;
+      if (Date.now() - recursiveStartedAt >= investigationBudgetMs) break;
       // Isolate URLs: one blocked search-provider or challenge page must not
       // discard a different source's successful crawler response in the batch.
       const passTargets = pendingTargets
         .filter(url => !seenTargets.has(url))
-        .slice(0, 1);
+        .slice(0, deepAcquisitionRequested ? 1 : 2);
       if (!passTargets.length) break;
       passTargets.forEach(url => seenTargets.add(url));
 
-      const remainingMs = Math.max(500, PERSON_RECURSIVE_TOTAL_BUDGET_MS - (Date.now() - recursiveStartedAt));
+      const remainingMs = Math.max(500, investigationBudgetMs - (Date.now() - recursiveStartedAt));
       const retrievalStartedAt = Date.now();
       // The first pass must stay within the interactive acquisition budget;
       // subsequent passes can spend longer exploring alternate capabilities.
@@ -786,7 +802,7 @@ export async function investigatePersonQuestion(
             { categories, jurisdiction: context.jurisdiction, limit: PERSON_RECURSIVE_MAX_TARGETS_PER_PASS, timeoutMs: Math.min(2_500, remainingMs), signal: context.signal, providerPolicy: 'capability-first' },
           );
           pendingTargets = [...new Set([...pendingTargets, ...broadened.urls.filter(url => !seenTargets.has(url))])]
-            .slice(0, Math.min(PERSON_RECURSIVE_MAX_TARGETS_PER_PASS, PERSON_RECURSIVE_MAX_TOTAL_TARGETS - seenTargets.size));
+            .slice(0, Math.min(PERSON_RECURSIVE_MAX_TARGETS_PER_PASS, investigationMaxTargets - seenTargets.size));
         } catch {}
         if (!pendingTargets.length) break;
         continue;
@@ -901,6 +917,16 @@ export async function investigatePersonQuestion(
       // findings may strengthen the assessment, but corroboration is never a
       // prerequisite for preserving or reporting a single useful source.
       if (bestConfidence >= PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD && !hasMaterialIdentityConflict) break;
+      // Ordinary live factual turns stop once several usable sources have
+      // converged enough for calibrated synthesis. Explicit deep research keeps
+      // the wider recursive budget.
+      const publishableEvidenceCount = rankedScores.filter(
+        score => score >= PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD,
+      ).length + structuredEvidence.length;
+      if (!deepAcquisitionRequested
+        && publishableEvidenceCount >= 3
+        && bestConfidence >= 0.65
+        && !hasMaterialIdentityConflict) break;
       // When useful, contradiction-free evidence has stabilized across repeated
       // broadening passes, stop successfully rather than pretending that perfect
       // evidence must exist somewhere. The surviving evidence remains available
@@ -908,7 +934,7 @@ export async function investigatePersonQuestion(
       if (stagnantUsefulPasses >= 2 && bestConfidence >= PERSON_PROGRESSIVE_CONFIDENCE_THRESHOLD && !hasMaterialIdentityConflict) break;
       // Explicit exhaustion endpoints: pass count, wall-clock budget, target
       // budget, caller abort, or no new URLs. This prevents unbounded recursion.
-      if (Date.now() >= globalDeadlineAt || pass + 1 >= PERSON_RECURSIVE_MAX_PASSES || seenTargets.size >= PERSON_RECURSIVE_MAX_TOTAL_TARGETS) break;
+      if (Date.now() >= globalDeadlineAt || pass + 1 >= investigationMaxPasses || seenTargets.size >= investigationMaxTargets) break;
 
       const frontier = [
         ...(retrieval.frontierCandidates?.discoveredCandidates || []),
@@ -938,7 +964,7 @@ export async function investigatePersonQuestion(
       }
       pendingTargets = [...new Set([...pendingTargets.filter(url => !seenTargets.has(url)), ...frontier, ...discovered])]
         .filter(url => !seenTargets.has(url))
-        .slice(0, Math.min(PERSON_RECURSIVE_MAX_TARGETS_PER_PASS, PERSON_RECURSIVE_MAX_TOTAL_TARGETS - seenTargets.size));
+        .slice(0, Math.min(PERSON_RECURSIVE_MAX_TARGETS_PER_PASS, investigationMaxTargets - seenTargets.size));
     }
 
     const evidenceEntries = [...acceptedEvidence.entries()]
@@ -961,7 +987,9 @@ export async function investigatePersonQuestion(
       : false;
     const evidenceSufficient = bestConfidence >= PERSON_HIGH_CONFIDENCE_STOP_THRESHOLD && !finalHasMaterialIdentityConflict;
     const hasUsefulPartialEvidence = publishableEvidenceCount > 0 || structuredEvidence.length > 0;
-    const bestAvailableEvidence = hasUsefulPartialEvidence && stagnantUsefulPasses >= 2 && !finalHasMaterialIdentityConflict;
+    const bestAvailableEvidence = hasUsefulPartialEvidence
+      && (stagnantUsefulPasses >= 2 || (!deepAcquisitionRequested && publishableEvidenceCount >= 3))
+      && !finalHasMaterialIdentityConflict;
     const sourceActuallyFetched = crawlerAudit.some(audit =>
       audit.status === 'completed_with_content' || audit.status === 'completed_with_evidence'
       || audit.status === 'completed_no_evidence');
@@ -973,7 +1001,7 @@ export async function investigatePersonQuestion(
           ? 'partial-evidence'
         : searchLeads.length ? 'search-leads-only'
         : !retrievalAvailable || !sourceActuallyFetched ? 'unavailable'
-        : Date.now() - recursiveStartedAt >= PERSON_RECURSIVE_TOTAL_BUDGET_MS
+        : Date.now() - recursiveStartedAt >= investigationBudgetMs
           ? 'budget-exhausted'
           : 'sources-exhausted';
     context.onProgress?.({ type: 'endpoint', pass: recursionPasses, confidence: bestConfidence, endpoint });
