@@ -74,6 +74,7 @@ const mesh = {
     state.tierCalls.push({ query, options });
     if (state.mode === 'empty') return [candidate('https://records.example.test/empty')];
     if (state.mode === 'employment') return [candidate('https://records.example.test/employer')];
+    if (state.mode === 'age-inference') return [candidate('https://records.example.test/juvenile')];
     if (state.mode === 'dob-recursive' && state.tierCalls.length === 1) {
       return [candidate('https://records.example.test/profile')];
     }
@@ -96,7 +97,7 @@ const retrieval = {
         if (target.endsWith('/profile')) {
           return [{
             target,
-            content: 'Avery Example appears in a public profile and is associated with Des Moines.',
+            content: 'Avery Example appears in a public profile and is associated with Des Moines, Iowa.',
             retrievedAt: '2026-09-30T12:00:00.000Z',
             contentType: 'text/html',
           }];
@@ -104,8 +105,16 @@ const retrieval = {
         if (target.endsWith('/dob')) {
           return [{
             target,
-            content: 'Official record for Avery Example of Des Moines. Date of birth: 01/02/1984.',
+            content: 'Official record for Avery Example of Des Moines, Iowa. Date of birth: 01/02/1984.',
             retrievedAt: '2026-09-30T12:00:01.000Z',
+            contentType: 'text/html',
+          }];
+        }
+        if (target.endsWith('/juvenile')) {
+          return [{
+            target,
+            content: 'In 2002, Avery Example of Des Moines, Iowa was a juvenile.',
+            retrievedAt: '2026-09-30T12:00:02.000Z',
             contentType: 'text/html',
           }];
         }
@@ -164,7 +173,7 @@ function reset(mode) {
   reset('dob-recursive');
   const progress = [];
   const dob = await investigator.investigateLexaraBackgroundQuestion(
-    'How old is Avery Example of Des Moines?',
+    'How old is Avery Example of Des Moines, Iowa?',
     { onProgress: event => progress.push(event) },
   );
   assert.equal(dob.endpoint, 'evidence-sufficient');
@@ -174,7 +183,7 @@ function reset(mode) {
     ['https://records.example.test/dob'],
   ]);
   assert.equal(state.tierCalls[0].options.subject, 'Avery Example', 'person name is normalized before search');
-  assert.equal(state.tierCalls[0].options.jurisdiction, 'Des Moines', 'location suffix survives subject normalization');
+  assert.equal(state.tierCalls[0].options.jurisdiction, 'Des Moines, Iowa', 'city and state both survive subject normalization');
   assert.match(dob.evidenceSummary, /SOURCE: https:\/\/records\.example\.test\/dob/);
   assert.match(dob.evidenceSummary, /RETRIEVED: 2026-09-30T12:00:01\.000Z/);
   assert.match(dob.evidenceSummary, /ASSESSMENT: DIRECT/);
@@ -189,6 +198,19 @@ function reset(mode) {
   assert.equal(employment.recursionPasses, 1);
   assert.deepEqual(state.retrievalCalls, [['https://records.example.test/employer']]);
   assert.match(employment.evidenceSummary, /employed by Example Industries/i);
+
+  reset('age-inference');
+  const inferredAge = await investigator.investigateLexaraBackgroundQuestion(
+    'How old is Avery Example of Des Moines, Iowa?',
+  );
+  assert.equal(inferredAge.endpoint, 'best-available-evidence');
+  assert.equal(inferredAge.recursionPasses, 1, 'recursion stops when broadening yields no unseen sources');
+  assert.match(inferredAge.evidenceSummary, /ASSESSMENT: INFERENTIAL/);
+  assert.match(inferredAge.evidenceSummary, /juvenile/i);
+  const inferredPrompt = investigator.formatLexaraBackgroundResearchForSystem(inferredAge);
+  assert.match(inferredPrompt, /strongest defensible answer/i);
+  assert.match(inferredPrompt, /shortest directly responsive answer/i);
+  assert.match(inferredPrompt, /about.*approximately.*probably.*range/i);
 
   reset('empty');
   const sameNameWrongContext = await investigator.investigateLexaraBackgroundQuestion(
