@@ -15,6 +15,7 @@ import { lexaraDocumentSpeech } from '@shared/lexaraDocumentSpeech';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { captureLexaraDeviceLocation, readLexaraDeviceLocation } from '@/lib/lexaraLocation';
+import { lexaraRealtimeVoiceClient } from '@/lib/lexaraRealtimeVoiceClient';
 
 interface LexaraConversationProps {
   lawTypeId?: string;
@@ -725,6 +726,16 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       return next;
     });
     return nextMessage.id;
+  }, []);
+
+  const updateMessageContent = useCallback((id: string, content: string) => {
+    setConversation(previous => {
+      const next = previous.map(message =>
+        message.id === id ? { ...message, content } : message
+      );
+      conversationRef.current = next;
+      return next;
+    });
   }, []);
 
   const enableVoice = useCallback(async () => {
