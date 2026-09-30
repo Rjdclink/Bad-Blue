@@ -48,7 +48,7 @@ for(const required of ['discoverPantheonSearchFirstCandidates','discoverPantheon
 for(const required of ['search_first_candidates_ready','searchFirstCandidates','discoverPantheonCategoryGapCandidates','combinedFreshLedger']){
   if(!categoryWorkflow.includes(required)) throw new Error('Pantheon category workflow is not consuming search-first discovery before registry standby: '+required);
 }
-if(!legalMesh.includes("tier: 3 as const") || !legalMesh.includes("tier: 5 as const")){
+if(!/tier:\s*3 as const/.test(legalMesh) || !/tier:\s*5 as const/.test(legalMesh)){
   throw new Error('Lexara direct legal discovery tiers are incomplete');
 }
 console.log('Pantheon registry remains intact while Lexara legal discovery is independently wired.');
