@@ -4,6 +4,7 @@ const orchestrator = fs.readFileSync('server/lexara/LexaraConversationOrchestrat
 const authority = fs.readFileSync('server/lexara/LexaraAuthorityResearch.ts','utf8');
 const legalMesh = fs.readFileSync('server/lexara/LegalProviderMesh.ts','utf8');
 const retrieval = fs.readFileSync('server/lexara/LexaraRetrievalBoundary.ts','utf8');
+const background = fs.readFileSync('server/lexara/LexaraBackgroundInvestigation.ts','utf8');
 const routes = fs.readFileSync('server/routes/lexara.chat.routes.ts','utf8');
 const planner = fs.readFileSync('server/lexara/LexaraResearchIntentRouter.ts','utf8');
 const sourceRegistry = fs.readFileSync('server/lexara/LexaraPublicSourceRegistry.ts','utf8');
@@ -35,11 +36,19 @@ if (!router.includes("useLegalResearch: true, useBackgroundResearch: false")) {
 if (!orchestrator.includes('planLexaraSequence(cleanPrompt, previousUserTurns)')) {
   throw new Error('Conversation orchestrator does not use six-sequence router');
 }
-if (!orchestrator.includes('const backgroundResearchRequested = false')) {
-  throw new Error('Lexara conversation route can still request Pantheon/background research');
+if (!orchestrator.includes("const backgroundResearchRequested = researchDecision.intent === 'factual' || mixedLegalFactNeed")) {
+  throw new Error('Lexara factual/mixed turns do not enable the Lexara-native background investigator');
 }
-if (orchestrator.includes("from './LexaraBackgroundResearchBoundary'") || orchestrator.includes('LexaraPantheonInvestigation')) {
-  throw new Error('Lexara conversation orchestrator still imports the Pantheon bridge');
+if (!orchestrator.includes("from './LexaraBackgroundInvestigation'")
+  || orchestrator.includes("from './LexaraBackgroundResearchBoundary'")
+  || orchestrator.includes('LexaraPantheonInvestigation')) {
+  throw new Error('Lexara conversation orchestrator is not cleanly wired to the native background investigator');
+}
+for (const forbidden of ['PantheonRetrievalAdapter','pantheonRetrievalAdapter','../services/pantheon/','PantheonDiscoveryCoordinator']) {
+  if (background.includes(forbidden)) throw new Error('Lexara native background investigator depends on Pantheon: '+forbidden);
+}
+for (const token of ['MAX_RECURSIVE_PASSES','discoverLegalMeshTier3','discoverLegalMeshSupplemental','lexaraRetrievalAdapter','directlyAnswers']) {
+  if (!background.includes(token)) throw new Error('Lexara native background investigation missing '+token);
 }
 if (!orchestrator.includes('const researchRouteSelected = sequencePlan.useLegalResearch || researchDecision.needed')) {
   throw new Error('Factual/research turns are not handed to the single Lexara research route');
