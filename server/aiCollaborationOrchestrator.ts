@@ -1813,6 +1813,8 @@ export class AICollaborationOrchestrator {
   ): AIProvider[] {
     // A single transport cannot count twice as redundancy. Claude Opus is
     // available after Sonnet fails but does not become a parallel hedge.
+    // LegalWhat uses Claude as the lead/final safety net while Gemini and xAI
+    // participate as independent redundant peers whenever healthy.
     const priority = [AIProvider.CLAUDE, AIProvider.GEMINI, AIProvider.XAI];
     const ranked = providers.slice().sort((a, b) => {
       const fit = (provider: AIProvider) => {
@@ -1831,7 +1833,7 @@ export class AICollaborationOrchestrator {
       if (domains.has(domain)) continue;
       selected.push(provider);
       domains.add(domain);
-      if (selected.length >= Math.min(explicitMax || 2, 2)) break;
+      if (selected.length >= Math.min(explicitMax || 3, 3)) break;
     }
     return selected;
   }

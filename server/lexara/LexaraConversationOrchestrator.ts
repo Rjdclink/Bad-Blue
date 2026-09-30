@@ -532,6 +532,11 @@ export async function generateLexaraConversationResponse(
     reason: researchDecision.reason,
     objectivePresent: Boolean(researchDecision.objective),
     objectiveKind: researchDecision.objectiveKind,
+    researchIntent: researchDecision.intent,
+    requestedFact: researchDecision.requestedFact,
+    sourceCategories: researchDecision.sourceCategories,
+    subjectPresent: Boolean(researchDecision.subject),
+    inferred: researchDecision.inferred,
     useLegalResearch: sequencePlan.useLegalResearch,
     useBackgroundResearch: sequencePlan.useBackgroundResearch,
     recursive: sequencePlan.recursive,
@@ -619,12 +624,19 @@ export async function generateLexaraConversationResponse(
   const relayResearchAbort = () => researchController.abort();
   if (context.signal?.aborted) researchController.abort();
   else context.signal?.addEventListener('abort', relayResearchAbort, { once: true });
-  const authorityResearchPromise = (sequencePlan.useLegalResearch || researchDecision.needed)
-    ? researchLegalAuthority(researchDecision.needed ? researchDecision.objective : cleanPrompt, {
+  const researchRouteSelected = sequencePlan.useLegalResearch || researchDecision.needed;
+  const authorityResearchPromise = researchRouteSelected
+    ? researchLegalAuthority(researchDecision.standaloneQuery || researchDecision.objective || cleanPrompt, {
         jurisdiction,
         domainName,
         researchHints: domainProfile?.researchHints,
         preferredOfficialDomains: domainProfile?.preferredOfficialDomains,
+        forceResearch: true,
+        researchIntent: researchDecision.intent,
+        subject: researchDecision.subject,
+        requestedFact: researchDecision.requestedFact,
+        sourceCategories: researchDecision.sourceCategories,
+        standaloneQuery: researchDecision.standaloneQuery,
         signal: researchController.signal,
       }).catch(() => null)
     : Promise.resolve(null);
@@ -681,9 +693,13 @@ export async function generateLexaraConversationResponse(
         backgroundStateJurisdiction,
       ].filter(Boolean).join(', ')}. Treat city/area as approximate network geography, not GPS-level certainty. Use only when location/jurisdiction is relevant to the current legal issue; if it materially affects the answer and conflicts with stronger user-supplied facts, prefer the user-supplied facts or ask a brief clarification.`
     : '';
+  const researchStatusPrompt = researchRouteSelected && !authorityResearch
+    ? '\n\nAPPLICATION RESEARCH STATUS\nLexara attempted the selected external research route for this turn but no independently usable source result was returned within the live research budget. Do not claim that no search was attempted. Do not invent the requested fact; say it could not be verified from the completed search and preserve useful next steps or clarification.'
+    : '';
   const systemPrompt = buildLegalSystemPrompt(context, mappedLawType, jurisdiction)
     + silentLocationContext
     + formatAuthorityResearchForSystem(authorityResearch)
+    + researchStatusPrompt
     + formatLexaraBackgroundResearchForSystem(backgroundInvestigation);
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
 
@@ -709,6 +725,7 @@ export async function generateLexaraConversationResponse(
           needsLegalAnalysis: true,
           needsVerification: true,
           needsReasoning: true,
+          needsSearchGrounding: researchDecision.needed,
           needsFastResponse: true,
           estimatedTokens: 1_500,
         },
@@ -716,7 +733,7 @@ export async function generateLexaraConversationResponse(
         {
           providerPolicy: 'legalwhat',
           systemPrompt,
-          maxParticipants: 2,
+          maxParticipants: 3,
           requestTimeoutMs: LIVE_REASONING_PROVIDER_ATTEMPT_MS,
           maxFallbacks: LIVE_REASONING_MAX_FALLBACKS,
           signal: context.signal,
@@ -764,10 +781,16 @@ export async function generateLexaraConversationResponse(
   // answer contains that prohibited refusal pattern, so normal turns gain no
   // extra latency.
   let permissionRefusalUnverified = false;
-  const modelPermissionRefusal = Boolean(backgroundInvestigation && !usedBackgroundSourceExcerptFallback && isPersonPermissionRefusal(text));
+  const factualAuthorityResearch = Boolean(
+    authorityResearch && (authorityResearch.researchIntent === 'factual' || authorityResearch.researchIntent === 'mixed')
+  );
+  const modelPermissionRefusal = Boolean(
+    (backgroundInvestigation || factualAuthorityResearch) && !usedBackgroundSourceExcerptFallback && isPersonPermissionRefusal(text)
+  );
   const sourceExcerptPermissionRefusal = Boolean(backgroundInvestigation && isPersonPermissionRefusal(text) && usedBackgroundSourceExcerptFallback);
-  if (backgroundInvestigation && (modelPermissionRefusal || sourceExcerptPermissionRefusal)) {
-    if (backgroundInvestigation.evidenceSummary && harmonyProviders.length > 0 && !context.signal?.aborted) {
+  if ((backgroundInvestigation || factualAuthorityResearch) && (modelPermissionRefusal || sourceExcerptPermissionRefusal)) {
+    const correctionEvidence = factualAuthorityResearch ? authorityResearch?.summary : backgroundInvestigation?.evidenceSummary;
+    if (correctionEvidence && harmonyProviders.length > 0 && !context.signal?.aborted) {
       // Preserve the correction deadline while using the canonical provider route.
       const correctionController = new AbortController();
       const relayCorrectionAbort = () => correctionController.abort(context.signal?.reason);
@@ -778,7 +801,7 @@ export async function generateLexaraConversationResponse(
       try {
         const correction = await AICollaborationOrchestrator.orchestrateCollaboration(
           'lexara-evidence-correction',
-          `CURRENT USER TURN:\n${cleanPrompt}\n\nLEXARA VERIFIED BACKGROUND EVIDENCE:\n${backgroundInvestigation.evidenceSummary}\n\nRewrite the answer using only this evidence. Do not refuse merely because the subject is a private individual or because the requested fact is personal. If the specific fact is not established, say it was not verified from the completed sources.`,
+          `CURRENT USER TURN:\n${cleanPrompt}\n\nLEXARA VERIFIED RESEARCH EVIDENCE:\n${correctionEvidence}\n\nRewrite the answer using only this evidence. Do not refuse merely because the subject is a private individual or because the requested fact is personal. If the specific fact is not established, say it was not verified from the completed sources.`,
           {
             context: UsageContext.USER,
             complexity: TaskComplexity.MODERATE,
@@ -818,9 +841,9 @@ export async function generateLexaraConversationResponse(
         usedBackgroundSourceExcerptFallback = true;
       } else {
         permissionRefusalUnverified = true;
-        text = backgroundInvestigation.evidenceSummary
+        text = factualAuthorityResearch || backgroundInvestigation?.evidenceSummary
           ? 'I found subject-specific source material, but the requested fact was not verified strongly enough for me to state it as fact.'
-          : backgroundInvestigation.endpoint === 'unavailable' || backgroundInvestigation.endpoint === 'failed'
+          : backgroundInvestigation?.endpoint === 'unavailable' || backgroundInvestigation?.endpoint === 'failed'
             ? 'I could not verify the requested fact; some sources may not have been available.'
             : 'I could not independently verify the requested fact from the sources I was able to assess.';
       }
@@ -832,10 +855,10 @@ export async function generateLexaraConversationResponse(
     harmonyMs: Date.now() - harmonyStartedAt,
     totalMs: Date.now() - turnStartedAt,
     grounded: !!authorityResearch || !!backgroundInvestigation?.evidenceSummary,
-    backgroundTargeted: backgroundResearchRequested,
-    backgroundEvidence: !!backgroundInvestigation?.evidenceSummary,
-    backgroundCategories: backgroundInvestigation?.categories || [],
-    backgroundSourceCount: backgroundInvestigation?.sources?.length || 0,
+    backgroundTargeted: researchDecision.intent === 'factual' || researchDecision.intent === 'mixed',
+    backgroundEvidence: factualAuthorityResearch || !!backgroundInvestigation?.evidenceSummary,
+    backgroundCategories: authorityResearch?.sourceCategories || backgroundInvestigation?.categories || [],
+    backgroundSourceCount: authorityResearch?.sources?.length || backgroundInvestigation?.sources?.length || 0,
     backgroundCoverageLimited: backgroundInvestigation?.coverageLimited === true,
     backgroundEndpoint: backgroundInvestigation?.endpoint || null,
     answerServiceUnavailable,
@@ -843,6 +866,11 @@ export async function generateLexaraConversationResponse(
     backgroundRecursionPasses: backgroundInvestigation?.recursionPasses || 0,
     researchNeeded: researchDecision.needed,
     researchObjectiveKind: researchDecision.objectiveKind,
+    researchIntent: researchDecision.intent,
+    requestedFact: researchDecision.requestedFact,
+    researchSubject: researchDecision.subject || null,
+    researchLanes: authorityResearch?.selectedCrawlers || [],
+    researchSourceCount: authorityResearch?.sources?.length || 0,
     researchEndpointReached: !researchDecision.needed || Boolean(authorityResearch || backgroundEndpoint),
     providersConfigured: harmonyProviders.length,
     initialHedgeParticipants: Math.min(3, harmonyProviders.length),
