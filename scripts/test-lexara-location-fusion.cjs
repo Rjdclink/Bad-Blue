@@ -24,7 +24,7 @@ let network = {
   confidence: 0.55,
 };
 
-const module = { exports: {} };
+const sandboxModule = { exports: {} };
 const localRequire = spec => {
   if (spec === './LocalNetworkJurisdiction') {
     return { resolveLocalNetworkJurisdiction: async () => network };
@@ -57,10 +57,10 @@ vm.runInNewContext(`(function(require,module,exports){${compiled}\n})`, {
   AbortController,
   setTimeout,
   clearTimeout,
-}, { filename: relative })(localRequire, module, module.exports);
+}, { filename: relative })(localRequire, sandboxModule, sandboxModule.exports);
 
 (async () => {
-  const resolver = module.exports;
+  const resolver = sandboxModule.exports;
 
   const fused = await resolver.resolveBestLocationEstimate('203.0.113.10', {
     latitude: 43.5446,
