@@ -48,13 +48,13 @@ type LexaraBackgroundResearchResult = {
 
 // Compatibility surface only. Lexara no longer invokes Pantheon from user turns.
 // All research-selected turns are routed through Lexara's legal authority/reasoning service.
-async function investigateLexaraBackgroundQuestion(): Promise<LexaraBackgroundResearchResult | null> {
+async function investigateLexaraBackgroundQuestion(..._args: any[]): Promise<LexaraBackgroundResearchResult | null> {
   return null;
 }
-async function discoverLexaraBackgroundSourcesParallel(): Promise<{ urls: string[]; lanesAttempted: string[] }> {
+async function discoverLexaraBackgroundSourcesParallel(..._args: any[]): Promise<{ urls: string[]; lanesAttempted: string[] }> {
   return { urls: [], lanesAttempted: [] };
 }
-function formatLexaraBackgroundResearchForSystem(): string {
+function formatLexaraBackgroundResearchForSystem(..._args: any[]): string {
   return '';
 }
 
