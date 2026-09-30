@@ -97,11 +97,11 @@ function requestedFact(text: string): LexaraRequestedFact {
   if (/\b(?:sanction|excluded|exclusion|disciplin(?:e|ary)|debarred|ofac|oig)\b/.test(value)) return 'sanctions-discipline';
   if (/\b(?:patent|trademark|inventor|assignee|intellectual property)\b/.test(value)) return 'intellectual-property';
   if (/\b(?:domain|website|rdap|whois|web footprint|internet footprint)\b/.test(value)) return 'domain-web';
+  if (/\b(?:social media|facebook|instagram|linkedin|tiktok|twitter|x\.com|username|online account|profile)\b/.test(value)) return 'social-online';
   if (/\b(?:news|newspaper|press|media|historical|archive|former|previously)\b/.test(value)) return 'news-history';
   if (/\b(?:identity|alias|aka|real name|who is)\b/.test(value)) return 'identity';
   if (/\b(?:phone|telephone|email|address|residen(?:ce|t)|where .+ live)\b/.test(value)) return 'contact-address';
   if (/\b(?:relatives?|family|parent|mother|father|sibling|brother|sister|associate|household|roommate|lives with)\b/.test(value)) return 'relatives-associates';
-  if (/\b(?:social media|facebook|instagram|linkedin|tiktok|twitter|x\.com|username|online account|profile)\b/.test(value)) return 'social-online';
   if (/\b(?:education|school|college|university|degree|diploma|graduat|alma mater)\b/.test(value)) return 'education';
   if (/\b(?:vehicle|car|truck|motorcycle|vin|vehicle title|vehicle registration)\b/.test(value)) return 'vehicle';
   if (/\b(?:criminal record|criminal history|conviction|charge|arrest|booking|police record|sheriff record)\b/.test(value)) return 'criminal-arrest';
