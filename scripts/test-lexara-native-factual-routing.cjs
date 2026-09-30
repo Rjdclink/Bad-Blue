@@ -6,6 +6,8 @@ const ts = require('typescript');
 
 const root = path.resolve(__dirname, '..');
 
+// Synthetic fixture only: these prompts test Lexara routing, not real-world facts about any person.
+
 function compile(relative) {
   const source = fs.readFileSync(path.join(root, relative), 'utf8');
   return ts.transpileModule(source, {
@@ -51,46 +53,50 @@ function factual(prompt, fact, categories = []) {
   return decision;
 }
 
-const age = factual('How old is Sarah Loretta Graves?', 'age-dob', ['vital-records','identity']);
-assert.equal(age.subject, 'Sarah Loretta Graves');
-assert.match(age.standaloneQuery, /Sarah Loretta Graves/i);
+const age = factual('How old is Avery Example?', 'age-dob', ['vital-records','identity']);
+assert.equal(age.subject, 'Avery Example');
+assert.match(age.standaloneQuery, /Avery Example/i);
 
-const license = factual('Does Sarah Loretta Graves hold any licenses?', 'professional-license', ['professional-license']);
-assert.equal(license.subject, 'Sarah Loretta Graves');
+const license = factual('Does Avery Example hold any licenses?', 'professional-license', ['professional-license']);
+assert.equal(license.subject, 'Avery Example');
 
-const follow = planner.decideLexaraResearchNeed('Nursing license', ['Does Sarah Loretta Graves hold any licenses?']);
+const follow = planner.decideLexaraResearchNeed('Nursing license', ['Does Avery Example hold any licenses?']);
 assert.equal(follow.needed, true);
 assert.equal(follow.reason, 'research-follow-up');
 assert.equal(follow.intent, 'factual');
 assert.equal(follow.requestedFact, 'professional-license');
-assert.equal(follow.subject, 'Sarah Loretta Graves');
+assert.equal(follow.subject, 'Avery Example');
 assert(follow.sourceCategories.includes('healthcare-professional'));
-assert.match(follow.standaloneQuery, /Sarah Loretta Graves/i);
+assert.match(follow.standaloneQuery, /Avery Example/i);
 assert.match(follow.standaloneQuery, /Nursing license/i);
+const followPlan = router.planLexaraSequence('Nursing license', ['Does Avery Example hold any licenses?']);
+assert.equal(followPlan.useBackgroundResearch, false, 'Lexara follow-up must never route to Pantheon');
 
-factual('Is Sarah Loretta Graves married?', 'marriage-divorce', ['vital-records']);
-factual('Where does Sarah Loretta Graves work?', 'employment', ['employment']);
-factual('Where is Sarah Loretta Graves incarcerated?', 'incarceration', ['corrections']);
-factual('Does Sarah Loretta Graves own real estate?', 'property', ['property']);
-factual('What address does Sarah Loretta Graves live at?', 'contact-address', ['contacts-addresses']);
-factual('Does Sarah Loretta Graves have any relatives?', 'relatives-associates', ['relationships']);
-factual('What social media profiles does Sarah Loretta Graves use?', 'social-online', ['social-online']);
-factual('Where did Sarah Loretta Graves go to college?', 'education', ['education']);
-factual('Does Sarah Loretta Graves have a criminal record?', 'criminal-arrest', ['criminal-records']);
-factual('Is Sarah Loretta Graves on probation or parole?', 'probation-parole', ['probation-parole']);
-factual('Does Sarah Loretta Graves have an outstanding warrant?', 'warrant', ['warrants']);
-factual('Is Sarah Loretta Graves on a sex offender registry?', 'sex-offender', ['sex-offender']);
-factual('Has Sarah Loretta Graves filed bankruptcy?', 'bankruptcy-financial', ['financial-public']);
+factual('Is Avery Example married?', 'marriage-divorce', ['vital-records']);
+factual('Where does Avery Example work?', 'employment', ['employment']);
+factual('Where is Avery Example incarcerated?', 'incarceration', ['corrections']);
+factual('Does Avery Example own real estate?', 'property', ['property']);
+factual('What address does Avery Example live at?', 'contact-address', ['contacts-addresses']);
+factual('Does Avery Example have any relatives?', 'relatives-associates', ['relationships']);
+factual('What social media profiles does Avery Example use?', 'social-online', ['social-online']);
+factual('Where did Avery Example go to college?', 'education', ['education']);
+factual('Does Avery Example have a criminal record?', 'criminal-arrest', ['criminal-records']);
+factual('Is Avery Example on probation or parole?', 'probation-parole', ['probation-parole']);
+factual('Does Avery Example have an outstanding warrant?', 'warrant', ['warrants']);
+factual('Is Avery Example on a sex offender registry?', 'sex-offender', ['sex-offender']);
+factual('Has Avery Example filed bankruptcy?', 'bankruptcy-financial', ['financial-public']);
 
 
 const legal = planner.decideLexaraResearchNeed('How do I file for divorce in Iowa?', []);
 assert.equal(legal.needed, true);
 assert.equal(legal.intent, 'legal');
 
-const mixed = planner.decideLexaraResearchNeed("Can I use Sarah Loretta Graves's nursing license records in my divorce case?", []);
+const mixed = planner.decideLexaraResearchNeed("Can I use Avery Example's nursing license records in my divorce case?", []);
 assert.equal(mixed.needed, true);
 assert.equal(mixed.intent, 'mixed');
 assert.equal(mixed.requestedFact, 'professional-license');
 assert(mixed.sourceCategories.includes('healthcare-professional'));
+const mixedPlan = router.planLexaraSequence("Can I use Avery Example's nursing license records in my divorce case?", []);
+assert.equal(mixedPlan.useBackgroundResearch, false, 'Lexara mixed research must never route to Pantheon');
 
-console.log('PASS: Lexara native factual intent, inference, follow-up carryover, and legal/factual routing are verified.');
+console.log('PASS: Lexara-owned factual intent, inference, follow-up carryover, and legal/factual routing are verified with Pantheon disconnected.');
