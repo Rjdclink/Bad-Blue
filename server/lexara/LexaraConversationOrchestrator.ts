@@ -501,20 +501,20 @@ export async function generateLexaraConversationResponse(
   const backgroundStateJurisdiction = jurisdictionRelevant
     ? normalizeJurisdiction(context.backgroundJurisdiction) : undefined;
   const backgroundLocationConfidence = Math.max(0, Math.min(1, Number(context.backgroundLocationConfidence || 0)));
-  const backgroundLocationUsable = Boolean(backgroundStateJurisdiction && backgroundLocationConfidence >= 0.75);
+  const backgroundLocationTrusted = Boolean(backgroundStateJurisdiction && backgroundLocationConfidence >= 0.75);
   const explicitLocationCue = hasExplicitLocationCue(cleanPrompt);
   // User-supplied place language always outranks automatic location evidence.
-  // Automatic location is only promoted to working jurisdiction when confidence
-  // is strong enough; weaker estimates remain silent context for clarification.
+  // A weaker automatic estimate may still guide the internal analysis, but only
+  // a stronger fused estimate is persisted as the matter's working jurisdiction.
   const stateJurisdiction = explicitStateJurisdiction
-    || (!explicitLocationCue && backgroundLocationUsable ? backgroundStateJurisdiction : undefined);
+    || (!explicitLocationCue ? backgroundStateJurisdiction : undefined);
   const resolvedJurisdiction = await resolveUSJurisdiction(cleanPrompt, stateJurisdiction);
   const jurisdiction = resolvedJurisdiction?.display || stateJurisdiction;
-  // High-confidence device/network fusion may seed the matter, but any later
-  // user-stated location overrides it through inferJurisdiction above.
   const publicJurisdiction = explicitStateJurisdiction
     || (explicitLocationCue ? resolvedJurisdiction?.display : undefined)
-    || (backgroundLocationUsable ? stateJurisdiction : undefined);
+    || (backgroundLocationTrusted ? stateJurisdiction : undefined);
+  const promptJurisdiction = explicitStateJurisdiction
+    || (backgroundLocationTrusted ? jurisdiction : undefined);
   const domainName = trustedDomainName(context.lawType);
   const domainProfile = getLexaraLegalDomainProfile(context.lawType);
   const previousUserTurns = (context.previousMessages || [])
@@ -712,7 +712,7 @@ export async function generateLexaraConversationResponse(
   const jurisdictionCorrectionPrompt = jurisdictionCorrectionOnly
     ? '\n\nJURISDICTION CORRECTION TURN\nThe user has supplied or corrected the location for the ongoing matter. Adopt it silently as controlling context. Do not explain jurisdictional background or repeat the correction. Continue directly with the single next necessary question or answer from the existing matter.'
     : '';
-  const systemPrompt = buildLegalSystemPrompt(context, mappedLawType, jurisdiction)
+  const systemPrompt = buildLegalSystemPrompt(context, mappedLawType, promptJurisdiction)
     + silentLocationContext
     + jurisdictionCorrectionPrompt
     + formatAuthorityResearchForSystem(authorityResearch)
