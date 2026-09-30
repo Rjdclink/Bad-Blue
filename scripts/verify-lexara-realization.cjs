@@ -1277,9 +1277,10 @@ must(
 must(
   lexaraConversationOrchestrator.includes('LIVE_BACKGROUND_FACT_BUDGET_MS = 16_000') &&
     lexaraConversationOrchestrator.includes('lexara_live_background_budget_exhausted') &&
-    lexaraPantheonInvestigation.includes('PERSON_LIVE_FACT_BUDGET_MS = 15_000') &&
-    lexaraPantheonInvestigation.includes('PERSON_LIVE_MAX_PASSES = 6') &&
-    lexaraPantheonInvestigation.includes('publishableEvidenceCount >= 3'),
+    lexaraBackgroundInvestigation.includes('LIVE_RESEARCH_BUDGET_MS = 15_000') &&
+    lexaraBackgroundInvestigation.includes('LIVE_RECURSIVE_PASSES = 6') &&
+    lexaraBackgroundInvestigation.includes('usefulCount >= 3') &&
+    lexaraBackgroundInvestigation.includes('stagnantUsefulPasses >= 2'),
   'ordinary background fact turns have bounded live budgets and stop when useful evidence converges',
 );
 must(
