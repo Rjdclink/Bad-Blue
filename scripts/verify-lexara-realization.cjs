@@ -531,6 +531,7 @@ must(
 );
 must(
   lexaraLegalMesh.includes('gemini-google-grounding') &&
+    lexaraLegalMesh.includes('duckduckgo-instant-answer') &&
     lexaraLegalMesh.includes('SEARXNG_URL') &&
     lexaraLegalMesh.includes('DDGS_URL') &&
     lexaraLegalMesh.includes('OPENSERP_URL') &&
