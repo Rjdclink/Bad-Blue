@@ -1706,6 +1706,65 @@ export class DatabaseStorage implements IStorage {
   }
 
   /**
+   * Return one latest representation-state snapshot per saved LEXARA matter.
+   * The existing conversation JSONB is the persistence authority, so this adds
+   * no parallel case database or migration.
+   */
+  async getUserLexaraMatterStates(userId: string, limit = 200) {
+    const rows = await getLexaraConversationPersistenceDb()
+      .select({
+        sessionId: lexaraConversations.sessionId,
+        context: lexaraConversations.context,
+        createdAt: lexaraConversations.createdAt,
+      })
+      .from(lexaraConversations)
+      .where(and(
+        eq(lexaraConversations.userId, userId),
+        sql`${lexaraConversations.context}->'representationMatter' IS NOT NULL`,
+      ))
+      .orderBy(desc(lexaraConversations.createdAt), desc(lexaraConversations.id))
+      .limit(limit);
+
+    const seen = new Set<string>();
+    return rows.flatMap(row => {
+      const matter = (row.context as any)?.representationMatter;
+      const key = String(matter?.matterId || row.sessionId || '').trim();
+      if (!key || seen.has(key) || !matter || typeof matter !== 'object') return [];
+      seen.add(key);
+      return [{ sessionId: row.sessionId, matter, createdAt: row.createdAt }];
+    });
+  }
+
+  /**
+   * Update only the latest stored turn for a matter. Artifact/evidence saves can
+   * therefore advance matter state without manufacturing fake chat messages.
+   */
+  async updateLatestLexaraMatterState(userId: string, sessionId: string, matter: any) {
+    const database = getLexaraConversationPersistenceDb();
+    const [latest] = await database
+      .select({ id: lexaraConversations.id, context: lexaraConversations.context })
+      .from(lexaraConversations)
+      .where(and(
+        eq(lexaraConversations.userId, userId),
+        eq(lexaraConversations.sessionId, sessionId),
+      ))
+      .orderBy(desc(lexaraConversations.createdAt), desc(lexaraConversations.id))
+      .limit(1);
+    if (!latest) return null;
+
+    const nextContext = {
+      ...((latest.context as Record<string, any> | null) || {}),
+      representationMatter: matter,
+    };
+    const [updated] = await database
+      .update(lexaraConversations)
+      .set({ context: nextContext })
+      .where(eq(lexaraConversations.id, latest.id))
+      .returning({ id: lexaraConversations.id, context: lexaraConversations.context });
+    return updated || null;
+  }
+
+  /**
    * Recover only the signed-in user's most recent session. Always scope both
    * queries by owner, even when a session ID is known.
    */
