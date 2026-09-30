@@ -84,6 +84,7 @@ const storage = read('server/storage.ts');
 const overflowSchema = read('server/services/cryptocrawl/runtime/cryptocrawl-overflow-runtime-schema.ts');
 const lexaraOverflowMigration = read('server/migrations/060_lexara_overflow_conversation_history.sql');
 const aiProvider = read('server/aiProvider.ts');
+const aiSubAgent = read('server/aiSubAgent.ts');
 const conversationalReliabilityReview = read('docs/LEXARA_CONVERSATIONAL_RELIABILITY_10_SOURCE_REVIEW_20260918.md');
 const duplexReview = read('docs/LEXARA_DUPLEX_ORCHESTRATION_30_SOURCE_REVIEW_20260918.md');
 const harmonyRootReview = read('docs/LEXARA_HARMONY_ROOT_CAUSE_10_SOURCE_REVIEW_20260918.md');
@@ -582,12 +583,13 @@ must(
   'Harmony uses robust Claude content parsing, permission-aware Groq recursive recovery, and provider-local cooldowns',
 );
 must(
-  harmonyRegistry.includes("'claude-sonnet-5-5'") &&
+  harmonyRegistry.includes("'claude-haiku-4-5-20251001'") &&
+    harmonyRegistry.includes("'claude-sonnet-5-5'") &&
     harmonyRegistry.includes("'claude-opus-5-5'") &&
     harmonyRegistry.includes('return provider === PROVIDER.CLAUDE') &&
     !harmonyRegistry.includes("geminiFast: 'gemini-3.8-flash'") &&
     !harmonyRegistry.includes("xaiFast: 'grok-4.7'"),
-  'LegalWhat inference authority is Claude-only while retaining Sonnet and Opus workload selection',
+  'LegalWhat inference authority is Claude-only with trial Haiku, paid Sonnet, and paid deep Opus workload selection',
 );
 must(
   lexaraChatRoutes.includes("router.post('/acknowledge'") &&
@@ -960,6 +962,9 @@ must(productLawTypes.includes('post-conviction-law'), 'Post Conviction is a firs
 must(
   authSource.includes('(req.user as any).accessState = decision.accessState') &&
     lexaraChatRoutes.includes('allowClaudeOpus: canUseClaudeOpus(req)') &&
+    lexaraRoutes.includes("providerPolicy: 'legalwhat'") &&
+    lexaraRoutes.includes('allowClaudeOpus: canUsePaidClaude(req)') &&
+    aiSubAgent.includes("options.allowClaudeOpus === true ? CURRENT_AI_MODELS.claudeBalanced : CURRENT_AI_MODELS.claudeFast") &&
     lexaraConversationOrchestrator.includes('allowClaudeOpus?: boolean') &&
     lexaraConversationOrchestrator.includes('requiresDeepClaudeForTurn') &&
     lexaraConversationOrchestrator.includes("sequencePlan.sequence === 'combined-legal-background'") &&
