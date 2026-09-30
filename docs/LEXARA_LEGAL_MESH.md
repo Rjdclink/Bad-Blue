@@ -1,12 +1,14 @@
 # Lexara and Pantheon provider routing
 
-Updated 2026-09-28.
+Updated 2026-09-30.
 
 ## Legal questions and legal documents
 
-Lexara's legal lane admits only Claude (Anthropic), Gemini (Google), and Grok (xAI's own API key and endpoint). Claude Sonnet is the first choice and the preferred final synthesizer; Gemini and xAI Grok assist from independent accounts. A short conversation can use a delayed hedge; deeper reasoning and drafting use independent specialists in parallel and preserve any successful draft if synthesis fails. Failed attempts can move to the other eligible providers while a provider's actual quota or cooldown is respected. The Groq hosting service and OpenRouter's GROK alias are outside this legal lane. The platform's wider Harmony pool remains available to unrelated services.
+Lexara's legal lane admits only Claude (Anthropic), Gemini (Google), and Grok (xAI's own API key and endpoint). Claude Sonnet owns normal legal turns. Gemini and xAI Grok are scarce support capacity: at most one joins when the real user task materially needs independent verification, multimodal help, or deep/document reasoning. If Claude fails, one healthy support provider may carry the user task. A provider already known quota-blocked, cooling, misconfigured, or catalog-degraded is excluded before dispatch and cannot turn its known failure into user-facing latency.
 
-The legal model IDs are `claude-sonnet-5-5`, `gemini-3.8-flash`, and `grok-4.7` (with `grok-4.6` after a model-specific permission denial). Shared quota leases, observed rate-limit headers, and Retry-After feedback prevent avoidable bursts. There is no arbitrary daily or monthly usage cap. Internal deadlines preserve a recovery window for legal-document synthesis. External provider outages and limits can still prevent an answer.
+Startup is catalog-only. LegalWhat may inspect configured keys and provider model catalogs, but it must not send synthetic Claude, Gemini, or xAI inference prompts. Gemini is also excluded from Lexara's ordinary parallel search fan-out; normal retrieval lanes run first, and scarce model inference is reserved for user-answer support.
+
+The legal model IDs are `claude-sonnet-5-5`, `gemini-3.8-flash`, and `grok-4.7` (with `grok-4.6` after a model-specific permission denial). Shared quota admission, observed provider feedback, and Retry-After handling prevent avoidable bursts. Gemini daily exhaustion is persisted until its Pacific-time daily reset, and rate/quota errors are surfaced immediately rather than retried into additional scarce calls.
 
 ## Background searches
 
