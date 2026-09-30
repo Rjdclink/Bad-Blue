@@ -5,6 +5,8 @@ const authority = fs.readFileSync('server/lexara/LexaraAuthorityResearch.ts','ut
 const legalMesh = fs.readFileSync('server/lexara/LegalProviderMesh.ts','utf8');
 const retrieval = fs.readFileSync('server/lexara/LexaraRetrievalBoundary.ts','utf8');
 const routes = fs.readFileSync('server/routes/lexara.chat.routes.ts','utf8');
+const planner = fs.readFileSync('server/lexara/LexaraResearchIntentRouter.ts','utf8');
+const sourceRegistry = fs.readFileSync('server/lexara/LexaraPublicSourceRegistry.ts','utf8');
 
 for (const id of [
   "'simple-factual'",
@@ -39,8 +41,8 @@ if (!orchestrator.includes('const backgroundResearchRequested = false')) {
 if (orchestrator.includes("from './LexaraBackgroundResearchBoundary'") || orchestrator.includes('LexaraPantheonInvestigation')) {
   throw new Error('Lexara conversation orchestrator still imports the Pantheon bridge');
 }
-if (!orchestrator.includes('(sequencePlan.useLegalResearch || researchDecision.needed)')) {
-  throw new Error('Factual/research turns are not handed to Lexara legal research');
+if (!orchestrator.includes('const researchRouteSelected = sequencePlan.useLegalResearch || researchDecision.needed')) {
+  throw new Error('Factual/research turns are not handed to the single Lexara research route');
 }
 if (!authority.includes('discoverLegalMeshTier3') || !authority.includes('enrichAuthoritySourcesWithLexaraRetrieval')) {
   throw new Error('Lexara legal discovery/retrieval sequence missing');
@@ -48,14 +50,19 @@ if (!authority.includes('discoverLegalMeshTier3') || !authority.includes('enrich
 if (authority.includes('selectLexaraCrawlerPlan') || retrieval.includes('PantheonRetrievalAdapter') || retrieval.includes('pantheonRetrievalAdapter')) {
   throw new Error('Lexara legal retrieval still depends on Pantheon');
 }
-for (const directLane of ['tavily', 'SEARXNG_URL', 'DDGS_URL', 'OPENSERP_URL']) {
+for (const directLane of ['tavily', 'gemini-google-grounding', 'SEARXNG_URL', 'DDGS_URL', 'OPENSERP_URL', 'index.commoncrawl.org', 'SERPAPI_KEY', 'SCRAPINGBEE_API_KEY']) {
   if (!legalMesh.includes(directLane)) throw new Error('Lexara direct legal discovery lane missing: '+directLane);
 }
 for (const forbidden of ['discoverPantheonSourcesParallel', 'PantheonDiscoveryCoordinator', 'LexaraBackgroundResearchBoundary']) {
   if (legalMesh.includes(forbidden)) throw new Error('Lexara legal mesh still depends on Pantheon: '+forbidden);
 }
-if (!routes.includes('documentIntent') || !routes.includes("send('complete'")) {
-  throw new Error('Document/action handoff missing');
+for (const plannerToken of ["'age-dob'","'professional-license'","'marriage-divorce'","'employment'","standaloneQuery","sourceCategories","research-follow-up"]) {
+  if (!planner.includes(plannerToken)) throw new Error('Lexara semantic research planner missing: '+plannerToken);
+}
+for (const sourceToken of ['cdc-vital-records','nursys-license','careeronestop-license-finder','bop-inmate-locator','finra-brokercheck','sec-edgar','icann-rdap']) {
+  if (!sourceRegistry.includes(sourceToken)) throw new Error('Lexara public source registry missing: '+sourceToken);
+}
+if (!routes.includes('documentIntent') || !routes.includes("send('complete'")) {  throw new Error('Document/action handoff missing');
 }
 
-console.log('LEXARA six-sequence routing verification passed with Pantheon disconnected.');
+console.log('LEXARA six-sequence routing verification passed with Pantheon disconnected and Lexara-native factual research wired.');
