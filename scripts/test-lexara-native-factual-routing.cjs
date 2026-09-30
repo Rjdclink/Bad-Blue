@@ -90,6 +90,11 @@ factual('Has Avery Example filed bankruptcy?', 'bankruptcy-financial', ['financi
 const legal = planner.decideLexaraResearchNeed('How do I file for divorce in Iowa?', []);
 assert.equal(legal.needed, true);
 assert.equal(legal.intent, 'legal');
+assert.equal(legal.requestedFact, 'none');
+assert.deepEqual(legal.sourceCategories, []);
+const legalPlan = router.planLexaraSequence('How do I file for divorce in Iowa?', []);
+assert.equal(legalPlan.useLegalResearch, true);
+assert.equal(legalPlan.useBackgroundResearch, false, 'Pure legal procedure must stay on Lexara and never route to Pantheon');
 
 const mixed = planner.decideLexaraResearchNeed("Can I use Avery Example's nursing license records in my divorce case?", []);
 assert.equal(mixed.needed, true);
