@@ -104,7 +104,7 @@ const retrieval = {
         if (target.endsWith('/dob')) {
           return [{
             target,
-            content: 'Official record for Avery Example. Date of birth: 01/02/1984.',
+            content: 'Official record for Avery Example of Des Moines. Date of birth: 01/02/1984.',
             retrievedAt: '2026-09-30T12:00:01.000Z',
             contentType: 'text/html',
           }];
@@ -112,7 +112,7 @@ const retrieval = {
         if (target.endsWith('/employer')) {
           return [{
             target,
-            content: 'Avery Example is employed by Example Industries as a compliance analyst.',
+            content: 'Avery Example of Iowa is employed by Example Industries as a compliance analyst.',
             retrievedAt: '2026-09-30T12:00:02.000Z',
             contentType: 'text/html',
           }];
@@ -189,6 +189,14 @@ function reset(mode) {
   assert.equal(employment.recursionPasses, 1);
   assert.deepEqual(state.retrievalCalls, [['https://records.example.test/employer']]);
   assert.match(employment.evidenceSummary, /employed by Example Industries/i);
+
+  reset('empty');
+  const sameNameWrongContext = await investigator.investigateLexaraBackgroundQuestion(
+    'What is the date of birth of Avery Example?',
+    { jurisdiction: 'Iowa' },
+  );
+  assert.notEqual(sameNameWrongContext.endpoint, 'evidence-sufficient',
+    'a page that does not correlate the requested subject/location cannot stop the investigation');
 
   reset('empty');
   const empty = await investigator.investigateLexaraBackgroundQuestion(
