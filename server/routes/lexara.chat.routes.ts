@@ -16,7 +16,7 @@ import { MASTER_USER_ID } from '../masterPassword';
 import { isAuthenticated } from '../auth';
 import { getConfiguredHarmonyParticipants } from '../aiHarmonyModelRegistry';
 import { isBlankLegalDocumentRequest, resolveLegalDocumentType } from '../lexara/legalDocumentRegistry';
-import { resolveNetworkState } from '../lexara/LexaraJurisdictionResolver';
+import { resolveBestLocationEstimate, type BrowserLocationSignal } from '../lexara/LexaraJurisdictionResolver';
 
 const router = express.Router();
 router.use(isAuthenticated);
@@ -37,6 +37,23 @@ function cleanOptionalString(value: unknown, maxLength = MAX_CONTEXT_FIELD_CHARA
   const trimmed = value.trim();
   if (!trimmed) return undefined;
   return trimmed.slice(0, maxLength);
+}
+
+function cleanDeviceLocation(value: unknown): BrowserLocationSignal | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const input = value as any;
+  const latitude = Number(input.latitude);
+  const longitude = Number(input.longitude);
+  const accuracyMeters = Number(input.accuracyMeters);
+  const observedAt = Number(input.observedAt);
+  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90
+    || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) return undefined;
+  if (Number.isFinite(observedAt) && Date.now() - observedAt > 30 * 60_000) return undefined;
+  return {
+    latitude,
+    longitude,
+    accuracyMeters: Number.isFinite(accuracyMeters) && accuracyMeters >= 0 ? accuracyMeters : undefined,
+  };
 }
 
 function detectDocumentIntent(prompt: string, previousMessages: LexaraConversationMessage[] = []): {
@@ -218,18 +235,20 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
     const previousMessages = sanitizePreviousMessages((rawContext as any).previousMessages);
     const documentIntent = detectDocumentIntent(prompt, previousMessages);
     const explicitJurisdiction = cleanOptionalString((rawContext as any).jurisdiction, 80);
-    const networkState = explicitJurisdiction ? null : await resolveNetworkState(
-      String(req.headers['x-real-ip'] || req.headers['cf-connecting-ip'] || req.ip || '')
+    const locationState = explicitJurisdiction ? null : await resolveBestLocationEstimate(
+      String(req.headers['x-real-ip'] || req.headers['cf-connecting-ip'] || req.ip || ''),
+      cleanDeviceLocation((rawContext as any).deviceLocation),
     );
     const result = await generateLexaraConversationResponse(prompt, {
       previousMessages,
       lawType: cleanOptionalString((rawContext as any).lawType),
       lawTypeName: cleanOptionalString((rawContext as any).lawTypeName, 160),
       jurisdiction: explicitJurisdiction,
-      backgroundJurisdiction: networkState?.state,
-      backgroundLocality: networkState?.locality,
-      backgroundArea: networkState?.area,
-      backgroundLocationConfidence: networkState?.confidence,
+      backgroundJurisdiction: locationState?.state,
+      backgroundLocality: locationState?.locality,
+      backgroundArea: locationState?.area,
+      backgroundLocationConfidence: locationState?.confidence,
+      backgroundLocationSource: locationState?.provider,
       behaviorMode: (rawContext as any).behaviorMode === 'personable' ? 'personable' : 'professional',
       sessionId: cleanOptionalString((rawContext as any).sessionId, 128),
       allowClaudeOpus: canUseClaudeOpus(req),
@@ -324,8 +343,9 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
     const lawType = cleanOptionalString((rawContext as any).lawType);
     const lawTypeName = cleanOptionalString((rawContext as any).lawTypeName, 160);
     const explicitJurisdiction = cleanOptionalString((rawContext as any).jurisdiction, 80);
-    const networkState = explicitJurisdiction ? null : await resolveNetworkState(
-      String(req.headers['x-real-ip'] || req.headers['cf-connecting-ip'] || req.ip || '')
+    const locationState = explicitJurisdiction ? null : await resolveBestLocationEstimate(
+      String(req.headers['x-real-ip'] || req.headers['cf-connecting-ip'] || req.ip || ''),
+      cleanDeviceLocation((rawContext as any).deviceLocation),
     );
     const jurisdiction = explicitJurisdiction;
     const behaviorMode = (rawContext as any).behaviorMode === 'personable' ? 'personable' : 'professional';
@@ -355,10 +375,11 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
         lawType,
         lawTypeName,
         jurisdiction: explicitJurisdiction,
-        backgroundJurisdiction: networkState?.state,
-        backgroundLocality: networkState?.locality,
-        backgroundArea: networkState?.area,
-        backgroundLocationConfidence: networkState?.confidence,
+        backgroundJurisdiction: locationState?.state,
+        backgroundLocality: locationState?.locality,
+        backgroundArea: locationState?.area,
+        backgroundLocationConfidence: locationState?.confidence,
+        backgroundLocationSource: locationState?.provider,
         behaviorMode,
         sessionId,
         allowClaudeOpus: canUseClaudeOpus(req),
