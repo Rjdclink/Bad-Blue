@@ -483,14 +483,14 @@ test('Claude stays primary when eligible and Gemini supports it', async () => {
   const chosen=Array.from(h.engine.selectLegalProvidersForTask(h.attributes,['gemini','claude','xai'],2));
   assert.equal(chosen[0],'claude'); assert.equal(chosen.length,2);
 });
-test('Claude, Gemini, and xAI are all retained as independent legal redundancy when requested', () => {
+test('Claude keeps at most one scarce independent support provider when requested', () => {
   const h = harness(['ANTHROPIC_API_KEY','GEMINI_API_KEY','XAI_API_KEY']);
   const chosen = Array.from(h.engine.selectLegalProvidersForTask(
     h.attributes, ['gemini','xai','claude'], 3,
   ));
   assert.equal(chosen[0], 'claude');
-  assert.equal(chosen.length, 3);
-  assert.deepEqual(new Set(chosen), new Set(['claude','gemini','xai']));
+  assert.equal(chosen.length, 2);
+  assert(['gemini','xai'].includes(chosen[1]));
 });
 test('xAI failure prefers Claude as the legalwhat recovery route', async () => {
   const h = harness(keys,{fail:'xai'});
