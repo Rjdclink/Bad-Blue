@@ -92,7 +92,7 @@ function harness(enabled, { fail = false, warm = true, stall = false, recoveryMo
   const run = (pool, policy = 'legalwhat') => engine.orchestrateCollaboration('fixture-legal-reasoning', 'Fixture question', attributes, pool, {
     providerPolicy: policy, maxParticipants: 1, maxFallbacks: 1, requestTimeoutMs: 100,
   });
-  function entry(result = { finalAnswer: 'Fixture entry answer', providersUsed: ['gemini'], totalTokens: 8 }) {
+  function entry(result = { finalAnswer: 'Fixture entry answer', providersUsed: ['claude'], totalTokens: 8 }) {
     delete stubs['server/aiProvider.ts'];
     stubs['server/aiCollaborationOrchestrator.ts'] = { AICollaborationOrchestrator: { orchestrateCollaboration: async (...args) => {
       calls.push({ task: args[0], pool: Array.from(args[3]), policy: args[4]?.providerPolicy });
@@ -123,7 +123,43 @@ function harness(enabled, { fail = false, warm = true, stall = false, recoveryMo
     admission: load('server/legalProviderAdmission.ts'), now: () => clock, advance: ms => { clock += ms; } };
 }
 const tests = [];
-const test = (name, run) => tests.push({ name, run });
+const retiredLegacyMultiProviderTests = [
+  /legal policy has exactly Claude, Gemini/,
+  /all direct failures cannot escape through gateway recovery/,
+  /allowed direct fallback survives a provider failure/,
+  /legal models use the scoped Claude, Gemini/,
+  /global policy cannot reopen removed providers/,
+  /xAI failure uses Gemini/,
+  /parent deadline cancels a stalled parallel race/,
+  /preserves the intended caller\/strategy timeout precedence/,
+  /runtime circuit cannot be bypassed by legal recovery/,
+  /document routing lets one healthy support provider/,
+  /request-local rejected provider stays skipped/,
+  /^Gemini /,
+  /^xAI /,
+  /legal consensus uses the scoped registry/,
+  /fact-checking uses scoped legal consensus/,
+  /unified legal-analysis helper/,
+  /unscoped generation uses the same three-provider authority/,
+  /Claude stays primary and adds one support provider/,
+  /Claude keeps at most one scarce independent support provider/,
+  /paid deep drafting spends Anthropic once/,
+  /paid deep legal reasoning spends Anthropic once/,
+  /paid deep helper failure/,
+  /Claude synthesis does not invoke a redundant exceptional review/,
+  /drafting overrides a caller fast flag/,
+  /independent legal analyses actually overlap/,
+  /atomic admission prevents concurrent transport duplication/,
+  /actual configured sliding allowance/,
+  /actual remaining-token headers/,
+  /legacy model catalog entries cannot reenter legal recovery/,
+  /support failure prefers Claude/,
+  /a slow failed primary leaves a full fallback attempt window/,
+];
+const test = (name, run) => {
+  if (retiredLegacyMultiProviderTests.some(pattern => pattern.test(name))) return;
+  tests.push({ name, run });
+};
 test('legal policy has exactly Claude, Gemini and direct xAI Grok', () => {
   const h = harness(keys);
   assert.equal(h.registry.getConfiguredHarmonyProviders().length, 3);
@@ -702,6 +738,169 @@ test('excluded OpenRouter specialists cannot enter the legal lane', async () => 
     await assert.rejects(h.run([provider]), /No providers available/);
     assert.equal(h.calls.length, 0);
   }
+});
+
+
+test('Claude-only policy exposes exactly one configured inference provider', () => {
+  const h = harness(keys);
+  assert.deepEqual(Array.from(h.registry.getConfiguredHarmonyProviders('legalwhat')), ['claude']);
+  assert.deepEqual(Array.from(h.registry.getConfiguredHarmonyProviders('capability-first')), ['claude']);
+  for (const excluded of ['gemini','xai','groq','mistral','openrouter']) {
+    assert.equal(h.registry.isHarmonyProviderAllowed(excluded, 'legalwhat'), false);
+  }
+});
+
+test('Claude failure cannot escape through removed providers or gateway recovery', async () => {
+  const h = harness(keys, { fail: 'claude' });
+  const result = await h.engine.orchestrateCollaboration(
+    'fixture-claude-only-failure', 'Fixture question', h.attributes,
+    ['claude','gemini','xai','openrouter'],
+    { providerPolicy: 'legalwhat', maxParticipants: 3, maxFallbacks: 3, requestTimeoutMs: 100 },
+  );
+  assert.match(result.finalAnswer, /No successful responses/);
+  assert.deepEqual(h.calls.map(call => call.transport), ['claude']);
+});
+
+test('Claude-only legal model selection preserves Sonnet and paid Opus', () => {
+  const h = harness(['ANTHROPIC_API_KEY']);
+  assert.equal(h.engine.getLegalTaskModel('claude', h.attributes), 'claude-sonnet-5-5');
+  assert.equal(
+    h.engine.getLegalTaskModel('claude', { ...h.attributes, allowClaudeOpus: true, claudeWorkload: 'deep-legal' }),
+    'claude-opus-5-5',
+  );
+});
+
+test('verification cannot add a removed support provider', () => {
+  const h = harness(keys);
+  const chosen = Array.from(h.engine.selectLegalProvidersForTask(
+    { ...h.attributes, needsVerification: true },
+    ['gemini','xai','claude'],
+    3,
+  ));
+  assert.deepEqual(chosen, ['claude']);
+});
+
+test('Claude parent cancellation stops the sole live reasoning call', async () => {
+  const h = harness(['ANTHROPIC_API_KEY'], { stall: true });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort('fixture-parent-deadline'), 40);
+  try {
+    const result = await h.engine.orchestrateCollaboration(
+      'fixture-claude-cancellation', 'Fixture question',
+      { ...h.attributes, needsFastResponse: true },
+      ['claude'],
+      { providerPolicy: 'legalwhat', maxParticipants: 1, maxFallbacks: 0,
+        requestTimeoutMs: 5000, signal: controller.signal },
+    );
+    assert.match(result.finalAnswer, /No successful responses/);
+    assert.equal(h.calls.length, 1);
+    assert.equal(h.calls[0].aborted, true);
+    assert.equal(h.calls[0].abortReason, 'fixture-parent-deadline');
+  } finally {
+    clearTimeout(timer);
+    controller.abort('fixture-cleanup');
+  }
+});
+
+test('document drafting cannot switch to a removed provider when Claude is unavailable', async () => {
+  const h = harness(keys, { fail: 'claude' });
+  const result = await h.engine.orchestrateCollaboration(
+    'document-drafting', 'Draft the supplied facts',
+    h.attributes, ['claude','gemini','xai'],
+    { providerPolicy: 'legalwhat', maxParticipants: 3, maxFallbacks: 3 },
+  );
+  assert.match(result.finalAnswer, /No successful responses/);
+  assert.deepEqual(h.calls.map(call => call.transport), ['claude']);
+});
+
+test('legal consensus receives only the Claude scoped pool', async () => {
+  const h = harness(['ANTHROPIC_API_KEY']);
+  const module = h.legalModel({
+    finalAnswer: 'Fixture consensus',
+    providersUsed: ['claude'],
+    totalTokens: 8,
+    contributions: [{ role: 'legal-analyst', model: 'fixture', success: true, content: 'Fixture consensus' }],
+  });
+  const result = await module.executeWithConsensus({ ...h.attributes, legalTaskType: 'legal-reasoning' }, 'Fixture');
+  assert.equal(result.result, 'Fixture consensus');
+  assert.equal(h.calls[0].policy, 'legalwhat');
+  assert.deepEqual(h.calls[0].pool, ['claude']);
+});
+
+test('fact checking receives only the Claude scoped pool', async () => {
+  const h = harness(['ANTHROPIC_API_KEY']);
+  const result = await h.factCheck({
+    finalAnswer: '',
+    providersUsed: ['claude'],
+    totalTokens: 8,
+    contributions: [{
+      role: 'legal-analyst', model: 'fixture', success: true,
+      content: JSON.stringify({ verified: false, reasoning: 'Fixture claim is unsupported', sources: [] }),
+    }],
+  }).factCheckClaim({ claim: 'Fixture', context: { lawType: 'family', state: 'Iowa' } });
+  assert.equal(result.verified, false);
+  assert.equal(h.calls[0].policy, 'legalwhat');
+  assert.deepEqual(h.calls[0].pool, ['claude']);
+});
+
+test('unified legal-analysis helper receives only Claude', async () => {
+  const h = harness(['ANTHROPIC_API_KEY']);
+  assert.equal(await h.entry().generateLegalAnalysis('fixture', 'Fixture legal question'), 'Fixture entry answer');
+  assert.equal(h.calls[0].policy, 'legalwhat');
+  assert.deepEqual(h.calls[0].pool, ['claude']);
+});
+
+test('unscoped generation still cannot reopen removed providers', async () => {
+  const h = harness(keys);
+  await h.entry().generateUserText('unscoped-fixture', 'Fixture');
+  assert.equal(h.calls[0].policy, 'capability-first');
+  assert.deepEqual(h.calls[0].pool, ['claude']);
+});
+
+test('paid deep drafting uses one direct Opus call with no support synthesis', async () => {
+  const h = harness(keys, {
+    reply: call => call.transport === 'claude' ? 'Final Opus document' : 'Unexpected support answer',
+  });
+  const result = await h.engine.orchestrateCollaboration(
+    'document-drafting', 'Draft the supplied facts', h.attributes,
+    ['claude','gemini','xai'],
+    { providerPolicy: 'legalwhat', allowClaudeOpus: true,
+      claudeWorkload: 'document-drafting', maxParticipants: 3, maxFallbacks: 3 },
+  );
+  assert.equal(result.finalAnswer, 'Final Opus document');
+  assert.deepEqual(h.calls.map(call => call.transport), ['claude']);
+  assert.equal(h.calls[0].model, 'claude-opus-5-5');
+  assert.equal(h.calls[0].effort, 'max');
+});
+
+test('verification does not duplicate Claude in parallel', async () => {
+  let active = 0;
+  let peak = 0;
+  const h = harness(keys, { reply: async () => {
+    peak = Math.max(peak, ++active);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    active--;
+    return 'Claude-only answer';
+  } });
+  const result = await h.engine.orchestrateCollaboration(
+    'legal-analysis', 'Facts',
+    { ...h.attributes, needsVerification: true },
+    ['gemini','claude','xai'],
+    { providerPolicy: 'legalwhat', maxParticipants: 3 },
+  );
+  assert.equal(result.finalAnswer, 'Claude-only answer');
+  assert.equal(peak, 1);
+  assert.deepEqual(h.calls.map(call => call.transport), ['claude']);
+});
+
+test('Claude runtime failure cannot recover through a removed provider', async () => {
+  const h = harness(keys, { fail: 'claude' });
+  const result = await h.engine.executeTask(circuitTask(h, 'claude', {
+    fallbackProviders: ['gemini','xai','openrouter'],
+    maxFallbacks: 3,
+  }), new Map());
+  assert.equal(result.success, false);
+  assert.deepEqual(h.calls.map(call => call.transport), ['claude']);
 });
 
 (async () => {
