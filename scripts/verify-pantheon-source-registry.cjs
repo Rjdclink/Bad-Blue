@@ -2,11 +2,12 @@ const fs=require('fs');
 const registry=fs.readFileSync('server/services/pantheon/PantheonSovereignSourceRegistry.ts','utf8');
 const people=fs.readFileSync('server/peopleSearch.ts','utf8');
 const spectra=fs.readFileSync('server/services/spectra/SpectraSourceRegistry.ts','utf8');
+const investigation=fs.readFileSync('server/lexara/LexaraPantheonInvestigation.ts','utf8');
 const discovery=fs.readFileSync('server/services/pantheon/PantheonDiscoveryCoordinator.ts','utf8');
 const authority=fs.readFileSync('server/lexara/LexaraAuthorityResearch.ts','utf8');
 const legalMesh=fs.readFileSync('server/lexara/LegalProviderMesh.ts','utf8');
 for(const forbidden of ['PANTHEON_VERIFIED_SOURCE_INVENTORY','PANTHEON_EXECUTABLE_SOURCE_INVENTORY','PANTHEON_DEPTH_SOURCE_BUDGET','4500','4,500','batch01','batch23']){
-  if([registry,people,spectra,discovery,authority,legalMesh].some(source=>source.includes(forbidden))) throw new Error('Legacy Pantheon registry token remains: '+forbidden);
+  if([registry,people,spectra,investigation,discovery,authority,legalMesh].some(source=>source.includes(forbidden))) throw new Error('Legacy Pantheon registry token remains: '+forbidden);
 }
 for(const required of ['buildPantheonCategoryTargets','buildPantheonBackgroundRegistryTargets','perCategory=10','KEYLESS_CATEGORY_SOURCES']){
   if(!registry.includes(required)) throw new Error('Missing dynamic-seed registry token: '+required);
@@ -24,6 +25,9 @@ for(const forbidden of ['orchestratedWebSearch','supplementalPantheonDiscovery']
 for(const required of ['pantheonSourceFamily','familyCounts','count >= 2']){
   if(!discovery.includes(required)) throw new Error('Pantheon source-family diversity guard missing: '+required);
 }
+if(!investigation.includes("target.transport !== 'search-provider'")){
+  throw new Error('Pantheon conversational frontier must exclude search-provider result pages');
+}
 for(const required of ['searchCourtListener','searchGovInfo','discoverLegalMeshTier3','discoverLegalMeshSupplemental']){
   if(!authority.includes(required)) throw new Error('Lexara legal provider mesh missing route: '+required);
 }
@@ -31,8 +35,7 @@ for(const forbidden of ['orchestratedWebSearch','FIRECRAWL_API_KEY','api.firecra
   if(authority.includes(forbidden)) throw new Error('Removed Lexara research route remains: '+forbidden);
 }
 if(!legalMesh.includes("providerPolicy: 'legalwhat'")) throw new Error('Lexara discovery must carry its canonical provider policy');
-if(!legalMesh.includes('tavily') || !legalMesh.includes('discoverLexaraBackgroundSourcesParallel')) throw new Error('Lexara legal mesh is not connected to Tavily + Lexara-owned dynamic discovery');
-if(legalMesh.includes('discoverPantheonSourcesParallel') || /services\\/pantheon/.test(legalMesh)) throw new Error('Lexara legal mesh still depends on Pantheon');
+if(!legalMesh.includes('tavily') || !legalMesh.includes('discoverPantheonSourcesParallel')) throw new Error('Lexara legal mesh is not connected to Tavily + dynamic discovery');
 const searchFirst=fs.readFileSync('server/services/pantheon/PantheonSearchFirstDiscovery.ts','utf8');
 const categoryWorkflow=fs.readFileSync('server/services/pantheon/PantheonCategoryWorkflow.ts','utf8');
 for(const required of ['discoverPantheonSearchFirstCandidates','discoverPantheonCategoryGapCandidates','CATEGORY_DISCOVERY_HINTS','includePaidFallback: true','categoryIndexes','discoveryLanes','discoverPantheonSourcesParallel']){
@@ -44,5 +47,5 @@ for(const required of ['search_first_candidates_ready','searchFirstCandidates','
 if(!legalMesh.includes('gemini-google-grounding') || !legalMesh.includes("tier: 3 as const")){
   throw new Error('Lexara Tier 3 does not preserve Gemini Google grounding as a parallel legal discovery provider');
 }
-console.log('Pantheon registry verified independently; Lexara legal discovery remains detached from Pantheon.');
+console.log('Pantheon legacy 4,500-source registry removal verified; dynamic search/index mesh and Lexara legal provider mesh remain exclusively wired.');
 
