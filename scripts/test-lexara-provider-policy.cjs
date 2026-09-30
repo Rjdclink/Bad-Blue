@@ -483,6 +483,21 @@ test('Claude stays primary when eligible and Gemini supports it', async () => {
   const chosen=Array.from(h.engine.selectLegalProvidersForTask(h.attributes,['gemini','claude','xai'],2));
   assert.equal(chosen[0],'claude'); assert.equal(chosen.length,2);
 });
+test('Claude, Gemini, and xAI are all retained as independent legal redundancy when requested', () => {
+  const h = harness(['ANTHROPIC_API_KEY','GEMINI_API_KEY','XAI_API_KEY']);
+  const chosen = Array.from(h.engine.selectLegalProvidersForTask(
+    h.attributes, ['gemini','xai','claude'], 3,
+  ));
+  assert.deepEqual(chosen, ['claude','gemini','xai']);
+});
+test('xAI failure prefers Claude as the legalwhat recovery route', async () => {
+  const h = harness(keys,{fail:'xai'});
+  const result = await h.engine.executeTask(circuitTask(h,'xai',{
+    fallbackProviders:['gemini','claude'],maxFallbacks:2,
+  }),new Map());
+  assert.equal(result.provider,'claude');
+  assert.equal(result.success,true);
+});
 test('Claude alone remains a working legal primary', async () => {
   const h=harness(['ANTHROPIC_API_KEY']);
   const result=await h.run(['claude']);
