@@ -73,6 +73,7 @@ function sourceFamily(raw: string): string {
 }
 
 function isPreferredOfficialCandidate(item: LegalMeshCandidate, options: LegalMeshSearchOptions): boolean {
+  if (!options.requestedFact || options.requestedFact === 'none') return false;
   let host = '';
   try {
     host = new URL(item.url).hostname.toLowerCase().replace(/^www\./, '');
