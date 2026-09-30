@@ -1201,7 +1201,9 @@ must(
 );
 must(
   conversation.includes('lexaraDocumentSpeech(answer, documentIntentRequested || Boolean(priorPendingDocument))') &&
-    conversation.includes('await speakLexara(spokenAnswer, generation)'),
+    lexaraConversationOrchestrator.includes('!sequencePlan.documentAction') &&
+    conversation.includes('const recoverySpeech = streamedSpeechFailed && spokenPrefix && spokenAnswer.startsWith(spokenPrefix)') &&
+    conversation.includes('if (recoverySpeech) await speakLexara(recoverySpeech, generation)'),
   'document bodies must never be sent to realtime TTS',
 );
 must(
