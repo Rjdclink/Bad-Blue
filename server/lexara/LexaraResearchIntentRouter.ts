@@ -118,7 +118,7 @@ function sourceCategoriesForFact(fact: LexaraRequestedFact, text: string): Lexar
   switch (fact) {
     case 'age-dob': return ['vital-records','identity','general-public-records'];
     case 'professional-license':
-      return /\b(?:nurs|medical|physician|health)\b/i.test(text)
+      return /\b(?:nurs\w*|medical|physician|health(?:care)?)\b/i.test(text)
         ? ['professional-license','healthcare-professional','sanctions-discipline']
         : ['professional-license','sanctions-discipline'];
     case 'marriage-divorce': return ['vital-records','courts','general-public-records'];
