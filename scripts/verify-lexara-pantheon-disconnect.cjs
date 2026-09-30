@@ -1,6 +1,7 @@
 const fs = require('fs');
 
 const router = fs.readFileSync('server/lexara/LexaraSequenceRouter.ts', 'utf8');
+const subject = fs.readFileSync('server/lexara/LexaraBackgroundSubject.ts', 'utf8');
 const orchestrator = fs.readFileSync('server/lexara/LexaraConversationOrchestrator.ts', 'utf8');
 const legalMesh = fs.readFileSync('server/lexara/LegalProviderMesh.ts', 'utf8');
 const authority = fs.readFileSync('server/lexara/LexaraAuthorityResearch.ts', 'utf8');
@@ -13,6 +14,11 @@ if (router.includes('useBackgroundResearch: true')) {
 }
 if (!router.includes('useLegalResearch: true, useBackgroundResearch: false')) {
   throw new Error('Lexara factual/research sequences do not select legal reasoning');
+}
+for (const activeSource of [router, subject]) {
+  if (activeSource.includes('LexaraBackgroundSemanticIntent') || activeSource.includes("../services/pantheon/")) {
+    throw new Error('Active Lexara routing/subject classification still imports Pantheon semantics');
+  }
 }
 if (orchestrator.includes("from './LexaraBackgroundResearchBoundary'")
   || orchestrator.includes("from './LexaraPantheonInvestigation'")
