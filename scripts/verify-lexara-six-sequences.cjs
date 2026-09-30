@@ -47,7 +47,7 @@ if (!orchestrator.includes("from './LexaraBackgroundInvestigation'")
 for (const forbidden of ['PantheonRetrievalAdapter','pantheonRetrievalAdapter','../services/pantheon/','PantheonDiscoveryCoordinator']) {
   if (background.includes(forbidden)) throw new Error('Lexara native background investigator depends on Pantheon: '+forbidden);
 }
-for (const token of ['MAX_RECURSIVE_PASSES = 30','TARGETS_PER_PASS = 10','TOTAL_RESEARCH_BUDGET_MS = 10 * 60_000','discoverLegalMeshTier3','discoverLegalMeshSupplemental','lexaraRetrievalAdapter','directlyAnswers','retrievedAt']) {
+for (const token of ['MAX_RECURSIVE_PASSES = 30','TARGETS_PER_PASS = 10','TOTAL_RESEARCH_BUDGET_MS = 10 * 60_000','discoverLegalMeshTier3','discoverLegalMeshSupplemental','lexaraRetrievalAdapter','directlyAnswers','retrievedAt','MIN_IDENTITY_CONFIDENCE = 0.62','identityConfidence']) {
   if (!background.includes(token)) throw new Error('Lexara native background investigation missing '+token);
 }
 if (!orchestrator.includes('const researchRouteSelected = sequencePlan.useLegalResearch || researchDecision.needed')) {
@@ -60,6 +60,9 @@ if (!orchestrator.includes('backgroundResearchRequested\n      ? backgroundInves
 if (!authority.includes('discoverLegalMeshTier3') || !authority.includes('enrichAuthoritySourcesWithLexaraRetrieval')) {
   throw new Error('Lexara legal discovery/retrieval sequence missing');
 }
+if (!authority.includes("research.researchIntent === 'factual' && research.subject")) {
+  throw new Error('Pure person-fact authority evidence can still bypass the identity-gated background path');
+}
 if (authority.includes('selectLexaraCrawlerPlan') || retrieval.includes('PantheonRetrievalAdapter') || retrieval.includes('pantheonRetrievalAdapter')) {
   throw new Error('Lexara legal retrieval still depends on Pantheon');
 }
@@ -68,6 +71,15 @@ for (const directLane of ['tavily', 'gemini-google-grounding', 'duckduckgo-insta
 }
 for (const forbidden of ['discoverPantheonSourcesParallel', 'PantheonDiscoveryCoordinator', 'LexaraBackgroundResearchBoundary']) {
   if (legalMesh.includes(forbidden)) throw new Error('Lexara legal mesh still depends on Pantheon: '+forbidden);
+}
+if (!legalMesh.includes('isPreferredOfficialCandidate') || !legalMesh.includes('const preferred=diversify')) {
+  throw new Error('Lexara factual discovery does not prioritize matching official registries');
+}
+if (!legalMesh.includes("if (!options.requestedFact || options.requestedFact === 'none') return false;")) {
+  throw new Error('Official-source priority can still reorder non-factual legal research');
+}
+if (!router.includes('const contextualContinuation') || !router.includes('const contextualPrompt')) {
+  throw new Error('Lexara sequence router does not preserve short factual follow-up context');
 }
 for (const plannerToken of ["'age-dob'","'professional-license'","'marriage-divorce'","'employment'","standaloneQuery","sourceCategories","research-follow-up"]) {
   if (!planner.includes(plannerToken)) throw new Error('Lexara semantic research planner missing: '+plannerToken);

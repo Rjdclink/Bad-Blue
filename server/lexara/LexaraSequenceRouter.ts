@@ -26,7 +26,22 @@ const ACTION_PATTERN = /\b(?:need|want|give|provide|make|prepare|draft|create|ge
 
 export function planLexaraSequence(prompt: string, previousUserTurns: string[] = []): LexaraSequencePlan {
   const text = String(prompt || '').trim();
-  const researchDecision = decideLexaraResearchNeed(text, previousUserTurns);
+  const currentDecision = decideLexaraResearchNeed(text, previousUserTurns);
+  const priorResearchDecision = !currentDecision.needed
+    ? [...previousUserTurns].reverse().map(turn => decideLexaraResearchNeed(turn, [])).find(decision => decision.needed)
+    : undefined;
+  const contextualContinuation = Boolean(priorResearchDecision)
+    && text.split(/\s+/).length <= 12
+    && /^(?:what|how|is|are|does|do|did|has|have|where|when|who|and|also)\b/i.test(text)
+    && /\b(?:status|record|records|license|licenses|issue|law|case|result|results|that|it|her|his|their|same|one|ones)\b/i.test(text);
+  const contextualPrompt = contextualContinuation && priorResearchDecision
+    ? [priorResearchDecision.subject, text, priorResearchDecision.requestedFact !== 'none' ? priorResearchDecision.requestedFact.replace(/-/g, ' ') : '']
+        .filter(Boolean).join(' ')
+    : text;
+  const contextualDecision = contextualContinuation
+    ? decideLexaraResearchNeed(contextualPrompt, previousUserTurns)
+    : currentDecision;
+  const researchDecision = contextualDecision.needed ? contextualDecision : currentDecision;
   if (isLexaraConversationControl(text)) return {
     sequence: 'conversation-only', researchDecision, useLegalResearch: false,
     useBackgroundResearch: false, recursive: false, classifyBackground: false,

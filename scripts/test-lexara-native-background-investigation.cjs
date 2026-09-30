@@ -75,6 +75,7 @@ const mesh = {
     if (state.mode === 'empty') return [candidate('https://records.example.test/empty')];
     if (state.mode === 'employment') return [candidate('https://records.example.test/employer')];
     if (state.mode === 'age-inference') return [candidate('https://records.example.test/juvenile')];
+    if (state.mode === 'wrong-identity') return [candidate('https://records.example.test/wrong-identity')];
     if (state.mode === 'dob-recursive' && state.tierCalls.length === 1) {
       return [candidate('https://records.example.test/profile')];
     }
@@ -115,6 +116,14 @@ const retrieval = {
             target,
             content: 'In 2002, Avery Example of Des Moines, Iowa was a juvenile.',
             retrievedAt: '2026-09-30T12:00:02.000Z',
+            contentType: 'text/html',
+          }];
+        }
+        if (target.endsWith('/wrong-identity')) {
+          return [{
+            target,
+            content: 'Avery Example is an attorney in Toronto, Canada and has practiced employment law for many years.',
+            retrievedAt: '2026-09-30T12:00:02.500Z',
             contentType: 'text/html',
           }];
         }
@@ -187,6 +196,8 @@ function reset(mode) {
   assert.match(dob.evidenceSummary, /SOURCE: https:\/\/records\.example\.test\/dob/);
   assert.match(dob.evidenceSummary, /RETRIEVED: 2026-09-30T12:00:01\.000Z/);
   assert.match(dob.evidenceSummary, /ASSESSMENT: DIRECT/);
+  assert.equal(progress.some(event => Boolean(event.evidence)), false,
+    'progress events never expose source excerpts before the final answer');
   assert.equal(progress.at(-1).endpoint, 'evidence-sufficient');
 
   reset('employment');
@@ -211,6 +222,14 @@ function reset(mode) {
   assert.match(inferredPrompt, /strongest defensible answer/i);
   assert.match(inferredPrompt, /shortest directly responsive answer/i);
   assert.match(inferredPrompt, /about.*approximately.*probably.*range/i);
+
+  reset('wrong-identity');
+  const wrongIdentity = await investigator.investigateLexaraBackgroundQuestion(
+    'How old is Avery Morgan Example of Des Moines, Iowa?',
+  );
+  assert.equal(wrongIdentity.endpoint, 'search-leads-only',
+    'matching first and last name alone cannot establish identity when middle name and location do not match');
+  assert.equal(wrongIdentity.evidenceSummary, undefined);
 
   reset('empty');
   const sameNameWrongContext = await investigator.investigateLexaraBackgroundQuestion(
