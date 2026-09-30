@@ -103,6 +103,8 @@ const FACT_EVIDENCE_PATTERNS: Partial<Record<LexaraRequestedFact, RegExp>> = {
   'contact-address': /\b(?:phone|telephone|email|address|residen|lives?\s+(?:at|in)|located)\b/i,
   'relatives-associates': /\b(?:relative|family|parent|mother|father|sibling|brother|sister|associate|household|roommate|spouse)\b/i,
   'social-online': /\b(?:social\s+media|facebook|instagram|linkedin|tiktok|twitter|username|handle|profile|online\s+account)\b/i,
+  'public-image': /\b(?:photo|photos|picture|pictures|image|images|headshot|portrait)\b/i,
+  'government-public': /\b(?:government|public\s+service|public\s+office|campaign|contribution|donation|lobby|contract)\b/i,
   education: /\b(?:education|school|college|university|degree|diploma|graduate|alumni)\b/i,
   vehicle: /\b(?:vehicle|car|truck|motorcycle|vin|title|registration)\b/i,
   'criminal-arrest': /\b(?:criminal|conviction|charge|arrest|booking|offense|police|sheriff)\b/i,
