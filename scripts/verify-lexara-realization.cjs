@@ -251,61 +251,16 @@ must(
   'production logs can distinguish voice playback from a real rendered avatar and actual speech-linked mouth motion',
 );
 must(
-  synthesis.includes('/api/lexara/tts/session') &&
-    synthesis.includes('adaptive-tts-mesh') &&
-    !synthesis.includes("setProvider('elevenlabs')") &&
-    !synthesis.includes('speechSynthesis') &&
-    ttsMesh.includes("type LexaraTTSProviderId") &&
-    ttsMesh.includes("'mistral'") &&
-    ttsMesh.includes("'gemini'") &&
-    ttsMesh.includes("'deepgram'") &&
-    ttsMesh.includes("'xai'") &&
-    ttsMesh.includes("'groq'") &&
-    !/openrouter/i.test(ttsMesh) &&
-    ttsMesh.includes("'azure'") &&
-    ttsMesh.includes("'elevenlabs'") &&
-    ttsMesh.includes('configuration_blocked') &&
-    ttsMesh.includes('refreshLexaraTTSReadiness') &&
-    ttsMesh.includes('verifyProvider') &&
-    ttsMesh.includes('/v1/audio/voices?type=all') &&
-    ttsMesh.includes("gemini-3.1-flash-tts-preview") &&
-    ttsMesh.includes("voxtral-mini-tts-2603") &&
-    ttsMesh.includes('/v1/user/subscription') &&
-    !ttsMesh.includes("process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY") &&
-    !ttsMesh.includes("'en_paul_neutral'") &&
-    ttsMesh.includes('fetchMistralVoiceDetails') &&
-    ttsMesh.includes('workerCount = Math.min(8') &&
-    ttsMesh.includes('configured Mistral TTS voice is not a verified female English voice') &&
-    ttsMesh.includes('mistral voice catalog contains no LEXARA-compatible female English voice') &&
-    ttsMesh.includes("response_format: 'mp3'") &&
-    ttsMesh.includes("mimeType: 'audio/wav'") &&
-    ttsMesh.includes('pcm16MonoToWav(pcm, 24_000)') &&
-    ttsMesh.includes('LEXARA_TTS_REQUEST_TIMEOUT_MS = 8_000') &&
-    ttsMesh.includes('slowRoutePenalty') &&
-    !ttsMesh.includes("'microsoft/mai-voice-2-flash'") &&
-    ttsMesh.includes('synthesizeLexaraSpeechWithFailover') &&
-    ttsMesh.includes('openLexaraSpeechStream') &&
-    ttsMesh.includes('raceVoiceRoutes') &&
-    ttsMesh.includes('openDeepgramSpeechStream') &&
-    ttsMesh.includes('openElevenLabsSpeechStream') &&
+  ttsMesh.includes("return configured('deepgram') ? ['deepgram'] : []") &&
     ttsMesh.includes("'flux-haley-en'") &&
-    ttsMesh.includes("const BASE_ORDER: LexaraTTSProviderId[] = [\n  'deepgram',\n  'gemini',\n  'mistral'") &&
     ttsMesh.includes("endpoint = flux ? '/v2/speak' : '/v1/speak'") &&
-    ttsMesh.includes('LEXARA_FEMALE_VOICE') &&
-    ttsMesh.includes('providerIndependenceDomain') &&
-    ttsMesh.includes('independentDomains') &&
-    ttsMesh.includes('LEXARA_TTS_HEDGE_DELAY_MS = 650') &&
-    ttsMesh.includes('conversationalPrimaryBonus') &&
+    ttsMesh.includes('openDeepgramSpeechStream') &&
     ttsMesh.includes('process.env.DEEPGRAM?.trim()') &&
     ttsMesh.includes('warm readiness snapshot') &&
-    ttsMesh.includes("abort('tts-hedge-loser')") &&
     ttsMesh.includes('readiness probe verified') &&
     ttsMesh.includes('progressive stream opened') &&
-    ttsMesh.includes('redundancyVerified') &&
-    ttsMesh.includes("voiceStatus: healthyProviders.length > 0 ? 'live' : 'reconnecting'") &&
-    ttsMesh.includes("process.env.LEXARA_TTS_ACTIVE_PROVIDERS || 'deepgram'") &&
-    ttsMesh.includes('setInterval(refresh, 90_000)'),
-  'LEXARA uses verified Deepgram by default and keeps inactive provider adapters out of live routing',
+    !ttsMesh.includes("process.env.LEXARA_TTS_ACTIVE_PROVIDERS || 'deepgram'"),
+  'LEXARA voice provider selection is locked to Deepgram and cannot be re-enabled by alternate-provider environment settings',
 );
 must(
   speechClient.includes('async resume(): Promise<void>') &&
@@ -333,7 +288,7 @@ must(
     realtimeVoiceClient.includes('mobile-network jitter gap occurs') &&
     orchestrator.includes('LIVE_RESEARCH_BUDGET_MS = 10_000') &&
     orchestrator.includes('LIVE_REASONING_PROVIDER_ATTEMPT_MS = 15_000') &&
-    orchestrator.includes('LIVE_REASONING_MAX_FALLBACKS = 3') &&
+    !orchestrator.includes('LIVE_REASONING_MAX_FALLBACKS') &&
     !realtimeVoiceClient.includes('LEXARA_REALTIME_OUTPUT_SAMPLE_RATE = 24_000') &&
     realtimeVoiceClient.includes('audio.defaultPlaybackRate = 1') &&
     realtimeVoiceClient.includes('audio.playbackRate = 1') &&
@@ -350,7 +305,7 @@ must(
     synthesis.includes('await lexaraRealtimeVoiceClient.speak(cleanText') &&
     synthesis.includes('await speakWithServer(cleanText, options, turnId)') &&
     synthesis.includes('/api/lexara/tts/session'),
-  'Lexara speech uses realtime PCM when healthy and preserves the adaptive TTS mesh as route-local recovery',
+  'Lexara speech uses realtime Deepgram PCM when healthy while retaining the Deepgram-only server route as acoustic recovery',
 );
 must(
   realtimeVoiceClient.includes("reportRealtimeVoiceEvent('realtime-first-audio'") &&
@@ -374,6 +329,12 @@ must(
     realtimeVoiceGateway.includes("type: 'ForceEndTurn'") &&
     realtimeVoiceGateway.includes("type: 'Speak'") &&
     realtimeVoiceGateway.includes("type: 'Flush'") &&
+    realtimeVoiceGateway.includes('activeTurnId === turnId') &&
+    realtimeVoiceClient.includes('beginSpeechStream') &&
+    realtimeVoiceClient.includes('appendSpeechStream') &&
+    realtimeVoiceClient.includes('endSpeechStream') &&
+    lexaraChatRoutes.includes("send('answer-delta'") &&
+    lexaraChatRoutes.includes("send('speech-chunk'") &&
     realtimeVoiceGateway.includes("type: 'Interrupt'") &&
     realtimeVoiceGateway.includes("type: 'time_ms'") &&
     realtimeVoiceGateway.includes('recentTurnIds') &&
@@ -483,37 +444,18 @@ must(
 );
 
 must(
-  orchestrator.includes('AICollaborationOrchestrator.orchestrateCollaboration') &&
-    orchestrator.includes("providerPolicy: 'legalwhat'") &&
-    orchestrator.includes('getConfiguredHarmonyProviders') &&
-    harmony.includes("'capability-first'") &&
-    harmony.includes('selectProvidersForTask') &&
-    harmony.includes('AIModelSelector.scoreProvidersForTask') &&
-    harmony.includes("role: 'harmony-synthesizer'") &&
-    harmony.includes('fallbackLimit') &&
-    harmony.includes('recoveryBatch') &&
-    harmony.includes('harmonyTransportCooldownUntil') &&
-    harmony.includes("return 'legal-fast'") &&
-    harmony.includes('withHarmonyDeadline') &&
-    harmonyRegistry.includes('HARMONY_17_PARTICIPANTS') &&
-    orchestrator.includes('maxParticipants: scarceSupportNeeded ? 2 : 1') &&
-    orchestrator.includes('estimatedTokens: 1_500') &&
-    !orchestrator.includes('LIVE_REASONING_DEADLINE_MS') &&
-    !orchestrator.includes('harmonyDeadline') &&
-    orchestrator.includes('LIVE_REASONING_PROVIDER_ATTEMPT_MS = 15_000') &&
-    orchestrator.includes('LIVE_REASONING_MAX_FALLBACKS = 3') &&
-    orchestrator.includes('requestTimeoutMs: LIVE_REASONING_PROVIDER_ATTEMPT_MS') &&
-    orchestrator.includes('maxFallbacks: LIVE_REASONING_MAX_FALLBACKS') &&
-    harmony.includes('fastSynthesisTask') &&
-    harmony.includes("firstSuccessful.role === 'legal-analyst'") &&
-    harmony.includes('harmonyProviderRuntimeScore') &&
-    harmony.includes('task.requestTimeoutMs || task.timeout || options.requestTimeoutMs') &&
-    harmonyWarmup.includes('prewarmHarmonyProviders') &&
-    harmonyWarmup.includes('isHarmonyProviderWarmHealthy') &&
-    harmonyWarmup.includes('getHarmonyWarmState') &&
-    harmonyWarmup.includes("'catalog'") &&
-    groq.includes('warmGroqModelCatalog'),
-  'Lexara keeps Claude primary, uses scarce Gemini/xAI support only when materially needed, and excludes unavailable routes before dispatch',
+  orchestrator.includes('callClaudeStreaming') &&
+    orchestrator.includes('callClaude(') &&
+    orchestrator.includes('CURRENT_AI_MODELS.claudeBalanced') &&
+    orchestrator.includes('CURRENT_AI_MODELS.claudeDeep') &&
+    orchestrator.includes("progressiveClaudeAllowed = !backgroundResearchRequested") &&
+    orchestrator.includes('!sequencePlan.documentAction') &&
+    orchestrator.includes('cacheSystemPrompt: true') &&
+    orchestrator.includes("reasoningProvider: 'claude'") &&
+    !orchestrator.includes('AICollaborationOrchestrator.orchestrateCollaboration') &&
+    !orchestrator.includes('getConfiguredHarmonyProviders') &&
+    !orchestrator.includes('maxFallbacks'),
+  'Lexara uses direct Claude reasoning with safe progressive streaming and no multi-provider routing overhead',
 );
 must(
   !authorityResearch.includes('openRouterWebSearch') &&
@@ -641,9 +583,11 @@ must(
 );
 must(
   harmonyRegistry.includes("'claude-sonnet-5-5'") &&
-    harmonyRegistry.includes("'gemini-3.8-flash'") &&
-    harmonyRegistry.includes("'grok-4.7'"),
-  'Harmony current-model registry pins Claude, Gemini and direct xAI Grok generations',
+    harmonyRegistry.includes("'claude-opus-5-5'") &&
+    harmonyRegistry.includes('return provider === PROVIDER.CLAUDE') &&
+    !harmonyRegistry.includes("geminiFast: 'gemini-3.8-flash'") &&
+    !harmonyRegistry.includes("xaiFast: 'grok-4.7'"),
+  'LegalWhat inference authority is Claude-only while retaining Sonnet and Opus workload selection',
 );
 must(
   lexaraChatRoutes.includes("router.post('/acknowledge'") &&
