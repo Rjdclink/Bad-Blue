@@ -48,8 +48,8 @@ function factual(prompt, fact, categories = []) {
   assert.equal(decision.requestedFact, fact, prompt);
   for (const category of categories) assert(decision.sourceCategories.includes(category), `${prompt}: missing ${category}`);
   const plan = router.planLexaraSequence(prompt, []);
-  assert.equal(plan.useLegalResearch, true, prompt);
-  assert.equal(plan.useBackgroundResearch, false, prompt);
+  assert.equal(plan.useLegalResearch, false, prompt);
+  assert.equal(plan.useBackgroundResearch, true, prompt);
   return decision;
 }
 
@@ -70,7 +70,7 @@ assert(follow.sourceCategories.includes('healthcare-professional'));
 assert.match(follow.standaloneQuery, /Avery Example/i);
 assert.match(follow.standaloneQuery, /Nursing license/i);
 const followPlan = router.planLexaraSequence('Nursing license', ['Does Avery Example hold any licenses?']);
-assert.equal(followPlan.useBackgroundResearch, false, 'Lexara follow-up must never route to Pantheon');
+assert.equal(followPlan.useBackgroundResearch, true, 'Lexara factual follow-up stays on the Lexara-owned background route without Pantheon');
 
 const contextualFollowPlan = router.planLexaraSequence('And her status?', ['Does Avery Example hold any licenses?']);
 assert.notEqual(contextualFollowPlan.sequence, 'conversation-only', 'Natural factual follow-up must retain active research context');
@@ -109,6 +109,7 @@ assert.equal(mixed.intent, 'mixed');
 assert.equal(mixed.requestedFact, 'professional-license');
 assert(mixed.sourceCategories.includes('healthcare-professional'));
 const mixedPlan = router.planLexaraSequence("Can I use Avery Example's nursing license records in my divorce case?", []);
-assert.equal(mixedPlan.useBackgroundResearch, false, 'Lexara mixed research must never route to Pantheon');
+assert.equal(mixedPlan.useLegalResearch, true, 'mixed research preserves the legal-authority lane');
+assert.equal(mixedPlan.useBackgroundResearch, true, 'mixed research also invokes the Lexara-owned background route without Pantheon');
 
 console.log('PASS: Lexara-owned factual intent, inference, follow-up carryover, and legal/factual routing are verified with Pantheon disconnected.');

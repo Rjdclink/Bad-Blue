@@ -109,8 +109,8 @@ const semantic = execute('server/lexara/LexaraSemanticIntentInterpreter.ts', {
   assert.equal(broad.inferred, true);
   const broadPlan = router.planLexaraSequence('Tell me about Avery Morgan Example.', [], broad);
   assert.equal(broadPlan.sequence, 'lexara-background');
-  assert.equal(broadPlan.useLegalResearch, true);
-  assert.equal(broadPlan.useBackgroundResearch, false, 'Pantheon stays disconnected');
+  assert.equal(broadPlan.useLegalResearch, false, 'pure factual background research should not invoke the legal-authority lane');
+  assert.equal(broadPlan.useBackgroundResearch, true, 'Lexara-owned background research is active while Pantheon stays disconnected');
 
   before = claudeCalls;
   const statement = await semantic.resolveLexaraResearchDecisionSemantic('Avery Morgan Example is employed.', []);
@@ -156,7 +156,8 @@ const semantic = execute('server/lexara/LexaraSemanticIntentInterpreter.ts', {
     mixed,
   );
   assert.equal(mixedPlan.sequence, 'combined-legal-background');
-  assert.equal(mixedPlan.useBackgroundResearch, false, 'mixed semantic routing still never invokes Pantheon');
+  assert.equal(mixedPlan.useLegalResearch, true, 'mixed semantic routing keeps legal authority research active');
+  assert.equal(mixedPlan.useBackgroundResearch, true, 'mixed semantic routing also invokes Lexara-owned background research without Pantheon');
 
   before = claudeCalls;
   const casual = await semantic.resolveLexaraResearchDecisionSemantic('Thanks.', []);
