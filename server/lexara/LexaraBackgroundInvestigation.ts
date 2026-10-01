@@ -385,12 +385,15 @@ export async function investigateLexaraBackgroundQuestion(
   if (!decision.needed || (decision.intent !== 'factual' && decision.intent !== 'mixed')) return null;
 
   const resolved = resolveLexaraBackgroundSubject(prompt, priorTurns, context.jurisdiction)
-    || (decision.subject ? {
-      name: decision.subject,
-      kind: 'person' as const,
-      identifiable: false,
-      location: context.jurisdiction,
-    } : null);
+    || (decision.subject
+      ? resolveLexaraBackgroundSubject(decision.subject, priorTurns, context.jurisdiction)
+        || {
+          name: decision.subject,
+          kind: 'person' as const,
+          identifiable: false,
+          location: context.jurisdiction,
+        }
+      : null);
   if (!resolved) return null;
   const subject = cleanSubject(resolved);
   const categories = backgroundCategories(prompt, decision);
