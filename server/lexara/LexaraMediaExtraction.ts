@@ -29,6 +29,7 @@ const DIRECT_TEXT_MIME_TYPES = new Set([
 const INLINE_MEDIA_MAX_BYTES = 15 * 1024 * 1024;
 const MAX_EXTRACTED_CHARACTERS = 160_000;
 const FILE_PROCESSING_TIMEOUT_MS = 60_000;
+const PRERECORDED_TRANSCRIPTION_TIMEOUT_MS = 3 * 60_000;
 const FILE_PROCESSING_POLL_MS = 1_500;
 const EXTRACTION_MODEL = process.env.LEXARA_MEDIA_EXTRACTION_MODEL?.trim()
   || process.env.GEMINI_MODEL?.trim()
@@ -184,7 +185,7 @@ async function extractAudioVideoWithDeepgram(input: LexaraMediaExtractionInput):
   url.searchParams.set('diarize', 'true');
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FILE_PROCESSING_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), PRERECORDED_TRANSCRIPTION_TIMEOUT_MS);
   try {
     const response = await fetch(url, {
       method: 'POST',
