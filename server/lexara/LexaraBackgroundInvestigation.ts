@@ -159,7 +159,11 @@ function cleanSubject(subject: LexaraBackgroundSubject): LexaraBackgroundSubject
   const locationSuffix = subject.name.match(/\s+(?:of|from|in)\s+(.+)$/u)?.[1]?.trim();
   const cleaned = subject.name.replace(/\s+(?:of|from|in)\s+[A-Z].*$/u, '').trim();
   const location = locationSuffix && subject.location
-    ? normalize(subject.location).includes(normalize(locationSuffix)) ? subject.location : `${locationSuffix}, ${subject.location}`
+    ? normalize(locationSuffix).includes(normalize(subject.location))
+      ? locationSuffix
+      : normalize(subject.location).includes(normalize(locationSuffix))
+        ? subject.location
+        : `${locationSuffix}, ${subject.location}`
     : subject.location || locationSuffix;
   return cleaned && cleaned !== subject.name
     ? { ...subject, name: cleaned, location }
