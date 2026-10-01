@@ -202,6 +202,142 @@ export async function callClaude(
   }
 }
 
+
+export interface ClaudeWebSearchSource {
+  url: string;
+  title?: string;
+  citedText?: string;
+}
+
+export interface ClaudeWebSearchOptions {
+  systemPrompt?: string;
+  maxTokens?: number;
+  maxUses?: number;
+  model?: string;
+  signal?: AbortSignal;
+}
+
+/**
+ * Anthropic-hosted web search transport for explicit research lanes.
+ *
+ * This is intentionally separate from callClaude(): ordinary reasoning never
+ * acquires web access implicitly. Background research may run this transport in
+ * parallel with Lexara's independent discovery lanes.
+ */
+export async function callClaudeWebSearch(
+  prompt: string,
+  options: ClaudeWebSearchOptions = {},
+): Promise<{
+  content: string;
+  sources: ClaudeWebSearchSource[];
+  tokensUsed: number;
+  searches: number;
+}> {
+  const client = getClaudeClient();
+  const model = options.model || CURRENT_AI_MODELS.claudeBalanced;
+  const maxUses = Math.max(1, Math.min(options.maxUses || 4, 8));
+  const tools = [{
+    type: 'web_search_20260318',
+    name: 'web_search',
+    max_uses: maxUses,
+    allowed_callers: ['direct'],
+  }];
+  const messages: any[] = [{ role: 'user', content: prompt }];
+  let response: any;
+  let tokensUsed = 0;
+  let searches = 0;
+
+  try {
+    for (let continuation = 0; continuation < 3; continuation += 1) {
+      response = await (client.messages as any).create({
+        model,
+        max_tokens: options.maxTokens || 900,
+        system: options.systemPrompt || 'Use web search only as needed. Prefer reliable, directly relevant sources and do not invent unsupported facts.',
+        messages,
+        tools,
+      }, {
+        signal: options.signal,
+        maxRetries: 0,
+      });
+
+      const usage = response?.usage || {};
+      tokensUsed += Number(usage.input_tokens || 0)
+        + Number(usage.output_tokens || 0)
+        + Number(usage.cache_read_input_tokens || 0)
+        + Number(usage.cache_creation_input_tokens || 0);
+      searches += Number(usage?.server_tool_use?.web_search_requests || 0);
+
+      if (response?.stop_reason !== 'pause_turn') break;
+      messages.push({ role: 'assistant', content: response.content });
+    }
+
+    const blocks: any[] = Array.isArray(response?.content) ? response.content : [];
+    const sourceMap = new Map<string, ClaudeWebSearchSource>();
+    let lastSearchResultIndex = -1;
+
+    blocks.forEach((block, index) => {
+      if (block?.type === 'web_search_tool_result') {
+        lastSearchResultIndex = index;
+        const results = Array.isArray(block.content) ? block.content : [];
+        for (const result of results) {
+          const url = typeof result?.url === 'string' ? result.url.trim() : '';
+          if (!url) continue;
+          sourceMap.set(url, {
+            url,
+            title: typeof result?.title === 'string' ? result.title : undefined,
+          });
+        }
+      }
+      if (block?.type === 'text' && Array.isArray(block.citations)) {
+        for (const citation of block.citations) {
+          const url = typeof citation?.url === 'string' ? citation.url.trim() : '';
+          if (!url) continue;
+          const existing = sourceMap.get(url);
+          sourceMap.set(url, {
+            url,
+            title: typeof citation?.title === 'string' ? citation.title : existing?.title,
+            citedText: typeof citation?.cited_text === 'string' ? citation.cited_text : existing?.citedText,
+          });
+        }
+      }
+    });
+
+    const answerBlocks = blocks
+      .slice(lastSearchResultIndex >= 0 ? lastSearchResultIndex + 1 : 0)
+      .filter(block => block?.type === 'text' && typeof block.text === 'string')
+      .map(block => block.text.trim())
+      .filter(Boolean);
+    const content = answerBlocks.join('\n').trim()
+      || blocks.filter(block => block?.type === 'text' && typeof block.text === 'string')
+        .map(block => block.text.trim()).filter(Boolean).join('\n').trim();
+
+    if (!content) {
+      throw new Error(`Claude web search returned no final text (stop_reason=${response?.stop_reason || 'unknown'})`);
+    }
+
+    return {
+      content,
+      sources: [...sourceMap.values()],
+      tokensUsed,
+      searches,
+    };
+  } catch (error: any) {
+    if (options.signal?.aborted) {
+      const reason = options.signal.reason;
+      if (reason instanceof Error || reason instanceof DOMException) throw reason;
+      throw new DOMException(typeof reason === 'string' ? reason : 'Claude web search cancelled', 'AbortError');
+    }
+    console.warn('[Claude Web Search] research lane unavailable', {
+      error: error?.message || String(error),
+      status: error?.status,
+    });
+    throw Object.assign(new Error(`Claude web search error: ${error?.message || String(error)}`), {
+      status: error?.status,
+      headers: error?.headers,
+    });
+  }
+}
+
 const CLAUDE_DIRECT_IMAGE_TYPES = new Set([
   'image/jpeg',
   'image/png',

@@ -38,6 +38,7 @@ const state = {
   tierCalls: [],
   supplementalCalls: [],
   retrievalCalls: [],
+  claudeCalls: [],
 };
 
 const planner = {
@@ -72,8 +73,10 @@ function candidate(url, provider = 'fixture-search') {
 const mesh = {
   async discoverLegalMeshTier3(query, _signal, options) {
     state.tierCalls.push({ query, options });
+    if (state.mode === 'native-failure') throw new Error('fixture native discovery outage');
     if (state.mode === 'empty') return [candidate('https://records.example.test/empty')];
     if (state.mode === 'employment') return [candidate('https://records.example.test/employer')];
+    if (state.mode === 'custom-general') return [candidate('https://records.example.test/civic-medal')];
     if (state.mode === 'age-inference') return [candidate('https://records.example.test/juvenile')];
     if (state.mode === 'converged-inference') return [
       candidate('https://records.example.test/juvenile-a'),
@@ -141,6 +144,14 @@ const retrieval = {
             contentType: 'text/html',
           }];
         }
+        if (target.endsWith('/civic-medal')) {
+          return [{
+            target,
+            content: 'Avery Example of Iowa received the Cedar Civic Medal in 2025 for volunteer service.',
+            retrievedAt: '2026-10-01T12:00:04.000Z',
+            contentType: 'text/html',
+          }];
+        }
         if (target.endsWith('/employer')) {
           return [{
             target,
@@ -176,6 +187,24 @@ const learning = {
   async rememberLexaraDiscoveryOutcome() {},
 };
 
+const claudeParallel = {
+  async searchLexaraBackgroundWithClaude(input) {
+    state.claudeCalls.push(input);
+    if (state.mode !== 'claude-only' && state.mode !== 'native-failure') {
+      return { candidates: [], citationEvidence: [], searches: 1 };
+    }
+    return {
+      candidates: [candidate('https://claude.example.test/employer', 'claude-web-search')],
+      citationEvidence: [{
+        url: 'https://claude.example.test/employer',
+        content: 'Avery Example of Iowa is employed by Parallel Research LLC.',
+        retrievedAt: '2026-10-01T12:00:00.000Z',
+      }],
+      searches: 2,
+    };
+  },
+};
+
 const investigator = execute('server/lexara/LexaraBackgroundInvestigation.ts', {
   './LexaraResearchIntentRouter': planner,
   './LexaraBackgroundSubject': subject,
@@ -183,6 +212,7 @@ const investigator = execute('server/lexara/LexaraBackgroundInvestigation.ts', {
   './LexaraRetrievalBoundary': retrieval,
   './LexaraPublicSourceRegistry': registry,
   './LexaraDiscoveryLearning': learning,
+  './LexaraClaudeBackgroundSearch': claudeParallel,
 });
 
 function reset(mode) {
@@ -190,6 +220,7 @@ function reset(mode) {
   state.tierCalls = [];
   state.supplementalCalls = [];
   state.retrievalCalls = [];
+  state.claudeCalls = [];
 }
 
 (async () => {
@@ -223,6 +254,55 @@ function reset(mode) {
   assert.equal(employment.recursionPasses, 1);
   assert.deepEqual(state.retrievalCalls, [['https://records.example.test/employer']]);
   assert.match(employment.evidenceSummary, /employed by Example Industries/i);
+  const verifiedPrompt = investigator.formatLexaraBackgroundResearchForSystem(employment);
+  assert.match(verifiedPrompt, /cleared Lexara's subject-match and evidence threshold/i);
+  assert.match(verifiedPrompt, /do not call it a guess/i);
+
+
+  reset('custom-general');
+  const customGeneral = await investigator.investigateLexaraBackgroundQuestion(
+    'Did Avery Example receive a civic medal?',
+    {
+      jurisdiction: 'Iowa',
+      researchDecision: {
+        needed: true,
+        reason: 'external-fact-question',
+        objective: 'Determine whether Avery Example received a civic medal.',
+        objectiveKind: 'external-fact',
+        intent: 'factual',
+        requestedFact: 'general-public-record',
+        sourceCategories: ['general-public-records'],
+        subject: 'Avery Example',
+        standaloneQuery: 'Avery Example civic medal Iowa',
+        inferred: true,
+      },
+    },
+  );
+  assert.equal(customGeneral.endpoint, 'evidence-sufficient',
+    'open-ended background objectives are evidence-gated by their semantic objective, not a fixed keyword taxonomy');
+  assert.match(customGeneral.evidenceSummary, /Cedar Civic Medal/i);
+
+  reset('claude-only');
+  const claudeOnly = await investigator.investigateLexaraBackgroundQuestion(
+    'Where does Avery Example work?',
+    { jurisdiction: 'Iowa' },
+  );
+  assert.equal(claudeOnly.endpoint, 'evidence-sufficient',
+    'Claude web search runs beside native lanes and can independently establish the requested fact');
+  assert.deepEqual(Array.from(claudeOnly.sources), ['https://claude.example.test/employer']);
+  assert(claudeOnly.discoveryLanes.includes('claude-web-search'));
+  assert.equal(state.claudeCalls.length, 1, 'Claude parallel lane runs once alongside initial native discovery');
+  assert.match(claudeOnly.evidenceSummary, /Parallel Research LLC/);
+
+  reset('native-failure');
+  const nativeFailure = await investigator.investigateLexaraBackgroundQuestion(
+    'Where does Avery Example work?',
+    { jurisdiction: 'Iowa' },
+  );
+  assert.equal(nativeFailure.endpoint, 'evidence-sufficient',
+    'a native discovery outage must not discard Claude parallel evidence');
+  assert(nativeFailure.discoveryLanes.includes('claude-web-search'));
+  assert.match(nativeFailure.evidenceSummary, /Parallel Research LLC/);
 
   reset('age-inference');
   const inferredAge = await investigator.investigateLexaraBackgroundQuestion(
@@ -233,9 +313,10 @@ function reset(mode) {
   assert.match(inferredAge.evidenceSummary, /ASSESSMENT: INFERENTIAL/);
   assert.match(inferredAge.evidenceSummary, /juvenile/i);
   const inferredPrompt = investigator.formatLexaraBackgroundResearchForSystem(inferredAge);
-  assert.match(inferredPrompt, /strongest defensible answer/i);
+  assert.match(inferredPrompt, /strongest defensible estimate/i);
   assert.match(inferredPrompt, /first sentence must contain only the requested fact/i);
-  assert.match(inferredPrompt, /about.*approximately.*probably.*range/i);
+  assert.match(inferredPrompt, /did NOT clear Lexara's verification threshold/i);
+  assert.match(inferredPrompt, /This is only a guess, not a verified fact/i);
 
   reset('converged-inference');
   const converged = await investigator.investigateLexaraBackgroundQuestion(

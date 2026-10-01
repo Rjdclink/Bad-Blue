@@ -24,9 +24,13 @@ const DEEP_PATTERN = /\b(?:deep|thorough|comprehensive|recursive|broaden|keep lo
 const DOCUMENT_PATTERN = /\b(?:draft|prepare|create|generate|write|download|export|pdf|docx|word document|demand|complaint|petition|motion|affidavit|declaration|letter|request)\b/i;
 const ACTION_PATTERN = /\b(?:need|want|give|provide|make|prepare|draft|create|generate|write|download|export|file|serve|send)\b/i;
 
-export function planLexaraSequence(prompt: string, previousUserTurns: string[] = []): LexaraSequencePlan {
+export function planLexaraSequence(
+  prompt: string,
+  previousUserTurns: string[] = [],
+  researchDecisionOverride?: LexaraResearchDecision,
+): LexaraSequencePlan {
   const text = String(prompt || '').trim();
-  const currentDecision = decideLexaraResearchNeed(text, previousUserTurns);
+  const currentDecision = researchDecisionOverride || decideLexaraResearchNeed(text, previousUserTurns);
   const priorResearchDecision = !currentDecision.needed
     ? [...previousUserTurns].reverse().map(turn => decideLexaraResearchNeed(turn, [])).find(decision => decision.needed)
     : undefined;
@@ -38,9 +42,11 @@ export function planLexaraSequence(prompt: string, previousUserTurns: string[] =
     ? [priorResearchDecision.subject, text, priorResearchDecision.requestedFact !== 'none' ? priorResearchDecision.requestedFact.replace(/-/g, ' ') : '']
         .filter(Boolean).join(' ')
     : text;
-  const contextualDecision = contextualContinuation
-    ? decideLexaraResearchNeed(contextualPrompt, previousUserTurns)
-    : currentDecision;
+  const contextualDecision = researchDecisionOverride?.needed
+    ? currentDecision
+    : contextualContinuation
+      ? decideLexaraResearchNeed(contextualPrompt, previousUserTurns)
+      : currentDecision;
   const researchDecision = contextualDecision.needed ? contextualDecision : currentDecision;
   if (isLexaraConversationControl(text)) return {
     sequence: 'conversation-only', researchDecision, useLegalResearch: false,

@@ -118,7 +118,7 @@ function requestedFact(text: string): LexaraRequestedFact {
   return 'none';
 }
 
-function sourceCategoriesForFact(fact: LexaraRequestedFact, text: string): LexaraSourceCategory[] {
+export function sourceCategoriesForFact(fact: LexaraRequestedFact, text: string): LexaraSourceCategory[] {
   switch (fact) {
     case 'age-dob': return ['vital-records','identity','general-public-records'];
     case 'professional-license':
@@ -172,7 +172,7 @@ function factualQuestion(text: string, fact: LexaraRequestedFact): boolean {
   return /\b(?:tell\s+me|find|locate|identify|determine|show|give\s+me|need\s+to\s+know|want\s+to\s+know|check|verify)\b/i.test(text);
 }
 
-function objectiveKindForFact(fact: LexaraRequestedFact, text: string): LexaraResearchObjectiveKind {
+export function objectiveKindForFact(fact: LexaraRequestedFact, text: string): LexaraResearchObjectiveKind {
   if (['professional-license','marriage-divorce','property','court-record','incarceration','financial-professional','sanctions-discipline','criminal-arrest','probation-parole','warrant','sex-offender','bankruptcy-financial','vehicle'].includes(fact)) return 'record-lookup';
   if (/\b(?:current|currently|latest|today|now|recent)\b/i.test(text)) return 'current-information';
   return 'external-fact';
