@@ -62,11 +62,13 @@ async function loadRepresentationContext(
   savedMatters: SavedMatterSummary[];
 }> {
   if (!hasPersistentMatterAccess(req)) {
-    const ephemeral = sanitizeRepresentationMatter(clientMatter);
+    // Trial/non-paid turns may use the live conversation, but the browser is not
+    // a trusted authority for a prior matter record and no durable matter state
+    // is restored for them.
     return {
       persistent: false,
-      activeMatter: ephemeral,
-      activeSessionId: ephemeral?.sessionId || requestedSessionId,
+      activeMatter: null,
+      activeSessionId: requestedSessionId,
       savedMatters: [],
     };
   }
