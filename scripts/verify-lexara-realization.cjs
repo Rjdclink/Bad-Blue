@@ -500,6 +500,7 @@ must(
     lexaraLegalMesh.includes('SERPAPI_KEY') &&
     lexaraLegalMesh.includes('SCRAPINGBEE_API_KEY') &&
     lexaraLegalMesh.includes('planLexaraResearchQueries') &&
+    lexaraLegalMesh.includes('fuseRankedCandidates') &&
     !lexaraLegalMesh.includes('PantheonDiscoveryCoordinator'),
   'Lexara owns the former non-crawler discovery lanes, archive fallback, paid fallback, and query expansion',
 );
