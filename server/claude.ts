@@ -237,7 +237,7 @@ export async function callClaudeWebSearch(
   const model = options.model || CURRENT_AI_MODELS.claudeBalanced;
   const maxUses = Math.max(1, Math.min(options.maxUses || 4, 8));
   const tools = [{
-    type: 'web_search_20250305',
+    type: 'web_search_20260318',
     name: 'web_search',
     max_uses: maxUses,
   }];
