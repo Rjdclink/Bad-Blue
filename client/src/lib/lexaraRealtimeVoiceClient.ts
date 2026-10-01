@@ -377,6 +377,13 @@ class LexaraRealtimeVoiceClient {
       && this.context?.state === 'running';
   }
 
+  reportInputDecision(
+    event: 'realtime-input-rejected' | 'realtime-input-confirmed',
+    reason: string,
+  ): void {
+    reportRealtimeVoiceEvent(event, { reason });
+  }
+
   async ensureSpeechOutputReady(): Promise<boolean> {
     if (!this.isReady() || !this.context || !this.playback) return false;
     if (!needsMediaStreamOutputSink()) return this.isSpeechOutputReady();
@@ -742,7 +749,7 @@ class LexaraRealtimeVoiceClient {
     if (!this.isSpeechOutputReady()) throw new Error('LEXARA realtime voice output is not ready');
 
     if (this.activeSpeech || this.interruptInFlight) {
-      this.interrupt();
+      this.interrupt('superseded-speech');
       throw new Error('LEXARA realtime interruption is still pending');
     }
 
@@ -827,7 +834,7 @@ class LexaraRealtimeVoiceClient {
     return completion;
   }
 
-  interrupt(): void {
+  interrupt(reason = 'unspecified'): void {
     const context = this.context;
     const active = this.activeSpeech;
     const playbackOffsetMs = context
@@ -849,6 +856,7 @@ class LexaraRealtimeVoiceClient {
         playbackOffsetMs,
       }));
       reportRealtimeVoiceEvent('realtime-interrupted', {
+        reason,
         turnId: active.turnId,
         playbackOffsetMs,
       });
@@ -865,7 +873,7 @@ class LexaraRealtimeVoiceClient {
 
   close(stopTracks = false): void {
     this.ready = false;
-    this.interrupt();
+    this.interrupt('session-close');
     const active = this.activeSpeech;
     if (active) {
       window.clearTimeout(active.timeout);
