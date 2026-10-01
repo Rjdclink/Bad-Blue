@@ -99,7 +99,8 @@ export async function resolveLexaraResearchDecisionSemantic(
 ): Promise<LexaraResearchDecision> {
   const text = String(prompt || '').trim();
   const deterministic = decideLexaraResearchNeed(text, previousUserTurns);
-  if (!text || isLexaraConversationControl(text) || LOW_VALUE_CONVERSATION.test(text)) {
+  if ((deterministic.intent === 'factual' || deterministic.intent === 'mixed')
+    || !text || isLexaraConversationControl(text) || LOW_VALUE_CONVERSATION.test(text)) {
     return deterministic;
   }
 
