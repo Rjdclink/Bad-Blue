@@ -618,6 +618,7 @@ export function setupFMIRoutes(app: Express): void {
             classification: analysis.classification,
             keyFindings: analysis.keyFindings.slice(0, 30),
             admissibilityAssessment: analysis.classification.admissibility,
+            persistence: hasPersistentMatterAccess(req) ? 'persistent' : 'ephemeral',
           },
           formIntelligence: formLayout ? { isLegalForm: true, layout: formLayout, editable: formLayout.verified } : { isLegalForm: false },
         };
