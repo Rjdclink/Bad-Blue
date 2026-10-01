@@ -210,6 +210,9 @@ function begins(bytes: Buffer, signature: number[], offset = 0): boolean {
 function looksLikeText(bytes: Buffer): boolean {
   const sample = bytes.subarray(0, Math.min(bytes.length, 16_384));
   if (!sample.length) return false;
+  // Preserve valid UTF-16 text uploads instead of rejecting them for embedded
+  // zero bytes before the extraction layer has a chance to decode them.
+  if (begins(sample, [0xff, 0xfe]) || begins(sample, [0xfe, 0xff])) return true;
   let suspicious = 0;
   for (const byte of sample) {
     if (byte === 0) return false;
@@ -233,8 +236,13 @@ function signatureMatchesMime(bytes: Buffer, mimeType: string): boolean {
   if (mime === 'video/x-msvideo') return bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'AVI ';
   if (mime === 'video/webm') return begins(bytes, [0x1a,0x45,0xdf,0xa3]);
   if (mime === 'video/mpeg') return begins(bytes, [0x00,0x00,0x01,0xba]) || begins(bytes, [0x00,0x00,0x01,0xb3]);
-  if (['video/mp4','video/quicktime','audio/mp4','audio/x-m4a'].includes(mime)) {
+  if (['video/mp4','audio/mp4','audio/x-m4a'].includes(mime)) {
     return bytes.length >= 12 && bytes.subarray(4, 8).toString('ascii') === 'ftyp';
+  }
+  if (mime === 'video/quicktime') {
+    if (bytes.length < 12) return false;
+    const atom = bytes.subarray(4, 8).toString('ascii');
+    return atom === 'ftyp' || atom === 'moov' || atom === 'mdat' || atom === 'wide' || atom === 'free';
   }
   if (mime === 'application/msword' || mime === 'application/vnd.ms-excel' || mime === 'application/vnd.ms-outlook') {
     return begins(bytes, [0xd0,0xcf,0x11,0xe0,0xa1,0xb1,0x1a,0xe1]);
