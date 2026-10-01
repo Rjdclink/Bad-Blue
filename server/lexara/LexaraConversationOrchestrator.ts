@@ -504,6 +504,19 @@ export async function generateLexaraConversationResponse(
   const mappedLawType = mapLexaraLawType(context.lawType);
   const immediate = getLexaraImmediateAcknowledgement(cleanPrompt);
   const history = buildConversationHistory(context.previousMessages);
+  const previousUserTurns = (context.previousMessages || [])
+    .filter(message => message.role === 'user')
+    .slice(-8)
+    .map(message => message.content || '');
+  // Start semantic background/mixed-intent inference immediately so its small
+  // classifier call overlaps normal jurisdiction/context preparation instead of
+  // extending the legal-answer latency tail.
+  const semanticResearchDecisionPromise = resolveLexaraResearchDecisionSemantic(
+    cleanPrompt,
+    previousUserTurns,
+    context.signal,
+    history,
+  );
   const explicitStateJurisdiction = inferJurisdiction(cleanPrompt)
     || normalizeJurisdiction(context.jurisdiction)
     || inferPriorUserJurisdiction(context.previousMessages);
@@ -544,19 +557,10 @@ export async function generateLexaraConversationResponse(
     ...(domainProfile?.preferredOfficialDomains || []),
     ...(jurisdictionAuthorityProfile?.preferredOfficialDomains || []),
   ].filter((value, index, values) => value && values.indexOf(value) === index).slice(0, 18);
-  const previousUserTurns = (context.previousMessages || [])
-    .filter(message => message.role === 'user')
-    .slice(-8)
-    .map(message => message.content || '');
   const jurisdictionCorrectionOnly = Boolean(inferJurisdiction(cleanPrompt))
     && !jurisdictionRelevant
     && (context.previousMessages?.length || 0) > 0;
-  const semanticResearchDecision = await resolveLexaraResearchDecisionSemantic(
-    cleanPrompt,
-    previousUserTurns,
-    context.signal,
-    history,
-  );
+  const semanticResearchDecision = await semanticResearchDecisionPromise;
   const sequencePlan = planLexaraSequence(cleanPrompt, previousUserTurns, semanticResearchDecision);
   const deepClaudeNeeded = requiresDeepClaudeForTurn(
     cleanPrompt,
