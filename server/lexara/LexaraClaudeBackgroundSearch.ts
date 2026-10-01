@@ -30,7 +30,7 @@ export async function searchLexaraBackgroundWithClaude(input: {
   signal?: AbortSignal;
 }): Promise<LexaraClaudeBackgroundSearchResult> {
   const subjectName = input.subject?.name || input.decision.subject || '';
-  const location = input.jurisdiction || input.subject?.location || '';
+  const location = input.subject?.location || input.jurisdiction || '';
   const requestedFact = input.decision.requestedFact === 'none'
     ? 'the exact external fact requested by the user'
     : input.decision.requestedFact.replace(/-/g, ' ');
