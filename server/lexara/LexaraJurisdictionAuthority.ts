@@ -65,7 +65,7 @@ const CIRCUIT_BY_CODE: Record<string, { name: string; number: string }> = {
 
 const DIRECTORY_CACHE = new Map<string, { expiresAt: number; resources: JurisdictionOfficialResource[] }>();
 const DIRECTORY_TTL_MS = 24 * 60 * 60 * 1000;
-const DIRECTORY_TIMEOUT_MS = 1600;
+const DIRECTORY_TIMEOUT_MS = 900;
 
 function normalizeState(value?: string): { name?: string; code?: string } {
   let raw = String(value || '').trim();
