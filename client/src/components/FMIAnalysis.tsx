@@ -68,6 +68,7 @@ export default function FMIAnalysis({
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const completedAnalysesRef = useRef<any[]>([]);
+  const reviewInputsRef = useRef<any[]>([]);
 
   const { data: fmiFiles, refetch: refetchFiles } = useQuery<FMIFile[]>({
     queryKey: ['/api/fmi/files'],
@@ -143,6 +144,12 @@ export default function FMIAnalysis({
         ].slice(-12);
         onAnalysisComplete?.(completedAnalysesRef.current);
       }
+      if (data?.reviewInput) {
+        reviewInputsRef.current = [
+          ...reviewInputsRef.current,
+          data.reviewInput,
+        ].slice(-20);
+      }
     },
     onError: (error: Error) => {
       toast({
@@ -155,7 +162,7 @@ export default function FMIAnalysis({
   });
 
   const reviewSetMutation = useMutation({
-    mutationFn: async (payload: { fileIds: string[]; lawType: string; state: string; question?: string }) => {
+    mutationFn: async (payload: { fileIds?: string[]; documents?: any[]; lawType: string; state: string; question?: string }) => {
       const response = await apiRequest('/api/fmi/review-set', 'POST', payload);
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
@@ -209,6 +216,7 @@ export default function FMIAnalysis({
       }
 
       const completedFileIds: string[] = [];
+      const batchReviewInputs: any[] = [];
       for (const file of acceptedFiles) {
         try {
           setUploadProgress(30);
@@ -219,13 +227,14 @@ export default function FMIAnalysis({
             throw new Error('F.M.I. upload completed without an evidence file ID');
           }
 
-          await analyzeMutation.mutateAsync({
+          const analyzed = await analyzeMutation.mutateAsync({
             fileId: uploaded.file.id,
             lawType: lawType || 'general',
             state,
             caseContext: caseContext?.trim() || undefined,
           });
           completedFileIds.push(uploaded.file.id);
+          if (analyzed?.reviewInput) batchReviewInputs.push(analyzed.reviewInput);
           setUploadProgress(100);
         } catch {
           // The mutations surface the actionable error. Continue so one bad file
@@ -240,6 +249,7 @@ export default function FMIAnalysis({
           setUploadProgress(90);
           const combined = await reviewSetMutation.mutateAsync({
             fileIds: completedFileIds,
+            documents: batchReviewInputs.length >= 2 ? batchReviewInputs : undefined,
             lawType: lawType || 'general',
             state,
             question: caseContext?.trim() || undefined,
