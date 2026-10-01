@@ -40,6 +40,11 @@ if (!orchestrator.includes('resolveLexaraResearchDecisionSemantic')
   || !orchestrator.includes('planLexaraSequence(cleanPrompt, previousUserTurns, semanticResearchDecision)')) {
   throw new Error('Conversation orchestrator does not feed semantic intent into the six-sequence router');
 }
+if (!orchestrator.includes('const semanticResearchDecisionPromise = resolveLexaraResearchDecisionSemantic(')
+  || orchestrator.indexOf('semanticResearchDecisionPromise') > orchestrator.indexOf('await resolveUSJurisdiction(')
+  || !orchestrator.includes('const semanticResearchDecision = await semanticResearchDecisionPromise')) {
+  throw new Error('Semantic background inference is not overlapped with existing turn preparation');
+}
 if (!orchestrator.includes("const backgroundResearchRequested = researchDecision.intent === 'factual' || mixedLegalFactNeed")) {
   throw new Error('Lexara factual/mixed turns do not enable the Lexara-native background investigator');
 }
