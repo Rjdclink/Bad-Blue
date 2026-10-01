@@ -521,7 +521,10 @@ must(
     lexaraDiscoveryLearning.includes('getLexaraLearnedQueryPatterns') &&
     lexaraResearchAssist.includes("providerPolicy:'legalwhat'") &&
     lexaraResearchAssist.includes('maxParticipants:1') &&
-    lexaraResearchAssist.includes('maxFallbacks:0'),
+    lexaraResearchAssist.includes('maxFallbacks:0') &&
+    lexaraResearchAssist.includes('needsVerification:false') &&
+    lexaraResearchAssist.includes('needsFastResponse:true') &&
+    lexaraResearchAssist.includes('requestTimeoutMs:2_500'),
   'Lexara owns discovery learning while scarce support providers stay out of query planning',
 );
 must(
