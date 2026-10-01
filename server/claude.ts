@@ -202,6 +202,26 @@ export async function callClaude(
   }
 }
 
+const CLAUDE_DIRECT_IMAGE_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+]);
+
+export function claudeSupportsDirectMedia(mimeType: string, byteLength: number): boolean {
+  const type = String(mimeType || '').toLowerCase();
+  if (type === 'application/pdf') {
+    // Base64 expands the file by about one third; keep the raw file well below
+    // Anthropic's 32 MB request ceiling.
+    return byteLength > 0 && byteLength <= 20 * 1024 * 1024;
+  }
+  if (CLAUDE_DIRECT_IMAGE_TYPES.has(type)) {
+    return byteLength > 0 && byteLength <= 7 * 1024 * 1024;
+  }
+  return false;
+}
+
 export async function callClaudeMediaExtraction(input: {
   bytes: Buffer;
   mimeType: 'application/pdf' | 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
