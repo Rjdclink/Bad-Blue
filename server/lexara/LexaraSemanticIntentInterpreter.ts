@@ -1,6 +1,6 @@
 import { callClaude } from '../claude';
 import { CURRENT_AI_MODELS } from '../aiHarmonyModelRegistry';
-import { resolveLexaraBackgroundSubject } from './LexaraBackgroundSubject';
+import { hasMultipleLexaraBackgroundSubjectCandidates, resolveLexaraBackgroundSubject } from './LexaraBackgroundSubject';
 import {
   decideLexaraResearchNeed,
   isLexaraConversationControl,
@@ -111,7 +111,10 @@ export async function resolveLexaraResearchDecisionSemantic(
   const text = String(prompt || '').trim();
   const deterministic = decideLexaraResearchNeed(text, previousUserTurns);
   const deterministicFactual = deterministic.intent === 'factual' || deterministic.intent === 'mixed';
-  const needsSubjectReview = deterministicFactual && deterministicSubjectNeedsSemanticReview(deterministic.subject);
+  const needsSubjectReview = deterministicFactual && (
+    deterministicSubjectNeedsSemanticReview(deterministic.subject)
+    || hasMultipleLexaraBackgroundSubjectCandidates(text)
+  );
   if ((deterministicFactual && !needsSubjectReview)
     || !text || isLexaraConversationControl(text) || LOW_VALUE_CONVERSATION.test(text)) {
     return deterministic;
