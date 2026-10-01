@@ -22,6 +22,7 @@ import {
   type LexaraBackgroundResearchResult,
 } from './LexaraBackgroundInvestigation';
 import { hasExplicitLocationCue, resolveUSJurisdiction } from './LexaraJurisdictionResolver';
+import { formatCitationVerificationForCorrection, verifyLegalCitationsInText } from './LexaraCitationVerifier';
 
 export interface LexaraConversationMessage {
   role: 'user' | 'lexara' | 'assistant';
@@ -862,6 +863,46 @@ export async function generateLexaraConversationResponse(
     }
   }
 
+  // Case citations are verified after generation so an otherwise strong legal
+  // answer cannot silently ship a hallucinated reporter citation. This runs only
+  // when the final answer actually contains reporter-style case citations.
+  let citationVerificationCount = 0;
+  let unresolvedCitationCount = 0;
+  let negativeTreatmentSignalCount = 0;
+  if (!answerServiceUnavailable && /\\b\\d{1,4}\\s+(?:U\\.?\\s*S\\.?|S\\.?\\s*Ct\\.?|F\\.?\\s*(?:Supp\\.?\\s*(?:2d|3d)?|2d|3d|4th)?|N\\.?\\s*[EW]\\.?\\s*(?:2d|3d)?|S\\.?\\s*[EW]\\.?\\s*(?:2d|3d)?|P\\.?\\s*(?:2d|3d)?|A\\.?\\s*(?:2d|3d)?|So\\.?\\s*(?:2d|3d)?)\\s+\\d{1,6}\\b/i.test(text)) {
+    try {
+      const verification = await Promise.race([
+        verifyLegalCitationsInText(text),
+        new Promise<[]>(resolve => setTimeout(() => resolve([]), 6_000)),
+      ]);
+      citationVerificationCount = verification.length;
+      unresolvedCitationCount = verification.filter(item => item.status === 'unresolved').length;
+      negativeTreatmentSignalCount = verification.filter(item => item.possibleNegativeTreatment).length;
+
+      if (verification.length && (unresolvedCitationCount > 0 || negativeTreatmentSignalCount > 0) && !context.signal?.aborted) {
+        const verificationSummary = formatCitationVerificationForCorrection(verification);
+        const correction = await callClaude(
+          `CURRENT ANSWER:\n${text}\n\nCITATION VERIFICATION RESULTS:\n${verificationSummary}\n\nRevise the answer conservatively. Preserve all supported analysis and conversational tone. Do not rely on any citation marked UNRESOLVED. If a citation has a possible negative-treatment signal, qualify it and avoid presenting it as unquestionably current authority unless the supplied LegalWhat research evidence independently establishes current validity. Do not invent replacement citations. Return only the corrected user-facing answer.`,
+          {
+            systemPrompt,
+            model: claudeModel,
+            effort: 'medium',
+            maxTokens: 1_500,
+            cacheSystemPrompt: true,
+            providerPolicy: 'legalwhat',
+            signal: context.signal,
+          },
+        );
+        const corrected = correction.content.trim();
+        if (corrected) text = corrected;
+      }
+    } catch (error) {
+      console.warn('[LEXARA CitationVerifier] post-generation verification unavailable; preserving answer with existing research guardrails', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   console.info('[LEXARA Performance] live turn', {
     researchWaitMs,
     claudeMs: Date.now() - claudeStartedAt,
@@ -891,6 +932,9 @@ export async function generateLexaraConversationResponse(
     researchSubject: researchDecision.subject || null,
     researchLanes: authorityResearch?.selectedCrawlers || [],
     researchSourceCount: authorityResearch?.sources?.length || 0,
+    citationVerificationCount,
+    unresolvedCitationCount,
+    negativeTreatmentSignalCount,
     researchEndpointReached: !researchDecision.needed || Boolean(authorityResearch || backgroundEndpoint),
     reasoningProvider: 'claude',
     reasoningModel: claudeModel,
