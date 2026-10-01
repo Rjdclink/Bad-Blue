@@ -22,6 +22,9 @@ import type { LawType } from '../../shared/legalCounselTypes';
 import PDFDocument from 'pdfkit';
 import archiver from 'archiver';
 import { LEGAL_DOCUMENT_TYPES, resolveLegalDocumentType, validateLegalDocumentDraft } from '../lexara/legalDocumentRegistry';
+import { persistMatterBuffer } from '../lexara/LexaraMatterStorage';
+import { sanitizeRepresentationMatter } from '../lexara/LexaraRepresentationEngine';
+import { randomUUID } from 'crypto';
 
 const log = createLogger('ConsultationRoutes');
 const MAX_FMI_CONTEXT_CHARACTERS = 8_000;
@@ -29,6 +32,100 @@ const MAX_FMI_CONTEXT_CHARACTERS = 8_000;
 function canUseClaudeOpus(req: Request): boolean {
   const accessState = String((req.user as any)?.accessState || '').trim().toLowerCase();
   return accessState === 'paid' || accessState === 'master';
+}
+
+function hasPersistentMatterAccess(req: Request): boolean {
+  return String((req.user as any)?.accessState || '').trim().toLowerCase() === 'paid';
+}
+
+function authenticatedUserId(req: Request): string | undefined {
+  const user = req.user as any;
+  const id = user?.id || user?.claims?.sub;
+  return typeof id === 'string' && id.trim() ? id.trim() : undefined;
+}
+
+async function resolveStoredMatter(req: Request, sessionId?: string): Promise<any | null> {
+  if (!hasPersistentMatterAccess(req)) return null;
+  const userId = authenticatedUserId(req);
+  if (!userId) return null;
+  const { storage } = await import('../storage');
+  const rows = await storage.getUserLexaraMatterStates(userId, 200);
+  const row = sessionId
+    ? rows.find((candidate: any) => String(candidate?.matter?.sessionId || '') === sessionId)
+    : rows[0];
+  return sanitizeRepresentationMatter(row?.matter);
+}
+
+async function saveMatterArtifact(
+  req: Request,
+  sessionId: string | undefined,
+  input: {
+    title: string;
+    kind: 'document' | 'filing-packet';
+    bytes: Buffer;
+    mimeType: string;
+    fileName: string;
+    sourceUrl?: string;
+  },
+): Promise<string | null> {
+  if (!hasPersistentMatterAccess(req)) return null;
+  const userId = authenticatedUserId(req);
+  if (!userId) return null;
+  const matter = await resolveStoredMatter(req, sessionId);
+  if (!matter) return null;
+
+  const storageRef = await persistMatterBuffer({
+    userId,
+    matterId: matter.matterId,
+    category: input.kind === 'filing-packet' ? 'packet' : 'document',
+    fileName: input.fileName,
+    mimeType: input.mimeType,
+    bytes: input.bytes,
+  });
+  const now = new Date().toISOString();
+  matter.artifacts.push({
+    id: `document:${randomUUID()}`,
+    title: input.title,
+    kind: input.kind,
+    status: 'saved',
+    storageRef,
+    sourceUrl: input.sourceUrl,
+    createdAt: now,
+    updatedAt: now,
+  });
+  matter.updatedAt = now;
+  const { storage } = await import('../storage');
+  await storage.updateLatestLexaraMatterState(userId, matter.sessionId, matter);
+  return storageRef;
+}
+
+async function renderPdfBuffer(title: string, content: string): Promise<Buffer> {
+  const pdf = new PDFDocument({ size: 'LETTER', margins: { top: 72, bottom: 72, left: 72, right: 72 }, info: { Title: title } });
+  const chunks: Buffer[] = [];
+  const complete = new Promise<Buffer>((resolve, reject) => {
+    pdf.on('data', chunk => chunks.push(Buffer.from(chunk)));
+    pdf.on('end', () => resolve(Buffer.concat(chunks)));
+    pdf.on('error', reject);
+  });
+  pdf.font('Times-Roman').fontSize(12).text(content, { lineGap: 4, align: 'left' });
+  pdf.end();
+  return complete;
+}
+
+async function renderDocxBuffer(content: string): Promise<Buffer> {
+  const zip = archiver('zip', { zlib: { level: 9 } });
+  const chunks: Buffer[] = [];
+  const complete = new Promise<Buffer>((resolve, reject) => {
+    zip.on('data', chunk => chunks.push(Buffer.from(chunk)));
+    zip.on('end', () => resolve(Buffer.concat(chunks)));
+    zip.on('error', reject);
+  });
+  const paragraphs = content.split(/\n/).map(line => `<w:p><w:pPr><w:spacing w:after="120" w:line="480" w:lineRule="auto"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="24"/></w:rPr><w:t xml:space="preserve">${escapeXml(line || ' ')}</w:t></w:r></w:p>`).join('');
+  zip.append(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`, { name: '[Content_Types].xml' });
+  zip.append(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`, { name: '_rels/.rels' });
+  zip.append(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${paragraphs}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr></w:body></w:document>`, { name: 'word/document.xml' });
+  await zip.finalize();
+  return complete;
 }
 
 function serializeFmiContext(value: unknown): string | undefined {
@@ -163,6 +260,7 @@ export function setupConsultationRoutes(app: Express): void {
 
   app.post('/api/lexara/documents/official-form', isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const officialForm = req.body?.officialForm;
+    const matterSessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId.trim().slice(0, 128) : undefined;
     let values = req.body?.values && typeof req.body.values === 'object' ? req.body.values : {};
     const facts = typeof req.body?.facts === 'string' ? req.body.facts.trim().slice(0, 30_000) : '';
     if (!officialForm?.verifiedOfficial || !officialForm?.url) return res.status(400).json({ error: 'A verified official form is required' });
@@ -195,6 +293,14 @@ export function setupConsultationRoutes(app: Express): void {
       const missingFlatFields = checkedLayout.anchors.filter(field => values[field.label] === undefined).map(field => field.label);
       if (missingFlatFields.length) return res.status(422).json({ error: 'Additional information is required to complete the official form', missingFields: missingFlatFields, sourceUrl: inspected.sourceUrl });
       const output = await overlayFlatOfficialPdf(inspected, checkedLayout, values);
+      await saveMatterArtifact(req, matterSessionId, {
+        title: String(officialForm.title || 'Official legal form'),
+        kind: 'document',
+        bytes: output,
+        mimeType: 'application/pdf',
+        fileName: 'lexara-official-form.pdf',
+        sourceUrl: inspected.sourceUrl,
+      }).catch(error => log.warn('Official form completed but persistent matter save failed route-locally', { error }));
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', 'attachment; filename="lexara-official-form.pdf"');
       res.setHeader('X-Lexara-Official-Source', inspected.sourceUrl);
@@ -207,7 +313,16 @@ export function setupConsultationRoutes(app: Express): void {
       ? await fillOfficialPdf(inspected, values, true)
       : await fillOfficialDocx(inspected, values);
     const extension = inspected.contentType === 'pdf' ? 'pdf' : 'docx';
-    res.setHeader('Content-Type', inspected.contentType === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    const outputMime = inspected.contentType === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    await saveMatterArtifact(req, matterSessionId, {
+      title: String(officialForm.title || 'Official legal form'),
+      kind: 'document',
+      bytes: output,
+      mimeType: outputMime,
+      fileName: 'lexara-official-form.' + extension,
+      sourceUrl: inspected.sourceUrl,
+    }).catch(error => log.warn('Official form completed but persistent matter save failed route-locally', { error }));
+    res.setHeader('Content-Type', outputMime);
     res.setHeader('Content-Disposition', 'attachment; filename="lexara-official-form.' + extension + '"');
     res.setHeader('X-Lexara-Official-Source', inspected.sourceUrl);
     res.send(output);
@@ -217,30 +332,38 @@ export function setupConsultationRoutes(app: Express): void {
     const title = String(req.body?.title || 'Lexara Legal Document').trim().slice(0, 160);
     const content = String(req.body?.content || '').trim();
     const format = String(req.body?.format || '').toLowerCase();
+    const matterSessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId.trim().slice(0, 128) : undefined;
     if (!content) return res.status(400).json({ error: 'Document content is required' });
     if (content.length > 200_000) return res.status(413).json({ error: 'Document is too large to export' });
     const safeBase = (title || 'lexara-document').replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 100) || 'lexara-document';
 
     if (format === 'pdf') {
+      const output = await renderPdfBuffer(title, content);
+      await saveMatterArtifact(req, matterSessionId, {
+        title,
+        kind: 'document',
+        bytes: output,
+        mimeType: 'application/pdf',
+        fileName: `${safeBase}.pdf`,
+      }).catch(error => log.warn('PDF exported but persistent matter save failed route-locally', { error }));
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="${safeBase}.pdf"`);
-      const pdf = new PDFDocument({ size: 'LETTER', margins: { top: 72, bottom: 72, left: 72, right: 72 }, info: { Title: title } });
-      pdf.pipe(res);
-      pdf.font('Times-Roman').fontSize(12).text(content, { lineGap: 4, align: 'left' });
-      pdf.end();
+      res.send(output);
       return;
     }
     if (format === 'docx') {
-      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+      const output = await renderDocxBuffer(content);
+      const outputMime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      await saveMatterArtifact(req, matterSessionId, {
+        title,
+        kind: 'document',
+        bytes: output,
+        mimeType: outputMime,
+        fileName: `${safeBase}.docx`,
+      }).catch(error => log.warn('DOCX exported but persistent matter save failed route-locally', { error }));
+      res.setHeader('Content-Type', outputMime);
       res.setHeader('Content-Disposition', `attachment; filename="${safeBase}.docx"`);
-      const zip = archiver('zip', { zlib: { level: 9 } });
-      zip.on('error', err => { throw err; });
-      zip.pipe(res);
-      const paragraphs = content.split(/\n/).map(line => `<w:p><w:pPr><w:spacing w:after="120" w:line="480" w:lineRule="auto"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="24"/></w:rPr><w:t xml:space="preserve">${escapeXml(line || ' ')}</w:t></w:r></w:p>`).join('');
-      zip.append(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`, { name: '[Content_Types].xml' });
-      zip.append(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`, { name: '_rels/.rels' });
-      zip.append(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${paragraphs}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr></w:body></w:document>`, { name: 'word/document.xml' });
-      await zip.finalize();
+      res.send(output);
       return;
     }
     return res.status(400).json({ error: 'Export format must be pdf or docx' });
