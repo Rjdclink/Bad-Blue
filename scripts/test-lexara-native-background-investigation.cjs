@@ -73,6 +73,7 @@ function candidate(url, provider = 'fixture-search') {
 const mesh = {
   async discoverLegalMeshTier3(query, _signal, options) {
     state.tierCalls.push({ query, options });
+    if (state.mode === 'native-failure') throw new Error('fixture native discovery outage');
     if (state.mode === 'empty') return [candidate('https://records.example.test/empty')];
     if (state.mode === 'employment') return [candidate('https://records.example.test/employer')];
     if (state.mode === 'custom-general') return [candidate('https://records.example.test/civic-medal')];
@@ -189,7 +190,7 @@ const learning = {
 const claudeParallel = {
   async searchLexaraBackgroundWithClaude(input) {
     state.claudeCalls.push(input);
-    if (state.mode !== 'claude-only') {
+    if (state.mode !== 'claude-only' && state.mode !== 'native-failure') {
       return { candidates: [], citationEvidence: [], searches: 1 };
     }
     return {
@@ -292,6 +293,16 @@ function reset(mode) {
   assert(claudeOnly.discoveryLanes.includes('claude-web-search'));
   assert.equal(state.claudeCalls.length, 1, 'Claude parallel lane runs once alongside initial native discovery');
   assert.match(claudeOnly.evidenceSummary, /Parallel Research LLC/);
+
+  reset('native-failure');
+  const nativeFailure = await investigator.investigateLexaraBackgroundQuestion(
+    'Where does Avery Example work?',
+    { jurisdiction: 'Iowa' },
+  );
+  assert.equal(nativeFailure.endpoint, 'evidence-sufficient',
+    'a native discovery outage must not discard Claude parallel evidence');
+  assert(nativeFailure.discoveryLanes.includes('claude-web-search'));
+  assert.match(nativeFailure.evidenceSummary, /Parallel Research LLC/);
 
   reset('age-inference');
   const inferredAge = await investigator.investigateLexaraBackgroundQuestion(
