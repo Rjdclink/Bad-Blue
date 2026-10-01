@@ -175,7 +175,8 @@ Provide at least 12-15 highly relevant, verified precedents in the same JSON for
     );
     if (reporterCitations.length) {
       const verification = await verifyLegalCitationsInText(
-        reporterCitations.map((precedent: LegalPrecedent) => precedent.citation).join('\n')
+        reporterCitations.map((precedent: LegalPrecedent) => precedent.citation).join('\n'),
+        20,
       );
       const byCitation = new Map(verification.map(item => [item.citation.toLowerCase(), item]));
       for (let index = uniquePrecedents.length - 1; index >= 0; index -= 1) {
