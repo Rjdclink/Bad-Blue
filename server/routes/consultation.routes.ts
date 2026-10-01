@@ -464,6 +464,13 @@ export function setupConsultationRoutes(app: Express): void {
         const repaired = String(citationRepair || '').trim();
         const repairedValidation = validateLegalDocumentDraft(requestedType, repaired, templateMode);
         if (repairedValidation.valid && (!filingLike || repaired.length >= (templateMode ? 400 : 700))) {
+          const repairedCitationVerification = await verifyLegalCitationsInText(repaired);
+          const repairedCitationProblems = repairedCitationVerification.filter(item =>
+            item.status === 'unresolved' || item.possibleNegativeTreatment
+          );
+          if (repairedCitationProblems.length) {
+            return res.status(422).json({ error: 'LEXARA found a citation-verification problem that remained after repair. The draft was not exported.' });
+          }
           finalDocument = repaired;
           finalValidation = repairedValidation;
         } else {
