@@ -681,6 +681,22 @@ export async function investigateLexaraBackgroundQuestion(
       const ranked = [...assessed.values()].sort((a, b) => b.confidence - a.confidence);
       const best = ranked[0];
       const usefulCount = ranked.filter(item => item.confidence >= PARTIAL_EVIDENCE_THRESHOLD).length;
+      if (initiallyAmbiguousSubject && pass === 0 && usefulCount === 0) {
+        const endpoint: LexaraBackgroundResearchResult['endpoint'] = 'clarification-required';
+        context.onProgress?.({ type: 'endpoint', pass: recursionPasses, confidence: best?.confidence || 0, endpoint });
+        return {
+          clarification: 'Could you be more specific—for example, a city or state?',
+          needsIdentityClarification: true,
+          sources: [],
+          categories,
+          fullBackgroundReportRequested: false,
+          coverageLimited: true,
+          coverageNote: 'Lexara completed a fast identification pass, but the available evidence was not strong enough to distinguish this person reliably.',
+          endpoint,
+          recursionPasses,
+          discoveryLanes: [...discoveryLanes],
+        };
+      }
       if (usefulCount > priorUsefulCount) stagnantUsefulPasses = 0;
       else if (usefulCount > 0) stagnantUsefulPasses += 1;
       priorUsefulCount = usefulCount;
