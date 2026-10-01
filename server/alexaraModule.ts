@@ -1,5 +1,5 @@
 /**
- * ALEXARA Module - Left Brain Legal Core
+ * LEXARA Neural Module - Legacy Path Compatibility Surface
  * 
  * Legal reasoning neurons with infinite instantiation capability.
  * Cross-domain inference clusters that can borrow pathways from CRYPTARA
@@ -122,24 +122,25 @@ export class LexaraNeuralModule extends EventEmitter {
       await this.pathwayManager.initialize();
     }
 
-    // Create core legal pathways
+    // Legacy pathway IDs are intentionally retained as stable persisted keys.
+    // They do not represent a second runtime authority.
     await this.pathwayManager.createPathway(
       'alexara-reasoning',
-      'ALEXARA Legal Reasoning',
+      'LEXARA Legal Reasoning',
       'legal',
       LEGAL_REASONING_NEURONS
     );
 
     await this.pathwayManager.createPathway(
       'alexara-case-patterns',
-      'ALEXARA Case Pattern Recognition',
+      'LEXARA Case Pattern Recognition',
       'legal',
       CASE_PATTERN_NEURONS
     );
 
     await this.pathwayManager.createPathway(
       'alexara-statutes',
-      'ALEXARA Statutory Interpretation',
+      'LEXARA Statutory Interpretation',
       'legal',
       STATUTORY_NEURONS
     );
