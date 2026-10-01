@@ -159,8 +159,8 @@ const semantic = execute('server/lexara/LexaraSemanticIntentInterpreter.ts', {
 
   before = claudeCalls;
   const known = await semantic.resolveLexaraResearchDecisionSemantic('Where does Avery Example work?', []);
-  assert.equal(claudeCalls, before + 1,
-    'substantive factual turns receive whole-utterance semantic review while deterministic routing remains the failure-safe fallback');
+  assert.equal(claudeCalls, before,
+    'already-recognized factual turns retain the zero-extra-call fast path after the handoff repair');
   assert.equal(known.intent, 'factual');
   assert.equal(known.requestedFact, 'employment');
 
