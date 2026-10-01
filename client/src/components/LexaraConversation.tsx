@@ -3,6 +3,7 @@ import { AlertCircle, CalendarDays, Download, FileText, Loader2, Mic, MicOff, Pe
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useVoiceMode, type VoiceTranscriptMeta } from '@/hooks/useVoiceMode';
 import { useVoiceSynthesis } from '@/hooks/useVoiceSynthesis';
 import {
@@ -420,6 +421,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const [savedArtifact, setSavedArtifact] = useState<{ title: string; fileName: string; mimeType: string; downloadUrl: string } | null>(null);
   const [deadlineCalendar, setDeadlineCalendar] = useState<{ label: string; dueDate: string; downloadUrl: string } | null>(null);
   const [documentBusy, setDocumentBusy] = useState(false);
+  const [documentPreviewOpen, setDocumentPreviewOpen] = useState(false);
   const [signerName, setSignerName] = useState('');
   const [esignConsent, setEsignConsent] = useState(false);
   const [esignOpen, setEsignOpen] = useState(false);
@@ -1614,7 +1616,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     return 'Text consultation';
   }, [historyReady, phase, restoreError]);
 
-  const generateAndDownloadPendingDocument = async (format: 'docx' | 'pdf') => {
+  const generateAndDownloadPendingDocument = async (format?: 'docx' | 'pdf') => {
     if (!pendingDocument || documentBusy) return;
     setDocumentBusy(true);
     try {
@@ -1664,9 +1666,14 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         const nativeFormat = blob.type.includes('wordprocessingml') ? 'docx' : 'pdf';
         const title = String(data?.officialForm?.title || pendingDocument.title || 'Lexara Official Form');
         const url = URL.createObjectURL(blob);
-        const anchor = document.createElement('a');
-        anchor.href = url; anchor.download = title.replace(/[^a-z0-9._-]+/gi, '-') + '.' + nativeFormat;
-        document.body.appendChild(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url);
+        if (!format && nativeFormat === 'pdf') {
+          window.open(url, '_blank', 'noopener,noreferrer');
+          window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        } else {
+          const anchor = document.createElement('a');
+          anchor.href = url; anchor.download = title.replace(/[^a-z0-9._-]+/gi, '-') + '.' + nativeFormat;
+          document.body.appendChild(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url);
+        }
         setPendingDocument(null); pendingActionRef.current = null; return;
       }
       if (!generated.ok || !data?.document) throw new Error(data?.error || 'Document generation failed');
@@ -1684,6 +1691,10 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         state: pendingDocument.state,
         esign: data?.esign && typeof data.esign === 'object' ? data.esign : undefined,
       });
+      if (!format) {
+        setDocumentPreviewOpen(true);
+        return;
+      }
       const exported = await fetch('/api/lexara/documents/export', {
         method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title, content, format, sessionId: sessionIdRef.current, lawType: lawTypeId }),
@@ -1980,10 +1991,11 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             <div className="flex justify-start">
               <div className="max-w-[92%] rounded-2xl border bg-card p-4 text-sm shadow-sm">
                 <div className="mb-2 font-medium">{pendingDocument.title}</div>
-                <div className="mb-3">Choose DOCX or PDF to generate your draft and download it.</div>
-                <div className="flex gap-2">
-                  <Button size="sm" variant="outline" disabled={documentBusy} onClick={() => void generateAndDownloadPendingDocument('docx')}><Download className="mr-1 h-4 w-4" />DOCX</Button>
-                  <Button size="sm" variant="outline" disabled={documentBusy} onClick={() => void generateAndDownloadPendingDocument('pdf')}><Download className="mr-1 h-4 w-4" />PDF</Button>
+                <div className="mb-3">Preview the complete document or download it in your preferred format.</div>
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" disabled={documentBusy} onClick={() => void generateAndDownloadPendingDocument()}><FileText className="mr-1 h-4 w-4" />Preview Document</Button>
+                  <Button size="sm" variant="outline" disabled={documentBusy} onClick={() => void generateAndDownloadPendingDocument('docx')}><Download className="mr-1 h-4 w-4" />Download DOCX</Button>
+                  <Button size="sm" variant="outline" disabled={documentBusy} onClick={() => void generateAndDownloadPendingDocument('pdf')}><Download className="mr-1 h-4 w-4" />Download PDF</Button>
                 </div>
               </div>
             </div>
@@ -1998,15 +2010,10 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
                 ) : conversationDocument ? (
                   <>
                     <div className="mb-3 font-medium">{conversationDocument.title}</div>
-                    <textarea
-                      value={conversationDocument.content}
-                      onChange={event => setConversationDocument({ ...conversationDocument, content: event.target.value })}
-                      className="mb-3 min-h-48 w-full rounded-md border bg-background p-3 font-mono text-xs"
-                      aria-label="Editable legal document"
-                    />
-                    <div className="flex gap-2">
-                      <Button size="sm" variant="outline" onClick={() => void downloadConversationDocument('docx')}><Download className="mr-1 h-4 w-4" />DOCX</Button>
-                      <Button size="sm" variant="outline" onClick={() => void downloadConversationDocument('pdf')}><Download className="mr-1 h-4 w-4" />PDF</Button>
+                    <div className="flex flex-wrap gap-2">
+                      <Button size="sm" variant="outline" onClick={() => setDocumentPreviewOpen(true)}><FileText className="mr-1 h-4 w-4" />Preview Document</Button>
+                      <Button size="sm" variant="outline" onClick={() => void downloadConversationDocument('docx')}><Download className="mr-1 h-4 w-4" />Download DOCX</Button>
+                      <Button size="sm" variant="outline" onClick={() => void downloadConversationDocument('pdf')}><Download className="mr-1 h-4 w-4" />Download PDF</Button>
                     </div>
                     {conversationDocument.esign?.eligible && (
                       <div className="mt-4 border-t pt-4">
@@ -2068,6 +2075,27 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
               </div>
             </div>
           )}
+
+          <Dialog open={documentPreviewOpen} onOpenChange={setDocumentPreviewOpen}>
+            <DialogContent className="flex h-[90dvh] w-[96vw] max-w-5xl flex-col gap-3 p-4 sm:p-6">
+              <DialogHeader>
+                <DialogTitle>{conversationDocument?.title || 'Document Preview'}</DialogTitle>
+                <DialogDescription>Full document preview. You can make final text edits here before downloading.</DialogDescription>
+              </DialogHeader>
+              <div className="min-h-0 flex-1 overflow-hidden rounded-md border bg-white">
+                <textarea
+                  value={conversationDocument?.content || ''}
+                  onChange={event => conversationDocument && setConversationDocument({ ...conversationDocument, content: event.target.value })}
+                  className="h-full w-full resize-none bg-white p-6 font-serif text-sm leading-7 text-slate-950 outline-none"
+                  aria-label="Full document preview and editor"
+                />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" disabled={!conversationDocument} onClick={() => void downloadConversationDocument('docx')}><Download className="mr-2 h-4 w-4" />Download DOCX</Button>
+                <Button variant="outline" disabled={!conversationDocument} onClick={() => void downloadConversationDocument('pdf')}><Download className="mr-2 h-4 w-4" />Download PDF</Button>
+              </div>
+            </DialogContent>
+          </Dialog>
 
           {/* Interim STT hypotheses are intentionally not rendered as user
               messages. Only a final, echo-screened committed turn can enter
