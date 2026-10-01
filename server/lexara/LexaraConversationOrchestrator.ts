@@ -614,10 +614,10 @@ export async function generateLexaraConversationResponse(
   const mixedLegalFactNeed = sequencePlan.useLegalResearch && sequencePlan.useBackgroundResearch;
   const backgroundResearchRequested = sequencePlan.useBackgroundResearch;
   const resolvedBackgroundSubject = backgroundResearchRequested
-    ? resolveLexaraBackgroundSubject(cleanPrompt, previousUserTurns, jurisdiction)
-      || (researchDecision.subject
-        ? resolveLexaraBackgroundSubject(researchDecision.subject, previousUserTurns, jurisdiction)
-        : null)
+    ? (researchDecision.subject
+      ? resolveLexaraBackgroundSubject(researchDecision.subject, previousUserTurns, jurisdiction)
+      : null)
+      || resolveLexaraBackgroundSubject(cleanPrompt, previousUserTurns, jurisdiction)
     : null;
 
   const backgroundPrompt = mixedLegalFactNeed
