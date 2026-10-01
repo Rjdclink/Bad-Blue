@@ -1047,8 +1047,8 @@ export async function generateLexaraConversationResponse(
         })()
       : null,
     researchSubject: resolvedBackgroundSubject?.name || researchDecision.subject || null,
-    researchLanes: authorityResearch?.selectedCrawlers || [],
-    researchSourceCount: authorityResearch?.sources?.length || 0,
+    researchLanes: authorityResearch?.selectedCrawlers || backgroundInvestigation?.discoveryLanes || [],
+    researchSourceCount: authorityResearch?.sources?.length || backgroundInvestigation?.sources?.length || 0,
     citationVerificationCount,
     unresolvedCitationCount,
     negativeTreatmentSignalCount,
