@@ -366,7 +366,7 @@ function extractVerifiedBackgroundSourceExcerpt(
 ): { text: string; sourceUrl: string; excerpt: string } | null {
   if (!result?.evidenceSummary || !result.sources.length) return null;
   const evidence = result.evidenceSummary;
-  const webRecord = /^\s*\d+\.\s*SOURCE:\s*(https?:\/\/[^\s]+)\s*\nASSESSMENT:\s*(?:STRONG|PARTIAL\/INFERENTIAL)\s*\(\d+%\)\s*\nEVIDENCE:\s*([\s\S]*?)(?=\n\d+\.\s*SOURCE:|$)/m.exec(evidence);
+  const webRecord = /^\s*\d+\.\s*SOURCE:\s*(https?:\/\/[^\s]+)\s*\n(?:RETRIEVED:\s*[^\n]*\n)?ASSESSMENT:\s*(?:DIRECT|INFERENTIAL|PARTIAL|STRONG|PARTIAL\/INFERENTIAL)\s*\(\d+%\)\s*\nEVIDENCE:\s*([\s\S]*?)(?=\n\d+\.\s*SOURCE:|$)/m.exec(evidence);
   const custodyRecord = /^\s*STRUCTURED CUSTODY SOURCE:\s*(https?:\/\/[^\s]+)\s*\n([\s\S]*?)(?=\nSTRUCTURED CUSTODY SOURCE:|$)/m.exec(evidence);
   const sourceUrl = webRecord?.[1] || custodyRecord?.[1];
   const excerpt = (webRecord?.[2] || custodyRecord?.[2] || '').replace(/\s+/g, ' ').trim();
@@ -399,16 +399,24 @@ function verifiedExcerptDirectlyAnswers(
   jurisdiction: string | undefined,
   investigation: LexaraBackgroundResearchResult,
   excerpt: string,
+  researchSubject?: string,
 ): boolean {
   if (investigation.endpoint !== 'evidence-sufficient') return false;
   const previousUserTurns = previousMessages
     .filter(message => message.role === 'user')
     .slice(-8)
     .map(message => message.content || '');
-  const subject = resolveLexaraBackgroundSubject(prompt, previousUserTurns, jurisdiction);
+  // Keep verification bound to the same semantic subject used by retrieval.
+  // Re-parsing the raw utterance here can otherwise revive the exact handoff
+  // regression that produced subjects such as "Hello. What".
+  const subject = researchSubject
+    ? resolveLexaraBackgroundSubject(researchSubject, previousUserTurns, jurisdiction)
+      || { name: researchSubject, kind: 'person' as const, identifiable: true, location: jurisdiction }
+    : resolveLexaraBackgroundSubject(prompt, previousUserTurns, jurisdiction);
   if (!subject?.name) return false;
+  const verifiedSubjectName = subject.name.replace(/\s+(?:of|from|in)\s+[A-Z].*$/u, '').trim() || subject.name;
   const normalizedEvidence = normalizeFactCheckText(excerpt);
-  const subjectTokens = normalizeFactCheckText(subject.name).match(/[\p{L}\p{N}]+/gu) || [];
+  const subjectTokens = normalizeFactCheckText(verifiedSubjectName).match(/[\p{L}\p{N}]+/gu) || [];
   if (!subjectTokens.length || !subjectTokens.every(token => new RegExp(`(?:^|[^\\p{L}\\p{N}])${token}(?:$|[^\\p{L}\\p{N}])`, 'u').test(normalizedEvidence))) {
     return false;
   }
@@ -435,7 +443,7 @@ function verifiedExcerptDirectlyAnswers(
   if (!qualifierChecks.every(check => !check.request.test(normalizedPrompt) || check.evidence.test(normalizedEvidence))) {
     return false;
   }
-  const normalizedSubject = normalizeFactCheckText(subject.name);
+  const normalizedSubject = normalizeFactCheckText(verifiedSubjectName);
   const jurisdictionWords: string[] = jurisdiction ? normalizeFactCheckText(jurisdiction).match(/[\p{L}\p{N}]+/gu) || [] : [];
   const stopWords = new Set([
     'a', 'about', 'an', 'and', 'any', 'are', 'as', 'at', 'be', 'been', 'being', 'by', 'can', 'did', 'do', 'does',
@@ -1036,6 +1044,7 @@ export async function generateLexaraConversationResponse(
       : null,
     researchSubject: researchDecision.subject || null,
     researchLanes: authorityResearch?.selectedCrawlers || [],
+    backgroundResearchLanes: backgroundInvestigation?.discoveryLanes || [],
     researchSourceCount: authorityResearch?.sources?.length || 0,
     citationVerificationCount,
     unresolvedCitationCount,
@@ -1059,7 +1068,7 @@ export async function generateLexaraConversationResponse(
     deadline: verifiedDeterministicDeadline || undefined,
     backgroundStatus: permissionRefusalUnverified ? 'partial'
       : usedBackgroundSourceExcerptFallback && backgroundInvestigation?.endpoint === 'evidence-sufficient'
-      && verifiedExcerptDirectlyAnswers(cleanPrompt, context.previousMessages || [], jurisdiction, backgroundInvestigation, extractVerifiedBackgroundSourceExcerpt(backgroundInvestigation)?.excerpt || '')
+      && verifiedExcerptDirectlyAnswers(cleanPrompt, context.previousMessages || [], jurisdiction, backgroundInvestigation, extractVerifiedBackgroundSourceExcerpt(backgroundInvestigation)?.excerpt || '', researchDecision.subject)
       ? 'completed'
       : (answerServiceUnavailable || usedBackgroundSourceExcerptFallback) && backgroundResearchRequested && backgroundInvestigation?.evidenceSummary
         ? 'partial' : backgroundStatus,
