@@ -100,7 +100,11 @@ export default function LexaraCaseTools({ lawTypeId, lawTypeName }: LexaraCaseTo
       if (response.status === 409 && data?.officialFormRequired && data?.officialForm) {
         const official = await fetch('/api/lexara/documents/official-form', {
           method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ officialForm: data.officialForm, facts: situation.trim() }),
+          body: JSON.stringify({
+            officialForm: data.officialForm,
+            facts: situation.trim(),
+            lawType: lawTypeId,
+          }),
         });
         if (!official.ok) { const issue = await official.json().catch(() => ({})); const missing = Array.isArray(issue?.missingFields) && issue.missingFields.length ? ' Missing information: ' + issue.missingFields.join(', ') + '.' : ''; throw new Error((issue?.error || 'Official form completion failed.') + missing); }
         const blob = await official.blob(); const url = URL.createObjectURL(blob); const nativeFormat = blob.type.includes('wordprocessingml') ? 'docx' : 'pdf';
@@ -120,7 +124,12 @@ export default function LexaraCaseTools({ lawTypeId, lawTypeName }: LexaraCaseTo
     try {
       const response = await fetch('/api/lexara/documents/export', {
         method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: documentTitle || documentType, content: documentDraft, format }),
+        body: JSON.stringify({
+          title: documentTitle || documentType,
+          content: documentDraft,
+          format,
+          lawType: lawTypeId,
+        }),
       });
       if (!response.ok) { const data = await response.json().catch(() => ({})); throw new Error(data.error || 'Export failed.'); }
       const blob = await response.blob(); const url = URL.createObjectURL(blob);
