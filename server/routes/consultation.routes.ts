@@ -26,7 +26,6 @@ import { LEGAL_DOCUMENT_TYPES, resolveLegalDocumentType, validateLegalDocumentDr
 import { persistMatterBuffer } from '../lexara/LexaraMatterStorage';
 import { sanitizeRepresentationMatter } from '../lexara/LexaraRepresentationEngine';
 import { randomUUID } from 'crypto';
-import { pool } from '../db';
 import {
   assessGenericESignEligibility,
   LEGALWHAT_ESIGN_CONSENT,
@@ -589,26 +588,6 @@ export function setupConsultationRoutes(app: Express): void {
       signaturePng,
     });
     const signedPdfHash = sha256Hex(signedPdf);
-
-    await pool.query(
-      `INSERT INTO legal_signature_audits (
-         id, user_id, matter_session_id, title, document_type, jurisdiction,
-         signer_name, consent_text, original_content_sha256, signed_pdf_sha256, signed_at
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-      [
-        auditId,
-        userId,
-        matterSessionId || null,
-        title,
-        documentType,
-        jurisdiction || null,
-        signerName,
-        LEGALWHAT_ESIGN_CONSENT,
-        originalContentHash,
-        signedPdfHash,
-        signedAt,
-      ],
-    );
 
     const safeBase = (title || 'lexara-document').replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 100) || 'lexara-document';
     await saveMatterArtifact(req, matterSessionId, {
