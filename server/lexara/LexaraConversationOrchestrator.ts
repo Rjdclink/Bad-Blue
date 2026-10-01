@@ -1041,13 +1041,13 @@ export async function generateLexaraConversationResponse(
           return age ? `age ${age[1]}` : null;
         })()
       : null,
-    researchSubject: researchDecision.subject || null,
+    researchSubject: resolvedBackgroundSubject?.name || researchDecision.subject || null,
     researchLanes: authorityResearch?.selectedCrawlers || [],
     researchSourceCount: authorityResearch?.sources?.length || 0,
     citationVerificationCount,
     unresolvedCitationCount,
     negativeTreatmentSignalCount,
-    researchEndpointReached: !researchDecision.needed || Boolean(authorityResearch || backgroundEndpoint),
+    researchEndpointReached: !researchDecision.needed || Boolean(authorityResearch || backgroundInvestigation?.endpoint),
     jurisdictionAuthoritySystem: jurisdictionAuthorityProfile?.system || null,
     jurisdictionFederalCircuit: jurisdictionAuthorityProfile?.federalCircuit || null,
     jurisdictionCourtClarificationNeeded: jurisdictionAuthorityProfile?.needsCourtClarification || false,
