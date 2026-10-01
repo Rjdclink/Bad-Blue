@@ -365,9 +365,11 @@ export async function discoverLexaraBackgroundSourcesParallel(
   const items = uniqueCandidates([...nativeItems, ...claudeParallel.candidates]);
   const excluded = new Set(exclude);
   const filtered = items.filter(item => !excluded.has(item.url)).slice(0, options.limit || 12);
+  const lanesAttempted = new Set(filtered.map(item => item.provider));
+  if (claudeParallel.searches > 0) lanesAttempted.add('claude-web-search');
   return {
     urls: filtered.map(item => item.url),
-    lanesAttempted: [...new Set(filtered.map(item => item.provider))],
+    lanesAttempted: [...lanesAttempted],
   };
 }
 
@@ -444,6 +446,7 @@ export async function investigateLexaraBackgroundQuestion(
       claudeCitationEvidence.set(item.url, { content: item.content, retrievedAt: item.retrievedAt });
     }
     candidates = uniqueCandidates([...nativeCandidates, ...claudeParallel.candidates]);
+    if (claudeParallel.searches > 0) discoveryLanes.add('claude-web-search');
     candidates.forEach(item => discoveryLanes.add(item.provider));
 
     for (let pass = 0; pass < maxPasses && Date.now() < deadlineAt; pass += 1) {
