@@ -1235,6 +1235,11 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             .join('\n\n')
             .slice(-30000);
           const pendingTitle = String(data.documentIntent.documentType || 'Legal Document');
+          // A newly requested document replaces the prior document task UI.
+          // Keep the conversation, but never let an older preview hide the new task.
+          setConversationDocument(null);
+          setDocumentPreviewOpen(false);
+          setEsignOpen(false);
           setPendingDocument({
             title: pendingTitle,
             facts,
