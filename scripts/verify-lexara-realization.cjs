@@ -64,6 +64,9 @@ const lexaraSourceRegistry = read('server/lexara/LexaraPublicSourceRegistry.ts')
 const lexaraLegalMesh = read('server/lexara/LegalProviderMesh.ts');
 const lexaraDiscoveryLearning = read('server/lexara/LexaraDiscoveryLearning.ts');
 const lexaraResearchAssist = read('server/lexara/LexaraResearchAssist.ts');
+const lexaraSemanticIntent = read('server/lexara/LexaraSemanticIntentInterpreter.ts');
+const lexaraClaudeBackground = read('server/lexara/LexaraClaudeBackgroundSearch.ts');
+const claudeService = read('server/claude.ts');
 const pantheonInvestigation = read('server/lexara/LexaraPantheonInvestigation.ts');
 const webSearch = read('server/webSearchService.ts');
 const modernWebSearch = read('server/openRouterWebSearch.ts');
@@ -947,6 +950,29 @@ must(
   'Lexara background research is native, recursive, fact-gated, and Pantheon-disconnected while legal reasoning remains on its existing route',
 );
 must(
+  lexaraSemanticIntent.includes('resolveLexaraResearchDecisionSemantic') &&
+    lexaraSemanticIntent.includes('Do not require special words') &&
+    lexaraSemanticIntent.includes("deterministic.intent === 'legal'") &&
+    lexaraConversationOrchestrator.includes('semanticResearchDecision'),
+  'Lexara dynamically infers background and mixed legal/background intent without requiring magic search terms',
+);
+must(
+  lexaraBackgroundInvestigation.includes('Promise.all([') &&
+    lexaraBackgroundInvestigation.includes('searchLexaraBackgroundWithClaude({') &&
+    lexaraBackgroundInvestigation.includes('claudeCitationEvidence') &&
+    lexaraClaudeBackground.includes("provider: 'claude-web-search'") &&
+    claudeService.includes('callClaudeWebSearch') &&
+    claudeService.includes('web_search_20260318'),
+  'Claude web search runs in parallel with Lexara native background discovery and feeds the same evidence gate',
+);
+must(
+  lexaraBackgroundInvestigation.includes('ANSWER-SCOPE RULE') &&
+    lexaraBackgroundInvestigation.includes('This is only a guess, not a verified fact') &&
+    lexaraBackgroundInvestigation.includes('CORROBORATION RULE'),
+  'Lexara answers only the requested background fact and explicitly labels unverified best estimates',
+);
+
+must(
   !conversation.includes('{interimTranscript && !isSpeaking && (') &&
     conversation.includes('Only a final, echo-screened committed turn can enter'),
   'interim STT hypotheses cannot render as apparent user messages',
@@ -1096,7 +1122,8 @@ must(
 
 }
 must(
-  lexaraConversationOrchestrator.includes('planLexaraSequence(cleanPrompt, previousUserTurns)') &&
+  lexaraConversationOrchestrator.includes('resolveLexaraResearchDecisionSemantic') &&
+    lexaraConversationOrchestrator.includes('planLexaraSequence(cleanPrompt, previousUserTurns, semanticResearchDecision)') &&
     lexaraConversationOrchestrator.includes("const backgroundResearchRequested = researchDecision.intent === 'factual' || mixedLegalFactNeed") &&
     lexaraConversationOrchestrator.includes('const researchRouteSelected = sequencePlan.useLegalResearch || researchDecision.needed') &&
     lexaraConversationOrchestrator.includes('callClaudeStreaming') &&
@@ -1309,6 +1336,7 @@ must(
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-location-fusion.cjs')], { stdio: 'inherit' });
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-document-handoff.cjs')], { stdio: 'inherit' });
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'verify-lexara-pantheon-disconnect.cjs')], { stdio: 'inherit' });
+require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-semantic-intent.cjs')], { stdio: 'inherit' });
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-native-factual-routing.cjs')], { stdio: 'inherit' });
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-native-background-investigation.cjs')], { stdio: 'inherit' });
 if (!process.exitCode) console.log('LEXARA realization verification passed.');
