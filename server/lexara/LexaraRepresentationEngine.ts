@@ -5,6 +5,8 @@ import {
   type LexaraAuthoritySource,
 } from './LexaraAuthorityResearch';
 import { getLexaraLegalDomainProfile } from './LexaraLegalDomainProfiles';
+import { resolveUSJurisdiction } from './LexaraJurisdictionResolver';
+import { resolveJurisdictionAuthorityProfile } from './LexaraJurisdictionAuthority';
 
 export type RepresentationStage =
   | 'intake'
@@ -383,8 +385,14 @@ async function buildPacket(
   const researchResults = (await Promise.all(researchPrompts.map(prompt => researchLegalAuthority(prompt, {
     jurisdiction: matter.jurisdiction,
     domainName: profile?.displayName,
-    researchHints: profile?.researchHints,
-    preferredOfficialDomains: profile?.preferredOfficialDomains,
+    researchHints: [
+      ...(profile?.researchHints || []),
+      ...(deadlineJurisdictionProfile?.researchHints || []),
+    ].slice(0, 12),
+    preferredOfficialDomains: [
+      ...(profile?.preferredOfficialDomains || []),
+      ...(deadlineJurisdictionProfile?.preferredOfficialDomains || []),
+    ].filter((value, index, values) => values.indexOf(value) === index).slice(0, 18),
     forceResearch: true,
     signal: options.signal,
   })))).filter((result): result is LexaraAuthorityResearch => Boolean(result));
@@ -669,6 +677,22 @@ async function verifyMatterDeadlines(
   if (!candidates.length || !matter.jurisdiction) return;
 
   const profile = getLexaraLegalDomainProfile(matter.lawType);
+  const deadlineJurisdictionText = [
+    matter.jurisdiction,
+    matter.courtOrAgency,
+    matter.proceeding,
+    ...matter.knownFacts.slice(0, 12),
+  ].filter(Boolean).join(' ');
+  const deadlineResolvedJurisdiction = await resolveUSJurisdiction(
+    deadlineJurisdictionText,
+    matter.jurisdiction,
+  ).catch(() => null);
+  const deadlineJurisdictionProfile = await resolveJurisdictionAuthorityProfile(
+    deadlineJurisdictionText,
+    deadlineResolvedJurisdiction,
+    matter.jurisdiction,
+    signal,
+  ).catch(() => null);
   const research = await researchLegalAuthority([
     `Jurisdiction: ${matter.jurisdiction}.`,
     `Proceeding: ${matter.proceeding || matter.title}.`,
