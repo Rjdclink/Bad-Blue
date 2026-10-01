@@ -98,7 +98,8 @@ export async function resolveLexaraResearchDecisionSemantic(
 ): Promise<LexaraResearchDecision> {
   const text = String(prompt || '').trim();
   const deterministic = decideLexaraResearchNeed(text, previousUserTurns);
-  if (deterministic.needed || !text || isLexaraConversationControl(text) || LOW_VALUE_CONVERSATION.test(text)) {
+  if ((deterministic.intent === 'factual' || deterministic.intent === 'mixed')
+    || !text || isLexaraConversationControl(text) || LOW_VALUE_CONVERSATION.test(text)) {
     return deterministic;
   }
 
@@ -151,8 +152,9 @@ ${text}`;
       signal,
     });
     const semantic = JSON.parse(cleanJson(response.content)) as SemanticIntentPayload;
-    const intent = semantic.intent;
-    if (semantic.needed !== true || (intent !== 'factual' && intent !== 'mixed')) return deterministic;
+    const semanticIntent = semantic.intent;
+    if (semantic.needed !== true || (semanticIntent !== 'factual' && semanticIntent !== 'mixed')) return deterministic;
+    const intent: LexaraResearchIntent = deterministic.intent === 'legal' ? 'mixed' : semanticIntent;
 
     const subject = supportedSubject(semantic.subject, text, previousUserTurns);
     const requestedFact = requestedFactFromSemantic(semantic.requestedFact);
