@@ -613,6 +613,12 @@ export async function generateLexaraConversationResponse(
   // background questions deliberately run both research domains in parallel.
   const mixedLegalFactNeed = sequencePlan.useLegalResearch && sequencePlan.useBackgroundResearch;
   const backgroundResearchRequested = sequencePlan.useBackgroundResearch;
+  const resolvedBackgroundSubject = backgroundResearchRequested
+    ? resolveLexaraBackgroundSubject(cleanPrompt, previousUserTurns, jurisdiction)
+      || (researchDecision.subject
+        ? resolveLexaraBackgroundSubject(researchDecision.subject, previousUserTurns, jurisdiction)
+        : null)
+    : null;
 
   const backgroundPrompt = mixedLegalFactNeed
     ? `${researchDecision.objective}\n\nLEXARA-DELEGATED FACTUAL OBJECTIVE: Retrieve only background facts and identifiers materially useful for identifying or resolving this legal matter (for example name variants, locations, dates, related proceedings, court references, docket/citation clues, and relevant public records). Do not perform the legal analysis and do not broaden into an unrestricted background report.`
@@ -628,6 +634,7 @@ export async function generateLexaraConversationResponse(
         delegatedByLexara: mixedLegalFactNeed,
         previousMessages: context.previousMessages,
         jurisdiction,
+        resolvedSubject: resolvedBackgroundSubject || undefined,
         signal: backgroundController.signal,
         onProgress: context.onResearchProgress,
         researchDecision,
