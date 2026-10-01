@@ -22,6 +22,8 @@ import { analyzeFMIEvidence, type FMIFile } from '../fmiIntelligenceTool';
 import { extractLexaraEvidenceContent } from '../lexara/LexaraMediaExtraction';
 import { MASTER_INTERNAL_EMAIL, MASTER_USER_ID } from '../masterPassword';
 import { detectFlatFormLayout } from '../lexara/FlatFormLayoutDetector';
+import { materializeMatterStorageRef, persistMatterBuffer } from '../lexara/LexaraMatterStorage';
+import { sanitizeRepresentationMatter } from '../lexara/LexaraRepresentationEngine';
 
 const log = createLogger('FMI-Routes');
 
@@ -53,6 +55,49 @@ function getAuthenticatedUserId(req: Request): string | undefined {
   const user = (req as any).user;
   const id = user?.id || user?.claims?.sub;
   return typeof id === 'string' && id.trim() ? id.trim() : undefined;
+}
+
+function hasPersistentMatterAccess(req: Request): boolean {
+  return String((req.user as any)?.accessState || '').trim().toLowerCase() === 'paid';
+}
+
+async function resolvePaidMatter(userId: string, lawType?: string): Promise<any | null> {
+  const { storage: appStorage } = await import('../storage');
+  const rows = await appStorage.getUserLexaraMatterStates(userId, 200);
+  const normalizedLawType = String(lawType || '').trim().toLowerCase();
+  for (const row of rows) {
+    const matter = sanitizeRepresentationMatter(row?.matter);
+    if (!matter) continue;
+    if (!normalizedLawType || String(matter.lawType || '').toLowerCase() === normalizedLawType) return matter;
+  }
+  return rows.length ? sanitizeRepresentationMatter(rows[0]?.matter) : null;
+}
+
+async function attachEvidenceArtifactToMatter(
+  userId: string,
+  matterId: string | undefined,
+  evidence: { id: string; name: string; storageRef: string; uploadedAt?: string | Date },
+): Promise<void> {
+  if (!matterId) return;
+  const { storage: appStorage } = await import('../storage');
+  const rows = await appStorage.getUserLexaraMatterStates(userId, 200);
+  const row = rows.find((candidate: any) => String(candidate?.matter?.matterId || '') === matterId);
+  const matter = sanitizeRepresentationMatter(row?.matter);
+  if (!matter) return;
+  const now = new Date().toISOString();
+  if (!matter.artifacts.some(artifact => artifact.id === `evidence:${evidence.id}`)) {
+    matter.artifacts.push({
+      id: `evidence:${evidence.id}`,
+      title: evidence.name,
+      kind: 'evidence',
+      status: 'saved',
+      storageRef: evidence.storageRef,
+      createdAt: evidence.uploadedAt ? new Date(evidence.uploadedAt).toISOString() : now,
+      updatedAt: now,
+    });
+  }
+  matter.updatedAt = now;
+  await appStorage.updateLatestLexaraMatterState(userId, matter.sessionId, matter);
 }
 
 const US_STATE_CODES = [
@@ -138,6 +183,7 @@ export function setupFMIRoutes(app: Express): void {
       const file = (req as any).file as Express.Multer.File | undefined;
       const { lawType, associatedWith } = (req as any).body || {};
       const userId = getAuthenticatedUserId(req);
+      const persistentMatterAccess = hasPersistentMatterAccess(req);
 
       if (!file) return res.status(400).json({ error: 'F.M.I. requires a file to upload' });
 
@@ -170,20 +216,38 @@ export function setupFMIRoutes(app: Express): void {
         // master identity at the persistence boundary so uploads work without
         // coupling master login itself to the database.
         await ensureFmiPersistenceUser(userId);
+        let storagePath = file.path;
+        let matterId: string | undefined;
+        if (persistentMatterAccess) {
+          const matter = await resolvePaidMatter(userId, lawType);
+          matterId = matter?.matterId;
+          const bytes = await fs.readFile(file.path);
+          storagePath = await persistMatterBuffer({
+            userId,
+            matterId: matterId || `workspace-${String(lawType || 'general')}`,
+            category: 'evidence',
+            fileName: file.originalname,
+            mimeType: file.mimetype,
+            bytes,
+          });
+          await fs.unlink(file.path).catch(() => undefined);
+        }
+
         const result = await pool.query(
           `INSERT INTO evidence_files (
             user_id, file_name, file_type, file_size, storage_path,
-            law_type, associated_with, fmi_analysis_status
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
+            law_type, associated_with, fmi_analysis_status, case_linkages
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8)
           RETURNING *`,
           [
             userId,
             file.originalname,
             file.mimetype,
             file.size,
-            file.path,
+            storagePath,
             lawType || null,
             associatedWith || null,
+            matterId ? JSON.stringify({ matterId }) : null,
           ]
         );
 
@@ -230,7 +294,7 @@ export function setupFMIRoutes(app: Express): void {
 
       const storedFileResult = await pool.query(
         `SELECT id, user_id, file_name, file_type, file_size, storage_path,
-                uploaded_at, law_type, fmi_analysis_status
+                uploaded_at, law_type, fmi_analysis_status, case_linkages
          FROM evidence_files
          WHERE id = $1 AND user_id = $2`,
         [fileId, userId]
@@ -259,9 +323,11 @@ export function setupFMIRoutes(app: Express): void {
         [fileId, userId]
       );
 
+      let materialized: Awaited<ReturnType<typeof materializeMatterStorageRef>> | null = null;
       try {
+        materialized = await materializeMatterStorageRef(storedFile.storage_path, storedFile.file_name);
         const extractedText = await extractLexaraEvidenceContent({
-          filePath: storedFile.storage_path,
+          filePath: materialized.filePath,
           fileName: storedFile.file_name,
           mimeType: storedFile.file_type,
           fileSize: Number(storedFile.file_size) || undefined,
@@ -287,7 +353,7 @@ export function setupFMIRoutes(app: Express): void {
 
         const isFormLike = /\b(form|petition|complaint|motion|application|affidavit|notice|summons|signature|case\s*(?:no|number))\b/i.test(extractedText);
         const formLayout = isFormLike && (storedFile.file_type === 'application/pdf' || String(storedFile.file_type).startsWith('image/'))
-          ? await detectFlatFormLayout(await fs.readFile(storedFile.storage_path), storedFile.file_type === 'application/pdf' ? 'pdf' : 'image')
+          ? await detectFlatFormLayout(await fs.readFile(materialized.filePath), storedFile.file_type === 'application/pdf' ? 'pdf' : 'image')
           : null;
 
         const structuredSignalCount =
@@ -349,26 +415,48 @@ export function setupFMIRoutes(app: Express): void {
           ]
         );
 
+        if (hasPersistentMatterAccess(req)) {
+          const matterId = String(storedFile.case_linkages?.matterId || '').trim() || undefined;
+          await attachEvidenceArtifactToMatter(userId, matterId, {
+            id: String(fileId),
+            name: String(storedFile.file_name),
+            storageRef: String(storedFile.storage_path),
+            uploadedAt: storedFile.uploaded_at,
+          }).catch(error => log.warn('[F.M.I.] Matter artifact linkage failed route-locally', { error, fileId }));
+        }
+
         log.info('[F.M.I.] Analysis completed and stored', {
           fileId,
           factsExtracted: analysis.extracted.facts.length,
         });
 
-        return res.json({
+        const responsePayload = {
           success: true,
           message: 'F.M.I. analysis completed',
           analysis: analysisForClient,
           formIntelligence: formLayout ? { isLegalForm: true, layout: formLayout, editable: formLayout.verified } : { isLegalForm: false },
-        });
+        };
+        if (!hasPersistentMatterAccess(req)) {
+          await pool.query('DELETE FROM evidence_files WHERE id = $1 AND user_id = $2', [fileId, userId]).catch(() => undefined);
+          await fs.unlink(storedFile.storage_path).catch(() => undefined);
+        }
+        return res.json(responsePayload);
       } catch (error) {
         log.error('[F.M.I.] Analysis failed', { error, fileId, userId });
-        await pool.query(
-          `UPDATE evidence_files
-           SET fmi_analysis_status = 'failed'
-           WHERE id = $1 AND user_id = $2`,
-          [fileId, userId]
-        ).catch(() => {});
+        if (hasPersistentMatterAccess(req)) {
+          await pool.query(
+            `UPDATE evidence_files
+             SET fmi_analysis_status = 'failed'
+             WHERE id = $1 AND user_id = $2`,
+            [fileId, userId]
+          ).catch(() => {});
+        } else {
+          await pool.query('DELETE FROM evidence_files WHERE id = $1 AND user_id = $2', [fileId, userId]).catch(() => undefined);
+          await fs.unlink(storedFile.storage_path).catch(() => undefined);
+        }
         throw error;
+      } finally {
+        await materialized?.cleanup().catch(() => undefined);
       }
     })
   );
@@ -380,6 +468,7 @@ export function setupFMIRoutes(app: Express): void {
     asyncHandler(async (req: Request, res: Response) => {
       const userId = getAuthenticatedUserId(req);
       if (!userId) return res.status(401).json({ error: 'Authentication required' });
+      if (!hasPersistentMatterAccess(req)) return res.json({ success: true, files: [] });
 
       const result = await pool.query(
         `SELECT
@@ -421,6 +510,7 @@ export function setupFMIRoutes(app: Express): void {
       const { id } = req.params;
       const userId = getAuthenticatedUserId(req);
       if (!userId) return res.status(401).json({ error: 'Authentication required' });
+      if (!hasPersistentMatterAccess(req)) return res.status(404).json({ error: 'No saved evidence is available for trial access' });
 
       const result = await pool.query(
         `SELECT * FROM evidence_files WHERE id = $1 AND user_id = $2`,
