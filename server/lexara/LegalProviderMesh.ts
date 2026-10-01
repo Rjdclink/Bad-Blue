@@ -306,6 +306,16 @@ async function freeSearch(query: string, signal?: AbortSignal): Promise<LegalMes
   return groups.flat();
 }
 
+export function getLexaraConfiguredDiscoveryLanes(): string[] {
+  return [
+    process.env.TAVILY_API_KEY?.trim() ? 'tavily' : '',
+    'duckduckgo-instant-answer',
+    process.env.SEARXNG_URL?.trim() ? 'searxng' : '',
+    process.env.DDGS_URL?.trim() ? 'ddgs' : '',
+    process.env.OPENSERP_URL?.trim() ? 'openserp' : '',
+  ].filter(Boolean);
+}
+
 export async function discoverLegalMeshTier3(
   query: string,
   signal?: AbortSignal,
