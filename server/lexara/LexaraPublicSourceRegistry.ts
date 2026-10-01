@@ -29,6 +29,8 @@ export type LexaraSourceCategory =
   | 'government-public'
   | 'general-public-records';
 
+export type LexaraSourceLookupMode = 'api' | 'structured-form' | 'direct-search' | 'interactive' | 'discovery';
+
 export interface LexaraPublicSource {
   id: string;
   root: string;
@@ -36,30 +38,31 @@ export interface LexaraPublicSource {
   queryHints: readonly string[];
   authority: 'primary' | 'secondary' | 'discovery' | 'archive';
   jurisdiction: string;
+  lookupMode?: LexaraSourceLookupMode;
 }
 
 export const LEXARA_PUBLIC_SOURCES: readonly LexaraPublicSource[] = [
   { id:'cdc-vital-records', root:'https://www.cdc.gov/nchs/w2w/index.htm', categories:['vital-records','identity'], queryHints:['birth record','date of birth','marriage record','divorce record','death record','vital records office'], authority:'primary', jurisdiction:'US' },
-  { id:'nursys-license', root:'https://www.nursys.com/', categories:['professional-license','healthcare-professional'], queryHints:['nursing license','RN license','LPN license','APRN license','discipline'], authority:'primary', jurisdiction:'US' },
+  { id:'nursys-license', root:'https://www.nursys.com/', categories:['professional-license','healthcare-professional'], queryHints:['nursing license','RN license','LPN license','APRN license','discipline'], authority:'primary', jurisdiction:'US', lookupMode:'interactive' },
   { id:'careeronestop-license-finder', root:'https://www.careeronestop.org/Toolkit/Training/find-licenses.aspx', categories:['professional-license','employment'], queryHints:['state occupational license','licensing agency','license finder'], authority:'primary', jurisdiction:'US' },
-  { id:'ncsbn-license-verification', root:'https://www.ncsbn.org/nursing-regulation/licensure/license-verification.page', categories:['professional-license','healthcare-professional'], queryHints:['nurse license verification','board of nursing','Nursys QuickConfirm'], authority:'primary', jurisdiction:'US' },
-  { id:'cms-npi-registry', root:'https://npiregistry.cms.hhs.gov/', categories:['healthcare-professional','employment','identity'], queryHints:['NPI registry','healthcare provider','taxonomy','practice address'], authority:'primary', jurisdiction:'US' },
+  { id:'ncsbn-license-verification', root:'https://www.ncsbn.org/nursing-regulation/licensure/license-verification.page', categories:['professional-license','healthcare-professional'], queryHints:['nurse license verification','board of nursing','Nursys QuickConfirm'], authority:'primary', jurisdiction:'US', lookupMode:'interactive' },
+  { id:'cms-npi-registry', root:'https://npiregistry.cms.hhs.gov/', categories:['healthcare-professional','employment','identity'], queryHints:['NPI registry','healthcare provider','taxonomy','practice address'], authority:'primary', jurisdiction:'US', lookupMode:'api' },
   { id:'oig-leie', root:'https://exclusions.oig.hhs.gov/', categories:['healthcare-professional','sanctions-discipline','employment'], queryHints:['OIG exclusion','LEIE','healthcare exclusion'], authority:'primary', jurisdiction:'US' },
   { id:'finra-brokercheck', root:'https://brokercheck.finra.org/', categories:['financial-professional','professional-license','employment','sanctions-discipline'], queryHints:['BrokerCheck','CRD','broker registration','employment history','regulatory action'], authority:'primary', jurisdiction:'US' },
   { id:'ofac-sanctions', root:'https://ofac.treasury.gov/sanctions-list-service', categories:['sanctions-discipline','government-public'], queryHints:['OFAC sanctions','SDN','sanctions list'], authority:'primary', jurisdiction:'US' },
   { id:'sec-edgar', root:'https://www.sec.gov/search-filings', categories:['business','employment','financial-professional'], queryHints:['SEC EDGAR','company filing','officer','director','ownership filing'], authority:'primary', jurisdiction:'US' },
   { id:'sam-entity', root:'https://sam.gov/', categories:['business','government-public','sanctions-discipline'], queryHints:['SAM entity','federal registration','exclusions'], authority:'primary', jurisdiction:'US' },
-  { id:'usaspending', root:'https://www.usaspending.gov/', categories:['business','employment','government-public'], queryHints:['federal awards','recipient','government contract'], authority:'primary', jurisdiction:'US' },
+  { id:'usaspending', root:'https://www.usaspending.gov/', categories:['business','employment','government-public'], queryHints:['federal awards','recipient','government contract'], authority:'primary', jurisdiction:'US', lookupMode:'api' },
   { id:'irs-teos', root:'https://apps.irs.gov/app/eos/', categories:['business','government-public'], queryHints:['tax exempt organization','Form 990','nonprofit'], authority:'primary', jurisdiction:'US' },
-  { id:'courtlistener', root:'https://www.courtlistener.com/', categories:['courts','criminal-records','law-enforcement','financial-public','general-public-records'], queryHints:['CourtListener','RECAP','court docket','case law'], authority:'secondary', jurisdiction:'US' },
-  { id:'bop-inmate-locator', root:'https://www.bop.gov/inmateloc/', categories:['corrections','criminal-records','general-public-records'], queryHints:['federal inmate','BOP inmate locator','custody','facility'], authority:'primary', jurisdiction:'US' },
+  { id:'courtlistener', root:'https://www.courtlistener.com/', categories:['courts','criminal-records','law-enforcement','financial-public','general-public-records'], queryHints:['CourtListener','RECAP','court docket','case law'], authority:'secondary', jurisdiction:'US', lookupMode:'direct-search' },
+  { id:'bop-inmate-locator', root:'https://www.bop.gov/inmateloc/', categories:['corrections','criminal-records','general-public-records'], queryHints:['federal inmate','BOP inmate locator','custody','facility'], authority:'primary', jurisdiction:'US', lookupMode:'structured-form' },
   { id:'usagov-corrections', root:'https://www.usa.gov/state-corrections', categories:['corrections','probation-parole','government-public'], queryHints:['state department of corrections','state inmate locator'], authority:'primary', jurisdiction:'US' },
   { id:'usagov-state-local', root:'https://www.usa.gov/state-local-governments', categories:['professional-license','contacts-addresses','property','business','courts','criminal-records','law-enforcement','corrections','probation-parole','warrants','sex-offender','financial-public','government-public','general-public-records'], queryHints:['state agency','county government','local government','state court','licensing board','county recorder'], authority:'primary', jurisdiction:'US' },
   { id:'vinelink', root:'https://www.vinelink.com/', categories:['corrections','probation-parole','law-enforcement','general-public-records'], queryHints:['custody status','jail','victim notification'], authority:'primary', jurisdiction:'US' },
   { id:'census-geocoder', root:'https://geocoding.geo.census.gov/geocoder/', categories:['property','identity'], queryHints:['Census geocoder','address','county','census tract'], authority:'primary', jurisdiction:'US' },
   { id:'epa-echo', root:'https://echo.epa.gov/', categories:['property','business','government-public'], queryHints:['EPA ECHO','facility','enforcement','environmental'], authority:'primary', jurisdiction:'US' },
   { id:'openfema', root:'https://www.fema.gov/api/open/', categories:['property','government-public'], queryHints:['OpenFEMA','disaster','flood','claims'], authority:'primary', jurisdiction:'US' },
-  { id:'nhtsa-vpic', root:'https://vpic.nhtsa.dot.gov/api/', categories:['transportation','general-public-records'], queryHints:['NHTSA vPIC','VIN','vehicle'], authority:'primary', jurisdiction:'US' },
+  { id:'nhtsa-vpic', root:'https://vpic.nhtsa.dot.gov/api/', categories:['transportation','general-public-records'], queryHints:['NHTSA vPIC','VIN','vehicle'], authority:'primary', jurisdiction:'US', lookupMode:'api' },
   { id:'uspto-patents', root:'https://www.uspto.gov/patents/search/patent-public-search', categories:['intellectual-property','business'], queryHints:['USPTO patent','inventor','assignee'], authority:'primary', jurisdiction:'US' },
   { id:'uspto-trademarks', root:'https://www.uspto.gov/trademarks/search', categories:['intellectual-property','business'], queryHints:['USPTO trademark','owner','registrant'], authority:'primary', jurisdiction:'US' },
   { id:'icann-rdap', root:'https://lookup.icann.org/en', categories:['domain-web','identity','business'], queryHints:['RDAP','domain registration','registrar'], authority:'primary', jurisdiction:'global' },
@@ -71,7 +74,7 @@ export const LEXARA_PUBLIC_SOURCES: readonly LexaraPublicSource[] = [
   { id:'commoncrawl-index', root:'https://index.commoncrawl.org/', categories:['news-history','relationship-timeline','domain-web','social-online','education','employment','business'], queryHints:['historical web page','archived page','former employer','old profile'], authority:'archive', jurisdiction:'global' },
   { id:'nsopw', root:'https://www.nsopw.gov/', categories:['sex-offender','criminal-records','law-enforcement'], queryHints:['national sex offender public website','sex offender registry','offender search'], authority:'primary', jurisdiction:'US' },
   { id:'pacer-court-records', root:'https://pacer.uscourts.gov/', categories:['courts','criminal-records','financial-public'], queryHints:['PACER','federal court docket','bankruptcy court'], authority:'primary', jurisdiction:'US' },
-  { id:'fec-data', root:'https://www.fec.gov/data/receipts/individual-contributions/', categories:['government-public','general-public-records'], queryHints:['campaign contribution','FEC individual contribution'], authority:'primary', jurisdiction:'US' },
+  { id:'fec-data', root:'https://www.fec.gov/data/receipts/individual-contributions/', categories:['government-public','general-public-records'], queryHints:['campaign contribution','FEC individual contribution'], authority:'primary', jurisdiction:'US', lookupMode:'api' },
   { id:'senate-lobbying', root:'https://lda.senate.gov/system/public/', categories:['government-public','business'], queryHints:['lobbying disclosure','lobbyist','client'], authority:'primary', jurisdiction:'US' },
   { id:'nmls-consumer-access', root:'https://www.nmlsconsumeraccess.org/', categories:['professional-license','financial-professional','employment'], queryHints:['NMLS','mortgage loan originator','license'], authority:'primary', jurisdiction:'US' },
 ] as const;
@@ -119,6 +122,14 @@ export function getLexaraPublicSources(
     && (source.jurisdiction === 'US' || source.jurisdiction === 'global'
       || !normalizedJurisdiction || normalizedJurisdiction.includes(source.jurisdiction.toUpperCase()))
   );
+}
+
+export function getLexaraExecutableSources(
+  categories: readonly LexaraSourceCategory[] = [],
+  jurisdiction?: string,
+): LexaraPublicSource[] {
+  return getLexaraPublicSources(categories, jurisdiction)
+    .filter(source => source.lookupMode && source.lookupMode !== 'discovery');
 }
 
 export function getLexaraSourceQueryHints(categories: readonly LexaraSourceCategory[] = []): string[] {
