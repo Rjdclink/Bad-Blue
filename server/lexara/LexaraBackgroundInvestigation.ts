@@ -436,7 +436,7 @@ export async function investigateLexaraBackgroundQuestion(
       }
     : null;
   const resolved = decisionResolved
-    ? { ...decisionResolved, location: promptResolved?.location || decisionResolved.location }
+    ? { ...decisionResolved, location: decisionResolved.location || promptResolved?.location }
     : promptResolved;
   if (!resolved) {
     const categories = backgroundCategories(prompt, decision);
