@@ -124,14 +124,6 @@ export function getLexaraPublicSources(
   );
 }
 
-export function getLexaraExecutableSources(
-  categories: readonly LexaraSourceCategory[] = [],
-  jurisdiction?: string,
-): LexaraPublicSource[] {
-  return getLexaraPublicSources(categories, jurisdiction)
-    .filter(source => source.lookupMode && source.lookupMode !== 'discovery');
-}
-
 export function getLexaraSourceQueryHints(categories: readonly LexaraSourceCategory[] = []): string[] {
   return [...new Set(categories.flatMap(category => LEXARA_CATEGORY_QUERY_HINTS[category] || []))].slice(0, 16);
 }
