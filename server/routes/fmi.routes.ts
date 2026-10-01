@@ -281,7 +281,7 @@ const legacyFileReferenceSchema = z.object({
 const fmiReviewDocumentSchema = z.object({
   sourceId: z.string().min(1).max(128),
   fileName: z.string().min(1).max(240),
-  excerpt: z.string().min(1).max(12_000),
+  excerpt: z.string().min(1).max(6_000),
   classification: z.unknown().optional(),
   keyFindings: z.array(z.string().max(1_000)).max(30).optional(),
   admissibilityAssessment: z.string().max(160).optional().nullable(),
@@ -289,7 +289,7 @@ const fmiReviewDocumentSchema = z.object({
 
 const fmiReviewSetSchema = z.object({
   fileIds: z.array(z.string().min(1).max(128)).min(2).max(20).optional(),
-  documents: z.array(fmiReviewDocumentSchema).min(2).max(20).optional(),
+  documents: z.array(fmiReviewDocumentSchema).min(2).max(8).optional(),
   lawType: fmiLawTypeSchema,
   state: z.enum(US_STATE_CODES),
   question: z.string().trim().max(4_000).optional(),
@@ -614,7 +614,7 @@ export function setupFMIRoutes(app: Express): void {
           reviewInput: {
             sourceId: String(fileId),
             fileName: String(storedFile.file_name),
-            excerpt: extractedText.slice(0, 12_000),
+            excerpt: extractedText.slice(0, 6_000),
             classification: analysis.classification,
             keyFindings: analysis.keyFindings.slice(0, 30),
             admissibilityAssessment: analysis.classification.admissibility,
