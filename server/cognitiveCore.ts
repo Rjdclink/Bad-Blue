@@ -29,7 +29,7 @@ import {
   BitState,
   PropagationResult
 } from './bitNeuralPathways';
-import { getALEXARA } from './alexaraModule';
+import { getLexaraNeuralModule } from './alexaraModule';
 import { getCRYPTARA } from './cryptaraModule';
 
 const log = createLogger('CognitiveCore');
@@ -275,16 +275,16 @@ export class CognitiveCore extends EventEmitter {
       improvements.push('Neural pathway topology analyzed');
     }
 
-    // Analyze legal domain knowledge (ALEXARA)
+    // Analyze legal domain knowledge (LEXARA)
     try {
-      const alexara = getALEXARA();
-      if (alexara.isInitialized()) {
-        const legalMetrics = alexara.getMetrics();
+      const lexara = getLexaraNeuralModule();
+      if (lexara.isInitialized()) {
+        const legalMetrics = lexara.getMetrics();
         this.knowledgeBase.set('legal_domain', legalMetrics);
         improvements.push('Legal domain knowledge synthesized');
       }
     } catch {
-      // ALEXARA not initialized
+      // LEXARA not initialized
     }
 
     // Analyze crypto domain knowledge (CRYPTARA)
@@ -718,7 +718,7 @@ export class CognitiveCore extends EventEmitter {
   }
 
   private ensureDomainSeparation(): void {
-    // Verify ALEXARA and CRYPTARA domains are properly separated
+    // Verify LEXARA and CRYPTARA domains are properly separated
     log.debug('Domain separation verified');
   }
 
