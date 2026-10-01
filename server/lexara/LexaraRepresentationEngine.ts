@@ -55,6 +55,9 @@ export interface RepresentationArtifact {
   status: 'saved' | 'draft' | 'filed' | 'served' | 'superseded';
   storageRef?: string;
   sourceUrl?: string;
+  contentSummary?: string;
+  consistencyFacts?: string[];
+  consistencyConflicts?: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -468,6 +471,9 @@ export function sanitizeRepresentationMatter(value: unknown): RepresentationMatt
             ? item.status : 'saved',
           storageRef: clamp(item.storageRef, 600) || undefined,
           sourceUrl: normalizeSourceUrl(item.sourceUrl) || undefined,
+          contentSummary: clamp(item.contentSummary, 1200) || undefined,
+          consistencyFacts: mergeUnique([], item.consistencyFacts, 30, 400),
+          consistencyConflicts: mergeUnique([], item.consistencyConflicts, 20, 500),
           createdAt: clamp(item.createdAt, 80) || new Date().toISOString(),
           updatedAt: clamp(item.updatedAt, 80) || new Date().toISOString(),
         } as RepresentationArtifact];
@@ -709,6 +715,9 @@ export function formatRepresentationForSystem(
       title: artifact.title,
       kind: artifact.kind,
       status: artifact.status,
+      contentSummary: artifact.contentSummary,
+      consistencyFacts: artifact.consistencyFacts,
+      consistencyConflicts: artifact.consistencyConflicts,
     })),
     evidenceMap: current.evidenceMap,
     deadlines: current.deadlines,
