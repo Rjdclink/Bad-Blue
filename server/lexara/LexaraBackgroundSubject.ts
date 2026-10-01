@@ -22,6 +22,7 @@ function refersToPriorSubject(text: string): boolean {
 function candidates(text: string): string[] {
   return [...text.matchAll(PROPER_NAME)]
     .map(match => match[0]
+      .replace(/^(?:(?:Hello|Hi|Hey|Okay|Ok)[.!?,;:\s]+)+/i, '')
       .replace(/^(?:(?:Please|Research|Lexara|Pantheon|Tell|Find|Check|Show|Look|Full|Complete|Current|Background|The|Is|Are|Has|Have|Who|Where|When|How|Does|Did|Can|Could|Would|Should)\s+)+/i, '')
       .replace(/\s+(?:of|the|and)$/i, '')
       .replace(/['’]s(?:\s+.*)?$/i, '')
