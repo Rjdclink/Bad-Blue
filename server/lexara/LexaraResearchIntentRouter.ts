@@ -1,4 +1,4 @@
-import { resolveLexaraBackgroundSubject } from './LexaraBackgroundSubject';
+import { resolveLexaraBackgroundSubject, type LexaraBackgroundSubjectKind } from './LexaraBackgroundSubject';
 import type { LexaraSourceCategory } from './LexaraPublicSourceRegistry';
 
 export type LexaraResearchReason =
@@ -60,6 +60,7 @@ export interface LexaraResearchDecision {
   requestedFact: LexaraRequestedFact;
   sourceCategories: LexaraSourceCategory[];
   subject?: string;
+  subjectKind?: LexaraBackgroundSubjectKind;
   standaloneQuery: string;
   inferred: boolean;
 }
