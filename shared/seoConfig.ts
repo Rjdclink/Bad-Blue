@@ -228,6 +228,18 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
     breadcrumbs: [{ name: "FAQ", url: `${BASE_URL}/faq` }],
     includeInSitemap: true,
   },
+  "/reviews": {
+    title: "Legal What? Reviews | Customer Feedback",
+    description: "Read about Legal What? customer experiences and share genuine feedback about LEXARA and the Legal What? platform.",
+    ogTitle: "Legal What? Reviews",
+    ogDescription: "Share genuine feedback about your experience with Legal What? and LEXARA.",
+    ogType: "website",
+    canonicalPath: "/reviews",
+    priority: 0.6,
+    changefreq: "monthly",
+    breadcrumbs: [{ name: "Reviews", url: `${BASE_URL}/reviews` }],
+    includeInSitemap: true,
+  },
   "/privacy": {
     title: "Privacy Policy | Legal What?",
     description: "Legal What? privacy policy. How we protect your data, evidence, and personal information. Your security is our priority.",
