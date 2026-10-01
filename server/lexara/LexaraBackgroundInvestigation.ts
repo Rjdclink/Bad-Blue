@@ -421,16 +421,22 @@ export async function investigateLexaraBackgroundQuestion(
   const decision = context.researchDecision || decideLexaraResearchNeed(prompt, priorTurns);
   if (!decision.needed || (decision.intent !== 'factual' && decision.intent !== 'mixed')) return null;
 
-  const resolved = resolveLexaraBackgroundSubject(prompt, priorTurns, context.jurisdiction)
-    || (decision.subject
-      ? resolveLexaraBackgroundSubject(decision.subject, priorTurns, context.jurisdiction)
-        || {
-          name: decision.subject,
-          kind: 'person' as const,
-          identifiable: false,
-          location: context.jurisdiction,
-        }
-      : null);
+  // The semantic research decision is Lexara's authoritative subject handoff.
+  // Re-parsing the raw utterance first can promote conversational fragments
+  // ("Hello. What") over the person Lexara already understood.
+  const promptResolved = resolveLexaraBackgroundSubject(prompt, priorTurns, context.jurisdiction);
+  const decisionResolved = decision.subject
+    ? resolveLexaraBackgroundSubject(decision.subject, priorTurns, context.jurisdiction)
+      || {
+        name: decision.subject,
+        kind: 'person' as const,
+        identifiable: false,
+        location: context.jurisdiction,
+      }
+    : null;
+  const resolved = decisionResolved
+    ? { ...decisionResolved, location: promptResolved?.location || decisionResolved.location }
+    : promptResolved;
   if (!resolved) {
     const categories = backgroundCategories(prompt, decision);
     const initialQuery = decision.standaloneQuery || decision.objective || prompt;
