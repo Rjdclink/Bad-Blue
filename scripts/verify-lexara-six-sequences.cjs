@@ -125,7 +125,7 @@ for (const claudeTransportToken of ['callClaudeWebSearch', "web_search_20260318"
 if (!orchestrator.includes('const backgroundClaudeModel = context.allowClaudeOpus === true')
   || !orchestrator.includes('CURRENT_AI_MODELS.claudeBalanced')
   || !orchestrator.includes('CURRENT_AI_MODELS.claudeFast')
-  || !background.includes('claudeResearchModel: backgroundClaudeModel')) {
+  || !orchestrator.includes('claudeResearchModel: backgroundClaudeModel')) {
   throw new Error('Claude background web search does not preserve trial/paid model routing');
 }
 if (!background.includes('dynamicGeneralObjectiveMatch')
