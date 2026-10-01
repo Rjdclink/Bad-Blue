@@ -39,6 +39,7 @@ const state = {
   supplementalCalls: [],
   retrievalCalls: [],
   claudeCalls: [],
+  authoritativeCalls: [],
 };
 
 const planner = {
@@ -214,7 +215,10 @@ const investigator = execute('server/lexara/LexaraBackgroundInvestigation.ts', {
   './LexaraDiscoveryLearning': learning,
   './LexaraClaudeBackgroundSearch': claudeParallel,
   './LexaraAuthoritativeLookup': {
-    async lookupLexaraAuthoritativeSources() { return []; },
+    async lookupLexaraAuthoritativeSources(input) {
+      state.authoritativeCalls.push(input);
+      return [];
+    },
   },
 });
 
@@ -224,6 +228,7 @@ function reset(mode) {
   state.supplementalCalls = [];
   state.retrievalCalls = [];
   state.claudeCalls = [];
+  state.authoritativeCalls = [];
 }
 
 (async () => {
@@ -247,6 +252,35 @@ function reset(mode) {
   assert.equal(progress.some(event => Boolean(event.evidence)), false,
     'progress events never expose source excerpts before the final answer');
   assert.equal(progress.at(-1).endpoint, 'evidence-sufficient');
+
+  reset('empty');
+  const conversationalHandoff = await investigator.investigateLexaraBackgroundQuestion(
+    'Hello. What can you tell me about Sarah Loretta Graves of Hartley, Iowa?',
+    {
+      jurisdiction: 'Iowa',
+      researchDecision: {
+        needed: true,
+        reason: 'external-fact-question',
+        objective: 'Find the background facts requested about Sarah Loretta Graves of Hartley, Iowa.',
+        objectiveKind: 'external-fact',
+        intent: 'factual',
+        requestedFact: 'general-public-record',
+        sourceCategories: ['general-public-records'],
+        subject: 'Sarah Loretta Graves of Hartley, Iowa',
+        standaloneQuery: 'Sarah Loretta Graves Hartley Iowa background public records',
+        inferred: true,
+      },
+    },
+  );
+  assert.equal(state.tierCalls[0].options.subject, 'Sarah Loretta Graves',
+    'the semantic subject survives the handoff instead of re-parsing conversational filler');
+  assert.equal(state.tierCalls[0].options.jurisdiction, 'Hartley, Iowa',
+    'the user-supplied locality survives into background discovery');
+  assert.equal(state.authoritativeCalls[0].subject.name, 'Sarah Loretta Graves',
+    'authoritative direct lookups receive the same resolved person');
+  assert.equal(state.authoritativeCalls[0].subject.location, 'Hartley, Iowa',
+    'authoritative direct lookups receive the same resolved locality');
+  assert.notEqual(conversationalHandoff.endpoint, 'failed');
 
   reset('employment');
   const employment = await investigator.investigateLexaraBackgroundQuestion(
@@ -369,7 +403,7 @@ function reset(mode) {
   assert.match(formatted, /No verified subject-specific source content established the requested fact/);
   assert.match(formatted, /Do not infer a negative fact/);
 
-  console.log('PASS: Lexara native background investigation is wired end to end with recursion, fact gating, provenance, location preservation, honest exhaustion, and legal-only isolation.');
+  console.log('PASS: Lexara native background investigation preserves semantic subjects and locality through handoff, recursion, fact gating, provenance, honest exhaustion, and legal-only isolation.');
 })().catch(error => {
   console.error(error);
   process.exitCode = 1;
