@@ -184,10 +184,14 @@ Provide at least 12-15 highly relevant, verified precedents in the same JSON for
         const extracted = extractCaseCitations(String(precedent.citation || ''))[0];
         if (!extracted) continue;
         const result = byCitation.get(extracted.citation.toLowerCase());
-        if (!result || result.status !== 'verified') {
+        if (result?.status === 'unresolved') {
           uniquePrecedents.splice(index, 1);
           continue;
         }
+        // A verifier outage is not evidence that a real citation is invalid.
+        // Preserve the existing two-pass research result when the public
+        // verification source itself is unavailable.
+        if (!result || result.status === 'unavailable') continue;
         if (result.possibleNegativeTreatment) {
           precedent.relevance = `${precedent.relevance} [Citation verified; possible negative-treatment signal requires current-authority review.]`;
         }
