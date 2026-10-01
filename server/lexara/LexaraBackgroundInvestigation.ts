@@ -544,14 +544,26 @@ export async function investigateLexaraBackgroundQuestion(
 
     for (const evidence of authoritativeEvidence) {
       discoveryLanes.add(evidence.provider);
-      const evaluation = assessEvidence(
-        evidence.content,
-        evidence.url,
-        evidence.retrievedAt,
-        subject,
-        decision,
-        prompt,
-      );
+      const evaluation = evidence.directlyAnswers === true
+        && Number.isFinite(evidence.confidence)
+        && Number.isFinite(evidence.identityConfidence)
+        ? {
+            url: evidence.url,
+            retrievedAt: evidence.retrievedAt,
+            excerpt: evidence.content.replace(/\s+/g, ' ').trim().slice(0, 1600),
+            confidence: Math.max(0, Math.min(1, Number(evidence.confidence))),
+            directlyAnswers: true,
+            inferentiallySupports: false,
+            identityConfidence: Math.max(0, Math.min(1, Number(evidence.identityConfidence))),
+          } satisfies AssessedEvidence
+        : assessEvidence(
+            evidence.content,
+            evidence.url,
+            evidence.retrievedAt,
+            subject,
+            decision,
+            prompt,
+          );
       if (!evaluation) continue;
       const existing = assessed.get(evidence.url);
       if (!existing || evaluation.confidence > existing.confidence) assessed.set(evidence.url, evaluation);
