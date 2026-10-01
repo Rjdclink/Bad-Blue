@@ -65,17 +65,20 @@ function supportedSubject(
   semanticSubject: string | undefined,
   prompt: string,
   previousUserTurns: readonly string[],
+  preferSemantic = false,
 ): string | undefined {
-  const resolved = resolveLexaraBackgroundSubject(prompt, previousUserTurns)?.name;
-  if (resolved) return resolved;
-
   const candidate = String(semanticSubject || '').trim().replace(/\s+/g, ' ');
-  if (!candidate || candidate.length > 140) return undefined;
   const corpus = [prompt, ...previousUserTurns].join(' ').toLowerCase();
   const meaningful = candidate.toLowerCase().split(/\s+/).filter(token => token.length > 1);
-  return meaningful.length && meaningful.every(token => corpus.includes(token))
-    ? candidate
-    : undefined;
+  const semanticSupported = Boolean(
+    candidate && candidate.length <= 140
+    && meaningful.length && meaningful.every(token => corpus.includes(token))
+  );
+  if (preferSemantic && semanticSupported) return candidate;
+
+  const resolved = resolveLexaraBackgroundSubject(prompt, previousUserTurns)?.name;
+  if (resolved) return resolved;
+  return semanticSupported ? candidate : undefined;
 }
 
 function requestedFactFromSemantic(value: string | undefined): LexaraRequestedFact {
@@ -166,7 +169,7 @@ ${text}`;
     if (semantic.needed !== true || (semanticIntent !== 'factual' && semanticIntent !== 'mixed')) return deterministic;
     const intent: LexaraResearchIntent = deterministic.intent === 'legal' ? 'mixed' : semanticIntent;
 
-    const subject = supportedSubject(semantic.subject, text, previousUserTurns);
+    const subject = supportedSubject(semantic.subject, text, previousUserTurns, needsSubjectReview);
     const requestedFact = requestedFactFromSemantic(semantic.requestedFact);
     const effectiveFact = requestedFact === 'none' ? 'general-public-record' : requestedFact;
     const sourceCategories = sourceCategoriesForFact(effectiveFact, text);
