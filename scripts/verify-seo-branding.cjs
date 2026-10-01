@@ -24,6 +24,7 @@ const robots = read('public/robots.txt');
 const sitemap = read('public/sitemap.xml');
 const llms = read('public/llms.txt');
 const serverIndex = read('server/index.ts');
+const routes = read('server/routes.ts');
 const viteServer = read('server/vite.ts');
 
 must(fs.existsSync('public/images/Legal What Icon.png'), 'Legal What brand icon must exist');
@@ -118,6 +119,8 @@ must(serverIndex.includes('Do not emit synthetic freshness'), 'dynamic sitemap m
 must(viteServer.includes('renderSeoShell') && viteServer.includes('SEO_CONFIG[pathname]'), 'SPA fallback must render route-specific SEO metadata before React');
 must(viteServer.includes('rel="canonical"') && viteServer.includes('canonicalUrl'), 'SPA fallback must emit a route-correct canonical in initial HTML');
 must(viteServer.includes('config.noIndex') && viteServer.includes('noindex, nofollow'), 'SPA fallback must preserve noindex on protected configured routes');
+mustNot(routes, "app.get('*'", 'server/routes.ts must not own a competing catch-all SPA fallback');
+must(routes.includes('Public static pages and the SPA fallback are owned by server/vite.ts.'), 'routes must document single non-API page-serving authority');
 
 for (const phrase of [
   'Legal What? — AI Legal Tools for 40 Practice Areas',
