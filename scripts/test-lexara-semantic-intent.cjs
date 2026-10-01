@@ -50,6 +50,14 @@ const claude = {
         subject: 'Avery Morgan Example',
         objective: 'Find the background facts requested about Avery Morgan Example.',
       };
+    } else if (current === 'Hello. What can you tell me about Sarah Loretta Graves of Hartley, Iowa?') {
+      payload = {
+        needed: true,
+        intent: 'factual',
+        requestedFact: 'general-public-record',
+        subject: 'Sarah Loretta Graves of Hartley, Iowa',
+        objective: 'Find the background facts requested about Sarah Loretta Graves of Hartley, Iowa.',
+      };
     } else if (current === 'Avery Morgan Example is employed.') {
       payload = {
         needed: true,
@@ -113,6 +121,17 @@ const semantic = execute('server/lexara/LexaraSemanticIntentInterpreter.ts', {
   assert.equal(broadPlan.useBackgroundResearch, true, 'Lexara-owned background research is active while Pantheon stays disconnected');
 
   before = claudeCalls;
+  const conversational = await semantic.resolveLexaraResearchDecisionSemantic(
+    'Hello. What can you tell me about Sarah Loretta Graves of Hartley, Iowa?',
+    [],
+  );
+  assert.equal(claudeCalls, before + 1);
+  assert.equal(conversational.intent, 'factual');
+  assert.equal(conversational.subject, 'Sarah Loretta Graves of Hartley, Iowa',
+    'whole-utterance semantic subject must outrank capitalization noise such as "Hello. What"');
+  assert.equal(conversational.requestedFact, 'general-public-record');
+
+  before = claudeCalls;
   const statement = await semantic.resolveLexaraResearchDecisionSemantic('Avery Morgan Example is employed.', []);
   assert.equal(claudeCalls, before + 1, 'background statement does not require question syntax or magic search words');
   assert.equal(statement.intent, 'factual');
@@ -131,7 +150,8 @@ const semantic = execute('server/lexara/LexaraSemanticIntentInterpreter.ts', {
 
   before = claudeCalls;
   const known = await semantic.resolveLexaraResearchDecisionSemantic('Where does Avery Example work?', []);
-  assert.equal(claudeCalls, before, 'existing deterministic factual fast path remains zero-extra-call');
+  assert.equal(claudeCalls, before + 1,
+    'substantive factual turns receive whole-utterance semantic review while deterministic routing remains the failure-safe fallback');
   assert.equal(known.intent, 'factual');
   assert.equal(known.requestedFact, 'employment');
 
@@ -164,7 +184,7 @@ const semantic = execute('server/lexara/LexaraSemanticIntentInterpreter.ts', {
   assert.equal(claudeCalls, before, 'obvious casual control turns do not pay semantic-classifier latency');
   assert.equal(casual.intent, 'conversation');
 
-  console.log('PASS: Lexara semantic inference recognizes broad requests, statements, mixed legal/background turns, and preserves deterministic factual and casual fast paths.');
+  console.log('PASS: Lexara semantic inference preserves whole-utterance background subjects across conversational wording, statements, mixed turns, and deterministic fallback.');
 })().catch(error => {
   console.error(error);
   process.exitCode = 1;
