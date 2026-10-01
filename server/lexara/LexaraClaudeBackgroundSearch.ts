@@ -25,6 +25,7 @@ export async function searchLexaraBackgroundWithClaude(input: {
   subject?: LexaraBackgroundSubject | null;
   decision: LexaraResearchDecision;
   jurisdiction?: string;
+  model?: string;
   signal?: AbortSignal;
 }): Promise<LexaraClaudeBackgroundSearchResult> {
   const subjectName = input.subject?.name || input.decision.subject || '';
@@ -49,6 +50,7 @@ export async function searchLexaraBackgroundWithClaude(input: {
     const result = await callClaudeWebSearch(prompt, {
       maxTokens: 1024,
       maxUses: 4,
+      model: input.model,
       signal: input.signal,
       systemPrompt: [
         'You are an internal public-web background researcher for Lexara.',
