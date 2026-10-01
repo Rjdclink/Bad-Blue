@@ -95,8 +95,10 @@ async function lookupBop(
   try {
     const payload: any = await response.json();
     if (payload?.Captcha || !Array.isArray(payload?.InmateLocator)) return [];
+    const records = payload.InmateLocator.slice(0, 8);
+    if (records.length > 1 && !subject.identifiable) return [];
     const retrievedAt = new Date().toISOString();
-    return payload.InmateLocator.slice(0, 8).flatMap((item: any) => {
+    return records.flatMap((item: any) => {
       const fullName = [item?.nameFirst, item?.nameMiddle, item?.nameLast].filter(Boolean).join(' ').trim();
       if (!fullName) return [];
       const content = [
@@ -108,7 +110,9 @@ async function lookupBop(
         item?.releaseCode ? `Release code: ${item.releaseCode}.` : '',
       ].filter(Boolean).join(' ');
       return [{
-        url: 'https://www.bop.gov/inmateloc/',
+        url: item?.inmateNum
+          ? `https://www.bop.gov/inmateloc/?inmateNum=${encodeURIComponent(String(item.inmateNum))}`
+          : 'https://www.bop.gov/inmateloc/',
         content,
         retrievedAt,
         provider: 'bop-structured',
@@ -143,8 +147,10 @@ async function lookupNpi(
   try {
     const payload: any = await response.json();
     if (!Array.isArray(payload?.results)) return [];
+    const records = payload.results.slice(0, 8);
+    if (records.length > 1 && !subject.identifiable) return [];
     const retrievedAt = new Date().toISOString();
-    return payload.results.slice(0, 8).flatMap((item: any) => {
+    return records.flatMap((item: any) => {
       const basic = item?.basic || {};
       const fullName = [basic?.first_name, basic?.middle_name, basic?.last_name].filter(Boolean).join(' ').trim();
       if (!fullName) return [];
@@ -166,7 +172,9 @@ async function lookupNpi(
         'NPI issuance does not itself verify professional licensure.',
       ].filter(Boolean).join(' ');
       return [{
-        url: url.toString(),
+        url: item?.number
+          ? `https://npiregistry.cms.hhs.gov/provider-view/${encodeURIComponent(String(item.number))}`
+          : url.toString(),
         content,
         retrievedAt,
         provider: 'cms-npi-api',
@@ -181,6 +189,7 @@ async function lookupCourtListener(
   subject: LexaraBackgroundSubject,
   signal?: AbortSignal,
 ): Promise<LexaraAuthoritativeEvidence[]> {
+  if (!subject.identifiable) return [];
   const url = new URL('https://www.courtlistener.com/');
   url.searchParams.set('q', `"${subject.name}"`);
   url.searchParams.set('type', 'r');
