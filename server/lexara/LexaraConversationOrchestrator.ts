@@ -614,12 +614,24 @@ export async function generateLexaraConversationResponse(
   // background questions deliberately run both research domains in parallel.
   const mixedLegalFactNeed = sequencePlan.useLegalResearch && sequencePlan.useBackgroundResearch;
   const backgroundResearchRequested = sequencePlan.useBackgroundResearch;
-  const resolvedBackgroundSubject = backgroundResearchRequested
-    ? (researchDecision.subject
-      ? resolveLexaraBackgroundSubject(researchDecision.subject, previousUserTurns, jurisdiction)
-      : null)
-      || resolveLexaraBackgroundSubject(cleanPrompt, previousUserTurns, jurisdiction)
+  const decisionBackgroundSubject = backgroundResearchRequested && researchDecision.subject
+    ? resolveLexaraBackgroundSubject(researchDecision.subject, previousUserTurns, jurisdiction)
     : null;
+  const promptBackgroundSubject = backgroundResearchRequested
+    ? resolveLexaraBackgroundSubject(cleanPrompt, previousUserTurns, jurisdiction)
+    : null;
+  const sameResolvedSubject = Boolean(
+    decisionBackgroundSubject?.name && promptBackgroundSubject?.name
+    && decisionBackgroundSubject.name.toLocaleLowerCase() === promptBackgroundSubject.name.toLocaleLowerCase()
+  );
+  const resolvedBackgroundSubject = sameResolvedSubject && decisionBackgroundSubject && promptBackgroundSubject
+    ? {
+        ...decisionBackgroundSubject,
+        kind: promptBackgroundSubject.kind,
+        location: promptBackgroundSubject.location || decisionBackgroundSubject.location,
+        identifiable: decisionBackgroundSubject.identifiable || promptBackgroundSubject.identifiable,
+      }
+    : decisionBackgroundSubject || promptBackgroundSubject;
 
   const backgroundPrompt = mixedLegalFactNeed
     ? `${researchDecision.objective}\n\nLEXARA-DELEGATED FACTUAL OBJECTIVE: Retrieve only background facts and identifiers materially useful for identifying or resolving this legal matter (for example name variants, locations, dates, related proceedings, court references, docket/citation clues, and relevant public records). Do not perform the legal analysis and do not broaden into an unrestricted background report.`
