@@ -122,6 +122,7 @@ function detectDocumentIntent(prompt: string, previousMessages: LexaraConversati
   explicit: boolean;
   documentType: string;
   templateMode: boolean;
+  packetItem?: boolean;
 } {
   const p = prompt.toLowerCase();
   const explicit = /\b(draft|prepare|create|generate|write|download|downloadable|export|pdf|docx|word document)\b/.test(p);
@@ -149,6 +150,53 @@ function detectDocumentIntent(prompt: string, previousMessages: LexaraConversati
     explicit,
     documentType: currentType || historyType || 'Custom Document',
     templateMode: isBlankLegalDocumentRequest(prompt),
+  };
+}
+
+function selectPacketDocumentIntent(prompt: string, matter: RepresentationMatterState | null | undefined): {
+  requested: boolean;
+  explicit: boolean;
+  documentType: string;
+  templateMode: boolean;
+  packetItem: true;
+} | null {
+  const packet = matter?.packet;
+  if (!packet?.items?.length) return null;
+  const text = String(prompt || '').trim().toLowerCase();
+  const action = /\b(?:prepare|create|generate|complete|fill(?:\s+out)?|file|start|continue|next|make|give\s+me|provide)\b/i.test(text);
+  if (!action) return null;
+
+  const candidates = packet.items.filter(item =>
+    item.status !== 'complete'
+    && item.status !== 'not-applicable'
+    && ['official-form', 'custom-draft', 'service-document'].includes(item.documentKind)
+  );
+  if (!candidates.length) return null;
+
+  const specific = candidates.find(item => {
+    const formNumber = String(item.formNumber || '').trim().toLowerCase();
+    if (formNumber && text.includes(formNumber)) return true;
+    const title = item.title.toLowerCase();
+    if (title.length >= 6 && text.includes(title)) return true;
+    const tokens = title.split(/[^a-z0-9]+/).filter(token => token.length >= 5);
+    return tokens.length >= 2 && tokens.filter(token => text.includes(token)).length >= Math.min(3, tokens.length);
+  });
+
+  const packetLanguage = /\b(?:packet|paperwork|forms?|next\s+(?:form|document)|all\s+(?:the\s+)?forms?)\b/i.test(text);
+  const filingObjective = /\b(?:file|start|continue)\b/i.test(text)
+    && /\b(?:divorc|custod|lawsuit|case|appeal|petition|claim|probate|bankrupt|evict|hearing|proceeding)\b/i.test(text);
+  const selected = specific
+    || ((packetLanguage || filingObjective)
+      ? candidates.find(item => item.requirement === 'mandatory') || candidates[0]
+      : null);
+  if (!selected) return null;
+
+  return {
+    requested: true,
+    explicit: true,
+    documentType: selected.title,
+    templateMode: false,
+    packetItem: true,
   };
 }
 
@@ -336,6 +384,8 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       allowClaudeOpus: canUseClaudeOpus(req),
       signal: controller.signal,
     });
+    const packetDocumentIntent = selectPacketDocumentIntent(prompt, preRepresentationMatter);
+    if (packetDocumentIntent) documentIntent = packetDocumentIntent;
     const result = await generateLexaraConversationResponse(prompt, {
       previousMessages: effectivePreviousMessages,
       lawType: cleanOptionalString((rawContext as any).lawType),
@@ -490,7 +540,9 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       prior: representationContext.activeMatter,
       allowClaudeOpus: canUseClaudeOpus(req),
     });
-    const documentIntent = detectDocumentIntent(prompt, effectivePreviousMessages);
+    let documentIntent = detectDocumentIntent(prompt, effectivePreviousMessages);
+    const packetDocumentIntent = selectPacketDocumentIntent(prompt, preRepresentationMatter);
+    if (packetDocumentIntent) documentIntent = packetDocumentIntent;
 
     log.info('[LEXARA] Conversational legal turn received', {
       promptLength: prompt.length,
