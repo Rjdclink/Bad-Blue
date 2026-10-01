@@ -960,6 +960,7 @@ must(
 must(
   lexaraSemanticIntent.includes('resolveLexaraResearchDecisionSemantic') &&
     lexaraSemanticIntent.includes('Do not require special words') &&
+    lexaraSemanticIntent.includes('deterministicSubjectNeedsSemanticReview') &&
     lexaraSemanticIntent.includes("deterministic.intent === 'legal'") &&
     lexaraConversationOrchestrator.includes('semanticResearchDecisionPromise') &&
     lexaraConversationOrchestrator.indexOf('semanticResearchDecisionPromise') < lexaraConversationOrchestrator.indexOf('await resolveUSJurisdiction(') &&
