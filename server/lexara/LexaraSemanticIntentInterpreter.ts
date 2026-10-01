@@ -85,7 +85,9 @@ function requestedFactFromSemantic(value: string | undefined): LexaraRequestedFa
 
 function deterministicSubjectNeedsSemanticReview(subject?: string): boolean {
   const value = String(subject || '').trim();
-  return !value || /^(?:hello|hi|hey|okay|ok|so|well|what|who|where|when|how|does|did|has|have|is|are|can|could|would|should)(?:\b|[.])/i.test(value);
+  return !value
+    || /^(?:hello|hi|hey|okay|ok|alright|sure|so|well|actually|anyway|what|who|where|when|how|does|did|has|have|is|are|can|could|would|should)(?:\b|[.])/i.test(value)
+    || /[.!?]\s*(?:what|who|where|when|how|does|did|has|have|is|are|can|could|would|should)\b/i.test(value);
 }
 
 /**
