@@ -993,14 +993,16 @@ must(
   'Post Conviction has normal bookshelf metadata and legal-tools routing',
 );
 must(
-  conversation.includes("const greeting = 'How can I help you?';") &&
+  conversation.includes("const greeting = hasSavedMatters") &&
+    conversation.includes("'You have saved legal matters I can pull up if you want to continue where you left off. How may I help you?'") &&
+    conversation.includes(": 'How may I help you?';") &&
     conversation.includes('if (liveEnabled && !voiceReady) return;') &&
     conversation.includes('await speakLexara(greeting, greetingGeneration).catch(() => false);') &&
     conversation.includes('if (liveEnabled && !started && greetingGeneration === generationRef.current)') &&
     conversation.includes('if (!greetingRef.current && !userSpeechObservedRef.current) {') &&
     conversation.includes('void sendGreeting();') &&
     !conversation.includes('Hello. Tell me what happened'),
-  'LEXARA queues the exact How can I help you? greeting until live voice is ready',
+  'LEXARA queues the correct new-user or saved-matter returning-user greeting until live voice is ready',
 );
 must(
   appSource.includes('<Route path="/welcome"><Redirect to="/lexara-consent" /></Route>') &&
