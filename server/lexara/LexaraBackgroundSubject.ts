@@ -10,7 +10,7 @@ export interface LexaraBackgroundSubject {
 const ORGANIZATION = /\b(?:LLC|L\.L\.C\.|Inc\.?|Corporation|Corp\.?|Company|Co\.?|LP|LLP|PLLC|Foundation|Association|University|Bank|Ltd\.?)\b/i;
 const PLACE = /\b(?:city|town|village|county|state|province|park|river|lake|mount|mountain|airport|station|building|bridge|museum|landmark|memorial|tower)\b/i;
 const NOISE = /^(?:Research Objective|Current User|Lexara Delegated|Full Background|Background Report|What Is|Who Is|Where Is|When Was|Tell Me|Find Out|Look Up|Public Records|New Question|Legal Analysis|The Company|The Person|The City)$/i;
-const CONVERSATIONAL_LEAD = /^(?:Hello|Hi|Hey|Okay|Ok|So|Well|Please|What|Who|Where|When|How|Does|Did|Has|Have|Is|Are|Can|Could|Would|Should|Tell|Find|Check|Show|Look|Research|Lexara|Pantheon|Current|Background|The)(?:\b|[.])/i;
+const CONVERSATIONAL_LEAD = /^(?:Hello|Hi|Hey|Okay|Ok|Alright|Sure|So|Well|Actually|Anyway|Please|What|Who|Where|When|How|Does|Did|Has|Have|Is|Are|Can|Could|Would|Should|Tell|Find|Check|Show|Look|Research|Lexara|Pantheon|Current|Background|The)(?:\b|[.])/i;
 const PROPER_NAME = /\b[A-Z][\p{L}\p{N}.'’&-]*(?:\s+(?:of|the|and|&|[A-Z][\p{L}\p{N}.'’&-]*)){1,6}/gu;
 const IDENTIFIER = /\b(?:born\s+(?:in\s+)?(?:19|20)\d{2}|dob\s*[:=]?\s*\d|age\s+\d{1,3}|lives?\s+in\s+[A-Z]|from\s+[A-Z][a-z]+|in\s+[A-Z][a-z]+(?:,|\s+[A-Z])|employer\s+[A-Z]|works?\s+(?:at|for)\s+[A-Z]|email\s+\S+@|phone\s+\d|address\s+\d|middle\s+name\s+[A-Z])\b/i;
 const FOLLOWUP = /\b(?:he|she|they|them|their|his|her|its|it|that|this|same|there|about\s+them|about\s+it|try\s+again|keep\s+looking)\b/i;
