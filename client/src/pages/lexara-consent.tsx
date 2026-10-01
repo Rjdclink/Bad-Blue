@@ -14,7 +14,7 @@ function consentMicrophoneConstraints(): MediaTrackConstraints {
   const supported = navigator.mediaDevices?.getSupportedConstraints?.() || {};
   const constraints: MediaTrackConstraints = {};
   if (supported.echoCancellation) constraints.echoCancellation = true;
-  if (supported.noiseSuppression) constraints.noiseSuppression = true;
+  if (supported.noiseSuppression) constraints.noiseSuppression = false;
   if (supported.autoGainControl) constraints.autoGainControl = true;
   if (supported.channelCount) constraints.channelCount = { ideal: 1 };
   return constraints;
