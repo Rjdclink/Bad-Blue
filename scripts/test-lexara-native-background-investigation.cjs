@@ -285,6 +285,28 @@ function reset(mode) {
     'authoritative direct lookups receive the same resolved locality');
   assert.notEqual(conversationalHandoff.endpoint, 'failed');
 
+  reset('empty');
+  await investigator.investigateLexaraBackgroundQuestion(
+    'Hello. What can you tell me about Sarah Loretta Graves of Hartley, Iowa?',
+    {
+      jurisdiction: 'Iowa',
+      researchDecision: {
+        needed: true,
+        reason: 'external-fact-question',
+        objective: 'Find the background facts requested about Sarah Loretta Graves.',
+        objectiveKind: 'external-fact',
+        intent: 'factual',
+        requestedFact: 'general-public-record',
+        sourceCategories: ['general-public-records'],
+        subject: 'Sarah Loretta Graves',
+        standaloneQuery: 'Sarah Loretta Graves Hartley Iowa background public records',
+        inferred: true,
+      },
+    },
+  );
+  assert.equal(state.tierCalls[0].options.jurisdiction, 'Hartley, Iowa',
+    'a semantic subject that omits locality must not downgrade the more specific locality present in the user utterance');
+
   reset('employment');
   const employment = await investigator.investigateLexaraBackgroundQuestion(
     'Where does Avery Example work?',
