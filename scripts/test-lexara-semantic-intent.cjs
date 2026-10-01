@@ -42,21 +42,21 @@ const claude = {
     claudeCalls += 1;
     const current = String(prompt).split('CURRENT TURN:\n').pop().trim();
     let payload;
-    if (current === 'Tell me about Sarah Loretta Graves.') {
+    if (current === 'Tell me about Avery Morgan Example.') {
       payload = {
         needed: true,
         intent: 'factual',
         requestedFact: 'general-public-record',
-        subject: 'Sarah Loretta Graves',
-        objective: 'Find the background facts requested about Sarah Loretta Graves.',
+        subject: 'Avery Morgan Example',
+        objective: 'Find the background facts requested about Avery Morgan Example.',
       };
-    } else if (current === 'Sarah Loretta Graves is employed.') {
+    } else if (current === 'Avery Morgan Example is employed.') {
       payload = {
         needed: true,
         intent: 'factual',
         requestedFact: 'employment',
-        subject: 'Sarah Loretta Graves',
-        objective: 'Determine whether Sarah Loretta Graves is currently employed.',
+        subject: 'Avery Morgan Example',
+        objective: 'Determine whether Avery Morgan Example is currently employed.',
       };
     } else if (current.includes('officer who arrested me')) {
       payload = {
@@ -88,16 +88,16 @@ const semantic = execute('server/lexara/LexaraSemanticIntentInterpreter.ts', {
 
 (async () => {
   let before = claudeCalls;
-  const broad = await semantic.resolveLexaraResearchDecisionSemantic('Tell me about Sarah Loretta Graves.', []);
+  const broad = await semantic.resolveLexaraResearchDecisionSemantic('Tell me about Avery Morgan Example.', []);
   assert.equal(claudeCalls, before + 1, 'broad natural-language background request uses semantic inference');
   assert.equal(broad.needed, true);
   assert.equal(broad.intent, 'factual');
   assert.equal(broad.requestedFact, 'general-public-record');
-  assert.equal(broad.subject, 'Sarah Loretta Graves');
+  assert.equal(broad.subject, 'Avery Morgan Example');
   assert.equal(broad.inferred, true);
 
   before = claudeCalls;
-  const statement = await semantic.resolveLexaraResearchDecisionSemantic('Sarah Loretta Graves is employed.', []);
+  const statement = await semantic.resolveLexaraResearchDecisionSemantic('Avery Morgan Example is employed.', []);
   assert.equal(claudeCalls, before + 1, 'background statement does not require question syntax or magic search words');
   assert.equal(statement.intent, 'factual');
   assert.equal(statement.requestedFact, 'employment');
