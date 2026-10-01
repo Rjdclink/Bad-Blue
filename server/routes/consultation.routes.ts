@@ -143,6 +143,8 @@ async function saveMatterArtifact(
     status: 'saved',
     storageRef,
     sourceUrl: input.sourceUrl,
+    fileName: input.fileName,
+    mimeType: input.mimeType,
     contentSummary,
     consistencyFacts,
     consistencyConflicts,
