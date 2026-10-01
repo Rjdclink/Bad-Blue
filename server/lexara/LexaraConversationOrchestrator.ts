@@ -643,7 +643,7 @@ export async function generateLexaraConversationResponse(
   const resolvedBackgroundSubject = sameResolvedSubject && decisionBackgroundSubject && promptBackgroundSubject
     ? {
         ...decisionBackgroundSubject,
-        kind: promptBackgroundSubject.kind,
+        kind: researchDecision.subjectKind || promptBackgroundSubject.kind,
         location: promptBackgroundSubject.location || decisionBackgroundSubject.location,
         identifiable: decisionBackgroundSubject.identifiable || promptBackgroundSubject.identifiable,
       }
