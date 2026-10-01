@@ -13,16 +13,16 @@ export interface CitationVerification {
 
 const REPORTER_SLUGS: Record<string, string> = {
   'u.s.': 'us',
-  's. ct.': 's-ct',
-  'l. ed.': 'l-ed',
-  'l. ed. 2d': 'l-ed-2d',
+  's.ct.': 's-ct',
+  'l.ed.': 'l-ed',
+  'l.ed.2d': 'l-ed-2d',
   'f.': 'f',
   'f.2d': 'f2d',
   'f.3d': 'f3d',
   'f.4th': 'f4th',
-  'f. supp.': 'f-supp',
-  'f. supp. 2d': 'f-supp-2d',
-  'f. supp. 3d': 'f-supp-3d',
+  'f.supp.': 'f-supp',
+  'f.supp.2d': 'f-supp-2d',
+  'f.supp.3d': 'f-supp-3d',
   'a.': 'a',
   'a.2d': 'a2d',
   'a.3d': 'a3d',
@@ -43,9 +43,9 @@ const REPORTER_SLUGS: Record<string, string> = {
   'so.': 'so',
   'so.2d': 'so2d',
   'so.3d': 'so3d',
-  'cal. rptr.': 'cal-rptr',
-  'cal. rptr. 2d': 'cal-rptr-2d',
-  'cal. rptr. 3d': 'cal-rptr-3d',
+  'cal.rptr.': 'cal-rptr',
+  'cal.rptr.2d': 'cal-rptr-2d',
+  'cal.rptr.3d': 'cal-rptr-3d',
 };
 
 const REPORTER_PATTERN = [
@@ -93,7 +93,8 @@ const CASE_CITATION_RE = new RegExp(
 function normalizeReporter(value: string): string {
   return value
     .replace(/\s+/g, ' ')
-    .replace(/\.\s+/g, '.')
+    .replace(/\s*\.\s*/g, '.')
+    .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase();
 }
@@ -222,5 +223,5 @@ export function formatCitationVerificationForCorrection(results: CitationVerific
     const title = result.caseTitle ? `; case/source title: ${result.caseTitle}` : '';
     const source = result.sourceUrl ? `; verification source: ${result.sourceUrl}` : '';
     return `- ${result.citation}: ${status}${title}${source}${treatment}`;
-  }).join('\\n');
+  }).join('\n');
 }
