@@ -123,6 +123,11 @@ if (!orchestrator.includes('const backgroundClaudeModel = context.allowClaudeOpu
   || !background.includes('claudeResearchModel: backgroundClaudeModel')) {
   throw new Error('Claude background web search does not preserve trial/paid model routing');
 }
+if (!background.includes('dynamicGeneralObjectiveMatch')
+  || !background.includes("decision.requestedFact !== 'general-public-record'")
+  || !background.includes('decision.objective || decision.standaloneQuery')) {
+  throw new Error('Open-ended semantic background facts still depend on a fixed keyword taxonomy');
+}
 if (!background.includes('This is only a guess, not a verified fact')
   || !background.includes('ANSWER-SCOPE RULE')
   || !background.includes('CORROBORATION RULE')) {
