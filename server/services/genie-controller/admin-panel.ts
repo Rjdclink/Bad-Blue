@@ -191,7 +191,7 @@ export class AdminControlPanel extends EventEmitter {
     const defaultPermissions: PermissionEntry[] = [
       {
         id: 'perm-alexara-crawler',
-        name: 'ALEXARA Legal Crawler',
+        name: 'LEXARA Legal Crawler',
         category: 'crawler',
         description: 'Legal OSINT crawler: 5 min/hour, 24/7',
         approved: true,
@@ -287,19 +287,19 @@ export class AdminControlPanel extends EventEmitter {
   getModuleDiagnostics(): ModuleDiagnostic[] {
     const diagnostics: ModuleDiagnostic[] = [];
 
-    // ALEXARA diagnostic
-    const alexaraStatus = this.genie?.getAlexara()?.getStatus();
+    // LEXARA diagnostic
+    const lexaraStatus = this.genie?.getLexara()?.getStatus();
     diagnostics.push({
-      moduleName: 'ALEXARA (Legal Intelligence)',
-      status: alexaraStatus?.isRunning ? 'healthy' : 'offline',
-      synopsis: alexaraStatus?.isRunning 
-        ? `ALEXARA is running smoothly. It has processed ${alexaraStatus.totalResearchQueries} legal research queries and generated ${alexaraStatus.totalDocumentsGenerated} documents. ${alexaraStatus.isResearching ? 'Currently conducting legal research.' : 'Ready for new queries.'}`
-        : 'ALEXARA is currently offline. Initialize 4JI-GENIE to start legal intelligence services.',
+      moduleName: 'LEXARA (Legal Intelligence)',
+      status: lexaraStatus?.isRunning ? 'healthy' : 'offline',
+      synopsis: lexaraStatus?.isRunning 
+        ? `LEXARA is running smoothly. It has processed ${lexaraStatus.totalResearchQueries} legal research queries and generated ${lexaraStatus.totalDocumentsGenerated} documents. ${lexaraStatus.isResearching ? 'Currently conducting legal research.' : 'Ready for new queries.'}`
+        : 'LEXARA is currently offline. Initialize 4JI-GENIE to start legal intelligence services.',
       lastCheck: new Date(),
       metrics: {
-        uptime: alexaraStatus?.uptime ?? 0,
-        requestsProcessed: alexaraStatus?.totalResearchQueries ?? 0,
-        errorRate: alexaraStatus ? (alexaraStatus.errorCount / Math.max(alexaraStatus.totalResearchQueries, 1)) * 100 : 0,
+        uptime: lexaraStatus?.uptime ?? 0,
+        requestsProcessed: lexaraStatus?.totalResearchQueries ?? 0,
+        errorRate: lexaraStatus ? (lexaraStatus.errorCount / Math.max(lexaraStatus.totalResearchQueries, 1)) * 100 : 0,
         avgResponseTimeMs: 250,
       },
     });
