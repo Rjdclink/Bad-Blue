@@ -7,6 +7,7 @@ const legalMesh = fs.readFileSync('server/lexara/LegalProviderMesh.ts', 'utf8');
 const authority = fs.readFileSync('server/lexara/LexaraAuthorityResearch.ts', 'utf8');
 const retrieval = fs.readFileSync('server/lexara/LexaraRetrievalBoundary.ts', 'utf8');
 const background = fs.readFileSync('server/lexara/LexaraBackgroundInvestigation.ts', 'utf8');
+const compatibilityBoundary = fs.readFileSync('server/lexara/LexaraBackgroundResearchBoundary.ts', 'utf8');
 const semantic = fs.readFileSync('server/lexara/LexaraSemanticIntentInterpreter.ts', 'utf8');
 const claudeBackground = fs.readFileSync('server/lexara/LexaraClaudeBackgroundSearch.ts', 'utf8');
 const pantheonRegistry = fs.readFileSync('server/services/pantheon/PantheonSovereignSourceRegistry.ts', 'utf8');
@@ -53,6 +54,16 @@ for (const activeLexaraSource of [semantic, claudeBackground]) {
 for (const forbidden of ['PantheonRetrievalAdapter', 'pantheonRetrievalAdapter', '../services/pantheon/', '../services/crawlers/Pantheon']) {
   if (retrieval.includes(forbidden)) throw new Error('Lexara retrieval boundary still depends on Pantheon: ' + forbidden);
   if (background.includes(forbidden)) throw new Error('Lexara background investigator still depends on Pantheon: ' + forbidden);
+}
+for (const forbidden of ['LexaraPantheonInvestigation', 'PantheonDiscoveryCoordinator', '../services/pantheon/', 'discoverPantheonSourcesParallel']) {
+  if (compatibilityBoundary.includes(forbidden)) {
+    throw new Error('Legacy Lexara background compatibility boundary can still reconnect Pantheon: ' + forbidden);
+  }
+}
+for (const required of ['LexaraBackgroundInvestigation', 'investigateLexaraBackgroundQuestion', 'formatLexaraBackgroundResearchForSystem', 'discoverLexaraBackgroundSourcesParallel']) {
+  if (!compatibilityBoundary.includes(required)) {
+    throw new Error('Legacy Lexara background compatibility boundary is not pinned to the native investigator: ' + required);
+  }
 }
 for (const required of ['discoverLegalMeshTier3', 'discoverLegalMeshSupplemental', 'lexaraRetrievalAdapter', 'MAX_RECURSIVE_PASSES', 'directlyAnswers']) {
   if (!background.includes(required)) throw new Error('Lexara native background investigator missing: ' + required);
