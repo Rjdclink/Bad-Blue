@@ -965,7 +965,7 @@ must(
     lexaraBackgroundInvestigation.includes('const decisionResolved = decision.subject') &&
     lexaraBackgroundInvestigation.indexOf('const decisionResolved = decision.subject') < lexaraBackgroundInvestigation.indexOf('const resolved = decisionResolved') &&
     lexaraBackgroundSubject.includes('qualifiedOfLocation') &&
-    lexaraBackgroundSubject.includes('explicitPlace?.[2] || qualifiedOfLocation || prepositionLocation || jurisdiction'),
+    lexaraBackgroundSubject.includes('qualifiedOfLocation || prepositionLocation || explicitPlace?.[2] || jurisdiction'),
   'whole-utterance semantic subjects and explicit locality remain authoritative through the background handoff',
 );
 must(
