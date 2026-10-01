@@ -664,8 +664,11 @@ must(
 );
 
 must(
-  routes.includes("req.path.startsWith('/images/')") &&
-    routes.includes("/\\.[a-z0-9]{2,8}$/i.test(req.path)"),
+  !routes.includes("app.get('*'") &&
+    serverVite.includes("pathname.startsWith('/images/')") &&
+    serverVite.includes("pathname.startsWith('/assets/')") &&
+    serverVite.includes("/\\.[a-z0-9]{2,8}$/i.test(pathname)") &&
+    serverVite.includes("Static asset not found"),
   'SPA routing cannot intercept WEBP or other static assets',
 );
 must(
