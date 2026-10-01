@@ -1,6 +1,8 @@
-import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, CalendarDays, Download, FileText, Loader2, Mic, MicOff, Send, Star } from 'lucide-react';
+import { type FormEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertCircle, CalendarDays, Download, FileText, Loader2, Mic, MicOff, PenLine, Send, Star, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
 import { useVoiceMode, type VoiceTranscriptMeta } from '@/hooks/useVoiceMode';
 import { useVoiceSynthesis } from '@/hooks/useVoiceSynthesis';
 import {
@@ -20,6 +22,18 @@ import { lexaraRealtimeVoiceClient } from '@/lib/lexaraRealtimeVoiceClient';
 interface LexaraConversationProps {
   lawTypeId?: string;
   lawTypeName?: string;
+}
+
+interface ConversationDocument {
+  title: string;
+  content: string;
+  documentType: string;
+  state?: string;
+  esign?: {
+    eligible: boolean;
+    reason: string;
+    authority?: string;
+  };
 }
 
 interface ConversationMessage {
@@ -402,10 +416,17 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const [audioLevel, setAudioLevel] = useState(0);
   const [emotion, setEmotion] = useState<LEXARAEmotionHint>('calm');
   const [gaze, setGaze] = useState<LEXARAGazeHint>('camera');
-  const [conversationDocument, setConversationDocument] = useState<{ title: string; content: string } | null>(null);
+  const [conversationDocument, setConversationDocument] = useState<ConversationDocument | null>(null);
   const [savedArtifact, setSavedArtifact] = useState<{ title: string; fileName: string; mimeType: string; downloadUrl: string } | null>(null);
   const [deadlineCalendar, setDeadlineCalendar] = useState<{ label: string; dueDate: string; downloadUrl: string } | null>(null);
   const [documentBusy, setDocumentBusy] = useState(false);
+  const [signerName, setSignerName] = useState('');
+  const [esignConsent, setEsignConsent] = useState(false);
+  const [esignOpen, setEsignOpen] = useState(false);
+  const [esignBusy, setEsignBusy] = useState(false);
+  const [signatureHasInk, setSignatureHasInk] = useState(false);
+  const signatureCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const signatureDrawingRef = useRef(false);
 
   useEffect(() => {
     // Reuse browser geolocation only when permission is already granted. Live
@@ -1656,7 +1677,13 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       }
       const title = String(data?.title || pendingDocument.title);
       const content = String(data.document);
-      setConversationDocument({ title, content });
+      setConversationDocument({
+        title,
+        content,
+        documentType: String(data?.documentType || pendingDocument.title),
+        state: pendingDocument.state,
+        esign: data?.esign && typeof data.esign === 'object' ? data.esign : undefined,
+      });
       const exported = await fetch('/api/lexara/documents/export', {
         method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title, content, format, sessionId: sessionIdRef.current, lawType: lawTypeId }),
@@ -1674,6 +1701,109 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       setErrorMessage(friendlyError(error));
     } finally {
       setDocumentBusy(false);
+    }
+  };
+
+  const signaturePoint = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    const canvas = signatureCanvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: (event.clientX - rect.left) * (canvas.width / rect.width),
+      y: (event.clientY - rect.top) * (canvas.height / rect.height),
+    };
+  };
+
+  const startSignatureStroke = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    const canvas = signatureCanvasRef.current;
+    const context = canvas?.getContext('2d');
+    if (!canvas || !context) return;
+    event.preventDefault();
+    canvas.setPointerCapture?.(event.pointerId);
+    const point = signaturePoint(event);
+    context.beginPath();
+    context.moveTo(point.x, point.y);
+    context.lineWidth = 2.2;
+    context.lineCap = 'round';
+    context.lineJoin = 'round';
+    context.strokeStyle = '#111827';
+    signatureDrawingRef.current = true;
+  };
+
+  const continueSignatureStroke = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (!signatureDrawingRef.current) return;
+    const context = signatureCanvasRef.current?.getContext('2d');
+    if (!context) return;
+    event.preventDefault();
+    const point = signaturePoint(event);
+    context.lineTo(point.x, point.y);
+    context.stroke();
+    setSignatureHasInk(true);
+  };
+
+  const endSignatureStroke = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (!signatureDrawingRef.current) return;
+    event.preventDefault();
+    signatureDrawingRef.current = false;
+    signatureCanvasRef.current?.releasePointerCapture?.(event.pointerId);
+  };
+
+  const clearSignatureDrawing = () => {
+    const canvas = signatureCanvasRef.current;
+    const context = canvas?.getContext('2d');
+    if (canvas && context) context.clearRect(0, 0, canvas.width, canvas.height);
+    signatureDrawingRef.current = false;
+    setSignatureHasInk(false);
+  };
+
+  const signConversationDocument = async () => {
+    if (!conversationDocument || esignBusy) return;
+    if (!conversationDocument.esign?.eligible) {
+      throw new Error(conversationDocument.esign?.reason || 'This document requires a jurisdiction-specific signing method');
+    }
+    if (signerName.trim().length < 2) throw new Error('Enter the signer name');
+    if (!esignConsent) throw new Error('Electronic-signature consent is required');
+
+    setEsignBusy(true);
+    try {
+      const signatureDataUrl = signatureHasInk
+        ? signatureCanvasRef.current?.toDataURL('image/png')
+        : undefined;
+      const response = await fetch('/api/lexara/documents/sign', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: conversationDocument.title,
+          content: conversationDocument.content,
+          documentType: conversationDocument.documentType,
+          state: conversationDocument.state || jurisdiction,
+          jurisdiction: conversationDocument.state || jurisdiction,
+          lawType: lawTypeId,
+          signerName: signerName.trim(),
+          consentAccepted: true,
+          signatureDataUrl,
+          sessionId: sessionIdRef.current,
+        }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body?.esign?.reason || body?.error || 'Electronic signing failed');
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `${conversationDocument.title.replace(/[^a-z0-9._-]+/gi, '-')}-signed.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      setEsignOpen(false);
+      setEsignConsent(false);
+      clearSignatureDrawing();
+    } finally {
+      setEsignBusy(false);
     }
   };
 
@@ -1878,6 +2008,61 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
                       <Button size="sm" variant="outline" onClick={() => void downloadConversationDocument('docx')}><Download className="mr-1 h-4 w-4" />DOCX</Button>
                       <Button size="sm" variant="outline" onClick={() => void downloadConversationDocument('pdf')}><Download className="mr-1 h-4 w-4" />PDF</Button>
                     </div>
+                    {conversationDocument.esign?.eligible && (
+                      <div className="mt-4 border-t pt-4">
+                        <div className="mb-2 flex items-center gap-2 font-medium"><PenLine className="h-4 w-4" />Electronic signature</div>
+                        {!esignOpen ? (
+                          <Button size="sm" variant="outline" onClick={() => setEsignOpen(true)}>
+                            <PenLine className="mr-1 h-4 w-4" />Sign this document
+                          </Button>
+                        ) : (
+                          <div className="space-y-3">
+                            <Input
+                              value={signerName}
+                              onChange={event => setSignerName(event.target.value)}
+                              placeholder="Signer’s full name"
+                              aria-label="Signer full name"
+                            />
+                            <div>
+                              <div className="mb-1 text-xs text-muted-foreground">Draw signature (optional — typed signer name is still recorded)</div>
+                              <canvas
+                                ref={signatureCanvasRef}
+                                width={560}
+                                height={140}
+                                className="h-28 w-full touch-none rounded-md border bg-white"
+                                aria-label="Draw electronic signature"
+                                onPointerDown={startSignatureStroke}
+                                onPointerMove={continueSignatureStroke}
+                                onPointerUp={endSignatureStroke}
+                                onPointerCancel={endSignatureStroke}
+                              />
+                              <Button type="button" size="sm" variant="ghost" className="mt-1" onClick={clearSignatureDrawing}>
+                                <Trash2 className="mr-1 h-3.5 w-3.5" />Clear drawing
+                              </Button>
+                            </div>
+                            <label className="flex items-start gap-2 text-xs">
+                              <Checkbox
+                                checked={esignConsent}
+                                onCheckedChange={value => setEsignConsent(value === true)}
+                                aria-label="Consent to electronic signature"
+                              />
+                              <span>I intend to sign this document electronically and consent to LegalWhat recording this signature event and retaining a reproducible signed PDF and audit record.</span>
+                            </label>
+                            <div className="flex gap-2">
+                              <Button
+                                size="sm"
+                                disabled={esignBusy || signerName.trim().length < 2 || !esignConsent}
+                                onClick={() => void signConversationDocument().catch(error => setErrorMessage(friendlyError(error)))}
+                              >
+                                {esignBusy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <PenLine className="mr-1 h-4 w-4" />}
+                                Sign & download PDF
+                              </Button>
+                              <Button size="sm" variant="ghost" disabled={esignBusy} onClick={() => setEsignOpen(false)}>Cancel</Button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </>
                 ) : null}
               </div>
