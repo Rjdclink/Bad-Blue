@@ -96,6 +96,7 @@ export async function resolveLexaraResearchDecisionSemantic(
   prompt: string,
   previousUserTurns: string[] = [],
   signal?: AbortSignal,
+  conversationContext?: string,
 ): Promise<LexaraResearchDecision> {
   const text = String(prompt || '').trim();
   const deterministic = decideLexaraResearchNeed(text, previousUserTurns);
@@ -104,7 +105,8 @@ export async function resolveLexaraResearchDecisionSemantic(
     return deterministic;
   }
 
-  const prior = previousUserTurns.slice(-6).map((turn, index) => `USER_${index + 1}: ${turn}`).join('\n');
+  const userTurnContext = previousUserTurns.slice(-6).map((turn, index) => `USER_${index + 1}: ${turn}`).join('\n');
+  const prior = String(conversationContext || userTurnContext).trim().slice(-5_000);
   const classificationPrompt = `Classify whether this turn needs EXTERNAL BACKGROUND FACT RESEARCH.
 
 This classifier exists only to detect:
