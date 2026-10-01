@@ -66,16 +66,17 @@ function supportedSubject(
   prompt: string,
   previousUserTurns: readonly string[],
 ): string | undefined {
-  const resolved = resolveLexaraBackgroundSubject(prompt, previousUserTurns)?.name;
-  if (resolved) return resolved;
-
+  // The whole-utterance semantic interpretation is the authoritative handoff
+  // when it identifies a subject that is actually grounded in the conversation.
+  // Raw capitalization parsing is fallback-only and must never override it.
   const candidate = String(semanticSubject || '').trim().replace(/\s+/g, ' ');
-  if (!candidate || candidate.length > 140) return undefined;
-  const corpus = [prompt, ...previousUserTurns].join(' ').toLowerCase();
-  const meaningful = candidate.toLowerCase().split(/\s+/).filter(token => token.length > 1);
-  return meaningful.length && meaningful.every(token => corpus.includes(token))
-    ? candidate
-    : undefined;
+  if (candidate && candidate.length <= 140) {
+    const corpus = [prompt, ...previousUserTurns].join(' ').toLowerCase();
+    const meaningful = candidate.toLowerCase().split(/\s+/).filter(token => token.length > 1);
+    if (meaningful.length && meaningful.every(token => corpus.includes(token))) return candidate;
+  }
+
+  return resolveLexaraBackgroundSubject(prompt, previousUserTurns)?.name;
 }
 
 function requestedFactFromSemantic(value: string | undefined): LexaraRequestedFact {
@@ -84,13 +85,11 @@ function requestedFactFromSemantic(value: string | undefined): LexaraRequestedFa
 }
 
 /**
- * Semantic fallback for background or mixed legal/background intent.
+ * Semantic authority for background or mixed legal/background intent.
  *
- * The deterministic planner remains the zero-latency fast path for already
- * recognized factual/mixed turns. Claude semantically reviews otherwise
- * conversational or legal-only turns so hidden background dependencies do not
- * require magic words, while pure legal-only routing remains unchanged when
- * no external factual dependency exists.
+ * The deterministic planner remains a failure-safe fallback, but substantive
+ * turns are interpreted from the whole utterance and conversation context so a
+ * capitalization heuristic cannot silently replace Lexara's understood subject.
  */
 export async function resolveLexaraResearchDecisionSemantic(
   prompt: string,
@@ -100,8 +99,7 @@ export async function resolveLexaraResearchDecisionSemantic(
 ): Promise<LexaraResearchDecision> {
   const text = String(prompt || '').trim();
   const deterministic = decideLexaraResearchNeed(text, previousUserTurns);
-  if ((deterministic.intent === 'factual' || deterministic.intent === 'mixed')
-    || !text || isLexaraConversationControl(text) || LOW_VALUE_CONVERSATION.test(text)) {
+  if (!text || isLexaraConversationControl(text) || LOW_VALUE_CONVERSATION.test(text)) {
     return deterministic;
   }
 
@@ -155,11 +153,14 @@ ${text}`;
     const semantic = JSON.parse(cleanJson(response.content)) as SemanticIntentPayload;
     const semanticIntent = semantic.intent;
     if (semantic.needed !== true || (semanticIntent !== 'factual' && semanticIntent !== 'mixed')) return deterministic;
-    const intent: LexaraResearchIntent = deterministic.intent === 'legal' ? 'mixed' : semanticIntent;
+    const intent: LexaraResearchIntent =
+      deterministic.intent === 'legal' || deterministic.intent === 'mixed' ? 'mixed' : semanticIntent;
 
     const subject = supportedSubject(semantic.subject, text, previousUserTurns);
     const requestedFact = requestedFactFromSemantic(semantic.requestedFact);
-    const effectiveFact = requestedFact === 'none' ? 'general-public-record' : requestedFact;
+    const effectiveFact = requestedFact === 'none'
+      ? deterministic.requestedFact !== 'none' ? deterministic.requestedFact : 'general-public-record'
+      : requestedFact;
     const sourceCategories = sourceCategoriesForFact(effectiveFact, text);
     const objective = String(semantic.objective || text).trim().slice(0, 600) || text;
     const standaloneQuery = [subject, objective, effectiveFact.replace(/-/g, ' ')]
