@@ -953,6 +953,8 @@ must(
   lexaraSemanticIntent.includes('resolveLexaraResearchDecisionSemantic') &&
     lexaraSemanticIntent.includes('Do not require special words') &&
     lexaraSemanticIntent.includes("deterministic.intent === 'legal'") &&
+    lexaraConversationOrchestrator.includes('semanticResearchDecisionPromise') &&
+    lexaraConversationOrchestrator.indexOf('semanticResearchDecisionPromise') < lexaraConversationOrchestrator.indexOf('await resolveUSJurisdiction(') &&
     lexaraConversationOrchestrator.includes('semanticResearchDecision'),
   'Lexara dynamically infers background and mixed legal/background intent without requiring magic search terms',
 );
