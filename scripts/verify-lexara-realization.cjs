@@ -969,6 +969,7 @@ must(
     lexaraSemanticIntent.includes('deterministicSubjectNeedsSemanticReview') &&
     lexaraSemanticIntent.includes('hasMultipleLexaraBackgroundSubjectCandidates') &&
     lexaraSemanticIntent.includes('subjectKindFromSemantic') &&
+    lexaraSemanticIntent.includes("const standaloneQuery = [subject, text, objective") &&
     lexaraSemanticIntent.includes('supportedSubject(semantic.subject, text, previousUserTurns, needsSubjectReview)') &&
     lexaraConversationOrchestrator.includes("kind: researchDecision.subjectKind || 'person' as const") &&
     lexaraSemanticIntent.includes("deterministic.intent === 'legal'") &&
