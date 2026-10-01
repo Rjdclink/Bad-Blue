@@ -10,6 +10,7 @@ import {
 import {
   discoverLegalMeshSupplemental,
   discoverLegalMeshTier3,
+  getLexaraConfiguredDiscoveryLanes,
   type LegalMeshCandidate,
 } from './LegalProviderMesh';
 import { lexaraRetrievalAdapter } from './LexaraRetrievalBoundary';
@@ -472,7 +473,10 @@ export async function investigateLexaraBackgroundQuestion(
         : 'Lexara searched and attempted retrieval but did not obtain usable public source content for this factual objective.',
       endpoint,
       recursionPasses: 1,
-      discoveryLanes: [...new Set(nativeCandidates.map(item => item.provider))],
+      discoveryLanes: [...new Set([
+        ...getLexaraConfiguredDiscoveryLanes(),
+        ...nativeCandidates.map(item => item.provider),
+      ])],
     };
   }
   const subject = cleanSubject(resolved);
@@ -490,7 +494,7 @@ export async function investigateLexaraBackgroundQuestion(
   const assessed = new Map<string, AssessedEvidence>();
   const claudeCitationEvidence = new Map<string, { content: string; retrievedAt: string }>();
   const seenUrls = new Set<string>();
-  const discoveryLanes = new Set<string>();
+  const discoveryLanes = new Set<string>(getLexaraConfiguredDiscoveryLanes());
   let candidates: LegalMeshCandidate[] = [];
   let recursionPasses = 0;
   let exhausted = false;
