@@ -25,6 +25,13 @@ import { LEGAL_DOCUMENT_TYPES, resolveLegalDocumentType, validateLegalDocumentDr
 import { persistMatterBuffer } from '../lexara/LexaraMatterStorage';
 import { sanitizeRepresentationMatter } from '../lexara/LexaraRepresentationEngine';
 import { randomUUID } from 'crypto';
+import { pool } from '../db';
+import {
+  assessGenericESignEligibility,
+  LEGALWHAT_ESIGN_CONSENT,
+  parseSignaturePngDataUrl,
+  sha256Hex,
+} from '../lexara/LegalESignature';
 
 const log = createLogger('ConsultationRoutes');
 const MAX_FMI_CONTEXT_CHARACTERS = 8_000;
@@ -210,6 +217,67 @@ async function renderPdfBuffer(title: string, content: string): Promise<Buffer> 
   return complete;
 }
 
+async function renderSignedPdfBuffer(input: {
+  title: string;
+  content: string;
+  signerName: string;
+  signedAt: string;
+  auditId: string;
+  originalContentHash: string;
+  consentText: string;
+  signaturePng?: Buffer | null;
+}): Promise<Buffer> {
+  const pdf = new PDFDocument({
+    size: 'LETTER',
+    margins: { top: 72, bottom: 72, left: 72, right: 72 },
+    info: { Title: input.title },
+  });
+  const chunks: Buffer[] = [];
+  const complete = new Promise<Buffer>((resolve, reject) => {
+    pdf.on('data', chunk => chunks.push(Buffer.from(chunk)));
+    pdf.on('end', () => resolve(Buffer.concat(chunks)));
+    pdf.on('error', reject);
+  });
+
+  pdf.font('Times-Roman').fontSize(12).text(input.content, { lineGap: 4, align: 'left' });
+  pdf.moveDown(2);
+  pdf.font('Times-Bold').fontSize(12).text('Electronic Signature');
+  pdf.moveDown(0.5);
+  if (input.signaturePng) {
+    try {
+      pdf.image(input.signaturePng, { fit: [220, 80], align: 'left' });
+      pdf.moveDown(0.5);
+    } catch {
+      // Typed signer identity remains the authoritative visible signature if
+      // the optional drawing cannot be rendered.
+    }
+  }
+  pdf.font('Times-Roman').fontSize(12).text(`Signed electronically by: ${input.signerName}`);
+  pdf.text(`Signed at: ${input.signedAt}`);
+  pdf.text(`LegalWhat audit ID: ${input.auditId}`);
+
+  pdf.addPage();
+  pdf.font('Times-Bold').fontSize(16).text('LegalWhat Electronic Signature Audit Record');
+  pdf.moveDown();
+  pdf.font('Times-Roman').fontSize(10);
+  pdf.text(`Document: ${input.title}`);
+  pdf.text(`Signer: ${input.signerName}`);
+  pdf.text(`Signed at (UTC): ${input.signedAt}`);
+  pdf.text(`Audit ID: ${input.auditId}`);
+  pdf.text(`Original document SHA-256: ${input.originalContentHash}`);
+  pdf.moveDown();
+  pdf.font('Times-Bold').text('Consent recorded');
+  pdf.font('Times-Roman').text(input.consentText, { lineGap: 3 });
+  pdf.moveDown();
+  pdf.font('Times-Roman').fontSize(9).text(
+    'This audit page records the electronic-signature event and the SHA-256 fingerprint of the exact document text presented for signing. It is not a certificate-authority digital signature, notarization, or representation that electronic execution is permitted for every document or jurisdiction.',
+    { lineGap: 3 },
+  );
+
+  pdf.end();
+  return complete;
+}
+
 async function renderDocxBuffer(content: string): Promise<Buffer> {
   const zip = archiver('zip', { zlib: { level: 9 } });
   const chunks: Buffer[] = [];
@@ -376,6 +444,7 @@ export function setupConsultationRoutes(app: Express): void {
       officialForm,
       reviewRequired: true,
       notice: 'Draft generated from supplied facts. Verify facts, authorities, local rules, deadlines, signatures, service, and filing requirements before use.',
+      esign: assessGenericESignEligibility({ documentType: documentLabel, lawType: typeof req.body?.lawType === 'string' ? req.body.lawType : undefined, title: documentLabel, content: finalDocument }),
     });
   }));
 
@@ -460,6 +529,93 @@ export function setupConsultationRoutes(app: Express): void {
     res.setHeader('Content-Disposition', 'attachment; filename="lexara-official-form.' + extension + '"');
     res.setHeader('X-Lexara-Official-Source', inspected.sourceUrl);
     res.send(output);
+  }));
+
+  app.post('/api/lexara/documents/sign', isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
+    const title = String(req.body?.title || 'Lexara Legal Document').trim().slice(0, 160);
+    const content = String(req.body?.content || '').trim();
+    const documentType = String(req.body?.documentType || '').trim().slice(0, 160);
+    const lawType = typeof req.body?.lawType === 'string' ? req.body.lawType.trim().slice(0, 120) : undefined;
+    const jurisdiction = String(req.body?.jurisdiction || req.body?.state || '').trim().slice(0, 160);
+    const signerName = String(req.body?.signerName || '').trim().replace(/[\r\n]+/g, ' ').slice(0, 160);
+    const consentAccepted = req.body?.consentAccepted === true;
+    const matterSessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId.trim().slice(0, 128) : undefined;
+
+    if (!content || content.length > 200_000) return res.status(400).json({ error: 'A valid document is required for signing' });
+    if (!documentType) return res.status(400).json({ error: 'Document type is required for signing' });
+    if (signerName.length < 2) return res.status(400).json({ error: 'Signer name is required' });
+    if (!consentAccepted) return res.status(400).json({ error: 'Electronic-signature consent is required' });
+
+    const eligibility = assessGenericESignEligibility({ documentType, lawType, title, content });
+    if (!eligibility.eligible) {
+      return res.status(409).json({
+        error: 'This document requires a jurisdiction-specific signing method',
+        esign: eligibility,
+      });
+    }
+
+    const userId = authenticatedUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Authentication required' });
+
+    let signaturePng: Buffer | null = null;
+    try {
+      signaturePng = parseSignaturePngDataUrl(req.body?.signatureDataUrl);
+    } catch (error) {
+      return res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid signature drawing' });
+    }
+
+    const signedAt = new Date().toISOString();
+    const auditId = `sig_${randomUUID()}`;
+    const originalContentHash = sha256Hex(Buffer.from(content, 'utf8'));
+    const signedPdf = await renderSignedPdfBuffer({
+      title,
+      content,
+      signerName,
+      signedAt,
+      auditId,
+      originalContentHash,
+      consentText: LEGALWHAT_ESIGN_CONSENT,
+      signaturePng,
+    });
+    const signedPdfHash = sha256Hex(signedPdf);
+
+    await pool.query(
+      `INSERT INTO legal_signature_audits (
+         id, user_id, matter_session_id, title, document_type, jurisdiction,
+         signer_name, consent_text, original_content_sha256, signed_pdf_sha256, signed_at
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [
+        auditId,
+        userId,
+        matterSessionId || null,
+        title,
+        documentType,
+        jurisdiction || null,
+        signerName,
+        LEGALWHAT_ESIGN_CONSENT,
+        originalContentHash,
+        signedPdfHash,
+        signedAt,
+      ],
+    );
+
+    const safeBase = (title || 'lexara-document').replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 100) || 'lexara-document';
+    await saveMatterArtifact(req, matterSessionId, {
+      title: `${title} — Signed`,
+      kind: 'document',
+      bytes: signedPdf,
+      mimeType: 'application/pdf',
+      fileName: `${safeBase}-signed.pdf`,
+      documentText: content,
+      lawType,
+    }).catch(error => log.warn('Signed PDF completed but persistent matter save failed route-locally', { error, auditId }));
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeBase}-signed.pdf"`);
+    res.setHeader('X-LegalWhat-Signature-Audit-Id', auditId);
+    res.setHeader('X-LegalWhat-Original-SHA256', originalContentHash);
+    res.setHeader('X-LegalWhat-Signed-PDF-SHA256', signedPdfHash);
+    return res.send(signedPdf);
   }));
 
   app.post('/api/lexara/documents/export', isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
