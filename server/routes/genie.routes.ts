@@ -3,7 +3,7 @@
  * 
  * API endpoints for the dual-module AI system:
  * - Authentication (canonical platform master session)
- * - Request routing to ALEXARA or CRYPTARA
+ * - Request routing to LEXARA or CRYPTARA
  * - Admin panel access
  * - Module diagnostics
  * - Permissions management
@@ -151,7 +151,7 @@ router.get('/auth/status', async (req: Request, res: Response) => {
 
 /**
  * POST /api/genie/route
- * Route a request to ALEXARA or CRYPTARA
+ * Route a request to LEXARA or CRYPTARA
  */
 router.post('/route', async (req: Request, res: Response) => {
   try {
@@ -242,30 +242,33 @@ router.get('/diagnostics', async (req: Request, res: Response) => {
 });
 
 /**
- * GET /api/genie/alexara/status
- * Get ALEXARA status
+ * GET /api/genie/lexara/status
+ * Get LEXARA status.
  */
-router.get('/alexara/status', async (req: Request, res: Response) => {
+const lexaraStatusHandler = async (_req: Request, res: Response) => {
   try {
     await initializeGenie();
-    
-    const alexara = genie?.getAlexara();
-    const status = alexara?.getStatus();
-    const crawlerSchedule = alexara?.getCrawlerSchedule();
-    
+
+    const lexara = genie?.getLexara();
+    const status = lexara?.getStatus();
+    const crawlerSchedule = lexara?.getCrawlerSchedule();
+
     return res.json({
       success: true,
       status,
       crawlerSchedule,
     });
   } catch (error: any) {
-    log.error('ALEXARA status error', { error });
-    return res.status(500).json({ 
-      success: false, 
-      error: error.message 
+    log.error('LEXARA status error', { error });
+    return res.status(500).json({
+      success: false,
+      error: error.message,
     });
   }
-});
+};
+router.get('/lexara/status', lexaraStatusHandler);
+// Legacy route kept as a no-break compatibility alias.
+router.get('/alexara/status', lexaraStatusHandler);
 
 /**
  * GET /api/genie/cryptara/status
@@ -670,28 +673,24 @@ router.post('/cryptara/simulation', async (req: Request, res: Response) => {
 });
 
 // ============================================================================
-// ALEXARA RESEARCH ROUTE
+// LEXARA RESEARCH ROUTES
 // ============================================================================
 
-/**
- * POST /api/genie/alexara/research
- * Perform legal research via ALEXARA
- */
-router.post('/alexara/research', async (req: Request, res: Response) => {
+const lexaraResearchHandler = async (req: Request, res: Response) => {
   try {
     await initializeGenie();
-    
+
     const { query, jurisdiction, lawType, userId, sessionId, context } = req.body;
-    
+
     if (!query) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'query is required' 
+      return res.status(400).json({
+        success: false,
+        error: 'query is required',
       });
     }
-    
-    const alexara = genie?.getAlexara();
-    const result = await alexara?.performResearch({
+
+    const lexara = genie?.getLexara();
+    const result = await lexara?.performResearch({
       query,
       jurisdiction,
       lawType,
@@ -699,56 +698,58 @@ router.post('/alexara/research', async (req: Request, res: Response) => {
       sessionId,
       context,
     });
-    
+
     return res.json({
       success: true,
       result,
     });
   } catch (error: any) {
     log.error('Research error', { error });
-    return res.status(500).json({ 
-      success: false, 
-      error: error.message 
+    return res.status(500).json({
+      success: false,
+      error: error.message,
     });
   }
-});
+};
 
-/**
- * POST /api/genie/alexara/document
- * Generate legal document via ALEXARA
- */
-router.post('/alexara/document', async (req: Request, res: Response) => {
+const lexaraDocumentHandler = async (req: Request, res: Response) => {
   try {
     await initializeGenie();
-    
+
     const { documentType, jurisdiction, context, userId } = req.body;
-    
+
     if (!documentType || !jurisdiction) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'documentType and jurisdiction are required' 
+      return res.status(400).json({
+        success: false,
+        error: 'documentType and jurisdiction are required',
       });
     }
-    
-    const alexara = genie?.getAlexara();
-    const result = await alexara?.generateDocument({
+
+    const lexara = genie?.getLexara();
+    const result = await lexara?.generateDocument({
       documentType,
       jurisdiction,
       context: context || {},
       userId,
     });
-    
+
     return res.json({
       success: true,
       result,
     });
   } catch (error: any) {
     log.error('Document generation error', { error });
-    return res.status(500).json({ 
-      success: false, 
-      error: error.message 
+    return res.status(500).json({
+      success: false,
+      error: error.message,
     });
   }
-});
+};
+
+router.post('/lexara/research', lexaraResearchHandler);
+router.post('/lexara/document', lexaraDocumentHandler);
+// Legacy routes kept as no-break compatibility aliases.
+router.post('/alexara/research', lexaraResearchHandler);
+router.post('/alexara/document', lexaraDocumentHandler);
 
 export default router;
