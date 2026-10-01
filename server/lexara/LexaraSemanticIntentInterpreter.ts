@@ -90,7 +90,7 @@ function deterministicSubjectNeedsSemanticReview(subject?: string): boolean {
   const value = String(subject || '').trim();
   return !value
     || /^(?:hello|hi|hey|good|thanks|thank|okay|ok|alright|sure|so|well|actually|anyway|what|who|where|when|how|does|did|has|have|is|are|can|could|would|should)(?:\b|[.])/i.test(value)
-    || /[.!?]\s*(?:what|who|where|when|how|does|did|has|have|is|are|can|could|would|should)\b/i.test(value);
+    || /[.!?]\s*(?:what|who|where|when|how|does|did|has|have|is|are|can|could|would|should|tell|find|check|show|look)\b/i.test(value);
 }
 
 /**
