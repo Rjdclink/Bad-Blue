@@ -224,6 +224,10 @@ export async function resolveJurisdictionAuthorityProfile(
     ? await fetchStateDirectory(state.name, signal)
     : { url: undefined, resources: [] as JurisdictionOfficialResource[] };
   const federalDistricts = directory.resources.filter(resource => resource.kind === 'federal-district');
+  const legalDirectoryResources = directory.resources.filter(resource =>
+    resource.kind !== 'directory'
+    || /\b(?:court|judicial|judiciary|legislature|laws?|code|statute)\b/i.test(resource.title)
+  );
 
   const officialResources: JurisdictionOfficialResource[] = [
     ...(directory.url ? [{
@@ -244,7 +248,7 @@ export async function resolveJurisdictionAuthorityProfile(
       host: 'uscourts.gov',
       kind: 'rules' as const
     },
-    ...directory.resources
+    ...legalDirectoryResources
   ];
   const preferredOfficialDomains = [...new Set(
     officialResources.map(resource => resource.host).filter(Boolean)
