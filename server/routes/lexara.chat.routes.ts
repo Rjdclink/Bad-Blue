@@ -326,6 +326,16 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       String(req.headers['x-real-ip'] || req.headers['cf-connecting-ip'] || req.ip || ''),
       cleanDeviceLocation((rawContext as any).deviceLocation),
     );
+    const preRepresentationMatter = await advanceRepresentationMatter({
+      prompt,
+      response: '',
+      sessionId: activeSessionId,
+      lawType: cleanOptionalString((rawContext as any).lawType),
+      jurisdiction: explicitJurisdiction || representationContext.activeMatter?.jurisdiction,
+      prior: representationContext.activeMatter,
+      allowClaudeOpus: canUseClaudeOpus(req),
+      signal: controller.signal,
+    });
     const result = await generateLexaraConversationResponse(prompt, {
       previousMessages: effectivePreviousMessages,
       lawType: cleanOptionalString((rawContext as any).lawType),
@@ -338,7 +348,7 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       backgroundLocationSource: locationState?.provider,
       behaviorMode: (rawContext as any).behaviorMode === 'personable' ? 'personable' : 'professional',
       sessionId: activeSessionId,
-      representationMatter: representationContext.activeMatter,
+      representationMatter: preRepresentationMatter || representationContext.activeMatter,
       savedMatters: representationContext.savedMatters,
       allowClaudeOpus: canUseClaudeOpus(req),
       signal: controller.signal,
@@ -368,7 +378,7 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       sessionId: activeSessionId,
       lawType: cleanOptionalString((rawContext as any).lawType),
       jurisdiction: result.jurisdiction || explicitJurisdiction,
-      prior: representationContext.activeMatter,
+      prior: preRepresentationMatter || representationContext.activeMatter,
       allowClaudeOpus: canUseClaudeOpus(req),
       signal: controller.signal,
     });
@@ -471,6 +481,15 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       && sessionId !== requestedSessionId
       ? []
       : previousMessages;
+    const preRepresentationMatter = await advanceRepresentationMatter({
+      prompt,
+      response: '',
+      sessionId,
+      lawType,
+      jurisdiction: explicitJurisdiction || representationContext.activeMatter?.jurisdiction,
+      prior: representationContext.activeMatter,
+      allowClaudeOpus: canUseClaudeOpus(req),
+    });
     const documentIntent = detectDocumentIntent(prompt, effectivePreviousMessages);
 
     log.info('[LEXARA] Conversational legal turn received', {
@@ -503,7 +522,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
         backgroundLocationSource: locationState?.provider,
         behaviorMode,
         sessionId,
-        representationMatter: representationContext.activeMatter,
+        representationMatter: preRepresentationMatter || representationContext.activeMatter,
         savedMatters: representationContext.savedMatters,
         allowClaudeOpus: canUseClaudeOpus(req),
         signal: requestController.signal,
@@ -521,7 +540,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       sessionId,
       lawType,
       jurisdiction: conversationResult.jurisdiction || jurisdiction,
-      prior: representationContext.activeMatter,
+      prior: preRepresentationMatter || representationContext.activeMatter,
       allowClaudeOpus: canUseClaudeOpus(req),
       signal: requestController.signal,
     });
