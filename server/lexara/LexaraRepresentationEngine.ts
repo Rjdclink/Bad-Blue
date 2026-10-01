@@ -266,14 +266,43 @@ async function buildPacket(
   options: { allowClaudeOpus?: boolean; signal?: AbortSignal },
 ): Promise<RepresentationPacket> {
   const profile = getLexaraLegalDomainProfile(matter.lawType);
-  const research = await researchLegalAuthority(packetResearchPrompt(matter), {
+  const basePrompt = packetResearchPrompt(matter);
+  const researchPrompts = [
+    basePrompt,
+    `${basePrompt}\n\nBROADENING PASS: Find the exact local court/agency forms library, official packet/checklist, local rules or standing orders, filing method, service documents, fee/fee-waiver requirements, and any required cover or confidential-information sheets.`,
+    `${basePrompt}\n\nCONDITIONAL PASS: Identify branch-dependent forms and attachments triggered by the user's facts or common procedural forks, and verify current form edition/revision information. Include what changes after filing, service, response, hearing, or review when the current stage makes those documents part of this package.`,
+  ];
+  const researchResults = (await Promise.all(researchPrompts.map(prompt => researchLegalAuthority(prompt, {
     jurisdiction: matter.jurisdiction,
     domainName: profile?.displayName,
     researchHints: profile?.researchHints,
     preferredOfficialDomains: profile?.preferredOfficialDomains,
     forceResearch: true,
     signal: options.signal,
-  });
+  })))).filter((result): result is LexaraAuthorityResearch => Boolean(result));
+
+  const mergedSourceMap = new Map<string, LexaraAuthoritySource>();
+  for (const result of researchResults) {
+    for (const source of result.sources) {
+      const key = normalizeSourceUrl(source.url);
+      if (!key || mergedSourceMap.has(key)) continue;
+      mergedSourceMap.set(key, source);
+      if (mergedSourceMap.size >= 40) break;
+    }
+    if (mergedSourceMap.size >= 40) break;
+  }
+  const mergedSources = [...mergedSourceMap.values()];
+  const firstResearch = researchResults[0];
+  const research: LexaraAuthorityResearch | null = firstResearch && mergedSources.length ? {
+    ...firstResearch,
+    sources: mergedSources,
+    hasPrimaryAuthority: mergedSources.some(source => source.kind === 'primary'),
+    selectedCrawlers: [...new Set(researchResults.flatMap(result => result.selectedCrawlers))],
+    searchedAt: researchResults.map(result => result.searchedAt).sort().at(-1) || firstResearch.searchedAt,
+    summary: mergedSources.map((source, index) =>
+      `${index + 1}. [${source.kind.toUpperCase()}] ${source.title} — ${source.url}${source.excerpt ? `\nEvidence excerpt: ${source.excerpt}` : ''}`
+    ).join('\n'),
+  } : null;
 
   const empty: RepresentationPacket = {
     name: `${matter.title} filing packet`,
