@@ -258,6 +258,20 @@ function matterTitle(proceeding: string | undefined, jurisdiction: string | unde
   return jurisdiction ? `${base} — ${jurisdiction}` : base;
 }
 
+function updateMatterTitle(matter: RepresentationMatterState, prompt: string, prior?: RepresentationMatterState | null): void {
+  const explicit = /\b(?:call|name|label)\s+(?:this\s+)?(?:matter|case|file)\s+(?:as\s+)?["“]?([^"”\n]{3,80})["”]?/i.exec(prompt);
+  if (explicit?.[1]) {
+    matter.title = clamp(explicit[1], 100);
+    return;
+  }
+  if (prior?.title && prior.title !== matterTitle(prior.proceeding, prior.jurisdiction, prior.lawType)) return;
+  const distinctParties = [...new Set(matter.parties.map(party => party.trim()).filter(Boolean))].slice(0, 2);
+  if (!distinctParties.length) return;
+  const base = matter.proceeding || getLexaraLegalDomainProfile(matter.lawType)?.displayName || 'Legal matter';
+  const jurisdiction = matter.jurisdiction ? ` — ${matter.jurisdiction}` : '';
+  matter.title = `${base} — ${distinctParties.join(' / ')}${jurisdiction}`;
+}
+
 function shouldOpenMatter(prompt: string, prior?: RepresentationMatterState | null): boolean {
   if (isSavedMatterListRequest(prompt)) return false;
   return Boolean(prior) || MATTER_SIGNAL.test(prompt);
@@ -726,6 +740,7 @@ export async function advanceRepresentationMatter(input: AdvanceMatterInput): Pr
       // Matter persistence must never block the legal answer if structured state
       // extraction is temporarily unavailable. The deterministic core above remains.
     }
+    updateMatterTitle(matter, input.prompt, prior);
   }
 
   if (shouldPlanPacket(input.prompt, matter)) {
