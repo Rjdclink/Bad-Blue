@@ -1,13 +1,14 @@
-// Lexara owns this research surface; underlying utilities remain shared and unchanged.
+// Compatibility boundary retained for callers that have not yet moved to the direct
+// Lexara import. It must resolve only to Lexara-native background research.
 export {
-  investigatePersonQuestion as investigateLexaraBackgroundQuestion,
-  formatPantheonInvestigationForSystem as formatLexaraBackgroundResearchForSystem,
-} from './LexaraPantheonInvestigation';
+  investigateLexaraBackgroundQuestion,
+  formatLexaraBackgroundResearchForSystem,
+  discoverLexaraBackgroundSourcesParallel,
+} from './LexaraBackgroundInvestigation';
 export type {
-  LexaraPersonInvestigation as LexaraBackgroundResearchResult,
-  LexaraPantheonProgressEvent as LexaraBackgroundProgressEvent,
-} from './LexaraPantheonInvestigation';
-export { discoverPantheonSourcesParallel as discoverLexaraBackgroundSourcesParallel } from '../services/pantheon/PantheonDiscoveryCoordinator';
+  LexaraBackgroundResearchResult,
+  LexaraBackgroundProgressEvent,
+} from './LexaraBackgroundInvestigation';
 
 export {
   getLexaraSupplementalQueryHints,
