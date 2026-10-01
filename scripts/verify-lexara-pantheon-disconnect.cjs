@@ -7,6 +7,7 @@ const legalMesh = fs.readFileSync('server/lexara/LegalProviderMesh.ts', 'utf8');
 const authority = fs.readFileSync('server/lexara/LexaraAuthorityResearch.ts', 'utf8');
 const retrieval = fs.readFileSync('server/lexara/LexaraRetrievalBoundary.ts', 'utf8');
 const background = fs.readFileSync('server/lexara/LexaraBackgroundInvestigation.ts', 'utf8');
+const backgroundBoundary = fs.readFileSync('server/lexara/LexaraBackgroundResearchBoundary.ts', 'utf8');
 const semantic = fs.readFileSync('server/lexara/LexaraSemanticIntentInterpreter.ts', 'utf8');
 const claudeBackground = fs.readFileSync('server/lexara/LexaraClaudeBackgroundSearch.ts', 'utf8');
 const pantheonRegistry = fs.readFileSync('server/services/pantheon/PantheonSovereignSourceRegistry.ts', 'utf8');
@@ -27,6 +28,13 @@ if (orchestrator.includes("from './LexaraBackgroundResearchBoundary'")
   || orchestrator.includes("from '../services/pantheon/")) {
   throw new Error('Lexara conversation runtime still imports Pantheon');
 }
+if (!backgroundBoundary.includes("from './LexaraBackgroundInvestigation'")
+  || backgroundBoundary.includes('LexaraPantheonInvestigation')
+  || backgroundBoundary.includes('PantheonDiscoveryCoordinator')
+  || backgroundBoundary.includes("../services/pantheon/")) {
+  throw new Error('Lexara compatibility boundary can still route background research through Pantheon');
+}
+
 if (!orchestrator.includes("const backgroundResearchRequested = sequencePlan.useBackgroundResearch")
   || !orchestrator.includes('const researchRouteSelected = sequencePlan.useLegalResearch')
   || !orchestrator.includes('forceResearch: true')
