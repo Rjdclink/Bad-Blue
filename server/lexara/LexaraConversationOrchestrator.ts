@@ -624,6 +624,7 @@ export async function generateLexaraConversationResponse(
         categories: researchDecision.sourceCategories,
         subject: researchDecision.subject,
         requestedFact: researchDecision.requestedFact,
+        researchDecision,
       }).then(discovery => ({
         sources: [], searchLeads: discovery.urls, categories: [], fullBackgroundReportRequested: false,
         endpoint: discovery.urls.length ? 'search-leads-only' as const : 'unavailable' as const,
