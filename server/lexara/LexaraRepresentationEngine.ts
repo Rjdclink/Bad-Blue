@@ -147,6 +147,9 @@ const MATTER_SIGNAL =
 const PACKET_SIGNAL =
   /\b(?:file|filing|packet|form|forms|petition|complaint|motion|appeal|divorc|custod|bankrupt|probate|evict|application|administrative\s+review|hearing|lawsuit|sue|service|summons|proposed\s+order)\b/i;
 
+const PACKET_BRANCH_SIGNAL =
+  /\b(?:child|children|minor|custod|visitation|parenting|property|asset|debt|support|alimony|spousal|service|serve|cannot\s+(?:find|locate)|publication|waiver|fee|indigent|emergency|temporary|protective|domestic\s+violence|contested|uncontested|agreement|default|counterclaim|address|county|court|agency|hearing|appeal|evidence|representative)\b/i;
+
 function clamp(value: unknown, max = 400): string {
   const text = typeof value === 'string' ? value.trim() : '';
   return text.length <= max ? text : text.slice(0, max);
@@ -262,7 +265,11 @@ function shouldOpenMatter(prompt: string, prior?: RepresentationMatterState | nu
 
 function shouldPlanPacket(prompt: string, matter: RepresentationMatterState): boolean {
   if (!matter.jurisdiction || !matter.proceeding) return false;
-  if (matter.packet?.coverage === 'verified' && !/\b(?:changed|different|new|another|update|amend|modify)\b/i.test(prompt)) {
+  if (
+    matter.packet?.coverage === 'verified'
+    && !/\b(?:changed|different|new|another|update|amend|modify)\b/i.test(prompt)
+    && !PACKET_BRANCH_SIGNAL.test(prompt)
+  ) {
     return false;
   }
   return PACKET_SIGNAL.test(prompt);
@@ -275,6 +282,8 @@ function packetResearchPrompt(matter: RepresentationMatterState): string {
     `Jurisdiction: ${matter.jurisdiction || 'not yet established'}`,
     matter.courtOrAgency ? `Court/agency: ${matter.courtOrAgency}` : '',
     `Current procedural stage: ${matter.stage}`,
+    `Known matter facts: ${JSON.stringify(matter.knownFacts)}`,
+    `Known missing information: ${JSON.stringify(matter.missingInformation)}`,
     'Identify the COMPLETE current filing package for this exact proceeding and stage.',
     'Find every mandatory form/document and every conditional document triggered by common factual branches, including local court/agency forms, statewide/federal forms, cover sheets, summons/service papers, confidential-information forms, disclosures, financial forms, fee/fee-waiver papers, proposed orders, certificates/proofs of service, required attachments, exhibits, and supporting documents.',
     'Prefer the exact court/agency and local rules/forms over generic statewide or federal material when both exist.',
@@ -361,6 +370,8 @@ async function buildPacket(
       jurisdiction: matter.jurisdiction,
       courtOrAgency: matter.courtOrAgency,
       stage: matter.stage,
+      knownFacts: matter.knownFacts,
+      missingInformation: matter.missingInformation,
     })}`,
     '',
     `APPLICATION-SUPPLIED SOURCES:\n${sourceDigest}`,
