@@ -296,14 +296,24 @@ async function commonCrawl(query: string, existingUrls: readonly string[], optio
 }
 
 async function freeSearch(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
-  const groups=await Promise.all([
-    tavily(query,signal),
-    duckDuckGoInstantAnswer(query,signal),
-    searxng(query,signal),
-    ddgs(query,signal),
-    openserp(query,signal),
-  ]);
-  return groups.flat();
+  // One parent listener per query variant prevents the shared turn signal from
+  // accumulating a listener for every parallel search provider.
+  const controller = new AbortController();
+  const relayAbort = () => controller.abort(signal?.reason);
+  if (signal?.aborted) controller.abort(signal.reason);
+  else signal?.addEventListener('abort', relayAbort, { once: true });
+  try {
+    const groups=await Promise.all([
+      tavily(query,controller.signal),
+      duckDuckGoInstantAnswer(query,controller.signal),
+      searxng(query,controller.signal),
+      ddgs(query,controller.signal),
+      openserp(query,controller.signal),
+    ]);
+    return groups.flat();
+  } finally {
+    signal?.removeEventListener('abort', relayAbort);
+  }
 }
 
 export async function discoverLegalMeshTier3(
