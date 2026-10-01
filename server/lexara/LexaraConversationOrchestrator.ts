@@ -13,6 +13,7 @@ import {
 } from './LexaraLegalDomainProfiles';
 import { decideLexaraResearchNeed, isLexaraRepeatRequest } from './LexaraResearchIntentRouter';
 import { planLexaraSequence } from './LexaraSequenceRouter';
+import { resolveLexaraResearchDecisionSemantic } from './LexaraSemanticIntentInterpreter';
 import { resolveLexaraBackgroundSubject } from './LexaraBackgroundSubject';
 import {
   discoverLexaraBackgroundSourcesParallel,
@@ -550,7 +551,12 @@ export async function generateLexaraConversationResponse(
   const jurisdictionCorrectionOnly = Boolean(inferJurisdiction(cleanPrompt))
     && !jurisdictionRelevant
     && (context.previousMessages?.length || 0) > 0;
-  const sequencePlan = planLexaraSequence(cleanPrompt, previousUserTurns);
+  const semanticResearchDecision = await resolveLexaraResearchDecisionSemantic(
+    cleanPrompt,
+    previousUserTurns,
+    context.signal,
+  );
+  const sequencePlan = planLexaraSequence(cleanPrompt, previousUserTurns, semanticResearchDecision);
   const deepClaudeNeeded = requiresDeepClaudeForTurn(
     cleanPrompt,
     history,
@@ -631,6 +637,7 @@ export async function generateLexaraConversationResponse(
     jurisdiction,
     signal: backgroundController.signal,
     onProgress: context.onResearchProgress,
+    researchDecision,
   })).catch(error => {
     console.warn('[LEXARA Background] application-owned research route unavailable', {
       error: error instanceof Error ? error.message : String(error),
