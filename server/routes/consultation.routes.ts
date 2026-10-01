@@ -66,6 +66,7 @@ async function saveMatterArtifact(
     mimeType: string;
     fileName: string;
     sourceUrl?: string;
+    documentText?: string;
   },
 ): Promise<string | null> {
   if (!hasPersistentMatterAccess(req)) return null;
@@ -73,6 +74,54 @@ async function saveMatterArtifact(
   if (!userId) return null;
   const matter = await resolveStoredMatter(req, sessionId);
   if (!matter) return null;
+
+  let contentSummary: string | undefined;
+  let consistencyFacts: string[] = [];
+  let consistencyConflicts: string[] = [];
+  if (input.documentText?.trim()) {
+    try {
+      const consistencyRaw = await generateLegalAnalysis('document-consistency', [
+        'Compare the new legal document against the supplied matter record and prior document fingerprints.',
+        'Return JSON only with keys: summary, consistencyFacts, conflicts.',
+        'consistencyFacts should be short labeled facts that future documents can compare, such as party roles/names, case number, addresses, material dates with their meaning, children and relationships, requested relief, asset/debt identities, and amounts with their meaning.',
+        'Flag a conflict only when two supplied facts cannot both be true in the same labeled context. Different dates or amounts for different purposes are not conflicts.',
+        'Do not invent facts or infer missing values.',
+        `MATTER RECORD:\n${JSON.stringify({
+          knownFacts: matter.knownFacts,
+          parties: matter.parties,
+          proceeding: matter.proceeding,
+          jurisdiction: matter.jurisdiction,
+          courtOrAgency: matter.courtOrAgency,
+        })}`,
+        `PRIOR DOCUMENT FINGERPRINTS:\n${JSON.stringify(matter.artifacts.map((artifact: any) => ({
+          title: artifact.title,
+          facts: artifact.consistencyFacts || [],
+          conflicts: artifact.consistencyConflicts || [],
+        })))}`,
+        `NEW DOCUMENT: ${input.title}\n${input.documentText.slice(0, 16000)}`,
+      ].join('\n\n'), {
+        providerPolicy: 'legalwhat',
+        systemPrompt: 'You are a deterministic cross-document consistency checker. Use only supplied matter/document facts. Return JSON only.',
+        temperature: 0,
+        maxTokens: 2200,
+        useJSON: true,
+        allowClaudeOpus: false,
+        claudeWorkload: 'standard',
+      });
+      const parsed = parseJsonObject(consistencyRaw);
+      if (parsed) {
+        contentSummary = typeof parsed.summary === 'string' ? parsed.summary.trim().slice(0, 1200) : undefined;
+        consistencyFacts = Array.isArray(parsed.consistencyFacts)
+          ? parsed.consistencyFacts.map((value: unknown) => String(value || '').trim()).filter(Boolean).slice(0, 30)
+          : [];
+        consistencyConflicts = Array.isArray(parsed.conflicts)
+          ? parsed.conflicts.map((value: unknown) => String(value || '').trim()).filter(Boolean).slice(0, 20)
+          : [];
+      }
+    } catch (error) {
+      log.warn('Cross-document consistency extraction failed route-locally', { error, title: input.title });
+    }
+  }
 
   const storageRef = await persistMatterBuffer({
     userId,
@@ -90,9 +139,19 @@ async function saveMatterArtifact(
     status: 'saved',
     storageRef,
     sourceUrl: input.sourceUrl,
+    contentSummary,
+    consistencyFacts,
+    consistencyConflicts,
     createdAt: now,
     updatedAt: now,
   });
+  if (consistencyConflicts.length) {
+    const existingMissing = new Set((matter.missingInformation || []).map((value: string) => value.toLowerCase()));
+    for (const conflict of consistencyConflicts) {
+      const item = `Resolve document consistency issue in ${input.title}: ${conflict}`;
+      if (!existingMissing.has(item.toLowerCase())) matter.missingInformation.push(item);
+    }
+  }
   if (matter.packet?.items?.length) {
     const normalizedTitle = input.title.toLowerCase();
     for (const item of matter.packet.items) {
@@ -184,6 +243,23 @@ function withFmiEvidenceContext(situation: string, fmiContext: unknown): string 
 function escapeXml(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
+
+function parseJsonObject(value: unknown): Record<string, any> | null {
+  const clean = String(value || '').replace(/^\s*```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+  try {
+    const parsed = JSON.parse(clean);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    const match = clean.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    try {
+      const parsed = JSON.parse(match[0]);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
 }
 
 export function setupConsultationRoutes(app: Express): void {
@@ -343,6 +419,7 @@ export function setupConsultationRoutes(app: Express): void {
         mimeType: 'application/pdf',
         fileName: 'lexara-official-form.pdf',
         sourceUrl: inspected.sourceUrl,
+        documentText: JSON.stringify(values),
       }).catch(error => log.warn('Official form completed but persistent matter save failed route-locally', { error }));
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', 'attachment; filename="lexara-official-form.pdf"');
@@ -368,6 +445,7 @@ export function setupConsultationRoutes(app: Express): void {
       mimeType: outputMime,
       fileName: 'lexara-official-form.' + extension,
       sourceUrl: inspected.sourceUrl,
+      documentText: JSON.stringify(values),
     }).catch(error => log.warn('Official form completed but persistent matter save failed route-locally', { error }));
     res.setHeader('Content-Type', outputMime);
     res.setHeader('Content-Disposition', 'attachment; filename="lexara-official-form.' + extension + '"');
@@ -392,6 +470,7 @@ export function setupConsultationRoutes(app: Express): void {
         bytes: output,
         mimeType: 'application/pdf',
         fileName: `${safeBase}.pdf`,
+        documentText: content,
       }).catch(error => log.warn('PDF exported but persistent matter save failed route-locally', { error }));
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="${safeBase}.pdf"`);
@@ -407,6 +486,7 @@ export function setupConsultationRoutes(app: Express): void {
         bytes: output,
         mimeType: outputMime,
         fileName: `${safeBase}.docx`,
+        documentText: content,
       }).catch(error => log.warn('DOCX exported but persistent matter save failed route-locally', { error }));
       res.setHeader('Content-Type', outputMime);
       res.setHeader('Content-Disposition', `attachment; filename="${safeBase}.docx"`);
