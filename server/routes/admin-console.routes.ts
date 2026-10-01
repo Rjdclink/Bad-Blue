@@ -135,7 +135,7 @@ router.get('/users/logged', async (req: Request, res: Response) => {
 router.get('/square/customer-audit', async (req: Request, res: Response) => {
   try {
     const email = String(req.query.email || '').trim().toLowerCase();
-    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return res.status(400).json({ success: false, error: 'A valid email is required' });
     }
 
