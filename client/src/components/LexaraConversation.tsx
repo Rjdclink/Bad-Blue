@@ -403,6 +403,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const [emotion, setEmotion] = useState<LEXARAEmotionHint>('calm');
   const [gaze, setGaze] = useState<LEXARAGazeHint>('camera');
   const [conversationDocument, setConversationDocument] = useState<{ title: string; content: string } | null>(null);
+  const [savedArtifact, setSavedArtifact] = useState<{ title: string; fileName: string; mimeType: string; downloadUrl: string } | null>(null);
   const [documentBusy, setDocumentBusy] = useState(false);
 
   useEffect(() => {
@@ -1169,6 +1170,16 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       if (data?.representationMatter && typeof data.representationMatter === 'object') {
         setRepresentationMatter(data.representationMatter);
       }
+      if (data?.savedArtifact?.downloadUrl && typeof data.savedArtifact.downloadUrl === 'string') {
+        setSavedArtifact({
+          title: String(data.savedArtifact.title || 'Saved file'),
+          fileName: String(data.savedArtifact.fileName || data.savedArtifact.title || 'legalwhat-file'),
+          mimeType: String(data.savedArtifact.mimeType || 'application/octet-stream'),
+          downloadUrl: data.savedArtifact.downloadUrl,
+        });
+      } else {
+        setSavedArtifact(null);
+      }
       if (typeof data?.matterSessionId === 'string' && data.matterSessionId.trim()) {
         sessionIdRef.current = data.matterSessionId.trim();
       }
@@ -1656,6 +1667,25 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     }
   };
 
+  const downloadSavedArtifact = async () => {
+    if (!savedArtifact?.downloadUrl) return;
+    const response = await fetch(savedArtifact.downloadUrl, {
+      method: 'GET',
+      credentials: 'include',
+      cache: 'no-store',
+    });
+    if (!response.ok) throw new Error('Saved file retrieval failed');
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = savedArtifact.fileName || savedArtifact.title || 'legalwhat-file';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  };
+
   const downloadConversationDocument = async (format: 'docx' | 'pdf') => {
     if (!conversationDocument?.content) return;
     const response = await fetch('/api/lexara/documents/export', {
@@ -1767,6 +1797,26 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
               </div>
             </div>
           ))}
+
+          {savedArtifact && (
+            <div className="flex justify-start">
+              <div className="max-w-[92%] rounded-2xl border bg-card p-4 text-sm shadow-sm">
+                <div className="mb-2 flex items-center gap-2 font-semibold">
+                  <FileText className="h-4 w-4" />
+                  Saved legal matter file
+                </div>
+                <div className="mb-3">{savedArtifact.title}</div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void downloadSavedArtifact().catch(error => setErrorMessage(friendlyError(error)))}
+                >
+                  <Download className="mr-1 h-4 w-4" />
+                  Open saved file
+                </Button>
+              </div>
+            </div>
+          )}
 
           {pendingDocument && !conversationDocument && (
             <div className="flex justify-start">
