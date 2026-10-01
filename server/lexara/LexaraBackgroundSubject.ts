@@ -7,7 +7,7 @@ export interface LexaraBackgroundSubject {
   location?: string;
 }
 
-const ORGANIZATION = /\b(?:LLC|L\.L\.C\.|Inc\.?|Corporation|Corp\.?|Company|Co\.?|LP|LLP|PLLC|Foundation|Association|University|Bank|Ltd\.?)\b/i;
+const ORGANIZATION = /\b(?:LLC|L\.L\.C\.|Inc\.?|Corporation|Corp\.?|Company|Co\.?|LP|LLP|PLLC|Foundation|Association|University|Bank|Ltd\.?|Holdings|Technologies|Industries|Enterprises|Systems|Solutions|Partners|Group)\b/i;
 const PLACE = /\b(?:city|town|village|county|state|province|park|river|lake|mount|mountain|airport|station|building|bridge|museum|landmark|memorial|tower)\b/i;
 const NOISE = /^(?:Research Objective|Current User|Lexara Delegated|Full Background|Background Report|What Is|Who Is|Where Is|When Was|Tell Me|Find Out|Look Up|Public Records|New Question|Legal Analysis|The Company|The Person|The City)$/i;
 const CONVERSATIONAL_LEAD = /^(?:Hello|Hi|Hey|Good|Thanks|Thank|Okay|Ok|Alright|Sure|So|Well|Actually|Anyway|Please|What|Who|Where|When|How|Does|Did|Has|Have|Is|Are|Can|Could|Would|Should|Tell|Find|Check|Show|Look|Research|Lexara|Pantheon|Current|Background|The)(?:\b|[.])/i;
