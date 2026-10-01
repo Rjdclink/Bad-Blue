@@ -733,6 +733,19 @@ export async function generateLexaraConversationResponse(
   if (backgroundResearchRequested && !backgroundInvestigation && !deepBackgroundRequested) {
     backgroundController.abort(new Error('lexara_live_background_budget_exhausted'));
   }
+  if (backgroundInvestigation?.clarification
+    && (backgroundInvestigation.needsIdentityClarification || backgroundInvestigation.fullBackgroundReportRequested)) {
+    context.signal?.removeEventListener('abort', relayBackgroundAbort);
+    if (!authorityResearch) researchController.abort();
+    context.signal?.removeEventListener('abort', relayResearchAbort);
+    return {
+      text: backgroundInvestigation.clarification,
+      jurisdiction: publicJurisdiction,
+      mappedLawType,
+      backgroundEndpoint: backgroundInvestigation.endpoint,
+      backgroundStatus: backgroundInvestigation.fullBackgroundReportRequested ? 'consent-required' : 'clarification-required',
+    };
+  }
   context.signal?.removeEventListener('abort', relayBackgroundAbort);
   if (!authorityResearch) researchController.abort();
   context.signal?.removeEventListener('abort', relayResearchAbort);
