@@ -35,9 +35,9 @@ export function resolveOfficialLegalForm(research: LexaraAuthorityResearch | nul
   const requirement: OfficialFormRequirement = MANDATORY_HINT.test(requirementText) ? 'mandatory' : OPTIONAL_HINT.test(requirementText) ? 'optional' : CUSTOM_HINT.test(requirementText) ? 'custom_allowed' : 'unverified';
   const direct=(specific.find(entry=>FORM_HINT.test(entry.source.title) && typeOf(entry.source.url)!=='html') || specific[0] || scored.find(entry=>FORM_HINT.test(entry.source.title) && typeOf(entry.source.url)!=='html') || scored[0])?.source;
   const title=direct?.title;
-  const formNumber=title?.match(/\b(?:form|ao|official form)\s*[-#:]*\s*([A-Z0-9.:-]{1,24})\b/i)?.[1]
-    || combined.match(/\b(?:form|ao|dc|civ|fam|div|eoir|va)\s*[-#:]*\s*([A-Z0-9.:-]{1,24})\b/i)?.[1];
-  const revisionText=[direct?.title,direct?.excerpt].filter(Boolean).join(' ');
+  const directText=[direct?.title,direct?.excerpt].filter(Boolean).join(' ');
+  const formNumber=directText.match(/\b(?:form|ao|dc|civ|fam|div|eoir|va|official form)\s*[-#:]*\s*([A-Z0-9.:-]{1,24})\b/i)?.[1];
+  const revisionText=directText;
   const revision=revisionText.match(/\b(?:revision|revised|edition|effective|updated|rev\.?)\s*(?:date)?\s*[:#-]?\s*((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2},?\s+\d{4}|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4})\b/i)?.[1];
   const localRules=relevant.filter(s=>/\\b(local rule|court rule|filing requirement|instructions?)\\b/i.test([s.title,s.excerpt].filter(Boolean).join(' '))).map(s=>s.title).slice(0,8);
   const companionDocuments=relevant.filter(s=>/\\b(summons|civil cover sheet|fee waiver|service|appearance|proposed order)\\b/i.test([s.title,s.excerpt].filter(Boolean).join(' '))).map(s=>s.title).slice(0,8);
