@@ -662,7 +662,7 @@ export class MasterActivation {
       
       components: {
         forgeAI: forgeStatus.isRunning,
-        alexara: legalStatus.alexaraOnline,
+        alexara: legalStatus.lexaraOnline,
         pantheon: this.isActivated,
         fmi: this.isActivated,
         cade: this.isActivated,
