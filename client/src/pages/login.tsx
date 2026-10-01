@@ -4,6 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Shield, Loader2 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -28,6 +29,7 @@ export default function Login() {
 
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
+  const [loginSubscribeNow, setLoginSubscribeNow] = useState(false);
   const [masterPassword, setMasterPassword] = useState("");
   const resetToken = urlParams.get("reset") || "";
   const [forgotMode, setForgotMode] = useState(false);
@@ -38,6 +40,7 @@ export default function Login() {
   const [signupPassword, setSignupPassword] = useState("");
   const [signupFirstName, setSignupFirstName] = useState("");
   const [signupLastName, setSignupLastName] = useState("");
+  const [signupSubscribeNow, setSignupSubscribeNow] = useState(false);
 
   const beginSubscriptionCheckout = useCallback(async () => {
     const response = await apiRequest("/api/subscription/checkout", "POST");
@@ -75,7 +78,7 @@ export default function Login() {
   // Merely rendering this page must never hijack navigation into Square.
 
 
-  const completeLogin = async (response: Response) => {
+  const completeLogin = async (response: Response, subscribeNow = false) => {
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
       throw new Error(data.error || data.message || "Login failed");
@@ -83,16 +86,36 @@ export default function Login() {
 
     const data = await response.json();
     const accessState = String(data.accessState || "");
-    const needsSubscriptionCheckout =
+    const subscribeNowCheckout =
+      subscribeNow &&
       !data.accessZone &&
-      !["paid", "trial_active", "master"].includes(accessState) &&
+      !["paid", "master"].includes(accessState) &&
       data.hasActiveSubscription !== true;
+    const needsSubscriptionCheckout =
+      subscribeNowCheckout ||
+      (!data.accessZone &&
+        !["paid", "trial_active", "master"].includes(accessState) &&
+        data.hasActiveSubscription !== true);
     if (needsSubscriptionCheckout) {
       // Own checkout before auth-query invalidation can rerender this page and
       // start the resume effect in parallel.
       subscriptionResumeStarted.current = true;
     }
     await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+
+    if (subscribeNowCheckout) {
+      toast({
+        title: "Opening subscription",
+        description: "Continue in Square to start your $19.99/month LegalWhat subscription.",
+      });
+      try {
+        await beginSubscriptionCheckout();
+      } catch (error) {
+        subscriptionResumeStarted.current = false;
+        throw error;
+      }
+      return;
+    }
 
     if (accessState === "trial_expired") {
       setLocation("/trial-expired");
@@ -135,7 +158,7 @@ export default function Login() {
         email: loginEmail,
         password: loginPassword,
       });
-      await completeLogin(response);
+      await completeLogin(response, loginSubscribeNow);
     } catch (error: any) {
       toast({
         title: "Login failed",
@@ -202,11 +225,27 @@ export default function Login() {
         password: signupPassword,
         firstName: signupFirstName,
         lastName: signupLastName,
+        skipTrial: signupSubscribeNow,
       });
 
       if (response.ok) {
         const data = await response.json();
         await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+
+        if (signupSubscribeNow) {
+          subscriptionResumeStarted.current = true;
+          toast({
+            title: "Account created",
+            description: "Opening secure Square checkout for your $19.99/month subscription.",
+          });
+          try {
+            await beginSubscriptionCheckout();
+          } catch (error) {
+            subscriptionResumeStarted.current = false;
+            throw error;
+          }
+          return;
+        }
 
         if (data.accessState === "trial_active" && data.trialOutcome === "ELIGIBLE") {
           toast({
@@ -355,6 +394,18 @@ export default function Login() {
                       />
                     </div>
 
+                    <div className="flex items-start gap-2 rounded-md border p-3">
+                      <Checkbox
+                        id="login-subscribe-now"
+                        checked={loginSubscribeNow}
+                        onCheckedChange={(checked) => setLoginSubscribeNow(checked === true)}
+                        disabled={isLoading}
+                      />
+                      <Label htmlFor="login-subscribe-now" className="cursor-pointer text-sm font-normal leading-snug">
+                        If this account is not already subscribed, take me to the $19.99/month subscription checkout after I sign in.
+                      </Label>
+                    </div>
+
                     <Button type="submit" className="w-full" disabled={isLoading}>
                       {isLoading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Logging in...</> : "Login"}
                     </Button>
@@ -411,11 +462,23 @@ export default function Login() {
                       <p className="text-xs text-muted-foreground">Password must be at least 8 characters</p>
                     </div>
 
+                    <div className="flex items-start gap-2 rounded-md border p-3">
+                      <Checkbox
+                        id="signup-subscribe-now"
+                        checked={signupSubscribeNow}
+                        onCheckedChange={(checked) => setSignupSubscribeNow(checked === true)}
+                        disabled={isLoading}
+                      />
+                      <Label htmlFor="signup-subscribe-now" className="cursor-pointer text-sm font-normal leading-snug">
+                        Skip my 72-hour free trial and subscribe now for $19.99/month.
+                      </Label>
+                    </div>
+
                     <Button type="submit" className="w-full" disabled={isLoading}>
                       {isLoading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Creating account...</> : "Sign Up"}
                     </Button>
 
-                    <p className="text-xs text-center text-muted-foreground">By signing up, you agree to complete payment before accessing tools</p>
+                    <p className="text-xs text-center text-muted-foreground">The 72-hour free trial does not require a payment card unless you choose to subscribe now.</p>
                   </form>
                 </TabsContent>
               </Tabs>
