@@ -93,10 +93,43 @@ async function saveMatterArtifact(
     createdAt: now,
     updatedAt: now,
   });
+  if (matter.packet?.items?.length) {
+    const normalizedTitle = input.title.toLowerCase();
+    for (const item of matter.packet.items) {
+      const sameSource = Boolean(input.sourceUrl && item.sourceUrl === input.sourceUrl);
+      const sameTitle = normalizedTitle.includes(item.title.toLowerCase())
+        || item.title.toLowerCase().includes(normalizedTitle);
+      if (sameSource || sameTitle) item.status = 'complete';
+    }
+  }
   matter.updatedAt = now;
   const { storage } = await import('../storage');
   await storage.updateLatestLexaraMatterState(userId, matter.sessionId, matter);
   return storageRef;
+}
+
+async function recordMatterMissingFields(
+  req: Request,
+  sessionId: string | undefined,
+  formTitle: string,
+  fields: string[],
+): Promise<void> {
+  if (!hasPersistentMatterAccess(req) || !fields.length) return;
+  const userId = authenticatedUserId(req);
+  if (!userId) return;
+  const matter = await resolveStoredMatter(req, sessionId);
+  if (!matter) return;
+  const existing = new Set((matter.missingInformation || []).map((value: string) => value.toLowerCase()));
+  for (const field of fields) {
+    const statement = `${formTitle}: ${field}`;
+    if (!existing.has(statement.toLowerCase())) {
+      matter.missingInformation.push(statement);
+      existing.add(statement.toLowerCase());
+    }
+  }
+  matter.updatedAt = new Date().toISOString();
+  const { storage } = await import('../storage');
+  await storage.updateLatestLexaraMatterState(userId, matter.sessionId, matter);
 }
 
 async function renderPdfBuffer(title: string, content: string): Promise<Buffer> {
@@ -291,7 +324,11 @@ export function setupConsultationRoutes(app: Express): void {
         try { values = JSON.parse(String(mappingRaw).replace(/^\x60\x60\x60(?:json)?\s*|\s*\x60\x60\x60$/gi, '').trim()); } catch { values = {}; }
       }
       const missingFlatFields = checkedLayout.anchors.filter(field => values[field.label] === undefined).map(field => field.label);
-      if (missingFlatFields.length) return res.status(422).json({ error: 'Additional information is required to complete the official form', missingFields: missingFlatFields, sourceUrl: inspected.sourceUrl });
+      if (missingFlatFields.length) {
+        await recordMatterMissingFields(req, matterSessionId, String(officialForm.title || 'Official form'), missingFlatFields)
+          .catch(error => log.warn('Could not persist missing official-form fields route-locally', { error }));
+        return res.status(422).json({ error: 'Additional information is required to complete the official form', missingFields: missingFlatFields, sourceUrl: inspected.sourceUrl });
+      }
       const output = await overlayFlatOfficialPdf(inspected, checkedLayout, values);
       await saveMatterArtifact(req, matterSessionId, {
         title: String(officialForm.title || 'Official legal form'),
@@ -308,7 +345,11 @@ export function setupConsultationRoutes(app: Express): void {
       return;
     }
     const missingFields = inspected.fields.filter(field => values[field.name] === undefined).map(field => field.name);
-    if (missingFields.length) return res.status(422).json({ error: 'Additional information is required to complete the official form', missingFields, sourceUrl: inspected.sourceUrl });
+    if (missingFields.length) {
+      await recordMatterMissingFields(req, matterSessionId, String(officialForm.title || 'Official form'), missingFields)
+        .catch(error => log.warn('Could not persist missing official-form fields route-locally', { error }));
+      return res.status(422).json({ error: 'Additional information is required to complete the official form', missingFields, sourceUrl: inspected.sourceUrl });
+    }
     const output = inspected.contentType === 'pdf'
       ? await fillOfficialPdf(inspected, values, true)
       : await fillOfficialDocx(inspected, values);
