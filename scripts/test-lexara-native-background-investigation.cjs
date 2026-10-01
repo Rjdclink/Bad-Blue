@@ -270,7 +270,7 @@ function reset(mode) {
   assert.match(inferredAge.evidenceSummary, /ASSESSMENT: INFERENTIAL/);
   assert.match(inferredAge.evidenceSummary, /juvenile/i);
   const inferredPrompt = investigator.formatLexaraBackgroundResearchForSystem(inferredAge);
-  assert.match(inferredPrompt, /strongest defensible answer/i);
+  assert.match(inferredPrompt, /strongest defensible estimate/i);
   assert.match(inferredPrompt, /first sentence must contain only the requested fact/i);
   assert.match(inferredPrompt, /did NOT clear Lexara's verification threshold/i);
   assert.match(inferredPrompt, /This is only a guess, not a verified fact/i);
