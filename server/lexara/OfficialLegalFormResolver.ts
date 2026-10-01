@@ -25,8 +25,8 @@ export function resolveOfficialLegalForm(research: LexaraAuthorityResearch | nul
   const requirement: OfficialFormRequirement = MANDATORY_HINT.test(combined) ? 'mandatory' : OPTIONAL_HINT.test(combined) ? 'optional' : CUSTOM_HINT.test(combined) ? 'custom_allowed' : 'unverified';
   const direct=relevant.find(source=>FORM_HINT.test(source.title) && typeOf(source.url)!=='html') || relevant[0];
   const title=direct?.title;
-  const formNumber=title?.match(/\b(?:form|ao|official form)\s*[-#:]*\s*([A-Z0-9.-]{1,24})\b/i)?.[1]
-    || combined.match(/\b(?:form|ao|dc|civ|fam|div|eoir|va)\s*[-#:]*\s*([A-Z0-9.-]{1,24})\b/i)?.[1];
+  const formNumber=title?.match(/\b(?:form|ao|official form)\s*[-#:]*\s*([A-Z0-9.:-]{1,24})\b/i)?.[1]
+    || combined.match(/\b(?:form|ao|dc|civ|fam|div|eoir|va)\s*[-#:]*\s*([A-Z0-9.:-]{1,24})\b/i)?.[1];
   const revisionText=[direct?.title,direct?.excerpt].filter(Boolean).join(' ');
   const revision=revisionText.match(/\b(?:revision|revised|edition|effective|updated|rev\.?)\s*(?:date)?\s*[:#-]?\s*((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2},?\s+\d{4}|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4})\b/i)?.[1];
   const localRules=relevant.filter(s=>/\\b(local rule|court rule|filing requirement|instructions?)\\b/i.test([s.title,s.excerpt].filter(Boolean).join(' '))).map(s=>s.title).slice(0,8);
