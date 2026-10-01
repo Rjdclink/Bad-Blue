@@ -240,9 +240,12 @@ export default function FMIAnalysis({
       if (completedFileIds.length >= 2) {
         try {
           setUploadProgress(90);
+          const useEphemeralReview = batchReviewInputs.some(input => input?.persistence !== 'persistent');
           const combined = await reviewSetMutation.mutateAsync({
             fileIds: completedFileIds,
-            documents: batchReviewInputs.length >= 2 ? batchReviewInputs.slice(0, 8) : undefined,
+            documents: useEphemeralReview && batchReviewInputs.length >= 2
+              ? batchReviewInputs.slice(0, 8)
+              : undefined,
             lawType: lawType || 'general',
             state,
             question: caseContext?.trim() || undefined,
