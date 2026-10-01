@@ -130,7 +130,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     activeTurnRef.current += 1;
     clearPlaybackWatchdog();
     interruptActiveWait();
-    lexaraRealtimeVoiceClient.interrupt();
+    lexaraRealtimeVoiceClient.interrupt(reason);
     LexaraServerTTS.stop(reason);
 
     setIsSpeaking(false);
