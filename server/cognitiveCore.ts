@@ -29,7 +29,7 @@ import {
   BitState,
   PropagationResult
 } from './bitNeuralPathways';
-import { getLexaraNeuralModule } from './alexaraModule';
+import { getLexaraNeuralModule } from './lexara/LexaraNeuralModule';
 import { getCRYPTARA } from './cryptaraModule';
 
 const log = createLogger('CognitiveCore');
