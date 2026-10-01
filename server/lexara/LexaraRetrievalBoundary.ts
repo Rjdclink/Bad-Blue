@@ -17,7 +17,9 @@ const MAX_TARGETS = 6;
 const MAX_RESPONSE_BYTES = 2_000_000;
 const MAX_CONTENT_CHARACTERS = 120_000;
 const MAX_REDIRECTS = 3;
-const REQUEST_TIMEOUT_MS = 1_500;
+// Public registries are often slower than search APIs. Keep this bounded, but
+// avoid manufacturing false negatives with an unrealistically short fetch window.
+const REQUEST_TIMEOUT_MS = 2_500;
 
 function isPrivateIpv4(address: string): boolean {
   const parts = address.split('.').map(Number);
