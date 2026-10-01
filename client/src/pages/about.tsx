@@ -36,6 +36,28 @@ export default function About() {
           </p>
         </section>
 
+        <section className="mt-12 rounded-2xl border bg-card p-6 md:p-8" aria-labelledby="what-legalwhat-offers">
+          <h2 id="what-legalwhat-offers" className="text-3xl font-bold mb-6">What LegalWhat Offers</h2>
+          <div className="space-y-4 text-muted-foreground leading-relaxed">
+            <p>
+              LegalWhat combines live two-way voice or text legal conversation with jurisdiction-aware legal research across 40 practice areas. Lexara can recognize when a legal document is needed, identify applicable local requirements and forms, analyze documents, evidence, images, and other media, and prepare downloadable PDF or DOCX legal documents.
+            </p>
+            <p>
+              Paid users also receive persistent case and matter organization, storage for documents and evidence, and calendar and schedule organization for hearings, appointments, filing dates, due dates, and other important matter events. LegalWhat organizes dates that are provided or otherwise established in the matter; it does not invent or automatically calculate legal deadlines.
+            </p>
+            <p>
+              LegalWhat also includes electronic-signature capability where legally permitted, with jurisdiction and document-type safeguards, plus access to higher legal-reasoning models for more complex legal work.
+            </p>
+          </div>
+        </section>
+
+        <section className="mt-12 rounded-2xl border bg-card p-6 md:p-8" aria-labelledby="fully-remote">
+          <h2 id="fully-remote" className="text-3xl font-bold mb-4">Fully Remote — Never Leave Home</h2>
+          <p className="text-muted-foreground leading-relaxed">
+            Complete every step online. File complaints, generate lawsuits, submit FOIA requests, and track your cases without visiting an office or courthouse. Justice from your living room.
+          </p>
+        </section>
+
         <section className="mt-12 rounded-2xl border bg-card p-6 md:p-8" aria-labelledby="about-the-founder">
           <h2 id="about-the-founder" className="text-3xl font-bold mb-6">About the Founder</h2>
           <div className="space-y-5 text-muted-foreground leading-relaxed">
