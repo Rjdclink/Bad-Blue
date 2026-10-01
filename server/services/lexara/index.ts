@@ -11,7 +11,7 @@ export {
 } from '../alexara';
 
 export type {
-  AlexaraConfig as LexaraConfig,
+  LexaraConfig,
   LegalResearchRequest,
   LegalResearchResult,
   DocumentGenerationRequest,
