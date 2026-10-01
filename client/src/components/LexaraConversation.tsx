@@ -1,5 +1,5 @@
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Download, FileText, Loader2, Mic, MicOff, Send, Star } from 'lucide-react';
+import { AlertCircle, CalendarDays, Download, FileText, Loader2, Mic, MicOff, Send, Star } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useVoiceMode, type VoiceTranscriptMeta } from '@/hooks/useVoiceMode';
 import { useVoiceSynthesis } from '@/hooks/useVoiceSynthesis';
@@ -404,6 +404,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const [gaze, setGaze] = useState<LEXARAGazeHint>('camera');
   const [conversationDocument, setConversationDocument] = useState<{ title: string; content: string } | null>(null);
   const [savedArtifact, setSavedArtifact] = useState<{ title: string; fileName: string; mimeType: string; downloadUrl: string } | null>(null);
+  const [deadlineCalendar, setDeadlineCalendar] = useState<{ label: string; dueDate: string; downloadUrl: string } | null>(null);
   const [documentBusy, setDocumentBusy] = useState(false);
 
   useEffect(() => {
@@ -1180,6 +1181,15 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       } else {
         setSavedArtifact(null);
       }
+      if (data?.deadlineCalendarUrl && data?.deadline?.dueDate) {
+        setDeadlineCalendar({
+          label: String(data.deadline?.rule?.label || 'Legal deadline'),
+          dueDate: String(data.deadline.dueDate),
+          downloadUrl: String(data.deadlineCalendarUrl),
+        });
+      } else {
+        setDeadlineCalendar(null);
+      }
       if (typeof data?.matterSessionId === 'string' && data.matterSessionId.trim()) {
         sessionIdRef.current = data.matterSessionId.trim();
       }
@@ -1813,6 +1823,24 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
                 >
                   <Download className="mr-1 h-4 w-4" />
                   Open saved file
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {deadlineCalendar && (
+            <div className="flex justify-start">
+              <div className="max-w-[92%] rounded-2xl border bg-card p-4 text-sm shadow-sm">
+                <div className="mb-2 flex items-center gap-2 font-semibold">
+                  <CalendarDays className="h-4 w-4" />
+                  Calculated legal deadline
+                </div>
+                <div className="mb-3">{deadlineCalendar.label}: {deadlineCalendar.dueDate}</div>
+                <Button size="sm" variant="outline" asChild>
+                  <a href={deadlineCalendar.downloadUrl}>
+                    <Download className="mr-1 h-4 w-4" />
+                    Add reminder to calendar
+                  </a>
                 </Button>
               </div>
             </div>
