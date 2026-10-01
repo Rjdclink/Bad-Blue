@@ -109,7 +109,7 @@ function requestedFact(text: string): LexaraRequestedFact {
   if (/\b(?:relatives?|family|parent|mother|father|sibling|brother|sister|associate|household|roommate|lives with)\b/.test(value)) return 'relatives-associates';
   if (/\b(?:education|school|college|university|degree|diploma|graduat|alma mater)\b/.test(value)) return 'education';
   if (/\b(?:vehicle|car|truck|motorcycle|vin|vehicle title|vehicle registration)\b/.test(value)) return 'vehicle';
-  if (/\b(?:criminal record|criminal history|conviction|charge|arrest|booking|police record|sheriff record)\b/.test(value)) return 'criminal-arrest';
+  if (/\b(?:criminal record|criminal history|criminal background|conviction|charge|arrest\w*|booking|police record|sheriff record)\b/.test(value)) return 'criminal-arrest';
   if (/\b(?:probation|parole|supervised release|community supervision)\b/.test(value)) return 'probation-parole';
   if (/\b(?:warrant|wanted|fugitive)\b/.test(value)) return 'warrant';
   if (/\b(?:sex offender|offender registry|registered offender)\b/.test(value)) return 'sex-offender';
