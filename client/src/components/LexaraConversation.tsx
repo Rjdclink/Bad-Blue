@@ -706,7 +706,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
           } else if (finalRealtimeOwnership) {
             validatedBargeInUtterancesRef.current.add(meta.utteranceId);
             lexaraRealtimeVoiceClient.reportInputDecision('realtime-input-confirmed', 'confirmed-user-speech');
-            if (phaseRef.current === 'speaking') autoInterruptRef.current('confirmed-user-speech');
+            if (phaseRef.current === 'speaking') autoInterruptRef.current();
           } else {
             realtimeBargeInCandidatesRef.current.delete(meta.utteranceId);
             lexaraRealtimeVoiceClient.reportInputDecision('realtime-input-rejected', 'unverified-playback-overlap');
