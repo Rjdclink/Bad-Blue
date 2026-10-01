@@ -616,6 +616,12 @@ export async function generateLexaraConversationResponse(
   const backgroundResearchRequested = sequencePlan.useBackgroundResearch;
   const decisionBackgroundSubject = backgroundResearchRequested && researchDecision.subject
     ? resolveLexaraBackgroundSubject(researchDecision.subject, previousUserTurns, jurisdiction)
+      || {
+        name: researchDecision.subject,
+        kind: researchDecision.subjectKind || 'person' as const,
+        identifiable: researchDecision.subjectKind === 'organization' || researchDecision.subjectKind === 'entity',
+        location: jurisdiction,
+      }
     : null;
   const promptBackgroundSubject = backgroundResearchRequested
     ? resolveLexaraBackgroundSubject(cleanPrompt, previousUserTurns, jurisdiction)
