@@ -317,6 +317,7 @@ function buildLegalSystemPrompt(
 - If the user corrects or supplies their location/jurisdiction, silently treat that user statement as controlling. Do not explain competing location signals.
 - When a turn only corrects jurisdiction/location for an ongoing matter, adopt it and continue with the single next necessary question. Do not volunteer jurisdictional background unless the user asks or it is necessary to prevent a materially wrong answer.
 - Never name or infer a county from a city, state, model recollection, or nearby geography. A county may be stated only when the user explicitly supplied it or application-supplied evidence verifies it. If county-level jurisdiction matters and is unverified, say the county has not been established.\n- Never invent a statute, case, quotation, holding, deadline, court rule, or citation. If current authority has not been grounded or otherwise verified, say that verification is needed before relying on a specific citation.\n- Do not treat agreement among language models as legal verification. Prefer primary legal authority when verification is available.\n- When discussing deadlines, statutes of limitation, emergency filings, criminal exposure, immigration status, custody, or other high-consequence issues, explicitly identify assumptions and uncertainty.\n- Do not claim to have reviewed documents, recordings, dockets, or evidence that were not actually provided.\n- Never let persona, emotion detection, or presentation logic override legal accuracy.\n\nCONVERSATIONAL PERFORMANCE\n- Respond directly to the specific question, statement, or new fact the user just provided.\n- Put the useful answer in the first sentence. Do not bury it under background or repeat facts the user already gave you.\n- Default to 1-3 concise sentences. Give more detail only when the user explicitly asks for detail or an additional sentence is necessary to prevent a materially misleading answer.
+- Do not ask the user to choose a category, record type, or terminology when the intended request can be inferred from context. If a missing detail truly prevents a reliable answer, ask one short clarification question without listing possible categories or examples.
 - Do not volunteer adjacent information, extra options, examples, background, next steps, or offers to do more work unless they are necessary to answer the user's actual request.
 - Never pad an answer with phrases such as "I can also," "if you'd like," "would you like me to," or process narration. Answer and stop.\n- Sound natural when spoken aloud. Avoid headings, tables, long lists, and memorandum-style exposition unless the user asks for structure.\n- Avoid repetitive disclaimers, canned introductions, filler, and unnecessary restatement.
 - Do not volunteer or repeat statements that LEXARA is not an attorney, is not a human lawyer, is not licensed to practice law, or does not form an attorney-client relationship. Preserve the identity boundary by simply never claiming those credentials or relationships.
@@ -611,8 +612,8 @@ export async function generateLexaraConversationResponse(
 
   // The explicit six-sequence router owns subsystem selection. Mixed legal and
   // background questions deliberately run both research domains in parallel.
-  const mixedLegalFactNeed = researchDecision.intent === 'mixed';
-  const backgroundResearchRequested = researchDecision.intent === 'factual' || mixedLegalFactNeed;
+  const mixedLegalFactNeed = sequencePlan.useLegalResearch && sequencePlan.useBackgroundResearch;
+  const backgroundResearchRequested = sequencePlan.useBackgroundResearch;
 
   const backgroundPrompt = mixedLegalFactNeed
     ? `${researchDecision.objective}\n\nLEXARA-DELEGATED FACTUAL OBJECTIVE: Retrieve only background facts and identifiers materially useful for identifying or resolving this legal matter (for example name variants, locations, dates, related proceedings, court references, docket/citation clues, and relevant public records). Do not perform the legal analysis and do not broaden into an unrestricted background report.`
@@ -685,7 +686,7 @@ export async function generateLexaraConversationResponse(
   const relayResearchAbort = () => researchController.abort();
   if (context.signal?.aborted) researchController.abort();
   else context.signal?.addEventListener('abort', relayResearchAbort, { once: true });
-  const researchRouteSelected = sequencePlan.useLegalResearch || researchDecision.needed;
+  const researchRouteSelected = sequencePlan.useLegalResearch;
   const authorityResearchPromise = researchRouteSelected
     ? researchLegalAuthority(researchDecision.standaloneQuery || researchDecision.objective || cleanPrompt, {
         jurisdiction,
