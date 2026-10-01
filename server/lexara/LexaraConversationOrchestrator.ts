@@ -22,6 +22,7 @@ import {
   type LexaraBackgroundResearchResult,
 } from './LexaraBackgroundInvestigation';
 import { hasExplicitLocationCue, resolveUSJurisdiction } from './LexaraJurisdictionResolver';
+import { formatJurisdictionAuthorityForSystem, resolveJurisdictionAuthorityProfile } from './LexaraJurisdictionAuthority';
 import { formatCitationVerificationForCorrection, verifyLegalCitationsInText } from './LexaraCitationVerifier';
 import { formatDeadlineCalculationForSystem, inferLegalDeadlineFromPrompt, type LegalDeadlineCalculation } from './LegalDeadlineEngine';
 
@@ -281,6 +282,22 @@ function buildLegalSystemPrompt(
 ): string {
   const domainName = trustedDomainName(context.lawType);
   const domainProfile = getLexaraLegalDomainProfile(context.lawType);
+  const jurisdictionAuthorityProfile = jurisdictionRelevant
+    ? await resolveJurisdictionAuthorityProfile(
+        cleanPrompt,
+        resolvedJurisdiction,
+        stateJurisdiction,
+        context.signal,
+      ).catch(() => null)
+    : null;
+  const jurisdictionResearchHints = [
+    ...(domainProfile?.researchHints || []),
+    ...(jurisdictionAuthorityProfile?.researchHints || []),
+  ].filter((value, index, values) => value && values.indexOf(value) === index).slice(0, 12);
+  const jurisdictionOfficialDomains = [
+    ...(domainProfile?.preferredOfficialDomains || []),
+    ...(jurisdictionAuthorityProfile?.preferredOfficialDomains || []),
+  ].filter((value, index, values) => value && values.indexOf(value) === index).slice(0, 18);
   const behaviorMode = context.behaviorMode === 'personable'
     ? 'warm and conversational'
     : 'calm, precise, and professional';
@@ -655,8 +672,8 @@ export async function generateLexaraConversationResponse(
     ? researchLegalAuthority(researchDecision.standaloneQuery || researchDecision.objective || cleanPrompt, {
         jurisdiction,
         domainName,
-        researchHints: domainProfile?.researchHints,
-        preferredOfficialDomains: domainProfile?.preferredOfficialDomains,
+        researchHints: jurisdictionResearchHints,
+        preferredOfficialDomains: jurisdictionOfficialDomains,
         forceResearch: true,
         researchIntent: researchDecision.intent,
         subject: researchDecision.subject,
@@ -724,6 +741,7 @@ export async function generateLexaraConversationResponse(
   const systemPrompt = buildLegalSystemPrompt(context, mappedLawType, promptJurisdiction)
     + silentLocationContext
     + jurisdictionCorrectionPrompt
+    + formatJurisdictionAuthorityForSystem(jurisdictionAuthorityProfile)
     + formatAuthorityResearchForSystem(authorityResearch)
     + formatDeadlineCalculationForSystem(deterministicDeadline)
     + researchStatusPrompt
@@ -940,6 +958,10 @@ export async function generateLexaraConversationResponse(
     unresolvedCitationCount,
     negativeTreatmentSignalCount,
     researchEndpointReached: !researchDecision.needed || Boolean(authorityResearch || backgroundEndpoint),
+    jurisdictionAuthoritySystem: jurisdictionAuthorityProfile?.system || null,
+    jurisdictionFederalCircuit: jurisdictionAuthorityProfile?.federalCircuit || null,
+    jurisdictionCourtClarificationNeeded: jurisdictionAuthorityProfile?.needsCourtClarification || false,
+    jurisdictionOfficialResourceCount: jurisdictionAuthorityProfile?.officialResources.length || 0,
     reasoningProvider: 'claude',
     reasoningModel: claudeModel,
     progressiveClaude: progressiveClaudeAllowed,
