@@ -324,7 +324,7 @@ export async function extractLexaraEvidenceContent(
       const bytes = await readFile(input.filePath);
       const response = await callClaudeMediaExtraction({
         bytes,
-        mimeType,
+        mimeType: mimeType as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
         fileName: input.fileName,
         instruction: EXTRACTION_INSTRUCTION,
       });
