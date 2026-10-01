@@ -1691,6 +1691,8 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         state: pendingDocument.state,
         esign: data?.esign && typeof data.esign === 'object' ? data.esign : undefined,
       });
+      setPendingDocument(null);
+      pendingActionRef.current = null;
       if (!format) {
         setDocumentPreviewOpen(true);
         return;
