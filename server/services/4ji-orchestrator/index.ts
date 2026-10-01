@@ -17,7 +17,7 @@
  * 
  * 3. LEGALWHAT ORCHESTRATOR:
  *    - Legal platform operations management
- *    - ALEXARA voice intelligence integration
+ *    - LEXARA voice intelligence integration
  *    - SEO and UX optimization
  *    - Document generation and filing
  * 
