@@ -242,7 +242,7 @@ export default function FMIAnalysis({
           setUploadProgress(90);
           const combined = await reviewSetMutation.mutateAsync({
             fileIds: completedFileIds,
-            documents: batchReviewInputs.length >= 2 ? batchReviewInputs : undefined,
+            documents: batchReviewInputs.length >= 2 ? batchReviewInputs.slice(0, 8) : undefined,
             lawType: lawType || 'general',
             state,
             question: caseContext?.trim() || undefined,
@@ -254,7 +254,9 @@ export default function FMIAnalysis({
           });
           toast({
             title: 'Combined Document Review Complete',
-            description: `Compared ${completedFileIds.length} uploaded files together.`,
+            description: combined.fileCount < completedFileIds.length
+              ? `Compared ${combined.fileCount} files together in this review pass; the remaining files were still analyzed individually.`
+              : `Compared ${combined.fileCount} uploaded files together.`,
           });
           setUploadProgress(100);
         } finally {
