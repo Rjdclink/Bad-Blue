@@ -181,7 +181,7 @@ export class SubAgentCoordinator {
         creativePromptEnabled: true,
         autonomousMode: true,
         maxConcurrentTasks: 10,
-        operationalModules: ['alexaraVoice', 'chatInterface', 'emailService'],
+        operationalModules: ['lexaraVoice', 'chatInterface', 'emailService'],
       },
       {
         id: '4JI-LEGAL-UX-006',
