@@ -11,7 +11,7 @@
  * - Pattern recognition at single-bit and aggregate pathway levels
  * - Adaptive activation thresholds for computational efficiency
  * - Real-time pathway pruning and redundancy management
- * - Integration with ALEXARA (Legal) and CRYPTARA (Crypto/OSINT) modules
+ * - Integration with LEXARA (Legal) and CRYPTARA (Crypto/OSINT) modules
  */
 
 import { EventEmitter } from 'events';
@@ -608,7 +608,7 @@ export class BitNeuralPathwayManager extends EventEmitter {
   }
 
   /**
-   * Cross-domain signal propagation (ALEXARA <-> CRYPTARA bridge)
+   * Cross-domain signal propagation (LEXARA <-> CRYPTARA bridge)
    */
   async crossDomainPropagate(
     sourceDomain: 'legal' | 'crypto',
