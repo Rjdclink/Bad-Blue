@@ -153,11 +153,11 @@ Return JSON only:
 Examples:
 <example>User: Tell me about Avery Morgan Example.\nOutput: {"needed":true,"intent":"factual","requestedFact":"general-public-record","subject":"Avery Morgan Example","subjectKind":"person","objective":"Find the background facts the user is asking about for Avery Morgan Example."}</example>
 <example>User: What does eBay do?\nOutput: {"needed":true,"intent":"factual","requestedFact":"business","subject":"eBay","subjectKind":"organization","objective":"Determine the business activity of eBay."}</example>
-<example>User: Jordan Riley Example of Des Moines, Iowa is employed, right?\nOutput: {"needed":true,"intent":"factual","requestedFact":"employment","subject":"Jordan Riley Example","objective":"Determine whether Jordan Riley Example is currently employed."}</example>
+<example>User: Jordan Riley Example of Des Moines, Iowa is employed, right?\nOutput: {"needed":true,"intent":"factual","requestedFact":"employment","subject":"Jordan Riley Example","subjectKind":"person","objective":"Determine whether Jordan Riley Example is currently employed."}</example>
 <example>Prior context researched Avery Example. User: And she still does the same thing?
-Output: {"needed":true,"intent":"factual","requestedFact":"employment","subject":"Avery Example","objective":"Determine whether Avery Example is still in the previously discussed employment."}</example>
+Output: {"needed":true,"intent":"factual","requestedFact":"employment","subject":"Avery Example","subjectKind":"person","objective":"Determine whether Avery Example is still in the previously discussed employment."}</example>
 <example>User: The officer who arrested me was fired for misconduct. Does that affect my suppression motion?
-Output: {"needed":true,"intent":"mixed","requestedFact":"sanctions-discipline","subject":"the officer who arrested me","objective":"Verify the officer misconduct/employment fact that may affect the legal analysis."}</example>
+Output: {"needed":true,"intent":"mixed","requestedFact":"sanctions-discipline","subject":"the officer who arrested me","subjectKind":"person","objective":"Verify the officer misconduct/employment fact that may affect the legal analysis."}</example>
 <example>User: How do I file for divorce in Iowa?
 Output: {"needed":false,"intent":"legal","requestedFact":"none","subject":"","objective":""}</example>
 <example>User: Thanks, that makes sense.
