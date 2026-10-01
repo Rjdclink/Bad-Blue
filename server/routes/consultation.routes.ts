@@ -44,15 +44,18 @@ function authenticatedUserId(req: Request): string | undefined {
   return typeof id === 'string' && id.trim() ? id.trim() : undefined;
 }
 
-async function resolveStoredMatter(req: Request, sessionId?: string): Promise<any | null> {
+async function resolveStoredMatter(req: Request, sessionId?: string, lawType?: string): Promise<any | null> {
   if (!hasPersistentMatterAccess(req)) return null;
   const userId = authenticatedUserId(req);
   if (!userId) return null;
   const { storage } = await import('../storage');
   const rows = await storage.getUserLexaraMatterStates(userId, 200);
+  const normalizedLawType = String(lawType || '').trim().toLowerCase();
   const row = sessionId
     ? rows.find((candidate: any) => String(candidate?.matter?.sessionId || '') === sessionId)
-    : rows[0];
+    : normalizedLawType
+      ? rows.find((candidate: any) => String(candidate?.matter?.lawType || '').trim().toLowerCase() === normalizedLawType)
+      : rows[0];
   return sanitizeRepresentationMatter(row?.matter);
 }
 
@@ -67,12 +70,13 @@ async function saveMatterArtifact(
     fileName: string;
     sourceUrl?: string;
     documentText?: string;
+    lawType?: string;
   },
 ): Promise<string | null> {
   if (!hasPersistentMatterAccess(req)) return null;
   const userId = authenticatedUserId(req);
   if (!userId) return null;
-  const matter = await resolveStoredMatter(req, sessionId);
+  const matter = await resolveStoredMatter(req, sessionId, input.lawType);
   if (!matter) return null;
 
   let contentSummary: string | undefined;
@@ -376,6 +380,7 @@ export function setupConsultationRoutes(app: Express): void {
   app.post('/api/lexara/documents/official-form', isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const officialForm = req.body?.officialForm;
     const matterSessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId.trim().slice(0, 128) : undefined;
+    const matterLawType = typeof req.body?.lawType === 'string' ? req.body.lawType.trim().slice(0, 120) : undefined;
     let values = req.body?.values && typeof req.body.values === 'object' ? req.body.values : {};
     const facts = typeof req.body?.facts === 'string' ? req.body.facts.trim().slice(0, 30_000) : '';
     if (!officialForm?.verifiedOfficial || !officialForm?.url) return res.status(400).json({ error: 'A verified official form is required' });
@@ -420,6 +425,7 @@ export function setupConsultationRoutes(app: Express): void {
         fileName: 'lexara-official-form.pdf',
         sourceUrl: inspected.sourceUrl,
         documentText: JSON.stringify(values),
+        lawType: matterLawType,
       }).catch(error => log.warn('Official form completed but persistent matter save failed route-locally', { error }));
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', 'attachment; filename="lexara-official-form.pdf"');
@@ -446,6 +452,7 @@ export function setupConsultationRoutes(app: Express): void {
       fileName: 'lexara-official-form.' + extension,
       sourceUrl: inspected.sourceUrl,
       documentText: JSON.stringify(values),
+      lawType: matterLawType,
     }).catch(error => log.warn('Official form completed but persistent matter save failed route-locally', { error }));
     res.setHeader('Content-Type', outputMime);
     res.setHeader('Content-Disposition', 'attachment; filename="lexara-official-form.' + extension + '"');
@@ -458,6 +465,7 @@ export function setupConsultationRoutes(app: Express): void {
     const content = String(req.body?.content || '').trim();
     const format = String(req.body?.format || '').toLowerCase();
     const matterSessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId.trim().slice(0, 128) : undefined;
+    const matterLawType = typeof req.body?.lawType === 'string' ? req.body.lawType.trim().slice(0, 120) : undefined;
     if (!content) return res.status(400).json({ error: 'Document content is required' });
     if (content.length > 200_000) return res.status(413).json({ error: 'Document is too large to export' });
     const safeBase = (title || 'lexara-document').replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 100) || 'lexara-document';
@@ -471,6 +479,7 @@ export function setupConsultationRoutes(app: Express): void {
         mimeType: 'application/pdf',
         fileName: `${safeBase}.pdf`,
         documentText: content,
+        lawType: matterLawType,
       }).catch(error => log.warn('PDF exported but persistent matter save failed route-locally', { error }));
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="${safeBase}.pdf"`);
@@ -487,6 +496,7 @@ export function setupConsultationRoutes(app: Express): void {
         mimeType: outputMime,
         fileName: `${safeBase}.docx`,
         documentText: content,
+        lawType: matterLawType,
       }).catch(error => log.warn('DOCX exported but persistent matter save failed route-locally', { error }));
       res.setHeader('Content-Type', outputMime);
       res.setHeader('Content-Disposition', `attachment; filename="${safeBase}.docx"`);
