@@ -53,8 +53,10 @@ export function resolveLexaraBackgroundSubject(
   const explicitPlace = current.match(/\b(?:city|town|county|village|state|place|location)\s+of\s+([A-Z][\p{L}.'’-]+)(?:,\s*([A-Z][\p{L}.'’-]+))?/u)
     || current.match(/\b([A-Z][\p{L}.'’-]+),\s*([A-Z][\p{L}.'’-]+)\b/u);
   const explicitEntity = current.match(/\b(company|business|organization|corporation|firm|nonprofit|website|domain|entity)\s+(?:(?:named|called)\s+)?["“]?([A-Z][\p{L}\p{N}.'’&-]*(?:\s+[A-Z][\p{L}\p{N}.'’&-]*){0,5})["”]?/iu);
+  const standaloneSubject = current.trim().match(/^[A-Z][\p{L}\p{N}.'’&-]{1,120}$/u)?.[0];
   const name = explicitEntity?.[2]
     || candidates(current)[0]
+    || (standaloneSubject && !CONVERSATIONAL_LEAD.test(standaloneSubject) ? standaloneSubject : undefined)
     || (explicitPlace ? explicitPlace[1] : undefined)
     || (followsPrior ? [...previousUserTurns].reverse().flatMap(candidates)[0] : undefined);
   if (!name) return null;
