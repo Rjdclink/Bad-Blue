@@ -18,6 +18,7 @@ import {
   type LexaraSourceCategory,
 } from './LexaraPublicSourceRegistry';
 import { rememberLexaraDiscoveryOutcome } from './LexaraDiscoveryLearning';
+import { searchLexaraBackgroundWithClaude } from './LexaraClaudeBackgroundSearch';
 
 export interface LexaraBackgroundProgressEvent {
   type: 'searching' | 'checkpoint' | 'evidence' | 'endpoint';
@@ -58,6 +59,7 @@ export interface LexaraBackgroundInvestigationContext {
   jurisdiction?: string;
   signal?: AbortSignal;
   onProgress?: (event: LexaraBackgroundProgressEvent) => void;
+  researchDecision?: LexaraResearchDecision;
 }
 
 interface AssessedEvidence {
@@ -343,10 +345,16 @@ export async function investigateLexaraBackgroundQuestion(
   context: LexaraBackgroundInvestigationContext = {},
 ): Promise<LexaraBackgroundResearchResult | null> {
   const priorTurns = previousUserTurns(context);
-  const decision = decideLexaraResearchNeed(prompt, priorTurns);
+  const decision = context.researchDecision || decideLexaraResearchNeed(prompt, priorTurns);
   if (!decision.needed || (decision.intent !== 'factual' && decision.intent !== 'mixed')) return null;
 
-  const resolved = resolveLexaraBackgroundSubject(prompt, priorTurns, context.jurisdiction);
+  const resolved = resolveLexaraBackgroundSubject(prompt, priorTurns, context.jurisdiction)
+    || (decision.subject ? {
+      name: decision.subject,
+      kind: 'person' as const,
+      identifiable: decision.subject.trim().split(/\s+/).length >= 2,
+      location: context.jurisdiction,
+    } : null);
   if (!resolved) return null;
   const subject = cleanSubject(resolved);
   const categories = backgroundCategories(prompt, decision);
@@ -373,6 +381,7 @@ export async function investigateLexaraBackgroundQuestion(
   const startedAt = Date.now();
   const deadlineAt = startedAt + researchBudgetMs;
   const assessed = new Map<string, AssessedEvidence>();
+  const claudeCitationEvidence = new Map<string, { content: string; retrievedAt: string }>();
   const seenUrls = new Set<string>();
   const discoveryLanes = new Set<string>();
   let candidates: LegalMeshCandidate[] = [];
@@ -385,12 +394,25 @@ export async function investigateLexaraBackgroundQuestion(
   try {
     const initialQuery = decision.standaloneQuery || decision.objective || prompt;
     context.onProgress?.({ type: 'searching', pass: 0 });
-    candidates = uniqueCandidates(await discoverLegalMeshTier3(initialQuery, context.signal, {
-      categories,
-      jurisdiction: context.jurisdiction || subject.location,
-      subject: subject.name,
-      requestedFact: decision.requestedFact,
-    }));
+    const [nativeCandidates, claudeParallel] = await Promise.all([
+      discoverLegalMeshTier3(initialQuery, context.signal, {
+        categories,
+        jurisdiction: context.jurisdiction || subject.location,
+        subject: subject.name,
+        requestedFact: decision.requestedFact,
+      }),
+      searchLexaraBackgroundWithClaude({
+        prompt,
+        subject,
+        decision,
+        jurisdiction: context.jurisdiction || subject.location,
+        signal: context.signal,
+      }),
+    ]);
+    for (const item of claudeParallel.citationEvidence) {
+      claudeCitationEvidence.set(item.url, { content: item.content, retrievedAt: item.retrievedAt });
+    }
+    candidates = uniqueCandidates([...nativeCandidates, ...claudeParallel.candidates]);
     candidates.forEach(item => discoveryLanes.add(item.provider));
 
     for (let pass = 0; pass < maxPasses && Date.now() < deadlineAt; pass += 1) {
@@ -409,9 +431,16 @@ export async function investigateLexaraBackgroundQuestion(
         const evidenceByTarget = new Map(retrieval.evidence.map(item => [item.target, item]));
         for (const candidate of fresh) {
           const evidence = evidenceByTarget.get(candidate.url);
-          const evaluation = evidence
+          const cited = claudeCitationEvidence.get(candidate.url);
+          const retrievedEvaluation = evidence
             ? assessEvidence(evidence.content, candidate.url, evidence.retrievedAt, subject, decision, prompt)
             : null;
+          const citedEvaluation = cited
+            ? assessEvidence(cited.content, candidate.url, cited.retrievedAt, subject, decision, prompt)
+            : null;
+          const evaluation = [retrievedEvaluation, citedEvaluation]
+            .filter((item): item is AssessedEvidence => Boolean(item))
+            .sort((a, b) => b.confidence - a.confidence)[0] || null;
           void rememberLexaraDiscoveryOutcome(candidate.url, Boolean(evaluation), {
             categories,
             jurisdiction: context.jurisdiction || subject.location,
