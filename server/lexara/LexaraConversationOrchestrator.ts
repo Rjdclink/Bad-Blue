@@ -368,6 +368,7 @@ function extractVerifiedBackgroundSourceExcerpt(
   const evidence = result.evidenceSummary;
   const webRecord = /^\s*\d+\.\s*SOURCE:\s*(https?:\/\/[^\s]+)\s*\nRETRIEVED:\s*[^\n]+\s*\nASSESSMENT:\s*(DIRECT|INFERENTIAL|PARTIAL)\s*\(\d+%\)\s*\nEVIDENCE:\s*([\s\S]*?)(?=\n\d+\.\s*SOURCE:|$)/m.exec(evidence);
   const custodyRecord = /^\s*STRUCTURED CUSTODY SOURCE:\s*(https?:\/\/[^\s]+)\s*\n([\s\S]*?)(?=\nSTRUCTURED CUSTODY SOURCE:|$)/m.exec(evidence);
+  if (webRecord && webRecord[2] !== 'DIRECT') return null;
   const sourceUrl = webRecord?.[1] || custodyRecord?.[1];
   const excerpt = (webRecord?.[3] || custodyRecord?.[2] || '').replace(/\s+/g, ' ').trim();
   if (!sourceUrl || !excerpt) return null;
