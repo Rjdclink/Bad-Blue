@@ -943,6 +943,12 @@ must(
     lexaraConversationOrchestrator.includes("from './LexaraBackgroundInvestigation'") &&
     lexaraConversationOrchestrator.includes("const backgroundResearchRequested = sequencePlan.useBackgroundResearch") &&
     lexaraConversationOrchestrator.includes('const researchRouteSelected = sequencePlan.useLegalResearch') &&
+    lexaraConversationOrchestrator.includes('resolvedSubject: resolvedBackgroundSubject || undefined') &&
+    lexaraBackgroundInvestigation.includes('const resolved = context.resolvedSubject') &&
+    lexaraBackgroundSubject.includes('CONVERSATIONAL_LEAD') &&
+    lexaraBackgroundBoundary.includes("from './LexaraBackgroundInvestigation'") &&
+    !lexaraBackgroundBoundary.includes('LexaraPantheonInvestigation') &&
+    !lexaraBackgroundBoundary.includes('PantheonDiscoveryCoordinator') &&
     !lexaraBackgroundInvestigation.includes('../services/pantheon/') &&
     !lexaraBackgroundInvestigation.includes('PantheonRetrievalAdapter') &&
     lexaraBackgroundInvestigation.includes('discoverLegalMeshTier3') &&
