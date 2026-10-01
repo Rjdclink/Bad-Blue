@@ -18,7 +18,7 @@ import { LAW_TYPES as EXPERT_LAW_TYPES } from '@shared/legalCounselTypes';
 import { LAW_TYPES as PRODUCT_LAW_TYPES } from '@shared/lawTypes';
 import { mapProductLawTypeToExpert } from '@shared/legalDomainMapping';
 import { apiRateLimit } from '../rateLimit';
-import { analyzeFMIEvidence, type FMIFile } from '../fmiIntelligenceTool';
+import { analyzeFMIEvidence, type FMIFile, type FMIAnalysisResult } from '../fmiIntelligenceTool';
 import { extractLexaraEvidenceContent } from '../lexara/LexaraMediaExtraction';
 import { MASTER_INTERNAL_EMAIL, MASTER_USER_ID } from '../masterPassword';
 import { detectFlatFormLayout } from '../lexara/FlatFormLayoutDetector';
@@ -76,7 +76,7 @@ async function resolvePaidMatter(userId: string, lawType?: string): Promise<any 
 async function attachEvidenceArtifactToMatter(
   userId: string,
   matterId: string | undefined,
-  evidence: { id: string; name: string; storageRef: string; uploadedAt?: string | Date },
+  evidence: { id: string; name: string; storageRef: string; uploadedAt?: string | Date; analysis?: FMIAnalysisResult },
 ): Promise<void> {
   if (!matterId) return;
   const { storage: appStorage } = await import('../storage');
@@ -95,6 +95,26 @@ async function attachEvidenceArtifactToMatter(
       createdAt: evidence.uploadedAt ? new Date(evidence.uploadedAt).toISOString() : now,
       updatedAt: now,
     });
+  }
+  if (evidence.analysis) {
+    const artifactId = `evidence:${evidence.id}`;
+    const contradictionText = [
+      ...(evidence.analysis.contradictions?.conflicts || []).map(conflict => conflict.description),
+      ...(evidence.analysis.contradictions?.inconsistencies || []).map(item => item.description),
+    ];
+    const link = {
+      artifactId,
+      title: evidence.name,
+      findings: [...evidence.analysis.extracted.facts, ...evidence.analysis.keyFindings].slice(0, 20),
+      supportsElements: evidence.analysis.legalSignificance.supportsElements || [],
+      weakensDefenses: evidence.analysis.legalSignificance.weakensDefenses || [],
+      raisesIssues: evidence.analysis.legalSignificance.raisesIssues || [],
+      contradictions: contradictionText.slice(0, 20),
+      status: contradictionText.length ? 'needs-corroboration' as const : 'analyzed' as const,
+    };
+    const existingIndex = matter.evidenceMap.findIndex(entry => entry.artifactId === artifactId);
+    if (existingIndex >= 0) matter.evidenceMap[existingIndex] = link;
+    else matter.evidenceMap.push(link);
   }
   matter.updatedAt = now;
   await appStorage.updateLatestLexaraMatterState(userId, matter.sessionId, matter);
@@ -422,6 +442,7 @@ export function setupFMIRoutes(app: Express): void {
             name: String(storedFile.file_name),
             storageRef: String(storedFile.storage_path),
             uploadedAt: storedFile.uploaded_at,
+            analysis,
           }).catch(error => log.warn('[F.M.I.] Matter artifact linkage failed route-locally', { error, fileId }));
         }
 
