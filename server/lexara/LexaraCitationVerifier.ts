@@ -161,11 +161,23 @@ async function possibleNegativeTreatment(citation: string): Promise<{ found: boo
   const html = await response.text().catch(() => '');
   if (!html) return { found: false };
   const $ = cheerio.load(html);
-  const text = $('main').text().replace(/\s+/g, ' ').trim();
-  const match = text.match(/.{0,110}\b(overruled|abrogated|superseded|vacated)\b.{0,170}/i);
-  return match
-    ? { found: true, evidence: match[0].trim().slice(0, 320) }
-    : { found: false };
+  // Search only actual opinion-result containers. The page also echoes the query
+  // itself, which contains our negative-treatment keywords and would otherwise
+  // create a false signal on every search.
+  const resultTexts: string[] = [];
+  $('a[href*="/opinion/"]').each((_index, element) => {
+    const anchor = $(element);
+    const container = anchor.closest('article, li, .search-result, .v-offset-below-2').first();
+    const text = (container.length ? container.text() : anchor.parent().text())
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (text) resultTexts.push(text);
+  });
+  for (const text of resultTexts.slice(0, 20)) {
+    const match = text.match(/.{0,110}\b(overruled|abrogated|superseded|vacated)\b.{0,170}/i);
+    if (match) return { found: true, evidence: match[0].trim().slice(0, 320) };
+  }
+  return { found: false };
 }
 
 async function verifyOneCitation(item: ReturnType<typeof extractCaseCitations>[number]): Promise<CitationVerification> {
