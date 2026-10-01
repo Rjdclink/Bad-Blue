@@ -12,6 +12,7 @@ import { getExpertSystemConfig } from './legalCounselExpertSystem';
 import { checkFact, extractClaimsFromResponse } from './factCheckingEngine';
 import type { LawType } from '../shared/legalCounselTypes';
 import { createLogger } from './logger';
+import { researchLegalAuthority, formatAuthorityResearchForSystem } from './lexara/LexaraAuthorityResearch';
 
 const log = createLogger('ConsultationEngine');
 
@@ -298,7 +299,8 @@ Return ONLY valid JSON in this exact format:
 export async function identifyLegalIssues(
   facts: ConsultationFacts,
   lawType: LawType,
-  state: string
+  state: string,
+  authorityContext = ''
 ): Promise<CauseOfAction[]> {
   const expertConfig = getExpertSystemConfig(lawType, state);
   
@@ -306,6 +308,9 @@ export async function identifyLegalIssues(
 
 Facts:
 ${JSON.stringify(facts, null, 2)}
+
+CURRENT APPLICATION-SUPPLIED AUTHORITY:
+${authorityContext || 'No current authority was retrieved. Do not invent statutes, cases, rules, citations, or deadlines.'}
 
 For each potential cause of action:
 1. Identify the legal claim (with statute reference if applicable)
@@ -315,7 +320,7 @@ For each potential cause of action:
 5. Calculate viability score (0-100)
 6. Provide analysis notes and recommendations
 
-Focus on ${state}-specific law and cite relevant statutes.
+Focus on ${state}-specific law. Cite a statute, rule, case, or deadline only when it appears in CURRENT APPLICATION-SUPPLIED AUTHORITY above. If authority is missing, identify the issue without fabricating a citation.
 
 Return ONLY valid JSON array in this exact format:
 [
@@ -435,7 +440,8 @@ export async function generateProceduralStrategy(
   analysis: Partial<ConsultationAnalysis>,
   facts: ConsultationFacts,
   lawType: LawType,
-  state: string
+  state: string,
+  authorityContext = ''
 ): Promise<{ posture: ProceduralPosture; nextSteps: NextStep[] }> {
   const expertConfig = getExpertSystemConfig(lawType, state);
   
@@ -447,12 +453,15 @@ ${JSON.stringify(analysis, null, 2)}
 Facts:
 ${JSON.stringify(facts, null, 2)}
 
+CURRENT APPLICATION-SUPPLIED AUTHORITY:
+${authorityContext || 'No current authority was retrieved. Do not invent filing deadlines, limitation periods, court rules, service rules, or venue requirements.'}
+
 Determine:
 1. Current procedural stage
 2. Jurisdiction (state/federal, venue)
-3. Statute of limitations deadline (calculate if possible)
+3. Statute of limitations deadline only when the controlling period and trigger are supported by CURRENT APPLICATION-SUPPLIED AUTHORITY; otherwise null
 4. Urgency level
-5. Next filing deadlines
+5. Next filing deadlines only when grounded in CURRENT APPLICATION-SUPPLIED AUTHORITY; otherwise null
 6. Prioritized next steps with deadlines and reasoning
 
 Return ONLY valid JSON:
@@ -615,10 +624,25 @@ export async function performConsultation(
     // STEP 1: Extract Facts
     log.info('Extracting facts from narrative');
     const facts = await extractFacts(situation, lawType, state);
-    
+
+    // Ground the structured engine in the same current-authority layer used by
+    // live LEXARA. Model agreement is analysis, never legal verification.
+    let authorityContext = '';
+    try {
+      const authorityResearch = await researchLegalAuthority([
+        `Jurisdiction: ${state}.`,
+        `Legal domain: ${String(lawType).replace(/-/g, ' ')}.`,
+        'Identify the controlling current statutes, regulations, court rules, procedural requirements, limitation/deadline rules, and primary authorities materially implicated by these facts. Prefer primary government/court sources.',
+        `FACTS:\n${situation}`,
+      ].join('\n\n'), { jurisdiction: state, forceResearch: true });
+      authorityContext = formatAuthorityResearchForSystem(authorityResearch);
+    } catch (error) {
+      log.warn('Current authority research unavailable for structured consultation', { error, lawType, state });
+    }
+
     // STEP 2: Identify Legal Issues / Causes of Action
     log.info('Identifying legal issues and causes of action');
-    const causesOfAction = await identifyLegalIssues(facts, lawType, state);
+    const causesOfAction = await identifyLegalIssues(facts, lawType, state, authorityContext);
     
     // STEP 3: Gap Analysis
     log.info('Performing gap analysis');
@@ -630,7 +654,8 @@ export async function performConsultation(
       { causesOfAction, missingElements },
       facts,
       lawType,
-      state
+      state,
+      authorityContext
     );
     
     // STEP 5: Strength Assessment

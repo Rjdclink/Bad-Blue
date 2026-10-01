@@ -390,6 +390,8 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const [userInput, setUserInput] = useState('');
   const [phase, setPhase] = useState<ConversationPhase>('initializing');
   const [jurisdiction, setJurisdiction] = useState<string | undefined>();
+  const [representationMatter, setRepresentationMatter] = useState<any | null>(null);
+  const [hasSavedMatters, setHasSavedMatters] = useState(false);
   const [historyReady, setHistoryReady] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [restoreAttempt, setRestoreAttempt] = useState(0);
@@ -401,6 +403,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const [emotion, setEmotion] = useState<LEXARAEmotionHint>('calm');
   const [gaze, setGaze] = useState<LEXARAGazeHint>('camera');
   const [conversationDocument, setConversationDocument] = useState<{ title: string; content: string } | null>(null);
+  const [savedArtifact, setSavedArtifact] = useState<{ title: string; fileName: string; mimeType: string; downloadUrl: string } | null>(null);
   const [documentBusy, setDocumentBusy] = useState(false);
 
   useEffect(() => {
@@ -408,7 +411,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     // consent may have populated the signal; text-only mode never gets a surprise prompt.
     void captureLexaraDeviceLocation({ prompt: false }).catch(() => undefined);
   }, []);
-  const [pendingDocument, setPendingDocument] = useState<{ title: string; facts: string; state: string; templateMode: boolean } | null>(null);
+  const [pendingDocument, setPendingDocument] = useState<{ title: string; facts: string; state: string; templateMode: boolean; missingFields?: string[]; packetItem?: boolean } | null>(null);
   const [showReviewPrompt, setShowReviewPrompt] = useState(false);
 
   const conversationRef = useRef<ConversationMessage[]>([]);
@@ -941,6 +944,14 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     setGaze('thinking');
 
     try {
+      if (pendingDocument?.missingFields?.length) {
+        const activeField = pendingDocument.missingFields[0];
+        setPendingDocument(previous => previous ? {
+          ...previous,
+          facts: `${previous.facts}\n\nLEXARA REQUESTED FORM FIELD: ${activeField}\nUSER ANSWER: ${message}`,
+        } : previous);
+      }
+
       const sharedContext = {
         previousMessages,
         lawType: lawTypeId,
@@ -948,6 +959,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         jurisdiction,
         deviceLocation: readLexaraDeviceLocation(),
         sessionId: sessionIdRef.current,
+        representationMatter,
         behaviorMode: 'professional',
       };
 
@@ -1155,9 +1167,26 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         researchProgressTimerRef.current = null;
       }
       if (generation !== generationRef.current) return;
+      if (data?.representationMatter && typeof data.representationMatter === 'object') {
+        setRepresentationMatter(data.representationMatter);
+      }
+      if (data?.savedArtifact?.downloadUrl && typeof data.savedArtifact.downloadUrl === 'string') {
+        setSavedArtifact({
+          title: String(data.savedArtifact.title || 'Saved file'),
+          fileName: String(data.savedArtifact.fileName || data.savedArtifact.title || 'legalwhat-file'),
+          mimeType: String(data.savedArtifact.mimeType || 'application/octet-stream'),
+          downloadUrl: data.savedArtifact.downloadUrl,
+        });
+      } else {
+        setSavedArtifact(null);
+      }
+      if (typeof data?.matterSessionId === 'string' && data.matterSessionId.trim()) {
+        sessionIdRef.current = data.matterSessionId.trim();
+      }
       const priorPendingDocument = pendingDocument;
       const documentIntentRequested = data?.documentIntent?.requested === true;
-      const documentFollowup = /\b(?:document|draft|form|letter|complaint|petition|motion|affidavit|declaration|pdf|docx|edit|revise|change|paragraph|section|signature|download|export|file|filing)\b/i.test(message);
+      const documentFollowup = /\b(?:document|draft|form|letter|complaint|petition|motion|affidavit|declaration|pdf|docx|edit|revise|change|paragraph|section|signature|download|export|file|filing)\b/i.test(message)
+        || Boolean(priorPendingDocument?.missingFields?.length);
       // Document controls belong to the active document task, never to the
       // conversation globally. An unrelated completed turn retires stale UI.
       if (!documentIntentRequested && priorPendingDocument && !documentFollowup) {
@@ -1178,6 +1207,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             facts,
             state: resolvedJurisdiction,
             templateMode: data.documentIntent.templateMode === true,
+            packetItem: data.documentIntent.packetItem === true,
           });
           pendingActionRef.current = { kind: 'document', label: pendingTitle };
         }
@@ -1298,7 +1328,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         }
       }
     }
-  }, [appendMessage, clearVoiceTurnBuffer, jurisdiction, lawTypeId, lawTypeName, liveEnabled, pendingDocument, resumeListening, setConversationPhase, speakLexara, stopSpeaking, updateMessageContent, voiceReady]);
+  }, [appendMessage, clearVoiceTurnBuffer, jurisdiction, lawTypeId, lawTypeName, liveEnabled, pendingDocument, representationMatter, resumeListening, setConversationPhase, speakLexara, stopSpeaking, updateMessageContent, voiceReady]);
 
   handleMessageRef.current = handleUserMessage;
 
@@ -1316,7 +1346,9 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
     const greetingGeneration = generationRef.current;
     responseEmotionRef.current = 'calm';
-    const greeting = 'How can I help you?';
+    const greeting = hasSavedMatters
+      ? 'You have saved legal matters I can pull up if you want to continue where you left off. How may I help you?'
+      : 'How may I help you?';
 
     // Do not consume the one-shot greeting until the voice path is ready.
     // Once ready, reserve it before the await so overlapping readiness effects
@@ -1332,7 +1364,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     if (liveEnabled && !started && greetingGeneration === generationRef.current) {
       greetingRef.current = false;
     }
-  }, [appendMessage, historyReady, liveEnabled, speakLexara, voiceReady]);
+  }, [appendMessage, hasSavedMatters, historyReady, liveEnabled, speakLexara, voiceReady]);
 
   useEffect(() => {
     if (initializedRef.current) return;
@@ -1415,6 +1447,8 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     conversationRef.current = [];
     setConversation([]);
     setJurisdiction(undefined);
+    setRepresentationMatter(null);
+    setHasSavedMatters(false);
     greetingRef.current = false;
     greetingDisplayedRef.current = false;
     pendingUserTurnQueueRef.current = [];
@@ -1448,6 +1482,8 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     conversationRef.current = [];
     setConversation([]);
     setJurisdiction(undefined);
+    setRepresentationMatter(null);
+    setHasSavedMatters(false);
     greetingRef.current = false;
     greetingDisplayedRef.current = false;
     userSpeechObservedRef.current = false;
@@ -1473,6 +1509,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       if (data?.success !== true) throw new Error('Could not load your last Lexara conversation.');
       if (controller.signal.aborted) return;
 
+      setHasSavedMatters(data?.hasSavedMatters === true);
       const saved = data.conversation;
       if (saved && Array.isArray(saved.turns) && saved.turns.length) {
         const messages: ConversationMessage[] = saved.turns.flatMap((turn: any) => {
@@ -1492,8 +1529,12 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
           const latestContext = saved.turns[saved.turns.length - 1]?.context;
           setJurisdiction(typeof latestContext?.jurisdiction === 'string'
             ? latestContext.jurisdiction : undefined);
-          greetingRef.current = true;
-          userSpeechObservedRef.current = true;
+          setRepresentationMatter(latestContext?.representationMatter && typeof latestContext.representationMatter === 'object'
+            ? latestContext.representationMatter : null);
+          // A returning user gets a fresh spoken entry greeting even when the
+          // prior matter history is restored beneath it.
+          greetingRef.current = false;
+          userSpeechObservedRef.current = false;
         }
       }
       historyReadyRef.current = true;
@@ -1553,6 +1594,8 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
           facts: pendingDocument.facts,
           lawType: lawTypeId,
           documentType: pendingDocument.title,
+          packetItem: pendingDocument.packetItem === true,
+          packetItemTitle: pendingDocument.packetItem ? pendingDocument.title : undefined,
           templateMode: pendingDocument.templateMode,
           instructions: pendingDocument.templateMode
             ? 'Create the requested blank/template legal document. Preserve unknown required facts as bracketed placeholders.'
@@ -1563,11 +1606,27 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       if (generated.status === 409 && data?.officialFormRequired && data?.officialForm) {
         const official = await fetch('/api/lexara/documents/official-form', {
           method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ officialForm: data.officialForm, facts: pendingDocument.facts }),
+          body: JSON.stringify({
+            officialForm: data.officialForm,
+            facts: pendingDocument.facts,
+            sessionId: sessionIdRef.current,
+            lawType: lawTypeId,
+          }),
         });
         if (!official.ok) {
           const issue = await official.json().catch(() => ({}));
-          const missing = Array.isArray(issue?.missingFields) && issue.missingFields.length ? ' Missing information: ' + issue.missingFields.join(', ') + '.' : '';
+          const missingFields = Array.isArray(issue?.missingFields)
+            ? issue.missingFields.map((field: unknown) => String(field || '').trim()).filter(Boolean)
+            : [];
+          if (official.status === 422 && missingFields.length) {
+            setPendingDocument(previous => previous ? { ...previous, missingFields } : previous);
+            const firstField = missingFields[0].replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+            const question = `I need one more piece of information to complete ${pendingDocument.title}: what should I enter for ${firstField}?`;
+            appendMessage('lexara', question);
+            void speakLexara(question, generationRef.current).catch(() => undefined);
+            return;
+          }
+          const missing = missingFields.length ? ' Missing information: ' + missingFields.join(', ') + '.' : '';
           throw new Error((issue?.error || 'Official form completion failed') + missing);
         }
         const blob = await official.blob();
@@ -1590,7 +1649,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       setConversationDocument({ title, content });
       const exported = await fetch('/api/lexara/documents/export', {
         method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, content, format }),
+        body: JSON.stringify({ title, content, format, sessionId: sessionIdRef.current, lawType: lawTypeId }),
       });
       if (!exported.ok) throw new Error('Document export failed');
       const blob = await exported.blob();
@@ -1608,11 +1667,36 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     }
   };
 
+  const downloadSavedArtifact = async () => {
+    if (!savedArtifact?.downloadUrl) return;
+    const response = await fetch(savedArtifact.downloadUrl, {
+      method: 'GET',
+      credentials: 'include',
+      cache: 'no-store',
+    });
+    if (!response.ok) throw new Error('Saved file retrieval failed');
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = savedArtifact.fileName || savedArtifact.title || 'legalwhat-file';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  };
+
   const downloadConversationDocument = async (format: 'docx' | 'pdf') => {
     if (!conversationDocument?.content) return;
     const response = await fetch('/api/lexara/documents/export', {
       method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: conversationDocument.title, content: conversationDocument.content, format }),
+      body: JSON.stringify({
+        title: conversationDocument.title,
+        content: conversationDocument.content,
+        format,
+        sessionId: sessionIdRef.current,
+        lawType: lawTypeId,
+      }),
     });
     if (!response.ok) throw new Error('Document export failed');
     const blob = await response.blob();
@@ -1713,6 +1797,26 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
               </div>
             </div>
           ))}
+
+          {savedArtifact && (
+            <div className="flex justify-start">
+              <div className="max-w-[92%] rounded-2xl border bg-card p-4 text-sm shadow-sm">
+                <div className="mb-2 flex items-center gap-2 font-semibold">
+                  <FileText className="h-4 w-4" />
+                  Saved legal matter file
+                </div>
+                <div className="mb-3">{savedArtifact.title}</div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void downloadSavedArtifact().catch(error => setErrorMessage(friendlyError(error)))}
+                >
+                  <Download className="mr-1 h-4 w-4" />
+                  Open saved file
+                </Button>
+              </div>
+            </div>
+          )}
 
           {pendingDocument && !conversationDocument && (
             <div className="flex justify-start">

@@ -22,6 +22,9 @@ import type { LawType } from '../../shared/legalCounselTypes';
 import PDFDocument from 'pdfkit';
 import archiver from 'archiver';
 import { LEGAL_DOCUMENT_TYPES, resolveLegalDocumentType, validateLegalDocumentDraft } from '../lexara/legalDocumentRegistry';
+import { persistMatterBuffer } from '../lexara/LexaraMatterStorage';
+import { sanitizeRepresentationMatter } from '../lexara/LexaraRepresentationEngine';
+import { randomUUID } from 'crypto';
 
 const log = createLogger('ConsultationRoutes');
 const MAX_FMI_CONTEXT_CHARACTERS = 8_000;
@@ -29,6 +32,198 @@ const MAX_FMI_CONTEXT_CHARACTERS = 8_000;
 function canUseClaudeOpus(req: Request): boolean {
   const accessState = String((req.user as any)?.accessState || '').trim().toLowerCase();
   return accessState === 'paid' || accessState === 'master';
+}
+
+function hasPersistentMatterAccess(req: Request): boolean {
+  return String((req.user as any)?.accessState || '').trim().toLowerCase() === 'paid';
+}
+
+function authenticatedUserId(req: Request): string | undefined {
+  const user = req.user as any;
+  const id = user?.id || user?.claims?.sub;
+  return typeof id === 'string' && id.trim() ? id.trim() : undefined;
+}
+
+async function resolveStoredMatter(req: Request, sessionId?: string, lawType?: string): Promise<any | null> {
+  if (!hasPersistentMatterAccess(req)) return null;
+  const userId = authenticatedUserId(req);
+  if (!userId) return null;
+  const { storage } = await import('../storage');
+  const rows = await storage.getUserLexaraMatterStates(userId, 200);
+  const normalizedLawType = String(lawType || '').trim().toLowerCase();
+  const row = sessionId
+    ? rows.find((candidate: any) => String(candidate?.matter?.sessionId || '') === sessionId)
+    : normalizedLawType
+      ? rows.find((candidate: any) => String(candidate?.matter?.lawType || '').trim().toLowerCase() === normalizedLawType)
+      : rows[0];
+  return sanitizeRepresentationMatter(row?.matter);
+}
+
+async function saveMatterArtifact(
+  req: Request,
+  sessionId: string | undefined,
+  input: {
+    title: string;
+    kind: 'document' | 'filing-packet';
+    bytes: Buffer;
+    mimeType: string;
+    fileName: string;
+    sourceUrl?: string;
+    documentText?: string;
+    lawType?: string;
+  },
+): Promise<string | null> {
+  if (!hasPersistentMatterAccess(req)) return null;
+  const userId = authenticatedUserId(req);
+  if (!userId) return null;
+  const matter = await resolveStoredMatter(req, sessionId, input.lawType);
+  if (!matter) return null;
+
+  let contentSummary: string | undefined;
+  let consistencyFacts: string[] = [];
+  let consistencyConflicts: string[] = [];
+  if (input.documentText?.trim()) {
+    try {
+      const consistencyRaw = await generateLegalAnalysis('document-consistency', [
+        'Compare the new legal document against the supplied matter record and prior document fingerprints.',
+        'Return JSON only with keys: summary, consistencyFacts, conflicts.',
+        'consistencyFacts should be short labeled facts that future documents can compare, such as party roles/names, case number, addresses, material dates with their meaning, children and relationships, requested relief, asset/debt identities, and amounts with their meaning.',
+        'Flag a conflict only when two supplied facts cannot both be true in the same labeled context. Different dates or amounts for different purposes are not conflicts.',
+        'Do not invent facts or infer missing values.',
+        `MATTER RECORD:\n${JSON.stringify({
+          knownFacts: matter.knownFacts,
+          parties: matter.parties,
+          proceeding: matter.proceeding,
+          jurisdiction: matter.jurisdiction,
+          courtOrAgency: matter.courtOrAgency,
+        })}`,
+        `PRIOR DOCUMENT FINGERPRINTS:\n${JSON.stringify(matter.artifacts.map((artifact: any) => ({
+          title: artifact.title,
+          facts: artifact.consistencyFacts || [],
+          conflicts: artifact.consistencyConflicts || [],
+        })))}`,
+        `NEW DOCUMENT: ${input.title}\n${input.documentText.slice(0, 16000)}`,
+      ].join('\n\n'), {
+        providerPolicy: 'legalwhat',
+        systemPrompt: 'You are a deterministic cross-document consistency checker. Use only supplied matter/document facts. Return JSON only.',
+        temperature: 0,
+        maxTokens: 2200,
+        useJSON: true,
+        allowClaudeOpus: false,
+        claudeWorkload: 'standard',
+      });
+      const parsed = parseJsonObject(consistencyRaw);
+      if (parsed) {
+        contentSummary = typeof parsed.summary === 'string' ? parsed.summary.trim().slice(0, 1200) : undefined;
+        consistencyFacts = Array.isArray(parsed.consistencyFacts)
+          ? parsed.consistencyFacts.map((value: unknown) => String(value || '').trim()).filter(Boolean).slice(0, 30)
+          : [];
+        consistencyConflicts = Array.isArray(parsed.conflicts)
+          ? parsed.conflicts.map((value: unknown) => String(value || '').trim()).filter(Boolean).slice(0, 20)
+          : [];
+      }
+    } catch (error) {
+      log.warn('Cross-document consistency extraction failed route-locally', { error, title: input.title });
+    }
+  }
+
+  const storageRef = await persistMatterBuffer({
+    userId,
+    matterId: matter.matterId,
+    category: input.kind === 'filing-packet' ? 'packet' : 'document',
+    fileName: input.fileName,
+    mimeType: input.mimeType,
+    bytes: input.bytes,
+  });
+  const now = new Date().toISOString();
+  matter.artifacts.push({
+    id: `document:${randomUUID()}`,
+    title: input.title,
+    kind: input.kind,
+    status: 'saved',
+    storageRef,
+    sourceUrl: input.sourceUrl,
+    fileName: input.fileName,
+    mimeType: input.mimeType,
+    contentSummary,
+    consistencyFacts,
+    consistencyConflicts,
+    createdAt: now,
+    updatedAt: now,
+  });
+  if (consistencyConflicts.length) {
+    const existingMissing = new Set((matter.missingInformation || []).map((value: string) => value.toLowerCase()));
+    for (const conflict of consistencyConflicts) {
+      const item = `Resolve document consistency issue in ${input.title}: ${conflict}`;
+      if (!existingMissing.has(item.toLowerCase())) matter.missingInformation.push(item);
+    }
+  }
+  if (matter.packet?.items?.length) {
+    const normalizedTitle = input.title.toLowerCase();
+    for (const item of matter.packet.items) {
+      const sameSource = Boolean(input.sourceUrl && item.sourceUrl === input.sourceUrl);
+      const sameTitle = normalizedTitle.includes(item.title.toLowerCase())
+        || item.title.toLowerCase().includes(normalizedTitle);
+      if (sameSource || sameTitle) item.status = 'complete';
+    }
+  }
+  matter.updatedAt = now;
+  const { storage } = await import('../storage');
+  await storage.updateLatestLexaraMatterState(userId, matter.sessionId, matter);
+  return storageRef;
+}
+
+async function recordMatterMissingFields(
+  req: Request,
+  sessionId: string | undefined,
+  formTitle: string,
+  fields: string[],
+): Promise<void> {
+  if (!hasPersistentMatterAccess(req) || !fields.length) return;
+  const userId = authenticatedUserId(req);
+  if (!userId) return;
+  const matter = await resolveStoredMatter(req, sessionId);
+  if (!matter) return;
+  const existing = new Set((matter.missingInformation || []).map((value: string) => value.toLowerCase()));
+  for (const field of fields) {
+    const statement = `${formTitle}: ${field}`;
+    if (!existing.has(statement.toLowerCase())) {
+      matter.missingInformation.push(statement);
+      existing.add(statement.toLowerCase());
+    }
+  }
+  matter.updatedAt = new Date().toISOString();
+  const { storage } = await import('../storage');
+  await storage.updateLatestLexaraMatterState(userId, matter.sessionId, matter);
+}
+
+async function renderPdfBuffer(title: string, content: string): Promise<Buffer> {
+  const pdf = new PDFDocument({ size: 'LETTER', margins: { top: 72, bottom: 72, left: 72, right: 72 }, info: { Title: title } });
+  const chunks: Buffer[] = [];
+  const complete = new Promise<Buffer>((resolve, reject) => {
+    pdf.on('data', chunk => chunks.push(Buffer.from(chunk)));
+    pdf.on('end', () => resolve(Buffer.concat(chunks)));
+    pdf.on('error', reject);
+  });
+  pdf.font('Times-Roman').fontSize(12).text(content, { lineGap: 4, align: 'left' });
+  pdf.end();
+  return complete;
+}
+
+async function renderDocxBuffer(content: string): Promise<Buffer> {
+  const zip = archiver('zip', { zlib: { level: 9 } });
+  const chunks: Buffer[] = [];
+  const complete = new Promise<Buffer>((resolve, reject) => {
+    zip.on('data', chunk => chunks.push(Buffer.from(chunk)));
+    zip.on('end', () => resolve(Buffer.concat(chunks)));
+    zip.on('error', reject);
+  });
+  const paragraphs = content.split(/\n/).map(line => `<w:p><w:pPr><w:spacing w:after="120" w:line="480" w:lineRule="auto"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="24"/></w:rPr><w:t xml:space="preserve">${escapeXml(line || ' ')}</w:t></w:r></w:p>`).join('');
+  zip.append(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`, { name: '[Content_Types].xml' });
+  zip.append(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`, { name: '_rels/.rels' });
+  zip.append(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${paragraphs}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr></w:body></w:document>`, { name: 'word/document.xml' });
+  await zip.finalize();
+  return complete;
 }
 
 function serializeFmiContext(value: unknown): string | undefined {
@@ -56,6 +251,23 @@ function escapeXml(value: string): string {
     .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 }
 
+function parseJsonObject(value: unknown): Record<string, any> | null {
+  const clean = String(value || '').replace(/^\s*```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+  try {
+    const parsed = JSON.parse(clean);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    const match = clean.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    try {
+      const parsed = JSON.parse(match[0]);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+}
+
 export function setupConsultationRoutes(app: Express): void {
   
   app.get('/api/lexara/documents/types', isAuthenticated, (_req, res) => {
@@ -66,19 +278,25 @@ export function setupConsultationRoutes(app: Express): void {
     const state = typeof req.body?.state === 'string' ? req.body.state.trim() : '';
     const facts = typeof req.body?.facts === 'string' ? req.body.facts.trim() : '';
     const rawRequestedType = typeof req.body?.documentType === 'string' ? req.body.documentType.trim() : '';
+    const packetItemMode = req.body?.packetItem === true;
+    const packetItemTitle = packetItemMode && typeof req.body?.packetItemTitle === 'string'
+      ? req.body.packetItemTitle.trim().slice(0, 240)
+      : '';
     const requestedType = (LEGAL_DOCUMENT_TYPES as readonly string[]).includes(rawRequestedType)
       ? rawRequestedType as (typeof LEGAL_DOCUMENT_TYPES)[number]
-      : resolveLegalDocumentType(rawRequestedType);
+      : resolveLegalDocumentType(rawRequestedType)
+        || (packetItemTitle ? 'Custom Document' : null);
+    const documentLabel = packetItemTitle || rawRequestedType || requestedType || '';
     const templateMode = req.body?.templateMode === true;
     const customInstructions = typeof req.body?.instructions === 'string' ? req.body.instructions.trim() : '';
-    if (!state || !facts || !requestedType) return res.status(400).json({ error: 'Jurisdiction, case facts, and a supported document type are required' });
+    if (!state || !facts || !requestedType || !documentLabel) return res.status(400).json({ error: 'Jurisdiction, case facts, and a supported document type are required' });
     if (facts.length > 30_000 || customInstructions.length > 8_000) return res.status(413).json({ error: 'Document request is too large' });
 
     const resolvedJurisdiction = await resolveUSJurisdiction(facts, state);
     const documentJurisdiction = resolvedJurisdiction?.display || state;
 
     const authorityPrompt = [
-      `Jurisdiction: ${documentJurisdiction}. Document: ${requestedType}.`,
+      `Jurisdiction: ${documentJurisdiction}. Document/form: ${documentLabel}.`,
       'Before drafting, determine from current authoritative court/government sources whether this jurisdiction requires an official/prescribed form, provides an optional official form, or permits a custom-drafted document.',
       'Identify the controlling court/agency and local rules when the facts establish them. Prefer official government/court sources. Do not invent a form number, URL, rule, requirement, or filing instruction.',
       'If a mandatory official form applies, do not substitute a custom document. State the official form identity/source and the factual fields still needed to complete it.',
@@ -88,13 +306,13 @@ export function setupConsultationRoutes(app: Express): void {
     const authorityResearch = await researchLegalAuthority(authorityPrompt, { jurisdiction: documentJurisdiction });
     const authorityAssessment = formatAuthorityResearchForSystem(authorityResearch)
       || 'No current authority was retrieved. Do not invent or claim verification of legal requirements, citations, deadlines, or official forms. Do not present this as ready to file.';
-    const officialForm = resolveOfficialLegalForm(authorityResearch, requestedType);
+    const officialForm = resolveOfficialLegalForm(authorityResearch, documentLabel);
     const formDirective = officialFormDirective(officialForm);
 
     if (officialForm.requirement === 'mandatory') {
       return res.status(409).json({
         error: 'A mandatory official form applies. Lexara will use the verified official form rather than substitute a custom draft.',
-        documentType: requestedType,
+        documentType: documentLabel,
         jurisdiction: documentJurisdiction,
         officialForm,
         officialFormRequired: true,
@@ -110,7 +328,7 @@ export function setupConsultationRoutes(app: Express): void {
     });
 
     const draftingPrompt = [
-      `Prepare a professional ${requestedType} for a matter in ${documentJurisdiction}.`,
+      `Prepare a professional ${documentLabel} for a matter in ${documentJurisdiction}.`,
       `JURISDICTION-FIRST AUTHORITY ASSESSMENT:\n${String(authorityAssessment || '').slice(0, 8000)}`,
       `OFFICIAL-FORM DETERMINATION:\n${formDirective}`,
       'Use ONLY facts supplied below. Never invent names, dates, courts, case numbers, quotations, authorities, procedural posture, or requested relief.',
@@ -124,7 +342,7 @@ export function setupConsultationRoutes(app: Express): void {
 
     let document = await generateDraft(draftingPrompt);
     const normalizedDocument = String(document || '').trim();
-    const filingLike = /motion|brief|memorandum|affidavit|declaration|complaint|answer|petition|notice|objection|appeal|application/i.test(requestedType);
+    const filingLike = /motion|brief|memorandum|affidavit|declaration|complaint|answer|petition|notice|objection|appeal|application|summons|service|order|form/i.test(documentLabel);
     const initialValidation = validateLegalDocumentDraft(requestedType, normalizedDocument, templateMode);
     const hasDocumentAnatomy = initialValidation.valid && (!filingLike || (
       normalizedDocument.length >= (templateMode ? 400 : 700)
@@ -149,8 +367,8 @@ export function setupConsultationRoutes(app: Express): void {
       return res.status(422).json({ error: 'LEXARA could not produce a validated legal-document draft of the requested type. The incomplete output was not exported.' });
     }
     return res.json({
-      title: requestedType,
-      documentType: requestedType,
+      title: documentLabel,
+      documentType: documentLabel,
       document: finalDocument,
       validated: true,
       templateMode,
@@ -163,6 +381,8 @@ export function setupConsultationRoutes(app: Express): void {
 
   app.post('/api/lexara/documents/official-form', isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const officialForm = req.body?.officialForm;
+    const matterSessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId.trim().slice(0, 128) : undefined;
+    const matterLawType = typeof req.body?.lawType === 'string' ? req.body.lawType.trim().slice(0, 120) : undefined;
     let values = req.body?.values && typeof req.body.values === 'object' ? req.body.values : {};
     const facts = typeof req.body?.facts === 'string' ? req.body.facts.trim().slice(0, 30_000) : '';
     if (!officialForm?.verifiedOfficial || !officialForm?.url) return res.status(400).json({ error: 'A verified official form is required' });
@@ -193,8 +413,22 @@ export function setupConsultationRoutes(app: Express): void {
         try { values = JSON.parse(String(mappingRaw).replace(/^\x60\x60\x60(?:json)?\s*|\s*\x60\x60\x60$/gi, '').trim()); } catch { values = {}; }
       }
       const missingFlatFields = checkedLayout.anchors.filter(field => values[field.label] === undefined).map(field => field.label);
-      if (missingFlatFields.length) return res.status(422).json({ error: 'Additional information is required to complete the official form', missingFields: missingFlatFields, sourceUrl: inspected.sourceUrl });
+      if (missingFlatFields.length) {
+        await recordMatterMissingFields(req, matterSessionId, String(officialForm.title || 'Official form'), missingFlatFields)
+          .catch(error => log.warn('Could not persist missing official-form fields route-locally', { error }));
+        return res.status(422).json({ error: 'Additional information is required to complete the official form', missingFields: missingFlatFields, sourceUrl: inspected.sourceUrl });
+      }
       const output = await overlayFlatOfficialPdf(inspected, checkedLayout, values);
+      await saveMatterArtifact(req, matterSessionId, {
+        title: String(officialForm.title || 'Official legal form'),
+        kind: 'document',
+        bytes: output,
+        mimeType: 'application/pdf',
+        fileName: 'lexara-official-form.pdf',
+        sourceUrl: inspected.sourceUrl,
+        documentText: JSON.stringify(values),
+        lawType: matterLawType,
+      }).catch(error => log.warn('Official form completed but persistent matter save failed route-locally', { error }));
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', 'attachment; filename="lexara-official-form.pdf"');
       res.setHeader('X-Lexara-Official-Source', inspected.sourceUrl);
@@ -202,12 +436,27 @@ export function setupConsultationRoutes(app: Express): void {
       return;
     }
     const missingFields = inspected.fields.filter(field => values[field.name] === undefined).map(field => field.name);
-    if (missingFields.length) return res.status(422).json({ error: 'Additional information is required to complete the official form', missingFields, sourceUrl: inspected.sourceUrl });
+    if (missingFields.length) {
+      await recordMatterMissingFields(req, matterSessionId, String(officialForm.title || 'Official form'), missingFields)
+        .catch(error => log.warn('Could not persist missing official-form fields route-locally', { error }));
+      return res.status(422).json({ error: 'Additional information is required to complete the official form', missingFields, sourceUrl: inspected.sourceUrl });
+    }
     const output = inspected.contentType === 'pdf'
       ? await fillOfficialPdf(inspected, values, true)
       : await fillOfficialDocx(inspected, values);
     const extension = inspected.contentType === 'pdf' ? 'pdf' : 'docx';
-    res.setHeader('Content-Type', inspected.contentType === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    const outputMime = inspected.contentType === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    await saveMatterArtifact(req, matterSessionId, {
+      title: String(officialForm.title || 'Official legal form'),
+      kind: 'document',
+      bytes: output,
+      mimeType: outputMime,
+      fileName: 'lexara-official-form.' + extension,
+      sourceUrl: inspected.sourceUrl,
+      documentText: JSON.stringify(values),
+      lawType: matterLawType,
+    }).catch(error => log.warn('Official form completed but persistent matter save failed route-locally', { error }));
+    res.setHeader('Content-Type', outputMime);
     res.setHeader('Content-Disposition', 'attachment; filename="lexara-official-form.' + extension + '"');
     res.setHeader('X-Lexara-Official-Source', inspected.sourceUrl);
     res.send(output);
@@ -217,30 +466,43 @@ export function setupConsultationRoutes(app: Express): void {
     const title = String(req.body?.title || 'Lexara Legal Document').trim().slice(0, 160);
     const content = String(req.body?.content || '').trim();
     const format = String(req.body?.format || '').toLowerCase();
+    const matterSessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId.trim().slice(0, 128) : undefined;
+    const matterLawType = typeof req.body?.lawType === 'string' ? req.body.lawType.trim().slice(0, 120) : undefined;
     if (!content) return res.status(400).json({ error: 'Document content is required' });
     if (content.length > 200_000) return res.status(413).json({ error: 'Document is too large to export' });
     const safeBase = (title || 'lexara-document').replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 100) || 'lexara-document';
 
     if (format === 'pdf') {
+      const output = await renderPdfBuffer(title, content);
+      await saveMatterArtifact(req, matterSessionId, {
+        title,
+        kind: 'document',
+        bytes: output,
+        mimeType: 'application/pdf',
+        fileName: `${safeBase}.pdf`,
+        documentText: content,
+        lawType: matterLawType,
+      }).catch(error => log.warn('PDF exported but persistent matter save failed route-locally', { error }));
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="${safeBase}.pdf"`);
-      const pdf = new PDFDocument({ size: 'LETTER', margins: { top: 72, bottom: 72, left: 72, right: 72 }, info: { Title: title } });
-      pdf.pipe(res);
-      pdf.font('Times-Roman').fontSize(12).text(content, { lineGap: 4, align: 'left' });
-      pdf.end();
+      res.send(output);
       return;
     }
     if (format === 'docx') {
-      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+      const output = await renderDocxBuffer(content);
+      const outputMime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      await saveMatterArtifact(req, matterSessionId, {
+        title,
+        kind: 'document',
+        bytes: output,
+        mimeType: outputMime,
+        fileName: `${safeBase}.docx`,
+        documentText: content,
+        lawType: matterLawType,
+      }).catch(error => log.warn('DOCX exported but persistent matter save failed route-locally', { error }));
+      res.setHeader('Content-Type', outputMime);
       res.setHeader('Content-Disposition', `attachment; filename="${safeBase}.docx"`);
-      const zip = archiver('zip', { zlib: { level: 9 } });
-      zip.on('error', err => { throw err; });
-      zip.pipe(res);
-      const paragraphs = content.split(/\n/).map(line => `<w:p><w:pPr><w:spacing w:after="120" w:line="480" w:lineRule="auto"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="24"/></w:rPr><w:t xml:space="preserve">${escapeXml(line || ' ')}</w:t></w:r></w:p>`).join('');
-      zip.append(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`, { name: '[Content_Types].xml' });
-      zip.append(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`, { name: '_rels/.rels' });
-      zip.append(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${paragraphs}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr></w:body></w:document>`, { name: 'word/document.xml' });
-      await zip.finalize();
+      res.send(output);
       return;
     }
     return res.status(400).json({ error: 'Export format must be pdf or docx' });

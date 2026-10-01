@@ -14,6 +14,10 @@ function must(condition, message) {
 
 const voiceMode = read('client/src/hooks/useVoiceMode.ts');
 const conversation = read('client/src/components/LexaraConversation.tsx');
+const representationEngine = read('server/lexara/LexaraRepresentationEngine.ts');
+const matterStorage = read('server/lexara/LexaraMatterStorage.ts');
+const fmiRoutes = read('server/routes/fmi.routes.ts');
+const landingPage = read('client/src/pages/landing.tsx');
 const avatar = read('client/src/components/LexaraEtherealAvatar.tsx');
 const viewport = read('client/src/components/LexaraViewport.tsx');
 const embodimentEngine = read('client/src/lib/lexaraEmbodimentEngine.ts');
@@ -993,14 +997,16 @@ must(
   'Post Conviction has normal bookshelf metadata and legal-tools routing',
 );
 must(
-  conversation.includes("const greeting = 'How can I help you?';") &&
+  conversation.includes("const greeting = hasSavedMatters") &&
+    conversation.includes("'You have saved legal matters I can pull up if you want to continue where you left off. How may I help you?'") &&
+    conversation.includes(": 'How may I help you?';") &&
     conversation.includes('if (liveEnabled && !voiceReady) return;') &&
     conversation.includes('await speakLexara(greeting, greetingGeneration).catch(() => false);') &&
     conversation.includes('if (liveEnabled && !started && greetingGeneration === generationRef.current)') &&
     conversation.includes('if (!greetingRef.current && !userSpeechObservedRef.current) {') &&
     conversation.includes('void sendGreeting();') &&
     !conversation.includes('Hello. Tell me what happened'),
-  'LEXARA queues the exact How can I help you? greeting until live voice is ready',
+  'LEXARA queues the correct new-user or saved-matter returning-user greeting until live voice is ready',
 );
 must(
   appSource.includes('<Route path="/welcome"><Redirect to="/lexara-consent" /></Route>') &&
@@ -1252,6 +1258,46 @@ must(
     lexaraConversationOrchestrator.includes("researchDecision.requestedFact === 'age-dob'"),
   'live telemetry records the synthesized age fact or range when Lexara states one',
 );
+must(
+  representationEngine.includes('export interface RepresentationMatterState') &&
+    representationEngine.includes('Identify the COMPLETE current filing package for this exact proceeding and stage.') &&
+    representationEngine.includes("requestedCompleteness === 'complete'") &&
+    representationEngine.includes('research.hasPrimaryAuthority') &&
+    representationEngine.includes('completeSourceLooksLikePacket') &&
+    representationEngine.includes('sourceText.includes(proposedFormNumber.toLowerCase())') &&
+    representationEngine.includes('sourceText.includes(proposedRevision.toLowerCase())') &&
+    representationEngine.includes('representation-deadline-verification') &&
+    representationEngine.includes("source.kind !== 'primary'") &&
+    representationEngine.includes("if (tied.length > 1 && !best.exact) return null"),
+  'LEXARA representation state verifies complete packets, form metadata, deadlines, and ambiguous matter references before treating them as authoritative',
+);
+must(
+  lexaraChatRoutes.includes("accessState === 'paid'") &&
+    lexaraChatRoutes.includes("'trial-ephemeral'") &&
+    lexaraChatRoutes.includes('activeMatter: null') &&
+    matterStorage.includes("const DEFAULT_SUPABASE_BUCKET = 'legalwhat-matters'") &&
+    matterStorage.includes('public: false') &&
+    fmiRoutes.includes('return matches.length === 1 ? matches[0] : null') &&
+    conversation.includes('You have saved legal matters I can pull up if you want to continue where you left off. How may I help you?') &&
+    landingPage.includes('Paid access includes persistent legal matter storage'),
+  'paid users receive private persistent saved matters while trial users remain ephemeral and ambiguous evidence is never guessed into a case file',
+);
+must(
+  consultationRoutes.includes('document-consistency') &&
+    consultationRoutes.includes('Resolve document consistency issue') &&
+    fmiRoutes.includes('supportsElements') &&
+    fmiRoutes.includes('weakensDefenses') &&
+    representationEngine.includes('evidenceMap') &&
+    representationEngine.includes('proceduralRequirements') &&
+    representationEngine.includes('fileName?: string') &&
+    representationEngine.includes('mimeType?: string') &&
+    lexaraChatRoutes.includes("/matters/artifacts/:artifactId") &&
+    lexaraChatRoutes.includes('readMatterBuffer') &&
+    lexaraChatRoutes.includes('if (!savedArtifact && !documentIntent.requested') &&
+    conversation.includes('Open saved file'),
+  'LEXARA keeps evidence, cross-document consistency, filing/service/fee procedure, and exact saved-file retrieval inside the persistent matter record',
+);
+
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-location-fusion.cjs')], { stdio: 'inherit' });
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-document-handoff.cjs')], { stdio: 'inherit' });
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'verify-lexara-pantheon-disconnect.cjs')], { stdio: 'inherit' });
