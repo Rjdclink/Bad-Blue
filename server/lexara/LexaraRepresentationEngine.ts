@@ -98,6 +98,7 @@ export interface RepresentationMatterState {
     label: string;
     date?: string;
     sourceUrl?: string;
+    basis?: string;
     status: 'unverified' | 'verified' | 'satisfied';
   }>;
   nextSteps: string[];
@@ -515,11 +516,87 @@ export function sanitizeRepresentationMatter(value: unknown): RepresentationMatt
         status: ['uploaded','analyzed','needs-corroboration'].includes(entry?.status) ? entry.status : 'uploaded',
       } as RepresentationEvidenceLink];
     }) : [],
-    deadlines: Array.isArray(raw.deadlines) ? raw.deadlines.slice(0, 40) : [],
+    deadlines: Array.isArray(raw.deadlines) ? raw.deadlines.slice(0, 40).flatMap((deadline: any) => {
+      const label = clamp(deadline?.label, 220);
+      if (!label) return [];
+      const status = ['unverified', 'verified', 'satisfied'].includes(deadline?.status) ? deadline.status : 'unverified';
+      return [{
+        label,
+        date: clamp(deadline?.date, 40) || undefined,
+        sourceUrl: normalizeSourceUrl(deadline?.sourceUrl) || undefined,
+        basis: clamp(deadline?.basis, 600) || undefined,
+        status,
+      }];
+    }) : [],
     nextSteps: Array.isArray(raw.nextSteps) ? raw.nextSteps.map((value: unknown) => clamp(value, 500)).filter(Boolean).slice(0, 20) : [],
     createdAt: clamp(raw.createdAt, 80) || new Date().toISOString(),
     updatedAt: clamp(raw.updatedAt, 80) || new Date().toISOString(),
   };
+}
+
+async function verifyMatterDeadlines(
+  matter: RepresentationMatterState,
+  signal?: AbortSignal,
+): Promise<void> {
+  const candidates = matter.deadlines.filter(deadline => deadline.status === 'unverified' && deadline.date);
+  if (!candidates.length || !matter.jurisdiction) return;
+
+  const profile = getLexaraLegalDomainProfile(matter.lawType);
+  const research = await researchLegalAuthority([
+    `Jurisdiction: ${matter.jurisdiction}.`,
+    `Proceeding: ${matter.proceeding || matter.title}.`,
+    `Procedural stage: ${matter.stage}.`,
+    'Verify the controlling current deadline rule, the event that triggers the clock, computation method, and any weekends/holidays/service extensions that materially affect the candidate dates below.',
+    'Use current primary court/government authority. Do not validate a candidate date merely because it appears plausible.',
+    `KNOWN MATTER FACTS: ${JSON.stringify(matter.knownFacts)}`,
+    `CANDIDATE DEADLINES: ${JSON.stringify(candidates)}`,
+  ].join('\n\n'), {
+    jurisdiction: matter.jurisdiction,
+    domainName: profile?.displayName,
+    researchHints: profile?.researchHints,
+    preferredOfficialDomains: profile?.preferredOfficialDomains,
+    forceResearch: true,
+    signal,
+  });
+  if (!research?.hasPrimaryAuthority || !research.sources.length) return;
+
+  const allowed = sourceMap(research);
+  const raw = await generateLegalAnalysis('representation-deadline-verification', [
+    'Verify candidate legal deadline dates using ONLY the supplied current authority excerpts and known matter facts.',
+    'Return JSON only: {"verified":[{"label":"...","date":"...","sourceUrl":"...","basis":"..."}]}.',
+    'Return an item only when the authority establishes the deadline period/rule and the supplied matter facts establish the triggering date well enough to support the exact candidate date.',
+    'The sourceUrl must exactly match one supplied PRIMARY source. If the exact date cannot be supported, omit it.',
+    `CANDIDATES:\n${JSON.stringify(candidates)}`,
+    `KNOWN FACTS:\n${JSON.stringify(matter.knownFacts)}`,
+    `SOURCES:\n${research.sources.map(source => `${source.kind.toUpperCase()} | ${source.title} | ${source.url} | ${source.excerpt || ''}`).join('\n')}`,
+  ].join('\n\n'), {
+    providerPolicy: 'legalwhat',
+    systemPrompt: 'You are a deterministic legal deadline verifier. Use only supplied primary authority and facts. Return JSON only.',
+    temperature: 0,
+    maxTokens: 2200,
+    useJSON: true,
+    allowClaudeOpus: false,
+    claudeWorkload: 'standard',
+    signal,
+  });
+  const parsed = safeJsonObject(raw);
+  const verified = Array.isArray(parsed?.verified) ? parsed!.verified : [];
+  for (const item of verified) {
+    const label = clamp(item?.label, 220);
+    const date = clamp(item?.date, 40);
+    const sourceUrl = normalizeSourceUrl(item?.sourceUrl);
+    const source = allowed.get(sourceUrl);
+    if (!label || !date || !source || source.kind !== 'primary') continue;
+    const match = matter.deadlines.find(deadline =>
+      deadline.status === 'unverified'
+      && deadline.date === date
+      && deadline.label.toLowerCase() === label.toLowerCase()
+    );
+    if (!match) continue;
+    match.status = 'verified';
+    match.sourceUrl = source.url;
+    match.basis = clamp(item?.basis, 600) || `Verified from ${source.title}`;
+  }
 }
 
 export async function advanceRepresentationMatter(input: AdvanceMatterInput): Promise<RepresentationMatterState | null> {
@@ -629,6 +706,10 @@ export async function advanceRepresentationMatter(input: AdvanceMatterInput): Pr
         updatedAt: now,
       });
     }
+  }
+
+  if (input.response.trim() && matter.deadlines.some(deadline => deadline.status === 'unverified' && deadline.date)) {
+    await verifyMatterDeadlines(matter, input.signal).catch(() => undefined);
   }
 
   return matter;
