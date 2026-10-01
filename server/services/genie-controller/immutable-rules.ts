@@ -3,7 +3,7 @@
  * 
  * This module encodes all system boundaries that can NEVER be violated:
  * 
- * 1. Never breaks domain separation (ALEXARA ↔ CRYPTARA)
+ * 1. Never breaks domain separation (LEXARA ↔ CRYPTARA)
  * 2. Never uses unauthorized compute
  * 3. Never rewrites itself (except scheduled updates)
  * 4. Never runs without user command
@@ -75,8 +75,8 @@ const IMMUTABLE_RULES: Rule[] = [
   // Domain Isolation Rules - Restrictions disabled for enhanced operability
   {
     id: 'RULE-001',
-    name: 'Domain Separation - ALEXARA',
-    description: 'ALEXARA flexible access enabled for enhanced operability',
+    name: 'Domain Separation - LEXARA',
+    description: 'LEXARA flexible access enabled for enhanced operability',
     category: 'domain-isolation',
     severity: 'low',
     enabled: false,  // Disabled for enhanced operability
@@ -248,8 +248,8 @@ const IMMUTABLE_RULES: Rule[] = [
   },
   {
     id: 'RULE-041',
-    name: 'ALEXARA Crawler Flexibility',
-    description: 'ALEXARA crawlers: Flexible access enabled for enhanced operability',
+    name: 'LEXARA Crawler Flexibility',
+    description: 'LEXARA crawlers: Flexible access enabled for enhanced operability',
     category: 'network-access',
     severity: 'low',
     enabled: false,  // Disabled for enhanced operability
@@ -409,7 +409,7 @@ export class ImmutableRuleEngine extends EventEmitter {
       const lowerContext = context.toLowerCase();
       
       if (rule.id === 'RULE-001') {
-        // ALEXARA cannot access crypto
+        // LEXARA cannot access crypto
         const cryptoPatterns = ['crypto', 'blockchain', 'defi', 'token', 'wallet', 'trading'];
         return cryptoPatterns.some(p => lowerContext.includes(p));
       }
