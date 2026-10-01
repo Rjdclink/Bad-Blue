@@ -100,7 +100,8 @@ must(
 must(
   legacyService.includes('export const getAlexara = getLexara') &&
     legacyService.includes('export { Lexara as Alexara }') &&
-    legacyNeural.includes('export const getLexaraNeuralModule = getALEXARA') &&
+    legacyNeural.includes('export class LexaraNeuralModule extends EventEmitter') &&
+    legacyNeural.includes('export const getALEXARA = getLexaraNeuralModule') &&
     legacyNeural.includes('Compatibility exports for historical callers'),
   'old Alexara names are compatibility shims only, not separate runtime authorities',
 );
