@@ -96,6 +96,12 @@ for (const inactiveUrl of ['https://legalwhat.com/services/background-report/', 
 }
 const sitemapLocs = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) => match[1]);
 must(new Set(sitemapLocs).size === sitemapLocs.length, 'static sitemap must not contain duplicate URLs');
+const spaSitemapPaths = sitemapLocs
+  .map((url) => new URL(url).pathname)
+  .filter((path) => path !== '/' && !path.endsWith('/'));
+for (const spaPath of spaSitemapPaths) {
+  must(seoConfig.includes(`"${spaPath}": {`), `SPA sitemap URL must have server-renderable SEO config: ${spaPath}`);
+}
 
 must(llms.includes('# Legal What?'), 'llms.txt must identify Legal What?');
 must(llms.includes('40+ areas of law'), 'llms.txt must accurately describe Lexara legal-area coverage');
