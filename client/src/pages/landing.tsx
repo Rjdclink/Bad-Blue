@@ -137,6 +137,9 @@ export default function Landing() {
               <p className="mt-1 text-sm text-white/85 md:text-base">
                 After your free trial, continue with full access for just $19.99/month.
               </p>
+              <p className="mt-2 text-xs leading-relaxed text-white/75 md:text-sm">
+                Paid access includes persistent legal matter storage, so your cases, filing packets, documents, evidence, deadlines, and progress stay organized and available when you return.
+              </p>
             </div>
           </div>
 
