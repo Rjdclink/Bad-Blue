@@ -683,11 +683,33 @@ export async function generateLexaraConversationResponse(
         signal: researchController.signal,
       }).catch(() => null)
     : Promise.resolve(null);
+  const deadlineAuthorityPromise = deterministicDeadline
+    ? researchLegalAuthority([
+        `Verify this candidate legal deadline from current controlling primary authority: ${deterministicDeadline.dueDate}.`,
+        `Rule candidate: ${deterministicDeadline.rule.ruleCitation}.`,
+        `Trigger date supplied by user: ${deterministicDeadline.triggerDate}.`,
+        `Jurisdiction/court context: ${jurisdiction || 'federal jurisdiction; exact court not established'}.`,
+        'Confirm the triggering rule, the exact counting method, any tolling or alternate-period exception implicated by the facts, and every applicable legal holiday or court-closure rule, including state-declared holidays where the procedural rule treats them as legal holidays.',
+        `User facts: ${cleanPrompt}`,
+      ].join('\n\n'), {
+        jurisdiction,
+        domainName,
+        researchHints: [
+          ...jurisdictionResearchHints,
+          'official court holiday calendar legal holidays deadline computation',
+        ].slice(0, 14),
+        preferredOfficialDomains: jurisdictionOfficialDomains,
+        forceResearch: true,
+        researchIntent: 'legal',
+        standaloneQuery: cleanPrompt,
+        signal: researchController.signal,
+      }).catch(() => null)
+    : Promise.resolve(null);
   const deepBackgroundRequested = /\b(?:deep|thorough|recursive|broaden|look harder)\b/i.test(cleanPrompt);
   const backgroundWaitBudgetMs = deepBackgroundRequested
     ? 10 * 60_000
     : LIVE_BACKGROUND_FACT_BUDGET_MS;
-  const [authorityResearch, backgroundInvestigation] = await Promise.all([
+  const [authorityResearch, backgroundInvestigation, deadlineAuthorityResearch] = await Promise.all([
     Promise.race([
       authorityResearchPromise,
       new Promise<null>(resolve => setTimeout(() => resolve(null), LIVE_RESEARCH_BUDGET_MS)),
@@ -701,6 +723,12 @@ export async function generateLexaraConversationResponse(
           backgroundInvestigationPromise,
           new Promise<null>(resolve => setTimeout(() => resolve(null), LIVE_RESEARCH_BUDGET_MS)),
         ]),
+    deterministicDeadline
+      ? Promise.race([
+          deadlineAuthorityPromise,
+          new Promise<null>(resolve => setTimeout(() => resolve(null), LIVE_RESEARCH_BUDGET_MS)),
+        ])
+      : Promise.resolve(null),
   ]);
   if (backgroundResearchRequested && !backgroundInvestigation && !deepBackgroundRequested) {
     backgroundController.abort(new Error('lexara_live_background_budget_exhausted'));
@@ -725,6 +753,48 @@ export async function generateLexaraConversationResponse(
     });
   }
 
+  let verifiedDeterministicDeadline: LegalDeadlineCalculation | null = null;
+  if (deterministicDeadline && deadlineAuthorityResearch?.hasPrimaryAuthority) {
+    const primaryDeadlineSources = deadlineAuthorityResearch.sources
+      .filter(source => source.kind === 'primary' && source.excerpt?.trim())
+      .slice(0, 10);
+    if (primaryDeadlineSources.length && !context.signal?.aborted) {
+      try {
+        const verification = await callClaude([
+          'Verify one candidate deadline using ONLY the supplied primary-authority excerpts and user facts.',
+          'Return JSON only: {"verified":boolean,"dueDate":"YYYY-MM-DD or null","reason":"short explanation"}.',
+          'verified=true only if the supplied sources establish the applicable period, the correct trigger, the time-computation rule, and enough holiday/closure information to support the exact due date.',
+          'If the exact court, a state-declared legal holiday, tolling event, service exception, or competing trigger could change the date and is not resolved by the supplied material, return verified=false.',
+          `Candidate: ${JSON.stringify(deterministicDeadline)}`,
+          `Jurisdiction profile: ${JSON.stringify({
+            display: jurisdictionAuthorityProfile?.display,
+            state: jurisdictionAuthorityProfile?.stateName,
+            county: jurisdictionAuthorityProfile?.county,
+            locality: jurisdictionAuthorityProfile?.locality,
+            court: jurisdictionAuthorityProfile?.explicitCourt,
+          })}`,
+          `User facts: ${cleanPrompt}`,
+          `Primary sources:\n${primaryDeadlineSources.map(source => `${source.title} | ${source.url} | ${source.excerpt || ''}`).join('\n')}`,
+        ].join('\n\n'), {
+          systemPrompt: 'You are a deterministic legal deadline verifier. Never infer a missing holiday, trigger, court, or exception. Return JSON only.',
+          model: CURRENT_AI_MODELS.claudeFast,
+          maxTokens: 500,
+          useJSON: true,
+          providerPolicy: 'legalwhat',
+          signal: context.signal,
+        });
+        const parsed = JSON.parse(verification.content);
+        if (parsed?.verified === true && String(parsed?.dueDate || '') === deterministicDeadline.dueDate) {
+          verifiedDeterministicDeadline = deterministicDeadline;
+        }
+      } catch (error) {
+        console.warn('[LEXARA Deadline] exact candidate verification unavailable; suppressing deterministic calendar date', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
   const silentLocationContext = jurisdictionRelevant && !explicitStateJurisdiction && backgroundStateJurisdiction
     ? `\n\nINTERNAL LOCATION CONTEXT (never announce the detection method or compare it with the user): Automatic location estimate: ${[
         context.backgroundLocality,
@@ -743,7 +813,7 @@ export async function generateLexaraConversationResponse(
     + jurisdictionCorrectionPrompt
     + formatJurisdictionAuthorityForSystem(jurisdictionAuthorityProfile)
     + formatAuthorityResearchForSystem(authorityResearch)
-    + formatDeadlineCalculationForSystem(deterministicDeadline)
+    + formatDeadlineCalculationForSystem(verifiedDeterministicDeadline)
     + researchStatusPrompt
     + formatLexaraBackgroundResearchForSystem(backgroundInvestigation);
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
@@ -973,7 +1043,7 @@ export async function generateLexaraConversationResponse(
     jurisdiction: publicJurisdiction,
     mappedLawType,
     backgroundEndpoint,
-    deadline: deterministicDeadline || undefined,
+    deadline: verifiedDeterministicDeadline || undefined,
     backgroundStatus: permissionRefusalUnverified ? 'partial'
       : usedBackgroundSourceExcerptFallback && backgroundInvestigation?.endpoint === 'evidence-sufficient'
       && verifiedExcerptDirectlyAnswers(cleanPrompt, context.previousMessages || [], jurisdiction, backgroundInvestigation, extractVerifiedBackgroundSourceExcerpt(backgroundInvestigation)?.excerpt || '')
