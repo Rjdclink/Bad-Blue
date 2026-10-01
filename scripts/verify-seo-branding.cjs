@@ -24,6 +24,8 @@ const robots = read('public/robots.txt');
 const sitemap = read('public/sitemap.xml');
 const llms = read('public/llms.txt');
 const serverIndex = read('server/index.ts');
+const routes = read('server/routes.ts');
+const viteServer = read('server/vite.ts');
 
 must(fs.existsSync('public/images/Legal What Icon.png'), 'Legal What brand icon must exist');
 must(index.includes('<title>Legal What? |'), 'root title must use Legal What?');
@@ -44,6 +46,7 @@ const lexaraSeoPage = read('public/services/ai-legal-consultation/index.html');
 for (const capability of ['animated conversational legal AI', '40+ areas of law', 'DOCX or PDF', 'Upload documents, evidence, images, and other media']) {
   must(lexaraSeoPage.includes(capability), `Lexara crawlable page must expose capability: ${capability}`);
 }
+must((lexaraSeoPage.match(/How people search for this capability/g) || []).length === 1, 'Lexara crawlable service page must not duplicate its search-intent section');
 
 must(seoHead.includes('const BASE_URL = "https://legalwhat.com"'), 'SEOHead base URL must be legalwhat.com');
 must(seoHead.includes('const SITE_NAME = "Legal What?"'), 'SEOHead site name must be Legal What?');
@@ -94,6 +97,12 @@ for (const inactiveUrl of ['https://legalwhat.com/services/background-report/', 
 }
 const sitemapLocs = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) => match[1]);
 must(new Set(sitemapLocs).size === sitemapLocs.length, 'static sitemap must not contain duplicate URLs');
+const spaSitemapPaths = sitemapLocs
+  .map((url) => new URL(url).pathname)
+  .filter((path) => path !== '/' && !path.endsWith('/'));
+for (const spaPath of spaSitemapPaths) {
+  must(seoConfig.includes(`"${spaPath}": {`), `SPA sitemap URL must have server-renderable SEO config: ${spaPath}`);
+}
 
 must(llms.includes('# Legal What?'), 'llms.txt must identify Legal What?');
 must(llms.includes('40+ areas of law'), 'llms.txt must accurately describe Lexara legal-area coverage');
@@ -107,6 +116,11 @@ mustNot(llms, '[Inmate locator]', 'llms.txt must not advertise inactive inmate s
 
 must(serverIndex.includes('staticSitemap.matchAll') && serverIndex.includes('staticUrls') && serverIndex.includes('new Set([...canonicalPaths, ...staticUrls])'), 'live sitemap must merge the expanded static crawl inventory with canonical SPA routes');
 must(serverIndex.includes('Do not emit synthetic freshness'), 'dynamic sitemap must not fabricate lastmod freshness');
+must(viteServer.includes('renderSeoShell') && viteServer.includes('SEO_CONFIG[pathname]'), 'SPA fallback must render route-specific SEO metadata before React');
+must(viteServer.includes('rel="canonical"') && viteServer.includes('canonicalUrl'), 'SPA fallback must emit a route-correct canonical in initial HTML');
+must(viteServer.includes('config.noIndex') && viteServer.includes('noindex, nofollow'), 'SPA fallback must preserve noindex on protected configured routes');
+mustNot(routes, "app.get('*'", 'server/routes.ts must not own a competing catch-all SPA fallback');
+must(routes.includes('Public static pages and the SPA fallback are owned by server/vite.ts.'), 'routes must document single non-API page-serving authority');
 
 for (const phrase of [
   'Legal What? — AI Legal Tools for 40 Practice Areas',
@@ -116,6 +130,9 @@ for (const phrase of [
 }
 must(landing.includes('/images/Legal%20What%20Icon.png'), 'landing must use Legal What icon');
 must(landing.includes('LAW_TYPE_DATA.map((area)'), 'landing must expose the 40 legal practice areas as crawlable content');
+for (const publicHub of ['/how-lexara-works/', '/services/', '/areas/', '/guides/', '/documents/']) {
+  must(landing.includes(`href="${publicHub}"`), `landing must expose crawlable public hub link: ${publicHub}`);
+}
 mustNot(landing, 'facebook.com/badblue', 'landing must not link legacy social profiles');
 mustNot(landing, 'twitter.com/badblue', 'landing must not link legacy social profiles');
 mustNot(landing, 'linkedin.com/company/badblue', 'landing must not link legacy social profiles');

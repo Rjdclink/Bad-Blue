@@ -5781,37 +5781,9 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // Apply notFoundHandler ONLY to API routes
   app.use('/api', notFoundHandler);
   
-  // PASS 7: SPA fallback routing - serve index.html for non-API routes
-  // IMPORTANT: Only enable this in production. In development, Vite middleware
-  // is responsible for serving the SPA (see server/index.ts -> setupVite()).
-  if (process.env.NODE_ENV === 'production') {
-    // This prevents 404 errors on direct navigation to /people-finder, /inmate-locator, etc.
-    app.get('*', (req, res, next) => {
-      // Skip if this is an API route (already handled above)
-      if (req.path.startsWith('/api/')) {
-        return next();
-      }
-      
-      // Static assets are owned by the production static middleware registered
-      // after routes. Never let the SPA catch-all convert an asset request into
-      // index.html (the prior extension whitelist omitted .webp).
-      const looksLikeStaticAsset = req.path.startsWith('/images/')
-        || req.path.startsWith('/assets/')
-        || /\.[a-z0-9]{2,8}$/i.test(req.path);
-      if (looksLikeStaticAsset) return next();
-      
-      console.log('[SPA FALLBACK] Serving index.html for:', req.path);
-      
-      // Serve the SPA index.html for all other routes
-      const indexPath = path.join(__dirname, '../dist/public/index.html');
-      res.sendFile(indexPath, (err) => {
-        if (err) {
-          console.error('[SPA FALLBACK] Error serving index.html:', err);
-          res.status(500).send('Error loading application');
-        }
-      });
-    });
-  }
+  // Public static pages and the SPA fallback are owned by server/vite.ts.
+  // Keep a single non-API page-serving authority so crawlable SEO pages are
+  // served from dist/public before the SPA fallback handles application routes.
 
       // Apply the general error handler globally
   app.use(errorHandler);
