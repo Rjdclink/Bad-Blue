@@ -45,7 +45,9 @@ function renderSeoShell(template: string, pathname: string): string {
     .replace(/<meta\s+property=["']og:description["'][^>]*>/i, `<meta property="og:description" content="${description}" />`)
     .replace(/<meta\s+property=["']og:url["'][^>]*>/i, `<meta property="og:url" content="${canonical}" />`)
     .replace(/<meta\s+name=["']twitter:title["'][^>]*>/i, `<meta name="twitter:title" content="${title}" />`)
-    .replace(/<meta\s+name=["']twitter:description["'][^>]*>/i, `<meta name="twitter:description" content="${description}" />`);
+    .replace(/<meta\s+name=["']twitter:description["'][^>]*>/i, `<meta name="twitter:description" content="${description}" />`)
+    .replace(/(<h1\s+data-seo-shell-title>)[\s\S]*?(<\/h1>)/i, `$1${title}$2`)
+    .replace(/(<p\s+data-seo-shell-description>)[\s\S]*?(<\/p>)/i, `$1${description}$2`);
 }
 
 export function log(message: string, source = "express") {
