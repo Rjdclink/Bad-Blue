@@ -299,22 +299,28 @@ export async function extractLexaraEvidenceContent(
 
   const mimeType = input.mimeType.toLowerCase();
 
-  // Claude is the preferred reader for PDFs/images because it is already the
-  // legal reasoning provider. Gemini remains an automatic route-local fallback,
-  // not a hard dependency.
+  // Preserve the existing Gemini media path first. If Gemini is unavailable,
+  // exhausted, or rejects the file, fail over automatically to the strongest
+  // already-configured LegalWhat route for that media type.
   if (mimeType === 'application/pdf') {
     try {
-      return await extractPdfWithClaudeChunks(input);
-    } catch (claudeError) {
-      console.warn('[F.M.I.] Claude PDF extraction unavailable; trying Gemini fallback', {
-        error: claudeError instanceof Error ? claudeError.message : String(claudeError),
+      return await extractWithGemini(input, size);
+    } catch (geminiError) {
+      console.warn('[F.M.I.] Gemini PDF extraction unavailable; switching to Claude', {
+        error: geminiError instanceof Error ? geminiError.message : String(geminiError),
       });
-      return extractWithGemini(input, size);
+      return extractPdfWithClaudeChunks(input);
     }
   }
 
-  if (mimeType.startsWith('image/') && claudeSupportsDirectMedia(mimeType, size)) {
+  if (mimeType.startsWith('image/')) {
     try {
+      return await extractWithGemini(input, size);
+    } catch (geminiError) {
+      console.warn('[F.M.I.] Gemini image extraction unavailable; switching to Claude when supported', {
+        error: geminiError instanceof Error ? geminiError.message : String(geminiError),
+      });
+      if (!claudeSupportsDirectMedia(mimeType, size)) throw geminiError;
       const bytes = await readFile(input.filePath);
       const response = await extractClaudeMediaEvidence({
         bytes,
@@ -323,22 +329,17 @@ export async function extractLexaraEvidenceContent(
         instruction: EXTRACTION_INSTRUCTION,
       });
       return clampEvidenceText(response.content);
-    } catch (claudeError) {
-      console.warn('[F.M.I.] Claude image extraction unavailable; trying Gemini fallback', {
-        error: claudeError instanceof Error ? claudeError.message : String(claudeError),
-      });
-      return extractWithGemini(input, size);
     }
   }
 
   if (mimeType.startsWith('audio/') || mimeType.startsWith('video/')) {
     try {
-      return await extractAudioVideoWithDeepgram(input);
-    } catch (deepgramError) {
-      console.warn('[F.M.I.] Deepgram prerecorded transcription unavailable; trying Gemini media fallback', {
-        error: deepgramError instanceof Error ? deepgramError.message : String(deepgramError),
+      return await extractWithGemini(input, size);
+    } catch (geminiError) {
+      console.warn('[F.M.I.] Gemini audio/video extraction unavailable; switching to Deepgram transcription', {
+        error: geminiError instanceof Error ? geminiError.message : String(geminiError),
       });
-      return extractWithGemini(input, size);
+      return extractAudioVideoWithDeepgram(input);
     }
   }
 
