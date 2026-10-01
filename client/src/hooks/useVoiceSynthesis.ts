@@ -26,7 +26,7 @@ export interface VoiceSynthesisOptions {
 
 export interface VoiceSynthesisResult {
   speak: (text: string, options?: VoiceSynthesisOptions) => Promise<void>;
-  stop: () => void;
+  stop: (reason?: string) => void;
   pause: () => void;
   resume: () => void;
   isSpeaking: boolean;
