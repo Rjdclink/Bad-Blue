@@ -81,6 +81,7 @@ const Contact = lazyWithRetry(() => import("@/pages/contact"), 'Contact');
 const Privacy = lazyWithRetry(() => import("@/pages/privacy"), 'Privacy');
 const Terms = lazyWithRetry(() => import("@/pages/terms"), 'Terms');
 const Reviews = lazyWithRetry(() => import("@/pages/reviews"), 'Reviews');
+const About = lazyWithRetry(() => import("@/pages/about"), 'About');
 
 const OfficerSearchPage = lazyWithRetry(() => import("@/pages/officer-search"), 'OfficerSearch');
 const OfficerInfo = lazyWithRetry(() => import("@/pages/officer"), 'OfficerInfo');
@@ -315,6 +316,7 @@ function Router() {
           <Route path="/privacy" component={Privacy} />
           <Route path="/terms" component={Terms} />
           <Route path="/reviews" component={Reviews} />
+          <Route path="/about" component={About} />
           <Route path="/legal-consultation" component={LegalConsultationPage} />
           <Route path="/faq" component={FAQPage} />
           <Route path="/petition/:slug" component={PetitionDetail} />
