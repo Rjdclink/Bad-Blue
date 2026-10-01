@@ -177,10 +177,7 @@ router.get('/square/customer-audit', async (req: Request, res: Response) => {
           limit: 100,
           returnEntries: false,
           ...(cursor ? { cursor } : {}),
-          query: {
-            filter: { customerFilter: { customerIds } },
-            sort: { sortField: 'CREATED_AT', sortOrder: 'DESC' },
-          },
+          query: { filter: { customerFilter: { customerIds } } },
         }, requestOptions);
         const page = Array.isArray(orderResponse?.orders) ? orderResponse.orders : [];
         orders.push(...page);
