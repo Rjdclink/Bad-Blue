@@ -218,11 +218,11 @@ export interface ClaudeWebSearchOptions {
 }
 
 /**
- * Anthropic-hosted web search fallback.
+ * Anthropic-hosted web search transport for explicit research lanes.
  *
  * This is intentionally separate from callClaude(): ordinary reasoning never
- * acquires web access implicitly. Callers opt in only when their own retrieval
- * lanes have not established the needed external fact.
+ * acquires web access implicitly. Background research may run this transport in
+ * parallel with Lexara's independent discovery lanes.
  */
 export async function callClaudeWebSearch(
   prompt: string,
@@ -326,7 +326,7 @@ export async function callClaudeWebSearch(
       if (reason instanceof Error || reason instanceof DOMException) throw reason;
       throw new DOMException(typeof reason === 'string' ? reason : 'Claude web search cancelled', 'AbortError');
     }
-    console.warn('[Claude Web Search] fallback unavailable', {
+    console.warn('[Claude Web Search] research lane unavailable', {
       error: error?.message || String(error),
       status: error?.status,
     });
