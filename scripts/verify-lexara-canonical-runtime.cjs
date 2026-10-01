@@ -28,6 +28,7 @@ const serverIndex = read('server/index.ts');
 const conversationOrchestrator = read('server/lexara/LexaraConversationOrchestrator.ts');
 const lexaraChatRoutes = read('server/routes/lexara.chat.routes.ts');
 const consultationRoutes = read('server/routes/consultation.routes.ts');
+const orchestratorRoutes = read('server/routes/orchestrator.routes.ts');
 
 must(
   canonicalService.includes("from '../alexara'") &&
@@ -111,13 +112,14 @@ for (const [name, source] of [
   ['LexaraConversationOrchestrator.ts', conversationOrchestrator],
   ['lexara.chat.routes.ts', lexaraChatRoutes],
   ['consultation.routes.ts', consultationRoutes],
+  ['orchestrator.routes.ts', orchestratorRoutes],
   ['fourJIOrchestrator.ts', fourJi],
   ['cognitiveCore.ts', cognitive],
   ['maintenanceWorker.ts', maintenance],
   ['genie-controller/index.ts', genie],
 ]) {
   must(
-    !/from ['"][^'"]*(?:services\/alexara|alexaraModule)['"]|import\(['"][^'"]*(?:services\/alexara|alexaraModule)/.test(source),
+    !/from ['"][^'"]*(?:services\/alexara|alexaraModule|alexaraConsole|integratedBrainArchitecture)['"]|import\(['"][^'"]*(?:services\/alexara|alexaraModule|alexaraConsole|integratedBrainArchitecture)/.test(source),
     `active runtime does not bypass the canonical Lexara boundary: ${name}`,
   );
 }
