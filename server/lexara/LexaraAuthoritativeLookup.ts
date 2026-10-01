@@ -7,6 +7,9 @@ export interface LexaraAuthoritativeEvidence {
   content: string;
   retrievedAt: string;
   provider: string;
+  confidence?: number;
+  identityConfidence?: number;
+  directlyAnswers?: boolean;
 }
 
 const DIRECT_LOOKUP_TIMEOUT_MS = 2_000;
@@ -116,6 +119,9 @@ async function lookupBop(
         content,
         retrievedAt,
         provider: 'bop-structured',
+        confidence: name.middle ? 0.96 : 0.88,
+        identityConfidence: name.middle ? 0.94 : 0.82,
+        directlyAnswers: true,
       }];
     });
   } catch {
@@ -178,6 +184,9 @@ async function lookupNpi(
         content,
         retrievedAt,
         provider: 'cms-npi-api',
+        confidence: state ? 0.94 : 0.86,
+        identityConfidence: state ? 0.92 : 0.82,
+        directlyAnswers: true,
       }];
     });
   } catch {
