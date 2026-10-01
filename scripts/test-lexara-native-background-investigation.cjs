@@ -213,6 +213,9 @@ const investigator = execute('server/lexara/LexaraBackgroundInvestigation.ts', {
   './LexaraPublicSourceRegistry': registry,
   './LexaraDiscoveryLearning': learning,
   './LexaraClaudeBackgroundSearch': claudeParallel,
+  './LexaraAuthoritativeLookup': {
+    async lookupLexaraAuthoritativeSources() { return []; },
+  },
 });
 
 function reset(mode) {
@@ -331,7 +334,7 @@ function reset(mode) {
   const wrongIdentity = await investigator.investigateLexaraBackgroundQuestion(
     'How old is Avery Morgan Example of Des Moines, Iowa?',
   );
-  assert.equal(wrongIdentity.endpoint, 'search-leads-only',
+  assert.equal(wrongIdentity.endpoint, 'sources-exhausted',
     'matching first and last name alone cannot establish identity when middle name and location do not match');
   assert.equal(wrongIdentity.evidenceSummary, undefined);
 
@@ -348,10 +351,10 @@ function reset(mode) {
     'What is the date of birth of Avery Example?',
     { jurisdiction: 'Iowa' },
   );
-  assert.equal(empty.endpoint, 'search-leads-only');
+  assert.equal(empty.endpoint, 'sources-exhausted');
   assert.deepEqual(Array.from(empty.sources), []);
-  assert.deepEqual(Array.from(empty.searchLeads || []), ['https://records.example.test/empty']);
-  assert.match(empty.coverageNote, /not a negative-record conclusion/i);
+  assert.equal(empty.searchLeads, undefined);
+  assert.match(empty.coverageNote, /not proof that no record exists/i);
 
   reset('dob-recursive');
   const legal = await investigator.investigateLexaraBackgroundQuestion(
@@ -363,7 +366,7 @@ function reset(mode) {
   assert.equal(state.retrievalCalls.length, 0);
 
   const formatted = investigator.formatLexaraBackgroundResearchForSystem(empty);
-  assert.match(formatted, /UNVERIFIED SEARCH LEADS/);
+  assert.match(formatted, /No verified subject-specific source content established the requested fact/);
   assert.match(formatted, /Do not infer a negative fact/);
 
   console.log('PASS: Lexara native background investigation is wired end to end with recursion, fact gating, provenance, location preservation, honest exhaustion, and legal-only isolation.');
