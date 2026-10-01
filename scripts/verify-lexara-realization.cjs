@@ -968,7 +968,9 @@ must(
     lexaraSemanticIntent.includes('Do not require special words') &&
     lexaraSemanticIntent.includes('deterministicSubjectNeedsSemanticReview') &&
     lexaraSemanticIntent.includes('hasMultipleLexaraBackgroundSubjectCandidates') &&
+    lexaraSemanticIntent.includes('subjectKindFromSemantic') &&
     lexaraSemanticIntent.includes('supportedSubject(semantic.subject, text, previousUserTurns, needsSubjectReview)') &&
+    lexaraConversationOrchestrator.includes("kind: researchDecision.subjectKind || 'person' as const") &&
     lexaraSemanticIntent.includes("deterministic.intent === 'legal'") &&
     lexaraConversationOrchestrator.includes('semanticResearchDecisionPromise') &&
     lexaraConversationOrchestrator.indexOf('semanticResearchDecisionPromise') < lexaraConversationOrchestrator.indexOf('await resolveUSJurisdiction(') &&
