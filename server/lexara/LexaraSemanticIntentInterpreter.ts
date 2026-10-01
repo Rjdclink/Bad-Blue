@@ -188,7 +188,7 @@ ${text}`;
     const effectiveFact = requestedFact === 'none' ? 'general-public-record' : requestedFact;
     const sourceCategories = sourceCategoriesForFact(effectiveFact, text);
     const objective = String(semantic.objective || text).trim().slice(0, 600) || text;
-    const standaloneQuery = [subject, objective, effectiveFact.replace(/-/g, ' ')]
+    const standaloneQuery = [subject, text, objective, effectiveFact.replace(/-/g, ' ')]
       .filter(Boolean)
       .join(' ')
       .replace(/\s+/g, ' ')
