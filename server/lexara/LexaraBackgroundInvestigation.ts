@@ -469,40 +469,54 @@ export async function investigateLexaraBackgroundQuestion(
   try {
     const initialQuery = decision.standaloneQuery || decision.objective || prompt;
     context.onProgress?.({ type: 'searching', pass: 0 });
-    const [nativeOutcome, claudeOutcome] = await Promise.allSettled([
-      discoverLegalMeshTier3(initialQuery, context.signal, {
-        categories,
-        jurisdiction: context.jurisdiction || subject.location,
-        subject: subject.name,
-        requestedFact: decision.requestedFact,
-      }),
-      searchLexaraBackgroundWithClaude({
-        prompt,
-        subject,
-        decision,
-        jurisdiction: context.jurisdiction || subject.location,
-        model: context.claudeResearchModel,
-        signal: context.signal,
-      }),
-    ]);
-    const nativeCandidates = nativeOutcome.status === 'fulfilled' ? nativeOutcome.value : [];
-    const claudeParallel = claudeOutcome.status === 'fulfilled'
-      ? claudeOutcome.value
-      : { candidates: [], citationEvidence: [], searches: 0 };
-    if (nativeOutcome.status === 'rejected') {
+
+    // Start Claude beside native discovery, but never let a slower model lane
+    // block authoritative/public-source retrieval from beginning.
+    let claudeParallel = { candidates: [] as LegalMeshCandidate[], citationEvidence: [] as Array<{ url: string; content: string; retrievedAt: string }>, searches: 0 };
+    let claudeIntegrated = false;
+    const claudeSearchPromise = searchLexaraBackgroundWithClaude({
+      prompt,
+      subject,
+      decision,
+      jurisdiction: context.jurisdiction || subject.location,
+      model: context.claudeResearchModel,
+      signal: context.signal,
+    }).then(result => {
+      claudeParallel = result;
+      return result;
+    });
+
+    const nativeCandidates = await discoverLegalMeshTier3(initialQuery, context.signal, {
+      categories,
+      jurisdiction: context.jurisdiction || subject.location,
+      subject: subject.name,
+      requestedFact: decision.requestedFact,
+    }).catch(error => {
       console.warn('[LEXARA Background] native discovery failed; preserving Claude parallel evidence', {
-        error: nativeOutcome.reason instanceof Error ? nativeOutcome.reason.message : String(nativeOutcome.reason),
+        error: error instanceof Error ? error.message : String(error),
       });
-    }
-    for (const item of claudeParallel.citationEvidence) {
-      claudeCitationEvidence.set(item.url, { content: item.content, retrievedAt: item.retrievedAt });
-    }
-    candidates = uniqueCandidates([...nativeCandidates, ...claudeParallel.candidates]);
-    if (claudeParallel.searches > 0) discoveryLanes.add('claude-web-search');
+      return [] as LegalMeshCandidate[];
+    });
+
+    candidates = uniqueCandidates(nativeCandidates);
     candidates.forEach(item => discoveryLanes.add(item.provider));
+
+    const integrateClaudeParallel = () => {
+      if (claudeIntegrated) return;
+      if (!claudeParallel.candidates.length && !claudeParallel.citationEvidence.length && claudeParallel.searches === 0) return;
+      for (const item of claudeParallel.citationEvidence) {
+        claudeCitationEvidence.set(item.url, { content: item.content, retrievedAt: item.retrievedAt });
+      }
+      candidates = uniqueCandidates([...candidates, ...claudeParallel.candidates]).slice(0, maxCandidates);
+      if (claudeParallel.searches > 0) discoveryLanes.add('claude-web-search');
+      claudeParallel.candidates.forEach(item => discoveryLanes.add(item.provider));
+      claudeIntegrated = true;
+    };
+    void claudeSearchPromise;
 
     for (let pass = 0; pass < maxPasses && Date.now() < deadlineAt; pass += 1) {
       recursionPasses = pass + 1;
+      integrateClaudeParallel();
       const fresh = candidates.filter(item => !seenUrls.has(item.url)).slice(0, targetsPerPass);
       if (!fresh.length) {
         exhausted = true;
@@ -551,6 +565,10 @@ export async function investigateLexaraBackgroundQuestion(
           });
         }
       }
+
+      // If the parallel Claude lane finished while native retrieval was running,
+      // fold its cited/source candidates into the very next pass instead of waiting up front.
+      integrateClaudeParallel();
 
       const ranked = [...assessed.values()].sort((a, b) => b.confidence - a.confidence);
       const best = ranked[0];
