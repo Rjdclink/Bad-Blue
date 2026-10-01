@@ -7,6 +7,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import FMIAnalysis from '@/components/FMIAnalysis';
 import { useAuth } from '@/hooks/useAuth';
 import { mapProductLawTypeToExpert } from '@shared/legalDomainMapping';
@@ -73,6 +74,7 @@ export default function LexaraCaseTools({ lawTypeId, lawTypeName }: LexaraCaseTo
   const [documentDraft, setDocumentDraft] = useState('');
   const [documentBusy, setDocumentBusy] = useState(false);
   const [documentError, setDocumentError] = useState<string | null>(null);
+  const [documentPreviewOpen, setDocumentPreviewOpen] = useState(false);
 
   const documentTypes = [
     'Motion','Supporting Brief','Memorandum of Law','Complaint','Answer','Counterclaim',
@@ -327,7 +329,7 @@ export default function LexaraCaseTools({ lawTypeId, lawTypeName }: LexaraCaseTo
       <Card id="lexara-document-studio">
         <CardHeader>
           <CardTitle className="flex items-center gap-2"><Sparkles className="h-5 w-5 text-primary" />LEXARA Document Studio</CardTitle>
-          <CardDescription>Generate a legal-document draft from the case facts already provided, review and edit it here, then export the same reviewed draft as DOCX or PDF.</CardDescription>
+          <CardDescription>Generate a legal-document draft from the case facts already provided, preview the complete document, then download the same reviewed draft as DOCX or PDF.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
@@ -352,12 +354,9 @@ export default function LexaraCaseTools({ lawTypeId, lawTypeName }: LexaraCaseTo
                 <Label htmlFor="lexara-document-title">Document title</Label>
                 <input id="lexara-document-title" className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm" value={documentTitle} onChange={e => setDocumentTitle(e.target.value)} />
               </div>
-              <div>
-                <Label htmlFor="lexara-document-draft">Preview & edit</Label>
-                <Textarea id="lexara-document-draft" value={documentDraft} onChange={e => setDocumentDraft(e.target.value)} rows={22} className="mt-1 font-serif leading-relaxed" />
-              </div>
               <p className="text-xs text-muted-foreground">Verify facts, authorities, local court rules, deadlines, signatures, service, and filing requirements before use. Unknown facts should remain bracketed rather than invented.</p>
               <div className="flex flex-wrap gap-2">
+                <Button variant="outline" onClick={() => setDocumentPreviewOpen(true)}><FileText className="mr-2 h-4 w-4" />Preview Document</Button>
                 <Button variant="outline" onClick={() => void downloadDocument('docx')}><Download className="mr-2 h-4 w-4" />Download DOCX</Button>
                 <Button variant="outline" onClick={() => void downloadDocument('pdf')}><Download className="mr-2 h-4 w-4" />Download PDF</Button>
               </div>
@@ -365,6 +364,27 @@ export default function LexaraCaseTools({ lawTypeId, lawTypeName }: LexaraCaseTo
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={documentPreviewOpen} onOpenChange={setDocumentPreviewOpen}>
+        <DialogContent className="flex h-[90dvh] w-[96vw] max-w-5xl flex-col gap-3 p-4 sm:p-6">
+          <DialogHeader>
+            <DialogTitle>{documentTitle || documentType || 'Document Preview'}</DialogTitle>
+            <DialogDescription>Full document preview. You can make final text edits here before downloading.</DialogDescription>
+          </DialogHeader>
+          <div className="min-h-0 flex-1 overflow-hidden rounded-md border bg-white">
+            <textarea
+              value={documentDraft}
+              onChange={event => setDocumentDraft(event.target.value)}
+              className="h-full w-full resize-none bg-white p-6 font-serif text-sm leading-7 text-slate-950 outline-none"
+              aria-label="Full document preview and editor"
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => void downloadDocument('docx')}><Download className="mr-2 h-4 w-4" />Download DOCX</Button>
+            <Button variant="outline" onClick={() => void downloadDocument('pdf')}><Download className="mr-2 h-4 w-4" />Download PDF</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <section id="fmi-section">
         <FMIAnalysis

@@ -67,6 +67,7 @@ export default function FMIAnalysis({
   const { toast } = useToast();
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number>(0);
+  const [combinedReview, setCombinedReview] = useState<any | null>(null);
   const completedAnalysesRef = useRef<any[]>([]);
 
   const { data: fmiFiles, refetch: refetchFiles } = useQuery<FMIFile[]>({
@@ -154,6 +155,24 @@ export default function FMIAnalysis({
     },
   });
 
+  const reviewSetMutation = useMutation({
+    mutationFn: async (payload: { fileIds?: string[]; documents?: any[]; lawType: string; state: string; question?: string }) => {
+      const response = await apiRequest('/api/fmi/review-set', 'POST', payload);
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body?.error || 'F.M.I. combined document review failed');
+      }
+      return await response.json();
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Combined Document Review Failed',
+        description: error.message,
+        variant: 'destructive',
+      });
+    },
+  });
+
   const supportedAccept = {
     'image/jpeg': ['.jpg', '.jpeg'], 'image/png': ['.png'], 'image/gif': ['.gif'],
     'image/webp': ['.webp'], 'image/bmp': ['.bmp'], 'image/tiff': ['.tif', '.tiff'],
@@ -190,6 +209,8 @@ export default function FMIAnalysis({
         return;
       }
 
+      const completedFileIds: string[] = [];
+      const batchReviewInputs: any[] = [];
       for (const file of acceptedFiles) {
         try {
           setUploadProgress(30);
@@ -200,16 +221,53 @@ export default function FMIAnalysis({
             throw new Error('F.M.I. upload completed without an evidence file ID');
           }
 
-          await analyzeMutation.mutateAsync({
+          const analyzed = await analyzeMutation.mutateAsync({
             fileId: uploaded.file.id,
             lawType: lawType || 'general',
             state,
             caseContext: caseContext?.trim() || undefined,
           });
+          completedFileIds.push(uploaded.file.id);
+          if (analyzed?.reviewInput) batchReviewInputs.push(analyzed.reviewInput);
           setUploadProgress(100);
         } catch {
           // The mutations surface the actionable error. Continue so one bad file
           // does not prevent other accepted evidence from being processed.
+        } finally {
+          window.setTimeout(() => setUploadProgress(0), 250);
+        }
+      }
+
+      if (completedFileIds.length >= 2) {
+        try {
+          setUploadProgress(90);
+          const useEphemeralReview = batchReviewInputs.some(input => input?.persistence !== 'persistent');
+          const combined = await reviewSetMutation.mutateAsync({
+            fileIds: completedFileIds.slice(0, 20),
+            documents: useEphemeralReview && batchReviewInputs.length >= 2
+              ? batchReviewInputs.slice(0, 8)
+              : undefined,
+            lawType: lawType || 'general',
+            state,
+            question: caseContext?.trim() || undefined,
+          });
+          setCombinedReview({
+            review: combined.review,
+            sources: combined.sources,
+            fileCount: combined.fileCount,
+          });
+          onAnalysisComplete?.({
+            documents: completedAnalysesRef.current,
+            documentSetReview: combined.review,
+            sources: combined.sources,
+          });
+          toast({
+            title: 'Combined Document Review Complete',
+            description: combined.fileCount < completedFileIds.length
+              ? `Compared ${combined.fileCount} files together in this review pass; the remaining files were still analyzed individually.`
+              : `Compared ${combined.fileCount} uploaded files together.`,
+          });
+          setUploadProgress(100);
         } finally {
           window.setTimeout(() => setUploadProgress(0), 250);
         }
@@ -237,7 +295,7 @@ export default function FMIAnalysis({
     }
   };
 
-  const busy = uploadMutation.isPending || analyzeMutation.isPending;
+  const busy = uploadMutation.isPending || analyzeMutation.isPending || reviewSetMutation.isPending;
 
   return (
     <div className="space-y-6">
@@ -382,6 +440,50 @@ export default function FMIAnalysis({
           </div>
         </CardContent>
       </Card>
+
+      {combinedReview?.review && (
+        <Card className="border-primary/20">
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Link2 className="w-5 h-5 text-primary" />
+              Combined Evidence Review
+            </CardTitle>
+            <CardDescription>
+              Cross-file comparison of {Number(combinedReview.fileCount || 0)} uploaded evidence files
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4 text-sm">
+            {combinedReview.review.summary && (
+              <p className="leading-relaxed">{String(combinedReview.review.summary)}</p>
+            )}
+            {Array.isArray(combinedReview.review.keyFindings) && combinedReview.review.keyFindings.length > 0 && (
+              <div>
+                <h4 className="mb-2 font-semibold">Key cross-file findings</h4>
+                <ul className="space-y-1 text-muted-foreground">
+                  {combinedReview.review.keyFindings.slice(0, 8).map((item: any, index: number) => (
+                    <li key={index}>• {String(item?.text || item)}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {Array.isArray(combinedReview.review.contradictions) && combinedReview.review.contradictions.length > 0 && (
+              <div>
+                <h4 className="mb-2 font-semibold">Potential contradictions</h4>
+                <ul className="space-y-1 text-muted-foreground">
+                  {combinedReview.review.contradictions.slice(0, 8).map((item: any, index: number) => (
+                    <li key={index}>• {String(item?.text || item)}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {Array.isArray(combinedReview.sources) && combinedReview.sources.length > 0 && (
+              <p className="text-xs text-muted-foreground">
+                Sources: {combinedReview.sources.map((source: any) => String(source?.fileName || '')).filter(Boolean).join(', ')}
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {fmiFiles && fmiFiles.length > 0 && (
         <Card>
