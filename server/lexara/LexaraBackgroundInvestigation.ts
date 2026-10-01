@@ -232,6 +232,34 @@ function factPattern(decision: LexaraResearchDecision, prompt: string): RegExp {
   return /\b(?:record|registry|filing|profile|history|public)\b/i;
 }
 
+const DYNAMIC_OBJECTIVE_STOP_WORDS = new Set([
+  'about','answer','asking','background','current','currently','determine','does','exact','fact','facts','find',
+  'from','have','information','into','know','need','person','public','record','records','requested','research',
+  'tell','that','their','them','they','this','user','verify','whether','with','would',
+]);
+
+function dynamicGeneralObjectiveMatch(
+  content: string,
+  subject: LexaraBackgroundSubject,
+  decision: LexaraResearchDecision,
+): boolean {
+  if (decision.requestedFact !== 'general-public-record') return false;
+  const normalizedContent = normalize(content);
+  const subjectTokens = new Set(normalize(subject.name).split(' ').filter(Boolean));
+  const locationTokens = new Set(normalize(subject.location || '').split(' ').filter(Boolean));
+  const terms = normalize(decision.objective || decision.standaloneQuery || '')
+    .split(' ')
+    .filter(term => term.length > 3)
+    .filter(term => !subjectTokens.has(term) && !locationTokens.has(term) && !DYNAMIC_OBJECTIVE_STOP_WORDS.has(term));
+  const uniqueTerms = [...new Set(terms)].slice(0, 8);
+  if (!uniqueTerms.length) return true;
+  const matched = uniqueTerms.filter(term => {
+    const stem = term.slice(0, Math.min(term.length, 5));
+    return new RegExp(`(?:^|[^a-z0-9])${stem}[a-z0-9]*`, 'i').test(normalizedContent);
+  }).length;
+  return matched >= Math.min(2, uniqueTerms.length);
+}
+
 function sourceAuthorityBonus(rawUrl: string): number {
   try {
     const host = new URL(rawUrl).hostname.toLowerCase();
@@ -262,9 +290,8 @@ function assessEvidence(
   if (identity < MIN_IDENTITY_CONFIDENCE) return null;
   const pattern = factPattern(decision, prompt);
   const relevantWindow = subjectRelevantWindow(content, subject);
-  const directlyAnswers = decision.requestedFact === 'general-public-record'
-    ? identity >= MIN_IDENTITY_CONFIDENCE
-    : pattern.test(relevantWindow);
+  const directlyAnswers = pattern.test(relevantWindow)
+    || (identity >= MIN_IDENTITY_CONFIDENCE && dynamicGeneralObjectiveMatch(relevantWindow, subject, decision));
   const inferencePattern = INFERENCE_EVIDENCE_PATTERNS[decision.requestedFact];
   const inferentiallySupports = !directlyAnswers && Boolean(inferencePattern?.test(relevantWindow));
   const confidence = Math.max(0, Math.min(1,
