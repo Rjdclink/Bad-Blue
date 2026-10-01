@@ -91,7 +91,7 @@ function requestedFact(text: string): LexaraRequestedFact {
   if (/\b(?:(?:nurs(?:e|ing)|medical|physician|lawyer|attorney|realtor|contractor|professional)\s+)?licen[cs](?:e|es|ed|ing)|licensure|credentials?|certifications?|board certified\b/.test(value)) return 'professional-license';
   if (/\b(?:married|marriage|spouse|husband|wife|divorc(?:e|ed)|marital status)\b/.test(value)) return 'marriage-divorce';
   if (/\b(?:government employee|government employment|public service|public office|campaign contribution|campaign donation|lobbying|lobbyist|government contract)\b/.test(value)) return 'government-public';
-  if (/\b(?:employ(?:er|ment|ed)|works?\s+(?:at|for)|where\s+(?:does|did)\s+.+\s+work|work history|job|occupation|profession|career)\b/.test(value)) return 'employment';
+  if (/\b(?:employ(?:er|ment|ed)|works?\s+(?:at|for)|where\s+(?:does|did)\s+.+\s+work|work history|job|occupation|profession|career|for a living)\b/.test(value)) return 'employment';
   if (/\b(?:property|real estate|parcel|deed|assessor|mortgage|owns?\s+(?:a\s+)?(?:house|home|land)|home ownership)\b/.test(value)) return 'property';
   if (/\b(?:court record|court case|docket|case filing|judgment|lawsuit|litigation)\b/.test(value)) return 'court-record';
   if (/\b(?:inmate|incarcerat\w*|prison|jail|custody|correctional|where is .+ (?:held|locked up))\b/.test(value)) return 'incarceration';
