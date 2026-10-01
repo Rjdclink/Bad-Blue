@@ -431,7 +431,44 @@ export async function investigateLexaraBackgroundQuestion(
           location: context.jurisdiction,
         }
       : null);
-  if (!resolved) return null;
+  if (!resolved) {
+    const categories = backgroundCategories(prompt, decision);
+    const initialQuery = decision.standaloneQuery || decision.objective || prompt;
+    const nativeCandidates = await discoverLegalMeshTier3(initialQuery, context.signal, {
+      categories,
+      jurisdiction: context.jurisdiction,
+      subject: decision.subject,
+      requestedFact: decision.requestedFact,
+    }).catch(() => [] as LegalMeshCandidate[]);
+    const targets = uniqueCandidates(nativeCandidates).slice(0, LIVE_TARGETS_PER_PASS);
+    const retrieval = targets.length
+      ? await lexaraRetrievalAdapter.retrieve({
+          purpose: 'lexara_legal_research',
+          targets: targets.map(item => item.url),
+          signal: context.signal,
+        }).catch(() => ({ evidence: [] }))
+      : { evidence: [] };
+    const evidenceSummary = retrieval.evidence.slice(0, 6).map((item, index) =>
+      `${index + 1}. SOURCE: ${item.target}\nRETRIEVED: ${item.retrievedAt}\nASSESSMENT: PARTIAL\nEVIDENCE: ${item.content.slice(0, 1600).replace(/\\s+/g, ' ').trim()}`,
+    ).join('\n\n');
+    const endpoint: LexaraBackgroundResearchResult['endpoint'] = retrieval.evidence.length
+      ? 'partial-evidence'
+      : 'sources-exhausted';
+    context.onProgress?.({ type: 'endpoint', pass: 1, endpoint });
+    return {
+      evidenceSummary: evidenceSummary || undefined,
+      sources: retrieval.evidence.map(item => item.target),
+      categories,
+      fullBackgroundReportRequested: false,
+      coverageLimited: true,
+      coverageNote: retrieval.evidence.length
+        ? 'Lexara retrieved public source content for the factual objective, but no subject-specific identity anchor was available for the normal identity-confidence gate.'
+        : 'Lexara searched and attempted retrieval but did not obtain usable public source content for this factual objective.',
+      endpoint,
+      recursionPasses: 1,
+      discoveryLanes: [...new Set(nativeCandidates.map(item => item.provider))],
+    };
+  }
   const subject = cleanSubject(resolved);
   const categories = backgroundCategories(prompt, decision);
 
