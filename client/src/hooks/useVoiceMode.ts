@@ -81,7 +81,7 @@ function preferredMicrophoneConstraints(): MediaTrackConstraints {
   const constraints: MediaTrackConstraints = {};
 
   if (supported.echoCancellation) constraints.echoCancellation = true;
-  if (supported.noiseSuppression) constraints.noiseSuppression = true;
+  if (supported.noiseSuppression) constraints.noiseSuppression = false;
   if (supported.autoGainControl) constraints.autoGainControl = true;
   if (supported.channelCount) constraints.channelCount = { ideal: 1 };
   if (supported.latency) constraints.latency = { ideal: 0.02 };
