@@ -2055,7 +2055,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
                                 onCheckedChange={value => setEsignConsent(value === true)}
                                 aria-label="Consent to electronic signature"
                               />
-                              <span>I intend to sign this document electronically and consent to LegalWhat recording this signature event and retaining a reproducible signed PDF and audit record.</span>
+                              <span>I intend to sign this document electronically and consent to LegalWhat recording this signature event. I understand the signed PDF contains an audit record and may be retained or reproduced later.</span>
                             </label>
                             <div className="flex gap-2">
                               <Button
