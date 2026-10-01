@@ -19,7 +19,7 @@ Bad-Blue contains **two primary product systems intentionally separated by domai
 
 | System | Purpose | Primary intelligence | Critical boundary |
 |---|---|---|---|
-| **LegalWhat** | Legal assistance, evidence analysis, legal research, drafting, public-record/accountability workflows | **LEXARA / ALEXARA**, F.M.I., C.A.D.E. | Legal intelligence does **not** receive crypto/blockchain execution authority |
+| **LegalWhat** | Legal assistance, evidence analysis, legal research, drafting, public-record/accountability workflows | **LEXARA**, F.M.I., C.A.D.E. | Legal intelligence does **not** receive crypto/blockchain execution authority |
 | **T.H.W.A.R.T.** | Market observation, arbitrage discovery, deterministic economics, probabilistic assessment, governance, execution architecture, settlement, learning | **CRYPTARA**, T.H.W.A.R.T. canonical runtime, QuantiComp/Monte Carlo | Market intelligence does **not** receive legal-data authority |
 
 They may reuse shared infrastructure—compute routing, persistence, provider governance, observability, and orchestration—but they are **not one blended application**.
@@ -1781,7 +1781,7 @@ Major repository areas include:
 
 - **`client/`** — React/TypeScript application surfaces.
 - **`server/`** — API, orchestration, providers, persistence, workers, and backend services.
-- **`server/services/alexara/`** — LEXARA legal brain, F.M.I., C.A.D.E., and legal research integration.
+- **`server/services/lexara/`** — canonical LEXARA service entry points. **`server/services/alexara/`** is retained only as a compatibility implementation surface while legacy imports are retired.
 - **`server/services/cryptara/`** — CRYPTARA market-surveillance/assessment intelligence.
 - **`server/services/quantiComp/`** — QuantiComp runtime, adaptive optimizer, backend registry/routing, Data Fabric, parallelism governor, profiler, interaction model.
 - **`server/services/cryptocrawl/`** — T.H.W.A.R.T. discovery, economics, validation, governance, execution, settlement, zero-capital, runtime, scaling, crawler research, Eden, Babel, and integration systems.
@@ -1893,7 +1893,7 @@ The continued engineering priority is **proof, canonicalization, observability, 
 |---|---|
 | **LegalWhat** | Legal-assistance and workflow product system |
 | **LEXARA** | Unified legal brain / primary legal persona |
-| **ALEXARA** | Legal/strategic service architecture associated with the LEXARA domain |
+| **ALEXARA** | Deprecated compatibility name for historical LEXARA service/module paths; not a separate runtime authority |
 | **F.M.I.** | Forensic Media Intelligence evidence-analysis subsystem |
 | **C.A.D.E.** | Case Adaptive Drafting Entity |
 | **T.H.W.A.R.T.** | **Trading Heuristic With Adaptive Reasoning & Tactics** — multi-topology market discovery, validation, governance, execution, settlement, and learning architecture |
