@@ -72,6 +72,9 @@ function candidate(url, provider = 'fixture-search') {
 }
 
 const mesh = {
+  getLexaraConfiguredDiscoveryLanes() {
+    return ['fixture-search'];
+  },
   async discoverLegalMeshTier3(query, _signal, options) {
     state.tierCalls.push({ query, options });
     if (state.mode === 'native-failure') throw new Error('fixture native discovery outage');
@@ -388,6 +391,8 @@ function reset(mode) {
   assert.equal(empty.endpoint, 'sources-exhausted');
   assert.deepEqual(Array.from(empty.sources), []);
   assert.equal(empty.searchLeads, undefined);
+  assert(empty.discoveryLanes.includes('fixture-search'),
+    'configured discovery lanes remain observable even when every lane returns zero candidates');
   assert.match(empty.coverageNote, /not a negative-record conclusion|not proof that no record exists/i);
 
   reset('dob-recursive');
