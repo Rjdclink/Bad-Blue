@@ -243,7 +243,7 @@ export default function FMIAnalysis({
           setUploadProgress(90);
           const useEphemeralReview = batchReviewInputs.some(input => input?.persistence !== 'persistent');
           const combined = await reviewSetMutation.mutateAsync({
-            fileIds: completedFileIds,
+            fileIds: completedFileIds.slice(0, 20),
             documents: useEphemeralReview && batchReviewInputs.length >= 2
               ? batchReviewInputs.slice(0, 8)
               : undefined,
