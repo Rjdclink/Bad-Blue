@@ -65,12 +65,13 @@ async function resolvePaidMatter(userId: string, lawType?: string): Promise<any 
   const { storage: appStorage } = await import('../storage');
   const rows = await appStorage.getUserLexaraMatterStates(userId, 200);
   const normalizedLawType = String(lawType || '').trim().toLowerCase();
-  for (const row of rows) {
+  const matches = rows.flatMap((row: any) => {
     const matter = sanitizeRepresentationMatter(row?.matter);
-    if (!matter) continue;
-    if (!normalizedLawType || String(matter.lawType || '').toLowerCase() === normalizedLawType) return matter;
-  }
-  return rows.length ? sanitizeRepresentationMatter(rows[0]?.matter) : null;
+    if (!matter) return [];
+    if (normalizedLawType && String(matter.lawType || '').toLowerCase() !== normalizedLawType) return [];
+    return [matter];
+  });
+  return matches.length === 1 ? matches[0] : null;
 }
 
 async function attachEvidenceArtifactToMatter(
