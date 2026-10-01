@@ -1,6 +1,6 @@
 import * as cheerio from 'cheerio';
 
-export type CitationVerificationStatus = 'verified' | 'unresolved';
+export type CitationVerificationStatus = 'verified' | 'unresolved' | 'unavailable';
 
 export interface CitationVerification {
   citation: string;
@@ -191,10 +191,19 @@ async function verifyOneCitation(item: ReturnType<typeof extractCaseCitations>[n
     fetchWithTimeout(lookupUrl),
     possibleNegativeTreatment(item.citation),
   ]);
-  if (!response?.ok) {
+  if (!response) {
     return {
       citation: item.citation,
-      status: 'unresolved',
+      status: 'unavailable',
+      possibleNegativeTreatment: treatment.found,
+      negativeTreatmentEvidence: treatment.evidence,
+    };
+  }
+  if (!response.ok) {
+    const unavailable = response.status === 403 || response.status === 429 || response.status >= 500;
+    return {
+      citation: item.citation,
+      status: unavailable ? 'unavailable' : 'unresolved',
       possibleNegativeTreatment: treatment.found,
       negativeTreatmentEvidence: treatment.evidence,
     };
@@ -229,7 +238,11 @@ export async function verifyLegalCitationsInText(text: string, maxCitations = 8)
 export function formatCitationVerificationForCorrection(results: CitationVerification[]): string {
   if (!results.length) return '';
   return results.map(result => {
-    const status = result.status === 'verified' ? 'VERIFIED' : 'UNRESOLVED';
+    const status = result.status === 'verified'
+      ? 'VERIFIED'
+      : result.status === 'unavailable'
+        ? 'VERIFICATION SOURCE UNAVAILABLE'
+        : 'UNRESOLVED';
     const treatment = result.possibleNegativeTreatment
       ? `; POSSIBLE NEGATIVE TREATMENT SIGNAL: ${result.negativeTreatmentEvidence || 'CourtListener search surfaced a negative-treatment term; verify before relying on the case'}`
       : '';
