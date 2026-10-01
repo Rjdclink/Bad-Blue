@@ -81,6 +81,16 @@ export interface RepresentationEvidenceLink {
   status: 'uploaded' | 'analyzed' | 'needs-corroboration';
 }
 
+export interface RepresentationScheduleItem {
+  label: string;
+  category: 'deadline' | 'court-date' | 'hearing' | 'filing' | 'document-due' | 'appointment' | 'meeting' | 'deposition' | 'mediation' | 'service' | 'follow-up' | 'other';
+  when?: string;
+  date?: string;
+  time?: string;
+  details?: string;
+  status: 'scheduled' | 'tentative' | 'completed' | 'canceled';
+}
+
 export interface RepresentationMatterState {
   version: 1;
   matterId: string;
@@ -102,6 +112,7 @@ export interface RepresentationMatterState {
   historySummary?: string;
   artifacts: RepresentationArtifact[];
   evidenceMap: RepresentationEvidenceLink[];
+  scheduleItems: RepresentationScheduleItem[];
   deadlines: Array<{
     label: string;
     date?: string;
@@ -124,6 +135,8 @@ export interface SavedMatterSummary {
   stage: RepresentationStage;
   packetCoverage?: PacketCoverage;
   artifactCount: number;
+  scheduleItems: RepresentationScheduleItem[];
+  deadlines: RepresentationMatterState['deadlines'];
   updatedAt: string;
 }
 
@@ -170,6 +183,54 @@ function mergeUnique(existing: string[] = [], incoming: unknown, max = 40, maxLe
     if (merged.length >= max) break;
   }
   return merged;
+}
+
+function mergeScheduleItems(
+  existing: RepresentationScheduleItem[] = [],
+  incoming: unknown,
+  max = 60,
+): RepresentationScheduleItem[] {
+  const merged = existing.map(item => ({ ...item }));
+  if (!Array.isArray(incoming)) return merged.slice(0, max);
+
+  for (const raw of incoming) {
+    if (!raw || typeof raw !== 'object') continue;
+    const item = raw as any;
+    const label = clamp(item.label, 220);
+    const categoryRaw = clamp(item.category, 80);
+    const category = [
+      'deadline', 'court-date', 'hearing', 'filing', 'document-due', 'appointment',
+      'meeting', 'deposition', 'mediation', 'service', 'follow-up', 'other',
+    ].includes(categoryRaw)
+      ? categoryRaw as RepresentationScheduleItem['category']
+      : 'other';
+    const when = clamp(item.when, 160);
+    const date = clamp(item.date, 40);
+    const time = clamp(item.time, 40);
+    const details = clamp(item.details, 500);
+    const statusRaw = clamp(item.status, 40);
+    const status = ['scheduled', 'tentative', 'completed', 'canceled'].includes(statusRaw)
+      ? statusRaw as RepresentationScheduleItem['status']
+      : 'scheduled';
+
+    if (!label || (!when && !date && !time)) continue;
+
+    const normalized: RepresentationScheduleItem = { label, category, status };
+    if (when) normalized.when = when;
+    if (date) normalized.date = date;
+    if (time) normalized.time = time;
+    if (details) normalized.details = details;
+
+    const key = `${category}:${label.toLowerCase()}`;
+    const index = merged.findIndex(existingItem =>
+      `${existingItem.category}:${existingItem.label.toLowerCase()}` === key
+    );
+    if (index >= 0) merged[index] = { ...merged[index], ...normalized };
+    else merged.push(normalized);
+    if (merged.length >= max) break;
+  }
+
+  return merged.slice(0, max);
 }
 
 function safeJsonObject(value: string): Record<string, any> | null {
@@ -581,6 +642,7 @@ export function sanitizeRepresentationMatter(value: unknown): RepresentationMatt
         status: ['uploaded','analyzed','needs-corroboration'].includes(entry?.status) ? entry.status : 'uploaded',
       } as RepresentationEvidenceLink];
     }) : [],
+    scheduleItems: mergeScheduleItems([], raw.scheduleItems, 60),
     deadlines: Array.isArray(raw.deadlines) ? raw.deadlines.slice(0, 40).flatMap((deadline: any) => {
       const label = clamp(deadline?.label, 220);
       if (!label) return [];
@@ -695,6 +757,7 @@ export async function advanceRepresentationMatter(input: AdvanceMatterInput): Pr
     historySummary: prior?.historySummary,
     artifacts: prior?.artifacts || [],
     evidenceMap: prior?.evidenceMap || [],
+    scheduleItems: prior?.scheduleItems || [],
     deadlines: prior?.deadlines || [],
     nextSteps: prior?.nextSteps || [],
     createdAt: prior?.createdAt || now,
@@ -705,12 +768,16 @@ export async function advanceRepresentationMatter(input: AdvanceMatterInput): Pr
     try {
       const stateRaw = await generateLegalAnalysis('representation-state-update', [
       'Update the structured matter record from ONLY the supplied current user turn, current Lexara response, and prior matter record.',
-      'Return JSON only with keys: knownFacts, legalIssues, defensesAndRisks, missingInformation, evidenceNeeds, parties, historySummary, courtOrAgency, nextSteps, deadlines.',
+      'Return JSON only with keys: knownFacts, legalIssues, defensesAndRisks, missingInformation, evidenceNeeds, parties, historySummary, courtOrAgency, nextSteps, scheduleItems, deadlines.',
       'Do not invent facts, names, dates, deadlines, filings, evidence, parties, or legal conclusions.',
       'knownFacts may include only facts stated by the user or explicitly identified in the supplied response as user-provided facts.',
       'legalIssues, defensesAndRisks, missingInformation, evidenceNeeds, and nextSteps may summarize only points explicitly present in the supplied response.',
+      'scheduleItems organizes any matter-related event whose meaning makes it schedule-relevant, including court dates, hearings, filing dates, document due dates, appointments, meetings, depositions, mediations, service events, calls, follow-ups, and equivalent events even when the user never says calendar or schedule.',
+      'Each scheduleItems entry must contain label, category, status, and at least one of when/date/time. category must be deadline, court-date, hearing, filing, document-due, appointment, meeting, deposition, mediation, service, follow-up, or other. status must be scheduled, tentative, completed, or canceled.',
+      'Preserve the user\'s timing words in when. Use date only for an exact date explicitly supplied or unambiguously established by the supplied text. Use time only when supplied or unambiguous. If timing is incomplete or ambiguous, preserve what was said and do not guess the missing date or time.',
       'For deadlines, include only a deadline date explicitly present in the supplied text; every new deadline must have status "unverified" unless a source URL is explicitly present in the supplied text.',
       'Keep the historySummary under 900 characters and describe what has happened in the matter so far, not generic law.',
+      `CURRENT DATE/TIME: ${now}`,
       `PRIOR MATTER: ${JSON.stringify(prior || {})}`,
       `CURRENT USER TURN: ${input.prompt}`,
       `CURRENT LEXARA RESPONSE: ${input.response}`,
@@ -735,6 +802,7 @@ export async function advanceRepresentationMatter(input: AdvanceMatterInput): Pr
       matter.historySummary = clamp(stateUpdate.historySummary, 2000) || matter.historySummary;
       matter.courtOrAgency = clamp(stateUpdate.courtOrAgency, 240) || matter.courtOrAgency;
       matter.nextSteps = mergeUnique(matter.nextSteps, stateUpdate.nextSteps, 20, 500);
+      matter.scheduleItems = mergeScheduleItems(matter.scheduleItems, stateUpdate.scheduleItems, 60);
       if (Array.isArray(stateUpdate.deadlines)) {
         for (const deadline of stateUpdate.deadlines.slice(0, 20)) {
           const label = clamp(deadline?.label, 220);
@@ -807,6 +875,8 @@ export function summarizeMatter(matter: RepresentationMatterState): SavedMatterS
     stage: matter.stage,
     packetCoverage: matter.packet?.coverage,
     artifactCount: matter.artifacts.length,
+    scheduleItems: matter.scheduleItems.slice(-8),
+    deadlines: matter.deadlines.slice(-8),
     updatedAt: matter.updatedAt,
   };
 }

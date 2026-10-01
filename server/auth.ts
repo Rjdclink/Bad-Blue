@@ -422,8 +422,9 @@ export async function setupAuth(app: Express) {
         subject: "LegalWhat: New signup",
         message: `New LegalWhat signup\n\nName: ${[createdUser.firstName, createdUser.lastName].filter(Boolean).join(" ") || "Not provided"}\nEmail: ${createdUser.email}`,
       }).catch((error) => console.error("[AUTH] Signup notification failed:", error));
-      const activation = await activateLocalTrialHttp(createdUser.id);
-      const user = activation.user;
+      const skipTrial = req.body?.skipTrial === true;
+      const activation = skipTrial ? null : await activateLocalTrialHttp(createdUser.id);
+      const user = activation?.user || createdUser;
       // Signup establishes a pending authenticated session so the user can move
       // directly into a trial or the existing Square subscription path.
       setLocalCookie(res, createLocalSessionToken(user));
@@ -435,8 +436,10 @@ export async function setupAuth(app: Express) {
         hasActiveSubscription: hasPaidServiceAccess(user),
         accessState: getLegalWhatAccessState(user),
         trialExpiresAt: user.trialExpiresAt || null,
-        trialOutcome: activation.outcome,
-        paymentRequired: activation.outcome !== "ELIGIBLE" ||
+        trialOutcome: activation?.outcome,
+        trialSkipped: skipTrial,
+        paymentRequired: skipTrial ||
+          activation?.outcome !== "ELIGIBLE" ||
           getLegalWhatAccessState(user) !== "trial_active",
       });
     } catch (error) {

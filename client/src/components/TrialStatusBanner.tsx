@@ -79,7 +79,7 @@ export function TrialStatusBanner({ accessState, trialRemainingMs = 0, trialExpi
       className="fixed right-3 top-3 z-40 max-w-[calc(100vw-1.5rem)] rounded-full border bg-background/95 px-3 py-1.5 text-xs font-medium text-foreground shadow-sm backdrop-blur sm:right-4 sm:top-4"
     >
       Free trial · {trialCountdownLabel(remainingMs)}
-      {reminder ? <span className="ml-2">· <Link href="/trial-upgrade" className="underline">Continue with subscription</Link></span> : null}
+      <span className="ml-2">· <Link href="/trial-upgrade" className="underline">Subscribe now</Link></span>
     </aside>
   );
 }

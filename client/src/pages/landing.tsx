@@ -138,7 +138,7 @@ export default function Landing() {
                 After your free trial, continue with full access for just $19.99/month.
               </p>
               <p className="mt-2 text-xs leading-relaxed text-white/75 md:text-sm">
-                Paid access includes persistent legal matter storage, so your cases, filing packets, documents, evidence, deadlines, and progress stay organized and available when you return.
+                Paid access includes persistent legal matter storage for your cases, filing packets, documents, evidence, deadlines, and progress; calendar and schedule organization for hearings, appointments, filing dates, due dates, and other important matter events; and access to higher legal reasoning models for more complex legal work.
               </p>
             </div>
           </div>
