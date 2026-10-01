@@ -8,7 +8,7 @@ export default function About() {
     <div className="min-h-screen bg-background">
       <SEOHead
         title="About LegalWhat | Founder & Mission"
-        description="Learn about Robert Clinkenbeard, founder and developer of LegalWhat, and the mission to make sophisticated legal technology more accessible and affordable."
+        description="Learn about Robert Clinkenbeard, founder, sole proprietor, and developer of LegalWhat, and the mission to make sophisticated legal technology more accessible and affordable."
         canonicalUrl="https://legalwhat.com/about"
         breadcrumbs={[{ name: "About", url: "https://legalwhat.com/about" }]}
       />
