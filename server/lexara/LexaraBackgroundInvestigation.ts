@@ -324,14 +324,42 @@ export async function discoverLexaraBackgroundSourcesParallel(
     categories?: readonly LexaraSourceCategory[];
     subject?: string;
     requestedFact?: string;
+    researchDecision?: LexaraResearchDecision;
   } = {},
 ): Promise<{ urls: string[]; lanesAttempted: string[] }> {
-  const items = await discoverLegalMeshTier3(query, options.signal, {
-    categories: options.categories,
-    jurisdiction: options.jurisdiction,
+  const fallbackDecision: LexaraResearchDecision = options.researchDecision || {
+    needed: true,
+    reason: 'external-fact-question',
+    objective: query,
+    objectiveKind: 'external-fact',
+    intent: 'factual',
+    requestedFact: (options.requestedFact || 'general-public-record') as LexaraRequestedFact,
+    sourceCategories: [...(options.categories || [])],
     subject: options.subject,
-    requestedFact: options.requestedFact,
-  });
+    standaloneQuery: query,
+    inferred: true,
+  };
+  const [nativeItems, claudeParallel] = await Promise.all([
+    discoverLegalMeshTier3(query, options.signal, {
+      categories: options.categories,
+      jurisdiction: options.jurisdiction,
+      subject: options.subject,
+      requestedFact: options.requestedFact,
+    }),
+    searchLexaraBackgroundWithClaude({
+      prompt: query,
+      subject: options.subject ? {
+        name: options.subject,
+        kind: 'person',
+        identifiable: true,
+        location: options.jurisdiction,
+      } : undefined,
+      decision: fallbackDecision,
+      jurisdiction: options.jurisdiction,
+      signal: options.signal,
+    }),
+  ]);
+  const items = uniqueCandidates([...nativeItems, ...claudeParallel.candidates]);
   const excluded = new Set(exclude);
   const filtered = items.filter(item => !excluded.has(item.url)).slice(0, options.limit || 12);
   return {
