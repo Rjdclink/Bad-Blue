@@ -410,7 +410,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     // consent may have populated the signal; text-only mode never gets a surprise prompt.
     void captureLexaraDeviceLocation({ prompt: false }).catch(() => undefined);
   }, []);
-  const [pendingDocument, setPendingDocument] = useState<{ title: string; facts: string; state: string; templateMode: boolean } | null>(null);
+  const [pendingDocument, setPendingDocument] = useState<{ title: string; facts: string; state: string; templateMode: boolean; missingFields?: string[] } | null>(null);
   const [showReviewPrompt, setShowReviewPrompt] = useState(false);
 
   const conversationRef = useRef<ConversationMessage[]>([]);
@@ -943,6 +943,14 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     setGaze('thinking');
 
     try {
+      if (pendingDocument?.missingFields?.length) {
+        const activeField = pendingDocument.missingFields[0];
+        setPendingDocument(previous => previous ? {
+          ...previous,
+          facts: `${previous.facts}\n\nLEXARA REQUESTED FORM FIELD: ${activeField}\nUSER ANSWER: ${message}`,
+        } : previous);
+      }
+
       const sharedContext = {
         previousMessages,
         lawType: lawTypeId,
@@ -1166,7 +1174,8 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       }
       const priorPendingDocument = pendingDocument;
       const documentIntentRequested = data?.documentIntent?.requested === true;
-      const documentFollowup = /\b(?:document|draft|form|letter|complaint|petition|motion|affidavit|declaration|pdf|docx|edit|revise|change|paragraph|section|signature|download|export|file|filing)\b/i.test(message);
+      const documentFollowup = /\b(?:document|draft|form|letter|complaint|petition|motion|affidavit|declaration|pdf|docx|edit|revise|change|paragraph|section|signature|download|export|file|filing)\b/i.test(message)
+        || Boolean(priorPendingDocument?.missingFields?.length);
       // Document controls belong to the active document task, never to the
       // conversation globally. An unrelated completed turn retires stale UI.
       if (!documentIntentRequested && priorPendingDocument && !documentFollowup) {
@@ -1583,11 +1592,26 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       if (generated.status === 409 && data?.officialFormRequired && data?.officialForm) {
         const official = await fetch('/api/lexara/documents/official-form', {
           method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ officialForm: data.officialForm, facts: pendingDocument.facts }),
+          body: JSON.stringify({
+            officialForm: data.officialForm,
+            facts: pendingDocument.facts,
+            sessionId: sessionIdRef.current,
+          }),
         });
         if (!official.ok) {
           const issue = await official.json().catch(() => ({}));
-          const missing = Array.isArray(issue?.missingFields) && issue.missingFields.length ? ' Missing information: ' + issue.missingFields.join(', ') + '.' : '';
+          const missingFields = Array.isArray(issue?.missingFields)
+            ? issue.missingFields.map((field: unknown) => String(field || '').trim()).filter(Boolean)
+            : [];
+          if (official.status === 422 && missingFields.length) {
+            setPendingDocument(previous => previous ? { ...previous, missingFields } : previous);
+            const firstField = missingFields[0].replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+            const question = `I need one more piece of information to complete ${pendingDocument.title}: what should I enter for ${firstField}?`;
+            appendMessage('lexara', question);
+            void speakLexara(question, generationRef.current).catch(() => undefined);
+            return;
+          }
+          const missing = missingFields.length ? ' Missing information: ' + missingFields.join(', ') + '.' : '';
           throw new Error((issue?.error || 'Official form completion failed') + missing);
         }
         const blob = await official.blob();
@@ -1610,7 +1634,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       setConversationDocument({ title, content });
       const exported = await fetch('/api/lexara/documents/export', {
         method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, content, format }),
+        body: JSON.stringify({ title, content, format, sessionId: sessionIdRef.current }),
       });
       if (!exported.ok) throw new Error('Document export failed');
       const blob = await exported.blob();
@@ -1632,7 +1656,12 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     if (!conversationDocument?.content) return;
     const response = await fetch('/api/lexara/documents/export', {
       method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: conversationDocument.title, content: conversationDocument.content, format }),
+      body: JSON.stringify({
+        title: conversationDocument.title,
+        content: conversationDocument.content,
+        format,
+        sessionId: sessionIdRef.current,
+      }),
     });
     if (!response.ok) throw new Error('Document export failed');
     const blob = await response.blob();
