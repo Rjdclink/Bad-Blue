@@ -120,12 +120,13 @@ Return JSON only:
   "needed": boolean,
   "intent": "factual" | "mixed" | "legal" | "conversation",
   "requestedFact": "age-dob" | "professional-license" | "marriage-divorce" | "employment" | "property" | "court-record" | "incarceration" | "business" | "financial-professional" | "healthcare-professional" | "sanctions-discipline" | "intellectual-property" | "domain-web" | "news-history" | "identity" | "contact-address" | "relatives-associates" | "social-online" | "public-image" | "government-public" | "education" | "vehicle" | "criminal-arrest" | "probation-parole" | "warrant" | "sex-offender" | "bankruptcy-financial" | "relationship-timeline" | "general-public-record" | "none",
-  "subject": "exact subject from the conversation or empty string",
+  "subject": "exact subject from the conversation or empty string; preserve a user-supplied location qualifier such as 'of Hartley, Iowa' when it identifies the subject",
   "objective": "one short description of exactly what external fact must be established"
 }
 
 Examples:
 <example>User: Tell me about Avery Morgan Example.\nOutput: {"needed":true,"intent":"factual","requestedFact":"general-public-record","subject":"Avery Morgan Example","objective":"Find the background facts the user is asking about for Avery Morgan Example."}</example>
+<example>User: Hello. What can you tell me about Sarah Loretta Graves of Hartley, Iowa?\nOutput: {"needed":true,"intent":"factual","requestedFact":"general-public-record","subject":"Sarah Loretta Graves of Hartley, Iowa","objective":"Find the background facts the user is asking about for Sarah Loretta Graves of Hartley, Iowa."}</example>
 <example>User: Jordan Riley Example of Des Moines, Iowa is employed, right?\nOutput: {"needed":true,"intent":"factual","requestedFact":"employment","subject":"Jordan Riley Example","objective":"Determine whether Jordan Riley Example is currently employed."}</example>
 <example>Prior context researched Avery Example. User: And she still does the same thing?
 Output: {"needed":true,"intent":"factual","requestedFact":"employment","subject":"Avery Example","objective":"Determine whether Avery Example is still in the previously discussed employment."}</example>
