@@ -82,10 +82,38 @@ async function resolveDownloadableOfficialForm(form: OfficialLegalForm): Promise
   return {url:best.url,contentType:best.contentType};
 }
 
+async function inspectDocxFields(bytes: Buffer): Promise<OfficialFormField[]> {
+  const dir=await mkdtemp(path.join(tmpdir(),'lexara-docx-inspect-'));
+  const input=path.join(dir,'official.docx');
+  const unpack=path.join(dir,'unpacked');
+  try {
+    await writeFile(input,bytes);
+    await execFileAsync('unzip',['-q',input,'-d',unpack]);
+    const xml=await readFile(path.join(unpack,'word','document.xml'),'utf8');
+    const names=new Set<string>();
+    for(const match of xml.matchAll(/<w:(?:tag|alias)\b[^>]*w:val="([^"]+)"/gi)) {
+      const name=String(match[1]||'').trim();
+      if(name && !/^\d+$/.test(name)) names.add(name);
+    }
+    for(const match of xml.matchAll(/\[\s*([A-Z][A-Z0-9 _/.-]{2,80})\s*\]|{{\s*([A-Za-z][A-Za-z0-9 _/.-]{2,80})\s*}}/g)) {
+      const name=String(match[1]||match[2]||'').trim();
+      if(name) names.add(name);
+    }
+    return [...names].slice(0,200).map(name=>({name,type:'text' as const}));
+  } catch {
+    return [];
+  } finally {
+    await rm(dir,{recursive:true,force:true}).catch(()=>{});
+  }
+}
+
 export async function inspectOfficialForm(form: OfficialLegalForm): Promise<InspectedOfficialForm> {
   const resolved=await resolveDownloadableOfficialForm(form);
   const bytes=await download(resolved.url);
-  if(resolved.contentType==='docx') return {sourceUrl:resolved.url,contentType:'docx',bytes,fields:[],fillable:true};
+  if(resolved.contentType==='docx') {
+    const fields=await inspectDocxFields(bytes);
+    return {sourceUrl:resolved.url,contentType:'docx',bytes,fields,fillable:fields.length>0};
+  }
   const pdf=await PDFDocument.load(bytes,{ignoreEncryption:false});
   const fields: OfficialFormField[]=[];
   try {
@@ -130,6 +158,11 @@ export async function fillOfficialDocx(inspected: InspectedOfficialForm, values:
       const safe=escapeXmlText(String(value));
       xml=xml.replace(new RegExp('\\[\\s*'+escapedKey+'\\s*\\]','gi'),safe)
         .replace(new RegExp('{{\\s*'+escapedKey+'\\s*}}','gi'),safe);
+      const contentControl=new RegExp(
+        '(<w:sdt\\b[\\s\\S]*?<w:(?:tag|alias)\\b[^>]*w:val="'+escapedKey+'"[^>]*>[\\s\\S]*?<w:sdtContent\\b[^>]*>[\\s\\S]*?<w:t\\b[^>]*>)([\\s\\S]*?)(</w:t>)',
+        'gi'
+      );
+      xml=xml.replace(contentControl,(_match,prefix,_oldValue,suffix)=>prefix+safe+suffix);
     }
     await writeFile(documentPath,xml,'utf8');
     await execFileAsync('zip',['-qr',out,'.'],{cwd:unpack});
