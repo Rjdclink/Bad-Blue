@@ -29,6 +29,7 @@ const COURT_DOCUMENT_PATTERN = /\b(?:motion|brief|complaint|answer|counterclaim|
 const FAMILY_PATTERN = /\b(?:adoption|divorce|dissolution|custody|parental rights?|child support|family[- ]law|paternity)\b/i;
 const ESTATE_PATTERN = /\b(?:will|codicil|testamentary trust|last will|probate|estate document)\b/i;
 const PRIMARY_RESIDENCE_NOTICE_PATTERN = /\b(?:foreclosure|eviction|default|acceleration|repossession|right to cure)\b/i;
+const UCC_EXCEPTION_PATTERN = /\b(?:security agreement|secured transaction|financing statement|ucc[- ]?1|ucc article 9|perfect(?:ion|ed|ing) of (?:a )?security interest|collateral assignment)\b/i;
 const OTHER_ESIGN_EXCEPTION_PATTERN = /\b(?:utility (?:termination|cancellation)|health insurance (?:termination|cancellation)|life insurance (?:termination|cancellation)|product recall|hazardous materials?|pesticides?|toxic materials?)\b/i;
 
 export function assessGenericESignEligibility(input: {
@@ -58,6 +59,9 @@ export function assessGenericESignEligibility(input: {
   }
   if (PRIMARY_RESIDENCE_NOTICE_PATTERN.test(haystack) && /\b(?:primary residence|home|residential|tenant|landlord)\b/i.test(haystack)) {
     return unsupported('Generic LegalWhat e-signing is disabled for covered primary-residence default, foreclosure, repossession, or eviction notices unless the controlling law is separately verified.');
+  }
+  if (UCC_EXCEPTION_PATTERN.test(haystack)) {
+    return unsupported('Generic LegalWhat e-signing is disabled for UCC-governed secured-transaction documents unless the controlling state electronic-transactions law is separately verified.');
   }
   if (OTHER_ESIGN_EXCEPTION_PATTERN.test(haystack)) {
     return unsupported('This document falls within a category that requires separate execution-law verification before LegalWhat can apply a generic electronic signature.');
