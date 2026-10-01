@@ -426,15 +426,24 @@ async function buildPacket(
       : 'other';
     const title = clamp(item.title, 220);
     if (!title) continue;
+    const sourceText = `${source.title} ${source.excerpt || ''}`.toLowerCase();
+    const proposedFormNumber = clamp(item.formNumber, 80);
+    const verifiedFormNumber = proposedFormNumber && sourceText.includes(proposedFormNumber.toLowerCase())
+      ? proposedFormNumber
+      : undefined;
+    const proposedRevision = clamp(item.revision, 120);
+    const verifiedRevision = proposedRevision && sourceText.includes(proposedRevision.toLowerCase())
+      ? proposedRevision
+      : undefined;
     items.push({
       id: `packet-item-${index + 1}`,
       title,
-      formNumber: clamp(item.formNumber, 80) || undefined,
+      formNumber: verifiedFormNumber,
       requirement,
       reason: clamp(item.reason, 700) || 'Required or potentially required by the cited source.',
       sourceUrl: source.url,
       sourceTitle: source.title,
-      revision: clamp(item.revision, 120) || undefined,
+      revision: verifiedRevision,
       documentKind,
       status: 'needed',
     });
