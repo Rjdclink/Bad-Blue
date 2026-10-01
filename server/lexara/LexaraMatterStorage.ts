@@ -76,8 +76,8 @@ export async function persistMatterBuffer(input: MatterStorageWrite): Promise<st
     const target = `${prefix}${objectName}`;
     await gcs.bucket(privateDir.bucket).file(target).save(input.bytes, {
       resumable: false,
-      contentType: input.mimeType || 'application/octet-stream',
       metadata: {
+        contentType: input.mimeType || 'application/octet-stream',
         metadata: {
           legalwhatUserId: input.userId,
           legalwhatMatterId: input.matterId,
