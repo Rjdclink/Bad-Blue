@@ -216,17 +216,36 @@ function selectSavedArtifactRequest(
     .map(artifact => {
       const title = String(artifact.title || '').toLowerCase();
       const fileName = String(artifact.fileName || '').toLowerCase();
+      const mimeType = String(artifact.mimeType || '').toLowerCase();
       const tokens = `${title} ${fileName}`.split(/[^a-z0-9]+/).filter(token => token.length >= 4);
       let score = tokens.filter(token => normalized.includes(token)).length;
-      if (title && normalized.includes(title)) score += 5;
-      if (fileName && normalized.includes(fileName)) score += 5;
-      return { artifact, score };
+      let exact = false;
+      if (title && normalized.includes(title)) {
+        score += 5;
+        exact = true;
+      }
+      if (fileName && normalized.includes(fileName)) {
+        score += 8;
+        exact = true;
+      }
+      if (/\bpdf\b/i.test(normalized) && (mimeType.includes('pdf') || fileName.endsWith('.pdf'))) score += 4;
+      if (/\b(?:docx|word)\b/i.test(normalized) && (mimeType.includes('wordprocessingml') || fileName.endsWith('.docx'))) score += 4;
+      return { artifact, score, exact };
     })
     .sort((a, b) => b.score - a.score);
 
   const best = candidates[0];
   if (!best || best.score <= 0) return null;
-  if (candidates.length > 1 && candidates[1].score === best.score && best.score < 5) return null;
+  const tied = candidates.filter(candidate => candidate.score === best.score);
+  if (tied.length > 1 && !best.exact) return null;
+  if (tied.length > 1 && best.exact) {
+    const exactFileMatches = tied.filter(candidate => {
+      const fileName = String(candidate.artifact.fileName || '').toLowerCase();
+      return fileName && normalized.includes(fileName);
+    });
+    if (exactFileMatches.length !== 1) return null;
+    best.artifact = exactFileMatches[0].artifact;
+  }
 
   const artifact = best.artifact;
   return {
@@ -498,7 +517,7 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       ...effectivePreviousMessages,
       { role: 'user', content: prompt },
     ]);
-    if (!documentIntent.requested && reasoningDocumentIntent.requested && reasoningDocumentIntent.explicit && reasoningDocumentIntent.documentType !== 'Custom Document') {
+    if (!savedArtifact && !documentIntent.requested && reasoningDocumentIntent.requested && reasoningDocumentIntent.explicit && reasoningDocumentIntent.documentType !== 'Custom Document') {
       documentIntent.requested = true;
       if (documentIntent.documentType === 'Custom Document') {
         documentIntent.documentType = reasoningDocumentIntent.documentType;
@@ -694,7 +713,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       ...effectivePreviousMessages,
       { role: 'user', content: prompt },
     ]);
-    if (!documentIntent.requested && reasoningDocumentIntent.requested && reasoningDocumentIntent.explicit && reasoningDocumentIntent.documentType !== 'Custom Document') {
+    if (!savedArtifact && !documentIntent.requested && reasoningDocumentIntent.requested && reasoningDocumentIntent.explicit && reasoningDocumentIntent.documentType !== 'Custom Document') {
       documentIntent.requested = true;
       if (documentIntent.documentType === 'Custom Document') {
         documentIntent.documentType = reasoningDocumentIntent.documentType;
