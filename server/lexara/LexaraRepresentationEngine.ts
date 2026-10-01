@@ -496,8 +496,9 @@ export async function advanceRepresentationMatter(input: AdvanceMatterInput): Pr
     updatedAt: now,
   };
 
-  try {
-    const stateRaw = await generateLegalAnalysis('representation-state-update', [
+  if (input.response.trim()) {
+    try {
+      const stateRaw = await generateLegalAnalysis('representation-state-update', [
       'Update the structured matter record from ONLY the supplied current user turn, current Lexara response, and prior matter record.',
       'Return JSON only with keys: knownFacts, legalIssues, defensesAndRisks, missingInformation, evidenceNeeds, parties, historySummary, courtOrAgency, nextSteps, deadlines.',
       'Do not invent facts, names, dates, deadlines, filings, evidence, parties, or legal conclusions.',
@@ -545,9 +546,10 @@ export async function advanceRepresentationMatter(input: AdvanceMatterInput): Pr
         }
       }
     }
-  } catch {
-    // Matter persistence must never block the legal answer if structured state
-    // extraction is temporarily unavailable. The deterministic core above remains.
+    } catch {
+      // Matter persistence must never block the legal answer if structured state
+      // extraction is temporarily unavailable. The deterministic core above remains.
+    }
   }
 
   if (shouldPlanPacket(input.prompt, matter)) {
