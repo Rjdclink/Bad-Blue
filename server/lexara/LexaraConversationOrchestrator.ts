@@ -23,6 +23,7 @@ import {
 } from './LexaraBackgroundInvestigation';
 import { hasExplicitLocationCue, resolveUSJurisdiction } from './LexaraJurisdictionResolver';
 import { formatCitationVerificationForCorrection, verifyLegalCitationsInText } from './LexaraCitationVerifier';
+import { formatDeadlineCalculationForSystem, inferLegalDeadlineFromPrompt, type LegalDeadlineCalculation } from './LegalDeadlineEngine';
 
 export interface LexaraConversationMessage {
   role: 'user' | 'lexara' | 'assistant';
@@ -58,6 +59,7 @@ export interface LexaraConversationResult {
   mappedLawType?: ExpertLawType;
   backgroundEndpoint?: LexaraBackgroundResearchResult['endpoint'];
   backgroundStatus?: 'completed' | 'partial' | 'unavailable' | 'failed' | 'clarification-required' | 'consent-required';
+  deadline?: LegalDeadlineCalculation;
 }
 
 const MAX_HISTORY_MESSAGES = 16;
@@ -519,6 +521,7 @@ export async function generateLexaraConversationResponse(
   const publicJurisdiction = explicitStateJurisdiction
     || (explicitLocationCue ? resolvedJurisdiction?.display : undefined)
     || (backgroundLocationTrusted ? stateJurisdiction : undefined);
+  const deterministicDeadline = inferLegalDeadlineFromPrompt(cleanPrompt, jurisdiction);
   const promptJurisdiction = explicitStateJurisdiction
     || (backgroundLocationTrusted ? jurisdiction : undefined);
   const domainName = trustedDomainName(context.lawType);
@@ -722,6 +725,7 @@ export async function generateLexaraConversationResponse(
     + silentLocationContext
     + jurisdictionCorrectionPrompt
     + formatAuthorityResearchForSystem(authorityResearch)
+    + formatDeadlineCalculationForSystem(deterministicDeadline)
     + researchStatusPrompt
     + formatLexaraBackgroundResearchForSystem(backgroundInvestigation);
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
@@ -947,6 +951,7 @@ export async function generateLexaraConversationResponse(
     jurisdiction: publicJurisdiction,
     mappedLawType,
     backgroundEndpoint,
+    deadline: deterministicDeadline || undefined,
     backgroundStatus: permissionRefusalUnverified ? 'partial'
       : usedBackgroundSourceExcerptFallback && backgroundInvestigation?.endpoint === 'evidence-sufficient'
       && verifiedExcerptDirectlyAnswers(cleanPrompt, context.previousMessages || [], jurisdiction, backgroundInvestigation, extractVerifiedBackgroundSourceExcerpt(backgroundInvestigation)?.excerpt || '')
