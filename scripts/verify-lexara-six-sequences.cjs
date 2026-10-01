@@ -94,7 +94,7 @@ if (!legalMesh.includes("if (!options.requestedFact || options.requestedFact ===
 if (!router.includes('const contextualContinuation') || !router.includes('const contextualPrompt')) {
   throw new Error('Lexara sequence router does not preserve short factual follow-up context');
 }
-for (const plannerToken of ["'age-dob'","'professional-license'","'marriage-divorce'","'employment'","standaloneQuery","sourceCategories","research-follow-up"]) {
+for (const plannerToken of ["'age-dob'","'professional-license'","'marriage-divorce'","'employment'","for a living","criminal background","arrest\\w*","standaloneQuery","sourceCategories","research-follow-up"]) {
   if (!planner.includes(plannerToken)) throw new Error('Lexara semantic research planner missing: '+plannerToken);
 }
 for (const semanticToken of [
