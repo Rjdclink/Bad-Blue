@@ -17,6 +17,10 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
+function requestPathname(originalUrl: string): string {
+  return (originalUrl || "/").split("?")[0].split("#")[0] || "/";
+}
+
 function renderSeoShell(template: string, pathname: string): string {
   const config = SEO_CONFIG[pathname];
   if (!config) return template;
@@ -97,7 +101,7 @@ export async function setupVite(app: Express, server: Server) {
 
       // always reload the index.html file from disk incase it changes
       let template = await fs.promises.readFile(clientTemplate, "utf-8");
-      template = renderSeoShell(template, req.path || "/");
+      template = renderSeoShell(template, requestPathname(req.originalUrl));
       template = template.replace(
         `src="/src/main.tsx"`,
         `src="/src/main.tsx?v=${nanoid()}"`,
@@ -157,7 +161,7 @@ export function serveStatic(app: Express) {
   // crawlers do not first see the homepage canonical and then a different one
   // after JavaScript renders.
   app.use("*", (req, res) => {
-    const pathname = req.path || '';
+    const pathname = requestPathname(req.originalUrl);
     const looksLikeStaticAsset = pathname.startsWith('/images/')
       || pathname.startsWith('/assets/')
       || /\.[a-z0-9]{2,8}$/i.test(pathname);
