@@ -7,6 +7,8 @@ const legalMesh = fs.readFileSync('server/lexara/LegalProviderMesh.ts', 'utf8');
 const authority = fs.readFileSync('server/lexara/LexaraAuthorityResearch.ts', 'utf8');
 const retrieval = fs.readFileSync('server/lexara/LexaraRetrievalBoundary.ts', 'utf8');
 const background = fs.readFileSync('server/lexara/LexaraBackgroundInvestigation.ts', 'utf8');
+const semantic = fs.readFileSync('server/lexara/LexaraSemanticIntentInterpreter.ts', 'utf8');
+const claudeBackground = fs.readFileSync('server/lexara/LexaraClaudeBackgroundSearch.ts', 'utf8');
 const pantheonRegistry = fs.readFileSync('server/services/pantheon/PantheonSovereignSourceRegistry.ts', 'utf8');
 const pantheonDiscovery = fs.readFileSync('server/services/pantheon/PantheonDiscoveryCoordinator.ts', 'utf8');
 
@@ -43,6 +45,11 @@ if (!authority.includes('discoverLegalMeshTier3') || !authority.includes('discov
 }
 if (authority.includes('selectLexaraCrawlerPlan') || authority.includes('PantheonRetrievalAdapter')) {
   throw new Error('Lexara authority research still selects or imports Pantheon retrieval machinery');
+}
+for (const activeLexaraSource of [semantic, claudeBackground]) {
+  for (const forbidden of ['LexaraPantheon', 'PantheonDiscoveryCoordinator', '../services/pantheon/', 'PantheonRetrievalAdapter']) {
+    if (activeLexaraSource.includes(forbidden)) throw new Error('New Lexara semantic/Claude background path still depends on Pantheon: ' + forbidden);
+  }
 }
 for (const forbidden of ['PantheonRetrievalAdapter', 'pantheonRetrievalAdapter', '../services/pantheon/', '../services/crawlers/Pantheon']) {
   if (retrieval.includes(forbidden)) throw new Error('Lexara retrieval boundary still depends on Pantheon: ' + forbidden);
