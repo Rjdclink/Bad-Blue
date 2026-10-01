@@ -345,7 +345,7 @@ export default function Landing() {
           <h2 id="about-the-founder" className="text-3xl font-bold mb-6">About the Founder</h2>
           <div className="space-y-4 text-muted-foreground leading-relaxed">
             <p>
-              <strong className="text-foreground">Robert Clinkenbeard</strong>, founder and developer of LegalWhat, created the platform with a straightforward purpose: to make meaningful legal guidance and legal resources accessible to everyday people who may not have the ability or desire to spend thousands of dollars on traditional legal services.
+              <strong className="text-foreground">Robert Clinkenbeard</strong>, founder, sole proprietor, and developer of LegalWhat, created the platform with a straightforward purpose: to make meaningful legal guidance and legal resources accessible to everyday people who may not have the ability or desire to spend thousands of dollars on traditional legal services.
             </p>
             <p>
               He developed LegalWhat as a technology-driven alternative that helps users better understand their legal situations, research their rights and options, analyze documents and evidence, and prepare legal documents at a fraction of the cost traditionally associated with obtaining legal assistance.
