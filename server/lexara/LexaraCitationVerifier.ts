@@ -207,8 +207,9 @@ async function verifyOneCitation(item: ReturnType<typeof extractCaseCitations>[n
   };
 }
 
-export async function verifyLegalCitationsInText(text: string): Promise<CitationVerification[]> {
-  const citations = extractCaseCitations(text).slice(0, 8);
+export async function verifyLegalCitationsInText(text: string, maxCitations = 8): Promise<CitationVerification[]> {
+  const limit = Math.max(1, Math.min(20, Math.trunc(maxCitations) || 8));
+  const citations = extractCaseCitations(text).slice(0, limit);
   if (!citations.length) return [];
   return Promise.all(citations.map(citation => verifyOneCitation(citation)));
 }
