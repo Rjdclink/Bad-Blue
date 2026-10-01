@@ -7,6 +7,7 @@
  */
 
 import type { ExpertProfile, LawType } from '../shared/legalCounselTypes';
+import { getLexaraLegalDomainProfile } from './lexara/LexaraLegalDomainProfiles';
 
 interface ExpertProfileConfig {
   specialty: string;
@@ -213,10 +214,20 @@ export interface ExpertSystemConfig {
  */
 const LEGACY_SENIORITY_COMPATIBILITY_VALUE = 30;
 
-export function generateExpertProfile(lawType: LawType): ExpertProfile {
-  const config = LAW_TYPE_CONFIGS[lawType];
+export function generateExpertProfile(lawType: LawType | string): ExpertProfile {
+  const config = LAW_TYPE_CONFIGS[lawType as LawType];
 
   if (!config) {
+    const domain = getLexaraLegalDomainProfile(lawType);
+    if (domain) {
+      return {
+        specialty: domain.displayName,
+        yearsExperience: LEGACY_SENIORITY_COMPATIBILITY_VALUE,
+        tone: 'analytical',
+        meticulousness: 8,
+        focusAreas: [...domain.coreIssues.slice(0, 8)],
+      };
+    }
     console.warn(`[ExpertSystem] Unknown law type: ${lawType}, using default profile`);
     return {
       specialty: 'General Legal Practice',
@@ -236,12 +247,13 @@ export function generateExpertProfile(lawType: LawType): ExpertProfile {
   };
 }
 
-export function calculateMeticulousness(lawType: LawType): number {
-  const config = LAW_TYPE_CONFIGS[lawType];
-  return config?.baseMeticulousness || 6;
+export function calculateMeticulousness(lawType: LawType | string): number {
+  const config = LAW_TYPE_CONFIGS[lawType as LawType];
+  if (config) return config.baseMeticulousness;
+  return getLexaraLegalDomainProfile(lawType) ? 8 : 6;
 }
 
-export function generateSystemPrompt(profile: ExpertProfile, _lawType: LawType, state: string): string {
+export function generateSystemPrompt(profile: ExpertProfile, _lawType: LawType | string, state: string): string {
   const toneDescriptions = {
     empathetic: 'compassionate and understanding',
     analytical: 'precise and methodical',
@@ -261,11 +273,11 @@ export function generateSystemPrompt(profile: ExpertProfile, _lawType: LawType, 
   return `You are LEXARA, an AI legal analysis assistant configured for ${profile.specialty}. Apply the issue-spotting depth, skepticism, practical judgment, and precision expected from highly experienced senior counsel, but never claim to be a human attorney, a licensed lawyer, a bar member, or to have practiced law for any number of years. Any yearsExperience field in internal profile metadata is legacy compatibility data only and is not a biographical fact.\n\nPROFESSIONAL REASONING PROFILE:\n- Communication style: ${toneDescriptions[profile.tone]}\n- Analytical detail: ${profile.meticulousness}/10\n- Focus areas: ${profile.focusAreas.join(', ')}\n\nJURISDICTION CONTEXT: ${state}. Do not assume every issue is governed only by ${state}; identify federal, local, tribal, military, administrative, or another jurisdictional overlay when the facts reasonably trigger it.\n\nLEGAL ACCURACY RULES:\n1. Distinguish facts supplied by the user, allegations, inferences, and legal conclusions.\n2. Identify missing elements, defenses, procedural barriers, evidentiary weaknesses, competing theories, remedies, and collateral consequences when relevant.\n3. Never invent a statute, case, quotation, holding, deadline, court rule, source, or citation.\n4. Do not claim an authority was checked unless verified source material was actually supplied to the model for this turn.\n5. If authority is not verified, explain the legal principle without fabricating a citation and state what must be verified before reliance.\n6. Treat model agreement as analysis, not verification. Prefer primary legal authority when verification is available.\n7. For deadlines, criminal exposure, immigration, custody, emergency relief, or other high-consequence matters, state material assumptions and uncertainty explicitly.\n8. Do not claim to have reviewed evidence, files, dockets, recordings, or documents that were not actually provided.\n\nBOUNDARIES:\n- LEXARA provides AI legal information and analysis, not a human attorney-client relationship.\n- Do not repeat a canned disclaimer in every paragraph; communicate the boundary naturally when relevant.\n- Never allow persona or presentation style to override legal accuracy.\n\nRESPONSE DEPTH:\n${responseGuidance}\n\nPrioritize correctness, issue spotting, and practical clarity over confident-sounding certainty.`;
 }
 
-export function generateConsultationPrompt(profile: ExpertProfile, lawType: LawType): string {
+export function generateConsultationPrompt(profile: ExpertProfile, lawType: LawType | string): string {
   return `LEXARA is configured to analyze ${lawType.replace(/-/g, ' ')} matters with a ${profile.tone} reasoning style and focus on ${profile.focusAreas.join(', ')}.\n\nDescribe the facts in your own words. LEXARA should identify the material legal issues, missing facts, strengths, weaknesses, defenses, procedural concerns, evidence needs, and practical next steps without claiming human credentials or inventing authority.`;
 }
 
-export function getExpertSystemConfig(lawType: LawType, state: string): ExpertSystemConfig {
+export function getExpertSystemConfig(lawType: LawType | string, state: string): ExpertSystemConfig {
   try {
     const profile = generateExpertProfile(lawType);
     const systemPrompt = generateSystemPrompt(profile, lawType, state);
