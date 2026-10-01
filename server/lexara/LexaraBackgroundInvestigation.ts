@@ -640,7 +640,18 @@ export async function investigateLexaraBackgroundQuestion(
           const citedEvaluation = cited
             ? assessEvidence(cited.content, candidate.url, cited.retrievedAt, subject, decision, prompt)
             : null;
-          const evaluation = [retrievedEvaluation, citedEvaluation]
+          const snippetEvaluationRaw = !retrievedEvaluation && !citedEvaluation && candidate.excerpt?.trim()
+            ? assessEvidence(candidate.excerpt, candidate.url, new Date().toISOString(), subject, decision, prompt)
+            : null;
+          const snippetEvaluation = snippetEvaluationRaw
+            ? {
+                ...snippetEvaluationRaw,
+                confidence: Math.min(snippetEvaluationRaw.confidence, 0.69),
+                directlyAnswers: false,
+                inferentiallySupports: true,
+              }
+            : null;
+          const evaluation = [retrievedEvaluation, citedEvaluation, snippetEvaluation]
             .filter((item): item is AssessedEvidence => Boolean(item))
             .sort((a, b) => b.confidence - a.confidence)[0] || null;
           void rememberLexaraDiscoveryOutcome(candidate.url, Boolean(evaluation), {
