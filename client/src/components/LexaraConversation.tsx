@@ -1599,6 +1599,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             officialForm: data.officialForm,
             facts: pendingDocument.facts,
             sessionId: sessionIdRef.current,
+            lawType: lawTypeId,
           }),
         });
         if (!official.ok) {
@@ -1637,7 +1638,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       setConversationDocument({ title, content });
       const exported = await fetch('/api/lexara/documents/export', {
         method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, content, format, sessionId: sessionIdRef.current }),
+        body: JSON.stringify({ title, content, format, sessionId: sessionIdRef.current, lawType: lawTypeId }),
       });
       if (!exported.ok) throw new Error('Document export failed');
       const blob = await exported.blob();
@@ -1664,6 +1665,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         content: conversationDocument.content,
         format,
         sessionId: sessionIdRef.current,
+        lawType: lawTypeId,
       }),
     });
     if (!response.ok) throw new Error('Document export failed');
