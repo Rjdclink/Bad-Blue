@@ -427,16 +427,18 @@ export async function investigateLexaraBackgroundQuestion(
   // ("Hello. What") over the person Lexara already understood.
   const promptResolved = resolveLexaraBackgroundSubject(prompt, priorTurns, context.jurisdiction);
   const decisionResolved = decision.subject
-    ? resolveLexaraBackgroundSubject(decision.subject, priorTurns, context.jurisdiction)
+    ? resolveLexaraBackgroundSubject(decision.subject, priorTurns)
       || {
         name: decision.subject,
         kind: 'person' as const,
         identifiable: false,
-        location: context.jurisdiction,
       }
     : null;
   const resolved = decisionResolved
-    ? { ...decisionResolved, location: decisionResolved.location || promptResolved?.location }
+    ? {
+        ...decisionResolved,
+        location: decisionResolved.location || promptResolved?.location || context.jurisdiction,
+      }
     : promptResolved;
   if (!resolved) {
     const categories = backgroundCategories(prompt, decision);
