@@ -1,13 +1,20 @@
-// Lexara owns this research surface; underlying utilities remain shared and unchanged.
+/**
+ * @deprecated Compatibility boundary for older Lexara imports.
+ *
+ * This facade now delegates only to Lexara's native background investigator.
+ * It intentionally contains no Pantheon imports so an old import path cannot
+ * silently reconnect the live Lexara conversation runtime to Pantheon.
+ */
 export {
-  investigatePersonQuestion as investigateLexaraBackgroundQuestion,
-  formatPantheonInvestigationForSystem as formatLexaraBackgroundResearchForSystem,
-} from './LexaraPantheonInvestigation';
+  investigateLexaraBackgroundQuestion,
+  formatLexaraBackgroundResearchForSystem,
+  discoverLexaraBackgroundSourcesParallel,
+} from './LexaraBackgroundInvestigation';
+
 export type {
-  LexaraPersonInvestigation as LexaraBackgroundResearchResult,
-  LexaraPantheonProgressEvent as LexaraBackgroundProgressEvent,
-} from './LexaraPantheonInvestigation';
-export { discoverPantheonSourcesParallel as discoverLexaraBackgroundSourcesParallel } from '../services/pantheon/PantheonDiscoveryCoordinator';
+  LexaraBackgroundResearchResult,
+  LexaraBackgroundProgressEvent,
+} from './LexaraBackgroundInvestigation';
 
 export {
   getLexaraSupplementalQueryHints,
