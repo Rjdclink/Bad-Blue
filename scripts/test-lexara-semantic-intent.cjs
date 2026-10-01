@@ -79,6 +79,10 @@ const claude = {
   },
 };
 
+const router = execute('server/lexara/LexaraSequenceRouter.ts', {
+  './LexaraResearchIntentRouter': planner,
+});
+
 const semantic = execute('server/lexara/LexaraSemanticIntentInterpreter.ts', {
   '../claude': claude,
   '../aiHarmonyModelRegistry': { CURRENT_AI_MODELS: { claudeFast: 'fixture-haiku' } },
@@ -95,6 +99,10 @@ const semantic = execute('server/lexara/LexaraSemanticIntentInterpreter.ts', {
   assert.equal(broad.requestedFact, 'general-public-record');
   assert.equal(broad.subject, 'Avery Morgan Example');
   assert.equal(broad.inferred, true);
+  const broadPlan = router.planLexaraSequence('Tell me about Avery Morgan Example.', [], broad);
+  assert.equal(broadPlan.sequence, 'lexara-background');
+  assert.equal(broadPlan.useLegalResearch, true);
+  assert.equal(broadPlan.useBackgroundResearch, false, 'Pantheon stays disconnected');
 
   before = claudeCalls;
   const statement = await semantic.resolveLexaraResearchDecisionSemantic('Avery Morgan Example is employed.', []);
@@ -123,6 +131,13 @@ const semantic = execute('server/lexara/LexaraSemanticIntentInterpreter.ts', {
   assert.equal(mixed.intent, 'mixed', 'legal plus external factual dependency becomes mixed research');
   assert.equal(mixed.requestedFact, 'sanctions-discipline');
   assert(mixed.sourceCategories.includes('sanctions-discipline'));
+  const mixedPlan = router.planLexaraSequence(
+    'The officer who arrested me was fired for misconduct. Does that affect my suppression motion?',
+    [],
+    mixed,
+  );
+  assert.equal(mixedPlan.sequence, 'combined-legal-background');
+  assert.equal(mixedPlan.useBackgroundResearch, false, 'mixed semantic routing still never invokes Pantheon');
 
   before = claudeCalls;
   const casual = await semantic.resolveLexaraResearchDecisionSemantic('Thanks.', []);
