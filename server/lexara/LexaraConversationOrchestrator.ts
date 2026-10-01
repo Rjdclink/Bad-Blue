@@ -282,22 +282,6 @@ function buildLegalSystemPrompt(
 ): string {
   const domainName = trustedDomainName(context.lawType);
   const domainProfile = getLexaraLegalDomainProfile(context.lawType);
-  const jurisdictionAuthorityProfile = jurisdictionRelevant
-    ? await resolveJurisdictionAuthorityProfile(
-        cleanPrompt,
-        resolvedJurisdiction,
-        stateJurisdiction,
-        context.signal,
-      ).catch(() => null)
-    : null;
-  const jurisdictionResearchHints = [
-    ...(domainProfile?.researchHints || []),
-    ...(jurisdictionAuthorityProfile?.researchHints || []),
-  ].filter((value, index, values) => value && values.indexOf(value) === index).slice(0, 12);
-  const jurisdictionOfficialDomains = [
-    ...(domainProfile?.preferredOfficialDomains || []),
-    ...(jurisdictionAuthorityProfile?.preferredOfficialDomains || []),
-  ].filter((value, index, values) => value && values.indexOf(value) === index).slice(0, 18);
   const behaviorMode = context.behaviorMode === 'personable'
     ? 'warm and conversational'
     : 'calm, precise, and professional';
@@ -543,6 +527,22 @@ export async function generateLexaraConversationResponse(
     || (backgroundLocationTrusted ? jurisdiction : undefined);
   const domainName = trustedDomainName(context.lawType);
   const domainProfile = getLexaraLegalDomainProfile(context.lawType);
+  const jurisdictionAuthorityProfile = jurisdictionRelevant
+    ? await resolveJurisdictionAuthorityProfile(
+        cleanPrompt,
+        resolvedJurisdiction,
+        stateJurisdiction,
+        context.signal,
+      ).catch(() => null)
+    : null;
+  const jurisdictionResearchHints = [
+    ...(domainProfile?.researchHints || []),
+    ...(jurisdictionAuthorityProfile?.researchHints || []),
+  ].filter((value, index, values) => value && values.indexOf(value) === index).slice(0, 12);
+  const jurisdictionOfficialDomains = [
+    ...(domainProfile?.preferredOfficialDomains || []),
+    ...(jurisdictionAuthorityProfile?.preferredOfficialDomains || []),
+  ].filter((value, index, values) => value && values.indexOf(value) === index).slice(0, 18);
   const previousUserTurns = (context.previousMessages || [])
     .filter(message => message.role === 'user')
     .slice(-8)
