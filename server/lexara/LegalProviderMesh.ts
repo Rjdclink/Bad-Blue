@@ -121,9 +121,9 @@ function diversify(items: LegalMeshCandidate[], limit = 16): LegalMeshCandidate[
 async function tavily(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
   const key = process.env.TAVILY_API_KEY?.trim();
   if (!key) return [];
-  try {
+  const result = await withTimeout(2_000, signal, async requestSignal => {
     const r = await fetch('https://api.tavily.com/search', {
-      method: 'POST', signal,
+      method: 'POST', signal: requestSignal,
       headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
       body: JSON.stringify({ query, search_depth: 'basic', max_results: 10, include_answer: false, include_raw_content: false }),
     });
@@ -133,9 +133,8 @@ async function tavily(query: string, signal?: AbortSignal): Promise<LegalMeshCan
       const url=clean(x.url);
       return url ? [{url,title:String(x.title||'Tavily result'),excerpt:String(x.content||'').slice(0,1200),tier:3 as const,provider:'tavily'}] : [];
     });
-  } catch {
-    return [];
-  }
+  });
+  return result || [];
 }
 
 async function duckDuckGoInstantAnswer(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
@@ -324,7 +323,7 @@ export async function discoverLegalMeshTier3(
     jurisdiction:options.jurisdiction,
   });
   if(learnedPatterns[0]) variants.push(`${query} ${learnedPatterns[0]}`);
-  const uniqueVariants=[...new Set(variants)].slice(0,4);
+  const uniqueVariants=[...new Set(variants)].slice(0,5);
   const groups=await Promise.all(uniqueVariants.map(variant=>freeSearch(variant,signal)));
   const learnedSources=await Promise.race([
     getLexaraLearnedSources(options.categories||[],options.jurisdiction,8),
