@@ -174,9 +174,17 @@ async function verifyOneCitation(item: ReturnType<typeof extractCaseCitations>[n
   }
 
   const lookupUrl = `https://www.courtlistener.com/c/${slug}/${item.volume}/${item.page}/`;
-  const response = await fetchWithTimeout(lookupUrl);
+  const [response, treatment] = await Promise.all([
+    fetchWithTimeout(lookupUrl),
+    possibleNegativeTreatment(item.citation),
+  ]);
   if (!response?.ok) {
-    return { citation: item.citation, status: 'unresolved', possibleNegativeTreatment: false };
+    return {
+      citation: item.citation,
+      status: 'unresolved',
+      possibleNegativeTreatment: treatment.found,
+      negativeTreatmentEvidence: treatment.evidence,
+    };
   }
 
   const html = await response.text().catch(() => '');
@@ -188,7 +196,6 @@ async function verifyOneCitation(item: ReturnType<typeof extractCaseCitations>[n
     return { citation: item.citation, status: 'unresolved', possibleNegativeTreatment: false };
   }
 
-  const treatment = await possibleNegativeTreatment(item.citation);
   return {
     citation: item.citation,
     status: 'verified',
@@ -200,14 +207,9 @@ async function verifyOneCitation(item: ReturnType<typeof extractCaseCitations>[n
 }
 
 export async function verifyLegalCitationsInText(text: string): Promise<CitationVerification[]> {
-  const citations = extractCaseCitations(text);
+  const citations = extractCaseCitations(text).slice(0, 8);
   if (!citations.length) return [];
-  const results: CitationVerification[] = [];
-  // Keep CourtListener load modest and deterministic rather than firing a wide parallel burst.
-  for (const citation of citations) {
-    results.push(await verifyOneCitation(citation));
-  }
-  return results;
+  return Promise.all(citations.map(citation => verifyOneCitation(citation)));
 }
 
 export function formatCitationVerificationForCorrection(results: CitationVerification[]): string {
