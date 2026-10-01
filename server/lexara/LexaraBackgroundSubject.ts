@@ -52,7 +52,7 @@ export function resolveLexaraBackgroundSubject(
   const followsPrior = refersToPriorSubject(current);
   const explicitPlace = current.match(/\b(?:city|town|county|village|state|place|location)\s+of\s+([A-Z][\p{L}.'’-]+)(?:,\s*([A-Z][\p{L}.'’-]+))?/u)
     || current.match(/\b([A-Z][\p{L}.'’-]+),\s*([A-Z][\p{L}.'’-]+)\b/u);
-  const explicitEntity = current.match(/\b(company|business|organization|corporation|firm|nonprofit|website|domain|entity)\s+(?:named|called\s+)?["“]?([A-Z][\p{L}\p{N}.'’&-]*(?:\s+[A-Z][\p{L}\p{N}.'’&-]*){0,5})["”]?/iu);
+  const explicitEntity = current.match(/\b(company|business|organization|corporation|firm|nonprofit|website|domain|entity)\s+(?:(?:named|called)\s+)?["“]?([A-Z][\p{L}\p{N}.'’&-]*(?:\s+[A-Z][\p{L}\p{N}.'’&-]*){0,5})["”]?/iu);
   const name = explicitEntity?.[2]
     || candidates(current)[0]
     || (explicitPlace ? explicitPlace[1] : undefined)
