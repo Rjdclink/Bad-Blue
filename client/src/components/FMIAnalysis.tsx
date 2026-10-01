@@ -68,7 +68,6 @@ export default function FMIAnalysis({
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const completedAnalysesRef = useRef<any[]>([]);
-  const reviewInputsRef = useRef<any[]>([]);
 
   const { data: fmiFiles, refetch: refetchFiles } = useQuery<FMIFile[]>({
     queryKey: ['/api/fmi/files'],
@@ -143,12 +142,6 @@ export default function FMIAnalysis({
           data.analysis,
         ].slice(-12);
         onAnalysisComplete?.(completedAnalysesRef.current);
-      }
-      if (data?.reviewInput) {
-        reviewInputsRef.current = [
-          ...reviewInputsRef.current,
-          data.reviewInput,
-        ].slice(-20);
       }
     },
     onError: (error: Error) => {
