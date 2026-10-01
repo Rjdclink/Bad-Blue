@@ -16,7 +16,6 @@ import { planLexaraSequence } from './LexaraSequenceRouter';
 import { resolveLexaraResearchDecisionSemantic } from './LexaraSemanticIntentInterpreter';
 import { resolveLexaraBackgroundSubject } from './LexaraBackgroundSubject';
 import {
-  discoverLexaraBackgroundSourcesParallel,
   formatLexaraBackgroundResearchForSystem,
   investigateLexaraBackgroundQuestion,
   type LexaraBackgroundProgressEvent,
@@ -624,33 +623,16 @@ export async function generateLexaraConversationResponse(
   const relayBackgroundAbort = () => backgroundController.abort(context.signal?.reason);
   if (context.signal?.aborted) backgroundController.abort(context.signal.reason);
   else context.signal?.addEventListener('abort', relayBackgroundAbort, { once: true });
-  const searchOnlyFact = sequencePlan.sequence === 'simple-factual'
-    && !resolveLexaraBackgroundSubject(cleanPrompt, previousUserTurns, jurisdiction);
-  const backgroundInvestigationPromise: Promise<LexaraBackgroundResearchResult | null> = backgroundResearchRequested ? (searchOnlyFact
-    ? discoverLexaraBackgroundSourcesParallel(researchDecision.objective || cleanPrompt, [], {
-        jurisdiction, limit: 8,
+  const backgroundInvestigationPromise: Promise<LexaraBackgroundResearchResult | null> = backgroundResearchRequested
+    ? investigateLexaraBackgroundQuestion(backgroundPrompt, {
+        delegatedByLexara: mixedLegalFactNeed,
+        previousMessages: context.previousMessages,
+        jurisdiction,
         signal: backgroundController.signal,
-        categories: researchDecision.sourceCategories,
-        subject: researchDecision.subject,
-        requestedFact: researchDecision.requestedFact,
+        onProgress: context.onResearchProgress,
         researchDecision,
         claudeResearchModel: backgroundClaudeModel,
-      }).then(discovery => ({
-        sources: [], searchLeads: discovery.urls, categories: [], fullBackgroundReportRequested: false,
-        endpoint: discovery.urls.length ? 'search-leads-only' as const : 'unavailable' as const,
-        coverageLimited: true,
-        coverageNote: 'Search links have not been independently fetched or verified.',
-        discoveryLanes: discovery.lanesAttempted,
-      }))
-    : investigateLexaraBackgroundQuestion(backgroundPrompt, {
-    delegatedByLexara: mixedLegalFactNeed,
-    previousMessages: context.previousMessages,
-    jurisdiction,
-    signal: backgroundController.signal,
-    onProgress: context.onResearchProgress,
-    researchDecision,
-    claudeResearchModel: backgroundClaudeModel,
-  })).catch(error => {
+      }).catch(error => {
     console.warn('[LEXARA Background] application-owned research route unavailable', {
       error: error instanceof Error ? error.message : String(error),
     });
@@ -659,11 +641,10 @@ export async function generateLexaraConversationResponse(
       endpoint: 'failed' as const, coverageLimited: true,
       coverageNote: 'Background research failed before a verified result was returned.',
     };
-  }) : Promise.resolve(null);
-  // Never await network-backed background research before the live research budget.
-  // Identity clarification is returned synchronously by investigatePersonQuestion
-  // before its first network await, so a microtask yield is sufficient to capture
-  // that deterministic result without letting a slow crawler block the spoken turn.
+      })
+    : Promise.resolve(null);
+  // The Lexara-owned investigator now searches before requesting identity clarification.
+  // Keep the zero-delay probe so immediately available deterministic results can still return early.
   const initialBackground = await Promise.race([
     backgroundInvestigationPromise,
     new Promise<null>(resolve => setTimeout(() => resolve(null), 0)),
@@ -751,6 +732,19 @@ export async function generateLexaraConversationResponse(
   ]);
   if (backgroundResearchRequested && !backgroundInvestigation && !deepBackgroundRequested) {
     backgroundController.abort(new Error('lexara_live_background_budget_exhausted'));
+  }
+  if (backgroundInvestigation?.clarification
+    && (backgroundInvestigation.needsIdentityClarification || backgroundInvestigation.fullBackgroundReportRequested)) {
+    context.signal?.removeEventListener('abort', relayBackgroundAbort);
+    if (!authorityResearch) researchController.abort();
+    context.signal?.removeEventListener('abort', relayResearchAbort);
+    return {
+      text: backgroundInvestigation.clarification,
+      jurisdiction: publicJurisdiction,
+      mappedLawType,
+      backgroundEndpoint: backgroundInvestigation.endpoint,
+      backgroundStatus: backgroundInvestigation.fullBackgroundReportRequested ? 'consent-required' : 'clarification-required',
+    };
   }
   context.signal?.removeEventListener('abort', relayBackgroundAbort);
   if (!authorityResearch) researchController.abort();
