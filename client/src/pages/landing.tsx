@@ -339,6 +339,27 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* About the Founder */}
+      <section className="border-t bg-card px-4 py-16" aria-labelledby="about-the-founder">
+        <div className="mx-auto max-w-3xl text-center">
+          <h2 id="about-the-founder" className="text-3xl font-bold mb-6">About the Founder</h2>
+          <div className="space-y-4 text-muted-foreground leading-relaxed">
+            <p>
+              <strong className="text-foreground">Robert Clinkenbeard</strong>, founder and developer of LegalWhat, created the platform with a straightforward purpose: to make meaningful legal guidance and legal resources accessible to everyday people who may not have the ability or desire to spend thousands of dollars on traditional legal services.
+            </p>
+            <p>
+              He developed LegalWhat as a technology-driven alternative that helps users better understand their legal situations, research their rights and options, analyze documents and evidence, and prepare legal documents at a fraction of the cost traditionally associated with obtaining legal assistance.
+            </p>
+            <p className="font-medium text-foreground">
+              His goal is simple: make sophisticated legal technology accessible, affordable, and understandable to ordinary people.
+            </p>
+            <p className="pt-2">
+              <a href="/about" className="text-primary hover:underline">Read more about LegalWhat</a>
+            </p>
+          </div>
+        </div>
+      </section>
+
       {/* Footer */}
       <footer className="py-12 px-4 border-t bg-background">
         <div className="max-w-7xl mx-auto">
@@ -361,6 +382,7 @@ export default function Landing() {
                 <li><a href="/guides/" className="hover:text-foreground">Legal Guides</a></li>
                 <li><a href="/documents/" className="hover:text-foreground">Legal Documents</a></li>
                 <li><a href="/reviews" className="hover:text-foreground">Reviews</a></li>
+                <li><a href="/about" className="hover:text-foreground">About</a></li>
               </ul>
             </div>
             <div>
