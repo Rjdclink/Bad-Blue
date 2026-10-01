@@ -968,6 +968,11 @@ must(
   'Claude web search runs in parallel with Lexara native background discovery and feeds the same evidence gate',
 );
 must(
+  lexaraBackgroundInvestigation.includes('dynamicGeneralObjectiveMatch') &&
+    lexaraBackgroundInvestigation.includes('decision.objective || decision.standaloneQuery'),
+  'open-ended background facts use the semantic objective as an evidence signal instead of requiring a fixed fact keyword',
+);
+must(
   lexaraBackgroundInvestigation.includes('ANSWER-SCOPE RULE') &&
     lexaraBackgroundInvestigation.includes('This is only a guess, not a verified fact') &&
     lexaraBackgroundInvestigation.includes('CORROBORATION RULE'),
