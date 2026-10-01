@@ -7,7 +7,7 @@
 import { type Express, type Request, type Response } from 'express';
 import multer from 'multer';
 import path from 'path';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import fs from 'fs/promises';
 import { z } from 'zod';
 import { pool } from '../db';
@@ -170,6 +170,98 @@ const fileFilter = (_req: Request, file: Express.Multer.File, cb: multer.FileFil
   else cb(new Error(`F.M.I. does not support file type: ${file.mimetype}`));
 };
 
+const ALLOWED_EXTENSIONS_BY_MIME: Record<string, Set<string>> = {
+  'image/jpeg': new Set(['.jpg', '.jpeg']),
+  'image/png': new Set(['.png']),
+  'image/gif': new Set(['.gif']),
+  'image/webp': new Set(['.webp']),
+  'image/bmp': new Set(['.bmp']),
+  'image/tiff': new Set(['.tif', '.tiff']),
+  'video/mp4': new Set(['.mp4']),
+  'video/quicktime': new Set(['.mov']),
+  'video/x-msvideo': new Set(['.avi']),
+  'video/mpeg': new Set(['.mpeg', '.mpg']),
+  'video/webm': new Set(['.webm']),
+  'audio/mpeg': new Set(['.mp3']),
+  'audio/wav': new Set(['.wav']),
+  'audio/ogg': new Set(['.ogg']),
+  'audio/mp4': new Set(['.m4a', '.mp4']),
+  'audio/x-m4a': new Set(['.m4a']),
+  'application/pdf': new Set(['.pdf']),
+  'application/msword': new Set(['.doc']),
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': new Set(['.docx']),
+  'application/vnd.ms-excel': new Set(['.xls']),
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': new Set(['.xlsx']),
+  'text/plain': new Set(['.txt']),
+  'text/csv': new Set(['.csv']),
+  'message/rfc822': new Set(['.eml']),
+  'application/vnd.ms-outlook': new Set(['.msg']),
+};
+
+function sha256FileBytes(bytes: Buffer): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+function begins(bytes: Buffer, signature: number[], offset = 0): boolean {
+  if (bytes.length < offset + signature.length) return false;
+  return signature.every((value, index) => bytes[offset + index] === value);
+}
+
+function looksLikeText(bytes: Buffer): boolean {
+  const sample = bytes.subarray(0, Math.min(bytes.length, 16_384));
+  if (!sample.length) return false;
+  let suspicious = 0;
+  for (const byte of sample) {
+    if (byte === 0) return false;
+    if (byte < 9 || (byte > 13 && byte < 32)) suspicious += 1;
+  }
+  return suspicious / sample.length < 0.02;
+}
+
+function signatureMatchesMime(bytes: Buffer, mimeType: string): boolean {
+  const mime = mimeType.toLowerCase();
+  if (mime === 'application/pdf') return bytes.subarray(0, 5).toString('ascii') === '%PDF-';
+  if (mime === 'image/jpeg') return begins(bytes, [0xff, 0xd8, 0xff]);
+  if (mime === 'image/png') return begins(bytes, [0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]);
+  if (mime === 'image/gif') return ['GIF87a','GIF89a'].includes(bytes.subarray(0, 6).toString('ascii'));
+  if (mime === 'image/webp') return bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP';
+  if (mime === 'image/bmp') return bytes.subarray(0, 2).toString('ascii') === 'BM';
+  if (mime === 'image/tiff') return begins(bytes, [0x49,0x49,0x2a,0x00]) || begins(bytes, [0x4d,0x4d,0x00,0x2a]);
+  if (mime === 'audio/wav') return bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WAVE';
+  if (mime === 'audio/ogg') return bytes.subarray(0, 4).toString('ascii') === 'OggS';
+  if (mime === 'audio/mpeg') return bytes.subarray(0, 3).toString('ascii') === 'ID3' || (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0);
+  if (mime === 'video/x-msvideo') return bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'AVI ';
+  if (mime === 'video/webm') return begins(bytes, [0x1a,0x45,0xdf,0xa3]);
+  if (mime === 'video/mpeg') return begins(bytes, [0x00,0x00,0x01,0xba]) || begins(bytes, [0x00,0x00,0x01,0xb3]);
+  if (['video/mp4','video/quicktime','audio/mp4','audio/x-m4a'].includes(mime)) {
+    return bytes.length >= 12 && bytes.subarray(4, 8).toString('ascii') === 'ftyp';
+  }
+  if (mime === 'application/msword' || mime === 'application/vnd.ms-excel' || mime === 'application/vnd.ms-outlook') {
+    return begins(bytes, [0xd0,0xcf,0x11,0xe0,0xa1,0xb1,0x1a,0xe1]);
+  }
+  if (mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      || mime === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') {
+    return begins(bytes, [0x50,0x4b,0x03,0x04]) || begins(bytes, [0x50,0x4b,0x05,0x06]) || begins(bytes, [0x50,0x4b,0x07,0x08]);
+  }
+  if (mime === 'text/plain' || mime === 'text/csv' || mime === 'message/rfc822') return looksLikeText(bytes);
+  return false;
+}
+
+function verifyUploadedFile(file: Express.Multer.File, bytes: Buffer): { sha256: string; extension: string } {
+  if (begins(bytes, [0x4d,0x5a]) || begins(bytes, [0x7f,0x45,0x4c,0x46])) {
+    throw new Error('Executable files are not accepted by Media Analyzer');
+  }
+  const extension = path.extname(file.originalname || '').toLowerCase();
+  const allowedExtensions = ALLOWED_EXTENSIONS_BY_MIME[file.mimetype];
+  if (!allowedExtensions?.has(extension)) {
+    throw new Error('The file extension does not match an allowed Media Analyzer file type');
+  }
+  if (!signatureMatchesMime(bytes, file.mimetype)) {
+    throw new Error('The uploaded file contents do not match the declared file type');
+  }
+  return { sha256: sha256FileBytes(bytes), extension };
+}
+
 const upload = multer({
   storage,
   fileFilter,
@@ -242,6 +334,9 @@ export function setupFMIRoutes(app: Express): void {
       });
 
       try {
+        const uploadBytes = await fs.readFile(file.path);
+        const verifiedUpload = verifyUploadedFile(file, uploadBytes);
+
         // Master authentication is deliberately stateless, while evidence_files
         // correctly enforces a users FK. Materialize only the stable synthetic
         // master identity at the persistence boundary so uploads work without
@@ -252,23 +347,58 @@ export function setupFMIRoutes(app: Express): void {
         if (persistentMatterAccess) {
           const matter = await resolvePaidMatter(userId, lawType);
           matterId = matter?.matterId;
-          const bytes = await fs.readFile(file.path);
           storagePath = await persistMatterBuffer({
             userId,
             matterId: matterId || `workspace-${String(lawType || 'general')}`,
             category: 'evidence',
             fileName: file.originalname,
             mimeType: file.mimetype,
-            bytes,
+            bytes: uploadBytes,
           });
           await fs.unlink(file.path).catch(() => undefined);
+        }
+
+        const duplicateEvidence = await pool.query(
+          `SELECT id, file_name, file_type, file_size, uploaded_at, fmi_analysis_status
+           FROM evidence_files
+           WHERE user_id = $1
+             AND extracted_metadata->>'sha256' = $2
+             AND COALESCE(law_type, '') = COALESCE($3, '')
+             AND COALESCE(case_linkages->>'matterId', '') = COALESCE($4, '')
+           ORDER BY uploaded_at DESC
+           LIMIT 1`,
+          [userId, verifiedUpload.sha256, lawType || null, matterId || null],
+        );
+        if (duplicateEvidence.rows.length) {
+          if (storagePath !== file.path) {
+            // The newly persisted object is redundant. Keep the prior evidence
+            // record as the canonical copy and do not create a second DB row.
+            // Object-store deletion is intentionally not attempted here because
+            // the storage abstraction does not expose a safe delete-by-ref API.
+          } else {
+            await fs.unlink(file.path).catch(() => undefined);
+          }
+          const existing = duplicateEvidence.rows[0];
+          return res.json({
+            success: true,
+            duplicate: true,
+            message: 'This exact evidence file is already in the current matter',
+            file: {
+              id: existing.id,
+              name: existing.file_name,
+              type: existing.file_type,
+              size: existing.file_size,
+              uploadedAt: existing.uploaded_at,
+              fmiAnalysisStatus: existing.fmi_analysis_status,
+            },
+          });
         }
 
         const result = await pool.query(
           `INSERT INTO evidence_files (
             user_id, file_name, file_type, file_size, storage_path,
-            law_type, associated_with, fmi_analysis_status, case_linkages
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8)
+            law_type, associated_with, fmi_analysis_status, case_linkages, extracted_metadata
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9)
           RETURNING *`,
           [
             userId,
@@ -279,6 +409,12 @@ export function setupFMIRoutes(app: Express): void {
             lawType || null,
             associatedWith || null,
             matterId ? JSON.stringify({ matterId }) : null,
+            JSON.stringify({
+              sha256: verifiedUpload.sha256,
+              verifiedMimeType: file.mimetype,
+              originalExtension: verifiedUpload.extension,
+              verifiedAt: new Date().toISOString(),
+            }),
           ]
         );
 
