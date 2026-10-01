@@ -343,7 +343,7 @@ async function buildPacket(
     sources: mergedSources,
     hasPrimaryAuthority: mergedSources.some(source => source.kind === 'primary'),
     selectedCrawlers: [...new Set(researchResults.flatMap(result => result.selectedCrawlers))],
-    searchedAt: researchResults.map(result => result.searchedAt).sort().at(-1) || firstResearch.searchedAt,
+    searchedAt: researchResults.map(result => result.searchedAt).sort().slice(-1)[0] || firstResearch.searchedAt,
     summary: mergedSources.map((source, index) =>
       `${index + 1}. [${source.kind.toUpperCase()}] ${source.title} — ${source.url}${source.excerpt ? `\nEvidence excerpt: ${source.excerpt}` : ''}`
     ).join('\n'),
