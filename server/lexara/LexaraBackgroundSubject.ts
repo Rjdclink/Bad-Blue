@@ -32,6 +32,11 @@ function candidates(text: string): string[] {
     .filter(name => !CONVERSATIONAL_LEAD.test(name));
 }
 
+export function hasMultipleLexaraBackgroundSubjectCandidates(prompt: string): boolean {
+  const current = String(prompt || '').split(/Research objective:|LEXARA-DELEGATED FACTUAL OBJECTIVE:/i)[0];
+  return candidates(current).length > 1;
+}
+
 function classify(name: string, text: string): LexaraBackgroundSubjectKind {
   if (ORGANIZATION.test(name) || new RegExp(`\\b(?:company|business|organization|corporation|firm|nonprofit|institution)\\s+(?:named|called)?\\s*${escapeRegExp(name)}\\b`, 'i').test(text)) return 'organization';
   if (PLACE.test(name) || new RegExp(`\\b(?:city|town|county|place|location|landmark)\\s+(?:of|named|called)?\\s*${escapeRegExp(name)}\\b`, 'i').test(text)) return 'place';
