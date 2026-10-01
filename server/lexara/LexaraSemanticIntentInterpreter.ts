@@ -86,10 +86,11 @@ function requestedFactFromSemantic(value: string | undefined): LexaraRequestedFa
 /**
  * Semantic fallback for background or mixed legal/background intent.
  *
- * The deterministic planner remains the zero-latency fast path. Claude is asked
- * only when that planner would otherwise treat a substantive turn as ordinary
- * conversation. This prevents "magic word" dependence without changing pure
- * legal-only routing.
+ * The deterministic planner remains the zero-latency fast path for already
+ * recognized factual/mixed turns. Claude semantically reviews otherwise
+ * conversational or legal-only turns so hidden background dependencies do not
+ * require magic words, while pure legal-only routing remains unchanged when
+ * no external factual dependency exists.
  */
 export async function resolveLexaraResearchDecisionSemantic(
   prompt: string,
@@ -124,10 +125,8 @@ Return JSON only:
 }
 
 Examples:
-<example>User: Tell me about Sarah Loretta Graves.
-Output: {"needed":true,"intent":"factual","requestedFact":"general-public-record","subject":"Sarah Loretta Graves","objective":"Find the background facts the user is asking about for Sarah Loretta Graves."}</example>
-<example>User: Robert Joseph Dale Clinkenbeard of Spirit Lake, Iowa is employed, right?
-Output: {"needed":true,"intent":"factual","requestedFact":"employment","subject":"Robert Joseph Dale Clinkenbeard","objective":"Determine whether Robert Joseph Dale Clinkenbeard is currently employed."}</example>
+<example>User: Tell me about Avery Morgan Example.\nOutput: {"needed":true,"intent":"factual","requestedFact":"general-public-record","subject":"Avery Morgan Example","objective":"Find the background facts the user is asking about for Avery Morgan Example."}</example>
+<example>User: Jordan Riley Example of Des Moines, Iowa is employed, right?\nOutput: {"needed":true,"intent":"factual","requestedFact":"employment","subject":"Jordan Riley Example","objective":"Determine whether Jordan Riley Example is currently employed."}</example>
 <example>Prior context researched Avery Example. User: And she still does the same thing?
 Output: {"needed":true,"intent":"factual","requestedFact":"employment","subject":"Avery Example","objective":"Determine whether Avery Example is still in the previously discussed employment."}</example>
 <example>User: The officer who arrested me was fired for misconduct. Does that affect my suppression motion?
