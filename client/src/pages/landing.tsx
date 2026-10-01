@@ -355,7 +355,11 @@ export default function Landing() {
             <div>
               <h4 className="font-medium mb-4">Product</h4>
               <ul className="space-y-2 text-sm text-muted-foreground">
-                <li><a href="/login" className="hover:text-foreground">How It Works</a></li>
+                <li><a href="/how-lexara-works/" className="hover:text-foreground">How Lexara Works</a></li>
+                <li><a href="/services/" className="hover:text-foreground">Services</a></li>
+                <li><a href="/areas/" className="hover:text-foreground">40 Legal Areas</a></li>
+                <li><a href="/guides/" className="hover:text-foreground">Legal Guides</a></li>
+                <li><a href="/documents/" className="hover:text-foreground">Legal Documents</a></li>
                 <li><a href="/reviews" className="hover:text-foreground">Reviews</a></li>
               </ul>
             </div>
