@@ -62,6 +62,7 @@ export interface LexaraBackgroundInvestigationContext {
   onProgress?: (event: LexaraBackgroundProgressEvent) => void;
   delegatedByLexara?: boolean;
   researchDecision?: LexaraResearchDecision;
+  resolvedSubject?: LexaraBackgroundSubject;
   claudeResearchModel?: string;
 }
 
@@ -421,7 +422,9 @@ export async function investigateLexaraBackgroundQuestion(
   const decision = context.researchDecision || decideLexaraResearchNeed(prompt, priorTurns);
   if (!decision.needed || (decision.intent !== 'factual' && decision.intent !== 'mixed')) return null;
 
-  const resolved = resolveLexaraBackgroundSubject(prompt, priorTurns, context.jurisdiction)
+  // Lexara resolves the subject once. Downstream background research must not
+  // second-guess that decision by reparsing conversational filler in the raw turn.
+  const resolved = context.resolvedSubject
     || (decision.subject
       ? resolveLexaraBackgroundSubject(decision.subject, priorTurns, context.jurisdiction)
         || {
@@ -430,7 +433,8 @@ export async function investigateLexaraBackgroundQuestion(
           identifiable: false,
           location: context.jurisdiction,
         }
-      : null);
+      : null)
+    || resolveLexaraBackgroundSubject(prompt, priorTurns, context.jurisdiction);
   if (!resolved) {
     const categories = backgroundCategories(prompt, decision);
     const initialQuery = decision.standaloneQuery || decision.objective || prompt;
