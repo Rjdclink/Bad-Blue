@@ -196,19 +196,25 @@ export function setupConsultationRoutes(app: Express): void {
     const state = typeof req.body?.state === 'string' ? req.body.state.trim() : '';
     const facts = typeof req.body?.facts === 'string' ? req.body.facts.trim() : '';
     const rawRequestedType = typeof req.body?.documentType === 'string' ? req.body.documentType.trim() : '';
+    const packetItemMode = req.body?.packetItem === true;
+    const packetItemTitle = packetItemMode && typeof req.body?.packetItemTitle === 'string'
+      ? req.body.packetItemTitle.trim().slice(0, 240)
+      : '';
     const requestedType = (LEGAL_DOCUMENT_TYPES as readonly string[]).includes(rawRequestedType)
       ? rawRequestedType as (typeof LEGAL_DOCUMENT_TYPES)[number]
-      : resolveLegalDocumentType(rawRequestedType);
+      : resolveLegalDocumentType(rawRequestedType)
+        || (packetItemTitle ? 'Custom Document' : null);
+    const documentLabel = packetItemTitle || rawRequestedType || requestedType || '';
     const templateMode = req.body?.templateMode === true;
     const customInstructions = typeof req.body?.instructions === 'string' ? req.body.instructions.trim() : '';
-    if (!state || !facts || !requestedType) return res.status(400).json({ error: 'Jurisdiction, case facts, and a supported document type are required' });
+    if (!state || !facts || !requestedType || !documentLabel) return res.status(400).json({ error: 'Jurisdiction, case facts, and a supported document type are required' });
     if (facts.length > 30_000 || customInstructions.length > 8_000) return res.status(413).json({ error: 'Document request is too large' });
 
     const resolvedJurisdiction = await resolveUSJurisdiction(facts, state);
     const documentJurisdiction = resolvedJurisdiction?.display || state;
 
     const authorityPrompt = [
-      `Jurisdiction: ${documentJurisdiction}. Document: ${requestedType}.`,
+      `Jurisdiction: ${documentJurisdiction}. Document/form: ${documentLabel}.`,
       'Before drafting, determine from current authoritative court/government sources whether this jurisdiction requires an official/prescribed form, provides an optional official form, or permits a custom-drafted document.',
       'Identify the controlling court/agency and local rules when the facts establish them. Prefer official government/court sources. Do not invent a form number, URL, rule, requirement, or filing instruction.',
       'If a mandatory official form applies, do not substitute a custom document. State the official form identity/source and the factual fields still needed to complete it.',
@@ -218,13 +224,13 @@ export function setupConsultationRoutes(app: Express): void {
     const authorityResearch = await researchLegalAuthority(authorityPrompt, { jurisdiction: documentJurisdiction });
     const authorityAssessment = formatAuthorityResearchForSystem(authorityResearch)
       || 'No current authority was retrieved. Do not invent or claim verification of legal requirements, citations, deadlines, or official forms. Do not present this as ready to file.';
-    const officialForm = resolveOfficialLegalForm(authorityResearch, requestedType);
+    const officialForm = resolveOfficialLegalForm(authorityResearch, documentLabel);
     const formDirective = officialFormDirective(officialForm);
 
     if (officialForm.requirement === 'mandatory') {
       return res.status(409).json({
         error: 'A mandatory official form applies. Lexara will use the verified official form rather than substitute a custom draft.',
-        documentType: requestedType,
+        documentType: documentLabel,
         jurisdiction: documentJurisdiction,
         officialForm,
         officialFormRequired: true,
@@ -240,7 +246,7 @@ export function setupConsultationRoutes(app: Express): void {
     });
 
     const draftingPrompt = [
-      `Prepare a professional ${requestedType} for a matter in ${documentJurisdiction}.`,
+      `Prepare a professional ${documentLabel} for a matter in ${documentJurisdiction}.`,
       `JURISDICTION-FIRST AUTHORITY ASSESSMENT:\n${String(authorityAssessment || '').slice(0, 8000)}`,
       `OFFICIAL-FORM DETERMINATION:\n${formDirective}`,
       'Use ONLY facts supplied below. Never invent names, dates, courts, case numbers, quotations, authorities, procedural posture, or requested relief.',
@@ -254,7 +260,7 @@ export function setupConsultationRoutes(app: Express): void {
 
     let document = await generateDraft(draftingPrompt);
     const normalizedDocument = String(document || '').trim();
-    const filingLike = /motion|brief|memorandum|affidavit|declaration|complaint|answer|petition|notice|objection|appeal|application/i.test(requestedType);
+    const filingLike = /motion|brief|memorandum|affidavit|declaration|complaint|answer|petition|notice|objection|appeal|application|summons|service|order|form/i.test(documentLabel);
     const initialValidation = validateLegalDocumentDraft(requestedType, normalizedDocument, templateMode);
     const hasDocumentAnatomy = initialValidation.valid && (!filingLike || (
       normalizedDocument.length >= (templateMode ? 400 : 700)
@@ -279,8 +285,8 @@ export function setupConsultationRoutes(app: Express): void {
       return res.status(422).json({ error: 'LEXARA could not produce a validated legal-document draft of the requested type. The incomplete output was not exported.' });
     }
     return res.json({
-      title: requestedType,
-      documentType: requestedType,
+      title: documentLabel,
+      documentType: documentLabel,
       document: finalDocument,
       validated: true,
       templateMode,
