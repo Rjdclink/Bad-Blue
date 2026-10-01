@@ -824,6 +824,7 @@ export function findReferencedMatter(
       candidate.summary.lawType?.replace(/-/g, ' '),
       candidate.summary.jurisdiction,
       candidate.state.packet?.name,
+      ...candidate.state.artifacts.flatMap(artifact => [artifact.title, artifact.fileName]),
     ].filter(Boolean).map(value => String(value).toLowerCase());
 
     let score = 0;
