@@ -57,7 +57,13 @@ export function resolveLexaraBackgroundSubject(
   if (!name) return null;
   const context = `${followsPrior ? previousUserTurns.slice(-2).join(' ') : ''} ${current}`;
   const kind = explicitPlace?.[1] === name ? 'place' : classify(name, context);
-  const location = jurisdiction || explicitPlace?.[2] || context.match(/\b(?:in|from|near)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?(?:,\s*[A-Z]{2})?)\b/)?.[1];
+  // Preserve explicit user-supplied locality context before falling back to the
+  // broader jurisdiction. "of Hartley, Iowa" is a common person-identity form,
+  // but requiring the comma/state shape prevents generic "of <Name>" phrases
+  // from being misread as geography.
+  const qualifiedOfLocation = context.match(/\bof\s+([A-Z][\p{L}.'’-]+(?:\s+[A-Z][\p{L}.'’-]+){0,2},\s*(?:[A-Z]{2}|[A-Z][\p{L}.'’-]+(?:\s+[A-Z][\p{L}.'’-]+){0,2}))\b/u)?.[1];
+  const prepositionLocation = context.match(/\b(?:in|from|near)\s+([A-Z][\p{L}.'’-]+(?:\s+[A-Z][\p{L}.'’-]+){0,2}(?:,\s*(?:[A-Z]{2}|[A-Z][\p{L}.'’-]+(?:\s+[A-Z][\p{L}.'’-]+){0,2}))?)\b/u)?.[1];
+  const location = explicitPlace?.[2] || qualifiedOfLocation || prepositionLocation || jurisdiction;
   return {
     name,
     kind,
