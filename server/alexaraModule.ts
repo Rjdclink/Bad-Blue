@@ -23,7 +23,7 @@ import {
   NeuralPathway
 } from './bitNeuralPathways';
 
-const log = createLogger('ALEXARA');
+const log = createLogger('LEXARA-Neural');
 
 // ============================================================================
 // CONSTANTS
@@ -115,7 +115,7 @@ export class ALEXARAModule extends EventEmitter {
       return;
     }
 
-    log.info('Initializing ALEXARA (Left Brain Legal Core)...');
+    log.info('Initializing LEXARA neural legal core...');
 
     // Ensure pathway manager is initialized
     if (!this.pathwayManager.isInitialized()) {
@@ -153,7 +153,7 @@ export class ALEXARAModule extends EventEmitter {
 
     this.initialized = true;
     this.emit('initialized', { clusters: this.clusters.size });
-    log.info('ALEXARA initialized', { clusters: this.clusters.size });
+    log.info('LEXARA neural core initialized', { clusters: this.clusters.size });
   }
 
   /**
@@ -544,17 +544,22 @@ export class ALEXARAModule extends EventEmitter {
    * Shutdown ALEXARA module
    */
   async shutdown(): Promise<void> {
-    log.info('Shutting down ALEXARA module...');
+    log.info('Shutting down LEXARA neural module...');
     this.removeAllListeners();
     this.clusters.clear();
     this.initialized = false;
-    log.info('ALEXARA shutdown complete');
+    log.info('LEXARA neural module shutdown complete');
   }
 }
 
 // ============================================================================
 // SINGLETON INSTANCE
 // ============================================================================
+
+// The historical class/export names remain as compatibility symbols only.
+// Active runtime code should use the canonical Lexara neural-module aliases.
+export type LexaraNeuralMetrics = ALEXARAMetrics;
+export { ALEXARAModule as LexaraNeuralModule };
 
 let alexaraInstance: ALEXARAModule | null = null;
 
@@ -578,7 +583,16 @@ export async function shutdownALEXARA(): Promise<void> {
   }
 }
 
+export const getLexaraNeuralModule = getALEXARA;
+export const initializeLexaraNeuralModule = initializeALEXARA;
+export const shutdownLexaraNeuralModule = shutdownALEXARA;
+
 export default {
+  LexaraNeuralModule: ALEXARAModule,
+  getLexaraNeuralModule,
+  initializeLexaraNeuralModule,
+  shutdownLexaraNeuralModule,
+  // Compatibility exports for historical callers.
   ALEXARAModule,
   getALEXARA,
   initializeALEXARA,
