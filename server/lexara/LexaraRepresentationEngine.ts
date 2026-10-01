@@ -61,6 +61,8 @@ export interface RepresentationArtifact {
   status: 'saved' | 'draft' | 'filed' | 'served' | 'superseded';
   storageRef?: string;
   sourceUrl?: string;
+  fileName?: string;
+  mimeType?: string;
   contentSummary?: string;
   consistencyFacts?: string[];
   consistencyConflicts?: string[];
@@ -533,6 +535,8 @@ export function sanitizeRepresentationMatter(value: unknown): RepresentationMatt
             ? item.status : 'saved',
           storageRef: clamp(item.storageRef, 600) || undefined,
           sourceUrl: normalizeSourceUrl(item.sourceUrl) || undefined,
+          fileName: clamp(item.fileName, 240) || undefined,
+          mimeType: clamp(item.mimeType, 160) || undefined,
           contentSummary: clamp(item.contentSummary, 1200) || undefined,
           consistencyFacts: mergeUnique([], item.consistencyFacts, 30, 400),
           consistencyConflicts: mergeUnique([], item.consistencyConflicts, 20, 500),
@@ -877,9 +881,12 @@ export function formatRepresentationForSystem(
       unresolved: current.packet.unresolved,
     } : undefined,
     artifacts: current.artifacts.map(artifact => ({
+      id: artifact.id,
       title: artifact.title,
       kind: artifact.kind,
       status: artifact.status,
+      fileName: artifact.fileName,
+      mimeType: artifact.mimeType,
       contentSummary: artifact.contentSummary,
       consistencyFacts: artifact.consistencyFacts,
       consistencyConflicts: artifact.consistencyConflicts,
