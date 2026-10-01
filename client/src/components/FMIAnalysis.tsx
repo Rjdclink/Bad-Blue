@@ -67,6 +67,7 @@ export default function FMIAnalysis({
   const { toast } = useToast();
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number>(0);
+  const [combinedReview, setCombinedReview] = useState<any | null>(null);
   const completedAnalysesRef = useRef<any[]>([]);
 
   const { data: fmiFiles, refetch: refetchFiles } = useQuery<FMIFile[]>({
@@ -249,6 +250,11 @@ export default function FMIAnalysis({
             lawType: lawType || 'general',
             state,
             question: caseContext?.trim() || undefined,
+          });
+          setCombinedReview({
+            review: combined.review,
+            sources: combined.sources,
+            fileCount: combined.fileCount,
           });
           onAnalysisComplete?.({
             documents: completedAnalysesRef.current,
@@ -434,6 +440,50 @@ export default function FMIAnalysis({
           </div>
         </CardContent>
       </Card>
+
+      {combinedReview?.review && (
+        <Card className="border-primary/20">
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Link2 className="w-5 h-5 text-primary" />
+              Combined Evidence Review
+            </CardTitle>
+            <CardDescription>
+              Cross-file comparison of {Number(combinedReview.fileCount || 0)} uploaded evidence files
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4 text-sm">
+            {combinedReview.review.summary && (
+              <p className="leading-relaxed">{String(combinedReview.review.summary)}</p>
+            )}
+            {Array.isArray(combinedReview.review.keyFindings) && combinedReview.review.keyFindings.length > 0 && (
+              <div>
+                <h4 className="mb-2 font-semibold">Key cross-file findings</h4>
+                <ul className="space-y-1 text-muted-foreground">
+                  {combinedReview.review.keyFindings.slice(0, 8).map((item: any, index: number) => (
+                    <li key={index}>• {String(item?.text || item)}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {Array.isArray(combinedReview.review.contradictions) && combinedReview.review.contradictions.length > 0 && (
+              <div>
+                <h4 className="mb-2 font-semibold">Potential contradictions</h4>
+                <ul className="space-y-1 text-muted-foreground">
+                  {combinedReview.review.contradictions.slice(0, 8).map((item: any, index: number) => (
+                    <li key={index}>• {String(item?.text || item)}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {Array.isArray(combinedReview.sources) && combinedReview.sources.length > 0 && (
+              <p className="text-xs text-muted-foreground">
+                Sources: {combinedReview.sources.map((source: any) => String(source?.fileName || '')).filter(Boolean).join(', ')}
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {fmiFiles && fmiFiles.length > 0 && (
         <Card>
