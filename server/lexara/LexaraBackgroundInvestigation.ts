@@ -449,7 +449,7 @@ export async function investigateLexaraBackgroundQuestion(
         }).catch(() => ({ evidence: [] }))
       : { evidence: [] };
     const evidenceSummary = retrieval.evidence.slice(0, 6).map((item, index) =>
-      `${index + 1}. SOURCE: ${item.target}\nRETRIEVED: ${item.retrievedAt}\nASSESSMENT: PARTIAL\nEVIDENCE: ${item.content.slice(0, 1600).replace(/\\s+/g, ' ').trim()}`,
+      `${index + 1}. SOURCE: ${item.target}\nRETRIEVED: ${item.retrievedAt}\nASSESSMENT: PARTIAL\nEVIDENCE: ${item.content.slice(0, 1600).replace(/\s+/g, ' ').trim()}`,
     ).join('\n\n');
     const endpoint: LexaraBackgroundResearchResult['endpoint'] = retrieval.evidence.length
       ? 'partial-evidence'
@@ -491,6 +491,11 @@ export async function investigateLexaraBackgroundQuestion(
   let converged = false;
   let priorUsefulCount = 0;
   let stagnantUsefulPasses = 0;
+  const laneController = new AbortController();
+  const relayLaneAbort = () => laneController.abort(context.signal?.reason);
+  if (context.signal?.aborted) laneController.abort(context.signal.reason);
+  else context.signal?.addEventListener('abort', relayLaneAbort, { once: true });
+  const laneSignal = laneController.signal;
 
   try {
     const initialQuery = decision.standaloneQuery || decision.objective || prompt;
@@ -506,37 +511,36 @@ export async function investigateLexaraBackgroundQuestion(
       decision,
       jurisdiction: context.jurisdiction || subject.location,
       model: context.claudeResearchModel,
-      signal: context.signal,
+      signal: laneSignal,
     }).then(result => {
       claudeParallel = result;
       return result;
     });
 
-    const [nativeCandidates, authoritativeEvidence] = await Promise.all([
-      discoverLegalMeshTier3(initialQuery, context.signal, {
-        categories,
-        jurisdiction: context.jurisdiction || subject.location,
-        subject: subject.name,
-        requestedFact: decision.requestedFact,
-      }).catch(error => {
-        console.warn('[LEXARA Background] native discovery failed; preserving other Lexara lanes', {
-          error: error instanceof Error ? error.message : String(error),
-        });
-        return [] as LegalMeshCandidate[];
-      }),
-      lookupLexaraAuthoritativeSources({
-        subject,
-        requestedFact: decision.requestedFact,
-        categories,
-        jurisdiction: context.jurisdiction || subject.location,
-        signal: context.signal,
-      }).catch(error => {
-        console.warn('[LEXARA Background] authoritative direct lookup unavailable; continuing search lanes', {
-          error: error instanceof Error ? error.message : String(error),
-        });
-        return [];
-      }),
-    ]);
+    const nativeDiscoveryPromise = discoverLegalMeshTier3(initialQuery, laneSignal, {
+      categories,
+      jurisdiction: context.jurisdiction || subject.location,
+      subject: subject.name,
+      requestedFact: decision.requestedFact,
+    }).catch(error => {
+      console.warn('[LEXARA Background] native discovery failed; preserving other Lexara lanes', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [] as LegalMeshCandidate[];
+    });
+
+    const authoritativeEvidence = await lookupLexaraAuthoritativeSources({
+      subject,
+      requestedFact: decision.requestedFact,
+      categories,
+      jurisdiction: context.jurisdiction || subject.location,
+      signal: laneSignal,
+    }).catch(error => {
+      console.warn('[LEXARA Background] authoritative direct lookup unavailable; continuing search lanes', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    });
 
     for (const evidence of authoritativeEvidence) {
       discoveryLanes.add(evidence.provider);
@@ -559,6 +563,24 @@ export async function investigateLexaraBackgroundQuestion(
       });
     }
 
+    const directBest = [...assessed.values()].sort((a, b) => b.confidence - a.confidence)[0];
+    if (directBest?.directlyAnswers && directBest.confidence >= SUFFICIENT_EVIDENCE_THRESHOLD) {
+      const endpoint: LexaraBackgroundResearchResult['endpoint'] = 'evidence-sufficient';
+      context.onProgress?.({ type: 'endpoint', pass: 0, confidence: directBest.confidence, endpoint });
+      laneController.abort(new Error('lexara_authoritative_fact_verified'));
+      return {
+        evidenceSummary: `1. SOURCE: ${directBest.url}\nRETRIEVED: ${directBest.retrievedAt}\nASSESSMENT: DIRECT (${Math.round(directBest.confidence * 100)}%)\nEVIDENCE: ${directBest.excerpt}`,
+        sources: [directBest.url],
+        categories,
+        fullBackgroundReportRequested: false,
+        coverageLimited: false,
+        endpoint,
+        recursionPasses: 0,
+        discoveryLanes: [...discoveryLanes],
+      };
+    }
+
+    const nativeCandidates = await nativeDiscoveryPromise;
     candidates = uniqueCandidates(nativeCandidates);
     candidates.forEach(item => discoveryLanes.add(item.provider));
 
@@ -588,7 +610,7 @@ export async function investigateLexaraBackgroundQuestion(
         const retrieval = await lexaraRetrievalAdapter.retrieve({
           purpose: 'lexara_legal_research',
           targets: fresh.map(item => item.url),
-          signal: context.signal,
+          signal: laneSignal,
         }).catch(error => {
           console.warn('[LEXARA Background] direct retrieval failed; preserving independently cited evidence', {
             error: error instanceof Error ? error.message : String(error),
@@ -639,7 +661,10 @@ export async function investigateLexaraBackgroundQuestion(
       if (usefulCount > priorUsefulCount) stagnantUsefulPasses = 0;
       else if (usefulCount > 0) stagnantUsefulPasses += 1;
       priorUsefulCount = usefulCount;
-      if (best?.directlyAnswers && best.confidence >= SUFFICIENT_EVIDENCE_THRESHOLD) break;
+      if (best?.directlyAnswers && best.confidence >= SUFFICIENT_EVIDENCE_THRESHOLD) {
+        laneController.abort(new Error('lexara_background_fact_verified'));
+        break;
+      }
       if (!deepAcquisitionRequested
         && usefulCount >= 3
         && Boolean(best?.directlyAnswers || best?.inferentiallySupports)
@@ -656,13 +681,13 @@ export async function investigateLexaraBackgroundQuestion(
       const query = broadenedQuery(subject, decision, categories, context.jurisdiction, pass);
       context.onProgress?.({ type: 'checkpoint', pass: recursionPasses, confidence: best?.confidence || 0 });
       const [primaryOutcome, supplementalOutcome] = await Promise.allSettled([
-        discoverLegalMeshTier3(query, context.signal, {
+        discoverLegalMeshTier3(query, laneSignal, {
           categories,
           jurisdiction: context.jurisdiction || subject.location,
           subject: subject.name,
           requestedFact: decision.requestedFact,
         }),
-        discoverLegalMeshSupplemental(query, [...seenUrls], context.signal, {
+        discoverLegalMeshSupplemental(query, [...seenUrls], laneSignal, {
           categories,
           jurisdiction: context.jurisdiction || subject.location,
           subject: subject.name,
@@ -745,6 +770,9 @@ export async function investigateLexaraBackgroundQuestion(
       recursionPasses,
       discoveryLanes: [...discoveryLanes],
     };
+  } finally {
+    if (!laneController.signal.aborted) laneController.abort();
+    context.signal?.removeEventListener('abort', relayLaneAbort);
   }
 }
 
