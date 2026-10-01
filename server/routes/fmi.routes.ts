@@ -347,15 +347,6 @@ export function setupFMIRoutes(app: Express): void {
         if (persistentMatterAccess) {
           const matter = await resolvePaidMatter(userId, lawType);
           matterId = matter?.matterId;
-          storagePath = await persistMatterBuffer({
-            userId,
-            matterId: matterId || `workspace-${String(lawType || 'general')}`,
-            category: 'evidence',
-            fileName: file.originalname,
-            mimeType: file.mimetype,
-            bytes: uploadBytes,
-          });
-          await fs.unlink(file.path).catch(() => undefined);
         }
 
         const duplicateEvidence = await pool.query(
@@ -370,14 +361,7 @@ export function setupFMIRoutes(app: Express): void {
           [userId, verifiedUpload.sha256, lawType || null, matterId || null],
         );
         if (duplicateEvidence.rows.length) {
-          if (storagePath !== file.path) {
-            // The newly persisted object is redundant. Keep the prior evidence
-            // record as the canonical copy and do not create a second DB row.
-            // Object-store deletion is intentionally not attempted here because
-            // the storage abstraction does not expose a safe delete-by-ref API.
-          } else {
-            await fs.unlink(file.path).catch(() => undefined);
-          }
+          await fs.unlink(file.path).catch(() => undefined);
           const existing = duplicateEvidence.rows[0];
           return res.json({
             success: true,
@@ -392,6 +376,18 @@ export function setupFMIRoutes(app: Express): void {
               fmiAnalysisStatus: existing.fmi_analysis_status,
             },
           });
+        }
+
+        if (persistentMatterAccess) {
+          storagePath = await persistMatterBuffer({
+            userId,
+            matterId: matterId || `workspace-${String(lawType || 'general')}`,
+            category: 'evidence',
+            fileName: file.originalname,
+            mimeType: file.mimetype,
+            bytes: uploadBytes,
+          });
+          await fs.unlink(file.path).catch(() => undefined);
         }
 
         const result = await pool.query(
