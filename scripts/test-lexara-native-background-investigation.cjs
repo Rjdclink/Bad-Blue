@@ -38,6 +38,7 @@ const state = {
   tierCalls: [],
   supplementalCalls: [],
   retrievalCalls: [],
+  claudeCalls: [],
 };
 
 const planner = {
@@ -176,6 +177,24 @@ const learning = {
   async rememberLexaraDiscoveryOutcome() {},
 };
 
+const claudeParallel = {
+  async searchLexaraBackgroundWithClaude(input) {
+    state.claudeCalls.push(input);
+    if (state.mode !== 'claude-only') {
+      return { candidates: [], citationEvidence: [], searches: 1 };
+    }
+    return {
+      candidates: [candidate('https://claude.example.test/employer', 'claude-web-search')],
+      citationEvidence: [{
+        url: 'https://claude.example.test/employer',
+        content: 'Avery Example of Iowa is employed by Parallel Research LLC.',
+        retrievedAt: '2026-10-01T12:00:00.000Z',
+      }],
+      searches: 2,
+    };
+  },
+};
+
 const investigator = execute('server/lexara/LexaraBackgroundInvestigation.ts', {
   './LexaraResearchIntentRouter': planner,
   './LexaraBackgroundSubject': subject,
@@ -183,6 +202,7 @@ const investigator = execute('server/lexara/LexaraBackgroundInvestigation.ts', {
   './LexaraRetrievalBoundary': retrieval,
   './LexaraPublicSourceRegistry': registry,
   './LexaraDiscoveryLearning': learning,
+  './LexaraClaudeBackgroundSearch': claudeParallel,
 });
 
 function reset(mode) {
@@ -190,6 +210,7 @@ function reset(mode) {
   state.tierCalls = [];
   state.supplementalCalls = [];
   state.retrievalCalls = [];
+  state.claudeCalls = [];
 }
 
 (async () => {
@@ -224,6 +245,19 @@ function reset(mode) {
   assert.deepEqual(state.retrievalCalls, [['https://records.example.test/employer']]);
   assert.match(employment.evidenceSummary, /employed by Example Industries/i);
 
+
+  reset('claude-only');
+  const claudeOnly = await investigator.investigateLexaraBackgroundQuestion(
+    'Where does Avery Example work?',
+    { jurisdiction: 'Iowa' },
+  );
+  assert.equal(claudeOnly.endpoint, 'evidence-sufficient',
+    'Claude web search runs beside native lanes and can independently establish the requested fact');
+  assert.deepEqual(Array.from(claudeOnly.sources), ['https://claude.example.test/employer']);
+  assert(claudeOnly.discoveryLanes.includes('claude-web-search'));
+  assert.equal(state.claudeCalls.length, 1, 'Claude parallel lane runs once alongside initial native discovery');
+  assert.match(claudeOnly.evidenceSummary, /Parallel Research LLC/);
+
   reset('age-inference');
   const inferredAge = await investigator.investigateLexaraBackgroundQuestion(
     'How old is Avery Example of Des Moines, Iowa?',
@@ -235,7 +269,7 @@ function reset(mode) {
   const inferredPrompt = investigator.formatLexaraBackgroundResearchForSystem(inferredAge);
   assert.match(inferredPrompt, /strongest defensible answer/i);
   assert.match(inferredPrompt, /first sentence must contain only the requested fact/i);
-  assert.match(inferredPrompt, /about.*approximately.*probably.*range/i);
+  assert.match(inferredPrompt, /This is only a guess, not a verified fact/i);
 
   reset('converged-inference');
   const converged = await investigator.investigateLexaraBackgroundQuestion(
