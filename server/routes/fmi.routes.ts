@@ -278,11 +278,23 @@ const legacyFileReferenceSchema = z.object({
   id: z.string().min(1).max(128),
 }).passthrough();
 
+const fmiReviewDocumentSchema = z.object({
+  sourceId: z.string().min(1).max(128),
+  fileName: z.string().min(1).max(240),
+  excerpt: z.string().min(1).max(12_000),
+  classification: z.unknown().optional(),
+  keyFindings: z.array(z.string().max(1_000)).max(30).optional(),
+  admissibilityAssessment: z.string().max(160).optional().nullable(),
+});
+
 const fmiReviewSetSchema = z.object({
-  fileIds: z.array(z.string().min(1).max(128)).min(2).max(20),
+  fileIds: z.array(z.string().min(1).max(128)).min(2).max(20).optional(),
+  documents: z.array(fmiReviewDocumentSchema).min(2).max(20).optional(),
   lawType: fmiLawTypeSchema,
   state: z.enum(US_STATE_CODES),
   question: z.string().trim().max(4_000).optional(),
+}).refine(value => Boolean(value.documents?.length || value.fileIds?.length), {
+  message: 'At least two completed evidence files are required for combined review',
 });
 
 const fmiAnalyzeSchema = z.object({
@@ -599,6 +611,14 @@ export function setupFMIRoutes(app: Express): void {
           success: true,
           message: 'F.M.I. analysis completed',
           analysis: analysisForClient,
+          reviewInput: {
+            sourceId: String(fileId),
+            fileName: String(storedFile.file_name),
+            excerpt: extractedText.slice(0, 12_000),
+            classification: analysis.classification,
+            keyFindings: analysis.keyFindings.slice(0, 30),
+            admissibilityAssessment: analysis.classification.admissibility,
+          },
           formIntelligence: formLayout ? { isLegalForm: true, layout: formLayout, editable: formLayout.verified } : { isLegalForm: false },
         };
         if (!hasPersistentMatterAccess(req)) {
@@ -639,44 +659,69 @@ export function setupFMIRoutes(app: Express): void {
       const userId = getAuthenticatedUserId(req);
       if (!userId) return res.status(401).json({ error: 'Authentication required' });
 
-      const { fileIds, lawType, state, question } = validation.data;
-      const result = await pool.query(
-        `SELECT id, file_name, extracted_text, content_classification, key_findings,
-                admissibility_assessment, uploaded_at
-         FROM evidence_files
-         WHERE user_id = $1
-           AND id = ANY($2)
-           AND fmi_analysis_status = 'completed'
-         ORDER BY uploaded_at ASC`,
-        [userId, fileIds],
-      );
+      const { fileIds, documents: ephemeralDocuments, lawType, state, question } = validation.data;
 
-      if (result.rows.length < 2) {
+      let documents: Array<{
+        sourceId: string;
+        fileName: string;
+        classification: unknown;
+        keyFindings: string[];
+        admissibilityAssessment: string | null;
+        excerpt: string;
+      }> = [];
+
+      if (ephemeralDocuments?.length) {
+        documents = ephemeralDocuments.map(document => ({
+          sourceId: document.sourceId,
+          fileName: document.fileName,
+          classification: document.classification || null,
+          keyFindings: document.keyFindings || [],
+          admissibilityAssessment: document.admissibilityAssessment || null,
+          excerpt: document.excerpt,
+        }));
+      } else if (fileIds?.length) {
+        const result = await pool.query(
+          `SELECT id, file_name, extracted_text, content_classification, key_findings,
+                  admissibility_assessment, uploaded_at
+           FROM evidence_files
+           WHERE user_id = $1
+             AND id = ANY($2)
+             AND fmi_analysis_status = 'completed'
+           ORDER BY uploaded_at ASC`,
+          [userId, fileIds],
+        );
+
+        if (result.rows.length < 2) {
+          return res.status(409).json({ error: 'At least two completed evidence files are required for combined review' });
+        }
+
+        const requested = new Set(fileIds.map(id => String(id)));
+        const returned = new Set(result.rows.map((row: any) => String(row.id)));
+        const missing = [...requested].filter(id => !returned.has(id));
+        if (missing.length) {
+          return res.status(409).json({ error: 'One or more selected evidence files are not ready for combined review', missingFileIds: missing });
+        }
+
+        let remaining = 48_000;
+        documents = result.rows.map((row: any, index: number) => {
+          const extracted = String(row.extracted_text || '').trim();
+          const allowance = Math.max(1_500, Math.min(8_000, Math.floor(remaining / Math.max(1, result.rows.length - index))));
+          const excerpt = extracted.slice(0, allowance);
+          remaining = Math.max(0, remaining - excerpt.length);
+          return {
+            sourceId: String(row.id),
+            fileName: String(row.file_name || `Evidence ${index + 1}`),
+            classification: row.content_classification || null,
+            keyFindings: Array.isArray(row.key_findings) ? row.key_findings.slice(0, 20) : [],
+            admissibilityAssessment: row.admissibility_assessment || null,
+            excerpt,
+          };
+        });
+      }
+
+      if (documents.length < 2) {
         return res.status(409).json({ error: 'At least two completed evidence files are required for combined review' });
       }
-
-      const requested = new Set(fileIds.map(id => String(id)));
-      const returned = new Set(result.rows.map((row: any) => String(row.id)));
-      const missing = [...requested].filter(id => !returned.has(id));
-      if (missing.length) {
-        return res.status(409).json({ error: 'One or more selected evidence files are not ready for combined review', missingFileIds: missing });
-      }
-
-      let remaining = 48_000;
-      const documents = result.rows.map((row: any, index: number) => {
-        const extracted = String(row.extracted_text || '').trim();
-        const allowance = Math.max(1_500, Math.min(8_000, Math.floor(remaining / Math.max(1, result.rows.length - index))));
-        const excerpt = extracted.slice(0, allowance);
-        remaining = Math.max(0, remaining - excerpt.length);
-        return {
-          sourceId: String(row.id),
-          fileName: String(row.file_name || `Evidence ${index + 1}`),
-          classification: row.content_classification || null,
-          keyFindings: Array.isArray(row.key_findings) ? row.key_findings.slice(0, 20) : [],
-          admissibilityAssessment: row.admissibility_assessment || null,
-          excerpt,
-        };
-      });
 
       const prompt = [
         `Review this evidence set together for a ${lawType} matter in ${state}.`,
