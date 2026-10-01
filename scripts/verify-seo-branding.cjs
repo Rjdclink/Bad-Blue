@@ -37,8 +37,13 @@ mustNot(index, 'Bad Blue', 'root metadata must not use Bad Blue');
 mustNot(index, '<meta name="keywords"', 'root must not emit meta-keywords');
 mustNot(index, '"aggregateRating"', 'root must not emit unverified aggregate rating markup');
 must(index.includes('"email": "contact.badblue@gmail.com"'), 'organization schema must expose the support email');
-must(index.includes('Try LegalWhat free for 3 days, then only $19.99/month.'), 'root metadata must expose canonical 3-day free trial and $19.99/month positioning');
+must(index.includes('Talk with Lexara, a jurisdiction-aware legal AI for 40+ areas of law.'), 'root metadata must expose concise current Lexara positioning');
+must(index.includes('3-day free trial, then $19.99/month'), 'root schema must preserve canonical trial and subscription positioning');
 must(index.includes('"price": "19.99"') && index.includes('"priceCurrency": "USD"'), 'root application schema must expose the canonical monthly offer price');
+must(index.includes('id="initial-seo-content"') && index.includes('data-seo-shell-title') && index.includes('data-seo-shell-description'), 'root must expose crawlable initial SEO content before React');
+for (const publicHref of ['/areas/', '/services/', '/guides/', '/documents/', '/sources-accuracy/', '/faq', '/reviews', '/contact']) {
+  must(index.includes(`href="${publicHref}"`), `root initial SEO shell must link public resource: ${publicHref}`);
+}
 for (const capability of ['Visible animated AI', 'DOCX and PDF', 'Uploaded document, evidence, image, and media analysis', 'Intuitive legal-document recognition and preparation']) {
   must(index.includes(capability), `root metadata/schema must expose Lexara capability: ${capability}`);
 }
@@ -119,6 +124,9 @@ must(serverIndex.includes('Do not emit synthetic freshness'), 'dynamic sitemap m
 must(viteServer.includes('renderSeoShell') && viteServer.includes('SEO_CONFIG[pathname]'), 'SPA fallback must render route-specific SEO metadata before React');
 must(viteServer.includes('rel="canonical"') && viteServer.includes('canonicalUrl'), 'SPA fallback must emit a route-correct canonical in initial HTML');
 must(viteServer.includes('config.noIndex') && viteServer.includes('noindex, nofollow'), 'SPA fallback must preserve noindex on protected configured routes');
+must(viteServer.includes('function requestPathname') && viteServer.includes('requestPathname(req.originalUrl)'), 'SPA SEO rendering must use the original requested URL before wildcard mount stripping');
+mustNot(viteServer, 'renderSeoShell(template, req.path', 'SPA SEO rendering must not use mount-stripped req.path');
+must(viteServer.includes('data-seo-shell-title') && viteServer.includes('data-seo-shell-description'), 'SPA fallback must render route-specific crawlable H1 and summary text');
 mustNot(routes, "app.get('*'", 'server/routes.ts must not own a competing catch-all SPA fallback');
 must(routes.includes('Public static pages and the SPA fallback are owned by server/vite.ts.'), 'routes must document single non-API page-serving authority');
 
@@ -211,6 +219,28 @@ must(llms.includes('[Services](https://legalwhat.com/services/)'), 'llms.txt mus
 must(sitemapUrls.has('https://legalwhat.com/areas/'), 'sitemap must include practice-area hub');
 must(sitemapUrls.has('https://legalwhat.com/services/'), 'sitemap must include services hub');
 
+
+for (const publicPagePath of [
+  'public/services/index.html',
+  'public/services/ai-legal-consultation/index.html',
+  'public/guides/index.html',
+  'public/documents/index.html',
+]) {
+  const publicPage = read(publicPagePath);
+  const description = publicPage.match(/<meta name=(?:"description"|description) content="([^"]+)"/)?.[1] || '';
+  must(description.length > 0 && description.length <= 160, `${publicPagePath} must expose a concise meta description`);
+}
+
+for (const guidePath of [
+  'public/guides/ai-legal-research-assistant/index.html',
+  'public/guides/motion-to-suppress-evidence/index.html',
+]) {
+  const guide = read(guidePath);
+  must(guide.includes('"@type":"WebPage"'), `${guidePath} must use WebPage schema for evergreen guide content`);
+  mustNot(guide, '"@type":"Article"', `${guidePath} must not claim incomplete Article rich-result markup`);
+}
+must(read('public/guides/ai-legal-research-assistant/index.html').includes('<h2>A useful legal-research workflow</h2>'), 'AI legal research guide must contain substantive workflow guidance');
+must(read('public/guides/motion-to-suppress-evidence/index.html').includes('<h2>Facts to organize first</h2>'), 'suppression guide must contain substantive fact-organization guidance');
 
 const searchArchitecture = read('shared/seoSearchArchitecture.json');
 for (const phrase of [

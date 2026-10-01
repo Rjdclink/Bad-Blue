@@ -17,6 +17,10 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
+function requestPathname(originalUrl: string): string {
+  return (originalUrl || "/").split("?")[0].split("#")[0] || "/";
+}
+
 function renderSeoShell(template: string, pathname: string): string {
   const config = SEO_CONFIG[pathname];
   if (!config) return template;
@@ -41,7 +45,9 @@ function renderSeoShell(template: string, pathname: string): string {
     .replace(/<meta\s+property=["']og:description["'][^>]*>/i, `<meta property="og:description" content="${description}" />`)
     .replace(/<meta\s+property=["']og:url["'][^>]*>/i, `<meta property="og:url" content="${canonical}" />`)
     .replace(/<meta\s+name=["']twitter:title["'][^>]*>/i, `<meta name="twitter:title" content="${title}" />`)
-    .replace(/<meta\s+name=["']twitter:description["'][^>]*>/i, `<meta name="twitter:description" content="${description}" />`);
+    .replace(/<meta\s+name=["']twitter:description["'][^>]*>/i, `<meta name="twitter:description" content="${description}" />`)
+    .replace(/(<h1\s+data-seo-shell-title>)[\s\S]*?(<\/h1>)/i, `$1${title}$2`)
+    .replace(/(<p\s+data-seo-shell-description>)[\s\S]*?(<\/p>)/i, `$1${description}$2`);
 }
 
 export function log(message: string, source = "express") {
@@ -97,7 +103,7 @@ export async function setupVite(app: Express, server: Server) {
 
       // always reload the index.html file from disk incase it changes
       let template = await fs.promises.readFile(clientTemplate, "utf-8");
-      template = renderSeoShell(template, req.path || "/");
+      template = renderSeoShell(template, requestPathname(req.originalUrl));
       template = template.replace(
         `src="/src/main.tsx"`,
         `src="/src/main.tsx?v=${nanoid()}"`,
@@ -157,7 +163,7 @@ export function serveStatic(app: Express) {
   // crawlers do not first see the homepage canonical and then a different one
   // after JavaScript renders.
   app.use("*", (req, res) => {
-    const pathname = req.path || '';
+    const pathname = requestPathname(req.originalUrl);
     const looksLikeStaticAsset = pathname.startsWith('/images/')
       || pathname.startsWith('/assets/')
       || /\.[a-z0-9]{2,8}$/i.test(pathname);

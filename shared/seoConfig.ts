@@ -68,7 +68,7 @@ export const GLOBAL_KEYWORDS: KeywordTaxonomy = {
 export const SEO_CONFIG: Record<string, PageSEO> = {
   "/": {
     title: "Legal What? | Lexara Conversational Legal AI",
-    description: "Talk with Lexara, a jurisdiction-aware legal AI across 40+ areas of law. Analyze and edit uploaded media, create PDF/DOCX legal documents, and more. Try LegalWhat free for 3 days, then $19.99/month.",
+    description: "Talk with Lexara, a jurisdiction-aware legal AI for 40+ areas of law. Analyze files, research legal issues, and create PDF or DOCX legal documents.",
     keywords: "Lexara, conversational legal AI, animated legal AI, voice legal AI, text legal AI, convenient legal AI, affordable legal AI, user-friendly legal AI, easy-to-use legal AI, flat-rate legal AI, $19.99 legal AI subscription, monthly legal AI subscription, 40 legal areas, legal media analysis, legal document generator, PDF legal documents, DOCX legal documents",
     keywordTaxonomy: GLOBAL_KEYWORDS,
     ogTitle: "Legal What? | Lexara Conversational Legal AI",
@@ -82,7 +82,7 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
   },
   "/landing": {
     title: "Legal What? | Lexara Conversational Legal AI",
-    description: "Talk with Lexara, a jurisdiction-aware legal AI across 40+ areas of law. Analyze and edit uploaded media, create PDF/DOCX legal documents, and more. Try LegalWhat free for 3 days, then $19.99/month.",
+    description: "Talk with Lexara, a jurisdiction-aware legal AI for 40+ areas of law. Analyze files, research legal issues, and create PDF or DOCX legal documents.",
     keywords: "Lexara, conversational legal AI, animated legal AI, voice and text legal AI, convenient legal AI, affordable legal AI, user-friendly legal AI, easy-to-use legal AI, flat-rate legal AI, $19.99 legal AI subscription, monthly legal AI subscription, 40 legal practice areas, media analysis, jurisdiction-specific legal documents",
     keywordTaxonomy: GLOBAL_KEYWORDS,
     ogType: "website",
@@ -196,7 +196,7 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
   },
   "/legal-consultation": {
     title: "LEXARA AI Legal Consultation | Legal What?",
-    description: "Talk live with Lexara, a jurisdiction-aware legal AI covering 40+ areas of law. Analyze and revise uploaded documents and media, identify jurisdiction-specific requirements, use appropriate local legal forms, and create legal documents. Try LegalWhat free for 3 days, then only $19.99/month.",
+    description: "Talk with Lexara by voice or text across 40+ areas of law. Analyze files, research jurisdiction-specific issues, and create PDF or DOCX legal documents.",
     keywords: "Lexara, conversational legal AI, animated legal AI, voice legal consultation, text legal consultation, legal guidance AI, legal research, legal media analysis, legal document generator",
     keywordTaxonomy: GLOBAL_KEYWORDS,
     ogType: "service",
@@ -208,7 +208,7 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
   },
   "/contact": {
     title: "Contact Legal What? | Support",
-    description: "Contact Legal What? for help with police complaints, lawsuits, FOIA requests. We're here to support you.",
+    description: "Contact Legal What? for account, subscription, platform, or Lexara support and questions.",
     keywords: "contact bad blue, bad blue support, help with police complaint, police accountability help, customer support",
     ogType: "website",
     canonicalPath: "/contact",
@@ -219,7 +219,7 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
   },
   "/faq": {
     title: "FAQ - LegalWhat AI Legal Platform",
-    description: "FAQ about LegalWhat's AI legal platform: P.A.N.T.H.E.O.N. system, LEXARA consultation, C.A.D.E. drafting, F.M.I. analysis, I-DRIVE search.",
+    description: "Answers about LegalWhat, Lexara, subscriptions, legal research, file analysis, privacy, and document creation.",
     keywords: "LegalWhat FAQ, AI legal platform, LEXARA, C.A.D.E., F.M.I., I-DRIVE, P.A.N.T.H.E.O.N., legal AI, 13 AI models",
     ogType: "website",
     canonicalPath: "/faq",
@@ -230,7 +230,7 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
   },
   "/reviews": {
     title: "Legal What? Reviews | Customer Feedback",
-    description: "Read about Legal What? customer experiences and share genuine feedback about LEXARA and the Legal What? platform.",
+    description: "Read Legal What? customer feedback and share a genuine review of your experience with Lexara and the Legal What? platform.",
     ogTitle: "Legal What? Reviews",
     ogDescription: "Share genuine feedback about your experience with Legal What? and LEXARA.",
     ogType: "website",
@@ -242,7 +242,7 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
   },
   "/privacy": {
     title: "Privacy Policy | Legal What?",
-    description: "Legal What? privacy policy. How we protect your data, evidence, and personal information. Your security is our priority.",
+    description: "Read how Legal What? handles account data, uploaded files, conversations, privacy, and security.",
     keywords: "bad blue privacy policy, data protection, evidence privacy, personal information security",
     ogType: "website",
     canonicalPath: "/privacy",
@@ -253,7 +253,7 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
   },
   "/terms": {
     title: "Terms of Service | Legal What?",
-    description: "Legal What? terms of service. Terms for using our police accountability platform and legal tools.",
+    description: "Read the terms for using Legal What?, Lexara, subscriptions, uploaded content, and AI-assisted legal tools.",
     keywords: "bad blue terms of service, terms and conditions, user agreement, legal terms",
     ogType: "website",
     canonicalPath: "/terms",
