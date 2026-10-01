@@ -232,7 +232,19 @@ export async function verifyLegalCitationsInText(text: string, maxCitations = 8)
   const limit = Math.max(1, Math.min(20, Math.trunc(maxCitations) || 8));
   const citations = extractCaseCitations(text).slice(0, limit);
   if (!citations.length) return [];
-  return Promise.all(citations.map(citation => verifyOneCitation(citation)));
+
+  const results = new Array<CitationVerification>(citations.length);
+  let nextIndex = 0;
+  const worker = async () => {
+    while (nextIndex < citations.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await verifyOneCitation(citations[index]);
+    }
+  };
+  const concurrency = Math.min(8, citations.length);
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
+  return results;
 }
 
 export function formatCitationVerificationForCorrection(results: CitationVerification[]): string {
