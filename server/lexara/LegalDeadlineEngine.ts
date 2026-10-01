@@ -151,31 +151,40 @@ const MONTHS: Record<string, number> = {
   october: 10, oct: 10, november: 11, nov: 11, december: 12, dec: 12,
 };
 
+function extractDatesFromText(text: string): string[] {
+  const dates = new Set<string>();
+
+  for (const match of text.matchAll(/\b(20\d{2}|19\d{2})-(0[1-9]|1[0-2])-([0-2]\d|3[01])\b/g)) {
+    if (parseIsoDate(match[0])) dates.add(match[0]);
+  }
+
+  for (const match of text.matchAll(/\b(0?[1-9]|1[0-2])\/(0?[1-9]|[12]\d|3[01])\/(20\d{2}|19\d{2})\b/g)) {
+    const value = `${match[3]}-${String(Number(match[1])).padStart(2, '0')}-${String(Number(match[2])).padStart(2, '0')}`;
+    if (parseIsoDate(value)) dates.add(value);
+  }
+
+  for (const match of text.matchAll(/\b(January|Jan|February|Feb|March|Mar|April|Apr|May|June|Jun|July|Jul|August|Aug|September|Sept?|October|Oct|November|Nov|December|Dec)\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(20\d{2}|19\d{2})\b/gi)) {
+    const month = MONTHS[match[1].toLowerCase()];
+    const value = `${match[3]}-${String(month).padStart(2, '0')}-${String(Number(match[2])).padStart(2, '0')}`;
+    if (parseIsoDate(value)) dates.add(value);
+  }
+
+  return [...dates];
+}
+
 export function extractDateFromText(text: string): string | null {
-  const iso = text.match(/\b(20\d{2}|19\d{2})-(0[1-9]|1[0-2])-([0-2]\d|3[01])\b/);
-  if (iso && parseIsoDate(iso[0])) return iso[0];
-
-  const slash = text.match(/\b(0?[1-9]|1[0-2])\/(0?[1-9]|[12]\d|3[01])\/(20\d{2}|19\d{2})\b/);
-  if (slash) {
-    const value = `${slash[3]}-${String(Number(slash[1])).padStart(2, '0')}-${String(Number(slash[2])).padStart(2, '0')}`;
-    if (parseIsoDate(value)) return value;
-  }
-
-  const named = text.match(/\b(January|Jan|February|Feb|March|Mar|April|Apr|May|June|Jun|July|Jul|August|Aug|September|Sept?|October|Oct|November|Nov|December|Dec)\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(20\d{2}|19\d{2})\b/i);
-  if (named) {
-    const month = MONTHS[named[1].toLowerCase()];
-    const value = `${named[3]}-${String(month).padStart(2, '0')}-${String(Number(named[2])).padStart(2, '0')}`;
-    if (parseIsoDate(value)) return value;
-  }
-  return null;
+  return extractDatesFromText(text)[0] || null;
 }
 
 export function inferLegalDeadlineFromPrompt(prompt: string, jurisdiction?: string): LegalDeadlineCalculation | null {
   const text = String(prompt || '');
   const federal = /\bfederal\b/i.test(text) || /\bfederal\b/i.test(String(jurisdiction || ''));
   if (!federal) return null;
-  const triggerDate = extractDateFromText(text);
-  if (!triggerDate) return null;
+  const triggerDates = extractDatesFromText(text);
+  // If multiple distinct dates are present, the language layer must establish
+  // which one is the legal trigger before deterministic arithmetic is allowed.
+  if (triggerDates.length !== 1) return null;
+  const triggerDate = triggerDates[0];
 
   const asksDeadline = /\b(?:deadline|due|when\s+(?:is|does|must|should)|how\s+long|time\s+to|days?\s+to)\b/i.test(text);
   if (!asksDeadline) return null;
@@ -194,16 +203,27 @@ export function inferLegalDeadlineFromPrompt(prompt: string, jurisdiction?: stri
     // Timely post-judgment motions can suspend the civil appeal clock.
     const tollingMotion = /\b(?:rule\s*(?:50\(b\)|52\(b\)|54|59|60)|post[- ]judgment motion|motion for new trial|alter or amend|relief from judgment)\b/i.test(text);
     if (/\b(?:criminal|conviction|sentence|sentenced|criminal defendant)\b/i.test(text)) {
-      const clearTrigger = /\b(?:judgment|order)\s+(?:was\s+)?entered\b|\bgovernment\s+(?:filed|files?)\s+(?:a\s+)?notice of appeal\b/i.test(text);
+      // If a government notice of appeal exists, Rule 4(b)(1)(A) uses the later
+      // of that filing and judgment. Do not calculate unless that comparison is
+      // already resolved by the supplied facts.
+      if (/\bgovernment\s+(?:filed|files?)\s+(?:a\s+)?notice of appeal\b/i.test(text)) return null;
+      const clearTrigger = /\b(?:judgment|order)\s+(?:was\s+)?entered\b/i.test(text);
       return clearTrigger
         ? calculateLegalDeadline('federal-criminal-appeal-defendant', triggerDate)
         : null;
     }
     if (/\b(?:civil|judgment|order)\b/i.test(text) && !tollingMotion) {
-      const usParty = /\b(?:united states|u\.s\.\s+(?:agency|officer|employee)|federal\s+(?:agency|officer|employee))\b/i.test(text)
-        && /\b(?:party|plaintiff|defendant|appellant|appellee|sued)\b/i.test(text);
+      if (/\b(?:another|other)\s+party\b[\s\S]{0,80}\bnotice of appeal\b/i.test(text)) return null;
+
+      const federalGovernmentMarker = /\b(?:united states|u\.s\.\s+(?:agency|officer|employee)|federal\s+(?:agency|officer|employee))\b/i.test(text);
+      const explicitFederalParty = federalGovernmentMarker && (
+        /\b(?:party|plaintiff|defendant|appellant|appellee|sued)\b/i.test(text)
+        || /\bUnited States\s+v\.|\bv\.\s+United States\b/i.test(text)
+      );
+      if (federalGovernmentMarker && !explicitFederalParty) return null;
+
       return calculateLegalDeadline(
-        usParty ? 'federal-civil-appeal-us-party' : 'federal-civil-appeal',
+        explicitFederalParty ? 'federal-civil-appeal-us-party' : 'federal-civil-appeal',
         triggerDate,
       );
     }
