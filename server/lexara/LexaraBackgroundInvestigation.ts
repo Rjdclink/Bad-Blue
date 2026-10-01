@@ -61,6 +61,7 @@ export interface LexaraBackgroundInvestigationContext {
   onProgress?: (event: LexaraBackgroundProgressEvent) => void;
   delegatedByLexara?: boolean;
   researchDecision?: LexaraResearchDecision;
+  claudeResearchModel?: string;
 }
 
 interface AssessedEvidence {
@@ -328,6 +329,7 @@ export async function discoverLexaraBackgroundSourcesParallel(
     subject?: string;
     requestedFact?: string;
     researchDecision?: LexaraResearchDecision;
+    claudeResearchModel?: string;
   } = {},
 ): Promise<{ urls: string[]; lanesAttempted: string[] }> {
   const fallbackDecision: LexaraResearchDecision = options.researchDecision || {
@@ -359,6 +361,7 @@ export async function discoverLexaraBackgroundSourcesParallel(
       } : undefined,
       decision: fallbackDecision,
       jurisdiction: options.jurisdiction,
+      model: options.claudeResearchModel,
       signal: options.signal,
     }),
   ]);
@@ -439,6 +442,7 @@ export async function investigateLexaraBackgroundQuestion(
         subject,
         decision,
         jurisdiction: context.jurisdiction || subject.location,
+        model: context.claudeResearchModel,
         signal: context.signal,
       }),
     ]);
