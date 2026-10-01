@@ -59,6 +59,7 @@ export interface LexaraBackgroundInvestigationContext {
   jurisdiction?: string;
   signal?: AbortSignal;
   onProgress?: (event: LexaraBackgroundProgressEvent) => void;
+  delegatedByLexara?: boolean;
   researchDecision?: LexaraResearchDecision;
 }
 
@@ -260,7 +261,9 @@ function assessEvidence(
   if (identity < MIN_IDENTITY_CONFIDENCE) return null;
   const pattern = factPattern(decision, prompt);
   const relevantWindow = subjectRelevantWindow(content, subject);
-  const directlyAnswers = pattern.test(relevantWindow);
+  const directlyAnswers = decision.requestedFact === 'general-public-record'
+    ? identity >= MIN_IDENTITY_CONFIDENCE
+    : pattern.test(relevantWindow);
   const inferencePattern = INFERENCE_EVIDENCE_PATTERNS[decision.requestedFact];
   const inferentiallySupports = !directlyAnswers && Boolean(inferencePattern?.test(relevantWindow));
   const confidence = Math.max(0, Math.min(1,
@@ -380,7 +383,7 @@ export async function investigateLexaraBackgroundQuestion(
     || (decision.subject ? {
       name: decision.subject,
       kind: 'person' as const,
-      identifiable: decision.subject.trim().split(/\s+/).length >= 2,
+      identifiable: false,
       location: context.jurisdiction,
     } : null);
   if (!resolved) return null;
