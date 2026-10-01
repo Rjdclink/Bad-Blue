@@ -42,7 +42,8 @@ must(
     genie.includes('private lexara: Lexara | null = null') &&
     genie.includes('this.lexara = getLexara()') &&
     genie.includes('routeToLexara') &&
-    genie.includes("routedTo = 'LEXARA'") &&
+    genie.includes("canonicalRoutedTo = 'LEXARA'") &&
+    genie.includes("routedTo = 'ALEXARA'; // compatibility label only") &&
     genie.includes('getLexara(): Lexara | null'),
   'Genie routes active legal work through canonical Lexara names and service entry point',
 );
