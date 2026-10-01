@@ -704,8 +704,14 @@ async function verifyMatterDeadlines(
   ].join('\n\n'), {
     jurisdiction: matter.jurisdiction,
     domainName: profile?.displayName,
-    researchHints: profile?.researchHints,
-    preferredOfficialDomains: profile?.preferredOfficialDomains,
+    researchHints: [
+      ...(profile?.researchHints || []),
+      ...(deadlineJurisdictionProfile?.researchHints || []),
+    ].slice(0, 12),
+    preferredOfficialDomains: [
+      ...(profile?.preferredOfficialDomains || []),
+      ...(deadlineJurisdictionProfile?.preferredOfficialDomains || []),
+    ].filter((value, index, values) => values.indexOf(value) === index).slice(0, 18),
     forceResearch: true,
     signal,
   });
