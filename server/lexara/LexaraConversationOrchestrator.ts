@@ -555,6 +555,7 @@ export async function generateLexaraConversationResponse(
     cleanPrompt,
     previousUserTurns,
     context.signal,
+    history,
   );
   const sequencePlan = planLexaraSequence(cleanPrompt, previousUserTurns, semanticResearchDecision);
   const deepClaudeNeeded = requiresDeepClaudeForTurn(
