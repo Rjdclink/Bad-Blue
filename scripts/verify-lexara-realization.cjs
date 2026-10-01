@@ -958,7 +958,9 @@ must(
     lexaraBackgroundInvestigation.includes('discoverLegalMeshTier3') &&
     lexaraBackgroundInvestigation.includes('discoverLegalMeshSupplemental') &&
     lexaraBackgroundInvestigation.includes('lexaraRetrievalAdapter') &&
-    lexaraBackgroundInvestigation.includes('directlyAnswers'),
+    lexaraBackgroundInvestigation.includes('directlyAnswers') &&
+    lexaraConversationOrchestrator.includes('DIRECT|INFERENTIAL|PARTIAL') &&
+    lexaraConversationOrchestrator.includes('RETRIEVED:'),
   'Lexara background research is native, recursive, fact-gated, and Pantheon-disconnected while legal reasoning remains on its existing route',
 );
 must(
