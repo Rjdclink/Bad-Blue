@@ -119,8 +119,8 @@ async function lookupBop(
         content,
         retrievedAt,
         provider: 'bop-structured',
-        confidence: name.middle ? 0.96 : 0.88,
-        identityConfidence: name.middle ? 0.94 : 0.82,
+        confidence: name.middle ? 0.96 : 0.76,
+        identityConfidence: name.middle ? 0.94 : 0.76,
         directlyAnswers: true,
       }];
     });
@@ -184,8 +184,8 @@ async function lookupNpi(
         content,
         retrievedAt,
         provider: 'cms-npi-api',
-        confidence: state ? 0.94 : 0.86,
-        identityConfidence: state ? 0.92 : 0.82,
+        confidence: state ? 0.94 : 0.76,
+        identityConfidence: state ? 0.92 : 0.76,
         directlyAnswers: true,
       }];
     });
