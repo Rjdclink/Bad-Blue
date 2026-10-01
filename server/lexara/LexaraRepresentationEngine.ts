@@ -565,12 +565,10 @@ export async function advanceRepresentationMatter(input: AdvanceMatterInput): Pr
           const date = clamp(deadline?.date, 40);
           if (!label || !date) continue;
           if (matter.deadlines.some(existing => existing.label.toLowerCase() === label.toLowerCase() && existing.date === date)) continue;
-          const sourceUrl = normalizeSourceUrl(deadline?.sourceUrl);
           matter.deadlines.push({
             label,
             date,
-            sourceUrl: sourceUrl || undefined,
-            status: sourceUrl ? 'verified' : 'unverified',
+            status: 'unverified',
           });
         }
       }
