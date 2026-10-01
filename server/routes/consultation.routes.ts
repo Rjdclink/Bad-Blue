@@ -11,6 +11,7 @@ import { analyzeLegalIssue } from '../legalAI';
 import { generateLegalAnalysis } from '../aiProvider';
 import { researchLegalAuthority, formatAuthorityResearchForSystem } from '../lexara/LexaraAuthorityResearch';
 import { resolveUSJurisdiction } from '../lexara/LexaraJurisdictionResolver';
+import { formatJurisdictionAuthorityForSystem, resolveJurisdictionAuthorityProfile } from '../lexara/LexaraJurisdictionAuthority';
 import { resolveOfficialLegalForm, officialFormDirective } from '../lexara/OfficialLegalFormResolver';
 import { inspectOfficialForm, fillOfficialPdf, fillOfficialDocx } from '../lexara/OfficialFormFiller';
 import { overlayFlatOfficialPdf, validateFlatFormLayout } from '../lexara/FlatOfficialFormOverlay';
@@ -362,6 +363,11 @@ export function setupConsultationRoutes(app: Express): void {
 
     const resolvedJurisdiction = await resolveUSJurisdiction(facts, state);
     const documentJurisdiction = resolvedJurisdiction?.display || state;
+    const documentJurisdictionProfile = await resolveJurisdictionAuthorityProfile(
+      [facts, documentLabel].join('\n'),
+      resolvedJurisdiction,
+      state,
+    ).catch(() => null);
 
     const authorityPrompt = [
       `Jurisdiction: ${documentJurisdiction}. Document/form: ${documentLabel}.`,
@@ -371,7 +377,11 @@ export function setupConsultationRoutes(app: Express): void {
       'If facts required for a complete document are missing, identify only those missing facts instead of pretending the document is complete.',
       `CASE FACTS:\n${facts}`,
     ].join('\n\n');
-    const authorityResearch = await researchLegalAuthority(authorityPrompt, { jurisdiction: documentJurisdiction });
+    const authorityResearch = await researchLegalAuthority(authorityPrompt, {
+      jurisdiction: documentJurisdiction,
+      researchHints: documentJurisdictionProfile?.researchHints,
+      preferredOfficialDomains: documentJurisdictionProfile?.preferredOfficialDomains,
+    });
     const authorityAssessment = formatAuthorityResearchForSystem(authorityResearch)
       || 'No current authority was retrieved. Do not invent or claim verification of legal requirements, citations, deadlines, or official forms. Do not present this as ready to file.';
     const officialForm = resolveOfficialLegalForm(authorityResearch, documentLabel);
@@ -398,6 +408,7 @@ export function setupConsultationRoutes(app: Express): void {
     const draftingPrompt = [
       `Prepare a professional ${documentLabel} for a matter in ${documentJurisdiction}.`,
       `JURISDICTION-FIRST AUTHORITY ASSESSMENT:\n${String(authorityAssessment || '').slice(0, 8000)}`,
+      formatJurisdictionAuthorityForSystem(documentJurisdictionProfile),
       `OFFICIAL-FORM DETERMINATION:\n${formDirective}`,
       'Use ONLY facts supplied below. Never invent names, dates, courts, case numbers, quotations, authorities, procedural posture, or requested relief.',
       'Where a required fact is unknown, insert a conspicuous bracketed placeholder such as [COURT NAME NEEDED].',
