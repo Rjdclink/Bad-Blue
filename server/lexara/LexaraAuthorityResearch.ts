@@ -65,10 +65,19 @@ function clampTail(value: string, maxLength: number): string {
   return trimmed.slice(trimmed.length - maxLength);
 }
 
-function classifySource(rawUrl: string): LexaraAuthoritySourceKind {
+function classifySource(
+  rawUrl: string,
+  preferredOfficialDomains: readonly string[] = [],
+): LexaraAuthoritySourceKind {
   try {
     const hostname = new URL(rawUrl).hostname.toLowerCase().replace(/^www\./, '');
+    const vettedOfficial = preferredOfficialDomains.some(domain => {
+      const normalized = String(domain || '').toLowerCase().replace(/^www\./, '').trim();
+      return normalized && (hostname === normalized || hostname.endsWith('.' + normalized));
+    });
     if (
+      vettedOfficial
+      ||
       hostname.endsWith('.gov') || hostname.endsWith('.mil')
       || hostname === 'congress.gov' || hostname === 'govinfo.gov'
       || hostname === 'ecfr.gov' || hostname === 'supremecourt.gov'
@@ -157,7 +166,7 @@ async function discoverAuthoritySources(
     sources.push({
       title: item.title.trim().slice(0,240) || 'Research source',
       url,
-      kind: classifySource(url),
+      kind: classifySource(url, context.preferredOfficialDomains),
       excerpt: item.excerpt?.trim().slice(0,900) || undefined,
       provider:item.provider,
     });
