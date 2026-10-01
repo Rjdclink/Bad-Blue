@@ -90,6 +90,19 @@ function isPreferredOfficialCandidate(item: LegalMeshCandidate, options: LegalMe
   return preferredHosts.some(preferred => host === preferred || host.endsWith(`.${preferred}`));
 }
 
+function fuseRankedCandidates(groups: readonly LegalMeshCandidate[][]): LegalMeshCandidate[] {
+  const scores = new Map<string, number>();
+  const byUrl = new Map<string, LegalMeshCandidate>();
+  for (const group of groups) {
+    group.forEach((item, index) => {
+      if (!byUrl.has(item.url)) byUrl.set(item.url, item);
+      scores.set(item.url, (scores.get(item.url) || 0) + 1 / (60 + index + 1));
+    });
+  }
+  return [...byUrl.values()].sort((left, right) =>
+    (scores.get(right.url) || 0) - (scores.get(left.url) || 0));
+}
+
 function diversify(items: LegalMeshCandidate[], limit = 16): LegalMeshCandidate[] {
   const byUrl = [...new Map(items.map(item => [item.url, item])).values()];
   const ranked = rankLexaraDiscoveryUrls(byUrl.map(item => item.url));
@@ -310,7 +323,7 @@ async function freeSearch(query: string, signal?: AbortSignal): Promise<LegalMes
       ddgs(query,controller.signal),
       openserp(query,controller.signal),
     ]);
-    return groups.flat();
+    return fuseRankedCandidates(groups);
   } finally {
     signal?.removeEventListener('abort', relayAbort);
   }
@@ -340,7 +353,7 @@ export async function discoverLegalMeshTier3(
     new Promise<string[]>(resolve=>setTimeout(()=>resolve([]),75)),
   ]);
   const learnedCandidates=learnedSources.map(url=>({url,title:'Previously successful Lexara source',tier:3 as const,provider:'lexara-learned'}));
-  const combined=[...groups.flat(),...learnedCandidates];
+  const combined=[...fuseRankedCandidates(groups),...learnedCandidates];
   const preferred=diversify(combined.filter(item=>isPreferredOfficialCandidate(item,options)),8);
   const preferredUrls=new Set(preferred.map(item=>item.url));
   const remainder=diversify(combined.filter(item=>!preferredUrls.has(item.url)),18);
