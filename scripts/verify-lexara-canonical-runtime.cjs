@@ -23,6 +23,7 @@ const legalWhat = read('server/services/4ji-orchestrator/legalwhat-orchestrator.
 const canonicalService = read('server/services/lexara/index.ts');
 const legacyService = read('server/services/alexara/index.ts');
 const legacyNeural = read('server/alexaraModule.ts');
+const backgroundBoundary = read('server/lexara/LexaraBackgroundResearchBoundary.ts');
 
 must(
   canonicalService.includes("from '../alexara'") &&
@@ -81,6 +82,14 @@ must(
     !legalWhat.includes('initializeAlexara') &&
     !legalWhat.includes("DomainFirewall.storeState(Domain.LEGAL_WHAT, 'alexara'"),
   'active LegalWhat orchestration stores and reports Lexara under the canonical identity',
+);
+
+must(
+  backgroundBoundary.includes("from './LexaraBackgroundInvestigation'") &&
+    !backgroundBoundary.includes('LexaraPantheonInvestigation') &&
+    !backgroundBoundary.includes('PantheonDiscoveryCoordinator') &&
+    !backgroundBoundary.includes('discoverPantheonSourcesParallel'),
+  'legacy Lexara background imports cannot silently reconnect the live runtime to Pantheon',
 );
 
 must(
