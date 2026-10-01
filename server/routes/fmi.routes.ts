@@ -469,7 +469,7 @@ export function setupFMIRoutes(app: Express): void {
 
       const storedFileResult = await pool.query(
         `SELECT id, user_id, file_name, file_type, file_size, storage_path,
-                uploaded_at, law_type, fmi_analysis_status, case_linkages
+                uploaded_at, law_type, fmi_analysis_status, case_linkages, extracted_metadata
          FROM evidence_files
          WHERE id = $1 AND user_id = $2`,
         [fileId, userId]
@@ -501,6 +501,13 @@ export function setupFMIRoutes(app: Express): void {
       let materialized: Awaited<ReturnType<typeof materializeMatterStorageRef>> | null = null;
       try {
         materialized = await materializeMatterStorageRef(storedFile.storage_path, storedFile.file_name);
+        const materializedBytes = await fs.readFile(materialized.filePath);
+        const expectedSha256 = String(storedFile.extracted_metadata?.sha256 || '').trim().toLowerCase();
+        const actualSha256 = sha256FileBytes(materializedBytes);
+        if (expectedSha256 && expectedSha256 !== actualSha256) {
+          throw new Error('F.M.I. evidence integrity check failed: stored bytes no longer match the upload fingerprint');
+        }
+
         const extractedText = await extractLexaraEvidenceContent({
           filePath: materialized.filePath,
           fileName: storedFile.file_name,
@@ -528,7 +535,7 @@ export function setupFMIRoutes(app: Express): void {
 
         const isFormLike = /\b(form|petition|complaint|motion|application|affidavit|notice|summons|signature|case\s*(?:no|number))\b/i.test(extractedText);
         const formLayout = isFormLike && (storedFile.file_type === 'application/pdf' || String(storedFile.file_type).startsWith('image/'))
-          ? await detectFlatFormLayout(await fs.readFile(materialized.filePath), storedFile.file_type === 'application/pdf' ? 'pdf' : 'image')
+          ? await detectFlatFormLayout(materializedBytes, storedFile.file_type === 'application/pdf' ? 'pdf' : 'image')
           : null;
 
         const structuredSignalCount =
@@ -611,6 +618,11 @@ export function setupFMIRoutes(app: Express): void {
           success: true,
           message: 'F.M.I. analysis completed',
           analysis: analysisForClient,
+          integrity: {
+            sha256: actualSha256,
+            verified: expectedSha256 ? expectedSha256 === actualSha256 : true,
+            legacyUnfingerprinted: !expectedSha256,
+          },
           reviewInput: {
             sourceId: String(fileId),
             fileName: String(storedFile.file_name),
