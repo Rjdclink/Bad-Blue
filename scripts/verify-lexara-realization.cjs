@@ -959,7 +959,7 @@ must(
   'Lexara dynamically infers background and mixed legal/background intent without requiring magic search terms',
 );
 must(
-  lexaraBackgroundInvestigation.includes('Promise.all([') &&
+  lexaraBackgroundInvestigation.includes('Promise.allSettled([') &&
     lexaraBackgroundInvestigation.includes('searchLexaraBackgroundWithClaude({') &&
     lexaraBackgroundInvestigation.includes('claudeCitationEvidence') &&
     lexaraClaudeBackground.includes("provider: 'claude-web-search'") &&
