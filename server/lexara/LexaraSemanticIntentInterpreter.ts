@@ -1,6 +1,6 @@
 import { callClaude } from '../claude';
 import { CURRENT_AI_MODELS } from '../aiHarmonyModelRegistry';
-import { hasMultipleLexaraBackgroundSubjectCandidates, resolveLexaraBackgroundSubject } from './LexaraBackgroundSubject';
+import { hasMultipleLexaraBackgroundSubjectCandidates, resolveLexaraBackgroundSubject, type LexaraBackgroundSubjectKind } from './LexaraBackgroundSubject';
 import {
   decideLexaraResearchNeed,
   isLexaraConversationControl,
@@ -51,6 +51,7 @@ interface SemanticIntentPayload {
   intent?: LexaraResearchIntent;
   requestedFact?: string;
   subject?: string;
+  subjectKind?: string;
   objective?: string;
 }
 
@@ -84,6 +85,13 @@ function supportedSubject(
 function requestedFactFromSemantic(value: string | undefined): LexaraRequestedFact {
   const normalized = String(value || '').trim() as LexaraRequestedFact;
   return REQUESTED_FACTS.has(normalized) ? normalized : 'general-public-record';
+}
+
+function subjectKindFromSemantic(value: string | undefined): LexaraBackgroundSubjectKind | undefined {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'person' || normalized === 'organization' || normalized === 'place' || normalized === 'entity'
+    ? normalized
+    : undefined;
 }
 
 function deterministicSubjectNeedsSemanticReview(subject?: string): boolean {
@@ -138,11 +146,13 @@ Return JSON only:
   "intent": "factual" | "mixed" | "legal" | "conversation",
   "requestedFact": "age-dob" | "professional-license" | "marriage-divorce" | "employment" | "property" | "court-record" | "incarceration" | "business" | "financial-professional" | "healthcare-professional" | "sanctions-discipline" | "intellectual-property" | "domain-web" | "news-history" | "identity" | "contact-address" | "relatives-associates" | "social-online" | "public-image" | "government-public" | "education" | "vehicle" | "criminal-arrest" | "probation-parole" | "warrant" | "sex-offender" | "bankruptcy-financial" | "relationship-timeline" | "general-public-record" | "none",
   "subject": "exact subject from the conversation or empty string",
+  "subjectKind": "person" | "organization" | "place" | "entity",
   "objective": "one short description of exactly what external fact must be established"
 }
 
 Examples:
-<example>User: Tell me about Avery Morgan Example.\nOutput: {"needed":true,"intent":"factual","requestedFact":"general-public-record","subject":"Avery Morgan Example","objective":"Find the background facts the user is asking about for Avery Morgan Example."}</example>
+<example>User: Tell me about Avery Morgan Example.\nOutput: {"needed":true,"intent":"factual","requestedFact":"general-public-record","subject":"Avery Morgan Example","subjectKind":"person","objective":"Find the background facts the user is asking about for Avery Morgan Example."}</example>
+<example>User: What does eBay do?\nOutput: {"needed":true,"intent":"factual","requestedFact":"business","subject":"eBay","subjectKind":"organization","objective":"Determine the business activity of eBay."}</example>
 <example>User: Jordan Riley Example of Des Moines, Iowa is employed, right?\nOutput: {"needed":true,"intent":"factual","requestedFact":"employment","subject":"Jordan Riley Example","objective":"Determine whether Jordan Riley Example is currently employed."}</example>
 <example>Prior context researched Avery Example. User: And she still does the same thing?
 Output: {"needed":true,"intent":"factual","requestedFact":"employment","subject":"Avery Example","objective":"Determine whether Avery Example is still in the previously discussed employment."}</example>
@@ -173,6 +183,7 @@ ${text}`;
     const intent: LexaraResearchIntent = deterministic.intent === 'legal' ? 'mixed' : semanticIntent;
 
     const subject = supportedSubject(semantic.subject, text, previousUserTurns, needsSubjectReview);
+    const subjectKind = subjectKindFromSemantic(semantic.subjectKind);
     const requestedFact = requestedFactFromSemantic(semantic.requestedFact);
     const effectiveFact = requestedFact === 'none' ? 'general-public-record' : requestedFact;
     const sourceCategories = sourceCategoriesForFact(effectiveFact, text);
@@ -192,6 +203,7 @@ ${text}`;
       requestedFact: effectiveFact,
       sourceCategories: sourceCategories.length ? sourceCategories : ['general-public-records'],
       subject,
+      subjectKind,
       standaloneQuery,
       inferred: true,
     };
