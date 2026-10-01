@@ -49,7 +49,7 @@ const log = createLogger('LEXARA');
 // TYPES AND INTERFACES
 // ============================================================================
 
-export interface AlexaraConfig {
+export interface LexaraConfig {
   enabled: boolean;
   crawlerIntervalMinutes: number;
   crawlerDurationMinutes: number;
@@ -57,6 +57,9 @@ export interface AlexaraConfig {
   legalDomains: string[];
   blockedDomains: string[];
 }
+
+/** @deprecated Import LexaraConfig from ../lexara instead. */
+export type AlexaraConfig = LexaraConfig;
 
 export interface LegalResearchRequest {
   query: string;
@@ -173,7 +176,7 @@ const LEGAL_DOMAINS = [
  */
 export class Lexara extends EventEmitter {
   private static instance: Lexara | null = null;
-  private config: AlexaraConfig;
+  private config: LexaraConfig;
   private status: LexaraStatus;
   private crawlerSchedule: CrawlerSchedule;
   private crawlerInterval: NodeJS.Timeout | null = null;
@@ -184,7 +187,7 @@ export class Lexara extends EventEmitter {
   private cade: CADE;
   private legalCrawler: InstantLegalCrawler;
 
-  private constructor(config?: Partial<AlexaraConfig>) {
+  private constructor(config?: Partial<LexaraConfig>) {
     super();
     
     this.config = {
@@ -227,7 +230,7 @@ export class Lexara extends EventEmitter {
   /**
    * Get singleton instance of LEXARA
    */
-  static getInstance(config?: Partial<AlexaraConfig>): Lexara {
+  static getInstance(config?: Partial<LexaraConfig>): Lexara {
     if (!Lexara.instance) {
       Lexara.instance = new Lexara(config);
     }
@@ -801,11 +804,11 @@ export class Lexara extends EventEmitter {
 }
 
 // Export singleton getter
-export const getLexara = (config?: Partial<AlexaraConfig>): Lexara => {
+export const getLexara = (config?: Partial<LexaraConfig>): Lexara => {
   return Lexara.getInstance(config);
 };
 
-// Backwards compatibility alias
+// Backwards compatibility aliases. Active runtime code imports canonical Lexara.
 export const getAlexara = getLexara;
 export { Lexara as Alexara };
 
