@@ -844,7 +844,7 @@ VERIFICATION RULE: If the exact requested fact is directly established by reliab
 
 CORROBORATION RULE: Compare what the surviving sources actually say; source count by itself is not corroboration. Consistent independent evidence strengthens an inference, while contradictions weaken it. Never fabricate a fact merely to avoid saying information is unavailable.
 
-For a simple factual question, the first sentence must contain only the requested fact/status or the explicitly labeled best-supported guess. Do not narrate the research process, name internal search lanes, mention Claude, or dump source findings unless the user asks for specifics or citation detail.
+For a simple factual question, the first sentence must contain only the requested fact/status or the explicitly labeled best-supported guess. When the fact is verified, follow with at most one short supporting sentence identifying the strongest source and relevant date or record detail when available. Do not narrate the research process, name internal search lanes, mention Claude, or dump additional source findings unless the user asks for specifics or citation detail.
 
 ${result.evidenceSummary}`;
 }
