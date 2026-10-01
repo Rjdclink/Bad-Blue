@@ -306,7 +306,7 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
   try {
     send('started', { status: 'researching' });
     const previousMessages = sanitizePreviousMessages((rawContext as any).previousMessages);
-    const documentIntent = detectDocumentIntent(prompt, previousMessages);
+    let documentIntent = detectDocumentIntent(prompt, previousMessages);
     const requestedSessionId = cleanOptionalString((rawContext as any).sessionId, 128);
     const representationContext = await loadRepresentationContext(
       req,
@@ -315,13 +315,19 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       (rawContext as any).representationMatter,
     );
     const activeSessionId = representationContext.activeSessionId || requestedSessionId || `lexara-${Date.now()}`;
+    const effectivePreviousMessages = representationContext.activeMatter
+      && requestedSessionId
+      && activeSessionId !== requestedSessionId
+      ? []
+      : previousMessages;
+    documentIntent = detectDocumentIntent(prompt, effectivePreviousMessages);
     const explicitJurisdiction = cleanOptionalString((rawContext as any).jurisdiction, 80);
     const locationState = explicitJurisdiction ? null : await resolveBestLocationEstimate(
       String(req.headers['x-real-ip'] || req.headers['cf-connecting-ip'] || req.ip || ''),
       cleanDeviceLocation((rawContext as any).deviceLocation),
     );
     const result = await generateLexaraConversationResponse(prompt, {
-      previousMessages,
+      previousMessages: effectivePreviousMessages,
       lawType: cleanOptionalString((rawContext as any).lawType),
       lawTypeName: cleanOptionalString((rawContext as any).lawTypeName, 160),
       jurisdiction: explicitJurisdiction,
@@ -346,7 +352,7 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
     });
 
     const reasoningDocumentIntent = detectDocumentIntent(result.text, [
-      ...previousMessages,
+      ...effectivePreviousMessages,
       { role: 'user', content: prompt },
     ]);
     if (!documentIntent.requested && reasoningDocumentIntent.requested && reasoningDocumentIntent.explicit && reasoningDocumentIntent.documentType !== 'Custom Document') {
@@ -460,7 +466,12 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       (rawContext as any).representationMatter,
     );
     const sessionId = representationContext.activeSessionId || requestedSessionId || `lexara-${Date.now()}`;
-    const documentIntent = detectDocumentIntent(prompt, previousMessages);
+    const effectivePreviousMessages = representationContext.activeMatter
+      && requestedSessionId
+      && sessionId !== requestedSessionId
+      ? []
+      : previousMessages;
+    const documentIntent = detectDocumentIntent(prompt, effectivePreviousMessages);
 
     log.info('[LEXARA] Conversational legal turn received', {
       promptLength: prompt.length,
@@ -481,7 +492,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
     let conversationResult: Awaited<ReturnType<typeof generateLexaraConversationResponse>>;
     try {
       conversationResult = await generateLexaraConversationResponse(prompt, {
-        previousMessages,
+        previousMessages: effectivePreviousMessages,
         lawType,
         lawTypeName,
         jurisdiction: explicitJurisdiction,
@@ -520,7 +531,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
     // completed legal reasoning bridge an implicit document need into the
     // existing document workflow. This does not add another model call.
     const reasoningDocumentIntent = detectDocumentIntent(responseText, [
-      ...previousMessages,
+      ...effectivePreviousMessages,
       { role: 'user', content: prompt },
     ]);
     if (!documentIntent.requested && reasoningDocumentIntent.requested && reasoningDocumentIntent.explicit && reasoningDocumentIntent.documentType !== 'Custom Document') {
