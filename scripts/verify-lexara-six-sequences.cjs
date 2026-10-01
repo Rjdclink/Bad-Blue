@@ -114,8 +114,14 @@ if (!background.includes('Promise.all([')
   || !background.includes('claudeCitationEvidence')) {
   throw new Error('Claude web search is not running in parallel with Lexara native background discovery/evidence scoring');
 }
-for (const claudeTransportToken of ['callClaudeWebSearch', "web_search_20260318", 'web_search_requests', "stop_reason !== 'pause_turn'"]) {
+for (const claudeTransportToken of ['callClaudeWebSearch', "web_search_20260318", "allowed_callers: ['direct']", 'web_search_requests', "stop_reason !== 'pause_turn'"]) {
   if (!claudeTransport.includes(claudeTransportToken)) throw new Error('Claude web-search transport missing: '+claudeTransportToken);
+}
+if (!orchestrator.includes('const backgroundClaudeModel = context.allowClaudeOpus === true')
+  || !orchestrator.includes('CURRENT_AI_MODELS.claudeBalanced')
+  || !orchestrator.includes('CURRENT_AI_MODELS.claudeFast')
+  || !background.includes('claudeResearchModel: backgroundClaudeModel')) {
+  throw new Error('Claude background web search does not preserve trial/paid model routing');
 }
 if (!background.includes('This is only a guess, not a verified fact')
   || !background.includes('ANSWER-SCOPE RULE')
