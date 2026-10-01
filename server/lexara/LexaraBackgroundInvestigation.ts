@@ -433,8 +433,8 @@ export async function investigateLexaraBackgroundQuestion(
       ? resolveLexaraBackgroundSubject(decision.subject, priorTurns, context.jurisdiction)
         || {
           name: decision.subject,
-          kind: 'person' as const,
-          identifiable: false,
+          kind: decision.subjectKind || 'person' as const,
+          identifiable: decision.subjectKind === 'organization' || decision.subjectKind === 'entity',
           location: context.jurisdiction,
         }
       : null)
