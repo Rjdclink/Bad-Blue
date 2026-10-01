@@ -73,7 +73,7 @@ const LexaraLiveConsentModal = memo(function LexaraLiveConsentModal({
         navigator.mediaDevices.getUserMedia({
           audio: {
             echoCancellation: true,
-            noiseSuppression: true,
+            noiseSuppression: false,
             autoGainControl: true,
           },
           video: false,
