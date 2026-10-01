@@ -92,14 +92,14 @@ const CASE_CITATION_RE = new RegExp(
 
 function normalizeReporter(value: string): string {
   return value
-    .replace(/\\s+/g, ' ')
-    .replace(/\\.\\s+/g, '.')
+    .replace(/\s+/g, ' ')
+    .replace(/\.\s+/g, '.')
     .trim()
     .toLowerCase();
 }
 
 function normalizedCitation(value: string): string {
-  return value.replace(/\\s+/g, ' ').replace(/\\.\\s+/g, '.').trim();
+  return value.replace(/\s+/g, ' ').replace(/\.\s+/g, '.').trim();
 }
 
 export function extractCaseCitations(text: string): Array<{ citation: string; volume: string; reporter: string; page: string }> {
@@ -143,10 +143,10 @@ async function fetchWithTimeout(url: string, timeoutMs = 4_000): Promise<Respons
 function titleFromHtml(html: string): string | undefined {
   try {
     const $ = cheerio.load(html);
-    const heading = $('h1').first().text().replace(/\\s+/g, ' ').trim();
+    const heading = $('h1').first().text().replace(/\s+/g, ' ').trim();
     if (heading && heading.length <= 240) return heading;
-    const title = $('title').first().text().replace(/\\s+/g, ' ').trim();
-    return title ? title.replace(/\\s*[–—-]\\s*CourtListener.*$/i, '').slice(0, 240) : undefined;
+    const title = $('title').first().text().replace(/\s+/g, ' ').trim();
+    return title ? title.replace(/\s*[–—-]\s*CourtListener.*$/i, '').slice(0, 240) : undefined;
   } catch {
     return undefined;
   }
@@ -160,8 +160,8 @@ async function possibleNegativeTreatment(citation: string): Promise<{ found: boo
   const html = await response.text().catch(() => '');
   if (!html) return { found: false };
   const $ = cheerio.load(html);
-  const text = $('main').text().replace(/\\s+/g, ' ').trim();
-  const match = text.match(/.{0,110}\\b(overruled|abrogated|superseded|vacated)\\b.{0,170}/i);
+  const text = $('main').text().replace(/\s+/g, ' ').trim();
+  const match = text.match(/.{0,110}\b(overruled|abrogated|superseded|vacated)\b.{0,170}/i);
   return match
     ? { found: true, evidence: match[0].trim().slice(0, 320) }
     : { found: false };
@@ -188,7 +188,7 @@ async function verifyOneCitation(item: ReturnType<typeof extractCaseCitations>[n
   }
 
   const html = await response.text().catch(() => '');
-  const normalizedBody = html.replace(/\\s+/g, ' ').toLowerCase();
+  const normalizedBody = html.replace(/\s+/g, ' ').toLowerCase();
   const citationPresent = normalizedBody.includes(item.citation.toLowerCase())
     || response.url.includes('/opinion/')
     || response.url.includes(`/c/${slug}/${item.volume}/${item.page}/`);
