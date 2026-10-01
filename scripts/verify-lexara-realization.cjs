@@ -1288,8 +1288,14 @@ must(
     fmiRoutes.includes('supportsElements') &&
     fmiRoutes.includes('weakensDefenses') &&
     representationEngine.includes('evidenceMap') &&
-    representationEngine.includes('proceduralRequirements'),
-  'LEXARA keeps evidence, cross-document consistency, and filing/service/fee procedure inside the persistent matter record',
+    representationEngine.includes('proceduralRequirements') &&
+    representationEngine.includes('fileName?: string') &&
+    representationEngine.includes('mimeType?: string') &&
+    lexaraChatRoutes.includes("/matters/artifacts/:artifactId") &&
+    lexaraChatRoutes.includes('readMatterBuffer') &&
+    lexaraChatRoutes.includes('if (!savedArtifact && !documentIntent.requested') &&
+    conversation.includes('Open saved file'),
+  'LEXARA keeps evidence, cross-document consistency, filing/service/fee procedure, and exact saved-file retrieval inside the persistent matter record',
 );
 
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-location-fusion.cjs')], { stdio: 'inherit' });
