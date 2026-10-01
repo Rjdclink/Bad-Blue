@@ -1,6 +1,6 @@
 import { readFile, stat } from 'fs/promises';
 import { PDFDocument } from 'pdf-lib';
-import { claudeSupportsDirectMedia, extractClaudeMediaEvidence, isClaudeAvailable } from '../claude';
+import { callClaudeMediaExtraction, claudeSupportsDirectMedia, isClaudeAvailable } from '../claude';
 import {
   GoogleGenAI,
   createPartFromBase64,
@@ -122,7 +122,7 @@ async function extractPdfWithClaudeChunks(input: LexaraMediaExtractionInput): Pr
   if (!isClaudeAvailable()) throw new Error('Claude media extraction is not configured');
   const bytes = await readFile(input.filePath);
   if (claudeSupportsDirectMedia('application/pdf', bytes.length)) {
-    const response = await extractClaudeMediaEvidence({
+    const response = await callClaudeMediaExtraction({
       bytes,
       mimeType: 'application/pdf',
       fileName: input.fileName,
@@ -153,7 +153,7 @@ async function extractPdfWithClaudeChunks(input: LexaraMediaExtractionInput): Pr
       return;
     }
 
-    const response = await extractClaudeMediaEvidence({
+    const response = await callClaudeMediaExtraction({
       bytes: chunkBytes,
       mimeType: 'application/pdf',
       fileName: `${input.fileName} pages ${start + 1}-${endExclusive}`,
@@ -322,7 +322,7 @@ export async function extractLexaraEvidenceContent(
       });
       if (!claudeSupportsDirectMedia(mimeType, size)) throw geminiError;
       const bytes = await readFile(input.filePath);
-      const response = await extractClaudeMediaEvidence({
+      const response = await callClaudeMediaExtraction({
         bytes,
         mimeType,
         fileName: input.fileName,
