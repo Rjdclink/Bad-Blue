@@ -962,7 +962,9 @@ must(
     lexaraBackgroundInvestigation.includes('claudeCitationEvidence') &&
     lexaraClaudeBackground.includes("provider: 'claude-web-search'") &&
     claudeService.includes('callClaudeWebSearch') &&
-    claudeService.includes('web_search_20260318'),
+    claudeService.includes('web_search_20260318') &&
+    claudeService.includes("allowed_callers: ['direct']") &&
+    lexaraConversationOrchestrator.includes('const backgroundClaudeModel = context.allowClaudeOpus === true'),
   'Claude web search runs in parallel with Lexara native background discovery and feeds the same evidence gate',
 );
 must(
