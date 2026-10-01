@@ -33,7 +33,7 @@ function candidates(text: string): string[] {
 }
 
 function classify(name: string, text: string): LexaraBackgroundSubjectKind {
-  if (ORGANIZATION.test(name) || new RegExp(`\\b(?:company|business|corporation|nonprofit)\\s+(?:named|called)?\\s*${escapeRegExp(name)}\\b`, 'i').test(text)) return 'organization';
+  if (ORGANIZATION.test(name) || new RegExp(`\\b(?:company|business|organization|corporation|firm|nonprofit|institution)\\s+(?:named|called)?\\s*${escapeRegExp(name)}\\b`, 'i').test(text)) return 'organization';
   if (PLACE.test(name) || new RegExp(`\\b(?:city|town|county|place|location|landmark)\\s+(?:of|named|called)?\\s*${escapeRegExp(name)}\\b`, 'i').test(text)) return 'place';
   if (/\b(?:product|project|ship|aircraft|organization|institution|website)\s+(?:named|called)\b/i.test(text)) return 'entity';
   return 'person';
