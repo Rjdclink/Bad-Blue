@@ -65,6 +65,7 @@ const lexaraLegalMesh = read('server/lexara/LegalProviderMesh.ts');
 const lexaraDiscoveryLearning = read('server/lexara/LexaraDiscoveryLearning.ts');
 const lexaraResearchAssist = read('server/lexara/LexaraResearchAssist.ts');
 const lexaraSemanticIntent = read('server/lexara/LexaraSemanticIntentInterpreter.ts');
+const lexaraBackgroundSubject = read('server/lexara/LexaraBackgroundSubject.ts');
 const lexaraClaudeBackground = read('server/lexara/LexaraClaudeBackgroundSearch.ts');
 const claudeService = read('server/claude.ts');
 const pantheonInvestigation = read('server/lexara/LexaraPantheonInvestigation.ts');
@@ -957,6 +958,31 @@ must(
     lexaraConversationOrchestrator.indexOf('semanticResearchDecisionPromise') < lexaraConversationOrchestrator.indexOf('await resolveUSJurisdiction(') &&
     lexaraConversationOrchestrator.includes('semanticResearchDecision'),
   'Lexara dynamically infers background and mixed legal/background intent without requiring magic search terms',
+);
+must(
+  lexaraSemanticIntent.includes('Raw capitalization parsing is fallback-only') &&
+    lexaraSemanticIntent.indexOf("const candidate = String(semanticSubject || '')") < lexaraSemanticIntent.indexOf('return resolveLexaraBackgroundSubject(prompt, previousUserTurns)?.name') &&
+    lexaraBackgroundInvestigation.includes('const decisionResolved = decision.subject') &&
+    lexaraBackgroundInvestigation.indexOf('const decisionResolved = decision.subject') < lexaraBackgroundInvestigation.indexOf('const resolved = decisionResolved') &&
+    lexaraBackgroundSubject.includes('qualifiedOfLocation') &&
+    lexaraBackgroundSubject.includes('explicitPlace?.[2] || qualifiedOfLocation || prepositionLocation || jurisdiction'),
+  'whole-utterance semantic subjects and explicit locality remain authoritative through the background handoff',
+);
+must(
+  lexaraResearchAssist.includes('TaskComplexity.LIGHTWEIGHT') &&
+    lexaraResearchAssist.includes('needsReasoning:false') &&
+    lexaraResearchAssist.includes('needsVerification:false') &&
+    lexaraResearchAssist.includes('needsSearchGrounding:false') &&
+    lexaraResearchAssist.includes('needsFastResponse:true') &&
+    lexaraResearchAssist.includes('requestTimeoutMs:2_500'),
+  'fallback query planning stays a single fast suggestion step instead of consuming the live retrieval budget with verification/synthesis',
+);
+must(
+  lexaraConversationOrchestrator.includes('(?:RETRIEVED:\\s*[^\\n]*\\n)?ASSESSMENT:') &&
+    lexaraConversationOrchestrator.includes('DIRECT|INFERENTIAL|PARTIAL|STRONG|PARTIAL\\/INFERENTIAL') &&
+    lexaraConversationOrchestrator.includes('researchSubject?: string') &&
+    lexaraConversationOrchestrator.includes('backgroundResearchLanes: backgroundInvestigation?.discoveryLanes || []'),
+  'current background evidence format, semantic subject verification, and lane observability stay aligned',
 );
 must(
   lexaraBackgroundInvestigation.includes('Promise.allSettled([') &&
