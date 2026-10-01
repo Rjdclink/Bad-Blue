@@ -202,6 +202,67 @@ export async function callClaude(
   }
 }
 
+export async function callClaudeMediaExtraction(input: {
+  bytes: Buffer;
+  mimeType: 'application/pdf' | 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+  fileName?: string;
+  instruction: string;
+  signal?: AbortSignal;
+}): Promise<{ content: string; tokensUsed: number }> {
+  const client = getClaudeClient();
+  const model = process.env.LEXARA_MEDIA_CLAUDE_MODEL?.trim() || CURRENT_AI_MODELS.claudeFast;
+  const base64 = input.bytes.toString('base64');
+  const mediaBlock = input.mimeType === 'application/pdf'
+    ? {
+        type: 'document',
+        source: { type: 'base64', media_type: 'application/pdf', data: base64 },
+        title: input.fileName || 'evidence.pdf',
+        citations: { enabled: true },
+      }
+    : {
+        type: 'image',
+        source: { type: 'base64', media_type: input.mimeType, data: base64 },
+      };
+
+  try {
+    const response = await (client.messages as any).create({
+      model,
+      max_tokens: 12_000,
+      messages: [{
+        role: 'user',
+        content: [
+          mediaBlock,
+          { type: 'text', text: input.instruction },
+        ],
+      }],
+    }, {
+      signal: input.signal,
+      maxRetries: 0,
+    });
+
+    const content = (response.content || [])
+      .flatMap((block: any) => block?.type === 'text' && typeof block.text === 'string' ? [block.text] : [])
+      .join('\n')
+      .trim();
+    if (!content) throw new Error('Claude media extraction returned no usable evidence content');
+
+    const usage = response.usage || {};
+    const tokensUsed = Number(usage.input_tokens || 0) + Number(usage.output_tokens || 0);
+    return { content, tokensUsed };
+  } catch (error: any) {
+    if (input.signal?.aborted) {
+      const reason = input.signal.reason;
+      if (reason instanceof Error || reason instanceof DOMException) throw reason;
+      throw new DOMException(typeof reason === 'string' ? reason : 'Claude media request cancelled', 'AbortError');
+    }
+    console.error('[Claude Media] Error:', error);
+    throw Object.assign(new Error(`Claude media extraction error: ${error?.message || String(error)}`), {
+      status: error?.status,
+      headers: error?.headers,
+    });
+  }
+}
+
 /**
  * Stream Claude text while preserving the same final-message semantics as callClaude.
  * Speech callbacks receive only conservative completed sentence chunks; the final
