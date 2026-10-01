@@ -608,9 +608,9 @@ export class CRYPTARAModule extends EventEmitter {
   }
 
   /**
-   * Share metadata with Lexara (legal domain) - metadata only.
+   * Share metadata with ALEXARA (legal domain) - metadata only
    */
-  async shareMetadataWithLexara(): Promise<{ patterns: number; confidence: number }> {
+  async shareMetadataWithALEXARA(): Promise<{ patterns: number; confidence: number }> {
     // Only share non-sensitive metadata
     const metadata = {
       patternsDetected: this.metrics.patternsDetected,
@@ -629,11 +629,6 @@ export class CRYPTARAModule extends EventEmitter {
       patterns: metadata.patternsDetected,
       confidence: result.confidence
     };
-  }
-
-  /** @deprecated Use shareMetadataWithLexara(). */
-  async shareMetadataWithALEXARA(): Promise<{ patterns: number; confidence: number }> {
-    return this.shareMetadataWithLexara();
   }
 
   /**
