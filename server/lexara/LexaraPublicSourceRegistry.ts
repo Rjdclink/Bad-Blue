@@ -142,12 +142,18 @@ export function buildLexaraSourceQueries(input: {
   const jurisdiction = input.jurisdiction || '';
   const base = [input.query, identity, jurisdiction].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
   const hinted = [base, ...hints.slice(0, 4)].filter(Boolean).join(' ');
-  const official = sources.slice(0, 3).map(source => {
+  const jurisdictionOfficial = [
+    identity || input.query,
+    input.requestedFact || hints.slice(0, 2).join(' '),
+    jurisdiction,
+    'official state agency board registry public record',
+  ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+  const official = sources.slice(0, 2).map(source => {
     try {
       return `site:${new URL(source.root).hostname} ${identity || input.query} ${input.requestedFact || hints.slice(0, 2).join(' ')} ${jurisdiction}`.replace(/\s+/g, ' ').trim();
     } catch {
       return '';
     }
   }).filter(Boolean);
-  return [...new Set([base, hinted, ...official].filter(Boolean))].slice(0, 5);
+  return [...new Set([base, hinted, jurisdictionOfficial, ...official].filter(Boolean))].slice(0, 5);
 }
