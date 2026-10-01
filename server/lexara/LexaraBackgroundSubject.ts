@@ -52,12 +52,16 @@ export function resolveLexaraBackgroundSubject(
   const followsPrior = refersToPriorSubject(current);
   const explicitPlace = current.match(/\b(?:city|town|county|village|state|place|location)\s+of\s+([A-Z][\p{L}.'’-]+)(?:,\s*([A-Z][\p{L}.'’-]+))?/u)
     || current.match(/\b([A-Z][\p{L}.'’-]+),\s*([A-Z][\p{L}.'’-]+)\b/u);
-  const name = candidates(current)[0]
+  const explicitEntity = current.match(/\b(company|business|organization|corporation|firm|nonprofit|website|domain|entity)\s+(?:named|called\s+)?["“]?([A-Z][\p{L}\p{N}.'’&-]*(?:\s+[A-Z][\p{L}\p{N}.'’&-]*){0,5})["”]?/iu);
+  const name = explicitEntity?.[2]
+    || candidates(current)[0]
     || (explicitPlace ? explicitPlace[1] : undefined)
     || (followsPrior ? [...previousUserTurns].reverse().flatMap(candidates)[0] : undefined);
   if (!name) return null;
   const context = `${followsPrior ? previousUserTurns.slice(-2).join(' ') : ''} ${current}`;
-  const kind = explicitPlace?.[1] === name ? 'place' : classify(name, context);
+  const kind = explicitEntity?.[2] === name
+    ? /^(?:website|domain|entity)$/i.test(explicitEntity[1]) ? 'entity' : 'organization'
+    : explicitPlace?.[1] === name ? 'place' : classify(name, context);
   const location = jurisdiction || explicitPlace?.[2] || context.match(/\b(?:in|from|near)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?(?:,\s*[A-Z]{2})?)\b/)?.[1];
   return {
     name,
