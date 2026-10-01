@@ -47,7 +47,7 @@ export async function searchLexaraBackgroundWithClaude(input: {
 
   try {
     const result = await callClaudeWebSearch(prompt, {
-      maxTokens: 700,
+      maxTokens: 1024,
       maxUses: 4,
       signal: input.signal,
       systemPrompt: [
