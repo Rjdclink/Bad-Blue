@@ -134,7 +134,10 @@ must(
     voiceMode.includes('initializeRealtimeRecognition') &&
     voiceMode.includes("provider: 'deepgram-flux'") &&
     conversation.includes('const BROWSER_FINAL_FALLBACK_SETTLE_MS = 1_200') &&
-    conversation.includes('Choose DOCX or PDF to generate your draft and download it.') &&
+    conversation.includes('Preview the complete document or download it in your preferred format.') &&
+    conversation.includes('Preview Document') &&
+    conversation.includes('Download DOCX') &&
+    conversation.includes('Download PDF') &&
     conversation.includes('generateAndDownloadPendingDocument') &&
     conversation.includes("fetch('/api/lexara/documents/export'") &&
     conversation.includes('URL.createObjectURL(blob)') &&
@@ -1037,8 +1040,10 @@ must(
 must(
   orchestrator.includes('getLexaraLegalDomainProfile(context.lawType)') &&
     orchestrator.includes('formatLexaraDomainSpecialization(domainProfile)') &&
-    orchestrator.includes('researchHints: domainProfile?.researchHints') &&
-    orchestrator.includes('preferredOfficialDomains: domainProfile?.preferredOfficialDomains'),
+    orchestrator.includes('...(domainProfile?.researchHints || [])') &&
+    orchestrator.includes('...(domainProfile?.preferredOfficialDomains || [])') &&
+    orchestrator.includes('researchHints: jurisdictionResearchHints') &&
+    orchestrator.includes('preferredOfficialDomains: jurisdictionOfficialDomains'),
   'selected bookshelf domain controls both LEXARA reasoning and authority research priorities',
 );
 must(
