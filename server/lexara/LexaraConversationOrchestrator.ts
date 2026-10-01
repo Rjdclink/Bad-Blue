@@ -414,7 +414,9 @@ function verifiedExcerptDirectlyAnswers(
       || { name: researchSubject, kind: 'person' as const, identifiable: true, location: jurisdiction }
     : resolveLexaraBackgroundSubject(prompt, previousUserTurns, jurisdiction);
   if (!subject?.name) return false;
-  const verifiedSubjectName = subject.name.replace(/\s+(?:of|from|in)\s+[A-Z].*$/u, '').trim() || subject.name;
+  const verifiedSubjectName = subject.kind === 'person'
+    ? subject.name.replace(/\s+(?:of|from|in)\s+[A-Z].*$/u, '').trim() || subject.name
+    : subject.name;
   const normalizedEvidence = normalizeFactCheckText(excerpt);
   const subjectTokens = normalizeFactCheckText(verifiedSubjectName).match(/[\p{L}\p{N}]+/gu) || [];
   if (!subjectTokens.length || !subjectTokens.every(token => new RegExp(`(?:^|[^\\p{L}\\p{N}])${token}(?:$|[^\\p{L}\\p{N}])`, 'u').test(normalizedEvidence))) {
