@@ -14,6 +14,10 @@ function must(condition, message) {
 
 const voiceMode = read('client/src/hooks/useVoiceMode.ts');
 const conversation = read('client/src/components/LexaraConversation.tsx');
+const representationEngine = read('server/lexara/LexaraRepresentationEngine.ts');
+const matterStorage = read('server/lexara/LexaraMatterStorage.ts');
+const fmiRoutes = read('server/routes/fmi.routes.ts');
+const landingPage = read('client/src/pages/landing.tsx');
 const avatar = read('client/src/components/LexaraEtherealAvatar.tsx');
 const viewport = read('client/src/components/LexaraViewport.tsx');
 const embodimentEngine = read('client/src/lib/lexaraEmbodimentEngine.ts');
@@ -1254,6 +1258,40 @@ must(
     lexaraConversationOrchestrator.includes("researchDecision.requestedFact === 'age-dob'"),
   'live telemetry records the synthesized age fact or range when Lexara states one',
 );
+must(
+  representationEngine.includes('export interface RepresentationMatterState') &&
+    representationEngine.includes('Identify the COMPLETE current filing package for this exact proceeding and stage.') &&
+    representationEngine.includes("requestedCompleteness === 'complete'") &&
+    representationEngine.includes('research.hasPrimaryAuthority') &&
+    representationEngine.includes('completeSourceLooksLikePacket') &&
+    representationEngine.includes('sourceText.includes(proposedFormNumber.toLowerCase())') &&
+    representationEngine.includes('sourceText.includes(proposedRevision.toLowerCase())') &&
+    representationEngine.includes('representation-deadline-verification') &&
+    representationEngine.includes("source.kind !== 'primary'") &&
+    representationEngine.includes("if (tied.length > 1 && !best.exact) return null"),
+  'LEXARA representation state verifies complete packets, form metadata, deadlines, and ambiguous matter references before treating them as authoritative',
+);
+must(
+  lexaraChatRoutes.includes("accessState === 'paid'") &&
+    lexaraChatRoutes.includes("'trial-ephemeral'") &&
+    lexaraChatRoutes.includes('activeMatter: null') &&
+    matterStorage.includes("const DEFAULT_SUPABASE_BUCKET = 'legalwhat-matters'") &&
+    matterStorage.includes('public: false') &&
+    fmiRoutes.includes('return matches.length === 1 ? matches[0] : null') &&
+    conversation.includes('You have saved legal matters I can pull up if you want to continue where you left off. How may I help you?') &&
+    landingPage.includes('Paid access includes persistent legal matter storage'),
+  'paid users receive private persistent saved matters while trial users remain ephemeral and ambiguous evidence is never guessed into a case file',
+);
+must(
+  consultationRoutes.includes('document-consistency') &&
+    consultationRoutes.includes('Resolve document consistency issue') &&
+    fmiRoutes.includes('supportsElements') &&
+    fmiRoutes.includes('weakensDefenses') &&
+    representationEngine.includes('evidenceMap') &&
+    representationEngine.includes('proceduralRequirements'),
+  'LEXARA keeps evidence, cross-document consistency, and filing/service/fee procedure inside the persistent matter record',
+);
+
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-location-fusion.cjs')], { stdio: 'inherit' });
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-document-handoff.cjs')], { stdio: 'inherit' });
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'verify-lexara-pantheon-disconnect.cjs')], { stdio: 'inherit' });
