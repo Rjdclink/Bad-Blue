@@ -566,6 +566,9 @@ export async function generateLexaraConversationResponse(
     Boolean(jurisdiction?.startsWith('Federal + ')),
   );
   const claudeWorkload = deepClaudeNeeded ? 'deep-legal' as const : 'standard' as const;
+  const backgroundClaudeModel = context.allowClaudeOpus === true
+    ? CURRENT_AI_MODELS.claudeBalanced
+    : CURRENT_AI_MODELS.claudeFast;
   if (isLexaraRepeatRequest(cleanPrompt)) {
     const lastReply = [...(context.previousMessages || [])].reverse().find(message =>
       message.role === 'lexara' || message.role === 'assistant');
@@ -626,6 +629,7 @@ export async function generateLexaraConversationResponse(
         subject: researchDecision.subject,
         requestedFact: researchDecision.requestedFact,
         researchDecision,
+        claudeResearchModel: backgroundClaudeModel,
       }).then(discovery => ({
         sources: [], searchLeads: discovery.urls, categories: [], fullBackgroundReportRequested: false,
         endpoint: discovery.urls.length ? 'search-leads-only' as const : 'unavailable' as const,
@@ -640,6 +644,7 @@ export async function generateLexaraConversationResponse(
     signal: backgroundController.signal,
     onProgress: context.onResearchProgress,
     researchDecision,
+    claudeResearchModel: backgroundClaudeModel,
   })).catch(error => {
     console.warn('[LEXARA Background] application-owned research route unavailable', {
       error: error instanceof Error ? error.message : String(error),
