@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Mail, Send, CheckCircle2, Search, Home as HomeIcon } from "lucide-react";
+import { Mail, Send, CheckCircle2, Home as HomeIcon } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Link } from "wouter";
@@ -132,10 +132,6 @@ export default function Contact() {
             <Link href="/landing" className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1">
               <HomeIcon className="w-4 h-4" />
               Home
-            </Link>
-            <Link href="/login" className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1">
-              <Search className="w-4 h-4" />
-              Officer Search
             </Link>
             <Link href="/privacy" className="text-sm text-muted-foreground hover:text-foreground">Privacy</Link>
             <Link href="/terms" className="text-sm text-muted-foreground hover:text-foreground">Terms</Link>
