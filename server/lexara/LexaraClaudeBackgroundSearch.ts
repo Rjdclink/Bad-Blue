@@ -77,7 +77,7 @@ export async function searchLexaraBackgroundWithClaude(input: {
       if (source.citedText?.trim()) {
         citationEvidence.push({
           url,
-          content: source.citedText.trim(),
+          content: [source.title, source.citedText].filter(Boolean).join('\n').trim(),
           retrievedAt: now,
         });
       }
