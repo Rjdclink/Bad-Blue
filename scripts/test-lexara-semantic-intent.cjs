@@ -58,6 +58,14 @@ const claude = {
         subject: 'Avery Morgan Example',
         objective: 'Determine whether Avery Morgan Example is currently employed.',
       };
+    } else if (current === 'Tell me more about her.') {
+      payload = {
+        needed: true,
+        intent: 'factual',
+        requestedFact: 'general-public-record',
+        subject: 'Avery Morgan Example',
+        objective: 'Continue the requested background research about Avery Morgan Example.',
+      };
     } else if (current.includes('officer who arrested me')) {
       payload = {
         needed: true,
@@ -109,6 +117,17 @@ const semantic = execute('server/lexara/LexaraSemanticIntentInterpreter.ts', {
   assert.equal(claudeCalls, before + 1, 'background statement does not require question syntax or magic search words');
   assert.equal(statement.intent, 'factual');
   assert.equal(statement.requestedFact, 'employment');
+
+  before = claudeCalls;
+  const contextual = await semantic.resolveLexaraResearchDecisionSemantic(
+    'Tell me more about her.',
+    ['We were talking about Avery Morgan Example.'],
+    undefined,
+    'USER: We were talking about Avery Morgan Example.\nLEXARA: I can focus on whatever specific background fact you want.',
+  );
+  assert.equal(claudeCalls, before + 1);
+  assert.equal(contextual.intent, 'factual');
+  assert.equal(contextual.subject, 'Avery Morgan Example');
 
   before = claudeCalls;
   const known = await semantic.resolveLexaraResearchDecisionSemantic('Where does Avery Example work?', []);
