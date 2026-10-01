@@ -154,6 +154,24 @@ export default function FMIAnalysis({
     },
   });
 
+  const reviewSetMutation = useMutation({
+    mutationFn: async (payload: { fileIds: string[]; lawType: string; state: string; question?: string }) => {
+      const response = await apiRequest('/api/fmi/review-set', 'POST', payload);
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body?.error || 'F.M.I. combined document review failed');
+      }
+      return await response.json();
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Combined Document Review Failed',
+        description: error.message,
+        variant: 'destructive',
+      });
+    },
+  });
+
   const supportedAccept = {
     'image/jpeg': ['.jpg', '.jpeg'], 'image/png': ['.png'], 'image/gif': ['.gif'],
     'image/webp': ['.webp'], 'image/bmp': ['.bmp'], 'image/tiff': ['.tif', '.tiff'],
@@ -190,6 +208,7 @@ export default function FMIAnalysis({
         return;
       }
 
+      const completedFileIds: string[] = [];
       for (const file of acceptedFiles) {
         try {
           setUploadProgress(30);
@@ -206,10 +225,35 @@ export default function FMIAnalysis({
             state,
             caseContext: caseContext?.trim() || undefined,
           });
+          completedFileIds.push(uploaded.file.id);
           setUploadProgress(100);
         } catch {
           // The mutations surface the actionable error. Continue so one bad file
           // does not prevent other accepted evidence from being processed.
+        } finally {
+          window.setTimeout(() => setUploadProgress(0), 250);
+        }
+      }
+
+      if (completedFileIds.length >= 2) {
+        try {
+          setUploadProgress(90);
+          const combined = await reviewSetMutation.mutateAsync({
+            fileIds: completedFileIds,
+            lawType: lawType || 'general',
+            state,
+            question: caseContext?.trim() || undefined,
+          });
+          onAnalysisComplete?.({
+            documents: completedAnalysesRef.current,
+            documentSetReview: combined.review,
+            sources: combined.sources,
+          });
+          toast({
+            title: 'Combined Document Review Complete',
+            description: `Compared ${completedFileIds.length} uploaded files together.`,
+          });
+          setUploadProgress(100);
         } finally {
           window.setTimeout(() => setUploadProgress(0), 250);
         }
@@ -237,7 +281,7 @@ export default function FMIAnalysis({
     }
   };
 
-  const busy = uploadMutation.isPending || analyzeMutation.isPending;
+  const busy = uploadMutation.isPending || analyzeMutation.isPending || reviewSetMutation.isPending;
 
   return (
     <div className="space-y-6">
