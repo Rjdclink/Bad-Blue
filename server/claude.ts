@@ -240,6 +240,7 @@ export async function callClaudeWebSearch(
     type: 'web_search_20260318',
     name: 'web_search',
     max_uses: maxUses,
+    allowed_callers: ['direct'],
   }];
   const messages: any[] = [{ role: 'user', content: prompt }];
   let response: any;
