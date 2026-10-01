@@ -410,7 +410,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     // consent may have populated the signal; text-only mode never gets a surprise prompt.
     void captureLexaraDeviceLocation({ prompt: false }).catch(() => undefined);
   }, []);
-  const [pendingDocument, setPendingDocument] = useState<{ title: string; facts: string; state: string; templateMode: boolean; missingFields?: string[] } | null>(null);
+  const [pendingDocument, setPendingDocument] = useState<{ title: string; facts: string; state: string; templateMode: boolean; missingFields?: string[]; packetItem?: boolean } | null>(null);
   const [showReviewPrompt, setShowReviewPrompt] = useState(false);
 
   const conversationRef = useRef<ConversationMessage[]>([]);
@@ -1196,6 +1196,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             facts,
             state: resolvedJurisdiction,
             templateMode: data.documentIntent.templateMode === true,
+            packetItem: data.documentIntent.packetItem === true,
           });
           pendingActionRef.current = { kind: 'document', label: pendingTitle };
         }
@@ -1582,6 +1583,8 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
           facts: pendingDocument.facts,
           lawType: lawTypeId,
           documentType: pendingDocument.title,
+          packetItem: pendingDocument.packetItem === true,
+          packetItemTitle: pendingDocument.packetItem ? pendingDocument.title : undefined,
           templateMode: pendingDocument.templateMode,
           instructions: pendingDocument.templateMode
             ? 'Create the requested blank/template legal document. Preserve unknown required facts as bracketed placeholders.'
