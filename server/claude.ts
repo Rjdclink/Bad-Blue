@@ -425,3 +425,91 @@ export async function generateClaudeLegalConsultation(
   
   return content;
 }
+
+
+export interface ClaudeMediaExtractionInput {
+  bytes: Buffer;
+  mimeType: string;
+  fileName?: string;
+  instruction: string;
+  signal?: AbortSignal;
+}
+
+const CLAUDE_DIRECT_IMAGE_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+]);
+
+export function claudeSupportsDirectMedia(mimeType: string, byteLength: number): boolean {
+  const type = String(mimeType || '').toLowerCase();
+  if (type === 'application/pdf') {
+    // Base64 expands bytes by roughly one third. Stay well inside the 32 MB
+    // standard request limit documented by Anthropic.
+    return byteLength > 0 && byteLength <= 20 * 1024 * 1024;
+  }
+  if (CLAUDE_DIRECT_IMAGE_TYPES.has(type)) {
+    // Anthropic caps directly supplied images at 10 MB encoded. A 7 MB raw
+    // image remains below that ceiling after base64 expansion.
+    return byteLength > 0 && byteLength <= 7 * 1024 * 1024;
+  }
+  return false;
+}
+
+/**
+ * Direct multimodal extraction for PDFs and supported images.
+ * This deliberately stays separate from ordinary callClaude() so legal text
+ * reasoning keeps its proven request shape.
+ */
+export async function extractClaudeMediaEvidence(
+  input: ClaudeMediaExtractionInput,
+): Promise<{ content: string; tokensUsed: number }> {
+  const client = getClaudeClient();
+  const mimeType = String(input.mimeType || '').toLowerCase();
+  if (!claudeSupportsDirectMedia(mimeType, input.bytes.length)) {
+    throw new Error(`Claude direct media extraction does not support ${mimeType || 'this file type/size'}`);
+  }
+
+  const source = {
+    type: 'base64' as const,
+    media_type: mimeType as any,
+    data: input.bytes.toString('base64'),
+  };
+  const mediaBlock: any = mimeType === 'application/pdf'
+    ? {
+        type: 'document',
+        source,
+        title: input.fileName || 'LegalWhat evidence',
+        citations: { enabled: true },
+      }
+    : {
+        type: 'image',
+        source,
+      };
+
+  const response = await client.messages.create({
+    model: process.env.LEXARA_MEDIA_CLAUDE_MODEL?.trim() || CURRENT_AI_MODELS.claudeBalanced,
+    max_tokens: 12_000,
+    messages: [{
+      role: 'user',
+      content: [
+        mediaBlock,
+        { type: 'text', text: input.instruction },
+      ] as any,
+    }],
+  } as any, {
+    signal: input.signal,
+    maxRetries: 0,
+  });
+
+  const content = response.content
+    .flatMap((block: any) => block?.type === 'text' && typeof block.text === 'string' ? [block.text] : [])
+    .join('\n')
+    .trim();
+  if (!content) throw new Error('Claude media extraction returned no usable evidence content');
+
+  const usage: any = response.usage || {};
+  const tokensUsed = Number(usage.input_tokens || 0) + Number(usage.output_tokens || 0);
+  return { content, tokensUsed };
+}
