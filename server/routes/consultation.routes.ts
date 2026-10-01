@@ -12,6 +12,7 @@ import { generateLegalAnalysis } from '../aiProvider';
 import { researchLegalAuthority, formatAuthorityResearchForSystem } from '../lexara/LexaraAuthorityResearch';
 import { resolveUSJurisdiction } from '../lexara/LexaraJurisdictionResolver';
 import { formatJurisdictionAuthorityForSystem, resolveJurisdictionAuthorityProfile } from '../lexara/LexaraJurisdictionAuthority';
+import { formatCitationVerificationForCorrection, verifyLegalCitationsInText } from '../lexara/LexaraCitationVerifier';
 import { resolveOfficialLegalForm, officialFormDirective } from '../lexara/OfficialLegalFormResolver';
 import { inspectOfficialForm, fillOfficialPdf, fillOfficialDocx } from '../lexara/OfficialFormFiller';
 import { overlayFlatOfficialPdf, validateFlatFormLayout } from '../lexara/FlatOfficialFormOverlay';
@@ -438,12 +439,44 @@ export function setupConsultationRoutes(app: Express): void {
       ].join('\n\n');
       document = await generateDraft(repairPrompt);
     }
-    const finalDocument = String(document || '').trim();
-    const finalValidation = validateLegalDocumentDraft(requestedType, finalDocument, templateMode);
+    let finalDocument = String(document || '').trim();
+    let finalValidation = validateLegalDocumentDraft(requestedType, finalDocument, templateMode);
     if (!finalValidation.valid || (filingLike && finalDocument.length < (templateMode ? 400 : 700))) {
       log.warn('Legal document draft rejected', { documentType: requestedType, reason: finalValidation.reason || 'filing draft too short', characters: finalDocument.length });
       return res.status(422).json({ error: 'LEXARA could not produce a validated legal-document draft of the requested type. The incomplete output was not exported.' });
     }
+
+    try {
+      const citationVerification = await verifyLegalCitationsInText(finalDocument);
+      const citationProblems = citationVerification.filter(item =>
+        item.status === 'unresolved' || item.possibleNegativeTreatment
+      );
+      if (citationProblems.length) {
+        const citationRepair = await generateDraft([
+          draftingPrompt,
+          'CITATION VERIFICATION REPAIR:',
+          formatCitationVerificationForCorrection(citationVerification),
+          'Revise the prior draft conservatively. Preserve its legal-document structure and all supported factual content.',
+          'Do not rely on any UNRESOLVED citation. If a citation has a possible negative-treatment signal, remove it unless the supplied authority assessment independently establishes that it remains valid for the proposition used.',
+          'Do not invent replacement citations. Return ONLY the complete repaired legal document.',
+          `PRIOR DRAFT:\n${finalDocument.slice(0, 18_000)}`,
+        ].join('\n\n'));
+        const repaired = String(citationRepair || '').trim();
+        const repairedValidation = validateLegalDocumentDraft(requestedType, repaired, templateMode);
+        if (repairedValidation.valid && (!filingLike || repaired.length >= (templateMode ? 400 : 700))) {
+          finalDocument = repaired;
+          finalValidation = repairedValidation;
+        } else {
+          return res.status(422).json({ error: 'LEXARA found a citation-verification problem and could not safely repair the draft. The draft was not exported.' });
+        }
+      }
+    } catch (error) {
+      log.warn('Document citation verification unavailable route-locally; retaining existing authority safeguards', {
+        error: error instanceof Error ? error.message : String(error),
+        documentType: requestedType,
+      });
+    }
+
     return res.json({
       title: documentLabel,
       documentType: documentLabel,
