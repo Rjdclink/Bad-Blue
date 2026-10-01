@@ -77,7 +77,7 @@ async function resolvePaidMatter(userId: string, lawType?: string): Promise<any 
 async function attachEvidenceArtifactToMatter(
   userId: string,
   matterId: string | undefined,
-  evidence: { id: string; name: string; storageRef: string; uploadedAt?: string | Date; analysis?: FMIAnalysisResult },
+  evidence: { id: string; name: string; storageRef: string; mimeType?: string; uploadedAt?: string | Date; analysis?: FMIAnalysisResult },
 ): Promise<void> {
   if (!matterId) return;
   const { storage: appStorage } = await import('../storage');
@@ -93,6 +93,8 @@ async function attachEvidenceArtifactToMatter(
       kind: 'evidence',
       status: 'saved',
       storageRef: evidence.storageRef,
+      fileName: evidence.name,
+      mimeType: evidence.mimeType,
       createdAt: evidence.uploadedAt ? new Date(evidence.uploadedAt).toISOString() : now,
       updatedAt: now,
     });
@@ -442,6 +444,7 @@ export function setupFMIRoutes(app: Express): void {
             id: String(fileId),
             name: String(storedFile.file_name),
             storageRef: String(storedFile.storage_path),
+            mimeType: String(storedFile.file_type || 'application/octet-stream'),
             uploadedAt: storedFile.uploaded_at,
             analysis,
           }).catch(error => log.warn('[F.M.I.] Matter artifact linkage failed route-locally', { error, fileId }));
