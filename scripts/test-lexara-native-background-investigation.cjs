@@ -75,6 +75,7 @@ const mesh = {
     state.tierCalls.push({ query, options });
     if (state.mode === 'empty') return [candidate('https://records.example.test/empty')];
     if (state.mode === 'employment') return [candidate('https://records.example.test/employer')];
+    if (state.mode === 'custom-general') return [candidate('https://records.example.test/civic-medal')];
     if (state.mode === 'age-inference') return [candidate('https://records.example.test/juvenile')];
     if (state.mode === 'converged-inference') return [
       candidate('https://records.example.test/juvenile-a'),
@@ -139,6 +140,14 @@ const retrieval = {
             target,
             content: 'Avery Example is an attorney in Toronto, Canada and has practiced employment law for many years.',
             retrievedAt: '2026-09-30T12:00:02.500Z',
+            contentType: 'text/html',
+          }];
+        }
+        if (target.endsWith('/civic-medal')) {
+          return [{
+            target,
+            content: 'Avery Example of Iowa received the Cedar Civic Medal in 2025 for volunteer service.',
+            retrievedAt: '2026-10-01T12:00:04.000Z',
             contentType: 'text/html',
           }];
         }
@@ -248,6 +257,29 @@ function reset(mode) {
   assert.match(verifiedPrompt, /cleared Lexara's subject-match and evidence threshold/i);
   assert.match(verifiedPrompt, /do not call it a guess/i);
 
+
+  reset('custom-general');
+  const customGeneral = await investigator.investigateLexaraBackgroundQuestion(
+    'Did Avery Example receive a civic medal?',
+    {
+      jurisdiction: 'Iowa',
+      researchDecision: {
+        needed: true,
+        reason: 'external-fact-question',
+        objective: 'Determine whether Avery Example received a civic medal.',
+        objectiveKind: 'external-fact',
+        intent: 'factual',
+        requestedFact: 'general-public-record',
+        sourceCategories: ['general-public-records'],
+        subject: 'Avery Example',
+        standaloneQuery: 'Avery Example civic medal Iowa',
+        inferred: true,
+      },
+    },
+  );
+  assert.equal(customGeneral.endpoint, 'evidence-sufficient',
+    'open-ended background objectives are evidence-gated by their semantic objective, not a fixed keyword taxonomy');
+  assert.match(customGeneral.evidenceSummary, /Cedar Civic Medal/i);
 
   reset('claude-only');
   const claudeOnly = await investigator.investigateLexaraBackgroundQuestion(
