@@ -95,7 +95,7 @@ function requestedFact(text: string): LexaraRequestedFact {
   if (/\b(?:property|real estate|parcel|deed|assessor|mortgage|owns?\s+(?:a\s+)?(?:house|home|land)|home ownership)\b/.test(value)) return 'property';
   if (/\b(?:court record|court case|docket|case filing|judgment|lawsuit|litigation)\b/.test(value)) return 'court-record';
   if (/\b(?:inmate|incarcerat\w*|prison|jail|custody|correctional|where is .+ (?:held|locked up))\b/.test(value)) return 'incarceration';
-  if (/\b(?:business|company|corporation|llc|registered agent|company officer|director|ownership)\b/.test(value)) return 'business';
+  if (/\b(?:business|company|corporation|corp\.?|inc\.?|llc|ltd\.?|holdings|technologies|industries|enterprises|registered agent|company officer|director|ownership)\b/.test(value)) return 'business';
   if (/\b(?:broker|financial adviser|investment adviser|finra|crd|securities license)\b/.test(value)) return 'financial-professional';
   if (/\b(?:npi|healthcare provider|health care provider|medical provider|practice address)\b/.test(value)) return 'healthcare-professional';
   if (/\b(?:sanction|excluded|exclusion|disciplin(?:e|ary)|debarred|ofac|oig)\b/.test(value)) return 'sanctions-discipline';
