@@ -63,6 +63,8 @@ const RESEARCH_PROGRESS_REPEAT_MS = 30_000;
 const ACKNOWLEDGEMENT_SOFT_TIMEOUT_MS = 450;
 const ACKNOWLEDGEMENT_DEDUPE_MS = 8_000;
 const ACKNOWLEDGEMENT_COOLDOWN_MS = 2_500;
+const SPEAKER_TAIL_GUARD_MS = 900;
+const REALTIME_OVERLAP_MIN_EOT_CONFIDENCE = 0.7;
 
 async function readLexaraSseResponse(response: Response, onEvent: (event: string, data: any) => void): Promise<any> {
   if (!response.ok || !response.body) throw new Error(`LEXARA stream failed (${response.status})`);
@@ -345,7 +347,40 @@ function isStrongBargeIn(text: string, meta: VoiceTranscriptMeta): boolean {
   return true;
 }
 
-function looksLikeLexaraEcho(candidate: string, spokenText: string): boolean {
+function speechWordDistance(left: string, right: string): number {
+  if (left === right) return 0;
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+    const current = [leftIndex];
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+      current[rightIndex] = Math.min(
+        current[rightIndex - 1] + 1,
+        previous[rightIndex] + 1,
+        previous[rightIndex - 1] + (left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1),
+      );
+    }
+    previous.splice(0, previous.length, ...current);
+  }
+  return previous[right.length];
+}
+
+function approximatelySameSpeechWord(left: string, right: string): boolean {
+  if (left === right) return true;
+  if (Math.min(left.length, right.length) < 4) return false;
+  const distance = speechWordDistance(left, right);
+  return distance <= 1 || distance / Math.max(left.length, right.length) <= 0.2;
+}
+
+function isLikelyPlaybackEchoFragment(value: string): boolean {
+  const normalized = normalizeSpeechText(value);
+  if (!normalized) return true;
+  const words = normalized.split(' ').filter(Boolean);
+  if (words.length > 4) return false;
+  if (/^(?:wait|stop|no|hold on|hang on|actually|but wait|let me finish)\b/.test(normalized)) return false;
+  return /^(?:on|in|at|to|from|with|for|of|by|about|under|over)\b/.test(normalized);
+}
+
+function looksLikeLexaraEcho(candidate: string, spokenText: string, tolerant = false): boolean {
   const normalizedCandidate = normalizeSpeechText(candidate);
   const normalizedSpoken = normalizeSpeechText(spokenText);
   if (!normalizedCandidate || !normalizedSpoken) return false;
@@ -355,7 +390,10 @@ function looksLikeLexaraEcho(candidate: string, spokenText: string): boolean {
 
   if (candidateWords.length === 1) {
     const word = candidateWords[0];
-    return word.length >= 5 && spokenWords.includes(word);
+    if (word.length < 5) return false;
+    return tolerant
+      ? spokenWords.some(spoken => approximatelySameSpeechWord(word, spoken))
+      : spokenWords.includes(word);
   }
 
   // Exact phrase leakage is strong echo evidence. For longer candidates compare
@@ -379,7 +417,37 @@ function looksLikeLexaraEcho(candidate: string, spokenText: string): boolean {
   }
 
   const orderedEchoRatio = longestRun / candidateWords.length;
-  return candidateWords.length >= 3 && longestRun >= 3 && orderedEchoRatio >= 0.8;
+  if (candidateWords.length >= 3 && longestRun >= 3 && orderedEchoRatio >= 0.8) return true;
+  if (!tolerant) return false;
+
+  let bestApproximateMatches = 0;
+  let bestApproximateHasAnchor = false;
+  for (let spokenStart = 0; spokenStart < spokenWords.length; spokenStart += 1) {
+    let candidateIndex = 0;
+    let spokenIndex = spokenStart;
+    let matches = 0;
+    let hasAnchor = false;
+    const spokenLimit = Math.min(spokenWords.length, spokenStart + candidateWords.length + 2);
+    while (candidateIndex < candidateWords.length && spokenIndex < spokenLimit) {
+      if (approximatelySameSpeechWord(candidateWords[candidateIndex], spokenWords[spokenIndex])) {
+        matches += 1;
+        if (candidateWords[candidateIndex].length >= 4) hasAnchor = true;
+        candidateIndex += 1;
+        spokenIndex += 1;
+      } else {
+        spokenIndex += 1;
+      }
+    }
+    if (matches > bestApproximateMatches || (matches === bestApproximateMatches && hasAnchor)) {
+      bestApproximateMatches = matches;
+      bestApproximateHasAnchor = hasAnchor;
+    }
+  }
+
+  const approximateRatio = bestApproximateMatches / candidateWords.length;
+  return bestApproximateHasAnchor
+    && bestApproximateMatches >= 2
+    && approximateRatio >= 0.75;
 }
 
 function emotionFromUserText(text: string): LEXARAEmotionHint {
@@ -466,9 +534,11 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const responseEmotionRef = useRef<LEXARAEmotionHint>('authoritative');
   const activeLexaraSpeechRef = useRef('');
   const recentLexaraSpeechRef = useRef<{ text: string; expiresAt: number }>({ text: '', expiresAt: 0 });
-  const autoInterruptRef = useRef<() => void>(() => undefined);
+  const recentLexaraSpeechEndedAtRef = useRef(0);
+  const autoInterruptRef = useRef<(reason?: string) => void>(() => undefined);
   const lastFinalVoiceSegmentRef = useRef<{ text: string; at: number }>({ text: '', at: 0 });
   const validatedBargeInUtterancesRef = useRef<Set<number>>(new Set());
+  const realtimeBargeInCandidatesRef = useRef<Set<number>>(new Set());
   const speculativeRequestRef = useRef<{ text: string; controller: AbortController; promise: Promise<Response> } | null>(null);
   const researchProgressTimerRef = useRef<number | null>(null);
 
@@ -548,24 +618,30 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       const observed = sanitizeLikelySpeechArtifacts(text, meta);
       if (!observed) return;
 
-      // Keep the microphone live while LEXARA speaks, but never trust VAD/AEC
-      // alone. A transcript must first survive lexical echo rejection before it
-      // can become either a barge-in probe or an authoritative user turn.
+      const normalizedObserved = normalizeSpeechText(observed);
+      const explicitPlaybackControl =
+        /^(?:wait|stop|no|hold on|hang on|actually|but wait|let me finish)\b/i.test(normalizedObserved);
       const echoReference = activeLexaraSpeechRef.current
         || (Date.now() <= recentLexaraSpeechRef.current.expiresAt
           ? recentLexaraSpeechRef.current.text
           : '');
+      const speakerTailActive =
+        recentLexaraSpeechEndedAtRef.current > 0
+        && Date.now() - recentLexaraSpeechEndedAtRef.current <= SPEAKER_TAIL_GUARD_MS;
+      const tolerantEchoCheck =
+        meta.startedDuringPlayback === true
+        || phaseRef.current === 'speaking'
+        || speakerTailActive;
 
-      if (echoReference && looksLikeLexaraEcho(observed, echoReference)) {
+      if (
+        !explicitPlaybackControl
+        && echoReference
+        && looksLikeLexaraEcho(observed, echoReference, tolerantEchoCheck)
+      ) {
+        lexaraRealtimeVoiceClient.reportInputDecision('realtime-input-rejected', 'suspected-echo');
         return;
       }
 
-      // Speaker-tail leakage can be transcribed as a plausible stock closer even
-      // when lexical echo matching misses it. During or immediately after LEXARA
-      // playback, short generic courtesy fragments are non-semantic unless the
-      // user produces a substantive turn. The server independently verifies the
-      // same suspicious class with the secondary ASR route.
-      const normalizedObserved = normalizeSpeechText(observed);
       const genericPlaybackTail = new Set([
         'thank you', 'thanks', 'bye', 'goodbye', 'you',
       ]);
@@ -575,22 +651,38 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         && genericPlaybackTail.has(normalizedObserved)
         && (meta.startedDuringPlayback || (meta.speechDurationMs || 0) < 1_200)
       ) {
+        lexaraRealtimeVoiceClient.reportInputDecision('realtime-input-rejected', 'generic-playback-tail');
+        return;
+      }
+
+      if (
+        speakerTailActive
+        && meta.engine === 'server'
+        && !meta.startedDuringPlayback
+        && !explicitPlaybackControl
+        && isLikelyPlaybackEchoFragment(observed)
+      ) {
+        lexaraRealtimeVoiceClient.reportInputDecision('realtime-input-rejected', 'speaker-tail');
         return;
       }
 
       if (meta.bargeInProbe) {
-        // Probe transcripts are non-destructive snapshots of the recording.
-        // They may yield the conversational floor, but never become user text;
-        // the complete recording remains authoritative after the user finishes.
+        // Flux StartOfTurn/Update is allowed to yield the conversational floor,
+        // but it never owns user text. The final EndOfTurn below must separately
+        // confirm the same utterance before it can enter the conversation.
         if (
           phaseRef.current === 'speaking'
           && !isSuspiciousGenericServerTranscript(observed, meta)
           && isStrongBargeIn(observed, meta)
         ) {
           if (typeof meta.utteranceId === 'number') {
-            validatedBargeInUtterancesRef.current.add(meta.utteranceId);
+            if (meta.provider === 'deepgram-flux') {
+              realtimeBargeInCandidatesRef.current.add(meta.utteranceId);
+            } else {
+              validatedBargeInUtterancesRef.current.add(meta.utteranceId);
+            }
           }
-          autoInterruptRef.current();
+          autoInterruptRef.current(explicitPlaybackControl ? 'explicit-floor-control' : 'barge-in-candidate');
         }
         return;
       }
@@ -598,22 +690,35 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       if (meta.startedDuringPlayback && typeof meta.utteranceId === 'number') {
         const alreadyValidated = validatedBargeInUtterancesRef.current.has(meta.utteranceId);
         if (!alreadyValidated) {
-          // A normal sentence that merely starts while LEXARA is speaking is not
-          // allowed to promote itself into user-turn authority. It must have won
-          // the non-destructive barge-in probe above. The only short-final
-          // exception is an explicit floor-control phrase, which preserves
-          // immediate "stop/wait/no" interruption without admitting plausible
-          // speaker-leakage hallucinations as blue user messages.
-          const explicitPlaybackControl =
-            /^(?:wait|stop|no|hold on|hang on|actually|but wait|let me finish)\b/i.test(observed.trim());
+          const realtimeCandidate =
+            meta.provider === 'deepgram-flux'
+            && realtimeBargeInCandidatesRef.current.has(meta.utteranceId);
+          const finalConfidenceStrong =
+            typeof meta.endOfTurnConfidence !== 'number'
+            || meta.endOfTurnConfidence >= REALTIME_OVERLAP_MIN_EOT_CONFIDENCE;
+          const finalRealtimeOwnership =
+            isFinal
+            && realtimeCandidate
+            && finalConfidenceStrong
+            && !isLikelyPlaybackEchoFragment(observed)
+            && !isSuspiciousGenericServerTranscript(observed, meta)
+            && isStrongBargeIn(observed, meta);
+
           if (
             isFinal
             && explicitPlaybackControl
             && !isSuspiciousGenericServerTranscript(observed, meta)
           ) {
             validatedBargeInUtterancesRef.current.add(meta.utteranceId);
-            if (phaseRef.current === 'speaking') autoInterruptRef.current();
+            lexaraRealtimeVoiceClient.reportInputDecision('realtime-input-confirmed', 'explicit-floor-control');
+            if (phaseRef.current === 'speaking') autoInterruptRef.current('explicit-floor-control');
+          } else if (finalRealtimeOwnership) {
+            validatedBargeInUtterancesRef.current.add(meta.utteranceId);
+            lexaraRealtimeVoiceClient.reportInputDecision('realtime-input-confirmed', 'confirmed-user-speech');
+            if (phaseRef.current === 'speaking') autoInterruptRef.current('confirmed-user-speech');
           } else {
+            realtimeBargeInCandidatesRef.current.delete(meta.utteranceId);
+            lexaraRealtimeVoiceClient.reportInputDecision('realtime-input-rejected', 'unverified-playback-overlap');
             return;
           }
         }
@@ -624,13 +729,13 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         && meta.engine === 'server'
         && isSuspiciousGenericServerTranscript(observed, meta)
       ) {
+        lexaraRealtimeVoiceClient.reportInputDecision('realtime-input-rejected', 'low-speech-evidence');
         return;
       }
 
       // Never interrupt LEXARA on an interim browser hypothesis. Speaker echo
-      // often appears first as an unstable interim transcript and was cutting
-      // off otherwise healthy ElevenLabs playback. Genuine barge-in remains
-      // available once a final, echo-screened transcript is committed.
+      // often appears first as an unstable interim transcript. Genuine barge-in
+      // remains available once a final, echo-screened transcript is committed.
       if (!isFinal) {
         if (phaseRef.current !== 'speaking') {
           voiceEndPendingRef.current = false;
@@ -640,12 +745,8 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       }
 
       if (phaseRef.current === 'speaking') {
-        // True barge-in remains first-class, but speaker echo and tiny final STT
-        // fragments are not allowed to chop LEXARA's playback. A deliberate
-        // interruption must survive lexical echo rejection above and carry
-        // enough final acoustic/transcript evidence to own the floor.
         if (!isStrongBargeIn(observed, meta)) return;
-        autoInterruptRef.current();
+        autoInterruptRef.current(explicitPlaybackControl ? 'explicit-floor-control' : 'confirmed-user-speech');
       }
 
       userSpeechObservedRef.current = true;
@@ -663,6 +764,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
       if (typeof meta.utteranceId === 'number') {
         validatedBargeInUtterancesRef.current.delete(meta.utteranceId);
+        realtimeBargeInCandidatesRef.current.delete(meta.utteranceId);
       }
       voiceTurnBufferRef.current = mergeSpeechSegments(voiceTurnBufferRef.current, observed);
 
@@ -826,6 +928,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       });
     } finally {
       activeLexaraSpeechRef.current = '';
+      recentLexaraSpeechEndedAtRef.current = Date.now();
       recentLexaraSpeechRef.current = { text, expiresAt: Date.now() + 8_000 };
       resumeListening();
       if (generation === undefined || generation === generationRef.current) {
@@ -1318,6 +1421,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
           const completion = lexaraRealtimeVoiceClient.endSpeechStream(completedTurnId);
           await completion;
           activeLexaraSpeechRef.current = '';
+          recentLexaraSpeechEndedAtRef.current = Date.now();
           recentLexaraSpeechRef.current = {
             text: progressiveSpokenText,
             expiresAt: Date.now() + 8_000,
@@ -1370,8 +1474,9 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
   handleMessageRef.current = handleUserMessage;
 
-  autoInterruptRef.current = () => {
-    stopSpeaking();
+  autoInterruptRef.current = (reason = 'confirmed-user-speech') => {
+    recentLexaraSpeechEndedAtRef.current = Date.now();
+    stopSpeaking(reason);
     resumeListening();
     setConversationPhase(liveEnabled && voiceReady ? 'listening' : 'text-only');
     setEmotion('calm');
