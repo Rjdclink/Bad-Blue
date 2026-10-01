@@ -49,20 +49,22 @@ export async function planLexaraResearchQueries(
       prompt,
       {
         context:UsageContext.USER,
-        complexity:TaskComplexity.MODERATE,
+        complexity:TaskComplexity.LIGHTWEIGHT,
         priority:TaskPriority.HIGH,
-        needsReasoning:true,
-        needsVerification:true,
-        needsSearchGrounding:true,
-        needsFastResponse:false,
-        estimatedTokens:350,
+        // Query suggestions are not evidence. A verification/synthesis chain here
+        // only burns the live research budget before real retrieval can run.
+        needsReasoning:false,
+        needsVerification:false,
+        needsSearchGrounding:false,
+        needsFastResponse:true,
+        estimatedTokens:250,
       },
       providers,
       {
         providerPolicy:'legalwhat',
         maxParticipants:1,
         maxFallbacks:0,
-        requestTimeoutMs:9_000,
+        requestTimeoutMs:2_500,
         signal:context.signal,
       },
     );
