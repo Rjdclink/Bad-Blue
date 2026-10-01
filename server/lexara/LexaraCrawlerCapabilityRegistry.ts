@@ -125,7 +125,7 @@ export const LEXARA_CRAWLER_CAPABILITY_POOL: readonly LexaraCrawlerDescriptor[] 
   c('seed-trinity', 'SeedFetchTrinity', 'seed-first', 'server/services/crawlers/seedFirst/SeedFetchTrinity.ts', ['web-discovery', 'verification'], 'retrieval', 'fast'),
   c('seed-sixdegrees', 'SeedFetchSixDegrees', 'seed-first', 'server/services/crawlers/seedFirst/SeedFetchSixDegrees.ts', ['social-graph', 'relationships'], 'retrieval', 'deep'),
 
-  c('instant-legal', 'InstantLegalCrawler', 'legal', 'server/services/alexara/instantLegalCrawler.ts', ['legal-authority', 'case-law', 'statutes', 'regulations'], 'retrieval', 'fast'),
+  c('instant-legal', 'InstantLegalCrawler', 'legal', 'server/services/lexara/instantLegalCrawler.ts', ['legal-authority', 'case-law', 'statutes', 'regulations'], 'retrieval', 'fast'),
   c('adaptive-legal', 'AdaptiveCrawler', 'legal', 'server/services/legalIntelligence/adaptiveCrawler.ts', ['legal-authority', 'semantic-extraction', 'deep-crawl'], 'retrieval', 'deep'),
   c('legal-crawler', 'LegalCrawler', 'legal', 'server/legalCrawler.ts', ['legal-authority', 'case-law', 'statutes', 'regulations'], 'retrieval', 'deep'),
   c('beneficial', 'BeneficialCrawler', 'legal', 'server/beneficialCrawler.ts', ['verification', 'pattern-analysis'], 'analysis', 'deep'),
