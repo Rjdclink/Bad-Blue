@@ -152,7 +152,7 @@ const retrieval = {
             contentType: 'text/html',
           }];
         }
-        if (target.endsWith('/employer')) {
+        if (target === 'https://records.example.test/employer') {
           return [{
             target,
             content: 'Avery Example of Iowa is employed by Example Industries as a compliance analyst.',
