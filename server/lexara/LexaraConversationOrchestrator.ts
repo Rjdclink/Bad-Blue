@@ -614,15 +614,25 @@ export async function generateLexaraConversationResponse(
   // background questions deliberately run both research domains in parallel.
   const mixedLegalFactNeed = sequencePlan.useLegalResearch && sequencePlan.useBackgroundResearch;
   const backgroundResearchRequested = sequencePlan.useBackgroundResearch;
-  const decisionBackgroundSubject = backgroundResearchRequested && researchDecision.subject
+  const parsedDecisionBackgroundSubject = backgroundResearchRequested && researchDecision.subject
     ? resolveLexaraBackgroundSubject(researchDecision.subject, previousUserTurns, jurisdiction)
-      || {
-        name: researchDecision.subject,
-        kind: researchDecision.subjectKind || 'person' as const,
-        identifiable: researchDecision.subjectKind === 'organization' || researchDecision.subjectKind === 'entity',
-        location: jurisdiction,
-      }
     : null;
+  const decisionBackgroundSubject = parsedDecisionBackgroundSubject
+    ? {
+        ...parsedDecisionBackgroundSubject,
+        kind: researchDecision.subjectKind || parsedDecisionBackgroundSubject.kind,
+        identifiable: parsedDecisionBackgroundSubject.identifiable
+          || researchDecision.subjectKind === 'organization'
+          || researchDecision.subjectKind === 'entity',
+      }
+    : backgroundResearchRequested && researchDecision.subject
+      ? {
+          name: researchDecision.subject,
+          kind: researchDecision.subjectKind || 'person' as const,
+          identifiable: researchDecision.subjectKind === 'organization' || researchDecision.subjectKind === 'entity',
+          location: jurisdiction,
+        }
+      : null;
   const promptBackgroundSubject = backgroundResearchRequested
     ? resolveLexaraBackgroundSubject(cleanPrompt, previousUserTurns, jurisdiction)
     : null;
