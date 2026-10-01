@@ -244,6 +244,9 @@ function reset(mode) {
   assert.equal(employment.recursionPasses, 1);
   assert.deepEqual(state.retrievalCalls, [['https://records.example.test/employer']]);
   assert.match(employment.evidenceSummary, /employed by Example Industries/i);
+  const verifiedPrompt = investigator.formatLexaraBackgroundResearchForSystem(employment);
+  assert.match(verifiedPrompt, /cleared Lexara's subject-match and evidence threshold/i);
+  assert.match(verifiedPrompt, /do not call it a guess/i);
 
 
   reset('claude-only');
@@ -269,6 +272,7 @@ function reset(mode) {
   const inferredPrompt = investigator.formatLexaraBackgroundResearchForSystem(inferredAge);
   assert.match(inferredPrompt, /strongest defensible answer/i);
   assert.match(inferredPrompt, /first sentence must contain only the requested fact/i);
+  assert.match(inferredPrompt, /did NOT clear Lexara's verification threshold/i);
   assert.match(inferredPrompt, /This is only a guess, not a verified fact/i);
 
   reset('converged-inference');
