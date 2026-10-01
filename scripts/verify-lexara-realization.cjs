@@ -499,8 +499,10 @@ must(
     lexaraLegalMesh.includes('SERPAPI_KEY') &&
     lexaraLegalMesh.includes('SCRAPINGBEE_API_KEY') &&
     lexaraLegalMesh.includes('planLexaraResearchQueries') &&
+    lexaraLegalMesh.includes('getLexaraConfiguredDiscoveryLanes') &&
+    lexaraBackgroundInvestigation.includes('new Set<string>(getLexaraConfiguredDiscoveryLanes())') &&
     !lexaraLegalMesh.includes('PantheonDiscoveryCoordinator'),
-  'Lexara owns the former non-crawler discovery lanes, archive fallback, paid fallback, and query expansion',
+  'Lexara owns and reports its independent discovery lanes, archive fallback, paid fallback, and query expansion even on empty-result searches',
 );
 must(
   lexaraSourceRegistry.includes('cdc-vital-records') &&
@@ -528,10 +530,11 @@ must(
     authorityResearch.includes('enrichAuthoritySourcesWithLexaraRetrieval') &&
     !authorityResearch.includes('selectLexaraCrawlerPlan') &&
     lexaraRetrievalBoundary.includes("purpose: 'lexara_legal_research'") &&
+    lexaraRetrievalBoundary.includes('REQUEST_TIMEOUT_MS = 2_500') &&
     !lexaraRetrievalBoundary.includes('PantheonRetrievalAdapter') &&
     !lexaraRetrievalBoundary.includes('pantheonRetrievalAdapter') &&
     !lexaraRetrievalBoundary.includes('../services/pantheon/'),
-  'Lexara legal research owns an independent retrieval boundary and does not execute through Pantheon',
+  'Lexara legal research owns a bounded independent retrieval boundary without Pantheon or artificially short public-record fetches',
 );
 must(
   pacer.includes('pacer.login.uscourts.gov/services/cso-auth') &&
