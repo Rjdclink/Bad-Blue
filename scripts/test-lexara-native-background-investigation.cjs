@@ -354,7 +354,7 @@ function reset(mode) {
   assert.equal(empty.endpoint, 'sources-exhausted');
   assert.deepEqual(Array.from(empty.sources), []);
   assert.equal(empty.searchLeads, undefined);
-  assert.match(empty.coverageNote, /not proof that no record exists/i);
+  assert.match(empty.coverageNote, /not a negative-record conclusion|not proof that no record exists/i);
 
   reset('dob-recursive');
   const legal = await investigator.investigateLexaraBackgroundQuestion(

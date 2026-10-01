@@ -9,16 +9,13 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Mail, Send, CheckCircle2, FileText, Scale, Users, Search, Home as HomeIcon } from "lucide-react";
+import { Mail, Send, CheckCircle2, Home as HomeIcon } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Link } from "wouter";
 import { SEOHead } from "@/components/SEOHead";
 import { PageBreadcrumbs } from "@/components/PageBreadcrumbs";
 import { SupportEmailFooter } from "@/components/SupportEmailFooter";
-import { AISystemShowcase } from "@/components/AISystemShowcase";
-import { usePageFaqSchema } from "@/hooks/useFaqSchema";
-import { HiddenFAQ } from "@/components/HiddenFAQ";
 
 const contactFormSchema = z.object({
   type: z.enum(['support', 'contact', 'report']),
@@ -31,8 +28,6 @@ const contactFormSchema = z.object({
 type ContactFormData = z.infer<typeof contactFormSchema>;
 
 export default function Contact() {
-  usePageFaqSchema("/contact");
-  
   const { toast } = useToast();
   const [submitted, setSubmitted] = useState(false);
 
@@ -77,12 +72,12 @@ export default function Contact() {
       "@context": "https://schema.org",
       "@type": "ContactPage",
       "name": "Contact Legal What? - Support",
-      "description": "Contact Legal What? for support with AI legal consultation, legal document tools, background reports, people-finding tools, inmate search, public records, and police accountability workflows.",
+      "description": "Contact Legal What? for support, questions, feedback, and account assistance.",
       "url": "https://legalwhat.com/contact",
       "mainEntity": {
         "@type": "Organization",
         "name": "Legal What?",
-        "description": "AI-assisted legal information and research platform with consultation, document, public-record, people-finding, background-report, inmate-search, and police-accountability tools.",
+        "description": "AI-assisted legal information and research platform.",
         "url": "https://legalwhat.com",
         "email": "contact.badblue@gmail.com",
         "contactPoint": {
@@ -119,7 +114,7 @@ export default function Contact() {
     <div className="min-h-screen bg-background">
       <SEOHead
         title="Contact Legal What? | Support"
-        description="Contact Legal What? for support with AI legal consultation, legal document tools, background reports, people-finding tools, inmate search, public records, and account questions."
+        description="Contact Legal What? for support, questions, feedback, and account assistance."
         canonicalUrl="https://legalwhat.com/contact"
         breadcrumbs={[
           { name: "Contact & Support", url: "https://legalwhat.com/contact" }
@@ -138,10 +133,6 @@ export default function Contact() {
               <HomeIcon className="w-4 h-4" />
               Home
             </Link>
-            <Link href="/login" className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1">
-              <Search className="w-4 h-4" />
-              Officer Search
-            </Link>
             <Link href="/privacy" className="text-sm text-muted-foreground hover:text-foreground">Privacy</Link>
             <Link href="/terms" className="text-sm text-muted-foreground hover:text-foreground">Terms</Link>
           </nav>
@@ -155,80 +146,6 @@ export default function Contact() {
           <h1 className="text-4xl font-bold mb-4">Contact Legal What?</h1>
           <p className="text-xl text-muted-foreground max-w-3xl mx-auto">
             Legal What? is an AI-assisted legal information and research platform with tools for two-way legal consultation, document workflows, background reports, people finding, inmate searches, public records, and police accountability.
-          </p>
-        </div>
-
-        {/* Key Features Grid */}
-        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
-          <Card className="text-center">
-            <CardContent className="pt-6">
-              <FileText className="w-10 h-10 text-primary mx-auto mb-3" />
-              <h3 className="font-semibold mb-2">Misconduct Complaints</h3>
-              <p className="text-sm text-muted-foreground">
-                File professional police misconduct complaints with automatic routing to oversight agencies.
-              </p>
-            </CardContent>
-          </Card>
-          
-          <Card className="text-center">
-            <CardContent className="pt-6">
-              <Scale className="w-10 h-10 text-primary mx-auto mb-3" />
-              <h3 className="font-semibold mb-2">§1983 Lawsuits</h3>
-              <p className="text-sm text-muted-foreground">
-                Generate U.S. District Court-compliant civil rights lawsuits against officers who violated your rights.
-              </p>
-            </CardContent>
-          </Card>
-          
-          <Card className="text-center">
-            <CardContent className="pt-6">
-              <Users className="w-10 h-10 text-primary mx-auto mb-3" />
-              <h3 className="font-semibold mb-2">Resignation Petitions</h3>
-              <p className="text-sm text-muted-foreground">
-                Create community petitions demanding officer resignation, delivered to city councils.
-              </p>
-            </CardContent>
-          </Card>
-          
-          <Card className="text-center">
-            <CardContent className="pt-6">
-              <Search className="w-10 h-10 text-primary mx-auto mb-3" />
-              <h3 className="font-semibold mb-2">Officer Search</h3>
-              <p className="text-sm text-muted-foreground">
-                Free officer badge lookup and background search using public records and disciplinary data.
-              </p>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Why Legal What? */}
-        <div className="bg-card rounded-lg p-8 mb-12 border">
-          <h2 className="text-2xl font-bold mb-4 text-center">Why Choose Legal What??</h2>
-          <div className="grid md:grid-cols-2 gap-6">
-            <div>
-              <h3 className="font-semibold text-primary mb-2">Affordable Alternative to Attorneys</h3>
-              <p className="text-muted-foreground">
-                Civil rights attorneys can charge $300-500/hour. Legal What? provides professional legal document 
-                preparation at a fraction of the cost, making police accountability accessible to everyone.
-              </p>
-            </div>
-            <div>
-              <h3 className="font-semibold text-primary mb-2">Fully Remote — Never Leave Home</h3>
-              <p className="text-muted-foreground">
-                Complete every step online. File complaints, generate lawsuits, submit FOIA requests, and 
-                track your cases without visiting an office or courthouse. Justice from your living room.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* AI Technology Card */}
-        <div className="mb-12">
-          <h2 className="text-2xl font-bold mb-6 text-center">Advanced AI Technology</h2>
-          <AISystemShowcase variant="brief" />
-          <p className="text-center text-muted-foreground mt-4 max-w-2xl mx-auto">
-            Our 7-provider AI coordination system ensures every search, complaint, and legal document 
-            is analyzed by multiple specialized AI models for maximum accuracy and comprehensiveness.
           </p>
         </div>
 
@@ -414,100 +331,6 @@ export default function Contact() {
           </Card>
         )}
 
-        {/* Hidden Crawlable FAQ - Visually hidden but in DOM for SEO */}
-        <div 
-          className="sr-only" 
-          aria-hidden="false"
-          itemScope 
-          itemType="https://schema.org/FAQPage"
-        >
-          <h2>Frequently Asked Questions About Legal What? Police Accountability Tools</h2>
-          
-          <div itemScope itemProp="mainEntity" itemType="https://schema.org/Question">
-            <h3 itemProp="name">How do I file a police misconduct complaint online?</h3>
-            <div itemScope itemProp="acceptedAnswer" itemType="https://schema.org/Answer">
-              <p itemProp="text">
-                Legal What? provides a streamlined online complaint filing system. After creating a free account, 
-                navigate to the Complaint Form, describe the incident involving police misconduct, excessive force, 
-                or civil rights violations, and our AI will help format your complaint professionally. We automatically 
-                route completed complaints to the appropriate internal affairs division, civilian oversight board, 
-                or department command staff. You can track your complaint status and receive email updates without 
-                ever leaving your home.
-              </p>
-            </div>
-          </div>
-
-          <div itemScope itemProp="mainEntity" itemType="https://schema.org/Question">
-            <h3 itemProp="name">What is a petition demanding officer resignation and how does Legal What? help?</h3>
-            <div itemScope itemProp="acceptedAnswer" itemType="https://schema.org/Answer">
-              <p itemProp="text">
-                A resignation petition is a community-driven document calling for a specific police officer to 
-                resign from their position due to misconduct, abuse of power, or patterns of civil rights violations. 
-                Legal What?'s petition tool allows you to create professional petitions, collect digital signatures from 
-                community members, and automatically deliver the completed petition to city council members, police 
-                oversight boards, and local officials. This grassroots approach empowers communities to demand 
-                accountability when internal processes fail.
-              </p>
-            </div>
-          </div>
-
-          <div itemScope itemProp="mainEntity" itemType="https://schema.org/Question">
-            <h3 itemProp="name">How do I file a 42 U.S.C. Section 1983 civil rights lawsuit against a police officer?</h3>
-            <div itemScope itemProp="acceptedAnswer" itemType="https://schema.org/Answer">
-              <p itemProp="text">
-                Section 1983 of Title 42 of the United States Code allows citizens to sue government officials, 
-                including police officers, who violate their constitutional rights while acting under color of law. 
-                Legal What?'s lawsuit generator creates U.S. District Court-compliant legal documents including the 
-                complaint, summons, and civil cover sheet. Our system follows district-specific formatting rules 
-                for California, New York, Texas, and all federal districts. You can file the lawsuit yourself 
-                (pro se) or use our documents as a foundation when working with an attorney. This is an affordable 
-                alternative to paying hundreds of dollars per hour for civil rights attorney consultation.
-              </p>
-            </div>
-          </div>
-
-          <div itemScope itemProp="mainEntity" itemType="https://schema.org/Question">
-            <h3 itemProp="name">What is a FOIA request and how can Legal What? help me file one?</h3>
-            <div itemScope itemProp="acceptedAnswer" itemType="https://schema.org/Answer">
-              <p itemProp="text">
-                FOIA (Freedom of Information Act) requests allow citizens to obtain public records from government 
-                agencies, including police departments. Legal What? generates state-specific FOIA requests that comply 
-                with your state's public records laws, including proper statutory citations, deadlines, and exemption 
-                references. Our system automatically looks up the correct FOIA officer or records custodian for your 
-                target agency and routes your request appropriately. Common requests include body camera footage, 
-                disciplinary records, use-of-force reports, and internal investigation files.
-              </p>
-            </div>
-          </div>
-
-          <div itemScope itemProp="mainEntity" itemType="https://schema.org/Question">
-            <h3 itemProp="name">How much does Legal What? cost compared to hiring a civil rights attorney?</h3>
-            <div itemScope itemProp="acceptedAnswer" itemType="https://schema.org/Answer">
-              <p itemProp="text">
-                Civil rights attorneys typically charge $300-500 per hour, with initial consultations alone costing 
-                $200 or more. Complex police misconduct cases can cost $5,000-50,000 in legal fees. Legal What? offers 
-                individual services starting at affordable rates: complaint filing, FOIA requests, petition creation, 
-                and lawsuit document generation are each priced to be accessible to everyone. Our AI-powered legal 
-                consultation is free for registered users. Legal What? is designed to democratize access to police 
-                accountability tools, ensuring that cost is not a barrier to seeking justice.
-              </p>
-            </div>
-          </div>
-
-          <div itemScope itemProp="mainEntity" itemType="https://schema.org/Question">
-            <h3 itemProp="name">Can I use Legal What? without leaving my home?</h3>
-            <div itemScope itemProp="acceptedAnswer" itemType="https://schema.org/Answer">
-              <p itemProp="text">
-                Yes, Legal What? is a fully remote police accountability platform. Every feature is accessible online: 
-                search for officers by name and state, file misconduct complaints, generate §1983 civil rights lawsuits, 
-                submit FOIA requests, and create resignation petitions — all from your computer or phone. Documents 
-                are delivered electronically to appropriate agencies. You never need to visit a law office, courthouse, 
-                or police department. This remote convenience makes police accountability accessible to people who 
-                cannot take time off work, have mobility limitations, or live in rural areas far from legal services.
-              </p>
-            </div>
-          </div>
-        </div>
       </main>
 
       <SupportEmailFooter />
@@ -517,21 +340,13 @@ export default function Contact() {
         <div className="max-w-7xl mx-auto px-4">
           <div className="flex flex-wrap justify-center gap-6 text-sm text-muted-foreground">
             <Link href="/landing" className="hover:text-foreground">Home</Link>
-            <Link href="/login" className="hover:text-foreground">Officer Search</Link>
-            <Link href="/login" className="hover:text-foreground">Complaints/FOIA</Link>
-            <Link href="/login" className="hover:text-foreground">§1983 Lawsuit Generator</Link>
             <Link href="/contact" className="hover:text-foreground font-medium text-foreground">Contact</Link>
             <Link href="/privacy" className="hover:text-foreground">Privacy</Link>
             <Link href="/terms" className="hover:text-foreground">Terms</Link>
           </div>
-          <p className="text-center text-xs text-muted-foreground mt-4">
-            Legal What? — Affordable police accountability tools, fully online. Never leave home.
-          </p>
         </div>
       </footer>
 
-      {/* Hidden FAQ for SEO - Screen reader accessible, visually hidden */}
-      <HiddenFAQ path="/contact" />
     </div>
   );
 }
