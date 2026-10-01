@@ -54,7 +54,7 @@ export function assessGenericESignEligibility(input: {
   if (ESTATE_PATTERN.test(haystack) || documentType === 'Probate or Estate Document') {
     return unsupported('Generic LegalWhat e-signing is disabled for wills, codicils, testamentary trusts, and estate/probate documents unless the controlling jurisdiction is separately verified to permit the requested electronic execution method.');
   }
-  if (COURT_DOCUMENT_PATTERN.test(documentType)) {
+  if (COURT_DOCUMENT_PATTERN.test(haystack)) {
     return unsupported('Generic LegalWhat e-signing is disabled for court filings and official court documents. The controlling court rules must establish the permitted electronic-signature method.');
   }
   if (PRIMARY_RESIDENCE_NOTICE_PATTERN.test(haystack) && /\b(?:primary residence|home|residential|tenant|landlord)\b/i.test(haystack)) {
