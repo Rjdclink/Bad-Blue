@@ -43,6 +43,12 @@ export interface RepresentationPacket {
   courtOrAgency?: string;
   coverage: PacketCoverage;
   items: RepresentationPacketItem[];
+  proceduralRequirements: Array<{
+    category: 'filing' | 'service' | 'fee' | 'deadline' | 'hearing' | 'other';
+    text: string;
+    sourceUrl: string;
+    sourceTitle: string;
+  }>;
   unresolved: string[];
   verifiedAt?: string;
   completePacketSourceUrl?: string;
@@ -327,6 +333,7 @@ async function buildPacket(
     courtOrAgency: matter.courtOrAgency,
     coverage: 'unverified',
     items: [],
+    proceduralRequirements: [],
     unresolved: ['The complete official filing package has not yet been verified from current authoritative sources.'],
   };
   if (!research?.sources?.length) return empty;
@@ -338,12 +345,13 @@ async function buildPacket(
 
   const raw = await generateLegalAnalysis('representation-packet-planning', [
     'Create a structured filing-packet plan ONLY from the application-supplied sources below.',
-    'Return JSON only with keys: packetName, courtOrAgency, completeness, completePacketSourceUrl, unresolved, items.',
+    'Return JSON only with keys: packetName, courtOrAgency, completeness, completePacketSourceUrl, unresolved, items, proceduralRequirements.',
     'completeness must be one of complete, partial, unverified.',
     'Each item must have: title, formNumber, requirement, reason, sourceUrl, revision, documentKind.',
     'requirement must be mandatory, conditional, or optional.',
     'documentKind must be official-form, custom-draft, supporting-document, service-document, evidence, or other.',
     'Every item MUST cite one exact sourceUrl from the supplied source list. Omit any item that cannot be tied to one of those sources.',
+    'proceduralRequirements is an array of source-backed filing/service/fee/deadline/hearing requirements. Each entry must contain category, text, and one exact sourceUrl from the supplied source list. Do not include generic advice.',
     'Use complete only when an official packet/checklist/practice-manual source supports the complete package for this proceeding. Otherwise use partial.',
     'Never invent a form number, filing requirement, local rule, fee, service method, revision, deadline, or court.',
     '',
@@ -407,6 +415,24 @@ async function buildPacket(
     });
   }
 
+  const proceduralRequirements = (Array.isArray(parsed.proceduralRequirements) ? parsed.proceduralRequirements : [])
+    .slice(0, 30)
+    .flatMap((requirement: any) => {
+      const sourceUrl = normalizeSourceUrl(requirement?.sourceUrl);
+      const source = allowedSources.get(sourceUrl);
+      const text = clamp(requirement?.text, 700);
+      if (!source || !text) return [];
+      const category = ['filing','service','fee','deadline','hearing','other'].includes(requirement?.category)
+        ? requirement.category
+        : 'other';
+      return [{
+        category,
+        text,
+        sourceUrl: source.url,
+        sourceTitle: source.title,
+      }];
+    });
+
   const completePacketUrl = normalizeSourceUrl(parsed.completePacketSourceUrl);
   const completeSource = completePacketUrl ? allowedSources.get(completePacketUrl) : undefined;
   const completeSourceLooksLikePacket = Boolean(
@@ -441,6 +467,7 @@ async function buildPacket(
     courtOrAgency: clamp(parsed.courtOrAgency, 220) || matter.courtOrAgency,
     coverage,
     items,
+    proceduralRequirements,
     unresolved,
     verifiedAt: research.searchedAt,
     completePacketSourceUrl: completeSourceLooksLikePacket ? completeSource?.url : undefined,
@@ -790,6 +817,7 @@ export function formatRepresentationForSystem(
         status: item.status,
         sourceUrl: item.sourceUrl,
       })),
+      proceduralRequirements: current.packet.proceduralRequirements,
       unresolved: current.packet.unresolved,
     } : undefined,
     artifacts: current.artifacts.map(artifact => ({
