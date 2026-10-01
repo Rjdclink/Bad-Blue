@@ -19,6 +19,7 @@ import {
 } from './LexaraPublicSourceRegistry';
 import { rememberLexaraDiscoveryOutcome } from './LexaraDiscoveryLearning';
 import { searchLexaraBackgroundWithClaude } from './LexaraClaudeBackgroundSearch';
+import { lookupLexaraAuthoritativeSources } from './LexaraAuthoritativeLookup';
 
 export interface LexaraBackgroundProgressEvent {
   type: 'searching' | 'checkpoint' | 'evidence' | 'endpoint';
@@ -434,19 +435,7 @@ export async function investigateLexaraBackgroundQuestion(
   const subject = cleanSubject(resolved);
   const categories = backgroundCategories(prompt, decision);
 
-  if (subject.kind === 'person' && !subject.identifiable) {
-    return {
-      clarification: `To make sure I research the right ${subject.name}, what city/state or another identifying detail should I use?`,
-      needsIdentityClarification: true,
-      sources: [],
-      categories,
-      fullBackgroundReportRequested: false,
-      coverageLimited: true,
-      coverageNote: 'The subject is not specific enough for reliable public-record matching.',
-      endpoint: 'clarification-required',
-      recursionPasses: 0,
-    };
-  }
+  const initiallyAmbiguousSubject = subject.kind === 'person' && !subject.identifiable;
 
   const deepAcquisitionRequested = /\b(?:deep|thorough|recursive|broaden|look harder)\b/i.test(prompt);
   const researchBudgetMs = deepAcquisitionRequested ? TOTAL_RESEARCH_BUDGET_MS : LIVE_RESEARCH_BUDGET_MS;
@@ -486,17 +475,52 @@ export async function investigateLexaraBackgroundQuestion(
       return result;
     });
 
-    const nativeCandidates = await discoverLegalMeshTier3(initialQuery, context.signal, {
-      categories,
-      jurisdiction: context.jurisdiction || subject.location,
-      subject: subject.name,
-      requestedFact: decision.requestedFact,
-    }).catch(error => {
-      console.warn('[LEXARA Background] native discovery failed; preserving Claude parallel evidence', {
-        error: error instanceof Error ? error.message : String(error),
+    const [nativeCandidates, authoritativeEvidence] = await Promise.all([
+      discoverLegalMeshTier3(initialQuery, context.signal, {
+        categories,
+        jurisdiction: context.jurisdiction || subject.location,
+        subject: subject.name,
+        requestedFact: decision.requestedFact,
+      }).catch(error => {
+        console.warn('[LEXARA Background] native discovery failed; preserving other Lexara lanes', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return [] as LegalMeshCandidate[];
+      }),
+      lookupLexaraAuthoritativeSources({
+        subject,
+        requestedFact: decision.requestedFact,
+        categories,
+        jurisdiction: context.jurisdiction || subject.location,
+        signal: context.signal,
+      }).catch(error => {
+        console.warn('[LEXARA Background] authoritative direct lookup unavailable; continuing search lanes', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return [];
+      }),
+    ]);
+
+    for (const evidence of authoritativeEvidence) {
+      discoveryLanes.add(evidence.provider);
+      const evaluation = assessEvidence(
+        evidence.content,
+        evidence.url,
+        evidence.retrievedAt,
+        subject,
+        decision,
+        prompt,
+      );
+      if (!evaluation) continue;
+      const existing = assessed.get(evidence.url);
+      if (!existing || evaluation.confidence > existing.confidence) assessed.set(evidence.url, evaluation);
+      context.onProgress?.({
+        type: 'evidence',
+        pass: 0,
+        confidence: evaluation.confidence,
+        sourceUrl: evaluation.url,
       });
-      return [] as LegalMeshCandidate[];
-    });
+    }
 
     candidates = uniqueCandidates(nativeCandidates);
     candidates.forEach(item => discoveryLanes.add(item.provider));
@@ -517,6 +541,8 @@ export async function investigateLexaraBackgroundQuestion(
     for (let pass = 0; pass < maxPasses && Date.now() < deadlineAt; pass += 1) {
       recursionPasses = pass + 1;
       integrateClaudeParallel();
+      const preexistingBest = [...assessed.values()].sort((a, b) => b.confidence - a.confidence)[0];
+      if (preexistingBest?.directlyAnswers && preexistingBest.confidence >= SUFFICIENT_EVIDENCE_THRESHOLD) break;
       const fresh = candidates.filter(item => !seenUrls.has(item.url)).slice(0, targetsPerPass);
       if (!fresh.length) {
         exhausted = true;
@@ -624,21 +650,35 @@ export async function investigateLexaraBackgroundQuestion(
       `${index + 1}. SOURCE: ${item.url}\nRETRIEVED: ${item.retrievedAt}\nASSESSMENT: ${item.directlyAnswers ? 'DIRECT' : item.inferentiallySupports ? 'INFERENTIAL' : 'PARTIAL'} (${Math.round(item.confidence * 100)}%)\nEVIDENCE: ${item.excerpt}`,
     ).join('\n\n');
     const timedOut = Date.now() >= deadlineAt;
+    if (initiallyAmbiguousSubject && !useful.length) {
+      const endpoint: LexaraBackgroundResearchResult['endpoint'] = 'clarification-required';
+      context.onProgress?.({ type: 'endpoint', pass: recursionPasses, confidence: best?.confidence || 0, endpoint });
+      return {
+        clarification: 'Could you be more specific—for example, a city or state?',
+        needsIdentityClarification: true,
+        sources: [],
+        categories,
+        fullBackgroundReportRequested: false,
+        coverageLimited: true,
+        coverageNote: 'Lexara searched first, but the available evidence was not strong enough to distinguish this person reliably.',
+        endpoint,
+        recursionPasses,
+        discoveryLanes: [...discoveryLanes],
+      };
+    }
+
     const endpoint: LexaraBackgroundResearchResult['endpoint'] = directlyAnswered
       ? 'evidence-sufficient'
       : useful.length
         ? exhausted || converged ? 'best-available-evidence' : 'partial-evidence'
-        : candidates.length
-          ? 'search-leads-only'
-          : timedOut
-            ? 'budget-exhausted'
-            : 'sources-exhausted';
+        : timedOut
+          ? 'budget-exhausted'
+          : 'sources-exhausted';
 
     context.onProgress?.({ type: 'endpoint', pass: recursionPasses, confidence: best?.confidence || 0, endpoint });
     return {
       evidenceSummary: evidenceSummary || undefined,
       sources: useful.map(item => item.url),
-      searchLeads: useful.length ? undefined : candidates.slice(0, 12).map(item => item.url),
       categories,
       fullBackgroundReportRequested: false,
       coverageLimited: !directlyAnswered,
@@ -647,7 +687,7 @@ export async function investigateLexaraBackgroundQuestion(
         : useful.length
           ? 'Lexara found subject-matched public evidence, but the exact requested fact was not strongly established. This is not proof that the fact or record does not exist.'
           : candidates.length
-            ? 'Lexara found candidate public sources but could not verify the requested fact from fetched source content. This is not a negative-record conclusion.'
+            ? 'Lexara attempted the available candidate sources but could not verify the requested fact from retrieved source content. This is not a negative-record conclusion.'
             : 'Lexara exhausted the bounded public-source search without verified subject-specific evidence. This is not proof that no record exists.',
       endpoint,
       recursionPasses,
