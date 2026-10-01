@@ -14,6 +14,7 @@ import * as schema from '@shared/schema';
 import { eq, desc, sql, and } from 'drizzle-orm';
 import { storage } from '../storage';
 import { invalidatePaidAccessCache } from '../auth';
+import { getSquareClient, getSquareLocationId } from '../squareClient';
 
 const router = Router();
 
@@ -122,6 +123,128 @@ router.get('/users/logged', async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Failed to get users',
+    });
+  }
+});
+
+/**
+ * GET /api/admin/square/customer-audit?email=<email>
+ * Read-only Square verification for a customer email. Returns only payment/subscription
+ * evidence needed for an admin audit; credentials and card details are never exposed.
+ */
+router.get('/square/customer-audit', async (req: Request, res: Response) => {
+  try {
+    const email = String(req.query.email || '').trim().toLowerCase();
+    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) {
+      return res.status(400).json({ success: false, error: 'A valid email is required' });
+    }
+
+    const square = getSquareClient();
+    const requestOptions = { timeoutInSeconds: 10, maxRetries: 1 } as const;
+    const customerResponse = await (square.customers as any).search({
+      query: { filter: { emailAddress: { exact: email } } },
+      limit: 100,
+      count: true,
+    }, requestOptions);
+
+    const customers = Array.isArray(customerResponse?.customers) ? customerResponse.customers : [];
+    const customerIds = customers
+      .map((customer: any) => String(customer?.id || '').trim())
+      .filter(Boolean)
+      .slice(0, 10);
+
+    let subscriptions: any[] = [];
+    let orders: any[] = [];
+
+    if (customerIds.length > 0) {
+      const subscriptionResponse = await (square.subscriptions as any).search({
+        query: {
+          filter: {
+            customerIds,
+            locationIds: [getSquareLocationId()],
+          },
+        },
+        limit: 100,
+      }, requestOptions);
+      subscriptions = Array.isArray(subscriptionResponse?.subscriptions)
+        ? subscriptionResponse.subscriptions
+        : [];
+
+      let cursor: string | undefined;
+      do {
+        const orderResponse = await (square.orders as any).search({
+          locationIds: [getSquareLocationId()],
+          limit: 100,
+          returnEntries: false,
+          ...(cursor ? { cursor } : {}),
+          query: {
+            filter: { customerFilter: { customerIds } },
+            sort: { sortField: 'CREATED_AT', sortOrder: 'DESC' },
+          },
+        }, requestOptions);
+        const page = Array.isArray(orderResponse?.orders) ? orderResponse.orders : [];
+        orders.push(...page);
+        cursor = String(orderResponse?.cursor || '').trim() || undefined;
+      } while (cursor && orders.length < 500);
+    }
+
+    const safeCustomers = customers.map((customer: any) => ({
+      id: customer?.id || null,
+      givenName: customer?.givenName || null,
+      familyName: customer?.familyName || null,
+      emailAddress: customer?.emailAddress || null,
+      referenceId: customer?.referenceId || null,
+      createdAt: customer?.createdAt || null,
+      updatedAt: customer?.updatedAt || null,
+    }));
+
+    const safeSubscriptions = subscriptions.map((subscription: any) => ({
+      id: subscription?.id || null,
+      customerId: subscription?.customerId || null,
+      status: subscription?.status || null,
+      planVariationId: subscription?.planVariationId || null,
+      startDate: subscription?.startDate || null,
+      chargedThroughDate: subscription?.chargedThroughDate || null,
+      canceledDate: subscription?.canceledDate || null,
+    }));
+
+    const safeOrders = orders.map((order: any) => ({
+      id: order?.id || null,
+      customerId: order?.customerId || null,
+      state: order?.state || null,
+      createdAt: order?.createdAt || null,
+      closedAt: order?.closedAt || null,
+      totalMoney: order?.totalMoney
+        ? { amount: String(order.totalMoney.amount ?? ''), currency: order.totalMoney.currency || null }
+        : null,
+      tenders: Array.isArray(order?.tenders)
+        ? order.tenders.map((tender: any) => ({
+            id: tender?.id || null,
+            paymentId: tender?.paymentId || null,
+            type: tender?.type || null,
+            amountMoney: tender?.amountMoney
+              ? { amount: String(tender.amountMoney.amount ?? ''), currency: tender.amountMoney.currency || null }
+              : null,
+          }))
+        : [],
+    }));
+
+    return res.json({
+      success: true,
+      data: {
+        email,
+        customerMatchCount: safeCustomers.length,
+        customers: safeCustomers,
+        subscriptions: safeSubscriptions,
+        orders: safeOrders,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('[AdminAPI] Square customer audit error:', error instanceof Error ? error.message : String(error));
+    return res.status(502).json({
+      success: false,
+      error: 'Square customer audit failed',
     });
   }
 });
