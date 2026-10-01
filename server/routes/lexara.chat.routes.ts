@@ -26,6 +26,7 @@ import {
   type SavedMatterSummary,
 } from '../lexara/LexaraRepresentationEngine';
 import { readMatterBuffer } from '../lexara/LexaraMatterStorage';
+import { buildDeadlineCalendar, calculateLegalDeadline, LEGAL_DEADLINE_RULES, type LegalDeadlineRuleId } from '../lexara/LegalDeadlineEngine';
 
 const router = express.Router();
 router.use(isAuthenticated);
@@ -325,6 +326,27 @@ async function persistConversationTurn(
 }
 
 /**
+ * GET /api/lexara/deadlines/calendar
+ * Generates a local .ics reminder for a deadline already calculated by the
+ * deterministic rule engine. No external calendar account or API is required.
+ */
+router.get('/deadlines/calendar', (req: Request, res: Response) => {
+  const ruleId = String(req.query.ruleId || '') as LegalDeadlineRuleId;
+  const triggerDate = String(req.query.triggerDate || '').trim();
+  if (!Object.prototype.hasOwnProperty.call(LEGAL_DEADLINE_RULES, ruleId)) {
+    return res.status(400).json({ success: false, error: 'Unknown deadline rule' });
+  }
+  const calculation = calculateLegalDeadline(ruleId, triggerDate);
+  if (!calculation) {
+    return res.status(400).json({ success: false, error: 'A valid trigger date is required' });
+  }
+  const ics = buildDeadlineCalendar(calculation);
+  res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="legalwhat-deadline-${calculation.dueDate}.ics"`);
+  return res.send(ics);
+});
+
+/**
  * GET /api/lexara/conversations/latest
  * No caller-supplied user or session ID is accepted; all reads are owner-scoped.
  */
@@ -569,6 +591,10 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       matterSessionId: activeSessionId,
       savedMatters: representationContext.savedMatters,
       savedArtifact,
+      deadline: result.deadline,
+      deadlineCalendarUrl: result.deadline
+        ? `/api/lexara/deadlines/calendar?ruleId=${encodeURIComponent(result.deadline.rule.id)}&triggerDate=${encodeURIComponent(result.deadline.triggerDate)}`
+        : undefined,
     });
   } catch (error) {
     log.error('[LEXARA] Stream turn failed', { error });
@@ -796,6 +822,10 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       matterSessionId: sessionId,
       savedMatters: representationContext.savedMatters,
       savedArtifact,
+      deadline: conversationResult.deadline,
+      deadlineCalendarUrl: conversationResult.deadline
+        ? `/api/lexara/deadlines/calendar?ruleId=${encodeURIComponent(conversationResult.deadline.rule.id)}&triggerDate=${encodeURIComponent(conversationResult.deadline.triggerDate)}`
+        : undefined,
     });
   } catch (error) {
     log.error('[LEXARA] Chat endpoint error', { error });
