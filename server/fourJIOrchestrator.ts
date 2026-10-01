@@ -27,7 +27,7 @@ import {
 
 // Import Bit Neural Pathway System
 import { initializeBitNeuralPathways, shutdownBitNeuralPathways, getBitNeuralPathwayManager } from './bitNeuralPathways';
-import { initializeLexaraNeuralModule, shutdownLexaraNeuralModule, getLexaraNeuralModule } from './alexaraModule';
+import { initializeLexaraNeuralModule, shutdownLexaraNeuralModule, getLexaraNeuralModule } from './lexara/LexaraNeuralModule';
 import { initializeCRYPTARA, shutdownCRYPTARA, getCRYPTARA } from './cryptaraModule';
 import { initializeBeneficialCrawler, shutdownBeneficialCrawler, getBeneficialCrawler } from './beneficialCrawler';
 
