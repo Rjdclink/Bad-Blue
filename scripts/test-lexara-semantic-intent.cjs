@@ -107,6 +107,15 @@ const semantic = execute('server/lexara/LexaraSemanticIntentInterpreter.ts', {
 });
 
 (async () => {
+  const rawConversationalSubject = subject.resolveLexaraBackgroundSubject(
+    'Hello. What can you tell me about Sarah Loretta Graves of Hartley, Iowa?',
+    [],
+  );
+  assert.notEqual(rawConversationalSubject?.name, 'Hello. What',
+    'fallback subject parsing must never promote a greeting/question fragment into the research subject');
+  assert.match(String(rawConversationalSubject?.name || ''), /Sarah Loretta Graves/i);
+  assert.equal(rawConversationalSubject?.location, 'Hartley, Iowa');
+
   let before = claudeCalls;
   const broad = await semantic.resolveLexaraResearchDecisionSemantic('Tell me about Avery Morgan Example.', []);
   assert.equal(claudeCalls, before + 1, 'broad natural-language background request uses semantic inference');
