@@ -98,8 +98,15 @@ async function lookupBop(
   try {
     const payload: any = await response.json();
     if (payload?.Captcha || !Array.isArray(payload?.InmateLocator)) return [];
-    const records = payload.InmateLocator.slice(0, 8);
-    if (records.length > 1 && !subject.identifiable) return [];
+    const rawRecords = payload.InmateLocator.slice(0, 8);
+    const records = rawRecords.filter((item: any) => {
+      const firstMatches = String(item?.nameFirst || '').trim().toLowerCase() === name.first.toLowerCase();
+      const lastMatches = String(item?.nameLast || '').trim().toLowerCase() === name.last.toLowerCase();
+      const middleMatches = !name.middle
+        || String(item?.nameMiddle || '').trim().toLowerCase() === name.middle.toLowerCase();
+      return firstMatches && lastMatches && middleMatches;
+    });
+    const uniqueIdentityMatch = records.length === 1;
     const retrievedAt = new Date().toISOString();
     return records.flatMap((item: any) => {
       const fullName = [item?.nameFirst, item?.nameMiddle, item?.nameLast].filter(Boolean).join(' ').trim();
@@ -119,9 +126,9 @@ async function lookupBop(
         content,
         retrievedAt,
         provider: 'bop-structured',
-        confidence: name.middle ? 0.96 : 0.76,
-        identityConfidence: name.middle ? 0.94 : 0.76,
-        directlyAnswers: true,
+        confidence: uniqueIdentityMatch && (name.middle || subject.identifiable) ? 0.96 : 0.76,
+        identityConfidence: uniqueIdentityMatch && (name.middle || subject.identifiable) ? 0.94 : 0.76,
+        directlyAnswers: uniqueIdentityMatch,
       }];
     });
   } catch {
@@ -153,8 +160,18 @@ async function lookupNpi(
   try {
     const payload: any = await response.json();
     if (!Array.isArray(payload?.results)) return [];
-    const records = payload.results.slice(0, 8);
-    if (records.length > 1 && !subject.identifiable) return [];
+    const rawRecords = payload.results.slice(0, 8);
+    const records = rawRecords.filter((item: any) => {
+      const basic = item?.basic || {};
+      const firstMatches = String(basic?.first_name || '').trim().toLowerCase() === name.first.toLowerCase();
+      const lastMatches = String(basic?.last_name || '').trim().toLowerCase() === name.last.toLowerCase();
+      const middleMatches = !name.middle
+        || String(basic?.middle_name || '').trim().toLowerCase() === name.middle.toLowerCase();
+      const stateMatches = !state || (Array.isArray(item?.addresses)
+        && item.addresses.some((address: any) => String(address?.state || '').toUpperCase() === state));
+      return firstMatches && lastMatches && middleMatches && stateMatches;
+    });
+    const uniqueIdentityMatch = records.length === 1;
     const retrievedAt = new Date().toISOString();
     return records.flatMap((item: any) => {
       const basic = item?.basic || {};
@@ -184,9 +201,9 @@ async function lookupNpi(
         content,
         retrievedAt,
         provider: 'cms-npi-api',
-        confidence: state ? 0.94 : 0.76,
-        identityConfidence: state ? 0.92 : 0.76,
-        directlyAnswers: true,
+        confidence: uniqueIdentityMatch && state ? 0.94 : 0.76,
+        identityConfidence: uniqueIdentityMatch && state ? 0.92 : 0.76,
+        directlyAnswers: uniqueIdentityMatch && Boolean(state),
       }];
     });
   } catch {
