@@ -729,11 +729,26 @@ export async function advanceRepresentationMatter(input: AdvanceMatterInput): Pr
   }
 
   if (shouldPlanPacket(input.prompt, matter)) {
-    matter.packet = await buildPacket(matter, {
+    const previousPacket = matter.packet;
+    const replannedPacket = await buildPacket(matter, {
       allowClaudeOpus: input.allowClaudeOpus,
       signal: input.signal,
     });
-    if (!matter.artifacts.some(artifact => artifact.id === `packet:${matter.matterId}`)) {
+    for (const item of replannedPacket.items) {
+      const priorItem = previousPacket?.items.find(previous =>
+        (item.formNumber && previous.formNumber && item.formNumber.toLowerCase() === previous.formNumber.toLowerCase())
+        || item.title.toLowerCase() === previous.title.toLowerCase()
+      );
+      if (priorItem?.status === 'complete') item.status = 'complete';
+      else if (priorItem?.status === 'in-progress') item.status = 'in-progress';
+    }
+    matter.packet = replannedPacket;
+    const packetArtifact = matter.artifacts.find(artifact => artifact.id === `packet:${matter.matterId}`);
+    if (packetArtifact) {
+      packetArtifact.title = matter.packet.name;
+      packetArtifact.sourceUrl = matter.packet.completePacketSourceUrl;
+      packetArtifact.updatedAt = now;
+    } else {
       matter.artifacts.push({
         id: `packet:${matter.matterId}`,
         title: matter.packet.name,
