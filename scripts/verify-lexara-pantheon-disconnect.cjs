@@ -12,11 +12,10 @@ const claudeBackground = fs.readFileSync('server/lexara/LexaraClaudeBackgroundSe
 const pantheonRegistry = fs.readFileSync('server/services/pantheon/PantheonSovereignSourceRegistry.ts', 'utf8');
 const pantheonDiscovery = fs.readFileSync('server/services/pantheon/PantheonDiscoveryCoordinator.ts', 'utf8');
 
-if (router.includes('useBackgroundResearch: true')) {
-  throw new Error('Lexara sequence routing still enables Pantheon/background research');
-}
-if (!router.includes('useLegalResearch: true, useBackgroundResearch: false')) {
-  throw new Error('Lexara factual/research sequences do not select legal reasoning');
+if (!router.includes('useBackgroundResearch: true')
+  || !router.includes("useLegalResearch: false, useBackgroundResearch: true")
+  || !router.includes("useLegalResearch: true, useBackgroundResearch: false")) {
+  throw new Error('Lexara AND-OR routing is not preserving independent legal/background selection');
 }
 for (const activeSource of [router, subject]) {
   if (activeSource.includes('LexaraBackgroundSemanticIntent') || activeSource.includes("../services/pantheon/")) {
@@ -28,8 +27,8 @@ if (orchestrator.includes("from './LexaraBackgroundResearchBoundary'")
   || orchestrator.includes("from '../services/pantheon/")) {
   throw new Error('Lexara conversation runtime still imports Pantheon');
 }
-if (!orchestrator.includes("const backgroundResearchRequested = researchDecision.intent === 'factual' || mixedLegalFactNeed")
-  || !orchestrator.includes('const researchRouteSelected = sequencePlan.useLegalResearch || researchDecision.needed')
+if (!orchestrator.includes("const backgroundResearchRequested = sequencePlan.useBackgroundResearch")
+  || !orchestrator.includes('const researchRouteSelected = sequencePlan.useLegalResearch')
   || !orchestrator.includes('forceResearch: true')
   || !orchestrator.includes("from './LexaraBackgroundInvestigation'")) {
   throw new Error('Lexara factual research is not wired to the native background investigator while legal research remains intact');
