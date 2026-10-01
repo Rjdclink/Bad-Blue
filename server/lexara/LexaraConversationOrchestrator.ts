@@ -822,6 +822,9 @@ export async function generateLexaraConversationResponse(
         backgroundStateJurisdiction,
       ].filter(Boolean).join(', ')}. Confidence: ${Math.round(backgroundLocationConfidence * 100)}%. Source class: ${context.backgroundLocationSource || 'automatic-location'}. If confidence is below 75% and jurisdiction materially changes the legal answer, ask only for the needed state/jurisdiction. If the user states a location, that statement controls immediately.`
     : '';
+  const resolvedBackgroundSubjectPrompt = resolvedBackgroundSubject
+    ? `\n\nLEXARA RESOLVED BACKGROUND SUBJECT\nThe exact subject for this turn is: "${resolvedBackgroundSubject.name}". Preserve that exact subject as one identity. Do not split a multi-part name into alternatives, rename the subject, or reinterpret conversational filler as the subject. Use the rest of the user's wording only as clues and as the requested factual objective.`
+    : '';
   const researchStatusPrompt = researchRouteSelected && !authorityResearch
     ? '\n\nAPPLICATION RESEARCH STATUS\nLexara attempted the selected external research route for this turn but no independently usable source result was returned within the live research budget. Do not claim that no search was attempted. Do not invent the requested fact; say it could not be verified from the completed search and preserve useful next steps or clarification.'
     : '';
@@ -834,6 +837,7 @@ export async function generateLexaraConversationResponse(
     + formatJurisdictionAuthorityForSystem(jurisdictionAuthorityProfile)
     + formatAuthorityResearchForSystem(authorityResearch)
     + formatDeadlineCalculationForSystem(verifiedDeterministicDeadline)
+    + resolvedBackgroundSubjectPrompt
     + researchStatusPrompt
     + formatLexaraBackgroundResearchForSystem(backgroundInvestigation);
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
