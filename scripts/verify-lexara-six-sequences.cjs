@@ -114,7 +114,7 @@ for (const claudeToken of [
 ]) {
   if (!claudeBackground.includes(claudeToken)) throw new Error('Lexara Claude parallel background lane missing: '+claudeToken);
 }
-if (!background.includes('Promise.all([')
+if (!background.includes('Promise.allSettled([')
   || !background.includes('searchLexaraBackgroundWithClaude({')
   || !background.includes('claudeCitationEvidence')) {
   throw new Error('Claude web search is not running in parallel with Lexara native background discovery/evidence scoring');
