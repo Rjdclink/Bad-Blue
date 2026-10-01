@@ -278,6 +278,23 @@ const legacyFileReferenceSchema = z.object({
   id: z.string().min(1).max(128),
 }).passthrough();
 
+function sampleEvidenceExcerpt(value: string, maxCharacters: number): string {
+  const text = String(value || '').trim();
+  if (text.length <= maxCharacters) return text;
+  const sections = 4;
+  const markerBudget = sections * 60;
+  const chunkSize = Math.max(600, Math.floor((maxCharacters - markerBudget) / sections));
+  const maxStart = Math.max(0, text.length - chunkSize);
+  const chunks: string[] = [];
+  for (let index = 0; index < sections; index += 1) {
+    const ratio = sections === 1 ? 0 : index / (sections - 1);
+    const start = Math.floor(maxStart * ratio);
+    const end = Math.min(text.length, start + chunkSize);
+    chunks.push(`[Source excerpt ${index + 1}/${sections}; chars ${start + 1}-${end}]\n${text.slice(start, end)}`);
+  }
+  return chunks.join('\n\n').slice(0, maxCharacters);
+}
+
 const fmiReviewDocumentSchema = z.object({
   sourceId: z.string().min(1).max(128),
   fileName: z.string().min(1).max(240),
@@ -626,7 +643,7 @@ export function setupFMIRoutes(app: Express): void {
           reviewInput: {
             sourceId: String(fileId),
             fileName: String(storedFile.file_name),
-            excerpt: extractedText.slice(0, 6_000),
+            excerpt: sampleEvidenceExcerpt(extractedText, 6_000),
             classification: analysis.classification,
             keyFindings: analysis.keyFindings.slice(0, 30),
             admissibilityAssessment: analysis.classification.admissibility,
@@ -719,7 +736,7 @@ export function setupFMIRoutes(app: Express): void {
         documents = result.rows.map((row: any, index: number) => {
           const extracted = String(row.extracted_text || '').trim();
           const allowance = Math.max(1_500, Math.min(8_000, Math.floor(remaining / Math.max(1, result.rows.length - index))));
-          const excerpt = extracted.slice(0, allowance);
+          const excerpt = sampleEvidenceExcerpt(extracted, allowance);
           remaining = Math.max(0, remaining - excerpt.length);
           return {
             sourceId: String(row.id),
