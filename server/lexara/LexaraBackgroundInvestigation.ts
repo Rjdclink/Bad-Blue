@@ -131,7 +131,7 @@ const FACT_EVIDENCE_PATTERNS: Partial<Record<LexaraRequestedFact, RegExp>> = {
 };
 
 const INFERENCE_EVIDENCE_PATTERNS: Partial<Record<LexaraRequestedFact, RegExp>> = {
-  'age-dob': /\b(?:juvenile|minor)\b[^.\n]{0,120}\b(?:19|20)\d{2}\b|\b(?:19|20)\d{2}\b[^.\n]{0,120}\b(?:juvenile|minor)\b/i,
+  'age-dob': /\b(?:juvenile|minor)\b[^.\n]{0,120}\b(?:19|20)\d{2}\b|\b(?:19|20)\d{2}\b[^.\n]{0,120}\b(?:juvenile|minor)\b|\b\d{1,3}[-\s]year[-\s]old\b|\baged\s+\d{1,3}\b/i,
 };
 
 function previousUserTurns(context: LexaraBackgroundInvestigationContext): string[] {
