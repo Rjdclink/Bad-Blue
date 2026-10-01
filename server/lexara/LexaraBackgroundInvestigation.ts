@@ -517,7 +517,7 @@ export async function investigateLexaraBackgroundQuestion(
       prompt,
       subject,
       decision,
-      jurisdiction: context.jurisdiction || subject.location,
+      jurisdiction: subject.location || context.jurisdiction,
       model: context.claudeResearchModel,
       signal: laneSignal,
     }).then(result => {
@@ -527,7 +527,7 @@ export async function investigateLexaraBackgroundQuestion(
 
     const nativeDiscoveryPromise = discoverLegalMeshTier3(initialQuery, laneSignal, {
       categories,
-      jurisdiction: context.jurisdiction || subject.location,
+      jurisdiction: subject.location || context.jurisdiction,
       subject: subject.name,
       requestedFact: decision.requestedFact,
     }).catch(error => {
@@ -541,7 +541,7 @@ export async function investigateLexaraBackgroundQuestion(
       subject,
       requestedFact: decision.requestedFact,
       categories,
-      jurisdiction: context.jurisdiction || subject.location,
+      jurisdiction: subject.location || context.jurisdiction,
       signal: laneSignal,
     }).catch(error => {
       console.warn('[LEXARA Background] authoritative direct lookup unavailable; continuing search lanes', {
@@ -664,7 +664,7 @@ export async function investigateLexaraBackgroundQuestion(
             .sort((a, b) => b.confidence - a.confidence)[0] || null;
           void rememberLexaraDiscoveryOutcome(candidate.url, Boolean(evaluation), {
             categories,
-            jurisdiction: context.jurisdiction || subject.location,
+            jurisdiction: subject.location || context.jurisdiction,
             query: decision.standaloneQuery,
             latencyMs: Date.now() - startedAt,
             evidenceConfidence: evaluation?.confidence || 0,
@@ -730,13 +730,13 @@ export async function investigateLexaraBackgroundQuestion(
       const [primaryOutcome, supplementalOutcome] = await Promise.allSettled([
         discoverLegalMeshTier3(query, laneSignal, {
           categories,
-          jurisdiction: context.jurisdiction || subject.location,
+          jurisdiction: subject.location || context.jurisdiction,
           subject: subject.name,
           requestedFact: decision.requestedFact,
         }),
         discoverLegalMeshSupplemental(query, [...seenUrls], laneSignal, {
           categories,
-          jurisdiction: context.jurisdiction || subject.location,
+          jurisdiction: subject.location || context.jurisdiction,
           subject: subject.name,
           requestedFact: decision.requestedFact,
         }),
