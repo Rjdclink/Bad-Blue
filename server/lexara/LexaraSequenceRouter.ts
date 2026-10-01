@@ -62,8 +62,8 @@ export function planLexaraSequence(
   if (documentAction) {
     return {
       sequence: 'document-action', researchDecision,
-      useLegalResearch: legal || factual || researchDecision.needed,
-      useBackgroundResearch: false,
+      useLegalResearch: legal || researchDecision.needed,
+      useBackgroundResearch: factual,
       recursive: deep || factual,
       classifyBackground: factual,
       documentAction: true,
@@ -73,9 +73,9 @@ export function planLexaraSequence(
   if (legal && factual) {
     return {
       sequence: 'combined-legal-background', researchDecision,
-      useLegalResearch: true, useBackgroundResearch: false, recursive: deep,
+      useLegalResearch: true, useBackgroundResearch: true, recursive: deep,
       classifyBackground: true, documentAction: false,
-      reason: 'legal and factual research run through one Lexara-owned research authority',
+      reason: 'legal and factual research run through connected Lexara legal and background routes',
     };
   }
   if (legal) {
@@ -89,17 +89,17 @@ export function planLexaraSequence(
   if (factual) {
     return {
       sequence: deep ? 'deep-recursive' : 'lexara-background', researchDecision,
-      useLegalResearch: true, useBackgroundResearch: false, recursive: true,
+      useLegalResearch: false, useBackgroundResearch: true, recursive: true,
       classifyBackground: true, documentAction: false,
-      reason: deep ? 'deep factual research routed through Lexara' : 'factual research routed through Lexara',
+      reason: deep ? 'deep factual research routed through Lexara background research' : 'factual research routed through Lexara background research',
     };
   }
   if (researchDecision.needed) {
     return {
       sequence: 'simple-factual', researchDecision,
-      useLegalResearch: true, useBackgroundResearch: false, recursive: deep,
-      classifyBackground: false, documentAction: false,
-      reason: 'external research routed through Lexara',
+      useLegalResearch: false, useBackgroundResearch: true, recursive: deep,
+      classifyBackground: true, documentAction: false,
+      reason: 'external factual research routed through Lexara background research',
     };
   }
   return {

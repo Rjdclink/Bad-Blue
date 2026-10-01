@@ -939,8 +939,8 @@ must(
   !lexaraConversationOrchestrator.includes("from './LexaraBackgroundResearchBoundary'") &&
     !lexaraConversationOrchestrator.includes("from './LexaraPantheonInvestigation'") &&
     lexaraConversationOrchestrator.includes("from './LexaraBackgroundInvestigation'") &&
-    lexaraConversationOrchestrator.includes("const backgroundResearchRequested = researchDecision.intent === 'factual' || mixedLegalFactNeed") &&
-    lexaraConversationOrchestrator.includes('const researchRouteSelected = sequencePlan.useLegalResearch || researchDecision.needed') &&
+    lexaraConversationOrchestrator.includes("const backgroundResearchRequested = sequencePlan.useBackgroundResearch") &&
+    lexaraConversationOrchestrator.includes('const researchRouteSelected = sequencePlan.useLegalResearch') &&
     !lexaraBackgroundInvestigation.includes('../services/pantheon/') &&
     !lexaraBackgroundInvestigation.includes('PantheonRetrievalAdapter') &&
     lexaraBackgroundInvestigation.includes('discoverLegalMeshTier3') &&
@@ -1133,8 +1133,8 @@ must(
 must(
   lexaraConversationOrchestrator.includes('resolveLexaraResearchDecisionSemantic') &&
     lexaraConversationOrchestrator.includes('planLexaraSequence(cleanPrompt, previousUserTurns, semanticResearchDecision)') &&
-    lexaraConversationOrchestrator.includes("const backgroundResearchRequested = researchDecision.intent === 'factual' || mixedLegalFactNeed") &&
-    lexaraConversationOrchestrator.includes('const researchRouteSelected = sequencePlan.useLegalResearch || researchDecision.needed') &&
+    lexaraConversationOrchestrator.includes("const backgroundResearchRequested = sequencePlan.useBackgroundResearch") &&
+    lexaraConversationOrchestrator.includes('const researchRouteSelected = sequencePlan.useLegalResearch') &&
     lexaraConversationOrchestrator.includes('callClaudeStreaming') &&
     lexaraConversationOrchestrator.includes('callClaude('),
   'factual/mixed turns add Lexara-native background research while preserving the direct Claude legal-reasoning path',

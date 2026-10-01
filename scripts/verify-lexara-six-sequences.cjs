@@ -30,11 +30,10 @@ for (const token of [
   'documentAction',
 ]) if (!router.includes(token)) throw new Error('Sequence contract missing '+token);
 
-if (router.includes('useBackgroundResearch: true')) {
-  throw new Error('Lexara sequence router still enables Pantheon/background routing');
-}
-if (!router.includes("useLegalResearch: true, useBackgroundResearch: false")) {
-  throw new Error('Research sequences are not routed to Lexara legal reasoning');
+if (!router.includes('useBackgroundResearch: true')
+  || !router.includes("useLegalResearch: false, useBackgroundResearch: true")
+  || !router.includes("useLegalResearch: true, useBackgroundResearch: false")) {
+  throw new Error('Lexara sequence router does not preserve independent legal/background AND-OR routing');
 }
 if (!orchestrator.includes('resolveLexaraResearchDecisionSemantic')
   || !orchestrator.includes('planLexaraSequence(cleanPrompt, previousUserTurns, semanticResearchDecision)')) {
@@ -45,8 +44,8 @@ if (!orchestrator.includes('const semanticResearchDecisionPromise = resolveLexar
   || !orchestrator.includes('const semanticResearchDecision = await semanticResearchDecisionPromise')) {
   throw new Error('Semantic background inference is not overlapped with existing turn preparation');
 }
-if (!orchestrator.includes("const backgroundResearchRequested = researchDecision.intent === 'factual' || mixedLegalFactNeed")) {
-  throw new Error('Lexara factual/mixed turns do not enable the Lexara-native background investigator');
+if (!orchestrator.includes("const backgroundResearchRequested = sequencePlan.useBackgroundResearch")) {
+  throw new Error('Lexara factual/mixed turns do not follow the sequence router into the native background investigator');
 }
 if (!orchestrator.includes("from './LexaraBackgroundInvestigation'")
   || orchestrator.includes("from './LexaraBackgroundResearchBoundary'")
@@ -59,8 +58,8 @@ for (const forbidden of ['PantheonRetrievalAdapter','pantheonRetrievalAdapter','
 for (const token of ['MAX_RECURSIVE_PASSES = 30','TARGETS_PER_PASS = 10','TOTAL_RESEARCH_BUDGET_MS = 10 * 60_000','discoverLegalMeshTier3','discoverLegalMeshSupplemental','lexaraRetrievalAdapter','directlyAnswers','retrievedAt','MIN_IDENTITY_CONFIDENCE = 0.62','identityConfidence']) {
   if (!background.includes(token)) throw new Error('Lexara native background investigation missing '+token);
 }
-if (!orchestrator.includes('const researchRouteSelected = sequencePlan.useLegalResearch || researchDecision.needed')) {
-  throw new Error('Factual/research turns are not handed to the single Lexara research route');
+if (!orchestrator.includes('const researchRouteSelected = sequencePlan.useLegalResearch')) {
+  throw new Error('Legal authority research does not follow the sequence router');
 }
 if (!orchestrator.includes('const backgroundWaitBudgetMs = deepBackgroundRequested')
   || !orchestrator.includes('? 10 * 60_000')
