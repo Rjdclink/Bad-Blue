@@ -86,7 +86,10 @@ export interface GenieResponse {
   success: boolean;
   domain: Domain;
   result: unknown;
-  routedTo: 'LEXARA' | 'CRYPTARA' | 'REJECTED';
+  /** Historical response field retained so older Genie clients do not break. */
+  routedTo: 'ALEXARA' | 'CRYPTARA' | 'REJECTED';
+  /** Canonical runtime authority. */
+  canonicalRoutedTo: 'LEXARA' | 'CRYPTARA' | 'REJECTED';
   processingTimeMs: number;
   confidence: number;
 }
@@ -349,14 +352,16 @@ export class GenieController extends EventEmitter {
 
     try {
       let result: unknown;
-      let routedTo: 'LEXARA' | 'CRYPTARA' | 'REJECTED';
+      let routedTo: GenieResponse['routedTo'];
+      let canonicalRoutedTo: GenieResponse['canonicalRoutedTo'];
 
       switch (domain) {
         case 'legal':
-          // Route to LEXARA
+          // Route to the one canonical LEXARA runtime.
           this.status.legalRequests++;
           result = await this.routeToLexara(request);
-          routedTo = 'LEXARA';
+          routedTo = 'ALEXARA'; // compatibility label only
+          canonicalRoutedTo = 'LEXARA';
           break;
 
         case 'crypto':
@@ -364,12 +369,14 @@ export class GenieController extends EventEmitter {
           this.status.cryptoRequests++;
           result = await this.routeToCryptara(request);
           routedTo = 'CRYPTARA';
+          canonicalRoutedTo = 'CRYPTARA';
           break;
 
         default:
           // Unknown domain - reject
           this.status.rejectedRequests++;
           routedTo = 'REJECTED';
+          canonicalRoutedTo = 'REJECTED';
           result = { 
             error: 'Unable to determine domain. Please specify if this is a legal or crypto query.',
             suggestions: ['Add legal context for LEXARA', 'Add crypto context for CRYPTARA'],
@@ -381,6 +388,7 @@ export class GenieController extends EventEmitter {
         domain,
         result,
         routedTo,
+        canonicalRoutedTo,
         processingTimeMs: Date.now() - startTime,
         confidence,
       };
