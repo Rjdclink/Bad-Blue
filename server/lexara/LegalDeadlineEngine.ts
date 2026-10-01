@@ -1,6 +1,7 @@
 export type LegalDeadlineRuleId =
   | 'federal-civil-answer'
   | 'federal-civil-appeal'
+  | 'federal-civil-appeal-us-party'
   | 'federal-criminal-appeal-defendant';
 
 export interface LegalDeadlineRule {
@@ -40,6 +41,14 @@ export const LEGAL_DEADLINE_RULES: Record<LegalDeadlineRuleId, LegalDeadlineRule
     label: 'Federal civil notice of appeal',
     days: 30,
     ruleCitation: 'Fed. R. App. P. 4(a)(1)(A)',
+    sourceUrl: FEDERAL_APPELLATE_RULES_URL,
+    triggerDescription: 'entry of the judgment or order appealed from',
+  },
+  'federal-civil-appeal-us-party': {
+    id: 'federal-civil-appeal-us-party',
+    label: 'Federal civil notice of appeal when the United States or qualifying federal officer/agency is a party',
+    days: 60,
+    ruleCitation: 'Fed. R. App. P. 4(a)(1)(B)',
     sourceUrl: FEDERAL_APPELLATE_RULES_URL,
     triggerDescription: 'entry of the judgment or order appealed from',
   },
@@ -104,6 +113,9 @@ export function federalObservedHolidays(year: number): Set<string> {
     observedFixedHoliday(year, 10, 11),
     nthWeekday(year, 10, 4, 4),
     observedFixedHoliday(year, 11, 25),
+    // New Year's Day for the following year can be observed on December 31
+    // of the current year when January 1 falls on a Saturday.
+    observedFixedHoliday(year + 1, 0, 1),
   ]);
 }
 
@@ -170,15 +182,30 @@ export function inferLegalDeadlineFromPrompt(prompt: string, jurisdiction?: stri
 
   if (/\b(?:answer|respond|responsive pleading)\b/i.test(text)
     && /\b(?:served|service|summons|complaint)\b/i.test(text)) {
+    // Rule 12 contains distinct periods for waived service and federal
+    // defendants. Do not force the ordinary 21-day rule across those facts.
+    if (/\b(?:waiv(?:e|ed|er)|rule\s*4\(d\)|united states|u\.s\.\s+(?:agency|officer|employee)|federal\s+(?:agency|officer|employee))\b/i.test(text)) {
+      return null;
+    }
     return calculateLegalDeadline('federal-civil-answer', triggerDate);
   }
 
   if (/\bappeal|notice of appeal\b/i.test(text)) {
-    if (/\b(?:criminal|conviction|sentence|sentenced|defendant)\b/i.test(text)) {
-      return calculateLegalDeadline('federal-criminal-appeal-defendant', triggerDate);
+    // Timely post-judgment motions can suspend the civil appeal clock.
+    const tollingMotion = /\b(?:rule\s*(?:50\(b\)|52\(b\)|54|59|60)|post[- ]judgment motion|motion for new trial|alter or amend|relief from judgment)\b/i.test(text);
+    if (/\b(?:criminal|conviction|sentence|sentenced|criminal defendant)\b/i.test(text)) {
+      const clearTrigger = /\b(?:judgment|order)\s+(?:was\s+)?entered\b|\bgovernment\s+(?:filed|files?)\s+(?:a\s+)?notice of appeal\b/i.test(text);
+      return clearTrigger
+        ? calculateLegalDeadline('federal-criminal-appeal-defendant', triggerDate)
+        : null;
     }
-    if (/\b(?:civil|judgment|order)\b/i.test(text)) {
-      return calculateLegalDeadline('federal-civil-appeal', triggerDate);
+    if (/\b(?:civil|judgment|order)\b/i.test(text) && !tollingMotion) {
+      const usParty = /\b(?:united states|u\.s\.\s+(?:agency|officer|employee)|federal\s+(?:agency|officer|employee))\b/i.test(text)
+        && /\b(?:party|plaintiff|defendant|appellant|appellee|sued)\b/i.test(text);
+      return calculateLegalDeadline(
+        usParty ? 'federal-civil-appeal-us-party' : 'federal-civil-appeal',
+        triggerDate,
+      );
     }
   }
 
