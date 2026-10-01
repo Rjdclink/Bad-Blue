@@ -25,6 +25,7 @@ import {
   type RepresentationMatterState,
   type SavedMatterSummary,
 } from '../lexara/LexaraRepresentationEngine';
+import { readMatterBuffer } from '../lexara/LexaraMatterStorage';
 
 const router = express.Router();
 router.use(isAuthenticated);
@@ -202,6 +203,41 @@ function selectPacketDocumentIntent(prompt: string, matter: RepresentationMatter
   };
 }
 
+function selectSavedArtifactRequest(
+  prompt: string,
+  matter: RepresentationMatterState | null | undefined,
+): { id: string; title: string; fileName: string; mimeType: string; downloadUrl: string } | null {
+  if (!matter?.artifacts?.length) return null;
+  const normalized = String(prompt || '').toLowerCase();
+  if (!/\b(?:open|download|retrieve|pull\s+up|show\s+me|get\s+me|give\s+me)\b/i.test(normalized)) return null;
+
+  const candidates = matter.artifacts
+    .filter(artifact => Boolean(artifact.storageRef))
+    .map(artifact => {
+      const title = String(artifact.title || '').toLowerCase();
+      const fileName = String(artifact.fileName || '').toLowerCase();
+      const tokens = `${title} ${fileName}`.split(/[^a-z0-9]+/).filter(token => token.length >= 4);
+      let score = tokens.filter(token => normalized.includes(token)).length;
+      if (title && normalized.includes(title)) score += 5;
+      if (fileName && normalized.includes(fileName)) score += 5;
+      return { artifact, score };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  const best = candidates[0];
+  if (!best || best.score <= 0) return null;
+  if (candidates.length > 1 && candidates[1].score === best.score && best.score < 5) return null;
+
+  const artifact = best.artifact;
+  return {
+    id: artifact.id,
+    title: artifact.title,
+    fileName: artifact.fileName || artifact.title,
+    mimeType: artifact.mimeType || 'application/octet-stream',
+    downloadUrl: `/api/lexara/matters/artifacts/${encodeURIComponent(artifact.id)}`,
+  };
+}
+
 function detectFullReportRequest(prompt: string): boolean {
   return /\b(?:full|complete|comprehensive|entire)\s+(?:background\s+)?(?:report|check|investigation)\b|\b(?:run|do|generate|prepare)\s+(?:a\s+)?background\s+(?:report|check)\b/i.test(prompt);
 }
@@ -300,6 +336,46 @@ router.get('/conversations/latest', async (req: Request, res: Response) => {
 });
 
 /**
+ * GET /api/lexara/matters/artifacts/:artifactId
+ * Paid users can retrieve only artifacts referenced by their own saved matter state.
+ */
+router.get('/matters/artifacts/:artifactId', async (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  if (!hasPersistentMatterAccess(req)) {
+    return res.status(404).json({ success: false, error: 'Saved legal-matter storage is available with paid access' });
+  }
+  const userId = authenticatedUserId(req);
+  if (!userId) return res.status(401).json({ success: false, error: 'Authentication required' });
+
+  try {
+    const artifactId = String(req.params.artifactId || '').trim().slice(0, 180);
+    const { storage } = await import('../storage');
+    const rows = await storage.getUserLexaraMatterStates(userId, 200);
+    let artifact: any = null;
+    for (const row of rows) {
+      const matter = sanitizeRepresentationMatter(row?.matter);
+      artifact = matter?.artifacts.find(candidate => candidate.id === artifactId && candidate.storageRef) || null;
+      if (artifact) break;
+    }
+    if (!artifact?.storageRef) {
+      return res.status(404).json({ success: false, error: 'Saved matter artifact not found' });
+    }
+
+    const bytes = await readMatterBuffer(artifact.storageRef);
+    const fileName = String(artifact.fileName || artifact.title || 'legalwhat-file')
+      .replace(/[\r\n"]/g, '')
+      .replace(/[^a-zA-Z0-9._ -]+/g, '-')
+      .slice(0, 180) || 'legalwhat-file';
+    res.setHeader('Content-Type', artifact.mimeType || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    return res.send(bytes);
+  } catch (error) {
+    log.error('[LEXARA] Saved matter artifact retrieval failed', { error, userId });
+    return res.status(503).json({ success: false, error: 'LEXARA could not retrieve that saved file' });
+  }
+});
+
+/**
  * POST /api/lexara/acknowledge
  * Sub-LLM conversational lane. Returns immediately so LEXARA can speak a
  * context-aware acknowledgement while deeper legal/Harmony analysis runs.
@@ -386,8 +462,13 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       allowClaudeOpus: canUseClaudeOpus(req),
       signal: controller.signal,
     });
-    const packetDocumentIntent = selectPacketDocumentIntent(prompt, preRepresentationMatter);
-    if (packetDocumentIntent) documentIntent = packetDocumentIntent;
+    const savedArtifact = selectSavedArtifactRequest(prompt, preRepresentationMatter || representationContext.activeMatter);
+    const packetDocumentIntent = savedArtifact ? null : selectPacketDocumentIntent(prompt, preRepresentationMatter);
+    if (savedArtifact) {
+      documentIntent = { requested: false, explicit: true, documentType: 'Custom Document', templateMode: false };
+    } else if (packetDocumentIntent) {
+      documentIntent = packetDocumentIntent;
+    }
     const result = await generateLexaraConversationResponse(prompt, {
       previousMessages: effectivePreviousMessages,
       lawType: cleanOptionalString((rawContext as any).lawType),
@@ -468,6 +549,7 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       representationMatter,
       matterSessionId: activeSessionId,
       savedMatters: representationContext.savedMatters,
+      savedArtifact,
     });
   } catch (error) {
     log.error('[LEXARA] Stream turn failed', { error });
@@ -543,8 +625,13 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       allowClaudeOpus: canUseClaudeOpus(req),
     });
     let documentIntent = detectDocumentIntent(prompt, effectivePreviousMessages);
-    const packetDocumentIntent = selectPacketDocumentIntent(prompt, preRepresentationMatter);
-    if (packetDocumentIntent) documentIntent = packetDocumentIntent;
+    const savedArtifact = selectSavedArtifactRequest(prompt, preRepresentationMatter || representationContext.activeMatter);
+    const packetDocumentIntent = savedArtifact ? null : selectPacketDocumentIntent(prompt, preRepresentationMatter);
+    if (savedArtifact) {
+      documentIntent = { requested: false, explicit: true, documentType: 'Custom Document', templateMode: false };
+    } else if (packetDocumentIntent) {
+      documentIntent = packetDocumentIntent;
+    }
 
     log.info('[LEXARA] Conversational legal turn received', {
       promptLength: prompt.length,
@@ -689,6 +776,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       representationMatter,
       matterSessionId: sessionId,
       savedMatters: representationContext.savedMatters,
+      savedArtifact,
     });
   } catch (error) {
     log.error('[LEXARA] Chat endpoint error', { error });
