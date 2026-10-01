@@ -5774,7 +5774,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // 4JI-GENIE DUAL-MODULE CONTROLLER API
   // ============================================
   
-  // Mount 4JI-GENIE routes (ALEXARA + CRYPTARA)
+  // Mount 4JI-GENIE routes (LEXARA + CRYPTARA)
   const genieRoutes = await import('./routes/genie.routes');
   app.use('/api/genie', genieRoutes.default);
   
