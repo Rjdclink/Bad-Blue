@@ -557,10 +557,10 @@ class MaintenanceWorker extends EventEmitter {
     }
     
     try {
-      await import('./services/alexara/index');
-      capabilities.push('Alexara');
+      await import('./services/lexara/index');
+      capabilities.push('Lexara');
     } catch {
-      issues.push('Alexara unavailable');
+      issues.push('Lexara unavailable');
     }
     
     return {
