@@ -160,7 +160,7 @@ export function serveStatic(app: Express) {
     const pathname = req.path || '';
     const looksLikeStaticAsset = pathname.startsWith('/images/')
       || pathname.startsWith('/assets/')
-      || /\\.[a-z0-9]{2,8}$/i.test(pathname);
+      || /\.[a-z0-9]{2,8}$/i.test(pathname);
     if (looksLikeStaticAsset) {
       return res.status(404).type('text/plain').send('Static asset not found');
     }
