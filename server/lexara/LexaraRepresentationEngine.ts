@@ -59,6 +59,17 @@ export interface RepresentationArtifact {
   updatedAt: string;
 }
 
+export interface RepresentationEvidenceLink {
+  artifactId: string;
+  title: string;
+  findings: string[];
+  supportsElements: string[];
+  weakensDefenses: string[];
+  raisesIssues: string[];
+  contradictions: string[];
+  status: 'uploaded' | 'analyzed' | 'needs-corroboration';
+}
+
 export interface RepresentationMatterState {
   version: 1;
   matterId: string;
@@ -79,6 +90,7 @@ export interface RepresentationMatterState {
   parties: string[];
   historySummary?: string;
   artifacts: RepresentationArtifact[];
+  evidenceMap: RepresentationEvidenceLink[];
   deadlines: Array<{
     label: string;
     date?: string;
@@ -482,6 +494,21 @@ export function sanitizeRepresentationMatter(value: unknown): RepresentationMatt
     parties: mergeUnique([], raw.parties, 30, 240),
     historySummary: clamp(raw.historySummary, 2000) || undefined,
     artifacts,
+    evidenceMap: Array.isArray(raw.evidenceMap) ? raw.evidenceMap.slice(0, 100).flatMap((entry: any) => {
+      const artifactId = clamp(entry?.artifactId, 180);
+      const title = clamp(entry?.title, 240);
+      if (!artifactId || !title) return [];
+      return [{
+        artifactId,
+        title,
+        findings: mergeUnique([], entry?.findings, 20, 600),
+        supportsElements: mergeUnique([], entry?.supportsElements, 20, 400),
+        weakensDefenses: mergeUnique([], entry?.weakensDefenses, 20, 400),
+        raisesIssues: mergeUnique([], entry?.raisesIssues, 20, 400),
+        contradictions: mergeUnique([], entry?.contradictions, 20, 600),
+        status: ['uploaded','analyzed','needs-corroboration'].includes(entry?.status) ? entry.status : 'uploaded',
+      } as RepresentationEvidenceLink];
+    }) : [],
     deadlines: Array.isArray(raw.deadlines) ? raw.deadlines.slice(0, 40) : [],
     nextSteps: Array.isArray(raw.nextSteps) ? raw.nextSteps.map((value: unknown) => clamp(value, 500)).filter(Boolean).slice(0, 20) : [],
     createdAt: clamp(raw.createdAt, 80) || new Date().toISOString(),
@@ -519,6 +546,7 @@ export async function advanceRepresentationMatter(input: AdvanceMatterInput): Pr
     parties: prior?.parties || [],
     historySummary: prior?.historySummary,
     artifacts: prior?.artifacts || [],
+    evidenceMap: prior?.evidenceMap || [],
     deadlines: prior?.deadlines || [],
     nextSteps: prior?.nextSteps || [],
     createdAt: prior?.createdAt || now,
@@ -682,6 +710,7 @@ export function formatRepresentationForSystem(
       kind: artifact.kind,
       status: artifact.status,
     })),
+    evidenceMap: current.evidenceMap,
     deadlines: current.deadlines,
     nextSteps: current.nextSteps,
   }) : 'none';
