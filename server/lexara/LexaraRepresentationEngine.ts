@@ -145,7 +145,7 @@ const MATTER_SIGNAL =
   /\b(?:my|me|i\s+(?:need|want|have|was|am|got|received|filed)|we\s+(?:need|want|have|were)|divorc|custod|lawsuit|sue|suing|petition|motion|complaint|appeal|charged|arrest|evict|foreclos|probate|estate|bankrupt|hearing|case|claim|benefit|discriminat|terminat|injur|accident|contract|debt|order|filing|served|summons)\b/i;
 
 const PACKET_SIGNAL =
-  /\b(?:file|filing|packet|form|forms|petition|complaint|motion|appeal|divorc|custod|bankrupt|probate|evict|application|administrative\s+review|hearing|lawsuit|sue|service|summons|proposed\s+order)\b/i;
+  /\b(?:file|filing|packet|form|forms|paperwork|petition|complaint|motion|appeal|divorc|custod|bankrupt|probate|evict|apply|application|register|registration|license|claim|benefit|review|request|response|respond|hearing|proceeding|lawsuit|sue|service|summons|proposed\s+order|formation|incorporat|administrative\s+review)\b/i;
 
 const PACKET_BRANCH_SIGNAL =
   /\b(?:child|children|minor|custod|visitation|parenting|property|asset|debt|support|alimony|spousal|service|serve|cannot\s+(?:find|locate)|publication|waiver|fee|indigent|emergency|temporary|protective|domestic\s+violence|contested|uncontested|agreement|default|counterclaim|address|county|court|agency|hearing|appeal|evidence|representative)\b/i;
