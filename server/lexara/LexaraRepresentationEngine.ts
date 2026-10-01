@@ -813,9 +813,7 @@ export function findReferencedMatter(
 ): RepresentationMatterState | null {
   if (!matters.length) return null;
   const normalizedPrompt = prompt.toLowerCase();
-  let best: { score: number; matter: RepresentationMatterState } | null = null;
-
-  for (const candidate of matters) {
+  const scored = matters.map(candidate => {
     const fields = [
       candidate.summary.title,
       candidate.summary.proceeding,
@@ -825,15 +823,23 @@ export function findReferencedMatter(
     ].filter(Boolean).map(value => String(value).toLowerCase());
 
     let score = 0;
+    let exact = false;
     for (const field of fields) {
       const tokens = field.split(/[^a-z0-9]+/).filter(token => token.length >= 4);
       score += tokens.filter(token => normalizedPrompt.includes(token)).length;
-      if (normalizedPrompt.includes(field)) score += 4;
+      if (normalizedPrompt.includes(field)) {
+        score += 4;
+        exact = true;
+      }
     }
-    if (!best || score > best.score) best = { score, matter: candidate.state };
-  }
+    return { score, exact, matter: candidate.state };
+  }).sort((a, b) => b.score - a.score);
 
-  return best && best.score > 0 ? best.matter : null;
+  const best = scored[0];
+  if (!best || best.score <= 0) return null;
+  const tied = scored.filter(candidate => candidate.score === best.score);
+  if (tied.length > 1 && !best.exact) return null;
+  return best.matter;
 }
 
 export function formatRepresentationForSystem(
