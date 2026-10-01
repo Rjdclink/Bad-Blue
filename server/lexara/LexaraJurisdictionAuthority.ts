@@ -68,8 +68,11 @@ const DIRECTORY_TTL_MS = 24 * 60 * 60 * 1000;
 const DIRECTORY_TIMEOUT_MS = 1600;
 
 function normalizeState(value?: string): { name?: string; code?: string } {
-  const raw = String(value || '').trim();
+  let raw = String(value || '').trim();
   if (!raw) return {};
+  const federalPlus = /^federal\s*(?:\+|\/|and)\s*(.+)$/i.exec(raw);
+  if (federalPlus?.[1]) raw = federalPlus[1].trim();
+  if (/^federal$/i.test(raw)) return {};
   const upper = raw.toUpperCase();
   if (CODE_TO_STATE[upper]) return { name: CODE_TO_STATE[upper], code: upper };
   const normalized = raw.toLowerCase().replace(/\./g, '').replace(/\s+/g, ' ').trim();
