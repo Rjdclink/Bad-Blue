@@ -83,6 +83,11 @@ function requestedFactFromSemantic(value: string | undefined): LexaraRequestedFa
   return REQUESTED_FACTS.has(normalized) ? normalized : 'general-public-record';
 }
 
+function deterministicSubjectNeedsSemanticReview(subject?: string): boolean {
+  const value = String(subject || '').trim();
+  return !value || /^(?:hello|hi|hey|okay|ok|so|well|what|who|where|when|how|does|did|has|have|is|are|can|could|would|should)(?:\b|[.])/i.test(value);
+}
+
 /**
  * Semantic fallback for background or mixed legal/background intent.
  *
@@ -100,7 +105,9 @@ export async function resolveLexaraResearchDecisionSemantic(
 ): Promise<LexaraResearchDecision> {
   const text = String(prompt || '').trim();
   const deterministic = decideLexaraResearchNeed(text, previousUserTurns);
-  if ((deterministic.intent === 'factual' || deterministic.intent === 'mixed')
+  const deterministicFactual = deterministic.intent === 'factual' || deterministic.intent === 'mixed';
+  const needsSubjectReview = deterministicFactual && deterministicSubjectNeedsSemanticReview(deterministic.subject);
+  if ((deterministicFactual && !needsSubjectReview)
     || !text || isLexaraConversationControl(text) || LOW_VALUE_CONVERSATION.test(text)) {
     return deterministic;
   }
