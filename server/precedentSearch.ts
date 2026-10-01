@@ -2,6 +2,7 @@ import { generateText, createTaskMetadata, UsageContext, TaskPriority, TaskCompl
 import { rateLimitTracker } from "./rateLimitTracker";
 import { isGroqAvailable, generateGroqStructuredResponse } from "./groq";
 import { safeJsonParse } from "./jsonParser";
+import { extractCaseCitations, verifyLegalCitationsInText } from "./lexara/LexaraCitationVerifier";
 
 export interface LegalPrecedent {
   caseName: string;
@@ -166,6 +167,32 @@ Provide at least 12-15 highly relevant, verified precedents in the same JSON for
     const uniquePrecedents = allPrecedents.filter((precedent, index, self) =>
       index === self.findIndex(p => p.citation === precedent.citation)
     );
+
+    // Verify reporter-style citations against CourtListener's public citation
+    // lookup before this legacy research path returns them to a user.
+    const reporterCitations = uniquePrecedents.filter((precedent: LegalPrecedent) =>
+      extractCaseCitations(String(precedent.citation || '')).length > 0
+    );
+    if (reporterCitations.length) {
+      const verification = await verifyLegalCitationsInText(
+        reporterCitations.map((precedent: LegalPrecedent) => precedent.citation).join('\n')
+      );
+      const byCitation = new Map(verification.map(item => [item.citation.toLowerCase(), item]));
+      for (let index = uniquePrecedents.length - 1; index >= 0; index -= 1) {
+        const precedent = uniquePrecedents[index] as LegalPrecedent;
+        const extracted = extractCaseCitations(String(precedent.citation || ''))[0];
+        if (!extracted) continue;
+        const result = byCitation.get(extracted.citation.toLowerCase());
+        if (!result || result.status !== 'verified') {
+          uniquePrecedents.splice(index, 1);
+          continue;
+        }
+        if (result.possibleNegativeTreatment) {
+          precedent.relevance = `${precedent.relevance} [Citation verified; possible negative-treatment signal requires current-authority review.]`;
+        }
+        if (!precedent.url && result.sourceUrl) precedent.url = result.sourceUrl;
+      }
+    }
 
     // Sort by relevance and year (most relevant and recent first)
     uniquePrecedents.sort((a, b) => {
