@@ -64,7 +64,7 @@ export function resolveLexaraBackgroundSubject(
   // from being misread as geography.
   const qualifiedOfLocation = context.match(/\bof\s+([A-Z][\p{L}.'’-]+(?:\s+[A-Z][\p{L}.'’-]+){0,2},\s*(?:[A-Z]{2}|[A-Z][\p{L}.'’-]+(?:\s+[A-Z][\p{L}.'’-]+){0,2}))\b/u)?.[1];
   const prepositionLocation = context.match(/\b(?:in|from|near)\s+([A-Z][\p{L}.'’-]+(?:\s+[A-Z][\p{L}.'’-]+){0,2}(?:,\s*(?:[A-Z]{2}|[A-Z][\p{L}.'’-]+(?:\s+[A-Z][\p{L}.'’-]+){0,2}))?)\b/u)?.[1];
-  const location = explicitPlace?.[2] || qualifiedOfLocation || prepositionLocation || jurisdiction;
+  const location = qualifiedOfLocation || prepositionLocation || explicitPlace?.[2] || jurisdiction;
   return {
     name,
     kind,
