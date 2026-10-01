@@ -1,4 +1,5 @@
 import { PDFDocument } from 'pdf-lib';
+import { load } from 'cheerio';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -31,10 +32,60 @@ async function download(url: string): Promise<Buffer> {
     return bytes;
   } finally { clearTimeout(timer); }
 }
+function downloadableType(url: string): 'pdf' | 'docx' | null {
+  const clean=url.toLowerCase().split('?')[0].split('#')[0];
+  if(clean.endsWith('.pdf')) return 'pdf';
+  if(clean.endsWith('.docx') || clean.endsWith('.doc')) return 'docx';
+  return null;
+}
+
+function officialHost(url: string): boolean {
+  try {
+    const host=new URL(url).hostname.toLowerCase();
+    return host.endsWith('.gov') || host.endsWith('.mil') || host.endsWith('.uscourts.gov')
+      || /(?:^|\.)courts?\.[a-z]{2}\.us$/.test(host)
+      || (host.endsWith('.us') && /(?:court|judicial|state)/.test(host));
+  } catch {
+    return false;
+  }
+}
+
+async function resolveDownloadableOfficialForm(form: OfficialLegalForm): Promise<{ url: string; contentType: 'pdf' | 'docx' }> {
+  if(!form.verifiedOfficial || !form.url || !officialHost(form.url)) throw new Error('No verified official form source is available');
+  const directType=downloadableType(form.url);
+  if(directType) return {url:form.url,contentType:directType};
+  if(form.contentType!=='html') throw new Error('No verified downloadable official form is available');
+
+  const html=(await download(form.url)).toString('utf8');
+  const $=load(html);
+  const formNumber=String(form.formNumber || '').trim().toLowerCase();
+  const titleTokens=String(form.title || form.sourceTitle || '')
+    .toLowerCase().split(/[^a-z0-9]+/).filter(token=>token.length>=4).slice(0,12);
+  const candidates:Array<{url:string;contentType:'pdf'|'docx';score:number}>=[];
+  $('a[href]').each((_index, element)=>{
+    const href=String($(element).attr('href') || '').trim();
+    if(!href) return;
+    let absolute='';
+    try { absolute=new URL(href,form.url).toString(); } catch { return; }
+    const contentType=downloadableType(absolute);
+    if(!contentType || !officialHost(absolute)) return;
+    const label=`${$(element).text()} ${href}`.toLowerCase();
+    let score=1;
+    if(formNumber && label.includes(formNumber)) score+=20;
+    score+=titleTokens.filter(token=>label.includes(token)).length*2;
+    if(/\b(form|petition|motion|affidavit|application|summons|decree|order|notice|packet)\b/i.test(label)) score+=2;
+    candidates.push({url:absolute,contentType,score});
+  });
+  candidates.sort((a,b)=>b.score-a.score);
+  const best=candidates[0];
+  if(!best || best.score<3) throw new Error('Official form page did not expose a confidently matched downloadable form');
+  return {url:best.url,contentType:best.contentType};
+}
+
 export async function inspectOfficialForm(form: OfficialLegalForm): Promise<InspectedOfficialForm> {
-  if(!form.verifiedOfficial || !form.url || (form.contentType!=='pdf' && form.contentType!=='docx')) throw new Error('No verified downloadable official form is available');
-  const bytes=await download(form.url);
-  if(form.contentType==='docx') return {sourceUrl:form.url,contentType:'docx',bytes,fields:[],fillable:true};
+  const resolved=await resolveDownloadableOfficialForm(form);
+  const bytes=await download(resolved.url);
+  if(resolved.contentType==='docx') return {sourceUrl:resolved.url,contentType:'docx',bytes,fields:[],fillable:true};
   const pdf=await PDFDocument.load(bytes,{ignoreEncryption:false});
   const fields: OfficialFormField[]=[];
   try {
@@ -43,7 +94,7 @@ export async function inspectOfficialForm(form: OfficialLegalForm): Promise<Insp
       fields.push({name,type:kind.includes('text')?'text':kind.includes('check')?'checkbox':kind.includes('radio')?'radio':kind.includes('dropdown')?'dropdown':kind.includes('option')?'option':'unknown'});
     }
   } catch {}
-  return {sourceUrl:form.url,contentType:'pdf',bytes,fields,fillable:fields.length>0};
+  return {sourceUrl:resolved.url,contentType:'pdf',bytes,fields,fillable:fields.length>0};
 }
 export async function fillOfficialPdf(inspected: InspectedOfficialForm, values: Record<string,string|boolean>, flatten=true): Promise<Buffer> {
   if(inspected.contentType!=='pdf') throw new Error('Official form is not a PDF');
