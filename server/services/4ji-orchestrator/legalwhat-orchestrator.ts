@@ -5,7 +5,7 @@
  * 
  * This orchestrator manages all LegalWhat legal platform operations:
  * - Legal consulting and analysis
- * - Visual and audio optimization (ALEXARA)
+ * - Visual and audio optimization (LEXARA)
  * - Filing and document management
  * - SEO and platform UX
  * - Internal orchestration
@@ -24,7 +24,7 @@
  * - Client Communication Agent
  * - UX Optimization Agent
  * - SEO Agent
- * - Accessibility Agent (ALEXARA voice)
+ * - Accessibility Agent (LEXARA voice)
  */
 
 import { createLogger } from '../../logger';
@@ -68,7 +68,9 @@ export interface LegalWhatSystemStatus {
   orchestratorOnline: boolean;
   subAgentsActive: number;
   workerFunctionsActive: number;
-  alexaraOnline: boolean;
+  lexaraOnline: boolean;
+  /** @deprecated Compatibility mirror; use lexaraOnline. */
+  alexaraOnline?: boolean;
   seoOptimizationActive: boolean;
   uxOptimizationActive: boolean;
   autosaveEnabled: boolean;
@@ -191,9 +193,9 @@ export class LegalWhatOrchestrator {
           log.info('Phase 2: Initializing Worker Functions');
           await this.initializeWorkerFunctions();
 
-          // Phase 3: Initialize ALEXARA Voice System
-          log.info('Phase 3: Initializing ALEXARA Voice Intelligence');
-          await this.initializeAlexara();
+          // Phase 3: Initialize LEXARA Voice System
+          log.info('Phase 3: Initializing LEXARA Voice Intelligence');
+          await this.initializeLexara();
 
           // Phase 4: Initialize SEO & UX Optimization
           log.info('Phase 4: Initializing SEO & UX Systems');
@@ -237,7 +239,7 @@ export class LegalWhatOrchestrator {
       { id: 'client-communication', name: 'Client Communication Agent' },
       { id: 'ux-optimization', name: 'UX Optimization Agent' },
       { id: 'seo', name: 'SEO Agent' },
-      { id: 'accessibility', name: 'Accessibility Agent (ALEXARA)' },
+      { id: 'accessibility', name: 'Accessibility Agent (LEXARA)' },
     ];
 
     for (const agent of agents) {
@@ -284,10 +286,10 @@ export class LegalWhatOrchestrator {
   }
 
   /**
-   * Initialize ALEXARA voice system
+   * Initialize LEXARA voice system
    */
-  private static async initializeAlexara(): Promise<void> {
-    DomainFirewall.storeState(Domain.LEGAL_WHAT, 'alexara', {
+  private static async initializeLexara(): Promise<void> {
+    DomainFirewall.storeState(Domain.LEGAL_WHAT, 'lexara', {
       enabled: true,
       voiceSynthesis: true,
       textSync: true,
@@ -295,7 +297,7 @@ export class LegalWhatOrchestrator {
       languages: ['en-US', 'es-ES', 'fr-FR'],
     });
 
-    log.info('ALEXARA voice intelligence initialized');
+    log.info('LEXARA voice intelligence initialized');
   }
 
   /**
@@ -652,15 +654,16 @@ Additional context: ${JSON.stringify(request.additionalContext ?? {})}`;
    */
   static getStatus(): LegalWhatSystemStatus {
     const stats = DomainFirewall.getDomainStats(Domain.LEGAL_WHAT);
-    // Note: alexaraOnline status is derived from whether the orchestrator is running,
+    // Note: lexaraOnline status is derived from whether the orchestrator is running,
     // not from domain state access, to avoid firewall bypass concerns
-    const alexaraOnline = this.isRunning;
+    const lexaraOnline = this.isRunning;
 
     return {
       orchestratorOnline: this.isRunning,
       subAgentsActive: Array.from(this.subAgents.values()).filter(a => a.active).length,
       workerFunctionsActive: this.workerFunctions.size,
-      alexaraOnline,
+      lexaraOnline,
+      alexaraOnline: lexaraOnline,
       seoOptimizationActive: this.isRunning,
       uxOptimizationActive: this.isRunning,
       autosaveEnabled: true,
