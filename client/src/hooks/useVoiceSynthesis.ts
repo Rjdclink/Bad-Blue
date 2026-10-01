@@ -26,7 +26,7 @@ export interface VoiceSynthesisOptions {
 
 export interface VoiceSynthesisResult {
   speak: (text: string, options?: VoiceSynthesisOptions) => Promise<void>;
-  stop: () => void;
+  stop: (reason?: string) => void;
   pause: () => void;
   resume: () => void;
   isSpeaking: boolean;
@@ -130,7 +130,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     activeTurnRef.current += 1;
     clearPlaybackWatchdog();
     interruptActiveWait();
-    lexaraRealtimeVoiceClient.interrupt();
+    lexaraRealtimeVoiceClient.interrupt(reason);
     LexaraServerTTS.stop(reason);
 
     setIsSpeaking(false);

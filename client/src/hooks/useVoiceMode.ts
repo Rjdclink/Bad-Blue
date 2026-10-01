@@ -21,6 +21,8 @@ export interface VoiceTranscriptMeta {
   bargeInProbe?: boolean;
   utteranceId?: number;
   startedDuringPlayback?: boolean;
+  endOfTurnConfidence?: number;
+  turnTrigger?: string;
 }
 
 export interface VoiceActivityMeta {
@@ -81,7 +83,7 @@ function preferredMicrophoneConstraints(): MediaTrackConstraints {
   const constraints: MediaTrackConstraints = {};
 
   if (supported.echoCancellation) constraints.echoCancellation = true;
-  if (supported.noiseSuppression) constraints.noiseSuppression = true;
+  if (supported.noiseSuppression) constraints.noiseSuppression = false;
   if (supported.autoGainControl) constraints.autoGainControl = true;
   if (supported.channelCount) constraints.channelCount = { ideal: 1 };
   if (supported.latency) constraints.latency = { ideal: 0.02 };
@@ -653,6 +655,11 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
         ? undefined
         : Math.max(0, performance.now() - startedAt);
       const confidence = averageFluxConfidence(event);
+      const endOfTurnConfidenceRaw = Number(event.end_of_turn_confidence);
+      const endOfTurnConfidence = Number.isFinite(endOfTurnConfidenceRaw)
+        ? endOfTurnConfidenceRaw
+        : undefined;
+      const turnTrigger = typeof event.trigger === 'string' ? event.trigger : undefined;
 
       if (eventType === 'StartOfTurn') {
         const beganDuringPlayback = optionsRef.current.shouldProbeBargeIn?.() === true;
@@ -728,6 +735,8 @@ export function useVoiceMode(options: VoiceModeOptions = {}): VoiceModeResult {
         speechDurationMs,
         utteranceId: turnIndex,
         startedDuringPlayback,
+        endOfTurnConfidence,
+        turnTrigger,
       });
       serverRealtimeTurnStartedDuringPlaybackRef.current.delete(turnIndex);
       serverRealtimeTurnStartedAtRef.current.delete(turnIndex);

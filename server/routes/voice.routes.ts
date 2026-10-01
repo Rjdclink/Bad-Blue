@@ -238,6 +238,8 @@ export function setupVoiceRoutes(app: Express): void {
       'realtime-first-audio',
       'realtime-playing',
       'realtime-interrupted',
+      'realtime-input-rejected',
+      'realtime-input-confirmed',
       'realtime-ended',
       'realtime-fallback',
       'realtime-fatal',
