@@ -9,7 +9,7 @@
  * - Crawler synchronization
  * - Research, drafting, error detection, and visual optimization
  * - Multi-model AI integration
- * - Bit-level neural pathways (ALEXARA/CRYPTARA dual-brain architecture)
+ * - Bit-level neural pathways (LEXARA/CRYPTARA dual-brain architecture)
  */
 
 import { promises as fs } from 'fs';
@@ -27,7 +27,7 @@ import {
 
 // Import Bit Neural Pathway System
 import { initializeBitNeuralPathways, shutdownBitNeuralPathways, getBitNeuralPathwayManager } from './bitNeuralPathways';
-import { initializeALEXARA, shutdownALEXARA, getALEXARA } from './alexaraModule';
+import { initializeLexaraNeuralModule, shutdownLexaraNeuralModule, getLexaraNeuralModule } from './alexaraModule';
 import { initializeCRYPTARA, shutdownCRYPTARA, getCRYPTARA } from './cryptaraModule';
 import { initializeBeneficialCrawler, shutdownBeneficialCrawler, getBeneficialCrawler } from './beneficialCrawler';
 
@@ -357,11 +357,11 @@ export async function initializeOrchestrator(): Promise<void> {
       }
     }
     
-    // Initialize Bit Neural Pathways System (ALEXARA/CRYPTARA dual-brain)
+    // Initialize Bit Neural Pathways System (LEXARA/CRYPTARA dual-brain)
     try {
       console.log('[4JI Orchestrator] Initializing Bit Neural Pathways...');
       await initializeBitNeuralPathways();
-      await initializeALEXARA();
+      await initializeLexaraNeuralModule();
       await initializeCRYPTARA();
       await initializeBeneficialCrawler({ crawlInterval: 60000 }); // 1 minute crawl interval
       console.log('[4JI Orchestrator] Bit Neural Pathways initialized');
@@ -928,20 +928,23 @@ async function logError(context: string, error: Error): Promise<void> {
 export function getNeuralPathwayStatus(): {
   initialized: boolean;
   pathwayMetrics: any;
+  lexaraMetrics: any;
+  /** @deprecated Compatibility mirror for older consumers. */
   alexaraMetrics: any;
   cryptaraMetrics: any;
   crawlerMetrics: any;
 } {
   try {
     const pathwayManager = getBitNeuralPathwayManager();
-    const alexara = getALEXARA();
+    const lexara = getLexaraNeuralModule();
     const cryptara = getCRYPTARA();
     const crawler = getBeneficialCrawler();
 
     return {
-      initialized: pathwayManager.isInitialized() && alexara.isInitialized() && cryptara.isInitialized(),
+      initialized: pathwayManager.isInitialized() && lexara.isInitialized() && cryptara.isInitialized(),
       pathwayMetrics: pathwayManager.isInitialized() ? pathwayManager.getMetrics() : null,
-      alexaraMetrics: alexara.isInitialized() ? alexara.getMetrics() : null,
+      lexaraMetrics: lexara.isInitialized() ? lexara.getMetrics() : null,
+      alexaraMetrics: lexara.isInitialized() ? lexara.getMetrics() : null,
       cryptaraMetrics: cryptara.isInitialized() ? cryptara.getMetrics() : null,
       crawlerMetrics: crawler.isInitialized() ? crawler.getMetrics() : null
     };
@@ -949,6 +952,7 @@ export function getNeuralPathwayStatus(): {
     return {
       initialized: false,
       pathwayMetrics: null,
+      lexaraMetrics: null,
       alexaraMetrics: null,
       cryptaraMetrics: null,
       crawlerMetrics: null
@@ -965,11 +969,11 @@ export async function performNeuralLegalAnalysis(
   jurisdiction: string
 ): Promise<any> {
   try {
-    const alexara = getALEXARA();
-    if (!alexara.isInitialized()) {
-      await initializeALEXARA();
+    const lexara = getLexaraNeuralModule();
+    if (!lexara.isInitialized()) {
+      await initializeLexaraNeuralModule();
     }
-    return await alexara.analyzeLegalSituation(situation, lawType, jurisdiction);
+    return await lexara.analyzeLegalSituation(situation, lawType, jurisdiction);
   } catch (error: any) {
     console.error('[4JI Orchestrator] Neural legal analysis failed:', error.message);
     return {
@@ -1019,7 +1023,7 @@ export async function shutdownNeuralPathways(): Promise<void> {
   try {
     await shutdownBeneficialCrawler();
     await shutdownCRYPTARA();
-    await shutdownALEXARA();
+    await shutdownLexaraNeuralModule();
     await shutdownBitNeuralPathways();
     console.log('[4JI Orchestrator] Neural pathways shutdown complete');
   } catch (error: any) {
