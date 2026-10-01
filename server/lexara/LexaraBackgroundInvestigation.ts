@@ -371,7 +371,7 @@ export async function discoverLexaraBackgroundSourcesParallel(
     standaloneQuery: query,
     inferred: true,
   };
-  const [nativeItems, claudeParallel] = await Promise.all([
+  const [nativeOutcome, claudeOutcome] = await Promise.allSettled([
     discoverLegalMeshTier3(query, options.signal, {
       categories: options.categories,
       jurisdiction: options.jurisdiction,
@@ -392,6 +392,15 @@ export async function discoverLexaraBackgroundSourcesParallel(
       signal: options.signal,
     }),
   ]);
+  const nativeItems = nativeOutcome.status === 'fulfilled' ? nativeOutcome.value : [];
+  const claudeParallel = claudeOutcome.status === 'fulfilled'
+    ? claudeOutcome.value
+    : { candidates: [], citationEvidence: [], searches: 0 };
+  if (nativeOutcome.status === 'rejected') {
+    console.warn('[LEXARA Background] native discovery lane failed while parallel research continued', {
+      error: nativeOutcome.reason instanceof Error ? nativeOutcome.reason.message : String(nativeOutcome.reason),
+    });
+  }
   const items = uniqueCandidates([...nativeItems, ...claudeParallel.candidates]);
   const excluded = new Set(exclude);
   const filtered = items.filter(item => !excluded.has(item.url)).slice(0, options.limit || 12);
@@ -460,7 +469,7 @@ export async function investigateLexaraBackgroundQuestion(
   try {
     const initialQuery = decision.standaloneQuery || decision.objective || prompt;
     context.onProgress?.({ type: 'searching', pass: 0 });
-    const [nativeCandidates, claudeParallel] = await Promise.all([
+    const [nativeOutcome, claudeOutcome] = await Promise.allSettled([
       discoverLegalMeshTier3(initialQuery, context.signal, {
         categories,
         jurisdiction: context.jurisdiction || subject.location,
@@ -476,6 +485,15 @@ export async function investigateLexaraBackgroundQuestion(
         signal: context.signal,
       }),
     ]);
+    const nativeCandidates = nativeOutcome.status === 'fulfilled' ? nativeOutcome.value : [];
+    const claudeParallel = claudeOutcome.status === 'fulfilled'
+      ? claudeOutcome.value
+      : { candidates: [], citationEvidence: [], searches: 0 };
+    if (nativeOutcome.status === 'rejected') {
+      console.warn('[LEXARA Background] native discovery failed; preserving Claude parallel evidence', {
+        error: nativeOutcome.reason instanceof Error ? nativeOutcome.reason.message : String(nativeOutcome.reason),
+      });
+    }
     for (const item of claudeParallel.citationEvidence) {
       claudeCitationEvidence.set(item.url, { content: item.content, retrievedAt: item.retrievedAt });
     }
@@ -494,6 +512,11 @@ export async function investigateLexaraBackgroundQuestion(
           purpose: 'lexara_legal_research',
           targets: fresh.map(item => item.url),
           signal: context.signal,
+        }).catch(error => {
+          console.warn('[LEXARA Background] direct retrieval failed; preserving independently cited evidence', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return { evidence: [] };
         });
 
         const evidenceByTarget = new Map(retrieval.evidence.map(item => [item.target, item]));
@@ -551,7 +574,7 @@ export async function investigateLexaraBackgroundQuestion(
 
       const query = broadenedQuery(subject, decision, categories, context.jurisdiction, pass);
       context.onProgress?.({ type: 'checkpoint', pass: recursionPasses, confidence: best?.confidence || 0 });
-      const [primary, supplemental] = await Promise.all([
+      const [primaryOutcome, supplementalOutcome] = await Promise.allSettled([
         discoverLegalMeshTier3(query, context.signal, {
           categories,
           jurisdiction: context.jurisdiction || subject.location,
@@ -565,6 +588,8 @@ export async function investigateLexaraBackgroundQuestion(
           requestedFact: decision.requestedFact,
         }),
       ]);
+      const primary = primaryOutcome.status === 'fulfilled' ? primaryOutcome.value : [];
+      const supplemental = supplementalOutcome.status === 'fulfilled' ? supplementalOutcome.value : [];
       [...primary, ...supplemental].forEach(item => discoveryLanes.add(item.provider));
       const merged = uniqueCandidates([...primary, ...supplemental, ...candidates])
         .slice(0, maxCandidates);
