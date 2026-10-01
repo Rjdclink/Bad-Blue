@@ -8,14 +8,14 @@
  * @exports Domain - Domain type enum
  * 
  * The top-layer controller that:
- * - Routes requests to ALEXARA or CRYPTARA based on extra-inferable communication
+ * - Routes requests to LEXARA or CRYPTARA based on extra-inferable communication
  * - Ensures NO cross-contamination between legal and crypto domains
- * - Can learn and evolve for enhancing both ALEXARA and CRYPTARA capabilities
+ * - Can learn and evolve for enhancing both LEXARA and CRYPTARA capabilities
  * - Equipped with shell capabilities and computational competence
  * - Runs autonomously with supervision
  * 
  * ROUTING RULES:
- * - Legal queries → ALEXARA (legal research, document generation, OSINT)
+ * - Legal queries → LEXARA (legal research, document generation, OSINT)
  * - Crypto queries → CRYPTARA (market surveillance, trading intelligence, simulations)
  * - Cross-domain requests → REJECTED with violation logged
  * 
@@ -32,7 +32,7 @@
 
 import { EventEmitter } from 'events';
 import { createLogger } from '../../logger';
-import { Alexara, getAlexara, type LegalResearchRequest, type DocumentGenerationRequest } from '../alexara';
+import { Lexara, getLexara, type LegalResearchRequest, type DocumentGenerationRequest } from '../lexara';
 import { Cryptara, getCryptara, type CryptaraConfig } from '../cryptara';
 import { ensureCryptaraBeamWiring } from '../cryptocrawl/integration/cryptara-beam-wiring.js';
 import { checkMasterPassword } from '../../masterPassword.js';
@@ -86,7 +86,7 @@ export interface GenieResponse {
   success: boolean;
   domain: Domain;
   result: unknown;
-  routedTo: 'ALEXARA' | 'CRYPTARA' | 'REJECTED';
+  routedTo: 'LEXARA' | 'CRYPTARA' | 'REJECTED';
   processingTimeMs: number;
   confidence: number;
 }
@@ -102,7 +102,9 @@ export interface DomainViolation {
 
 export interface GenieStatus {
   isRunning: boolean;
-  alexaraStatus: 'running' | 'stopped' | 'error';
+  lexaraStatus: 'running' | 'stopped' | 'error';
+  /** @deprecated Compatibility mirror for older Genie clients. */
+  alexaraStatus?: 'running' | 'stopped' | 'error';
   cryptaraStatus: 'running' | 'stopped' | 'error';
   totalRequests: number;
   legalRequests: number;
@@ -139,7 +141,7 @@ const IMMUTABLE_RULES: ImmutableRule[] = [
   {
     id: 'domain-separation',
     name: 'Domain Separation',
-    description: 'CRYPTARA cannot call legal endpoints; ALEXARA cannot call crypto endpoints',
+    description: 'CRYPTARA cannot call legal endpoints; LEXARA cannot call crypto endpoints',
     enforced: true,
     violations: 0,
   },
@@ -200,7 +202,7 @@ const IMMUTABLE_RULES: ImmutableRule[] = [
 
 export class GenieController extends EventEmitter {
   private static instance: GenieController | null = null;
-  private alexara: Alexara | null = null;
+  private lexara: Lexara | null = null;
   private cryptara: Cryptara | null = null;
   private violations: DomainViolation[] = [];
   private scheduledTasks: ScheduledTask[] = [];
@@ -211,7 +213,7 @@ export class GenieController extends EventEmitter {
   
   private status: GenieStatus = {
     isRunning: false,
-    alexaraStatus: 'stopped',
+    lexaraStatus: 'stopped',
     cryptaraStatus: 'stopped',
     totalRequests: 0,
     legalRequests: 0,
@@ -253,11 +255,11 @@ export class GenieController extends EventEmitter {
     this.startTime = new Date();
 
     try {
-      // Initialize ALEXARA (Legal)
-      this.alexara = getAlexara();
-      await this.alexara.initialize();
-      this.status.alexaraStatus = 'running';
-      log.info('ALEXARA module initialized');
+      // Initialize LEXARA (Legal)
+      this.lexara = getLexara();
+      await this.lexara.initialize();
+      this.status.lexaraStatus = 'running';
+      log.info('LEXARA module initialized');
 
       // Initialize CRYPTARA through the canonical CryptoCrawler compute authority.
       // This guarantees Genie-owned direct simulation calls cannot bypass the
@@ -279,7 +281,7 @@ export class GenieController extends EventEmitter {
       this.emit('initialized', { timestamp: new Date() });
       
       log.info('4JI-GENIE Controller initialized successfully', {
-        alexaraStatus: this.status.alexaraStatus,
+        lexaraStatus: this.status.lexaraStatus,
         cryptaraStatus: this.status.cryptaraStatus,
         immutableRules: this.rules.length,
       });
@@ -347,14 +349,14 @@ export class GenieController extends EventEmitter {
 
     try {
       let result: unknown;
-      let routedTo: 'ALEXARA' | 'CRYPTARA' | 'REJECTED';
+      let routedTo: 'LEXARA' | 'CRYPTARA' | 'REJECTED';
 
       switch (domain) {
         case 'legal':
-          // Route to ALEXARA
+          // Route to LEXARA
           this.status.legalRequests++;
-          result = await this.routeToAlexara(request);
-          routedTo = 'ALEXARA';
+          result = await this.routeToLexara(request);
+          routedTo = 'LEXARA';
           break;
 
         case 'crypto':
@@ -370,7 +372,7 @@ export class GenieController extends EventEmitter {
           routedTo = 'REJECTED';
           result = { 
             error: 'Unable to determine domain. Please specify if this is a legal or crypto query.',
-            suggestions: ['Add legal context for ALEXARA', 'Add crypto context for CRYPTARA'],
+            suggestions: ['Add legal context for LEXARA', 'Add crypto context for CRYPTARA'],
           };
       }
 
@@ -443,12 +445,12 @@ export class GenieController extends EventEmitter {
   }
 
   /**
-   * Route request to ALEXARA
+   * Route request to LEXARA
    * Cross-domain restrictions removed for enhanced operability
    */
-  private async routeToAlexara(request: GenieRequest): Promise<unknown> {
-    if (!this.alexara) {
-      throw new Error('ALEXARA is not initialized');
+  private async routeToLexara(request: GenieRequest): Promise<unknown> {
+    if (!this.lexara) {
+      throw new Error('LEXARA is not initialized');
     }
 
     // Cross-domain check disabled for enhanced operability
@@ -460,7 +462,7 @@ export class GenieController extends EventEmitter {
       context: request.context,
     };
 
-    return this.alexara.performResearch(legalRequest);
+    return this.lexara.performResearch(legalRequest);
   }
 
   /**
@@ -632,15 +634,21 @@ export class GenieController extends EventEmitter {
   getStatus(): GenieStatus {
     return {
       ...this.status,
+      alexaraStatus: this.status.lexaraStatus,
       uptime: this.startTime ? Date.now() - this.startTime.getTime() : 0,
     };
   }
 
   /**
-   * Get ALEXARA instance (for direct access when needed)
+   * Get LEXARA instance (for direct access when needed)
    */
-  getAlexara(): Alexara | null {
-    return this.alexara;
+  getLexara(): Lexara | null {
+    return this.lexara;
+  }
+
+  /** @deprecated Use getLexara(). */
+  getAlexara(): Lexara | null {
+    return this.getLexara();
   }
 
   /**
@@ -661,9 +669,9 @@ export class GenieController extends EventEmitter {
       this.updateScheduleInterval = null;
     }
 
-    if (this.alexara) {
-      await this.alexara.shutdown();
-      this.status.alexaraStatus = 'stopped';
+    if (this.lexara) {
+      await this.lexara.shutdown();
+      this.status.lexaraStatus = 'stopped';
     }
 
     if (this.cryptara) {
@@ -687,7 +695,7 @@ export class GenieController extends EventEmitter {
       await GenieController.instance.shutdown();
       GenieController.instance = null;
     }
-    await Alexara.reset();
+    await Lexara.reset();
     await Cryptara.reset();
   }
 }
