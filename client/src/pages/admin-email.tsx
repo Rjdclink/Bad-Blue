@@ -354,7 +354,7 @@ export default function AdminEmail() {
     );
   }
 
-  if !hasMasterAccess {
+  if (!hasMasterAccess) {
     return null;
   }
 
