@@ -109,6 +109,16 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     notes: 'Uses three or more georeferenced anchors and measurement uncertainty.',
   },
   {
+    id: 'structured-telemetry-import',
+    label: 'Structured telemetry import',
+    mode: 'live-telemetry',
+    sourceTypes: ['device_gps','gnss_fix','vehicle_telemetry','social_geotag','historical_location','public_record'],
+    configured: () => true,
+    priority: 'high',
+    supportsRealtime: false,
+    notes: 'Imports timestamped GeoJSON, GPX, KML, NMEA, CSV and NDJSON location observations.',
+  },
+  {
     id: 'media-metadata',
     label: 'Media metadata extraction',
     mode: 'media',
