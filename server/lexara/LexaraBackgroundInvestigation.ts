@@ -576,16 +576,18 @@ export async function investigateLexaraBackgroundQuestion(
       signal: laneSignal,
       deep: deepAcquisitionRequested,
     }).then(async result => {
-      peopleParallel = result;
       const targets = result.candidates.slice(0, 3);
+      let retrievedEvidence: Array<{ target: string; content: string; retrievedAt: string }> = [];
       if (targets.length && !laneSignal.aborted) {
         const retrieval = await lexaraRetrievalAdapter.retrieve({
           purpose: 'lexara_legal_research',
           targets: targets.map(item => item.url),
           signal: laneSignal,
         }).catch(() => ({ evidence: [] }));
-        peopleRetrievedEvidence = retrieval.evidence;
+        retrievedEvidence = retrieval.evidence;
       }
+      peopleParallel = result;
+      peopleRetrievedEvidence = retrievedEvidence;
       return result;
     }).catch(error => {
       console.warn('[LEXARA Background] specialized people-tool lanes failed; preserving native research', {
