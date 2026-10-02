@@ -667,6 +667,94 @@ export function useGeoRuntime(
     };
   }, [isLive, cfg.autoFetch, cfg.maxFrameBuffer, requestAuthoritativeFuturecast, sessionId]);
 
+  // Server push channel for telemetry arriving from any configured adapter.
+  // Browser-originated points are de-duplicated against the local live frame,
+  // while external provider/radio/ranging observations appear immediately.
+  useEffect(() => {
+    if (!sessionId || typeof EventSource === 'undefined') return;
+
+    const source = new EventSource(
+      `/api/geoconsole/telemetry-stream/${encodeURIComponent(sessionId)}`,
+      { withCredentials: true },
+    );
+
+    const onObservationBatch = (event: MessageEvent) => {
+      try {
+        const payload = JSON.parse(String(event.data || '{}'));
+        const rawPoints = Array.isArray(payload?.points) ? payload.points : [];
+        const points: GPSPoint[] = rawPoints.flatMap((point: any) => {
+          const timestamp = new Date(point?.timestamp);
+          if (
+            !Number.isFinite(Number(point?.latitude))
+            || !Number.isFinite(Number(point?.longitude))
+            || !Number.isFinite(timestamp.getTime())
+          ) return [];
+
+          return [{
+            ...point,
+            latitude: Number(point.latitude),
+            longitude: Number(point.longitude),
+            timestamp,
+            receivedAt: point?.receivedAt ? new Date(point.receivedAt) : undefined,
+            provenance: point?.provenance
+              ? {
+                  ...point.provenance,
+                  capturedAt: point.provenance.capturedAt
+                    ? new Date(point.provenance.capturedAt)
+                    : undefined,
+                }
+              : undefined,
+          } as GPSPoint];
+        });
+        if (!points.length) return;
+
+        const incoming = convertToFrames(points);
+        if (!incoming.length) return;
+
+        const keyFor = (frame: GeoFrame) => [
+          frame.position.latitude.toFixed(7),
+          frame.position.longitude.toFixed(7),
+          frame.timestamp.toISOString(),
+          frame.source,
+          frame.correlationGroup || frame.provenance?.recordId || '',
+        ].join('|');
+
+        const merged = new Map<string, GeoFrame>();
+        for (const frame of [...framesRef.current, ...incoming]) {
+          merged.set(keyFor(frame), frame);
+        }
+
+        let next = [...merged.values()]
+          .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+        const latestMs = next[next.length - 1]?.timestamp.getTime() ?? Date.now();
+        next = next.filter(frame => frame.timestamp.getTime() >= latestMs - ONE_HOUR_MS);
+        if (next.length > cfg.maxFrameBuffer) next = next.slice(-cfg.maxFrameBuffer);
+
+        framesRef.current = next;
+        setFrames([...next]);
+        setCurrentIndex(Math.max(0, next.length - 1));
+        setVersion(value => value + 1);
+
+        const nowMs = Date.now();
+        if (
+          next.length >= 3
+          && nowMs - liveFuturecastLastRequestRef.current >= 30_000
+        ) {
+          liveFuturecastLastRequestRef.current = nowMs;
+          void requestAuthoritativeFuturecast(next);
+        }
+      } catch {
+        // A malformed provider event is isolated and cannot break the local map.
+      }
+    };
+
+    source.addEventListener('observation-batch', onObservationBatch as EventListener);
+    return () => {
+      source.removeEventListener('observation-batch', onObservationBatch as EventListener);
+      source.close();
+    };
+  }, [cfg.maxFrameBuffer, convertToFrames, requestAuthoritativeFuturecast, sessionId]);
+
   // === DERIVED STATE (computed from index + frames) ===
   
   // Current frame - derived directly from index
