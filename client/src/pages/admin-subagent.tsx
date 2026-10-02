@@ -218,7 +218,7 @@ export default function AdminSubAgent() {
   }
 
   // Show access denied if not admin
-  if !hasMasterAccess {
+  if (!hasMasterAccess) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <Card className="max-w-md">
