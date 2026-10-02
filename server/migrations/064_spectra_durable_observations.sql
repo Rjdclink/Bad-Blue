@@ -121,4 +121,4 @@ BEGIN
       ADD TABLE public.spectra_location_observations;
   END IF;
 END
-$;
+$$;
