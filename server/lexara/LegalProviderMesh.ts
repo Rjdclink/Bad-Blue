@@ -372,10 +372,17 @@ export async function discoverLegalMeshSupplemental(
   if(historicalNew.length) return diversify(historicalNew,12);
 
   const learnedPatterns=await getLexaraLearnedQueryPatterns(options.categories||[],options.jurisdiction,2);
-  for(const pattern of learnedPatterns){
-    const retry=await freeSearch(`${query} ${pattern}`,signal);
-    const fresh=retry.filter(item=>!seen.has(item.url)).map(item=>({...item,tier:5 as const,provider:`supplemental-${item.provider}`}));
-    if(fresh.length) return diversify(fresh,12);
+  if(learnedPatterns.length){
+    const learnedOutcomes=await Promise.allSettled(
+      learnedPatterns.map(pattern=>freeSearch(`${query} ${pattern}`,signal)),
+    );
+    const learnedFresh=diversify(
+      learnedOutcomes.flatMap(outcome=>outcome.status==='fulfilled' ? outcome.value : [])
+        .filter(item=>!seen.has(item.url))
+        .map(item=>({...item,tier:5 as const,provider:`supplemental-${item.provider}`})),
+      12,
+    );
+    if(learnedFresh.length) return learnedFresh;
   }
 
   // Only after independent search + learned-pattern retries miss, let the
@@ -387,10 +394,17 @@ export async function discoverLegalMeshSupplemental(
     jurisdiction:options.jurisdiction,
     signal,
   });
-  for(const alternate of planned.queries){
-    const retry=await freeSearch(alternate,signal);
-    const fresh=retry.filter(item=>!seen.has(item.url)).map(item=>({...item,tier:5 as const,provider:`planned-${item.provider}`}));
-    if(fresh.length) return diversify(fresh,12);
+  if(planned.queries.length){
+    const plannedOutcomes=await Promise.allSettled(
+      planned.queries.map(alternate=>freeSearch(alternate,signal)),
+    );
+    const plannedFresh=diversify(
+      plannedOutcomes.flatMap(outcome=>outcome.status==='fulfilled' ? outcome.value : [])
+        .filter(item=>!seen.has(item.url))
+        .map(item=>({...item,tier:5 as const,provider:`planned-${item.provider}`})),
+      12,
+    );
+    if(plannedFresh.length) return plannedFresh;
   }
 
   const paid=await serpApi(query,existingUrls,signal);
