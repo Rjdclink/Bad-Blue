@@ -2437,11 +2437,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 // ============================================
 app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) => {
   try {
-    // Allow the special bypass id used elsewhere OR a user object that marks admin.
-    const userId = req.user?.claims?.sub;
-    const isAdminUserFlag = req.user?.isAdmin === true || req.user?.claims?.isAdmin === true;
-
-    if (userId !== 'admin-bypass' && !isAdminUserFlag) {
+    // Master password is the sole browser administrator credential.
+    if (req.user?.isMasterBypass !== true) {
       return res.status(403).json({ success: false, message: 'Forbidden - Admin access required' });
     }
 
@@ -2506,7 +2503,7 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
       try {
         const userId = req.user?.claims?.sub;
 
-        if (userId !== "admin-bypass") {
+        if (req.user?.isMasterBypass !== true) {
           return res.status(403).json({ message: "Access denied: Admin only" });
         }
 
@@ -2564,7 +2561,7 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
     try {
       const userId = req.user?.claims?.sub;
 
-      if (userId !== "admin-bypass") {
+      if (req.user?.isMasterBypass !== true) {
         return res.status(403).json({ message: "Access denied: Admin only" });
       }
 
@@ -2601,7 +2598,7 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
         const userId = req.user?.claims?.sub;
 
         // Only allow admin access to MCC
-        if (userId !== "admin-bypass" && !req.user?.isAdmin) {
+        if (req.user?.isMasterBypass !== true) {
           return res.status(403).json({ 
             success: false,
             message: "Access denied: MCC requires admin privileges" 
@@ -2652,7 +2649,7 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
       try {
         const userId = req.user?.claims?.sub;
 
-        if (userId !== "admin-bypass" && !req.user?.isAdmin) {
+        if (req.user?.isMasterBypass !== true) {
           return res.status(403).json({ 
             success: false,
             message: "Access denied: MCC requires admin privileges" 
@@ -2685,7 +2682,7 @@ app.post('/api/admin/send-custom-email', isAuthenticated, async (req: any, res) 
       try {
         const userId = req.user?.claims?.sub;
 
-        if (userId !== "admin-bypass" && !req.user?.isAdmin) {
+        if (req.user?.isMasterBypass !== true) {
           return res.status(403).json({ 
             success: false,
             message: "Access denied: MCC requires admin privileges" 
@@ -4515,7 +4512,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // Get all subscription tiers
   app.get("/api/admin/subscription-tiers", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const userId = req.user?.id || req.user?.claims?.sub;
-    if (userId !== 'admin-bypass') {
+    if (req.user?.isMasterBypass !== true) {
       return res.status(403).json({ error: "Admin access required" });
     }
     
@@ -4530,7 +4527,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // Create subscription tier
   app.post("/api/admin/subscription-tiers", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const userId = req.user?.id || req.user?.claims?.sub;
-    if (userId !== 'admin-bypass') {
+    if (req.user?.isMasterBypass !== true) {
       return res.status(403).json({ error: "Admin access required" });
     }
     
@@ -4560,7 +4557,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // Update subscription tier
   app.patch("/api/admin/subscription-tiers/:id", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const userId = req.user?.id || req.user?.claims?.sub;
-    if (userId !== 'admin-bypass') {
+    if (req.user?.isMasterBypass !== true) {
       return res.status(403).json({ error: "Admin access required" });
     }
     
@@ -4593,7 +4590,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // Delete subscription tier
   app.delete("/api/admin/subscription-tiers/:id", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const userId = req.user?.id || req.user?.claims?.sub;
-    if (userId !== 'admin-bypass') {
+    if (req.user?.isMasterBypass !== true) {
       return res.status(403).json({ error: "Admin access required" });
     }
     
@@ -4613,7 +4610,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // Get all user subscriptions with pagination
   app.get("/api/admin/user-subscriptions", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const userId = req.user?.id || req.user?.claims?.sub;
-    if (userId !== 'admin-bypass') {
+    if (req.user?.isMasterBypass !== true) {
       return res.status(403).json({ error: "Admin access required" });
     }
     
@@ -4662,7 +4659,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // Assign subscription to user
   app.post("/api/admin/user-subscriptions", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const adminId = req.user?.id || req.user?.claims?.sub;
-    if (adminId !== 'admin-bypass') {
+    if (req.user?.isMasterBypass !== true) {
       return res.status(403).json({ error: "Admin access required" });
     }
     
@@ -4703,7 +4700,7 @@ Contact: ${foiaRequest.userEmail || userEmail}
   // Cancel user subscription
   app.patch("/api/admin/user-subscriptions/:id/cancel", isAuthenticated, asyncHandler(async (req: Request, res: Response) => {
     const adminId = req.user?.id || req.user?.claims?.sub;
-    if (adminId !== 'admin-bypass') {
+    if (req.user?.isMasterBypass !== true) {
       return res.status(403).json({ error: "Admin access required" });
     }
     
