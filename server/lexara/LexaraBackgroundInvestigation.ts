@@ -442,7 +442,15 @@ export async function investigateLexaraBackgroundQuestion(
   const promptNormalized = promptResolved ? cleanSubject(promptResolved) : null;
   const sameSubject = Boolean(
     decisionResolved?.name && promptNormalized?.name
-    && normalize(decisionResolved.name) === normalize(promptNormalized.name)
+    && (() => {
+      const decisionTokens = normalize(decisionResolved.name).split(' ').filter(Boolean);
+      const promptTokens = normalize(promptNormalized.name).split(' ').filter(Boolean);
+      const exact = decisionTokens.join(' ') === promptTokens.join(' ');
+      const sameFirstLast = decisionTokens.length >= 2 && promptTokens.length >= 2
+        && decisionTokens[0] === promptTokens[0]
+        && decisionTokens[decisionTokens.length - 1] === promptTokens[promptTokens.length - 1];
+      return exact || sameFirstLast;
+    })()
   );
   const resolved = context.resolvedSubject
     || (sameSubject && decisionResolved && promptNormalized
