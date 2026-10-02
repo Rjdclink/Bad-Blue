@@ -41,9 +41,11 @@ export default function AdminSubAgent() {
     queryKey: ['/api/auth/user'],
   });
 
+  const hasMasterAccess = Boolean((user as any)?.isMasterBypass);
+
   // Redirect if not admin
   useEffect(() => {
-    if (!isLoadingUser && (!user || user.id !== 'admin-bypass')) {
+    if (!isLoadingUser && !hasMasterAccess) {
       toast({
         title: "Access Denied",
         description: "Admin access required",
@@ -51,18 +53,18 @@ export default function AdminSubAgent() {
       });
       setLocation('/');
     }
-  }, [user, isLoadingUser, setLocation, toast]);
+  }, [hasMasterAccess, isLoadingUser, setLocation, toast]);
 
   // Fetch command history
   const { data: history, isLoading: isLoadingHistory } = useQuery<SubAgentLog[]>({
     queryKey: ['/api/admin/subagent/history'],
-    enabled: !!user && user.id === 'admin-bypass',
+    enabled: hasMasterAccess,
   });
 
   // Fetch last change for undo button
   const { data: lastChangeData } = useQuery<{ hasChange: boolean; change: any }>({
     queryKey: ['/api/admin/subagent/last-change'],
-    enabled: !!user && user.id === 'admin-bypass',
+    enabled: hasMasterAccess,
     refetchInterval: 2000, // Refresh every 2 seconds
   });
 
@@ -216,7 +218,7 @@ export default function AdminSubAgent() {
   }
 
   // Show access denied if not admin
-  if (!user || user.id !== 'admin-bypass') {
+  if !hasMasterAccess {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <Card className="max-w-md">
