@@ -157,6 +157,273 @@ router.get('/street-imagery', async (req: Request, res: Response) => {
   }
 });
 
+interface PublicCameraResult {
+  id: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  provider: string;
+  imageUrl?: string;
+  videoUrl?: string;
+  observedAt?: string;
+  status?: {
+    disabled?: boolean;
+    qualityWarning?: boolean;
+    quality?: number | null;
+  };
+  metadata?: Record<string, unknown>;
+}
+
+const cameraCache = new Map<string, { expiresAt: number; items: PublicCameraResult[] }>();
+const CAMERA_CACHE_MS = 30 * 60_000;
+
+function cameraCacheKey(lat: number, lng: number, radiusMiles: number): string {
+  return `${lat.toFixed(3)}:${lng.toFixed(3)}:${radiusMiles.toFixed(1)}`;
+}
+
+function configuredArcGisCameraLayers(): Array<{ url: string; provider: string }> {
+  const raw = String(process.env.SPECTRA_CAMERA_ARCGIS_FEEDS || '').trim();
+  if (!raw) return [];
+  return raw.split(',')
+    .map(entry => entry.trim())
+    .filter(Boolean)
+    .flatMap(entry => {
+      const [urlRaw, providerRaw] = entry.split('|').map(value => value.trim());
+      if (!/^https:\/\//i.test(urlRaw || '')) return [];
+      return [{
+        url: String(urlRaw).replace(/\/$/, ''),
+        provider: providerRaw || new URL(urlRaw).hostname,
+      }];
+    });
+}
+
+function cameraBoundingBox(latitude: number, longitude: number, radiusMiles: number) {
+  const radiusMeters = Math.max(250, Math.min(100_000, radiusMiles * 1609.344));
+  const latDelta = radiusMeters / 111_320;
+  const lngDelta = radiusMeters / (111_320 * Math.max(0.15, Math.cos(latitude * Math.PI / 180)));
+  return {
+    minLat: latitude - latDelta,
+    maxLat: latitude + latDelta,
+    minLng: longitude - lngDelta,
+    maxLng: longitude + lngDelta,
+  };
+}
+
+function cameraAttributeString(
+  attributes: Record<string, unknown>,
+  patterns: RegExp[],
+): string | undefined {
+  for (const [key, value] of Object.entries(attributes)) {
+    if (!patterns.some(pattern => pattern.test(key))) continue;
+    const text = String(value ?? '').trim();
+    if (text) return text;
+  }
+  return undefined;
+}
+
+function cameraAttributeNumber(
+  attributes: Record<string, unknown>,
+  patterns: RegExp[],
+): number | undefined {
+  const value = cameraAttributeString(attributes, patterns);
+  if (value === undefined) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+async function trafficLandCameras(
+  lat: number,
+  lng: number,
+  radiusMiles: number,
+): Promise<PublicCameraResult[]> {
+  const key = String(process.env.TRAFFICLAND_API_KEY || '').trim();
+  const system = String(process.env.TRAFFICLAND_SYSTEM || '').trim();
+  if (!key || !system) return [];
+
+  const endpoint = new URL('https://api.trafficland.com/v2.2/json/video_feeds/poi');
+  endpoint.searchParams.set('lat', String(lat));
+  endpoint.searchParams.set('lon', String(lng));
+  endpoint.searchParams.set('radius', String(radiusMiles));
+  endpoint.searchParams.set('uom', 'mi');
+  endpoint.searchParams.set('key', key);
+  endpoint.searchParams.set('system', system);
+
+  const response = await fetch(endpoint, {
+    headers: {
+      Accept: 'application/json',
+      'Accept-Encoding': 'gzip',
+    },
+    signal: AbortSignal.timeout(6_000),
+  });
+  if (!response.ok) return [];
+
+  const payload: any = await response.json();
+  const rows = Array.isArray(payload) ? payload : [];
+  return rows.flatMap((row: any) => {
+    const latitude = Number(row?.location?.latitude);
+    const longitude = Number(row?.location?.longitude);
+    if (
+      !Number.isFinite(latitude) || !Number.isFinite(longitude)
+      || latitude < -90 || latitude > 90
+      || longitude < -180 || longitude > 180
+    ) return [];
+
+    const updatedAt = Number(row?.updatedAt);
+    return [{
+      id: String(row?.publicId || `${latitude},${longitude}`),
+      name: String(row?.name || 'Traffic camera'),
+      latitude,
+      longitude,
+      provider: String(row?.providerFullName || row?.provider || 'TrafficLand'),
+      imageUrl: String(row?.content?.hugeJpeg || row?.content?.fullJpeg || row?.content?.halfJpeg || '') || undefined,
+      observedAt: Number.isFinite(updatedAt) ? new Date(updatedAt).toISOString() : undefined,
+      status: {
+        disabled: row?.status?.isDisabled === true,
+        qualityWarning: row?.status?.hasQualityWarning === true,
+        quality: Number.isFinite(Number(row?.status?.quality?.current))
+          ? Number(row.status.quality.current)
+          : null,
+      },
+      metadata: {
+        orientation: row?.orientation,
+        city: row?.location?.cityName,
+        state: row?.location?.stateName,
+        country: row?.location?.countryName,
+        refreshRateMs: row?.policy?.refreshRate,
+      },
+    } satisfies PublicCameraResult];
+  });
+}
+
+async function arcGisCameras(
+  lat: number,
+  lng: number,
+  radiusMiles: number,
+): Promise<PublicCameraResult[]> {
+  const layers = configuredArcGisCameraLayers();
+  if (!layers.length) return [];
+
+  const box = cameraBoundingBox(lat, lng, radiusMiles);
+  const settled = await Promise.allSettled(layers.map(async layer => {
+    const endpoint = new URL(`${layer.url}/query`);
+    endpoint.searchParams.set('f', 'json');
+    endpoint.searchParams.set('where', '1=1');
+    endpoint.searchParams.set('outFields', '*');
+    endpoint.searchParams.set('returnGeometry', 'true');
+    endpoint.searchParams.set('geometryType', 'esriGeometryEnvelope');
+    endpoint.searchParams.set('geometry', `${box.minLng},${box.minLat},${box.maxLng},${box.maxLat}`);
+    endpoint.searchParams.set('inSR', '4326');
+    endpoint.searchParams.set('outSR', '4326');
+    endpoint.searchParams.set('spatialRel', 'esriSpatialRelIntersects');
+    endpoint.searchParams.set('resultRecordCount', '200');
+
+    const response = await fetch(endpoint, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(6_000),
+    });
+    if (!response.ok) return [];
+
+    const payload: any = await response.json();
+    const features = Array.isArray(payload?.features) ? payload.features : [];
+    return features.flatMap((feature: any, index: number) => {
+      const attributes = feature?.attributes && typeof feature.attributes === 'object'
+        ? feature.attributes as Record<string, unknown>
+        : {};
+      const latitude = Number(
+        cameraAttributeNumber(attributes, [/^latitude$/i, /^lat$/i]) ?? feature?.geometry?.y
+      );
+      const longitude = Number(
+        cameraAttributeNumber(attributes, [/^longitude$/i, /^lon$/i, /^lng$/i]) ?? feature?.geometry?.x
+      );
+      if (
+        !Number.isFinite(latitude) || !Number.isFinite(longitude)
+        || latitude < -90 || latitude > 90
+        || longitude < -180 || longitude > 180
+      ) return [];
+
+      const imageUrl = cameraAttributeString(attributes, [
+        /^ImageURL$/i, /snapshot/i, /still.*image/i, /^image$/i, /image.*url/i,
+      ]);
+      const videoUrl = cameraAttributeString(attributes, [
+        /^VideoURL$/i, /stream/i, /video.*url/i, /^video$/i,
+      ]);
+      return [{
+        id: String(
+          cameraAttributeString(attributes, [/^COMMON_ID$/i, /^device_id$/i, /^camera_?id$/i, /^id$/i])
+          || cameraAttributeNumber(attributes, [/^FID$/i, /^OBJECTID$/i])
+          || `${layer.provider}-${index + 1}`
+        ),
+        name: cameraAttributeString(attributes, [
+          /^Desc_$/i, /description/i, /intersection/i, /location/i, /^name$/i, /^Route$/i,
+        ]) || `${layer.provider} camera`,
+        latitude,
+        longitude,
+        provider: layer.provider,
+        imageUrl: imageUrl && /^https?:\/\//i.test(imageUrl) ? imageUrl : undefined,
+        videoUrl: videoUrl && /^https?:\/\//i.test(videoUrl) ? videoUrl : undefined,
+        metadata: attributes,
+      } satisfies PublicCameraResult];
+    });
+  }));
+
+  return settled.flatMap(result => result.status === 'fulfilled' ? result.value : []);
+}
+
+/**
+ * GET /api/geoconsole/public-cameras
+ * Nationwide camera discovery: TrafficLand when configured plus any
+ * state/local ArcGIS camera feeds registered in SPECTRA_CAMERA_ARCGIS_FEEDS.
+ */
+router.get('/public-cameras', async (req: Request, res: Response) => {
+  const validation = z.object({
+    lat: z.coerce.number().min(-90).max(90),
+    lng: z.coerce.number().min(-180).max(180),
+    radiusMiles: z.coerce.number().min(0.25).max(62).default(10),
+  }).safeParse(req.query);
+
+  if (!validation.success) {
+    return res.status(400).json({ success: false, error: 'Invalid camera search coordinates' });
+  }
+
+  const { lat, lng, radiusMiles } = validation.data;
+  const cacheKey = cameraCacheKey(lat, lng, radiusMiles);
+  const cached = cameraCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return res.json({ success: true, data: cached.items, cached: true });
+  }
+
+  const settled = await Promise.allSettled([
+    trafficLandCameras(lat, lng, radiusMiles),
+    arcGisCameras(lat, lng, radiusMiles),
+  ]);
+
+  const seen = new Set<string>();
+  const cameras = settled
+    .flatMap(result => result.status === 'fulfilled' ? result.value : [])
+    .filter(camera => {
+      const key = `${camera.provider}:${camera.id}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 250);
+
+  cameraCache.set(cacheKey, {
+    expiresAt: Date.now() + CAMERA_CACHE_MS,
+    items: cameras,
+  });
+
+  return res.json({
+    success: true,
+    data: cameras,
+    cached: false,
+    providers: {
+      trafficLand: Boolean(process.env.TRAFFICLAND_API_KEY && process.env.TRAFFICLAND_SYSTEM),
+      arcGisFeeds: configuredArcGisCameraLayers().length,
+    },
+  });
+});
+
 /**
  * POST /api/geoconsole/process
  * Process raw location inputs through the full pipeline
@@ -325,7 +592,7 @@ router.get('/status', async (req: Request, res: Response) => {
           earthObservationTimeline: true,
           weatherRadarOverlay: true,
           streetImagery: true,
-          publicCameraIntegration: false,
+          publicCameraIntegration: true,
         },
       },
     });
