@@ -461,6 +461,7 @@ function emotionFromUserText(text: string): LEXARAEmotionHint {
 }
 
 export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraConversationProps) {
+  const [, setLocation] = useLocation();
   const { user, isLoading: authLoading } = useAuth();
   const isMasterSession = Boolean((user as any)?.isMasterBypass);
   const userId = (user as any)?.id || (user as any)?.claims?.sub;
@@ -850,12 +851,17 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     }
   }, []);
 
-  const appendMessage = useCallback((role: ConversationMessage['role'], content: string): string => {
+  const appendMessage = useCallback((
+    role: ConversationMessage['role'],
+    content: string,
+    spectraLaunch?: ConversationMessage['spectraLaunch'],
+  ): string => {
     const nextMessage: ConversationMessage = {
       id: makeMessageId(role),
       role,
       content,
       timestamp: new Date(),
+      spectraLaunch,
     };
 
     setConversation(previous => {
@@ -875,6 +881,37 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       return next;
     });
   }, []);
+
+  const attachSpectraLaunch = useCallback((
+    id: string,
+    spectraLaunch: NonNullable<ConversationMessage['spectraLaunch']>,
+  ) => {
+    setConversation(previous => {
+      const next = previous.map(message =>
+        message.id === id ? { ...message, spectraLaunch } : message
+      );
+      conversationRef.current = next;
+      return next;
+    });
+  }, []);
+
+  const openSpectra = useCallback((
+    launch: NonNullable<ConversationMessage['spectraLaunch']>,
+  ) => {
+    try {
+      sessionStorage.setItem('legalwhat:spectra-launch', JSON.stringify({
+        ...launch,
+        conversation: conversationRef.current.slice(-30).map(message => ({
+          role: message.role,
+          content: message.content,
+          timestamp: message.timestamp.toISOString(),
+        })),
+      }));
+    } catch {
+      // Navigation remains available even when browser storage is unavailable.
+    }
+    setLocation('/spectra');
+  }, [setLocation]);
 
   const enableVoice = useCallback(async () => {
     try {
