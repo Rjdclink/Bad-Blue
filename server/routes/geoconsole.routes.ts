@@ -184,7 +184,7 @@ const telemetrySensorSchema = z.object({
   metadata: z.record(z.unknown()).optional(),
 });
 
-const telemetryMeasurementSchema = z.discriminatedUnion('kind', [
+const telemetryMeasurementSchema = z.union([
   telemetryAbsoluteSchema,
   telemetryRadioSchema,
   telemetryRangingSchema,
