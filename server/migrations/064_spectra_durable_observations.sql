@@ -94,3 +94,20 @@ ALTER TABLE public.spectra_investigations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.spectra_clues ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.spectra_telemetry_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.spectra_location_observations ENABLE ROW LEVEL SECURITY;
+
+DO $
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime'
+  ) AND NOT EXISTS (
+    SELECT 1
+    FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime'
+      AND schemaname = 'public'
+      AND tablename = 'spectra_location_observations'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime
+      ADD TABLE public.spectra_location_observations;
+  END IF;
+END
+$;
