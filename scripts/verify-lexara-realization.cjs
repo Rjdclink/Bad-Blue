@@ -1284,6 +1284,10 @@ must(
     !lexaraConversationOrchestrator.includes('The source says:') &&
     lexaraChatRoutes.includes('backgroundDocumentContext: result.backgroundDocumentContext') &&
     lexaraChatRoutes.includes('backgroundDocumentContext: conversationResult.backgroundDocumentContext') &&
+    lexaraChatRoutes.includes("...(event.type === 'endpoint' ? { endpoint: event.endpoint } : {})") &&
+    !lexaraChatRoutes.includes("onResearchProgress: event => send('research', event)") &&
+    conversation.includes("if (event === 'research' && (payload?.type === 'evidence' || payload?.type === 'checkpoint')) {") &&
+    !conversation.includes('const confidence = Math.max(0, Math.min(100, Math.round(Number(payload?.confidence || 0) * 100)))') &&
     conversation.includes('APPLICATION-SUPPLIED LEXARA BACKGROUND EVIDENCE') &&
     conversation.includes("data.backgroundDocumentContext.trim().slice(0, 9_000)") &&
     consultationRoutes.includes('never expose source, provenance, confidence, retrieval metadata, or the research process in the document'),
