@@ -56,10 +56,10 @@ export default function AdminUsers() {
     queryKey: ['/api/auth/user'],
   });
 
-  const ADMIN_BYPASS_USER_ID = 'admin-bypass';
+  const hasMasterAccess = Boolean((user as any)?.isMasterBypass);
 
   useEffect(() => {
-    if (!isLoadingUser && (!user || user.id !== ADMIN_BYPASS_USER_ID)) {
+    if (!isLoadingUser && !hasMasterAccess) {
       toast({
         title: "Access Denied",
         description: "Admin access required",
@@ -67,14 +67,14 @@ export default function AdminUsers() {
       });
       setLocation('/');
     }
-  }, [user, isLoadingUser, setLocation, toast]);
+  }, [hasMasterAccess, isLoadingUser, setLocation, toast]);
 
   const { data: usersData, isLoading: isLoadingUsers } = useQuery<{
     users: UserWithServices[];
     pagination: { page: number; limit: number; total: number; totalPages: number };
   }>({
     queryKey: ['/api/admin/users', usersPage],
-    enabled: !!user && user.id === ADMIN_BYPASS_USER_ID,
+    enabled: hasMasterAccess,
   });
 
   const getServiceNames = (services: PaidServices): string[] => {
@@ -86,7 +86,7 @@ export default function AdminUsers() {
     return names;
   };
 
-  if (isLoadingUser || !user || user.id !== ADMIN_BYPASS_USER_ID) {
+  if (isLoadingUser || !hasMasterAccess) {
     return (
       <div className="flex items-center justify-center min-h-screen" data-testid="loading-spinner">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
