@@ -1280,6 +1280,8 @@ must(
     lexaraConversationOrchestrator.includes("backgroundDocumentContext: formatBackgroundFactsForDocument(backgroundInvestigation)") &&
     lexaraConversationOrchestrator.includes('BACKGROUND USER-PRESENTATION RULE') &&
     lexaraConversationOrchestrator.includes('Do not expose background source names or URLs, confidence percentages') &&
+    lexaraConversationOrchestrator.includes('text: quote,') &&
+    !lexaraConversationOrchestrator.includes('The source says:') &&
     lexaraChatRoutes.includes('backgroundDocumentContext: result.backgroundDocumentContext') &&
     lexaraChatRoutes.includes('backgroundDocumentContext: conversationResult.backgroundDocumentContext') &&
     conversation.includes('APPLICATION-SUPPLIED LEXARA BACKGROUND EVIDENCE') &&
