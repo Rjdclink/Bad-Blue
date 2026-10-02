@@ -539,22 +539,25 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       && activeSessionId !== requestedSessionId
       ? []
       : previousMessages;
+    const genericLegalIntake = isLexaraGenericLegalIntake(prompt);
     documentIntent = detectDocumentIntent(prompt, effectivePreviousMessages);
     const explicitJurisdiction = cleanOptionalString((rawContext as any).jurisdiction, 80);
     const locationState = explicitJurisdiction ? null : await resolveBestLocationEstimate(
       String(req.headers['x-real-ip'] || req.headers['cf-connecting-ip'] || req.ip || ''),
       cleanDeviceLocation((rawContext as any).deviceLocation),
     );
-    const preRepresentationMatter = await advanceRepresentationMatter({
-      prompt,
-      response: '',
-      sessionId: activeSessionId,
-      lawType: cleanOptionalString((rawContext as any).lawType),
-      jurisdiction: explicitJurisdiction || representationContext.activeMatter?.jurisdiction,
-      prior: representationContext.activeMatter,
-      allowClaudeOpus: canUseClaudeOpus(req),
-      signal: controller.signal,
-    });
+    const preRepresentationMatter = genericLegalIntake
+      ? representationContext.activeMatter
+      : await advanceRepresentationMatter({
+          prompt,
+          response: '',
+          sessionId: activeSessionId,
+          lawType: cleanOptionalString((rawContext as any).lawType),
+          jurisdiction: explicitJurisdiction || representationContext.activeMatter?.jurisdiction,
+          prior: representationContext.activeMatter,
+          allowClaudeOpus: canUseClaudeOpus(req),
+          signal: controller.signal,
+        });
     const savedArtifact = selectSavedArtifactRequest(prompt, preRepresentationMatter || representationContext.activeMatter);
     const packetDocumentIntent = savedArtifact ? null : selectPacketDocumentIntent(prompt, preRepresentationMatter);
     if (savedArtifact) {
@@ -602,16 +605,13 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       }
     }
     const response = result.text;
-    const representationMatter = await advanceRepresentationMatter({
-      prompt,
-      response,
-      sessionId: activeSessionId,
-      lawType: cleanOptionalString((rawContext as any).lawType),
-      jurisdiction: result.jurisdiction || explicitJurisdiction,
-      prior: preRepresentationMatter || representationContext.activeMatter,
-      allowClaudeOpus: canUseClaudeOpus(req),
-      signal: controller.signal,
-    });
+    const representationMatter = preRepresentationMatter || representationContext.activeMatter;
+    const enrichmentUserId = representationContext.persistent ? authenticatedUserId(req) : undefined;
+    const enrichmentNeeded = Boolean(
+      enrichmentUserId
+      && representationMatter
+      && shouldEnrichRepresentationMatter(prompt, response, representationMatter)
+    );
     let persistence: Awaited<ReturnType<typeof persistConversationTurn>>;
     try {
       persistence = await persistConversationTurn(req, {
@@ -635,6 +635,18 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
         error: 'LEXARA could not save this reply; please try again',
       });
       return;
+    }
+    if (enrichmentNeeded && enrichmentUserId && representationMatter) {
+      const enrichmentTask: MatterEnrichmentTask = {
+        userId: enrichmentUserId,
+        sessionId: activeSessionId,
+        prompt,
+        response,
+        lawType: cleanOptionalString((rawContext as any).lawType),
+        jurisdiction: result.jurisdiction || explicitJurisdiction,
+        fallbackMatter: representationMatter,
+      };
+      res.once('finish', () => enqueueMatterEnrichment(enrichmentTask));
     }
     send('complete', {
       success: true,
