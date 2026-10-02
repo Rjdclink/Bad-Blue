@@ -73,6 +73,29 @@ const LIVE_BACKGROUND_FACT_BUDGET_MS = 16_000;
 // superseded/disconnected turn; evidence-correction retries remain locally bounded.
 const LIVE_REASONING_PROVIDER_ATTEMPT_MS = 15_000;
 
+
+function formatBackgroundFactsForDocument(
+  result: LexaraBackgroundResearchResult | null | undefined,
+): string | undefined {
+  if (!result?.evidenceSummary || result.endpoint !== 'evidence-sufficient') return undefined;
+
+  const directFacts = result.evidenceSummary
+    .split(/\n\s*\n/)
+    .filter(block => /\bASSESSMENT:\s*DIRECT\b/i.test(block))
+    .map(block => block.match(/\bEVIDENCE:\s*([\s\S]*)$/i)?.[1] || '')
+    .map(value => value
+      .replace(/\bhttps?:\/\/\S+/gi, '')
+      .replace(/\bwww\.\S+/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+    )
+    .filter(Boolean)
+    .slice(0, 3)
+    .map(value => value.slice(0, 700).trim());
+
+  return directFacts.length ? directFacts.join('\n') : undefined;
+}
+
 export type LexaraAcknowledgementKind =
   | 'presence'
   | 'added-facts'
