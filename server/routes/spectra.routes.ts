@@ -1048,6 +1048,48 @@ router.post('/acquire', async (req: Request, res: Response) => {
       sourceKeys.add(discoverySourceKey({ url }));
     }
 
+    let contextEvidence: SpectraContextEvidence = {
+      places: [],
+      cameras: [],
+      geotaggedMedia: [],
+      earthObservation: [],
+      sourceFamilies: [],
+    };
+    const contextAnchor = canonicalLatest?.point
+      ? {
+          latitude: canonicalLatest.point.latitude,
+          longitude: canonicalLatest.point.longitude,
+          accuracyMeters: canonicalLatest.point.accuracy,
+          observedAt: canonicalLatest.point.timestamp,
+          basis: 'timestamped_observation' as const,
+        }
+      : candidateLocations[0]
+        ? {
+            latitude: candidateLocations[0].latitude,
+            longitude: candidateLocations[0].longitude,
+            accuracyMeters: candidateLocations[0].accuracyMeters,
+            basis: 'regional_candidate' as const,
+          }
+        : null;
+
+    if (contextAnchor) {
+      const contextOutcome = await settleWithin(
+        collectSpectraContextEvidence(contextAnchor),
+        8_500,
+        'SPECTRA geographic context',
+      );
+      if (contextOutcome.status === 'fulfilled') {
+        contextEvidence = contextOutcome.value;
+      }
+    }
+
+    const contextEvidenceItemCount =
+      contextEvidence.places.length
+      + contextEvidence.cameras.length
+      + contextEvidence.geotaggedMedia.length
+      + contextEvidence.earthObservation.length
+      + (contextEvidence.weather ? 1 : 0);
+
     const persistence = await persistSpectraAcquisition({
       userId,
       sessionId: requestedSessionId,
@@ -1061,6 +1103,8 @@ router.post('/acquire', async (req: Request, res: Response) => {
         discoveryPasses,
         discoveryQueriesAttempted,
         discoveryQueriesFailed,
+        contextSourceFamilies: contextEvidence.sourceFamilies,
+        contextEvidenceItemCount,
         lastAcquiredAt: new Date().toISOString(),
       },
     }).catch(error => {
@@ -1094,11 +1138,14 @@ router.post('/acquire', async (req: Request, res: Response) => {
         discoveryPasses,
         discoveryQueriesAttempted,
         discoveryQueriesFailed,
+        contextSourceFamilies: contextEvidence.sourceFamilies,
+        contextEvidenceItemCount,
         summary: report.summary || '',
         verificationStatus: report.identitySummary?.verificationStatus || 'Unknown',
       },
       locationObservations,
       candidateLocations,
+      contextEvidence,
       evidence: {
         contactInformation: report.contactInformation || [],
         locationHistory: report.locationHistory || [],
