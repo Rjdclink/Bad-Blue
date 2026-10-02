@@ -21,12 +21,14 @@ import {
   advanceRepresentationMatter,
   findReferencedMatter,
   sanitizeRepresentationMatter,
+  shouldEnrichRepresentationMatter,
   summarizeMatter,
   type RepresentationMatterState,
   type SavedMatterSummary,
 } from '../lexara/LexaraRepresentationEngine';
 import { readMatterBuffer } from '../lexara/LexaraMatterStorage';
 import { buildDeadlineCalendar, calculateLegalDeadline, LEGAL_DEADLINE_RULES, type LegalDeadlineRuleId } from '../lexara/LegalDeadlineEngine';
+import { isLexaraGenericLegalIntake } from '../lexara/LexaraResearchIntentRouter';
 
 const router = express.Router();
 router.use(isAuthenticated);
@@ -51,6 +53,135 @@ function authenticatedUserId(req: Request): string | undefined {
   const id = user?.id || user?.claims?.sub;
   return typeof id === 'string' && id.trim() ? id.trim() : undefined;
 }
+
+function mergeMatterEnrichmentBase(
+  currentValue: unknown,
+  completedValue: unknown,
+): RepresentationMatterState | null {
+  const current = sanitizeRepresentationMatter(currentValue);
+  const completed = sanitizeRepresentationMatter(completedValue);
+  if (!current) return completed;
+  if (!completed) return current;
+
+  const mergeStrings = (older: string[], newer: string[], max: number) => {
+    const seen = new Set<string>();
+    return [...older, ...newer].filter(value => {
+      const key = String(value || '').trim().toLowerCase();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).slice(0, max);
+  };
+  const mergeByKey = <T>(older: T[], newer: T[], keyFor: (value: T) => string, max: number) => {
+    const merged = new Map<string, T>();
+    for (const value of [...older, ...newer]) {
+      const key = keyFor(value);
+      if (key) merged.set(key, value);
+    }
+    return [...merged.values()].slice(0, max);
+  };
+
+  return {
+    ...completed,
+    ...current,
+    knownFacts: mergeStrings(completed.knownFacts, current.knownFacts, 60),
+    legalIssues: mergeStrings(completed.legalIssues, current.legalIssues, 40),
+    defensesAndRisks: mergeStrings(completed.defensesAndRisks, current.defensesAndRisks, 40),
+    missingInformation: mergeStrings(completed.missingInformation, current.missingInformation, 40),
+    evidenceNeeds: mergeStrings(completed.evidenceNeeds, current.evidenceNeeds, 40),
+    parties: mergeStrings(completed.parties, current.parties, 30),
+    historySummary: completed.historySummary || current.historySummary,
+    courtOrAgency: current.courtOrAgency || completed.courtOrAgency,
+    artifacts: mergeByKey(completed.artifacts, current.artifacts, artifact => artifact.id, 100),
+    scheduleItems: mergeByKey(
+      completed.scheduleItems,
+      current.scheduleItems,
+      item => [item.label, item.date, item.time, item.when].filter(Boolean).join('|').toLowerCase(),
+      60,
+    ),
+    deadlines: mergeByKey(
+      completed.deadlines,
+      current.deadlines,
+      deadline => [deadline.label, deadline.date].filter(Boolean).join('|').toLowerCase(),
+      60,
+    ),
+    nextSteps: mergeStrings(completed.nextSteps, current.nextSteps, 20),
+  };
+}
+
+let matterEnrichmentDrainPromise: Promise<void> | null = null;
+
+async function drainDurableMatterEnrichmentJobs(): Promise<void> {
+  if (matterEnrichmentDrainPromise) return matterEnrichmentDrainPromise;
+  matterEnrichmentDrainPromise = (async () => {
+    const { storage } = await import('../storage');
+    for (let processed = 0; processed < 4; processed += 1) {
+      const job = await storage.claimNextLexaraMatterEnrichmentJob();
+      if (!job) break;
+
+      const attempts = Number(job?.context?.matterEnrichmentJob?.attempts || 1);
+      try {
+        const userId = String(job?.userId || '').trim();
+        const sessionId = String(job?.sessionId || '').trim();
+        const prompt = String(job?.userPrompt || '').trim();
+        const response = String(job?.lexaraResponse || '').trim();
+        if (!userId || !sessionId || !prompt || !response) {
+          await storage.clearLexaraMatterEnrichmentJob(String(job?.id || ''));
+          continue;
+        }
+
+        const latestCompleted = await storage.getLatestCompletedLexaraMatterEnrichmentState(userId, sessionId);
+        const prior = mergeMatterEnrichmentBase(job?.context?.representationMatter, latestCompleted);
+        if (!shouldEnrichRepresentationMatter(prompt, response, prior)) {
+          await storage.clearLexaraMatterEnrichmentJob(job.id);
+          continue;
+        }
+
+        const enriched = await advanceRepresentationMatter({
+          prompt,
+          response,
+          sessionId,
+          lawType: cleanOptionalString(job?.context?.lawType),
+          jurisdiction: cleanOptionalString(job?.context?.jurisdiction, 80) || prior?.jurisdiction,
+          prior,
+          allowClaudeOpus: false,
+          skipPacketPlanning: true,
+        });
+        if (enriched) {
+          await storage.completeLexaraMatterEnrichmentJob(job.id, enriched);
+        } else {
+          await storage.clearLexaraMatterEnrichmentJob(job.id);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await storage.retryLexaraMatterEnrichmentJob(String(job?.id || ''), message, attempts).catch(() => undefined);
+        log.warn('[LEXARA] Durable post-response matter enrichment unavailable', {
+          error: message,
+          sessionId: job?.sessionId || null,
+          attempts,
+        });
+      }
+    }
+  })().finally(() => {
+    matterEnrichmentDrainPromise = null;
+  });
+  return matterEnrichmentDrainPromise;
+}
+
+function scheduleMatterEnrichmentDrain(): void {
+  setImmediate(() => {
+    void drainDurableMatterEnrichmentJobs().catch(error => {
+      log.warn('[LEXARA] Durable matter-enrichment drain failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  });
+}
+
+const matterEnrichmentRecoveryTimer = setInterval(scheduleMatterEnrichmentDrain, 60_000);
+matterEnrichmentRecoveryTimer.unref?.();
+const initialMatterEnrichmentRecovery = setTimeout(scheduleMatterEnrichmentDrain, 15_000);
+initialMatterEnrichmentRecovery.unref?.();
 
 async function loadRepresentationContext(
   req: Request,
@@ -79,7 +210,7 @@ async function loadRepresentationContext(
   if (!userId) return { persistent: false, activeMatter: null, activeSessionId: requestedSessionId, savedMatters: [] };
 
   const { storage } = await import('../storage');
-  const rows = await storage.getUserLexaraMatterStates(userId, 200);
+  const rows = await storage.getUserLexaraRestorableMatterStates(userId, 200);
   const matters = rows.flatMap((row: any) => {
     const state = sanitizeRepresentationMatter(row?.matter);
     return state ? [{ state, summary: summarizeMatter(state) }] : [];
@@ -292,6 +423,7 @@ async function persistConversationTurn(
     behaviorMode: string;
     audioBase64?: string;
     representationMatter?: RepresentationMatterState | null;
+    matterEnrichmentPending?: boolean;
   },
 ): Promise<{ conversationId: string | null; persistenceSuccess: boolean | null; persistenceStatus: 'saved' | 'master-ephemeral' | 'trial-ephemeral' }> {
   const user = (req as any).user;
@@ -320,6 +452,13 @@ async function persistConversationTurn(
       mappedLawType: data.mappedLawType || null,
       behaviorMode: data.behaviorMode,
       representationMatter: data.representationMatter || null,
+      ...(data.matterEnrichmentPending ? {
+        matterEnrichmentJob: {
+          status: 'pending',
+          attempts: 0,
+          enqueuedAt: new Date().toISOString(),
+        },
+      } : {}),
     },
   });
   return { conversationId: conversation.id, persistenceSuccess: true, persistenceStatus: 'saved' };
@@ -475,12 +614,20 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
     const previousMessages = sanitizePreviousMessages((rawContext as any).previousMessages);
     let documentIntent = detectDocumentIntent(prompt, previousMessages);
     const requestedSessionId = cleanOptionalString((rawContext as any).sessionId, 128);
-    const representationContext = await loadRepresentationContext(
-      req,
-      prompt,
-      requestedSessionId,
-      (rawContext as any).representationMatter,
-    );
+    const genericLegalIntake = isLexaraGenericLegalIntake(prompt);
+    const representationContext = genericLegalIntake
+      ? {
+          persistent: hasPersistentMatterAccess(req),
+          activeMatter: null,
+          activeSessionId: requestedSessionId,
+          savedMatters: [] as SavedMatterSummary[],
+        }
+      : await loadRepresentationContext(
+          req,
+          prompt,
+          requestedSessionId,
+          (rawContext as any).representationMatter,
+        );
     const activeSessionId = representationContext.activeSessionId || requestedSessionId || `lexara-${Date.now()}`;
     const effectivePreviousMessages = representationContext.activeMatter
       && requestedSessionId
@@ -489,20 +636,22 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       : previousMessages;
     documentIntent = detectDocumentIntent(prompt, effectivePreviousMessages);
     const explicitJurisdiction = cleanOptionalString((rawContext as any).jurisdiction, 80);
-    const locationState = explicitJurisdiction ? null : await resolveBestLocationEstimate(
+    const locationState = genericLegalIntake || explicitJurisdiction ? null : await resolveBestLocationEstimate(
       String(req.headers['x-real-ip'] || req.headers['cf-connecting-ip'] || req.ip || ''),
       cleanDeviceLocation((rawContext as any).deviceLocation),
     );
-    const preRepresentationMatter = await advanceRepresentationMatter({
-      prompt,
-      response: '',
-      sessionId: activeSessionId,
-      lawType: cleanOptionalString((rawContext as any).lawType),
-      jurisdiction: explicitJurisdiction || representationContext.activeMatter?.jurisdiction,
-      prior: representationContext.activeMatter,
-      allowClaudeOpus: canUseClaudeOpus(req),
-      signal: controller.signal,
-    });
+    const preRepresentationMatter = genericLegalIntake
+      ? representationContext.activeMatter
+      : await advanceRepresentationMatter({
+          prompt,
+          response: '',
+          sessionId: activeSessionId,
+          lawType: cleanOptionalString((rawContext as any).lawType),
+          jurisdiction: explicitJurisdiction || representationContext.activeMatter?.jurisdiction,
+          prior: representationContext.activeMatter,
+          allowClaudeOpus: canUseClaudeOpus(req),
+          signal: controller.signal,
+        });
     const savedArtifact = selectSavedArtifactRequest(prompt, preRepresentationMatter || representationContext.activeMatter);
     const packetDocumentIntent = savedArtifact ? null : selectPacketDocumentIntent(prompt, preRepresentationMatter);
     if (savedArtifact) {
@@ -550,16 +699,24 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       }
     }
     const response = result.text;
-    const representationMatter = await advanceRepresentationMatter({
-      prompt,
-      response,
-      sessionId: activeSessionId,
-      lawType: cleanOptionalString((rawContext as any).lawType),
-      jurisdiction: result.jurisdiction || explicitJurisdiction,
-      prior: preRepresentationMatter || representationContext.activeMatter,
-      allowClaudeOpus: canUseClaudeOpus(req),
-      signal: controller.signal,
-    });
+    const baseRepresentationMatter = preRepresentationMatter || representationContext.activeMatter;
+    const durableEnrichmentNeeded = Boolean(
+      representationContext.persistent
+      && baseRepresentationMatter
+      && shouldEnrichRepresentationMatter(prompt, response, baseRepresentationMatter)
+    );
+    const representationMatter = !representationContext.persistent && !genericLegalIntake
+      ? await advanceRepresentationMatter({
+          prompt,
+          response,
+          sessionId: activeSessionId,
+          lawType: cleanOptionalString((rawContext as any).lawType),
+          jurisdiction: result.jurisdiction || explicitJurisdiction,
+          prior: baseRepresentationMatter,
+          allowClaudeOpus: canUseClaudeOpus(req),
+          signal: controller.signal,
+        })
+      : baseRepresentationMatter;
     let persistence: Awaited<ReturnType<typeof persistConversationTurn>>;
     try {
       persistence = await persistConversationTurn(req, {
@@ -571,6 +728,7 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
         mappedLawType: result.mappedLawType,
         behaviorMode: (rawContext as any).behaviorMode === 'personable' ? 'personable' : 'professional',
         representationMatter,
+        matterEnrichmentPending: durableEnrichmentNeeded,
       });
     } catch (dbError) {
       log.error('[LEXARA] Failed to persist streamed conversation', { error: dbError });
@@ -583,6 +741,9 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
         error: 'LEXARA could not save this reply; please try again',
       });
       return;
+    }
+    if (durableEnrichmentNeeded && persistence.persistenceStatus === 'saved') {
+      res.once('finish', scheduleMatterEnrichmentDrain);
     }
     send('complete', {
       success: true,
@@ -645,35 +806,45 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
     const previousMessages = sanitizePreviousMessages((rawContext as any).previousMessages);
     const lawType = cleanOptionalString((rawContext as any).lawType);
     const lawTypeName = cleanOptionalString((rawContext as any).lawTypeName, 160);
+    const genericLegalIntake = isLexaraGenericLegalIntake(prompt);
     const explicitJurisdiction = cleanOptionalString((rawContext as any).jurisdiction, 80);
-    const locationState = explicitJurisdiction ? null : await resolveBestLocationEstimate(
+    const locationState = genericLegalIntake || explicitJurisdiction ? null : await resolveBestLocationEstimate(
       String(req.headers['x-real-ip'] || req.headers['cf-connecting-ip'] || req.ip || ''),
       cleanDeviceLocation((rawContext as any).deviceLocation),
     );
     const jurisdiction = explicitJurisdiction;
     const behaviorMode = (rawContext as any).behaviorMode === 'personable' ? 'personable' : 'professional';
     const requestedSessionId = cleanOptionalString((rawContext as any).sessionId, 128);
-    const representationContext = await loadRepresentationContext(
-      req,
-      prompt,
-      requestedSessionId,
-      (rawContext as any).representationMatter,
-    );
+    const representationContext = genericLegalIntake
+      ? {
+          persistent: hasPersistentMatterAccess(req),
+          activeMatter: null,
+          activeSessionId: requestedSessionId,
+          savedMatters: [] as SavedMatterSummary[],
+        }
+      : await loadRepresentationContext(
+          req,
+          prompt,
+          requestedSessionId,
+          (rawContext as any).representationMatter,
+        );
     const sessionId = representationContext.activeSessionId || requestedSessionId || `lexara-${Date.now()}`;
     const effectivePreviousMessages = representationContext.activeMatter
       && requestedSessionId
       && sessionId !== requestedSessionId
       ? []
       : previousMessages;
-    const preRepresentationMatter = await advanceRepresentationMatter({
-      prompt,
-      response: '',
-      sessionId,
-      lawType,
-      jurisdiction: explicitJurisdiction || representationContext.activeMatter?.jurisdiction,
-      prior: representationContext.activeMatter,
-      allowClaudeOpus: canUseClaudeOpus(req),
-    });
+    const preRepresentationMatter = genericLegalIntake
+      ? representationContext.activeMatter
+      : await advanceRepresentationMatter({
+          prompt,
+          response: '',
+          sessionId,
+          lawType,
+          jurisdiction: explicitJurisdiction || representationContext.activeMatter?.jurisdiction,
+          prior: representationContext.activeMatter,
+          allowClaudeOpus: canUseClaudeOpus(req),
+        });
     let documentIntent = detectDocumentIntent(prompt, effectivePreviousMessages);
     const savedArtifact = selectSavedArtifactRequest(prompt, preRepresentationMatter || representationContext.activeMatter);
     const packetDocumentIntent = savedArtifact ? null : selectPacketDocumentIntent(prompt, preRepresentationMatter);
@@ -725,16 +896,18 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
 
 
     const responseText = conversationResult.text;
-    const representationMatter = await advanceRepresentationMatter({
-      prompt,
-      response: responseText,
-      sessionId,
-      lawType,
-      jurisdiction: conversationResult.jurisdiction || jurisdiction,
-      prior: preRepresentationMatter || representationContext.activeMatter,
-      allowClaudeOpus: canUseClaudeOpus(req),
-      signal: requestController.signal,
-    });
+    const representationMatter = genericLegalIntake
+      ? preRepresentationMatter || representationContext.activeMatter
+      : await advanceRepresentationMatter({
+          prompt,
+          response: responseText,
+          sessionId,
+          lawType,
+          jurisdiction: conversationResult.jurisdiction || jurisdiction,
+          prior: preRepresentationMatter || representationContext.activeMatter,
+          allowClaudeOpus: canUseClaudeOpus(req),
+          signal: requestController.signal,
+        });
     const model = 'lexara-legal-orchestrator';
 
     // Preserve the deterministic explicit-request fast path, but let LEXARA's
