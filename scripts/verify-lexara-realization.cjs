@@ -1276,6 +1276,7 @@ must(
     lexaraConversationOrchestrator.includes('function formatBackgroundFactsForDocument') &&
     lexaraConversationOrchestrator.includes("result.endpoint !== 'evidence-sufficient'") &&
     lexaraConversationOrchestrator.includes('ASSESSMENT:\\s*DIRECT') &&
+    lexaraConversationOrchestrator.includes('value.slice(0, 500).trim()') &&
     lexaraConversationOrchestrator.includes("backgroundDocumentContext: formatBackgroundFactsForDocument(backgroundInvestigation)") &&
     lexaraConversationOrchestrator.includes('BACKGROUND USER-PRESENTATION RULE') &&
     lexaraConversationOrchestrator.includes('Do not expose background source names or URLs, confidence percentages') &&
