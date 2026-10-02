@@ -1124,13 +1124,7 @@ export async function generateLexaraConversationResponse(
     jurisdiction: publicJurisdiction,
     mappedLawType,
     backgroundEndpoint,
-    backgroundDocumentContext: backgroundResearchRequested && backgroundInvestigation?.evidenceSummary
-      ? [
-          `BACKGROUND RESEARCH STATUS: ${backgroundInvestigation.endpoint}`,
-          backgroundInvestigation.coverageNote ? `COVERAGE: ${backgroundInvestigation.coverageNote}` : '',
-          backgroundInvestigation.evidenceSummary,
-        ].filter(Boolean).join('\n\n').slice(0, 12_000)
-      : undefined,
+    backgroundDocumentContext: formatBackgroundFactsForDocument(backgroundInvestigation),
     deadline: verifiedDeterministicDeadline || undefined,
     backgroundStatus: permissionRefusalUnverified ? 'partial'
       : usedBackgroundSourceExcerptFallback && backgroundInvestigation?.endpoint === 'evidence-sufficient'
