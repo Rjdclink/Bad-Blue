@@ -80,13 +80,15 @@ function isPreferredOfficialCandidate(item: LegalMeshCandidate, options: LegalMe
     return false;
   }
   if (host.endsWith('.gov') || host.endsWith('.mil') || host.endsWith('.uscourts.gov')) return true;
-  const preferredHosts = getLexaraPublicSources(options.categories || [], options.jurisdiction).flatMap(source => {
-    try {
-      return [new URL(source.root).hostname.toLowerCase().replace(/^www\./, '')];
-    } catch {
-      return [];
-    }
-  });
+  const preferredHosts = getLexaraPublicSources(options.categories || [], options.jurisdiction)
+    .filter(source => source.authority !== 'discovery')
+    .flatMap(source => {
+      try {
+        return [new URL(source.root).hostname.toLowerCase().replace(/^www\./, '')];
+      } catch {
+        return [];
+      }
+    });
   return preferredHosts.some(preferred => host === preferred || host.endsWith(`.${preferred}`));
 }
 
@@ -346,7 +348,7 @@ export async function discoverLegalMeshTier3(
     jurisdiction:options.jurisdiction,
   });
   if(learnedPatterns[0]) variants.push(`${query} ${learnedPatterns[0]}`);
-  const uniqueVariants=[...new Set(variants)].slice(0,5);
+  const uniqueVariants=[...new Set(variants)].slice(0,6);
   const groups=await Promise.all(uniqueVariants.map(variant=>freeSearch(variant,signal)));
   const learnedSources=await Promise.race([
     getLexaraLearnedSources(options.categories||[],options.jurisdiction,8),
