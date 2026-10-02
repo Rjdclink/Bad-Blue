@@ -1,5 +1,5 @@
 import { type FormEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, CalendarDays, Download, FileText, Loader2, Mic, MicOff, PenLine, Send, Star, Trash2 } from 'lucide-react';
+import { AlertCircle, CalendarDays, Download, FileText, Loader2, MapPin, Mic, MicOff, PenLine, Send, Star, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { captureLexaraDeviceLocation, readLexaraDeviceLocation } from '@/lib/lexaraLocation';
 import { lexaraRealtimeVoiceClient } from '@/lib/lexaraRealtimeVoiceClient';
+import { useLocation } from 'wouter';
 
 interface LexaraConversationProps {
   lawTypeId?: string;
@@ -42,6 +43,18 @@ interface ConversationMessage {
   role: 'user' | 'lexara';
   content: string;
   timestamp: Date;
+  spectraLaunch?: {
+    target: string;
+    clues: string;
+    lexaraSessionId: string;
+  };
+}
+
+function spectraTargetFromPrompt(value: string): string | null {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  const match = normalized.match(/^(?:please\s+)?(?:show\s+me|where\s+(?:is|'s))\s+(.+?)[?.!]*$/i);
+  const target = match?.[1]?.trim().replace(/[?.!]+$/g, '').trim() || '';
+  return target.length >= 2 && target.length <= 500 ? target : null;
 }
 
 type ConversationPhase =
