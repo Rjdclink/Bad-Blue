@@ -21,12 +21,14 @@ import {
   advanceRepresentationMatter,
   findReferencedMatter,
   sanitizeRepresentationMatter,
+  shouldEnrichRepresentationMatter,
   summarizeMatter,
   type RepresentationMatterState,
   type SavedMatterSummary,
 } from '../lexara/LexaraRepresentationEngine';
 import { readMatterBuffer } from '../lexara/LexaraMatterStorage';
 import { buildDeadlineCalendar, calculateLegalDeadline, LEGAL_DEADLINE_RULES, type LegalDeadlineRuleId } from '../lexara/LegalDeadlineEngine';
+import { isLexaraGenericLegalIntake } from '../lexara/LexaraResearchIntentRouter';
 
 const router = express.Router();
 router.use(isAuthenticated);
@@ -50,6 +52,56 @@ function authenticatedUserId(req: Request): string | undefined {
   const user = (req as any).user;
   const id = user?.id || user?.claims?.sub;
   return typeof id === 'string' && id.trim() ? id.trim() : undefined;
+}
+
+interface MatterEnrichmentTask {
+  userId: string;
+  sessionId: string;
+  prompt: string;
+  response: string;
+  lawType?: string;
+  jurisdiction?: string;
+  fallbackMatter?: RepresentationMatterState | null;
+}
+
+const matterEnrichmentChains = new Map<string, Promise<void>>();
+
+function enqueueMatterEnrichment(task: MatterEnrichmentTask): void {
+  const key = `${task.userId}:${task.sessionId}`;
+  const previous = matterEnrichmentChains.get(key) || Promise.resolve();
+  const run = previous
+    .catch(() => undefined)
+    .then(async () => {
+      const { storage } = await import('../storage');
+      const rows = await storage.getUserLexaraMatterStates(task.userId, 200);
+      const persisted = rows.find((row: any) => String(row?.matter?.sessionId || '') === task.sessionId);
+      const prior = sanitizeRepresentationMatter(persisted?.matter) || sanitizeRepresentationMatter(task.fallbackMatter);
+      if (!shouldEnrichRepresentationMatter(task.prompt, task.response, prior)) return;
+
+      const enriched = await advanceRepresentationMatter({
+        prompt: task.prompt,
+        response: task.response,
+        sessionId: task.sessionId,
+        lawType: task.lawType,
+        jurisdiction: task.jurisdiction || prior?.jurisdiction,
+        prior,
+        allowClaudeOpus: false,
+        skipPacketPlanning: true,
+      });
+      if (enriched) {
+        await storage.updateLatestLexaraMatterState(task.userId, task.sessionId, enriched);
+      }
+    })
+    .catch(error => {
+      log.warn('[LEXARA] Post-response matter enrichment unavailable', {
+        error: error instanceof Error ? error.message : String(error),
+        sessionId: task.sessionId,
+      });
+    })
+    .finally(() => {
+      if (matterEnrichmentChains.get(key) === run) matterEnrichmentChains.delete(key);
+    });
+  matterEnrichmentChains.set(key, run);
 }
 
 async function loadRepresentationContext(
