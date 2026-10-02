@@ -743,6 +743,35 @@ function serializedPoint(point: GPSPoint): Record<string, unknown> {
   };
 }
 
+function telemetryEvidenceClass(point: GPSPoint): string {
+  if (point.observationKind === 'predicted' || point.source === 'predicted') return 'PREDICTED';
+  if (point.observationKind === 'interpolated' || point.source === 'interpolated') return 'INTERPOLATED';
+  if (
+    point.observationKind === 'historical'
+    || point.source === 'historical_location'
+    || point.source === 'public_record'
+  ) return 'HISTORICAL';
+  if (point.observationKind === 'inferred') return 'INFERRED';
+
+  const ageMs = Math.max(0, Date.now() - point.timestamp.getTime());
+  if (ageMs <= 5 * 60_000) return 'CURRENT';
+  if (ageMs <= 24 * 60 * 60_000) return 'RECENT';
+  return 'HISTORICAL';
+}
+
+function pointMetadataConfidence(point: GPSPoint, key: string): number | null {
+  const value = Number(point.metadata?.[key]);
+  return Number.isFinite(value) && value >= 0 && value <= 1 ? value : null;
+}
+
+function pointMetadataString(point: GPSPoint, ...keys: string[]): string | null {
+  for (const key of keys) {
+    const value = point.metadata?.[key];
+    if (typeof value === 'string' && value.trim()) return value.trim().slice(0, 2_000);
+  }
+  return null;
+}
+
 async function persistTelemetryBatch(input: {
   batch: TelemetryBatch;
   sessionId: string;
@@ -821,14 +850,18 @@ async function persistTelemetryBatch(input: {
           (
             investigation_id, telemetry_event_id, user_id, session_id, subject_label,
             source_type, provider, latitude, longitude, altitude, accuracy_meters,
-            confidence, observation_kind, observed_at, received_at, correlation_group,
+            confidence, observation_kind, evidence_class, subject_match_confidence,
+            timestamp_confidence, acquisition_method, source_url,
+            observed_at, received_at, correlation_group,
             provenance, metadata, evidence_fingerprint
           )
          VALUES (
             $1::uuid, $2::uuid, $3, $4, $5,
             $6, $7, $8, $9, $10, $11,
-            $12, $13, $14, $15, $16,
-            $17::jsonb, $18::jsonb, $19
+            $12, $13, $14, $15,
+            $16, $17, $18,
+            $19, $20, $21,
+            $22::jsonb, $23::jsonb, $24
          )
          ON CONFLICT (session_id, evidence_fingerprint) DO NOTHING`,
         [
@@ -845,6 +878,13 @@ async function persistTelemetryBatch(input: {
           point.accuracy ?? null,
           point.confidence,
           point.observationKind || 'observed',
+          telemetryEvidenceClass(point),
+          pointMetadataConfidence(point, 'subjectMatchConfidence'),
+          pointMetadataConfidence(point, 'timestampConfidence'),
+          pointMetadataString(point, 'acquisitionMethod')
+            || point.provenance?.transformedBy?.[0]
+            || null,
+          pointMetadataString(point, 'sourceUrl', 'url'),
           point.timestamp,
           point.receivedAt || new Date(),
           point.correlationGroup || null,
@@ -999,8 +1039,9 @@ router.get('/telemetry-history/:sessionId', async (req: Request, res: Response) 
     const history = await pool.query(
       `SELECT
          source_type, provider, latitude, longitude, altitude, accuracy_meters,
-         confidence, observation_kind, observed_at, received_at,
-         correlation_group, provenance, metadata
+         confidence, observation_kind, evidence_class,
+         subject_match_confidence, timestamp_confidence, acquisition_method, source_url,
+         observed_at, received_at, correlation_group, provenance, metadata
        FROM public.spectra_location_observations
        WHERE session_id = $1 AND user_id = $2
        ORDER BY observed_at ASC
@@ -1020,6 +1061,15 @@ router.get('/telemetry-history/:sessionId', async (req: Request, res: Response) 
         source: row.source_type,
         confidence: Number(row.confidence),
         observationKind: row.observation_kind,
+        evidenceClass: row.evidence_class,
+        subjectMatchConfidence: row.subject_match_confidence == null
+          ? undefined
+          : Number(row.subject_match_confidence),
+        timestampConfidence: row.timestamp_confidence == null
+          ? undefined
+          : Number(row.timestamp_confidence),
+        acquisitionMethod: row.acquisition_method || undefined,
+        sourceUrl: row.source_url || undefined,
         correlationGroup: row.correlation_group || undefined,
         provenance: row.provenance || undefined,
         metadata: row.metadata || {},
