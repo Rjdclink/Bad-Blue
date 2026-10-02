@@ -163,7 +163,9 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     label: 'TrafficLand camera network',
     mode: 'camera',
     sourceTypes: ['traffic_cam','public_camera'],
-    configured: () => anyEnv('TRAFFICLAND_API_KEY','TRAFFICLAND_SYSTEM'),
+    configured: () =>
+      Boolean(String(process.env.TRAFFICLAND_API_KEY || '').trim())
+      && Boolean(String(process.env.TRAFFICLAND_SYSTEM || '').trim()),
     priority: 'high',
     supportsRealtime: true,
     notes: 'Nationwide camera metadata/images where the configured account has coverage.',
