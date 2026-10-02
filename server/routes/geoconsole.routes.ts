@@ -34,6 +34,7 @@ import {
   importSpectraTelemetry,
   type SpectraTelemetryImportFormat,
 } from '../services/spectra/SpectraTelemetryImport';
+import { acquireSpectraPlaceContext } from '../services/spectra/SpectraPlaceContext';
 
 const router = Router();
 const log = createLogger('GeoconsoleRoutes');
@@ -1927,6 +1928,29 @@ router.get('/public-geotagged-media', async (req: Request, res: Response) => {
     providers: {
       wikimedia: true,
       flickr: Boolean(process.env.FLICKR_API_KEY),
+    },
+  });
+});
+
+router.get('/place-context', async (req: Request, res: Response) => {
+  const validation = z.object({
+    lat: z.coerce.number().min(-90).max(90),
+    lng: z.coerce.number().min(-180).max(180),
+    radiusMeters: z.coerce.number().min(50).max(30_000).default(2_000),
+  }).safeParse(req.query);
+
+  if (!validation.success) {
+    return res.status(400).json({ success: false, error: 'Invalid place-context coordinates' });
+  }
+
+  const { lat, lng, radiusMeters } = validation.data;
+  const data = await acquireSpectraPlaceContext(lat, lng, radiusMeters);
+  return res.json({
+    success: true,
+    data,
+    providers: {
+      openStreetMapOverpass: true,
+      geoNames: Boolean(process.env.GEONAMES_USERNAME),
     },
   });
 });
