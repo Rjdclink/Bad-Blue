@@ -1139,6 +1139,11 @@ router.get('/telemetry-stream/:sessionId', async (req: Request, res: Response) =
         provenance: row.provenance || undefined,
         metadata: {
           ...(row.metadata || {}),
+          evidenceClass: row.evidence_class || undefined,
+          subjectMatchConfidence: row.subject_match_confidence ?? undefined,
+          timestampConfidence: row.timestamp_confidence ?? undefined,
+          acquisitionMethod: row.acquisition_method || undefined,
+          sourceUrl: row.source_url || undefined,
           databaseObservationId: row.id,
           crossReplicaRealtime: true,
         },
