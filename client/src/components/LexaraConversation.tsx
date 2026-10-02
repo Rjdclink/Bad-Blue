@@ -1329,10 +1329,16 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       if (documentIntentRequested) {
         const resolvedJurisdiction = String(data?.jurisdiction || jurisdiction || '').trim();
         if (resolvedJurisdiction) {
-          const facts = [...previousMessages, { role: 'user', content: message }]
+          const backgroundDocumentContext = typeof data?.backgroundDocumentContext === 'string'
+            ? data.backgroundDocumentContext.trim().slice(0, 9_000)
+            : '';
+          const conversationFacts = [...previousMessages, { role: 'user', content: message }]
             .map(item => `${item.role === 'user' ? 'USER' : 'LEXARA'}: ${item.content}`)
             .join('\n\n')
-            .slice(-30000);
+            .slice(backgroundDocumentContext ? -20_000 : -30_000);
+          const facts = backgroundDocumentContext
+            ? `${conversationFacts}\n\nAPPLICATION-SUPPLIED LEXARA BACKGROUND EVIDENCE:\n${backgroundDocumentContext}`
+            : conversationFacts;
           const pendingTitle = String(data.documentIntent.documentType || 'Legal Document');
           // A newly requested document replaces the prior document task UI.
           // Keep the conversation, but never let an older preview hide the new task.

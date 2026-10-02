@@ -1272,6 +1272,15 @@ must(
   'document export must retain strict server validation/type identity',
 );
 must(
+  lexaraConversationOrchestrator.includes('backgroundDocumentContext?: string') &&
+    lexaraConversationOrchestrator.includes('backgroundResearchRequested && backgroundInvestigation?.evidenceSummary') &&
+    lexaraChatRoutes.includes('backgroundDocumentContext: result.backgroundDocumentContext') &&
+    lexaraChatRoutes.includes('backgroundDocumentContext: conversationResult.backgroundDocumentContext') &&
+    conversation.includes('APPLICATION-SUPPLIED LEXARA BACKGROUND EVIDENCE') &&
+    conversation.includes("data.backgroundDocumentContext.trim().slice(0, 9_000)"),
+  'verified Lexara background evidence must flow into the document fact bundle without re-running background research',
+);
+must(
   consultationRoutes.includes("/api/lexara/documents/official-form") &&
     conversation.includes("/api/lexara/documents/official-form"),
   'mandatory verified official forms must continue from Lexara conversation into completion/download',
