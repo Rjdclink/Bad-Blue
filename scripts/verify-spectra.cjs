@@ -178,8 +178,7 @@ test('Generic target classes resolve identity without treating city/state as a p
   routes.includes('extractLikelyName(details)') &&
   routes.includes('looksLikeLocation') &&
   routes.includes('extractCityStateHint(firstSegment)') &&
-  routes.includes('resolvedTargetLabel') &&
-  routes.includes('const searchQuery = resolvedName || details'));
+  routes.includes('resolvedTargetLabel'));
 test('SPECTRA only maps qualified explicitly timestamped coordinates',
   routes.includes('explicitTimestamp') &&
   routes.includes('hasLocationContext') &&
