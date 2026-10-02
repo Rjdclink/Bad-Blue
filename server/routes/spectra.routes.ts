@@ -38,6 +38,9 @@ import {
   createSpectraInvestigation,
   getSpectraInvestigation,
   loadSpectraObservations,
+  persistSpectraObservation,
+  persistSpectraClue,
+  updateSpectraInvestigationState,
 } from '../services/spectra/SpectraPersistence';
 import { subscribeSpectraInvestigation } from '../services/spectra/SpectraRealtimeHub';
 
@@ -72,6 +75,8 @@ const acquireSchema = z.object({
 });
 
 const absoluteDeviceObservationSchema = z.object({
+  investigationId: z.string().uuid().optional(),
+  subjectLabel: z.string().trim().min(1).max(500).optional(),
   kind: z.literal('absolute'),
   source: z.enum(['device_gps', 'gnss_fix', 'gnss_raw', 'browser_geolocation', 'vehicle_telemetry']),
   latitude: z.number().min(-90).max(90),
@@ -94,6 +99,8 @@ const absoluteDeviceObservationSchema = z.object({
 });
 
 const radioDeviceObservationSchema = z.object({
+  investigationId: z.string().uuid().optional(),
+  subjectLabel: z.string().trim().min(1).max(500).optional(),
   kind: z.literal('radio'),
   timestamp: z.string().datetime(),
   radioType: z.enum(['gsm', 'cdma', 'wcdma', 'lte', 'nr']).optional(),
@@ -120,6 +127,8 @@ const radioDeviceObservationSchema = z.object({
 });
 
 const rangingDeviceObservationSchema = z.object({
+  investigationId: z.string().uuid().optional(),
+  subjectLabel: z.string().trim().min(1).max(500).optional(),
   kind: z.literal('ranging'),
   source: z.enum(['wifi_rtt', 'uwb_range', 'uwb_direction', 'ble_rssi', 'ble_aoa', 'bluetooth_proximity']),
   timestamp: z.string().datetime(),
@@ -797,9 +806,43 @@ router.post('/device-observation', async (req: Request, res: Response) => {
   }
 
   const normalized = signServerEvidence(normalizeClientEvidence(point));
+  const userId = getPlatformUserId(req.user as any);
+  let persistedInvestigationId = input.investigationId;
+
+  if (userId && (input.investigationId || input.subjectLabel)) {
+    try {
+      let investigation = input.investigationId
+        ? await getSpectraInvestigation(input.investigationId, userId)
+        : null;
+      if (input.investigationId && !investigation) {
+        return res.status(404).json({ success: false, error: 'Investigation not found.' });
+      }
+      if (!investigation && input.subjectLabel) {
+        investigation = await createSpectraInvestigation({
+          userId,
+          subjectLabel: input.subjectLabel,
+          clues: [],
+        });
+      }
+      if (investigation) {
+        persistedInvestigationId = investigation.id;
+        await persistSpectraObservation({
+          investigationId: investigation.id,
+          userId,
+          point: normalized,
+        });
+      }
+    } catch (error) {
+      console.warn('[SPECTRA] Device observation persistence unavailable', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   return res.json({
     success: true,
     acquired: true,
+    investigationId: persistedInvestigationId,
     point: {
       ...normalized,
       timestamp: normalized.timestamp.toISOString(),
