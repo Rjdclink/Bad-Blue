@@ -69,6 +69,7 @@ export const LEXARA_PUBLIC_SOURCES: readonly LexaraPublicSource[] = [
   { id:'iana-rdap-bootstrap', root:'https://data.iana.org/rdap/dns.json', categories:['domain-web'], queryHints:['IANA RDAP bootstrap','authoritative RDAP'], authority:'primary', jurisdiction:'global' },
   { id:'cisa-advisories', root:'https://www.cisa.gov/news-events/cybersecurity-advisories', categories:['domain-web','news-history'], queryHints:['cybersecurity advisory','public breach notice'], authority:'primary', jurisdiction:'US' },
   { id:'hibp-breach-directory', root:'https://haveibeenpwned.com/PwnedWebsites', categories:['domain-web','news-history'], queryHints:['public breach directory','breach notice'], authority:'secondary', jurisdiction:'global' },
+  { id:'lookups-io', root:'https://lookups.io/', categories:['identity','contacts-addresses','relationships','social-online','general-public-records'], queryHints:['Lookups.io people search','reverse phone lookup','reverse address lookup','email lookup','aliases','age','relatives and associates'], authority:'discovery', jurisdiction:'US', lookupMode:'discovery' },
   { id:'wikidata', root:'https://www.wikidata.org/', categories:['identity','relationships','social-online','education','business','government-public','news-history','relationship-timeline'], queryHints:['Wikidata','public knowledge graph','identity relationship'], authority:'secondary', jurisdiction:'global' },
   { id:'wikidata-query', root:'https://query.wikidata.org/', categories:['identity','relationships','social-online','education','business','government-public','news-history','relationship-timeline'], queryHints:['Wikidata query','public knowledge graph'], authority:'secondary', jurisdiction:'global' },
   { id:'commoncrawl-index', root:'https://index.commoncrawl.org/', categories:['news-history','relationship-timeline','domain-web','social-online','education','employment','business'], queryHints:['historical web page','archived page','former employer','old profile'], authority:'archive', jurisdiction:'global' },
@@ -148,12 +149,19 @@ export function buildLexaraSourceQueries(input: {
     jurisdiction,
     'official state agency board registry public record',
   ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
-  const official = sources.slice(0, 2).map(source => {
+  const official = sources.filter(source => source.lookupMode !== 'discovery').slice(0, 2).map(source => {
     try {
       return `site:${new URL(source.root).hostname} ${identity || input.query} ${input.requestedFact || hints.slice(0, 2).join(' ')} ${jurisdiction}`.replace(/\s+/g, ' ').trim();
     } catch {
       return '';
     }
   }).filter(Boolean);
-  return [...new Set([base, hinted, jurisdictionOfficial, ...official].filter(Boolean))].slice(0, 5);
+  const discovery = sources.filter(source => source.lookupMode === 'discovery').slice(0, 1).map(source => {
+    try {
+      return `site:${new URL(source.root).hostname} ${identity || input.query} ${input.requestedFact || hints.slice(0, 2).join(' ')} ${jurisdiction}`.replace(/\s+/g, ' ').trim();
+    } catch {
+      return '';
+    }
+  }).filter(Boolean);
+  return [...new Set([base, hinted, jurisdictionOfficial, ...official, ...discovery].filter(Boolean))].slice(0, 6);
 }
