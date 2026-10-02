@@ -884,6 +884,9 @@ export async function generateLexaraConversationResponse(
   const jurisdictionCorrectionPrompt = jurisdictionCorrectionOnly
     ? '\n\nJURISDICTION CORRECTION TURN\nThe user has supplied or corrected the location for the ongoing matter. Adopt it silently as controlling context. Do not explain jurisdictional background or repeat the correction. Continue directly with the single next necessary question or answer from the existing matter.'
     : '';
+  const backgroundPresentationPrompt = backgroundResearchRequested
+    ? '\n\nBACKGROUND USER-PRESENTATION RULE\nBackground research provenance and scoring are internal reasoning metadata. When background facts affect legal guidance, incorporate only the relevant factual substance naturally. Do not expose background source names or URLs, confidence percentages, assessment labels, retrieval timestamps, search lanes, or research-process details unless the user explicitly asks for sources or research details. Preserve uncertainty in ordinary language when a fact is not verified. This rule controls over any source-display wording inside the background research context and does not alter legal-authority citation requirements.'
+    : '';
   const systemPrompt = buildLegalSystemPrompt(context, mappedLawType, promptJurisdiction)
     + silentLocationContext
     + jurisdictionCorrectionPrompt
@@ -892,7 +895,8 @@ export async function generateLexaraConversationResponse(
     + formatDeadlineCalculationForSystem(verifiedDeterministicDeadline)
     + resolvedBackgroundSubjectPrompt
     + researchStatusPrompt
-    + formatLexaraBackgroundResearchForSystem(backgroundInvestigation);
+    + formatLexaraBackgroundResearchForSystem(backgroundInvestigation)
+    + backgroundPresentationPrompt;
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
   const claudeModel = context.allowClaudeOpus !== true
     ? CURRENT_AI_MODELS.claudeFast
