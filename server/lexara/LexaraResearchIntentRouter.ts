@@ -70,8 +70,15 @@ export function isLexaraRepeatRequest(text: string): boolean {
   return /^(?:(?:sorry|please|lexara)[, ]+)*(?:(?:what (?:did|do) you (?:just )?say)|(?:can|could|would) you (?:please )?(?:repeat (?:that|your (?:last )?(?:answer|response))|say that again)|repeat (?:that|your (?:last )?(?:answer|response))|say (?:that|it) again|i (?:didn't|did not|couldn't|could not) hear (?:you|that))[?.! ]*$/i.test(text.trim());
 }
 
+export function isLexaraGenericLegalIntake(text: string): boolean {
+  const value = String(text || '').trim();
+  return /^(?:(?:hi|hello|hey)[, ]+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?help\s+me(?:\s+out)?\s+with\s+(?:a|an|my)?\s*(?:(?:[a-z][a-z -]{0,48}\s+law)|law|legal)\s+(?:issue|matter|question|problem|case)|(?:i\s+(?:need|want|would\s+like)\s+(?:some\s+)?help\s+with|i\s+have)\s+(?:a|an|my)?\s*(?:(?:[a-z][a-z -]{0,48}\s+law)|law|legal)\s+(?:issue|matter|question|problem|case))[?.! ]*$/i.test(value);
+}
+
 export function isLexaraConversationControl(text: string): boolean {
-  return isLexaraRepeatRequest(text) || /^(?:(?:please|lexara)[, ]+)*(?:what do you mean|can you explain (?:that|your answer)|explain that|could you clarify|are you (?:still )?there|can you hear me|did you hear me|are you listening|how are you|who are you|what can you do|can you help me)[?.! ]*$/i.test(text.trim());
+  return isLexaraRepeatRequest(text)
+    || isLexaraGenericLegalIntake(text)
+    || /^(?:(?:please|lexara)[, ]+)*(?:what do you mean|can you explain (?:that|your answer)|explain that|could you clarify|are you (?:still )?there|can you hear me|did you hear me|are you listening|how are you|who are you|what can you do|can you help me)[?.! ]*$/i.test(text.trim());
 }
 
 const LEGAL_AUTHORITY_INTENT_PATTERN = /\b(?:versus|case\s+law|court\s+(?:case|decision|opinion|holding)|holding|precedent|statute|u\.?s\.?c\.?|cfr|code\s+section|rule\s+\d|motion|appeal|lawsuit|cause\s+of\s+action|civil\s+(?:issue|case|claim|matter)|criminal\s+(?:issue|case|charge)|constitutional|jurisdiction|legal\s+(?:issue|question|claim|case|matter|right|remedy|defense|option|analysis|advice)s?|rights?|remed(?:y|ies)|liabilit\w*|breach|contract\w*|damages|cause\s+of\s+action)\b/i;
