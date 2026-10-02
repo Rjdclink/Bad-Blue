@@ -467,9 +467,185 @@ async function telemetryPoint(
     : normalizeClientEvidence(candidate);
 }
 
+interface TelemetryPushEvent {
+  sessionId: string;
+  userId?: string;
+  points: Array<Record<string, unknown>>;
+  receivedAt: string;
+}
+
+const telemetryPushEmitter = new EventEmitter();
+telemetryPushEmitter.setMaxListeners(0);
+
+function pointFingerprint(point: GPSPoint): string {
+  return createHash('sha256')
+    .update([
+      Number(point.latitude).toFixed(7),
+      Number(point.longitude).toFixed(7),
+      point.timestamp.toISOString(),
+      point.source,
+      point.correlationGroup || '',
+      point.provenance?.provider || '',
+      point.provenance?.recordId || '',
+    ].join('|'))
+    .digest('hex');
+}
+
+function serializedPoint(point: GPSPoint): Record<string, unknown> {
+  return {
+    ...point,
+    timestamp: point.timestamp.toISOString(),
+    receivedAt: point.receivedAt?.toISOString(),
+    provenance: point.provenance
+      ? {
+          ...point.provenance,
+          capturedAt: point.provenance.capturedAt instanceof Date
+            ? point.provenance.capturedAt.toISOString()
+            : point.provenance.capturedAt,
+        }
+      : undefined,
+  };
+}
+
+async function persistTelemetryBatch(input: {
+  batch: TelemetryBatch;
+  sessionId: string;
+  userId?: string;
+  providerId?: string;
+  points: GPSPoint[];
+}): Promise<{ available: boolean; investigationId?: string; eventId?: string }> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const investigationResult = await client.query(
+      `INSERT INTO public.spectra_investigations
+        (user_id, subject_label, session_id, clues, state)
+       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb)
+       ON CONFLICT (session_id)
+       DO UPDATE SET
+         user_id = COALESCE(public.spectra_investigations.user_id, EXCLUDED.user_id),
+         subject_label = COALESCE(EXCLUDED.subject_label, public.spectra_investigations.subject_label),
+         state = public.spectra_investigations.state || EXCLUDED.state,
+         updated_at = now()
+       RETURNING id, user_id`,
+      [
+        input.userId || null,
+        input.batch.subjectLabel || null,
+        input.sessionId,
+        JSON.stringify([]),
+        JSON.stringify({
+          sourceId: input.providerId || input.batch.sourceId || null,
+          lastTelemetryAt: new Date().toISOString(),
+        }),
+      ],
+    );
+    const investigationId = String(investigationResult.rows[0]?.id || '');
+    const effectiveUserId = String(investigationResult.rows[0]?.user_id || input.userId || '') || undefined;
+
+    const eventHash = createHash('sha256')
+      .update(stableJson({
+        sourceId: input.providerId || input.batch.sourceId || null,
+        subjectLabel: input.batch.subjectLabel || null,
+        measurements: input.batch.measurements,
+      }))
+      .digest('hex');
+    const observedTimes = input.batch.measurements
+      .map(measurement => measurement.timestamp?.getTime())
+      .filter((value): value is number => Number.isFinite(value));
+    const observedAt = observedTimes.length ? new Date(Math.min(...observedTimes)) : null;
+
+    const eventResult = await client.query(
+      `INSERT INTO public.spectra_telemetry_events
+        (investigation_id, user_id, source_id, provider, subject_label, session_id, observed_at, event_hash, payload)
+       VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+       ON CONFLICT (session_id, event_hash)
+       DO UPDATE SET received_at = now()
+       RETURNING id`,
+      [
+        investigationId,
+        effectiveUserId || null,
+        input.batch.sourceId || null,
+        input.providerId || input.batch.sourceId || null,
+        input.batch.subjectLabel || null,
+        input.sessionId,
+        observedAt,
+        eventHash,
+        JSON.stringify({
+          metadata: input.batch.metadata || {},
+          measurements: input.batch.measurements,
+        }),
+      ],
+    );
+    const eventId = String(eventResult.rows[0]?.id || '');
+
+    for (const point of input.points) {
+      await client.query(
+        `INSERT INTO public.spectra_location_observations
+          (
+            investigation_id, telemetry_event_id, user_id, session_id, subject_label,
+            source_type, provider, latitude, longitude, altitude, accuracy_meters,
+            confidence, observation_kind, observed_at, received_at, correlation_group,
+            provenance, metadata, evidence_fingerprint
+          )
+         VALUES (
+            $1::uuid, $2::uuid, $3, $4, $5,
+            $6, $7, $8, $9, $10, $11,
+            $12, $13, $14, $15, $16,
+            $17::jsonb, $18::jsonb, $19
+         )
+         ON CONFLICT (session_id, evidence_fingerprint) DO NOTHING`,
+        [
+          investigationId,
+          eventId,
+          effectiveUserId || null,
+          input.sessionId,
+          input.batch.subjectLabel || null,
+          point.source,
+          point.provenance?.provider || null,
+          point.latitude,
+          point.longitude,
+          point.altitude ?? null,
+          point.accuracy ?? null,
+          point.confidence,
+          point.observationKind || 'observed',
+          point.timestamp,
+          point.receivedAt || new Date(),
+          point.correlationGroup || null,
+          JSON.stringify(point.provenance || {}),
+          JSON.stringify(point.metadata || {}),
+          pointFingerprint(point),
+        ],
+      );
+    }
+
+    await client.query('COMMIT');
+
+    const pushEvent: TelemetryPushEvent = {
+      sessionId: input.sessionId,
+      userId: effectiveUserId,
+      points: input.points.map(serializedPoint),
+      receivedAt: new Date().toISOString(),
+    };
+    telemetryPushEmitter.emit(input.sessionId, pushEvent);
+
+    return { available: true, investigationId, eventId };
+  } catch (error: any) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    if (error?.code === '42P01') {
+      return { available: false };
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function processTelemetryBatch(
   batch: TelemetryBatch,
   trustedProvider: boolean,
+  userId?: string,
+  providerId?: string,
 ): Promise<{
   sessionId: string;
   inputCount: number;
@@ -477,6 +653,7 @@ async function processTelemetryBatch(
   contextOnlyCount: number;
   quality: ReturnType<typeof assessLocationQuality>;
   result: Awaited<ReturnType<typeof hybridGeoconsole.processLocationData>> | null;
+  persistence: { available: boolean; investigationId?: string; eventId?: string };
 }> {
   const sessionId = batch.sessionId || randomUUID();
   const pointOutcomes = await Promise.allSettled(
@@ -490,6 +667,19 @@ async function processTelemetryBatch(
     ? await hybridGeoconsole.processLocationData(quality.points, sessionId)
     : null;
 
+  const persistence = await persistTelemetryBatch({
+    batch,
+    sessionId,
+    userId,
+    providerId,
+    points: quality.points,
+  }).catch(error => {
+    log.warn('SPECTRA telemetry persistence unavailable', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { available: false };
+  });
+
   return {
     sessionId,
     inputCount: batch.measurements.length,
@@ -497,6 +687,7 @@ async function processTelemetryBatch(
     contextOnlyCount: batch.measurements.length - points.length,
     quality,
     result,
+    persistence,
   };
 }
 
@@ -517,13 +708,14 @@ router.post('/telemetry/provider/:providerId', async (req: Request, res: Respons
   }
 
   try {
-    const processed = await processTelemetryBatch(validation.data, true);
+    const processed = await processTelemetryBatch(validation.data, true, undefined, req.params.providerId);
     return res.json({
       success: true,
       data: {
         sessionId: processed.sessionId,
         inputCount: processed.inputCount,
         positionCount: processed.positionCount,
+        persistence: processed.persistence,
         contextOnlyCount: processed.contextOnlyCount,
         fusedLocations: processed.result?.fusedLocations.map(location => ({
           ...location,
@@ -587,13 +779,14 @@ router.post('/telemetry-ingest', async (req: Request, res: Response) => {
   if (!userId) return res.status(401).json({ success: false, error: 'Authentication required.' });
 
   try {
-    const processed = await processTelemetryBatch(validation.data, false);
+    const processed = await processTelemetryBatch(validation.data, false, userId, validation.data.sourceId);
     return res.json({
       success: true,
       data: {
         sessionId: processed.sessionId,
         inputCount: processed.inputCount,
         positionCount: processed.positionCount,
+        persistence: processed.persistence,
         contextOnlyCount: processed.contextOnlyCount,
         fusedLocations: processed.result?.fusedLocations.map(location => ({
           ...location,
