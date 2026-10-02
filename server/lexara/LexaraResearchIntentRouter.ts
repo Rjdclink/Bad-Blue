@@ -1,4 +1,4 @@
-import { resolveLexaraBackgroundSubject } from './LexaraBackgroundSubject';
+import { resolveLexaraBackgroundSubject, type LexaraBackgroundSubjectKind } from './LexaraBackgroundSubject';
 import type { LexaraSourceCategory } from './LexaraPublicSourceRegistry';
 
 export type LexaraResearchReason =
@@ -60,6 +60,7 @@ export interface LexaraResearchDecision {
   requestedFact: LexaraRequestedFact;
   sourceCategories: LexaraSourceCategory[];
   subject?: string;
+  subjectKind?: LexaraBackgroundSubjectKind;
   standaloneQuery: string;
   inferred: boolean;
 }
@@ -90,11 +91,11 @@ function requestedFact(text: string): LexaraRequestedFact {
   if (/\b(?:(?:nurs(?:e|ing)|medical|physician|lawyer|attorney|realtor|contractor|professional)\s+)?licen[cs](?:e|es|ed|ing)|licensure|credentials?|certifications?|board certified\b/.test(value)) return 'professional-license';
   if (/\b(?:married|marriage|spouse|husband|wife|divorc(?:e|ed)|marital status)\b/.test(value)) return 'marriage-divorce';
   if (/\b(?:government employee|government employment|public service|public office|campaign contribution|campaign donation|lobbying|lobbyist|government contract)\b/.test(value)) return 'government-public';
-  if (/\b(?:employ(?:er|ment|ed)|works?\s+(?:at|for)|where\s+(?:does|did)\s+.+\s+work|work history|job|occupation|profession|career)\b/.test(value)) return 'employment';
+  if (/\b(?:employ(?:er|ment|ed)|works?\s+(?:at|for)|where\s+(?:does|did)\s+.+\s+work|work history|job|occupation|profession|career|for a living)\b/.test(value)) return 'employment';
   if (/\b(?:property|real estate|parcel|deed|assessor|mortgage|owns?\s+(?:a\s+)?(?:house|home|land)|home ownership)\b/.test(value)) return 'property';
   if (/\b(?:court record|court case|docket|case filing|judgment|lawsuit|litigation)\b/.test(value)) return 'court-record';
   if (/\b(?:inmate|incarcerat\w*|prison|jail|custody|correctional|where is .+ (?:held|locked up))\b/.test(value)) return 'incarceration';
-  if (/\b(?:business|company|corporation|llc|registered agent|company officer|director|ownership)\b/.test(value)) return 'business';
+  if (/\b(?:business|company|corporation|corp\.?|inc\.?|llc|ltd\.?|holdings|technologies|industries|enterprises|registered agent|company officer|director|ownership)\b/.test(value)) return 'business';
   if (/\b(?:broker|financial adviser|investment adviser|finra|crd|securities license)\b/.test(value)) return 'financial-professional';
   if (/\b(?:npi|healthcare provider|health care provider|medical provider|practice address)\b/.test(value)) return 'healthcare-professional';
   if (/\b(?:sanction|excluded|exclusion|disciplin(?:e|ary)|debarred|ofac|oig)\b/.test(value)) return 'sanctions-discipline';
@@ -108,7 +109,7 @@ function requestedFact(text: string): LexaraRequestedFact {
   if (/\b(?:relatives?|family|parent|mother|father|sibling|brother|sister|associate|household|roommate|lives with)\b/.test(value)) return 'relatives-associates';
   if (/\b(?:education|school|college|university|degree|diploma|graduat|alma mater)\b/.test(value)) return 'education';
   if (/\b(?:vehicle|car|truck|motorcycle|vin|vehicle title|vehicle registration)\b/.test(value)) return 'vehicle';
-  if (/\b(?:criminal record|criminal history|conviction|charge|arrest|booking|police record|sheriff record)\b/.test(value)) return 'criminal-arrest';
+  if (/\b(?:criminal record|criminal history|criminal background|conviction|charge|arrest\w*|booking|police record|sheriff record)\b/.test(value)) return 'criminal-arrest';
   if (/\b(?:probation|parole|supervised release|community supervision)\b/.test(value)) return 'probation-parole';
   if (/\b(?:warrant|wanted|fugitive)\b/.test(value)) return 'warrant';
   if (/\b(?:sex offender|offender registry|registered offender)\b/.test(value)) return 'sex-offender';

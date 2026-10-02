@@ -62,6 +62,7 @@ export interface LexaraBackgroundInvestigationContext {
   onProgress?: (event: LexaraBackgroundProgressEvent) => void;
   delegatedByLexara?: boolean;
   researchDecision?: LexaraResearchDecision;
+  resolvedSubject?: LexaraBackgroundSubject;
   claudeResearchModel?: string;
 }
 
@@ -158,7 +159,11 @@ function cleanSubject(subject: LexaraBackgroundSubject): LexaraBackgroundSubject
   const locationSuffix = subject.name.match(/\s+(?:of|from|in)\s+(.+)$/u)?.[1]?.trim();
   const cleaned = subject.name.replace(/\s+(?:of|from|in)\s+[A-Z].*$/u, '').trim();
   const location = locationSuffix && subject.location
-    ? normalize(subject.location).includes(normalize(locationSuffix)) ? subject.location : `${locationSuffix}, ${subject.location}`
+    ? normalize(locationSuffix).includes(normalize(subject.location))
+      ? locationSuffix
+      : normalize(subject.location).includes(normalize(locationSuffix))
+        ? subject.location
+        : `${locationSuffix}, ${subject.location}`
     : subject.location || locationSuffix;
   return cleaned && cleaned !== subject.name
     ? { ...subject, name: cleaned, location }
@@ -421,16 +426,19 @@ export async function investigateLexaraBackgroundQuestion(
   const decision = context.researchDecision || decideLexaraResearchNeed(prompt, priorTurns);
   if (!decision.needed || (decision.intent !== 'factual' && decision.intent !== 'mixed')) return null;
 
-  const resolved = resolveLexaraBackgroundSubject(prompt, priorTurns, context.jurisdiction)
+  // Lexara resolves the subject once. Downstream background research must not
+  // second-guess that decision by reparsing conversational filler in the raw turn.
+  const resolved = context.resolvedSubject
     || (decision.subject
       ? resolveLexaraBackgroundSubject(decision.subject, priorTurns, context.jurisdiction)
         || {
           name: decision.subject,
-          kind: 'person' as const,
-          identifiable: false,
+          kind: decision.subjectKind || 'person' as const,
+          identifiable: decision.subjectKind === 'organization' || decision.subjectKind === 'entity',
           location: context.jurisdiction,
         }
-      : null);
+      : null)
+    || resolveLexaraBackgroundSubject(prompt, priorTurns, context.jurisdiction);
   if (!resolved) {
     const categories = backgroundCategories(prompt, decision);
     const initialQuery = decision.standaloneQuery || decision.objective || prompt;
@@ -509,7 +517,7 @@ export async function investigateLexaraBackgroundQuestion(
       prompt,
       subject,
       decision,
-      jurisdiction: context.jurisdiction || subject.location,
+      jurisdiction: subject.location || context.jurisdiction,
       model: context.claudeResearchModel,
       signal: laneSignal,
     }).then(result => {
@@ -519,7 +527,7 @@ export async function investigateLexaraBackgroundQuestion(
 
     const nativeDiscoveryPromise = discoverLegalMeshTier3(initialQuery, laneSignal, {
       categories,
-      jurisdiction: context.jurisdiction || subject.location,
+      jurisdiction: subject.location || context.jurisdiction,
       subject: subject.name,
       requestedFact: decision.requestedFact,
     }).catch(error => {
@@ -533,7 +541,7 @@ export async function investigateLexaraBackgroundQuestion(
       subject,
       requestedFact: decision.requestedFact,
       categories,
-      jurisdiction: context.jurisdiction || subject.location,
+      jurisdiction: subject.location || context.jurisdiction,
       signal: laneSignal,
     }).catch(error => {
       console.warn('[LEXARA Background] authoritative direct lookup unavailable; continuing search lanes', {
@@ -656,7 +664,7 @@ export async function investigateLexaraBackgroundQuestion(
             .sort((a, b) => b.confidence - a.confidence)[0] || null;
           void rememberLexaraDiscoveryOutcome(candidate.url, Boolean(evaluation), {
             categories,
-            jurisdiction: context.jurisdiction || subject.location,
+            jurisdiction: subject.location || context.jurisdiction,
             query: decision.standaloneQuery,
             latencyMs: Date.now() - startedAt,
             evidenceConfidence: evaluation?.confidence || 0,
@@ -722,13 +730,13 @@ export async function investigateLexaraBackgroundQuestion(
       const [primaryOutcome, supplementalOutcome] = await Promise.allSettled([
         discoverLegalMeshTier3(query, laneSignal, {
           categories,
-          jurisdiction: context.jurisdiction || subject.location,
+          jurisdiction: subject.location || context.jurisdiction,
           subject: subject.name,
           requestedFact: decision.requestedFact,
         }),
         discoverLegalMeshSupplemental(query, [...seenUrls], laneSignal, {
           categories,
-          jurisdiction: context.jurisdiction || subject.location,
+          jurisdiction: subject.location || context.jurisdiction,
           subject: subject.name,
           requestedFact: decision.requestedFact,
         }),
@@ -840,7 +848,7 @@ VERIFICATION RULE: If the exact requested fact is directly established by reliab
 
 CORROBORATION RULE: Compare what the surviving sources actually say; source count by itself is not corroboration. Consistent independent evidence strengthens an inference, while contradictions weaken it. Never fabricate a fact merely to avoid saying information is unavailable.
 
-For a simple factual question, the first sentence must contain only the requested fact/status or the explicitly labeled best-supported guess. Do not narrate the research process, name internal search lanes, mention Claude, or dump source findings unless the user asks for specifics or citation detail.
+For a simple factual question, the first sentence must contain only the requested fact/status or the explicitly labeled best-supported guess. When the fact is verified, follow with at most one short supporting sentence identifying the strongest source, including its URL when available, and the relevant date or record detail when useful. Do not narrate the research process, name internal search lanes, mention Claude, or dump additional source findings unless the user asks for specifics or citation detail.
 
 ${result.evidenceSummary}`;
 }

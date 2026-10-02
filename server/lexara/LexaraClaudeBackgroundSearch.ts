@@ -30,7 +30,8 @@ export async function searchLexaraBackgroundWithClaude(input: {
   signal?: AbortSignal;
 }): Promise<LexaraClaudeBackgroundSearchResult> {
   const subjectName = input.subject?.name || input.decision.subject || '';
-  const location = input.jurisdiction || input.subject?.location || '';
+  const subjectKind = input.subject?.kind || input.decision.subjectKind || '';
+  const location = input.subject?.location || input.jurisdiction || '';
   const requestedFact = input.decision.requestedFact === 'none'
     ? 'the exact external fact requested by the user'
     : input.decision.requestedFact.replace(/-/g, ' ');
@@ -42,6 +43,7 @@ export async function searchLexaraBackgroundWithClaude(input: {
     'Corroborate with more than one independent source when practical. Do not invent facts, and do not treat absence from one source as proof of absence.',
     'Do not produce a biography or unrelated background. Your final text is internal research notes and must stay narrowly focused on the requested fact.',
     subjectName ? `Subject: ${subjectName}` : '',
+    subjectKind ? `Subject type: ${subjectKind}` : '',
     location ? `Location/jurisdiction context: ${location}` : '',
     sourceHints.length ? `Preferred source families/search concepts: ${sourceHints.join(', ')}` : '',
     `Requested fact: ${requestedFact}`,

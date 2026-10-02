@@ -366,10 +366,11 @@ function extractVerifiedBackgroundSourceExcerpt(
 ): { text: string; sourceUrl: string; excerpt: string } | null {
   if (!result?.evidenceSummary || !result.sources.length) return null;
   const evidence = result.evidenceSummary;
-  const webRecord = /^\s*\d+\.\s*SOURCE:\s*(https?:\/\/[^\s]+)\s*\nASSESSMENT:\s*(?:STRONG|PARTIAL\/INFERENTIAL)\s*\(\d+%\)\s*\nEVIDENCE:\s*([\s\S]*?)(?=\n\d+\.\s*SOURCE:|$)/m.exec(evidence);
+  const webRecord = /^\s*\d+\.\s*SOURCE:\s*(https?:\/\/[^\s]+)\s*\nRETRIEVED:\s*[^\n]+\s*\nASSESSMENT:\s*(DIRECT|INFERENTIAL|PARTIAL)\s*\(\d+%\)\s*\nEVIDENCE:\s*([\s\S]*?)(?=\n\d+\.\s*SOURCE:|$)/m.exec(evidence);
   const custodyRecord = /^\s*STRUCTURED CUSTODY SOURCE:\s*(https?:\/\/[^\s]+)\s*\n([\s\S]*?)(?=\nSTRUCTURED CUSTODY SOURCE:|$)/m.exec(evidence);
+  if (webRecord && webRecord[2] !== 'DIRECT') return null;
   const sourceUrl = webRecord?.[1] || custodyRecord?.[1];
-  const excerpt = (webRecord?.[2] || custodyRecord?.[2] || '').replace(/\s+/g, ' ').trim();
+  const excerpt = (webRecord?.[3] || custodyRecord?.[2] || '').replace(/\s+/g, ' ').trim();
   if (!sourceUrl || !excerpt) return null;
 
   let parsedUrl: URL;
@@ -613,6 +614,40 @@ export async function generateLexaraConversationResponse(
   // background questions deliberately run both research domains in parallel.
   const mixedLegalFactNeed = sequencePlan.useLegalResearch && sequencePlan.useBackgroundResearch;
   const backgroundResearchRequested = sequencePlan.useBackgroundResearch;
+  const parsedDecisionBackgroundSubject = backgroundResearchRequested && researchDecision.subject
+    ? resolveLexaraBackgroundSubject(researchDecision.subject, previousUserTurns, jurisdiction)
+    : null;
+  const decisionBackgroundSubject = parsedDecisionBackgroundSubject
+    ? {
+        ...parsedDecisionBackgroundSubject,
+        kind: researchDecision.subjectKind || parsedDecisionBackgroundSubject.kind,
+        identifiable: parsedDecisionBackgroundSubject.identifiable
+          || researchDecision.subjectKind === 'organization'
+          || researchDecision.subjectKind === 'entity',
+      }
+    : backgroundResearchRequested && researchDecision.subject
+      ? {
+          name: researchDecision.subject,
+          kind: researchDecision.subjectKind || 'person' as const,
+          identifiable: researchDecision.subjectKind === 'organization' || researchDecision.subjectKind === 'entity',
+          location: jurisdiction,
+        }
+      : null;
+  const promptBackgroundSubject = backgroundResearchRequested
+    ? resolveLexaraBackgroundSubject(cleanPrompt, previousUserTurns, jurisdiction)
+    : null;
+  const sameResolvedSubject = Boolean(
+    decisionBackgroundSubject?.name && promptBackgroundSubject?.name
+    && decisionBackgroundSubject.name.toLocaleLowerCase() === promptBackgroundSubject.name.toLocaleLowerCase()
+  );
+  const resolvedBackgroundSubject = sameResolvedSubject && decisionBackgroundSubject && promptBackgroundSubject
+    ? {
+        ...decisionBackgroundSubject,
+        kind: researchDecision.subjectKind || promptBackgroundSubject.kind,
+        location: promptBackgroundSubject.location || decisionBackgroundSubject.location,
+        identifiable: decisionBackgroundSubject.identifiable || promptBackgroundSubject.identifiable,
+      }
+    : decisionBackgroundSubject || promptBackgroundSubject;
 
   const backgroundPrompt = mixedLegalFactNeed
     ? `${researchDecision.objective}\n\nLEXARA-DELEGATED FACTUAL OBJECTIVE: Retrieve only background facts and identifiers materially useful for identifying or resolving this legal matter (for example name variants, locations, dates, related proceedings, court references, docket/citation clues, and relevant public records). Do not perform the legal analysis and do not broaden into an unrestricted background report.`
@@ -628,6 +663,7 @@ export async function generateLexaraConversationResponse(
         delegatedByLexara: mixedLegalFactNeed,
         previousMessages: context.previousMessages,
         jurisdiction,
+        resolvedSubject: resolvedBackgroundSubject || undefined,
         signal: backgroundController.signal,
         onProgress: context.onResearchProgress,
         researchDecision,
@@ -815,6 +851,9 @@ export async function generateLexaraConversationResponse(
         backgroundStateJurisdiction,
       ].filter(Boolean).join(', ')}. Confidence: ${Math.round(backgroundLocationConfidence * 100)}%. Source class: ${context.backgroundLocationSource || 'automatic-location'}. If confidence is below 75% and jurisdiction materially changes the legal answer, ask only for the needed state/jurisdiction. If the user states a location, that statement controls immediately.`
     : '';
+  const resolvedBackgroundSubjectPrompt = resolvedBackgroundSubject
+    ? `\n\nLEXARA RESOLVED BACKGROUND SUBJECT\nThe exact subject for this turn is: "${resolvedBackgroundSubject.name}". Preserve that exact subject as one identity. Do not split a multi-part name into alternatives, rename the subject, or reinterpret conversational filler as the subject. Use the rest of the user's wording only as clues and as the requested factual objective.`
+    : '';
   const researchStatusPrompt = researchRouteSelected && !authorityResearch
     ? '\n\nAPPLICATION RESEARCH STATUS\nLexara attempted the selected external research route for this turn but no independently usable source result was returned within the live research budget. Do not claim that no search was attempted. Do not invent the requested fact; say it could not be verified from the completed search and preserve useful next steps or clarification.'
     : '';
@@ -827,6 +866,7 @@ export async function generateLexaraConversationResponse(
     + formatJurisdictionAuthorityForSystem(jurisdictionAuthorityProfile)
     + formatAuthorityResearchForSystem(authorityResearch)
     + formatDeadlineCalculationForSystem(verifiedDeterministicDeadline)
+    + resolvedBackgroundSubjectPrompt
     + researchStatusPrompt
     + formatLexaraBackgroundResearchForSystem(backgroundInvestigation);
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
@@ -1034,13 +1074,13 @@ export async function generateLexaraConversationResponse(
           return age ? `age ${age[1]}` : null;
         })()
       : null,
-    researchSubject: researchDecision.subject || null,
-    researchLanes: authorityResearch?.selectedCrawlers || [],
-    researchSourceCount: authorityResearch?.sources?.length || 0,
+    researchSubject: resolvedBackgroundSubject?.name || researchDecision.subject || null,
+    researchLanes: authorityResearch?.selectedCrawlers || backgroundInvestigation?.discoveryLanes || [],
+    researchSourceCount: authorityResearch?.sources?.length || backgroundInvestigation?.sources?.length || 0,
     citationVerificationCount,
     unresolvedCitationCount,
     negativeTreatmentSignalCount,
-    researchEndpointReached: !researchDecision.needed || Boolean(authorityResearch || backgroundEndpoint),
+    researchEndpointReached: !researchDecision.needed || Boolean(authorityResearch || backgroundInvestigation?.endpoint),
     jurisdictionAuthoritySystem: jurisdictionAuthorityProfile?.system || null,
     jurisdictionFederalCircuit: jurisdictionAuthorityProfile?.federalCircuit || null,
     jurisdictionCourtClarificationNeeded: jurisdictionAuthorityProfile?.needsCourtClarification || false,

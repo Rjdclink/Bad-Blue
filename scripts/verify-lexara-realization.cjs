@@ -40,6 +40,8 @@ const realtimeVoiceClient = read('client/src/lib/lexaraRealtimeVoiceClient.ts');
 const lexaraConversationOrchestrator = read('server/lexara/LexaraConversationOrchestrator.ts');
 const lexaraPantheonInvestigation = read('server/lexara/LexaraPantheonInvestigation.ts');
 const lexaraBackgroundInvestigation = read('server/lexara/LexaraBackgroundInvestigation.ts');
+const lexaraBackgroundSubject = read('server/lexara/LexaraBackgroundSubject.ts');
+const lexaraBackgroundBoundary = read('server/lexara/LexaraBackgroundResearchBoundary.ts');
 const inmateSearchAggregator = read('server/services/inmateSearch/InmateSearchAggregator.ts');
 const liveAvatarReview = read('docs/LEXARA_LIVE_AVATAR_100_SOURCE_REVIEW_20260920.md');
 const embodiedConversationReview = read('docs/LEXARA_EMBODIED_CONVERSATION_50_SOURCE_BLUEPRINT_20260920.md');
@@ -498,6 +500,7 @@ must(
     lexaraLegalMesh.includes('SERPAPI_KEY') &&
     lexaraLegalMesh.includes('SCRAPINGBEE_API_KEY') &&
     lexaraLegalMesh.includes('planLexaraResearchQueries') &&
+    lexaraLegalMesh.includes('fuseRankedCandidates') &&
     !lexaraLegalMesh.includes('PantheonDiscoveryCoordinator'),
   'Lexara owns the former non-crawler discovery lanes, archive fallback, paid fallback, and query expansion',
 );
@@ -519,7 +522,10 @@ must(
     lexaraDiscoveryLearning.includes('getLexaraLearnedQueryPatterns') &&
     lexaraResearchAssist.includes("providerPolicy:'legalwhat'") &&
     lexaraResearchAssist.includes('maxParticipants:1') &&
-    lexaraResearchAssist.includes('maxFallbacks:0'),
+    lexaraResearchAssist.includes('maxFallbacks:0') &&
+    lexaraResearchAssist.includes('needsVerification:false') &&
+    lexaraResearchAssist.includes('needsFastResponse:true') &&
+    lexaraResearchAssist.includes('requestTimeoutMs:2_500'),
   'Lexara owns discovery learning while scarce support providers stay out of query planning',
 );
 must(
@@ -941,17 +947,33 @@ must(
     lexaraConversationOrchestrator.includes("from './LexaraBackgroundInvestigation'") &&
     lexaraConversationOrchestrator.includes("const backgroundResearchRequested = sequencePlan.useBackgroundResearch") &&
     lexaraConversationOrchestrator.includes('const researchRouteSelected = sequencePlan.useLegalResearch') &&
+    lexaraConversationOrchestrator.includes('resolvedSubject: resolvedBackgroundSubject || undefined') &&
+    lexaraBackgroundInvestigation.includes('const resolved = context.resolvedSubject') &&
+    lexaraBackgroundSubject.includes('CONVERSATIONAL_LEAD') &&
+    lexaraBackgroundSubject.includes('commaSubjectLocation') &&
+    lexaraBackgroundSubject.includes('jurisdictionSubjectLocality') &&
+    lexaraBackgroundBoundary.includes("from './LexaraBackgroundInvestigation'") &&
+    !lexaraBackgroundBoundary.includes('LexaraPantheonInvestigation') &&
+    !lexaraBackgroundBoundary.includes('PantheonDiscoveryCoordinator') &&
     !lexaraBackgroundInvestigation.includes('../services/pantheon/') &&
     !lexaraBackgroundInvestigation.includes('PantheonRetrievalAdapter') &&
     lexaraBackgroundInvestigation.includes('discoverLegalMeshTier3') &&
     lexaraBackgroundInvestigation.includes('discoverLegalMeshSupplemental') &&
     lexaraBackgroundInvestigation.includes('lexaraRetrievalAdapter') &&
-    lexaraBackgroundInvestigation.includes('directlyAnswers'),
+    lexaraBackgroundInvestigation.includes('directlyAnswers') &&
+    lexaraConversationOrchestrator.includes('DIRECT|INFERENTIAL|PARTIAL') &&
+    lexaraConversationOrchestrator.includes('RETRIEVED:'),
   'Lexara background research is native, recursive, fact-gated, and Pantheon-disconnected while legal reasoning remains on its existing route',
 );
 must(
   lexaraSemanticIntent.includes('resolveLexaraResearchDecisionSemantic') &&
     lexaraSemanticIntent.includes('Do not require special words') &&
+    lexaraSemanticIntent.includes('deterministicSubjectNeedsSemanticReview') &&
+    lexaraSemanticIntent.includes('hasMultipleLexaraBackgroundSubjectCandidates') &&
+    lexaraSemanticIntent.includes('subjectKindFromSemantic') &&
+    lexaraSemanticIntent.includes("const standaloneQuery = [subject, text, objective") &&
+    lexaraSemanticIntent.includes('supportedSubject(semantic.subject, text, previousUserTurns, needsSubjectReview)') &&
+    lexaraConversationOrchestrator.includes("kind: researchDecision.subjectKind || 'person' as const") &&
     lexaraSemanticIntent.includes("deterministic.intent === 'legal'") &&
     lexaraConversationOrchestrator.includes('semanticResearchDecisionPromise') &&
     lexaraConversationOrchestrator.indexOf('semanticResearchDecisionPromise') < lexaraConversationOrchestrator.indexOf('await resolveUSJurisdiction(') &&

@@ -90,6 +90,19 @@ function isPreferredOfficialCandidate(item: LegalMeshCandidate, options: LegalMe
   return preferredHosts.some(preferred => host === preferred || host.endsWith(`.${preferred}`));
 }
 
+function fuseRankedCandidates(groups: readonly LegalMeshCandidate[][]): LegalMeshCandidate[] {
+  const scores = new Map<string, number>();
+  const byUrl = new Map<string, LegalMeshCandidate>();
+  for (const group of groups) {
+    group.forEach((item, index) => {
+      if (!byUrl.has(item.url)) byUrl.set(item.url, item);
+      scores.set(item.url, (scores.get(item.url) || 0) + 1 / (60 + index + 1));
+    });
+  }
+  return [...byUrl.values()].sort((left, right) =>
+    (scores.get(right.url) || 0) - (scores.get(left.url) || 0));
+}
+
 function diversify(items: LegalMeshCandidate[], limit = 16): LegalMeshCandidate[] {
   const byUrl = [...new Map(items.map(item => [item.url, item])).values()];
   const ranked = rankLexaraDiscoveryUrls(byUrl.map(item => item.url));
@@ -296,14 +309,24 @@ async function commonCrawl(query: string, existingUrls: readonly string[], optio
 }
 
 async function freeSearch(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
-  const groups=await Promise.all([
-    tavily(query,signal),
-    duckDuckGoInstantAnswer(query,signal),
-    searxng(query,signal),
-    ddgs(query,signal),
-    openserp(query,signal),
-  ]);
-  return groups.flat();
+  // One parent listener per query variant prevents the shared turn signal from
+  // accumulating a listener for every parallel search provider.
+  const controller = new AbortController();
+  const relayAbort = () => controller.abort(signal?.reason);
+  if (signal?.aborted) controller.abort(signal.reason);
+  else signal?.addEventListener('abort', relayAbort, { once: true });
+  try {
+    const groups=await Promise.all([
+      tavily(query,controller.signal),
+      duckDuckGoInstantAnswer(query,controller.signal),
+      searxng(query,controller.signal),
+      ddgs(query,controller.signal),
+      openserp(query,controller.signal),
+    ]);
+    return fuseRankedCandidates(groups);
+  } finally {
+    signal?.removeEventListener('abort', relayAbort);
+  }
 }
 
 export async function discoverLegalMeshTier3(
@@ -330,7 +353,7 @@ export async function discoverLegalMeshTier3(
     new Promise<string[]>(resolve=>setTimeout(()=>resolve([]),75)),
   ]);
   const learnedCandidates=learnedSources.map(url=>({url,title:'Previously successful Lexara source',tier:3 as const,provider:'lexara-learned'}));
-  const combined=[...groups.flat(),...learnedCandidates];
+  const combined=[...fuseRankedCandidates(groups),...learnedCandidates];
   const preferred=diversify(combined.filter(item=>isPreferredOfficialCandidate(item,options)),8);
   const preferredUrls=new Set(preferred.map(item=>item.url));
   const remainder=diversify(combined.filter(item=>!preferredUrls.has(item.url)),18);
