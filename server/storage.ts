@@ -1773,6 +1773,21 @@ export class DatabaseStorage implements IStorage {
                 < NOW() - INTERVAL '2 minutes'
             )
           )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM lexara_conversations AS earlier
+            WHERE earlier.user_id IS NOT DISTINCT FROM lexara_conversations.user_id
+              AND earlier.session_id IS NOT DISTINCT FROM lexara_conversations.session_id
+              AND (
+                earlier.created_at < lexara_conversations.created_at
+                OR (
+                  earlier.created_at = lexara_conversations.created_at
+                  AND earlier.id < lexara_conversations.id
+                )
+              )
+              AND COALESCE((earlier.context->'matterEnrichmentJob'->>'attempts')::integer, 0) < 3
+              AND earlier.context->'matterEnrichmentJob'->>'status' IN ('pending', 'processing')
+          )
         ORDER BY created_at ASC, id ASC
         FOR UPDATE SKIP LOCKED
         LIMIT 1
