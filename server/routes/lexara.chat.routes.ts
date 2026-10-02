@@ -716,35 +716,45 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
     const previousMessages = sanitizePreviousMessages((rawContext as any).previousMessages);
     const lawType = cleanOptionalString((rawContext as any).lawType);
     const lawTypeName = cleanOptionalString((rawContext as any).lawTypeName, 160);
+    const genericLegalIntake = isLexaraGenericLegalIntake(prompt);
     const explicitJurisdiction = cleanOptionalString((rawContext as any).jurisdiction, 80);
-    const locationState = explicitJurisdiction ? null : await resolveBestLocationEstimate(
+    const locationState = genericLegalIntake || explicitJurisdiction ? null : await resolveBestLocationEstimate(
       String(req.headers['x-real-ip'] || req.headers['cf-connecting-ip'] || req.ip || ''),
       cleanDeviceLocation((rawContext as any).deviceLocation),
     );
     const jurisdiction = explicitJurisdiction;
     const behaviorMode = (rawContext as any).behaviorMode === 'personable' ? 'personable' : 'professional';
     const requestedSessionId = cleanOptionalString((rawContext as any).sessionId, 128);
-    const representationContext = await loadRepresentationContext(
-      req,
-      prompt,
-      requestedSessionId,
-      (rawContext as any).representationMatter,
-    );
+    const representationContext = genericLegalIntake
+      ? {
+          persistent: hasPersistentMatterAccess(req),
+          activeMatter: null,
+          activeSessionId: requestedSessionId,
+          savedMatters: [] as SavedMatterSummary[],
+        }
+      : await loadRepresentationContext(
+          req,
+          prompt,
+          requestedSessionId,
+          (rawContext as any).representationMatter,
+        );
     const sessionId = representationContext.activeSessionId || requestedSessionId || `lexara-${Date.now()}`;
     const effectivePreviousMessages = representationContext.activeMatter
       && requestedSessionId
       && sessionId !== requestedSessionId
       ? []
       : previousMessages;
-    const preRepresentationMatter = await advanceRepresentationMatter({
-      prompt,
-      response: '',
-      sessionId,
-      lawType,
-      jurisdiction: explicitJurisdiction || representationContext.activeMatter?.jurisdiction,
-      prior: representationContext.activeMatter,
-      allowClaudeOpus: canUseClaudeOpus(req),
-    });
+    const preRepresentationMatter = genericLegalIntake
+      ? representationContext.activeMatter
+      : await advanceRepresentationMatter({
+          prompt,
+          response: '',
+          sessionId,
+          lawType,
+          jurisdiction: explicitJurisdiction || representationContext.activeMatter?.jurisdiction,
+          prior: representationContext.activeMatter,
+          allowClaudeOpus: canUseClaudeOpus(req),
+        });
     let documentIntent = detectDocumentIntent(prompt, effectivePreviousMessages);
     const savedArtifact = selectSavedArtifactRequest(prompt, preRepresentationMatter || representationContext.activeMatter);
     const packetDocumentIntent = savedArtifact ? null : selectPacketDocumentIntent(prompt, preRepresentationMatter);
@@ -796,16 +806,13 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
 
 
     const responseText = conversationResult.text;
-    const representationMatter = await advanceRepresentationMatter({
-      prompt,
-      response: responseText,
-      sessionId,
-      lawType,
-      jurisdiction: conversationResult.jurisdiction || jurisdiction,
-      prior: preRepresentationMatter || representationContext.activeMatter,
-      allowClaudeOpus: canUseClaudeOpus(req),
-      signal: requestController.signal,
-    });
+    const representationMatter = preRepresentationMatter || representationContext.activeMatter;
+    const enrichmentUserId = representationContext.persistent ? authenticatedUserId(req) : undefined;
+    const enrichmentNeeded = Boolean(
+      enrichmentUserId
+      && representationMatter
+      && shouldEnrichRepresentationMatter(prompt, responseText, representationMatter)
+    );
     const model = 'lexara-legal-orchestrator';
 
     // Preserve the deterministic explicit-request fast path, but let LEXARA's
@@ -883,6 +890,19 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
         persistenceSuccess: false,
         persistenceStatus: 'failed',
       });
+    }
+
+    if (enrichmentNeeded && enrichmentUserId && representationMatter) {
+      const enrichmentTask: MatterEnrichmentTask = {
+        userId: enrichmentUserId,
+        sessionId,
+        prompt,
+        response: responseText,
+        lawType,
+        jurisdiction: conversationResult.jurisdiction || jurisdiction,
+        fallbackMatter: representationMatter,
+      };
+      res.once('finish', () => enqueueMatterEnrichment(enrichmentTask));
     }
 
     return res.json({
