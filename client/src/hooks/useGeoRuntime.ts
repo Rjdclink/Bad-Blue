@@ -616,7 +616,15 @@ export function useGeoRuntime(
               },
             }],
           }),
-        }).catch(() => undefined);
+        })
+          .then(async response => response.ok ? response.json() : null)
+          .then(payload => {
+            const telemetrySessionId = typeof payload?.data?.sessionId === 'string'
+              ? payload.data.sessionId.trim()
+              : '';
+            if (telemetrySessionId && !sessionId) setSessionId(telemetrySessionId);
+          })
+          .catch(() => undefined);
 
         const cutoff = newFrame.timestamp.getTime() - ONE_HOUR_MS;
         const updated = [...framesRef.current, newFrame]
