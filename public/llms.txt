@@ -1,11 +1,13 @@
 # Legal What?
 
-> Lexara is a jurisdiction-aware conversational legal AI with extensive knowledge across 40+ areas of law. Talk live by voice or text, analyze and revise uploaded documents and media, identify jurisdiction-specific requirements, find and use appropriate local legal forms, and create legal documents. Try LegalWhat free for 3 days, then only $19.99/month.
+> LegalWhat provides affordable legal guidance and answers to legal questions across 40+ areas of law. Ask by voice or text, analyze documents and media, research jurisdiction-specific issues, and create legal documents. The experience is powered by Lexara. Try LegalWhat free for 3 days, then $19.99/month.
 
 Legal What? provides legal information and AI-assisted tools. It does not constitute legal advice.
 
 ## Core pages
-- [Homepage](https://legalwhat.com/): Overview of Legal What? and its legal research tools.
+- [Homepage](https://legalwhat.com/): Overview of LegalWhat and its affordable legal guidance, research, file analysis, and document tools.
+- [Affordable legal guidance](https://legalwhat.com/affordable-legal-guidance/): Flagship resource for affordable legal guidance across 40 legal areas.
+- [Affordable answers to legal questions](https://legalwhat.com/guides/affordable-answers-to-legal-questions/): Practical guide to asking legal questions online and understanding when professional representation may still be needed.
 - [Legal consultation](https://legalwhat.com/legal-consultation): AI-assisted legal consultation.
 - [Practice areas](https://legalwhat.com/areas/): Legal information and research coverage across 40 practice areas.
 - [Services](https://legalwhat.com/services/): Legal What? service overview.
@@ -66,7 +68,7 @@ Legal What? provides legal information and AI-assisted tools. It does not consti
 
 
 ## Search-intent resources
-- [Legal AI and research guides](https://legalwhat.com/guides/): Conversational legal AI, two-way voice/text interaction, AI legal research, case analysis, evidence/media analysis, OSINT, public records, criminal procedure, appeals, post-conviction research, drafting, and document review.
-- [AI legal document library](https://legalwhat.com/documents/): Public discovery pages for motions, complaints, contracts, demand letters, affidavits, appellate briefs, habeas petitions, FOIA requests, sentencing memoranda, and legal research memoranda.
+- [Legal guidance and research guides](https://legalwhat.com/guides/): Affordable legal guidance, legal answers, conversational assistance, legal research, case analysis, evidence/media analysis, public records, criminal procedure, appeals, post-conviction research, drafting, and document review.
+- [Affordable legal document help](https://legalwhat.com/documents/): Public discovery pages for motions, complaints, contracts, demand letters, affidavits, appellate briefs, habeas petitions, FOIA requests, sentencing memoranda, and legal research memoranda.
 
 LegalWhat's public discovery architecture describes capabilities in natural language while private user conversations, accounts, and protected workspaces remain outside search indexing.
