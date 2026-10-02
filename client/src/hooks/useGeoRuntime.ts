@@ -586,6 +586,38 @@ export function useGeoRuntime(
           },
         };
 
+        void fetch('/api/geoconsole/telemetry-ingest', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sessionId: sessionId || undefined,
+            sourceId: 'browser-geolocation',
+            measurements: [{
+              kind: 'position',
+              source: 'browser_geolocation',
+              timestamp: now.toISOString(),
+              latitude,
+              longitude,
+              altitude,
+              accuracy,
+              verticalAccuracy: Number.isFinite(coords.altitudeAccuracy)
+                ? coords.altitudeAccuracy ?? undefined
+                : undefined,
+              speed,
+              heading,
+              confidence,
+              provider: 'navigator.geolocation',
+              correlationGroup: 'browser:navigator.geolocation',
+              metadata: {
+                live: true,
+                providerSpeedMps: Number.isFinite(coords.speed) ? coords.speed : undefined,
+                providerHeadingDegrees: Number.isFinite(coords.heading) ? coords.heading : undefined,
+              },
+            }],
+          }),
+        }).catch(() => undefined);
+
         const cutoff = newFrame.timestamp.getTime() - ONE_HOUR_MS;
         const updated = [...framesRef.current, newFrame]
           .filter(frame => frame.timestamp.getTime() >= cutoff);
@@ -625,7 +657,7 @@ export function useGeoRuntime(
         // ignore
       }
     };
-  }, [isLive, cfg.autoFetch, cfg.maxFrameBuffer, requestAuthoritativeFuturecast]);
+  }, [isLive, cfg.autoFetch, cfg.maxFrameBuffer, requestAuthoritativeFuturecast, sessionId]);
 
   // === DERIVED STATE (computed from index + frames) ===
   
