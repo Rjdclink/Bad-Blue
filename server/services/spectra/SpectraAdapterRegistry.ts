@@ -251,6 +251,16 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     notes: 'Spatiotemporal Earth-observation catalogue context.',
   },
   {
+    id: 'public-source-retrieval',
+    label: 'Direct public source retrieval',
+    mode: 'generic-http',
+    sourceTypes: ['historical_location','public_record','social_geotag'],
+    configured: () => true,
+    priority: 'high',
+    supportsRealtime: false,
+    notes: 'Fetches bounded direct source pages/JSON and extracts explicit geospatial metadata before evidence admission.',
+  },
+  {
     id: 'common-crawl',
     label: 'Common Crawl archive index',
     mode: 'archive',
