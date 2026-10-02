@@ -561,6 +561,13 @@ export async function investigateLexaraBackgroundQuestion(
       return [] as LegalMeshCandidate[];
     });
 
+    let peopleParallel = {
+      candidates: [] as LegalMeshCandidate[],
+      evidence: [] as Array<{ url: string; content: string; retrievedAt: string; provider: string }>,
+      lanesAttempted: [] as string[],
+    };
+    let peopleRetrievedEvidence: Array<{ target: string; content: string; retrievedAt: string }> = [];
+    let peopleIntegrated = false;
     const peopleToolPromise = runLexaraPeopleToolLanes({
       prompt,
       subject,
@@ -568,11 +575,23 @@ export async function investigateLexaraBackgroundQuestion(
       categories,
       signal: laneSignal,
       deep: deepAcquisitionRequested,
+    }).then(async result => {
+      peopleParallel = result;
+      const targets = result.candidates.slice(0, 3);
+      if (targets.length && !laneSignal.aborted) {
+        const retrieval = await lexaraRetrievalAdapter.retrieve({
+          purpose: 'lexara_legal_research',
+          targets: targets.map(item => item.url),
+          signal: laneSignal,
+        }).catch(() => ({ evidence: [] }));
+        peopleRetrievedEvidence = retrieval.evidence;
+      }
+      return result;
     }).catch(error => {
       console.warn('[LEXARA Background] specialized people-tool lanes failed; preserving native research', {
         error: error instanceof Error ? error.message : String(error),
       });
-      return { candidates: [], evidence: [], lanesAttempted: [] };
+      return peopleParallel;
     });
 
     const authoritativeEvidence = await lookupLexaraAuthoritativeSources({
@@ -638,61 +657,48 @@ export async function investigateLexaraBackgroundQuestion(
       };
     }
 
-    const [nativeCandidates, peopleTools] = await Promise.all([
-      nativeDiscoveryPromise,
-      peopleToolPromise,
-    ]);
-    peopleTools.lanesAttempted.forEach(lane => discoveryLanes.add(lane));
-    for (const evidence of peopleTools.evidence) {
-      discoveryLanes.add(evidence.provider);
-      const evaluation = assessEvidence(
-        evidence.content,
-        evidence.url,
-        evidence.retrievedAt,
-        subject,
-        decision,
-        prompt,
-      );
-      if (!evaluation) continue;
-      const existing = assessed.get(evidence.url);
-      if (!existing || evaluation.confidence > existing.confidence) assessed.set(evidence.url, evaluation);
-      context.onProgress?.({
-        type: 'evidence',
-        pass: 0,
-        confidence: evaluation.confidence,
-        sourceUrl: evaluation.url,
-      });
-    }
+    const nativeCandidates = await nativeDiscoveryPromise;
+    candidates = uniqueCandidates(nativeCandidates).slice(0, maxCandidates);
+    candidates.forEach(item => discoveryLanes.add(item.provider));
 
-    // Preserve the native candidate budget exactly. Specialized people tools get
-    // a small, separate retrieval allowance so they cannot crowd out sources
-    // that already worked before this lane was added.
-    const peopleTargets = peopleTools.candidates.slice(0, 3);
-    if (peopleTargets.length) {
-      peopleTargets.forEach(item => {
+    // The new people tools are opportunistic: they run beside the existing
+    // native/Claude lanes and are never awaited on the live critical path.
+    // This preserves the old response timing when the existing lanes finish first.
+    const integratePeopleParallel = () => {
+      if (peopleIntegrated) return;
+      if (!peopleParallel.lanesAttempted.length
+        && !peopleParallel.candidates.length
+        && !peopleParallel.evidence.length
+        && !peopleRetrievedEvidence.length) return;
+
+      peopleParallel.lanesAttempted.forEach(lane => discoveryLanes.add(lane));
+      peopleParallel.candidates.slice(0, 3).forEach(item => {
         discoveryLanes.add(item.provider);
         seenUrls.add(item.url);
       });
-      const peopleRetrieval = await lexaraRetrievalAdapter.retrieve({
-        purpose: 'lexara_legal_research',
-        targets: peopleTargets.map(item => item.url),
-        signal: laneSignal,
-      }).catch(() => ({ evidence: [] }));
-      const peopleEvidenceByTarget = new Map(peopleRetrieval.evidence.map(item => [item.target, item]));
-      for (const candidate of peopleTargets) {
-        const evidence = peopleEvidenceByTarget.get(candidate.url);
-        if (!evidence) continue;
+
+      const directEvidence = peopleParallel.evidence.map(evidence => ({
+        url: evidence.url,
+        content: evidence.content,
+        retrievedAt: evidence.retrievedAt,
+      }));
+      const retrievedEvidence = peopleRetrievedEvidence.map(evidence => ({
+        url: evidence.target,
+        content: evidence.content,
+        retrievedAt: evidence.retrievedAt,
+      }));
+      for (const evidence of [...directEvidence, ...retrievedEvidence]) {
         const evaluation = assessEvidence(
           evidence.content,
-          candidate.url,
+          evidence.url,
           evidence.retrievedAt,
           subject,
           decision,
           prompt,
         );
         if (!evaluation) continue;
-        const existing = assessed.get(candidate.url);
-        if (!existing || evaluation.confidence > existing.confidence) assessed.set(candidate.url, evaluation);
+        const existing = assessed.get(evidence.url);
+        if (!existing || evaluation.confidence > existing.confidence) assessed.set(evidence.url, evaluation);
         context.onProgress?.({
           type: 'evidence',
           pass: 0,
@@ -700,10 +706,10 @@ export async function investigateLexaraBackgroundQuestion(
           sourceUrl: evaluation.url,
         });
       }
-    }
-
-    candidates = uniqueCandidates(nativeCandidates).slice(0, maxCandidates);
-    candidates.forEach(item => discoveryLanes.add(item.provider));
+      peopleIntegrated = true;
+    };
+    integratePeopleParallel();
+    void peopleToolPromise;
 
     const integrateClaudeParallel = () => {
       if (claudeIntegrated) return;
@@ -782,6 +788,10 @@ export async function investigateLexaraBackgroundQuestion(
           });
         }
       }
+
+      // Fold in any specialized people evidence that finished while native
+      // retrieval was running. This never waits for the new lane.
+      integratePeopleParallel();
 
       // If the parallel Claude lane finished while native retrieval was running,
       // fold its cited/source candidates into the very next pass instead of waiting up front.
