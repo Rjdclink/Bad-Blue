@@ -102,7 +102,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
   }, [actions.loadData, initialData]);
 
   // UI state (not affecting frame data)
-  const [mapMode, setMapMode] = useState<MapMode>(() => spectraShell ? 'hybrid' : 'satellite');
+  const [mapMode, setMapMode] = useState<MapMode>('satellite');
   const [layerCfg, setLayerCfg] = useState<LayerState>({ satellite: true, earthObservation: false, trail: true, heatmap: true, markers: true, futurecast: true, reticle: true, weather: false, terrain: true, buildings: true, uncertainty: true, streetImagery: false });
   const [lockOnTarget, setLockOnTarget] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -594,8 +594,8 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
                     setQuickLayersOpen(value => !value);
                   }}
                   className="flex h-11 w-11 items-center justify-center rounded-full border border-slate-600/60 bg-slate-950/85 text-slate-200 shadow-xl backdrop-blur hover:bg-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
-                  title="Map view"
-                  aria-label="Map view"
+                  title="Map layers"
+                  aria-label="Map layers"
                   aria-expanded={quickLayersOpen}
                 >
                   <Layers className="h-4 w-4" />
@@ -623,15 +623,6 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
                     <Target className="h-4 w-4" />
                   </button>
                 )}
-                <button
-                  type="button"
-                  onClick={() => setIsFullscreen(value => !value)}
-                  className="flex h-11 w-11 items-center justify-center rounded-full border border-slate-600/60 bg-slate-950/85 text-slate-200 shadow-xl backdrop-blur hover:bg-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
-                  title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-                  aria-label={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-                >
-                  {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-                </button>
               </div>
 
               {quickLayersOpen && (
@@ -650,44 +641,21 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
                       <X className="h-4 w-4" />
                     </button>
                   </div>
-                  <div className="grid grid-cols-3 gap-2">
-                    {(['hybrid', 'street', 'dark'] as const).map(view => (
+                  <div className="grid grid-cols-2 gap-2">
+                    {(['satellite', 'terrain', 'weather', 'evidence', 'street'] as const).map(preset => (
                       <button
-                        key={view}
+                        key={preset}
                         type="button"
                         onClick={() => {
-                          setMapMode(view);
-                          setLayerCfg(prev => ({
-                            ...prev,
-                            satellite: view === 'hybrid',
-                            terrain: view === 'hybrid',
-                            buildings: view !== 'dark',
-                            streetImagery: view === 'street',
-                          }));
+                          applyMapPreset(preset);
                           setQuickLayersOpen(false);
                         }}
-                        className={`min-h-11 rounded-lg border px-3 text-center text-xs font-medium capitalize ${
-                          mapMode === view
-                            ? 'border-cyan-500/50 bg-cyan-500/15 text-cyan-200'
-                            : 'border-slate-700 bg-slate-900 text-slate-200 hover:border-cyan-500/40 hover:bg-cyan-500/10'
-                        }`}
+                        className="min-h-11 rounded-lg border border-slate-700 bg-slate-900 px-3 text-left text-xs font-medium capitalize text-slate-200 hover:border-cyan-500/40 hover:bg-cyan-500/10 hover:text-cyan-200"
                       >
-                        {view}
+                        {preset}
                       </button>
                     ))}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setLayerCfg(prev => ({ ...prev, weather: !prev.weather }))}
-                    className={`mt-2 flex min-h-11 w-full items-center justify-between rounded-lg border px-3 text-xs font-medium ${
-                      layerCfg.weather
-                        ? 'border-cyan-500/50 bg-cyan-500/15 text-cyan-200'
-                        : 'border-slate-700 bg-slate-900 text-slate-200 hover:border-cyan-500/40 hover:bg-cyan-500/10'
-                    }`}
-                  >
-                    <span>Weather</span>
-                    <span>{layerCfg.weather ? 'On' : 'Off'}</span>
-                  </button>
                 </div>
               )}
 
