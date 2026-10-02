@@ -408,7 +408,7 @@ function extractVerifiedBackgroundSourceExcerpt(
 
   const quote = excerpt.replace(/["“”]/g, "'").slice(0, 700);
   return {
-    text: `Lexara retrieved verified, subject-matched source material. The source says: “${quote}” Source: ${parsedUrl.toString()}. This is the retrieved evidence, not a separate conclusion.`,
+    text: quote,
     sourceUrl: parsedUrl.toString(),
     excerpt,
   };
