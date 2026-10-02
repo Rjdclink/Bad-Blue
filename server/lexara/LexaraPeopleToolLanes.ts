@@ -96,10 +96,7 @@ function extractEmail(prompt: string): string | undefined {
 
 function extractDomain(prompt: string, email?: string): string | undefined {
   if (email?.includes('@')) return email.split('@')[1]?.toLowerCase();
-  const cue = DOMAIN_CUE.exec(String(prompt || ''))?.[1]?.toLowerCase();
-  if (cue) return cue;
-  const urlHost = String(prompt || '').match(/https?:\/\/([a-z0-9.-]+\.[a-z]{2,})/i)?.[1];
-  return urlHost?.toLowerCase();
+  return DOMAIN_CUE.exec(String(prompt || ''))?.[1]?.toLowerCase();
 }
 
 function configuredUrl(name: string): string | undefined {
@@ -293,16 +290,19 @@ async function runHunter(
       .map((item: any) => String(item?.uri || item?.url || '').trim())
       .filter((value: string) => isPublicHttpUrl(value))
       .slice(0, 6);
+    // Hunter may infer an address when it does not have a public source.
+    // Keep those inferred-only results out of Lexara's evidence path.
+    if (!sourceUrls.length) return { candidates: [], evidence: [] };
     const candidates: LegalMeshCandidate[] = sourceUrls.map(sourceUrl => ({
       url: sourceUrl,
       title: `Public source supporting professional email for ${subject.name}`,
-      excerpt: `Hunter reported ${email} for ${subject.name} at ${domain}; retrieve the source page before treating the address as independently verified.`,
+      excerpt: `Hunter reported ${email} for ${subject.name} at ${domain}; retrieve the public source page before treating the address as verified.`,
       tier: 3,
       provider: 'hunter',
     }));
     const evidence: LexaraAuthoritativeEvidence[] = [{
-      url: sourceUrls[0] || 'https://hunter.io/',
-      content: `Hunter Email Finder reports ${email} for ${subject.name} at ${domain}. Confidence score: ${Number.isFinite(score) ? score : 'not supplied'}. ${sourceUrls.length ? `Public supporting source URLs were supplied: ${sourceUrls.join(', ')}.` : 'No public supporting source URL was supplied in this response.'}`,
+      url: sourceUrls[0],
+      content: `Hunter Email Finder reports ${email} for ${subject.name} at ${domain} and supplied public source URLs: ${sourceUrls.join(', ')}. Confidence score: ${Number.isFinite(score) ? score : 'not supplied'}.`,
       retrievedAt: new Date().toISOString(),
       provider: 'hunter',
     }];
