@@ -185,7 +185,10 @@ const telemetryRangingSchema = z.object({
     longitude: z.number().min(-180).max(180),
     distanceMeters: z.number().nonnegative().max(1_000_000),
     uncertaintyMeters: z.number().positive().max(1_000_000).optional(),
-  })).min(3).max(64),
+    bearingDegrees: z.number().min(0).max(360).optional(),
+    bearingUncertaintyDegrees: z.number().positive().max(180).optional(),
+    bearingReference: z.enum(['true_north', 'magnetic_north', 'device']).optional(),
+  })).min(1).max(64),
   metadata: z.record(z.unknown()).optional(),
 });
 
@@ -282,6 +285,29 @@ function geoFromLocalMeters(
   };
 }
 
+function directionalAnchorCandidate(
+  anchor: z.infer<typeof telemetryRangingSchema>['anchors'][number],
+): { x: number; y: number; accuracy: number } | null {
+  if (
+    anchor.bearingReference !== 'true_north'
+    || !Number.isFinite(anchor.bearingDegrees)
+    || !Number.isFinite(anchor.distanceMeters)
+  ) return null;
+
+  const bearingRadians = Number(anchor.bearingDegrees) * Math.PI / 180;
+  const angularUncertaintyRadians =
+    Number(anchor.bearingUncertaintyDegrees ?? 12) * Math.PI / 180;
+  const distanceUncertainty = Math.max(0.1, Number(anchor.uncertaintyMeters ?? 2));
+  const lateralUncertainty =
+    Math.abs(Math.sin(angularUncertaintyRadians) * Number(anchor.distanceMeters));
+
+  return {
+    x: Math.sin(bearingRadians) * Number(anchor.distanceMeters),
+    y: Math.cos(bearingRadians) * Number(anchor.distanceMeters),
+    accuracy: Math.max(0.5, distanceUncertainty, lateralUncertainty),
+  };
+}
+
 function rangingPoint(
   measurement: z.infer<typeof telemetryRangingSchema>,
 ): GPSPoint | null {
@@ -293,36 +319,100 @@ function rangingPoint(
     ...localMeters(anchor.latitude, anchor.longitude, originLatitude, originLongitude),
     distance: anchor.distanceMeters,
     uncertainty: Math.max(0.1, anchor.uncertaintyMeters ?? 2),
+    raw: anchor,
   }));
 
-  const reference = anchors[0];
-  let ata00 = 0;
-  let ata01 = 0;
-  let ata11 = 0;
-  let atb0 = 0;
-  let atb1 = 0;
+  const directionalEstimates = anchors.flatMap(anchor => {
+    const relative = directionalAnchorCandidate(anchor.raw);
+    if (!relative) return [];
+    return [{
+      x: anchor.x + relative.x,
+      y: anchor.y + relative.y,
+      accuracy: relative.accuracy,
+    }];
+  });
 
-  for (let index = 1; index < anchors.length; index += 1) {
-    const anchor = anchors[index];
-    const a0 = 2 * (anchor.x - reference.x);
-    const a1 = 2 * (anchor.y - reference.y);
-    const b =
-      reference.distance ** 2 - anchor.distance ** 2
-      - reference.x ** 2 - reference.y ** 2
-      + anchor.x ** 2 + anchor.y ** 2;
-    const weight = 1 / Math.max(0.25, anchor.uncertainty ** 2);
-    ata00 += weight * a0 * a0;
-    ata01 += weight * a0 * a1;
-    ata11 += weight * a1 * a1;
-    atb0 += weight * a0 * b;
-    atb1 += weight * a1 * b;
+  let x: number;
+  let y: number;
+  let rangeAccuracy = Number.POSITIVE_INFINITY;
+  let residualRms = Number.POSITIVE_INFINITY;
+
+  if (anchors.length >= 3) {
+    const reference = anchors[0];
+    let ata00 = 0;
+    let ata01 = 0;
+    let ata11 = 0;
+    let atb0 = 0;
+    let atb1 = 0;
+
+    for (let index = 1; index < anchors.length; index += 1) {
+      const anchor = anchors[index];
+      const a0 = 2 * (anchor.x - reference.x);
+      const a1 = 2 * (anchor.y - reference.y);
+      const b =
+        reference.distance ** 2 - anchor.distance ** 2
+        - reference.x ** 2 - reference.y ** 2
+        + anchor.x ** 2 + anchor.y ** 2;
+      const weight = 1 / Math.max(0.25, anchor.uncertainty ** 2);
+      ata00 += weight * a0 * a0;
+      ata01 += weight * a0 * a1;
+      ata11 += weight * a1 * a1;
+      atb0 += weight * a0 * b;
+      atb1 += weight * a1 * b;
+    }
+
+    const determinant = ata00 * ata11 - ata01 * ata01;
+    if (Number.isFinite(determinant) && Math.abs(determinant) >= 1e-6) {
+      x = (atb0 * ata11 - atb1 * ata01) / determinant;
+      y = (ata00 * atb1 - ata01 * atb0) / determinant;
+      const residuals = anchors.map(anchor =>
+        Math.abs(Math.hypot(x - anchor.x, y - anchor.y) - anchor.distance)
+      );
+      residualRms = Math.sqrt(
+        residuals.reduce((sum, residual) => sum + residual ** 2, 0) / residuals.length
+      );
+      const anchorUncertainty = Math.sqrt(
+        anchors.reduce((sum, anchor) => sum + anchor.uncertainty ** 2, 0) / anchors.length
+      );
+      rangeAccuracy = Math.max(0.5, residualRms, anchorUncertainty);
+    } else if (!directionalEstimates.length) {
+      return null;
+    } else {
+      x = 0;
+      y = 0;
+    }
+  } else if (!directionalEstimates.length) {
+    // Range-only localization is underdetermined with fewer than three anchors.
+    return null;
+  } else {
+    x = 0;
+    y = 0;
   }
 
-  const determinant = ata00 * ata11 - ata01 * ata01;
-  if (!Number.isFinite(determinant) || Math.abs(determinant) < 1e-6) return null;
+  if (directionalEstimates.length) {
+    let weightedX = 0;
+    let weightedY = 0;
+    let totalWeight = 0;
 
-  const x = (atb0 * ata11 - atb1 * ata01) / determinant;
-  const y = (ata00 * atb1 - ata01 * atb0) / determinant;
+    if (Number.isFinite(rangeAccuracy)) {
+      const rangeWeight = 1 / Math.max(0.25, rangeAccuracy ** 2);
+      weightedX += x * rangeWeight;
+      weightedY += y * rangeWeight;
+      totalWeight += rangeWeight;
+    }
+
+    for (const estimate of directionalEstimates) {
+      const weight = 1 / Math.max(0.25, estimate.accuracy ** 2);
+      weightedX += estimate.x * weight;
+      weightedY += estimate.y * weight;
+      totalWeight += weight;
+    }
+
+    if (totalWeight <= 0) return null;
+    x = weightedX / totalWeight;
+    y = weightedY / totalWeight;
+  }
+
   const location = geoFromLocalMeters(x, y, originLatitude, originLongitude);
   if (
     !Number.isFinite(location.latitude) || !Number.isFinite(location.longitude)
@@ -330,36 +420,46 @@ function rangingPoint(
     || location.longitude < -180 || location.longitude > 180
   ) return null;
 
-  const residuals = anchors.map(anchor =>
-    Math.abs(Math.hypot(x - anchor.x, y - anchor.y) - anchor.distance)
+  const directionalAccuracy = directionalEstimates.length
+    ? Math.sqrt(
+        directionalEstimates.reduce((sum, estimate) => sum + estimate.accuracy ** 2, 0)
+        / directionalEstimates.length
+      )
+    : Number.POSITIVE_INFINITY;
+  const accuracy = Math.max(
+    0.5,
+    Math.min(rangeAccuracy, directionalAccuracy),
   );
-  const residualRms = Math.sqrt(
-    residuals.reduce((sum, residual) => sum + residual ** 2, 0) / residuals.length
-  );
-  const anchorUncertainty = Math.sqrt(
-    anchors.reduce((sum, anchor) => sum + anchor.uncertainty ** 2, 0) / anchors.length
-  );
-  const accuracy = Math.max(0.5, residualRms, anchorUncertainty);
 
   return signServerEvidence({
     latitude: location.latitude,
     longitude: location.longitude,
-    accuracy,
+    accuracy: Number.isFinite(accuracy) ? accuracy : undefined,
     timestamp: measurement.timestamp,
     receivedAt: new Date(),
     source: measurement.source,
-    confidence: Math.min(0.95, confidenceForAccuracy(accuracy) + Math.min(0.18, (anchors.length - 2) * 0.06)),
+    confidence: Math.min(
+      0.95,
+      confidenceForAccuracy(Number.isFinite(accuracy) ? accuracy : 25)
+        + Math.min(0.18, Math.max(0, anchors.length - 2) * 0.06)
+        + Math.min(0.08, directionalEstimates.length * 0.03),
+    ),
     observationKind: 'inferred',
     correlationGroup: measurement.correlationGroup || `ranging:${measurement.provider || measurement.source}`,
     provenance: {
       provider: measurement.provider || 'spectra-ranging',
       capturedAt: measurement.timestamp,
-      transformedBy: ['spectra_weighted_multilateration'],
+      transformedBy: [
+        anchors.length >= 3 ? 'spectra_weighted_multilateration' : 'spectra_directional_ranging',
+        ...(directionalEstimates.length ? ['spectra_true_north_direction_fusion'] : []),
+      ],
     },
     metadata: {
       ...(measurement.metadata || {}),
       anchorCount: anchors.length,
-      residualRmsMeters: residualRms,
+      directionalAnchorCount: directionalEstimates.length,
+      residualRmsMeters: Number.isFinite(residualRms) ? residualRms : undefined,
+      bearingReferencePolicy: 'only_true_north_bearings_used_for_absolute_position',
     },
   });
 }
