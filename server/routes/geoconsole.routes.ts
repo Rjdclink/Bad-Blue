@@ -944,7 +944,9 @@ router.get('/status', async (req: Request, res: Response) => {
           earthObservationTimeline: true,
           weatherRadarOverlay: true,
           streetImagery: true,
-          publicCameraIntegration: true,
+          publicCameraIntegration:
+            Boolean(process.env.TRAFFICLAND_API_KEY && process.env.TRAFFICLAND_SYSTEM)
+            || configuredArcGisCameraLayers().length > 0,
         },
       },
     });
