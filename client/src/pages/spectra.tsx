@@ -32,6 +32,8 @@ interface AcquisitionResponse {
   target?: string;
   details?: string;
   resolvedTargetLabel?: string;
+  sessionId?: string;
+  persistenceAvailable?: boolean;
   acquisition?: {
     identityConfidence: number;
     locationConfidence: number;
@@ -73,6 +75,7 @@ export default function SpectraPage() {
   const [directEvidence, setDirectEvidence] = useState<GPSPoint[]>([]);
   const [confidence, setConfidence] = useState<number | null>(null);
   const [sourceCount, setSourceCount] = useState(0);
+  const [spectraSessionId, setSpectraSessionId] = useState<string | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [acquisitionStage, setAcquisitionStage] = useState('Waiting for target');
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -197,6 +200,7 @@ export default function SpectraPage() {
     setDirectEvidence([]);
     setConfidence(null);
     setSourceCount(0);
+    setSpectraSessionId(null);
     setLastError(null);
     setAcquisitionStage('Waiting for target');
     setInput('');
@@ -295,6 +299,7 @@ export default function SpectraPage() {
         body: JSON.stringify({
           target: targetValue,
           details: detailsValue,
+          sessionId: spectraSessionId || undefined,
           directEvidence: extraEvidence.map(point => ({
             ...point,
             timestamp: new Date(point.timestamp).toISOString(),
@@ -352,6 +357,9 @@ export default function SpectraPage() {
           : null
       );
       setSourceCount(payload.acquisition?.sourceCount ?? 0);
+      if (typeof payload.sessionId === 'string' && payload.sessionId.trim()) {
+        setSpectraSessionId(payload.sessionId.trim());
+      }
       setPhase('active');
 
       const certainty = points.length > 0 || canonicalLocationConfidence > 0
@@ -380,7 +388,7 @@ export default function SpectraPage() {
       addMessage('spectra', responseText);
       speakIfEnabled(responseText);
     }
-  }, [addMessage, directEvidence, speakIfEnabled]);
+  }, [addMessage, directEvidence, speakIfEnabled, spectraSessionId]);
 
   const handleMediaEvidence = useCallback(async (file: File) => {
     if (phase === 'awaiting_target') {
