@@ -21,6 +21,7 @@ import {
   normalizeClientEvidence,
   signServerEvidence,
 } from '../services/geoconsole/evidence-proof';
+import { getSpectraAdapterCapabilities } from '../services/spectra/SpectraAdapterRegistry';
 
 const router = Router();
 const log = createLogger('GeoconsoleRoutes');
@@ -989,6 +990,7 @@ router.get('/telemetry-capabilities', (_req: Request, res: Response) => {
         || process.env.GOOGLE_MAPS_API_KEY
       ),
       providerWebhookConfigured: Boolean(process.env.SPECTRA_TELEMETRY_HMAC_SECRET),
+      adapters: getSpectraAdapterCapabilities(),
     },
   });
 });
