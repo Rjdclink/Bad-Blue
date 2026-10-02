@@ -660,7 +660,7 @@ export async function investigateLexaraBackgroundQuestion(
     }
 
     const nativeCandidates = await nativeDiscoveryPromise;
-    candidates = uniqueCandidates(nativeCandidates).slice(0, maxCandidates);
+    candidates = uniqueCandidates(nativeCandidates);
     candidates.forEach(item => discoveryLanes.add(item.provider));
 
     // The new people tools are opportunistic: they run beside the existing
