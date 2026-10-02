@@ -11,7 +11,7 @@ import {
   formatLexaraDomainSpecialization,
   getLexaraLegalDomainProfile,
 } from './LexaraLegalDomainProfiles';
-import { decideLexaraResearchNeed, isLexaraRepeatRequest } from './LexaraResearchIntentRouter';
+import { decideLexaraResearchNeed, isLexaraGenericLegalIntake, isLexaraRepeatRequest } from './LexaraResearchIntentRouter';
 import { planLexaraSequence } from './LexaraSequenceRouter';
 import { resolveLexaraResearchDecisionSemantic } from './LexaraSemanticIntentInterpreter';
 import { resolveLexaraBackgroundSubject } from './LexaraBackgroundSubject';
@@ -527,6 +527,12 @@ export async function generateLexaraConversationResponse(
   }
 
   const mappedLawType = mapLexaraLawType(context.lawType);
+  if (isLexaraGenericLegalIntake(cleanPrompt)) {
+    return {
+      text: 'Yes. Tell me what happened.',
+      mappedLawType,
+    };
+  }
   const immediate = getLexaraImmediateAcknowledgement(cleanPrompt);
   const history = buildConversationHistory(context.previousMessages);
   const previousUserTurns = (context.previousMessages || [])

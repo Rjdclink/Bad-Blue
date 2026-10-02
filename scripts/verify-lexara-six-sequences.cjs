@@ -11,6 +11,11 @@ const sourceRegistry = fs.readFileSync('server/lexara/LexaraPublicSourceRegistry
 const semanticIntent = fs.readFileSync('server/lexara/LexaraSemanticIntentInterpreter.ts','utf8');
 const claudeBackground = fs.readFileSync('server/lexara/LexaraClaudeBackgroundSearch.ts','utf8');
 const claudeTransport = fs.readFileSync('server/claude.ts','utf8');
+const representationEngine = fs.readFileSync('server/lexara/LexaraRepresentationEngine.ts','utf8');
+const storage = fs.readFileSync('server/storage.ts','utf8');
+const liveStreamStart = routes.indexOf("router.post('/chat/stream'");
+const legacyChatStart = routes.indexOf("router.post('/chat'", liveStreamStart + 1);
+const liveStreamRoute = routes.slice(liveStreamStart, legacyChatStart);
 
 for (const id of [
   "'simple-factual'",
@@ -43,6 +48,33 @@ if (!orchestrator.includes('const semanticResearchDecisionPromise = resolveLexar
   || orchestrator.indexOf('semanticResearchDecisionPromise') > orchestrator.indexOf('await resolveUSJurisdiction(')
   || !orchestrator.includes('const semanticResearchDecision = await semanticResearchDecisionPromise')) {
   throw new Error('Semantic background inference is not overlapped with existing turn preparation');
+}
+if (!planner.includes('export function isLexaraGenericLegalIntake')
+  || !planner.includes('isLexaraGenericLegalIntake(text)')
+  || !orchestrator.includes("text: 'Yes. Tell me what happened.'")
+  || orchestrator.indexOf('if (isLexaraGenericLegalIntake(cleanPrompt))')
+    > orchestrator.indexOf('const semanticResearchDecisionPromise = resolveLexaraResearchDecisionSemantic(')) {
+  throw new Error('Generic legal intake can still launch semantic research or Claude before the immediate intake response');
+}
+if (liveStreamStart < 0 || legacyChatStart < 0
+  || !liveStreamRoute.includes('matterEnrichmentPending: durableEnrichmentNeeded')
+  || !liveStreamRoute.includes("res.once('finish', scheduleMatterEnrichmentDrain)")
+  || !liveStreamRoute.includes('!representationContext.persistent && !genericLegalIntake')
+  || !liveStreamRoute.includes('? await advanceRepresentationMatter({')
+  || !routes.includes('async function drainDurableMatterEnrichmentJobs()')
+  || !routes.includes('claimNextLexaraMatterEnrichmentJob')
+  || !storage.includes('FOR UPDATE SKIP LOCKED')
+  || !storage.includes("matterEnrichmentJob'->>'status' IN ('pending', 'processing')")
+  || !routes.includes('getUserLexaraRestorableMatterStates')
+  || !storage.includes('getUserLexaraRestorableMatterStates')
+  || !storage.includes('getUserLexaraMatterStates')
+  || !storage.includes('getLatestCompletedLexaraMatterEnrichmentState')
+  || !storage.includes("matterEnrichmentJob' IS NULL")
+  || !storage.includes('matterEnrichmentCompletedAt')
+  || !representationEngine.includes('export function shouldEnrichRepresentationMatter')
+  || !representationEngine.includes('skipPacketPlanning?: boolean')
+  || !representationEngine.includes('!input.skipPacketPlanning && shouldPlanPacket')) {
+  throw new Error('Durable post-response matter enrichment or ephemeral-state preservation invariant is missing');
 }
 if (!orchestrator.includes("const backgroundResearchRequested = sequencePlan.useBackgroundResearch")) {
   throw new Error('Lexara factual/mixed turns do not follow the sequence router into the native background investigator');

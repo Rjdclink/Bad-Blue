@@ -1736,6 +1736,181 @@ export class DatabaseStorage implements IStorage {
   }
 
   /**
+   * Restore only completed/usable matter snapshots for live reasoning. Pending
+   * background-enrichment rows stay durable but cannot temporarily outrank the
+   * last complete matter state.
+   */
+  async getUserLexaraRestorableMatterStates(userId: string, limit = 200) {
+    const rows = await getLexaraConversationPersistenceDb()
+      .select({
+        sessionId: lexaraConversations.sessionId,
+        context: lexaraConversations.context,
+        createdAt: lexaraConversations.createdAt,
+      })
+      .from(lexaraConversations)
+      .where(and(
+        eq(lexaraConversations.userId, userId),
+        sql`${lexaraConversations.context}->'representationMatter' IS NOT NULL`,
+        sql`(
+          ${lexaraConversations.context}->'matterEnrichmentJob' IS NULL
+          OR ${lexaraConversations.context}->'matterEnrichmentJob'->>'status' = 'failed'
+        )`,
+      ))
+      .orderBy(desc(lexaraConversations.createdAt), desc(lexaraConversations.id))
+      .limit(limit);
+
+    const seen = new Set<string>();
+    return rows.flatMap(row => {
+      const matter = (row.context as any)?.representationMatter;
+      const key = String(matter?.matterId || row.sessionId || '').trim();
+      if (!key || seen.has(key) || !matter || typeof matter !== 'object') return [];
+      seen.add(key);
+      return [{ sessionId: row.sessionId, matter, createdAt: row.createdAt }];
+    });
+  }
+
+  async getLatestCompletedLexaraMatterEnrichmentState(userId: string, sessionId: string) {
+    const [row] = await getLexaraConversationPersistenceDb()
+      .select({ context: lexaraConversations.context })
+      .from(lexaraConversations)
+      .where(and(
+        eq(lexaraConversations.userId, userId),
+        eq(lexaraConversations.sessionId, sessionId),
+        sql`${lexaraConversations.context}->'representationMatter' IS NOT NULL`,
+        sql`${lexaraConversations.context}->>'matterEnrichmentCompletedAt' IS NOT NULL`,
+      ))
+      .orderBy(desc(lexaraConversations.createdAt), desc(lexaraConversations.id))
+      .limit(1);
+    return (row?.context as any)?.representationMatter || null;
+  }
+
+  /**
+   * Atomically claim one durable post-response matter-enrichment job from the
+   * existing Lexara conversation JSONB. SKIP LOCKED keeps multiple consumers
+   * from owning the same row if the service is ever scaled beyond one replica.
+   */
+  async claimNextLexaraMatterEnrichmentJob() {
+    const result = await getLexaraConversationPersistenceDb().execute(sql`
+      WITH candidate AS (
+        SELECT id
+        FROM lexara_conversations
+        WHERE COALESCE((context->'matterEnrichmentJob'->>'attempts')::integer, 0) < 3
+          AND (
+            context->'matterEnrichmentJob'->>'status' = 'pending'
+            OR (
+              context->'matterEnrichmentJob'->>'status' = 'processing'
+              AND NULLIF(context->'matterEnrichmentJob'->>'claimedAt', '')::timestamptz
+                < NOW() - INTERVAL '2 minutes'
+            )
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM lexara_conversations AS earlier
+            WHERE earlier.user_id IS NOT DISTINCT FROM lexara_conversations.user_id
+              AND earlier.session_id IS NOT DISTINCT FROM lexara_conversations.session_id
+              AND (
+                earlier.created_at < lexara_conversations.created_at
+                OR (
+                  earlier.created_at = lexara_conversations.created_at
+                  AND earlier.id < lexara_conversations.id
+                )
+              )
+              AND COALESCE((earlier.context->'matterEnrichmentJob'->>'attempts')::integer, 0) < 3
+              AND earlier.context->'matterEnrichmentJob'->>'status' IN ('pending', 'processing')
+          )
+        ORDER BY created_at ASC, id ASC
+        FOR UPDATE SKIP LOCKED
+        LIMIT 1
+      )
+      UPDATE lexara_conversations AS conversation
+      SET context = jsonb_set(
+        jsonb_set(
+          jsonb_set(
+            COALESCE(conversation.context, '{}'::jsonb),
+            '{matterEnrichmentJob,status}',
+            to_jsonb('processing'::text),
+            true
+          ),
+          '{matterEnrichmentJob,claimedAt}',
+          to_jsonb(NOW()::text),
+          true
+        ),
+        '{matterEnrichmentJob,attempts}',
+        to_jsonb(COALESCE((conversation.context->'matterEnrichmentJob'->>'attempts')::integer, 0) + 1),
+        true
+      )
+      FROM candidate
+      WHERE conversation.id = candidate.id
+      RETURNING
+        conversation.id,
+        conversation.user_id AS "userId",
+        conversation.session_id AS "sessionId",
+        conversation.user_prompt AS "userPrompt",
+        conversation.lexara_response AS "lexaraResponse",
+        conversation.context
+    `);
+    return result.rows?.[0] || null;
+  }
+
+  async completeLexaraMatterEnrichmentJob(conversationId: string, matter: any) {
+    const serialized = JSON.stringify(matter);
+    const result = await getLexaraConversationPersistenceDb().execute(sql`
+      UPDATE lexara_conversations
+      SET context = jsonb_set(
+        jsonb_set(
+          COALESCE(context, '{}'::jsonb) - 'matterEnrichmentJob',
+          '{representationMatter}',
+          ${serialized}::jsonb,
+          true
+        ),
+        '{matterEnrichmentCompletedAt}',
+        to_jsonb(NOW()::text),
+        true
+      )
+      WHERE id = ${conversationId}
+      RETURNING id, context
+    `);
+    return result.rows?.[0] || null;
+  }
+
+  async clearLexaraMatterEnrichmentJob(conversationId: string) {
+    const result = await getLexaraConversationPersistenceDb().execute(sql`
+      UPDATE lexara_conversations
+      SET context = COALESCE(context, '{}'::jsonb) - 'matterEnrichmentJob'
+      WHERE id = ${conversationId}
+      RETURNING id, context
+    `);
+    return result.rows?.[0] || null;
+  }
+
+  async retryLexaraMatterEnrichmentJob(conversationId: string, errorMessage: string, attempts: number) {
+    const terminal = attempts >= 3;
+    const status = terminal ? 'failed' : 'pending';
+    const result = await getLexaraConversationPersistenceDb().execute(sql`
+      UPDATE lexara_conversations
+      SET context = jsonb_set(
+        jsonb_set(
+          jsonb_set(
+            COALESCE(context, '{}'::jsonb),
+            '{matterEnrichmentJob,status}',
+            to_jsonb(${status}::text),
+            true
+          ),
+          '{matterEnrichmentJob,claimedAt}',
+          'null'::jsonb,
+          true
+        ),
+        '{matterEnrichmentJob,lastError}',
+        to_jsonb(${errorMessage.slice(0, 500)}::text),
+        true
+      )
+      WHERE id = ${conversationId}
+      RETURNING id, context
+    `);
+    return result.rows?.[0] || null;
+  }
+
+  /**
    * Update only the latest stored turn for a matter. Artifact/evidence saves can
    * therefore advance matter state without manufacturing fake chat messages.
    */
