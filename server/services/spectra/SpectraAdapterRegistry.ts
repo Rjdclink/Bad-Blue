@@ -75,6 +75,16 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     notes: 'Fixed HTTPS pull adapters normalize provider JSON into SPECTRA observations.',
   },
   {
+    id: 'beacondb-radio-geolocation',
+    label: 'beaconDB radio geolocation',
+    mode: 'radio-resolution',
+    sourceTypes: ['wifi_fingerprint','cellular'],
+    configured: () => true,
+    priority: 'high',
+    supportsRealtime: true,
+    notes: 'Keyless Ichnaea-compatible Wi-Fi/cellular positioning fallback for supplied radio observations.',
+  },
+  {
     id: 'google-radio-geolocation',
     label: 'Google radio geolocation',
     mode: 'radio-resolution',
