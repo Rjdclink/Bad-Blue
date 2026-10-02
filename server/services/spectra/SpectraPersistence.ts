@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { pool } from '../../db';
 import type { GPSPoint } from '../geoconsole/types';
+import { publishLocalSpectraObservation } from './SpectraRealtimeHub';
 
 export interface SpectraInvestigationRecord {
   id: string;
@@ -239,13 +240,45 @@ export async function persistSpectraObservation(input: {
   );
 
   if (!result.rows[0]?.id) return null;
-  return {
+  const persisted = {
     id: String(result.rows[0].id),
     investigationId: input.investigationId,
     point,
     evidenceClass: klass,
     evidenceFingerprint: fingerprint,
   };
+
+  publishLocalSpectraObservation({
+    type: 'observation',
+    investigationId: input.investigationId,
+    userId: input.userId,
+    observationId: persisted.id,
+    payload: {
+      id: persisted.id,
+      investigation_id: input.investigationId,
+      user_id: input.userId,
+      source_type: point.source,
+      provider: point.provenance?.provider || null,
+      evidence_class: klass,
+      latitude: point.latitude,
+      longitude: point.longitude,
+      altitude: point.altitude ?? null,
+      accuracy_meters: point.accuracy ?? null,
+      confidence: point.confidence,
+      observed_at: point.timestamp.toISOString(),
+      received_at: (point.receivedAt || new Date()).toISOString(),
+      correlation_group: point.correlationGroup || null,
+      provenance: point.provenance || {},
+      raw_observation: {
+        verticalAccuracy: point.verticalAccuracy,
+        observationKind: point.observationKind,
+        metadata: point.metadata || {},
+      },
+      evidence_fingerprint: fingerprint,
+    },
+  });
+
+  return persisted;
 }
 
 export async function loadSpectraObservations(input: {
