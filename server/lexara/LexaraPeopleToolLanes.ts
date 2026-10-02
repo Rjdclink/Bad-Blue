@@ -389,27 +389,95 @@ async function runHoleheAdapter(
   }];
 }
 
+function spiderFootStatus(payload: any, scanId: string): string | null {
+  const direct = payload?.status || payload?.scanStatus || payload?.state;
+  if (typeof direct === 'string') return direct.toUpperCase();
+  const rows = Array.isArray(payload) ? payload : Array.isArray(payload?.scans) ? payload.scans : [];
+  for (const row of rows) {
+    if (Array.isArray(row)) {
+      if (String(row[0] ?? '') === scanId && typeof row[6] === 'string') return row[6].toUpperCase();
+      continue;
+    }
+    if (!row || typeof row !== 'object') continue;
+    const id = String(row.id ?? row.scanId ?? row.scan_id ?? '');
+    const status = row.status ?? row.scanStatus ?? row.state;
+    if (id === scanId && typeof status === 'string') return status.toUpperCase();
+  }
+  return null;
+}
+
+async function spiderFootJson(
+  baseUrl: string,
+  paths: readonly string[],
+  init: RequestInit | undefined,
+  signal?: AbortSignal,
+  timeoutMs = 2_500,
+): Promise<any | null> {
+  for (const path of paths) {
+    const endpoint = new URL(path, baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`).toString();
+    const response = await fetchWithDeadline(endpoint, init || {}, timeoutMs, signal);
+    if (!response) continue;
+    try {
+      return await response.json();
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
 async function runSpiderFootDeep(
   seed: string,
   signal?: AbortSignal,
 ): Promise<LegalMeshCandidate[]> {
-  if (!process.env.SPIDERFOOT_URL?.trim() || signal?.aborted) return [];
-  try {
-    const { spiderfootClient } = await import('../services/spiderfootClient');
-    const scanId = await spiderfootClient.startScan(seed);
-    await spiderfootClient.waitForScanCompletion(scanId, { timeoutMs: 20_000, pollIntervalMs: 1_000 });
-    if (signal?.aborted) return [];
-    const payload = await spiderfootClient.getScanResults(scanId);
-    return [...collectUrls(payload)].slice(0, 30).map(url => ({
-      url,
-      title: `SpiderFoot public-source candidate for ${seed}`,
-      excerpt: 'SpiderFoot returned this URL during a deep public-source scan. Treat it as discovery only until Lexara retrieves and subject-matches the source.',
-      tier: 3,
-      provider: 'spiderfoot',
-    }));
-  } catch {
-    return [];
+  const baseUrl = configuredUrl('SPIDERFOOT_URL');
+  if (!baseUrl || signal?.aborted) return [];
+
+  const scanName = `lexara-${Date.now()}`;
+  const started = await spiderFootJson(baseUrl, ['/api/startscan'], {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({
+      scanname: scanName,
+      scantarget: seed,
+      modulelist: 'sfp_sociallinks',
+    }),
+  }, signal, 3_000);
+  const scanId = String(started?.id || started?.scanId || started?.scan_id || '').trim();
+  if (!scanId) return [];
+
+  const deadline = Date.now() + 20_000;
+  const terminal = new Set(['FINISHED', 'ABORTED', 'ABORT-REQUESTED', 'ERROR-FAILED']);
+  let finished = false;
+  while (!signal?.aborted && Date.now() < deadline) {
+    const statusPayload = await spiderFootJson(baseUrl, [
+      `/api/scanstatus?id=${encodeURIComponent(scanId)}`,
+      '/api/scanlist',
+      '/scanlist',
+    ], undefined, signal, 2_000);
+    const status = spiderFootStatus(statusPayload, scanId);
+    if (status && terminal.has(status)) {
+      finished = status === 'FINISHED';
+      break;
+    }
+    await new Promise(resolve => setTimeout(resolve, 750));
   }
+  if (!finished || signal?.aborted) return [];
+
+  const payload = await spiderFootJson(baseUrl, [
+    `/api/scanresults?id=${encodeURIComponent(scanId)}`,
+    `/scaneventresults?id=${encodeURIComponent(scanId)}&eventType=ALL`,
+    `/scanexportjsonmulti?ids=${encodeURIComponent(scanId)}`,
+  ], undefined, signal, 4_000);
+  if (!payload) return [];
+
+  return [...collectUrls(payload)].slice(0, 30).map(url => ({
+    url,
+    title: `SpiderFoot public-source candidate for ${seed}`,
+    excerpt: 'SpiderFoot returned this URL during a deep public-source scan. Treat it as discovery only until Lexara retrieves and subject-matches the source.',
+    tier: 3,
+    provider: 'spiderfoot',
+  }));
 }
 
 /**
