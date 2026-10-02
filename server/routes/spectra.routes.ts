@@ -71,6 +71,7 @@ const directEvidenceSchema = z.object({
 const acquireSchema = z.object({
   target: z.string().trim().min(1).max(500),
   details: z.string().trim().min(1).max(4000),
+  investigationId: z.string().uuid().optional(),
   directEvidence: z.array(directEvidenceSchema).max(20).default([]),
 });
 
@@ -891,7 +892,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
     });
   }
 
-  const { target, details, directEvidence } = parsed.data;
+  const { target, details, investigationId, directEvidence } = parsed.data;
   const normalizedTarget = normalizeTargetIntent(target);
   const combinedTargetText = [normalizedTarget, details].filter(Boolean).join(' ');
   const phone = extractPhoneNumber(combinedTargetText);
@@ -908,6 +909,53 @@ router.post('/acquire', async (req: Request, res: Response) => {
     : subject;
   const searchQuery = resolvedName || details;
   const resolvedTargetLabel = resolvedName || phone || normalizedTarget;
+  const userId = getPlatformUserId(req.user as any);
+  if (!userId) {
+    return res.status(401).json({ success: false, error: 'Authentication required.' });
+  }
+
+  let activeInvestigationId = investigationId;
+  let persistenceAvailable = true;
+  try {
+    if (activeInvestigationId) {
+      const existing = await getSpectraInvestigation(activeInvestigationId, userId);
+      if (!existing) {
+        return res.status(404).json({ success: false, error: 'Investigation not found.' });
+      }
+    } else {
+      const created = await createSpectraInvestigation({
+        userId,
+        subjectLabel: resolvedTargetLabel,
+        clues: [target, details],
+        state: { phase: 'acquiring' },
+      });
+      activeInvestigationId = created.id;
+    }
+
+    if (activeInvestigationId) {
+      await Promise.allSettled([
+        persistSpectraClue({
+          investigationId: activeInvestigationId,
+          clueType: 'identity',
+          rawValue: resolvedTargetLabel,
+          confidence: resolvedName ? 0.8 : 0.55,
+          metadata: { origin: 'spectra-target' },
+        }),
+        persistSpectraClue({
+          investigationId: activeInvestigationId,
+          clueType: 'context',
+          rawValue: details,
+          confidence: 0.35,
+          metadata: { origin: 'spectra-details' },
+        }),
+      ]);
+    }
+  } catch (error) {
+    persistenceAvailable = false;
+    console.warn('[SPECTRA] Durable investigation unavailable; acquisition continues', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 
   try {
     const semanticSubject = resolveLexaraBackgroundSubject(
@@ -1146,6 +1194,24 @@ router.post('/acquire', async (req: Request, res: Response) => {
     const locationObservations = qualityLocationObservations
       .map(point => signServerEvidence(point));
 
+    if (activeInvestigationId && persistenceAvailable) {
+      const persisted = await Promise.allSettled(
+        qualityLocationObservations.map(point => persistSpectraObservation({
+          investigationId: activeInvestigationId!,
+          userId,
+          point,
+        })),
+      );
+      const rejectedPersistence = persisted.filter(result => result.status === 'rejected').length;
+      if (rejectedPersistence > 0) {
+        persistenceAvailable = false;
+        console.warn('[SPECTRA] Some location observations could not be persisted', {
+          rejectedPersistence,
+          total: persisted.length,
+        });
+      }
+    }
+
     const candidateLocations: Array<{
       latitude: number;
       longitude: number;
@@ -1215,6 +1281,28 @@ router.post('/acquire', async (req: Request, res: Response) => {
       ?? candidateLocations[0]?.confidence
       ?? 0;
 
+    if (activeInvestigationId && persistenceAvailable) {
+      await updateSpectraInvestigationState({
+        investigationId: activeInvestigationId,
+        userId,
+        clues: [target, details],
+        state: {
+          phase: 'active',
+          resolvedTargetLabel,
+          observationCount: locationObservations.length,
+          locationConfidence,
+          discoveryPasses,
+          discoveryQueriesAttempted,
+          discoveryQueriesFailed,
+        },
+      }).catch(error => {
+        persistenceAvailable = false;
+        console.warn('[SPECTRA] Investigation state update failed', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
+
     const sourceKeys = new Set<string>();
     for (const point of directEvidence) {
       sourceKeys.add(
@@ -1236,6 +1324,8 @@ router.post('/acquire', async (req: Request, res: Response) => {
       success: true,
       target,
       details,
+      investigationId: activeInvestigationId,
+      persistenceAvailable,
       resolvedTargetLabel,
       acquisition: {
         identityConfidence,
