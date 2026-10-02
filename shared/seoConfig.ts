@@ -43,36 +43,38 @@ export interface PageSEO {
 
 export const GLOBAL_KEYWORDS: KeywordTaxonomy = {
   primary: [
-    "conversational legal AI", "two-way conversational legal AI", "voice legal AI",
-    "voice and text legal AI", "interactive legal AI", "AI legal conversation",
-    "AI legal assistant", "AI legal research assistant", "AI legal document generator",
-    "legal media analysis AI", "AI evidence analyzer", "OSINT AI", "legal OSINT AI",
-    "jurisdiction-aware legal AI", "AI legal media editor", "AI legal document assistant", "animated legal AI"
+    "affordable legal guidance", "affordable answers to legal questions", "affordable legal help online",
+    "affordable legal information", "low-cost legal guidance", "ask legal questions online",
+    "online legal guidance", "legal answers online", "legal help without hourly attorney fees",
+    "conversational legal assistant", "voice legal help", "text legal help",
+    "jurisdiction-aware legal guidance", "legal document help", "legal document generator",
+    "legal research assistance"
   ],
   secondary: [
-    "talk to legal AI", "speak with legal AI", "ask AI a legal question", "AI case analysis",
-    "legal issue spotting AI", "AI case law research", "AI statute research", "legal drafting AI",
-    "conversational document drafting", "AI document review", "video evidence analysis",
-    "audio evidence analysis", "AI open-source intelligence", "investigative AI",
-    "jurisdiction-aware legal research", "AI media critique", "AI media editing",
-    "jurisdiction-specific legal documents", "40 legal practice areas"
+    "affordable legal insight", "affordable legal support", "low-cost legal help",
+    "legal questions by voice", "legal questions by text", "online legal answers",
+    "legal issue spotting", "case law research", "statute research", "legal drafting",
+    "document review", "evidence analysis", "public records research",
+    "jurisdiction-aware legal research", "jurisdiction-specific legal documents",
+    "40 legal practice areas", "conversational legal AI", "voice legal AI"
   ],
   lsi: [
-    "AI I can talk to about my legal problem", "talk to an AI about my case",
-    "AI that researches my case", "AI that analyzes legal documents", "AI that analyzes evidence",
-    "AI that creates legal documents", "AI that edits uploaded media",
-    "real-time legal AI conversation", "download legal document DOCX", "download legal document PDF"
+    "where can I get affordable legal guidance", "affordable answers to my legal questions",
+    "how to ask a legal question online", "help understanding my legal problem",
+    "help understanding legal documents", "help researching my legal issue",
+    "affordable help creating legal documents", "legal guidance without hourly attorney fees",
+    "3-day free trial legal help", "$19.99 monthly legal guidance"
   ]
 };
 
 export const SEO_CONFIG: Record<string, PageSEO> = {
   "/": {
-    title: "Legal What? | Lexara Conversational Legal AI",
-    description: "Talk with Lexara, a jurisdiction-aware legal AI for 40+ areas of law. Analyze files, research legal issues, and create PDF or DOCX legal documents.",
-    keywords: "Lexara, conversational legal AI, animated legal AI, voice legal AI, text legal AI, convenient legal AI, affordable legal AI, user-friendly legal AI, easy-to-use legal AI, flat-rate legal AI, $19.99 legal AI subscription, monthly legal AI subscription, 40 legal areas, legal media analysis, legal document generator, PDF legal documents, DOCX legal documents",
+    title: "Affordable Legal Guidance & Legal Answers | LegalWhat",
+    description: "Affordable legal guidance and answers to legal questions. Ask by voice or text, analyze files, and create legal documents. 3 days free, then $19.99/month.",
+    keywords: "affordable legal guidance, affordable answers to legal questions, affordable legal help online, affordable legal insight, low-cost legal guidance, ask legal questions online, legal answers online, LegalWhat, Lexara, voice legal help, text legal help, jurisdiction-aware legal guidance, 40 legal areas, legal document help, PDF legal documents, DOCX legal documents",
     keywordTaxonomy: GLOBAL_KEYWORDS,
-    ogTitle: "Legal What? | Lexara Conversational Legal AI",
-    ogDescription: "Talk with Lexara, LegalWhat’s animated conversational legal AI, by voice or text across 40+ areas of law. Analyze media and generate jurisdiction-aware PDF or DOCX legal documents.",
+    ogTitle: "Affordable Legal Guidance & Legal Answers | LegalWhat",
+    ogDescription: "Get affordable legal guidance and answers to legal questions by voice or text across 40+ areas of law. Analyze files and create PDF or DOCX legal documents.",
     ogType: "website",
     canonicalPath: "/",
     priority: 1.0,
@@ -81,9 +83,9 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
     includeInSitemap: true,
   },
   "/landing": {
-    title: "Legal What? | Lexara Conversational Legal AI",
-    description: "Talk with Lexara, a jurisdiction-aware legal AI for 40+ areas of law. Analyze files, research legal issues, and create PDF or DOCX legal documents.",
-    keywords: "Lexara, conversational legal AI, animated legal AI, voice and text legal AI, convenient legal AI, affordable legal AI, user-friendly legal AI, easy-to-use legal AI, flat-rate legal AI, $19.99 legal AI subscription, monthly legal AI subscription, 40 legal practice areas, media analysis, jurisdiction-specific legal documents",
+    title: "Affordable Legal Guidance & Legal Answers | LegalWhat",
+    description: "Affordable legal guidance and answers to legal questions. Ask by voice or text, analyze files, and create legal documents. 3 days free, then $19.99/month.",
+    keywords: "affordable legal guidance, affordable answers to legal questions, affordable legal help online, affordable legal insight, low-cost legal guidance, ask legal questions online, LegalWhat, Lexara, voice legal help, text legal help, 40 legal practice areas, media analysis, jurisdiction-specific legal documents",
     keywordTaxonomy: GLOBAL_KEYWORDS,
     ogType: "website",
     canonicalPath: "/",
@@ -91,6 +93,37 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
     changefreq: "weekly",
     breadcrumbs: [],
     includeInSitemap: false,
+  },
+  "/affordable-legal-guidance/": {
+    title: "Affordable Legal Guidance Online | LegalWhat",
+    description: "Get affordable legal guidance online across 40 areas of law. Ask questions by voice or text, analyze files, and create legal documents for $19.99/month.",
+    keywords: "affordable legal guidance, affordable legal help online, low-cost legal guidance, affordable legal insight, online legal guidance, legal guidance without hourly attorney fees",
+    keywordTaxonomy: GLOBAL_KEYWORDS,
+    ogTitle: "Affordable Legal Guidance Online | LegalWhat",
+    ogDescription: "Ask legal questions, understand your options, analyze files, and create legal documents with affordable online legal guidance from LegalWhat.",
+    ogType: "service",
+    canonicalPath: "/affordable-legal-guidance/",
+    priority: 0.95,
+    changefreq: "weekly",
+    breadcrumbs: [{ name: "Affordable Legal Guidance", url: `${BASE_URL}/affordable-legal-guidance/` }],
+    includeInSitemap: true,
+  },
+  "/guides/affordable-answers-to-legal-questions/": {
+    title: "Affordable Answers to Legal Questions Online | LegalWhat",
+    description: "Learn how to get affordable answers to legal questions online, what information to provide, and when a licensed attorney may still be necessary.",
+    keywords: "affordable answers to legal questions, affordable legal answers, ask legal questions online, affordable legal help, online legal answers, low-cost legal guidance",
+    keywordTaxonomy: GLOBAL_KEYWORDS,
+    ogTitle: "Affordable Answers to Legal Questions Online | LegalWhat",
+    ogDescription: "A practical guide to getting affordable answers to legal questions online while understanding when professional representation may still be needed.",
+    ogType: "article",
+    canonicalPath: "/guides/affordable-answers-to-legal-questions/",
+    priority: 0.9,
+    changefreq: "monthly",
+    breadcrumbs: [
+      { name: "Guides", url: `${BASE_URL}/guides/` },
+      { name: "Affordable Legal Answers", url: `${BASE_URL}/guides/affordable-answers-to-legal-questions/` }
+    ],
+    includeInSitemap: true,
   },
   "/officer": {
     title: "Police Officer Search | Find Cop Records | Legal What?",
@@ -195,9 +228,9 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
     includeInSitemap: false,
   },
   "/legal-consultation": {
-    title: "LEXARA AI Legal Consultation | Legal What?",
-    description: "Talk with Lexara by voice or text across 40+ areas of law. Analyze files, research jurisdiction-specific issues, and create PDF or DOCX legal documents.",
-    keywords: "Lexara, conversational legal AI, animated legal AI, voice legal consultation, text legal consultation, legal guidance AI, legal research, legal media analysis, legal document generator",
+    title: "Ask Legal Questions Online | Affordable Legal Help | LegalWhat",
+    description: "Ask legal questions by voice or text and get affordable legal guidance across 40+ areas of law. Analyze files and create PDF or DOCX legal documents.",
+    keywords: "ask legal questions online, affordable legal help, affordable legal guidance, legal answers online, voice legal help, text legal help, Lexara, jurisdiction-aware legal guidance, legal research, legal media analysis, legal document generator",
     keywordTaxonomy: GLOBAL_KEYWORDS,
     ogType: "service",
     canonicalPath: "/legal-consultation",
