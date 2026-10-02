@@ -14,6 +14,7 @@ import { assessLocationQuality } from '../services/geoconsole/location-quality';
 import { selectCrawlerPlan } from '../services/crawlers/CrawlerSelectionUtility';
 import { createLogger } from '../logger';
 import { isAuthenticated } from '../auth';
+import { getPlatformUserId } from '../authIdentity';
 import { pool } from '../db';
 import {
   normalizeClientEvidence,
@@ -98,6 +99,518 @@ const configUpdateSchema = z.object({
     adaptiveResolution: z.boolean().optional(),
     gpuAcceleration: z.boolean().optional(),
   }).optional(),
+});
+
+
+const telemetryAbsoluteSchema = z.object({
+  kind: z.literal('position'),
+  source: z.enum([
+    'device_gps', 'gnss_fix', 'gnss_raw', 'browser_geolocation',
+    'vehicle_telemetry', 'exif_photo', 'exif_video', 'xmp_sidecar',
+    'json_sidecar', 'social_geotag', 'public_camera', 'traffic_cam',
+    'satellite_imagery', 'historical_location', 'public_record',
+  ]),
+  timestamp: validDateString,
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  altitude: z.number().optional(),
+  accuracy: z.number().positive().max(5_000_000).optional(),
+  verticalAccuracy: z.number().nonnegative().max(5_000_000).optional(),
+  speed: z.number().nonnegative().optional(),
+  heading: z.number().min(0).max(360).optional(),
+  confidence: z.number().min(0).max(1).default(0.5),
+  provider: z.string().trim().min(1).max(200).optional(),
+  recordId: z.string().trim().min(1).max(300).optional(),
+  correlationGroup: z.string().trim().min(1).max(300).optional(),
+  metadata: z.record(z.unknown()).optional(),
+});
+
+const telemetryRadioSchema = z.object({
+  kind: z.literal('radio'),
+  timestamp: validDateString,
+  radioType: z.enum(['gsm', 'cdma', 'wcdma', 'lte', 'nr']).optional(),
+  homeMobileCountryCode: z.number().int().min(0).max(999).optional(),
+  homeMobileNetworkCode: z.number().int().min(0).max(32767).optional(),
+  carrier: z.string().max(120).optional(),
+  provider: z.string().max(200).optional(),
+  wifiAccessPoints: z.array(z.object({
+    macAddress: z.string().trim().min(11).max(32),
+    signalStrength: z.number().min(-127).max(126).optional(),
+    signalToNoiseRatio: z.number().optional(),
+    channel: z.number().optional(),
+    age: z.number().nonnegative().optional(),
+  })).max(64).optional(),
+  cellTowers: z.array(z.object({
+    cellId: z.number().int().nonnegative().optional(),
+    newRadioCellId: z.number().int().nonnegative().optional(),
+    locationAreaCode: z.number().int().nonnegative().optional(),
+    mobileCountryCode: z.number().int().min(0).max(999).optional(),
+    mobileNetworkCode: z.number().int().min(0).max(32767),
+    age: z.number().nonnegative().optional(),
+    signalStrength: z.number().optional(),
+    timingAdvance: z.number().nonnegative().optional(),
+  })).max(32).optional(),
+  metadata: z.record(z.unknown()).optional(),
+}).refine(value =>
+  Boolean(value.wifiAccessPoints?.length || value.cellTowers?.length),
+  { message: 'Radio telemetry requires Wi-Fi access points or cell towers.' },
+);
+
+const telemetryRangingSchema = z.object({
+  kind: z.literal('ranging'),
+  source: z.enum([
+    'wifi_rtt', 'uwb_range', 'uwb_direction',
+    'bluetooth_proximity', 'ble_rssi', 'ble_aoa',
+  ]),
+  timestamp: validDateString,
+  provider: z.string().max(200).optional(),
+  correlationGroup: z.string().max(300).optional(),
+  anchors: z.array(z.object({
+    id: z.string().max(200).optional(),
+    latitude: z.number().min(-90).max(90),
+    longitude: z.number().min(-180).max(180),
+    distanceMeters: z.number().nonnegative().max(1_000_000),
+    uncertaintyMeters: z.number().positive().max(1_000_000).optional(),
+  })).min(3).max(64),
+  metadata: z.record(z.unknown()).optional(),
+});
+
+const telemetrySensorSchema = z.object({
+  kind: z.literal('sensor'),
+  source: z.enum(['accelerometer', 'imu_gyro', 'magnetometer', 'barometer']),
+  timestamp: validDateString,
+  provider: z.string().max(200).optional(),
+  values: z.record(z.number()),
+  metadata: z.record(z.unknown()).optional(),
+});
+
+const telemetryMeasurementSchema = z.discriminatedUnion('kind', [
+  telemetryAbsoluteSchema,
+  telemetryRadioSchema,
+  telemetryRangingSchema,
+  telemetrySensorSchema,
+]);
+
+const telemetryBatchSchema = z.object({
+  sessionId: z.string().trim().min(1).max(200).optional(),
+  subjectLabel: z.string().trim().min(1).max(500).optional(),
+  sourceId: z.string().trim().min(1).max(200).optional(),
+  measurements: z.array(telemetryMeasurementSchema).min(1).max(250),
+  metadata: z.record(z.unknown()).optional(),
+});
+
+type TelemetryBatch = z.infer<typeof telemetryBatchSchema>;
+type TelemetryMeasurement = z.infer<typeof telemetryMeasurementSchema>;
+
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).sort().map(key =>
+    `${JSON.stringify(key)}:${stableJson(record[key])}`
+  ).join(',')}}`;
+}
+
+function providerTelemetryAuthorized(req: Request): boolean {
+  const secret = String(process.env.SPECTRA_TELEMETRY_HMAC_SECRET || '').trim();
+  if (!secret) return false;
+  const timestamp = String(req.header('x-spectra-timestamp') || '').trim();
+  const signature = String(req.header('x-spectra-signature') || '').trim().toLowerCase();
+  const timestampMs = Date.parse(timestamp);
+  if (!Number.isFinite(timestampMs) || Math.abs(Date.now() - timestampMs) > 5 * 60_000) return false;
+  if (!/^[a-f0-9]{64}$/.test(signature)) return false;
+
+  const expected = createHmac('sha256', secret)
+    .update(`${timestamp}.${stableJson(req.body)}`)
+    .digest('hex');
+  const actualBuffer = Buffer.from(signature, 'hex');
+  const expectedBuffer = Buffer.from(expected, 'hex');
+  return actualBuffer.length === expectedBuffer.length
+    && timingSafeEqual(actualBuffer, expectedBuffer);
+}
+
+function confidenceForAccuracy(accuracyMeters: number, ceiling = 0.92): number {
+  if (!Number.isFinite(accuracyMeters) || accuracyMeters <= 0) return 0.35;
+  const normalized = 1 - Math.log10(Math.max(1, accuracyMeters)) / 5;
+  return Math.max(0.2, Math.min(ceiling, normalized));
+}
+
+function localMeters(
+  latitude: number,
+  longitude: number,
+  originLatitude: number,
+  originLongitude: number,
+): { x: number; y: number } {
+  const radius = 6_378_137;
+  const originLatitudeRadians = originLatitude * Math.PI / 180;
+  return {
+    x: (longitude - originLongitude) * Math.PI / 180 * radius * Math.cos(originLatitudeRadians),
+    y: (latitude - originLatitude) * Math.PI / 180 * radius,
+  };
+}
+
+function geoFromLocalMeters(
+  x: number,
+  y: number,
+  originLatitude: number,
+  originLongitude: number,
+): { latitude: number; longitude: number } {
+  const radius = 6_378_137;
+  const originLatitudeRadians = originLatitude * Math.PI / 180;
+  return {
+    latitude: originLatitude + y / radius * 180 / Math.PI,
+    longitude: originLongitude + x / (radius * Math.cos(originLatitudeRadians)) * 180 / Math.PI,
+  };
+}
+
+function rangingPoint(
+  measurement: z.infer<typeof telemetryRangingSchema>,
+): GPSPoint | null {
+  const originLatitude = measurement.anchors.reduce((sum, anchor) => sum + anchor.latitude, 0)
+    / measurement.anchors.length;
+  const originLongitude = measurement.anchors.reduce((sum, anchor) => sum + anchor.longitude, 0)
+    / measurement.anchors.length;
+  const anchors = measurement.anchors.map(anchor => ({
+    ...localMeters(anchor.latitude, anchor.longitude, originLatitude, originLongitude),
+    distance: anchor.distanceMeters,
+    uncertainty: Math.max(0.1, anchor.uncertaintyMeters ?? 2),
+  }));
+
+  const reference = anchors[0];
+  let ata00 = 0;
+  let ata01 = 0;
+  let ata11 = 0;
+  let atb0 = 0;
+  let atb1 = 0;
+
+  for (let index = 1; index < anchors.length; index += 1) {
+    const anchor = anchors[index];
+    const a0 = 2 * (anchor.x - reference.x);
+    const a1 = 2 * (anchor.y - reference.y);
+    const b =
+      reference.distance ** 2 - anchor.distance ** 2
+      - reference.x ** 2 - reference.y ** 2
+      + anchor.x ** 2 + anchor.y ** 2;
+    const weight = 1 / Math.max(0.25, anchor.uncertainty ** 2);
+    ata00 += weight * a0 * a0;
+    ata01 += weight * a0 * a1;
+    ata11 += weight * a1 * a1;
+    atb0 += weight * a0 * b;
+    atb1 += weight * a1 * b;
+  }
+
+  const determinant = ata00 * ata11 - ata01 * ata01;
+  if (!Number.isFinite(determinant) || Math.abs(determinant) < 1e-6) return null;
+
+  const x = (atb0 * ata11 - atb1 * ata01) / determinant;
+  const y = (ata00 * atb1 - ata01 * atb0) / determinant;
+  const location = geoFromLocalMeters(x, y, originLatitude, originLongitude);
+  if (
+    !Number.isFinite(location.latitude) || !Number.isFinite(location.longitude)
+    || location.latitude < -90 || location.latitude > 90
+    || location.longitude < -180 || location.longitude > 180
+  ) return null;
+
+  const residuals = anchors.map(anchor =>
+    Math.abs(Math.hypot(x - anchor.x, y - anchor.y) - anchor.distance)
+  );
+  const residualRms = Math.sqrt(
+    residuals.reduce((sum, residual) => sum + residual ** 2, 0) / residuals.length
+  );
+  const anchorUncertainty = Math.sqrt(
+    anchors.reduce((sum, anchor) => sum + anchor.uncertainty ** 2, 0) / anchors.length
+  );
+  const accuracy = Math.max(0.5, residualRms, anchorUncertainty);
+
+  return signServerEvidence({
+    latitude: location.latitude,
+    longitude: location.longitude,
+    accuracy,
+    timestamp: measurement.timestamp,
+    receivedAt: new Date(),
+    source: measurement.source,
+    confidence: Math.min(0.95, confidenceForAccuracy(accuracy) + Math.min(0.18, (anchors.length - 2) * 0.06)),
+    observationKind: 'inferred',
+    correlationGroup: measurement.correlationGroup || `ranging:${measurement.provider || measurement.source}`,
+    provenance: {
+      provider: measurement.provider || 'spectra-ranging',
+      capturedAt: measurement.timestamp,
+      transformedBy: ['spectra_weighted_multilateration'],
+    },
+    metadata: {
+      ...(measurement.metadata || {}),
+      anchorCount: anchors.length,
+      residualRmsMeters: residualRms,
+    },
+  });
+}
+
+async function radioPoint(
+  measurement: z.infer<typeof telemetryRadioSchema>,
+): Promise<GPSPoint | null> {
+  const key = String(
+    process.env.SPECTRA_GOOGLE_GEOLOCATION_API_KEY
+    || process.env.GOOGLE_GEOLOCATION_API_KEY
+    || process.env.GOOGLE_MAPS_API_KEY
+    || ''
+  ).trim();
+  if (!key) return null;
+
+  const wifiAccessPoints = (measurement.wifiAccessPoints || []).filter(accessPoint => {
+    const mac = accessPoint.macAddress.toLowerCase();
+    if (!/^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(mac)) return false;
+    const firstOctet = Number.parseInt(mac.slice(0, 2), 16);
+    return (firstOctet & 0x02) === 0;
+  });
+
+  const endpoint = new URL('https://www.googleapis.com/geolocation/v1/geolocate');
+  endpoint.searchParams.set('key', key);
+
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        homeMobileCountryCode: measurement.homeMobileCountryCode,
+        homeMobileNetworkCode: measurement.homeMobileNetworkCode,
+        radioType: measurement.radioType,
+        carrier: measurement.carrier,
+        considerIp: false,
+        wifiAccessPoints: wifiAccessPoints.length ? wifiAccessPoints : undefined,
+        cellTowers: measurement.cellTowers?.length ? measurement.cellTowers : undefined,
+      }),
+      signal: AbortSignal.timeout(6_000),
+    });
+    if (!response.ok) return null;
+    const payload: any = await response.json();
+    const latitude = Number(payload?.location?.lat);
+    const longitude = Number(payload?.location?.lng);
+    const accuracy = Number(payload?.accuracy);
+    if (
+      !Number.isFinite(latitude) || !Number.isFinite(longitude)
+      || latitude < -90 || latitude > 90
+      || longitude < -180 || longitude > 180
+    ) return null;
+
+    const source: DataSource = wifiAccessPoints.length ? 'wifi_fingerprint' : 'cellular';
+    return signServerEvidence({
+      latitude,
+      longitude,
+      accuracy: Number.isFinite(accuracy) && accuracy > 0 ? accuracy : undefined,
+      timestamp: measurement.timestamp,
+      receivedAt: new Date(),
+      source,
+      confidence: confidenceForAccuracy(accuracy, 0.88),
+      observationKind: 'inferred',
+      correlationGroup: `radio:${measurement.provider || 'google-geolocation'}`,
+      provenance: {
+        provider: measurement.provider || 'google-geolocation',
+        capturedAt: measurement.timestamp,
+        transformedBy: ['spectra_radio_geolocation'],
+      },
+      metadata: {
+        ...(measurement.metadata || {}),
+        radioType: measurement.radioType,
+        wifiAccessPointCount: wifiAccessPoints.length,
+        cellTowerCount: measurement.cellTowers?.length || 0,
+      },
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function telemetryPoint(
+  measurement: TelemetryMeasurement,
+  trustedProvider: boolean,
+): Promise<GPSPoint | null> {
+  if (measurement.kind === 'sensor') return null;
+  if (measurement.kind === 'radio') return radioPoint(measurement);
+  if (measurement.kind === 'ranging') return rangingPoint(measurement);
+
+  const candidate: GPSPoint = {
+    latitude: measurement.latitude,
+    longitude: measurement.longitude,
+    altitude: measurement.altitude,
+    accuracy: measurement.accuracy,
+    verticalAccuracy: measurement.verticalAccuracy,
+    timestamp: measurement.timestamp,
+    receivedAt: new Date(),
+    source: measurement.source,
+    confidence: measurement.confidence,
+    observationKind:
+      measurement.source === 'historical_location' || measurement.source === 'public_record'
+        ? 'historical'
+        : 'observed',
+    correlationGroup: measurement.correlationGroup
+      || `${measurement.source}:${measurement.provider || 'telemetry-source'}`,
+    provenance: {
+      provider: measurement.provider || 'telemetry-source',
+      recordId: measurement.recordId,
+      capturedAt: measurement.timestamp,
+      transformedBy: ['spectra_telemetry_ingest'],
+    },
+    metadata: {
+      ...(measurement.metadata || {}),
+      velocity: (
+        measurement.speed !== undefined || measurement.heading !== undefined
+      ) ? {
+        speed: measurement.speed,
+        heading: measurement.heading,
+      } : undefined,
+    },
+  };
+
+  return trustedProvider
+    ? signServerEvidence(candidate)
+    : normalizeClientEvidence(candidate);
+}
+
+async function processTelemetryBatch(
+  batch: TelemetryBatch,
+  trustedProvider: boolean,
+): Promise<{
+  sessionId: string;
+  inputCount: number;
+  positionCount: number;
+  contextOnlyCount: number;
+  quality: ReturnType<typeof assessLocationQuality>;
+  result: Awaited<ReturnType<typeof hybridGeoconsole.processLocationData>> | null;
+}> {
+  const sessionId = batch.sessionId || randomUUID();
+  const pointOutcomes = await Promise.allSettled(
+    batch.measurements.map(measurement => telemetryPoint(measurement, trustedProvider))
+  );
+  const points = pointOutcomes.flatMap(outcome =>
+    outcome.status === 'fulfilled' && outcome.value ? [outcome.value] : []
+  );
+  const quality = assessLocationQuality(points);
+  const result = quality.points.length
+    ? await hybridGeoconsole.processLocationData(quality.points, sessionId)
+    : null;
+
+  return {
+    sessionId,
+    inputCount: batch.measurements.length,
+    positionCount: quality.points.length,
+    contextOnlyCount: batch.measurements.length - points.length,
+    quality,
+    result,
+  };
+}
+
+router.post('/telemetry/provider/:providerId', async (req: Request, res: Response) => {
+  if (!providerTelemetryAuthorized(req)) {
+    return res.status(401).json({ success: false, error: 'Invalid telemetry provider signature.' });
+  }
+  const validation = telemetryBatchSchema.safeParse({
+    ...req.body,
+    sourceId: req.params.providerId,
+  });
+  if (!validation.success) {
+    return res.status(400).json({
+      success: false,
+      error: 'Invalid telemetry payload.',
+      details: validation.error.errors,
+    });
+  }
+
+  try {
+    const processed = await processTelemetryBatch(validation.data, true);
+    return res.json({
+      success: true,
+      data: {
+        sessionId: processed.sessionId,
+        inputCount: processed.inputCount,
+        positionCount: processed.positionCount,
+        contextOnlyCount: processed.contextOnlyCount,
+        fusedLocations: processed.result?.fusedLocations.map(location => ({
+          ...location,
+          point: signServerEvidence(location.point),
+        })) || [],
+        trail: processed.result?.trail || null,
+        futurecast: processed.result?.futurecast.map(signServerEvidence) || [],
+        inputQuality: {
+          acceptedCount: processed.quality.acceptedCount,
+          rejectedCount: processed.quality.rejectedCount,
+          issues: processed.quality.issues,
+        },
+      },
+    });
+  } catch (error) {
+    log.error('Provider telemetry ingest failed', { error });
+    return res.status(500).json({ success: false, error: 'Telemetry processing failed.' });
+  }
+});
+
+// Every ordinary GeoConsole/SPECTRA endpoint below remains authenticated.
+router.use(isAuthenticated);
+
+router.get('/telemetry-capabilities', (_req: Request, res: Response) => {
+  return res.json({
+    success: true,
+    data: {
+      transports: ['https-json', 'signed-webhook'],
+      positionSources: [
+        'browser_geolocation', 'device_gps', 'gnss_fix', 'gnss_raw',
+        'vehicle_telemetry', 'exif_photo', 'exif_video', 'social_geotag',
+        'public_camera', 'traffic_cam', 'historical_location', 'public_record',
+      ],
+      radioSources: ['wifi_fingerprint', 'cellular'],
+      rangingSources: [
+        'wifi_rtt', 'uwb_range', 'uwb_direction',
+        'bluetooth_proximity', 'ble_rssi', 'ble_aoa',
+      ],
+      contextSources: ['accelerometer', 'imu_gyro', 'magnetometer', 'barometer'],
+      radioGeolocationConfigured: Boolean(
+        process.env.SPECTRA_GOOGLE_GEOLOCATION_API_KEY
+        || process.env.GOOGLE_GEOLOCATION_API_KEY
+        || process.env.GOOGLE_MAPS_API_KEY
+      ),
+      providerWebhookConfigured: Boolean(process.env.SPECTRA_TELEMETRY_HMAC_SECRET),
+    },
+  });
+});
+
+router.post('/telemetry-ingest', async (req: Request, res: Response) => {
+  const validation = telemetryBatchSchema.safeParse(req.body);
+  if (!validation.success) {
+    return res.status(400).json({
+      success: false,
+      error: 'Invalid telemetry payload.',
+      details: validation.error.errors,
+    });
+  }
+
+  const userId = getPlatformUserId(req.user as any);
+  if (!userId) return res.status(401).json({ success: false, error: 'Authentication required.' });
+
+  try {
+    const processed = await processTelemetryBatch(validation.data, false);
+    return res.json({
+      success: true,
+      data: {
+        sessionId: processed.sessionId,
+        inputCount: processed.inputCount,
+        positionCount: processed.positionCount,
+        contextOnlyCount: processed.contextOnlyCount,
+        fusedLocations: processed.result?.fusedLocations.map(location => ({
+          ...location,
+          point: signServerEvidence(location.point),
+        })) || [],
+        trail: processed.result?.trail || null,
+        futurecast: processed.result?.futurecast.map(signServerEvidence) || [],
+        inputQuality: {
+          acceptedCount: processed.quality.acceptedCount,
+          rejectedCount: processed.quality.rejectedCount,
+          issues: processed.quality.issues,
+        },
+      },
+    });
+  } catch (error) {
+    log.error('Telemetry ingest failed', { error, userId });
+    return res.status(500).json({ success: false, error: 'Telemetry processing failed.' });
+  }
 });
 
 // ============ API ENDPOINTS ============
