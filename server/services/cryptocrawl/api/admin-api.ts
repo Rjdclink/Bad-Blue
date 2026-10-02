@@ -133,7 +133,7 @@ const requireCryptoControlAuthority = (req: any, res: any, next: any) => {
     return res.status(401).json({ success: false, error: 'Authentication required' });
   }
 
-  if (!req.user.isMasterBypass && !req.user.isAdminBypass) {
+  if (!req.user.isMasterBypass) {
     return res.status(403).json({ success: false, error: 'Platform administrator access required' });
   }
 
